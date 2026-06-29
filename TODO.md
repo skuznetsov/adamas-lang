@@ -9,6 +9,22 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
 - 2026-06-29 UPDATE: the full-prelude s2 frontier moved again. Root for the
+  `Random#rand_int(Int32)` undefined-extern was not a backend stub problem.
+  The source `src/stdlib/random.cr` macro body contains `range.begin` /
+  `range.end` inside a macro-for generated method signature/body. The parser's
+  macro body scanner treated keyword tokens after dot as real `begin`/`end`
+  block delimiters, leaving `block_depth=1`, consuming the outer `{% end %}`,
+  and dropping the `MacroForNode` plus all later module members from the
+  registered `Random` body. Fix: macro body scanning ignores keyword block
+  effects after dot, and module macro-for include expansion is replayed for
+  existing includers when a later module reopening is registered. Guards:
+  `regression_tests/macro_body_keyword_member_after_dot_repro.sh`,
+  `regression_tests/module_macro_for_include_private_helper_repro.sh`, and
+  `regression_tests/stage2_lower_field_get_full_prelude_frontier_repro.sh`.
+  Fresh `/tmp/adamas_random_rootfix` gets the full-prelude guard to
+  `status=0`; `Random#rand_int` is no longer an accepted frontier.
+
+- 2026-06-29 UPDATE: the previous full-prelude s2 frontier moved. Root for the
   `Time::Format#initialize(String, Location?)` crash was not backend ABI: the
   ivar annotation `@location : Location?` in `Time::Format` was registered
   before nested `Time::Location` was discoverable, leaving class ivar metadata
@@ -19,9 +35,9 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   `regression_tests/nilable_forward_nested_class_ivar_repro.sh`. Fresh s2
   built from the fixed compiler gets past the old `lower_field_get`, old
   `Time::Location.local`, and old `Time::Format#initialize` frontiers; the
-  current downstream boundary is `STUB CALLED:
-  Random$Hrand_int$$Int32` (exit 134). The full-prelude guard accepts only that
-  moved frontier or a future clean compile.
+  downstream boundary at that checkpoint was `STUB CALLED:
+  Random$Hrand_int$$Int32` (exit 134). That boundary is now superseded by the
+  parser/module macro-for include slice above.
 
 - 2026-06-28 UPDATE: the current `lower_field_get` crash has moved, but s2 is
   still not green. Fresh producer/consumer probes on clean HEAD showed the first
@@ -76,10 +92,10 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   `TypeRef.new(15)` case-identity ledger described an earlier frontier before
   the escaped-interpolation parser fix. Do not continue from that row unless it
   is re-observed on the current tree.
-- REQUIRED NEXT SLICE (read-only/default-off first): localize the current
-  `Random#rand_int(Int32)` undefined-extern/materialization frontier. Do not
-  continue patching `lower_field_get`, `Time::Location.local`, or
-  `Time::Format#initialize` unless
+- REQUIRED NEXT SLICE (read-only/default-off first): re-run the bootstrap gate
+  from the new clean full-prelude baseline and localize the next observed
+  `s2b`/`s3b` boundary. Do not continue patching `Random#rand_int`,
+  `lower_field_get`, `Time::Location.local`, or `Time::Format#initialize` unless
   `regression_tests/stage2_lower_field_get_full_prelude_frontier_repro.sh`
   regresses or new evidence names a fresh boundary in those older slices.
 - DEAD-CODE/BLOAT TRACK: classify backend fallback and repair paths touched by

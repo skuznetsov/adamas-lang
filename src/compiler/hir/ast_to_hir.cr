@@ -16997,6 +16997,30 @@ module Adamas::HIR
                         offset += field_storage_size(inferred)
                       end
                     end
+                  when Adamas::Compiler::Frontend::BeginNode, Adamas::Compiler::Frontend::BlockNode, Adamas::Compiler::Frontend::ModuleNode
+                    next if @lazy_module_methods
+                    register_included_module_macro_for_container_in_class(
+                      member,
+                      class_name,
+                      module_full_name,
+                      defined_class_method_full_names,
+                      visited_extends,
+                      ivars,
+                      pointerof(offset),
+                      init_capture
+                    )
+                  when Adamas::Compiler::Frontend::MacroForNode
+                    next if @lazy_module_methods
+                    register_included_module_macro_for_in_class(
+                      member,
+                      class_name,
+                      module_full_name,
+                      defined_class_method_full_names,
+                      visited_extends,
+                      ivars,
+                      pointerof(offset),
+                      init_capture
+                    )
                   when Adamas::Compiler::Frontend::DefNode
                     next if (recv = member.receiver) && (safe_slice_to_string(recv) || "") == "self"
                     next if member.is_abstract
@@ -17229,6 +17253,125 @@ module Adamas::HIR
         i += 1
       end
       offset
+    end
+
+    private def register_included_module_macro_for_container_in_class(
+      node : Adamas::Compiler::Frontend::Node,
+      class_name : String,
+      module_name : String,
+      defined_class_method_full_names : Set(String),
+      visited_extends : Set(String),
+      ivars : Array(IVarInfo)?,
+      offset_ref : Pointer(Int32)?,
+      init_capture : InitParamsCapture?,
+    ) : Nil
+      body = case node
+             when Adamas::Compiler::Frontend::BeginNode
+               node.body
+             when Adamas::Compiler::Frontend::BlockNode
+               node.body
+             when Adamas::Compiler::Frontend::ModuleNode
+               nested_name = safe_slice_to_string(node.name) || ""
+               return unless nested_name == last_namespace_component(module_name) || nested_name == module_name
+               node.body || [] of ExprId
+             else
+               return
+             end
+
+      body.each do |child_id|
+        next if child_id.invalid?
+        child = unwrap_visibility_member(@arena[child_id])
+        case child
+        when Adamas::Compiler::Frontend::BeginNode, Adamas::Compiler::Frontend::BlockNode, Adamas::Compiler::Frontend::ModuleNode
+          register_included_module_macro_for_container_in_class(
+            child,
+            class_name,
+            module_name,
+            defined_class_method_full_names,
+            visited_extends,
+            ivars,
+            offset_ref,
+            init_capture
+          )
+        when Adamas::Compiler::Frontend::MacroForNode
+          register_included_module_macro_for_in_class(
+            child,
+            class_name,
+            module_name,
+            defined_class_method_full_names,
+            visited_extends,
+            ivars,
+            offset_ref,
+            init_capture
+          )
+        end
+      end
+    end
+
+    private def register_included_module_macro_for_in_class(
+      node : Adamas::Compiler::Frontend::MacroForNode,
+      class_name : String,
+      module_name : String,
+      defined_class_method_full_names : Set(String),
+      visited_extends : Set(String),
+      ivars : Array(IVarInfo)?,
+      offset_ref : Pointer(Int32)?,
+      init_capture : InitParamsCapture?,
+    ) : Nil
+      iter_vars = macro_for_iter_var_names(node)
+      return if iter_vars.empty?
+
+      values = macro_for_iterable_values(node.iterable)
+      return unless values
+
+      source = source_for_arena(@arena)
+      program = Adamas::Compiler::Frontend::Program.new(@arena, [] of ExprId)
+      expander = Adamas::Compiler::Semantic::MacroExpander.new(
+        program,
+        @arena,
+        Adamas::Runtime.target_flags,
+        recovery_mode: true,
+        macro_source: source,
+        macro_source_path: source_path_for(@arena)
+      )
+      owner_type = macro_owner_type_for(module_name)
+
+      expanded = String.build do |io|
+        values.each_with_index do |value, idx|
+          vars = {} of String => Adamas::Compiler::Semantic::MacroValue
+          assign_macro_iter_vars(vars, iter_vars, value, idx)
+          if body_output = expander.expand_literal(node.body, variables: vars, owner_type: owner_type)
+            io << body_output
+            io << "\n"
+          end
+        end
+      end
+
+      if parsed = parse_macro_literal_class_body_with_sanitized_fallback(expanded, "include_module_for:#{module_name}->#{class_name}")
+        parsed_arena, body_ids = parsed
+        with_arena(parsed_arena) do
+          body_ids.each do |expr_id|
+            process_class_macro_expansion_member(class_name, expr_id, ivars, offset_ref, init_capture)
+          end
+        end
+        return
+      end
+
+      if parsed_prog = parse_macro_literal_program_with_sanitized_fallback(expanded, "include_module_for_program:#{module_name}->#{class_name}")
+        prog_arena, prog_roots = parsed_prog
+        with_arena(prog_arena) do
+          prog_roots.each do |expr_id|
+            register_class_members_from_expansion(
+              class_name,
+              expr_id,
+              defined_class_method_full_names,
+              visited_extends,
+              ivars,
+              offset_ref
+            )
+          end
+        end
+      end
     end
 
     private def debug_probe_include_call_boundary(
@@ -20967,7 +21110,6 @@ module Adamas::HIR
       if debug_env_filter_match?("DEBUG_NESTED_CLASS", module_name)
         STDERR.puts "[DEBUG_MODULE] Processing module: #{module_name}, body_size=#{node.body.try(&.size) || 0}"
       end
-
       record_nested_type_names(module_name, node.body)
       registered_self_class = false
 
@@ -21577,8 +21719,58 @@ module Adamas::HIR
               end
             end
           end
+          propagate_module_macro_for_methods_to_existing_includers(module_name, body)
         ensure
           @current_class = old_class
+        end
+      end
+    end
+
+    private def propagate_module_macro_for_methods_to_existing_includers(
+      module_name : String,
+      body : Array(ExprId),
+    ) : Nil
+      includers = @module_includers[module_name]?
+      if includers.nil?
+        short_name = last_namespace_component(module_name)
+        includers = @module_includers[short_name]? if short_name != module_name
+      end
+      return unless includers
+
+      includers.each do |class_name|
+        class_info = @class_info[class_name]?
+        next unless class_info
+
+        offset = class_info.size
+        with_namespace_override(module_name) do
+          body.each do |expr_id|
+            next if expr_id.null_ptr? || expr_id.invalid?
+            member = unwrap_visibility_member(@arena[expr_id])
+            case member
+            when Adamas::Compiler::Frontend::BeginNode, Adamas::Compiler::Frontend::BlockNode, Adamas::Compiler::Frontend::ModuleNode
+              register_included_module_macro_for_container_in_class(
+                member,
+                class_name,
+                module_name,
+                Set(String).new,
+                Set(String).new,
+                class_info.ivars,
+                pointerof(offset),
+                nil
+              )
+            when Adamas::Compiler::Frontend::MacroForNode
+              register_included_module_macro_for_in_class(
+                member,
+                class_name,
+                module_name,
+                Set(String).new,
+                Set(String).new,
+                class_info.ivars,
+                pointerof(offset),
+                nil
+              )
+            end
+          end
         end
       end
     end

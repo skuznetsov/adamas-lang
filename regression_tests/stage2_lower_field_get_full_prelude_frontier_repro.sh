@@ -4,9 +4,9 @@
 #
 # This is not a full bootstrap-readiness test. It rejects the old
 # lower_field_get crash, the old Time::Location.local undefined-extern stub, and
-# the later Time::Format#initialize nilable Location? field-store crash. The
-# current accepted downstream frontier is Random#rand_int(Int32) materialization
-# under the produced s2 compiler.
+# the later Time::Format#initialize nilable Location? field-store crash. It also
+# rejects the later Random#rand_int(Int32) materialization stub. A clean compile
+# of this minimal full-prelude program is the only accepted signal.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -33,6 +33,12 @@ if grep -Fq 'STUB CALLED: Time$CCLocation$Dlocal' "$LOG"; then
   exit 1
 fi
 
+if grep -Fq 'STUB CALLED: Random$Hrand_int$$Int32' "$LOG"; then
+  echo "stage2_lower_field_get_full_prelude_frontier_failed: old Random#rand_int stub returned" >&2
+  tail -120 "$LOG" >&2 || true
+  exit 1
+fi
+
 if grep -Eq 'lower_field_get|hir_type_is_lib_struct' "$LOG"; then
   echo "stage2_lower_field_get_full_prelude_frontier_failed: old lower_field_get crash returned" >&2
   tail -120 "$LOG" >&2 || true
@@ -41,11 +47,6 @@ fi
 
 if [[ $status -eq 0 && -x "$OUT" ]]; then
   echo "stage2_lower_field_get_full_prelude_frontier_ok status=0"
-  exit 0
-fi
-
-if [[ $status -eq 134 ]] && grep -Fq 'STUB CALLED: Random$Hrand_int$$Int32' "$LOG"; then
-  echo "stage2_lower_field_get_full_prelude_frontier_ok frontier=random_rand_int_int32_stub"
   exit 0
 fi
 

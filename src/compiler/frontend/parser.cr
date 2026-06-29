@@ -8958,14 +8958,18 @@ module Adamas
               # stop on the outer macro 'end' when control_depth == 0 and
               # block_depth == 0 and the current token is End.
               prev_tok = previous_token
+              keyword_member_after_dot = prev_tok &&
+                                         prev_tok.kind == Token::Kind::Operator &&
+                                         slice_eq?(prev_tok.slice, ".")
               starts_statement = macro_body_token_starts_statement?(token, prev_tok)
               abstract_def = starts_statement && token.kind == Token::Kind::Def &&
                              prev_tok && prev_tok.kind == Token::Kind::Abstract
               case token.kind
               when Token::Kind::Begin, Token::Kind::Do
-                # begin/do always introduce a block that must be closed with end,
-                # even when used as expressions (e.g., x = begin ... end, foo do ... end).
-                depth_state.push_block
+                # begin/do introduce a block that must be closed with end, even
+                # when used as expressions (e.g., x = begin ... end, foo do ... end).
+                # After dot they are method names and must not alter macro text nesting.
+                depth_state.push_block unless keyword_member_after_dot
               when Token::Kind::Fun
                 if starts_statement && macro_fun_starts_block?(@index)
                   depth_state.push_block
@@ -8980,7 +8984,10 @@ module Adamas
                   depth_state.push_block
                 end
               when Token::Kind::End
-                if !stop_on_branch && depth_state.control_depth == 0 && depth_state.block_depth == 0 && starts_statement
+                if keyword_member_after_dot
+                  # Keywords are valid method names after dot (`range.begin`, `range.end`).
+                  # In macro text scanning they must not affect block nesting.
+                elsif !stop_on_branch && depth_state.control_depth == 0 && depth_state.block_depth == 0 && starts_statement
                   # Do not consume macro-def 'end'; leave it for caller
                   break
                 else

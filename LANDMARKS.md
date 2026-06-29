@@ -12,6 +12,33 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-S2S3-RANDOM-MACRO-FOR-KEYWORD-MEMBER|verified 2026-06-29 {F:0.88 G:0.44 R:0.90}]:
+Fresh compiler `/tmp/adamas_random_rootfix` moves past the
+`Random#rand_int(Int32)` undefined-extern frontier. Root was a parser
+macro-body nesting bug plus include-order replay gap, not a backend stub or
+Random-specific stdlib issue. In macro text, `range.begin` and `range.end`
+tokenize as keyword tokens after dot; `parse_macro_body` previously treated
+`begin` as a block opener and `end` as a block closer regardless of dot context.
+For `src/stdlib/random.cr` this left `block_depth=1`, consumed the outer
+`{% end %}`, reached EOF, and dropped the `MacroForNode` plus later module
+members from the registered `Random` body. `Random::PCG32` had already included
+early `Random` reopenings from `random/secure.cr` and `random/pcg32.cr`, so the
+later main `Random` reopening also needed module macro-for include replay for
+existing includers. Fix slice: ignore keyword block effects after dot while
+scanning macro text, register included module `MacroForNode` expansions for
+concrete classes, and replay module macro-for generated members to existing
+includers when later module reopenings are registered. Evidence:
+`crystal build src/adamas.cr -o /tmp/adamas_random_rootfix --error-trace`;
+`regression_tests/macro_body_keyword_member_after_dot_repro.sh
+/tmp/adamas_random_rootfix`;
+`regression_tests/module_macro_for_include_private_helper_repro.sh
+/tmp/adamas_random_rootfix`;
+direct `Random.rand(10)` no longer emits `STUB CALLED: Random#rand_int`;
+`regression_tests/stage2_lower_field_get_full_prelude_frontier_repro.sh
+/tmp/adamas_random_rootfix` returns `status=0`; full suites pass 151/151
+originals + 36/36 combined. Caveat: this verifies the materialization frontier
+moved/cleared, not statistical correctness of Random output.
+
 [LM-S2S3-NILABLE-FORWARD-NESTED-IVAR-CANONICALIZATION|verified 2026-06-29 {F:0.88 G:0.42 R:0.90}]:
 Fresh s2 now moves past the old `Time::Format#initialize(String, Location?)`
 nilable field-store crash. Root was a producer identity/order bug, not backend
@@ -29,8 +56,9 @@ compiled by `/tmp/adamas_tfmt_fix` exits 0 and
 `Time::Format#initialize` stores `ptr %location`; `/tmp/adamas_tfmt_fix` builds
 fresh `/tmp/adamas_tfmt_s2`; `regression_tests/stage2_lower_field_get_full_prelude_frontier_repro.sh /tmp/adamas_tfmt_s2`
 passes with moved frontier `random_rand_int_int32_stub`; full suites pass
-151/151 originals + 36/36 combined. Residual frontier:
-`STUB CALLED: Random$Hrand_int$$Int32` under produced s2.
+151/151 originals + 36/36 combined. Superseded residual frontier:
+`STUB CALLED: Random$Hrand_int$$Int32` under produced s2; see
+`LM-S2S3-RANDOM-MACRO-FOR-KEYWORD-MEMBER`.
 
 [LM-S2S3-LOWER-FIELD-GET-CONSUMER-SIDETABLE|verified 2026-06-28 {F:0.86 G:0.34 R:0.88}]:
 The active full-prelude `puts "x"` s2 crash moved past
@@ -55,8 +83,8 @@ fresh s2 compiling full-prelude `puts "x"` exits 134 at
 and suites 151/151 + 36/36 pass. Guard:
 `regression_tests/stage2_lower_field_get_full_prelude_frontier_repro.sh`.
 Superseded residual frontier: materialization of `Time::Location.local`; the
-new active residual is `Random#rand_int(Int32)` per
-`LM-S2S3-NILABLE-FORWARD-NESTED-IVAR-CANONICALIZATION`.
+later `Random#rand_int(Int32)` residual is now superseded by
+`LM-S2S3-RANDOM-MACRO-FOR-KEYWORD-MEMBER`.
 
 [LM-S2S3-ARCH-STOPRULE-CURRENT-BATCH|verified-boundary 2026-06-27 {F:0.84 G:0.62 R:0.88}]:
 SUPERSEDED for the active crash by
