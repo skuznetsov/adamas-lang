@@ -57,7 +57,10 @@ lexical-short-name variant, which derived MemberAccess short names from source
 and bypassed the third guard for static calls by assigning
 `method_name = lexical_method_name`, also failed under generated s2: the
 `BootstrapEnv.get?("X")` reducer still emitted the bare `get$Q$$String` stub,
-and `p2_stage2_static_call_named_llvm_no_prelude.sh` still failed. These are
+and `p2_stage2_static_call_named_llvm_no_prelude.sh` still failed. Marking
+`v2_string_readable?` as `@[NoInline]` was refuted too: host gates stayed green
+and s2 built, but the generated-s2 reducer and static-call regression remained
+red. These are
 consumer/local-carrier/guard-shaped fixes and should not be repeated.
 Evidence: `/tmp/adamas_static_snapshot_s2s3.log` retains bare
 `CALL_EMIT ... emit=get?$String`; `/tmp/adamas_static_sourcepath_s2s3.log`

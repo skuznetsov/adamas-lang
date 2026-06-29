@@ -152,7 +152,12 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   bare `get$Q$$String` stub, and
   `p2_stage2_static_call_named_llvm_no_prelude.sh` still failed. This confirms
   that simply refeeding the short method local at this point is too late or
-  still tied to the same fragile local-slot corridor.
+  still tied to the same fragile local-slot corridor. A helper-level attempt to
+  make `v2_string_readable?` `@[NoInline]` was also refuted: host gates stayed
+  green and s2 built, but generated s2 still emitted the bare
+  `get$Q$$String` stub for the `BootstrapEnv.get?("X")` reducer, and the
+  static-call regression still failed. The owner collapse is therefore not
+  fixed by changing only helper inlining.
   Next step: no more consumer restore/guard patches; continue the
   method-resolution SDD path by separating source/static receiver identity from
   selected/materialized identity with a falsifier that does not depend on
