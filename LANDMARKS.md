@@ -12,6 +12,36 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-S3B-LOWER-SUPER-IMPLICIT-ARGS-NO-SELF|verified 2026-06-29 {F:0.88 G:0.38 R:0.90}]:
+Fresh `s2 -> s3` moved past `error: Index out of bounds` after
+`pass3 after lower_main call`. The first bad boundary was HIR pending-demand
+lowering, not MIR/LLVM. Existing `ADAMAS_TRACE_FLUSH_ENTER` showed
+`flush_pending_functions -> lower_missing_call_targets` scanning
+`Exception#backtrace?`; lldb then stopped on `__adamas_raise` with stack
+`Array(HIR::Parameter)#[](Range(Int32, Nil)) -> AstToHir#lower_super ->
+lower_method -> lower_function_if_needed_impl -> process_pending_lower_functions
+-> lower_missing_call_targets -> flush_pending_functions`. Root: implicit
+no-arg `super` / `previous_def` forwarding used `ctx.function.params[1..]`,
+which assumes param 0 is always synthetic `self`. Class/static/top-level
+wrapper functions may have no `self` and even no params, so slicing from index
+1 raises `IndexError`. Fix slice: `current_method_forward_arg_ids` forwards all
+current params but skips the first only when its HIR parameter name is exactly
+`self`; both `lower_super` and `lower_previous_def` use it. Evidence:
+`crystal build src/adamas.cr -o /tmp/adamas_super_forward_stage1 --error-trace`;
+`regression_tests/class_method_noarg_super_forward_repro.sh
+/tmp/adamas_try_noblock_stage1` is red with `Index out of bounds`;
+`regression_tests/class_method_noarg_super_forward_repro.sh
+/tmp/adamas_super_forward_stage1` and the same guard on
+`/tmp/adamas_super_forward_s2` return `status=0`; fixed s2 builds
+`/tmp/adamas_super_forward_s3` from `src/adamas.cr` with exit 0. Adjacent guard
+`regression_tests/array_bool_join_module_super_repro.sh
+/tmp/adamas_super_forward_stage1` remains green. Adversary caveat: this is a
+compile-frontier fix, not a broad class-method-super runtime semantics fix;
+fixed s2 compiles the small class-method-super reducer to a binary that prints
+`0`, and generated s3 compiling `puts "hi"` aborts with
+`STUB CALLED: get$Q$$String`. Residual frontier is therefore generated-s3
+materialization of `get?`, not green s3/s3b.
+
 [LM-S3B-INLINE-TRY-SCALAR-BLOCK-CALLBACK|verified 2026-06-29 {F:0.88 G:0.34 R:0.90}]:
 The fresh `s2 -> s3` crash no longer stops in
 `AstToHir#inline_try_with_block`. The first bad boundary was not `TypeRef`

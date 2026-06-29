@@ -58947,6 +58947,22 @@ module Adamas::HIR
       emit_self(ctx)
     end
 
+    private def current_method_forward_arg_ids(ctx : LoweringContext) : Array(ValueId)
+      params = ctx.function.params
+      args = [] of ValueId
+      start_idx = 0
+      if params.size > 0 && params.unsafe_fetch(0).name == "self"
+        start_idx = 1
+      end
+
+      idx = start_idx
+      while idx < params.size
+        args << params.unsafe_fetch(idx).id
+        idx += 1
+      end
+      args
+    end
+
     # Lower super call - calls parent class method with same name
     private def lower_super(ctx : LoweringContext, node : Adamas::Compiler::Frontend::SuperNode) : ValueId
       class_name = @current_class
@@ -58981,8 +58997,10 @@ module Adamas::HIR
                node_args.reject(&.invalid?).map { |arg| lower_expr(ctx, arg) }
              else
                # If no args, forward current method's parameters
-               # Get them from the function context (skip 'self' param at index 0)
-               ctx.function.params[1..].map(&.id)
+               # Skip the synthetic instance `self` param when present. Class/static
+               # methods and top-level fun wrappers may have no `self`, so slicing
+               # from index 1 is not safe.
+               current_method_forward_arg_ids(ctx)
              end
 
       # Get argument types for mangling
@@ -59352,8 +59370,10 @@ module Adamas::HIR
                node_args.reject(&.invalid?).map { |arg| lower_expr(ctx, arg) }
              else
                # If no args, forward current method's parameters
-               # Get them from the function context (skip 'self' param at index 0)
-               ctx.function.params[1..].map(&.id)
+               # Skip the synthetic instance `self` param when present. Class/static
+               # methods and top-level fun wrappers may have no `self`, so slicing
+               # from index 1 is not safe.
+               current_method_forward_arg_ids(ctx)
              end
 
       # Get argument types for mangling

@@ -8,6 +8,26 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-06-29 UPDATE: the `s2 -> s3` frontier moved past
+  `error: Index out of bounds` after `pass3 after lower_main call`. Root was
+  not MIR/LLVM and not `Exception#backtrace?` itself: lldb on fresh s2 stopped
+  at `__adamas_raise`, with the stack
+  `lower_missing_call_targets -> process_pending_lower_functions ->
+  lower_function_if_needed_impl -> lower_method -> lower_super ->
+  Array(HIR::Parameter)#[](Range(Int32, Nil))`. `lower_super` and
+  `previous_def` used `ctx.function.params[1..]` to forward implicit no-arg
+  calls, assuming every lowered method has a synthetic `self` parameter. That
+  is false for class/static/top-level wrappers; a no-arg `super` in that shape
+  tried to slice an empty parameter array from index 1. Fix: forward current
+  method args with `current_method_forward_arg_ids`, skipping the first
+  parameter only when it is actually named `self`. Guard:
+  `regression_tests/class_method_noarg_super_forward_repro.sh` is red on
+  baseline `/tmp/adamas_try_noblock_stage1` with `Index out of bounds` and
+  green on fixed stage1 and fixed s2. Fresh fixed s2 builds s3 cleanly
+  (`/tmp/adamas_super_forward_s3`, exit 0). Residual frontier: generated s3 is
+  not a usable compiler yet; compiling even `puts "hi"` exits 134 with
+  `STUB CALLED: get$Q$$String`. Do not claim green s3/s3b.
+
 - 2026-06-29 UPDATE: the `s2 -> s3` frontier moved past the
   `AstToHir#inline_try_with_block` SIGSEGV. Root was not `TypeRef` parameter
   passing: the crash came from `inline_try_core` taking a Crystal block callback
@@ -80,9 +100,11 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   full-prelude lower-field-get/Time/Random guard, and the
   `Exception#backtrace?` inline-try scalar callback guard. Generated s2
   compiling `src/adamas.cr` to s3 no longer exits 139 in
-  `AstToHir#inline_try_with_block`; the current red evidence is
-  `error: Index out of bounds` after `pass3 after lower_main call`. Treat that
-  as the active frontier; do not claim s3 green.
+  `AstToHir#inline_try_with_block` and no longer exits 1 with
+  `Index out of bounds` in `lower_super`; it now produces an s3 binary. The
+  active red evidence is generated s3 compiling a simple program and aborting
+  with `STUB CALLED: get$Q$$String`. Treat that as the active frontier; do not
+  claim green s3/s3b.
 - HARD BOUNDARY: keep `BlockOwner`. Do not revert `@block_owner` back to
   `NamedTuple` or positional `Tuple`; that rollback re-enters an already
   observed materialization/key-shape trap.
