@@ -195,7 +195,22 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   collapses the owner/name channel. Next probe: class/nested-method
   registration and selected-call identity ledger for `Exception::CallStack.skip`,
   not another consumer restore, Bool/string carrier, backend forwarder, or
-  raw-pointer fix.
+  raw-pointer fix. The first registration probe now pins that direction further:
+  stage1 registers the nested body on the current `AstArena` as
+  `Exception::CallStack.skip$String`, while generated s2 sees the same nested
+  body through a `VirtualArena` where the body member is a generic `Node`, fails
+  `arena_fits_class_node?`, fails source reparse repair, and falls back to
+  registering the method under `Exception::.skip$String`. Instrumented
+  generated-s2 repair showed source and slice recovery are good (`class
+  CallStack`, `roots=1`, `arena present=1`), but fetching the reparsed root via
+  `AstArena#[]?` returns nil for a valid root (`expr=1`, `null=0`, `invalid=0`,
+  `arena_size=2`). A narrow `[]?` -> strict `[]` patch inside
+  `reparse_class_from_current_source` was refuted: patched stage1 passed the
+  static-call guard and built fresh s2, but patched generated s2 still emitted
+  bare `skip$String` with no owner-qualified body. Do not repeat that
+  consumer-local repair tweak. Next probe must name whether the reparsed
+  `AstArena` root/slot storage, `TypedNode?` materialization, or the outer
+  `VirtualArena` node-body storage is the real producer.
 - HARD BOUNDARY: keep `BlockOwner`. Do not revert `@block_owner` back to
   `NamedTuple` or positional `Tuple`; that rollback re-enters an already
   observed materialization/key-shape trap.

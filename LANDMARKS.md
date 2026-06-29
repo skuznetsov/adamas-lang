@@ -92,7 +92,23 @@ Exception::CallStack.skip$String` plus a matching function body; generated s2
 emits `Class Exception::`, a dummy `Type(36)` literal, `call skip$String`, and
 no `Exception::CallStack.skip$String` body. The next discriminating probe is
 class/nested-method registration and selected-call identity for that static
-call, not raw-pointer lowering.
+call, not raw-pointer lowering. Follow-up probes pinned the first bad
+registration path: stage1 takes `register_class_with_name` through
+`before_current` with current `AstArena` fit=1 and registers
+`Exception::CallStack.skip$String`; generated s2 sees current `VirtualArena`
+fit=0, the nested body member reads as generic `Node`, source repair returns
+`repaired=0`, and fallback registers the same method as `Exception::.skip$String`.
+An instrumented generated-s2 repair run showed the snippet itself is good:
+source present, slice header `class CallStack`, leading name `CallStack`,
+parse roots=1, reparsed arena present. The bad transition inside repair is
+root fetch: `program.roots[0]` has `expr=1`, `null=0`, `invalid=0`,
+`arena_size=2`, but `reparsed_arena.[]?(expr_id)` returns nil. A narrow
+replacement of that one lookup with strict `reparsed_arena[expr_id]` was
+refuted: patched stage1 passed the static-call guard and built fresh s2, but
+patched generated s2 still emitted bare `skip$String` and no
+`Exception::CallStack.skip$String` body. Next probe must name the producer below
+that failed repair: reparsed `AstArena` root/slot storage, `TypedNode?`
+materialization, or the outer `VirtualArena` body-node storage.
 
 [LM-S3B-LOWER-SUPER-IMPLICIT-ARGS-NO-SELF|verified 2026-06-29 {F:0.88 G:0.38 R:0.90}]:
 Fresh `s2 -> s3` moved past `error: Index out of bounds` after
