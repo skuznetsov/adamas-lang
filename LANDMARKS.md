@@ -12,30 +12,43 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
-[LM-S3B-BOOTSTRAPENV-GET-OWNERLOSS-REFUTATIONS|in-progress 2026-06-29 {F:0.78 G:0.28 R:0.86}]:
+[LM-S3B-BOOTSTRAPENV-GET-OWNERLOSS-REFUTATIONS|in-progress 2026-06-29 {F:0.82 G:0.30 R:0.86}]:
 Generated s3's `STUB CALLED: get$Q$$String` frontier is not a backend-stub
 root. Static IR from an s2-built compiler shows startup lowering emits
 `call i1 @get$Q$$String(ptr @.str.17)`, where `@.str.17` is
 `"STAGE2_BOOTSTRAP_TRACE"` from
 `Adamas::Compiler::BootstrapEnv.get?("STAGE2_BOOTSTRAP_TRACE")`. A focused
 s2->s3 trace showed the class-method resolver selects
-`Adamas::Compiler::BootstrapEnv.get?$String` and keeps it through defaults, but
-`full_method_name` is blank after splat packing and final emit collapses to
-bare `get?$String`. Refuted fixes: restoring a pre-pack snapshot did not change
-the final emit; restoring directly from `splat_pack_full_method_name` made
-s2->s3 segfault during registration; broad source-`Path.method` recovery fixed
-the outer emit but over-fired to `Frontend::ArrayLiteralNode.named...` stubs;
+`Adamas::Compiler::BootstrapEnv.get?$String`, but final emit collapses to bare
+`get?$String`. Correction from a later focused trace: the earlier "blank after
+splat packing" wording is stale because direct `full_method_name || ""` debug
+strings are not reliable in this self-hosted nilable corridor. The later trace
+showed source/path recognition, static lookup, and M3F path refine all preserve
+the owner-qualified `Adamas::Compiler::BootstrapEnv.get?$String`; the owner is
+lost only by the lower-call identity channel before/at final resolver
+consumption. Refuted fixes: restoring a pre-pack snapshot did not change the
+final emit; restoring directly from `splat_pack_full_method_name` made s2->s3
+segfault during registration; broad source-`Path.method` recovery fixed the
+outer emit but over-fired to `Frontend::ArrayLiteralNode.named...` stubs;
 typed-entry-plus-lib fallback still fixed the outer emit but exposed a malformed
 inner call while lowering `BootstrapEnv.get?`:
 `lookup=Adamas::Compiler::BootstrapEnv.` with one `Pointer(UInt8)` argument.
+Two newer local repair attempts are also refuted and reverted: pre-base
+static-owner reconstruction caused repeated s2->s3 segfaults in
+`register_function -> annotation_type_ref -> monomorphize_generic_class`, and an
+M3E lookup-only static-owner correction let patched s2 build but made repeated
+s2->s3 runs segfault before/after lower_main. These are consumer/guard-shaped
+fixes and should not be repeated.
 Evidence: `/tmp/adamas_static_snapshot_s2s3.log` retains bare
 `CALL_EMIT ... emit=get?$String`; `/tmp/adamas_static_sourcepath_s2s3.log`
 shows `CALL_EMIT ... emit=Adamas::Compiler::BootstrapEnv.get?$String` followed
 by the malformed inner lookup and exit 139; `/tmp/adamas_static_pathbase_s2s3.log`
-shows the broad fallback over-fire to the `ArrayLiteralNode.named` stub.
-Next root step: pin the malformed inner call's source/producer without
-production edits; do not ship consumer restore, broad `Path.method` fallback, or
-backend stub forwarding for this frontier.
+shows the broad fallback over-fire to the `ArrayLiteralNode.named` stub. Current
+next root step: continue the method-resolution SDD path by separating
+source/static receiver identity from selected/materialized identity with a
+falsifier that does not depend on nilable debug-string formatting. Do not ship
+consumer restore, broad `Path.method` fallback, static-owner guard, or backend
+stub forwarding for this frontier.
 
 [LM-S3B-LOWER-SUPER-IMPLICIT-ARGS-NO-SELF|verified 2026-06-29 {F:0.88 G:0.38 R:0.90}]:
 Fresh `s2 -> s3` moved past `error: Index out of bounds` after

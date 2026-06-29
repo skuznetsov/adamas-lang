@@ -106,17 +106,27 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   with `STUB CALLED: get$Q$$String`. Treat that as the active frontier; do not
   claim green s3/s3b.
 - 2026-06-29 NOTE: the first `get$Q$$String` probes found a real owner-loss
-  boundary but no shippable fix yet. s2->s3 lowering selects
-  `Adamas::Compiler::BootstrapEnv.get?$String` for
-  `BootstrapEnv.get?("STAGE2_BOOTSTRAP_TRACE")`, then loses `full_method_name`
-  after splat packing and emits bare `get?$String`. Refuted branches:
-  pre-pack snapshot restore (no effect), `splat_pack_full_method_name` restore
-  (registration-time segfault), broad `Path.method` recovery (over-fires to
-  `ArrayLiteralNode.named` stub), and scoped typed-entry/lib fallback (outer
-  `get?` fixed but inner `BootstrapEnv.get?` lowering malformed to
-  `Adamas::Compiler::BootstrapEnv.` with a `Pointer(UInt8)` argument). Next
-  step is read-only pinning of that malformed inner call's source/producer
-  before any production patch.
+  boundary but no shippable fix yet. Earlier wording that blamed "after splat
+  packing" is now stale: direct `full_method_name || ""` debug strings are not
+  reliable evidence in this corridor. A later focused trace showed static
+  receiver recognition is correct for `src/adamas.cr:13`:
+  `Adamas::Compiler::BootstrapEnv.get?` is recognized as a path/static call,
+  static lookup selects `Adamas::Compiler::BootstrapEnv.get?$String`, and M3F
+  path refine also returns `Adamas::Compiler::BootstrapEnv.get?$String`; final
+  lower-call consumption still collapses to bare `get?$String`. Refuted
+  branches: pre-pack snapshot restore (no effect),
+  `splat_pack_full_method_name` restore (registration-time segfault), broad
+  `Path.method` recovery (over-fires to `ArrayLiteralNode.named` stub), scoped
+  typed-entry/lib fallback (outer `get?` fixed but inner `BootstrapEnv.get?`
+  lowering malformed to `Adamas::Compiler::BootstrapEnv.` with a
+  `Pointer(UInt8)` argument), pre-base static-owner reconstruction (s2->s3
+  segfaults in `register_function -> annotation_type_ref ->
+  monomorphize_generic_class`), and M3E lookup-only static-owner correction
+  (patched s2 builds, but s2->s3 segfaults before/after lower_main on repeated
+  runs). Next step: no more consumer restore/guard patches; continue the
+  method-resolution SDD path by separating source/static receiver identity from
+  selected/materialized identity with a falsifier that does not depend on
+  nilable debug-string formatting.
 - HARD BOUNDARY: keep `BlockOwner`. Do not revert `@block_owner` back to
   `NamedTuple` or positional `Tuple`; that rollback re-enters an already
   observed materialization/key-shape trap.
