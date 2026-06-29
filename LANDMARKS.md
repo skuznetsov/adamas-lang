@@ -1,6 +1,6 @@
 # LANDMARKS
 
-Updated: 2026-06-27
+Updated: 2026-06-28
 Context: compiler/bootstrap/stage2-stability
 
 This file is the active working set only. Historical landmarks before this
@@ -12,7 +12,34 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-S2S3-LOWER-FIELD-GET-CONSUMER-SIDETABLE|verified 2026-06-28 {F:0.86 G:0.34 R:0.88}]:
+The active full-prelude `puts "x"` s2 crash moved past
+`HIRToMIRLowering#lower_field_get`. Fresh clean probes localized the first
+crashing value to `String#bytesize` reading `@bytesize` (`FieldGet id=1`,
+offset 4). The HIR producer path was correct in both stage1 and s2:
+`lower_instance_var` constructed the `FieldGet` with `TypeRef::INT32` (`id=4`),
+the constructor, `ctx.emit`, and `ctx.register_type` preserved `id=4`, and the
+MIR side table `@hir_value_types[field.id]` still held `id=4` immediately before
+the old crash. The bad boundary was the MIR consumer reading the inherited
+`field.type` directly under s2. Fix slice: `lower_field_get` derives
+`field_hir_type = @hir_value_types[field.id]? || field.type` and uses that value
+for storage/layout/load decisions. A second adjacent s2-only crash in the same
+consumer path came from using `Array#find` while matching MIR field descriptors;
+that single compiler-critical lookup now uses an explicit indexed loop. This is
+not a claim that language-level `Array#find` is fixed. Evidence:
+`/tmp/adamas_fgclean_stage1` builds `/tmp/adamas_fgclean_s2` successfully;
+fresh s2 compiling full-prelude `puts "x"` exits 134 at
+`STUB CALLED: Time$CCLocation$Dlocal`, not 139 in `lower_field_get`;
+`ptr_value_field_heap_struct_repro`, `struct_pointer_word_boundary_repro`,
+`tuple_small_struct_element_inline_repro`, `p2_generated_stage2_no_prelude_puts_guard`,
+and suites 151/151 + 36/36 pass. Guard:
+`regression_tests/stage2_lower_field_get_full_prelude_frontier_repro.sh`.
+Residual frontier: materialization of `Time::Location.local`.
+
 [LM-S2S3-ARCH-STOPRULE-CURRENT-BATCH|verified-boundary 2026-06-27 {F:0.84 G:0.62 R:0.88}]:
+SUPERSEDED for the active crash by
+`LM-S2S3-LOWER-FIELD-GET-CONSUMER-SIDETABLE`; retained as the branch-level
+architecture stop-rule and cleanup boundary.
 Current `work/s3-range-slice-frontier` is not merge-ready. The previous broad
 dirty batch was reduced before continuing: stale `ADAMAS_*_LEDGER` probes, an
 unbacked `lower_field_get` Void guard, stale backend bootstrap rewrites, and a
@@ -64,6 +91,8 @@ explicitly requested. Evidence: `crystal build src/adamas.cr -o
 it does not clear the current `lower_field_get` bootstrap frontier.
 
 [LM-S2S3-LOWER-FIELD-GET-PUTS-X-FRONTIER|verified-boundary 2026-06-27 {F:0.80 G:0.30 R:0.86}]:
+SUPERSEDED by `LM-S2S3-LOWER-FIELD-GET-CONSUMER-SIDETABLE`; retained as the
+red baseline for the moved frontier.
 After the escaped-interpolation frontend fix, generated s2 still cannot compile
 minimal full-prelude `puts "x"`. `scripts/run_safe.sh
 /tmp/adamas_frontend_slice_s2 120 2048 /tmp/adamas_puts_x.cr -o
@@ -71,10 +100,11 @@ minimal full-prelude `puts "x"`. `scripts/run_safe.sh
 call`. Fresh lldb on the same compiler/input stops at
 `Adamas::MIR::HIRToMIRLowering#lower_field_get(HIR::FieldGet) + 3480`
 (`ldr w8, [x8]`, address `0x300000000`), called from `lower_value`,
-`lower_block`, `lower_function_body`, and `lower_all_bodies`. This is the
-current active red boundary. Do not continue from the older `IO#<<` runtime
-recursion row without re-observing it; first localize the exact HIR FieldGet
-producer, field metadata, and stage1-vs-s2 divergence.
+`lower_block`, `lower_function_body`, and `lower_all_bodies`. This was the
+then-current red boundary. Do not continue from the older `IO#<<` runtime
+recursion row without re-observing it; if a FieldGet crash returns, first
+localize the exact HIR FieldGet producer, field metadata, and stage1-vs-s2
+divergence.
 
 [LM-S2S3-STATE-SCOPE-LEDGER-IO-SHIFT|stale-boundary 2026-06-27 {F:0.84 G:0.30 R:0.55}]:
 STALE after `LM-S2S3-ESCAPED-INTERP-STRING-PARSER`; reverify before using as

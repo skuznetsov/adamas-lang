@@ -5633,10 +5633,11 @@ module Adamas
 
       private def lower_field_get(field : HIR::FieldGet) : ValueId
         builder = @builder.not_nil!
+        field_hir_type = @hir_value_types[field.id]? || field.type
         # Nil-typed fields are zero-sized and have no storage.
         # Loading from such fields must return typed nil directly.
-        if field.type == HIR::TypeRef::NIL
-          return builder.const_nil_typed(convert_type(field.type))
+        if field_hir_type == HIR::TypeRef::NIL
+          return builder.const_nil_typed(convert_type(field_hir_type))
         end
 
         obj_ptr = get_value(field.object)
@@ -5648,8 +5649,8 @@ module Adamas
         # Large struct fields (> pointer size) are stored INLINE in their parent object.
         # Return the GEP pointer directly — no additional load needed.
         # Small structs (≤ 8 bytes) are stored as scalars, need normal load.
-        if hir_type_is_struct?(field.type) && !hir_type_is_lib_struct?(field.type)
-          inline_size = hir_type_inline_size(field.type)
+        if hir_type_is_struct?(field_hir_type) && !hir_type_is_lib_struct?(field_hir_type)
+          inline_size = hir_type_inline_size(field_hir_type)
           # Inline storage decision via the single layout source (ABI-rework 1c),
           # matching the symmetric lower_field_store_to_ptr routing so a field is
           # read back exactly as it was written (no pointer-word-boundary flip).
@@ -5662,41 +5663,41 @@ module Adamas
           suppress_step4_tuple = inline_size.to_u64 <= pointer_word_bytes_u64 &&
                                  field_receiver_is_tuple?(field.object)
           if !suppress_step4_tuple &&
-             Adamas::LayoutContract.user_struct_inline?(inline_size.to_u64, hir_type_name(field.type))
+             Adamas::LayoutContract.user_struct_inline?(inline_size.to_u64, hir_type_name(field_hir_type))
             @inline_struct_ptrs << field.id
             if Adamas::LayoutProbe.enabled?
               probe_field_event("lower_field_get.inline_struct", "field-get", "consumer",
-                field.type, "BorrowedAddress", inline_size.to_i64)
+                field_hir_type, "BorrowedAddress", inline_size.to_i64)
             end
             return field_ptr
           end
         end
-        if @inline_struct_ptrs.includes?(field.object) && hir_type_is_struct?(field.type)
+        if @inline_struct_ptrs.includes?(field.object) && hir_type_is_struct?(field_hir_type)
           @inline_struct_ptrs << field.id
           if Adamas::LayoutProbe.enabled?
             probe_field_event("lower_field_get.propagated", "field-get", "consumer",
-              field.type, "BorrowedAddress", -1_i64)
+              field_hir_type, "BorrowedAddress", -1_i64)
           end
           field_ptr
-        elsif hir_type_is_static_array?(field.type)
+        elsif hir_type_is_static_array?(field_hir_type)
           # StaticArray is always inline in its parent — return GEP pointer directly
           @inline_struct_ptrs << field.id
           if Adamas::LayoutProbe.enabled?
             probe_field_event("lower_field_get.static_array", "field-get", "consumer",
-              field.type, "BorrowedAddress", -1_i64)
+              field_hir_type, "BorrowedAddress", -1_i64)
           end
           field_ptr
-        elsif hir_type_is_lib_struct?(field.type)
+        elsif hir_type_is_lib_struct?(field_hir_type)
           # Lib struct fields are stored inline (via memcopy in FieldSet).
           # Return the GEP pointer directly — the data is at the field address.
           @inline_struct_ptrs << field.id
           if Adamas::LayoutProbe.enabled?
             probe_field_event("lower_field_get.lib_struct", "field-get", "consumer",
-              field.type, "BorrowedAddress", -1_i64)
+              field_hir_type, "BorrowedAddress", -1_i64)
           end
           field_ptr
         else
-          field_mir_type = convert_type(field.type)
+          field_mir_type = convert_type(field_hir_type)
           probe_declared_type = field_mir_type
 
           # CRITICAL: If field_mir_type maps to an all-ref union, override to POINTER.
@@ -5725,7 +5726,17 @@ module Adamas
             obj_mir_type = convert_type(obj_hir_type)
             if mir_type = @mir_module.type_registry.get(obj_mir_type)
               if fields = mir_type.fields
-                if found_field = fields.find { |f| f.name == field.field_name && f.offset == field.field_offset.to_u32 }
+                found_field = nil.as(Adamas::MIR::Field?)
+                field_index = 0
+                while field_index < fields.size
+                  candidate_field = fields[field_index]
+                  if candidate_field.name == field.field_name && candidate_field.offset == field.field_offset.to_u32
+                    found_field = candidate_field
+                    break
+                  end
+                  field_index += 1
+                end
+                if found_field
                   if found_field.type_ref != field_mir_type
                     if actual_type = @mir_module.type_registry.get(found_field.type_ref)
                       if actual_type.kind.union?
@@ -5743,7 +5754,7 @@ module Adamas
                           if field_is_allref
                             if Adamas::LayoutProbe.enabled?
                               probe_field_event("lower_field_get.payload4", "field-get", "consumer",
-                                field.type, "InlineBytes", probe_mir_type_size(found_field.type_ref),
+                                field_hir_type, "InlineBytes", probe_mir_type_size(found_field.type_ref),
                                 field_mir_type, found_field.type_ref)
                             end
                             # GEP past the union header to the payload and load from there.
@@ -5762,7 +5773,7 @@ module Adamas
 
           loaded = builder.load(field_ptr, actual_load_type)
           if Adamas::LayoutProbe.enabled?
-            storage = if hir_type_is_struct?(field.type)
+            storage = if hir_type_is_struct?(field_hir_type)
                         "PointerCarrier"
                       elsif actual_load_type == TypeRef::POINTER
                         "PointerReference"
@@ -5770,7 +5781,7 @@ module Adamas
                         "InlineBytes"
                       end
             probe_field_event("lower_field_get.load", "field-get", "consumer",
-              field.type, storage, probe_mir_type_size(actual_load_type),
+              field_hir_type, storage, probe_mir_type_size(actual_load_type),
               probe_declared_type, actual_load_type)
           end
           loaded

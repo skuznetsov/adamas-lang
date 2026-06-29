@@ -1,6 +1,6 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-06-27
+Updated: 2026-06-28
 Branch: `work/s3-range-slice-frontier`
 
 This is the active working backlog only. Historical detail is in git history,
@@ -8,8 +8,26 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-06-28 UPDATE: the current `lower_field_get` crash has moved, but s2 is
+  still not green. Fresh producer/consumer probes on clean HEAD showed the first
+  crashing `FieldGet` is `String#bytesize @bytesize` (`id=1`, offset 4): HIR
+  construction, `ctx.emit`, and `ctx.register_type` all preserve
+  `TypeRef::INT32` (`id=4`) in both stage1 and s2, and the MIR side table
+  `@hir_value_types[field.id]` also contains `id=4` in s2. The bad consumer
+  transition was direct inherited `field.type` access inside
+  `HIRToMIRLowering#lower_field_get`. The slice now uses the HIR value-type
+  side table for `FieldGet` lowering and avoids the s2-brittle `Array#find`
+  helper only in the compiler-critical MIR field-descriptor lookup. Fresh s2
+  compiling full-prelude `puts "x"` no longer exits 139 in `lower_field_get`;
+  it reaches the next boundary, `STUB CALLED: Time::Location.local` (exit 134).
+  Guard: `regression_tests/stage2_lower_field_get_full_prelude_frontier_repro.sh`
+  accepts only that moved frontier or a future clean compile, and fails if the
+  old segfault returns. Do not claim `Array#find` or general HIR node storage is
+  fixed by this slice.
+
 - CURRENT STATUS: branch `work/s3-range-slice-frontier` is still not
-  merge-ready, but the previous broad dirty batch has been cut down. Stale
+  merge-ready, but the previous broad dirty batch has been cut down and the
+  former `lower_field_get` full-prelude crash is now moved. Stale
   `ADAMAS_*_LEDGER` probes, an unbacked `lower_field_get` Void guard, stale
   backend bootstrap rewrites, and a misleading `stage2_try_inline...` repro were
   removed instead of being carried forward. A fresh stage1 build produces a
@@ -17,11 +35,11 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   both stage1 and that generated s2:
   `regression_tests/stage2_escaped_interpolation_string_parser_repro.sh
   /tmp/adamas_cleaned_batch` and the same script with
-  `/tmp/adamas_cleaned_batch_s2`. However, generated s2 compiling minimal
-  full-prelude `puts "x"` still exits 139 during compilation after
-  `pass3 after lower_main call`; fresh lldb stops in
-  `Adamas::MIR::HIRToMIRLowering#lower_field_get(HIR::FieldGet)`. Treat this
-  as the current red evidence; do not claim s2/s3 green.
+  `/tmp/adamas_cleaned_batch_s2`. Generated s2 compiling minimal full-prelude
+  `puts "x"` no longer exits 139 in
+  `Adamas::MIR::HIRToMIRLowering#lower_field_get(HIR::FieldGet)`; the current
+  red evidence is `STUB CALLED: Time::Location.local` (exit 134). Treat this as
+  the active frontier; do not claim s2/s3 green.
 - HARD BOUNDARY: keep `BlockOwner`. Do not revert `@block_owner` back to
   `NamedTuple` or positional `Tuple`; that rollback re-enters an already
   observed materialization/key-shape trap.
@@ -44,11 +62,10 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   the escaped-interpolation parser fix. Do not continue from that row unless it
   is re-observed on the current tree.
 - REQUIRED NEXT SLICE (read-only/default-off first): localize the current
-  `lower_field_get` crash. Record the exact HIR `FieldGet`, its owning
-  function, object type, field name, field offset, field type, class-info field
-  vector, and stage1-vs-s2 divergence. Do not add a consumer guard in
-  `lower_field_get` unless the producer proves that the FieldGet is legitimate
-  but the consumer mishandles it.
+  `Time::Location.local` undefined-extern/materialization frontier. Do not
+  continue patching `lower_field_get` unless
+  `regression_tests/stage2_lower_field_get_full_prelude_frontier_repro.sh`
+  regresses or new evidence names a fresh FieldGet boundary.
 - DEAD-CODE/BLOAT TRACK: classify backend fallback and repair paths touched by
   the current batch (`emit_dead_code_stub`, `lookup_module_function_for_extern`,
   `fixup_call_arg_types`, `emit_functions_parallel` bootstrap workarounds) using
