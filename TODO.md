@@ -1,12 +1,27 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-06-28
+Updated: 2026-06-29
 Branch: `work/s3-range-slice-frontier`
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
+
+- 2026-06-29 UPDATE: the full-prelude s2 frontier moved again. Root for the
+  `Time::Format#initialize(String, Location?)` crash was not backend ABI: the
+  ivar annotation `@location : Location?` in `Time::Format` was registered
+  before nested `Time::Location` was discoverable, leaving class ivar metadata
+  as stale `Nil | Location` while the initializer parameter was
+  `Nil | Time::Location`. The final ivar layout pass now canonicalizes
+  owner-scoped simple union variants after all class names are known, so stale
+  `Nil | Inner` becomes `Nil | Outer::Inner` for field storage. Guard:
+  `regression_tests/nilable_forward_nested_class_ivar_repro.sh`. Fresh s2
+  built from the fixed compiler gets past the old `lower_field_get`, old
+  `Time::Location.local`, and old `Time::Format#initialize` frontiers; the
+  current downstream boundary is `STUB CALLED:
+  Random$Hrand_int$$Int32` (exit 134). The full-prelude guard accepts only that
+  moved frontier or a future clean compile.
 
 - 2026-06-28 UPDATE: the current `lower_field_get` crash has moved, but s2 is
   still not green. Fresh producer/consumer probes on clean HEAD showed the first
@@ -62,10 +77,11 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   the escaped-interpolation parser fix. Do not continue from that row unless it
   is re-observed on the current tree.
 - REQUIRED NEXT SLICE (read-only/default-off first): localize the current
-  `Time::Location.local` undefined-extern/materialization frontier. Do not
-  continue patching `lower_field_get` unless
+  `Random#rand_int(Int32)` undefined-extern/materialization frontier. Do not
+  continue patching `lower_field_get`, `Time::Location.local`, or
+  `Time::Format#initialize` unless
   `regression_tests/stage2_lower_field_get_full_prelude_frontier_repro.sh`
-  regresses or new evidence names a fresh FieldGet boundary.
+  regresses or new evidence names a fresh boundary in those older slices.
 - DEAD-CODE/BLOAT TRACK: classify backend fallback and repair paths touched by
   the current batch (`emit_dead_code_stub`, `lookup_module_function_for_extern`,
   `fixup_call_arg_types`, `emit_functions_parallel` bootstrap workarounds) using

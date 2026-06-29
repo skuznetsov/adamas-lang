@@ -1,6 +1,6 @@
 # LANDMARKS
 
-Updated: 2026-06-28
+Updated: 2026-06-29
 Context: compiler/bootstrap/stage2-stability
 
 This file is the active working set only. Historical landmarks before this
@@ -11,6 +11,26 @@ checkpoint remain recoverable from git history, especially:
   `d43826fdcc2277b6075026244764a84d0069d1a30b675642b603f3511b14a1e5`
 
 ## Active Bootstrap Gate
+
+[LM-S2S3-NILABLE-FORWARD-NESTED-IVAR-CANONICALIZATION|verified 2026-06-29 {F:0.88 G:0.42 R:0.90}]:
+Fresh s2 now moves past the old `Time::Format#initialize(String, Location?)`
+nilable field-store crash. Root was a producer identity/order bug, not backend
+ABI: `Time::Format` was registered before nested `Time::Location` was known, so
+the ivar metadata for `@location : Location?` used stale `Nil | Location` while
+the initializer parameter/value type was `Nil | Time::Location`. MIR then saw a
+non-all-ref ghost union and lowered the field store as `memcpy(ptr %location)`,
+crashing on the nil default. Fix slice: during final ivar layout,
+`canonical_ivar_storage_type_ref` canonicalizes owner-scoped simple union
+variants after all nested class names are known, turning stale `Nil | Inner`
+into `Nil | Outer::Inner` for field storage. Evidence:
+`regression_tests/nilable_forward_nested_class_ivar_repro.sh /tmp/adamas_tfmt_fix`
+passes and static LLVM IR shows `store ptr %inner`; `Time.utc.to_s("%F")`
+compiled by `/tmp/adamas_tfmt_fix` exits 0 and
+`Time::Format#initialize` stores `ptr %location`; `/tmp/adamas_tfmt_fix` builds
+fresh `/tmp/adamas_tfmt_s2`; `regression_tests/stage2_lower_field_get_full_prelude_frontier_repro.sh /tmp/adamas_tfmt_s2`
+passes with moved frontier `random_rand_int_int32_stub`; full suites pass
+151/151 originals + 36/36 combined. Residual frontier:
+`STUB CALLED: Random$Hrand_int$$Int32` under produced s2.
 
 [LM-S2S3-LOWER-FIELD-GET-CONSUMER-SIDETABLE|verified 2026-06-28 {F:0.86 G:0.34 R:0.88}]:
 The active full-prelude `puts "x"` s2 crash moved past
@@ -34,7 +54,9 @@ fresh s2 compiling full-prelude `puts "x"` exits 134 at
 `tuple_small_struct_element_inline_repro`, `p2_generated_stage2_no_prelude_puts_guard`,
 and suites 151/151 + 36/36 pass. Guard:
 `regression_tests/stage2_lower_field_get_full_prelude_frontier_repro.sh`.
-Residual frontier: materialization of `Time::Location.local`.
+Superseded residual frontier: materialization of `Time::Location.local`; the
+new active residual is `Random#rand_int(Int32)` per
+`LM-S2S3-NILABLE-FORWARD-NESTED-IVAR-CANONICALIZATION`.
 
 [LM-S2S3-ARCH-STOPRULE-CURRENT-BATCH|verified-boundary 2026-06-27 {F:0.84 G:0.62 R:0.88}]:
 SUPERSEDED for the active crash by

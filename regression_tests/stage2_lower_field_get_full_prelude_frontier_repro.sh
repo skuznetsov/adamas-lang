@@ -2,10 +2,11 @@
 # Frontier guard: a produced s2 compiler must get past the old full-prelude
 # lower_field_get SIGSEGV while compiling a minimal `puts "x"` program.
 #
-# This is not a full bootstrap-readiness test. The current accepted downstream
-# frontier is a nilable Location? argument crash in Time::Format#initialize
-# after the compiler has already passed the old lower_field_get crash and the
-# old Time::Location.local undefined-extern stub.
+# This is not a full bootstrap-readiness test. It rejects the old
+# lower_field_get crash, the old Time::Location.local undefined-extern stub, and
+# the later Time::Format#initialize nilable Location? field-store crash. The
+# current accepted downstream frontier is Random#rand_int(Int32) materialization
+# under the produced s2 compiler.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -43,6 +44,11 @@ if [[ $status -eq 0 && -x "$OUT" ]]; then
   exit 0
 fi
 
+if [[ $status -eq 134 ]] && grep -Fq 'STUB CALLED: Random$Hrand_int$$Int32' "$LOG"; then
+  echo "stage2_lower_field_get_full_prelude_frontier_ok frontier=random_rand_int_int32_stub"
+  exit 0
+fi
+
 if [[ $status -eq 139 ]] || grep -Eq 'Segmentation fault|EXC_BAD_ACCESS' "$LOG"; then
   LLDB_LOG="$TMP_DIR/lldb.log"
   set +e
@@ -60,8 +66,9 @@ if [[ $status -eq 139 ]] || grep -Eq 'Segmentation fault|EXC_BAD_ACCESS' "$LOG";
   fi
 
   if grep -Fq 'Time$CCFormat$Hinitialize$$String_Nil$_$OR$_Location' "$LLDB_LOG"; then
-    echo "stage2_lower_field_get_full_prelude_frontier_ok frontier=time_format_nilable_location_param"
-    exit 0
+    echo "stage2_lower_field_get_full_prelude_frontier_failed: old Time::Format nilable Location? crash returned" >&2
+    tail -120 "$LLDB_LOG" >&2 || true
+    exit 1
   fi
 
   echo "stage2_lower_field_get_full_prelude_frontier_failed: unclassified segfault status=$status" >&2

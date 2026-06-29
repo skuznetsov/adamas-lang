@@ -16503,6 +16503,13 @@ module Adamas::HIR
       return type_ref if type_ref == TypeRef::VOID || type_ref == TypeRef::NIL
       desc = @module.get_type_descriptor(type_ref)
       return type_ref unless desc
+
+      if desc.kind == TypeKind::Union
+        if canonical = canonical_owner_union_type_ref(desc.name, owner_name)
+          return canonical
+        end
+      end
+
       return type_ref unless canonical_slice_storage_ivar?(desc, owner_name, ivar_name)
 
       if desc.kind == TypeKind::Generic
@@ -16518,6 +16525,41 @@ module Adamas::HIR
       end
 
       type_ref
+    end
+
+    private def canonical_owner_union_type_ref(union_name : String, owner_name : String?) : TypeRef?
+      return nil unless owner_name
+
+      parts = split_union_type_name(union_name)
+      return nil if parts.size < 2
+
+      changed = false
+      resolved_parts = [] of String
+      parts.each do |part|
+        resolved = canonical_owner_union_variant_name(part, owner_name)
+        changed = true if resolved != part
+        resolved_parts << resolved
+      end
+      return nil unless changed
+
+      canonical_name = normalize_union_type_name(resolved_parts.join(" | "))
+      canonical_ref = type_ref_for_name(canonical_name)
+      return nil if canonical_ref == TypeRef::VOID
+
+      canonical_ref
+    end
+
+    private def canonical_owner_union_variant_name(variant_name : String, owner_name : String) : String
+      name = variant_name.strip
+      return name if name.empty?
+      return name if name == "Nil" || name == "Void"
+      return name if name.starts_with?("::")
+      return name if namespace_separator_index(name)
+      return name if name.includes?('(') || name.includes?('{') || name.includes?('[')
+      return name if BUILTIN_TYPE_NAMES.includes?(name) || builtin_alias_target?(name)
+      return name if type_param_like?(name) && short_type_param_name?(name)
+
+      nested_type_full_name_in_namespace_chain(owner_name, name) || name
     end
 
     private def canonical_slice_storage_ivar?(
