@@ -219,10 +219,29 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   with no owner-qualified body. Second, adding an exact typed PathNode target
   check before M3F path-refine fallback also failed under generated s2: the same
   bare `skip$String` HIR remained. Do not ship either as a standalone fix. The
-  next evidence-gaining probe should inspect why the already-selected
-  `Exception::CallStack.skip$String` from `with_arena_done`/M3L/M3N is not the
-  symbol consumed by BASE_METHOD; downstream exact-target rebinding has not
-  reached the corrupt local/identity channel.
+  selected-name-to-BASE identity channel has now been root-fixed at the
+  short-circuit lowering layer, not by another resolver carrier: a primitive
+  generated-s2 trace pinned the first bad transition to
+  `_post_fmn_ok = full_method_name.nil? || full_method_name == method_name`,
+  where the RHS nilable narrowing of `full_method_name` leaked out of the value
+  `||` expression and corrupted the later `full_method_name || ...` read. The
+  fix scopes value-expression short-circuit RHS narrowing with the same
+  restore-if-unchanged mechanism previously used for condition-context RHS
+  narrowing. Guard:
+  `regression_tests/short_circuit_value_narrowing_leak.cr` is red on the old
+  shape with SIGSEGV in `String#bytesize` and green after the fix; the older
+  `regression_tests/short_circuit_condition_narrowing_leak.cr` remains green;
+  `regression_tests/run_all_suites.sh /tmp/adamas_value_narrow_fix_stage1 4`
+  passed 152/152 original + 36/36 combined. Fresh fixed generated s2 now
+  preserves the call identity through BASE:
+  `lookup=Exception::CallStack.skip`, `mangled=Exception::CallStack.skip$String`,
+  and HIR contains `call Exception::CallStack.skip$String`. Residual frontier:
+  the body is still not materialized in generated-s2 HIR, and running the
+  no-prelude binary aborts with
+  `STUB CALLED: Exception$CCCallStack$Dskip$$String`. The next probe is
+  nested static method body registration/materialization for the already-correct
+  call symbol, not owner-loss, `v2_string_readable?`, raw-pointer lowering,
+  exact-target rebinding, or another local resolver carrier.
 - HARD BOUNDARY: keep `BlockOwner`. Do not revert `@block_owner` back to
   `NamedTuple` or positional `Tuple`; that rollback re-enters an already
   observed materialization/key-shape trap.

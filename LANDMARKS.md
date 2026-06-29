@@ -116,10 +116,53 @@ to `Class Exception::CallStack`, but did not fix the focused guard: the emitted
 call stayed bare `skip$String` and no owner-qualified body was emitted. Adding
 an exact typed PathNode target check before M3F path-refine fallback also left
 generated-s2 HIR unchanged. These refute standalone class-name byte-slice and
-late exact-target rebinding as sufficient fixes. The remaining bad channel is
-between the already-selected `Exception::CallStack.skip$String` seen at
-`with_arena_done`/M3L/M3N and the `BASE_METHOD` consumer that still reads bare
-`skip`.
+late exact-target rebinding as sufficient fixes. The selected-name-to-BASE
+identity channel is now fixed by a root producer-lifetime change, not by another
+resolver carrier. A primitive generated-s2 trace showed
+`full_method_name=Exception::CallStack.skip` survived through defaults and
+prepack maps, then was corrupted exactly by
+`_post_fmn_ok = full_method_name.nil? || full_method_name == method_name`: the
+ordinary value-expression `||` narrowed `full_method_name` while lowering its
+RHS equality and leaked that branch-local binding into later reads. Standalone
+reducer `regression_tests/short_circuit_value_narrowing_leak.cr` reproduced the
+same shape and crashed in `String#bytesize`; its LLVM showed the later
+`full_method_name || "nil"` using the RHS-only narrowed slot. Fix:
+`lower_short_circuit` now scopes RHS truthy/falsy narrowing with
+`with_scoped_condition_narrowing`, matching the earlier condition-context fix.
+Evidence: focused value reducer prints
+`VALUE=Exception::CallStack.skip`, older
+`short_circuit_condition_narrowing_leak.cr` still prints `RESULT=7`, fresh
+generated s2 preserves `Exception::CallStack.skip$String` through BASE and HIR
+emits `call Exception::CallStack.skip$String`, and
+`regression_tests/run_all_suites.sh /tmp/adamas_value_narrow_fix_stage1 4`
+passes 152/152 original + 36/36 combined. Residual frontier: generated-s2 HIR
+still lacks the `func Exception::CallStack.skip$String` body, and the compiled
+no-prelude binary aborts with
+`STUB CALLED: Exception$CCCallStack$Dskip$$String`. Next probe:
+nested static method body registration/materialization for the now-correct call
+symbol. Do not return to owner-loss guards, `v2_string_readable?` tweaks,
+raw-pointer lowering, exact-target rebinding, or local resolver carriers for
+this slice.
+
+[LM-S3B-SHORT-CIRCUIT-VALUE-NARROWING-LEAK|verified 2026-06-29 {F:0.88 G:0.52 R:0.91}]:
+Value-expression short-circuit lowering had the same dominance-lifetime class
+as the earlier condition-context leak, but outside
+`lower_short_circuit_condition`. In `ok = full.nil? || full == method`, lowering
+the RHS equality narrowed `full` to a non-nil binding that only dominates the
+RHS branch. `lower_short_circuit` registered that narrowed binding in the
+surrounding local environment, so a later `full || "nil"` read it on paths where
+it was undefined; backend phi filtering then replaced the non-dominating
+incoming with null. The focused compiler trace hit this in
+`lower_call`'s post-print predicate for `Exception::CallStack.skip`, and the
+standalone reducer crashed before the fix. Fix: wrap value short-circuit RHS
+lowering in `with_scoped_condition_narrowing` for static and dynamic
+`&&`/`||` paths, preserving genuine RHS reassignments via the existing
+restore-if-current-id rule. Evidence: `crystal build src/adamas.cr -o
+/tmp/adamas_value_narrow_fix_stage1 --error-trace`; value reducer exit 0 with
+`VALUE=Exception::CallStack.skip`; existing condition reducer exit 0 with
+`RESULT=7`; fresh fixed s2 preserves the owner-qualified static call through
+BASE; full suites pass 152/152 + 36/36. Scope: this fixes narrowed-local leakage
+from value short-circuit RHS lowering, not nested static body materialization.
 
 [LM-S3B-LOWER-SUPER-IMPLICIT-ARGS-NO-SELF|verified 2026-06-29 {F:0.88 G:0.38 R:0.90}]:
 Fresh `s2 -> s3` moved past `error: Index out of bounds` after

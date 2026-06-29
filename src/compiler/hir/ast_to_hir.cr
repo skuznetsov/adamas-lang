@@ -60525,13 +60525,19 @@ module Adamas::HIR
             then_type = ctx.type_of(left_id)
             return unwrap_non_nil_to_block(ctx, ctx.current_block, left_id, then_type)
           else
-            apply_truthy_narrowing(ctx, falsy_targets)
-            return lower_expr(ctx, node.right)
+            rhs_value = nil.as(ValueId?)
+            with_scoped_condition_narrowing(ctx, falsy_targets) do
+              rhs_value = lower_expr(ctx, node.right)
+            end
+            return rhs_value.not_nil!
           end
         else
           if static_left
-            apply_truthy_narrowing(ctx, truthy_targets)
-            return lower_expr(ctx, node.right)
+            rhs_value = nil.as(ValueId?)
+            with_scoped_condition_narrowing(ctx, truthy_targets) do
+              rhs_value = lower_expr(ctx, node.right)
+            end
+            return rhs_value.not_nil!
           else
             return left_id
           end
@@ -60552,8 +60558,11 @@ module Adamas::HIR
       then_value = if op_str == "||"
                      left_id
                    else
-                     apply_truthy_narrowing(ctx, truthy_targets)
-                     lower_expr(ctx, node.right)
+                     rhs_value = nil.as(ValueId?)
+                     with_scoped_condition_narrowing(ctx, truthy_targets) do
+                       rhs_value = lower_expr(ctx, node.right)
+                     end
+                     rhs_value.not_nil!
                    end
       # In the then-branch, `left` is proven truthy by `cond_id`.
       # For common nilable unions (T | Nil), narrow to the non-nil payload so
@@ -60578,8 +60587,11 @@ module Adamas::HIR
       ctx.current_block = else_block
       ctx.restore_locals(pre_branch_locals)
       else_value = if op_str == "||"
-                     apply_truthy_narrowing(ctx, falsy_targets)
-                     lower_expr(ctx, node.right)
+                     rhs_value = nil.as(ValueId?)
+                     with_scoped_condition_narrowing(ctx, falsy_targets) do
+                       rhs_value = lower_expr(ctx, node.right)
+                     end
+                     rhs_value.not_nil!
                    else
                      left_id
                    end
@@ -60772,16 +60784,16 @@ module Adamas::HIR
       end
     end
 
-    # Apply a condition-context truthy/falsy narrowing only for the duration of
-    # lowering the RHS condition, then restore the narrowed targets to their
-    # pre-narrowing bindings. Without this, `lower_short_circuit_condition`
-    # registers the branch-local `UnionUnwrap` globally; because the RHS is lowered
-    # in an intermediate `rhs_block` that does not dominate the enclosing if/while
-    # then-body, the stale narrowed binding leaks into consumers (e.g. a later
-    # `x || default`) that read it along a path where it is undefined -> the backend
-    # drops the non-dominating phi incoming to `null`. The enclosing `lower_if`
-    # re-applies the narrowing inside its (dominating) then_block, so scoping here
-    # does not lose the then-body narrowing.
+    # Apply a short-circuit RHS truthy/falsy narrowing only for the duration of
+    # lowering that RHS, then restore the narrowed targets to their pre-narrowing
+    # bindings. Without this, branch-local `UnionUnwrap` bindings can escape their
+    # dominance region from both condition-context lowering and value-expression
+    # lowering (e.g. `ok = x.nil? || x == y; later = x || default`). A later read
+    # can then use the narrowed id along a path where it is undefined, and the
+    # backend correctly drops the non-dominating phi incoming to `null`. The
+    # enclosing `lower_if` re-applies condition narrowing inside its dominating
+    # then_block, and this helper preserves genuine RHS reassignments by restoring
+    # only bindings that still equal the narrowing-produced id.
     private def with_scoped_condition_narrowing(ctx : LoweringContext, targets : Array(String), &)
       if targets.empty?
         yield
