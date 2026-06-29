@@ -12,6 +12,35 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-S3B-INLINE-TRY-SCALAR-BLOCK-CALLBACK|verified 2026-06-29 {F:0.88 G:0.34 R:0.90}]:
+The fresh `s2 -> s3` crash no longer stops in
+`AstToHir#inline_try_with_block`. The first bad boundary was not `TypeRef`
+parameter passing. Baseline `/tmp/adamas_537e13fc_s2` compiling the focused
+`Exception#backtrace?` reducer crashed while lowering
+`@callstack.try &.printable_backtrace`: lldb stopped in
+`inline_try_with_block + 588` at `ldr x1, [x8]` with `x8 = 0`, because the
+generated `inline_try_core` block callback path read closure cells that were
+allocated only on the non-union `inline_try_without_nil` branch. Removing that
+dead non-union callback moved the crash into `__crystal_block_proc_1871`, where
+the callback treated scalar `ValueId` argument `4` as a pointer (`ldr w3, [x8]`,
+address `0x4`). Fix slice: nilable `try` no longer sends the scalar
+`ValueId` through a generated Crystal block callback; block and proc paths
+inline the small nil/value/merge CFG separately and call
+`inline_try_block_body` / `inline_try_proc_body` directly. Evidence:
+`crystal build src/adamas.cr -o /tmp/adamas_try_noblock_stage1 --error-trace`;
+`scripts/run_safe.sh /tmp/adamas_try_noblock_stage1 900 12288 src/adamas.cr -o
+/tmp/adamas_try_noblock_s2`; focused guard
+`regression_tests/stage2_inline_try_block_scalar_callback_repro.sh
+/tmp/adamas_try_noblock_s2` returns `status=0`; the same guard is red on
+baseline `/tmp/adamas_537e13fc_s2`; old full-prelude guard
+`regression_tests/stage2_lower_field_get_full_prelude_frontier_repro.sh
+/tmp/adamas_try_noblock_s2` remains green. Residual frontier: fixed
+`/tmp/adamas_try_noblock_s2` compiling `src/adamas.cr` to s3 exits 1 with
+`error: Index out of bounds` after `pass3 after lower_main call`, so s3 is not
+green. Scope: this is a source-level avoidance of the generated block-callback
+ABI for this scalar `ValueId` try-inline path, not a general closure-lowering
+or `TypeRef` ABI fix.
+
 [LM-S2S3-RANDOM-MACRO-FOR-KEYWORD-MEMBER|verified 2026-06-29 {F:0.88 G:0.44 R:0.90}]:
 Fresh compiler `/tmp/adamas_random_rootfix` moves past the
 `Random#rand_int(Int32)` undefined-extern frontier. Root was a parser
@@ -87,8 +116,8 @@ later `Random#rand_int(Int32)` residual is now superseded by
 `LM-S2S3-RANDOM-MACRO-FOR-KEYWORD-MEMBER`.
 
 [LM-S2S3-ARCH-STOPRULE-CURRENT-BATCH|verified-boundary 2026-06-27 {F:0.84 G:0.62 R:0.88}]:
-SUPERSEDED for the active crash by
-`LM-S2S3-LOWER-FIELD-GET-CONSUMER-SIDETABLE`; retained as the branch-level
+SUPERSEDED for the active crash by later landmarks, currently
+`LM-S3B-INLINE-TRY-SCALAR-BLOCK-CALLBACK`; retained as the branch-level
 architecture stop-rule and cleanup boundary.
 Current `work/s3-range-slice-frontier` is not merge-ready. The previous broad
 dirty batch was reduced before continuing: stale `ADAMAS_*_LEDGER` probes, an

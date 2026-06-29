@@ -86946,14 +86946,10 @@ module Adamas::HIR
       end
 
       unless is_union_or_nilable_type?(receiver_type)
-        return inline_try_without_nil(ctx, receiver_id) do |non_nil_id|
-          inline_try_block_body(ctx, block_node, non_nil_id)
-        end
+        return inline_try_block_body(ctx, block_node, receiver_id)
       end
 
-      inline_try_core(ctx, receiver_id, receiver_type) do |non_nil_id|
-        inline_try_block_body(ctx, block_node, non_nil_id)
-      end
+      inline_try_block_core(ctx, receiver_id, receiver_type, block_node)
     end
 
     private def inline_try_block_body(
@@ -87000,14 +86996,10 @@ module Adamas::HIR
       end
 
       unless is_union_or_nilable_type?(receiver_type)
-        return inline_try_without_nil(ctx, receiver_id) do |non_nil_id|
-          inline_try_proc_body(ctx, proc_node, non_nil_id)
-        end
+        return inline_try_proc_body(ctx, proc_node, receiver_id)
       end
 
-      inline_try_core(ctx, receiver_id, receiver_type) do |non_nil_id|
-        inline_try_proc_body(ctx, proc_node, non_nil_id)
-      end
+      inline_try_proc_core(ctx, receiver_id, receiver_type, proc_node)
     end
 
     private def inline_try_proc_body(
@@ -87041,19 +87033,11 @@ module Adamas::HIR
       value_id
     end
 
-    private def inline_try_without_nil(
-      ctx : LoweringContext,
-      receiver_id : ValueId,
-      &block : ValueId -> ValueId
-    ) : ValueId
-      block.call(receiver_id)
-    end
-
-    private def inline_try_core(
+    private def inline_try_block_core(
       ctx : LoweringContext,
       receiver_id : ValueId,
       receiver_type : TypeRef,
-      &
+      block_node : Adamas::Compiler::Frontend::BlockNode,
     ) : ValueId
       nil_check = lower_nil_check_intrinsic(ctx, receiver_id, receiver_type)
       nil_block = ctx.create_block
@@ -87079,7 +87063,74 @@ module Adamas::HIR
         ctx.register_type(receiver_id, non_nil_type)
       end
 
-      value_id = yield non_nil_id
+      value_id = inline_try_block_body(ctx, block_node, non_nil_id)
+
+      if original_type
+        ctx.register_type(receiver_id, original_type.not_nil!)
+      end
+
+      value_exit_block = ctx.current_block
+      block_data = ctx.get_block(value_exit_block)
+      value_has_noreturn = block_has_raise_or_return_instruction?(block_data)
+      value_flows_to_merge = block_data.terminator.is_a?(Unreachable) &&
+                             !value_has_noreturn &&
+                             !control_flow_dead_block?(ctx, value_exit_block)
+      if value_flows_to_merge
+        ctx.terminate(Jump.new(merge_block))
+      end
+
+      # Merge
+      ctx.current_block = merge_block
+
+      unless value_flows_to_merge
+        return nil_lit.id
+      end
+
+      value_type = ctx.type_of(value_id)
+      if value_type == TypeRef::VOID || value_type == TypeRef::NIL
+        return nil_lit.id
+      end
+
+      phi_type = is_union_or_nilable_type?(value_type) ? value_type : create_union_type_for_nullable(value_type)
+      phi = Phi.new(ctx.next_id, phi_type)
+      phi.add_incoming(nil_exit_block, nil_lit.id)
+      phi.add_incoming(value_exit_block, value_id)
+      ctx.emit(phi)
+      ctx.register_type(phi.id, phi_type)
+      phi.id
+    end
+
+    private def inline_try_proc_core(
+      ctx : LoweringContext,
+      receiver_id : ValueId,
+      receiver_type : TypeRef,
+      proc_node : Adamas::Compiler::Frontend::ProcLiteralNode,
+    ) : ValueId
+      nil_check = lower_nil_check_intrinsic(ctx, receiver_id, receiver_type)
+      nil_block = ctx.create_block
+      value_block = ctx.create_block
+      merge_block = ctx.create_block
+
+      ctx.terminate(Branch.new(nil_check, nil_block, value_block))
+
+      # Nil branch
+      ctx.current_block = nil_block
+      nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+      ctx.emit(nil_lit)
+      nil_exit_block = ctx.current_block
+      ctx.terminate(Jump.new(merge_block))
+
+      # Non-nil branch
+      ctx.current_block = value_block
+      non_nil_id = lower_not_nil_intrinsic(ctx, receiver_id, receiver_type)
+      non_nil_type = non_nil_type_for_union(receiver_type)
+      original_type : TypeRef? = nil
+      if non_nil_type && non_nil_type != receiver_type
+        original_type = ctx.type_of(receiver_id)
+        ctx.register_type(receiver_id, non_nil_type)
+      end
+
+      value_id = inline_try_proc_body(ctx, proc_node, non_nil_id)
 
       if original_type
         ctx.register_type(receiver_id, original_type.not_nil!)

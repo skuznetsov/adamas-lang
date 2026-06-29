@@ -8,6 +8,23 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-06-29 UPDATE: the `s2 -> s3` frontier moved past the
+  `AstToHir#inline_try_with_block` SIGSEGV. Root was not `TypeRef` parameter
+  passing: the crash came from `inline_try_core` taking a Crystal block callback
+  with a scalar `ValueId` (`UInt32`) argument. In generated s2 code, the block
+  callback path either reused closure cells allocated only on the non-union
+  branch or treated the scalar callback argument as a pointer (`ldr w3, [x8]`
+  with `x8=4`). Fix: inline the nilable `try` CFG separately for block and proc
+  paths, and call `inline_try_block_body` / `inline_try_proc_body` directly
+  instead of crossing the generated block-callback ABI. Guard:
+  `regression_tests/stage2_inline_try_block_scalar_callback_repro.sh` is red on
+  baseline `/tmp/adamas_537e13fc_s2` and green on fixed
+  `/tmp/adamas_try_noblock_s2`. Fresh fixed `s2` also keeps
+  `regression_tests/stage2_lower_field_get_full_prelude_frontier_repro.sh`
+  green. Residual frontier: fixed `s2 -> s3` no longer exits 139 in
+  `inline_try_with_block`, but now exits 1 with `error: Index out of bounds`
+  after `pass3 after lower_main call`. Do not claim s3 green.
+
 - 2026-06-29 UPDATE: the full-prelude s2 frontier moved again. Root for the
   `Random#rand_int(Int32)` undefined-extern was not a backend stub problem.
   The source `src/stdlib/random.cr` macro body contains `range.begin` /
@@ -57,20 +74,15 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   fixed by this slice.
 
 - CURRENT STATUS: branch `work/s3-range-slice-frontier` is still not
-  merge-ready, but the previous broad dirty batch has been cut down and the
-  former `lower_field_get` full-prelude crash is now moved. Stale
-  `ADAMAS_*_LEDGER` probes, an unbacked `lower_field_get` Void guard, stale
-  backend bootstrap rewrites, and a misleading `stage2_try_inline...` repro were
-  removed instead of being carried forward. A fresh stage1 build produces a
-  fresh s2, and the escaped-interpolation parser regression now passes under
-  both stage1 and that generated s2:
-  `regression_tests/stage2_escaped_interpolation_string_parser_repro.sh
-  /tmp/adamas_cleaned_batch` and the same script with
-  `/tmp/adamas_cleaned_batch_s2`. Generated s2 compiling minimal full-prelude
-  `puts "x"` no longer exits 139 in
-  `Adamas::MIR::HIRToMIRLowering#lower_field_get(HIR::FieldGet)`; the current
-  red evidence is `STUB CALLED: Time::Location.local` (exit 134). Treat this as
-  the active frontier; do not claim s2/s3 green.
+  merge-ready, but the previous broad dirty batch has been cut down and several
+  old full-prelude frontiers have moved. Fresh stage1 now builds fresh s2;
+  generated s2 passes the focused escaped-interpolation parser guard, the
+  full-prelude lower-field-get/Time/Random guard, and the
+  `Exception#backtrace?` inline-try scalar callback guard. Generated s2
+  compiling `src/adamas.cr` to s3 no longer exits 139 in
+  `AstToHir#inline_try_with_block`; the current red evidence is
+  `error: Index out of bounds` after `pass3 after lower_main call`. Treat that
+  as the active frontier; do not claim s3 green.
 - HARD BOUNDARY: keep `BlockOwner`. Do not revert `@block_owner` back to
   `NamedTuple` or positional `Tuple`; that rollback re-enters an already
   observed materialization/key-shape trap.
