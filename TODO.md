@@ -105,6 +105,18 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   active red evidence is generated s3 compiling a simple program and aborting
   with `STUB CALLED: get$Q$$String`. Treat that as the active frontier; do not
   claim green s3/s3b.
+- 2026-06-29 NOTE: the first `get$Q$$String` probes found a real owner-loss
+  boundary but no shippable fix yet. s2->s3 lowering selects
+  `Adamas::Compiler::BootstrapEnv.get?$String` for
+  `BootstrapEnv.get?("STAGE2_BOOTSTRAP_TRACE")`, then loses `full_method_name`
+  after splat packing and emits bare `get?$String`. Refuted branches:
+  pre-pack snapshot restore (no effect), `splat_pack_full_method_name` restore
+  (registration-time segfault), broad `Path.method` recovery (over-fires to
+  `ArrayLiteralNode.named` stub), and scoped typed-entry/lib fallback (outer
+  `get?` fixed but inner `BootstrapEnv.get?` lowering malformed to
+  `Adamas::Compiler::BootstrapEnv.` with a `Pointer(UInt8)` argument). Next
+  step is read-only pinning of that malformed inner call's source/producer
+  before any production patch.
 - HARD BOUNDARY: keep `BlockOwner`. Do not revert `@block_owner` back to
   `NamedTuple` or positional `Tuple`; that rollback re-enters an already
   observed materialization/key-shape trap.
