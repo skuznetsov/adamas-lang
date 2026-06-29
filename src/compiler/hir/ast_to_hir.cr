@@ -37699,6 +37699,16 @@ module Adamas::HIR
       create_union_type(non_nil.join(" | "))
     end
 
+    private def all_ref_union_type_ref?(type_ref : TypeRef) : Bool
+      return false unless ensure_union_descriptor_for_type_ref(type_ref)
+
+      if descriptor = @union_descriptors[hir_to_mir_type_ref(type_ref)]?
+        union_all_reference_types?(descriptor)
+      else
+        false
+      end
+    end
+
     private def resolve_ancestor_overload(owner : String, method_name : String, arg_count : Int32, has_block_call : Bool, call_has_named_args : Bool = false) : String?
       # Use cached ancestor chain to avoid repeated hash lookups
       chain = get_ancestor_chain(owner)
@@ -99399,6 +99409,18 @@ module Adamas::HIR
         return unwrap.id
       end
 
+      if extra_non_nil
+        if narrowed_type = non_nil_type_for_union(value_type)
+          if narrowed_type != value_type && is_union_type?(narrowed_type) &&
+             all_ref_union_type_ref?(value_type) && all_ref_union_type_ref?(narrowed_type)
+            copy = Copy.new(ctx.next_id, narrowed_type, value_id)
+            ctx.emit(copy)
+            ctx.register_type(copy.id, narrowed_type)
+            return copy.id
+          end
+        end
+      end
+
       # Fallback: return the original value to avoid incorrect narrowing.
       value_id
     end
@@ -99429,6 +99451,18 @@ module Adamas::HIR
           non_nil_type_name = variant.full_name
           # Use full_name for semantic type (preserves enum type like Signal instead of storage Int32)
           non_nil_type = type_ref_for_name(variant.full_name)
+        end
+      end
+
+      if extra_non_nil
+        if narrowed_type = non_nil_type_for_union(value_type)
+          if narrowed_type != value_type && is_union_type?(narrowed_type) &&
+             all_ref_union_type_ref?(value_type) && all_ref_union_type_ref?(narrowed_type)
+            copy = Copy.new(ctx.next_id, narrowed_type, value_id)
+            ctx.emit_to_block(block_id, copy)
+            ctx.register_type(copy.id, narrowed_type)
+            return copy.id
+          end
         end
       end
 

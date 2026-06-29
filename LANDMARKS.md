@@ -7340,6 +7340,51 @@ Adversary notes:
 
 Trust: {F/G/R: 0.87/0.38/0.88} [verified for the named no-prelude self-host shape]
 
+### LM-S2S3-MULTI-REF-UNION-TRUTHY-NARROWING - Multi-reference union truthy narrowing must remove Nil
+
+The generated s2 `try_resolve_simple_default` abort-stub frontier was a
+producer narrowing bug, not a resolver scoring or helper-signature bug. Truthy
+narrowing only unwrapped `Nil | T` when exactly one non-Nil variant remained.
+For all-reference unions with multiple non-Nil variants, such as
+`Nil | AstArena | PageArena | VirtualArena`, `lower_not_nil_intrinsic` returned
+the original nilable value. The allocator default loop then called
+`try_resolve_simple_default(default_node, default_arena, ivar.type)` with a
+still-nilable `default_arena`, causing overload lookup to miss the non-nil
+`ArenaLike` overload and emit a generated-s2 abort stub.
+
+Fix shape:
+
+- If removing Nil leaves another all-reference union, emit a typed
+  pass-through `Copy` to the union-minus-Nil type.
+- Keep mixed/value unions on the old conservative fallback.
+- Apply the same typed-copy narrowing in both direct `lower_not_nil_intrinsic`
+  and block-local `unwrap_non_nil_to_block`.
+
+Evidence:
+
+- `regression_tests/multi_ref_union_truthy_narrowing_repro.sh
+  /tmp/adamas_nested_class_byteslice_stage1` -> red with
+  `CALL_LOOKUP_MISS func=accept` and arg type `Nil | A | B`.
+- `crystal build src/adamas.cr -o /tmp/adamas_multi_ref_narrow_stage1
+  --error-trace` -> exit 0.
+- `regression_tests/multi_ref_union_truthy_narrowing_repro.sh
+  /tmp/adamas_multi_ref_narrow_stage1` -> `RESULT=11`, PASS.
+- Fresh stage1->s2 trace for `try_resolve_simple_default` selected
+  `$ArenaLike_TypeRef$arity3` with arg types
+  `Node, AstArena | PageArena | VirtualArena, TypeRef`; HIR and MIR bodies are
+  present.
+- `regression_tests/run_all_suites.sh /tmp/adamas_multi_ref_narrow_stage1 4`
+  -> 152/152 originals and 36/36 combined, all passed.
+
+Residual:
+
+- Fresh fixed s2 compiling `src/adamas.cr` moves past the old
+  `try_resolve_simple_default` stub and stops later with
+  `error: Empty enumerable`; do not claim s2->s3 or s3b green from this
+  landmark.
+
+Trust: {F/G/R: 0.89/0.58/0.91} [verified for all-reference nilable-union truthy narrowing]
+
 ### LM-624 - Runtime object headers must use MIR type ids
 
 `set_crystal_type_id` object-header writers must bake MIR/runtime type ids, not

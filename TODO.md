@@ -259,6 +259,26 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   producing s3, now at
   `STUB CALLED: Adamas::HIR::AstToHir#try_resolve_simple_default(...)`. Treat
   that as the active frontier; do not claim green s2->s3/s3b.
+- 2026-06-29 UPDATE: the `try_resolve_simple_default` stub frontier is fixed at
+  the producer layer. Root was not resolver scoring or the helper's signature:
+  truthy narrowing only unwrapped `Nil | T` when there was exactly one non-Nil
+  variant. For all-reference unions with multiple non-Nil variants, such as
+  `Nil | AstArena | PageArena | VirtualArena`, `lower_not_nil_intrinsic`
+  returned the original nilable value. The allocator default loop then called
+  `try_resolve_simple_default(default_node, default_arena, ivar.type)` with a
+  still-nilable `default_arena`, so overload resolution missed the
+  non-nil `ArenaLike` overload and emitted an abort stub into generated s2. The
+  fix removes `Nil` for all-reference unions by emitting a typed pass-through
+  `Copy` to the `union-minus-Nil` type; mixed/value unions remain conservative.
+  Guard: `regression_tests/multi_ref_union_truthy_narrowing_repro.sh`, red on
+  the previous stage1 (`CALL_LOOKUP_MISS func=accept`, runtime stub) and green
+  after the fix (`RESULT=11`). Stage1 -> s2 trace now shows
+  `try_resolve_simple_default` arg types as
+  `Node, AstArena | PageArena | VirtualArena, TypeRef`, selected overload
+  `$ArenaLike_TypeRef$arity3`, and HIR+MIR bodies present. Full stage1 suites
+  pass (`152/152` originals + `36/36` combined). Residual frontier: fresh fixed
+  s2 compiling `src/adamas.cr` now moves past the stub and stops later with
+  `error: Empty enumerable`; do not claim green s2->s3/s3b.
 - HARD BOUNDARY: keep `BlockOwner`. Do not revert `@block_owner` back to
   `NamedTuple` or positional `Tuple`; that rollback re-enters an already
   observed materialization/key-shape trap.
