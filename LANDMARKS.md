@@ -52,7 +52,12 @@ neighboring local so `BASE_METHOD` read `full_method_name=get?`. Removing the
 guard fixed the `BootstrapEnv.get?("X")` IR reducer under s2, but regressed the
 existing `p2_stage2_static_call_named_llvm_no_prelude` guard by materializing
 `Exception::CallStack.skip$String` as an abort stub (`define ptr`) while the call
-site still expected the real `define void` static function. These are
+site still expected the real `define void` static function. A narrower
+lexical-short-name variant, which derived MemberAccess short names from source
+and bypassed the third guard for static calls by assigning
+`method_name = lexical_method_name`, also failed under generated s2: the
+`BootstrapEnv.get?("X")` reducer still emitted the bare `get$Q$$String` stub,
+and `p2_stage2_static_call_named_llvm_no_prelude.sh` still failed. These are
 consumer/local-carrier/guard-shaped fixes and should not be repeated.
 Evidence: `/tmp/adamas_static_snapshot_s2s3.log` retains bare
 `CALL_EMIT ... emit=get?$String`; `/tmp/adamas_static_sourcepath_s2s3.log`

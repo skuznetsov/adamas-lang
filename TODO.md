@@ -145,7 +145,14 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   correct `Exception::CallStack.skip$String` call, but materialized the callee
   as an abort stub (`define ptr ... STUB CALLED`) instead of the real
   `define void` body. Treat guard removal/skipping as refuted too; it trades
-  one static-call symptom for another.
+  one static-call symptom for another. A narrower lexical-short-name variant
+  (derive MemberAccess short names from source and bypass the third guard for
+  static calls by assigning `method_name = lexical_method_name`) also failed
+  under generated s2: the `BootstrapEnv.get?("X")` reducer still emitted the
+  bare `get$Q$$String` stub, and
+  `p2_stage2_static_call_named_llvm_no_prelude.sh` still failed. This confirms
+  that simply refeeding the short method local at this point is too late or
+  still tied to the same fragile local-slot corridor.
   Next step: no more consumer restore/guard patches; continue the
   method-resolution SDD path by separating source/static receiver identity from
   selected/materialized identity with a falsifier that does not depend on
