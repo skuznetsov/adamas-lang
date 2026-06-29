@@ -48,19 +48,26 @@ checkpoint probe pinned the owner collapse to the third method-name null guard:
 generated s2 wrote `full_method_name=Adamas::Compiler::BootstrapEnv.get?$String`
 at the PathNode refine entry and preserved it through the top-level checks, then
 `method_name = "" unless v2_string_readable?(method_name)` corrupted the
-neighboring local so `BASE_METHOD` read `full_method_name=get?`. Removing the
-guard fixed the `BootstrapEnv.get?("X")` IR reducer under s2, but regressed the
-existing `p2_stage2_static_call_named_llvm_no_prelude` guard by materializing
-`Exception::CallStack.skip$String` as an abort stub (`define ptr`) while the call
-site still expected the real `define void` static function. A narrower
-lexical-short-name variant, which derived MemberAccess short names from source
-and bypassed the third guard for static calls by assigning
-`method_name = lexical_method_name`, also failed under generated s2: the
-`BootstrapEnv.get?("X")` reducer still emitted the bare `get$Q$$String` stub,
-and `p2_stage2_static_call_named_llvm_no_prelude.sh` still failed. Marking
-`v2_string_readable?` as `@[NoInline]` was refuted too: host gates stayed green
-and s2 built, but the generated-s2 reducer and static-call regression remained
-red. An external callsite map carrier, keyed by `node.object_id`, fixed the
+neighboring local so `BASE_METHOD` read `full_method_name=get?`. Later hostile
+rechecks showed that `v2_string_readable?` is not a sound produced-code
+invariant: a standalone reducer compiled by stage1 emits valid `ptrtoint` /
+`pointerof` loads and exits with valid pointer buckets, while generated s2 emits
+`ret i64 0` for both raw String pointer extraction paths and lowers the large
+high-address bound to `0`. Global `v2_string_readable? = true` is still refuted,
+because the `BootstrapEnv.get?("X")` reducer then segfaults in
+`String#single_byte_optimizable? -> String#index(Char, Int32) ->
+strip_type_suffix_uncached`; other guard sites are protecting real invalid
+strings. Unconditional third-guard removal fixed the cheap IR reducer but
+exposed a later s2->s3 crash in
+`String#bytesize -> String#ends_with?(Char) -> ensure_accessor_method`. Narrower
+skip attempts using `static_class_name && full_method_name`, a carried
+`path_static_refined` Bool, and a recomputed `PathNode` AST-shape Bool all
+failed under generated s2: the cheap reducer still emitted the bare
+`get$Q$$String` stub. A narrower lexical-short-name variant, which derived
+MemberAccess short names from source and bypassed the third guard for static
+calls by assigning `method_name = lexical_method_name`, also failed under
+generated s2. Marking `v2_string_readable?` as `@[NoInline]` was refuted too.
+An external callsite map carrier, keyed by `node.object_id`, fixed the
 `BootstrapEnv.get?("X")` reducer under generated s2 but regressed the real
 s2->s3 bootstrap gate: patched s2 segfaulted after `lower_main` in
 `AstToHir#pack_splat_args_for_call -> lower_call`. These are
@@ -70,11 +77,11 @@ Evidence: `/tmp/adamas_static_snapshot_s2s3.log` retains bare
 shows `CALL_EMIT ... emit=Adamas::Compiler::BootstrapEnv.get?$String` followed
 by the malformed inner lookup and exit 139; `/tmp/adamas_static_pathbase_s2s3.log`
 shows the broad fallback over-fire to the `ArrayLiteralNode.named` stub. Current
-next root step: continue the method-resolution SDD path by separating
-source/static receiver identity from selected/materialized identity with a
-falsifier that does not depend on nilable debug-string formatting. Do not ship
-consumer restore, broad `Path.method` fallback, static-owner guard, or backend
-stub forwarding for this frontier.
+next root step: do not ship another consumer restore, broad `Path.method`
+fallback, static-owner guard, local Bool/string carrier, or backend stub
+forwarding for this frontier. First choose a lower-level falsifier for
+produced-code raw pointer/int literal lowering, or continue the SDD
+method-resolution identity redesign with a non-string carrier.
 
 [LM-S3B-LOWER-SUPER-IMPLICIT-ARGS-NO-SELF|verified 2026-06-29 {F:0.88 G:0.38 R:0.90}]:
 Fresh `s2 -> s3` moved past `error: Index out of bounds` after

@@ -138,14 +138,25 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   PathNode refine entry, keeps it through the top-level-source/exact checks,
   then the third null guard
   `method_name = "" unless v2_string_readable?(method_name)` corrupts the
-  neighboring local so `BASE_METHOD` reads `full_method_name=get?`. Removing
-  that guard made the `BootstrapEnv.get?("X")` reducer emit the qualified
-  call/define under s2, but it regressed the existing
-  `p2_stage2_static_call_named_llvm_no_prelude` guard: s2 still emitted the
-  correct `Exception::CallStack.skip$String` call, but materialized the callee
-  as an abort stub (`define ptr ... STUB CALLED`) instead of the real
-  `define void` body. Treat guard removal/skipping as refuted too; it trades
-  one static-call symptom for another. A narrower lexical-short-name variant
+  neighboring local so `BASE_METHOD` reads `full_method_name=get?`. Later
+  hostile rechecks refined this: generated-s2 standalone reducers prove that
+  `v2_string_readable?`'s raw-pointer ingredients are themselves not reliable
+  under produced code. Stage1 emits `ptrtoint ptr %str` / load-from-pointerof
+  and exits with valid buckets; generated s2 emits `ret i64 0` for both
+  `str.as(Void*).address` and `pointerof(str).as(UInt64*).value`, and also
+  lowers the large `0x0000_7FFF_FFFF_FFFF` bound to `0` in the reduced bucket
+  helper. However globally disabling `v2_string_readable?` is refuted too:
+  the `BootstrapEnv.get?("X")` reducer then segfaults in
+  `String#single_byte_optimizable? -> String#index(Char, Int32) ->
+  strip_type_suffix_uncached`, showing other guard sites still protect real
+  invalid strings. Unconditional third-guard removal fixed the cheap IR
+  reducer (qualified call/define), but exposed a later s2->s3 crash in
+  `String#bytesize -> String#ends_with?(Char) -> ensure_accessor_method`.
+  Narrower skip attempts using `static_class_name && full_method_name`, a
+  carried `path_static_refined` Bool, and a recomputed `PathNode` AST-shape
+  Bool all failed under generated s2: the cheap reducer still emitted the
+  bare `get$Q$$String` stub. Do not repeat local Bool/string carrier skips in
+  this corridor. A narrower lexical-short-name variant
   (derive MemberAccess short names from source and bypass the third guard for
   static calls by assigning `method_name = lexical_method_name`) also failed
   under generated s2: the `BootstrapEnv.get?("X")` reducer still emitted the
@@ -166,10 +177,10 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   `AstToHir#pack_splat_args_for_call -> lower_call`. Treat this as another
   bridge-carrier that improves the local oracle while destabilizing the real
   bootstrap path.
-  Next step: no more consumer restore/guard patches; continue the
-  method-resolution SDD path by separating source/static receiver identity from
-  selected/materialized identity with a falsifier that does not depend on
-  nilable debug-string formatting.
+  Next step: stop consumer restore/guard patches. The active root direction is
+  lower-level: produced-code raw pointer/int literal lowering and the larger
+  SDD method-resolution identity redesign need to remove the need for these
+  ad hoc string-readability guards instead of adding another local carrier.
 - HARD BOUNDARY: keep `BlockOwner`. Do not revert `@block_owner` back to
   `NamedTuple` or positional `Tuple`; that rollback re-enters an already
   observed materialization/key-shape trap.
