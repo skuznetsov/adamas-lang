@@ -123,7 +123,16 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   segfaults in `register_function -> annotation_type_ref ->
   monomorphize_generic_class`), and M3E lookup-only static-owner correction
   (patched s2 builds, but s2->s3 segfaults before/after lower_main on repeated
-  runs). Next step: no more consumer restore/guard patches; continue the
+  runs). A later `static_resolved_call_name` carrier attempt, recording the
+  selected static/path resolver identity and feeding it back into `lookup_name`,
+  fixed the cheap no-prelude `BootstrapEnv.get?("X")` IR reducer (qualified
+  call/define, no bare `get$Q$$String` stub) but failed the real self-host
+  falsifier: patched s2 compiling `src/adamas.cr` segfaulted early in
+  class/module registration, with lldb stopping in
+  `Array(TypeRef)#size -> Array(TypeRef)#equals? -> Module#intern_type ->
+  AstToHir#type_ref_for_name_inner -> register_concrete_class`. Treat this as
+  another refuted local carrier/consumer shape, not a shippable root fix.
+  Next step: no more consumer restore/guard patches; continue the
   method-resolution SDD path by separating source/static receiver identity from
   selected/materialized identity with a falsifier that does not depend on
   nilable debug-string formatting.

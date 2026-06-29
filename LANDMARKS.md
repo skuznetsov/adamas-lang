@@ -33,12 +33,18 @@ outer emit but over-fired to `Frontend::ArrayLiteralNode.named...` stubs;
 typed-entry-plus-lib fallback still fixed the outer emit but exposed a malformed
 inner call while lowering `BootstrapEnv.get?`:
 `lookup=Adamas::Compiler::BootstrapEnv.` with one `Pointer(UInt8)` argument.
-Two newer local repair attempts are also refuted and reverted: pre-base
+Three newer local repair attempts are also refuted and reverted: pre-base
 static-owner reconstruction caused repeated s2->s3 segfaults in
-`register_function -> annotation_type_ref -> monomorphize_generic_class`, and an
+`register_function -> annotation_type_ref -> monomorphize_generic_class`; an
 M3E lookup-only static-owner correction let patched s2 build but made repeated
-s2->s3 runs segfault before/after lower_main. These are consumer/guard-shaped
-fixes and should not be repeated.
+s2->s3 runs segfault before/after lower_main; and a
+`static_resolved_call_name` carrier, which preserved the selected static/path
+resolver identity for `lookup_name`, fixed a cheap no-prelude
+`BootstrapEnv.get?("X")` IR reducer but failed the real self-host falsifier.
+The carrier-built s2 segfaulted while compiling `src/adamas.cr`, with lldb
+stopping in `Array(TypeRef)#size -> Array(TypeRef)#equals? -> Module#intern_type
+-> AstToHir#type_ref_for_name_inner -> register_concrete_class`. These are
+consumer/local-carrier/guard-shaped fixes and should not be repeated.
 Evidence: `/tmp/adamas_static_snapshot_s2s3.log` retains bare
 `CALL_EMIT ... emit=get?$String`; `/tmp/adamas_static_sourcepath_s2s3.log`
 shows `CALL_EMIT ... emit=Adamas::Compiler::BootstrapEnv.get?$String` followed
