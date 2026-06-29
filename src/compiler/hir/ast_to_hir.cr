@@ -7965,6 +7965,86 @@ module Adamas::HIR
       @macro_params[key] = extract_macro_params(node)
     end
 
+    def pre_register_class_scoped_macros(node : Adamas::Compiler::Frontend::ClassNode)
+      class_name = class_name_from_node(node) || ""
+      return if class_name.empty?
+
+      pre_register_class_scoped_macros_with_name(node, resolve_class_name_for_definition(class_name))
+    end
+
+    def pre_register_module_scoped_macros(node : Adamas::Compiler::Frontend::ModuleNode)
+      module_name = module_name_from_node(node) || ""
+      return if module_name.empty?
+
+      pre_register_module_scoped_macros_with_name(node, resolve_class_name_for_definition(module_name))
+    end
+
+    def pre_register_enum_scoped_macros(node : Adamas::Compiler::Frontend::EnumNode)
+      enum_name = enum_name_from_node(node) || ""
+      return if enum_name.empty?
+
+      pre_register_enum_scoped_macros_with_name(node, resolve_class_name_for_definition(enum_name))
+    end
+
+    private def pre_register_class_scoped_macros_with_name(
+      node : Adamas::Compiler::Frontend::ClassNode,
+      class_name : String,
+    ) : Nil
+      pre_register_type_body_macros(class_name, node.body)
+    end
+
+    private def pre_register_module_scoped_macros_with_name(
+      node : Adamas::Compiler::Frontend::ModuleNode,
+      module_name : String,
+    ) : Nil
+      pre_register_type_body_macros(module_name, node.body)
+    end
+
+    private def pre_register_enum_scoped_macros_with_name(
+      node : Adamas::Compiler::Frontend::EnumNode,
+      enum_name : String,
+    ) : Nil
+      pre_register_type_body_macros(enum_name, node.body)
+    end
+
+    private def pre_register_type_body_macros(
+      owner_name : String,
+      body : Array(Adamas::Compiler::Frontend::ExprId)?,
+    ) : Nil
+      return unless body
+
+      body.each do |expr_id|
+        next if expr_id.invalid?
+
+        member = unwrap_visibility_member_in_arena(@arena[expr_id], @arena)
+        case member
+        when Adamas::Compiler::Frontend::MacroDefNode
+          register_macro(member, owner_name)
+        when Adamas::Compiler::Frontend::ClassNode
+          nested_name = class_name_from_node(member) || ""
+          next if nested_name.empty?
+          pre_register_class_scoped_macros_with_name(
+            member,
+            qualified_nested_type_name(owner_name, nested_name)
+          )
+        when Adamas::Compiler::Frontend::ModuleNode
+          nested_name = module_name_from_node(member) || ""
+          next if nested_name.empty?
+          pre_register_module_scoped_macros_with_name(
+            member,
+            qualified_nested_type_name(owner_name, nested_name)
+          )
+        when Adamas::Compiler::Frontend::EnumNode
+          nested_name = enum_name_from_node(member) || ""
+          next if nested_name.empty?
+          pre_register_enum_scoped_macros_with_name(
+            member,
+            qualified_nested_type_name(owner_name, nested_name)
+          )
+        end
+      end
+    end
+
     private def lookup_macro_entry(method_name : String, scope_name : String? = nil)
       if scope = scope_name
         scoped = "#{scope}::#{method_name}"
@@ -8134,6 +8214,51 @@ module Adamas::HIR
       end
     end
 
+    private def register_expanded_class_var_decl(
+      class_name : String,
+      expr_id : ExprId,
+      member : Adamas::Compiler::Frontend::ClassVarDeclNode,
+    ) : Nil
+      raw_name = (safe_slice_to_string(member.name) || "")
+      cvar_name = raw_name.lstrip('@')
+      type_name = (safe_slice_to_string(member.type) || "")
+      cvar_type = annotation_type_ref(type_name, class_name)
+
+      initial_value : Int64? = nil
+      needs_runtime_init = false
+      if val_id = member.value
+        val_node = @arena[val_id]
+        if val_node.is_a?(Adamas::Compiler::Frontend::NumberNode)
+          initial_value = (safe_slice_to_string(val_node.value) || "").to_i64?
+        else
+          needs_runtime_init = true
+        end
+      end
+
+      record_class_var_type(class_name, cvar_name, cvar_type, initial_value, source_location_for_node(@arena, member))
+      if needs_runtime_init
+        @deferred_classvar_inits << DeferredClassvarInit.new(expr_id, @arena, class_name)
+      end
+    end
+
+    private def register_expanded_class_var_type_pair(
+      class_name : String,
+      class_var_id : ExprId,
+      class_var_node : Adamas::Compiler::Frontend::ClassVarNode,
+      type_expr_id : ExprId,
+    ) : Bool
+      return false if type_expr_id.invalid?
+
+      type_name = stringify_type_expr(type_expr_id)
+      return false if type_name.nil? || type_name.not_nil!.empty?
+
+      raw_name = (safe_slice_to_string(class_var_node.name) || "")
+      cvar_name = raw_name.lstrip('@')
+      cvar_type = annotation_type_ref(type_name.not_nil!, class_name)
+      record_class_var_type(class_name, cvar_name, cvar_type, nil, source_location_for_node(@arena, class_var_node))
+      true
+    end
+
     private def register_class_members_from_expansion(
       class_name : String,
       expr_id : ExprId,
@@ -8156,6 +8281,103 @@ module Adamas::HIR
         clear_pending_effect_annotations
       end
       case member
+      when Adamas::Compiler::Frontend::BeginNode
+        i = 0
+        while i < member.body.size
+          child_id = member.body[i]
+          child_member = unwrap_visibility_member(@arena[child_id])
+          if child_member.is_a?(Adamas::Compiler::Frontend::ClassVarNode)
+            if next_id = member.body[i + 1]?
+              if register_expanded_class_var_type_pair(class_name, child_id, child_member, next_id)
+                i += 2
+                next
+              end
+            end
+          end
+          register_class_members_from_expansion(
+            class_name,
+            child_id,
+            defined_class_method_full_names,
+            visited_extends,
+            ivars,
+            offset_ref
+          )
+          i += 1
+        end
+        if rescue_clauses = member.rescue_clauses
+          rescue_clauses.each do |clause|
+            i = 0
+            while i < clause.body.size
+              child_id = clause.body[i]
+              child_member = unwrap_visibility_member(@arena[child_id])
+              if child_member.is_a?(Adamas::Compiler::Frontend::ClassVarNode)
+                if next_id = clause.body[i + 1]?
+                  if register_expanded_class_var_type_pair(class_name, child_id, child_member, next_id)
+                    i += 2
+                    next
+                  end
+                end
+              end
+              register_class_members_from_expansion(
+                class_name,
+                child_id,
+                defined_class_method_full_names,
+                visited_extends,
+                ivars,
+                offset_ref
+              )
+              i += 1
+            end
+          end
+        end
+        if else_body = member.else_body
+          i = 0
+          while i < else_body.size
+            child_id = else_body[i]
+            child_member = unwrap_visibility_member(@arena[child_id])
+            if child_member.is_a?(Adamas::Compiler::Frontend::ClassVarNode)
+              if next_id = else_body[i + 1]?
+                if register_expanded_class_var_type_pair(class_name, child_id, child_member, next_id)
+                  i += 2
+                  next
+                end
+              end
+            end
+            register_class_members_from_expansion(
+              class_name,
+              child_id,
+              defined_class_method_full_names,
+              visited_extends,
+              ivars,
+              offset_ref
+            )
+            i += 1
+          end
+        end
+        if ensure_body = member.ensure_body
+          i = 0
+          while i < ensure_body.size
+            child_id = ensure_body[i]
+            child_member = unwrap_visibility_member(@arena[child_id])
+            if child_member.is_a?(Adamas::Compiler::Frontend::ClassVarNode)
+              if next_id = ensure_body[i + 1]?
+                if register_expanded_class_var_type_pair(class_name, child_id, child_member, next_id)
+                  i += 2
+                  next
+                end
+              end
+            end
+            register_class_members_from_expansion(
+              class_name,
+              child_id,
+              defined_class_method_full_names,
+              visited_extends,
+              ivars,
+              offset_ref
+            )
+            i += 1
+          end
+        end
       when Adamas::Compiler::Frontend::BlockNode
         i = 0
         while i < member.body.size
@@ -8173,6 +8395,14 @@ module Adamas::HIR
                   ivars << IVarInfo.new(ivar_name, ivar_type, offset)
                   offset_ref.value = offset + field_storage_size(ivar_type)
                 end
+                i += 2
+                next
+              end
+            end
+          end
+          if child_member.is_a?(Adamas::Compiler::Frontend::ClassVarNode)
+            if next_id = member.body[i + 1]?
+              if register_expanded_class_var_type_pair(class_name, child_id, child_member, next_id)
                 i += 2
                 next
               end
@@ -8221,6 +8451,8 @@ module Adamas::HIR
         register_accessors_in_class(member, class_name, ivars, offset_ref)
       when Adamas::Compiler::Frontend::PropertyNode
         register_accessors_in_class(member, class_name, ivars, offset_ref)
+      when Adamas::Compiler::Frontend::ClassVarDeclNode
+        register_expanded_class_var_decl(class_name, expr_id, member)
       when Adamas::Compiler::Frontend::TypeDeclarationNode
         if ivars && offset_ref
           raw_name = (safe_slice_to_string(member.name) || "")

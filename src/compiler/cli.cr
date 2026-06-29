@@ -1971,6 +1971,31 @@ module Adamas
           bootstrap_trace_puts "[CONST_MAP] phase=macro_register_done literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
         end
         bootstrap_trace_puts if options.progress
+
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_before_scoped_macro_prescan"; STDERR.flush
+        i = 0
+        while i < enum_nodes.size
+          n, a = enum_nodes.unsafe_fetch(i)
+          hir_converter.arena = a
+          hir_converter.pre_register_enum_scoped_macros(n)
+          i += 1
+        end
+        i = 0
+        while i < module_nodes.size
+          n, a = module_nodes.unsafe_fetch(i)
+          hir_converter.arena = a
+          hir_converter.pre_register_module_scoped_macros(n)
+          i += 1
+        end
+        i = 0
+        while i < class_nodes.size
+          n, a = class_nodes.unsafe_fetch(i)
+          hir_converter.arena = a
+          hir_converter.pre_register_class_scoped_macros(n)
+          i += 1
+        end
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_scoped_macro_prescan"; STDERR.flush
+
         bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_before_log_modules modules=#{module_nodes.size}"; STDERR.flush
         log(options, out_io, "    Modules: #{module_nodes.size}")
         bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_log_modules modules=#{module_nodes.size}"; STDERR.flush
