@@ -79,9 +79,20 @@ by the malformed inner lookup and exit 139; `/tmp/adamas_static_pathbase_s2s3.lo
 shows the broad fallback over-fire to the `ArrayLiteralNode.named` stub. Current
 next root step: do not ship another consumer restore, broad `Path.method`
 fallback, static-owner guard, local Bool/string carrier, or backend stub
-forwarding for this frontier. First choose a lower-level falsifier for
-produced-code raw pointer/int literal lowering, or continue the SDD
-method-resolution identity redesign with a non-string carrier.
+forwarding for this frontier. Later explicit-return raw-pointer reducers
+refuted the broad "produced-code raw pointer/int literal lowering is the next
+root" wording: with explicit returns, stage1-built and generated-s2 binaries
+both return valid non-null pointer buckets, and `v2_string_readable?` itself
+uses explicit returns. The earlier raw-pointer reducer was not a faithful
+next-root oracle. The active direction is the SDD
+method-resolution/materialization identity ledger. A focused
+`Exception::CallStack.skip("x")` no-prelude guard now pins the first bad layer
+to HIR under generated s2: stage1 emits `call
+Exception::CallStack.skip$String` plus a matching function body; generated s2
+emits `Class Exception::`, a dummy `Type(36)` literal, `call skip$String`, and
+no `Exception::CallStack.skip$String` body. The next discriminating probe is
+class/nested-method registration and selected-call identity for that static
+call, not raw-pointer lowering.
 
 [LM-S3B-LOWER-SUPER-IMPLICIT-ARGS-NO-SELF|verified 2026-06-29 {F:0.88 G:0.38 R:0.90}]:
 Fresh `s2 -> s3` moved past `error: Index out of bounds` after

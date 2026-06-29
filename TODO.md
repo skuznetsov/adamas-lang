@@ -177,10 +177,25 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   `AstToHir#pack_splat_args_for_call -> lower_call`. Treat this as another
   bridge-carrier that improves the local oracle while destabilizing the real
   bootstrap path.
-  Next step: stop consumer restore/guard patches. The active root direction is
-  lower-level: produced-code raw pointer/int literal lowering and the larger
-  SDD method-resolution identity redesign need to remove the need for these
-  ad hoc string-readability guards instead of adding another local carrier.
+  Later explicit-return raw-pointer reducers refuted the broad "produced-code
+  raw pointer/int literal lowering is the next root" wording: when the reducer
+  preserves explicit returns, stage1-built and generated-s2-built binaries both
+  return valid non-null pointer buckets. The earlier raw-pointer reducer mostly
+  exposed an unfaithful implicit-final-expression shape, while
+  `v2_string_readable?` itself uses explicit returns. The active next step is
+  therefore not to patch raw pointer lowering or add another guard carrier. Use
+  a read-only identity/registration ledger. The focused
+  `Exception::CallStack.skip("x")` no-prelude guard shows the first bad layer in
+  HIR: stage1 emits `call Exception::CallStack.skip$String` and a matching
+  function body, while generated s2 emits `Class Exception::`, a dummy
+  `Type(36)` literal, `call skip$String`, and no
+  `Exception::CallStack.skip$String` body. Trace evidence shows
+  `full_method_name` is already missing the `$String` suffix by
+  `with_arena_done` in generated s2, and the splat-pack corridor further
+  collapses the owner/name channel. Next probe: class/nested-method
+  registration and selected-call identity ledger for `Exception::CallStack.skip`,
+  not another consumer restore, Bool/string carrier, backend forwarder, or
+  raw-pointer fix.
 - HARD BOUNDARY: keep `BlockOwner`. Do not revert `@block_owner` back to
   `NamedTuple` or positional `Tuple`; that rollback re-enters an already
   observed materialization/key-shape trap.

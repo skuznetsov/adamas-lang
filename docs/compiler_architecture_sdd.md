@@ -19,18 +19,23 @@ ambient `@type_param_map` leak into a naming/materialization decision
 (`def_has_untyped_regular_param?` at the `lower_function_if_needed_impl`
 override seam). A later `work/s3-range-slice-frontier` checkpoint exposed an
 `IO#<<(String) -> Reference#to_s` runtime recursion, but that evidence is now
-stale after the escaped-interpolation parser fix. The current verified red is
-earlier in the pipeline: a fresh s2 compiler builds, but compiling minimal
-full-prelude `puts "x"` exits 139 after `lower_main`, with lldb stopping in
-`HIRToMIRLowering#lower_field_get(HIR::FieldGet)`. A subsequent dirty-batch
-audit removed stale `ADAMAS_*_LEDGER` probes, an unbacked `lower_field_get`
-consumer guard, stale backend bootstrap rewrites, and a misclassified
-`stage2_try_inline...` repro; none of those is the active fix path. Treat the
-remaining crash as a fresh producer/consumer boundary until a ledger names the
-exact HIR FieldGet and its metadata divergence. The deeper architectural issue
-is still that symbol identity, type-param authority, type identity,
-materialization ownership, and field/layout facts are inferred from mutable
-process state and rendered strings instead of from owned typed facts.
+stale after the escaped-interpolation parser fix. Subsequent full-prelude
+frontiers moved through `lower_field_get`, `Time::Format`, `Random#rand_int`,
+inline `try`, and implicit `super` forwarding. The current verified red is
+generated s3 compiling a trivial program and aborting at `STUB CALLED:
+get$Q$$String`, with focused no-prelude evidence showing the same
+static-call owner-loss class on `Exception::CallStack.skip("x")`: stage1 HIR
+keeps `Exception::CallStack.skip$String`, while generated s2 HIR emits a bare
+`skip$String` call and no matching owner-qualified body. A later
+explicit-return raw-pointer reducer refuted the broad claim that produced-code
+raw pointer/int literal lowering is the next root; that reducer is no longer a
+sound architecture direction without a stronger falsifier. Treat the active
+bug as a symbol-identity / nested registration / materialization boundary until
+a ledger names the writer that drops the owner-qualified selected call. The
+deeper architectural issue is still that symbol identity, type-param
+authority, type identity, materialization ownership, and field/layout facts are
+inferred from mutable process state and rendered strings instead of from owned
+typed facts.
 
 Bounded context: Crystal V2 compiler architecture:
 
