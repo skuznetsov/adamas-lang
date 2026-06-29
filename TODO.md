@@ -211,6 +211,18 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   consumer-local repair tweak. Next probe must name whether the reparsed
   `AstArena` root/slot storage, `TypedNode?` materialization, or the outer
   `VirtualArena` node-body storage is the real producer.
+  Two behavior attempts after that probe were refuted and reverted. First,
+  changing `resolve_class_name_for_definition` to split qualified names with
+  explicit `byte_slice` lengths moved one sub-boundary: generated s2 registered
+  `Class Exception::CallStack` instead of `Class Exception::`, but the focused
+  static-call guard still failed and HIR still emitted bare `call skip$String`
+  with no owner-qualified body. Second, adding an exact typed PathNode target
+  check before M3F path-refine fallback also failed under generated s2: the same
+  bare `skip$String` HIR remained. Do not ship either as a standalone fix. The
+  next evidence-gaining probe should inspect why the already-selected
+  `Exception::CallStack.skip$String` from `with_arena_done`/M3L/M3N is not the
+  symbol consumed by BASE_METHOD; downstream exact-target rebinding has not
+  reached the corrupt local/identity channel.
 - HARD BOUNDARY: keep `BlockOwner`. Do not revert `@block_owner` back to
   `NamedTuple` or positional `Tuple`; that rollback re-enters an already
   observed materialization/key-shape trap.

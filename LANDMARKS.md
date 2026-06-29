@@ -109,6 +109,17 @@ patched generated s2 still emitted bare `skip$String` and no
 `Exception::CallStack.skip$String` body. Next probe must name the producer below
 that failed repair: reparsed `AstArena` root/slot storage, `TypedNode?`
 materialization, or the outer `VirtualArena` body-node storage.
+Two behavior attempts after this pin were refuted and reverted. Replacing
+`resolve_class_name_for_definition`'s open-ended range split with explicit
+`byte_slice` lengths partially moved generated-s2 HIR from `Class Exception::`
+to `Class Exception::CallStack`, but did not fix the focused guard: the emitted
+call stayed bare `skip$String` and no owner-qualified body was emitted. Adding
+an exact typed PathNode target check before M3F path-refine fallback also left
+generated-s2 HIR unchanged. These refute standalone class-name byte-slice and
+late exact-target rebinding as sufficient fixes. The remaining bad channel is
+between the already-selected `Exception::CallStack.skip$String` seen at
+`with_arena_done`/M3L/M3N and the `BASE_METHOD` consumer that still reads bare
+`skip`.
 
 [LM-S3B-LOWER-SUPER-IMPLICIT-ARGS-NO-SELF|verified 2026-06-29 {F:0.88 G:0.38 R:0.90}]:
 Fresh `s2 -> s3` moved past `error: Index out of bounds` after
