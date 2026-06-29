@@ -131,7 +131,21 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   class/module registration, with lldb stopping in
   `Array(TypeRef)#size -> Array(TypeRef)#equals? -> Module#intern_type ->
   AstToHir#type_ref_for_name_inner -> register_concrete_class`. Treat this as
-  another refuted local carrier/consumer shape, not a shippable root fix.
+  another refuted local carrier/consumer shape, not a shippable root fix. A
+  follow-up path-refine checkpoint probe pinned a sharper self-host-only
+  transition: generated s2 writes
+  `full_method_name=Adamas::Compiler::BootstrapEnv.get?$String` at the
+  PathNode refine entry, keeps it through the top-level-source/exact checks,
+  then the third null guard
+  `method_name = "" unless v2_string_readable?(method_name)` corrupts the
+  neighboring local so `BASE_METHOD` reads `full_method_name=get?`. Removing
+  that guard made the `BootstrapEnv.get?("X")` reducer emit the qualified
+  call/define under s2, but it regressed the existing
+  `p2_stage2_static_call_named_llvm_no_prelude` guard: s2 still emitted the
+  correct `Exception::CallStack.skip$String` call, but materialized the callee
+  as an abort stub (`define ptr ... STUB CALLED`) instead of the real
+  `define void` body. Treat guard removal/skipping as refuted too; it trades
+  one static-call symptom for another.
   Next step: no more consumer restore/guard patches; continue the
   method-resolution SDD path by separating source/static receiver identity from
   selected/materialized identity with a falsifier that does not depend on

@@ -43,7 +43,16 @@ resolver identity for `lookup_name`, fixed a cheap no-prelude
 `BootstrapEnv.get?("X")` IR reducer but failed the real self-host falsifier.
 The carrier-built s2 segfaulted while compiling `src/adamas.cr`, with lldb
 stopping in `Array(TypeRef)#size -> Array(TypeRef)#equals? -> Module#intern_type
--> AstToHir#type_ref_for_name_inner -> register_concrete_class`. These are
+-> AstToHir#type_ref_for_name_inner -> register_concrete_class`. A follow-up
+checkpoint probe pinned the owner collapse to the third method-name null guard:
+generated s2 wrote `full_method_name=Adamas::Compiler::BootstrapEnv.get?$String`
+at the PathNode refine entry and preserved it through the top-level checks, then
+`method_name = "" unless v2_string_readable?(method_name)` corrupted the
+neighboring local so `BASE_METHOD` read `full_method_name=get?`. Removing the
+guard fixed the `BootstrapEnv.get?("X")` IR reducer under s2, but regressed the
+existing `p2_stage2_static_call_named_llvm_no_prelude` guard by materializing
+`Exception::CallStack.skip$String` as an abort stub (`define ptr`) while the call
+site still expected the real `define void` static function. These are
 consumer/local-carrier/guard-shaped fixes and should not be repeated.
 Evidence: `/tmp/adamas_static_snapshot_s2s3.log` retains bare
 `CALL_EMIT ... emit=get?$String`; `/tmp/adamas_static_sourcepath_s2s3.log`
