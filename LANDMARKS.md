@@ -60,7 +60,10 @@ and bypassed the third guard for static calls by assigning
 and `p2_stage2_static_call_named_llvm_no_prelude.sh` still failed. Marking
 `v2_string_readable?` as `@[NoInline]` was refuted too: host gates stayed green
 and s2 built, but the generated-s2 reducer and static-call regression remained
-red. These are
+red. An external callsite map carrier, keyed by `node.object_id`, fixed the
+`BootstrapEnv.get?("X")` reducer under generated s2 but regressed the real
+s2->s3 bootstrap gate: patched s2 segfaulted after `lower_main` in
+`AstToHir#pack_splat_args_for_call -> lower_call`. These are
 consumer/local-carrier/guard-shaped fixes and should not be repeated.
 Evidence: `/tmp/adamas_static_snapshot_s2s3.log` retains bare
 `CALL_EMIT ... emit=get?$String`; `/tmp/adamas_static_sourcepath_s2s3.log`

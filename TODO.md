@@ -157,7 +157,15 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   green and s2 built, but generated s2 still emitted the bare
   `get$Q$$String` stub for the `BootstrapEnv.get?("X")` reducer, and the
   static-call regression still failed. The owner collapse is therefore not
-  fixed by changing only helper inlining.
+  fixed by changing only helper inlining. An external callsite map carrier
+  (store the selected PathNode resolver entry under `node.object_id`, consume it
+  as `lookup_name` before M3E) was also refuted: it fixed the
+  `BootstrapEnv.get?("X")` reducer under generated s2 (qualified call/define,
+  no bare `get$Q$$String` stub), but patched s2 compiling `src/adamas.cr` to s3
+  regressed to a SIGSEGV after `lower_main` in
+  `AstToHir#pack_splat_args_for_call -> lower_call`. Treat this as another
+  bridge-carrier that improves the local oracle while destabilizing the real
+  bootstrap path.
   Next step: no more consumer restore/guard patches; continue the
   method-resolution SDD path by separating source/static receiver identity from
   selected/materialized identity with a falsifier that does not depend on
