@@ -1,12 +1,34 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-06-29
+Updated: 2026-06-30
 Branch: `work/s3-range-slice-frontier`
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
+
+- 2026-06-30 UPDATE: the `AstToHir#reorder_named_args <- lower_call`
+  s2->s3 SIGSEGV moved. Root was a producer contract bug in the
+  `Array#index(value)` HIR fast path: it returned concrete `Int32` with `-1`
+  as a miss sentinel, while Crystal's `Indexable#index` contract is
+  `Nil | Int32`. In generated s2, `param_call_names.index(arg_name)` in
+  `reorder_named_args` therefore saw a miss as truthy `-1` and indexed the
+  result array through the negative slot. Fix: `lower_array_index_dynamic`
+  now returns a nilable union, wrapping the found index as `Int32` and the
+  miss path as `nil`; no consumer guard was added. Guard:
+  `regression_tests/array_index_nilable_contract_repro.sh` is red on the
+  previous compiler with `miss_obj=IDX:-1` and green on fixed stage1 with
+  `miss_obj=NIL`. Verification: fresh stage1 builds; the new contract guard
+  passes; adjacent bootstrap guards
+  `hir_inline_yield_param_bind_loop_guard.sh`,
+  `hir_pack_splat_param_find_guard.sh`, and
+  `stage2_contains_yield_deep_materialization_repro.sh` pass; full suites pass
+  (`152/152` original + `36/36` combined); fresh fixed stage1 builds fresh s2.
+  Residual frontier: fresh fixed s2 compiling `src/adamas.cr` still exits 139
+  after `[STAGE2_DEBUG] pass3 after lower_main call`, but lldb now stops in
+  `AstToHir#lower_case <- lower_node`, reached through nested inlined block
+  bodies under `inline_yield_function`. Do not claim green s2->s3/s3b.
 
 - 2026-06-29 UPDATE: the `inline_yield_function <-
   each_param_with_index` s2->s3 SIGSEGV moved. Producer-side probes refuted
@@ -187,14 +209,16 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   generated s2 passes the focused escaped-interpolation parser guard, the
   full-prelude lower-field-get/Time/Random guard, the `Exception#backtrace?`
   inline-try scalar callback guard, the receiver-call factory guard, the splat
-  param find guard, and the `contains_yield_deep?` materialization guard.
+  param find guard, the `contains_yield_deep?` materialization guard, and the
+  `Array#index(value)` nilable contract guard.
   Generated s2 compiling `src/adamas.cr` to s3 no longer exits in the old
   `inline_try_with_block`, `lower_super`, `String#size`, `pack_splat_args`, or
   `contains_yield_deep?` frontiers, and no longer stops in the
-  `inline_yield_function` parameter-binding `each_param_with_index` callback.
+  `inline_yield_function` parameter-binding `each_param_with_index` callback or
+  the downstream `reorder_named_args` negative-index crash.
   The active red evidence is now a fresh s2 SIGSEGV after `[STAGE2_DEBUG] pass3
   after lower_main call`, with lldb stopping in
-  `AstToHir#reorder_named_args <- lower_call`, reached from an inlined yield
+  `AstToHir#lower_case <- lower_node`, reached from nested inlined yield
   body. Treat that as the active frontier; do not claim green s2->s3/s3b.
 - 2026-06-29 NOTE: the first `get$Q$$String` probes found a real owner-loss
   boundary but no shippable fix yet. Earlier wording that blamed "after splat

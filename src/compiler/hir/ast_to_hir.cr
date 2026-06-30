@@ -74770,7 +74770,7 @@ module Adamas::HIR
         end
       end
 
-      # Handle Array#index(value) intrinsic — returns Int32 (-1 = not found)
+      # Handle Array#index(value) intrinsic.
       if method_name == "index" && receiver_id && args.size >= 1 && block_expr.nil?
         if array_intrinsic_receiver?(ctx, receiver_id) ||
            (callee_node.is_a?(Adamas::Compiler::Frontend::MemberAccessNode) &&
@@ -85824,14 +85824,15 @@ module Adamas::HIR
       result_phi.id
     end
 
-    # Lower Array#index(value) intrinsic
-    # Returns Int32: index if found, -1 if not found
+    # Lower Array#index(value) intrinsic.
+    # Crystal's Indexable#index contract is Nil | Int32: index if found, nil if not found.
     private def lower_array_index_dynamic(
       ctx : LoweringContext,
       array_id : ValueId,
       value_id : ValueId,
     ) : ValueId
       element_type = array_element_type_for_value(ctx, array_id, TypeRef::INT32)
+      result_type = create_union_type_for_nullable(TypeRef::INT32)
 
       size_val = ArraySize.new(ctx.next_id, TypeRef::INT32, array_id)
       ctx.emit(size_val)
@@ -85839,9 +85840,13 @@ module Adamas::HIR
       entry_block = ctx.current_block
       zero = Literal.new(ctx.next_id, TypeRef::INT32, 0_i64)
       ctx.emit(zero)
-      neg_one = Literal.new(ctx.next_id, TypeRef::INT32, -1_i64)
-      ctx.emit(neg_one)
-      ctx.register_type(neg_one.id, TypeRef::INT32)
+      nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+      ctx.emit(nil_lit)
+      ctx.register_type(nil_lit.id, TypeRef::NIL)
+      nil_variant = get_union_variant_id(result_type, TypeRef::NIL)
+      nil_wrap = UnionWrap.new(ctx.next_id, result_type, nil_lit.id, nil_variant >= 0 ? nil_variant : 0)
+      ctx.emit(nil_wrap)
+      ctx.register_type(nil_wrap.id, result_type)
 
       cond_block = ctx.create_block
       body_block = ctx.create_block
@@ -85873,6 +85878,10 @@ module Adamas::HIR
 
       # Found block: return current index
       ctx.current_block = found_block
+      int_variant = get_union_variant_id(result_type, TypeRef::INT32)
+      found_wrap = UnionWrap.new(ctx.next_id, result_type, index_phi.id, int_variant)
+      ctx.emit(found_wrap)
+      ctx.register_type(found_wrap.id, result_type)
       ctx.terminate(Jump.new(exit_block))
 
       # Incr block
@@ -85884,13 +85893,13 @@ module Adamas::HIR
       index_phi.add_incoming(incr_block, new_i.id)
       ctx.terminate(Jump.new(cond_block))
 
-      # Exit block: phi result (index from found_block, -1 from cond_block)
+      # Exit block: phi result (index from found_block, nil from cond_block)
       ctx.current_block = exit_block
-      result_phi = Phi.new(ctx.next_id, TypeRef::INT32)
-      result_phi.add_incoming(found_block, index_phi.id)
-      result_phi.add_incoming(cond_block, neg_one.id)
+      result_phi = Phi.new(ctx.next_id, result_type)
+      result_phi.add_incoming(found_block, found_wrap.id)
+      result_phi.add_incoming(cond_block, nil_wrap.id)
       ctx.emit(result_phi)
-      ctx.register_type(result_phi.id, TypeRef::INT32)
+      ctx.register_type(result_phi.id, result_type)
 
       result_phi.id
     end

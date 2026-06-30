@@ -7483,6 +7483,61 @@ Adversary notes:
 
 Trust: {F/G/R: 0.84/0.36/0.88} [verified for the inline-yield parameter-binding callback frontier]
 
+### LM-666 - Array#index fast path preserves nilable miss contract
+
+The `AstToHir#reorder_named_args <- lower_call` generated-s2 crash after
+LM-628 was not a `reorder_named_args` consumer bug. A focused reducer showed
+that the HIR fast path for `Array#index(value)` returned concrete `Int32` and
+used `-1` as a not-found sentinel, while the stdlib `Indexable#index` contract
+returns `Nil | Int32`. That made a missed
+`param_call_names.index(arg_name)` truthy in generated s2 and drove a negative
+array index in the named-argument reorder result.
+
+The fix changes `lower_array_index_dynamic` to return a nilable union:
+the found path wraps the loop index as the `Int32` variant and the miss path
+wraps `nil`. No `reorder_named_args` guard was added.
+
+Evidence:
+
+- `regression_tests/array_index_nilable_contract_repro.sh
+  /tmp/adamas_reorder_probe_stage1` was red on the previous compiler with
+  `miss_obj=IDX:-1`.
+- `crystal build src/adamas.cr -o /tmp/adamas_array_index_contract_stage1
+  --error-trace` -> exit 0.
+- `regression_tests/array_index_nilable_contract_repro.sh
+  /tmp/adamas_array_index_contract_stage1` -> `miss_obj=NIL`,
+  `hit_obj=IDX:0`, `miss_block=NIL`, `direct_nil=NIL`.
+- Adjacent bootstrap guards passed:
+  `hir_inline_yield_param_bind_loop_guard.sh`,
+  `hir_pack_splat_param_find_guard.sh`, and
+  `stage2_contains_yield_deep_materialization_repro.sh`.
+- `scripts/run_safe.sh /tmp/adamas_array_index_contract_stage1 900 12288
+  src/adamas.cr -o /tmp/adamas_array_index_contract_s2` -> exit 0.
+- Fresh fixed s2 compiling `src/adamas.cr` no longer stops in
+  `AstToHir#reorder_named_args`; lldb now stops in
+  `AstToHir#lower_case <- lower_node` under nested inlined block bodies.
+- `regression_tests/run_all_suites.sh /tmp/adamas_array_index_contract_stage1 4`
+  -> 152/152 original tests and 36/36 combined tests, all passed.
+
+Residual:
+
+- This is a frontier move, not a green bootstrap claim. Fresh fixed s2 still
+  exits 139 after `[STAGE2_DEBUG] pass3 after lower_main call`.
+- The new active boundary is `AstToHir#lower_case`, reached through nested
+  inlined block/yield lowering under `inline_yield_function`.
+
+Adversary notes:
+
+- A downstream `idx >= 0` or `idx != -1` guard in `reorder_named_args` would
+  have masked the source-level contract violation and left all other
+  `Array#index(value)` callers with wrong truthiness.
+- The block form was not changed by this slice; it already used the stdlib
+  nilable path in the focused reducer.
+- The broader architecture smell remains: compiler-critical metadata code is
+  still passing through brittle self-hosted block/yield corridors.
+
+Trust: {F/G/R: 0.86/0.43/0.90} [verified for Array#index(value) fast-path contract and this frontier move]
+
 ### LM-665 - Generated s2 preserves nested static method owner during body registration
 
 Generated s2 now registers a nested static method body under the same owner
