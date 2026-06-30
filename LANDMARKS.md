@@ -7369,6 +7369,65 @@ Adversary notes:
 
 Trust: {F/G/R: 0.84/0.38/0.86} [verified for the File.join splat-param find crash]
 
+### LM-627 - Union arguments can match wider union parameters during materialization
+
+The generated-s2 abort-stub frontier at
+`AstToHir#contains_yield_deep?$Array(ExprId)_AstArena|PageArena|VirtualArena`
+was a generic union-compatibility gap in materialization scoring, not a backend
+undefined-extern problem and not a `contains_yield_deep?`-specific issue.
+`contains_yield_deep?` is declared with `preferred_arena : ArenaLike?`, where
+`ArenaLike?` is `Nil | AstArena | PageArena | VirtualArena`. Fresh probes showed
+the method was registered under the nilable signature, while the failing call
+requested the non-nil union suffix `AstArena | PageArena | VirtualArena`.
+`declared_type_match_score` could match a scalar argument against one variant of
+a union parameter, but it could not match an argument that was itself a union
+whose variants were all contained in the declared wider union. The sibling
+`contains_yield?` survived only because historical callsite entries included a
+nilable arena shape.
+
+The fix teaches `declared_type_match_score` to compare union arguments against
+union declarations: exact normalized union matches score as exact, and subset
+union arguments score as compatible when every argument variant matches at least
+one declared variant. This keeps the fix generic and avoids a local compiler
+helper special case.
+
+Evidence:
+
+- `crystal build src/adamas.cr -o /tmp/adamas_cyield_fix_stage1 --error-trace`
+  -> exit 0.
+- `bash regression_tests/stage2_contains_yield_deep_materialization_repro.sh
+  /tmp/adamas_cyield_fix_stage1` ->
+  `stage2_contains_yield_deep_materialization_ok`.
+- `scripts/run_safe.sh /tmp/adamas_cyield_fix_stage1 900 12288
+  src/adamas.cr -o /tmp/adamas_cyield_fix_s2` -> exit 0.
+- `strings /tmp/adamas_cyield_fix_s2 | rg
+  'STUB CALLED: .*contains_yield_deep|contains_yield_deep'` -> no stub output.
+- `nm -g /tmp/adamas_cyield_fix_s2 | rg 'contains_yield_deep'` -> real
+  generated-s2 symbol present for the non-nil ArenaLike suffix.
+- `regression_tests/run_all_suites.sh /tmp/adamas_cyield_fix_stage1 4` ->
+  152/152 original tests and 36/36 combined tests, all passed.
+
+Residual:
+
+- Fresh fixed s2 compiling `src/adamas.cr` no longer aborts on the
+  `contains_yield_deep?` undefined-extern stub, but still exits 139 after
+  `[STAGE2_DEBUG] pass3 after lower_main call`.
+- lldb stops at `EXC_BAD_ACCESS address=0x53` in
+  `AstToHir#inline_yield_function <- each_param_with_index`; this is the next
+  frontier and is not root-caused by this landmark.
+
+Adversary notes:
+
+- This is a frontier move, not a green bootstrap claim.
+- The regression checks self-IR for the exact old abort-stub family and would
+  fail if the stage1 compiler still emits the `contains_yield_deep?` stub.
+- The fix broadens type compatibility for union-subset arguments. The full
+  suites and fresh s2 build are the regression guard against obvious overload
+  over-selection, but future materialization work should still treat broad
+  union matching as a CAUTION surface.
+
+Trust: {F/G/R: 0.86/0.47/0.89} [verified for union-subset materialization scoring]
+
 ### LM-665 - Generated s2 preserves nested static method owner during body registration
 
 Generated s2 now registers a nested static method body under the same owner

@@ -8,6 +8,27 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-06-29 UPDATE: the `contains_yield_deep?` s2->s3 abort-stub
+  frontier moved. Root was not a backend undefined-extern problem and not a
+  local `contains_yield_deep?` special case: `declared_type_match_score` could
+  match a scalar argument against a union parameter, but it could not match a
+  union argument whose variants are a subset of a wider union parameter. That
+  made the registered `ArenaLike?` overload
+  (`Nil | AstArena | PageArena | VirtualArena`) reject the non-nil ArenaLike
+  call suffix (`AstArena | PageArena | VirtualArena`) unless older nilable
+  callsite history happened to exist. Fix: if both declared and argument types
+  are unions, accept the argument union when every argument variant matches at
+  least one declared variant. Guard:
+  `regression_tests/stage2_contains_yield_deep_materialization_repro.sh`.
+  Verification: fresh stage1 builds; the focused guard passes; fresh stage1
+  builds fresh s2; the generated s2 contains a real `contains_yield_deep?`
+  symbol and no `STUB CALLED: ...contains_yield_deep` string; full suites pass
+  (`152/152` original + `36/36` combined). Residual frontier: fresh fixed s2
+  compiling `src/adamas.cr` no longer aborts on `contains_yield_deep?`, but
+  exits 139 after `[STAGE2_DEBUG] pass3 after lower_main call`; lldb stops in
+  `AstToHir#inline_yield_function <- each_param_with_index`. Do not claim
+  green s2->s3/s3b.
+
 - 2026-06-29 UPDATE: the `AstToHir#pack_splat_args_for_call` s2->s3
   SIGSEGV moved. Temporary probes on fresh fixed s2 pinned the crash to
   `Adamas::Compiler::LSP::ToolDispatch.resolve_server_path` lowering
@@ -142,14 +163,15 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   merge-ready, but the previous broad dirty batch has been cut down and several
   old full-prelude frontiers have moved. Fresh stage1 now builds fresh s2;
   generated s2 passes the focused escaped-interpolation parser guard, the
-  full-prelude lower-field-get/Time/Random guard, and the
-  `Exception#backtrace?` inline-try scalar callback guard. Generated s2
-  compiling `src/adamas.cr` to s3 no longer exits 139 in
-  `AstToHir#inline_try_with_block` and no longer exits 1 with
-  `Index out of bounds` in `lower_super`; it now produces an s3 binary. The
-  active red evidence is generated s3 compiling a simple program and aborting
-  with `STUB CALLED: get$Q$$String`. Treat that as the active frontier; do not
-  claim green s3/s3b.
+  full-prelude lower-field-get/Time/Random guard, the `Exception#backtrace?`
+  inline-try scalar callback guard, the receiver-call factory guard, the splat
+  param find guard, and the `contains_yield_deep?` materialization guard.
+  Generated s2 compiling `src/adamas.cr` to s3 no longer exits in the old
+  `inline_try_with_block`, `lower_super`, `String#size`, `pack_splat_args`, or
+  `contains_yield_deep?` frontiers. The active red evidence is now a fresh s2
+  SIGSEGV after `[STAGE2_DEBUG] pass3 after lower_main call`, with lldb
+  stopping in `AstToHir#inline_yield_function <- each_param_with_index`.
+  Treat that as the active frontier; do not claim green s2->s3/s3b.
 - 2026-06-29 NOTE: the first `get$Q$$String` probes found a real owner-loss
   boundary but no shippable fix yet. Earlier wording that blamed "after splat
   packing" is now stale: direct `full_method_name || ""` debug strings are not

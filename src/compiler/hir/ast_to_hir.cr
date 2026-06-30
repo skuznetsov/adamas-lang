@@ -39173,6 +39173,30 @@ module Adamas::HIR
       return nil if resolved_name.empty?
 
       if union_type_name?(resolved_name)
+        if arg_desc = @module.get_type_descriptor(arg_type)
+          if arg_desc.kind == TypeKind::Union
+            declared_variants = split_union_type_name(resolved_name)
+            arg_variants = split_union_type_name(arg_desc.name)
+            unless declared_variants.empty? || arg_variants.empty?
+              return 2 if normalize_union_type_name(arg_desc.name) == normalize_union_type_name(resolved_name)
+
+              all_variants_match = arg_variants.all? do |arg_variant|
+                arg_variant_name = arg_variant.strip
+                arg_variant_ref = type_ref_for_name(arg_variant_name)
+                declared_variants.any? do |declared_variant|
+                  declared_variant_name = declared_variant.strip
+                  if arg_variant_ref != TypeRef::VOID
+                    !!declared_type_match_score(arg_variant_ref, declared_variant_name)
+                  else
+                    resolve_type_alias_chain(arg_variant_name) == resolve_type_alias_chain(declared_variant_name)
+                  end
+                end
+              end
+              return 1 if all_variants_match
+            end
+          end
+        end
+
         best_score : Int32? = nil
         split_union_type_name(resolved_name).each do |variant_name|
           next if variant_name.empty?
