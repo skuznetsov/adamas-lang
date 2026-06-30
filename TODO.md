@@ -8,6 +8,26 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-06-30 UPDATE: the `AstToHir#apply_is_a_narrowing -> TypeRef#==`
+  s2->s3 SIGSEGV moved. Root was not `type_ref_for_name` and not the
+  narrowing consumer loop: probes showed `is_a_narrowing_targets` produced a
+  valid `("parser", OptionParser TypeRef)` and the local array was valid, but
+  returning `Array(Tuple(String, TypeRef))` across the recursive helper
+  corrupted the carried entry before `apply_is_a_narrowing` consumed it.
+  Standalone reducers confirmed the broader shape: recursive returns of
+  tuple arrays carrying `String + small value` corrupt after return, while an
+  `Array` of a reference carrier preserves the same data. Fix:
+  `is_a_narrowing_targets` now returns `Array(IsANarrowingTarget)` instead of
+  `Array(Tuple(String, TypeRef))`, and case-branch narrowing call sites use the
+  same carrier. Guard:
+  `regression_tests/hir_is_a_narrowing_target_carrier_guard.sh`. Verification:
+  fresh stage1 builds; the new guard passes; full suites pass (`152/152`
+  original + `36/36` combined); fresh fixed stage1 builds fresh s2. Residual
+  frontier: fresh fixed s2 compiling `src/adamas.cr` still exits 139 after
+  `[STAGE2_DEBUG] pass3 after lower_main call`, but lldb now stops in
+  `String#size <- AstToHir#scan_hir_function_for_live_types`. Do not claim
+  green s2->s3/s3b.
+
 - 2026-06-30 UPDATE: the `AstToHir#lower_case <- lower_node`
   s2->s3 SIGSEGV moved. Root was a producer bug in the `Array#reduce`
   HIR intrinsic: `lower_array_reduce_dynamic` hardcoded the element and

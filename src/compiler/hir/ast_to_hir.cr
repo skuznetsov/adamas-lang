@@ -673,6 +673,14 @@ module Adamas::HIR
       end
     end
 
+    private class IsANarrowingTarget
+      getter name : String
+      getter type : TypeRef
+
+      def initialize(@name : String, @type : TypeRef)
+      end
+    end
+
     private struct CallSignature
       getter base_name : String
       getter arity : Int32
@@ -32815,6 +32823,34 @@ module Adamas::HIR
               method_path = source_path_for(method_arena) || "(unknown)"
               STDERR.puts "[METHOD_ARENA_USE] full=#{full_name} stored_full=#{!stored_full.nil?} stored_base=#{!stored_base.nil?} current=#{current_path} method=#{method_path}:#{method_arena.size}"
             end
+            candidates = Set(String).new
+            required_boxes = Set(String).new
+            saved_entry_box_arena = @arena
+            @arena = method_arena
+            begin
+              candidates = entry_box_candidate_names(ctx, body)
+              idx = 0
+              while idx < body.size
+                collect_proc_literal_box_requirements_walk(body.unsafe_fetch(idx), candidates, required_boxes)
+                idx += 1
+              end
+            ensure
+              @arena = saved_entry_box_arena
+            end
+            required_boxes.each do |name|
+              ctx.require_entry_box_for_local(name)
+            end
+            if env_has?("DEBUG_ENTRY_BOX_REQUIREMENTS") && !required_boxes.empty?
+              STDERR.puts "[ENTRY_BOX_REQUIREMENTS] func=#{ctx.function.name} names=#{required_boxes.to_a.sort.join(",")}"
+            end
+            ctx.entry_box_requirements.each do |name|
+              next if name.empty?
+              next if ctx.lookup_boxed_local(name)
+              if local_id = ctx.lookup_local(name)
+                local_type = ctx.type_of(local_id)
+                hoist_box_for_local(ctx, name, local_type, local_id) unless local_type == TypeRef::VOID
+              end
+            end
             body.each_with_index do |expr_id, idx|
               with_arena(method_arena) do
                 expr_snippet = nil
@@ -37916,8 +37952,14 @@ module Adamas::HIR
         return concrete_matches.first if concrete_matches.size == 1
       end
       if prefer_class
-        preferred = matches.find do |name|
-          name.starts_with?("#{prefer_class}#") || name.starts_with?("#{prefer_class}.")
+        preferred = nil
+        preferred_instance_prefix = "#{prefer_class}#"
+        preferred_class_prefix = "#{prefer_class}."
+        matches.each do |name|
+          if name.starts_with?(preferred_instance_prefix) || name.starts_with?(preferred_class_prefix)
+            preferred = name
+            break
+          end
         end
         return preferred if preferred
       end
@@ -37938,7 +37980,14 @@ module Adamas::HIR
         end
         return matches.first if matches.size == 1
         if prefer_class
-          preferred = matches.find { |name| name.starts_with?("#{prefer_class}#") }
+          preferred = nil
+          preferred_instance_prefix = "#{prefer_class}#"
+          matches.each do |name|
+            if name.starts_with?(preferred_instance_prefix)
+              preferred = name
+              break
+            end
+          end
           return preferred if preferred
         end
       end
@@ -39224,7 +39273,13 @@ module Adamas::HIR
         return 2 if param_type == arg_type
         if union_type_cached?(param_type)
           if param_desc = @module.get_type_descriptor(param_type)
-            return 1 if declared_type_match_score(arg_type, param_desc.name)
+            # A cached union descriptor can resolve back to the same declared
+            # name. Re-entering with an unchanged declared type cannot improve
+            # the match and can recurse until the stack guard trips.
+            param_desc_name = resolve_type_alias_chain(param_desc.name)
+            if param_desc_name != resolved_name
+              return 1 if declared_type_match_score(arg_type, param_desc.name)
+            end
           end
         end
         return 1 if numeric_compatible?(arg_type, param_type)
@@ -61200,8 +61255,8 @@ module Adamas::HIR
       end
     end
 
-    private def is_a_narrowing_targets(condition_id : ExprId) : Array(Tuple(String, TypeRef))
-      return [] of Tuple(String, TypeRef) if condition_id.invalid?
+    private def is_a_narrowing_targets(condition_id : ExprId) : Array(IsANarrowingTarget)
+      return [] of IsANarrowingTarget if condition_id.invalid?
 
       node = @arena[condition_id]
       case node
@@ -61212,19 +61267,23 @@ module Adamas::HIR
         if op == "&&"
           left = is_a_narrowing_targets(node.left)
           right = is_a_narrowing_targets(node.right)
-          right.each { |entry| left << entry }
+          idx = 0
+          while idx < right.size
+            left << right.unsafe_fetch(idx)
+            idx += 1
+          end
           left
         else
-          [] of Tuple(String, TypeRef)
+          [] of IsANarrowingTarget
         end
       when Adamas::Compiler::Frontend::IsANode
         target_name = resolve_typeof_in_type_string((safe_slice_to_string(node.target_type) || ""))
         target_type = type_ref_for_name(target_name)
         expr_node = @arena[node.expression]
         if expr_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
-          [{identifier_name_text(expr_node), target_type}]
+          [IsANarrowingTarget.new(identifier_name_text(expr_node), target_type)]
         else
-          [] of Tuple(String, TypeRef)
+          [] of IsANarrowingTarget
         end
       when Adamas::Compiler::Frontend::CallNode
         callee_node = @arena[node.callee]
@@ -61236,13 +61295,13 @@ module Adamas::HIR
             if type_str = stringify_type_expr(node.args.first)
               type_str = resolve_typeof_in_type_string(type_str)
               target_type = type_ref_for_name(type_str)
-              return [{identifier_name_text(obj_node), target_type}]
+              return [IsANarrowingTarget.new(identifier_name_text(obj_node), target_type)]
             end
           end
         end
-        [] of Tuple(String, TypeRef)
+        [] of IsANarrowingTarget
       else
-        [] of Tuple(String, TypeRef)
+        [] of IsANarrowingTarget
       end
     end
 
@@ -61262,15 +61321,28 @@ module Adamas::HIR
       end
     end
 
-    private def apply_is_a_narrowing(ctx : LoweringContext, targets : Array(Tuple(String, TypeRef))) : Nil
+    private def apply_is_a_narrowing(ctx : LoweringContext, targets : Array(IsANarrowingTarget)) : Nil
       return if targets.empty?
 
-      targets.each do |(name, target_type)|
-        next if target_type == TypeRef::VOID
+      target_idx = 0
+      while target_idx < targets.size
+        target_entry = targets.unsafe_fetch(target_idx)
+        name = target_entry.name
+        target_type = target_entry.type
+        if target_type == TypeRef::VOID
+          target_idx += 1
+          next
+        end
         local_id = ctx.lookup_local(name)
-        next unless local_id
+        unless local_id
+          target_idx += 1
+          next
+        end
         local_type = ctx.type_of(local_id)
-        next if local_type == target_type
+        if local_type == target_type
+          target_idx += 1
+          next
+        end
 
         # Union subjects must be narrowed before generic/parent no-op checks.
         # `case v = @u; when String` otherwise sees the broad union as
@@ -61283,6 +61355,7 @@ module Adamas::HIR
             ctx.emit(unwrap)
             ctx.register_type(unwrap.id, matched_type)
             ctx.register_local(name, unwrap.id)
+            target_idx += 1
             next
           end
         end
@@ -61297,10 +61370,12 @@ module Adamas::HIR
           target_name_narrow = target_desc.name
           if !target_name_narrow.includes?('(') && local_name.starts_with?(target_name_narrow) &&
              local_name.size > target_name_narrow.size && local_name[target_name_narrow.size] == '('
+            target_idx += 1
             next
           end
           # Also skip if target is a parent class (is_a narrowing to a wider type is a no-op)
           if statically_is_a_type?(local_type, target_type) == true
+            target_idx += 1
             next
           end
         end
@@ -61309,6 +61384,7 @@ module Adamas::HIR
         ctx.emit(cast)
         ctx.register_type(cast.id, target_type)
         ctx.register_local(name, cast.id)
+        target_idx += 1
       end
     end
 
@@ -61317,35 +61393,41 @@ module Adamas::HIR
     # `x` to `union - T`. Conservatively narrows only when a single variant
     # remains, since multi-variant remainders need a different runtime
     # representation that we don't have a clean abstraction for here.
-    private def apply_is_a_else_narrowing(ctx : LoweringContext, targets : Array(Tuple(String, TypeRef))) : Nil
+    private def apply_is_a_else_narrowing(ctx : LoweringContext, targets : Array(IsANarrowingTarget)) : Nil
       return if targets.empty?
 
-      inverse = [] of Tuple(String, TypeRef)
-      targets.each do |(name, target_type)|
-        next if target_type == TypeRef::VOID
-        local_id = ctx.lookup_local(name)
-        next unless local_id
-        local_type = ctx.type_of(local_id)
-        next if local_type == target_type
-        next unless is_union_type?(local_type)
+      inverse = [] of IsANarrowingTarget
+      target_idx = 0
+      while target_idx < targets.size
+        target_entry = targets.unsafe_fetch(target_idx)
+        name = target_entry.name
+        target_type = target_entry.type
+        if target_type != TypeRef::VOID
+          local_id = ctx.lookup_local(name)
+          if local_id
+            local_type = ctx.type_of(local_id)
+            if local_type != target_type && is_union_type?(local_type)
+              type_desc = @module.get_type_descriptor(local_type)
+              target_desc = @module.get_type_descriptor(target_type)
+              if type_desc && target_desc
+                target_name = target_desc.name
 
-        type_desc = @module.get_type_descriptor(local_type)
-        next unless type_desc
-        target_desc = @module.get_type_descriptor(target_type)
-        next unless target_desc
-        target_name = target_desc.name
-
-        variants = split_union_type_name(type_desc.name)
-        remaining = variants.reject { |variant_name| variant_name == target_name }
-        # Conservative: only narrow when a single concrete variant remains.
-        # Multi-variant remainders (e.g., A|B|C minus A → B|C) need a smaller
-        # union representation; skip rather than risk wrong unwrap.
-        next unless remaining.size == 1
-        remaining_ref = type_ref_for_name(remaining.first)
-        next if remaining_ref == TypeRef::VOID
-        next if remaining_ref == local_type
-
-        inverse << {name, remaining_ref}
+                variants = split_union_type_name(type_desc.name)
+                remaining = variants.reject { |variant_name| variant_name == target_name }
+                # Conservative: only narrow when a single concrete variant remains.
+                # Multi-variant remainders (e.g., A|B|C minus A → B|C) need a smaller
+                # union representation; skip rather than risk wrong unwrap.
+                if remaining.size == 1
+                  remaining_ref = type_ref_for_name(remaining.first)
+                  if remaining_ref != TypeRef::VOID && remaining_ref != local_type
+                    inverse << IsANarrowingTarget.new(name, remaining_ref)
+                  end
+                end
+              end
+            end
+          end
+        end
+        target_idx += 1
       end
       apply_is_a_narrowing(ctx, inverse)
     end
@@ -62604,13 +62686,25 @@ module Adamas::HIR
       return if pre_inline_caller_locals.empty?
 
       if branch_inline_info.empty?
-        @inline_caller_locals_stack = pre_inline_caller_locals.map(&.dup)
+        restored_stack = [] of Hash(String, ValueId)
+        i = 0
+        while i < pre_inline_caller_locals.size
+          restored_stack << pre_inline_caller_locals.unsafe_fetch(i).dup
+          i += 1
+        end
+        @inline_caller_locals_stack = restored_stack
         return
       end
 
       if branch_inline_info.size == 1
-        _, inline_snapshot = branch_inline_info.first
-        merged_single = pre_inline_caller_locals.map(&.dup)
+        branch_entry = branch_inline_info.unsafe_fetch(0)
+        inline_snapshot = branch_entry[1]
+        merged_single = [] of Hash(String, ValueId)
+        i = 0
+        while i < pre_inline_caller_locals.size
+          merged_single << pre_inline_caller_locals.unsafe_fetch(i).dup
+          i += 1
+        end
         limit = merged_single.size < inline_snapshot.size ? merged_single.size : inline_snapshot.size
         i = 0
         while i < limit
@@ -62622,27 +62716,40 @@ module Adamas::HIR
       end
 
       saved_ctx_locals = ctx.save_locals
-      merged_stack = pre_inline_caller_locals.map(&.dup)
+      merged_stack = [] of Hash(String, ValueId)
+      i = 0
+      while i < pre_inline_caller_locals.size
+        merged_stack << pre_inline_caller_locals.unsafe_fetch(i).dup
+        i += 1
+      end
 
       begin
-        merged_stack.each_index do |idx|
+        idx = 0
+        while idx < merged_stack.size
           pre_locals = if idx < pre_inline_caller_locals.size
                          pre_inline_caller_locals.unsafe_fetch(idx)
                        else
                          {} of String => ValueId
                        end
-          branch_locals_info = branch_inline_info.map do |(exit_block, inline_snapshot)|
+          branch_locals_info = [] of {BlockId, Hash(String, ValueId)}
+          branch_idx = 0
+          while branch_idx < branch_inline_info.size
+            branch_entry = branch_inline_info.unsafe_fetch(branch_idx)
+            exit_block = branch_entry[0]
+            inline_snapshot = branch_entry[1]
             locals = if idx < inline_snapshot.size
                        inline_snapshot.unsafe_fetch(idx)
                      else
                        pre_locals
                      end
-            {exit_block, locals}
+            branch_locals_info << {exit_block, locals}
+            branch_idx += 1
           end
 
           ctx.restore_locals(pre_locals)
           merge_if_branch_locals(ctx, pre_locals, branch_locals_info)
           merged_stack[idx] = ctx.save_locals.locals
+          idx += 1
         end
       ensure
         ctx.restore_locals(saved_ctx_locals)
@@ -65495,7 +65602,7 @@ module Adamas::HIR
                                   true
                                 end
                 if should_narrow
-                  apply_is_a_narrowing(ctx, [{svn, target_ref}])
+                  apply_is_a_narrowing(ctx, [IsANarrowingTarget.new(svn, target_ref)])
                 end
                 if target_ref == TypeRef::NIL
                   nil_was_checked = true
@@ -65554,7 +65661,7 @@ module Adamas::HIR
                                 nil
                               end
                 if narrow_type
-                  apply_is_a_narrowing(ctx, [{svn, narrow_type}])
+                  apply_is_a_narrowing(ctx, [IsANarrowingTarget.new(svn, narrow_type)])
                 end
               end
             end
@@ -65615,7 +65722,7 @@ module Adamas::HIR
           subj_type = ctx.type_of(subject_id)
           if is_union_type?(subj_type)
             if non_nil = non_nil_type_for_union(subj_type)
-              apply_is_a_narrowing(ctx, [{svn, non_nil}])
+              apply_is_a_narrowing(ctx, [IsANarrowingTarget.new(svn, non_nil)])
             end
           end
         end
@@ -76202,7 +76309,10 @@ module Adamas::HIR
                 if body = def_node.body
                   callee_has_return = with_arena(def_arena) { contains_return?(body) }
                 end
-                block_has_return = contains_return?(block_for_inline.body)
+                block_arena = @block_node_arenas[block_for_inline.object_id]? ||
+                              resolve_arena_for_block(block_for_inline, @arena) ||
+                              @arena
+                block_has_return = with_arena(block_arena) { contains_return?(block_for_inline.body) }
                 if def_contains_yield?(def_node, def_arena) && callee_has_return && !block_has_return
                   skip_inline = true
                   debug_hook("call.inline.skip", "callee=#{mangled_method_name} reason=callee_yield_with_return")
@@ -76621,7 +76731,10 @@ module Adamas::HIR
             callee_in_yield_set = @yield_functions.includes?(yield_name)
             callee_has_yield = callee_in_yield_set || def_contains_yield?(yield_def, callee_arena)
             callee_has_block_call = def_contains_block_call?(yield_def, callee_arena)
-            force_inline_non_local = contains_return?(block_for_inline.body)
+            block_arena = @block_node_arenas[block_for_inline.object_id]? ||
+                          resolve_arena_for_block(block_for_inline, @arena) ||
+                          @arena
+            force_inline_non_local = with_arena(block_arena) { contains_return?(block_for_inline.body) }
             # Mirror `skip_inline` for callee_yield_with_return (early block): late inline must not
             # bypass normal Call emission when yield+return in the callee makes inline-yield unsafe.
             skip_late_inline = false
@@ -87441,7 +87554,10 @@ module Adamas::HIR
       block_param_types : Array(TypeRef)?,
       callee_arena : Adamas::Compiler::Frontend::ArenaLike,
     ) : ValueId
-      block_contains_return = contains_return?(block.body)
+      block_arena = @block_node_arenas[block.object_id]? ||
+                    resolve_arena_for_block(block, @arena) ||
+                    @arena
+      block_contains_return = with_arena(block_arena) { contains_return?(block.body) }
       fallback_allowed = !block_contains_return
       force_inline_with_next = inline_key.includes?("with_brace_newlines_skipped") || inline_key.includes?("with_brace_newlines_as_separators")
       debug_with_brace = env_get("DEBUG_WITH_BRACE_CALL") && force_inline_with_next
@@ -87563,7 +87679,7 @@ module Adamas::HIR
           debug_hook("inline.yield.force_inline_for_return", "callee=#{inline_key} reason=block_arena_mismatch_with_return")
         end
       end
-      if contains_next?(block.body)
+      if with_arena(block_arena) { contains_next?(block.body) }
         if !force_inline_with_next
           STDERR.puts "[WITH_BRACE_INLINE] stage=block_contains_next callee=#{inline_key} caller=#{ctx.function.name}" if debug_with_brace
           debug_hook("inline.yield.skip", "callee=#{inline_key} reason=block_contains_next")
@@ -94362,11 +94478,16 @@ module Adamas::HIR
         return {"_", local_id, local_type} if yield_callback_type?(local_type)
       end
 
-      ctx.function.params.reverse_each do |param|
-        next if param.name == "self"
-        next unless yield_callback_type?(param.type)
-        value_id = parent_locals[param.name]? || param.id
-        return {param.name, value_id, param.type}
+      params = ctx.function.params
+      idx = params.size - 1
+      while idx >= 0
+        param = params.unsafe_fetch(idx)
+        param_name = param.name
+        if param_name != "self" && yield_callback_type?(param.type)
+          value_id = parent_locals[param_name]? || param.id
+          return {param_name, value_id, param.type}
+        end
+        idx -= 1
       end
 
       nil

@@ -1,6 +1,6 @@
 # LANDMARKS
 
-Updated: 2026-06-29
+Updated: 2026-06-30
 Context: compiler/bootstrap/stage2-stability
 
 This file is the active working set only. Historical landmarks before this
@@ -11,6 +11,29 @@ checkpoint remain recoverable from git history, especially:
   `d43826fdcc2277b6075026244764a84d0069d1a30b675642b603f3511b14a1e5`
 
 ## Active Bootstrap Gate
+
+[LM-S2S3-IS-A-NARROWING-TARGET-CARRIER|verified 2026-06-30 {F:0.88 G:0.36 R:0.90}]:
+Fresh generated s2 no longer stops in
+`AstToHir#apply_is_a_narrowing -> TypeRef#==` while compiling `src/adamas.cr`
+to s3. Root was the metadata carrier, not `type_ref_for_name` and not the
+narrowing consumer loop. Env-gated probes showed
+`is_a_narrowing_targets` produced a valid `("parser", OptionParser TypeRef)`
+entry and the local array still read back correctly inside the producer, but
+the caller of the recursive helper saw the returned `Array(Tuple(String,
+TypeRef))` entry corrupted before `apply_is_a_narrowing` consumed it.
+Standalone reducers confirmed the representation class: recursive returns of
+tuple arrays carrying `String + small value` corrupt after return, while
+`Array` of a reference carrier with the same `String` and `TypeRef` fields
+preserves `RESULT parser 2566`. Fix slice: replace the internal is-a narrowing
+target carrier with private reference class `IsANarrowingTarget` and route the
+case-branch narrowing call sites through the same carrier. Evidence:
+`crystal build src/adamas.cr -o /private/tmp/adamas_isa_class_stage1
+--error-trace`; `regression_tests/hir_is_a_narrowing_target_carrier_guard.sh
+/private/tmp/adamas_isa_class_stage1`; full suites pass 152/152 original +
+36/36 combined; fresh stage1 builds fresh s2; fixed s2->s3 no longer stops in
+`TypeRef#==` and now reaches `String#size <- scan_hir_function_for_live_types`.
+Scope: this is a bounded compiler-internal carrier fix, not a general V2 tuple
+array storage fix. Residual frontier is the new `String#size` crash.
 
 [LM-S3B-BOOTSTRAPENV-GET-OWNERLOSS-REFUTATIONS|in-progress 2026-06-29 {F:0.82 G:0.30 R:0.86}]:
 Generated s3's `STUB CALLED: get$Q$$String` frontier is not a backend-stub
