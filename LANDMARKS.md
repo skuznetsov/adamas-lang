@@ -12,6 +12,29 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-S2S3-LOWER-UNLESS-TUPLE-DESTRUCTURING|verified 2026-06-30 {F:0.84 G:0.30 R:0.90}]:
+Fresh generated s2 no longer stops with SIGSEGV in `AstToHir#lower_unless`
+while compiling `src/adamas.cr` to s3. Root was the branch-result coercion
+producer inside `lower_unless`, not `UnionWrap` or union variant lookup.
+A gated probe immediately before `UnionWrap.new` showed the direct branch
+values were valid (`then=62`, `else=63` in the crashing case), but the tuple
+destructured block parameters from `incoming.map do |(blk, val)|` printed as
+corrupted `blk={}` / blank `val` before the wrap call. Nearby `lower_if`
+already carried the local invariant "Use indexed tuple access to avoid V2 tuple
+destructuring issues" and used indexed arrays for the same merge/coercion
+shape. Fix slice: rewrite the two-branch `lower_unless` value merge to build
+indexed `incoming_blocks` / `incoming_values` arrays and add phi incomings in a
+plain `while` loop, avoiding both `map` tuple destructuring and the later
+`coerced_incoming.each` tuple destructuring. Evidence: `crystal build
+src/adamas.cr -o /private/tmp/adamas_unless_fix_stage1 --error-trace`;
+`regression_tests/run_all_suites.sh /private/tmp/adamas_unless_fix_stage1 4`
+passes 152/152 original + 36/36 combined; fresh fixed stage1 builds fresh s2;
+fixed s2 compiling `src/adamas.cr` no longer segfaults in `lower_unless` and
+instead reaches the next frontier, `EXC_BREAKPOINT` in
+`__crystal_block_proc_744 <- AstToHir#each_param <- lower_method`. Scope: this
+is a bounded `lower_unless` merge repair, not a global tuple-destructuring fix
+for generated s2.
+
 [LM-S2S3-ARENA-FALLBACK-CAPTURED-LOCAL|verified 2026-06-30 {F:0.86 G:0.30 R:0.90}]:
 Fresh generated s2 no longer stops with
 `error: ExprId out of bounds: 260 (arena=:67, current=:67, main_arenas=398,

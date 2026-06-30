@@ -8,6 +8,24 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-06-30 UPDATE: the `AstToHir#lower_unless` s2->s3 SIGSEGV
+  moved. A gated coercion probe showed the direct branch values were valid
+  (`then=62`, `else=63` in the crashing case), but the tuple-destructured block
+  parameters from `incoming.map do |(blk, val)|` read back corrupted
+  (`blk={}` / blank `val`) immediately before `UnionWrap.new`. This matches
+  the local invariant already documented in `lower_if`: use indexed tuple
+  access to avoid V2 tuple destructuring issues. Fix: rewrite the
+  two-branch `lower_unless` value merge to use indexed `incoming_blocks` /
+  `incoming_values` arrays and a plain `while` loop, avoiding both the `map`
+  destructuring and the later `coerced_incoming.each` destructuring.
+  Verification: fresh stage1 builds; full suites pass (`152/152` original +
+  `36/36` combined); fresh fixed stage1 builds fresh s2; fixed s2 compiling
+  `src/adamas.cr` no longer segfaults in `lower_unless`. Residual frontier:
+  fixed s2->s3 now exits 133 after `[STAGE2_DEBUG] pass3 after lower_main
+  call`; lldb stops at `EXC_BREAKPOINT` in
+  `__crystal_block_proc_744 <- AstToHir#each_param <- lower_method`. Do not
+  claim green s2->s3/s3b.
+
 - 2026-06-30 UPDATE: the `ExprId out of bounds: 260` s2->s3 frontier
   moved. Root was not `lower_main` packing and not an empty arena registry:
   a targeted `arena_for_expr?` probe showed `@main_arenas` had 177 candidate

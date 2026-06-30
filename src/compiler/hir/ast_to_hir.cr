@@ -63327,33 +63327,42 @@ module Adamas::HIR
             return nil_lit.id
           end
 
-          incoming = [{then_exit, then_value}, {else_exit, else_value}]
-          coerced_incoming = incoming.map do |(blk, val)|
+          # Use indexed arrays here, matching lower_if, to avoid generated-s2
+          # tuple-destructuring corruption in block parameters.
+          incoming_blocks = Array(BlockId).new(2)
+          incoming_values = Array(ValueId).new(2)
+          incoming_blocks << then_exit
+          incoming_values << then_value
+          incoming_blocks << else_exit
+          incoming_values << else_value
+
+          phi = Phi.new(ctx.next_id, phi_type)
+          i = 0
+          while i < incoming_blocks.size
+            blk = incoming_blocks.unsafe_fetch(i)
+            val = incoming_values.unsafe_fetch(i)
             val_type = ctx.type_of(val)
             if val_type == phi_type
-              {blk, val}
+              phi.add_incoming(blk, val)
             elsif is_union_type?(phi_type)
               variant_id = get_union_variant_id(phi_type, val_type)
               if variant_id >= 0
                 wrap = UnionWrap.new(ctx.next_id, phi_type, val, variant_id)
                 ctx.emit_to_block(blk, wrap)
-                {blk, wrap.id}
+                phi.add_incoming(blk, wrap.id)
               else
-                {blk, val}
+                phi.add_incoming(blk, val)
               end
             elsif numeric_primitive?(val_type) && numeric_primitive?(phi_type)
               cast = Cast.new(ctx.next_id, phi_type, val, phi_type, safe: false)
               ctx.emit_to_block(blk, cast)
-              {blk, cast.id}
+              phi.add_incoming(blk, cast.id)
             else
-              {blk, val}
+              phi.add_incoming(blk, val)
             end
+            i += 1
           end
 
-          phi = Phi.new(ctx.next_id, phi_type)
-          coerced_incoming.each do |exit_block, value|
-            phi.add_incoming(exit_block, value)
-          end
           ctx.emit(phi)
           ctx.register_type(phi.id, phi_type)
           merge_inline_caller_locals_after_if(
