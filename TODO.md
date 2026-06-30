@@ -9,6 +9,27 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
 - 2026-06-30 UPDATE: the
+  `MIR::TypeRef#hash <- Hash(MIR::TypeRef, String)#[]? <-
+  LLVMTypeMapper#llvm_type <- LLVMIRGenerator#emit_string_interpolation`
+  s2->s3 SIGSEGV moved. Pointer-safe probes showed the interpolation metadata
+  itself was valid in the caller: the local `part_type.id` read succeeded, and
+  the same value only became unsafe after crossing the helper boundary as
+  `hint_type : TypeRef?` into `interpolation_i32_arg`. A tempting
+  `LLVMTypeMapper` id-key cache change was refuted: it removed the hash call
+  but then crashed directly on `type_ref.id` inside `llvm_type`, proving the
+  bad edge was the helper argument transport, not the cache key. Fix: make
+  `interpolation_i32_arg` accept scalar metadata (`hint_llvm_type : String?`
+  and `signed : Bool`) instead of a nilable `TypeRef` wrapper; caller code still
+  computes the LLVM type from the local `TypeRef` before the helper call.
+  Verification: fresh stage1 builds; full suites pass (`152/152` original +
+  `36/36` combined); fresh fixed stage1 builds fresh s2; fixed s2->s3 no
+  longer reaches `MIR::TypeRef#hash`/`LLVMTypeMapper#llvm_type` and now exits
+  139 in `__adamas_string_eq <- __crystal_proc_653 <-
+  LLVMIRGenerator#emit_extern_call` during LLVM emission after allocator flush.
+  This is a bounded interpolation-helper ABI repair, not a global `TypeRef`
+  hash/value-round-trip fix and not a green s2->s3/s3b claim.
+
+- 2026-06-30 UPDATE: the
   `AstToHir#missing_required_runtime_param_types? <-
   AstToHir#lower_method` s2->s3 `EXC_BREAKPOINT` moved. Fresh base stage1
   built fresh s2; base s2->s3 reproduced `EXIT 133`, and lldb stopped in

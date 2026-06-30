@@ -12,6 +12,34 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-S2S3-INTERPOLATION-I32-ARG-TYPEREF-HELPER-ABI|verified 2026-06-30 {F:0.86 G:0.26 R:0.89}]:
+Fresh generated s2 no longer stops in
+`MIR::TypeRef#hash <- Hash(MIR::TypeRef, String)#[]? <-
+LLVMTypeMapper#llvm_type <- LLVMIRGenerator#emit_string_interpolation` while
+compiling `src/adamas.cr` to s3. Boundary probes inside
+`emit_string_interpolation` and `interpolation_i32_arg` showed the
+interpolation metadata was valid before the helper call: caller-side
+`part_type.id` read succeeded, and callee-side `hint.id` could also be read
+when probed before `@type_mapper.llvm_type(hint)`. The crash then occurred in
+`Hash(TypeRef, String)#key_hash -> TypeRef#hash`, and a scalar id-cache attempt
+was refuted because it simply moved the crash to the first `type_ref.id` read
+inside `LLVMTypeMapper#llvm_type`. Root-shaped boundary: the nilable wrapper
+argument `hint_type : TypeRef?` is unsafe across the interpolation helper call
+under self-hosting; the caller can translate the local `TypeRef` to scalar LLVM
+metadata before crossing that boundary. Fix slice: change
+`interpolation_i32_arg` to accept `hint_llvm_type : String?` plus a scalar
+`signed : Bool`, preserving emitted-value and cross-block-slot precedence while
+removing the `TypeRef?` helper argument. Evidence: `crystal build
+src/adamas.cr -o /private/tmp/adamas_interp_scalar_stage1 --error-trace`;
+fresh fixed stage1 builds fresh s2; `regression_tests/run_all_suites.sh
+/private/tmp/adamas_interp_scalar_stage1 4` passes 152/152 original + 36/36
+combined; lldb on fresh fixed s2->s3 now stops in the later frontier
+`__adamas_string_eq <- __crystal_proc_653 <-
+LLVMIRGenerator#emit_extern_call`, not in `MIR::TypeRef#hash` or
+`LLVMTypeMapper#llvm_type`. Scope: this is a bounded interpolation-helper ABI
+repair, not a global `TypeRef` hash/value-round-trip fix and not a green
+s2->s3/s3b claim.
+
 [LM-S2S3-MISSING-REQUIRED-PARAM-EACH-PARAM-CALLBACK|verified 2026-06-30 {F:0.84 G:0.28 R:0.88}]:
 Fresh generated s2 no longer stops with `EXC_BREAKPOINT` in
 `AstToHir#missing_required_runtime_param_types? <- AstToHir#lower_method` while

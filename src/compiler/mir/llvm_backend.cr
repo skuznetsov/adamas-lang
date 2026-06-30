@@ -26011,12 +26011,12 @@ module Adamas::MIR
           string_parts << part_ref
         elsif part_type == TypeRef::CHAR
           # Convert char (i32 codepoint) to string
-          char_arg = interpolation_i32_arg(part_ref, part_id, base_name, idx, part_type.as(TypeRef?))
+          char_arg = interpolation_i32_arg(part_ref, part_id, base_name, idx, part_llvm_type_check, signed: false)
           emit "%#{base_name}.conv#{idx} = call ptr @__adamas_char_to_string(i32 #{char_arg})"
           string_parts << "%#{base_name}.conv#{idx}"
         elsif part_type == TypeRef::INT32 || part_type == TypeRef::UINT32
           # Convert int32 to string
-          int_arg = interpolation_i32_arg(part_ref, part_id, base_name, idx, part_type.as(TypeRef?))
+          int_arg = interpolation_i32_arg(part_ref, part_id, base_name, idx, part_llvm_type_check, signed: part_type == TypeRef::INT32)
           emit "%#{base_name}.conv#{idx} = call ptr @__adamas_int_to_string(i32 #{int_arg})"
           string_parts << "%#{base_name}.conv#{idx}"
         elsif part_type == TypeRef::INT64 || part_type == TypeRef::UINT64
@@ -26046,7 +26046,7 @@ module Adamas::MIR
           # Check actual LLVM type - might be i32 (enum/symbol) that needs conversion
           part_llvm_type = part_type ? @type_mapper.llvm_type(part_type) : "ptr"
           if part_llvm_type == "i32"
-            int_arg = interpolation_i32_arg(part_ref, part_id, base_name, idx, part_type.as(TypeRef?))
+            int_arg = interpolation_i32_arg(part_ref, part_id, base_name, idx, part_llvm_type, signed: false)
             emit "%#{base_name}.conv#{idx} = call ptr @__adamas_int_to_string(i32 #{int_arg})"
             string_parts << "%#{base_name}.conv#{idx}"
           elsif part_llvm_type == "i64"
@@ -26092,7 +26092,7 @@ module Adamas::MIR
               # Slot is a primitive — use the primitive conversion path instead of union
               case actual_slot_type
               when "i32"
-                int_arg = interpolation_i32_arg(part_ref, part_id, base_name, idx, part_type.as(TypeRef?))
+                int_arg = interpolation_i32_arg(part_ref, part_id, base_name, idx, actual_slot_type, signed: false)
                 emit "%#{base_name}.conv#{idx} = call ptr @__adamas_int_to_string(i32 #{int_arg})"
               when "i64"
                 emit "%#{base_name}.conv#{idx} = call ptr @__adamas_int64_to_string(i64 #{part_ref})"
@@ -26222,12 +26222,16 @@ module Adamas::MIR
 
     # Ensure interpolation operand is materialized as i32 for int/char conversion
     # helpers (ptr-encoded scalar slots, widened ints, etc.).
-    private def interpolation_i32_arg(part_ref : String, part_id : ValueId, base_name : String, idx : Int32, hint_type : TypeRef?) : String
+    private def interpolation_i32_arg(part_ref : String, part_id : ValueId, base_name : String, idx : Int32, hint_llvm_type : String?, *, signed : Bool) : String
       return part_ref unless part_ref.starts_with?('%')
 
-      actual_type = @emitted_value_types[part_ref]? ||
-                    @cross_block_slot_types[part_id]? ||
-                    hint_type.try { |t| @type_mapper.llvm_type(t) }
+      actual_type = @emitted_value_types[part_ref]?
+      unless actual_type
+        actual_type = @cross_block_slot_types[part_id]?
+        unless actual_type
+          actual_type = hint_llvm_type
+        end
+      end
       return part_ref unless actual_type
 
       cast_name = "%#{base_name}.i32_cast#{idx}"
@@ -26241,8 +26245,6 @@ module Adamas::MIR
         emit "#{cast_name} = trunc #{actual_type} #{part_ref} to i32"
         cast_name
       when "i16", "i8", "i1"
-        signed = hint_type == TypeRef::INT8 || hint_type == TypeRef::INT16 || hint_type == TypeRef::INT32 ||
-                 hint_type == TypeRef::INT64 || hint_type == TypeRef::INT128
         op = signed ? "sext" : "zext"
         emit "#{cast_name} = #{op} #{actual_type} #{part_ref} to i32"
         cast_name
