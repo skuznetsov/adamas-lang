@@ -12,6 +12,28 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-S2S3-EACH-PARAM-BLOCK-BREAK|verified 2026-06-30 {F:0.84 G:0.28 R:0.90}]:
+Fresh generated s2 no longer stops with `EXC_BREAKPOINT` in
+`__crystal_block_proc_744 <- AstToHir#each_param <- lower_method` while
+compiling `src/adamas.cr` to s3. The earlier lldb stack pointed at a
+`lower_method` block callback; replacing the later parameter collector did not
+move the stack, which refuted that consumer. The root-shaped producer was the
+untyped-param default inference branch in `lower_method`, where
+`each_param(params) do |param| ... break` used non-local block control-flow to
+stop scanning when a parameter had neither annotation nor default. Fix slice:
+add `param_at_or_nil` and rewrite only that scan as an indexed `while` loop
+whose condition carries `all_defaulted`, preserving early-stop semantics
+without a yielded-block `break`. Evidence: `crystal build src/adamas.cr -o
+/private/tmp/adamas_eachparam_break_stage1 --error-trace`;
+`regression_tests/run_all_suites.sh /private/tmp/adamas_eachparam_break_stage1
+4` passes 152/152 original + 36/36 combined; fresh fixed stage1 builds fresh
+s2; fixed s2 compiling `src/adamas.cr` no longer hits the `each_param`
+breakpoint and instead reaches the next frontier, a SIGSEGV in
+`String#bytesize <- AstToHir#parse_method_name <- AstToHir#apply_default_args`
+after `[STAGE2_DEBUG] pass3 after lower_main call`. Scope: this is a bounded
+`lower_method` untyped-default scan fix, not a global `each_param` or block
+callback rewrite.
+
 [LM-S2S3-LOWER-UNLESS-TUPLE-DESTRUCTURING|verified 2026-06-30 {F:0.84 G:0.30 R:0.90}]:
 Fresh generated s2 no longer stops with SIGSEGV in `AstToHir#lower_unless`
 while compiling `src/adamas.cr` to s3. Root was the branch-result coercion

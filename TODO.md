@@ -8,6 +8,23 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-06-30 UPDATE: the
+  `__crystal_block_proc_744 <- AstToHir#each_param <- lower_method`
+  s2->s3 `EXC_BREAKPOINT` moved. Root-shaped producer was the untyped-param
+  default inference branch in `lower_method`: it used `each_param(params) do`
+  with a `break` from inside the yielded block when a param had no annotation
+  and no default. Generated s2 traps on this non-local block control-flow
+  shape. Fix: add `param_at_or_nil` and rewrite only that default-inference
+  scan as an indexed `while` loop guarded by `all_defaulted`, preserving the
+  previous early-stop semantics without a block `break`. Verification: fresh
+  stage1 builds; full suites pass (`152/152` original + `36/36` combined);
+  fresh fixed stage1 builds fresh s2; fixed s2 compiling `src/adamas.cr` no
+  longer hits the `each_param` breakpoint. Residual frontier: fixed s2->s3
+  now exits 139 after `[STAGE2_DEBUG] pass3 after lower_main call`; lldb stops
+  in `String#bytesize <- AstToHir#parse_method_name <-
+  AstToHir#apply_default_args <- AstToHir#lower_member_access`. Do not claim
+  green s2->s3/s3b.
+
 - 2026-06-30 UPDATE: the `AstToHir#lower_unless` s2->s3 SIGSEGV
   moved. A gated coercion probe showed the direct branch values were valid
   (`then=62`, `else=63` in the crashing case), but the tuple-destructured block

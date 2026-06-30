@@ -5731,6 +5731,19 @@ module Adamas::HIR
       end
     end
 
+    private def param_at_or_nil(params : Array(Adamas::Compiler::Frontend::Parameter), idx : Int32) : Adamas::Compiler::Frontend::Parameter?
+      return nil if idx < 0 || idx >= params.size
+      if sizeof(Adamas::Compiler::Frontend::Parameter) <= 8
+        buf = params.to_unsafe
+        return nil if buf.unsafe_as(UInt64) == 0
+        param = buf[idx]
+        return nil if param.unsafe_as(UInt64) == 0
+        param
+      else
+        params.unsafe_fetch(idx)
+      end
+    end
+
     # Optional ivar probes must not dereference a null/corrupted Array object in
     # generated V2. Registration/layout paths still use direct arrays because
     # silently dropping ivars there would corrupt object layout.
@@ -31993,7 +32006,11 @@ module Adamas::HIR
           if params = node.params
             inferred = [] of TypeRef
             all_defaulted = true
-            each_param(params) do |param|
+            param_idx = 0
+            while param_idx < params.size && all_defaulted
+              param = param_at_or_nil(params, param_idx)
+              param_idx += 1
+              next unless param
               next if param.is_block || named_only_separator?(param)
               if ta = param.type_annotation
                 inferred << type_ref_for_name((safe_slice_to_string(ta) || ""))
@@ -32004,7 +32021,6 @@ module Adamas::HIR
                 inferred << (inferred_type || TypeRef::VOID)
               else
                 all_defaulted = false
-                break
               end
             end
             if all_defaulted && inferred.any? { |t| t != TypeRef::VOID }
