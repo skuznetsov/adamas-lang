@@ -10939,8 +10939,15 @@ module Adamas::HIR
     end
 
     private def stringify_type_expr(expr_id : ExprId) : String?
+      return nil if expr_id.null_ptr?
       return nil if expr_id.invalid?
+      arena = arena_for_expr?(expr_id)
+      return nil unless arena
 
+      with_arena(arena) { stringify_type_expr_in_current_arena(expr_id) }
+    end
+
+    private def stringify_type_expr_in_current_arena(expr_id : ExprId) : String?
       node = @arena[expr_id]
       case node
       when Adamas::Compiler::Frontend::TypeofNode

@@ -9,6 +9,27 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
 - 2026-06-30 UPDATE: the
+  `NodeSlot#node <- AstArena#[] <- AstToHir#stringify_type_expr <-
+  AstToHir#lower_call` s2->s3 SIGSEGV moved. Boundary probes showed
+  `stringify_type_expr` was not receiving a corrupt or unowned `ExprId`: the
+  failing value was `ExprId 774`, the current arena had only `109` nodes,
+  `@main_arenas` had `398` arenas, and `arena_for_expr?` resolved the same id
+  to a known arena of size `775`. Root-shaped boundary was therefore
+  `stringify_type_expr` reading through raw `@arena[expr_id]` instead of the
+  existing arena-resolution path already used by `node_for_expr`. Fix:
+  split `stringify_type_expr` into an arena-resolving wrapper plus
+  `stringify_type_expr_in_current_arena`, and run the existing body under
+  `with_arena(arena_for_expr?(expr_id))`; no nil/OOB consumer guard was added.
+  Verification: fresh stage1 builds; full suites pass (`152/152` original +
+  `36/36` combined); fresh fixed stage1 builds fresh s2; fixed s2 no longer
+  crashes in `stringify_type_expr`. With a 20GB `run_safe` cap, fixed s2->s3
+  now exits 139 in
+  `AstToHir#static_truthy_value <- AstToHir#lower_short_circuit_condition <-
+  AstToHir#lower_while` while draining missing call targets. Caveat: the same
+  run can hit the 16GB `run_safe` memory cap before exposing that later stack.
+  Do not claim green s2->s3/s3b.
+
+- 2026-06-30 UPDATE: the
   `AstToHir#lower_enum_predicate <- AstToHir#lower_member_access <-
   AstToHir#lower_if` s2->s3 SIGSEGV moved. Boundary probes first separated
   the non-enum `Nil | String` path from the enum path, then pinned the failing

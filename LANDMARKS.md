@@ -12,6 +12,33 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-S2S3-STRINGIFY-TYPE-EXPR-ARENA-BOUNDARY|verified 2026-06-30 {F:0.85 G:0.34 R:0.89}]:
+Fresh generated s2 no longer stops in
+`NodeSlot#node <- AstArena#[] <- AstToHir#stringify_type_expr <-
+AstToHir#lower_call` while compiling `src/adamas.cr` to s3. Boundary probes
+showed this was not a corrupt or unowned `ExprId`: the failing value was
+`ExprId 774`, the current arena had size `109`, `@main_arenas` had `398`
+entries, and the existing `arena_for_expr?` path resolved the same id to a
+known arena of size `775`. Root-shaped boundary was `stringify_type_expr`
+using raw `@arena[expr_id]`, unlike nearby helpers such as `node_for_expr`
+that already route through arena resolution. Fix slice: make
+`stringify_type_expr` a resolver wrapper that rejects null/invalid ids,
+looks up the owning arena with `arena_for_expr?`, and executes the former body
+as `stringify_type_expr_in_current_arena` under `with_arena(arena)`. This
+preserves recursive type-AST stringification while reading child ids from the
+owning arena; it does not drop valid foreign type expressions as nil.
+Evidence: `crystal build src/adamas.cr -o
+/private/tmp/adamas_stringify_fix_stage1 --error-trace`; fresh fixed stage1
+builds fresh s2; fixed s2 compiling `src/adamas.cr` no longer crashes in
+`stringify_type_expr`; with a 20GB `run_safe` cap lldb now stops in the later
+frontier `AstToHir#static_truthy_value <-
+AstToHir#lower_short_circuit_condition <- AstToHir#lower_while`;
+`regression_tests/run_all_suites.sh /private/tmp/adamas_stringify_fix_stage1
+4` passes 152/152 original + 36/36 combined. Scope: this is a bounded
+type-expression arena-boundary fix, not a global arena identity redesign and
+not a green s2->s3 claim. Caveat: the same s2->s3 run may hit the 16GB
+`run_safe` memory cap before exposing the later `static_truthy_value` stack.
+
 [LM-S2S3-ENUM-PREDICATE-FIND-BLOCK|verified 2026-06-30 {F:0.84 G:0.28 R:0.89}]:
 Fresh generated s2 no longer stops in
 `AstToHir#lower_enum_predicate <- AstToHir#lower_member_access <-
