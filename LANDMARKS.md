@@ -12,6 +12,31 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-S2S3-ENUM-PREDICATE-FIND-BLOCK|verified 2026-06-30 {F:0.84 G:0.28 R:0.89}]:
+Fresh generated s2 no longer stops in
+`AstToHir#lower_enum_predicate <- AstToHir#lower_member_access <-
+AstToHir#lower_if` while compiling `src/adamas.cr` to s3. Boundary probes
+first showed the non-enum `Nil | String` predicate path completed through
+`after_lazy enum=nil`, then pinned the crash to the enum predicate
+`Path.to_kind$Path::Kind_Bool`: enum metadata was valid
+(`enum_key=Path::Kind`, `enum=Path::Kind`, `count=2`), `base=posix` and
+`target=posix` were valid, and the crash happened before the match step
+completed. Root-shaped producer was the hot-path yielded block
+`members.keys.find { |m| underscore_lower(m) == target }`, not enum metadata
+resolution or member-name normalization. Fix slice: replace that block `find`
+with an indexed scan over `members.keys`, preserving the same comparison while
+avoiding a self-host-brittle block callback and captured `target` in this
+compiler chokepoint. Evidence: `crystal build src/adamas.cr -o
+/private/tmp/adamas_enum_fix_stage1 --error-trace`; fresh fixed stage1 builds
+fresh s2; fixed s2 compiling `src/adamas.cr` no longer crashes in
+`lower_enum_predicate` and instead reaches the next frontier,
+`NodeSlot#node <- AstArena#[] <- AstToHir#stringify_type_expr <-
+AstToHir#lower_call`; `regression_tests/run_all_suites.sh
+/private/tmp/adamas_enum_fix_stage1 4` passes 152/152 original + 36/36
+combined. Scope: this is a bounded enum-predicate matching repair, not a
+global fix for every `Enumerable#find` / block-capture shape and not a green
+s2->s3 claim.
+
 [LM-S2S3-BLOCK-ARENA-LOWERING|verified 2026-06-30 {F:0.85 G:0.34 R:0.89}]:
 Fresh generated s2 no longer stops in
 `NodeSlot#node <- AstArena#[] <- AstToHir#collect_assigned_vars_in_expr <-

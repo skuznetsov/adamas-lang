@@ -89795,7 +89795,17 @@ module Adamas::HIR
       # Try to match the predicate to an enum member (e.g., "data1?" -> "Data1").
       base_name = member_name[0...-1]
       target = underscore_lower(base_name)
-      member_match = members.keys.find { |m| underscore_lower(m) == target }
+      member_match = nil.as(String?)
+      member_keys = members.keys
+      member_idx = 0
+      while member_idx < member_keys.size
+        member = member_keys.unsafe_fetch(member_idx)
+        if underscore_lower(member) == target
+          member_match = member
+          break
+        end
+        member_idx += 1
+      end
       if member_match.nil? && target == "none"
         enum_type = enum_base_type(enum_name)
         lit = Literal.new(ctx.next_id, enum_type, 0_i64)

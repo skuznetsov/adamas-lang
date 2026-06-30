@@ -9,6 +9,24 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
 - 2026-06-30 UPDATE: the
+  `AstToHir#lower_enum_predicate <- AstToHir#lower_member_access <-
+  AstToHir#lower_if` s2->s3 SIGSEGV moved. Boundary probes first separated
+  the non-enum `Nil | String` path from the enum path, then pinned the failing
+  enum predicate to `Path.to_kind$Path::Kind_Bool`: enum metadata was valid
+  (`enum_key=Path::Kind`, `count=2`), `base=posix` and `target=posix` were
+  valid, and the crash occurred before the `members.keys.find { ... }` match
+  completed. Fix: replace that hot-path block `find` with an indexed scan over
+  `members.keys`, preserving the same `underscore_lower(member) == target`
+  predicate without yielding through a self-host-brittle block. Verification:
+  fresh stage1 builds; full suites pass (`152/152` original + `36/36`
+  combined); fresh fixed stage1 builds fresh s2; fixed s2 compiling
+  `src/adamas.cr` no longer crashes in `lower_enum_predicate`. Residual
+  frontier: fixed s2->s3 still exits 139 after `[STAGE2_DEBUG] pass3 after
+  lower_main call`, now in
+  `NodeSlot#node <- AstArena#[] <- AstToHir#stringify_type_expr <-
+  AstToHir#lower_call`. Do not claim green s2->s3/s3b.
+
+- 2026-06-30 UPDATE: the
   `NodeSlot#node <- AstArena#[] <- AstToHir#collect_assigned_vars_in_expr <-
   AstToHir#lower_block_to_block_id` s2->s3 SIGSEGV moved. Boundary probes
   showed this was not a `NodeSlot` storage root: the failing block body had
