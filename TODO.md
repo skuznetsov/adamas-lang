@@ -8,6 +8,29 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-06-30 UPDATE: the `String#size <-
+  scan_hir_function_for_live_types` s2->s3 SIGSEGV moved again. Two
+  independent probes pinned the same producer family: after the earlier central
+  receiver-call factory fix, s2 still constructed malformed HIR calls where a
+  receiver `ValueId` became the `method_name` pointer. First source was
+  `src/compiler/cli.cr:1003` (`options.optimize = 3`) with raw method pointer
+  `97`; after the assignment call sites were migrated, the next source was
+  `src/stdlib/file.cr:681` (`Path.new(*parts).to_s`) with raw method pointer
+  `0`. Root class: self-hosted overload selection for the many overloaded
+  `HIR::Call.new` constructors is not a safe boundary. Fix: add explicit
+  no-receiver block/virtual factories and migrate production HIR call
+  construction in `AstToHir` to the intent-named factories
+  (`with_receiver*` / `without_receiver*`), leaving only the two intentional
+  placeholder `Call.new(..., "")` sites. Verification: fresh stage1 builds;
+  static grep finds no remaining production HIR `Call.new` construction in
+  `ast_to_hir.cr`; independent Spark scout review found the same; full suites
+  pass (`152/152` original + `36/36` combined); fresh fixed stage1 builds
+  fresh s2; fixed s2 compiling `src/adamas.cr` no longer segfaults in
+  `String#size <- scan_hir_function_for_live_types`. Residual frontier: fixed
+  s2->s3 now exits 1 with `error: ExprId out of bounds: 260
+  (arena=:67, current=:67, main_arenas=398, inline_arenas=0)` after
+  `[STAGE2_DEBUG] pass3 after lower_main call`. Do not claim green s2->s3/s3b.
+
 - 2026-06-30 UPDATE: the `AstToHir#apply_is_a_narrowing -> TypeRef#==`
   s2->s3 SIGSEGV moved. Root was not `type_ref_for_name` and not the
   narrowing consumer loop: probes showed `is_a_narrowing_targets` produced a

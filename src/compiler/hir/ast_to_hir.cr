@@ -30475,7 +30475,7 @@ module Adamas::HIR
           end
         end
         init_call_args = coerce_args_to_types(ctx, param_ids, init_param_types)
-        init_call = Call.new(ctx.next_id, TypeRef::VOID, alloc.id, init_name, init_call_args)
+        init_call = Call.with_receiver(ctx.next_id, TypeRef::VOID, alloc.id, init_name, init_call_args)
         ctx.emit(init_call)
 
         # V2 BOOTSTRAP: Re-store union-typed fields after initialize.
@@ -30516,7 +30516,7 @@ module Adamas::HIR
           wrapper_param_ids << hir_param.id
         end
 
-        new_call = Call.new(instance_ctx.next_id, class_info.type_ref, nil, func_name, wrapper_param_ids)
+        new_call = Call.without_receiver(instance_ctx.next_id, class_info.type_ref, func_name, wrapper_param_ids)
         instance_ctx.emit(new_call)
         instance_ctx.register_type(new_call.id, class_info.type_ref)
         instance_ctx.terminate(Return.new(new_call.id))
@@ -31028,7 +31028,7 @@ module Adamas::HIR
         )
         init_call_args << block_param_id.not_nil! if block_param_id
         init_call_args = coerce_args_to_types(ctx, init_call_args, init_param_types)
-        init_call = Call.new(ctx.next_id, TypeRef::VOID, alloc.id, init_name, init_call_args)
+        init_call = Call.with_receiver(ctx.next_id, TypeRef::VOID, alloc.id, init_name, init_call_args)
         ctx.emit(init_call)
       end
 
@@ -31156,7 +31156,7 @@ module Adamas::HIR
       ctx.emit(nil_lit2)
       ctx.register_type(nil_lit2.id, TypeRef::NIL)
 
-      internal_call = Call.new(ctx.next_id, class_info.type_ref, nil, internal_name,
+      internal_call = Call.without_receiver(ctx.next_id, class_info.type_ref, internal_name,
         [path_id, fd_get.id, mode_id, blocking_get.id, nil_lit1.id, nil_lit2.id])
       ctx.emit(internal_call)
       ctx.register_type(internal_call.id, class_info.type_ref)
@@ -31211,7 +31211,7 @@ module Adamas::HIR
       # Ensure the internal 3-arg allocator exists
       generate_allocator_overload(class_name, class_info, internal_types)
 
-      internal_call = Call.new(ctx.next_id, class_info.type_ref, nil, internal_name,
+      internal_call = Call.without_receiver(ctx.next_id, class_info.type_ref, internal_name,
         [buffer_ptr, size_id, false_lit.id])
       ctx.emit(internal_call)
       ctx.register_type(internal_call.id, class_info.type_ref)
@@ -31571,7 +31571,7 @@ module Adamas::HIR
       remember_callsite_arg_types(meta_method, arg_types)
       lower_function_if_needed(meta_method)
 
-      call = Call.new(ctx.next_id, return_type, literal_id, meta_method, arg_ids)
+      call = Call.with_receiver(ctx.next_id, return_type, literal_id, meta_method, arg_ids)
       ctx.emit(call)
       ctx.register_type(call.id, return_type)
       if return_type == TypeRef::VOID
@@ -31666,7 +31666,7 @@ module Adamas::HIR
       remember_callsite_arg_types(instance_name, instance_arg_types)
       lower_function_if_needed(instance_name)
 
-      call = Call.new(ctx.next_id, return_type, receiver_id, instance_name, arg_ids)
+      call = Call.with_receiver(ctx.next_id, return_type, receiver_id, instance_name, arg_ids)
       ctx.emit(call)
       ctx.register_type(call.id, return_type)
       if return_type == TypeRef::VOID
@@ -38081,9 +38081,9 @@ module Adamas::HIR
             end
           end
           new_call = if inst.has_block?
-                       Call.new(inst.id, return_type, recv, inst.method_name, inst.args, inst.block_value, true)
+                       Call.with_receiver_block(inst.id, return_type, recv, inst.method_name, inst.args, inst.block_value, true)
                      else
-                       Call.new(inst.id, return_type, recv, inst.method_name, inst.args, true)
+                       Call.with_receiver_virtual(inst.id, return_type, recv, inst.method_name, inst.args, true)
                      end
           block.instructions[idx] = new_call
           ctx.register_type(inst.id, return_type)
@@ -38129,15 +38129,15 @@ module Adamas::HIR
               if inst.has_receiver?
                 recv = inst.receiver_value
                 if block_id = inst.block
-                  Call.new(inst.id, resolved_type, recv, inst.method_name, inst.args, block_id, inst.virtual)
+                  Call.with_receiver_block(inst.id, resolved_type, recv, inst.method_name, inst.args, block_id, inst.virtual)
                 else
-                  Call.new(inst.id, resolved_type, recv, inst.method_name, inst.args, nil, inst.virtual)
+                  Call.with_receiver_virtual(inst.id, resolved_type, recv, inst.method_name, inst.args, inst.virtual)
                 end
               else
                 if block_id = inst.block
-                  Call.new(inst.id, resolved_type, nil, inst.method_name, inst.args, block_id, inst.virtual)
+                  Call.without_receiver_block(inst.id, resolved_type, inst.method_name, inst.args, block_id, inst.virtual)
                 else
-                  Call.new(inst.id, resolved_type, nil, inst.method_name, inst.args, nil, inst.virtual)
+                  Call.without_receiver_virtual(inst.id, resolved_type, inst.method_name, inst.args, inst.virtual)
                 end
               end
             # TODO(s2b-union-arg-abi): root cause is s2b mislowering a `Nil | UInt32`
@@ -38413,7 +38413,11 @@ module Adamas::HIR
             end
             return_type = inst.type if return_type == TypeRef::VOID
 
-            block.instructions[idx] = Call.new(inst.id, return_type, recv, corrected_name, inst.args, inst.block, inst.virtual)
+            block.instructions[idx] = if block_id = inst.block
+                                        Call.with_receiver_block(inst.id, return_type, recv, corrected_name, inst.args, block_id, inst.virtual)
+                                      else
+                                        Call.with_receiver_virtual(inst.id, return_type, recv, corrected_name, inst.args, inst.virtual)
+                                      end
             value_types[inst.id] = return_type
             repaired_value_types[inst.id] = return_type
             targets_to_lower << corrected_name
@@ -49980,7 +49984,7 @@ module Adamas::HIR
         lower_function_if_needed(new_name)
         # Emit a Call to ClassName.new() with no args
         call_id = ctx.next_id
-        call = Call.new(call_id, ivar_type, nil, new_name, [] of ValueId)
+        call = Call.without_receiver(call_id, ivar_type, new_name, [] of ValueId)
         ctx.emit(call)
         ctx.register_type(call_id, ivar_type)
         return call_id
@@ -52006,7 +52010,7 @@ module Adamas::HIR
         io_get = ClassVarGet.new(ctx.next_id, recv_type, "Object", io_name)
         ctx.emit(io_get)
         ctx.register_type(io_get.id, recv_type)
-        call_instr = Call.new(ctx.next_id, TypeRef::NIL, io_get.id, flush_mangled, [] of ValueId, false)
+        call_instr = Call.with_receiver_virtual(ctx.next_id, TypeRef::NIL, io_get.id, flush_mangled, [] of ValueId, false)
         ctx.emit(call_instr)
         ctx.register_type(call_instr.id, TypeRef::NIL)
       end
@@ -52038,7 +52042,7 @@ module Adamas::HIR
         # and extra materialization; for the compiler bootstrap we only need a
         # FileDescriptor object carrying fd 0/1/2.
         call_name = mangle_function_name("IO::FileDescriptor.new", [TypeRef::INT32])
-        call = Call.new(ctx.next_id, fd_type, call_name, [fd_lit.id])
+        call = Call.without_receiver(ctx.next_id, fd_type, call_name, [fd_lit.id])
         ctx.emit(call)
         ctx.register_type(call.id, fd_type)
         call.id
@@ -52128,7 +52132,7 @@ module Adamas::HIR
       args = [] of ValueId
       args << argc_param.id if param_types.size >= 1
       args << argv_param.id if param_types.size >= 2
-      call = Call.new(ctx.next_id, return_type, nil, main_name, args)
+      call = Call.without_receiver(ctx.next_id, return_type, main_name, args)
       ctx.emit(call)
 
       ctx.terminate(Return.new(nil))
@@ -57920,7 +57924,7 @@ module Adamas::HIR
         lower_function_if_needed(full_name)
         if @module.has_function?(full_name)
           return_type = @function_base_return_types[full_name]? || TypeRef::VOID
-          call = Call.new(ctx.next_id, return_type, nil, full_name, [] of ValueId)
+          call = Call.without_receiver(ctx.next_id, return_type, full_name, [] of ValueId)
           ctx.emit(call)
           return call.id
         end
@@ -58383,7 +58387,7 @@ module Adamas::HIR
                 if to_s_name && !to_s_name.empty?
                   remember_callsite_arg_types(to_s_name, [] of TypeRef)
                   lower_function_if_needed(to_s_name) unless function_state(to_s_name).completed?
-                  to_s_call = Call.new(ctx.next_id, TypeRef::STRING, val_id, to_s_name, [] of ValueId)
+                  to_s_call = Call.with_receiver(ctx.next_id, TypeRef::STRING, val_id, to_s_name, [] of ValueId)
                   ctx.emit(to_s_call)
                   ctx.register_type(to_s_call.id, TypeRef::STRING)
                   val_id = to_s_call.id
@@ -58648,7 +58652,7 @@ module Adamas::HIR
               end
             end
           end
-          call = Call.new(ctx.next_id, return_type, self_id, full_name, [] of ValueId, nil, call_virtual)
+          call = Call.with_receiver_virtual(ctx.next_id, return_type, self_id, full_name, [] of ValueId, call_virtual)
           ctx.emit(call)
           ctx.register_type(call.id, return_type)
           if function_returns_type_literal?(full_name, class_method_base)
@@ -58675,7 +58679,7 @@ module Adamas::HIR
               return_type = get_function_return_type(module_method_base)
             end
           end
-          call = Call.new(ctx.next_id, return_type, nil, full_name, [] of ValueId)
+          call = Call.without_receiver(ctx.next_id, return_type, full_name, [] of ValueId)
           ctx.emit(call)
           ctx.register_type(call.id, return_type)
           if function_returns_type_literal?(full_name, module_method_base)
@@ -58691,7 +58695,7 @@ module Adamas::HIR
         full_name = mangle_function_name(TOP_LEVEL_MAIN_BASE, [] of TypeRef)
         return_type = @function_types[full_name]? || TypeRef::VOID
         lower_function_if_needed(full_name)
-        call = Call.new(ctx.next_id, return_type, nil, full_name, [] of ValueId)
+        call = Call.without_receiver(ctx.next_id, return_type, full_name, [] of ValueId)
         ctx.emit(call)
         ctx.register_type(call.id, return_type)
         return call.id
@@ -58727,7 +58731,7 @@ module Adamas::HIR
             return_type = get_function_return_type(name)
           end
         end
-        call = Call.new(ctx.next_id, return_type, nil, full_name, call_args)
+        call = Call.without_receiver(ctx.next_id, return_type, full_name, call_args)
         ctx.emit(call)
         ctx.register_type(call.id, return_type)
         if function_returns_type_literal?(full_name, name)
@@ -58843,7 +58847,7 @@ module Adamas::HIR
             # Ensure the getter method is lowered
             remember_callsite_arg_types(full_name, [] of TypeRef)
             lower_function_if_needed(full_name)
-            call = Call.new(ctx.next_id, return_type, self_id, full_name, [] of ValueId)
+            call = Call.with_receiver(ctx.next_id, return_type, self_id, full_name, [] of ValueId)
             ctx.emit(call)
             ctx.register_type(call.id, return_type)
             return call.id
@@ -58883,7 +58887,7 @@ module Adamas::HIR
         if @classvar_lazy_init_info.has_key?(key)
           init_func_name = classvar_init_func_name(class_name, name)
           ensure_classvar_init_function(key, init_func_name, ctx)
-          call = Call.new(ctx.next_id, TypeRef::VOID, nil, init_func_name, [] of ValueId, nil, false)
+          call = Call.without_receiver(ctx.next_id, TypeRef::VOID, init_func_name, [] of ValueId)
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::VOID)
         end
@@ -59134,7 +59138,7 @@ module Adamas::HIR
         lower_function_if_needed(actual_prev_name)
         return_type = @function_types[actual_prev_name]? || TypeRef::VOID
         self_id = emit_self(ctx)
-        call = Call.new(ctx.next_id, return_type, self_id, actual_prev_name, args)
+        call = Call.with_receiver(ctx.next_id, return_type, self_id, actual_prev_name, args)
         ctx.emit(call)
         ctx.register_type(call.id, return_type)
         if debug_argerr_super
@@ -59220,7 +59224,7 @@ module Adamas::HIR
               end
               return_type = @function_types[super_name]? || TypeRef::VOID
               self_id = emit_self(ctx)
-              call = Call.new(ctx.next_id, return_type, self_id, super_name, args)
+              call = Call.with_receiver(ctx.next_id, return_type, self_id, super_name, args)
               ctx.emit(call)
               ctx.register_type(call.id, return_type)
               if debug_argerr_super
@@ -59284,7 +59288,7 @@ module Adamas::HIR
           end
           return_type = @function_types[super_name]? || TypeRef::VOID
           self_id = emit_self(ctx)
-          call = Call.new(ctx.next_id, return_type, self_id, super_name, args)
+          call = Call.with_receiver(ctx.next_id, return_type, self_id, super_name, args)
           ctx.emit(call)
           ctx.register_type(call.id, return_type)
           return call.id
@@ -59440,7 +59444,7 @@ module Adamas::HIR
       if debug_argerr_super
         STDERR.puts "[ARGERR_SUPER] phase=emit target=#{super_tagged_name} return=#{get_type_name_from_ref(return_type)}"
       end
-      call = Call.new(ctx.next_id, return_type, self_id, super_tagged_name, args)
+      call = Call.with_receiver(ctx.next_id, return_type, self_id, super_tagged_name, args)
       ctx.emit(call)
       ctx.register_type(call.id, return_type)
       call.id
@@ -59500,7 +59504,7 @@ module Adamas::HIR
       self_id = emit_self(ctx)
 
       # Call previous method definition
-      call = Call.new(ctx.next_id, return_type, self_id, previous_method_name, args)
+      call = Call.with_receiver(ctx.next_id, return_type, self_id, previous_method_name, args)
       ctx.emit(call)
       ctx.register_type(call.id, return_type)
       call.id
@@ -60407,7 +60411,7 @@ module Adamas::HIR
           right_id = first_arg
         end
         right_id = coerce_arg_to_container_element_type(ctx, right_id, left_type)
-        call = Call.new(ctx.next_id, left_type, left_id, call_target_name, [right_id])
+        call = Call.with_receiver(ctx.next_id, left_type, left_id, call_target_name, [right_id])
         ctx.emit(call)
         ctx.register_type(call.id, left_type)
         return call.id
@@ -60416,7 +60420,7 @@ module Adamas::HIR
       # String == / != must use content comparison, not pointer comparison.
       # Intercept here and emit a call to __adamas_string_eq runtime helper.
       if left_type == TypeRef::STRING && right_type == TypeRef::STRING && (op_str == "==" || op_str == "!=")
-        call = Call.new(ctx.next_id, TypeRef::BOOL, left_id, "__adamas_string_eq", [right_id])
+        call = Call.with_receiver(ctx.next_id, TypeRef::BOOL, left_id, "__adamas_string_eq", [right_id])
         ctx.emit(call)
         ctx.register_type(call.id, TypeRef::BOOL)
         if op_str == "!="
@@ -62091,7 +62095,7 @@ module Adamas::HIR
                       end
                       inferred == TypeRef::VOID || inferred == TypeRef::NIL ? left_type : inferred
                     end
-      call = Call.new(ctx.next_id, return_type, left, call_target_name, [right])
+      call = Call.with_receiver(ctx.next_id, return_type, left, call_target_name, [right])
       ctx.emit(call)
       ctx.register_type(call.id, return_type)
       call.id
@@ -62148,7 +62152,7 @@ module Adamas::HIR
              if method_name != primary_mangled_name
                lower_function_if_needed(method_name)
              end
-             call = Call.new(ctx.next_id, TypeRef::VOID, operand_id, method_name, [] of ValueId)
+             call = Call.with_receiver(ctx.next_id, TypeRef::VOID, operand_id, method_name, [] of ValueId)
              ctx.emit(call)
              return call.id
            end
@@ -64871,7 +64875,7 @@ module Adamas::HIR
         cond_val = lower_expr(ctx, cond_expr)
         subject_type = ctx.type_of(subject_id)
         if subject_type == TypeRef::STRING
-          call = Call.new(ctx.next_id, TypeRef::BOOL, subject_id, "__adamas_string_eq", [cond_val])
+          call = Call.with_receiver(ctx.next_id, TypeRef::BOOL, subject_id, "__adamas_string_eq", [cond_val])
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::BOOL)
           call.id
@@ -65055,7 +65059,7 @@ module Adamas::HIR
         end
       when Adamas::Compiler::Frontend::NamedTupleLiteralNode
         cond_val = lower_expr(ctx, cond_expr)
-        eq_call = Call.new(ctx.next_id, TypeRef::BOOL, subject_id, "==", [cond_val])
+        eq_call = Call.with_receiver(ctx.next_id, TypeRef::BOOL, subject_id, "==", [cond_val])
         ctx.emit(eq_call)
         ctx.register_type(eq_call.id, TypeRef::BOOL)
         eq_call.id
@@ -65243,7 +65247,7 @@ module Adamas::HIR
           if debug_stdio_case && {"pipe?", "socket?", "character_device?"}.includes?(member_name)
             STDERR.puts "[STDIO_CASE] branch=member member=#{member_name} lowered=fallback_call"
           end
-          call = Call.new(ctx.next_id, TypeRef::BOOL, subject_id, member_name, [] of ValueId)
+          call = Call.with_receiver(ctx.next_id, TypeRef::BOOL, subject_id, member_name, [] of ValueId)
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::BOOL)
           return call.id
@@ -65429,7 +65433,7 @@ module Adamas::HIR
             if debug_stdio_case && {"pipe?", "socket?", "character_device?"}.includes?(member_name)
               STDERR.puts "[STDIO_CASE] branch=call member=#{member_name} lowered=fallback_call"
             end
-            call = Call.new(ctx.next_id, TypeRef::BOOL, actual_object_id, member_name, [] of ValueId)
+            call = Call.with_receiver(ctx.next_id, TypeRef::BOOL, actual_object_id, member_name, [] of ValueId)
             ctx.emit(call)
             ctx.register_type(call.id, TypeRef::BOOL)
             return call.id
@@ -72119,7 +72123,7 @@ module Adamas::HIR
                 if proc_call_return == TypeRef::VOID
                   proc_call_return = contextual_bare_proc_call_return_type(ctx) || proc_call_return
                 end
-                proc_call = Call.new(ctx.next_id, proc_call_return, proc_recv_id, "Proc#call", proc_call_args)
+                proc_call = Call.with_receiver(ctx.next_id, proc_call_return, proc_recv_id, "Proc#call", proc_call_args)
                 ctx.emit(proc_call)
                 ctx.register_type(proc_call.id, proc_call_return)
                 return proc_call.id
@@ -72967,7 +72971,7 @@ module Adamas::HIR
                     return_type = get_function_return_type(obj_name)
                   end
                 end
-                call = Call.new(ctx.next_id, return_type, nil, full_name, [] of ValueId)
+                call = Call.without_receiver(ctx.next_id, return_type, full_name, [] of ValueId)
                 ctx.emit(call)
                 ctx.register_type(call.id, return_type)
                 receiver_id = call.id
@@ -72980,7 +72984,7 @@ module Adamas::HIR
                     full_name = mangle_function_name(base, [] of TypeRef)
                     return_type = @function_types[full_name]? || TypeRef::VOID
                     lower_function_if_needed(full_name)
-                    call = Call.new(ctx.next_id, return_type, self_id, full_name, [] of ValueId)
+                    call = Call.with_receiver(ctx.next_id, return_type, self_id, full_name, [] of ValueId)
                     ctx.emit(call)
                     ctx.register_type(call.id, return_type)
                     receiver_id = call.id
@@ -73210,7 +73214,7 @@ module Adamas::HIR
                 if npt_name
                   npt_mangled = mangle_function_name(npt_name, [] of TypeRef)
                   lower_function_if_needed(npt_mangled)
-                  npt_call = Call.new(ctx.next_id, arg_type, arg_id, npt_mangled, [] of ValueId)
+                  npt_call = Call.with_receiver(ctx.next_id, arg_type, arg_id, npt_mangled, [] of ValueId)
                   ctx.emit(npt_call)
                   ctx.register_type(npt_call.id, arg_type)
                   return npt_call.id
@@ -73853,7 +73857,7 @@ module Adamas::HIR
               ctx.emit(stdout_get)
               ctx.register_type(stdout_get.id, TypeRef::POINTER)
               # Call x.to_s(STDOUT) via virtual dispatch on the union
-              to_s_call = Call.new(ctx.next_id, TypeRef::NIL, arg_id, "Object#to_s$IO", [stdout_get.id], nil, true)
+              to_s_call = Call.with_receiver_virtual(ctx.next_id, TypeRef::NIL, arg_id, "Object#to_s$IO", [stdout_get.id], true)
               ctx.emit(to_s_call)
               ctx.register_type(to_s_call.id, TypeRef::NIL)
               if method_name == "puts"
@@ -73864,7 +73868,7 @@ module Adamas::HIR
                 stdout_get2 = ClassVarGet.new(ctx.next_id, TypeRef::POINTER, "Object", "STDOUT")
                 ctx.emit(stdout_get2)
                 ctx.register_type(stdout_get2.id, TypeRef::POINTER)
-                print_call = Call.new(ctx.next_id, TypeRef::NIL, stdout_get2.id, "IO#print$Char", [newline_char.id], nil, false)
+                print_call = Call.with_receiver_virtual(ctx.next_id, TypeRef::NIL, stdout_get2.id, "IO#print$Char", [newline_char.id], false)
                 ctx.emit(print_call)
                 ctx.register_type(print_call.id, TypeRef::NIL)
               end
@@ -73971,7 +73975,7 @@ module Adamas::HIR
                 ctx.emit(stdout_get)
                 ctx.register_type(stdout_get.id, TypeRef::POINTER)
                 mangled = mangle_function_name("IO##{method_name}", [TypeRef::STRING])
-                call_instr = Call.new(ctx.next_id, TypeRef::NIL, stdout_get.id, mangled, [str_phi.id], nil, true)
+                call_instr = Call.with_receiver_virtual(ctx.next_id, TypeRef::NIL, stdout_get.id, mangled, [str_phi.id], true)
                 ctx.emit(call_instr)
                 ctx.register_type(call_instr.id, TypeRef::NIL)
                 return call_instr.id
@@ -73985,7 +73989,7 @@ module Adamas::HIR
             # Build mangled method name: IO#puts$Int32, IO#print$String, etc.
             mangled = mangle_function_name("IO##{method_name}", [arg_type])
             # Emit virtual call: STDOUT.puts(arg) / STDOUT.print(arg)
-            call_instr = Call.new(ctx.next_id, TypeRef::NIL, stdout_get.id, mangled, [arg_id], nil, true)
+            call_instr = Call.with_receiver_virtual(ctx.next_id, TypeRef::NIL, stdout_get.id, mangled, [arg_id], true)
             ctx.emit(call_instr)
             ctx.register_type(call_instr.id, TypeRef::NIL)
             return call_instr.id
@@ -74169,7 +74173,7 @@ module Adamas::HIR
           ctx.emit(_stdout_get)
           ctx.register_type(_stdout_get.id, TypeRef::POINTER)
           _mangled = mangle_function_name("IO##{method_name}", [_post_arg_type])
-          _call_instr = Call.new(ctx.next_id, TypeRef::NIL, _stdout_get.id, _mangled, [_post_arg_id], nil, true)
+          _call_instr = Call.with_receiver_virtual(ctx.next_id, TypeRef::NIL, _stdout_get.id, _mangled, [_post_arg_id], true)
           ctx.emit(_call_instr)
           ctx.register_type(_call_instr.id, TypeRef::NIL)
           return _call_instr.id
@@ -74453,7 +74457,7 @@ module Adamas::HIR
               includes_idx += 1
             end
             if resolved_includes
-              call = Call.new(ctx.next_id, TypeRef::BOOL, collection_id, resolved_includes, [receiver_id])
+              call = Call.with_receiver(ctx.next_id, TypeRef::BOOL, collection_id, resolved_includes, [receiver_id])
               ctx.emit(call)
               ctx.register_type(call.id, TypeRef::BOOL)
               return call.id
@@ -77782,7 +77786,7 @@ module Adamas::HIR
           hasher_type = TypeRef::POINTER if hasher_type == TypeRef::VOID
           hash_name = mangle_function_name("UInt64#hash", [hasher_type])
           lower_function_if_needed(hash_name)
-          call = Call.new(ctx.next_id, hasher_type, cast.id, hash_name, args)
+          call = Call.with_receiver(ctx.next_id, hasher_type, cast.id, hash_name, args)
           ctx.emit(call)
           ctx.register_type(call.id, hasher_type)
           return call.id
@@ -78016,7 +78020,7 @@ module Adamas::HIR
             if call_target.ends_with?("$Range") || call_target.includes?("$Range$")
               call_target = primary_mangled_name
             end
-            call = Call.new(ctx.next_id, element_type, slice_receiver_id, call_target, [index_arg_id])
+            call = Call.with_receiver(ctx.next_id, element_type, slice_receiver_id, call_target, [index_arg_id])
             ctx.emit(call)
             ctx.register_type(call.id, element_type)
             return call.id
@@ -79755,7 +79759,7 @@ module Adamas::HIR
                  Call.with_receiver(ctx.next_id, return_type, recv_id, emit_method_name, args)
                end
              elsif has_block_call && block_id
-               Call.new(ctx.next_id, return_type, emit_method_name, args, block_id.not_nil!, call_virtual)
+               Call.without_receiver_block(ctx.next_id, return_type, emit_method_name, args, block_id.not_nil!, call_virtual)
              else
                if env_has?("ADAMAS_TRACE_TOPLEVEL_CALL_SHAPE") &&
                   @current_class.nil? &&
@@ -80000,7 +80004,11 @@ module Adamas::HIR
       ctx.emit(uw1); ctx.register_type(uw1.id, fr)
       ta = args.dup; ta[ui] = uw1.id
       ta = ta[0, ta.size - 1] if f_drop && ta.size > 1
-      c1 = Call.new(ctx.next_id, return_type, receiver_id, fm, ta)
+      c1 = if recv = receiver_id
+             Call.with_receiver(ctx.next_id, return_type, recv, fm, ta)
+           else
+             Call.without_receiver(ctx.next_id, return_type, fm, ta)
+           end
       ctx.emit(c1); ctx.register_type(c1.id, return_type)
       te = ctx.current_block; ctx.terminate(Jump.new(mb))
       ctx.current_block = eb; ctx.restore_locals(pb)
@@ -80008,7 +80016,11 @@ module Adamas::HIR
       ctx.emit(uw2); ctx.register_type(uw2.id, sr)
       ea = args.dup; ea[ui] = uw2.id
       ea = ea[0, ea.size - 1] if s_drop && ea.size > 1
-      c2 = Call.new(ctx.next_id, return_type, receiver_id, sm, ea)
+      c2 = if recv = receiver_id
+             Call.with_receiver(ctx.next_id, return_type, recv, sm, ea)
+           else
+             Call.without_receiver(ctx.next_id, return_type, sm, ea)
+           end
       ctx.emit(c2); ctx.register_type(c2.id, return_type)
       ee = ctx.current_block; ctx.terminate(Jump.new(mb))
       ctx.current_block = mb
@@ -80118,13 +80130,21 @@ module Adamas::HIR
         ctx.emit(isa); ctx.register_type(isa.id, TypeRef::BOOL)
         ctx.terminate(Branch.new(isa.id, tb, nb))
         ctx.current_block = tb; ctx.restore_locals(pb)
-        c = Call.new(ctx.next_id, return_type, receiver_id, vm, args)
+        c = if recv = receiver_id
+              Call.with_receiver(ctx.next_id, return_type, recv, vm, args)
+            else
+              Call.without_receiver(ctx.next_id, return_type, vm, args)
+            end
         ctx.emit(c); ctx.register_type(c.id, return_type)
         phi_inputs << {ctx.current_block, c.id}
         ctx.terminate(Jump.new(mb))
         ctx.current_block = nb; ctx.restore_locals(pb)
       end
-      fc = Call.new(ctx.next_id, return_type, receiver_id, fallback, args)
+      fc = if recv = receiver_id
+             Call.with_receiver(ctx.next_id, return_type, recv, fallback, args)
+           else
+             Call.without_receiver(ctx.next_id, return_type, fallback, args)
+           end
       ctx.emit(fc); ctx.register_type(fc.id, return_type)
       phi_inputs << {ctx.current_block, fc.id}
       ctx.terminate(Jump.new(mb))
@@ -80330,9 +80350,9 @@ module Adamas::HIR
           ctx.emit(uw); ctx.register_type(uw.id, vmr)
           pi = primitive_intrinsic_for_dispatch(vmr, mb)
           c = if pi
-                Call.new(ctx.next_id, pi[1], nil, pi[0], [uw.id] + args)
+                Call.without_receiver(ctx.next_id, pi[1], pi[0], [uw.id] + args)
               else
-                Call.new(ctx.next_id, return_type, uw.id, vmn, args)
+                Call.with_receiver(ctx.next_id, return_type, uw.id, vmn, args)
               end
           ctx.emit(c); ctx.register_type(c.id, return_type)
           inc << {ctx.current_block, c.id}
@@ -80347,9 +80367,9 @@ module Adamas::HIR
           ctx.emit(uw); ctx.register_type(uw.id, vmr)
           pi2 = primitive_intrinsic_for_dispatch(vmr, mb)
           c = if pi2
-                Call.new(ctx.next_id, pi2[1], nil, pi2[0], [uw.id] + args)
+                Call.without_receiver(ctx.next_id, pi2[1], pi2[0], [uw.id] + args)
               else
-                Call.new(ctx.next_id, return_type, uw.id, vmn, args)
+                Call.with_receiver(ctx.next_id, return_type, uw.id, vmn, args)
               end
           ctx.emit(c); ctx.register_type(c.id, return_type)
           inc << {ctx.current_block, c.id}
@@ -80547,7 +80567,7 @@ module Adamas::HIR
       to_unsafe_name = "#{class_name}#to_unsafe"
       if @function_defs.has_key?(to_unsafe_name) || @module.has_function?(to_unsafe_name)
         # Emit call: obj.to_unsafe (receiver=obj, no extra args)
-        call = Call.new(ctx.next_id, TypeRef::POINTER, arg_val, to_unsafe_name, [] of ValueId)
+        call = Call.with_receiver(ctx.next_id, TypeRef::POINTER, arg_val, to_unsafe_name, [] of ValueId)
         ctx.emit(call)
         ctx.register_type(call.id, TypeRef::POINTER)
         return call.id
@@ -84457,13 +84477,13 @@ module Adamas::HIR
       ctx.current_block = body_block
 
       # entry_ptr = __adamas_hash_get_entry_ptr(hash, index)
-      entry_call = Call.new(ctx.next_id, TypeRef::POINTER, nil, "__adamas_hash_get_entry_ptr", [hash_id, index_phi.id, entry_size_lit.id])
+      entry_call = Call.without_receiver(ctx.next_id, TypeRef::POINTER, "__adamas_hash_get_entry_ptr", [hash_id, index_phi.id, entry_size_lit.id])
       ctx.emit(entry_call)
       ctx.register_type(entry_call.id, TypeRef::POINTER)
       entry_ptr_id = entry_call.id
 
       # is_deleted = __adamas_hash_entry_deleted(entry_ptr)
-      deleted_call = Call.new(ctx.next_id, TypeRef::BOOL, nil, "__adamas_hash_entry_deleted", [entry_ptr_id, hash_offset_lit.id])
+      deleted_call = Call.without_receiver(ctx.next_id, TypeRef::BOOL, "__adamas_hash_entry_deleted", [entry_ptr_id, hash_offset_lit.id])
       ctx.emit(deleted_call)
       ctx.register_type(deleted_call.id, TypeRef::BOOL)
       is_deleted = deleted_call
@@ -84654,11 +84674,11 @@ module Adamas::HIR
 
       # Body block — check if entry is deleted
       ctx.current_block = body_block
-      entry_call = Call.new(ctx.next_id, TypeRef::POINTER, nil, "__adamas_hash_get_entry_ptr", [hash_id, index_phi.id, entry_size_lit.id])
+      entry_call = Call.without_receiver(ctx.next_id, TypeRef::POINTER, "__adamas_hash_get_entry_ptr", [hash_id, index_phi.id, entry_size_lit.id])
       ctx.emit(entry_call)
       ctx.register_type(entry_call.id, TypeRef::POINTER)
 
-      deleted_call = Call.new(ctx.next_id, TypeRef::BOOL, nil, "__adamas_hash_entry_deleted", [entry_call.id, hash_offset_lit.id])
+      deleted_call = Call.without_receiver(ctx.next_id, TypeRef::BOOL, "__adamas_hash_entry_deleted", [entry_call.id, hash_offset_lit.id])
       ctx.emit(deleted_call)
       ctx.register_type(deleted_call.id, TypeRef::BOOL)
 
@@ -87023,7 +87043,7 @@ module Adamas::HIR
       remember_callsite_arg_types(builder_ctor, [ctx.type_of(capacity_value)])
       lower_function_if_needed(builder_ctor) unless function_state(builder_ctor).completed?
 
-      builder_call = Call.new(ctx.next_id, builder_type, nil, builder_ctor, [capacity_value])
+      builder_call = Call.without_receiver(ctx.next_id, builder_type, builder_ctor, [capacity_value])
       ctx.emit(builder_call)
       ctx.register_type(builder_call.id, builder_type)
 
@@ -87047,7 +87067,7 @@ module Adamas::HIR
       to_s_name = resolve_method_call(ctx, builder_call.id, "to_s", [] of TypeRef, false)
       remember_callsite_arg_types(to_s_name, [] of TypeRef)
       lower_function_if_needed(to_s_name) unless function_state(to_s_name).completed?
-      to_s_call = Call.new(ctx.next_id, TypeRef::STRING, builder_call.id, to_s_name, [] of ValueId)
+      to_s_call = Call.with_receiver(ctx.next_id, TypeRef::STRING, builder_call.id, to_s_name, [] of ValueId)
       ctx.emit(to_s_call)
       ctx.register_type(to_s_call.id, TypeRef::STRING)
       to_s_call.id
@@ -87502,7 +87522,11 @@ module Adamas::HIR
             STDERR.puts "[CALL_EMIT] site=yield_fallback emit=#{call_target} inline_key=#{inline_key} ret=#{get_type_name_from_ref(return_type)} caller=#{ctx.function.name}"
           end
         end
-        call = Call.new(ctx.next_id, return_type, receiver_id, call_target, fallback_args, block_id)
+        call = if recv = receiver_id
+                 Call.with_receiver_block(ctx.next_id, return_type, recv, call_target, fallback_args, block_id, false)
+               else
+                 Call.without_receiver_block(ctx.next_id, return_type, call_target, fallback_args, block_id, false)
+               end
         ctx.emit(call)
         ctx.register_type(call.id, return_type)
         call.id
@@ -88947,7 +88971,7 @@ module Adamas::HIR
           return_type = owner_type unless owner_type == TypeRef::VOID
         end
         return_type = TypeRef::POINTER if return_type == TypeRef::VOID
-        call = Call.new(ctx.next_id, return_type, nil, full_method_name, index_ids)
+        call = Call.without_receiver(ctx.next_id, return_type, full_method_name, index_ids)
         ctx.emit(call)
         ctx.register_type(call.id, return_type)
         return call.id
@@ -89087,7 +89111,7 @@ module Adamas::HIR
           if call_virtual
             ensure_index_union_virtual_targets_lowered(ctx, object_id, [range_type], "[]")
           end
-          call = Call.new(ctx.next_id, return_type, object_id, call_target_name, [range_id], nil, call_virtual)
+          call = Call.with_receiver_virtual(ctx.next_id, return_type, object_id, call_target_name, [range_id], call_virtual)
           ctx.emit(call)
           ctx.register_type(call.id, return_type)
           return call.id
@@ -89364,7 +89388,7 @@ module Adamas::HIR
           if call_virtual
             ensure_index_union_virtual_targets_lowered(ctx, object_id, arg_types, "[]")
           end
-          call = Call.new(ctx.next_id, return_type, object_id, method_name, index_ids, nil, call_virtual)
+          call = Call.with_receiver_virtual(ctx.next_id, return_type, object_id, method_name, index_ids, call_virtual)
           ctx.emit(call)
           ctx.register_type(call.id, return_type)
           call.id
@@ -89414,7 +89438,7 @@ module Adamas::HIR
           call_target = primary_mangled_name
         end
         return_type = element_type
-        call = Call.new(ctx.next_id, return_type, object_id, call_target, call_args)
+        call = Call.with_receiver(ctx.next_id, return_type, object_id, call_target, call_args)
         ctx.emit(call)
         ctx.register_type(call.id, return_type)
         call.id
@@ -89539,7 +89563,7 @@ module Adamas::HIR
         if call_virtual
           ensure_index_union_virtual_targets_lowered(ctx, object_id, arg_types, "[]")
         end
-        call = Call.new(ctx.next_id, return_type, object_id, call_target_name, index_ids, nil, call_virtual)
+        call = Call.with_receiver_virtual(ctx.next_id, return_type, object_id, call_target_name, index_ids, call_virtual)
         ctx.emit(call)
         ctx.register_type(call.id, return_type)
         call.id
@@ -89660,7 +89684,7 @@ module Adamas::HIR
       end
       return_type = TypeRef::POINTER if return_type == TypeRef::VOID
 
-      call = Call.new(ctx.next_id, return_type, receiver_id, resolved_name, [] of ValueId)
+      call = Call.with_receiver(ctx.next_id, return_type, receiver_id, resolved_name, [] of ValueId)
       ctx.emit(call)
       ctx.register_type(call.id, return_type)
       call.id
@@ -89914,7 +89938,7 @@ module Adamas::HIR
             if proc_call_return == TypeRef::VOID
               proc_call_return = contextual_bare_proc_call_return_type(ctx) || proc_call_return
             end
-            proc_call = Call.new(ctx.next_id, proc_call_return, proc_recv_id, "Proc#call", proc_call_args)
+            proc_call = Call.with_receiver(ctx.next_id, proc_call_return, proc_recv_id, "Proc#call", proc_call_args)
             ctx.emit(proc_call)
             ctx.register_type(proc_call.id, proc_call_return)
             return proc_call.id
@@ -90408,7 +90432,7 @@ module Adamas::HIR
                   return_type = get_function_return_type(obj_name)
                 end
               end
-              call = Call.new(ctx.next_id, return_type, nil, full_name, [] of ValueId)
+              call = Call.without_receiver(ctx.next_id, return_type, full_name, [] of ValueId)
               ctx.emit(call)
               ctx.register_type(call.id, return_type)
               object_id = call.id
@@ -90420,7 +90444,7 @@ module Adamas::HIR
                   full_name = mangle_function_name(base, [] of TypeRef)
                   return_type = @function_types[full_name]? || TypeRef::VOID
                   lower_function_if_needed(full_name)
-                  call = Call.new(ctx.next_id, return_type, self_id, full_name, [] of ValueId)
+                  call = Call.with_receiver(ctx.next_id, return_type, self_id, full_name, [] of ValueId)
                   ctx.emit(call)
                   ctx.register_type(call.id, return_type)
                   object_id = call.id
@@ -91008,7 +91032,7 @@ module Adamas::HIR
           ctx.emit(unwrap)
           ctx.register_type(unwrap.id, TypeRef::INT32)
           # Call __adamas_int_to_string on the unwrapped value
-          call = Call.new(ctx.next_id, TypeRef::STRING, nil, "__adamas_int_to_string", [unwrap.id])
+          call = Call.without_receiver(ctx.next_id, TypeRef::STRING, "__adamas_int_to_string", [unwrap.id])
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::STRING)
           return call.id
@@ -91017,7 +91041,7 @@ module Adamas::HIR
           unwrap = UnionUnwrap.new(ctx.next_id, TypeRef::INT32, object_id, 0, false)
           ctx.emit(unwrap)
           ctx.register_type(unwrap.id, TypeRef::INT32)
-          call = Call.new(ctx.next_id, TypeRef::INT32, nil, "__adamas_int_abs", [unwrap.id])
+          call = Call.without_receiver(ctx.next_id, TypeRef::INT32, "__adamas_int_abs", [unwrap.id])
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::INT32)
           return call.id
@@ -91031,12 +91055,12 @@ module Adamas::HIR
       if receiver_type == TypeRef::INT32
         case member_name
         when "to_s"
-          call = Call.new(ctx.next_id, TypeRef::STRING, nil, "__adamas_int_to_string", [object_id])
+          call = Call.without_receiver(ctx.next_id, TypeRef::STRING, "__adamas_int_to_string", [object_id])
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::STRING)
           return call.id
         when "abs"
-          call = Call.new(ctx.next_id, TypeRef::INT32, nil, "__adamas_int_abs", [object_id])
+          call = Call.without_receiver(ctx.next_id, TypeRef::INT32, "__adamas_int_abs", [object_id])
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::INT32)
           return call.id
@@ -91058,7 +91082,7 @@ module Adamas::HIR
           ctx.register_type(cast.id, TypeRef::UINT64)
           return cast.id
         when "to_f", "to_f64"
-          call = Call.new(ctx.next_id, TypeRef::FLOAT64, nil, "__adamas_int_to_f64", [object_id])
+          call = Call.without_receiver(ctx.next_id, TypeRef::FLOAT64, "__adamas_int_to_f64", [object_id])
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::FLOAT64)
           return call.id
@@ -91066,12 +91090,12 @@ module Adamas::HIR
           # Inline intrinsic for Int32 — avoids abstract Int method which crashes
           # due to is_a?(Int::Signed) runtime check on raw integer values.
           # Implementation: bit-trick for next power of 2, clamped for signed int
-          call = Call.new(ctx.next_id, TypeRef::INT32, nil, "__adamas_next_power_of_two_i32", [object_id])
+          call = Call.without_receiver(ctx.next_id, TypeRef::INT32, "__adamas_next_power_of_two_i32", [object_id])
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::INT32)
           return call.id
         when "leading_zeros_count"
-          call = Call.new(ctx.next_id, TypeRef::INT32, nil, "__adamas_leading_zeros_count_i32", [object_id])
+          call = Call.without_receiver(ctx.next_id, TypeRef::INT32, "__adamas_leading_zeros_count_i32", [object_id])
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::INT32)
           return call.id
@@ -91081,7 +91105,7 @@ module Adamas::HIR
       elsif receiver_type == TypeRef::INT64
         case member_name
         when "to_s"
-          call = Call.new(ctx.next_id, TypeRef::STRING, nil, "__adamas_int64_to_string", [object_id])
+          call = Call.without_receiver(ctx.next_id, TypeRef::STRING, "__adamas_int64_to_string", [object_id])
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::STRING)
           return call.id
@@ -91114,17 +91138,17 @@ module Adamas::HIR
       elsif receiver_type == TypeRef::FLOAT64
         case member_name
         when "to_s"
-          call = Call.new(ctx.next_id, TypeRef::STRING, nil, "__adamas_f64_to_string", [object_id])
+          call = Call.without_receiver(ctx.next_id, TypeRef::STRING, "__adamas_f64_to_string", [object_id])
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::STRING)
           return call.id
         when "to_i", "to_i32"
-          call = Call.new(ctx.next_id, TypeRef::INT32, nil, "__adamas_f64_to_i32", [object_id])
+          call = Call.without_receiver(ctx.next_id, TypeRef::INT32, "__adamas_f64_to_i32", [object_id])
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::INT32)
           return call.id
         when "to_i64"
-          call = Call.new(ctx.next_id, TypeRef::INT64, nil, "__adamas_f64_to_i64", [object_id])
+          call = Call.without_receiver(ctx.next_id, TypeRef::INT64, "__adamas_f64_to_i64", [object_id])
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::INT64)
           return call.id
@@ -91132,7 +91156,7 @@ module Adamas::HIR
       elsif receiver_type == TypeRef::CHAR
         case member_name
         when "to_s"
-          call = Call.new(ctx.next_id, TypeRef::STRING, nil, "__adamas_char_to_string", [object_id])
+          call = Call.without_receiver(ctx.next_id, TypeRef::STRING, "__adamas_char_to_string", [object_id])
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::STRING)
           return call.id
@@ -91146,7 +91170,7 @@ module Adamas::HIR
       elsif receiver_type == TypeRef::BOOL
         case member_name
         when "to_s"
-          call = Call.new(ctx.next_id, TypeRef::STRING, nil, "__adamas_bool_to_string", [object_id])
+          call = Call.without_receiver(ctx.next_id, TypeRef::STRING, "__adamas_bool_to_string", [object_id])
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::STRING)
           return call.id
@@ -91850,7 +91874,7 @@ module Adamas::HIR
           end
         end
       end
-      call = Call.new(ctx.next_id, return_type, object_id, actual_name, args, nil, call_virtual)
+      call = Call.with_receiver_virtual(ctx.next_id, return_type, object_id, actual_name, args, call_virtual)
       ctx.emit(call)
       ctx.register_type(call.id, return_type)
       track_enum_return_value(call.id, actual_name, return_type)
@@ -92208,7 +92232,7 @@ module Adamas::HIR
           # Ensure the []= method is lowered
           remember_callsite_arg_types(method_name, arg_types)
           lower_function_if_needed(method_name)
-          call = Call.new(ctx.next_id, return_type, object_id, method_name, all_args)
+          call = Call.with_receiver(ctx.next_id, return_type, object_id, method_name, all_args)
           ctx.emit(call)
           ctx.register_type(call.id, return_type)
           call.id
@@ -92271,7 +92295,7 @@ module Adamas::HIR
             return_type = get_function_return_type(full_method_name)
             remember_callsite_arg_types(full_method_name, arg_types)
             lower_function_if_needed(full_method_name)
-            call = Call.new(ctx.next_id, return_type, nil, full_method_name, [value_id])
+            call = Call.without_receiver(ctx.next_id, return_type, full_method_name, [value_id])
             ctx.emit(call)
             ctx.register_type(call.id, return_type)
             return call.id
@@ -92423,7 +92447,7 @@ module Adamas::HIR
         # Ensure the setter method is lowered
         remember_callsite_arg_types(method_name, arg_types)
         lower_function_if_needed(method_name)
-        call = Call.new(ctx.next_id, return_type, object_id, method_name, [value_id])
+        call = Call.with_receiver(ctx.next_id, return_type, object_id, method_name, [value_id])
         ctx.emit(call)
         ctx.register_type(call.id, return_type)
         call.id
@@ -92547,7 +92571,7 @@ module Adamas::HIR
       end
 
       args = coerce_args_to_param_types(ctx, args, actual_name)
-      call = Call.new(ctx.next_id, return_type, nil, actual_name, args)
+      call = Call.without_receiver(ctx.next_id, return_type, actual_name, args)
       ctx.emit(call)
       ctx.register_type(call.id, return_type)
       track_enum_return_value(call.id, actual_name, return_type)
@@ -92624,8 +92648,17 @@ module Adamas::HIR
                   rhs_type = repaired
                   block.instructions.each_with_index do |inst, i|
                     if inst.is_a?(Call) && inst.id == rhs_id && inst.type == TypeRef::VOID
-                      block.instructions[i] = Call.new(rhs_id, repaired, inst.has_receiver? ? inst.receiver_value : nil, inst.method_name, inst.args,
-                        inst.block, inst.virtual)
+                      block.instructions[i] = if inst.has_receiver?
+                                                if block_id = inst.block
+                                                  Call.with_receiver_block(rhs_id, repaired, inst.receiver_value, inst.method_name, inst.args, block_id, inst.virtual)
+                                                else
+                                                  Call.with_receiver_virtual(rhs_id, repaired, inst.receiver_value, inst.method_name, inst.args, inst.virtual)
+                                                end
+                                              elsif block_id = inst.block
+                                                Call.without_receiver_block(rhs_id, repaired, inst.method_name, inst.args, block_id, inst.virtual)
+                                              else
+                                                Call.without_receiver_virtual(rhs_id, repaired, inst.method_name, inst.args, inst.virtual)
+                                              end
                       ctx.register_type(rhs_id, repaired)
                     end
                   end
@@ -92854,7 +92887,7 @@ module Adamas::HIR
       call_target = prefer_primary_call_target(method_name, primary_name, arg_types)
       return_type = get_function_return_type(call_target)
       return_type = TypeRef::INT32 if return_type == TypeRef::VOID
-      call = Call.new(ctx.next_id, return_type, rhs_id, call_target, [] of ValueId)
+      call = Call.with_receiver(ctx.next_id, return_type, rhs_id, call_target, [] of ValueId)
       ctx.emit(call)
       ctx.register_type(call.id, return_type)
       call.id
@@ -92877,7 +92910,7 @@ module Adamas::HIR
       lower_function_if_needed(primary_name)
       lower_function_if_needed(method_name) if method_name != primary_name
       call_target = prefer_primary_call_target(method_name, primary_name, arg_types)
-      call = Call.new(ctx.next_id, rhs_type, rhs_id, call_target, [start_id, count_id])
+      call = Call.with_receiver(ctx.next_id, rhs_type, rhs_id, call_target, [start_id, count_id])
       ctx.emit(call)
       ctx.register_type(call.id, rhs_type)
       call.id
@@ -93154,7 +93187,7 @@ module Adamas::HIR
           return_type = get_function_return_type(method_name)
           remember_callsite_arg_types(method_name, arg_types)
           lower_function_if_needed(method_name)
-          call = Call.new(ctx.next_id, return_type, object_id, method_name, all_args)
+          call = Call.with_receiver(ctx.next_id, return_type, object_id, method_name, all_args)
           ctx.emit(call)
           ctx.register_type(call.id, return_type)
           call.id
@@ -93252,7 +93285,7 @@ module Adamas::HIR
         end
         remember_callsite_arg_types(method_name, arg_types)
         lower_function_if_needed(method_name)
-        call = Call.new(ctx.next_id, return_type, object_id, method_name, [value_id])
+        call = Call.with_receiver(ctx.next_id, return_type, object_id, method_name, [value_id])
         ctx.emit(call)
         ctx.register_type(call.id, return_type)
         call.id
@@ -93591,7 +93624,7 @@ module Adamas::HIR
         end
       end
 
-      call = Call.new(ctx.next_id, return_type, proc_id, actual_name, param_ids)
+      call = Call.with_receiver(ctx.next_id, return_type, proc_id, actual_name, param_ids)
       ctx.emit(call)
       ctx.register_type(call.id, return_type)
 
@@ -95689,7 +95722,7 @@ module Adamas::HIR
       set_name = "#{hash_type_name}#[]="
       entries.each do |key_id, value_id|
         coerced_key_id = coerce_enum_tracked_value_to_type(ctx, key_id, key_type)
-        set_call = Call.new(ctx.next_id, value_type, hash_call.id, set_name, [coerced_key_id, value_id], nil, false)
+        set_call = Call.with_receiver_virtual(ctx.next_id, value_type, hash_call.id, set_name, [coerced_key_id, value_id], false)
         ctx.emit(set_call)
       end
 
@@ -95889,7 +95922,7 @@ module Adamas::HIR
         end
 
         if left_type == TypeRef::STRING
-          call = Call.new(ctx.next_id, TypeRef::BOOL, left_id, "__adamas_string_eq", [right_id])
+          call = Call.with_receiver(ctx.next_id, TypeRef::BOOL, left_id, "__adamas_string_eq", [right_id])
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::BOOL)
           return call.id
@@ -96049,14 +96082,14 @@ module Adamas::HIR
       ctor_name = mangle_function_name("Crystal::Hasher.new", [TypeRef::UINT64, TypeRef::UINT64])
       remember_callsite_arg_types(ctor_name, [TypeRef::UINT64, TypeRef::UINT64])
       lower_function_if_needed(ctor_name)
-      hasher = Call.new(ctx.next_id, hasher_type, nil, ctor_name, [zero_a.id, zero_b.id])
+      hasher = Call.without_receiver(ctx.next_id, hasher_type, ctor_name, [zero_a.id, zero_b.id])
       ctx.emit(hasher)
       ctx.register_type(hasher.id, hasher_type)
 
       hashed = lower_tuple_hash_with_hasher_intrinsic(ctx, tuple_id, tuple_type, hasher.id) || hasher.id
       result_name = "Crystal::Hasher#result"
       lower_function_if_needed(result_name)
-      result_call = Call.new(ctx.next_id, TypeRef::UINT64, hashed, result_name, [] of ValueId)
+      result_call = Call.with_receiver(ctx.next_id, TypeRef::UINT64, hashed, result_name, [] of ValueId)
       ctx.emit(result_call)
       ctx.register_type(result_call.id, TypeRef::UINT64)
       result_call.id
@@ -96136,7 +96169,7 @@ module Adamas::HIR
         lower_function_if_needed(resolved_name)
       end
       call_target = prefer_primary_call_target(resolved_name, primary_mangled_name, [hasher_type])
-      call = Call.new(ctx.next_id, hasher_type, value_id, call_target, [hasher_id])
+      call = Call.with_receiver(ctx.next_id, hasher_type, value_id, call_target, [hasher_id])
       ctx.emit(call)
       ctx.register_type(call.id, hasher_type)
       call.id
@@ -96241,8 +96274,8 @@ module Adamas::HIR
       # Emit: __adamas_select_ptr(is_a_bool, obj) → ptr (or null)
       # The LLVM backend emits: select i1 %is_a, ptr %obj, ptr null
       # Result is nilable: non-null = matches target type, null = nil
-      select_call = Call.new(ctx.next_id, target_type,
-        nil, "__adamas_select_ptr", [is_a_result, value_id])
+      select_call = Call.without_receiver(ctx.next_id, target_type,
+        "__adamas_select_ptr", [is_a_result, value_id])
       ctx.emit(select_call)
       ctx.register_type(select_call.id, target_type)
       # Mark this value as potentially null so lower_truthy_check emits null check

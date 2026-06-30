@@ -727,6 +727,31 @@ module Adamas::HIR
       call
     end
 
+    def self.without_receiver_block(
+      id : ValueId,
+      type : TypeRef,
+      method_name : String,
+      args : Array(ValueId),
+      block : BlockId,
+      virtual : Bool,
+    ) : Call
+      call = new(id, type, "")
+      call.configure_without_receiver_block(method_name, args, block, virtual)
+      call
+    end
+
+    def self.without_receiver_virtual(
+      id : ValueId,
+      type : TypeRef,
+      method_name : String,
+      args : Array(ValueId),
+      virtual : Bool,
+    ) : Call
+      call = new(id, type, "")
+      call.configure_without_receiver(method_name, args, virtual)
+      call
+    end
+
     def self.without_receiver(
       id : ValueId,
       type : TypeRef,
@@ -750,6 +775,31 @@ module Adamas::HIR
       @args = args
       @block_value = NO_BLOCK
       @virtual = false
+    end
+
+    def configure_without_receiver(
+      method_name : String,
+      args : Array(ValueId),
+      virtual : Bool,
+    ) : Nil
+      @receiver_value = NO_RECEIVER
+      @method_name = method_name
+      @args = args
+      @block_value = NO_BLOCK
+      @virtual = virtual
+    end
+
+    def configure_without_receiver_block(
+      method_name : String,
+      args : Array(ValueId),
+      block : BlockId,
+      virtual : Bool,
+    ) : Nil
+      @receiver_value = NO_RECEIVER
+      @method_name = method_name
+      @args = args
+      @block_value = block
+      @virtual = virtual
     end
 
     def configure_with_receiver(

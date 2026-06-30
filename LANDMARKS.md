@@ -12,6 +12,31 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-S2S3-HIR-CALL-CTOR-FACTORY-MIGRATION|verified 2026-06-30 {F:0.86 G:0.44 R:0.90}]:
+Fresh generated s2 no longer stops in
+`String#size <- AstToHir#scan_hir_function_for_live_types` while compiling
+`src/adamas.cr` to s3. Root was not the scanner/live-type consumer. Temporary
+probes first showed `options.optimize = 3` in `src/compiler/cli.cr:1003`
+emitted a malformed HIR `Call` with raw low `method_name` pointer `97`, no
+receiver, and no args; after assignment call construction was migrated to
+factories, the next malformed call came from `Path.new(*parts).to_s` in
+`src/stdlib/file.cr:681` with raw low `method_name` pointer `0`. The shared
+producer class is self-hosted misselection of overloaded `HIR::Call.new`
+constructor shapes, where receiver `ValueId`s can be consumed as method-name
+values. Fix slice: add explicit no-receiver block/virtual factories and migrate
+production HIR call construction in `AstToHir` to intent-named factories
+(`with_receiver*` / `without_receiver*`). Only the two intentional
+placeholder `Call.new(..., "")` sites remain. Evidence: `crystal build
+src/adamas.cr -o /private/tmp/adamas_call_factory_stage1 --error-trace`;
+`regression_tests/run_all_suites.sh /private/tmp/adamas_call_factory_stage1 4`
+passes 152/152 original + 36/36 combined; fresh stage1 builds fresh s2;
+fixed s2 compiling `src/adamas.cr` no longer segfaults in scanner and instead
+exits with `error: ExprId out of bounds: 260`. Static grep plus independent
+Spark scout audit found no remaining production `Call.new` sites in
+`ast_to_hir.cr`. Scope: this removes the overloaded HIR `Call.new` construction
+hazard in `AstToHir`; it does not make s2->s3 green. Residual frontier is the
+new ExprId arena-boundary diagnostic after `pass3 after lower_main call`.
+
 [LM-S2S3-IS-A-NARROWING-TARGET-CARRIER|verified 2026-06-30 {F:0.88 G:0.36 R:0.90}]:
 Fresh generated s2 no longer stops in
 `AstToHir#apply_is_a_narrowing -> TypeRef#==` while compiling `src/adamas.cr`
