@@ -8,6 +8,22 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-06-30 UPDATE: the `ExprId out of bounds: 260` s2->s3 frontier
+  moved. Root was not `lower_main` packing and not an empty arena registry:
+  a targeted `arena_for_expr?` probe showed `@main_arenas` had 177 candidate
+  arenas that covered ExprId 260, and the original `@main_arenas.each` loop
+  visited fitting candidates, but captured locals `best` / `best_size` still
+  read back as `nil` / `Int32::MAX` after the block in generated s2. Fix:
+  replace the `@inline_arenas.each` and `@main_arenas.each` fallback scans in
+  `AstToHir#arena_for_expr?` with explicit `while` loops so the selected arena
+  is assigned in the current frame. Verification: fresh stage1 builds; full
+  suites pass (`152/152` original + `36/36` combined); fresh fixed stage1
+  builds fresh s2; fixed s2 compiling `src/adamas.cr` no longer raises
+  `ExprId out of bounds: 260`. Residual frontier: fixed s2->s3 now exits 139
+  after `[STAGE2_DEBUG] pass3 after lower_main call`; lldb stops in
+  `AstToHir#lower_unless` while lowering an inlined yield path. Do not claim
+  green s2->s3/s3b.
+
 - 2026-06-30 UPDATE: the `String#size <-
   scan_hir_function_for_live_types` s2->s3 SIGSEGV moved again. Two
   independent probes pinned the same producer family: after the earlier central

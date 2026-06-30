@@ -12296,21 +12296,28 @@ module Adamas::HIR
       return nil if expr_id.index < 0
       return @arena if expr_id.index < @arena.size
       if arenas = @inline_arenas
-        arenas.each do |candidate|
+        idx = 0
+        while idx < arenas.size
+          candidate = arenas.unsafe_fetch(idx)
           return candidate if expr_id.index < candidate.size
+          idx += 1
         end
       end
       # Fallback: scan known arenas (macros/expansions) for an index match.
       if !@main_arenas.empty?
         best = nil
         best_size = Int32::MAX
-        @main_arenas.each do |candidate|
-          next unless expr_id.index < candidate.size
-          size = candidate.size
-          if size < best_size
-            best = candidate
-            best_size = size
+        idx = 0
+        while idx < @main_arenas.size
+          candidate = @main_arenas.unsafe_fetch(idx)
+          if expr_id.index < candidate.size
+            size = candidate.size
+            if size < best_size
+              best = candidate
+              best_size = size
+            end
           end
+          idx += 1
         end
         return best if best
       end

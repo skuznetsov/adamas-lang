@@ -12,6 +12,28 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-S2S3-ARENA-FALLBACK-CAPTURED-LOCAL|verified 2026-06-30 {F:0.86 G:0.30 R:0.90}]:
+Fresh generated s2 no longer stops with
+`error: ExprId out of bounds: 260 (arena=:67, current=:67, main_arenas=398,
+inline_arenas=0)` while compiling `src/adamas.cr` to s3. Root was not packed
+main expressions and not an empty arena registry. A targeted probe in
+`arena_for_expr?` showed `@main_arenas` contained 177 arenas whose size covered
+ExprId 260 and the original `@main_arenas.each` loop visited matching
+candidates, but the captured locals `best` / `best_size` were still `nil` /
+`Int32::MAX` after the block returned in generated s2. Fix slice: replace the
+`@inline_arenas.each` and `@main_arenas.each` fallback scans in
+`AstToHir#arena_for_expr?` with explicit `while` loops so the selected arena is
+written in the current frame. Evidence: `crystal build src/adamas.cr -o
+/private/tmp/adamas_exprfix_stage1 --error-trace`; `regression_tests/run_all_suites.sh
+/private/tmp/adamas_exprfix_stage1 4` passes 152/152 original + 36/36
+combined; fresh fixed stage1 builds fresh s2; fixed s2 compiling
+`src/adamas.cr` no longer raises the ExprId 260 OOB and instead reaches the
+next frontier, a SIGSEGV in `AstToHir#lower_unless` after
+`[STAGE2_DEBUG] pass3 after lower_main call`. Scope: this is a bounded
+arena-fallback repair for a directly observed captured-local writeback failure;
+it does not fix the broader block-capture family and does not make s2->s3
+green.
+
 [LM-S2S3-HIR-CALL-CTOR-FACTORY-MIGRATION|verified 2026-06-30 {F:0.86 G:0.44 R:0.90}]:
 Fresh generated s2 no longer stops in
 `String#size <- AstToHir#scan_hir_function_for_live_types` while compiling
