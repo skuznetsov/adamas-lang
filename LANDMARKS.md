@@ -7323,6 +7323,52 @@ Adversary notes:
 
 Trust: {F/G/R: 0.86/0.43/0.88} [verified for the central receiver-call constructor frontier]
 
+### LM-626 - Splat formal lookup avoids Array#find in pack_splat_args_for_call
+
+The s2->s3 crash at `AstToHir#pack_splat_args_for_call` was localized to a
+block-helper lookup over compiler parameter metadata. Temporary probes on fresh
+fixed s2 showed the failing call was
+`Adamas::Compiler::LSP::ToolDispatch.resolve_server_path` lowering
+`File.join$Path | String_splat` with two `String` args. The first manual splat
+scan read the single `DefParamInfo` correctly (`is_splat=1`,
+`is_double_splat=0`), the fixed/splat/post slices were valid, and
+`splat_types=String,String` was produced. The next operation,
+`params.find { |p| p.is_splat && !p.is_double_splat }`, crashed before
+returning `splat_param`.
+
+The fix replaces that one compiler-critical `Array#find` call with an explicit
+`params.each` scan. It does not change splat packing semantics; it only avoids a
+self-host-brittle block helper in the bootstrap compiler's metadata path.
+
+Evidence:
+
+- `crystal build src/adamas.cr -o /tmp/adamas_pack_find_stage1 --error-trace`
+  -> exit 0.
+- Focused guards passed on the same stage1:
+  `hir_call_receiver_factory_guard.sh`,
+  `hir_pack_splat_param_find_guard.sh`,
+  `p2_short_type_index_first_no_prelude.sh`, and
+  `class_method_noarg_super_forward_repro.sh`.
+- `regression_tests/run_all_suites.sh /tmp/adamas_pack_find_stage1 4` ->
+  152/152 original tests and 36/36 combined tests, all passed.
+- `scripts/run_safe.sh /tmp/adamas_pack_find_stage1 900 12288
+  src/adamas.cr -o /tmp/adamas_pack_find_s2` -> exit 0.
+- Fresh fixed s2 compiling `src/adamas.cr` no longer exits 139 in
+  `pack_splat_args_for_call`; it now aborts with `STUB CALLED:
+  Adamas::HIR::AstToHir#contains_yield_deep?$Array(ExprId)_AstArena|PageArena|VirtualArena`.
+
+Adversary notes:
+
+- This is a frontier move, not a green bootstrap claim. The fresh fixed s2
+  still does not build s3.
+- The fix is intentionally scoped to the observed `params.find` in
+  `pack_splat_args_for_call`. It does not claim that every `Array#find` use in
+  the compiler is unsafe or fixed.
+- The new residual frontier is a materialization/stub boundary for
+  `contains_yield_deep?`, not evidence against the splat-param lookup move.
+
+Trust: {F/G/R: 0.84/0.38/0.86} [verified for the File.join splat-param find crash]
+
 ### LM-665 - Generated s2 preserves nested static method owner during body registration
 
 Generated s2 now registers a nested static method body under the same owner

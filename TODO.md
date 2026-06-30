@@ -8,6 +8,28 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-06-29 UPDATE: the `AstToHir#pack_splat_args_for_call` s2->s3
+  SIGSEGV moved. Temporary probes on fresh fixed s2 pinned the crash to
+  `Adamas::Compiler::LSP::ToolDispatch.resolve_server_path` lowering
+  `File.join$Path | String_splat` with two `String` args. The first splat
+  param scan, array slicing, and `splat_types=String,String` were readable; the
+  bad transition was the later `params.find { |p| p.is_splat &&
+  !p.is_double_splat }` callback before `splat_param` returned. This matches
+  the existing self-host brittle-helper pattern for block-based metadata scans.
+  Fix: replace only that compiler-critical `Array#find` call with an explicit
+  `params.each` loop; splat semantics are unchanged. Guard:
+  `regression_tests/hir_pack_splat_param_find_guard.sh`. Verification:
+  fresh stage1 builds; focused guards
+  `hir_call_receiver_factory_guard.sh`,
+  `hir_pack_splat_param_find_guard.sh`,
+  `p2_short_type_index_first_no_prelude.sh`, and
+  `class_method_noarg_super_forward_repro.sh` pass; full suites pass
+  (`152/152` original + `36/36` combined); fresh stage1 builds fresh s2.
+  Residual frontier: fresh fixed s2 compiling `src/adamas.cr` no longer
+  segfaults in `pack_splat_args_for_call`; it aborts with `STUB CALLED:
+  Adamas::HIR::AstToHir#contains_yield_deep?$Array(ExprId)_AstArena|PageArena|VirtualArena`.
+  Do not claim green s2->s3/s3b.
+
 - 2026-06-29 UPDATE: the `String#size <-
   scan_hir_function_for_live_types` s2->s3 frontier moved. Read-only probes
   before the fix showed that `lower_call` resolved

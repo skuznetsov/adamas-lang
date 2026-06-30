@@ -80789,7 +80789,13 @@ module Adamas::HIR
       # via the formal Enumerable-typed signature read 16B union slots,
       # producing garbage reads. Only override when the formal is a union
       # — concrete formals already match concrete args.
-      splat_param = params.find { |p| p.is_splat && !p.is_double_splat }
+      splat_param : DefParamInfo? = nil
+      params.each do |param|
+        if param.is_splat && !param.is_double_splat
+          splat_param = param
+          break
+        end
+      end
       if splat_param && (formal_ta = splat_param.type_annotation)
         formal_name = formal_ta
         if !formal_name.empty? && (formal_context = function_context_from_name(func_name))
