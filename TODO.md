@@ -9,6 +9,31 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
 - 2026-06-30 UPDATE: the
+  `__adamas_string_eq <- __crystal_proc_653 <-
+  LLVMIRGenerator#emit_extern_call` s2->s3 SIGSEGV moved. IR and lldb
+  disassembly pinned `__crystal_proc_653` to the heap Proc body for
+  `cast_fixed_arg` in `emit_extern_call`: the generated function expected
+  five user parameters including two full `Nil | TypeRef` union arguments, but
+  the indirect-call emission path unconditionally unwrapped every union
+  argument as if the call were raw yield dispatch. That shifted the Proc ABI:
+  `expected_type` was never passed in the expected register, and the first
+  `expected_type == "void"` string comparison crashed. A standalone reducer
+  with a heap Proc `(String, Wrap?, String, String, Wrap?)` returned `REF`
+  before the fix because the second nilable argument was shifted into the
+  later `String` slot. Fix: add an explicit `unwrap_union_args` mode to
+  `MIR::IndirectCall`, keep the old unwrap-by-default behavior for raw yield
+  callbacks, and make heap Proc dispatch preserve full union arguments.
+  Verification: fresh stage1 builds; the new
+  `regression_tests/proc_nilable_union_arg_indirect_call_repro.sh` passes and
+  prints `VALUE`; full suites pass (`152/152` original + `36/36` combined);
+  fresh fixed stage1 builds fresh s2; fixed s2->s3 no longer reaches
+  `__crystal_proc_653` / `emit_extern_call` and now exits 139 after
+  `pass3 after lower_main call` in
+  `Hash(Tuple(UInt32, UInt32), Nil)#entry_matches? <- Set#add <-
+  AstToHir#lower_break`. This is a bounded heap Proc indirect-call ABI repair,
+  not a global Proc/yield ABI redesign and not a green s2->s3/s3b claim.
+
+- 2026-06-30 UPDATE: the
   `MIR::TypeRef#hash <- Hash(MIR::TypeRef, String)#[]? <-
   LLVMTypeMapper#llvm_type <- LLVMIRGenerator#emit_string_interpolation`
   s2->s3 SIGSEGV moved. Pointer-safe probes showed the interpolation metadata

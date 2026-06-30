@@ -12,6 +12,34 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-S2S3-HEAP-PROC-INDIRECT-UNION-ARG-ABI|verified 2026-06-30 {F:0.86 G:0.30 R:0.89}]:
+Fresh generated s2 no longer stops in
+`__adamas_string_eq <- __crystal_proc_653 <-
+LLVMIRGenerator#emit_extern_call` while compiling `src/adamas.cr` to s3. IR
+and lldb disassembly tied `__crystal_proc_653` to the heap Proc body for
+`cast_fixed_arg`: the generated function expected declared Proc parameters,
+including full `Nil | TypeRef` union arguments, but `emit_indirect_call`
+unconditionally unwrapped every union argument as if the indirect call were raw
+yield dispatch. That shifted the Proc ABI and left `expected_type` stale before
+the first `expected_type == "void"` comparison. A standalone reducer
+`(String, Wrap?, String, String, Wrap?)` returned `REF` before the fix and
+`VALUE` after the fix, proving the second nilable argument was preserved only
+when heap Proc calls pass full unions. Fix slice: add
+`MIR::IndirectCall#unwrap_union_args` with the existing unwrap behavior as the
+default, preserve that default for raw yield callbacks, and set
+`unwrap_union_args: false` only in heap Proc dispatch. Evidence:
+`crystal build src/adamas.cr -o /private/tmp/adamas_procabi_stage1
+--error-trace`; `regression_tests/proc_nilable_union_arg_indirect_call_repro.sh
+/private/tmp/adamas_procabi_stage1` passes; `regression_tests/run_all_suites.sh
+/private/tmp/adamas_procabi_stage1 4` passes 152/152 original + 36/36
+combined; fresh fixed stage1 builds fresh s2; fixed s2->s3 now stops in the
+later frontier
+`Hash(Tuple(UInt32, UInt32), Nil)#entry_matches? <- Set#add <-
+AstToHir#lower_break`, not in `__crystal_proc_653` or
+`LLVMIRGenerator#emit_extern_call`. Scope: this is a bounded heap Proc
+indirect-call union-argument ABI repair, not a global Proc/yield ABI redesign
+and not a green s2->s3/s3b claim.
+
 [LM-S2S3-INTERPOLATION-I32-ARG-TYPEREF-HELPER-ABI|verified 2026-06-30 {F:0.86 G:0.26 R:0.89}]:
 Fresh generated s2 no longer stops in
 `MIR::TypeRef#hash <- Hash(MIR::TypeRef, String)#[]? <-

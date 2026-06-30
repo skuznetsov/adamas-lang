@@ -1833,8 +1833,9 @@ module Adamas::MIR
   class IndirectCall < Value
     getter callee_ptr : ValueId
     getter args : Array(ValueId)
+    getter unwrap_union_args : Bool
 
-    def initialize(id : ValueId, type : TypeRef, @callee_ptr : ValueId, @args : Array(ValueId))
+    def initialize(id : ValueId, type : TypeRef, @callee_ptr : ValueId, @args : Array(ValueId), @unwrap_union_args : Bool = true)
       super(id, type)
     end
 
@@ -1848,7 +1849,9 @@ module Adamas::MIR
         io << ", " if idx > 0
         io << "%" << arg
       end
-      io << ") : " << @type
+      io << ")"
+      io << " preserve_unions" unless @unwrap_union_args
+      io << " : " << @type
     end
   end
 
@@ -2721,8 +2724,8 @@ module Adamas::MIR
       emit(Call.new(@function.next_value_id, return_type, callee, args))
     end
 
-    def call_indirect(callee_ptr : ValueId, args : Array(ValueId), return_type : TypeRef) : ValueId
-      emit(IndirectCall.new(@function.next_value_id, return_type, callee_ptr, args))
+    def call_indirect(callee_ptr : ValueId, args : Array(ValueId), return_type : TypeRef, unwrap_union_args : Bool = true) : ValueId
+      emit(IndirectCall.new(@function.next_value_id, return_type, callee_ptr, args, unwrap_union_args))
     end
 
     def extern_call(extern_name : String, args : Array(ValueId), return_type : TypeRef) : ValueId

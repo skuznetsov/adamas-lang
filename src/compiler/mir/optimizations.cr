@@ -1573,7 +1573,7 @@ module Adamas::MIR
         callee_ptr = resolve(inst.callee_ptr, replacements, block_id, inst_index, def_blocks, def_index, dominance_info)
         new_args = inst.args.map { |a| resolve(a, replacements, block_id, inst_index, def_blocks, def_index, dominance_info) }
         return inst if callee_ptr == inst.callee_ptr && new_args == inst.args
-        IndirectCall.new(inst.id, inst.type, callee_ptr, new_args)
+        IndirectCall.new(inst.id, inst.type, callee_ptr, new_args, inst.unwrap_union_args)
       else
         inst
       end

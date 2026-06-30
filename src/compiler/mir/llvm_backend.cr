@@ -22655,8 +22655,9 @@ module Adamas::MIR
       needs_scalar_to_union_wrap = false
       scalar_to_union_target_type = ""
       callee = value_ref(inst.callee_ptr)
-      # Handle args: union types need special handling - pass ptr to slot/alloca, not loaded value.
-      # Non-union values should be passed by value with their LLVM type.
+      # Raw yield callbacks historically receive union payloads. Heap Proc
+      # objects call compiler-generated proc bodies whose signatures use the
+      # declared parameter types, so the MIR call site selects the ABI mode.
       arg_strs = inst.args.compact_map do |a|
         arg_type = @value_types[a]?
         next if arg_type == TypeRef::VOID
@@ -22671,7 +22672,7 @@ module Adamas::MIR
             else
               "ptr #{val}"
             end
-          elsif arg_llvm_type.includes?(".union")
+          elsif arg_llvm_type.includes?(".union") && inst.unwrap_union_args
             # Indirect calls are yield dispatch to block procs. Block procs
             # expect the unwrapped element value (ptr for reference types,
             # value-as-ptr for primitives), NOT a pointer to the whole union.
@@ -22693,6 +22694,8 @@ module Adamas::MIR
             @cond_counter += 1
             emit "#{extracted} = load ptr, ptr #{payload_ptr}, align 4"
             "ptr #{extracted}"
+          elsif arg_llvm_type.includes?(".union")
+            "#{arg_llvm_type} #{normalize_union_value(value_ref(a), arg_llvm_type)}"
           else
             "#{arg_llvm_type} #{value_ref(a)}"
           end

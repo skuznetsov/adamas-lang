@@ -3863,11 +3863,11 @@ module Adamas
         builder.branch(env_is_null, raw_block, env_block)
 
         builder.current_block = raw_block
-        raw_result = builder.call_indirect(fn_ptr, user_args, return_type)
+        raw_result = builder.call_indirect(fn_ptr, user_args, return_type, unwrap_union_args: false)
         builder.jump(merge_block)
 
         builder.current_block = env_block
-        env_result = builder.call_indirect(fn_ptr, [env_ptr] + user_args, return_type)
+        env_result = builder.call_indirect(fn_ptr, [env_ptr] + user_args, return_type, unwrap_union_args: false)
         builder.jump(merge_block)
 
         builder.current_block = merge_block

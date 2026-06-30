@@ -177,7 +177,8 @@ module Adamas::MIR
         @function.next_value_id,
         call.type,
         call.callee_ptr,
-        call.args.dup
+        call.args.dup,
+        call.unwrap_union_args
       )
       slow_path.add(slow_result)
       slow_path.terminator = Jump.new(merge_block_id)
