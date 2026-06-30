@@ -12,6 +12,36 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-S2S3-HASH-ENTRY-PRIMITIVE-TUPLE-FIELDGET-ABI|verified 2026-06-30 {F:0.87 G:0.34 R:0.89}]:
+Fresh generated s2 no longer stops in
+`Hash(Tuple(UInt32, UInt32), Nil)#entry_matches? <- Set#add <-
+AstToHir#lower_break` while compiling `src/adamas.cr` to s3. lldb on the
+crashing baseline s2 showed the incoming lookup key was a valid tuple pointer,
+but the existing `Hash::Entry` stored the primitive tuple key inline in the
+entry body. The generated `entry_matches?` consumer loaded the first entry word
+as a pointer (`ldr x9, [entry]`) and then dereferenced it, misreading inline
+tuple fields as an address. Producer-side disassembly of `Hash::Entry#initialize`
+and `Hash#set_entry` showed the write path already copied the tuple payload
+inline. Root-shaped boundary: `FieldGet @key` for a primitive Tuple/NamedTuple
+field inside an inline-container struct receiver (`Hash::Entry`) used the
+pointer-carrier read path instead of borrowing the field address. Fix slice:
+when `lower_field_get` sees an inline primitive tuple field on an
+inline-container struct receiver, return the field GEP and mark it as an inline
+aggregate pointer. Evidence: `crystal build src/adamas.cr -o
+/private/tmp/adamas_deadset_stage1_fix --error-trace`; focused
+`Set(Tuple(UInt32, UInt32))` reducer prints `true/true/2`; patched s2
+disassembly for the same `entry_matches?` directly reads `[entry]` and
+`[entry+4]` without dereferencing `[entry]`; `regression_tests/run_all_suites.sh
+/private/tmp/adamas_deadset_stage1_fix 4` passes 152/152 original + 36/36
+combined; fresh fixed stage1 builds fresh s2; fixed s2->s3 now stops in the
+later frontier
+`__adamas_string_eq <- __crystal_proc_1627 <-
+AstToHir#lower_generic_type_ref`, not in `Hash(Tuple(UInt32, UInt32),
+Nil)#entry_matches?`. Scope: this is an inline-container field-read ABI repair
+for primitive tuple payloads, not a global Hash rewrite and not a green
+s2->s3/s3b claim. Decay trigger: any rewrite of `Hash::Entry` container layout,
+primitive tuple carrier rules, or `lower_field_get` aggregate read semantics.
+
 [LM-S2S3-HEAP-PROC-INDIRECT-UNION-ARG-ABI|verified 2026-06-30 {F:0.86 G:0.30 R:0.89}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_653 <-

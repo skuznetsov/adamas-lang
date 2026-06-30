@@ -5631,6 +5631,19 @@ module Adamas
         false
       end
 
+      # Inline-container structs (currently Hash::Entry/Slice/StaticArray families)
+      # store their own field payloads as inline bytes. A primitive Tuple field read
+      # from such a receiver must therefore borrow the field address; loading a ptr
+      # from the slot misreads the first tuple words as an address.
+      private def field_receiver_is_inline_container_struct?(object_id : HIR::ValueId) : Bool
+        if obj_hir_type = @hir_value_types[object_id]?
+          if mir_type = @mir_module.type_registry.get(convert_type(obj_hir_type))
+            return inline_container_struct_type?(mir_type)
+          end
+        end
+        false
+      end
+
       private def lower_field_get(field : HIR::FieldGet) : ValueId
         builder = @builder.not_nil!
         field_hir_type = @hir_value_types[field.id]? || field.type
@@ -5645,6 +5658,16 @@ module Adamas
         # GEP to field address
         # field_offset is byte offset from object start
         field_ptr = builder.gep(obj_ptr, [field.field_offset.to_u32], TypeRef::POINTER)
+
+        if hir_type_is_inline_pointer_tuple?(field_hir_type) &&
+           field_receiver_is_inline_container_struct?(field.object)
+          @inline_struct_ptrs << field.id
+          if Adamas::LayoutProbe.enabled?
+            probe_field_event("lower_field_get.inline_container_tuple", "field-get", "consumer",
+              field_hir_type, "BorrowedAddress", hir_type_inline_size(field_hir_type).to_i64)
+          end
+          return field_ptr
+        end
 
         # Large struct fields (> pointer size) are stored INLINE in their parent object.
         # Return the GEP pointer directly — no additional load needed.

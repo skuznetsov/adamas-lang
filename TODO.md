@@ -9,6 +9,29 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
 - 2026-06-30 UPDATE: the
+  `Hash(Tuple(UInt32, UInt32), Nil)#entry_matches? <- Set#add <-
+  AstToHir#lower_break` s2->s3 SIGSEGV moved. lldb on the crashing generated
+  s2 showed the new lookup key was a valid tuple pointer, but the existing
+  Hash entry stored the tuple key inline at offset 0 (`UInt32` fields in the
+  entry body). The generated `entry_matches?` consumer nevertheless emitted
+  `ldr x9, [entry]` and dereferenced that word as a tuple pointer. `set_entry`
+  and `Hash::Entry#initialize` already copied the primitive tuple payload
+  inline, so the first bad boundary was the read side: `FieldGet @key` from an
+  inline-container receiver (`Hash::Entry`) treated a primitive tuple field as a
+  pointer-carrier. Fix: when a primitive Tuple/NamedTuple field is read from an
+  inline-container struct receiver, return the field address as a borrowed
+  inline aggregate, matching the existing store/memcpy path. Verification:
+  fresh stage1 builds; focused `Set(Tuple(UInt32, UInt32))` reducer still
+  prints `true/true/2`; patched s2 disassembly for the same `entry_matches?`
+  now directly reads `[entry]` and `[entry+4]` instead of dereferencing
+  `[entry]` as a pointer; full suites pass (`152/152` original + `36/36`
+  combined); fresh fixed stage1 builds fresh s2; fixed s2->s3 no longer stops
+  in `Hash(Tuple(UInt32, UInt32), Nil)#entry_matches?` and now exits 139 in
+  `__adamas_string_eq <- __crystal_proc_1627 <-
+  AstToHir#lower_generic_type_ref`. This is an inline-container field-read ABI
+  repair, not a green s2->s3/s3b claim.
+
+- 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_653 <-
   LLVMIRGenerator#emit_extern_call` s2->s3 SIGSEGV moved. IR and lldb
   disassembly pinned `__crystal_proc_653` to the heap Proc body for
