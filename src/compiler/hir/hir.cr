@@ -688,6 +688,45 @@ module Adamas::HIR
     @block_value : BlockId = NO_BLOCK
     getter virtual : Bool
 
+    def self.with_receiver(
+      id : ValueId,
+      type : TypeRef,
+      receiver : ValueId,
+      method_name : String,
+      args : Array(ValueId),
+    ) : Call
+      call = new(id, type, "")
+      call.configure_with_receiver(receiver, method_name, args, false)
+      call
+    end
+
+    def self.with_receiver_virtual(
+      id : ValueId,
+      type : TypeRef,
+      receiver : ValueId,
+      method_name : String,
+      args : Array(ValueId),
+      virtual : Bool,
+    ) : Call
+      call = new(id, type, "")
+      call.configure_with_receiver(receiver, method_name, args, virtual)
+      call
+    end
+
+    def self.with_receiver_block(
+      id : ValueId,
+      type : TypeRef,
+      receiver : ValueId,
+      method_name : String,
+      args : Array(ValueId),
+      block : BlockId,
+      virtual : Bool,
+    ) : Call
+      call = new(id, type, "")
+      call.configure_with_receiver_block(receiver, method_name, args, block, virtual)
+      call
+    end
+
     def self.without_receiver(
       id : ValueId,
       type : TypeRef,
@@ -711,6 +750,33 @@ module Adamas::HIR
       @args = args
       @block_value = NO_BLOCK
       @virtual = false
+    end
+
+    def configure_with_receiver(
+      receiver : ValueId,
+      method_name : String,
+      args : Array(ValueId),
+      virtual : Bool,
+    ) : Nil
+      @receiver_value = receiver
+      @method_name = method_name
+      @args = args
+      @block_value = NO_BLOCK
+      @virtual = virtual
+    end
+
+    def configure_with_receiver_block(
+      receiver : ValueId,
+      method_name : String,
+      args : Array(ValueId),
+      block : BlockId,
+      virtual : Bool,
+    ) : Nil
+      @receiver_value = receiver
+      @method_name = method_name
+      @args = args
+      @block_value = block
+      @virtual = virtual
     end
 
     def initialize(

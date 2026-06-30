@@ -79611,11 +79611,11 @@ module Adamas::HIR
       call = if receiver_id
                recv_id = receiver_id.not_nil!
                if has_block_call && block_id
-                 Call.new(ctx.next_id, return_type, recv_id, emit_method_name, args, block_id.not_nil!, call_virtual)
+                 Call.with_receiver_block(ctx.next_id, return_type, recv_id, emit_method_name, args, block_id.not_nil!, call_virtual)
                elsif call_virtual
-                 Call.new(ctx.next_id, return_type, recv_id, emit_method_name, args, true)
+                 Call.with_receiver_virtual(ctx.next_id, return_type, recv_id, emit_method_name, args, true)
                else
-                 Call.new(ctx.next_id, return_type, recv_id, emit_method_name, args)
+                 Call.with_receiver(ctx.next_id, return_type, recv_id, emit_method_name, args)
                end
              elsif has_block_call && block_id
                Call.new(ctx.next_id, return_type, emit_method_name, args, block_id.not_nil!, call_virtual)

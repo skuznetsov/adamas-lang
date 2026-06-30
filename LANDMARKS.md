@@ -7280,6 +7280,49 @@ WBA framing:
 
 Trust: {F/G/R: 0.88/0.50/0.89} [verified]
 
+### LM-625 - Receiver HIR calls avoid overloaded constructor dispatch in lower_call
+
+The s2->s3 crash at `String#size <- scan_hir_function_for_live_types` was a
+producer bug in central `lower_call`, not an RTA consumer bug. Pointer-safe
+probes before the fix showed that `src/adamas.cr:20:3` resolved as
+`IO#puts$String` with receiver `IO::FileDescriptor`, `virtual=true`, and
+`ret=Nil`, but the emitted HIR `Call` already had `method_name` as tiny
+pointer/value id `126`, no receiver, no args, and type `Symbol`. That bad HIR
+value later crashed live-type scanning.
+
+The fix adds named `HIR::Call.with_receiver*` factories and routes the receiver
+branch of `lower_call` through those factories, so the self-hosted compiler no
+longer depends on overloaded `Call.new(...)` dispatch for receiver calls at
+that chokepoint. Receiverless calls are intentionally unchanged in this slice.
+
+Evidence:
+
+- `regression_tests/hir_call_receiver_factory_guard.sh
+  /tmp/adamas_call_factory_stage1` -> `hir_call_receiver_factory_guard_ok`.
+- Focused guards also passed on the same stage1:
+  `p2_short_type_index_first_no_prelude.sh`,
+  `multi_ref_union_truthy_narrowing_repro.sh`, and
+  `class_method_noarg_super_forward_repro.sh`.
+- `regression_tests/run_all_suites.sh /tmp/adamas_call_factory_stage1 4` ->
+  152/152 original tests and 36/36 combined tests, all passed.
+- `scripts/run_safe.sh /tmp/adamas_call_factory_stage1 900 12288
+  src/adamas.cr -o /tmp/adamas_call_factory_s2` -> exit 0.
+- Fresh fixed s2 compiling `src/adamas.cr` no longer stops in
+  `String#size <- scan_hir_function_for_live_types`. `lldb` now stops at
+  `AstToHir#pack_splat_args_for_call <- lower_call` after
+  `[STAGE2_DEBUG] pass3 after lower_main call`.
+
+Adversary notes:
+
+- This is a frontier move, not a green bootstrap claim. The fresh fixed s2
+  still exits 139 while compiling `src/adamas.cr` to s3.
+- The guard is intentionally scoped to the central receiver branch. It does not
+  prove that every overloaded `Call.new` constructor site is self-host safe.
+- A consumer guard in live-type scanning would have hidden the producer
+  corruption and is not the fix shape used here.
+
+Trust: {F/G/R: 0.86/0.43/0.88} [verified for the central receiver-call constructor frontier]
+
 ### LM-665 - Generated s2 preserves nested static method owner during body registration
 
 Generated s2 now registers a nested static method body under the same owner

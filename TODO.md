@@ -8,6 +8,29 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-06-29 UPDATE: the `String#size <-
+  scan_hir_function_for_live_types` s2->s3 frontier moved. Read-only probes
+  before the fix showed that `lower_call` resolved
+  `src/adamas.cr:20:3` as `IO#puts$String` with receiver
+  `IO::FileDescriptor`, `virtual=true`, and `ret=Nil`, but the constructed
+  HIR `Call` at emit time had `method_name` as tiny pointer/value id `126`,
+  no receiver, no args, and type `Symbol`. The bad value was therefore produced
+  by the overloaded receiver `Call.new(...)` constructor path in central
+  `lower_call`, not by RTA/live-type scanning. The fix adds named
+  `HIR::Call.with_receiver*` factories and routes the receiver branch through
+  them, leaving receiverless calls unchanged. Guard:
+  `regression_tests/hir_call_receiver_factory_guard.sh`. Verification:
+  fresh stage1 builds; focused guards
+  `hir_call_receiver_factory_guard.sh`,
+  `p2_short_type_index_first_no_prelude.sh`,
+  `multi_ref_union_truthy_narrowing_repro.sh`, and
+  `class_method_noarg_super_forward_repro.sh` pass; full suites pass
+  (`152/152` original + `36/36` combined); fresh stage1 builds fresh s2.
+  Residual frontier: fresh fixed s2 compiling `src/adamas.cr` no longer stops
+  in `String#size <- scan_hir_function_for_live_types`; lldb now stops in
+  `AstToHir#pack_splat_args_for_call <- lower_call` after
+  `[STAGE2_DEBUG] pass3 after lower_main call`. Do not claim green s2->s3/s3b.
+
 - 2026-06-29 UPDATE: the `s2 -> s3` frontier moved past
   `error: Index out of bounds` after `pass3 after lower_main call`. Root was
   not MIR/LLVM and not `Exception#backtrace?` itself: lldb on fresh s2 stopped
