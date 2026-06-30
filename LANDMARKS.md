@@ -12,6 +12,31 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-S2S3-BLOCK-ARENA-LOWERING|verified 2026-06-30 {F:0.85 G:0.34 R:0.89}]:
+Fresh generated s2 no longer stops in
+`NodeSlot#node <- AstArena#[] <- AstToHir#collect_assigned_vars_in_expr <-
+AstToHir#lower_block_to_block_id` while compiling `src/adamas.cr` to s3.
+Baseline lldb stopped in `NodeSlot#node` with an ASCII-looking fault address,
+but env-gated boundary probes showed the first bad transition was earlier:
+`lower_block_to_block_id` entered for `Exception#inspect_with_backtrace$IO`
+with a cached block arena `size=138` and `body_max=76`, while the current
+caller arena was `size=41`. The method then unconditionally wrote
+`@block_node_arenas[node.object_id] = @arena`, clobbering the correct cached
+arena before `collect_assigned_vars` read body expr `76` from arena `41`.
+Fix slice: resolve the block arena at `lower_block_to_block_id` entry from
+the existing cache / `resolve_arena_for_block` / caller fallback, store it via
+`store_block_arena`, lower the block with `@arena` set to that block arena,
+and restore the caller arena in `ensure`. Evidence:
+`crystal build src/adamas.cr -o /private/tmp/adamas_arena_fix_stage1
+--error-trace`; fresh fixed stage1 builds fresh s2; fixed s2 compiling
+`src/adamas.cr` no longer crashes in `collect_assigned_vars_in_expr` and
+instead reaches the next frontier,
+`AstToHir#lower_enum_predicate <- AstToHir#lower_member_access <-
+AstToHir#lower_if`; `regression_tests/run_all_suites.sh
+/private/tmp/adamas_arena_fix_stage1 4` passes 152/152 original + 36/36
+combined. Scope: this is a bounded block-arena lifetime repair, not a global
+AstArena/NodeSlot storage fix and not a green s2->s3 claim.
+
 [LM-S2S3-MEMBER-ACCESS-SUFFIX-STRIP|verified 2026-06-30 {F:0.84 G:0.30 R:0.89}]:
 Fresh generated s2 no longer stops in
 `String#bytesize <- AstToHir#parse_method_name <- AstToHir#apply_default_args`

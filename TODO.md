@@ -8,6 +8,26 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-06-30 UPDATE: the
+  `NodeSlot#node <- AstArena#[] <- AstToHir#collect_assigned_vars_in_expr <-
+  AstToHir#lower_block_to_block_id` s2->s3 SIGSEGV moved. Boundary probes
+  showed this was not a `NodeSlot` storage root: the failing block body had
+  expr `76`, and a valid cached block arena existed with `size=138` /
+  `body_max=76`, but `lower_block_to_block_id` was entered with a current
+  caller arena of `size=41`. The method then unconditionally overwrote
+  `@block_node_arenas[node.object_id] = @arena`, clobbering the correct block
+  arena before `collect_assigned_vars` read body expr `76` from arena `41`.
+  Fix: choose the block arena at `lower_block_to_block_id` entry from
+  existing cache / `resolve_arena_for_block` / caller fallback, store it with
+  `store_block_arena`, lower the block with `@arena` set to that arena, and
+  restore the caller arena in `ensure`. Verification: fresh stage1 builds;
+  full suites pass (`152/152` original + `36/36` combined); fresh fixed stage1
+  builds fresh s2; fixed s2 no longer crashes in `collect_assigned_vars`.
+  Residual frontier: fixed s2->s3 still exits 139 after
+  `[STAGE2_DEBUG] pass3 after lower_main call`, now in
+  `AstToHir#lower_enum_predicate <- AstToHir#lower_member_access <-
+  AstToHir#lower_if`. Do not claim green s2->s3/s3b.
+
 - 2026-06-30 UPDATE: the `String#bytesize <-
   AstToHir#parse_method_name <- AstToHir#apply_default_args` s2->s3 SIGSEGV
   moved. lldb showed `parse_method_name` received `x0=0x10`. Targeted

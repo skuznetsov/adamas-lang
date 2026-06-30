@@ -93495,7 +93495,12 @@ module Adamas::HIR
       end
 
       saved_block = ctx.current_block
-      @block_node_arenas[node.object_id] = @arena
+      saved_arena_for_block = @arena
+      block_arena = @block_node_arenas[node.object_id]? ||
+                    resolve_arena_for_block(node, saved_arena_for_block) ||
+                    saved_arena_for_block
+      @arena = block_arena
+      store_block_arena(node.object_id, block_arena)
       @block_owner[node.object_id] = BlockOwner.new(@current_class, @current_method, @current_method_is_class)
       @block_owner_function_ids[node.object_id] = ctx.function.id
       if ctx.lookup_local("self").nil?
@@ -93585,6 +93590,7 @@ module Adamas::HIR
       @block_lowering_cache[cache_key] = body_block
       body_block
     ensure
+      @arena = saved_arena_for_block if saved_arena_for_block
       @block_lowering_in_progress.delete(cache_key)
     end
 
