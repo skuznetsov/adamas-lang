@@ -97866,16 +97866,21 @@ module Adamas::HIR
 
       idx = 0
       if params = node.params
-        each_param(params) do |param|
-          next if named_only_separator?(param) || param.is_block || param.is_double_splat
-          break if idx >= call_types.size
+        param_idx = 0
+        while param_idx < params.size
+          param = param_at_or_nil(params, param_idx)
+          param_idx += 1
 
-          current_type = call_types[idx]
-          if param.default_value.nil? && !param.is_splat && current_type == TypeRef::VOID
-            return true
+          if param && !named_only_separator?(param) && !param.is_block && !param.is_double_splat
+            break if idx >= call_types.size
+
+            current_type = call_types[idx]
+            if param.default_value.nil? && !param.is_splat && current_type == TypeRef::VOID
+              return true
+            end
+
+            idx += 1
           end
-
-          idx += 1
         end
       end
 

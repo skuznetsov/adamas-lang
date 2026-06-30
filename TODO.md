@@ -9,6 +9,27 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
 - 2026-06-30 UPDATE: the
+  `AstToHir#missing_required_runtime_param_types? <-
+  AstToHir#lower_method` s2->s3 `EXC_BREAKPOINT` moved. Fresh base stage1
+  built fresh s2; base s2->s3 reproduced `EXIT 133`, and lldb stopped in
+  `missing_required_runtime_param_types?`. A first marker before the
+  `return true` branch did not print in generated s2, refuting that as the
+  immediate edge. A wider primitive marker probe showed the last generated-s2
+  line was the callback `loop` marker, with no `after skip`, pinning the
+  producer to the yielded `each_param` callback skip line
+  (`next if named_only_separator?(param) || param.is_block ||
+  param.is_double_splat`) rather than corrupt `call_types` or the required-param
+  check. Fix: rewrite only `missing_required_runtime_param_types?` as a plain
+  indexed `while` scan using `param_at_or_nil`, with no yielded-block `next`,
+  `break`, or `return`. Verification: fresh stage1 builds; full suites pass
+  (`152/152` original + `36/36` combined); fresh fixed stage1 builds fresh s2;
+  fixed s2 no longer hits `missing_required_runtime_param_types?`. Fixed s2->s3
+  now reaches a later `EXIT 139` in
+  `MIR::TypeRef#hash <- Hash(MIR::TypeRef, String)#[]? <-
+  LLVMTypeMapper#llvm_type <- LLVMIRGenerator#emit_string_interpolation` during
+  LLVM emission after allocator flush. Do not claim green s2->s3/s3b.
+
+- 2026-06-30 UPDATE: the
   `AstToHir#static_truthy_value <-
   AstToHir#lower_short_circuit_condition <- AstToHir#lower_while` s2->s3
   SIGSEGV moved. Probe logs showed `ctx.value_for(value_id)` succeeded and

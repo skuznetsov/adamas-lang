@@ -12,6 +12,34 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-S2S3-MISSING-REQUIRED-PARAM-EACH-PARAM-CALLBACK|verified 2026-06-30 {F:0.84 G:0.28 R:0.88}]:
+Fresh generated s2 no longer stops with `EXC_BREAKPOINT` in
+`AstToHir#missing_required_runtime_param_types? <- AstToHir#lower_method` while
+compiling `src/adamas.cr` to s3. Fresh base stage1 built fresh s2; base s2->s3
+reproduced `EXIT 133`, and lldb stopped in `missing_required_runtime_param_types?`.
+A marker immediately before the `return true` branch did not print in generated
+s2, refuting that return as the immediate edge. A wider primitive marker probe
+showed the final generated-s2 marker was the callback `loop` marker, with no
+`after skip`, pinning the trap to the yielded `each_param` callback skip line
+(`next if named_only_separator?(param) || param.is_block ||
+param.is_double_splat`). Root-shaped boundary: this predicate used
+yielded-block control-flow in a self-hosted hot path, not corrupt `call_types`
+or corrupt parameter metadata. Fix slice: rewrite only
+`missing_required_runtime_param_types?` as an indexed `while` scan over
+`param_at_or_nil`, preserving null-param skip, named/block/double-splat skip,
+and required-`VOID` detection without yielded-block `next`, `break`, or `return`.
+Evidence: `crystal build src/adamas.cr -o
+/private/tmp/adamas_missing_param_fix_stage1 --error-trace`; fresh fixed stage1
+builds fresh s2; fixed s2 compiling `src/adamas.cr` no longer crashes in
+`missing_required_runtime_param_types?`; `regression_tests/run_all_suites.sh
+/private/tmp/adamas_missing_param_fix_stage1 4` passes 152/152 original +
+36/36 combined. Residual frontier: fixed s2->s3 now exits 139 in
+`MIR::TypeRef#hash <- Hash(MIR::TypeRef, String)#[]? <-
+LLVMTypeMapper#llvm_type <- LLVMIRGenerator#emit_string_interpolation` during
+LLVM emission after allocator flush. Scope: this is a bounded parameter-scan
+callback-control fix, not a global `each_param` or block-callback ABI repair and
+not a green s2->s3/s3b claim.
+
 [LM-S2S3-STATIC-TRUTHY-LITERAL-CACHED-BOOL|verified 2026-06-30 {F:0.85 G:0.32 R:0.89}]:
 Fresh generated s2 no longer stops in
 `AstToHir#static_truthy_value <- AstToHir#lower_short_circuit_condition <-
