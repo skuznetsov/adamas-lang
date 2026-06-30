@@ -8,6 +8,25 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-06-30 UPDATE: the `String#bytesize <-
+  AstToHir#parse_method_name <- AstToHir#apply_default_args` s2->s3 SIGSEGV
+  moved. lldb showed `parse_method_name` received `x0=0x10`. Targeted
+  raw-pointer probes then showed the value was already corrupt in
+  `lower_member_access` before `apply_default_args`: `resolve_method_call`
+  returned a valid String (`pre_raw` high), `dollar=16`, and the local suffix
+  strip `base_method_name[0, dollar]` produced `post_raw=16`. Root-shaped
+  producer was therefore the compiler hot-path use of self-host-brittle
+  `String#[](Int32, Int32)` for function-name suffix stripping, not
+  `parse_method_name`, `apply_default_args`, or method resolution. Fix: replace
+  that local slice with the existing `strip_type_suffix(...)` helper, which
+  already uses `byte_slice`. Verification: fresh stage1 builds; full suites
+  pass (`152/152` original + `36/36` combined); fresh fixed stage1 builds fresh
+  s2; fixed s2 no longer crashes in `parse_method_name`. Residual frontier:
+  under the normal 12GB `run_safe` cap fixed s2 reaches memory kill first; with
+  a 16GB cap it reaches the next SIGSEGV in
+  `NodeSlot#node <- AstArena#[] <- AstToHir#collect_assigned_vars_in_expr <-
+  AstToHir#lower_block_to_block_id`. Do not claim green s2->s3/s3b.
+
 - 2026-06-30 UPDATE: the
   `__crystal_block_proc_744 <- AstToHir#each_param <- lower_method`
   s2->s3 `EXC_BREAKPOINT` moved. Root-shaped producer was the untyped-param

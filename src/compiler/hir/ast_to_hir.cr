@@ -91428,12 +91428,8 @@ module Adamas::HIR
 
       base_method_name = resolved_method_name
       if base_method_name.nil?
-        base_method_name = resolve_method_call(ctx, object_id, member_name, [] of TypeRef, false)
-        if dollar = base_method_name.index('$')
-          base_method_name = base_method_name[0, dollar]
-        end
+        base_method_name = strip_type_suffix(resolve_method_call(ctx, object_id, member_name, [] of TypeRef, false))
       end
-
       args, _, _ = apply_default_args(ctx, [] of ValueId, member_name, base_method_name, false, false)
       arg_types = args.map { |arg_id| ctx.type_of(arg_id) }
 

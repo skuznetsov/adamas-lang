@@ -12,6 +12,31 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-S2S3-MEMBER-ACCESS-SUFFIX-STRIP|verified 2026-06-30 {F:0.84 G:0.30 R:0.89}]:
+Fresh generated s2 no longer stops in
+`String#bytesize <- AstToHir#parse_method_name <- AstToHir#apply_default_args`
+while compiling `src/adamas.cr` to s3. lldb showed `parse_method_name` was
+called with `x0=0x10`, so the argument was a tiny String pointer, not merely a
+bad String payload. Targeted raw-pointer probes showed `apply_default_args`
+was a consumer: `method_name` was valid, `full_method_name`/`func_name` were
+`0x10`, and the caller already had corrupt `base_method_name`. A second
+caller-side probe pinned the producer:
+`resolve_method_call` returned a valid String (`pre_raw` high), `dollar=16`,
+and the local suffix-strip expression `base_method_name[0, dollar]` produced
+`post_raw=16`, exactly the integer count reinterpreted as a pointer. Fix
+slice: replace that hot-path substring operation with the existing
+`strip_type_suffix(resolve_method_call(...))` helper, which uses
+`byte_slice(0, dollar)` rather than `String#[](Int32, Int32)`. Evidence:
+`crystal build src/adamas.cr -o /private/tmp/adamas_parse_fix_stage1
+--error-trace`; fresh fixed stage1 builds fresh s2; fixed s2 compiling
+`src/adamas.cr` no longer crashes in `parse_method_name`; with a 16GB
+`run_safe` cap it reaches the next frontier,
+`NodeSlot#node <- AstArena#[] <- AstToHir#collect_assigned_vars_in_expr <-
+AstToHir#lower_block_to_block_id`; `regression_tests/run_all_suites.sh
+/private/tmp/adamas_parse_fix_stage1 4` passes 152/152 original + 36/36
+combined. Scope: this is a bounded member-access suffix-strip repair, not a
+global fix for every `String#[](start, count)` use.
+
 [LM-S2S3-EACH-PARAM-BLOCK-BREAK|verified 2026-06-30 {F:0.84 G:0.28 R:0.90}]:
 Fresh generated s2 no longer stops with `EXC_BREAKPOINT` in
 `__crystal_block_proc_744 <- AstToHir#each_param <- lower_method` while
