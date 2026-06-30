@@ -7385,6 +7385,63 @@ Residual:
 
 Trust: {F/G/R: 0.89/0.58/0.91} [verified for all-reference nilable-union truthy narrowing]
 
+### LM-S2S3-SHORT-TYPE-INDEX-SAFE-FIRST - Short-type index Set first must be guarded
+
+The generated s2 `error: Empty enumerable` frontier after the multi-reference
+union narrowing fix was a short-type-index lookup hazard, not another
+nilable-owner collapse. `resolve_short_type_in_namespace_chain` ended with
+`candidates.first` when `@short_type_index[short]` had a singleton candidate.
+On the fresh s2->s3 attempt, lldb stopped at `Enumerable::EmptyError.new` with
+the stack `Set(String)#first -> AstToHir#resolve_short_type_in_namespace_chain
+-> resolve_method_call -> lower_member_access`. A filtered probe for the same
+boundary logged `name=Nil | Exception::CallStack short=CallStack
+candidates_size=1 first_nil=true`: generated s2 saw a singleton `Set`, but the
+set yielded no first value. The source context was `Exception#backtrace?`
+lowering `@callstack.try &.printable_backtrace`, so blindly collapsing union
+owners was not semantically safe.
+
+Fix shape:
+
+- Keep namespace-chain matching unchanged.
+- For the final singleton fallback, call the existing `safe_set_first?`
+  helper and return `nil` when the generated `Set` is internally inconsistent.
+- Extend `regression_tests/p2_short_type_index_first_no_prelude.sh` so both
+  `fast_resolve_type_name_for_signature` and
+  `resolve_short_type_in_namespace_chain` are forbidden from direct `Set#first`
+  use.
+
+Evidence:
+
+- Clean HEAD reproduced the frontier:
+  `scripts/run_safe.sh /tmp/adamas_live_s2 900 12288 src/adamas.cr -o
+  /tmp/adamas_live_s3` -> exit 1 with `error: Empty enumerable`.
+- lldb on the generated s2 stopped in `Set(String)#first` from
+  `resolve_short_type_in_namespace_chain`.
+- Refuted candidate: skipping short namespace resolution for all union owners
+  made produced s2 crash immediately after `prelude exists`.
+- With this fix, the focused guards
+  `multi_ref_union_truthy_narrowing_repro.sh`,
+  `nested_class_static_method_registration_repro.sh`, and
+  `p2_short_type_index_first_no_prelude.sh` pass on the fixed stage1.
+- `regression_tests/run_all_suites.sh /tmp/adamas_short_first_stage1 4` ->
+  152/152 original tests and 36/36 combined tests, all passed.
+- `scripts/run_safe.sh /tmp/adamas_short_first_stage1 900 12288
+  src/adamas.cr -o /tmp/adamas_short_first_s2` -> exit 0.
+
+Residual:
+
+- Fresh fixed s2 compiling `src/adamas.cr` moves past `Empty enumerable`, reaches
+  `[STAGE2_DEBUG] pass3 after lower_main call`, then segfaults in
+  `String#size <- scan_hir_function_for_live_types <- initialize_lazy_rta <-
+  flush_pending_functions`.
+- lldb on the same generated s2 confirms the residual crash at
+  `String#size`, called by
+  `Adamas::HIR::AstToHir#scan_hir_function_for_live_types ->
+  initialize_lazy_rta -> flush_pending_functions`. This landmark does not
+  claim s2->s3 or s3b green.
+
+Trust: {F/G/R: 0.86/0.42/0.88} [verified for the named short-type-index singleton fallback]
+
 ### LM-624 - Runtime object headers must use MIR type ids
 
 `set_crystal_type_id` object-header writers must bake MIR/runtime type ids, not

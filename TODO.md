@@ -279,6 +279,25 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   pass (`152/152` originals + `36/36` combined). Residual frontier: fresh fixed
   s2 compiling `src/adamas.cr` now moves past the stub and stops later with
   `error: Empty enumerable`; do not claim green s2->s3/s3b.
+- 2026-06-29 UPDATE: the `error: Empty enumerable` frontier is fixed as a
+  guarded short-type-index lookup. Root was a direct `Set#first` in
+  `resolve_short_type_in_namespace_chain`: generated s2 reached
+  `Nil | Exception::CallStack` from `Exception#backtrace?`
+  (`@callstack.try &.printable_backtrace`), found a singleton
+  `@short_type_index["CallStack"]`, but that generated `Set` reported
+  `size == 1` while yielding no first value, so `Set#first` raised
+  `Enumerable::EmptyError`. The fix reuses the existing `safe_set_first?`
+  guard for the final singleton candidate and fails closed to `nil` when the
+  self-hosted `Set` is internally inconsistent. Guard:
+  `regression_tests/p2_short_type_index_first_no_prelude.sh` now also forbids
+  direct `Set#first` in this resolver. Full stage1 suites pass (`152/152`
+  originals + `36/36` combined). Refuted: skipping short namespace resolution
+  for all union owners overcorrected and made produced s2 crash immediately
+  after `prelude exists`. Residual frontier: fresh fixed s2
+  compiling `src/adamas.cr` moves past `Empty enumerable`, reaches
+  `[STAGE2_DEBUG] pass3 after lower_main call`, then segfaults in
+  `String#size <- scan_hir_function_for_live_types <- initialize_lazy_rta <-
+  flush_pending_functions`; do not claim green s2->s3/s3b.
 - HARD BOUNDARY: keep `BlockOwner`. Do not revert `@block_owner` back to
   `NamedTuple` or positional `Tuple`; that rollback re-enters an already
   observed materialization/key-shape trap.

@@ -38493,7 +38493,11 @@ module Adamas::HIR
         parts.pop
       end
 
-      return candidates.first if candidates.size == 1
+      if candidates.size == 1
+        if candidate = safe_set_first?(candidates)
+          return candidate
+        end
+      end
       nil
     end
 

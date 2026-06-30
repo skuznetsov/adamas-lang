@@ -28,6 +28,18 @@ else
   exit 1
 fi
 
+if awk '
+  /private def resolve_short_type_in_namespace_chain/ { in_func = 1 }
+  in_func && /candidates\.first/ { bad = 1 }
+  in_func && /^    private def / && !/resolve_short_type_in_namespace_chain/ { exit bad ? 1 : 0 }
+  END { if (!in_func) exit 1 }
+' "$ROOT_DIR/src/compiler/hir/ast_to_hir.cr"; then
+  :
+else
+  echo "resolve_short_type_in_namespace_chain must not call Set#first directly" >&2
+  exit 1
+fi
+
 cat >"$tmpdir/repro.cr" <<'CR'
 private VALUE = 1
 VALUE
