@@ -7428,6 +7428,61 @@ Adversary notes:
 
 Trust: {F/G/R: 0.86/0.47/0.89} [verified for union-subset materialization scoring]
 
+### LM-628 - inline_yield_function binds callee params without a block callback
+
+The generated-s2 crash after LM-627 was not caused by corrupted
+`ParameterBuffer#to_a` output. A producer-side probe in `ParameterBuffer#to_a`
+showed the returned `Array(Parameter)` had high pointer slots. The earlier
+low values from `param.unsafe_as(UInt64)` were generated-s2 object tokens, not
+raw array storage. A follow-up lldb run on the same frontier stopped inside the
+generated block callback used by `each_param_with_index(params)` in
+`inline_yield_function`, before the first probe line in that callback could
+print.
+
+The fix removes that block-callback dependency from the compiler-critical
+callee-parameter binding loop inside `inline_yield_function`. It iterates the
+`params` array with an explicit `while`, preserves the existing `arg_idx`
+semantics for named-only separators and `&block`, and skips null raw slots when
+the generated compiler represents `Parameter` as an 8-byte reference.
+
+Evidence:
+
+- `crystal build src/adamas.cr -o /tmp/adamas_inline_param_loop_stage1
+  --error-trace` -> exit 0.
+- `regression_tests/hir_inline_yield_param_bind_loop_guard.sh
+  /tmp/adamas_inline_param_loop_stage1` ->
+  `hir_inline_yield_param_bind_loop_guard_ok`.
+- Adjacent focused guards also passed:
+  `hir_pack_splat_param_find_guard.sh` and
+  `stage2_contains_yield_deep_materialization_repro.sh`.
+- `scripts/run_safe.sh /tmp/adamas_inline_param_loop_stage1 900 12288
+  src/adamas.cr -o /tmp/adamas_inline_param_loop_s2` -> exit 0.
+- Fresh fixed s2 compiling `src/adamas.cr` no longer stops in the
+  `inline_yield_function <- each_param_with_index` block-proc crash.
+- `regression_tests/run_all_suites.sh /tmp/adamas_inline_param_loop_stage1 4`
+  -> 152/152 original tests and 36/36 combined tests, all passed.
+
+Residual:
+
+- Fresh fixed s2 compiling `src/adamas.cr` still exits 139 after
+  `[STAGE2_DEBUG] pass3 after lower_main call`.
+- lldb now stops in
+  `AstToHir#reorder_named_args <- lower_call`, reached from the inlined body
+  under `inline_yield_function`. This is the next frontier and is not
+  root-caused by this landmark.
+
+Adversary notes:
+
+- This is another bounded bootstrap chokepoint removal, not a general fix for
+  all generated block callbacks or every `each_param_with_index` callsite.
+- A broad consumer guard that simply skipped low `param.unsafe_as(UInt64)`
+  values would have been wrong: those low values were not raw array slots.
+- The next crash still sits under `inline_yield_function`, so the broader
+  architecture smell remains: self-hosted block callbacks in compiler metadata
+  corridors are brittle and should not be multiplied.
+
+Trust: {F/G/R: 0.84/0.36/0.88} [verified for the inline-yield parameter-binding callback frontier]
+
 ### LM-665 - Generated s2 preserves nested static method owner during body registration
 
 Generated s2 now registers a nested static method body under the same owner

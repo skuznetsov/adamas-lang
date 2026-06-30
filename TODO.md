@@ -8,6 +8,28 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-06-29 UPDATE: the `inline_yield_function <-
+  each_param_with_index` s2->s3 SIGSEGV moved. Producer-side probes refuted
+  the first tempting explanation: `ParameterBuffer#to_a` stored valid high
+  pointer slots in the returned `Array(Parameter)`; the low `unsafe_as` tokens
+  seen in generated s2 were not raw array slots. lldb on the crashing s2 then
+  showed the fault occurred inside the generated block callback for
+  `each_param_with_index` before the probe body could print. Fix: bind
+  `inline_yield_function` callee parameters with a direct `while` loop over
+  the `params` array, preserving the existing `arg_idx` semantics and null-slot
+  skip but avoiding the self-host-brittle block callback in this compiler
+  chokepoint. Guard:
+  `regression_tests/hir_inline_yield_param_bind_loop_guard.sh`. Verification:
+  fresh stage1 builds; focused guards
+  `hir_inline_yield_param_bind_loop_guard.sh`,
+  `hir_pack_splat_param_find_guard.sh`, and
+  `stage2_contains_yield_deep_materialization_repro.sh` pass; full suites pass
+  (`152/152` original + `36/36` combined); fresh stage1 builds fresh s2.
+  Residual frontier: fresh fixed s2 compiling `src/adamas.cr` no longer stops
+  in `each_param_with_index`; lldb now stops in
+  `AstToHir#reorder_named_args <- lower_call`, reached from the inlined body
+  under `inline_yield_function`. Do not claim green s2->s3/s3b.
+
 - 2026-06-29 UPDATE: the `contains_yield_deep?` s2->s3 abort-stub
   frontier moved. Root was not a backend undefined-extern problem and not a
   local `contains_yield_deep?` special case: `declared_type_match_score` could
@@ -168,10 +190,12 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   param find guard, and the `contains_yield_deep?` materialization guard.
   Generated s2 compiling `src/adamas.cr` to s3 no longer exits in the old
   `inline_try_with_block`, `lower_super`, `String#size`, `pack_splat_args`, or
-  `contains_yield_deep?` frontiers. The active red evidence is now a fresh s2
-  SIGSEGV after `[STAGE2_DEBUG] pass3 after lower_main call`, with lldb
-  stopping in `AstToHir#inline_yield_function <- each_param_with_index`.
-  Treat that as the active frontier; do not claim green s2->s3/s3b.
+  `contains_yield_deep?` frontiers, and no longer stops in the
+  `inline_yield_function` parameter-binding `each_param_with_index` callback.
+  The active red evidence is now a fresh s2 SIGSEGV after `[STAGE2_DEBUG] pass3
+  after lower_main call`, with lldb stopping in
+  `AstToHir#reorder_named_args <- lower_call`, reached from an inlined yield
+  body. Treat that as the active frontier; do not claim green s2->s3/s3b.
 - 2026-06-29 NOTE: the first `get$Q$$String` probes found a real owner-loss
   boundary but no shippable fix yet. Earlier wording that blamed "after splat
   packing" is now stale: direct `full_method_name || ""` debug strings are not

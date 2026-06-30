@@ -87797,7 +87797,22 @@ module Adamas::HIR
           # appearing after the separator. Likewise, `&block` is bound from
           # the block argument, not from call_args.
           arg_idx = 0
-          each_param_with_index(params) do |param, idx|
+          param_buf = params.to_unsafe
+          param_idx = 0
+          while param_idx < params.size
+            if param_buf.unsafe_as(UInt64) == 0_u64
+              break
+            end
+            if sizeof(Adamas::Compiler::Frontend::Parameter) <= 8
+              raw_param_slot = param_buf.unsafe_as(Pointer(UInt64))[param_idx]
+              if raw_param_slot == 0_u64
+                param_idx += 1
+                next
+              end
+            end
+            param = params.unsafe_fetch(param_idx)
+            idx = param_idx
+            param_idx += 1
             next if named_only_separator?(param)
             if pname = param.name
               param_name = (safe_slice_to_string(pname) || "")
