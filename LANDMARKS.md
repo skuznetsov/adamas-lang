@@ -12,6 +12,31 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-S2S3-STATIC-TRUTHY-LITERAL-CACHED-BOOL|verified 2026-06-30 {F:0.85 G:0.32 R:0.89}]:
+Fresh generated s2 no longer stops in
+`AstToHir#static_truthy_value <- AstToHir#lower_short_circuit_condition <-
+AstToHir#lower_while` while compiling `src/adamas.cr` to s3. Primitive probes
+inside `static_truthy_value` showed `ctx.value_for(value_id)` succeeded and
+the last failing path was a Bool `Literal`: `value.type.id=1`
+(`TypeRef::BOOL`), `is_literal=1`, and the probe printed after `value.value`
+returned before the crash. Root-shaped boundary was therefore the
+polymorphic `case bool_lit = value.value` over `LiteralValue`, not
+`ctx.value_for`, `value.type`, or the payload load. This matches the existing
+`Literal` representation contract in `hir.cr`: primitive payloads are mirrored
+to `@int_value` / `@uint_value` / `@float_value` because V2 can corrupt the
+`@value` union tag, and `Literal#to_s` already uses `@int_value` for Bool.
+Fix slice: make `static_truthy_value` evaluate Bool literals through
+`value.int_value != 0` instead of reading and case-dispatching on
+`value.value`. Evidence: `crystal build src/adamas.cr -o
+/private/tmp/adamas_static_truthy_fix_stage1 --error-trace`; fresh fixed
+stage1 builds fresh s2; fixed s2 compiling `src/adamas.cr` no longer crashes
+in `static_truthy_value`; with a 20GB `run_safe` cap lldb now stops in the
+later frontier `AstToHir#missing_required_runtime_param_types? <-
+AstToHir#lower_method`; `regression_tests/run_all_suites.sh
+/private/tmp/adamas_static_truthy_fix_stage1 4` passes 152/152 original +
+36/36 combined. Scope: this is a bounded Bool-literal static-truthiness fix,
+not a global `LiteralValue` union ABI repair and not a green s2->s3 claim.
+
 [LM-S2S3-STRINGIFY-TYPE-EXPR-ARENA-BOUNDARY|verified 2026-06-30 {F:0.85 G:0.34 R:0.89}]:
 Fresh generated s2 no longer stops in
 `NodeSlot#node <- AstArena#[] <- AstToHir#stringify_type_expr <-

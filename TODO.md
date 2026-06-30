@@ -9,6 +9,27 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
 - 2026-06-30 UPDATE: the
+  `AstToHir#static_truthy_value <-
+  AstToHir#lower_short_circuit_condition <- AstToHir#lower_while` s2->s3
+  SIGSEGV moved. Probe logs showed `ctx.value_for(value_id)` succeeded and
+  the last failing case was a Bool `Literal`: `value.type.id=1`
+  (`TypeRef::BOOL`), `is_literal=1`, and the probe printed after
+  `value.value` returned before the crash. That pins the bad transition to the
+  polymorphic `case bool_lit = value.value` over `LiteralValue`, not to
+  `ctx.value_for`, `value.type`, or the payload load itself. This matches the
+  existing `Literal` contract in `hir.cr`: Bool/number payloads are mirrored
+  into primitive cache fields because V2 can corrupt the `@value` union tag,
+  and `Literal#to_s` already uses `@int_value` for Bool. Fix: in
+  `static_truthy_value`, evaluate Bool literals through `value.int_value != 0`
+  instead of reading and case-dispatching on `value.value`. Verification:
+  fresh stage1 builds; full suites pass (`152/152` original + `36/36`
+  combined); fresh fixed stage1 builds fresh s2; fixed s2 no longer crashes in
+  `static_truthy_value`. With a 20GB `run_safe` cap, fixed s2->s3 now exits
+  133 in
+  `AstToHir#missing_required_runtime_param_types? <- AstToHir#lower_method`.
+  Do not claim green s2->s3/s3b.
+
+- 2026-06-30 UPDATE: the
   `NodeSlot#node <- AstArena#[] <- AstToHir#stringify_type_expr <-
   AstToHir#lower_call` s2->s3 SIGSEGV moved. Boundary probes showed
   `stringify_type_expr` was not receiving a corrupt or unowned `ExprId`: the

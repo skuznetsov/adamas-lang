@@ -61040,19 +61040,7 @@ module Adamas::HIR
         if value.is_a?(Literal)
           return false if value.type == TypeRef::NIL
           if value.type == TypeRef::BOOL
-            bool_lit = value.value
-            case bool_lit
-            when Bool
-              return bool_lit
-            when Int32
-              return bool_lit != 0
-            when Int64
-              return bool_lit != 0
-            when Nil
-              return false
-            else
-              return nil
-            end
+            return value.int_value != 0
           end
         end
       end
