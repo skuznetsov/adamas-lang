@@ -8,6 +8,26 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-06-30 UPDATE: the `AstToHir#lower_case <- lower_node`
+  s2->s3 SIGSEGV moved. Root was a producer bug in the `Array#reduce`
+  HIR intrinsic: `lower_array_reduce_dynamic` hardcoded the element and
+  accumulator type to `Pointer`, which is valid for reference-like arrays but
+  wrong for primitive arrays. `lower_case` builds `conds.reduce` over
+  `Array(ValueId)` (`UInt32`), so generated s2 tried to pass a pointer-shaped
+  reduce result as a `Branch` condition. Fix: `lower_array_reduce_dynamic`
+  now resolves the element type through `array_element_type_for_value`, the
+  same container helper used by sibling Array intrinsics; no `lower_case`
+  consumer guard was added. Guard:
+  `regression_tests/array_reduce_uint32_element_type_repro.sh` is red on the
+  previous compiler with an llc pointer-vs-i32 type error and green on fixed
+  stage1 with `plain=6`. Verification: fresh stage1 builds; the new reduce
+  guard passes; manual `Array(UInt32)#map + #reduce` reducer passes; full
+  suites pass (`152/152` original + `36/36` combined); fresh fixed stage1
+  builds fresh s2. Residual frontier: fresh fixed s2 compiling
+  `src/adamas.cr` still exits 139 after `[STAGE2_DEBUG] pass3 after
+  lower_main call`, but lldb now stops in `AstToHir#lower_module_method` at a
+  null receiver before `DefNode#return_type`. Do not claim green s2->s3/s3b.
+
 - 2026-06-30 UPDATE: the `AstToHir#reorder_named_args <- lower_call`
   s2->s3 SIGSEGV moved. Root was a producer contract bug in the
   `Array#index(value)` HIR fast path: it returned concrete `Int32` with `-1`

@@ -7538,6 +7538,57 @@ Adversary notes:
 
 Trust: {F/G/R: 0.86/0.43/0.90} [verified for Array#index(value) fast-path contract and this frontier move]
 
+### LM-667 - Array#reduce preserves primitive element types
+
+The `AstToHir#lower_case <- lower_node` generated-s2 crash after LM-666 was
+not a `lower_case` consumer bug. The HIR intrinsic for `Array#reduce`
+hardcoded its element and accumulator type to `Pointer`. That was survivable
+for reference-like arrays, but wrong for primitive arrays. `lower_case`
+combines case-condition ids with `conds.reduce`, where `conds` is
+`Array(ValueId)` and `ValueId` is `UInt32`; generated s2 therefore produced a
+pointer-shaped reduce result and fed it to `Branch.new`.
+
+The fix changes `lower_array_reduce_dynamic` to resolve the element type with
+`array_element_type_for_value(ctx, array_id, TypeRef::POINTER)`, matching
+sibling Array intrinsics. No `lower_case` guard was added.
+
+Evidence:
+
+- `regression_tests/array_reduce_uint32_element_type_repro.sh
+  /tmp/adamas_lower_case_stage1` was red on the previous compiler: compilation
+  failed before runtime with the known pointer-vs-i32 llc error for
+  `Array(UInt32)#reduce`.
+- `crystal build src/adamas.cr -o /tmp/adamas_reduce_stage1 --error-trace`
+  -> exit 0.
+- `regression_tests/array_reduce_uint32_element_type_repro.sh
+  /tmp/adamas_reduce_stage1` -> `plain=6`, exit 0.
+- Manual `Array(UInt32)#map + #reduce` reducer compiled and ran with
+  `plain=6`, `mapped0=2`, `combined=9`.
+- `scripts/run_safe.sh /tmp/adamas_reduce_stage1 900 12288 src/adamas.cr
+  -o /tmp/adamas_reduce_s2` -> exit 0.
+- Fresh fixed s2 compiling `src/adamas.cr` no longer stops in
+  `AstToHir#lower_case`; lldb now stops in `AstToHir#lower_module_method` at
+  a null receiver before `DefNode#return_type`.
+- `regression_tests/run_all_suites.sh /tmp/adamas_reduce_stage1 4`
+  -> 152/152 original tests and 36/36 combined tests, all passed.
+
+Residual:
+
+- This is a frontier move, not a green bootstrap claim. Fresh fixed s2 still
+  exits 139 after `[STAGE2_DEBUG] pass3 after lower_main call`.
+- The new active boundary is `AstToHir#lower_module_method`, not
+  `lower_case`.
+
+Adversary notes:
+
+- A local cast or null/pointer guard in `lower_case` would have hidden the
+  broader `Array(UInt32)#reduce` type contract bug.
+- Object-array behavior remains covered by the same helper because
+  `array_element_type_for_value` still returns `Pointer` for reference-like
+  element descriptors.
+
+Trust: {F/G/R: 0.87/0.44/0.90} [verified for Array#reduce primitive element typing and this frontier move]
+
 ### LM-665 - Generated s2 preserves nested static method owner during body registration
 
 Generated s2 now registers a nested static method body under the same owner

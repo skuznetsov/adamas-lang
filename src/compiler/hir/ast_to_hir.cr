@@ -86366,8 +86366,7 @@ module Adamas::HIR
         end
       end
 
-      # Element type - use POINTER since we're typically working with objects
-      element_type = TypeRef::POINTER
+      element_type = array_element_type_for_value(ctx, array_id, TypeRef::POINTER)
 
       # Get array size
       size_val = ArraySize.new(ctx.next_id, TypeRef::INT32, array_id)
