@@ -12,6 +12,32 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-GENERATED-STAGE-TX-EMIT-EDGE-SELECTION|verified 2026-07-01 {F:0.86 G:0.36 R:0.88}]:
+Slice 0k-AJ adds an executable reached-edge selector:
+`scripts/generated_stage_transaction_edge_selection_report.sh`. It parses an
+existing classifier log or runs the generated-stage spine classifier, joins
+transaction-bound `[MAT_EMIT]` rows to their `[MAT_TX]` metadata, and selects
+the next reached `CallMaterializationTransaction` contract class:
+`call_materialization.wrapper_or_call_remap.extern_missing_body`
+(`required_contract=wrapper_or_call_remap`,
+`symbol_relation=body_eq_target_call_eq_requested`,
+`identity_status=rejected_mismatch`, backend `kind=extern`, and
+`body_present=0`). Fresh current evidence: `classifier_classification=
+reached_tx_and_emit`, `mat_tx_rows=604`, `mat_emit_rows=69`,
+`transaction_bound_emit_rows=29`, `candidate_selected_rows=4`,
+`candidate_selected_distinct_txs=3`, `candidate_selected_owner_kinds=2`,
+`candidate_selected_branch_kinds=1`, `source_shape=eligible_reached_edge`, and
+`selection_status=eligible_reached_transaction_emission_edge`. Negative control:
+with `MAX_SELECTED_ROWS=3`, the same log is rejected as
+`selected_edge_too_wide`. Decision: the next production slice may target this
+selected transaction/emission edge in shadow/parity mode, but must not jump to a
+backend forwarder, target keepalive, requested-name force, `NamedTuple`/`Tuple`
+normalization, global ambient-map change, `BlockOwner` rollback, or direct
+segfault patch. Decay trigger: the selector reports
+`rejected_missing_selected_edge`, `rejected_selected_edge_too_wide`, malformed
+ledger rows, or a future generated-stage classifier stops reaching
+transaction-bound emits.
+
 [LM-ARCH-GENERATED-STAGE-TX-SPINE-CLASSIFIER|verified 2026-07-01 {F:0.86 G:0.42 R:0.88}]:
 Slice 0k-AI adds an executable generated-stage transaction-spine classifier:
 `scripts/generated_stage_transaction_spine_classifier.sh`. It builds/uses a
@@ -32,6 +58,7 @@ policy, cleanup behavior, or `BlockOwner` changed. This is not green generated
 s2, `s2b`, or `s3b`. Decay trigger: a fresh generated-stage classifier reports
 `tx_only_no_emit`, `no_tx_rows`, or build-corridor failure, or a future reached
 edge selection refutes transaction/emission correlation as the active frontier.
+Current selector: [LM-ARCH-GENERATED-STAGE-TX-EMIT-EDGE-SELECTION].
 
 [LM-ARCH-POST-0K-AH-TAIL-CHASE-CHECKPOINT|superseded 2026-07-01 {F:0.80 G:0.44 R:0.86}]:
 After Slice 0k-AH, the architecture track is paused before more production

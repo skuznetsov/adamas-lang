@@ -292,6 +292,20 @@ architecture step: select one reached transaction/emission edge with a
 red/green gate before any behavior fix. Do not continue by globally lowering
 `residual_legacy_edge_count` or by patching the segfault directly.
 
+2026-07-01 post-0k-AJ implementation note: the reached-edge selector now exists
+as `scripts/generated_stage_transaction_edge_selection_report.sh`. On a fresh
+generated-stage corridor it selects
+`call_materialization.wrapper_or_call_remap.extern_missing_body` with
+`candidate_selected_rows=4`, `candidate_selected_distinct_txs=3`,
+`source_shape=eligible_reached_edge`, and
+`selection_status=eligible_reached_transaction_emission_edge`. The selected old
+authority edge is backend extern emission from `call_symbol_hint` while the
+transaction already records `required_contract=wrapper_or_call_remap` and
+`body_symbol != call_symbol_hint`. The next architecture slice is therefore a
+shadow/parity consumer of the transaction contract facts, not a backend
+forwarder, requested-name force, target keepalive, `NamedTuple`/`Tuple`
+normalization, global ambient-map change, or direct segfault patch.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging

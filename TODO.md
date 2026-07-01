@@ -8,6 +8,33 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: implemented Slice 0k-AJ,
+  generated-stage transaction/emission edge selection gate. New script:
+  `scripts/generated_stage_transaction_edge_selection_report.sh`. It consumes
+  either an existing classifier `LOG_FILE` or a fresh
+  `scripts/generated_stage_transaction_spine_classifier.sh` run, joins
+  transaction-bound `[MAT_EMIT]` rows back to `[MAT_TX]` transaction metadata,
+  and selects exactly the reached contract class
+  `call_materialization.wrapper_or_call_remap.extern_missing_body`:
+  `required_contract=wrapper_or_call_remap`,
+  `symbol_relation=body_eq_target_call_eq_requested`,
+  `identity_status=rejected_mismatch`, backend `kind=extern`, and
+  `body_present=0`. Measured fresh generated-stage result:
+  `classifier_classification=reached_tx_and_emit`, `mat_tx_rows=604`,
+  `mat_emit_rows=69`, `transaction_bound_emit_rows=29`,
+  `candidate_selected_rows=4`, `candidate_selected_distinct_txs=3`,
+  `candidate_selected_owner_kinds=2`, `candidate_selected_branch_kinds=1`,
+  `source_shape=eligible_reached_edge`, and
+  `selection_status=eligible_reached_transaction_emission_edge`. The gate is
+  fail-closed: lowering `MAX_SELECTED_ROWS` to `3` rejects the same log as
+  `selected_edge_too_wide`. Next admitted production slice: a behavior-neutral
+  shadow/parity consumer for this selected transaction contract edge, proving
+  how `CallMaterializationTransaction.required_contract`, `body_symbol`, and
+  `call_symbol_hint` should own the old backend extern-emission-from-call-hint
+  authority. Do not implement backend forwarders, keep target bodies alive,
+  force requested names, normalize `NamedTuple`/`Tuple`, globally change
+  ambient-map policy, or patch the segfault directly from this gate.
+
 - 2026-07-01 UPDATE: implemented Slice 0k-AI,
   generated-stage transaction-spine classifier. New script:
   `scripts/generated_stage_transaction_spine_classifier.sh`. It builds a fresh
