@@ -403,6 +403,20 @@ repeats: backend forwarder, requested-name forcing, target keepalive,
 `NamedTuple`/`Tuple` rendering changes, global ambient-map policy changes,
 cleanup classification as bootstrap progress, and `BlockOwner` rollback.
 
+2026-07-01 post-0k-AU source-selector note: the existing
+`semantic_state_scope_admission_report.sh` now has `SOURCE_SHAPE_ONLY=1`. The
+source-only selector confirms the no-repeat gate rather than choosing a local
+consumer: `prefer_callsite_specialization` and
+`lower_function_if_needed.override` are already promoted, `lower_call.remangle`
+is backend-adjacent, and both `lower_function_if_needed.callsite_args` and
+`lower_function_if_needed.suffix_types` remain unpromoted frontend direct
+consumers. It reports `selected_count=0` and
+`state_model_redesign_required=1`, while `REQUIRE_SELECTED=1` exits `9`.
+Therefore the next architecture step is a state-model redesign checkpoint for
+shared `lower_function_if_needed` keep-requested-name state, unless a stronger
+falsifier collapses the two frontend candidates to exactly one root-sized
+authority edge.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging

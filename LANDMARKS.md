@@ -12,6 +12,30 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-AU-STATE-SCOPE-NO-REPEAT-SOURCE|verified 2026-07-01 {F:0.86 G:0.48 R:0.88}]:
+Slice 0k-AU extends `scripts/semantic_state_scope_admission_report.sh` with
+`SOURCE_SHAPE_ONLY=1`, a no-repeat source-shape selector for remaining
+`SemanticStateScope` consumers. It scans
+`src/compiler/hir/ast_to_hir.cr` without running a compiler and reports
+`prefer_callsite_specialization` plus `lower_function_if_needed.override` as
+`already_promoted_shadow`, `lower_call.remangle` as `rejected_backend_adjacent`,
+and the two remaining frontend direct consumers
+`lower_function_if_needed.callsite_args` / `.suffix_types` as
+`rejected_multiple_frontend_candidates`. Evidence:
+`SOURCE_SHAPE_ONLY=1 scripts/semantic_state_scope_admission_report.sh` prints
+`malformed_direct=0`, `frontend_candidate_count=2`, `selected_count=0`,
+`already_promoted_count=2`, and `state_model_redesign_required=1`;
+`SOURCE_SHAPE_ONLY=1 REQUIRE_SELECTED=1 ...` exits `9`. Consequence: the next
+architecture move must be a state-model redesign checkpoint for shared
+`lower_function_if_needed` keep-requested-name state, or a stronger falsifier
+that collapses the two frontend candidates to exactly one root-sized authority
+edge. It is not admitted to pick either consumer by source order or convenience.
+Scope: source-shape gate only; no compiler behavior, bootstrap claim,
+`BlockOwner` carrier change, backend forwarder, requested-name force, or
+`NamedTuple`/`Tuple` rendering change. Decay trigger: the direct caller set
+changes, one frontend candidate is eliminated/promoted with evidence, or fresh
+generated-stage evidence selects a different state-owner boundary.
+
 [LM-ARCH-0K-AT-SEMANTIC-IDENTITY-PIVOT|design-sealed 2026-07-01 {F:0.82 G:0.50 R:0.86}]:
 Slice 0k-AT pauses cleanup/report pursuit for the bootstrap objective and
 selects the next root architecture lane: a no-repeat `SemanticStateScope`

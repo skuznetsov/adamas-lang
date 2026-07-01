@@ -8,6 +8,23 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: implemented Slice 0k-AU, a source-shape-only no-repeat mode
+  in `scripts/semantic_state_scope_admission_report.sh`. `SOURCE_SHAPE_ONLY=1`
+  now enumerates live direct
+  `state_scope_consumer_def_has_untyped_regular_param?` callers without running
+  a compiler. Result: `prefer_callsite_specialization` and
+  `lower_function_if_needed.override` are already promoted; `lower_call.remangle`
+  is backend-adjacent; the two remaining frontend direct consumers are
+  `lower_function_if_needed.callsite_args` and
+  `lower_function_if_needed.suffix_types`. Because both remain direct,
+  unpromoted frontend candidates, the selector reports
+  `frontend_candidate_count=2`, `selected_count=0`, and
+  `state_model_redesign_required=1`; `SOURCE_SHAPE_ONLY=1 REQUIRE_SELECTED=1`
+  exits `9`. Next aligned architecture step is therefore a state-model redesign
+  checkpoint for shared `lower_function_if_needed` keep-requested-name state, or
+  a stronger falsifier that collapses those two candidates to exactly one
+  root-sized edge. Do not choose either consumer by source order or convenience.
+
 - 2026-07-01 UPDATE: added Slice 0k-AT, an architecture pivot checkpoint after
   the cleanup lane produced only negative cleanup facts. The active bootstrap
   lane is now a no-repeat `SemanticStateScope` selection gate, not another

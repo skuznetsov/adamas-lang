@@ -14,7 +14,7 @@ fallbacks, and hard-to-localize bootstrap failures.
 
 ## Active Architecture Board
 
-Status: execution board after Slice 0k-AT. This board exists to
+Status: execution board after Slice 0k-AU. This board exists to
 prevent the next step from being selected by the latest generated-stage crash
 stack. A next slice is admitted only if it moves one board row by replacing or
 shadowing a named authority edge, producing `CodePathStatus` evidence for a
@@ -22,7 +22,7 @@ named path, or refuting a row with fresher generated-stage evidence.
 
 | Owner boundary | Current status | Next admitted movement | Forbidden repeat |
 | --- | --- | --- | --- |
-| `SemanticStateScope` | `prefer_callsite_specialization` is promoted in shadow/parity mode; emitted behavior still returns the legacy result. The `lower_function_if_needed.override` seam is also already promoted through the MaterializationDecision shadow helper and must not be reselected. Slice 0k-AT selects the next architecture unit: a no-repeat SemanticStateScope selector for the remaining direct ambient-predicate consumers. | Add a red/green source-shape gate that enumerates remaining direct calls to `state_scope_consumer_def_has_untyped_regular_param?` (currently including `lower_function_if_needed.callsite_args`, `lower_function_if_needed.suffix_types`, and `lower_call.remangle`) and selects at most one unpromoted, non-backend-adjacent, root-sized consumer for a future behavior-neutral owner decision. | Reselecting `prefer_callsite_specialization` or `lower_function_if_needed.override`; wrapping `def_has_untyped_regular_param?` without a separate owner result; changing emitted behavior from a shadow row; globally clearing/ignoring `@type_param_map`; backend forwarders; requested-name forcing. |
+| `SemanticStateScope` | `prefer_callsite_specialization` is promoted in shadow/parity mode; emitted behavior still returns the legacy result. The `lower_function_if_needed.override` seam is also already promoted through the MaterializationDecision shadow helper and must not be reselected. Slice 0k-AU extends the existing admission report with a source-only no-repeat selector. It finds two unpromoted frontend direct consumers (`lower_function_if_needed.callsite_args` and `lower_function_if_needed.suffix_types`), rejects `lower_call.remangle` as backend-adjacent, and selects no single root-sized consumer. | Move up to a state-model redesign checkpoint for the shared `lower_function_if_needed` keep-requested-name state, or add a stronger discriminator that collapses `callsite_args` and `suffix_types` to exactly one root-sized consumer before any helper code. | Reselecting `prefer_callsite_specialization` or `lower_function_if_needed.override`; choosing either `callsite_args` or `suffix_types` by source order or convenience; wrapping `def_has_untyped_regular_param?` without a separate owner result; changing emitted behavior from a shadow row; globally clearing/ignoring `@type_param_map`; backend forwarders; requested-name forcing. |
 | `MaterializationIdentity` / `MaterializationRegistry` | Slice 0k-Z promotes the selected `lower_function_if_needed.symbol_binding` seam in behavior-neutral shadow/parity mode. `scripts/materialization_symbol_binding_admission_report.sh` now reports `already_promoted_shadow` even with `REQUIRE_PROMOTED=1`; keepalive and materialization-ledger consumers read from `MaterializationSymbolBinding` fields instead of recomputing split locals. | Do not flip emitted symbols from this slice. Next movement must either run a generated-stage materialization/symbol-binding classification on the residual full-prelude s2 crash, or select the next root-sized owner consumer with a red/green gate. | Backend undefined-extern rescue; target keepalive as a standalone patch; requested-name forcing; `NamedTuple`/`Tuple` display normalization; global ambient-map predicate changes; `BlockOwner` rollback; treating the green source-shape gate as green `s2b`/`s3b`. |
 | `NameResolution` / `MethodNameCodec` | File identity was fixed; method/symbol identity is still partly rendered-string driven. Slice 0k-V promotes the selected `lower_function_if_needed.exact_lookup_keep_requested_name` seam through `method_name_codec_exact_lookup_keep_requested_name?` in shadow/parity mode; emitted behavior still returns the legacy result. Slice 0k-W pauses standalone promotion-report proliferation. | Either select the next root-sized codec seam with a red/green source-shape gate, or define a generated-stage classification slice that consumes the existing promotion ledger to answer one blocking yes/no decision before changing emitted naming behavior. | String-slice parsing patches at individual callsites; treating rendered names as canonical identity; broad normalization without a falsifier; selecting lower-level helpers before a materialization seam; flipping owner-result behavior from shadow rows; committing another report surface that does not reduce or select an authority edge. |
 | `CallMaterializationTransaction` spine | Slice 0k-AJ selects the reached transaction/emission edge `call_materialization.wrapper_or_call_remap.extern_missing_body`. Slice 0k-AK adds the docs stop rule for post-consumer selector decay. Slice 0k-AL makes that rule executable. Slice 0k-AM implements the behavior-neutral consumer: HIR stores transaction contract facts by tx id, HIR-to-MIR attaches them to transaction-bound `Call`/`ExternCall`, backend `[MAT_EMIT]` logs them mechanically, and optimizer replacement preserves them. Slice 0k-AO extends the same selector with a post-consumer exact-contract residual split. Fresh generated-stage evidence reports `post_consumer_state=selected_consumed_by_contract_consumer`, `contract_mismatch_rows=0`, `residual_exact_missing_body_rows=14`, `residual_exact_missing_body_groups=9`, and `residual_selection_status=rejected_exact_missing_body_ambiguous`. | The 0k-AJ selected edge is consumed, and the immediate exact-contract residual is ambiguous rather than root-selected. The next movement must either add a stronger discriminator that can select exactly one old authority edge from the 9 residual groups, or switch to `consolidation` / `cleanup/delete` under the 0k-AN covenant. | Treating consumed edge disappearance as failure; making old `REQUIRE_SELECTED=1` green by redefining rows; behavior-patching any residual sample (`Array#<<`, `Slice#[]`, `IO#read`, etc.) without a unique selector; backend forwarder or undefined-extern rescue; requested-name forcing; broad `NamedTuple`/`Tuple` rendering changes; global ambient-map policy changes; `BlockOwner` rollback; another standalone report that does not remove ambiguity or retire/refute an older surface. |
@@ -167,6 +167,80 @@ or cleanup classification.
   unpromoted, root-sized, and not backend-adjacent;
 - keep `BlockOwner`; converting it back to tuple/namedtuple owner metadata is
   outside the admitted surface.
+
+Slice 0k-AU no-repeat gate result: `SOURCE_SHAPE_ONLY=1
+scripts/semantic_state_scope_admission_report.sh` now runs without compiling a
+program and enumerates the live direct callers of
+`state_scope_consumer_def_has_untyped_regular_param?`. It reports
+`prefer_callsite_specialization` and `lower_function_if_needed.override` as
+`already_promoted_shadow`, `lower_call.remangle` as `rejected_backend_adjacent`,
+and the two remaining frontend direct consumers
+`lower_function_if_needed.callsite_args` / `.suffix_types` as
+`rejected_multiple_frontend_candidates`. The source-only selector therefore
+prints `frontend_candidate_count=2`, `selected_count=0`,
+`already_promoted_count=2`, and `state_model_redesign_required=1`. With
+`REQUIRE_SELECTED=1`, the same command exits `9`, proving that no future slice
+may silently choose one of the two frontend consumers. The next admitted move is
+the state-model redesign checkpoint unless a stronger falsifier collapses that
+pair to exactly one root-sized authority edge.
+
+### Slice 0k-AU: SemanticStateScope no-repeat source selector
+
+Status:
+
+- implemented as source-shape-only mode in the existing
+  `scripts/semantic_state_scope_admission_report.sh`;
+- no compiler behavior, materialization behavior, remangling behavior, backend
+  behavior, cleanup behavior, or `BlockOwner` carrier is changed by this slice.
+
+Problem:
+
+- Slice 0k-AT said to enumerate the remaining direct ambient-predicate
+  consumers before choosing another `SemanticStateScope` helper;
+- choosing one of the remaining `lower_function_if_needed` consumers by source
+  order would repeat the earlier symptom-patching pattern;
+- the gate must therefore either select exactly one root-sized unpromoted
+  frontend consumer or force a redesign checkpoint.
+
+Implementation:
+
+- `SOURCE_SHAPE_ONLY=1` skips compiler execution and scans
+  `src/compiler/hir/ast_to_hir.cr` directly;
+- it reports `[STATE_SCOPE_SOURCE]` rows for the known state-scope consumers;
+- it reports `[STATE_SCOPE_NO_REPEAT]` selection rows;
+- `REQUIRE_SELECTED=1` fails unless exactly one unpromoted frontend consumer is
+  source-selected.
+
+Fresh evidence:
+
+- default source-only gate:
+  - `prefer_callsite_specialization`: `already_promoted_shadow`;
+  - `lower_function_if_needed.override`: `already_promoted_shadow`;
+  - `lower_function_if_needed.callsite_args`: `legacy_direct_edge`,
+    `rejected_multiple_frontend_candidates`;
+  - `lower_function_if_needed.suffix_types`: `legacy_direct_edge`,
+    `rejected_multiple_frontend_candidates`;
+  - `lower_call.remangle`: `legacy_direct_edge`, `rejected_backend_adjacent`;
+  - `malformed_direct=0`, `frontend_candidate_count=2`,
+    `selected_count=0`, `already_promoted_count=2`,
+    `state_model_redesign_required=1`.
+- negative selection gate:
+  `SOURCE_SHAPE_ONLY=1 REQUIRE_SELECTED=1
+  scripts/semantic_state_scope_admission_report.sh` exits `9`.
+
+Boundary:
+
+- this is a source-shape selector, not a behavior fix;
+- it does not prove `s2b`/`s3b` progress;
+- it prevents the next slice from picking either `callsite_args` or
+  `suffix_types` without a stronger discriminator.
+
+Next local track:
+
+- move to a state-model redesign checkpoint for the shared
+  `lower_function_if_needed` keep-requested-name state, or first produce a
+  stronger falsifier that collapses the two frontend candidates to one
+  root-sized authority edge.
 
 Current selected implementation status: Slice 0k-AH is a behavior-neutral
 consumer migration. Instance-method override, keepalive, and diagnostic

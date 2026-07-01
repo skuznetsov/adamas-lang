@@ -1,31 +1,40 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -lt 1 ]]; then
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SOURCE_SHAPE_ONLY="${SOURCE_SHAPE_ONLY:-0}"
+
+if [[ $# -lt 1 && "$SOURCE_SHAPE_ONLY" != "1" ]]; then
   echo "usage: $0 <compiler> [source.cr [compiler-args...]]" >&2
   echo "env: TIMEOUT=180 MEM_MB=4096 SAMPLES=8" >&2
   echo "env: PREFERRED_CONSUMER=prefer_callsite_specialization REQUIRE_PROMOTED=0" >&2
+  echo "env: SOURCE_SHAPE_ONLY=1 REQUIRE_SELECTED=0" >&2
   exit 2
 fi
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COMPILER="$1"
-shift
+COMPILER="${1:-source-shape-only}"
+if [[ $# -gt 0 ]]; then
+  shift
+fi
 
 TIMEOUT="${TIMEOUT:-180}"
 MEM_MB="${MEM_MB:-4096}"
 SAMPLES="${SAMPLES:-8}"
 PREFERRED_CONSUMER="${PREFERRED_CONSUMER:-prefer_callsite_specialization}"
 REQUIRE_PROMOTED="${REQUIRE_PROMOTED:-0}"
-TMP_DIR="$(mktemp -d "$ROOT_DIR/tmp/semantic-state-scope-admission.XXXXXX")"
-LOG="$TMP_DIR/compile.log"
+REQUIRE_SELECTED="${REQUIRE_SELECTED:-0}"
+
+TMP_DIR=""
+LOG=""
 
 cleanup() {
-  rm -rf "$TMP_DIR"
+  if [[ -n "$TMP_DIR" ]]; then
+    rm -rf "$TMP_DIR"
+  fi
 }
 trap cleanup EXIT
 
-if [[ $# -eq 0 ]]; then
+create_default_repro() {
   SRC="$TMP_DIR/repro.cr"
   OUT="$TMP_DIR/repro.bin"
   cat >"$SRC" <<'CR'
@@ -59,11 +68,7 @@ puts box.value
 puts cache.read(1_u64).nil? ? 0 : 1
 CR
   COMPILE_ARGS=("$SRC" -o "$OUT")
-else
-  SRC="$1"
-  shift
-  COMPILE_ARGS=("$SRC" "$@")
-fi
+}
 
 source_shape_for_prefer_callsite_specialization() {
   local source_file="$ROOT_DIR/src/compiler/hir/ast_to_hir.cr"
@@ -97,6 +102,215 @@ source_shape_for_prefer_callsite_specialization() {
     }
   ' "$source_file"
 }
+
+source_shape_for_materialization_override() {
+  local source_file="$ROOT_DIR/src/compiler/hir/ast_to_hir.cr"
+  local helper_name="materialization_override_shadow_untyped_regular_param?"
+  local legacy_name="state_scope_consumer_def_has_untyped_regular_param?"
+
+  awk -v helper="$helper_name" -v legacy="$legacy_name" '
+    /has_untyped_regular_param =/ {
+      in_window = 1
+      window = 0
+    }
+    in_window {
+      window++
+      if (index($0, helper) > 0) {
+        helper_call = 1
+      }
+      if (index($0, legacy) > 0) {
+        legacy_call = 1
+      }
+      if (window > 8) {
+        in_window = 0
+      }
+    }
+    END {
+      if (helper_call && !legacy_call) {
+        print "already_promoted_shadow"
+      } else if (legacy_call) {
+        print "legacy_direct_edge"
+      } else {
+        print "missing_old_edge"
+      }
+    }
+  ' "$source_file"
+}
+
+run_source_shape_selection() {
+  local source_file="$ROOT_DIR/src/compiler/hir/ast_to_hir.cr"
+  local preferred_shape override_shape
+  preferred_shape="$(source_shape_for_prefer_callsite_specialization)"
+  override_shape="$(source_shape_for_materialization_override)"
+
+  echo "# SemanticStateScope No-Repeat Source-Shape Selection"
+  echo "source_file: $source_file"
+  echo "preferred_consumer: $PREFERRED_CONSUMER"
+  echo "prefer_callsite_source_shape: $preferred_shape"
+  echo "override_source_shape: $override_shape"
+  echo "require_selected: $REQUIRE_SELECTED"
+  echo "note: source-shape gate only; no compiler execution and no behavior change"
+
+  awk \
+    -v preferred="$PREFERRED_CONSUMER" \
+    -v preferred_shape="$preferred_shape" \
+    -v override_shape="$override_shape" \
+    -v require_selected="$REQUIRE_SELECTED" '
+    function append_known(consumer) {
+      if (!(consumer in known_seen)) {
+        known_seen[consumer] = 1
+        known_order[++known_count] = consumer
+      }
+    }
+
+    function append_direct(consumer, line) {
+      append_known(consumer)
+      direct_count[consumer]++
+      if (direct_line[consumer] == "") {
+        direct_line[consumer] = line
+      }
+    }
+
+    function source_status(consumer) {
+      if (consumer == "prefer_callsite_specialization") {
+        return preferred_shape
+      }
+      if (consumer == "lower_function_if_needed.override") {
+        return override_shape
+      }
+      if (direct_count[consumer] > 0) {
+        return "legacy_direct_edge"
+      }
+      return "not_direct"
+    }
+
+    function preselection_status(consumer, shape) {
+      if (consumer == "prefer_callsite_specialization") {
+        return shape == "already_promoted_shadow" ? "already_promoted_shadow" : "rejected_prefer_not_promoted"
+      }
+      if (consumer == "lower_function_if_needed.override") {
+        return shape == "already_promoted_shadow" ? "already_promoted_shadow" : "rejected_override_not_promoted"
+      }
+      if (consumer == "def_has_untyped_regular_param" ||
+          consumer == "raw_annotation_needs_callsite_specialization") {
+        return "rejected_predicate_helper_not_consumer"
+      }
+      if (consumer == "lower_call.remangle") {
+        return "rejected_backend_adjacent"
+      }
+      if (shape == "legacy_direct_edge") {
+        return "candidate_unpromoted_frontend"
+      }
+      return "rejected_not_direct"
+    }
+
+    BEGIN {
+      append_known("prefer_callsite_specialization")
+      append_known("lower_function_if_needed.callsite_args")
+      append_known("lower_function_if_needed.suffix_types")
+      append_known("lower_function_if_needed.override")
+      append_known("lower_call.remangle")
+      append_known("def_has_untyped_regular_param")
+      append_known("raw_annotation_needs_callsite_specialization")
+    }
+
+    /state_scope_consumer_def_has_untyped_regular_param\?\(/ {
+      if ($0 ~ /private def state_scope_consumer_def_has_untyped_regular_param\?/) {
+        next
+      }
+      pending_line = NR
+      pending = 1
+      next
+    }
+
+    pending {
+      if (match($0, /"[^"]+"/)) {
+        consumer = substr($0, RSTART + 1, RLENGTH - 2)
+        append_direct(consumer, pending_line)
+        pending = 0
+      } else if (NR - pending_line > 8) {
+        malformed_direct++
+        pending = 0
+      }
+    }
+
+    END {
+      print ""
+      print "## Direct Legacy Calls"
+      for (i = 1; i <= known_count; i++) {
+        consumer = known_order[i]
+        print "[STATE_SCOPE_SOURCE] consumer=" consumer \
+          " direct_count=" direct_count[consumer] + 0 \
+          " first_line=" (direct_line[consumer] == "" ? "none" : direct_line[consumer]) \
+          " source_shape=" source_status(consumer)
+      }
+
+      for (i = 1; i <= known_count; i++) {
+        consumer = known_order[i]
+        shape = source_status(consumer)
+        preliminary = preselection_status(consumer, shape)
+        prelim_status[consumer] = preliminary
+        if (preliminary == "candidate_unpromoted_frontend") {
+          candidate_count++
+        }
+        if (preliminary == "already_promoted_shadow") {
+          already_promoted_count++
+        }
+      }
+
+      print ""
+      print "## Candidate Selection"
+      for (i = 1; i <= known_count; i++) {
+        consumer = known_order[i]
+        preliminary = prelim_status[consumer]
+        status = preliminary
+        if (preliminary == "candidate_unpromoted_frontend") {
+          if (candidate_count == 1) {
+            status = "eligible_scope_owner"
+            selected_count++
+          } else {
+            status = "rejected_multiple_frontend_candidates"
+          }
+        }
+        print "[STATE_SCOPE_NO_REPEAT] consumer=" consumer \
+          " direct_count=" direct_count[consumer] + 0 \
+          " source_shape=" source_status(consumer) \
+          " selection_status=" status
+      }
+
+      print ""
+      print "malformed_direct=" malformed_direct + 0
+      print "frontend_candidate_count=" candidate_count + 0
+      print "selected_count=" selected_count + 0
+      print "already_promoted_count=" already_promoted_count + 0
+      redesign = (selected_count == 0 && candidate_count != 1) ? 1 : 0
+      print "state_model_redesign_required=" redesign
+
+      if (malformed_direct > 0 || selected_count > 1) {
+        exit 7
+      }
+      if (require_selected == "1" && selected_count != 1) {
+        exit 9
+      }
+    }
+  ' "$source_file"
+}
+
+if [[ "$SOURCE_SHAPE_ONLY" == "1" ]]; then
+  run_source_shape_selection
+  exit $?
+fi
+
+TMP_DIR="$(mktemp -d "$ROOT_DIR/tmp/semantic-state-scope-admission.XXXXXX")"
+LOG="$TMP_DIR/compile.log"
+
+if [[ $# -eq 0 ]]; then
+  create_default_repro
+else
+  SRC="$1"
+  shift
+  COMPILE_ARGS=("$SRC" "$@")
+fi
 
 set +e
 ADAMAS_STATE_SCOPE_CONSUMER_LEDGER=1 \
