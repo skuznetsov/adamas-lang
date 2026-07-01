@@ -8,6 +8,21 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: added Slice 0k-BD, a docs-only TypeValue implementation
+  receipt before production code. This is the pause requested after the H6
+  measured-red guard: the next code slice is admitted only if it introduces one
+  HIR-owned `TypeValue` / `RuntimeTypeIdentity` fact and migrates the
+  H6-reached consumers to that fact. The old authority edges are now explicit:
+  `typeof(...)`'s nil placeholder, runtime `.class` type-literal construction,
+  dot-class side maps, direct-output conversion, interpolation conversion, and
+  type-literal name/string query lowering. The slice must not touch generic
+  materialization, `BlockOwner`, requested-name policy, ambient maps, backend
+  stubs/forwarders, or broad `NamedTuple`/`Tuple` rendering. If implementation
+  requires consumers outside the H6 guard or mixes in those surfaces, stop at
+  classification and return to the G3 semantic-key migration lane. This is
+  planning/frontier control only; no compiler behavior changed and no green
+  `s2b`/`s3b` claim is made.
+
 - 2026-07-01 UPDATE: implemented Slice 0k-BC, the H6 TypeValue
   runtime-identity falsifier. New guard:
   `regression_tests/type_value_runtime_identity_contract.sh <compiler>`.

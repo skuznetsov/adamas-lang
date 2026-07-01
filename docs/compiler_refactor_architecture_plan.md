@@ -153,6 +153,17 @@ type-literal name/string consumers while preserving the H4 type-literal query
 guard. If the required consumer set widens beyond the H6 guard, stop at
 classification rather than patching one output path.
 
+2026-07-01 post-0k-BD note: the TypeValue production slice now has an
+implementation receipt. The next code change is admitted only as owner-fact
+migration for the H6-reached source-visible type-value surface. It must name
+the old authority edge it replaces (`typeof` nil placeholder, runtime `.class`
+type-literal construction, dot-class side map, direct-output conversion,
+interpolation conversion, or type-literal query lowering) and keep generic
+materialization, `BlockOwner`, requested-name policy, ambient maps, backend
+stubs/forwarders, and broad `NamedTuple`/`Tuple` rendering out of scope. If
+that boundary cannot be kept, pause implementation and return to G3 semantic
+key migration rather than shipping a local output fix.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`

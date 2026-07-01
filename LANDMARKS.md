@@ -12,6 +12,27 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-BD-TYPEVALUE-IMPLEMENTATION-RECEIPT|design-sealed 2026-07-01 {F:0.82 G:0.56 R:0.88}]:
+Slice 0k-BD is a docs-only implementation receipt for the H6 TypeValue
+frontier. It deliberately pauses production changes after the measured-red H6
+guard and before adding the HIR-owned `TypeValue` / `RuntimeTypeIdentity` fact.
+The admitted production slice must replace a named set of old authority edges:
+`typeof(...)`'s nil placeholder, runtime `.class` type-literal construction,
+dot-class side maps, direct-output conversion, interpolation conversion, and
+type-literal name/string query lowering. The owned fact must carry semantic
+`TypeRef`, canonical display name, origin, and runtime-stringification versus
+compile-time-only status. Rejected repeats are string-only `lower_typeof`,
+interpolation-only or direct-output-only special cases, backend stubs or
+forwarders, generic materialization changes, `BlockOwner` changes,
+requested-name or ambient-map policy changes, and broad `NamedTuple`/`Tuple`
+rendering normalization. If the consumer set widens beyond the H6 guard or
+requires those rejected surfaces, the implementation must stop at
+classification and return to the G3 semantic-key migration lane. Scope:
+planning/frontier control only; no compiler behavior changed and no green
+`s2b`/`s3b` claim. Decay trigger: the H6 guard changes, a TypeValue owner fact
+lands, B3 strict turns green, or fresh generated-stage evidence selects a
+different source-visible type-identity boundary.
+
 [LM-ARCH-0K-BC-TYPEVALUE-RUNTIME-IDENTITY-GUARD|measured-red 2026-07-01 {F:0.86 G:0.42 R:0.89}]:
 Slice 0k-BC adds executable guard
 `regression_tests/type_value_runtime_identity_contract.sh <compiler>` for the
