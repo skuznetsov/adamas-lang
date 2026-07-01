@@ -8,6 +8,22 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: implemented Slice 0k-BC, the H6 TypeValue
+  runtime-identity falsifier. New guard:
+  `regression_tests/type_value_runtime_identity_contract.sh <compiler>`.
+  It compares original Crystal and the supplied stage compiler through
+  `scripts/run_safe.sh` on direct and interpolated `typeof(1)`, runtime
+  `1.class`, nilable `(true ? 1 : nil).class`, and type-literal `.name` /
+  `.to_s` / `inspect`. The guard is strict by default; use
+  `ADAMAS_EXPECT_TYPEVALUE_MISMATCH=1` only to assert the known measured-red
+  frontier. Fresh measured-red evidence is stronger than a plain stdout diff:
+  the stage binary prints blank direct/interpolated `typeof` rows and then
+  exits 139 at the direct `.class` row. This closes the H6 missing-falsifier
+  hole but does not add the HIR-owned `TypeValue` / `RuntimeTypeIdentity` fact,
+  does not fix B3, and does not prove green `s2b`/`s3b`. Next aligned
+  production work is the TypeValue owner-fact implementation/migration for the
+  reached consumers.
+
 - 2026-07-01 UPDATE: added Slice 0k-BB, a docs-only hostile
   self-review checkpoint after the measured-red B3 oracle. The B3 failure is
   now classified as a `TypeValue` / `RuntimeTypeIdentity` frontier, not as a

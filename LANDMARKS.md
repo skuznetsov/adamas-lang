@@ -12,6 +12,23 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-BC-TYPEVALUE-RUNTIME-IDENTITY-GUARD|measured-red 2026-07-01 {F:0.86 G:0.42 R:0.89}]:
+Slice 0k-BC adds executable guard
+`regression_tests/type_value_runtime_identity_contract.sh <compiler>` for the
+H6 `TypeValue` / `RuntimeTypeIdentity` contract. It builds and runs the same
+source with original Crystal and the supplied stage compiler through
+`scripts/run_safe.sh`, then compares direct and interpolated `typeof(1)`,
+runtime `1.class`, nilable `(true ? 1 : nil).class`, and type-literal
+`.name` / `.to_s` / `inspect` rows. The guard is strict by default; the env
+`ADAMAS_EXPECT_TYPEVALUE_MISMATCH=1` is only for asserting the known
+measured-red frontier. Fresh measured-red evidence on a stage1 built at this
+slice shows blank direct/interpolated `typeof` rows followed by exit 139 at the
+direct `.class` row. Scope: missing H6 falsifier closed, HIR-owned TypeValue
+fact not implemented, B3 still not fixed, no green `s2b`/`s3b` claim. Decay
+trigger: TypeValue guard rows, type-literal lowering, direct/interpolated
+output conversion, original Crystal version, or `scripts/run_safe.sh` output
+format changes.
+
 [LM-ARCH-0K-BB-TYPEVALUE-RUNTIME-TYPE-IDENTITY|design-sealed 2026-07-01 {F:0.83 G:0.54 R:0.88}]:
 Slice 0k-BB is a docs-only hostile self-review checkpoint after the measured-red
 B3 oracle. The current type-visible semantic failure is now classified as a

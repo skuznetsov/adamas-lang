@@ -141,6 +141,18 @@ type-visible value fact and migrate the reached consumers to it. Do not use a
 string-only `lower_typeof` patch, interpolation-only special-case, backend
 stub, generic materialization change, or `BlockOwner` change as a shortcut.
 
+2026-07-01 post-0k-BC note: the TypeValue falsifier now exists as
+`regression_tests/type_value_runtime_identity_contract.sh`. It is strict by
+default and measured-red only under `ADAMAS_EXPECT_TYPEVALUE_MISMATCH=1`.
+Fresh measured-red evidence shows blank direct/interpolated `typeof` rows
+followed by exit 139 at direct `.class`. The next production implementation
+unit is therefore no longer another report: add the smallest HIR-owned
+`TypeValue` / `RuntimeTypeIdentity` fact that can serve the reached `typeof`,
+runtime `.class`, nilable `.class`, direct output, interpolation, and
+type-literal name/string consumers while preserving the H4 type-literal query
+guard. If the required consumer set widens beyond the H6 guard, stop at
+classification rather than patching one output path.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`

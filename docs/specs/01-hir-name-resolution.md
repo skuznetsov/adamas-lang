@@ -106,6 +106,10 @@ Current frontier: the B3 original-vs-stage oracle prints blank `TYPE=` and
 is a `TypeValue` / `RuntimeTypeIdentity` frontier, not permission for a
 string-only `typeof` patch.
 
+Focused guard: `regression_tests/type_value_runtime_identity_contract.sh`.
+It is strict by default and measured-red only with
+`ADAMAS_EXPECT_TYPEVALUE_MISMATCH=1`.
+
 ## 5. Source-Backed Recovery
 
 When generated stages cannot trust raw frontend slices, HIR MAY recover

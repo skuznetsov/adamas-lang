@@ -498,6 +498,20 @@ Next local track:
   broad or mixed, stop at classification and return to the G3 semantic-key
   migration lane rather than patching one output path.
 
+Executed result after Slice 0k-BC: H6 now has an executable focused falsifier,
+`regression_tests/type_value_runtime_identity_contract.sh`. It compares
+original Crystal and the supplied stage compiler on direct and interpolated
+`typeof(1)`, runtime `1.class`, nilable `(true ? 1 : nil).class`, and
+type-literal `.name` / `.to_s` / `inspect`. The guard is strict by default and
+measured-red only with `ADAMAS_EXPECT_TYPEVALUE_MISMATCH=1`. Fresh evidence
+shows the current stage binary emits blank direct/interpolated `typeof` rows
+and then exits 139 at the direct `.class` row. This closes the
+missing-falsifier part of the TypeValue boundary but does not implement the
+HIR-owned `TypeValue` fact, does not fix B3, and does not prove green
+`s2b`/`s3b`. The next production slice is the owner-fact
+implementation/migration for the reached type-visible consumers, or a
+stop-at-classification if that migration is broader than the H6 guard.
+
 Current selected implementation status: Slice 0k-AH is a behavior-neutral
 consumer migration. Instance-method override, keepalive, and diagnostic
 materialization-symbol consumers now read from `CallMaterializationTransaction`
