@@ -1236,7 +1236,8 @@ Source/spec:
 
 - `src/compiler/hir/ast_to_hir.cr` `AstNodeRef`;
 - `ADAMAS_LOWER_CALL_ARENA_LEDGER=1` lower-call arena ledger;
-- `scripts/lower_call_arena_ledger_smoke.sh`.
+- `scripts/lower_call_arena_ledger_smoke.sh`;
+- `scripts/lower_call_arena_parity_report.sh`.
 
 Falsifiers:
 
@@ -1247,14 +1248,20 @@ Falsifiers:
   consumed by lowering decisions;
 - ledger rows contain explicit ref origin/span/path data in addition to current
   arena and heuristic owner data;
-- default env-off compile emits no `[LC_ARENA]` rows.
+- default env-off compile emits no `[LC_ARENA]` rows;
+- the parity report must treat compiler nonzero exit as reportable data when
+  `[LC_ARENA]` rows exist, so generated-stage crashes can still produce owner
+  classification evidence.
 
 Evidence:
 
 - the lower-call ledger now records explicit owner-scoped references before raw
   AST reads, while preserving the legacy raw reads untouched;
 - focused smoke requires `[LC_ARENA]` expr/phase rows plus `ref_origin=` and
-  `ref_span=`.
+  `ref_span=`;
+- `scripts/lower_call_arena_parity_report.sh <compiler>` summarizes
+  `current`, explicit `AstNodeRef` owner, and heuristic owner parity into
+  `agree_all_have`, missing-has, and divergence buckets.
 
 Boundary:
 
@@ -1269,6 +1276,10 @@ Next local track:
 - use the facade to add a shadow parity report for lower-call raw reads:
   `current`, explicit `AstNodeRef` owner, and heuristic owner must be compared
   before any consumer read is routed through the facade;
+- run the parity report on the generated s2->s3 frontier before any raw-read
+  routing change; the report should classify whether the crash-edge rows show
+  owner agreement, current-vs-ref divergence, heuristic divergence, or missing
+  ownership evidence;
 - if parity still shows owner agreement at the crash edge, move the
   investigation to `NodeSlot`/arena storage producer corruption rather than
   arena selection.

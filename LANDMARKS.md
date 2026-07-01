@@ -155,6 +155,21 @@ protecting falsifier for each candidate. Decay trigger: compiler hot-file
 layout changes, debug/workaround gates are renamed, or a real `CodePathStatus`
 ledger replaces the static census as the cleanup authority.
 
+[LM-ARCH-LOWER-CALL-ARENA-PARITY-REPORT|guard-only 2026-07-01 {F:0.78 G:0.42 R:0.86}]:
+The `AstNodeRef` shadow facade now has an executable parity/classification
+report: `scripts/lower_call_arena_parity_report.sh`. It runs a compiler with
+`ADAMAS_LOWER_CALL_ARENA_LEDGER=1`, accepts nonzero compiler exit as useful
+data when `[LC_ARENA]` rows exist, and buckets lower-call expr rows by
+current-arena, explicit `AstNodeRef` owner, and heuristic owner agreement:
+`agree_all_have`, `agree_missing_has`,
+`ref_current_vs_heuristic_diverge`, `current_vs_ref_owner_diverge`, and
+`three_way_diverge`. Baseline no-prelude evidence with a fresh stage1 reports
+`phase_rows=5`, `expr_rows=3`, and `agree_all_have=3`. Scope: this is a
+diagnostic gate only; it does not route AST reads and does not classify the
+generated s2->s3 crash until run on that corridor. Decay trigger:
+`[LC_ARENA]` field format changes, lower-call raw-read labels change, or
+`AstNodeRef` starts driving behavior.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

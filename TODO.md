@@ -110,6 +110,16 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   agreeing at the crash edge, move to `NodeSlot`/arena storage producer
   corruption instead of arena-selection fixes.
 
+- 2026-07-01 UPDATE: added `scripts/lower_call_arena_parity_report.sh`, the
+  read-only parity/classification gate for the `AstNodeRef` shadow facade. It
+  runs with `ADAMAS_LOWER_CALL_ARENA_LEDGER=1`, accepts nonzero compiler exit
+  as reportable data when ledger rows exist, and buckets each lower-call expr
+  row into current/ref/heuristic owner agreement or divergence. Baseline
+  no-prelude smoke reports `phase_rows=5`, `expr_rows=3`, and
+  `agree_all_have=3`. Next generated-stage work must run this report on the
+  s2->s3 crash corridor before any raw `@arena[...]` consumer is routed through
+  `AstNodeRef`.
+
 - 2026-07-01 UPDATE: added the Phase 1b static `CodePathStatus` census entry
   point, `scripts/codepath_status_census.sh`. This is the architecture-side
   answer to codebase bloat and stale workaround risk: it groups debug/probe
