@@ -541,6 +541,29 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   global ambient-map change, `NamedTuple`/`Tuple` normalization, or
   `BlockOwner` rollback remains forbidden until that selection gate is green.
 
+- 2026-07-01 UPDATE: implemented Slice 0k-I as a behavior-neutral promotion
+  target selection report. `scripts/materialization_promotion_selection_report.sh`
+  consumes existing `ADAMAS_MATERIALIZATION_DECISION_LEDGER=1` rows; it does
+  not add compiler instrumentation, a new env ledger, backend hooks, or a
+  behavior change. Red gate: before the report existed, the command failed with
+  `FAIL: no materialization promotion selection report exists`. Focused stage1
+  evidence: fresh `/private/tmp/adamas_0ki_stage1` report emits `rows=7544`,
+  `malformed=0`, `invalid_owner=0`, `invalid_legacy_result=0`,
+  `invalid_would_change=0`, `eligible_count=1`, and `selected_count=1`. The
+  single eligible promotion consumer is `lower_function_if_needed.override`
+  (`row_count=1062`, `would_change_rows=0`). Direct predicate consumers are
+  rejected as requiring their own oracle, `lower_call.remangle` is rejected as
+  backend-adjacent/too late for the first promotion, and `callsite_args` /
+  `suffix_types` are unreached in the focused MaterializationRegistry row set.
+  Existing `materialization_decision_report`, `state_scope_consumer_report`,
+  `semantic_decision_census`, and `codepath_status_census` all remain green.
+  Generated-stage residual remains explicit: fresh stage1 builds fresh s2
+  (`EXIT: 0`), but generated s2 still crashes before `[MAT_DECISION]` on the
+  focused full-prelude report (`compiler_rc=139`); residual mode records
+  `generated_stage_status=not_reached_named_residual`. Next admitted
+  implementation: a narrow shadow/parity promotion helper for
+  `lower_function_if_needed.override` only, preserving legacy emitted behavior.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was

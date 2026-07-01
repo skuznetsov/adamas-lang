@@ -107,6 +107,20 @@ rows to choose exactly one legacy consumer or to explicitly switch to
 `CodePathStatus` cleanup. No promotion helper, forwarder, remangle change, or
 backend reconciliation is admitted until that selection gate is green.
 
+Current next-slice decision after Slice 0k-I implementation: the promotion
+target selection gate now exists and is behavior-neutral. The focused stage1
+report selected exactly one eligible promotion consumer from existing
+`[MAT_DECISION]` rows: `lower_function_if_needed.override`. Direct predicate
+consumers remain rejected as requiring their own oracle, `lower_call.remangle`
+is rejected as too late/backend-adjacent for the first promotion, and
+`lower_function_if_needed.callsite_args` / `.suffix_types` are unreached for
+the focused MaterializationRegistry row set. Generated s2 still crashes before
+`[MAT_DECISION]` on the focused full-prelude repro, and the report records
+that as `not_reached_named_residual`, not as a green generated-stage promotion.
+The next admitted implementation is therefore a narrow, behavior-neutral
+promotion helper for the selected override seam only, with legacy emitted
+behavior unchanged and no backend reconciliation or behavior flip.
+
 Bounded context: Crystal V2 compiler architecture:
 
 - HIR lowering and semantic registration (`src/compiler/hir/ast_to_hir.cr`)
@@ -2989,7 +3003,7 @@ Next local track:
 
 Status:
 
-- design-sealed, docs-only checkpoint after the failed 0k-H implementation
+- implemented behavior-neutral report after the failed 0k-H implementation
   preflight;
 - no compiler behavior, materialization behavior, remangling behavior, backend
   behavior, AST-read behavior, or cleanup behavior is changed by this slice.
@@ -3090,6 +3104,45 @@ Current evidence:
 - this is a planning/refutation result, not a compiler behavior result and not
   a green `s2b`/`s3b` claim.
 
+Implementation evidence:
+
+- red gate: before the report existed,
+  `scripts/materialization_promotion_selection_report.sh` failed closed with
+  `FAIL: no materialization promotion selection report exists`;
+- implementation:
+  `scripts/materialization_promotion_selection_report.sh` consumes the existing
+  `ADAMAS_MATERIALIZATION_DECISION_LEDGER=1` rows and does not add a compiler
+  env, source instrumentation, backend hook, or behavior change;
+- focused stage1 report:
+  `scripts/materialization_promotion_selection_report.sh
+  /private/tmp/adamas_0ki_stage1` reports `rows=7544`, `malformed=0`,
+  `invalid_owner=0`, `invalid_legacy_result=0`,
+  `invalid_would_change=0`, `eligible_count=1`, and `selected_count=1`;
+- selected consumer:
+  `lower_function_if_needed.override` has `row_count=1062`,
+  `missing_owner_fields=0`, `invalid_owner_fields=0`,
+  `would_change_rows=0`, and
+  `selection_status=eligible_promote_owner`;
+- rejected consumers:
+  `prefer_callsite_specialization`, `def_has_untyped_regular_param`, and
+  `raw_annotation_needs_callsite_specialization` are
+  `rejected_requires_new_oracle`; `lower_call.remangle` is
+  `rejected_backend_only`; `lower_function_if_needed.callsite_args` and
+  `.suffix_types` are `rejected_unreached`;
+- compatibility gates:
+  `scripts/materialization_decision_report.sh
+  /private/tmp/adamas_0ki_stage1`,
+  `scripts/state_scope_consumer_report.sh /private/tmp/adamas_0ki_stage1`,
+  `scripts/semantic_decision_census.sh`, and
+  `scripts/codepath_status_census.sh` all exit `0`;
+- generated-stage gate: fresh stage1 builds fresh generated s2
+  `/private/tmp/adamas_0ki_s2` (`EXIT: 0` after about 178s). Running the
+  focused selection report with generated s2 still fails before
+  `[MAT_DECISION]` with `compiler_rc=139`; explicit residual mode reports
+  `rows=0`, `eligible_count=0`, `selected_count=0`,
+  `generated_stage_status=not_reached_named_residual`, and
+  `no_row_reason=generated_s2_crashes_before_materialization_decision`.
+
 Hostile self-review:
 
 - strongest objection: this selection gate can become another report instead
@@ -3104,9 +3157,13 @@ Hostile self-review:
 
 Next local track:
 
-- implement the selection report without changing compiler instrumentation, or
-  if existing rows lack required fields, revise Slice 0k-I before adding any
-  new env-gated compiler ledger.
+- implement a narrow behavior-neutral promotion helper for the selected
+  `lower_function_if_needed.override` consumer only. It must read the existing
+  `MaterializationDecision` owner record in shadow/parity mode, preserve the
+  legacy emitted result, and keep generated-stage `not_reached_named_residual`
+  as a residual boundary. Do not promote direct predicates, `lower_call`
+  remangling, backend undefined-extern handling, target keepalive, or
+  requested-name materialization in the same slice.
 
 ### Slice A: CallResolution boundary
 

@@ -660,6 +660,38 @@ promotion-selection report lands and chooses an eligible consumer, or fresh
 generated-stage evidence invalidates the current MaterializationDecision owner
 rows.
 
+[LM-ARCH-PROMOTION-TARGET-SELECTION-GATE|verified 2026-07-01 {F:0.84 G:0.44 R:0.88}]:
+Slice 0k-I now has a behavior-neutral promotion target selection report.
+`scripts/materialization_promotion_selection_report.sh` consumes existing
+`ADAMAS_MATERIALIZATION_DECISION_LEDGER=1` rows and does not add compiler
+instrumentation, a new promotion ledger env, backend hooks, or behavior
+changes. Red gate: before the report existed, the command failed with
+`FAIL: no materialization promotion selection report exists`. Focused stage1
+evidence with `/private/tmp/adamas_0ki_stage1` reports `rows=7544`,
+`malformed=0`, `invalid_owner=0`, `invalid_legacy_result=0`,
+`invalid_would_change=0`, `eligible_count=1`, and `selected_count=1`. The
+single selected consumer is `lower_function_if_needed.override`
+(`row_count=1062`, `missing_owner_fields=0`, `invalid_owner_fields=0`,
+`would_change_rows=0`, `selection_status=eligible_promote_owner`). Other
+candidate consumers are explicitly rejected or unreached:
+`prefer_callsite_specialization`, `def_has_untyped_regular_param`, and
+`raw_annotation_needs_callsite_specialization` are
+`rejected_requires_new_oracle`; `lower_call.remangle` is
+`rejected_backend_only`; `lower_function_if_needed.callsite_args` and
+`.suffix_types` are `rejected_unreached`. Compatibility gates remain green:
+`materialization_decision_report`, `state_scope_consumer_report`,
+`semantic_decision_census`, and `codepath_status_census` all exit `0`.
+Generated-stage boundary: fresh stage1 builds fresh s2 (`EXIT: 0`), but the
+generated compiler still crashes before `[MAT_DECISION]` on the focused
+full-prelude report (`compiler_rc=139`). The selection report's residual mode
+records this as `generated_stage_status=not_reached_named_residual` with
+`no_row_reason=generated_s2_crashes_before_materialization_decision`. Scope:
+selection/facade planning only; no compiler behavior changed and no green
+`s2b`/`s3b` claim. Decay trigger: the report row format changes, a later
+generated-stage run reaches `[MAT_DECISION]` with different candidate buckets,
+or the selected `lower_function_if_needed.override` promotion helper lands and
+starts driving behavior.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-
