@@ -655,6 +655,26 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   `SemanticStateScope` facade unless a fresh focused report names a different
   unpromoted MaterializationDecision consumer with complete owner fields.
 
+- 2026-07-01 UPDATE: added Slice 0k-O as a docs-only
+  `SemanticStateScope` admission gate before the next code slice. The prior
+  "add a behavior-neutral scope snapshot" wording was too weak: it could admit
+  another report/helper while leaving every ambient-state consumer on the old
+  authority edge. The next `SemanticStateScope` code slice is now admitted only
+  if it presents a concrete receipt for exactly one selected seam: `old_edge`,
+  `owned_edge`, `legacy_parity`, `source_shape`, `report_shape`,
+  `generated_stage_boundary`, and `cleanup_impact`. The preferred candidate is
+  currently `prefer_callsite_specialization`, because it still directly reads
+  `state_scope_consumer_def_has_untyped_regular_param?`, but this must be
+  rechecked against the live `StateScopeConsumer` report before code. Rejected
+  repeats remain: adding a report whose only effect is new rows, adding boolean
+  modes to old predicates, global `@type_param_map` changes, migrating multiple
+  consumers in one slice, backend stub/forwarder/keepalive work, remangling,
+  requested-name materialization, `NamedTuple`/`Tuple` normalization, or rolling
+  `BlockOwner` back to tuple/namedtuple metadata. If the receipt cannot be
+  made root-sized, switch to runtime `CodePathStatus` cleanup selection rather
+  than expanding diagnostics again. No compiler behavior changed and no green
+  `s2b`/`s3b` claim is made.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was

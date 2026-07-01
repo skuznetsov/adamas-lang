@@ -49,6 +49,13 @@ legacy ambient reads. Do not continue materialization-selection work unless a
 fresh focused report names a different unpromoted consumer with complete owner
 fields.
 
+2026-07-01 post-0k-O note: `SemanticStateScope` is not admitted as another
+diagnostic report lane. The next code slice must replace one named ambient-state
+authority edge in shadow/parity mode, with a source-shape guard proving that the
+selected consumer no longer calls the old helper directly. If that receipt is
+not root-sized, switch to runtime `CodePathStatus` cleanup selection instead of
+adding another scope ledger.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging

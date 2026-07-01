@@ -3719,6 +3719,123 @@ Next local track:
 - the next code slice should add a behavior-neutral scope snapshot at a naming
   or materialization seam and prove parity against legacy ambient reads.
 
+### Slice 0k-O: SemanticStateScope admission gate
+
+Status:
+
+- design-sealed planning checkpoint after Slice 0k-N;
+- no compiler behavior, materialization behavior, remangling behavior, backend
+  behavior, AST-read behavior, cleanup behavior, or `BlockOwner` carrier is
+  changed by this slice;
+- the purpose is to prevent the `SemanticStateScope` lane from becoming another
+  sequence of shadow ledgers that do not reduce authority edges.
+
+Problem:
+
+- Slice 0k-N correctly routes the next near-term architecture lane to
+  `SemanticStateScope`, because the focused post-0k-L
+  `MaterializationDecision` surface has no second eligible consumer;
+- the current wording still admits a weak next move: add a behavior-neutral
+  scope snapshot and a report, but leave every consumer reading ambient state
+  through the same legacy helper;
+- that weak shape would repeat the old failure mode under a new vocabulary:
+  evidence grows, but the old authority edge remains live and the next frontier
+  can still be patched at a consumer.
+
+Mini-Quadrumvirate receipt for the next code slice:
+
+1. `VERIFY`: name the exact legacy ambient-state edge and the existing owner
+   fact it already exposes. For the preferred first seam this is expected to be
+   `prefer_callsite_specialization` reading
+   `state_scope_consumer_def_has_untyped_regular_param?` directly, with owner
+   facts already present in `[STATE_SCOPE_CONSUMER]` rows.
+2. `CRITICIZE`: prove that the proposed slice does not merely add a new report.
+   A new ledger is admitted only if a source-shape guard proves the selected
+   consumer no longer calls the legacy edge directly.
+3. `BUILD`: introduce a named `SemanticStateScopeSnapshot` or equivalently
+   named internal owner object for exactly one selected seam. The snapshot may
+   observe the legacy result for parity, but emitted behavior must still return
+   the legacy result until a later would-change slice is admitted.
+4. `ADVERSARY`: run a no-repeat/source-shape report that rejects already
+   promoted seams, rejects broad or multi-consumer migrations, and proves
+   `emitted_result == legacy_result`.
+
+Admitted next code slice:
+
+- choose exactly one `SemanticStateScope` consumer seam before implementation;
+- record the receipt fields:
+  - `old_edge`: direct ambient-state read or legacy helper call at the selected
+    consumer;
+  - `owned_edge`: `SemanticStateScopeSnapshot` fields used by that consumer;
+  - `legacy_parity`: the helper returns the same boolean/value the old edge
+    returned;
+  - `source_shape`: the selected consumer no longer calls the old helper
+    directly;
+  - `report_shape`: rows are limited to the selected consumer, include complete
+    authority/lifetime/map fields, and fail closed on malformed rows;
+  - `generated_stage_boundary`: a generated-stage run may stop at the current
+    residual frontier, but any claim must state where the new seam was or was
+    not reached;
+  - `cleanup_impact`: whether the old direct call is eliminated only at the
+    selected seam, remains elsewhere, or becomes a delete candidate.
+
+Rejected next moves:
+
+- adding a `SemanticStateScope` report whose only effect is to print new rows;
+- adding a boolean mode to `def_has_untyped_regular_param?`,
+  `raw_annotation_needs_callsite_specialization?`, or related helpers;
+- globally clearing, ignoring, or trusting `@type_param_map`;
+- migrating multiple state-scope consumers in one slice;
+- treating `diagnostic_only`, `keep_legacy_shim`, or `blocked_unknown` rows as
+  behavior authority;
+- backend undefined-extern rescue, target keepalive, requested-name
+  materialization, remangling, `NamedTuple`/`Tuple` display normalization, or
+  rolling `BlockOwner` back to tuple/namedtuple metadata.
+
+Stop rules:
+
+- if the selected seam cannot name `old_edge`, `owned_edge`, source-shape guard,
+  and falsifier before code, stop and switch to `CodePathStatus` cleanup
+  selection instead of adding another scope ledger;
+- if a would-change census for the selected seam is broader than the named seam
+  or contains unrelated behavior classes, stop and classify before patching;
+- if the source-shape report cannot distinguish already promoted seams from
+  unpromoted ones, stop before adding the helper.
+
+DoD for the next code slice:
+
+- red gate: the new SemanticStateScope promotion/admission report fails on a
+  pre-slice compiler with no promoted state-scope rows or with the old direct
+  source shape still present;
+- green source-shape gate: the selected consumer obtains parity input through
+  the owned snapshot and no longer calls the old helper directly;
+- green report gate: rows are limited to the selected consumer, malformed and
+  invalid counts are zero, authority/lifetime/map fields are complete, and
+  `emitted_result == legacy_result`;
+- compatibility gates: existing `state_scope_consumer_report`,
+  `materialization_promotion_selection_report`, `semantic_decision_census`, and
+  `codepath_status_census` still pass;
+- behavior gate for code changes: focused regression suite and a fresh
+  generated-s2 smoke must be run, with any residual generated-stage boundary
+  named explicitly in `TODO.md` / `LANDMARKS.md`.
+
+Boundary:
+
+- this is an admission gate, not an implementation;
+- it does not claim `s2b`/`s3b` progress;
+- it narrows the next `SemanticStateScope` code slice from "add a snapshot" to
+  "replace one named ambient-state authority edge in shadow/parity mode."
+
+Next local track:
+
+- implement the first `SemanticStateScope` owner-consumption slice only after a
+  concrete receipt names the selected seam. The current preferred candidate is
+  `prefer_callsite_specialization`, but that preference must be rechecked
+  against the live `StateScopeConsumer` report before code;
+- if that receipt cannot be made root-sized, switch to runtime
+  `CodePathStatus` cleanup selection rather than continuing diagnostic
+  expansion.
+
 ### Slice A: CallResolution boundary
 
 Source/spec:

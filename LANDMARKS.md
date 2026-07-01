@@ -815,6 +815,28 @@ promotion-selection row semantics change, a second unpromoted consumer becomes
 eligible with complete owner fields, or the source-shape detector no longer
 matches the override seam.
 
+[LM-ARCH-SEMANTIC-STATE-SCOPE-ADMISSION-GATE|design-sealed 2026-07-01 {F:0.80 G:0.52 R:0.86}]:
+Slice 0k-O tightens the post-0k-N `SemanticStateScope` lane before any new code.
+The previous "add a behavior-neutral scope snapshot" wording was too weak
+because it could admit another ledger/helper while every consumer kept reading
+ambient state through the legacy helper. The next `SemanticStateScope` code
+slice is admitted only if it presents a concrete receipt for exactly one
+selected seam: `old_edge`, `owned_edge`, `legacy_parity`, `source_shape`,
+`report_shape`, `generated_stage_boundary`, and `cleanup_impact`. The preferred
+candidate is currently `prefer_callsite_specialization`, where the source still
+directly calls `state_scope_consumer_def_has_untyped_regular_param?`, but that
+candidate must be rechecked against the live `StateScopeConsumer` report before
+implementation. Rejected repeats remain new rows without edge replacement,
+boolean modes on old predicates, global `@type_param_map` changes, broad
+multi-consumer migration, backend stub/forwarder/keepalive work, remangling,
+requested-name materialization, `NamedTuple`/`Tuple` normalization, and rolling
+`BlockOwner` back to tuple/namedtuple metadata. Scope: docs-only admission gate;
+no compiler behavior changed and no green `s2b`/`s3b` claim. Decay trigger:
+a concrete SemanticStateScope owner-consumption slice lands with source-shape
+and report evidence, the live consumer report refutes
+`prefer_callsite_specialization` as a root-sized seam, or the owner explicitly
+switches the next lane to runtime `CodePathStatus` cleanup.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-
