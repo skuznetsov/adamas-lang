@@ -217,6 +217,19 @@ the next implementation unit should introduce one HIR-owned
 `TypeValue` / `RuntimeTypeIdentity` fact for the core rows. A green core guard
 is not a full old-H6 claim while the command-call frontend guard is still red.
 
+2026-07-01 post-0k-BJ note: the TypeValue implementation lane now has an
+owner-fact design gate. The next code slice is still the H6-core
+`contract-owner-migration`, but it must be rejected if it merely makes the
+output rows green. The implementation must create a named HIR-owned
+`TypeValue` / `RuntimeTypeIdentity` fact carrying semantic `TypeRef`, display
+name, origin, and runtime stringification policy; producers and consumers must
+route through that fact. `@type_literal_values` may remain as a static-call
+compatibility flag, but `dot_class_literal?`, nil placeholder shape, rendered
+names, or backend stringification must not remain the sole authority for
+source-visible type behavior. Parser, generic materialization, `BlockOwner`,
+requested-name, ambient-map, backend forwarder/stub, and broad
+`NamedTuple`/`Tuple` work remain out of scope for this slice.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`

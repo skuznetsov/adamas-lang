@@ -12,6 +12,27 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-BJ-TYPEVALUE-OWNER-FACT-GATE|design-sealed 2026-07-01 {F:0.84 G:0.56 R:0.87}]:
+Slice 0k-BJ adds a docs-only implementation gate before the TypeValue
+production slice. The next code movement remains `contract-owner-migration`,
+but it must install a named HIR-owned `TypeValue` / `RuntimeTypeIdentity` fact
+before claiming H6-core progress. The fact must be keyed to HIR `ValueId` and
+carry semantic `TypeRef`, canonical display name, origin (`typeof`, runtime
+`.class`, explicit type literal, or type-literal query), and runtime
+stringification policy. Required producers are `lower_typeof`, runtime
+`.class`, `lower_type_literal_from_name`, and type-literal name/string query
+lowering. Required consumers are direct output, string interpolation,
+call-argument conversion for runtime `.class`, H4 type-literal queries, and
+local/copy propagation for the H6-core local nilable rows. Stop rule: a green
+H6-core guard is rejected if it still derives source-visible type behavior from
+nil placeholders, `dot_class_literal?`, rendered-name shortcuts, backend
+stringification, or another local side map instead of the owner fact. Scope:
+docs/design only; no compiler behavior changed, no parser behavior changed, no
+`BlockOwner`, generic materialization, requested-name, ambient-map, backend
+stub/forwarder, or broad `NamedTuple`/`Tuple` behavior changed. Decay trigger:
+a committed TypeValue owner fact lands, H6-core changes, or source-shape review
+shows the old authority edges no longer match the implementation plan.
+
 [LM-ARCH-0K-BI-H6-SPLIT-TYPEVALUE-CORE-GUARD|measured-red 2026-07-01 {F:0.87 G:0.42 R:0.89}]:
 Slice 0k-BI implements the H6 split route admitted by 0k-BH. New guard:
 `regression_tests/type_value_core_runtime_identity_contract.sh <compiler>`.

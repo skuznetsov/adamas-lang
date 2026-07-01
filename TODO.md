@@ -8,6 +8,21 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: added Slice 0k-BJ, a docs-only TypeValue
+  owner-fact implementation gate. Production code remains paused until the next
+  slice can name the `TypeValue` / `RuntimeTypeIdentity` owner fact, its
+  producers, its consumers, the old authority edges it retires or shadows, and
+  the residual command-call frontend row. The admitted code route is still
+  `contract-owner-migration`, but a green H6-core result is not acceptable if it
+  comes from a string-only `lower_typeof` patch, interpolation/direct-output
+  special-case, backend stringification, `dot_class_literal?`-only authority, or
+  another local side map. The next code slice must route direct output,
+  interpolation, call-argument conversion, type-literal name/string queries, and
+  local/copy propagation through the HIR-owned fact, while keeping parser,
+  generic materialization, `BlockOwner`, requested-name policy, ambient-map
+  policy, backend stubs/forwarders, and broad `NamedTuple`/`Tuple` behavior out
+  of scope. No compiler behavior changed in this checkpoint.
+
 - 2026-07-01 UPDATE: implemented Slice 0k-BI, the H6 split required by the
   0k-BH pause gate. New guard:
   `regression_tests/type_value_core_runtime_identity_contract.sh <compiler>`.

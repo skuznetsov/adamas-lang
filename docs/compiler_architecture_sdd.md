@@ -17,6 +17,9 @@ precedence work must stop and return to the split-H6 / TypeValue-owner route.
 Slice 0k-BI takes that split-H6 route: it adds a TypeValue-core guard that
 excludes the parser-confounded direct no-parens command-call row, leaving the
 command-call frontend guard as a separate measured-red frontier.
+Slice 0k-BJ adds the pre-implementation TypeValue owner-fact design gate:
+the next code slice must prove it is replacing the old type-visible authority
+edges, not just making the H6-core output rows green.
 
 Current frontier: the compiler can make progress through bounded bug slices,
 but many semantic decisions are still inferred repeatedly across HIR, MIR, and
@@ -887,6 +890,117 @@ Forbidden repeats:
 - do not change generic materialization, requested-name policy, ambient-map
   policy, `BlockOwner`, or broad `NamedTuple`/`Tuple` rendering in the
   TypeValue-core slice.
+
+### Slice 0k-BJ: TypeValue owner-fact implementation gate
+
+Status:
+
+- docs-only design gate before the TypeValue production implementation;
+- no compiler behavior, parser behavior, TypeValue behavior, materialization
+  behavior, backend behavior, requested-name policy, ambient-map policy,
+  `BlockOwner` carrier, or broad `NamedTuple`/`Tuple` rendering changes.
+
+ProblemCard:
+
+- signal: repeated frontiers were fixed locally, then reappeared one layer later
+  because the underlying semantic owner did not move;
+- why now: H6-core is measured-red and narrow enough to invite an output-only
+  patch, while the SDD requires `contract-owner-migration`;
+- bounded context: HIR type-visible values only;
+- not merely: a test-green wish or a stringification patch;
+- validation boundary: H6-core/B3/H4 plus source-shape evidence that old
+  type-visible authority edges are no longer the consumers' sole authority.
+
+Pre-action quadrum:
+
+- Cassandra: the likely failure mode is a new side map that makes direct output
+  and interpolation print `Int32` but leaves `typeof`, runtime `.class`,
+  type-literal queries, and call-argument conversion as independent authorities;
+- Maieutic: if the H6-core guard turns green but the consumers still decide
+  source-visible type behavior from nil placeholders, `dot_class_literal?`, or
+  rendered-name shortcuts, the slice is not architecture work;
+- Daedalus: shift the next implementation from "fix output rows" to "install
+  one HIR-owned fact and route every reached producer/consumer through it";
+- Adversary verdict: direct code is admitted only if it can name the owner fact,
+  producers, consumers, retired/shadowed old edges, and residual frontend row.
+
+Required owner fact shape for the next code slice:
+
+1. A named HIR-owned fact, `TypeValue` / `RuntimeTypeIdentity`, keyed to a
+   `ValueId` at the HIR boundary. The first implementation may store it beside
+   `LoweringContext` value metadata, but it must be the owner consulted by
+   consumers, not a backend or output-only side table.
+2. Required fields:
+   - semantic `TypeRef`;
+   - canonical display name;
+   - origin: `typeof`, runtime `.class`, explicit type literal, or
+     type-literal query;
+   - runtime policy: compile-time-only value versus runtime stringification
+     required.
+3. Required producer coverage:
+   - `lower_typeof`;
+   - runtime `.class` lowering in member access;
+   - `lower_type_literal_from_name`;
+   - type-literal `.name` / `.to_s` / `inspect` query lowering when it creates a
+     source-visible type string.
+4. Required consumer coverage:
+   - direct output paths that currently route through ordinary call lowering;
+   - string interpolation conversion;
+   - call-argument conversion for runtime `.class` values;
+   - type-literal name/string query lowering protected by H4;
+   - local/copy propagation for the H6-core local nilable rows.
+
+Compatibility rule:
+
+- `@type_literal_values` may remain temporarily as a static-call compatibility
+  flag, but source-visible runtime stringification must not depend solely on
+  `ctx.type_literal?`, `ctx.dot_class_literal?`, nil literal shape, or backend
+  stringification after the implementation slice.
+- `@dot_class_literals` is a legacy authority edge for stringification. A
+  TypeValue patch may keep it only as a compatibility shim while each surviving
+  use is justified as non-authoritative or replaced by the owner fact.
+
+Implementation phases admitted inside one code slice:
+
+1. Add the owner fact and producer helpers.
+2. Route direct-output, interpolation, call-argument, and type-literal-query
+   consumers through the fact.
+3. Propagate the fact through local/copy paths needed by H6-core.
+4. Leave the command-call parser guard separate and measured-red unless the
+   slice explicitly changes tranche to parser `semantic-service-extraction`
+   before editing parser code.
+
+DoD for the next code slice:
+
+- strict `regression_tests/type_value_core_runtime_identity_contract.sh
+  <compiler>` passes;
+- strict `regression_tests/original_vs_stage_semantic_oracle_contract.sh
+  <compiler>` passes for the type-visible B3 rows;
+- `regression_tests/p2_type_literal_name_query_no_stub.sh <compiler>` remains
+  green;
+- `ADAMAS_EXPECT_COMMAND_CALL_MEMBER_MISMATCH=1
+  regression_tests/command_call_member_access_preservation_contract.sh` remains
+  measured-red unless the slice explicitly chose the parser route first;
+- source-shape review lists every remaining `dot_class_literal?` and
+  `type_literal?` consumer touched by the slice and states whether it is
+  compatibility-only or still an authority edge;
+- `git diff --check` passes;
+- TODO/LANDMARKS/SDD state whether generated `s2b` / `s3b` was actually run.
+
+Stop rules:
+
+- if the patch can pass H6-core without adding the named owner fact, reject it
+  as a symptom fix;
+- if direct output and interpolation become green but `typeof`, runtime
+  `.class`, type-literal query, or local/copy propagation still has its own
+  independent authority, stop and split the implementation;
+- if the patch needs parser precedence, generic materialization, requested-name
+  policy, ambient-map policy, backend stubs/forwarders, LLVM stringification,
+  `BlockOwner`, or broad `NamedTuple`/`Tuple` behavior, stop and reclassify the
+  slice before editing those surfaces;
+- if a green H6-core result is used to claim old full-H6, generated `s2b`, or
+  generated `s3b`, downgrade the claim: the command-call frontend guard and
+  generated-stage evidence remain separate.
 
 Historical ledger resumes below. Entries after this point predate the current
 Active Architecture Board / 0k-BG receipt unless they are explicitly referenced
