@@ -8,6 +8,20 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: added Slice 0k-BE, a docs-only architecture
+  tranche selector / tail-chasing stop after the TypeValue implementation
+  receipt. Production code is paused again until the next code slice states
+  its tranche before editing: `contract-owner-migration`,
+  `semantic-service-extraction`, `cleanup/delete`, or
+  `bootstrap-emergency-with-ledger`. TypeValue remains an admitted candidate,
+  but only as `contract-owner-migration`: it must retire or shadow the named
+  H6 authority edges through one owner fact, not become another local output
+  patch. A future G3 generic-key migration is the fallback if TypeValue cannot
+  stay inside H6 or if the implementation needs generic materialization,
+  `BlockOwner`, requested-name policy, ambient maps, backend stubs/forwarders,
+  or broad `NamedTuple`/`Tuple` rendering. This slice changes planning only;
+  no compiler behavior changed and no green `s2b`/`s3b` claim is made.
+
 - 2026-07-01 UPDATE: added Slice 0k-BD, a docs-only TypeValue implementation
   receipt before production code. This is the pause requested after the H6
   measured-red guard: the next code slice is admitted only if it introduces one

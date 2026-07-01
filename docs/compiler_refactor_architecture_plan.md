@@ -164,6 +164,18 @@ stubs/forwarders, and broad `NamedTuple`/`Tuple` rendering out of scope. If
 that boundary cannot be kept, pause implementation and return to G3 semantic
 key migration rather than shipping a local output fix.
 
+2026-07-01 post-0k-BE note: the project is paused before production code again
+because a well-scoped measured-red guard can still pull the work back into
+local tail-chasing. The next code slice must first declare an architecture
+tranche: `contract-owner-migration`, `semantic-service-extraction`,
+`cleanup/delete`, or `bootstrap-emergency-with-ledger`. TypeValue remains
+admitted only as `contract-owner-migration`; it must retire or shadow the H6
+authority edges through one owner fact and must not become another output
+special-case. If TypeValue needs generic materialization, `BlockOwner`,
+requested-name policy, ambient maps, backend stubs/forwarders, or broad
+`NamedTuple`/`Tuple` rendering, pause and return to G3 semantic-key migration
+or a narrower semantic-service extraction plan.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`

@@ -12,6 +12,24 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-BE-ARCHITECTURE-TRANCHE-SELECTOR|design-sealed 2026-07-01 {F:0.84 G:0.62 R:0.88}]:
+Slice 0k-BE is a docs-only architecture tranche selector and tail-chasing stop
+after the TypeValue implementation receipt. It does not revoke 0k-BD, but it
+removes the implicit autopilot from "latest measured-red guard -> next code
+fix". Before any production code slice, the slice must declare exactly one
+tranche: `contract-owner-migration`, `semantic-service-extraction`,
+`cleanup/delete`, or `bootstrap-emergency-with-ledger`. TypeValue remains
+admitted only as `contract-owner-migration`: one HIR-owned type-visible fact
+must retire or shadow the named H6 authority edges, and success on H6/B3 alone
+must not be reported as green `s2b`/`s3b`. If TypeValue needs generic
+materialization, `BlockOwner`, requested-name policy, ambient-map policy,
+backend stubs/forwarders, or broad `NamedTuple`/`Tuple` rendering, stop and
+return to G3 semantic-key migration or a higher-level semantic service
+extraction plan. Scope: planning/frontier control only; no compiler behavior
+changed and no bootstrap claim. Decay trigger: a production slice lands under
+this selector, a fresh generated-stage run refutes the active board, or the SDD
+changes tranche vocabulary.
+
 [LM-ARCH-0K-BD-TYPEVALUE-IMPLEMENTATION-RECEIPT|design-sealed 2026-07-01 {F:0.82 G:0.56 R:0.88}]:
 Slice 0k-BD is a docs-only implementation receipt for the H6 TypeValue
 frontier. It deliberately pauses production changes after the measured-red H6
