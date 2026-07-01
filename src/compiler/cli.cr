@@ -592,6 +592,26 @@ module Adamas
         !env_get(name).nil?
       end
 
+      private def codepath_status_enabled? : Bool
+        BootstrapEnv.enabled?("ADAMAS_CODEPATH_STATUS_LEDGER")
+      end
+
+      private def codepath_status_token(value : String) : String
+        return "" if value.empty?
+
+        value.gsub(' ', "%20").gsub('\t', "%09").gsub('\n', "%0A").gsub('\r', "%0D")
+      end
+
+      private def log_codepath_status(category : String, path : String, status : String, owner : String, note : String = "") : Nil
+        return unless codepath_status_enabled?
+
+        STDERR.puts "[CODEPATH_STATUS] category=#{codepath_status_token(category)} path=#{codepath_status_token(path)} status=#{codepath_status_token(status)} owner=#{codepath_status_token(owner)} note=#{codepath_status_token(note)}"
+      end
+
+      private def log_codepath_branch(category : String, path : String, taken : Bool, owner : String, note : String = "") : Nil
+        log_codepath_status(category, path, taken ? "taken" : "not_taken", owner, note)
+      end
+
       private def write_all_fd(fd : IO::FileDescriptor::Handle, bytes : Bytes) : Int64
         offset = 0
         while offset < bytes.size
@@ -1047,6 +1067,7 @@ module Adamas
       def run(*, out_io : IO = STDOUT, err_io : IO = STDERR) : Int32
         # stage2_debug is unconditional (required for stage2 stability — see method comment)
         bootstrap_trace_puts "[S2_RUN] start args=#{@args.size}"; STDERR.flush
+        log_codepath_status("cli", "run", "taken", "CLI", "args=#{@args.size}")
         @args.each_with_index do |arg, i|
           bootstrap_trace_puts "[S2_RUN] arg[#{i}]=#{arg.bytesize}b '#{arg}'"; STDERR.flush
         end
@@ -1059,10 +1080,12 @@ module Adamas
 
         bootstrap_trace_puts "[S2_RUN] before parse_args_safe"; STDERR.flush
         if !env_enabled?("ADAMAS_USE_OPTION_PARSER") || env_enabled?("ADAMAS_SAFE_PARSER")
+          log_codepath_status("cli.parser", "safe_parser", "taken", "CLI", "default_or_ADAMAS_SAFE_PARSER")
           status = parse_args_safe(pointerof(options), parser_help, err_io)
           bootstrap_trace_puts "[S2_RUN] parse_args_safe done status=#{status}"; STDERR.flush
           return status if status != 0
         elsif (minimal_parser = env_get("ADAMAS_MINIMAL_PARSER"))
+          log_codepath_status("cli.parser", "minimal_option_parser", "taken", "CLI", "mode=#{minimal_parser}")
           if minimal_parser == "2"
             parser = OptionParser.new do |p|
               p.banner = "Usage: adamas [options] <source.cr>\n\nOptions:"
@@ -1080,6 +1103,7 @@ module Adamas
             end
             end
         else
+          log_codepath_status("cli.parser", "full_option_parser", "taken", "CLI")
           parser = OptionParser.new do |p|
             p.banner = "Usage: adamas [options] <source.cr>\n\nOptions:"
 
@@ -1163,13 +1187,16 @@ module Adamas
         begin
           stage2_debug("[STAGE2_DEBUG] before parser.parse", err_io)
           parser.parse(@args)
+          log_codepath_status("cli.parser", "option_parser_parse", "taken", "CLI")
           stage2_debug("[STAGE2_DEBUG] parser.parse ok", err_io)
         rescue ex : OptionParser::InvalidOption
           stage2_debug("[STAGE2_DEBUG] parser invalid option, fallback safe parser", err_io)
+          log_codepath_status("cli.parser", "option_parser_invalid_fallback", "taken", "CLI", ex.class.name)
           status = parse_args_safe(pointerof(options), parser_help, err_io)
           return status if status != 0
         end
         elsif parser.nil?
+          log_codepath_status("cli.parser", "no_option_parser_object", "taken", "CLI")
           parser_text = parser_help
         end
 
@@ -1178,6 +1205,7 @@ module Adamas
         {% end %}
 
         show_version = options.show_version
+        log_codepath_branch("cli.exit", "show_version", show_version, "CLI")
         if show_version
           stage2_debug("[STAGE2_DEBUG] options.show_version=true", err_io)
           out_io.puts "adamas #{VERSION}"
@@ -1185,12 +1213,14 @@ module Adamas
         end
 
         stage2_debug("[STAGE2_DEBUG] after show_version, show_help=#{options.show_help}", err_io)
+        log_codepath_branch("cli.exit", "show_help", options.show_help, "CLI")
         if options.show_help
           stage2_debug("[STAGE2_DEBUG] showing help", err_io)
           out_io.puts parser
           return 0
         end
 
+        log_codepath_branch("cli.error", "invalid_mm_stack_threshold", mm_stack_threshold_invalid, "CLI")
         if mm_stack_threshold_invalid
           err_io.puts "Error: --mm-stack-threshold expects an integer"
           err_io.puts(parser || parser_text)
@@ -1226,6 +1256,7 @@ module Adamas
           end
           i += 1
         end
+        log_codepath_branch("cli.error", "missing_input_file", input_file.empty?, "CLI")
         if input_file.empty?
           err_io.puts "Error: No input file specified"
           err_io.puts(parser || parser_text)
@@ -1248,6 +1279,7 @@ module Adamas
         stage2_debug("[STAGE2_DEBUG] selected input size=#{input_file.size}, output size=#{options.output.size}, check_only=#{options.check_only}", err_io)
 
         bootstrap_trace_puts "[S2_RUN] input='#{input_file}' output='#{options.output}' no_prelude=#{options.no_prelude}"; STDERR.flush
+        log_codepath_branch("cli.mode", "check_only", options.check_only, "CLI")
         if options.check_only
           return run_check(input_file, options, out_io, err_io)
         else
@@ -1373,6 +1405,7 @@ module Adamas
         timings = {} of String => Float64
         debug_profile = options.debug_profile
         stage2_debug("[STAGE2_DEBUG] compile start", err_io)
+        log_codepath_status("cli.compile", "compile", "taken", "CLI", "no_prelude=#{options.no_prelude}")
         total_start = Time.instant
         @ast_cache_hits = 0
         @ast_cache_misses = 0
@@ -1400,6 +1433,7 @@ module Adamas
         input_base_dir = safe_dirname(expanded)
 
         # Load prelude first (unless --no-prelude)
+        log_codepath_branch("cli.parse", "load_prelude", !options.no_prelude, "CLI")
         unless options.no_prelude
           stage2_debug("[STAGE2_DEBUG] loading prelude branch", err_io)
           prelude_path = if options.prelude_file.empty?
@@ -1464,6 +1498,7 @@ module Adamas
         total_exprs = 0
         stop_after_parse = BootstrapEnv.enabled?("ADAMAS_STOP_AFTER_PARSE")
         debug_trace_enabled = env_enabled?("STAGE2_DEBUG") || env_enabled?("STAGE2_BOOTSTRAP_TRACE")
+        log_codepath_branch("cli.gate", "stop_after_parse", stop_after_parse, "CLI")
         if options.verbose
           log(options, out_io, "  Files: #{all_arenas.size}, Expressions: #{total_exprs}")
         end
@@ -1477,7 +1512,9 @@ module Adamas
           return 0
         end
 
-        if semantic_compile_enabled?
+        semantic_compile_active = semantic_compile_enabled?
+        log_codepath_branch("cli.semantic", "semantic_compile_prepass", semantic_compile_active, "CLI")
+        if semantic_compile_active
           semantic_compile_start = Time.instant
           if status = run_semantic_compile_prepass(all_arenas, options, out_io, err_io)
             timings["semantic_compile_prepass"] = (Time.instant - semantic_compile_start).total_milliseconds if options.stats
@@ -1487,7 +1524,9 @@ module Adamas
           timings["semantic_compile_prepass"] = (Time.instant - semantic_compile_start).total_milliseconds if options.stats
         end
 
-        if semantic_shadow_enabled?
+        semantic_shadow_active = semantic_shadow_enabled?
+        log_codepath_branch("cli.semantic", "semantic_shadow", semantic_shadow_active, "CLI")
+        if semantic_shadow_active
           shadow_start = Time.instant
           shadow_summary = run_semantic_compile_shadow(all_arenas, options, out_io, err_io)
           if shadow_summary
@@ -1600,6 +1639,7 @@ module Adamas
 
         pipeline_cache_pid = 0
 
+        log_codepath_branch("cli.cache", "pipeline_cache_hit", pipeline_cache_hit, "CLI")
         unless pipeline_cache_hit
 
         # Step 2: Lower to HIR
@@ -2279,10 +2319,12 @@ module Adamas
             i += 1
           end
           if main_def_index >= 0
+            log_codepath_status("cli.hir", "lower_main_from_def", "taken", "CLI")
             main_def = def_nodes.unsafe_fetch(main_def_index)
             hir_converter.arena = main_def[1]
             hir_converter.lower_main_from_def(main_def[0])
           else
+            log_codepath_status("cli.hir", "lower_main_exprs", "taken", "CLI")
             # Keep runtime contract stable: Crystal.main_user_code always expects
             # __crystal_main(argc, argv), even when user code has no top-level
             # expressions and no explicit main definition.
@@ -2298,6 +2340,7 @@ module Adamas
         # AST reachability pre-filter: skip functions whose method name was never
         # seen transitively from main. Enable with ADAMAS_AST_FILTER=1.
         if BootstrapEnv.enabled?("ADAMAS_AST_FILTER")
+          log_codepath_status("cli.hir", "ast_filter", "taken", "CLI")
           ast_filter_start = Time.instant
           ast_result = hir_converter.compute_ast_reachable_functions(main_exprs)
           hir_converter.set_ast_reachable_filter(ast_result[:defs], ast_result[:method_names], ast_result[:owner_types], ast_result[:method_bases])
@@ -2305,6 +2348,7 @@ module Adamas
             bootstrap_trace_puts "[PHASE_STATS] AST filter: #{ast_result[:defs].size}/#{hir_converter.function_defs_count} defs reachable, #{ast_result[:method_names].size} method names in #{(Time.instant - ast_filter_start).total_milliseconds.round(1)}ms"
           end
         elsif BootstrapEnv.enabled?("ADAMAS_PHASE_STATS")
+          log_codepath_status("cli.hir", "ast_filter_analysis_only", "taken", "CLI")
           # Just compute for analysis, don't activate filter
           ast_filter_start = Time.instant
           ast_result = hir_converter.compute_ast_reachable_functions(main_exprs)
@@ -2325,6 +2369,7 @@ module Adamas
           end
           i += 1
         end
+        log_codepath_branch("cli.hir", "fun_main_entry", fun_main_index >= 0, "CLI")
         if fun_main_index >= 0
           fun_main = def_nodes.unsafe_fetch(fun_main_index)
           hir_converter.arena = fun_main[1]
@@ -2334,6 +2379,7 @@ module Adamas
           did_flush = true
         end
         bootstrap_trace_puts "  Flushing pending functions..." if options.progress
+        log_codepath_status("cli.hir", "flush_pending_functions", did_flush ? "skipped_after_fun_main" : "taken", "CLI")
         hir_converter.flush_pending_functions unless did_flush
         bootstrap_trace_puts "  Main function created" if options.progress
 
@@ -2391,6 +2437,9 @@ module Adamas
           rta_msg = "  Reachable functions: #{hir_module.functions.size}/#{total_before} (discarded #{discarded}, #{(discarded * 100.0 / total_before).round(1)}%)"
           log(options, out_io, rta_msg)
           bootstrap_trace_puts "[PHASE_STATS] RTA: #{rta_msg.strip}" if BootstrapEnv.enabled?("ADAMAS_PHASE_STATS")
+          log_codepath_status("cli.hir", "rta_prune", "taken", "CLI", "discarded=#{discarded}")
+        else
+          log_codepath_status("cli.hir", "rta_prune", "not_taken", "CLI", "reachable=#{reachable.size} funcs=#{hir_module.functions.size}")
         end
         timings["hir_rta"] = (Time.instant - rta_start).total_milliseconds if options.stats
         timings["hir_reachable_funcs"] = hir_module.functions.size.to_f if options.stats
@@ -2402,14 +2451,20 @@ module Adamas
         # Phase 0 metrics dump — AFTER allocator flush AND RTA pruning
         # so total_hir_functions reflects final emitted shape.
         if BootstrapEnv.enabled?("ADAMAS_PHASE0_METRICS")
+          log_codepath_status("cli.metrics", "phase0_metrics", "taken", "CLI")
           hir_converter.dump_phase0_metrics(STDERR)
+        else
+          log_codepath_status("cli.metrics", "phase0_metrics", "not_taken", "CLI")
         end
 
         # Phase 1: identity dry-run stats (side-channel, no behavior change)
         if BootstrapEnv.enabled?("ADAMAS_IDENTITY_DRY_RUN")
+          log_codepath_status("cli.metrics", "identity_dry_run", "taken", "CLI")
           if tracker = hir_converter.identity_tracker
             tracker.dump(STDERR)
           end
+        else
+          log_codepath_status("cli.metrics", "identity_dry_run", "not_taken", "CLI")
         end
 
         if options.stats
@@ -2441,12 +2496,16 @@ module Adamas
         end
 
         if BootstrapEnv.enabled?("ADAMAS_STOP_AFTER_HIR")
+          log_codepath_status("cli.gate", "stop_after_hir", "taken", "CLI")
           log(options, out_io, "  Stop after HIR (ADAMAS_STOP_AFTER_HIR)")
           emit_timings(options, out_io, timings, total_start)
           return 0
+        else
+          log_codepath_status("cli.gate", "stop_after_hir", "not_taken", "CLI")
         end
 
         if options.emit_hir && !options.emit_mir && !options.emit_llvm && !options.link
+          log_codepath_status("cli.gate", "emit_hir_no_link_stop", "taken", "CLI")
           log(options, out_io, "  Stop after HIR (--emit hir --no-link)")
           emit_timings(options, out_io, timings, total_start)
           return 0
@@ -2454,6 +2513,7 @@ module Adamas
 
         # Step 3: Escape analysis
         effective_ea = options.escape_analysis
+        log_codepath_branch("cli.escape", "escape_analysis", effective_ea, "CLI")
         log(options, out_io, "\n[3/6] Escape analysis#{effective_ea ? "" : " (skipped)"}...")
         escape_start = Time.instant
         total_funcs = hir_module.functions.size
@@ -2650,8 +2710,10 @@ module Adamas
         # module singletons, etc.) that get lost across fork boundaries.
         # Enable with ADAMAS_FUSED_PARALLEL=1 for experimentation.
         fused_parallel = (BootstrapEnv.get?("ADAMAS_FUSED_PARALLEL") || "0") != "0"
+        log_codepath_branch("cli.mir", "fused_parallel_requested", fused_parallel, "CLI")
 
         if fused_parallel && !options.emit_mir && !BootstrapEnv.enabled?("ADAMAS_STOP_AFTER_MIR")
+          log_codepath_status("cli.mir", "fused_parallel", "taken", "CLI")
           # Fused path: prepare stubs only, defer body lowering to parallel LLVM workers
           bootstrap_trace_puts "  Preparing #{hir_module.functions.size} MIR function stubs..." if options.progress
           bootstrap_trace_puts "[MIR_SETUP] prepare stubs count=#{hir_module.functions.size}" if mir_setup_trace
@@ -2673,6 +2735,7 @@ module Adamas
             emit_stage_timing(options, out_io, total_start, 4, "mir", mir_stage_ms, mir_details)
           end
         else
+          log_codepath_status("cli.mir", "serial_lowering", "taken", "CLI")
           # Serial path: full MIR lowering + optimization
           bootstrap_trace_puts "  Lowering #{hir_module.functions.size} functions to MIR..." if options.progress
           bootstrap_trace_puts "[MIR_SETUP] lowering bodies count=#{hir_module.functions.size}" if mir_setup_trace
@@ -2703,6 +2766,7 @@ module Adamas
           # Optimize MIR — deferred to LLVM workers when parallel (saves ~700ms)
           workers_available = (BootstrapEnv.get?("ADAMAS_LLVM_WORKERS").try(&.to_i?) || System.cpu_count).clamp(1, 8) > 1
           if options.mir_opt && !workers_available
+            log_codepath_status("cli.mir", "mir_opt_serial", "taken", "CLI")
             # Serial fallback: optimize here when no parallel workers
             log(options, out_io, "  Optimizing MIR (serial)...")
             mir_opt_start = Time.instant
@@ -2735,9 +2799,11 @@ module Adamas
             timings["mir_opt"] = (Time.instant - mir_opt_start).total_milliseconds if options.stats
             timings["dbg_count_mir_opt_funcs"] = mir_module.functions.size.to_f if debug_profile
           elsif options.mir_opt
+            log_codepath_status("cli.mir", "mir_opt_deferred_workers", "taken", "CLI")
             log(options, out_io, "  MIR optimization deferred to LLVM workers (parallel)")
             timings["mir_opt"] = 0.0 if options.stats  # included in LLVM timing
           else
+            log_codepath_status("cli.mir", "mir_opt_disabled", "taken", "CLI")
             log(options, out_io, "  Skipping MIR optimizations (--no-mir-opt)")
             timings["mir_opt"] = 0.0 if options.stats
           end
@@ -2748,6 +2814,7 @@ module Adamas
           # run it serially here first, THEN populate the facts, THEN disable
           # per-worker opt so workers don't re-optimize and re-clobber the marks.
           inline_value_array_storage = BootstrapEnv.enabled?("ADAMAS_INLINE_VALUE_ARRAY_STORAGE")
+          log_codepath_branch("cli.mir", "inline_value_array_storage", inline_value_array_storage, "CLI")
           if inline_value_array_storage
             if options.mir_opt && workers_available
               log(options, out_io, "  Inline-value Array storage: running MIR opt serially before facts")
@@ -2793,9 +2860,12 @@ module Adamas
           end
 
           if BootstrapEnv.enabled?("ADAMAS_STOP_AFTER_MIR")
+            log_codepath_status("cli.gate", "stop_after_mir", "taken", "CLI")
             log(options, out_io, "  Stop after MIR (ADAMAS_STOP_AFTER_MIR)")
             emit_timings(options, out_io, timings, total_start)
             return 0
+          else
+            log_codepath_status("cli.gate", "stop_after_mir", "not_taken", "CLI")
           end
           fused_parallel = false  # already lowered serially
         end

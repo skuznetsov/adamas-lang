@@ -431,10 +431,19 @@ transaction contract; it must not become a backend undefined-extern rescue or
 another diagnostic ladder after a ledger has already refuted the local
 hypothesis.
 
+The first runtime `CodePathStatus` slice now exists for coarse
+CLI/compiler-driver control flow. Treat it as a cleanup/bloat evidence channel,
+not as a semantic owner boundary: it can show that a branch was observed or not
+observed in a focused run, but deletion still requires the SDD's protecting
+falsifier and bootstrap guard. The bootstrap-correctness path remains
+`SemanticStateScope` / `MaterializationIdentity` transaction completeness.
+
 Initial executable entry point:
 
 ```bash
 scripts/semantic_decision_census.sh
+scripts/codepath_status_census.sh
+scripts/codepath_status_runtime_report.sh <compiler>
 scripts/arena_ownership_census.sh
 scripts/lower_call_arena_ledger_smoke.sh <compiler>
 scripts/node_slot_integrity_report.sh <compiler>
@@ -457,6 +466,10 @@ Acceptance for this first architecture slice:
   patch;
 - after `NodeSlotIntegrity` evidence refutes the local slot hypotheses, the
   next default slice is architecture sealing, not a second diagnostic ladder.
+- after the first runtime `CodePathStatus` ledger, cleanup/deletion work is
+  still blocked until a candidate path reaches `delete_ready` with a protecting
+  falsifier. Correctness work should continue through transaction completeness,
+  not through another crash-stack-local patch.
 
 ## 9. Decision Summary
 

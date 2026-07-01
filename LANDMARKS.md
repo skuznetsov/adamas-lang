@@ -294,6 +294,27 @@ a transaction-completeness slice lands, a runtime `CodePathStatus` ledger
 replaces the static census as cleanup authority, or fresh generated-stage
 evidence invalidates the current owner-ledger path.
 
+[LM-ARCH-RUNTIME-CODEPATH-STATUS-CLI-LEDGER|verified 2026-07-01 {F:0.82 G:0.34 R:0.88}]:
+The first runtime `CodePathStatus` ledger exists for coarse
+CLI/compiler-driver control flow. With `ADAMAS_CODEPATH_STATUS_LEDGER=1`,
+`src/compiler/cli.cr` emits `[CODEPATH_STATUS]` rows for parser mode, parse /
+semantic / HIR / MIR driver gates, metrics gates, cache, error/exit gates, and
+stop-after gates. `scripts/codepath_status_runtime_report.sh` is the focused
+runtime report and fails closed when no rows are emitted. Evidence: fresh
+stage1 build passes; the no-prelude runtime report produced `rows=26`,
+`malformed=0`, `taken=8`, and `not_taken=18`; the default env-off no-prelude
+compile emitted no `[CODEPATH_STATUS]` rows; static semantic and
+CodePathStatus censuses still run; full stage1 suites pass (`152/152`
+original + `36/36` combined); fresh stage1 builds fresh s2, and the generated
+s2 emits the same focused no-prelude report shape (`rows=26`, `malformed=0`).
+Scope: this is cleanup/bloat evidence only for coarse CLI branches. It does
+not prove any path is `delete_ready`, does not classify `ast_to_hir`,
+`hir_to_mir`, or backend semantic branches, and does not make `s2b`/`s3b`
+green. Decay trigger: CLI driver control flow changes, the ledger row format
+changes, runtime `CodePathStatus` is extended into semantic hot paths, or a
+cleanup slice tries to use this evidence as deletion authority without a
+protecting falsifier.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

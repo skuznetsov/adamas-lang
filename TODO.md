@@ -225,6 +225,23 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   or a local falsifier only if fresh generated-stage evidence invalidates the
   current owner ledgers.
 
+- 2026-07-01 UPDATE: implemented Slice 0j, the first runtime
+  `CodePathStatus` ledger. `ADAMAS_CODEPATH_STATUS_LEDGER=1` now emits
+  `[CODEPATH_STATUS]` rows from coarse CLI/compiler-driver branches, and
+  `scripts/codepath_status_runtime_report.sh` fails closed when no rows are
+  emitted. Verification on a fresh stage1: the focused no-prelude report
+  produced `rows=26`, `malformed=0`, `taken=8`, `not_taken=18`; the default
+  env-off no-prelude compile emitted no `[CODEPATH_STATUS]` rows; static
+  semantic and CodePathStatus censuses still run; full stage1 suites passed
+  (`152/152` original + `36/36` combined); a fresh generated s2 build exited
+  `0`, and the generated s2 emitted the same focused report shape
+  (`rows=26`, `malformed=0`). Boundary: this is runtime evidence for
+  cleanup/bloat planning only. It does not mark any path `delete_ready`, does
+  not alter compiler semantics, and does not make `s2b`/`s3b` green. Next
+  correctness work remains the `SemanticStateScope` /
+  `MaterializationIdentity` transaction-completeness path, not a backend
+  forwarder or crash-stack patch.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was

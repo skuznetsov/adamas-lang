@@ -86,6 +86,15 @@ transaction identity contract, or build runtime `CodePathStatus` evidence for
 cleanup and bloat reduction. Both tracks must preserve the same rule: no
 compiler behavior changes until the owning semantic fact is named.
 
+2026-07-01 runtime `CodePathStatus` checkpoint after Slice 0i: the first
+runtime status ledger is deliberately limited to coarse CLI/compiler-driver
+branches. It proves that `CodePathStatus` can collect observed branch status
+without changing default compiler behavior, but it does not classify any
+`ast_to_hir`, `hir_to_mir`, or backend semantic path as dead or
+`delete_ready`. This slice chooses the cleanup/bloat evidence track for one
+small executable step. It does not replace the transaction-completeness track
+needed before call/materialization behavior patches.
+
 ## 1. Admitted surface
 
 This SDD admits only future architecture work that:
@@ -1652,6 +1661,58 @@ Next local track:
    emitted call, state-scope authority, and ABI shape as one owned fact.
 3. Prefer a local falsifier only if a fresh generated-stage frontier invalidates
    the current owner ledgers or exposes a new uninstrumented boundary.
+
+### Slice 0j: Runtime CodePathStatus CLI ledger
+
+Source/spec:
+
+- `src/compiler/cli.cr` coarse compiler-driver control flow;
+- `scripts/codepath_status_runtime_report.sh`;
+- static Phase 1b census script `scripts/codepath_status_census.sh`.
+
+Falsifiers:
+
+- before the runtime ledger exists, the report script must fail closed with
+  `FAIL: no [CODEPATH_STATUS] runtime rows emitted`;
+- with `ADAMAS_CODEPATH_STATUS_LEDGER=1`, a no-prelude compile must emit
+  parseable `[CODEPATH_STATUS]` rows with no malformed rows;
+- without `ADAMAS_CODEPATH_STATUS_LEDGER`, the same compile must emit no
+  `[CODEPATH_STATUS]` rows;
+- broad stage1 regression suites must remain green, because this is
+  behavior-neutral instrumentation.
+
+Evidence:
+
+- a fresh stage1 build with this slice passed;
+- the focused runtime report on a no-prelude `x = 1` compile produced
+  `rows=26`, `malformed=0`, `taken=8`, and `not_taken=18`;
+- the default env-off no-prelude compile emitted no `[CODEPATH_STATUS]` rows;
+- static semantic and CodePathStatus census scripts still run;
+- full stage1 suites passed: `152/152` original regression tests plus `36/36`
+  combined tests;
+- a fresh generated s2 build exited `0`, and the generated s2 emitted the same
+  focused no-prelude runtime report shape: `rows=26`, `malformed=0`.
+
+Boundary:
+
+- this slice records runtime status only for coarse CLI/compiler-driver
+  branches such as parser mode, semantic gates, HIR/MIR driver gates, metrics,
+  cache, and stop-after gates;
+- it is not delete-ready proof and must not drive code removal by itself;
+- it does not change overload, materialization, ABI, backend, or AST ownership
+  behavior;
+- it does not declare `s2b`/`s3b` green.
+
+Next local track:
+
+- if continuing cleanup/bloat work, extend runtime `CodePathStatus` only for a
+  named cluster from the static census and pair every `suspected_dead` row with
+  a protecting falsifier before deletion;
+- if continuing bootstrap correctness work, return to
+  `SemanticStateScope` / `MaterializationIdentity` transaction-completeness:
+  requested symbol, selected definition, target symbol, created body, emitted
+  call, state-scope authority, and ABI shape must be one owned fact before the
+  next behavior-changing call/materialization patch.
 
 ### Slice A: CallResolution boundary
 
