@@ -110,6 +110,15 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   agreeing at the crash edge, move to `NodeSlot`/arena storage producer
   corruption instead of arena-selection fixes.
 
+- 2026-07-01 UPDATE: added the Phase 1b static `CodePathStatus` census entry
+  point, `scripts/codepath_status_census.sh`. This is the architecture-side
+  answer to codebase bloat and stale workaround risk: it groups debug/probe
+  gates, bootstrap workaround comments, fallback/recovery paths, legacy naming
+  shims, broad semantic scans, backend semantic leakage, and layout/ABI
+  workaround candidates without classifying anything as live/dead/delete-ready.
+  Cleanup remains blocked on a runtime census plus a protecting falsifier for
+  each candidate path.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was

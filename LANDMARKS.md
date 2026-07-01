@@ -143,6 +143,18 @@ instead of adding another `arena_for_expr?` consumer patch. Decay trigger:
 `AstNodeRef` starts driving behavior, `ArenaLike` representation changes, or a
 future generated-stage ledger refutes the explicit-owner classification.
 
+[LM-ARCH-CODEPATH-STATUS-CENSUS|guard-only 2026-07-01 {F:0.70 G:0.52 R:0.82}]:
+Phase 1b now has a read-only static entry point:
+`scripts/codepath_status_census.sh`. It groups candidate debug/probe gates,
+bootstrap workaround comments, fallback/recovery paths, legacy naming shims,
+broad semantic scans, backend semantic leakage, and layout/ABI workaround
+surfaces across the compiler hot files. Scope: this census is an owner-map and
+cleanup planning input only; it does not classify paths as live, dead, or
+`delete_ready`. Deletion still requires runtime branch evidence plus a
+protecting falsifier for each candidate. Decay trigger: compiler hot-file
+layout changes, debug/workaround gates are renamed, or a real `CodePathStatus`
+ledger replaces the static census as the cleanup authority.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

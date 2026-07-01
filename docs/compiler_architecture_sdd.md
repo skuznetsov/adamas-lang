@@ -798,6 +798,17 @@ Exit signal:
 - no production behavior changes;
 - cleanup candidates are ordered by risk and blast radius.
 
+Executable entry point:
+
+```bash
+scripts/codepath_status_census.sh
+```
+
+This command is static grep only. It may identify candidate debug gates,
+workarounds, fallback paths, compatibility shims, and broad semantic scans, but
+it must not classify a candidate as live, dead, or `delete_ready` without a
+follow-up runtime census plus protecting falsifier.
+
 ### Phase 2: Typed facades over existing state
 
 Introduce small wrapper types that read/write the old maps but record owner,
@@ -1355,6 +1366,7 @@ Next local track:
 
 Source/spec:
 
+- `scripts/codepath_status_census.sh`;
 - large helper clusters and fallback branches in `ast_to_hir.cr`,
   `hir_to_mir.cr`, and `llvm_backend.cr`;
 - debug/probe gates left from bootstrap investigations;
@@ -1370,12 +1382,16 @@ Falsifiers:
 
 Evidence:
 
+- static Phase 1b census output grouped by debug gates, workaround comments,
+  fallback/recovery paths, legacy naming shims, broad scans, backend semantic
+  leakage, and layout/ABI workaround candidates;
 - `CodePathStatus` ledger with `suspected_dead` -> `delete_ready` transitions;
 - before/after diffstat and removed-symbol list;
 - regression script or documented reason for each removed compatibility path.
 
 Boundary:
 
+- the census itself is read-only and never proves deletion safety alone;
 - no semantic behavior changes in the same commit as a deletion unless the
   deletion is the behavior change and has its own falsifier.
 
