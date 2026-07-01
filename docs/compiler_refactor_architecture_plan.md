@@ -368,6 +368,13 @@ one with a full receipt. This makes the near-term plan more opinionated: if no
 root-sized correctness discriminator exists, move to `CodePathStatus`
 cleanup/delete rather than adding another diagnostic surface.
 
+2026-07-01 post-0k-AP cleanup preflight note: the existing cleanup entry does
+not yet provide a deletion target. Fresh stage1 runs classify both supported
+paths, `identity_dry_run` and `phase0_metrics`, as `debug_only` with env-off
+`not_taken` and env-on `taken`. That protects them from deletion; the next
+cleanup/delete slice must select another path or extend the selector before
+claiming delete readiness.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging

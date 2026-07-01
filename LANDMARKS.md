@@ -12,6 +12,21 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-AQ-CLEANUP-PREFLIGHT|verified 2026-07-01 {F:0.82 G:0.34 R:0.88}]:
+After Slice 0k-AP, a fresh stage1 ran the existing
+`scripts/codepath_status_cleanup_selection_report.sh` cleanup-entry gate for
+both supported paths. `SELECTED_CLEANUP_PATH=identity_dry_run` and
+`SELECTED_CLEANUP_PATH=phase0_metrics` each reported `default_rc=0`,
+`enabled_rc=0`, `default_status=not_taken`, `enabled_status=taken`, and
+`status=debug_only`. Decision: neither current CLI metrics path is
+`delete_ready`; do not delete `identity_dry_run` or `phase0_metrics` from the
+existing cleanup-entry evidence. The next cleanup/delete slice must select a
+different named path or first extend the cleanup selector to enumerate a
+root-sized candidate with a protecting falsifier. Scope: cleanup preflight only;
+no compiler behavior and no bootstrap claim. Decay trigger: cleanup selector
+semantics change, a future `CodePathStatus` run reports either path as
+`delete_ready`, or the CLI metrics paths are redesigned.
+
 [LM-ARCH-0K-AP-SURFACE-CONSOLIDATION|design-sealed 2026-07-01 {F:0.80 G:0.52 R:0.86}]:
 Slice 0k-AP consolidates the architecture report surface after the ambiguous
 0k-AO residual. The active SDD now classifies existing report scripts by role:

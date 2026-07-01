@@ -8,6 +8,17 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: ran the post-0k-AP cleanup-entry preflight
+  on a freshly built stage1 compiler. Both currently supported cleanup paths
+  remain classify-only: `SELECTED_CLEANUP_PATH=identity_dry_run` and
+  `SELECTED_CLEANUP_PATH=phase0_metrics` each reported `default_rc=0`,
+  `enabled_rc=0`, `default_status=not_taken`, `enabled_status=taken`, and
+  `status=debug_only`. Decision: neither path is `delete_ready`; do not delete
+  either CLI metrics path from the existing cleanup report. The next
+  cleanup/delete slice must select a different named path or first extend the
+  cleanup selector to enumerate a root-sized candidate with a protecting
+  falsifier.
+
 - 2026-07-01 UPDATE: added Slice 0k-AP, report-surface
   consolidation after the ambiguous 0k-AO residual. The active SDD now treats
   architecture reports as a status registry, not as a menu of competing next
