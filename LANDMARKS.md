@@ -188,6 +188,25 @@ Decay trigger: lower-call raw-read instrumentation changes, a fresh generated
 s2->s3 parity report shows divergence, or the crash stack moves before this
 edge.
 
+[LM-ARCH-NODESLOT-INTEGRITY-NEXT-SLICE|guard-only 2026-07-01 {F:0.78 G:0.44 R:0.84}]:
+The next admitted architecture implementation slice is
+`NodeSlotIntegrity / AstArenaStorage`, not another `lower_call` arena-selection
+consumer patch. Rationale: generated-stage lower-call owner parity already
+showed current arena, explicit `AstNodeRef` owner, and heuristic owner all
+agreeing at the crash edge (`210/210 agree_all_have`, zero divergence buckets),
+so owner selection is no longer the highest-value hypothesis for the
+instrumented edge. Required next ledger: env-gated/default-off, behavior-neutral
+slot producer/read integrity rows with arena owner, `ExprId`, index range, slot
+initialization/presence, safe node-kind/span facts when available, producer/read
+site, and no broad fallback scan. Forbidden next moves before that ledger:
+routing lower-call raw reads through `AstNodeRef`, scanning all arenas to find a
+node by index, rewriting parser allocation, or claiming a behavior fix from
+crash movement alone. Evidence: `docs/compiler_architecture_sdd.md` now has
+Slice 0f and `docs/compiler_refactor_architecture_plan.md` marks the LLVM
+writer as postponed for the active bootstrap objective. Decay trigger: a fresh
+generated s2->s3 report shows owner divergence, the crash stack moves before
+`NodeSlot#node`, or `AstArena` / `NodeSlot` storage representation is rewritten.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

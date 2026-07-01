@@ -1,7 +1,7 @@
 # Compiler Refactor Architecture Plan
 
-Status: Draft; superseded for near-term bootstrap work by
-`docs/compiler_architecture_sdd.md`
+Status: Draft; reference-only for near-term bootstrap work. Active bootstrap
+architecture is governed by `docs/compiler_architecture_sdd.md`.
 Date: 2026-04-11
 Scope: compile pipeline maintainability, LLVM IR emission, and HIR service
 boundaries
@@ -410,7 +410,11 @@ control. It proves the typed writer seam without changing call coercion,
 metadata ownership, or worker merging.
 
 Active candidate for the 2026-07 bootstrap objective: implement the
-architecture SDD's Phase 1/1b census and owner-ledger path first.
+architecture SDD's Phase 1/1b census and owner-ledger path first. After the
+fresh generated-stage lower-call arena parity report showed
+`210/210 agree_all_have` with zero owner divergence buckets, the next
+architecture slice is `NodeSlotIntegrity / AstArenaStorage`, not another
+`lower_call` arena-selection consumer patch and not the LLVM writer.
 
 Initial executable entry point:
 
@@ -429,13 +433,11 @@ Acceptance for this first architecture slice:
 - TODO/LANDMARKS identify the next dynamic ledger to implement before the next
   behavior-changing bootstrap fix;
 - the script does not classify dead/live status by itself.
-- if the generated-stage `lower_call` ledger shows current/preferred/owner
-  arena agreement at the last observed edge, the next architecture slice is a
-  behavior-neutral `AstNodeRef` / `ArenaOwnership` facade rather than another
-  raw-read consumer patch.
-- the first facade must be shadow-only: it may enrich ledgers with explicit
-  owner-scoped references, but must not route raw AST reads until a follow-up
-  parity report classifies the first bad transition.
+- the `AstNodeRef` shadow facade and lower-call parity report already showed
+  current/ref/heuristic owner agreement at the generated-stage crash edge;
+- the next architecture slice is therefore a behavior-neutral
+  `NodeSlotIntegrity / AstArenaStorage` ledger, not another raw-read consumer
+  patch.
 
 ## 9. Decision Summary
 
@@ -445,9 +447,12 @@ Recommended direction:
 - Use typed per-function streaming for `.ll` emission.
 - Extract HIR services by behavior boundary, not by line count.
 - Keep the demand-driven semantic rewrite as the strategic long-term track.
-- Start with the LLVM writer because it has a verified failure pattern,
-  relatively narrow scope, and low interaction with stdlib/runtime behavior.
+- Do not start the current bootstrap effort with the LLVM writer. That remains
+  a later backend-local refactor candidate after semantic ownership boundaries
+  are sealed. The active path is the architecture SDD sequence:
+  semantic/CodePath census, owner ledgers, typed facades, and only then bounded
+  behavior slices that consume named facts.
 
-This plan should be revisited after the current benchmark formatter frontier is
-green, because that frontier will likely add another concrete backend or
-macro-provenance contract to preserve during refactoring.
+This plan should be revisited after the architecture SDD seals the active
+semantic-owner frontiers enough that backend-local refactoring cannot hide a
+state-scope, materialization, arena, or ABI owner bug.

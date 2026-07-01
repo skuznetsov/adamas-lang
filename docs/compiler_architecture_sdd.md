@@ -1,8 +1,8 @@
 # Compiler Architecture Frontier SDD
 
-Document status: PROPOSED, design-only. This is a post-bootstrap
-architecture target, not approval to start a broad refactor while the current
-`s2b`/`s3b` bug frontiers are still moving.
+Document status: ACTIVE FRONTIER SDD. Behavior-neutral architecture slices are
+landing as bootstrap control gates. This is not approval to start a broad
+refactor while the current `s2b`/`s3b` bug frontiers are still moving.
 
 Current frontier: the compiler can make progress through bounded bug slices,
 but many semantic decisions are still inferred repeatedly across HIR, MIR, and
@@ -20,13 +20,17 @@ materialization identity ledger, and a parse-path identity gate. The active
 verified residual after the parse-path identity fix is generated s2->s3
 reaching materialization (`11` `[MAT_ID]` rows) and then crashing in
 `NodeSlot#node <- AstArena#[] <- AstToHir#lower_call` while draining missing
-call targets. Treat this as an `AstNodeIdentity / ArenaOwnership` boundary
-until a dynamic ledger proves whether the first bad transition is current-arena
-drift, stale/corrupt `ExprId`, or `NodeSlot`/arena storage corruption. The
-deeper architectural issue is still that symbol identity, type-param authority,
-AST node ownership, type identity, materialization ownership, and field/layout
-facts are inferred from mutable process state and rendered/index-only values
-instead of from owned typed facts.
+call targets. The generated-stage lower-call arena parity report then returned
+`compiler_rc=139`, `phase_rows=265`, `expr_rows=210`,
+`agree_all_have=210`, and zero current/ref/heuristic owner divergence buckets.
+That refutes current-arena drift for the instrumented edge. The next admitted
+architecture slice is therefore `NodeSlotIntegrity / AstArenaStorage`: name
+the producer/read boundary for the crashing slot, or find an uninstrumented raw
+read, before any lower-call consumer routing change. The deeper architectural
+issue is still that symbol identity, type-param authority, AST node ownership,
+type identity, materialization ownership, and field/layout facts are inferred
+from mutable process state and rendered/index-only values instead of from owned
+typed facts.
 
 Bounded context: Crystal V2 compiler architecture:
 
@@ -140,8 +144,9 @@ remains unchanged until the declared falsifiers pass.
   MIR plus typed streaming fragments cannot carry the needed checks.
 - Do not solve every ABI problem before improving call/materialization
   boundaries. The migration should be sliced.
-- Do not make `s2b`/`s3b` stability depend on this architecture work. First
-  stabilize bootstrap; then widen the architecture frontier.
+- Do not make `s2b`/`s3b` stability depend on a broad refactor. Use the
+  architecture SDD as the bootstrap control surface: behavior-neutral ledgers
+  first, then bounded behavior slices only after the owning boundary is named.
 
 ## 5. Design laws
 
@@ -367,6 +372,66 @@ Key falsifiers:
   caller arena merely because the numeric index fits;
 - a genuine current-arena local expression should remain readable without
   routing every access through a broad global arena scan.
+
+### 6.2b NodeSlotIntegrity and AstArenaStorage
+
+Owns the producer/read integrity of arena slots after the owning arena has
+already been identified.
+
+Input:
+
+```text
+NodeSlotRead {
+  arena_owner
+  expr_id
+  read_site
+  expected_span
+  expected_kind_hint
+}
+```
+
+Output:
+
+```text
+NodeSlotFacts {
+  arena_owner
+  expr_id
+  index_in_range
+  slot_initialized
+  node_pointer_present
+  node_kind
+  node_span
+  producer_site
+}
+```
+
+Responsibilities:
+
+- distinguish owner selection bugs from slot storage/producer corruption;
+- record whether an `ExprId` points at an initialized slot in its owning arena;
+- identify the producer that created or failed to create the slot;
+- make `NodeSlot#node` reads reportable without requiring the crashing
+  consumer to dereference an invalid node;
+- provide a small generated-stage ledger before any consumer reads are routed
+  through `AstNodeRef`.
+
+Non-responsibilities:
+
+- selecting the owning arena;
+- repairing `lower_call` by scanning other arenas;
+- changing parser allocation or macro expansion semantics;
+- deciding call resolution, materialization, or ABI layout.
+
+Key falsifiers:
+
+- if lower-call owner parity reports `agree_all_have` for the crash edge, the
+  next ledger must show whether the owning arena slot itself is initialized
+  and which producer wrote it;
+- a valid local node read must still show `index_in_range=true`,
+  `slot_initialized=true`, and matching span/kind without requiring broad arena
+  fallback;
+- if the crash stack moves to an uninstrumented raw read, the ledger must name
+  that read site before a consumer patch is allowed.
 
 ### 6.3 CallResolution
 
@@ -735,6 +800,10 @@ Rejected work:
 - deleting "dead" branches before `CodePathStatus` marks them `delete_ready`;
 - continuing a behavior patch after its focused DoD moves only memory/time but
   not the intended semantic boundary.
+- another `lower_call` raw-read routing patch after generated-stage owner
+  parity has already shown current/ref/heuristic owner agreement at the crash
+  edge. The next slice must inspect `NodeSlot` / arena storage producer/read
+  integrity or name an uninstrumented raw read first.
 
 Exit signal:
 
@@ -821,6 +890,8 @@ Examples:
 - `StateScope` facade over type-param and namespace authority,
 - `AstNodeIdentity` facade over parser arenas and owner-scoped `ExprId`
   references,
+- `NodeSlotIntegrity` facade over arena slot producer/read facts after owner
+  selection is already known,
 - `MaterializationRegistry` facade over pending/lazy/block-shape functions,
 - `AbiFacts` facade over layout/provenance facts.
 
@@ -1290,6 +1361,52 @@ Next local track:
 - because parity shows owner agreement at the crash edge, move the next
   read-only investigation to `NodeSlot` / arena storage producer corruption or
   an uninstrumented raw read, not to another arena-selection consumer patch.
+
+### Slice 0f: NodeSlotIntegrity / AstArenaStorage ledger
+
+Source/spec:
+
+- `src/compiler/frontend/ast_arena.cr` and related `NodeSlot`/arena storage
+  definitions;
+- `src/compiler/hir/ast_to_hir.cr` raw AST-read callsites that already have
+  current/ref/heuristic owner parity;
+- generated-stage crash corridor
+  `NodeSlot#node <- AstArena#[] <- AstToHir#lower_call`.
+
+Falsifiers:
+
+- the ledger must be env-gated and behavior-neutral when disabled;
+- it must log slot facts before the crashing read dereferences the node:
+  arena owner, `ExprId`, index range, slot initialization/presence, safe
+  node-kind/span facts when available, and read site;
+- it must distinguish "owner selected correctly but slot is corrupt/missing"
+  from "read site was never instrumented";
+- it must not scan all arenas as a substitute for naming the producer.
+
+Evidence required before any behavior change:
+
+- a no-prelude stage1 smoke proves the ledger channel without generated
+  compiler artifacts;
+- generated s2->s3 report names the first bad transition as one of:
+  stale/corrupt `ExprId`, missing/uninitialized `NodeSlot`, node payload
+  corruption, or uninstrumented raw read;
+- if all slot facts are healthy at the crash edge, the next slice must move
+  upstream to the producer of the `ExprId` or downstream to the exact
+  uninstrumented consumer, not add a lower-call arena routing patch.
+
+Boundary:
+
+- no HIR behavior changes;
+- no parser or arena allocation rewrite;
+- no `lower_call` consumer route through `AstNodeRef` until this ledger names
+  the first bad transition.
+
+Next local track:
+
+- implement the env-gated ledger and report script, then rerun the generated
+  s2->s3 crash corridor under `scripts/run_safe.sh`;
+- only after the ledger names a producer boundary may a bounded behavior slice
+  be designed.
 
 ### Slice A: CallResolution boundary
 

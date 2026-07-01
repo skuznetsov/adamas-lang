@@ -133,6 +133,20 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   producer/read integrity or find an uninstrumented raw read, not add another
   `lower_call` arena consumer patch.
 
+- 2026-07-01 UPDATE: hardened the architecture stop-rule before further code
+  changes. `docs/compiler_architecture_sdd.md` is now the active bootstrap
+  control surface, not a post-bootstrap wish list.
+  `docs/compiler_refactor_architecture_plan.md` is reference-only for
+  near-term work and no longer
+  recommends starting the current bootstrap objective with the LLVM writer.
+  The next admitted implementation slice is
+  `NodeSlotIntegrity / AstArenaStorage`: an env-gated, behavior-neutral ledger
+  that reports arena owner, `ExprId`, slot initialization/presence, safe
+  node-kind/span facts when available, and read site before the crashing
+  `NodeSlot#node` dereference. Forbidden next moves: lower-call arena routing,
+  broad arena scans, parser allocation rewrites, or behavior fixes that do not
+  name the first bad transition.
+
 - 2026-07-01 UPDATE: added the Phase 1b static `CodePathStatus` census entry
   point, `scripts/codepath_status_census.sh`. This is the architecture-side
   answer to codebase bloat and stale workaround risk: it groups debug/probe
