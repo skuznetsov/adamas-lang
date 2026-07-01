@@ -14,7 +14,7 @@ fallbacks, and hard-to-localize bootstrap failures.
 
 ## Active Architecture Board
 
-Status: execution board after Slice 0k-AM. This board exists to
+Status: execution board after Slice 0k-AP. This board exists to
 prevent the next step from being selected by the latest generated-stage crash
 stack. A next slice is admitted only if it moves one board row by replacing or
 shadowing a named authority edge, producing `CodePathStatus` evidence for a
@@ -30,7 +30,29 @@ named path, or refuting a row with fresher generated-stage evidence.
 | `AstNodeRef` / `ArenaOwnership` | Explicit-owner lower-call rows and `NodeSlotIntegrity` refuted owner drift, out-of-range ids, and missing slots for the instrumented edge. | Resume only with a named payload/deep-read or uninstrumented-consumer falsifier, including cleanup rules for its ledger. | Lower-call arena routing, broad arena scans, parser allocation rewrites, or another unbounded crash-edge probe. |
 | `CodePathStatus` | `cli.metrics.identity_dry_run` is classified as `debug_only`, not `delete_ready`. | Classify another named path, or run a separate `delete_ready` slice with default-behavior, HIR/MIR/LLVM, bootstrap, and evidence-preservation guards. | Deleting debug/probe/fallback paths from static grep output; using runtime liveness as semantic ownership evidence. |
 
-Default next track after Slice 0k-AO: the selected
+Slice 0k-AP consolidation result: the architecture report surface is now
+treated as a registry, not as a menu of competing next steps. Existing reports
+are statused below. A script marked `guard` may protect a promoted seam, but it
+does not select new work. A script marked `historical` is evidence for its
+recorded slice only and must not drive a future patch without a fresh SDD
+receipt. A script marked `cleanup-entry` may be used only after the slice
+chooses the `cleanup/delete` lane.
+
+| Surface | Status | Use after 0k-AP |
+| --- | --- | --- |
+| `scripts/generated_stage_transaction_edge_selection_report.sh` | `active-stop-gate` | Proves the consumed 0k-AJ edge and the ambiguous 0k-AO residual. It can admit a future correctness-selection slice only if `REQUIRE_RESIDUAL_SELECTED=1` becomes root-sized with a named old authority edge. |
+| `scripts/generated_stage_transaction_spine_classifier.sh` | `supporting` | Builds the generated-stage corridor for the edge selector. It is not a standalone next-step selector. |
+| `scripts/call_materialization_transaction_admission_report.sh` | `guard` | Historical 0k-AE/0k-AF transaction-spine admission. Protects the owner boundary; do not reselect it as new work. |
+| `scripts/call_materialization_transaction_consumer_selection_report.sh` | `guard` | Historical 0k-AG/0k-AH consumer selection. Protects the promoted instance-symbol consumers; do not reselect it. |
+| `scripts/materialization_symbol_binding_admission_report.sh` | `guard` | Protects the promoted `MaterializationSymbolBinding` seam. It is not a behavior license. |
+| `scripts/method_name_codec_admission_report.sh` | `guard` | Protects the promoted exact-lookup `MethodNameCodec` seam. It is not permission for global name normalization. |
+| `scripts/invocation_context_admission_report.sh` | `guard` | Protects the promoted `InvocationContext` seam. It is not permission for direct `lower_super` behavior patches. |
+| `scripts/semantic_state_scope_admission_report.sh` | `guard` | Protects the promoted `prefer_callsite_specialization` state-scope seam. It is not permission to wrap `def_has_untyped_regular_param?` again. |
+| `scripts/codepath_status_cleanup_selection_report.sh` | `cleanup-entry` | The only currently admitted cleanup/delete entry point. It creates repo-local `tmp/` before `mktemp` so scratch cleanup does not break the lane. A cleanup slice still needs default-behavior, HIR/MIR/LLVM, bootstrap, and protecting-falsifier evidence. |
+| `scripts/codepath_status_census.sh`, `scripts/codepath_status_runtime_report.sh` | `cleanup-supporting` | Supporting evidence for cleanup only; runtime liveness alone is not semantic ownership. |
+| `scripts/semantic_decision_census.sh`, `scripts/semantic_state_scope_report.sh`, `scripts/state_scope_consumer_report.sh`, `scripts/materialization_decision_report.sh`, `scripts/materialization_promotion_selection_report.sh`, `scripts/materialization_override_promotion_report.sh`, `scripts/materialization_transaction_report.sh`, `scripts/materialization_identity_ledger_smoke.sh`, `scripts/arena_ownership_census.sh`, `scripts/lower_call_arena_ledger_smoke.sh`, `scripts/lower_call_arena_parity_report.sh`, `scripts/node_slot_integrity_report.sh`, `scripts/layout_probe_report.sh` | `historical` | Evidence for earlier slices or local audits. They may be run as guards when their owner row is touched, but they are not next-step selectors. |
+
+Default next track after Slices 0k-AO/0k-AP: the selected
 `wrapper_or_call_remap.extern_missing_body` edge is consumed, not fixed by a
 behavior change. Do not implement a backend forwarder or requested-name/materialized-body
 repair from this consumed edge. Slice 0k-AO tried the first post-consumer
@@ -71,6 +93,18 @@ Post-0k-AM architecture pacing covenant:
 This covenant is a stop rule, not a new behavior plan. It exists to prevent the
 architecture track from replacing consumer-patch tail-chasing with
 selector/report tail-chasing.
+
+Executed result after Slice 0k-AP: the report surface is consolidated instead
+of expanded. The current scripts were classified into `active-stop-gate`,
+`supporting`, `guard`, `cleanup-entry`, `cleanup-supporting`, and `historical`
+roles, and the cleanup-entry script now creates repo-local `tmp/` before
+`mktemp`. This retires old source-shape and ledger reports as next-step
+authorities unless a future SDD slice explicitly reactivates one with a decision
+question, root-size budget, negative control, and old authority edge.
+Decision: the default next executable slice should be `cleanup/delete` through
+`CodePathStatus`, or a narrowly justified correctness-selection discriminator
+that selects exactly one authority edge. It must not be another standalone
+report or a behavior fix from residual samples.
 
 Current selected implementation status: Slice 0k-AH is a behavior-neutral
 consumer migration. Instance-method override, keepalive, and diagnostic

@@ -358,6 +358,16 @@ either a stronger discriminator that proves one old authority edge, or an
 explicit consolidation / cleanup lane. Treat the grouped samples as routing
 data, not as a prioritized fix list.
 
+2026-07-01 post-0k-AP consolidation note: the report/gate surface is now
+statused in the active SDD. Existing reports are not all live work queues:
+promoted source-shape reports are guards, generated-stage transaction selection
+is an active stop gate, `codepath_status_cleanup_selection_report.sh` is the
+cleanup entry point and now creates repo-local `tmp/` before `mktemp`, and
+older census/ledger reports are historical unless a future SDD slice reactivates
+one with a full receipt. This makes the near-term plan more opinionated: if no
+root-sized correctness discriminator exists, move to `CodePathStatus`
+cleanup/delete rather than adding another diagnostic surface.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging

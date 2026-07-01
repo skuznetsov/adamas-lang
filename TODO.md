@@ -8,6 +8,25 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: added Slice 0k-AP, report-surface
+  consolidation after the ambiguous 0k-AO residual. The active SDD now treats
+  architecture reports as a status registry, not as a menu of competing next
+  steps. `generated_stage_transaction_edge_selection_report.sh` is the
+  `active-stop-gate`; `generated_stage_transaction_spine_classifier.sh` is only
+  supporting; previously promoted source-shape reports for
+  `CallMaterializationTransaction`, `MaterializationSymbolBinding`,
+  `MethodNameCodec`, `InvocationContext`, and `SemanticStateScope` are guards,
+  not new selectors; `codepath_status_cleanup_selection_report.sh` is the only
+  current cleanup/delete entry point and now creates repo-local `tmp/` before
+  `mktemp`; older census/ledger reports are historical unless a future SDD
+  slice explicitly reactivates one with a
+  decision question, root-size budget, negative control, and old authority
+  edge. Decision: the default next executable slice should be `cleanup/delete`
+  through `CodePathStatus`, or a stronger correctness-selection discriminator
+  that selects exactly one authority edge. Do not add another standalone
+  report, do not patch residual sample paths, and do not treat old green
+  source-shape gates as green `s2b`/`s3b` evidence.
+
 - 2026-07-01 UPDATE: implemented Slice 0k-AO,
   post-0k-AM exact-contract residual selector inside the existing generated
   stage transaction edge selection script. The script now creates repo-local

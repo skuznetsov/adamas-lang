@@ -14,6 +14,7 @@ shift
 TIMEOUT="${TIMEOUT:-180}"
 MEM_MB="${MEM_MB:-4096}"
 SELECTED_CLEANUP_PATH="${SELECTED_CLEANUP_PATH:-identity_dry_run}"
+mkdir -p "$ROOT_DIR/tmp"
 TMP_DIR="$(mktemp -d "$ROOT_DIR/tmp/codepath-status-cleanup.XXXXXX")"
 DEFAULT_LOG="$TMP_DIR/default.log"
 ENABLED_LOG="$TMP_DIR/enabled.log"

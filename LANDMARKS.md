@@ -12,6 +12,27 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-AP-SURFACE-CONSOLIDATION|design-sealed 2026-07-01 {F:0.80 G:0.52 R:0.86}]:
+Slice 0k-AP consolidates the architecture report surface after the ambiguous
+0k-AO residual. The active SDD now classifies existing report scripts by role:
+`generated_stage_transaction_edge_selection_report.sh` is the
+`active-stop-gate`; `generated_stage_transaction_spine_classifier.sh` is
+supporting only; promoted source-shape reports for
+`CallMaterializationTransaction`, `MaterializationSymbolBinding`,
+`MethodNameCodec`, `InvocationContext`, and `SemanticStateScope` are guards,
+not new selectors; `codepath_status_cleanup_selection_report.sh` is the current
+cleanup/delete entry point and creates repo-local `tmp/` before `mktemp`; older
+census, ledger, arena, materialization, and layout reports are historical unless
+reactivated by a future SDD slice with a decision question, root-size budget,
+negative control, and old authority edge.
+Decision: the default next executable slice should be `cleanup/delete` through
+`CodePathStatus`, or a stronger correctness-selection discriminator that
+selects exactly one old authority edge. Scope: control-plane consolidation
+only; no compiler behavior, no new bootstrap claim, no `BlockOwner` change.
+Decay trigger: a future slice reactivates one historical report with a full SDD
+receipt, the active stop gate selects exactly one residual edge, or the board
+switches to a different owner boundary.
+
 [LM-ARCH-0K-AO-EXACT-RESIDUAL-AMBIGUOUS|verified 2026-07-01 {F:0.86 G:0.48 R:0.88}]:
 Slice 0k-AO extends the existing generated-stage transaction edge selector with
 a post-consumer exact-contract missing-body residual classifier. The selector
