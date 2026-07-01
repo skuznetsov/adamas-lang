@@ -1069,6 +1069,31 @@ green `s2b`/`s3b` claim. Decay trigger: the gate turns green with a helper
 implementation, or the active board selects a different MaterializationIdentity
 authority edge.
 
+[LM-ARCH-MATERIALIZATION-SYMBOL-BINDING-SHADOW|verified 2026-07-01 {F:0.86 G:0.50 R:0.88}]:
+Slice 0k-Z promotes `lower_function_if_needed.symbol_binding` in
+shadow/parity mode. `src/compiler/hir/ast_to_hir.cr` now has a
+`MaterializationSymbolBinding` record carrying requested symbol, target
+symbol, materialization state key, body symbol, call-symbol hint, override
+symbol, and override reason. The old inline materialized-name and override
+branches are gone from `lower_function_if_needed_impl`; instance keepalive and
+instance/class/def materialization-ledger consumers read binding fields instead
+of recomputing split locals. `scripts/materialization_symbol_binding_admission_report.sh`
+and `REQUIRE_PROMOTED=1` now report `source_shape=already_promoted_shadow`,
+with `old_materialized_branch_count=0`, `old_override_branch_count=0`,
+`direct_keepalive_count=0`, `direct_ledger_materialized_count=0`, and
+`direct_ledger_override_count=0`. Verification: fresh stage1 builds; full
+regression suites pass `152/152 + 36/36`; materialization transaction and
+promotion-selection reports have malformed/invalid counts at zero; fresh stage1
+builds fresh s2; generated s2 no-prelude smoke compiles and runs `x = 1` with
+output `1`. Residual boundary: generated s2 full-prelude smoke still exits 139
+after `pass3 after lower_main call`, so this is not a green `s2b`/`s3b` claim
+and does not authorize backend forwarders, target keepalive behavior patches,
+requested-name forcing, remangling, `NamedTuple`/`Tuple` rendering changes,
+ambient-map policy changes, or `BlockOwner` rollback. Decay trigger: emitted
+symbol behavior starts reading owner-result instead of legacy parity, generated
+stage evidence refutes the binding as self-host safe, or the active board
+selects a different MaterializationIdentity consumer.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

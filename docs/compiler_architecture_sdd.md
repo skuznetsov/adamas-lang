@@ -14,7 +14,7 @@ fallbacks, and hard-to-localize bootstrap failures.
 
 ## Active Architecture Board
 
-Status: design-sealed execution board after Slice 0k-Y. This board exists to
+Status: design-sealed execution board after Slice 0k-Z. This board exists to
 prevent the next step from being selected by the latest generated-stage crash
 stack. A next slice is admitted only if it moves one board row by replacing or
 shadowing a named authority edge, producing `CodePathStatus` evidence for a
@@ -23,7 +23,7 @@ named path, or refuting a row with fresher generated-stage evidence.
 | Owner boundary | Current status | Next admitted movement | Forbidden repeat |
 | --- | --- | --- | --- |
 | `SemanticStateScope` | `prefer_callsite_specialization` is promoted in shadow/parity mode; emitted behavior still returns the legacy result. | Select a different root-sized consumer with a red/green source-shape gate, or explicitly leave this lane paused. | Reselecting `prefer_callsite_specialization`; wrapping `def_has_untyped_regular_param?` without a separate owner result; changing emitted behavior from the shadow row. |
-| `MaterializationIdentity` / `MaterializationRegistry` | Transaction and decision ledgers exist, but focused generated-stage runs still do not authorize a behavior patch. Slice 0k-X selects the next implementation receipt and Slice 0k-Y adds the red source-shape gate for it: `scripts/materialization_symbol_binding_admission_report.sh` reports `legacy_split_edge` until the helper lands. | Implement the selected `MaterializationSymbolBinding` shadow seam: one helper owns requested, target, materialized body, override/call hint, keepalive, state-scope, target-map, call-arg, and ABI facts while emitted behavior remains legacy. Turn `REQUIRE_PROMOTED=1 scripts/materialization_symbol_binding_admission_report.sh` green. | Backend undefined-extern rescue; target keepalive as a standalone patch; requested-name forcing; `NamedTuple`/`Tuple` display normalization; global ambient-map predicate changes; adding another report before consuming the symbol-binding source-shape gate. |
+| `MaterializationIdentity` / `MaterializationRegistry` | Slice 0k-Z promotes the selected `lower_function_if_needed.symbol_binding` seam in behavior-neutral shadow/parity mode. `scripts/materialization_symbol_binding_admission_report.sh` now reports `already_promoted_shadow` even with `REQUIRE_PROMOTED=1`; keepalive and materialization-ledger consumers read from `MaterializationSymbolBinding` fields instead of recomputing split locals. | Do not flip emitted symbols from this slice. Next movement must either run a generated-stage materialization/symbol-binding classification on the residual full-prelude s2 crash, or select the next root-sized owner consumer with a red/green gate. | Backend undefined-extern rescue; target keepalive as a standalone patch; requested-name forcing; `NamedTuple`/`Tuple` display normalization; global ambient-map predicate changes; `BlockOwner` rollback; treating the green source-shape gate as green `s2b`/`s3b`. |
 | `NameResolution` / `MethodNameCodec` | File identity was fixed; method/symbol identity is still partly rendered-string driven. Slice 0k-V promotes the selected `lower_function_if_needed.exact_lookup_keep_requested_name` seam through `method_name_codec_exact_lookup_keep_requested_name?` in shadow/parity mode; emitted behavior still returns the legacy result. Slice 0k-W pauses standalone promotion-report proliferation. | Either select the next root-sized codec seam with a red/green source-shape gate, or define a generated-stage classification slice that consumes the existing promotion ledger to answer one blocking yes/no decision before changing emitted naming behavior. | String-slice parsing patches at individual callsites; treating rendered names as canonical identity; broad normalization without a falsifier; selecting lower-level helpers before a materialization seam; flipping owner-result behavior from shadow rows; committing another report surface that does not reduce or select an authority edge. |
 | `AstNodeRef` / `ArenaOwnership` | Explicit-owner lower-call rows and `NodeSlotIntegrity` refuted owner drift, out-of-range ids, and missing slots for the instrumented edge. | Resume only with a named payload/deep-read or uninstrumented-consumer falsifier, including cleanup rules for its ledger. | Lower-call arena routing, broad arena scans, parser allocation rewrites, or another unbounded crash-edge probe. |
 | `CodePathStatus` | `cli.metrics.identity_dry_run` is classified as `debug_only`, not `delete_ready`. | Classify another named path, or run a separate `delete_ready` slice with default-behavior, HIR/MIR/LLVM, bootstrap, and evidence-preservation guards. | Deleting debug/probe/fallback paths from static grep output; using runtime liveness as semantic ownership evidence. |
@@ -34,18 +34,13 @@ the repeated high-cost frontiers are symbol/owner identity failures. A cleanup
 slice remains admitted, but only when the goal is explicitly bloat reduction
 and the selected path has its own `CodePathStatus` falsifier.
 
-Current selected implementation receipt and gate: `MaterializationIdentity /
-MaterializationRegistry`, `lower_function_if_needed.symbol_binding`,
-`scripts/materialization_symbol_binding_admission_report.sh`. The next
-production code slice should be a behavior-neutral helper/record extraction for
-the inline materialization symbol-binding seam, not a behavior flip. It must
-make requested/target/body/call-symbol identity one owned fact before any
-forwarder, keepalive, remangle, or requested-name behavior patch is admissible.
-Acceptance is not "a record exists": downstream materialization consumers must
-read the body/call/keepalive symbols from that binding record, and any legacy
-branching that remains must be enclosed inside the helper as a parity oracle,
-not re-derived at each consumer. The source-shape gate is intentionally red
-today under `REQUIRE_PROMOTED=1`.
+Current selected implementation status: `MaterializationIdentity /
+MaterializationRegistry`, `lower_function_if_needed.symbol_binding` is now
+promoted in shadow/parity mode. This is not a behavior flip and not a green
+bootstrap claim. Fresh generated s2 builds and no-prelude smoke passes, but the
+generated-s2 full-prelude smoke still exits 139 after `pass3 after lower_main
+call`; that residual must be classified with fresh generated-stage evidence
+before any materialization behavior patch is admitted.
 
 Mini-Quadrumvirate gate for every future slice:
 
@@ -4700,6 +4695,86 @@ Boundary:
   or `s3b` claim;
 - the next production code slice is now constrained to turn this exact gate
   green through authority migration, not through a record-only wrapper.
+
+### Slice 0k-Z: MaterializationSymbolBinding shadow seam
+
+Status:
+
+- behavior-neutral compiler source slice;
+- the selected `MaterializationIdentity` /
+  `lower_function_if_needed.symbol_binding` seam is now promoted in
+  shadow/parity mode;
+- emitted materialization symbols remain legacy-equivalent;
+- no backend remangling, undefined-extern rescue, target keepalive behavior
+  patch, `NamedTuple`/`Tuple` rendering change, ambient-map policy change,
+  `BlockOwner` carrier change, or deletion behavior changed.
+
+Source/spec:
+
+- `src/compiler/hir/ast_to_hir.cr`;
+- `scripts/materialization_symbol_binding_admission_report.sh`;
+- SDD Slice 0k-X receipt and Slice 0k-Y source-shape gate.
+
+Implementation:
+
+- add `MaterializationSymbolBinding`, carrying requested symbol, target symbol,
+  materialization state key, body symbol, call-symbol hint, override symbol,
+  and override reason;
+- replace the early inline `materialized_name = if ...` branch with
+  `materialization_symbol_binding_state_key`;
+- replace the instance-method inline `override = if ...` branch with
+  `materialization_symbol_binding`;
+- make `record_materialization_keepalive_candidate` consume
+  `symbol_binding.requested_name`, `symbol_binding.target_name`, and
+  `symbol_binding.body_symbol`;
+- make instance-method, class-method, and top-level-def
+  `log_materialization_identity_ledger` calls consume
+  `MaterializationSymbolBinding` fields instead of separate symbol locals.
+
+Evidence:
+
+- `crystal build src/adamas.cr -o /private/tmp/adamas_symbind_stage1
+  --error-trace` exits 0;
+- `scripts/materialization_symbol_binding_admission_report.sh` and
+  `REQUIRE_PROMOTED=1 scripts/materialization_symbol_binding_admission_report.sh`
+  report `source_shape=already_promoted_shadow`,
+  `old_materialized_branch_count=0`, `old_override_branch_count=0`,
+  `direct_keepalive_count=0`, `direct_ledger_materialized_count=0`, and
+  `direct_ledger_override_count=0`;
+- `scripts/method_name_codec_admission_report.sh` and its
+  `REQUIRE_PROMOTED=1` variant still report `already_promoted_shadow`;
+- `scripts/materialization_transaction_report.sh
+  /private/tmp/adamas_symbind_stage1` exits 0 with `rows=2513`,
+  `malformed=0`, `malformed_emit=0`, and `owner_malformed=0`;
+- `scripts/materialization_promotion_selection_report.sh
+  /private/tmp/adamas_symbind_stage1` exits 0 with `malformed=0`,
+  `invalid_owner=0`, `invalid_legacy_result=0`, `invalid_would_change=0`, and
+  `lower_function_if_needed.override` still `already_promoted_shadow`;
+- `scripts/semantic_decision_census.sh` and
+  `scripts/codepath_status_census.sh` still run;
+- `regression_tests/run_all_suites.sh /private/tmp/adamas_symbind_stage1 4`
+  passes `152/152 + 36/36`;
+- `scripts/run_safe.sh /private/tmp/adamas_symbind_stage1 300 4096
+  src/adamas.cr -o /private/tmp/adamas_symbind_s2` exits 0;
+- generated s2 no-prelude smoke compiles and runs `x = 1; puts x` with
+  runtime output `1`.
+
+Residual boundary:
+
+- generated s2 full-prelude smoke still exits 139 after
+  `pass3 after lower_main call`;
+- therefore this slice is an architecture authority migration, not a green
+  full-prelude generated-s2, `s2b`, or `s3b` claim.
+
+Next local track:
+
+- run a fresh generated-stage materialization/symbol-binding classification on
+  the residual full-prelude crash, or select the next root-sized owner consumer
+  from the active board with a red/green source-shape gate;
+- do not treat `MaterializationSymbolBinding` parity promotion as permission to
+  force requested-name behavior, add backend forwarders, change target
+  keepalive behavior, normalize `NamedTuple`/`Tuple` display strings, change
+  ambient-map policy globally, or roll back `BlockOwner`.
 
 ### Slice A: CallResolution boundary
 

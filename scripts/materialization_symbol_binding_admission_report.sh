@@ -56,6 +56,20 @@ source_shape_for_symbol_binding() {
       if (index($0, "record_materialization_keepalive_candidate(name, target_name, override || target_name)") > 0) {
         direct_keepalive = 1
       }
+      if (index($0, "record_materialization_keepalive_candidate(") > 0) {
+        in_keepalive_call = 1
+        keepalive_window = 0
+      }
+      if (in_keepalive_call) {
+        keepalive_window++
+        if (index($0, "symbol_binding.") > 0 ||
+            index($0, "binding.") > 0) {
+          binding_keepalive = 1
+        }
+        if (keepalive_window > 12) {
+          in_keepalive_call = 0
+        }
+      }
       if (index($0, "log_materialization_identity_ledger(") > 0) {
         in_ledger_call = 1
         ledger_window = 0
@@ -73,10 +87,6 @@ source_shape_for_symbol_binding() {
         if (ledger_window > 24) {
           in_ledger_call = 0
         }
-      }
-      if (index($0, "record_materialization_keepalive_candidate(") > 0 &&
-          (index($0, "symbol_binding.") > 0 || index($0, "binding.") > 0)) {
-        binding_keepalive = 1
       }
     }
     END {
@@ -102,10 +112,88 @@ binding_helper_count="$(count_literal "materialization_symbol_binding")"
 old_materialized_count="$(count_literal "materialized_name = if materialize_requested_instance_wrapper")"
 old_override_count="$(count_literal "override = if materialize_requested_instance_wrapper")"
 direct_keepalive_count="$(count_literal "record_materialization_keepalive_candidate(name, target_name, override || target_name)")"
-direct_ledger_materialized_count="$(count_literal "materialized_name,")"
-direct_ledger_override_count="$(count_literal "override || target_name,")"
-binding_keepalive_count="$(grep -F "record_materialization_keepalive_candidate(" "$SOURCE_FILE" | grep -E -c "symbol_binding\\.|binding\\." || true)"
-binding_ledger_count="$(grep -F "log_materialization_identity_ledger(" -A 24 "$SOURCE_FILE" | grep -E -c "symbol_binding\\.|binding\\." || true)"
+direct_ledger_materialized_count="$(
+  awk '
+    /private def lower_function_if_needed_impl\(name : String\)/ { in_method = 1; next }
+    in_method && /private def / { in_method = 0 }
+    in_method {
+      if (index($0, "log_materialization_identity_ledger(") > 0) {
+        in_ledger_call = 1
+        ledger_window = 0
+      }
+      if (in_ledger_call) {
+        ledger_window++
+        if (index($0, "materialized_name,") > 0) {
+          count++
+        }
+        if (ledger_window > 24) {
+          in_ledger_call = 0
+        }
+      }
+    }
+    END { print count + 0 }
+  ' "$SOURCE_FILE"
+)"
+direct_ledger_override_count="$(
+  awk '
+    /private def lower_function_if_needed_impl\(name : String\)/ { in_method = 1; next }
+    in_method && /private def / { in_method = 0 }
+    in_method {
+      if (index($0, "log_materialization_identity_ledger(") > 0) {
+        in_ledger_call = 1
+        ledger_window = 0
+      }
+      if (in_ledger_call) {
+        ledger_window++
+        if (index($0, "override || target_name,") > 0) {
+          count++
+        }
+        if (ledger_window > 24) {
+          in_ledger_call = 0
+        }
+      }
+    }
+    END { print count + 0 }
+  ' "$SOURCE_FILE"
+)"
+binding_keepalive_count="$(
+  awk '
+    /record_materialization_keepalive_candidate\(/ {
+      in_keepalive_call = 1
+      keepalive_window = 0
+    }
+    in_keepalive_call {
+      keepalive_window++
+      if (index($0, "symbol_binding.") > 0 ||
+          index($0, "binding.") > 0) {
+        count++
+      }
+      if (keepalive_window > 12) {
+        in_keepalive_call = 0
+      }
+    }
+    END { print count + 0 }
+  ' "$SOURCE_FILE"
+)"
+binding_ledger_count="$(
+  awk '
+    /log_materialization_identity_ledger\(/ {
+      in_ledger_call = 1
+      ledger_window = 0
+    }
+    in_ledger_call {
+      ledger_window++
+      if (index($0, "symbol_binding.") > 0 ||
+          index($0, "binding.") > 0) {
+        count++
+      }
+      if (ledger_window > 24) {
+        in_ledger_call = 0
+      }
+    }
+    END { print count + 0 }
+  ' "$SOURCE_FILE"
+)"
 
 selection_status="rejected"
 case "$PREFERRED_SEAM:$source_shape" in

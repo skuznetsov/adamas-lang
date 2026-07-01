@@ -155,6 +155,16 @@ so the next code slice has a concrete movement target: turn the gate green by
 making keepalive and materialization-ledger consumers read from the binding
 record, without changing emitted symbols.
 
+2026-07-01 post-0k-Z note: the `MaterializationSymbolBinding` shadow/parity
+slice landed. The symbol-binding source-shape gate is now green, and
+keepalive/materialization-ledger consumers read the binding record instead of
+recomputing split symbol locals. This is still not a full bootstrap claim:
+fresh generated s2 builds and no-prelude smoke passes, but full-prelude
+generated-s2 smoke still exits 139 after `pass3 after lower_main call`. The
+next slice must classify that residual with fresh generated-stage evidence or
+select another owner seam; do not jump to backend rescue or keepalive/remangle
+behavior patches.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging

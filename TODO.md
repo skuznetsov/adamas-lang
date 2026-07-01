@@ -8,6 +8,26 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: implemented Slice 0k-Z,
+  `MaterializationSymbolBinding` shadow/parity promotion. The selected
+  `lower_function_if_needed.symbol_binding` seam now owns requested, target,
+  materialization state key, body, call-symbol hint, override symbol, and
+  override reason in one record. The old inline materialized-name and override
+  branches are gone from `lower_function_if_needed_impl`; keepalive and
+  materialization-ledger consumers read binding fields instead of recomputing
+  split locals. `REQUIRE_PROMOTED=1
+  scripts/materialization_symbol_binding_admission_report.sh` is green.
+  Verification: fresh stage1 builds; source-shape, MethodNameCodec,
+  materialization transaction, materialization promotion-selection, semantic
+  census, and CodePathStatus census gates run; full suites pass `152/152 +
+  36/36`; fresh stage1 builds fresh s2; generated s2 no-prelude smoke compiles
+  and runs `x = 1` with output `1`. Residual boundary: generated s2
+  full-prelude smoke still exits 139 after `pass3 after lower_main call`, so
+  this is not a green `s2b`/`s3b` claim. Next work must classify that residual
+  with fresh generated-stage evidence or choose another active-board owner
+  seam; do not jump to backend rescue / keepalive / remangle / tuple-rendering
+  patches.
+
 - 2026-07-01 UPDATE: added the red/green source-shape gate for the selected
   Slice 0k-X implementation seam:
   `scripts/materialization_symbol_binding_admission_report.sh`. Current source

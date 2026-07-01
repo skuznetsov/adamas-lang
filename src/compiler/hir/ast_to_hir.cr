@@ -2192,6 +2192,27 @@ module Adamas::HIR
       end
     end
 
+    private struct MaterializationSymbolBinding
+      getter requested_name : String
+      getter target_name : String
+      getter state_key : String
+      getter body_symbol : String
+      getter call_symbol_hint : String
+      getter override_symbol : String?
+      getter override_reason : String
+
+      def initialize(
+        @requested_name : String,
+        @target_name : String,
+        @state_key : String,
+        @body_symbol : String,
+        @call_symbol_hint : String,
+        @override_symbol : String?,
+        @override_reason : String,
+      )
+      end
+    end
+
     # Per-function lowering state
     @function_lowering_states : Hash(String, FunctionLoweringState) = Hash(String, FunctionLoweringState).new(initial_capacity: 32768)
     # Queue for pending lower requests to avoid O(n^2) scans of the state hash.
@@ -2344,6 +2365,61 @@ module Adamas::HIR
       return unless materialized_name == target_name
 
       @module.mark_materialization_keepalive_function(target_name)
+    end
+
+    private def materialization_symbol_binding_state_key(
+      requested_name : String,
+      target_name : String,
+      requested_wrapper : Bool,
+      shape_keyed_block_specialization : Bool,
+    ) : String
+      if requested_wrapper || shape_keyed_block_specialization
+        requested_name
+      else
+        target_name
+      end
+    end
+
+    private def materialization_symbol_binding(
+      requested_name : String,
+      target_name : String,
+      state_key : String,
+      requested_wrapper : Bool,
+      deferred_lookup_used : Bool?,
+      has_untyped_regular_param : Bool,
+      resolved_method : String?,
+    ) : MaterializationSymbolBinding
+      override_reason = "target"
+      override_symbol : String? = nil
+
+      if requested_wrapper
+        override_reason = "requested_wrapper"
+        override_symbol = requested_name
+      elsif deferred_lookup_used
+        override_reason = "deferred_lookup"
+        override_symbol = requested_name
+      elsif has_untyped_regular_param
+        override_reason = "untyped_regular_param"
+        override_symbol = requested_name
+      else
+        override_reason = "target_materialization"
+        override_symbol = target_name
+      end
+
+      if resolved_method == "in?" && target_name.starts_with?("Object#")
+        override_reason = "object_in_base"
+        override_symbol = nil
+      end
+
+      MaterializationSymbolBinding.new(
+        requested_name,
+        target_name,
+        state_key,
+        override_symbol || target_name,
+        requested_name,
+        override_symbol,
+        override_reason,
+      )
     end
 
     private def log_materialization_identity_ledger(
@@ -71787,20 +71863,21 @@ module Adamas::HIR
         end
       end
 
-      materialized_name = if materialize_requested_instance_wrapper
-                            name
-                          elsif requested_shape_keyed_block_specialization?(name, resolved_target_name)
-                            # Per-shape block specialization (see shape_keyed_block_target):
-                            # emit the concrete-shape `_block` specialization as a DISTINCT
-                            # function under the requested shape name, using the shared yield
-                            # def (resolved_func_def) only as the source AST. Without this the
-                            # shape name canonicalizes back to the arity-collapsed block target
-                            # and distinct shapes (Int32 limit -> i32, Nil limit -> ptr) share
-                            # one signature fixed by whichever lowers first.
-                            name
-                          else
-                            resolved_target_name
-                          end
+      target_name = resolved_target_name
+      shape_keyed_block_specialization = requested_shape_keyed_block_specialization?(name, target_name)
+      # Per-shape block specialization (see shape_keyed_block_target):
+      # emit the concrete-shape `_block` specialization as a DISTINCT function
+      # under the requested shape name, using the shared yield def
+      # (resolved_func_def) only as the source AST. Without this the shape name
+      # canonicalizes back to the arity-collapsed block target and distinct
+      # shapes (Int32 limit -> i32, Nil limit -> ptr) share one signature fixed
+      # by whichever lowers first.
+      materialized_name = materialization_symbol_binding_state_key(
+        name,
+        target_name,
+        materialize_requested_instance_wrapper,
+        shape_keyed_block_specialization
+      )
 
       # A function entry can exist as a declaration-only placeholder after a
       # call target was referenced before the body was materialized. Treat only
@@ -71814,7 +71891,6 @@ module Adamas::HIR
       return if has_in_module
       return if is_lowering_resolved
 
-      target_name = resolved_target_name
       record_pending_callee_for_rta(target_name)
       # Re-parse resolved target name once for use in the rest of this function
       resolved_parts = parse_method_name(target_name)
@@ -71887,27 +71963,22 @@ module Adamas::HIR
                 resolved_func_def,
                 call_arg_types
               )
-              override_reason = "target"
-              override = if materialize_requested_instance_wrapper
-                           override_reason = "requested_wrapper"
-                           name
-                         elsif deferred_lookup_used
-                           override_reason = "deferred_lookup"
-                           name
-                         elsif has_untyped_regular_param
-                           override_reason = "untyped_regular_param"
-                           name
-                         else
-                           override_reason = "target_materialization"
-                           target_name
-                         end
-              # Avoid per-receiver monomorphization for Object#in? by forcing the
-              # base method name even when the call site is mangled.
-              if resolved_parts.method == "in?" && target_name.starts_with?("Object#")
-                override = nil
-                override_reason = "object_in_base"
-              end
-              record_materialization_keepalive_candidate(name, target_name, override || target_name)
+              symbol_binding : MaterializationSymbolBinding = materialization_symbol_binding(
+                name,
+                target_name,
+                materialized_name,
+                materialize_requested_instance_wrapper,
+                deferred_lookup_used,
+                has_untyped_regular_param,
+                resolved_parts.method
+              )
+              override = symbol_binding.override_symbol
+              override_reason = symbol_binding.override_reason
+              record_materialization_keepalive_candidate(
+                symbol_binding.requested_name,
+                symbol_binding.target_name,
+                symbol_binding.body_symbol
+              )
               # M4c0 (diagnostic-only): the materialization-binding decision. Logs the
               # requested/target/materialize names + the selected def's required vs the
               # expected arg count. MAT_BINDING_DANGEROUS = a BARE requested family name
@@ -71916,7 +71987,7 @@ module Adamas::HIR
               # Inert unless ADAMAS_REGMAT_ASSERT; changes no materialization.
               if env_has?("ADAMAS_REGMAT_ASSERT")
                 mstats = function_param_stats(target_name, resolved_func_def)
-                materialize_name = override || target_name
+                materialize_name = symbol_binding.body_symbol
                 requested_bare = !name.includes?('$')
                 STDERR.puts "[MAT_BINDING_SEEN] requested=#{name} target=#{target_name} materialize=#{materialize_name} branch=#{lookup_branch || "?"} expected=#{lookup_expected_param_count} req=#{mstats.required} pc=#{mstats.param_count} splat=#{mstats.has_splat ? 1 : 0} dsplat=#{mstats.has_double_splat ? 1 : 0} bare=#{requested_bare ? 1 : 0}"
                 if requested_bare && mstats.required > lookup_expected_param_count && !mstats.has_splat && !mstats.has_double_splat
@@ -71932,12 +72003,12 @@ module Adamas::HIR
               merged_params = extra_type_params ? extra_params.merge(extra_type_params) : extra_params
               log_materialization_identity_ledger(
                 "instance_method",
-                name,
-                target_name,
-                materialized_name,
-                override || target_name,
-                name,
-                override_reason,
+                symbol_binding.requested_name,
+                symbol_binding.target_name,
+                symbol_binding.state_key,
+                symbol_binding.body_symbol,
+                symbol_binding.call_symbol_hint,
+                symbol_binding.override_reason,
                 lookup_branch,
                 call_arg_types,
                 merged_params,
@@ -72083,14 +72154,23 @@ module Adamas::HIR
               old_class = @current_class
               @current_class = owner
               forced_method_name = method || ""
-              log_materialization_identity_ledger(
-                "class_method",
+              class_symbol_binding : MaterializationSymbolBinding = MaterializationSymbolBinding.new(
                 name,
                 target_name,
                 materialized_name,
                 target_for_lower,
                 name,
-                target_for_lower == name ? "requested_class_target" : "target_class_symbol",
+                target_for_lower,
+                target_for_lower == name ? "requested_class_target" : "target_class_symbol"
+              )
+              log_materialization_identity_ledger(
+                "class_method",
+                class_symbol_binding.requested_name,
+                class_symbol_binding.target_name,
+                class_symbol_binding.state_key,
+                class_symbol_binding.body_symbol,
+                class_symbol_binding.call_symbol_hint,
+                class_symbol_binding.override_reason,
                 lookup_branch,
                 call_arg_types,
                 extra_type_params,
@@ -72150,14 +72230,23 @@ module Adamas::HIR
             # Phase 0 metric: count lower_def entries (full HIR body emission).
             canonical_key = override_name || target_name
             @phase0_lower_def_counts[canonical_key] = (@phase0_lower_def_counts[canonical_key]? || 0) + 1
-            log_materialization_identity_ledger(
-              "def",
+            def_symbol_binding : MaterializationSymbolBinding = MaterializationSymbolBinding.new(
               name,
               target_name,
               materialized_name,
               canonical_key,
               name,
-              override_reason,
+              override_name,
+              override_reason
+            )
+            log_materialization_identity_ledger(
+              "def",
+              def_symbol_binding.requested_name,
+              def_symbol_binding.target_name,
+              def_symbol_binding.state_key,
+              def_symbol_binding.body_symbol,
+              def_symbol_binding.call_symbol_hint,
+              def_symbol_binding.override_reason,
               lookup_branch,
               call_arg_types,
               extra_type_params,
