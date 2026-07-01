@@ -1969,6 +1969,7 @@ module Adamas::HIR
     getter module_includers : Hash(String, Array(String))
     getter virtual_dispatch_target_functions : Set(String)
     getter materialization_keepalive_functions : Set(String)
+    getter materialization_transaction_ids_by_call_symbol : Hash(String, String)
     getter lib_names : Set(String)
     getter lib_structs : Set(String)
     getter primitive_methods : Hash(String, String)
@@ -2005,6 +2006,7 @@ module Adamas::HIR
       @module_includers = {} of String => Array(String)
       @virtual_dispatch_target_functions = Set(String).new
       @materialization_keepalive_functions = Set(String).new
+      @materialization_transaction_ids_by_call_symbol = {} of String => String
       @lib_names = Set(String).new
       @lib_structs = Set(String).new
       @primitive_methods = {} of String => String
@@ -2038,6 +2040,7 @@ module Adamas::HIR
       @class_parents = {} of String => String?
       @module_includers = {} of String => Array(String)
       @materialization_keepalive_functions = Set(String).new
+      @materialization_transaction_ids_by_call_symbol = {} of String => String
       @lib_names = Set(String).new
       @lib_structs = Set(String).new
       @primitive_methods = {} of String => String
@@ -2107,6 +2110,16 @@ module Adamas::HIR
 
     def mark_materialization_keepalive_function(name : String) : Nil
       @materialization_keepalive_functions << name unless name.empty?
+    end
+
+    def remember_materialization_transaction(call_symbol : String, tx_id : String) : Nil
+      return if call_symbol.empty? || tx_id.empty?
+
+      @materialization_transaction_ids_by_call_symbol[call_symbol] ||= tx_id
+    end
+
+    def materialization_transaction_id_for_call_symbol(call_symbol : String) : String?
+      @materialization_transaction_ids_by_call_symbol[call_symbol]?
     end
 
     def register_primitive(name : String, kind : String) : Nil

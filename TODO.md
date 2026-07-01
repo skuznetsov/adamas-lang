@@ -275,6 +275,26 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   reconstruction in `llvm_backend.cr`, broad live-target marking, or backend
   `@undefined_externs` as the first useful semantic signal.
 
+- 2026-07-01 UPDATE: implemented Slice 0k-A as a behavior-neutral
+  transaction-correlation channel. The report was made red first: a Slice
+  0h-only compiler (`/private/tmp/adamas_txcorr_red`) failed with
+  `FAIL: no [MAT_EMIT] materialization emitted-call rows emitted` while still
+  producing `[MAT_TX]`. The code then added a stable `tx=` id to
+  `MaterializationIdentityTransaction`, stored the HIR-owned
+  call-symbol→transaction mapping on `HIR::Module`, carried optional
+  `materialization_tx_id` through MIR `Call` / `ExternCall`, and made backend
+  emission log only mechanical `[MAT_EMIT]` facts under the same ledger env.
+  Focused stage1 report now shows `rows=2513`, `emit_rows=16995`,
+  `transaction_bound_emit_rows=5332`, `joined_transactions=1349`, and
+  `unjoined_emit_rows=0`; generated-s2 no-prelude report shows `rows=1`,
+  `emit_rows=2`, `joined_transactions=1`, and `unjoined_emit_rows=0`.
+  Env-off focused compile emits no materialization rows, and full stage1 suites
+  pass `152/152 + 36/36`. This still is not a behavior fix and not green
+  `s2b`/`s3b`: broad `[MAT_EMIT] tx=none` rows are diagnostic only, and the next
+  behavior slice must consume a targeted joined transaction row or return to
+  `SemanticStateScope` / `MaterializationRegistry` if selected-definition or
+  state-authority evidence is still missing.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was

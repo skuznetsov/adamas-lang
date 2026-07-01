@@ -355,24 +355,31 @@ not an implemented report and not a green `s2b`/`s3b` claim. Decay trigger: a
 transaction-correlation implementation lands, or fresh generated-stage evidence
 shows materialization transaction identity is not the active correctness path.
 
-[LM-ARCH-SLICE-0K-A-TRANSACTION-CORRELATION-PREFLIGHT|guard-only 2026-07-01 {F:0.78 G:0.50 R:0.84}]:
-Slice 0k now has an executable preflight boundary before code changes:
-transaction correlation is admitted only when a HIR-owned `[MAT_TX]` identity
-can be carried to final emitted-call facts. Broad backend emitted-call logs are
-diagnostics, not the contract gate. The first implementation must upgrade
-`scripts/materialization_transaction_report.sh` so the current Slice 0h-only
-compiler fails red on missing emitted-call correlation, then add a default-off
-channel that reports backend mechanical facts (`[MAT_EMIT]`) tied to the HIR
-transaction id. Minimal green evidence is focused stage1 plus generated-s2
-no-prelude reports with parseable `[MAT_TX]`, parseable `[MAT_EMIT]`, at least
-one joined transaction-bound emitted call, zero malformed rows, and no
-env-off behavior/output change. Stop conditions: source-level reconstruction in
-`llvm_backend.cr`, broad live-target marking, backend `@undefined_externs` as
-the first useful signal, or an empty joined transaction-bound subset. Scope:
-guard-only planning; this is not implemented transaction completeness and not
-a green `s2b`/`s3b` claim. Decay trigger: Slice 0k-A implementation lands, or
-fresh generated-stage evidence shows materialization transaction identity is no
-longer the active correctness path.
+[LM-ARCH-SLICE-0K-A-TRANSACTION-CORRELATION|verified 2026-07-01 {F:0.84 G:0.44 R:0.88}]:
+Slice 0k-A now has an implemented, behavior-neutral transaction-correlation
+channel. Red gate: after `scripts/materialization_transaction_report.sh` was
+upgraded, a Slice 0h-only compiler built at `/private/tmp/adamas_txcorr_red`
+failed with `FAIL: no [MAT_EMIT] materialization emitted-call rows emitted`
+while still emitting `[MAT_TX]` rows. Implementation shape:
+`MaterializationIdentityTransaction` emits a stable `tx=` id, `HIR::Module`
+stores a HIR-owned call-symbol to transaction-id map, MIR `Call` /
+`ExternCall` carry optional `materialization_tx_id`, HIR-to-MIR direct call
+lowering preserves that id for transaction-bound calls, and backend call
+emission logs only mechanical `[MAT_EMIT]` facts under
+`ADAMAS_MATERIALIZATION_IDENTITY_LEDGER=1`. Evidence: focused stage1 report
+emits `rows=2513`, `malformed=0`, `emit_rows=16995`, `malformed_emit=0`,
+`transaction_bound_emit_rows=5332`, `non_transaction_emit_rows=11663`,
+`joined_transactions=1349`, and `unjoined_emit_rows=0`; generated-s2
+no-prelude report emits `rows=1`, `emit_rows=2`,
+`transaction_bound_emit_rows=1`, `joined_transactions=1`, and
+`unjoined_emit_rows=0`; env-off focused compile emits no `[MAT_ID]`,
+`[MAT_TX]`, or `[MAT_EMIT]`; full stage1 suites pass `152/152 + 36/36`.
+Scope: this proves transaction correlation and backend emitted-call visibility
+for a joined HIR-owned subset, not a behavior fix and not a green `s2b`/`s3b`
+claim. Broad `[MAT_EMIT] tx=none` rows remain diagnostics only. Decay trigger:
+MIR call representation, `lower_function_if_needed_impl`, HIR-to-MIR call
+lowering, backend call emission, or the materialization transaction report row
+format changes.
 
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in

@@ -21153,6 +21153,31 @@ module Adamas::MIR
       end
     end
 
+    private def materialization_emit_ledger_enabled? : Bool
+      ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_MATERIALIZATION_IDENTITY_LEDGER")
+    end
+
+    private def materialization_emit_token(value : String?) : String
+      return "none" unless value
+      return "none" if value.empty?
+
+      value.gsub(' ', "%20").gsub('\t', "%09").gsub('\n', "%0A").gsub('\r', "%0D")
+    end
+
+    private def log_materialization_emit_ledger(
+      kind : String,
+      tx_id : String?,
+      emitted : String,
+      ret : String,
+      arg_types : Array(String),
+      body_present : Bool,
+    ) : Nil
+      return unless materialization_emit_ledger_enabled?
+
+      arg_token = materialization_emit_token(arg_types.join(","))
+      STDERR.puts "[MAT_EMIT] tx=#{materialization_emit_token(tx_id)} kind=#{materialization_emit_token(kind)} emitted=#{materialization_emit_token(emitted)} ret=#{materialization_emit_token(ret)} argc=#{arg_types.size} arg_types=#{arg_token} body_present=#{body_present ? 1 : 0}"
+    end
+
     private def emit_call(inst : Call, name : String, func : Function)
       # Look up callee function for name and param types
       callee_func = function_by_id(inst.callee)
@@ -22646,6 +22671,14 @@ module Adamas::MIR
       # Overwrite any FuncPointer placeholder ({ptr, 0, []}): real calls must win so
       # end-of-module stub synthesis (no-prelude String/IO helpers) sees correct
       # return type and arg_count — otherwise String$Hsize etc. get abort stubs.
+      log_materialization_emit_ledger(
+        "call",
+        inst.materialization_tx_id,
+        callee_name,
+        return_type == "void" ? "ptr" : return_type,
+        arg_type_strs,
+        !!callee_func || @func_by_name.has_key?(callee_name)
+      )
       @called_crystal_functions[callee_name] = {(return_type == "void" ? "ptr" : return_type), arg_type_strs.size, arg_type_strs}
     end
 
@@ -23670,6 +23703,14 @@ module Adamas::MIR
           "ptr"
         end
       end.reject { |t| t == "void" }
+      log_materialization_emit_ledger(
+        "extern",
+        inst.materialization_tx_id,
+        mangled_extern_name,
+        return_type == "void" ? "ptr" : return_type,
+        extern_arg_types,
+        !!matching_func || @func_by_name.has_key?(mangled_extern_name)
+      )
       @called_crystal_functions[mangled_extern_name] = {(return_type == "void" ? "ptr" : return_type), extern_arg_types.size, extern_arg_types}
     end
 

@@ -59,6 +59,13 @@ if ! grep -q '^\[MAT_TX\]' "$LOG"; then
   exit 1
 fi
 
+if ! grep -q '^\[MAT_EMIT\]' "$LOG"; then
+  echo "FAIL: no [MAT_EMIT] materialization emitted-call rows emitted" >&2
+  echo "compiler_rc=$compiler_rc" >&2
+  tail -100 "$LOG" >&2 || true
+  exit 1
+fi
+
 echo "# Materialization Transaction Report"
 echo "compiler: $COMPILER"
 echo "source: $SRC"
@@ -79,6 +86,7 @@ awk -v samples="$SAMPLES" '
 
   /^\[MAT_TX\]/ {
     row_count++
+    tx = field("tx")
     phase = field("phase")
     status = field("identity_status")
     relation = field("symbol_relation")
@@ -94,12 +102,14 @@ awk -v samples="$SAMPLES" '
     relation_count[relation]++
     contract_count[contract]++
 
-    if (status == "" || relation == "" || requested == "" || target == "" || body == "" || call == "") {
+    if (tx == "" || status == "" || relation == "" || requested == "" || target == "" || body == "" || call == "") {
       malformed++
       if (sample_count["malformed"] < samples) {
         sample_count["malformed"]++
         sample["malformed", sample_count["malformed"]] = $0
       }
+    } else {
+      tx_seen[tx] = 1
     }
 
     if (status != "exact") {
@@ -110,11 +120,66 @@ awk -v samples="$SAMPLES" '
     }
   }
 
+  /^\[MAT_EMIT\]/ {
+    emit_count++
+    tx = field("tx")
+    kind = field("kind")
+    emitted = field("emitted")
+    ret = field("ret")
+    argc = field("argc")
+    arg_types = field("arg_types")
+    body_present = field("body_present")
+
+    emit_kind_count[kind]++
+    last_emit_row = $0
+
+    if (tx == "" || kind == "" || emitted == "" || ret == "" || argc == "" || body_present == "") {
+      malformed_emit++
+      if (sample_count["malformed_emit"] < samples) {
+        sample_count["malformed_emit"]++
+        sample["malformed_emit", sample_count["malformed_emit"]] = $0
+      }
+      next
+    }
+
+    if (tx == "none") {
+      non_transaction_emit++
+      if (sample_count["non_transaction_emit"] < samples) {
+        sample_count["non_transaction_emit"]++
+        sample["non_transaction_emit", sample_count["non_transaction_emit"]] = "kind=" kind " emitted=" emitted " ret=" ret " argc=" argc " arg_types=" arg_types
+      }
+    } else {
+      transaction_emit++
+      tx_emit_count[tx]++
+      if (!(tx in tx_seen)) {
+        unjoined_emit++
+        if (sample_count["unjoined_emit"] < samples) {
+          sample_count["unjoined_emit"]++
+          sample["unjoined_emit", sample_count["unjoined_emit"]] = $0
+        }
+      }
+    }
+  }
+
   END {
+    for (tx in tx_seen) {
+      tx_distinct++
+      if ((tx_emit_count[tx] + 0) > 0) {
+        joined_tx++
+      }
+    }
+
     print ""
     print "## Counts"
     print "rows=" row_count + 0
     print "malformed=" malformed + 0
+    print "emit_rows=" emit_count + 0
+    print "malformed_emit=" malformed_emit + 0
+    print "transaction_ids=" tx_distinct + 0
+    print "transaction_bound_emit_rows=" transaction_emit + 0
+    print "non_transaction_emit_rows=" non_transaction_emit + 0
+    print "joined_transactions=" joined_tx + 0
+    print "unjoined_emit_rows=" unjoined_emit + 0
 
     print ""
     print "## Identity Status"
@@ -156,6 +221,22 @@ awk -v samples="$SAMPLES" '
     }
 
     print ""
+    print "## Emit Kinds"
+    for (k in emit_kind_count) {
+      print k "=" emit_kind_count[k]
+    }
+
+    print ""
+    print "## Non-Transaction Emit Samples"
+    if ((sample_count["non_transaction_emit"] + 0) == 0) {
+      print "(none)"
+    } else {
+      for (i = 1; i <= sample_count["non_transaction_emit"]; i++) {
+        print sample["non_transaction_emit", i]
+      }
+    }
+
+    print ""
     print "## Malformed Samples"
     if ((sample_count["malformed"] + 0) == 0) {
       print "(none)"
@@ -166,10 +247,36 @@ awk -v samples="$SAMPLES" '
     }
 
     print ""
+    print "## Malformed Emit Samples"
+    if ((sample_count["malformed_emit"] + 0) == 0) {
+      print "(none)"
+    } else {
+      for (i = 1; i <= sample_count["malformed_emit"]; i++) {
+        print sample["malformed_emit", i]
+      }
+    }
+
+    print ""
+    print "## Unjoined Emit Samples"
+    if ((sample_count["unjoined_emit"] + 0) == 0) {
+      print "(none)"
+    } else {
+      for (i = 1; i <= sample_count["unjoined_emit"]; i++) {
+        print sample["unjoined_emit", i]
+      }
+    }
+
+    print ""
     print "## Last Row"
     print last_row
 
-    if ((row_count + 0) == 0 || (malformed + 0) != 0) {
+    print ""
+    print "## Last Emit Row"
+    print last_emit_row
+
+    if ((row_count + 0) == 0 || (emit_count + 0) == 0 || (malformed + 0) != 0 ||
+        (malformed_emit + 0) != 0 || (transaction_emit + 0) == 0 ||
+        (joined_tx + 0) == 0 || (unjoined_emit + 0) != 0) {
       exit 1
     }
   }

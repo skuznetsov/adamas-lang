@@ -1729,6 +1729,7 @@ module Adamas::MIR
   class Call < Value
     getter callee : FunctionId
     getter args : Array(ValueId)
+    property materialization_tx_id : String? = nil
 
     # A' mini-AbiFacts: durable per-site classification of an Array(C) @buffer bulk
     # op that lowers as a Call to a shared `Pointer(C)#` body (clear / move_from /
@@ -1753,7 +1754,13 @@ module Adamas::MIR
     # set only under the candidate gate; no lowering reads it yet.
     property cnarrow_a_candidate : Bool = false
 
-    def initialize(id : ValueId, type : TypeRef, @callee : FunctionId, @args : Array(ValueId))
+    def initialize(
+      id : ValueId,
+      type : TypeRef,
+      @callee : FunctionId,
+      @args : Array(ValueId),
+      @materialization_tx_id : String? = nil,
+    )
       super(id, type)
     end
 
@@ -1775,6 +1782,7 @@ module Adamas::MIR
   class ExternCall < Value
     getter extern_name : String
     getter args : Array(ValueId)
+    property materialization_tx_id : String? = nil
 
     # A' mini-AbiFacts: durable per-site classification of an Array(C) @buffer bulk
     # op (memmove/memcpy/memset/malloc/realloc) found inside a monomorphic Array(C)#
@@ -1794,7 +1802,13 @@ module Adamas::MIR
     property array_bulk_stride : UInt32 = 0_u32
     property array_bulk_logical_count : ValueId? = nil
 
-    def initialize(id : ValueId, type : TypeRef, @extern_name : String, @args : Array(ValueId))
+    def initialize(
+      id : ValueId,
+      type : TypeRef,
+      @extern_name : String,
+      @args : Array(ValueId),
+      @materialization_tx_id : String? = nil,
+    )
       super(id, type)
     end
 
@@ -2720,16 +2734,26 @@ module Adamas::MIR
     end
 
     # Calls
-    def call(callee : FunctionId, args : Array(ValueId), return_type : TypeRef) : ValueId
-      emit(Call.new(@function.next_value_id, return_type, callee, args))
+    def call(
+      callee : FunctionId,
+      args : Array(ValueId),
+      return_type : TypeRef,
+      materialization_tx_id : String? = nil,
+    ) : ValueId
+      emit(Call.new(@function.next_value_id, return_type, callee, args, materialization_tx_id))
     end
 
     def call_indirect(callee_ptr : ValueId, args : Array(ValueId), return_type : TypeRef, unwrap_union_args : Bool = true) : ValueId
       emit(IndirectCall.new(@function.next_value_id, return_type, callee_ptr, args, unwrap_union_args))
     end
 
-    def extern_call(extern_name : String, args : Array(ValueId), return_type : TypeRef) : ValueId
-      emit(ExternCall.new(@function.next_value_id, return_type, extern_name, args))
+    def extern_call(
+      extern_name : String,
+      args : Array(ValueId),
+      return_type : TypeRef,
+      materialization_tx_id : String? = nil,
+    ) : ValueId
+      emit(ExternCall.new(@function.next_value_id, return_type, extern_name, args, materialization_tx_id))
     end
 
     # Union operations

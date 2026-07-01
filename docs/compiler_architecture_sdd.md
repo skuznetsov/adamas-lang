@@ -1718,8 +1718,10 @@ Next local track:
 
 Status:
 
-- design-only next correctness slice after Slice 0j;
-- no production behavior change is admitted by this slice.
+- Slice 0k-A default-off transaction-correlation channel implemented;
+- no production behavior change is admitted by this slice;
+- behavior-changing call/materialization fixes remain blocked until a targeted
+  row is classified by the completed transaction contract.
 
 Source/spec:
 
@@ -1871,6 +1873,49 @@ Stop conditions for the first code slice:
   facts";
 - the joined transaction-bound subset is empty for focused stage1 or
   generated-s2 no-prelude runs after the implementation.
+
+Slice 0k-A evidence:
+
+- red gate: after upgrading `scripts/materialization_transaction_report.sh`, a
+  Slice 0h-only compiler built as `/private/tmp/adamas_txcorr_red` fails with
+  `FAIL: no [MAT_EMIT] materialization emitted-call rows emitted` while still
+  emitting `[MAT_TX]` rows;
+- implementation: `MaterializationIdentityTransaction` now emits a stable
+  `tx=` id, `HIR::Module` records the HIR-owned call-symbol to transaction-id
+  lookup, MIR `Call` / `ExternCall` carry an optional
+  `materialization_tx_id`, HIR-to-MIR call lowering preserves that id for
+  direct transaction-bound calls, and backend call emission emits default-off
+  `[MAT_EMIT]` mechanical rows under
+  `ADAMAS_MATERIALIZATION_IDENTITY_LEDGER=1`;
+- focused stage1 report:
+  `scripts/materialization_transaction_report.sh
+  /private/tmp/adamas_txcorr_stage1` reports `rows=2513`,
+  `malformed=0`, `emit_rows=16995`, `malformed_emit=0`,
+  `transaction_bound_emit_rows=5332`, `non_transaction_emit_rows=11663`,
+  `joined_transactions=1349`, and `unjoined_emit_rows=0`;
+- default-env check: compiling a focused Box reducer with the same stage1
+  compiler and no ledger env emits no `[MAT_ID]`, `[MAT_TX]`, or `[MAT_EMIT]`
+  rows;
+- generated-s2 no-prelude report:
+  `scripts/materialization_transaction_report.sh /private/tmp/adamas_txcorr_s2
+  /private/tmp/adamas_txcorr_np.cr --no-prelude -o
+  /private/tmp/adamas_txcorr_np.bin` reports `rows=1`, `emit_rows=2`,
+  `transaction_bound_emit_rows=1`, `joined_transactions=1`, and
+  `unjoined_emit_rows=0`;
+- broad guard: `regression_tests/run_all_suites.sh
+  /private/tmp/adamas_txcorr_stage1 4` passes `152/152` original and `36/36`
+  combined tests.
+
+Residual boundary after Slice 0k-A:
+
+- broad `[MAT_EMIT] tx=none` rows are diagnostics only; they must not drive a
+  behavior patch;
+- the report now proves correlation is possible, but it does not by itself fix
+  `Hash(UInt64, NamedTuple)#[]=`, `@type_param_map` authority, or any current
+  generated-stage crash;
+- the next behavior slice must choose a targeted transaction-bound row or add a
+  `SemanticStateScope` / `MaterializationRegistry` owner record if the row still
+  lacks selected-definition or state-authority evidence.
 
 ### Slice A: CallResolution boundary
 
