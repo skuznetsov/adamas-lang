@@ -12,6 +12,36 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
+Fresh generated s2 no longer stops in
+`__adamas_string_eq <- __crystal_proc_1627 <-
+AstToHir#lower_generic_type_ref` while compiling `src/adamas.cr` to s3. lldb
+and HIR probes tied `__crystal_proc_1627` to the local
+`normalize_typeof_name : String -> String` lambda in `lower_generic_type_ref`.
+The Proc receiver was a heap Proc with declared `String -> String` parameters;
+the bad argument was already a `Bool | String` local before the call. The first
+bad local binding came from `arg_name = br` in the
+`@function_type_param_maps.dig?(..., "__block_return__")` fallback. Standalone
+falsifiers for `Hash(String, Hash(String, String))` showed direct
+`has_key? + []` lookup returns `String`, while nested `dig?` returns nil and
+inner `[]?` produces an invalid-looking String value under V2. Root-shaped
+boundary for this bootstrap slice: self-host compiler metadata lookup relied on
+nested Hash optional/dig semantics that are not safe in V2. Fix slice: add
+`function_type_param_map_value?` and route every `@function_type_param_maps`
+`__block_return__` lookup through `has_key? + []` instead of `dig?`. Evidence:
+`crystal build src/adamas.cr -o /private/tmp/adamas_lgtr_stage1 --error-trace`;
+`regression_tests/function_type_param_map_safe_lookup_repro.sh
+/private/tmp/adamas_lgtr_stage1` passes;
+`regression_tests/run_all_suites.sh /private/tmp/adamas_lgtr_stage1 4` passes
+152/152 original + 36/36 combined; fresh fixed stage1 builds fresh s2; fixed
+s2->s3 no longer stops in `lower_generic_type_ref` and instead reaches a later
+RSS frontier after `pass3 after lower_main call` (safe-wrapper kills at both
+4GB and 8GB). Scope: compiler metadata lookup hardening only; standalone
+`Hash#dig?`/inner `Hash#[]?` remains a residual bug family and this is not a
+green s2->s3/s3b claim. Decay trigger: rewrites of
+`@function_type_param_maps`, block-return metadata propagation, Hash optional
+lookup lowering, or `lower_generic_type_ref` `typeof(yield)` recovery.
+
 [LM-S2S3-HASH-ENTRY-PRIMITIVE-TUPLE-FIELDGET-ABI|verified 2026-06-30 {F:0.87 G:0.34 R:0.89}]:
 Fresh generated s2 no longer stops in
 `Hash(Tuple(UInt32, UInt32), Nil)#entry_matches? <- Set#add <-

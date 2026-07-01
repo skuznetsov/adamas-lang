@@ -9,6 +9,29 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
 - 2026-06-30 UPDATE: the
+  `__adamas_string_eq <- __crystal_proc_1627 <-
+  AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was
+  the local `normalize_typeof_name : String -> String` lambda, but HIR probes
+  showed the Proc receiver was correctly heap-backed and the bad argument was
+  already a `Bool | String` local before the call. The first bad local binding
+  came from `arg_name = br` under
+  `@function_type_param_maps.dig?(..., "__block_return__")`: standalone
+  falsifiers showed nested `Hash(String, Hash(String, String))#dig?` and the
+  inner `[]?` path are unsafe under V2, while `has_key? + []` returns the
+  expected `String`. Fix: introduce `function_type_param_map_value?` and route
+  compiler `__block_return__` metadata lookups through `has_key? + []`, avoiding
+  nested `Hash#dig?`/inner optional lookup in this self-host metadata path.
+  Verification: fresh stage1 builds; new
+  `regression_tests/function_type_param_map_safe_lookup_repro.sh` passes; full
+  suites pass (`152/152` original + `36/36` combined); fresh fixed stage1 builds
+  fresh s2; fixed s2->s3 no longer stops in
+  `lower_generic_type_ref`/`__crystal_proc_1627` and now hits a later RSS
+  frontier after `pass3 after lower_main call` (safe-wrapper kills at 4GB and
+  8GB). Scope: this is a compiler metadata lookup hardening for
+  `@function_type_param_maps`, not a global `Hash#dig?`/`Hash#[]?` fix and not a
+  green s2->s3/s3b claim.
+
+- 2026-06-30 UPDATE: the
   `Hash(Tuple(UInt32, UInt32), Nil)#entry_matches? <- Set#add <-
   AstToHir#lower_break` s2->s3 SIGSEGV moved. lldb on the crashing generated
   s2 showed the new lookup key was a valid tuple pointer, but the existing

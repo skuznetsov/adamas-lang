@@ -15418,6 +15418,17 @@ module Adamas::HIR
       nil
     end
 
+    private def function_type_param_map_value?(name : String, key : String) : String?
+      return nil unless v2_string_readable?(name)
+      return nil if name.empty?
+      return nil unless @function_type_param_maps.has_key?(name)
+
+      map = @function_type_param_maps[name]
+      return nil unless map.has_key?(key)
+
+      map[key]
+    end
+
     private def function_type_param_map_for(name1 : String, name2 : String) : Hash(String, String)?
       if map = function_type_param_map_for_name(name1)
         return map
@@ -48292,7 +48303,7 @@ module Adamas::HIR
       lookup_idx = 0
       while lookup_idx < lookup_names.size
         lookup_name = lookup_names.unsafe_fetch(lookup_idx)
-        if br = @function_type_param_maps.dig?(lookup_name, "__block_return__")
+        if br = function_type_param_map_value?(lookup_name, "__block_return__")
           block_ret_name = br
           block_ret_src = lookup_name
           break
@@ -59958,9 +59969,9 @@ module Adamas::HIR
             end
             # 2. Check function_type_param_maps (set by callers before lowering)
             if arg_name == "Pointer(Void)" || arg_name.empty?
-              if br = @function_type_param_maps.dig?(func_name, "__block_return__")
+              if br = function_type_param_map_value?(func_name, "__block_return__")
                 arg_name = br
-              elsif br = @function_type_param_maps.dig?(base_func, "__block_return__")
+              elsif br = function_type_param_map_value?(base_func, "__block_return__")
                 arg_name = br
               elsif br = @type_param_map["__block_return__"]?
                 arg_name = br unless br.empty? || br == "Void" || br == "Unknown"
@@ -95062,13 +95073,13 @@ module Adamas::HIR
       stripped = strip_type_suffix(func_name)
       return base if base != TypeRef::VOID && base != TypeRef::NIL
 
-      if br = @function_type_param_maps.dig?(func_name, "__block_return__")
+      if br = function_type_param_map_value?(func_name, "__block_return__")
         if candidate = stable_block_return_type_ref(br)
           return candidate
         end
       end
       if stripped != func_name
-        if br = @function_type_param_maps.dig?(stripped, "__block_return__")
+        if br = function_type_param_map_value?(stripped, "__block_return__")
           if candidate = stable_block_return_type_ref(br)
             return candidate
           end
