@@ -462,6 +462,24 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   contract for selected-definition parameter classes and their exceptions
   before any consumer/naming/materialization behavior patch.
 
+- 2026-07-01 UPDATE: converted the post-0k-F tail-chase risk into Slice 0k-G
+  in `docs/compiler_architecture_sdd.md`. This is a docs-only checkpoint, not
+  a behavior fix. The active next implementation is now a behavior-neutral
+  `MaterializationDecision` shadow record/report owned by
+  `MaterializationRegistry`. It must carry requested symbol, selected
+  definition, target symbol, state-scope authority, callsite arg types,
+  target map, and ABI shape, and classify each row as `exact`,
+  `callsite_specialized`, `target_materialized`, `wrapper_required`,
+  `legacy_shim`, or `rejected_mismatch`. It must fail closed when required
+  fields or owners are missing, and any later behavior consumer must run a
+  bounded would-change census before changing naming, remangling, keepalive, or
+  forwarder behavior. Rejected next moves remain direct patches to
+  `def_has_untyped_regular_param?`, `raw_annotation_needs_callsite_specialization?`,
+  materialization override, `lower_call` remangling, backend undefined-extern
+  rescue, forced requested-name materialization, `NamedTuple`/`Tuple`
+  display-string normalization, or rolling `BlockOwner` back to tuple or
+  namedtuple metadata.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was

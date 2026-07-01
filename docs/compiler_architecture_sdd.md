@@ -56,6 +56,21 @@ emit a migration decision for that consumer. A report that only prints rows,
 ambient maps, or suspicious examples remains diagnostic-only and authorizes no
 behavior change.
 
+Current next-slice decision after Slice 0k-F: pause behavior fixes and turn
+the mixed `MaterializationRegistry` result surface into a contract slice. The
+consumer report has already refuted the simple replacements: consumer name,
+target-map presence, call-arg count, and migration class are all mixed. The
+next executable implementation must therefore create a typed
+`MaterializationDecision` / `MaterializationRegistry` facade or equivalent
+contract record before any naming, remangling, keepalive, or forwarder
+behavior changes. That record must explain the decision from
+`requested_symbol`, `selected_def`, `target_symbol`, `callsite_arg_types`,
+`target_map`, `state_scope`, and ABI shape. Another local patch to
+`def_has_untyped_regular_param?`, materialization override selection,
+`lower_call` remangling, backend undefined extern handling, or
+`NamedTuple`/`Tuple` display strings is explicitly rejected until it consumes
+that owner record and passes a bounded would-change census.
+
 Bounded context: Crystal V2 compiler architecture:
 
 - HIR lowering and semantic registration (`src/compiler/hir/ast_to_hir.cr`)
@@ -2595,6 +2610,151 @@ Next local track:
   untyped params, short type params, concrete typed params, and no-param
   definitions must each state whether callsite specialization, target
   materialization, or legacy shim owns the symbol decision.
+
+### Slice 0k-G: MaterializationRegistry contract checkpoint
+
+Status:
+
+- docs-only design checkpoint after Slice 0k-F;
+- no compiler behavior, state-scope behavior, materialization behavior,
+  remangling behavior, backend behavior, or cleanup behavior is changed by
+  this slice.
+
+Problem:
+
+- Slice 0k-F made the known naming/materialization consumers visible, but its
+  owner-result probe is measured-red for `MaterializationRegistry`: the same
+  migration class splits `3779/3765` against the legacy result;
+- each tempting local discriminator is also mixed or too broad. Consumer name,
+  target-map presence, and callsite-arg count do not isolate the behavior
+  decision. Selected-definition parameter class is stronger but still has
+  exceptions, especially `short_type_params` and `skipped_untyped_params`;
+- continuing directly to a consumer patch would repeat the previous failure
+  pattern: a locally plausible fix would encode one symptom into one consumer
+  while leaving symbol identity spread across ambient maps, rendered strings,
+  pending queues, and backend function presence.
+
+Source/spec:
+
+- `SemanticStateScope` section 6.4;
+- `Materialization` section 6.5;
+- Slice 0k-F `StateScopeConsumerCensus`;
+- `scripts/state_scope_consumer_report.sh` attribution output;
+- `TODO.md` active architecture backlog;
+- `LANDMARKS.md` active bootstrap gate.
+
+Required MaterializationRegistry contract:
+
+`MaterializationRegistry` must become the owner of a typed decision record for
+symbol identity. The record must be explicit enough that later phases do not
+reconstruct the answer from ambient state or rendered name strings.
+
+Minimum input fields:
+
+- `requested_symbol`: the symbol emitted or requested by the callsite;
+- `selected_def`: the resolved source definition and its regular parameter
+  annotations;
+- `target_symbol`: the symbol produced by target/materialization naming;
+- `state_scope`: the authoritative `SemanticStateScope` decision for this
+  materialization;
+- `callsite_arg_types`: callsite argument types, including whether the row has
+  no args, one arg, bounded multi-arg shape, or large arg shape;
+- `target_map`: the selected target-materialization type-param map, including
+  empty-map and missing-map cases;
+- `arg_abi` / `block_abi`: the ABI shape required by the emitted call and the
+  materialized body.
+
+Minimum output fields:
+
+- `decision`:
+  `exact`, `callsite_specialized`, `target_materialized`,
+  `wrapper_required`, `legacy_shim`, or `rejected_mismatch`;
+- `owner`:
+  `materialization_registry`, `semantic_state_scope`,
+  `call_resolution`, `backend_mechanical`, or `rejected`;
+- `reason`: a non-stringly reason such as
+  `regular_untyped_param_requires_callsite_symbol`,
+  `concrete_typed_param_uses_target_symbol`,
+  `short_type_param_requires_scope_disambiguation`,
+  `skipped_untyped_param_requires_legacy_shim`,
+  `no_regular_param_requires_target_symbol`,
+  `abi_shape_requires_wrapper`, or `insufficient_owner_evidence`;
+- `legacy_result`: the current decision result, carried only for parity and
+  would-change reporting, not as an authority;
+- `would_change`: whether consuming the record would alter the current result.
+
+Admitted next implementation slice:
+
+- add a behavior-neutral `MaterializationDecision` shadow record or facade at
+  the materialization/naming seam;
+- populate it from the existing `StateScopeConsumerCensus`,
+  `MaterializationIdentityTransaction`, and `SemanticStateScope` facts without
+  changing the chosen symbol;
+- fail closed when a reached row lacks one of the required inputs or cannot
+  name an owner/reason;
+- report the same focused stage1 corridor and, where reachable, generated-s2
+  no-prelude/full-stage corridors;
+- print bounded would-change buckets by decision, reason, owner, consumer,
+  selected-definition parameter class, target-map class, call-arg shape, and
+  ABI shape.
+
+Rejected moves:
+
+- patching `def_has_untyped_regular_param?`,
+  `raw_annotation_needs_callsite_specialization?`, materialization override,
+  or `lower_call` remangling directly from the Slice 0k-F attribution;
+- treating `migrate_to_materialization_registry` as a replacement boolean;
+- forcing requested-name materialization globally or per `Hash#[]=`;
+- adding backend keepalive, backend forwarder, or undefined-extern rescue as
+  the first behavior mechanism;
+- normalizing `NamedTuple`/`Tuple` display strings as the root fix;
+- converting `BlockOwner` back to tuple/namedtuple owner metadata;
+- adding another diagnostic-only report that does not define a contract owner,
+  accepted/rejected decisions, and cleanup/falsifier requirements.
+
+DoD for implementation:
+
+- red gate: the pre-slice compiler/report must fail closed because no
+  `MaterializationDecision` rows are emitted or required fields are missing;
+- green focused gate: fresh stage1 report emits decision rows for all reached
+  `MaterializationRegistry` candidates with malformed/unknown owner counts at
+  zero;
+- generated-stage gate: generated-s2 no-prelude runs the report where
+  reachable, and full generated-stage evidence is recorded as either valid
+  rows or a named seam-reachability failure;
+- over-fire gate: any proposed behavior consumer must run a would-change
+  census and must not exceed the owned decision set. A broad would-change set
+  is measured-red, not permission to patch;
+- compatibility gate: static `semantic_decision_census.sh` and
+  `codepath_status_census.sh` still run, and existing
+  `semantic_state_scope_report.sh` / `materialization_transaction_report.sh`
+  row formats still compose;
+- ledger sync: update `TODO.md` and `LANDMARKS.md` with accepted, rejected, and
+  residual surfaces before any behavior-changing patch.
+
+Hostile self-review:
+
+- strongest objection: this slice can become one more ledger instead of a
+  simplification. The guard is that a `MaterializationDecision` row must name a
+  behavior owner and accepted/rejected decision. Rows that only restate
+  ambient maps or string differences remain diagnostic-only and block behavior
+  work;
+- second objection: the record can accidentally encode the old legacy result
+  as truth. The guard is that `legacy_result` is carried only for parity and
+  would-change reporting, while `decision` and `reason` must be derived from
+  owner facts;
+- third objection: the current `Hash(UInt64, NamedTuple)#[]=` frontier may
+  tempt a special-case wrapper. The guard is that any wrapper or keepalive is
+  admitted only after the registry row says `wrapper_required`, proves ABI
+  compatibility, and survives a root-sized would-change census.
+
+Next local track:
+
+- implement the behavior-neutral `MaterializationDecision` record/report as
+  the next architecture slice, or explicitly choose `CodePathStatus` cleanup
+  work instead. Do not resume behavior fixes from the `Hash#[]=`,
+  `@type_param_map`, `NamedTuple`/`Tuple`, or backend stub corridor until this
+  contract exists and selects an owned behavior row.
 
 ### Slice A: CallResolution boundary
 

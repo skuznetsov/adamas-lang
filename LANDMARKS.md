@@ -559,6 +559,30 @@ consumer set moves, the report row format changes, a later `StateScope` facade
 starts driving behavior, or fresh generated-stage evidence reaches all
 required consumers with different migration buckets.
 
+[LM-ARCH-MATERIALIZATION-DECISION-CONTRACT|design-sealed 2026-07-01 {F:0.80 G:0.54 R:0.86}]:
+The next architecture move after Slice 0k-F is not another
+`def_has_untyped_regular_param?`, override, remangle, backend-stub, or
+`NamedTuple`/`Tuple` patch. The owner-result and attribution ledgers show that
+`migrate_to_materialization_registry` is a mixed surface (`3779/3765`) and
+that consumer name, target-map presence, callsite-arg shape, and migration
+class are insufficient replacement rules. The active SDD now requires a typed
+`MaterializationDecision` / `MaterializationRegistry` contract before behavior
+changes: the record must include requested symbol, selected definition, target
+symbol, `SemanticStateScope`, callsite arg types, target map, and ABI shape,
+then classify the row as `exact`, `callsite_specialized`,
+`target_materialized`, `wrapper_required`, `legacy_shim`, or
+`rejected_mismatch`. `legacy_result` is parity evidence only, not authority.
+Accepted next implementation is behavior-neutral shadow/report work with a
+red-before-green missing-row gate and bounded would-change buckets. Rejected
+next moves: direct consumer predicate patches, forced requested-name
+materialization, backend undefined-extern rescue, backend keepalive/forwarder
+as first mechanism, `NamedTuple`/`Tuple` display normalization, or rollback of
+`BlockOwner` to tuple/namedtuple metadata. Scope: docs-only design seal; no
+compiler behavior changed and no green `s2b`/`s3b` claim. Decay trigger: an
+implemented `MaterializationDecision` facade starts driving behavior, the
+StateScope consumer report row format changes, or fresh generated-stage
+evidence produces a materially different MaterializationRegistry split.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-
