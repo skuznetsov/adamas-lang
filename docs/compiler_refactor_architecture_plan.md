@@ -251,6 +251,22 @@ transaction constructor/helper. A code slice that constructs transactions but
 leaves selected downstream consumers reading `symbol_binding.*` is wrapper
 theater, not transaction-spine progress.
 
+2026-07-01 post-0k-AH note: the selected
+`lower_function_if_needed.instance_symbol_consumers` group is now promoted in
+shadow/parity mode. The instance-method override, keepalive, and diagnostic
+materialization-symbol consumers read `CallMaterializationTransaction` fields
+instead of direct `MaterializationSymbolBinding` fields; the binding remains
+only as a parity input to the transaction constructor. The selected-consumer
+gate is green with `selected_binding_consumer_count=0`, and the transaction
+gate is green with `transaction_field_read_count=6` and
+`residual_legacy_edge_count=20`. This is still not a behavior flip, not a
+full transaction-spine completion, and not a green full-prelude generated s2,
+`s2b`, or `s3b` claim. The next slice should either select the next
+transaction consumer with a red/green source-shape gate or run a generated-stage
+classifier that answers whether the transaction spine is still on the active
+frontier. Before adding more default-path transaction fields, consider splitting
+a cheap owner-core record from debug-payload ledger fields.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging

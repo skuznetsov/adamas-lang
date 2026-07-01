@@ -108,7 +108,8 @@ source_shape_for_symbol_binding() {
       if (binding_type && helper_call &&
           !old_materialized_branch && !old_override_branch &&
           !direct_keepalive && !direct_ledger_symbols &&
-          binding_keepalive && (binding_ledger_symbols || binding_transaction_symbols)) {
+          (binding_keepalive || binding_transaction_symbols) &&
+          (binding_ledger_symbols || binding_transaction_symbols)) {
         print "already_promoted_shadow"
       } else if (old_materialized_branch && old_override_branch && direct_keepalive && direct_ledger_symbols && !helper_call) {
         print "legacy_split_edge"

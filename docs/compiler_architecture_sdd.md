@@ -14,7 +14,7 @@ fallbacks, and hard-to-localize bootstrap failures.
 
 ## Active Architecture Board
 
-Status: execution board after Slice 0k-AG. This board exists to
+Status: execution board after Slice 0k-AH. This board exists to
 prevent the next step from being selected by the latest generated-stage crash
 stack. A next slice is admitted only if it moves one board row by replacing or
 shadowing a named authority edge, producing `CodePathStatus` evidence for a
@@ -25,26 +25,26 @@ named path, or refuting a row with fresher generated-stage evidence.
 | `SemanticStateScope` | `prefer_callsite_specialization` is promoted in shadow/parity mode; emitted behavior still returns the legacy result. | Select a different root-sized consumer with a red/green source-shape gate, or explicitly leave this lane paused. | Reselecting `prefer_callsite_specialization`; wrapping `def_has_untyped_regular_param?` without a separate owner result; changing emitted behavior from the shadow row. |
 | `MaterializationIdentity` / `MaterializationRegistry` | Slice 0k-Z promotes the selected `lower_function_if_needed.symbol_binding` seam in behavior-neutral shadow/parity mode. `scripts/materialization_symbol_binding_admission_report.sh` now reports `already_promoted_shadow` even with `REQUIRE_PROMOTED=1`; keepalive and materialization-ledger consumers read from `MaterializationSymbolBinding` fields instead of recomputing split locals. | Do not flip emitted symbols from this slice. Next movement must either run a generated-stage materialization/symbol-binding classification on the residual full-prelude s2 crash, or select the next root-sized owner consumer with a red/green gate. | Backend undefined-extern rescue; target keepalive as a standalone patch; requested-name forcing; `NamedTuple`/`Tuple` display normalization; global ambient-map predicate changes; `BlockOwner` rollback; treating the green source-shape gate as green `s2b`/`s3b`. |
 | `NameResolution` / `MethodNameCodec` | File identity was fixed; method/symbol identity is still partly rendered-string driven. Slice 0k-V promotes the selected `lower_function_if_needed.exact_lookup_keep_requested_name` seam through `method_name_codec_exact_lookup_keep_requested_name?` in shadow/parity mode; emitted behavior still returns the legacy result. Slice 0k-W pauses standalone promotion-report proliferation. | Either select the next root-sized codec seam with a red/green source-shape gate, or define a generated-stage classification slice that consumes the existing promotion ledger to answer one blocking yes/no decision before changing emitted naming behavior. | String-slice parsing patches at individual callsites; treating rendered names as canonical identity; broad normalization without a falsifier; selecting lower-level helpers before a materialization seam; flipping owner-result behavior from shadow rows; committing another report surface that does not reduce or select an authority edge. |
-| `CallMaterializationTransaction` spine | Slice 0k-AF promotes the selected materialization ledger/state-scope consumer in behavior-neutral shadow/parity mode. Slice 0k-AG adds the stop-rule and measured-red selection gate for the next consumer: `lower_function_if_needed.instance_symbol_consumers` still has `selected_binding_consumer_count=6` and `transaction_field_read_count=0`. | The next code movement may only migrate the selected override, keepalive, and diagnostic materialization-symbol consumers from direct `MaterializationSymbolBinding` field reads to the existing `CallMaterializationTransaction` record in shadow/parity mode. Do not flip emitted symbols from this slice. Generated-stage classification remains admitted only if it answers a transaction-spine yes/no question. | Treating transaction construction as sufficient while consumers still bypass it through `symbol_binding.*`; continuing seam-by-seam shadow migrations without a vertical transaction stop-rule; generated-stage crash classification that does not answer a transaction yes/no question; backend forwarder or undefined-extern rescue; requested-name forcing; broad `NamedTuple`/`Tuple` rendering changes; another standalone report that does not select a consumer migration. |
+| `CallMaterializationTransaction` spine | Slice 0k-AH promotes the selected instance-symbol consumer group in behavior-neutral shadow/parity mode. `REQUIRE_PROMOTED=1 scripts/call_materialization_transaction_consumer_selection_report.sh` is green with `selected_binding_consumer_count=0`, `transaction_field_read_count=6`, and the broader transaction gate reports `residual_legacy_edge_count=20`. | Do not flip emitted symbols from this slice. Next movement must either select the next transaction consumer to migrate with a source-shape gate, or run generated-stage classification only if it answers a transaction-spine yes/no question. | Treating transaction construction as sufficient while consumers still bypass it through older locals; continuing seam-by-seam shadow migrations without a vertical transaction stop-rule; generated-stage crash classification that does not answer a transaction yes/no question; backend forwarder or undefined-extern rescue; requested-name forcing; broad `NamedTuple`/`Tuple` rendering changes; another standalone report that does not select a consumer migration. |
 | `InvocationContext` / `InlineYieldFrame` | Slice 0k-AC promotes the selected `lower_super.previous_def.invocation_context` seam in behavior-neutral shadow/parity mode. `scripts/invocation_context_admission_report.sh` now reports `already_promoted_shadow` even with `REQUIRE_PROMOTED=1`; `lower_super` and `lower_previous_def` consume an `InvocationContext` owner fact instead of directly reading ambient owner/method, method-kind, super-source, and forward-policy state. | Do not flip super lookup, previous-def lookup, or argument-forwarding behavior from this slice. Next movement must either classify the residual generated-stage frontier with fresh owner-boundary evidence or select a different root-sized board row with a red/green source-shape gate. | A new `ADAMAS_SUPER_CALL_CONTEXT_LEDGER` report without a decision question; direct `lower_super` guards; changing super lookup or argument forwarding from a crash stack; inline-yield stack resets as a consumer fix; treating the green source-shape gate as green bootstrap evidence. |
 | `AstNodeRef` / `ArenaOwnership` | Explicit-owner lower-call rows and `NodeSlotIntegrity` refuted owner drift, out-of-range ids, and missing slots for the instrumented edge. | Resume only with a named payload/deep-read or uninstrumented-consumer falsifier, including cleanup rules for its ledger. | Lower-call arena routing, broad arena scans, parser allocation rewrites, or another unbounded crash-edge probe. |
 | `CodePathStatus` | `cli.metrics.identity_dry_run` is classified as `debug_only`, not `delete_ready`. | Classify another named path, or run a separate `delete_ready` slice with default-behavior, HIR/MIR/LLVM, bootstrap, and evidence-preservation guards. | Deleting debug/probe/fallback paths from static grep output; using runtime liveness as semantic ownership evidence. |
 
-Default next track: migrate the selected
-`lower_function_if_needed.instance_symbol_consumers` transaction edge in
-shadow/parity mode, or run a generated-stage classifier only when it answers a
+Default next track: select the next transaction consumer to migrate with a
+source-shape gate, or run a generated-stage classifier only when it answers a
 transaction-spine yes/no question. A cleanup slice remains admitted, but only
 when the goal is explicitly bloat reduction and the selected path has its own
 `CodePathStatus` falsifier.
 
-Current selected implementation status: Slice 0k-AG is a behavior-neutral
-architecture stop-rule plus source-shape selection gate. It preserves the 0k-AF
-`CallMaterializationTransaction` owner record/helper and selects the next
-consumer edge that must stop bypassing it: instance-method override,
-keepalive, and diagnostic materialization-symbol consumers. This is not a
-behavior flip and not a green bootstrap claim. It deliberately pauses
-generated-stage crash-stack pursuit unless the next generated-stage run answers
-a specific transaction-spine yes/no question.
+Current selected implementation status: Slice 0k-AH is a behavior-neutral
+consumer migration. Instance-method override, keepalive, and diagnostic
+materialization-symbol consumers now read from `CallMaterializationTransaction`
+fields instead of direct `MaterializationSymbolBinding` field reads.
+`MaterializationSymbolBinding` remains a parity input to transaction
+construction, not the downstream authority for the selected consumer group.
+This is not a behavior flip and not a green bootstrap claim. It deliberately
+pauses generated-stage crash-stack pursuit unless the next generated-stage run
+answers a specific transaction-spine yes/no question.
 
 Mini-Quadrumvirate gate for every future slice:
 
@@ -5333,6 +5333,88 @@ Next local track:
   the existing transaction, symbol-binding, InvocationContext, MethodNameCodec,
   semantic census, and full-suite guards before any generated-stage bootstrap
   claim.
+
+### Slice 0k-AH: Transaction instance-symbol consumer promotion
+
+Status:
+
+- behavior-neutral source/consumer migration after Slice 0k-AG;
+- no emitted symbol behavior, backend behavior, requested-name policy,
+  target keepalive policy, `NamedTuple`/`Tuple` rendering behavior, ambient-map
+  policy, cleanup behavior, or `BlockOwner` carrier changed;
+- the selected consumer group is the instance-method override, keepalive, and
+  diagnostic materialization-symbol path in `lower_function_if_needed_impl`.
+
+Implementation:
+
+- add `override_symbol` to `CallMaterializationTransaction` so the selected
+  instance-method body-lowering override can read the transaction record
+  without converting the optional override into a non-null body symbol;
+- construct the instance `CallMaterializationTransaction` before the selected
+  consumers run;
+- make the selected consumers read `instance_transaction.override_symbol`,
+  `instance_transaction.override_reason`,
+  `instance_transaction.requested_name`,
+  `instance_transaction.target_name`, and
+  `instance_transaction.body_symbol`;
+- keep `MaterializationSymbolBinding` as the parity input inside
+  `call_materialization_transaction(...)`;
+- update `scripts/materialization_symbol_binding_admission_report.sh` so the
+  older binding gate remains green when binding authority has moved forward into
+  transaction construction and no selected downstream consumer reads
+  `symbol_binding.*` directly.
+
+Measured-green evidence:
+
+- `REQUIRE_PROMOTED=1
+  scripts/call_materialization_transaction_consumer_selection_report.sh` exits
+  0 with `preferred_source_shape=already_promoted_shadow`,
+  `transaction_constructor_count=3`, `transaction_field_read_count=6`,
+  `instance_override_binding_count=0`, `keepalive_binding_count=0`,
+  `regmat_binding_count=0`, and `selected_binding_consumer_count=0`;
+- `REQUIRE_PROMOTED=1
+  scripts/call_materialization_transaction_admission_report.sh` exits 0 with
+  `symbol_binding_field_read_count=0`, `transaction_field_read_count=6`, and
+  `residual_legacy_edge_count=20`;
+- `REQUIRE_PROMOTED=1
+  scripts/materialization_symbol_binding_admission_report.sh` exits 0 with
+  `binding_keepalive_count=0`, `binding_ledger_count=0`, and
+  `binding_transaction_count=3`;
+- `REQUIRE_PROMOTED=1 scripts/invocation_context_admission_report.sh` exits 0;
+- `REQUIRE_PROMOTED=1 scripts/method_name_codec_admission_report.sh` exits 0;
+- `scripts/semantic_decision_census.sh` and
+  `scripts/codepath_status_census.sh` run as broad source-shape guards;
+- `crystal build src/adamas.cr -o /private/tmp/adamas_0kah_stage1 --error-trace`
+  exits 0;
+- `scripts/materialization_identity_ledger_smoke.sh
+  /private/tmp/adamas_0kah_stage1` exits 0;
+- `scripts/materialization_transaction_report.sh
+  /private/tmp/adamas_0kah_stage1` exits 0 with `malformed=0`,
+  `owner_malformed=0`, and `unjoined_emit_rows=0`;
+- `regression_tests/run_all_suites.sh /private/tmp/adamas_0kah_stage1 4`
+  passes `152/152 + 36/36`;
+- `scripts/run_safe.sh /private/tmp/adamas_0kah_stage1 600 4096
+  src/adamas.cr -o /private/tmp/adamas_0kah_s2/adamas` exits 0 and produces a
+  fresh generated compiler;
+- the fresh generated compiler compiles a no-prelude `x = 1; puts x` smoke, and
+  the produced binary prints `1` through `scripts/run_safe.sh`.
+
+Boundary:
+
+- this is a selected-consumer source-shape and broad-regression migration, not a
+  full transaction-spine completion and not green full-prelude generated s2,
+  `s2b`, or `s3b`;
+- residual legacy transaction edges remain (`residual_legacy_edge_count=20`);
+- the full default-path transaction construction now carries more fields than
+  before. The next transaction slice should consider whether another consumer
+  migration needs a cheaper owner-core / debug-payload split before broadening
+  the default transaction surface.
+
+Next local track:
+
+- select the next transaction consumer edge with a source-shape gate, or run a
+  generated-stage classifier only if it answers a transaction-spine yes/no
+  question; do not start from the latest generated-stage crash stack.
 
 ### Slice A: CallResolution boundary
 

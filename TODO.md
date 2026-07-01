@@ -8,6 +8,40 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: implemented Slice 0k-AH,
+  `CallMaterializationTransaction` instance-symbol consumer promotion in
+  shadow/parity mode. The selected `lower_function_if_needed` instance-method
+  override, keepalive, and diagnostic materialization-symbol consumers now read
+  from `CallMaterializationTransaction` fields instead of direct
+  `MaterializationSymbolBinding` field reads. `CallMaterializationTransaction`
+  now carries `override_symbol : String?` so the body-lowering override can
+  preserve the previous nil-vs-string semantics. `MaterializationSymbolBinding`
+  remains a parity input inside transaction construction, not the downstream
+  authority for the selected consumer group. The 0k-AH gate is green:
+  `REQUIRE_PROMOTED=1
+  scripts/call_materialization_transaction_consumer_selection_report.sh`
+  reports `preferred_source_shape=already_promoted_shadow`,
+  `transaction_field_read_count=6`, and
+  `selected_binding_consumer_count=0`. The broader transaction gate remains
+  green with `symbol_binding_field_read_count=0`,
+  `transaction_field_read_count=6`, and `residual_legacy_edge_count=20`; the
+  older symbol-binding gate now accepts the forward transaction path with
+  `binding_transaction_count=3`. Verification: fresh stage1 build to
+  `/private/tmp/adamas_0kah_stage1`; transaction-consumer, transaction,
+  symbol-binding, InvocationContext, MethodNameCodec, semantic census, and
+  CodePathStatus gates run; `scripts/materialization_identity_ledger_smoke.sh`
+  and `scripts/materialization_transaction_report.sh` run; full suites pass
+  `152/152 + 36/36`; fresh stage1 builds fresh generated s2; generated s2
+  compiles and runs a no-prelude `x = 1; puts x` smoke. This is not a compiler
+  behavior fix and not green full-prelude `s2b`/`s3b` evidence. Next work:
+  select the next transaction consumer with a red/green source-shape gate, or
+  run generated-stage classification only if it answers the transaction-spine
+  yes/no question. Consider whether future transaction broadening needs a
+  cheaper owner-core/debug-payload split before more default-path fields are
+  added. Do not add backend forwarders, force requested names, keep target
+  bodies alive, normalize `NamedTuple`/`Tuple`, change ambient-map policy
+  globally, or roll back `BlockOwner`.
+
 - 2026-07-01 UPDATE: added Slice 0k-AG,
   `CallMaterializationTransaction` transaction-consumer stop-rule and
   next-edge selection gate. New script:

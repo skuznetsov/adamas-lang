@@ -12,7 +12,38 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
-[LM-ARCH-CALL-MATERIALIZATION-TRANSACTION-CONSUMER-SELECTION|measured-red 2026-07-01 {F:0.78 G:0.38 R:0.86}]:
+[LM-ARCH-CALL-MATERIALIZATION-INSTANCE-CONSUMER|verified 2026-07-01 {F:0.86 G:0.38 R:0.90}]:
+The selected `CallMaterializationTransaction` instance-symbol consumer group is
+promoted in behavior-neutral shadow/parity mode. The instance-method override,
+keepalive, and diagnostic materialization-symbol consumers in
+`lower_function_if_needed_impl` now read `instance_transaction.*` fields rather
+than direct `MaterializationSymbolBinding` fields. `CallMaterializationTransaction`
+now carries `override_symbol : String?`, preserving the previous optional
+override semantics while letting selected consumers read the transaction owner
+record. Evidence: `REQUIRE_PROMOTED=1
+scripts/call_materialization_transaction_consumer_selection_report.sh` exits 0
+with `preferred_source_shape=already_promoted_shadow`,
+`transaction_constructor_count=3`, `transaction_field_read_count=6`,
+`instance_override_binding_count=0`, `keepalive_binding_count=0`,
+`regmat_binding_count=0`, and `selected_binding_consumer_count=0`;
+`REQUIRE_PROMOTED=1 scripts/call_materialization_transaction_admission_report.sh`
+exits 0 with `symbol_binding_field_read_count=0`,
+`transaction_field_read_count=6`, and `residual_legacy_edge_count=20`;
+`REQUIRE_PROMOTED=1 scripts/materialization_symbol_binding_admission_report.sh`
+exits 0 with `binding_transaction_count=3`; `crystal build src/adamas.cr -o
+/private/tmp/adamas_0kah_stage1 --error-trace` exits 0; materialization ledger
+and transaction reports pass; full suites pass `152/152 + 36/36`; fresh stage1
+builds fresh generated s2 through `scripts/run_safe.sh`; generated s2 compiles
+and runs a no-prelude `x = 1; puts x` smoke. Scope: selected consumer
+source-shape and broad-regression migration only. It does not flip emitted
+symbols, backend behavior, requested-name policy, target keepalive policy,
+`NamedTuple`/`Tuple` rendering, global ambient-map policy, cleanup behavior, or
+`BlockOwner`, and it is not green full-prelude generated s2, `s2b`, or `s3b`.
+Decay trigger: selected consumers start reading `symbol_binding.*` directly
+again, transaction construction is rewritten, or a future generated-stage
+classifier refutes this transaction edge as relevant.
+
+[LM-ARCH-CALL-MATERIALIZATION-TRANSACTION-CONSUMER-SELECTION|superseded 2026-07-01 {F:0.78 G:0.38 R:0.86}]:
 Slice 0k-AG selects the next `CallMaterializationTransaction` consumer edge
 without changing compiler behavior. The selected edge is
 `lower_function_if_needed.instance_symbol_consumers`: the instance branch
@@ -35,7 +66,8 @@ Next work: migrate exactly this selected consumer group to read transaction
 fields in shadow/parity mode while preserving emitted behavior. Decay trigger:
 `lower_function_if_needed_impl` stops constructing instance transactions, the
 selected consumers stop reading `symbol_binding.*`, or a future generated-stage
-classifier refutes this transaction edge as relevant.
+classifier refutes this transaction edge as relevant. Superseded by
+[LM-ARCH-CALL-MATERIALIZATION-INSTANCE-CONSUMER] after Slice 0k-AH.
 
 [LM-ARCH-CALL-MATERIALIZATION-TRANSACTION-CONSUMER|verified 2026-07-01 {F:0.84 G:0.40 R:0.88}]:
 The first selected `CallMaterializationTransaction` consumer is promoted in

@@ -2146,6 +2146,7 @@ module Adamas::HIR
       getter state_key : String
       getter body_symbol : String
       getter call_symbol_hint : String
+      getter override_symbol : String?
       getter override_reason : String
       getter lookup_branch : String
       getter ambient_map : String
@@ -2168,6 +2169,7 @@ module Adamas::HIR
         @state_key : String,
         @body_symbol : String,
         @call_symbol_hint : String,
+        @override_symbol : String?,
         @override_reason : String,
         @lookup_branch : String,
         @ambient_map : String,
@@ -2511,6 +2513,7 @@ module Adamas::HIR
         symbol_binding.state_key,
         symbol_binding.body_symbol,
         symbol_binding.call_symbol_hint,
+        symbol_binding.override_symbol,
         symbol_binding.override_reason,
         lookup_branch || "?",
         ambient,
@@ -72063,12 +72066,28 @@ module Adamas::HIR
                 has_untyped_regular_param,
                 resolved_parts.method
               )
-              override = symbol_binding.override_symbol
-              override_reason = symbol_binding.override_reason
+              namespace_override = function_namespace_override_for(target_name, base_target_name, name)
+              # Add forall type param bindings for primitive templates and FastFloat methods.
+              extra_params = primitive_template_map || {} of String => String
+              if target_name.includes?("FastFloat")
+                extra_params = extra_params.merge({"UC" => "UInt8", "T" => "Float64"})
+              end
+              merged_params = extra_type_params ? extra_params.merge(extra_type_params) : extra_params
+              instance_transaction : CallMaterializationTransaction = call_materialization_transaction(
+                "instance_method",
+                symbol_binding,
+                lookup_branch,
+                call_arg_types,
+                merged_params,
+                resolved_func_def,
+                owner
+              )
+              override = instance_transaction.override_symbol
+              override_reason = instance_transaction.override_reason
               record_materialization_keepalive_candidate(
-                symbol_binding.requested_name,
-                symbol_binding.target_name,
-                symbol_binding.body_symbol
+                instance_transaction.requested_name,
+                instance_transaction.target_name,
+                instance_transaction.body_symbol
               )
               # M4c0 (diagnostic-only): the materialization-binding decision. Logs the
               # requested/target/materialize names + the selected def's required vs the
@@ -72078,30 +72097,14 @@ module Adamas::HIR
               # Inert unless ADAMAS_REGMAT_ASSERT; changes no materialization.
               if env_has?("ADAMAS_REGMAT_ASSERT")
                 mstats = function_param_stats(target_name, resolved_func_def)
-                materialize_name = symbol_binding.body_symbol
+                materialize_name = instance_transaction.body_symbol
                 requested_bare = !name.includes?('$')
                 STDERR.puts "[MAT_BINDING_SEEN] requested=#{name} target=#{target_name} materialize=#{materialize_name} branch=#{lookup_branch || "?"} expected=#{lookup_expected_param_count} req=#{mstats.required} pc=#{mstats.param_count} splat=#{mstats.has_splat ? 1 : 0} dsplat=#{mstats.has_double_splat ? 1 : 0} bare=#{requested_bare ? 1 : 0}"
                 if requested_bare && mstats.required > lookup_expected_param_count && !mstats.has_splat && !mstats.has_double_splat
                   STDERR.puts "[MAT_BINDING_DANGEROUS] requested=#{name} materialize=#{materialize_name} req=#{mstats.required} expected=#{lookup_expected_param_count} branch=#{lookup_branch || "?"}"
                 end
               end
-              namespace_override = function_namespace_override_for(target_name, base_target_name, name)
-              # Add forall type param bindings for primitive templates and FastFloat methods.
-              extra_params = primitive_template_map || {} of String => String
-              if target_name.includes?("FastFloat")
-                extra_params = extra_params.merge({"UC" => "UInt8", "T" => "Float64"})
-              end
-              merged_params = extra_type_params ? extra_params.merge(extra_type_params) : extra_params
               if materialization_transaction_ledger_enabled?
-                instance_transaction : CallMaterializationTransaction = call_materialization_transaction(
-                  "instance_method",
-                  symbol_binding,
-                  lookup_branch,
-                  call_arg_types,
-                  merged_params,
-                  resolved_func_def,
-                  owner
-                )
                 log_call_materialization_transaction_ledger(instance_transaction)
               end
               with_isolated_type_param_map(merged_params) do
