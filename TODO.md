@@ -8,6 +8,22 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: added Slice 0k-AX, a docs-only contract-first
+  architecture pivot after 0k-AW. The next work must not be selected by the
+  latest generated-stage crash stack. Before another behavior fix, pick one
+  missing or weak compiler contract and either add its falsifier or replace a
+  named authority edge with an owned fact. Priority order:
+  1. function-body presence vs undefined/bodyless stubs
+     (`docs/specs/05-falsifier-matrix.md` H5);
+  2. generic template/instance semantic keys vs rendered-name identity (`G3`);
+  3. original-vs-stage semantic oracle coverage for future language-behavior
+     changes (`B3`).
+  A slice that only adds a report, moves a crash frontier, or makes a source
+  metric greener is rejected unless it also removes/refutes an older report
+  surface or closes one of these falsifier holes. `s2b`/`s3b` remain the goal,
+  but crash progress is now a downstream acceptance signal, not the work
+  selector.
+
 - 2026-07-01 UPDATE: implemented Slice 0k-AW, the behavior-neutral shared
   keep-requested-name state model admitted by 0k-AV. The paired frontend
   `lower_function_if_needed.callsite_args` and `.suffix_types` consumers now

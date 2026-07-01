@@ -97,6 +97,14 @@ generic template/instance semantic keys, and original-vs-stage semantic
 oracles before admitting another behavior fix from a generated-stage crash
 stack.
 
+2026-07-01 post-0k-AX note: the active refactor plan is now contract-first,
+not crash-stack-first. The next executable production slice should start from
+`docs/specs/05-falsifier-matrix.md`, not from the newest `s2b` symptom. The
+first three priorities are H5 function-body presence, G3 generic semantic
+keys, and B3 original-vs-stage semantic oracle coverage. A helper, ledger, or
+report is architecture work only when it closes one of those holes or removes a
+named old authority edge; otherwise it is diagnostic debt.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`

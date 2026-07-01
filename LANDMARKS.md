@@ -12,6 +12,23 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-AX-CONTRACT-FIRST-PIVOT|design-sealed 2026-07-01 {F:0.82 G:0.60 R:0.86}]:
+Slice 0k-AX is a docs-only architecture pivot after 0k-AW. The repeated
+frontier pattern is now load-bearing evidence: local generated-stage symptoms
+have repeatedly led to narrower reports or parity helpers, then revealed a
+deeper identity/state/materialization contract gap. The next work must
+therefore be selected from contract debt, not from the latest crash stack.
+Priority order: (1) function-body presence versus undefined/bodyless stubs
+(`docs/specs/05-falsifier-matrix.md` H5), (2) generic template and instance
+semantic keys versus rendered names (G3), and (3) original-vs-stage semantic
+oracle coverage for future language-behavior changes (B3). A future slice may
+still touch production code, but only after it names the contract hole, the old
+authority edge, the falsifier/DoD, and why it is not another source-shape or
+crash-progress proxy. Scope: planning/frontier control only; no compiler
+behavior changed and no bootstrap claim. Decay trigger: a fresh generated-stage
+failure is proven to bypass these contract holes and select a different
+root-sized owner boundary with stronger evidence.
+
 [LM-ARCH-0K-AW-SHARED-KEEP-REQUESTED-NAME-STATE|verified 2026-07-01 {F:0.86 G:0.40 R:0.88}]:
 Slice 0k-AW implements the behavior-neutral shared keep-requested-name state
 model admitted by 0k-AV. The paired frontend consumers

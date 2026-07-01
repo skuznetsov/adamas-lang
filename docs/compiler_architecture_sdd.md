@@ -342,6 +342,61 @@ contract holes are function-body presence versus stub, generic template and
 instance semantic keys versus rendered strings, and original-vs-stage semantic
 oracle coverage for future language-behavior changes.
 
+### Slice 0k-AX: contract-first pivot after shared state
+
+Status:
+
+- docs-only architecture pivot;
+- no compiler behavior, materialization behavior, remangling behavior, backend
+  behavior, cleanup behavior, or `BlockOwner` carrier is changed by this slice.
+
+Problem:
+
+- `s2b`/`s3b` failures are still the final acceptance pressure, but the last
+  frontier chain showed that choosing work from the latest crash stack
+  repeatedly selects symptoms;
+- many local fixes were useful, but the recurring root class is missing
+  compiler contracts: semantic identity is rendered as strings, body presence
+  is inferred late, generic instance identity is reconstructed from names, and
+  stage equivalence sometimes lacks an original-vs-stage oracle;
+- another report or parity helper is only admitted if it closes a contract
+  hole or removes/refutes an older report surface.
+
+Admitted next slices, in order:
+
+1. `FunctionBodyPresence`: add the missing falsifier for H5 before trusting
+   downstream call/materialization decisions. The test must distinguish a real
+   emitted body from an undefined/bodyless stub and state which phase owns the
+   fact.
+2. `GenericIdentityKey`: add a semantic-key oracle for G3 before changing
+   generic materialization or registration behavior. The oracle must compare
+   owner, template/source identity, declared type parameters, and
+   specialization argument identity against rendered names.
+3. `StageSemanticOracle`: define the B3 original-vs-stage oracle shape for any
+   future semantic behavior change. If no normalizer exists, the slice must
+   state the exact semantic lines being compared.
+
+Stop rules:
+
+- do not select the next slice from a crash stack unless the crash directly
+  falsifies one of the above contracts;
+- do not add a new report unless it retires, merges, or refutes an older
+  report surface, or it is the executable falsifier for H5/G3/B3;
+- do not claim progress from source-shape counters, row counts, or crash
+  movement alone;
+- do not use backend forwarders, target keepalive, requested-name forcing,
+  `NamedTuple`/`Tuple` rendering normalization, global ambient-map policy, or
+  `BlockOwner` rollback as shortcuts around these contracts.
+
+DoD for the next production slice:
+
+- cite one contract row from `docs/specs/05-falsifier-matrix.md`;
+- add or update the smallest falsifier for that row before behavior changes;
+- name the old authority edge being replaced, shadowed, or refuted;
+- run the falsifier plus `git diff --check`;
+- update TODO/LANDMARKS/SDD with residual risk and no green `s2b`/`s3b` claim
+  unless a generated stage actually proves it.
+
 Current selected implementation status: Slice 0k-AH is a behavior-neutral
 consumer migration. Instance-method override, keepalive, and diagnostic
 materialization-symbol consumers now read from `CallMaterializationTransaction`
