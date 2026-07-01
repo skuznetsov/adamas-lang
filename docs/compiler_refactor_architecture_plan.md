@@ -122,6 +122,16 @@ behavior from this slice. The next slice must either run/extend the promotion
 ledger on a generated-stage corridor or explicitly select another active-board
 authority edge with a red/green gate.
 
+2026-07-01 post-0k-W note: pause before adding more report surfaces. A local
+MethodNameCodec promotion-report scratch was removed because it would have made
+existing rows easier to print without reducing an authority edge or naming the
+decision it unlocks. Future generated-stage reports are admitted only when the
+SDD records their `decision_question`, source-shape gate, generated-stage
+boundary, and cleanup rule. The near-term architecture unit is still one owned
+fact at a time, but "owned fact" means a consumer stops treating rendered names,
+ambient maps, arena-local ids, or backend fallback state as authority; it does
+not mean another standalone ledger wrapper.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging

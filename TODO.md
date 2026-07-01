@@ -8,6 +8,18 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: paused production-code and report-surface work after the
+  `MethodNameCodec` 0k-V shadow helper. A local
+  `scripts/method_name_codec_promotion_report.sh` scratch was classified as
+  stale/non-admitted and removed because it only wrapped the existing
+  `ADAMAS_METHOD_NAME_CODEC_PROMOTION_LEDGER=1` rows without naming the SDD
+  decision it would unblock or reducing another authority edge. Current work
+  remains governed by `docs/compiler_architecture_sdd.md`: the next slice must
+  present a concrete implementation receipt (`old_edge`, `owned_fact`,
+  `decision_question`, red/green gate, generated-stage boundary, cleanup rule)
+  before production code or a new committed report is admitted. Do not claim
+  s2b/s3b progress from this docs-only pause.
+
 - 2026-07-01 UPDATE: switch the active path from unbounded bootstrap
   symptom-fixing to implementation of the architecture SDD. A parse-path
   identity WIP showed useful evidence (`s2` loaded 138 raw paths that

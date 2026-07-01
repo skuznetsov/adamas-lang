@@ -14,7 +14,7 @@ fallbacks, and hard-to-localize bootstrap failures.
 
 ## Active Architecture Board
 
-Status: design-sealed execution board after Slice 0k-S. This board exists to
+Status: design-sealed execution board after Slice 0k-W. This board exists to
 prevent the next step from being selected by the latest generated-stage crash
 stack. A next slice is admitted only if it moves one board row by replacing or
 shadowing a named authority edge, producing `CodePathStatus` evidence for a
@@ -24,7 +24,7 @@ named path, or refuting a row with fresher generated-stage evidence.
 | --- | --- | --- | --- |
 | `SemanticStateScope` | `prefer_callsite_specialization` is promoted in shadow/parity mode; emitted behavior still returns the legacy result. | Select a different root-sized consumer with a red/green source-shape gate, or explicitly leave this lane paused. | Reselecting `prefer_callsite_specialization`; wrapping `def_has_untyped_regular_param?` without a separate owner result; changing emitted behavior from the shadow row. |
 | `MaterializationIdentity` / `MaterializationRegistry` | Transaction and decision ledgers exist, but focused generated-stage runs still do not authorize a behavior patch. | Define a typed registry/authority seam that owns requested, selected, target, body, emitted-call, state-scope, target-map, call-arg, and ABI facts before any forwarder/name/remangle fix. | Backend undefined-extern rescue; target keepalive; requested-name forcing; `NamedTuple`/`Tuple` display normalization; global ambient-map predicate changes. |
-| `NameResolution` / `MethodNameCodec` | File identity was fixed; method/symbol identity is still partly rendered-string driven. Slice 0k-V promotes the selected `lower_function_if_needed.exact_lookup_keep_requested_name` seam through `method_name_codec_exact_lookup_keep_requested_name?` in shadow/parity mode; emitted behavior still returns the legacy result. | Either run/extend the MethodNameCodec promotion ledger on a generated-stage corridor, or select the next root-sized codec seam with a red/green source-shape gate before changing emitted naming behavior. | String-slice parsing patches at individual callsites; treating rendered names as canonical identity; broad normalization without a falsifier; selecting lower-level helpers before a materialization seam; flipping owner-result behavior from shadow rows. |
+| `NameResolution` / `MethodNameCodec` | File identity was fixed; method/symbol identity is still partly rendered-string driven. Slice 0k-V promotes the selected `lower_function_if_needed.exact_lookup_keep_requested_name` seam through `method_name_codec_exact_lookup_keep_requested_name?` in shadow/parity mode; emitted behavior still returns the legacy result. Slice 0k-W pauses standalone promotion-report proliferation. | Either select the next root-sized codec seam with a red/green source-shape gate, or define a generated-stage classification slice that consumes the existing promotion ledger to answer one blocking yes/no decision before changing emitted naming behavior. | String-slice parsing patches at individual callsites; treating rendered names as canonical identity; broad normalization without a falsifier; selecting lower-level helpers before a materialization seam; flipping owner-result behavior from shadow rows; committing another report surface that does not reduce or select an authority edge. |
 | `AstNodeRef` / `ArenaOwnership` | Explicit-owner lower-call rows and `NodeSlotIntegrity` refuted owner drift, out-of-range ids, and missing slots for the instrumented edge. | Resume only with a named payload/deep-read or uninstrumented-consumer falsifier, including cleanup rules for its ledger. | Lower-call arena routing, broad arena scans, parser allocation rewrites, or another unbounded crash-edge probe. |
 | `CodePathStatus` | `cli.metrics.identity_dry_run` is classified as `debug_only`, not `delete_ready`. | Classify another named path, or run a separate `delete_ready` slice with default-behavior, HIR/MIR/LLVM, bootstrap, and evidence-preservation guards. | Deleting debug/probe/fallback paths from static grep output; using runtime liveness as semantic ownership evidence. |
 
@@ -45,6 +45,12 @@ Mini-Quadrumvirate gate for every future slice:
 4. `ADVERSARY`: before claiming progress, check whether the slice merely added
    another row/report without consumer migration, deletion classification, or a
    refuted owner hypothesis.
+
+Immediate stop rule after Slice 0k-W: a new script, ledger wrapper, or
+generated-stage report is not architecture progress unless the SDD names the
+decision it answers and the authority edge it reduces, selects, or blocks. If a
+report only makes existing rows easier to print, keep it as local scratch and
+delete it before handoff.
 
 Current hostile-review frontier: the latest bootstrap work keeps exposing the
 same ownership class under different symptoms, but the active implementation
@@ -4443,6 +4449,62 @@ Next local track:
   behavior flip;
 - otherwise choose the next active-board row explicitly, with one old authority
   edge, one owned fact, and one red/green falsifier.
+
+### Slice 0k-W: plan pause after MethodNameCodec shadow helper
+
+Status:
+
+- docs-only control-plane pause after Slice 0k-V;
+- stale local `scripts/method_name_codec_promotion_report.sh` scratch was
+  removed instead of promoted into the repo;
+- no compiler source, emitted behavior, generated-stage behavior,
+  materialization naming, backend remangling, `BlockOwner` carrier, or deletion
+  behavior changed.
+
+Problem:
+
+- Slice 0k-V already promoted the selected `MethodNameCodec` consumer in
+  shadow/parity mode;
+- the next tempting move was to add another report wrapper around
+  `ADAMAS_METHOD_NAME_CODEC_PROMOTION_LEDGER=1`;
+- that shape is only architecture work if it answers a named SDD decision, such
+  as "is this shadow owner result safe to flip?" or "which unpromoted seam is
+  next?";
+- otherwise it repeats the same tail-chase pattern: more evidence rows without
+  fewer authority edges.
+
+Decision:
+
+- pause production code and report-surface growth before the next slice;
+- a generated-stage MethodNameCodec report may be used as ephemeral evidence,
+  but committing a new report requires its own SDD slice with:
+  `old_edge`, `owned_fact`, `decision_question`, `red_gate`, `green_gate`,
+  `generated_stage_boundary`, and `cleanup_rule`;
+- if that receipt cannot be written, the next slice must select another board
+  row or move to `CodePathStatus` cleanup with a named path and protecting
+  falsifier;
+- the active default remains `NameResolution` / `MethodNameCodec` plus
+  `MaterializationIdentity`, but the unit of progress is authority-edge
+  reduction, not ledger count.
+
+Boundary:
+
+- this is not a behavior fix and not a green full-prelude generated s2, `s2b`,
+  or `s3b` claim;
+- it does not authorize flipping `method_name_codec_*` owner results into
+  emitted behavior;
+- it does not authorize backend forwarders, target keepalive, requested-name
+  forcing, `NamedTuple`/`Tuple` normalization, or `BlockOwner` rollback.
+
+Next local track:
+
+- write a concrete implementation receipt for the next active-board move before
+  editing production code;
+- preferred receipt shape: one `NameResolution` / `MethodNameCodec` or
+  `MaterializationIdentity` authority edge, one owned typed fact that shadows or
+  replaces it, a source-shape gate, and a generated-stage residual boundary;
+- if the receipt would only introduce another report, delete the scratch and
+  choose a different board row.
 
 ### Slice A: CallResolution boundary
 

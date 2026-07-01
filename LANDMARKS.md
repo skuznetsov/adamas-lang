@@ -1001,6 +1001,28 @@ the helper starts returning owner-result behavior, sibling keep-requested-name
 seams are promoted, `MethodNameParts` suffix semantics change, or generated
 stage evidence shows this helper is not self-host safe.
 
+[LM-ARCH-ANTI-LEDGER-PROLIFERATION-PAUSE|design-sealed 2026-07-01 {F:0.76 G:0.58 R:0.84}]:
+Slice 0k-W pauses production-code and report-surface work after the
+`MethodNameCodec` exact-lookup shadow helper. The immediate risk is no longer
+lack of another diagnostic row; it is mistaking another wrapper script for
+architecture progress. A local uncommitted
+`scripts/method_name_codec_promotion_report.sh` scratch was removed rather than
+committed because it only made existing
+`ADAMAS_METHOD_NAME_CODEC_PROMOTION_LEDGER=1` rows easier to print. It did not
+name a new authority edge, select a new seam, classify a path through
+`CodePathStatus`, refute an active-board row, or state the yes/no SDD decision
+it would unblock. Next production-code or report-surface work must provide an
+implementation receipt: `old_edge`, `owned_fact`, `decision_question`,
+`red_gate`, `green_gate`, `generated_stage_boundary`, and `cleanup_rule`.
+Rejected repeats remain standalone report proliferation, backend forwarders,
+target keepalive, requested-name forcing, global ambient-map changes,
+`NamedTuple`/`Tuple` normalization, and rolling `BlockOwner` back to tuple or
+namedtuple owner metadata. Scope: docs/control-plane only; no compiler behavior
+changed, no deletion, no `BlockOwner` carrier change, and no green `s2b`/`s3b`
+claim. Decay trigger: the next slice lands with a concrete authority-edge
+receipt, the active board is replaced, or a future generated-stage report
+refutes the current MethodNameCodec/MaterializationIdentity priority.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-
