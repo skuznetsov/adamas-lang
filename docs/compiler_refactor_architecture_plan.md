@@ -383,6 +383,13 @@ targets. The next cleanup/delete step must add a protecting falsifier for one
 named path or define a stricter `eligible_delete_ready_candidate` class before
 removing code.
 
+2026-07-01 post-0k-AS cleanup classification note: the first follow-up
+`not_taken_unproven` row, `fused_parallel_requested`, is classified as
+`experimental_live`, not delete-ready. The env-off/env-on falsifier proves the
+path is selectable and still compiles the no-prelude reducer when enabled. This
+keeps cleanup honest: reduce unknowns one path at a time, but do not turn
+experimental-live evidence into deletion.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging

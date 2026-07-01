@@ -4,6 +4,7 @@ set -euo pipefail
 if [[ $# -lt 1 ]]; then
   echo "usage: $0 <compiler> [source.cr [compiler-args...]]" >&2
   echo "env: TIMEOUT=180 MEM_MB=4096 SELECTED_CLEANUP_PATH=identity_dry_run LIST_RUNTIME_PATHS=0 REQUIRE_DELETE_READY=0" >&2
+  echo "supported SELECTED_CLEANUP_PATH values: identity_dry_run, phase0_metrics, fused_parallel_requested" >&2
   exit 2
 fi
 
@@ -52,6 +53,9 @@ selected_env_name() {
     phase0_metrics)
       echo "ADAMAS_PHASE0_METRICS"
       ;;
+    fused_parallel_requested)
+      echo "ADAMAS_FUSED_PARALLEL"
+      ;;
     *)
       echo "unsupported SELECTED_CLEANUP_PATH=$SELECTED_CLEANUP_PATH" >&2
       exit 2
@@ -60,6 +64,55 @@ selected_env_name() {
 }
 
 SELECTED_ENV="$(selected_env_name)"
+
+selected_expected_category() {
+  case "$SELECTED_CLEANUP_PATH" in
+    identity_dry_run|phase0_metrics)
+      echo "cli.metrics"
+      ;;
+    fused_parallel_requested)
+      echo "cli.mir"
+      ;;
+    *)
+      echo "unsupported SELECTED_CLEANUP_PATH=$SELECTED_CLEANUP_PATH" >&2
+      exit 2
+      ;;
+  esac
+}
+
+selected_cleanup_status() {
+  case "$SELECTED_CLEANUP_PATH" in
+    identity_dry_run|phase0_metrics)
+      echo "debug_only"
+      ;;
+    fused_parallel_requested)
+      echo "experimental_live"
+      ;;
+    *)
+      echo "unsupported SELECTED_CLEANUP_PATH=$SELECTED_CLEANUP_PATH" >&2
+      exit 2
+      ;;
+  esac
+}
+
+selected_cleanup_action() {
+  case "$SELECTED_CLEANUP_PATH" in
+    identity_dry_run|phase0_metrics)
+      echo "classify_only"
+      ;;
+    fused_parallel_requested)
+      echo "keep_experimental_live"
+      ;;
+    *)
+      echo "unsupported SELECTED_CLEANUP_PATH=$SELECTED_CLEANUP_PATH" >&2
+      exit 2
+      ;;
+  esac
+}
+
+SELECTED_EXPECTED_CATEGORY="$(selected_expected_category)"
+SELECTED_CLEANUP_STATUS="$(selected_cleanup_status)"
+SELECTED_CLEANUP_ACTION="$(selected_cleanup_action)"
 
 set +e
 ADAMAS_CODEPATH_STATUS_LEDGER=1 \
@@ -224,7 +277,7 @@ echo "## Enabled Run"
 echo "$enabled_summary"
 echo ""
 echo "## Selection"
-echo "[CODEPATH_CLEANUP_SELECTION] cluster=cli.metrics path=$SELECTED_CLEANUP_PATH owner=CLI status=debug_only default_status=$default_status enabled_status=$enabled_status default_rows=$default_selected_rows enabled_rows=$enabled_selected_rows protecting_falsifier=env_off_not_taken_env_on_taken action=classify_only"
+echo "[CODEPATH_CLEANUP_SELECTION] cluster=$SELECTED_EXPECTED_CATEGORY path=$SELECTED_CLEANUP_PATH owner=CLI status=$SELECTED_CLEANUP_STATUS default_status=$default_status enabled_status=$enabled_status default_rows=$default_selected_rows enabled_rows=$enabled_selected_rows protecting_falsifier=env_off_not_taken_env_on_taken action=$SELECTED_CLEANUP_ACTION"
 
 if [[ -n "$inventory_summary" ]]; then
   echo ""
@@ -245,9 +298,9 @@ fi
 
 if [[ "$default_selected_rows" != "1" || "$enabled_selected_rows" != "1" ||
       "$default_status" != "not_taken" || "$enabled_status" != "taken" ||
-      "$default_category" != "cli.metrics" || "$enabled_category" != "cli.metrics" ||
+      "$default_category" != "$SELECTED_EXPECTED_CATEGORY" || "$enabled_category" != "$SELECTED_EXPECTED_CATEGORY" ||
       "$default_owner" != "CLI" || "$enabled_owner" != "CLI" ]]; then
-  echo "FAIL: selected cleanup path did not match debug-only shape" >&2
+  echo "FAIL: selected cleanup path did not match expected cleanup shape" >&2
   exit 1
 fi
 

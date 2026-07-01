@@ -12,6 +12,22 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-AS-FUSED-PARALLEL-CLASSIFIED|verified 2026-07-01 {F:0.84 G:0.30 R:0.88}]:
+Slice 0k-AS adds a focused `CodePathStatus` cleanup classification for
+`fused_parallel_requested`. The cleanup-entry report now supports
+`SELECTED_CLEANUP_PATH=fused_parallel_requested` and reports
+`cluster=cli.mir`, `status=experimental_live`,
+`default_status=not_taken`, `enabled_status=taken`,
+`default_rows=1`, `enabled_rows=1`, and `action=keep_experimental_live` on a
+fresh stage1 no-prelude run. Negative control remains:
+`REQUIRE_DELETE_READY=1` exits 9 with
+`inventory_status=no_delete_ready_candidate`. Decision: the fused parallel MIR
+path is not delete-ready from current evidence; do not delete it. Scope:
+cleanup classification only; no compiler behavior and no bootstrap claim.
+Decay trigger: fused parallel semantics are removed by design, the path starts
+failing its protecting falsifier, or a future SDD slice intentionally reopens
+experimental MIR parallelism.
+
 [LM-ARCH-0K-AR-CLEANUP-INVENTORY|verified 2026-07-01 {F:0.84 G:0.42 R:0.88}]:
 Slice 0k-AR extends the `CodePathStatus` cleanup-entry report with a
 fail-closed runtime inventory mode. With `LIST_RUNTIME_PATHS=1`, a fresh stage1

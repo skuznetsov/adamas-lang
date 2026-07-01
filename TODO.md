@@ -8,6 +8,18 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: added Slice 0k-AS, a focused
+  `CodePathStatus` cleanup classification for
+  `fused_parallel_requested`. The cleanup-entry report now supports
+  `SELECTED_CLEANUP_PATH=fused_parallel_requested` and classifies it as
+  `experimental_live`, with `default_status=not_taken`,
+  `enabled_status=taken`, and `action=keep_experimental_live`.
+  `REQUIRE_DELETE_READY=1` still fails with
+  `inventory_status=no_delete_ready_candidate`. Decision: the fused parallel
+  MIR path is not delete-ready from current evidence; do not delete it. The
+  next cleanup slice must choose a different `not_taken_unproven` path or
+  define a stricter delete-ready class.
+
 - 2026-07-01 UPDATE: added Slice 0k-AR, fail-closed runtime
   inventory mode for the `CodePathStatus` cleanup-entry report. With
   `LIST_RUNTIME_PATHS=1`, a fresh stage1 no-prelude compile reports
