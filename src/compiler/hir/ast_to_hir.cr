@@ -2538,6 +2538,124 @@ module Adamas::HIR
       types.map { |type_ref| get_type_name_from_ref(type_ref) }.join(",")
     end
 
+    private def state_scope_consumer_ledger_enabled? : Bool
+      env_has?("ADAMAS_STATE_SCOPE_CONSUMER_LEDGER")
+    end
+
+    private def state_scope_consumer_target_map(
+      requested_name : String,
+      target_name : String,
+      target_params : Hash(String, String)?,
+    ) : Hash(String, String)?
+      return target_params if target_params && !target_params.empty?
+      return nil if requested_name.empty? && target_name.empty?
+
+      base_target = target_name.empty? ? "" : strip_type_suffix(target_name)
+      if target_name.empty?
+        function_type_param_map_for(requested_name)
+      elsif requested_name.empty?
+        function_type_param_map_for(target_name, base_target)
+      else
+        function_type_param_map_for(target_name, base_target, requested_name)
+      end
+    end
+
+    private def state_scope_consumer_authority(
+      result : Bool,
+      target_map : Hash(String, String)?,
+      call_arg_types : Array(TypeRef)?,
+    ) : String
+      return "target_materialization" if target_map && !target_map.empty?
+      return "callsite" if result && call_arg_types && !call_arg_types.empty?
+      return "callsite" if result
+      return "rejected_ambient" unless @type_param_map.empty?
+
+      "legacy_shim"
+    end
+
+    private def state_scope_consumer_migration(authority : String) : String
+      case authority
+      when "callsite"
+        "migrate_to_state_scope"
+      when "target_materialization"
+        "migrate_to_materialization_registry"
+      when "rejected_ambient"
+        "rejected_ambient"
+      when "legacy_shim"
+        "keep_legacy_shim"
+      else
+        "blocked_unknown"
+      end
+    end
+
+    private def state_scope_consumer_validation(authority : String) : String
+      case authority
+      when "rejected_ambient"
+        "ambient_rejected"
+      when "legacy_shim"
+        "diagnostic_only"
+      else
+        "owned"
+      end
+    end
+
+    private def log_state_scope_consumer_decision(
+      consumer : String,
+      decision : String,
+      requested_name : String,
+      target_name : String,
+      func_def : Adamas::Compiler::Frontend::DefNode,
+      result : Bool,
+      call_arg_types : Array(TypeRef)? = nil,
+      target_params : Hash(String, String)? = nil,
+    ) : Nil
+      return unless state_scope_consumer_ledger_enabled?
+
+      effective_target = target_name.empty? ? requested_name : target_name
+      selected_owner = effective_target.empty? ? "?" : method_owner(effective_target)
+      target_map_hash = state_scope_consumer_target_map(requested_name, target_name, target_params)
+      authority = state_scope_consumer_authority(result, target_map_hash, call_arg_types)
+      migration = state_scope_consumer_migration(authority)
+      validation = state_scope_consumer_validation(authority)
+      selected_def = selected_definition_debug_string(func_def, effective_target, selected_owner)
+
+      STDERR.puts "[STATE_SCOPE_CONSUMER] consumer=#{ledger_token(consumer)} decision=#{ledger_token(decision)} requested=#{ledger_token(requested_name)} target=#{ledger_token(target_name)} selected_def=#{ledger_token(selected_def)} result=#{result ? 1 : 0} authority=#{ledger_token(authority)} migration=#{ledger_token(migration)} validation=#{ledger_token(validation)} ambient_map=#{ledger_token(type_param_map_debug_string)} target_map=#{ledger_token(string_map_debug_string(target_map_hash))} call_arg_types=#{ledger_token(type_ref_array_debug_string(call_arg_types))}"
+    end
+
+    private def state_scope_consumer_def_has_untyped_regular_param?(
+      consumer : String,
+      decision : String,
+      requested_name : String,
+      target_name : String,
+      func_def : Adamas::Compiler::Frontend::DefNode,
+      call_arg_types : Array(TypeRef)? = nil,
+      target_params : Hash(String, String)? = nil,
+    ) : Bool
+      result = def_has_untyped_regular_param?(func_def)
+      if state_scope_consumer_ledger_enabled?
+        log_state_scope_consumer_decision(consumer, decision, requested_name, target_name, func_def, result, call_arg_types, target_params)
+        log_state_scope_consumer_decision("def_has_untyped_regular_param", decision, requested_name, target_name, func_def, result, call_arg_types, target_params)
+        if def_has_regular_type_annotation_for_state_scope_consumer?(func_def)
+          log_state_scope_consumer_decision("raw_annotation_needs_callsite_specialization", decision, requested_name, target_name, func_def, result, call_arg_types, target_params)
+        end
+      end
+      result
+    end
+
+    private def def_has_regular_type_annotation_for_state_scope_consumer?(func_def : Adamas::Compiler::Frontend::DefNode) : Bool
+      params = func_def.params
+      return false unless params
+
+      found = false
+      each_param(params) do |param|
+        unless found || named_only_separator?(param) || param.is_block || param.is_double_splat
+          found = true if param.type_annotation
+        end
+      end
+
+      found
+    end
+
     private def same_owner_class_method_exact_demand?(name : String) : Bool
       current_class = @current_class
       return false unless current_class
@@ -37773,7 +37891,14 @@ module Adamas::HIR
       def_node = @function_defs[base_method_name]? || @function_defs[resolved_name]?
       return nil unless def_node
 
-      needs_callsite_specialization = def_has_untyped_regular_param?(def_node)
+      needs_callsite_specialization = state_scope_consumer_def_has_untyped_regular_param?(
+        "prefer_callsite_specialization",
+        "callsite_specialization",
+        base_method_name,
+        resolved_name,
+        def_node,
+        arg_types
+      )
       unless needs_callsite_specialization
         call_index = 0
         function_param_infos(def_node).each do |param|
@@ -69641,8 +69766,16 @@ module Adamas::HIR
                 resolved_entry_def = entry[1]
                 func_def = resolved_entry_def
                 arena = @function_def_arenas[resolved_entry_name]
+                untyped_regular_param = state_scope_consumer_def_has_untyped_regular_param?(
+                  "lower_function_if_needed.callsite_args",
+                  "keep_requested_name",
+                  name,
+                  resolved_entry_name,
+                  resolved_entry_def,
+                  callsite.types
+                )
                 keep_requested_name = name.includes?('$') && (
-                  def_has_untyped_regular_param?(resolved_entry_def) ||
+                  untyped_regular_param ||
                   (
                     def_has_bare_collection_regular_param?(resolved_entry_def) &&
                     begin
@@ -69684,8 +69817,16 @@ module Adamas::HIR
                 resolved_entry_def = entry[1]
                 func_def = resolved_entry_def
                 arena = @function_def_arenas[resolved_entry_name]
+                untyped_regular_param = state_scope_consumer_def_has_untyped_regular_param?(
+                  "lower_function_if_needed.suffix_types",
+                  "keep_requested_name",
+                  name,
+                  resolved_entry_name,
+                  resolved_entry_def,
+                  parsed_types
+                )
                 keep_requested_name = name.includes?('$') && (
-                  def_has_untyped_regular_param?(resolved_entry_def) ||
+                  untyped_regular_param ||
                   (
                     def_has_bare_collection_regular_param?(resolved_entry_def) &&
                     parsed_types.any? { |t| concrete_collection_type_ref?(t) }
@@ -71152,6 +71293,14 @@ module Adamas::HIR
               # Use the resolved target by default. Keep the caller's requested
               # mangled name only for deferred/untyped cases that rely on
               # callsite-driven specialization.
+              has_untyped_regular_param = state_scope_consumer_def_has_untyped_regular_param?(
+                "lower_function_if_needed.override",
+                "materialization_override",
+                name,
+                target_name,
+                resolved_func_def,
+                call_arg_types
+              )
               override_reason = "target"
               override = if materialize_requested_instance_wrapper
                            override_reason = "requested_wrapper"
@@ -71159,7 +71308,7 @@ module Adamas::HIR
                          elsif deferred_lookup_used
                            override_reason = "deferred_lookup"
                            name
-                         elsif def_has_untyped_regular_param?(resolved_func_def)
+                         elsif has_untyped_regular_param
                            override_reason = "untyped_regular_param"
                            name
                          else
@@ -76232,7 +76381,14 @@ module Adamas::HIR
             # When concrete callsite args are available for untyped params, preserve
             # specialization by remangling with full arg_types.
           elsif !arg_types.empty? &&
-                def_has_untyped_regular_param?(entry_def) &&
+                state_scope_consumer_def_has_untyped_regular_param?(
+                  "lower_call.remangle",
+                  "entry_name_suffix",
+                  base_method_name,
+                  entry_name,
+                  entry_def,
+                  arg_types
+                ) &&
                 arg_types.any? { |t| t != TypeRef::VOID } && !has_unknown_arg_types
             mangled_method_name = mangle_function_name(base_method_name, arg_types, has_block_call)
           elsif !arg_types.empty? &&

@@ -1,0 +1,288 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -lt 1 ]]; then
+  echo "usage: $0 <compiler> [source.cr [compiler-args...]]" >&2
+  echo "env: TIMEOUT=180 MEM_MB=4096 SAMPLES=8" >&2
+  exit 2
+fi
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+COMPILER="$1"
+shift
+
+TIMEOUT="${TIMEOUT:-180}"
+MEM_MB="${MEM_MB:-4096}"
+SAMPLES="${SAMPLES:-8}"
+TMP_DIR="$(mktemp -d "$ROOT_DIR/tmp/state-scope-consumer.XXXXXX")"
+LOG="$TMP_DIR/compile.log"
+
+cleanup() {
+  rm -rf "$TMP_DIR"
+}
+trap cleanup EXIT
+
+if [[ $# -eq 0 ]]; then
+  SRC="$TMP_DIR/repro.cr"
+  OUT="$TMP_DIR/repro.bin"
+  cat >"$SRC" <<'CR'
+class Box(T)
+  def initialize(@value : T)
+  end
+
+  def value
+    @value
+  end
+end
+
+class OwnerCache
+  @owners = Hash(UInt64, NamedTuple(class_name: String?, method_name: String?, is_class: Bool)).new
+
+  def write(id : UInt64, flag : Bool)
+    class_name = flag ? "Box" : nil
+    method_name = flag ? nil : "initialize"
+    @owners[id] = {class_name: class_name, method_name: method_name, is_class: flag}
+  end
+
+  def read(id : UInt64)
+    @owners[id]?
+  end
+end
+
+box = Box(Int32).new(7)
+cache = OwnerCache.new
+cache.write(1_u64, true)
+puts box.value
+puts cache.read(1_u64).nil? ? 0 : 1
+CR
+  COMPILE_ARGS=("$SRC" -o "$OUT")
+else
+  SRC="$1"
+  shift
+  COMPILE_ARGS=("$SRC" "$@")
+fi
+
+set +e
+ADAMAS_STATE_SCOPE_CONSUMER_LEDGER=1 \
+  "$ROOT_DIR/scripts/run_safe.sh" "$COMPILER" "$TIMEOUT" "$MEM_MB" \
+  "${COMPILE_ARGS[@]}" >"$LOG" 2>&1
+compiler_rc=$?
+set -e
+
+if ! grep -q '^\[STATE_SCOPE_CONSUMER\]' "$LOG"; then
+  echo "FAIL: no [STATE_SCOPE_CONSUMER] consumer rows emitted" >&2
+  echo "compiler_rc=$compiler_rc" >&2
+  tail -100 "$LOG" >&2 || true
+  exit 1
+fi
+
+echo "# StateScope Consumer Report"
+echo "compiler: $COMPILER"
+echo "source: $SRC"
+echo "compiler_rc: $compiler_rc"
+echo "samples_per_section: $SAMPLES"
+echo "note: report is a migration gate; malformed or missing required consumers fail"
+
+awk -v samples="$SAMPLES" '
+  function field(name,    i, p) {
+    for (i = 1; i <= NF; i++) {
+      p = index($i, "=")
+      if (p > 0 && substr($i, 1, p - 1) == name) {
+        return substr($i, p + 1)
+      }
+    }
+    return ""
+  }
+
+  function keep_sample(bucket, row) {
+    if (sample_count[bucket] < samples) {
+      sample_count[bucket]++
+      sample[bucket, sample_count[bucket]] = row
+    }
+  }
+
+  /^\[STATE_SCOPE_CONSUMER\]/ {
+    rows++
+    consumer = field("consumer")
+    decision = field("decision")
+    requested = field("requested")
+    target = field("target")
+    selected_def = field("selected_def")
+    authority = field("authority")
+    migration = field("migration")
+    validation = field("validation")
+    ambient = field("ambient_map")
+    target_map = field("target_map")
+    call_arg_types = field("call_arg_types")
+    result = field("result")
+    last_row = $0
+
+    consumer_count[consumer]++
+    decision_count[decision]++
+    authority_count[authority]++
+    migration_count[migration]++
+    validation_count[validation]++
+
+    if (consumer == "" || decision == "" || requested == "" || target == "" ||
+        selected_def == "" || authority == "" || migration == "" ||
+        validation == "" || result == "") {
+      malformed++
+      keep_sample("malformed", $0)
+    }
+
+    if (authority != "callsite" &&
+        authority != "target_materialization" &&
+        authority != "body_substitution" &&
+        authority != "legacy_shim" &&
+        authority != "rejected_ambient") {
+      invalid_authority++
+      keep_sample("invalid_authority", $0)
+    }
+
+    if (migration != "migrate_to_state_scope" &&
+        migration != "migrate_to_materialization_registry" &&
+        migration != "keep_legacy_shim" &&
+        migration != "blocked_unknown" &&
+        migration != "rejected_ambient") {
+      invalid_migration++
+      keep_sample("invalid_migration", $0)
+    }
+
+    if (validation != "owned" &&
+        validation != "ambient_rejected" &&
+        validation != "diagnostic_only") {
+      invalid_validation++
+      keep_sample("invalid_validation", $0)
+    }
+
+    if (validation == "ambient_rejected" && ambient == "") {
+      rejected_without_ambient++
+      keep_sample("rejected_without_ambient", $0)
+    }
+
+    if (validation == "diagnostic_only" || migration == "blocked_unknown") {
+      blocked_rows++
+      keep_sample("blocked_rows", $0)
+    }
+
+    if (authority == "target_materialization" && target_map == "") {
+      target_without_map++
+      keep_sample("target_without_map", $0)
+    }
+
+    if (authority == "callsite" && call_arg_types == "") {
+      callsite_without_args++
+      keep_sample("callsite_without_args", $0)
+    }
+  }
+
+  END {
+    print ""
+    print "## Counts"
+    print "rows=" rows + 0
+    print "malformed=" malformed + 0
+    print "invalid_authority=" invalid_authority + 0
+    print "invalid_migration=" invalid_migration + 0
+    print "invalid_validation=" invalid_validation + 0
+    print "rejected_without_ambient=" rejected_without_ambient + 0
+    print "blocked_rows=" blocked_rows + 0
+    print "target_without_map=" target_without_map + 0
+    print "callsite_without_args=" callsite_without_args + 0
+
+    print ""
+    print "## Consumers"
+    for (c in consumer_count) {
+      print c "=" consumer_count[c]
+    }
+
+    print ""
+    print "## Decisions"
+    for (d in decision_count) {
+      print d "=" decision_count[d]
+    }
+
+    print ""
+    print "## Authorities"
+    for (a in authority_count) {
+      print a "=" authority_count[a]
+    }
+
+    print ""
+    print "## Migrations"
+    for (m in migration_count) {
+      print m "=" migration_count[m]
+    }
+
+    print ""
+    print "## Validations"
+    for (v in validation_count) {
+      print v "=" validation_count[v]
+    }
+
+    print ""
+    print "## Last Row"
+    print last_row
+
+    buckets[1] = "malformed"
+    buckets[2] = "invalid_authority"
+    buckets[3] = "invalid_migration"
+    buckets[4] = "invalid_validation"
+    buckets[5] = "rejected_without_ambient"
+    buckets[6] = "blocked_rows"
+    buckets[7] = "target_without_map"
+    buckets[8] = "callsite_without_args"
+    for (i = 1; i <= 8; i++) {
+      bucket = buckets[i]
+      if (sample_count[bucket] > 0) {
+        print ""
+        print "## Sample " bucket
+        for (j = 1; j <= sample_count[bucket]; j++) {
+          print sample[bucket, j]
+        }
+      }
+    }
+
+    if (malformed || invalid_authority || invalid_migration ||
+        invalid_validation || rejected_without_ambient) {
+      exit 7
+    }
+  }
+' "$LOG"
+
+required_consumers=(
+  "prefer_callsite_specialization"
+  "lower_function_if_needed.callsite_args"
+  "lower_function_if_needed.suffix_types"
+  "lower_function_if_needed.override"
+  "lower_call.remangle"
+  "def_has_untyped_regular_param"
+  "raw_annotation_needs_callsite_specialization"
+)
+
+missing=0
+echo ""
+echo "## Required Consumers"
+for consumer in "${required_consumers[@]}"; do
+  if grep -q "^\[STATE_SCOPE_CONSUMER\].* consumer=${consumer} " "$LOG"; then
+    echo "${consumer}=present"
+  else
+    echo "${consumer}=missing"
+    missing=1
+  fi
+done
+
+if [[ "$missing" -ne 0 ]]; then
+  echo "FAIL: required StateScope consumer missing" >&2
+  if [[ "$compiler_rc" -ne 0 ]]; then
+    echo "" >&2
+    echo "## Nonzero Compiler Tail" >&2
+    tail -60 "$LOG" >&2 || true
+  fi
+  exit 8
+fi
+
+if [[ "$compiler_rc" -ne 0 ]]; then
+  echo ""
+  echo "## Nonzero Compiler Tail"
+  tail -60 "$LOG" || true
+fi

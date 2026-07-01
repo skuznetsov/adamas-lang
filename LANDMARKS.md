@@ -476,25 +476,45 @@ fresh full generated-stage run reaches joined `[MAT_TX]` / `[MAT_EMIT]` rows,
 or one of the migration contracts lands as a behavior-driving facade with
 focused and generated-stage evidence.
 
-[LM-ARCH-STATESCOPE-CONSUMER-MIGRATION-GATE|design-sealed 2026-07-01 {F:0.74 G:0.54 R:0.82}]:
-The next executable `StateScopeConsumerCensus` slice is now constrained as a
-migration gate rather than a diagnostic ladder. Slice 0k-F in
-`docs/compiler_architecture_sdd.md` requires the report to classify the known
+[LM-ARCH-STATESCOPE-CONSUMER-MIGRATION-GATE|verified 2026-07-01 {F:0.84 G:0.42 R:0.88}]:
+Slice 0k-F now has an implemented, behavior-neutral
+`StateScopeConsumerCensus` migration gate. The report classifies the known
 naming/materialization consumers, including `prefer_callsite_specialization`,
 `lower_function_if_needed_impl` `callsite_args` / `suffix_types` / `override`,
 `lower_call` remangling, and the direct type-param predicates
 `def_has_untyped_regular_param?` /
-`raw_annotation_needs_callsite_specialization?`. Each reached consumer must
-emit an authority and migration decision:
+`raw_annotation_needs_callsite_specialization?`. Each reached consumer emits
+an authority and migration decision:
 `migrate_to_state_scope`, `migrate_to_materialization_registry`,
-`keep_legacy_shim`, `blocked_unknown`, or `rejected_ambient`. A row that is
-only `diagnostic_only`, or any `blocked_unknown` row, blocks behavior patches
-on that surface. This landmark is docs-only and changes no compiler behavior.
-Scope: it prevents another ambient-map or materialization consumer patch from
-being justified by row count alone; it does not implement the report and does
-not make `s2b`/`s3b` green. Decay trigger: the consumer report/ledger lands,
-the required consumer set moves, or a later `StateScope` facade starts driving
-behavior with focused and generated-stage evidence.
+`keep_legacy_shim`, `blocked_unknown`, or `rejected_ambient`. Red gate: a
+pre-slice compiler from `4d0965e2` fails
+`scripts/state_scope_consumer_report.sh` with
+`FAIL: no [STATE_SCOPE_CONSUMER] consumer rows emitted` while the focused
+compile exits `0`. Fresh stage1 evidence:
+`scripts/state_scope_consumer_report.sh /private/tmp/adamas_ssc_stage1`
+emits `rows=42224`, `malformed=0`, `invalid_authority=0`,
+`invalid_migration=0`, `invalid_validation=0`,
+`rejected_without_ambient=0`, and all required consumers are present. The same
+report records the blocking migration surface instead of hiding it:
+`diagnostic_only=5935`, `keep_legacy_shim=5935`,
+`rejected_ambient=2767`, `migrate_to_state_scope=25978`, and
+`migrate_to_materialization_registry=7544`. Env-off focused compile emits no
+consumer rows and the compiled `basic_sanity` binary exits `0`. Existing
+static censuses, `semantic_state_scope_report`, and
+`materialization_transaction_report` remain compatible; focused
+`String#split` and heap-Proc nilable-union reducers remain green, and
+`regression_tests/run_combined.sh /private/tmp/adamas_ssc_stage1` passes
+`36/36`. Generated s2 self-build exits `0`, but generated-s2 consumer report fails closed with
+`compiler_rc=139`, `rows=17`, and missing `callsite_args` / `suffix_types`
+because the generated compiler crashes before those required consumers are
+reached. Scope: this is a migration gate, not a behavior fix and not a green
+`s2b`/`s3b` claim. Any `diagnostic_only` / `keep_legacy_shim` row blocks
+behavior patches on that decision surface until a later
+StateScope/MaterializationRegistry migration row and bounded would-change
+census exist. Decay trigger: the required consumer set moves, the report row
+format changes, a later `StateScope` facade starts driving behavior, or fresh
+generated-stage evidence reaches all required consumers with different
+migration buckets.
 
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in

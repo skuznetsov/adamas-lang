@@ -2344,8 +2344,8 @@ Next local track:
 
 Status:
 
-- design-sealed follow-up to Slice 0k-E;
-- docs-only in this checkpoint;
+- implemented behavior-neutral follow-up to Slice 0k-E;
+- default-off migration ledger/report, not a behavior patch;
 - no compiler behavior, state-scope behavior, materialization behavior, AST
   read behavior, or backend behavior is changed by this slice.
 
@@ -2444,13 +2444,79 @@ DoD for implementation:
 - update `TODO.md` and `LANDMARKS.md` with residual `blocked_unknown` and
   `diagnostic_only` surfaces before any behavior-changing patch.
 
+Current evidence:
+
+- red gate: a pre-slice compiler built from `4d0965e2` as
+  `/private/tmp/adamas_ssc_red` compiles the focused repro but
+  `scripts/state_scope_consumer_report.sh /private/tmp/adamas_ssc_red` fails
+  closed with `FAIL: no [STATE_SCOPE_CONSUMER] consumer rows emitted` and
+  `compiler_rc=0`;
+- fresh stage1 build:
+  `crystal build src/adamas.cr -o /private/tmp/adamas_ssc_stage1
+  --error-trace`;
+- focused stage1 report:
+  `scripts/state_scope_consumer_report.sh /private/tmp/adamas_ssc_stage1`
+  emits `rows=42224`, `malformed=0`, `invalid_authority=0`,
+  `invalid_migration=0`, `invalid_validation=0`,
+  `rejected_without_ambient=0`, and covers all required consumers:
+  `prefer_callsite_specialization`,
+  `lower_function_if_needed.callsite_args`,
+  `lower_function_if_needed.suffix_types`,
+  `lower_function_if_needed.override`, `lower_call.remangle`,
+  `def_has_untyped_regular_param`, and
+  `raw_annotation_needs_callsite_specialization`;
+- the same report records migration blockers rather than hiding them:
+  `diagnostic_only=5935`, `keep_legacy_shim=5935`,
+  `rejected_ambient=2767`, `migrate_to_state_scope=25978`, and
+  `migrate_to_materialization_registry=7544`;
+- env-off focused compile emits `0` `[STATE_SCOPE_CONSUMER]` rows and the
+  compiled `basic_sanity` binary exits `0`;
+- static gates still run:
+  `scripts/semantic_decision_census.sh` and
+  `scripts/codepath_status_census.sh`;
+- existing state/materialization reports still compose with the new ledger:
+  `scripts/semantic_state_scope_report.sh /private/tmp/adamas_ssc_stage1`
+  emits `rows=2513`, `malformed=0`, and
+  `scripts/materialization_transaction_report.sh
+  /private/tmp/adamas_ssc_stage1` emits `rows=2513`,
+  `owner_malformed=0`, `joined_transactions=1349`, and
+  `unjoined_emit_rows=0`;
+- focused regressions remain green:
+  `regression_tests/string_split_default_nil_limit_repro.sh`,
+  `regression_tests/string_split_int32_nil_limit_collision_repro.sh`, and
+  `regression_tests/proc_nilable_union_arg_indirect_call_repro.sh` against
+  `/private/tmp/adamas_ssc_stage1`;
+- broader bounded guard:
+  `regression_tests/run_combined.sh /private/tmp/adamas_ssc_stage1` passes
+  `36` / `36` combined tests;
+- generated s2 self-build succeeds under `scripts/run_safe.sh`
+  (`EXIT: 0` after about 179s), but
+  `TIMEOUT=240 MEM_MB=8192 scripts/state_scope_consumer_report.sh
+  /private/tmp/adamas_ssc_s2` fails closed with `compiler_rc=139`,
+  `rows=17`, `malformed=0`, and missing
+  `lower_function_if_needed.callsite_args` /
+  `lower_function_if_needed.suffix_types` because generated s2 crashes before
+  those consumer sites are reached.
+
+Interpretation:
+
+- Slice 0k-F is a migration gate. It proves the known consumer set is
+  reportable in a focused stage1 corridor and that generated s2 reaches the
+  ledger but not the full required consumer set;
+- the `diagnostic_only` / `keep_legacy_shim` rows are blockers for behavior
+  patches on those surfaces, not invitations to patch
+  `def_has_untyped_regular_param?` or `lower_call` locally;
+- the generated-s2 `compiler_rc=139` residual is a stage frontier and must not
+  be converted into a consumer predicate fix without a later owned
+  StateScope/MaterializationRegistry migration row plus would-change census.
+
 Next local track:
 
-- implement the report and default-off ledger described above. Do not modify
-  naming/materialization semantics in the same commit. A later behavior slice
-  may only target a consumer whose migration decision is owned, whose
-  would-change set is bounded, and whose negative controls preserve
-  legitimate ambient current-instantiation behavior.
+- classify the `diagnostic_only` / `keep_legacy_shim` rows into explicit
+  `StateScope` or `MaterializationRegistry` migration candidates before any
+  behavior patch. Do not modify naming/materialization semantics until a later
+  would-change census proves the changed set is bounded and preserves
+  legitimate current-instantiation behavior.
 
 ### Slice A: CallResolution boundary
 
