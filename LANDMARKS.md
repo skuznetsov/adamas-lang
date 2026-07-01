@@ -12,6 +12,29 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-AV-PLAN-BEFORE-STATE-SCOPE-HELPER|design-sealed 2026-07-01 {F:0.84 G:0.54 R:0.88}]:
+Slice 0k-AV is a docs-only hostile self-review checkpoint after 0k-AU. The
+0k-AU selector correctly forced a state-model redesign because
+`lower_function_if_needed.callsite_args` and `.suffix_types` are a paired
+frontend authority problem, not two independent consumers to choose by source
+order. A local uncommitted shared keep-requested-name helper WIP showed that the
+next failure mode is making `state_model_redesign_complete=1` a new proxy
+metric: source shape can become green while semantic identity remains inferred
+from legacy ambient predicates. That WIP was reverted before this checkpoint.
+The next production slice is admitted only as a behavior-neutral shared
+keep-requested-name state model with an explicit owned fact, old authority edge,
+legacy parity rule, stale-regression audit, and generated-stage guard. It must
+not claim `s2b`/`s3b` progress from source shape alone. The old
+`hash_named_tuple_index_assign_materialization_repro.sh` gate must be audited
+against the current `BlockOwner` carrier before it is used as DoD; if stale, it
+must be replaced or retired. Rejected repeats remain backend forwarder, target
+keepalive, requested-name force, `NamedTuple`/`Tuple` rendering change, global
+ambient-map policy change, and `BlockOwner` rollback. Scope: plan/SDD
+checkpoint only; no compiler behavior changed and no bootstrap claim. Decay
+trigger: a future 0k-AV implementation lands with behavior-neutral parity and
+fresh generated-stage evidence, or fresh evidence selects a different active
+owner boundary.
+
 [LM-ARCH-0K-AU-STATE-SCOPE-NO-REPEAT-SOURCE|verified 2026-07-01 {F:0.86 G:0.48 R:0.88}]:
 Slice 0k-AU extends `scripts/semantic_state_scope_admission_report.sh` with
 `SOURCE_SHAPE_ONLY=1`, a no-repeat source-shape selector for remaining

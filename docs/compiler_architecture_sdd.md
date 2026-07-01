@@ -14,7 +14,7 @@ fallbacks, and hard-to-localize bootstrap failures.
 
 ## Active Architecture Board
 
-Status: execution board after Slice 0k-AU. This board exists to
+Status: execution board after Slice 0k-AV. This board exists to
 prevent the next step from being selected by the latest generated-stage crash
 stack. A next slice is admitted only if it moves one board row by replacing or
 shadowing a named authority edge, producing `CodePathStatus` evidence for a
@@ -22,7 +22,7 @@ named path, or refuting a row with fresher generated-stage evidence.
 
 | Owner boundary | Current status | Next admitted movement | Forbidden repeat |
 | --- | --- | --- | --- |
-| `SemanticStateScope` | `prefer_callsite_specialization` is promoted in shadow/parity mode; emitted behavior still returns the legacy result. The `lower_function_if_needed.override` seam is also already promoted through the MaterializationDecision shadow helper and must not be reselected. Slice 0k-AU extends the existing admission report with a source-only no-repeat selector. It finds two unpromoted frontend direct consumers (`lower_function_if_needed.callsite_args` and `lower_function_if_needed.suffix_types`), rejects `lower_call.remangle` as backend-adjacent, and selects no single root-sized consumer. | Move up to a state-model redesign checkpoint for the shared `lower_function_if_needed` keep-requested-name state, or add a stronger discriminator that collapses `callsite_args` and `suffix_types` to exactly one root-sized consumer before any helper code. | Reselecting `prefer_callsite_specialization` or `lower_function_if_needed.override`; choosing either `callsite_args` or `suffix_types` by source order or convenience; wrapping `def_has_untyped_regular_param?` without a separate owner result; changing emitted behavior from a shadow row; globally clearing/ignoring `@type_param_map`; backend forwarders; requested-name forcing. |
+| `SemanticStateScope` | `prefer_callsite_specialization` is promoted in shadow/parity mode; emitted behavior still returns the legacy result. The `lower_function_if_needed.override` seam is also already promoted through the MaterializationDecision shadow helper and must not be reselected. Slice 0k-AU extends the existing admission report with a source-only no-repeat selector. It finds two unpromoted frontend direct consumers (`lower_function_if_needed.callsite_args` and `lower_function_if_needed.suffix_types`), rejects `lower_call.remangle` as backend-adjacent, and selects no single root-sized consumer. Slice 0k-AV is a docs-only checkpoint: an uncommitted shared helper WIP proved that the next risk is treating shared source shape as progress without first defining the state model. | Next movement is a behavior-neutral shared keep-requested-name state model for the paired `lower_function_if_needed` consumers. The slice must state the owned fact, old authority edge, emitted-behavior parity rule, stale-regression audit, and generated-stage guard before code lands. | Reselecting `prefer_callsite_specialization` or `lower_function_if_needed.override`; choosing either `callsite_args` or `suffix_types` by source order or convenience; wrapping `def_has_untyped_regular_param?` without a separate owner result; treating `state_model_redesign_complete=1` as bootstrap progress; changing emitted behavior from a shadow row; globally clearing/ignoring `@type_param_map`; backend forwarders; requested-name forcing. |
 | `MaterializationIdentity` / `MaterializationRegistry` | Slice 0k-Z promotes the selected `lower_function_if_needed.symbol_binding` seam in behavior-neutral shadow/parity mode. `scripts/materialization_symbol_binding_admission_report.sh` now reports `already_promoted_shadow` even with `REQUIRE_PROMOTED=1`; keepalive and materialization-ledger consumers read from `MaterializationSymbolBinding` fields instead of recomputing split locals. | Do not flip emitted symbols from this slice. Next movement must either run a generated-stage materialization/symbol-binding classification on the residual full-prelude s2 crash, or select the next root-sized owner consumer with a red/green gate. | Backend undefined-extern rescue; target keepalive as a standalone patch; requested-name forcing; `NamedTuple`/`Tuple` display normalization; global ambient-map predicate changes; `BlockOwner` rollback; treating the green source-shape gate as green `s2b`/`s3b`. |
 | `NameResolution` / `MethodNameCodec` | File identity was fixed; method/symbol identity is still partly rendered-string driven. Slice 0k-V promotes the selected `lower_function_if_needed.exact_lookup_keep_requested_name` seam through `method_name_codec_exact_lookup_keep_requested_name?` in shadow/parity mode; emitted behavior still returns the legacy result. Slice 0k-W pauses standalone promotion-report proliferation. | Either select the next root-sized codec seam with a red/green source-shape gate, or define a generated-stage classification slice that consumes the existing promotion ledger to answer one blocking yes/no decision before changing emitted naming behavior. | String-slice parsing patches at individual callsites; treating rendered names as canonical identity; broad normalization without a falsifier; selecting lower-level helpers before a materialization seam; flipping owner-result behavior from shadow rows; committing another report surface that does not reduce or select an authority edge. |
 | `CallMaterializationTransaction` spine | Slice 0k-AJ selects the reached transaction/emission edge `call_materialization.wrapper_or_call_remap.extern_missing_body`. Slice 0k-AK adds the docs stop rule for post-consumer selector decay. Slice 0k-AL makes that rule executable. Slice 0k-AM implements the behavior-neutral consumer: HIR stores transaction contract facts by tx id, HIR-to-MIR attaches them to transaction-bound `Call`/`ExternCall`, backend `[MAT_EMIT]` logs them mechanically, and optimizer replacement preserves them. Slice 0k-AO extends the same selector with a post-consumer exact-contract residual split. Fresh generated-stage evidence reports `post_consumer_state=selected_consumed_by_contract_consumer`, `contract_mismatch_rows=0`, `residual_exact_missing_body_rows=14`, `residual_exact_missing_body_groups=9`, and `residual_selection_status=rejected_exact_missing_body_ambiguous`. | The 0k-AJ selected edge is consumed, and the immediate exact-contract residual is ambiguous rather than root-selected. The next movement must either add a stronger discriminator that can select exactly one old authority edge from the 9 residual groups, or switch to `consolidation` / `cleanup/delete` under the 0k-AN covenant. | Treating consumed edge disappearance as failure; making old `REQUIRE_SELECTED=1` green by redefining rows; behavior-patching any residual sample (`Array#<<`, `Slice#[]`, `IO#read`, etc.) without a unique selector; backend forwarder or undefined-extern rescue; requested-name forcing; broad `NamedTuple`/`Tuple` rendering changes; global ambient-map policy changes; `BlockOwner` rollback; another standalone report that does not remove ambiguity or retire/refute an older surface. |
@@ -241,6 +241,81 @@ Next local track:
   `lower_function_if_needed` keep-requested-name state, or first produce a
   stronger falsifier that collapses the two frontend candidates to one
   root-sized authority edge.
+
+### Slice 0k-AV: plan before shared keep-requested-name state
+
+Status:
+
+- docs-only hostile self-review checkpoint;
+- no compiler behavior, materialization behavior, remangling behavior, backend
+  behavior, cleanup behavior, or `BlockOwner` carrier is changed by this slice.
+
+Problem:
+
+- Slice 0k-AU proved that `callsite_args` and `suffix_types` must not be picked
+  independently;
+- a local uncommitted shared helper WIP could make the source-shape report say
+  `state_model_redesign_complete=1`, but that alone would only prove that two
+  callsites share a helper;
+- the root architecture problem is stronger: keep-requested-name identity must
+  be produced as one owned state fact and then consumed mechanically, without
+  turning `state_model_redesign_complete` into a value proxy for green
+  `s2b`/`s3b`.
+
+Admitted next implementation shape:
+
+- introduce one behavior-neutral shared keep-requested-name state record/helper
+  for the paired `lower_function_if_needed.callsite_args` and
+  `lower_function_if_needed.suffix_types` consumers;
+- the record must expose at least:
+  - requested symbol;
+  - resolved/materialized symbol;
+  - selected definition identity;
+  - predicate input types;
+  - collection-policy input types when they intentionally differ from predicate
+    input types;
+  - legacy result;
+  - owner result;
+  - emitted result, which remains legacy/parity for this slice;
+  - reason/classification that explains which authority decided the result.
+- both consumers must read the emitted result from that record instead of
+  recomputing the legacy expression inline;
+- optional ledgers may print the record, but the ledger is not the owner.
+
+DoD for the future production slice:
+
+- source-shape gate:
+  `SOURCE_SHAPE_ONLY=1 REQUIRE_REDESIGNED=1
+  scripts/semantic_state_scope_admission_report.sh` reports both frontend
+  keep-requested-name consumers as shared and no direct frontend candidate;
+- negative source-shape gate:
+  `SOURCE_SHAPE_ONLY=1 REQUIRE_SELECTED=1
+  scripts/semantic_state_scope_admission_report.sh` still exits non-zero, proving
+  no single consumer was silently reselected;
+- behavior smoke:
+  fresh stage1 builds and compiles/runs at least one trivial program and one
+  generic keep-requested-name stress program through `scripts/run_safe.sh`;
+- regression audit:
+  `hash_named_tuple_index_assign_materialization_repro.sh` must be checked
+  against the current `BlockOwner` carrier before use. If it still searches for
+  the obsolete `Hash(UInt64, NamedTuple)#[]=` symbol, replace it with a
+  `BlockOwner` successor or retire it as stale before using it as a gate;
+- generated-stage guard:
+  run the existing generated-stage classifier or a narrower successor only as a
+  guard. A crash-stack movement or a green source-shape gate is not a bootstrap
+  claim.
+
+Stop rules:
+
+- stop if the implementation changes emitted keep-requested-name behavior;
+- stop if the shared helper hides the old
+  `state_scope_consumer_def_has_untyped_regular_param?` authority without
+  recording a distinct owner result;
+- stop if a stale `NamedTuple`-based regression is used to reject a
+  `BlockOwner`-based implementation;
+- stop if the next step becomes backend forwarder, target keepalive,
+  requested-name force, `NamedTuple`/`Tuple` rendering normalization, global
+  ambient-map policy, or `BlockOwner` rollback.
 
 Current selected implementation status: Slice 0k-AH is a behavior-neutral
 consumer migration. Instance-method override, keepalive, and diagnostic

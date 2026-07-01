@@ -417,6 +417,17 @@ shared `lower_function_if_needed` keep-requested-name state, unless a stronger
 falsifier collapses the two frontend candidates to exactly one root-sized
 authority edge.
 
+2026-07-01 post-0k-AV checkpoint note: pause production code before turning that
+state-model redesign into another helper. A local uncommitted shared
+keep-requested-name helper WIP was reverted because it demonstrated the next
+failure mode: a source-shape report can say `state_model_redesign_complete=1`
+while the architecture still treats the report as the value being optimized.
+The next implementation may reintroduce the shared model only as a
+behavior-neutral owned fact with explicit legacy result, owner result, emitted
+parity result, stale-regression audit, and generated-stage guard. This is not a
+license to force requested names, normalize `NamedTuple`/`Tuple`, add backend
+forwarders, change global ambient-map policy, or roll back `BlockOwner`.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging

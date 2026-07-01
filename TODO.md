@@ -8,6 +8,22 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: added Slice 0k-AV, a docs-only hostile self-review
+  checkpoint after the 0k-AU source selector. The selector correctly refused to
+  choose between `lower_function_if_needed.callsite_args` and
+  `lower_function_if_needed.suffix_types`, but an uncommitted helper WIP showed
+  the next risk: turning the required state-model redesign into another
+  source-shape proxy. That WIP was reverted before this checkpoint. The next
+  admitted production slice may introduce a shared keep-requested-name state
+  model only if it first states the owned fact, legacy edge, emitted-behavior
+  parity rule, stale-regression audit, and generated-stage guard. It must not
+  claim bootstrap progress from `state_model_redesign_complete=1` alone. If
+  `hash_named_tuple_index_assign_materialization_repro.sh` no longer matches
+  the `BlockOwner` carrier, replace or retire it before using it as DoD. Do not
+  add backend forwarders, target keepalive, requested-name forcing,
+  `NamedTuple`/`Tuple` rendering changes, global ambient-map policy changes, or
+  `BlockOwner` rollback.
+
 - 2026-07-01 UPDATE: implemented Slice 0k-AU, a source-shape-only no-repeat mode
   in `scripts/semantic_state_scope_admission_report.sh`. `SOURCE_SHAPE_ONLY=1`
   now enumerates live direct
