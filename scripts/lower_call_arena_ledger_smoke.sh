@@ -57,4 +57,16 @@ if ! grep -q 'kind=phase' "$LOG"; then
   exit 1
 fi
 
+if ! grep -q 'ref_origin=' "$LOG"; then
+  echo "FAIL: no AstNodeRef origin emitted" >&2
+  tail -80 "$LOG" >&2 || true
+  exit 1
+fi
+
+if ! grep -q 'ref_span=' "$LOG"; then
+  echo "FAIL: no AstNodeRef span emitted" >&2
+  tail -80 "$LOG" >&2 || true
+  exit 1
+fi
+
 echo "PASS lower_call_arena_ledger"

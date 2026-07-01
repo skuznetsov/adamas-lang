@@ -433,6 +433,9 @@ Acceptance for this first architecture slice:
   arena agreement at the last observed edge, the next architecture slice is a
   behavior-neutral `AstNodeRef` / `ArenaOwnership` facade rather than another
   raw-read consumer patch.
+- the first facade must be shadow-only: it may enrich ledgers with explicit
+  owner-scoped references, but must not route raw AST reads until a follow-up
+  parity report classifies the first bad transition.
 
 ## 9. Decision Summary
 

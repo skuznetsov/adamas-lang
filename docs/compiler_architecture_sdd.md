@@ -1219,6 +1219,49 @@ Next local track:
   a behavior-neutral `AstNodeRef` / `ArenaOwnership` facade instead of patching
   another `lower_call` consumer.
 
+### Slice 0e: AstNodeRef shadow facade
+
+Source/spec:
+
+- `src/compiler/hir/ast_to_hir.cr` `AstNodeRef`;
+- `ADAMAS_LOWER_CALL_ARENA_LEDGER=1` lower-call arena ledger;
+- `scripts/lower_call_arena_ledger_smoke.sh`.
+
+Falsifiers:
+
+- `AstNodeRef` is a reference type, not a struct carrying `ArenaLike`, because
+  generated-stage binaries have shown fragile copies of ArenaLike-bearing
+  structs;
+- the facade is allocated only under the env-gated ledger path and is not
+  consumed by lowering decisions;
+- ledger rows contain explicit ref origin/span/path data in addition to current
+  arena and heuristic owner data;
+- default env-off compile emits no `[LC_ARENA]` rows.
+
+Evidence:
+
+- the lower-call ledger now records explicit owner-scoped references before raw
+  AST reads, while preserving the legacy raw reads untouched;
+- focused smoke requires `[LC_ARENA]` expr/phase rows plus `ref_origin=` and
+  `ref_span=`.
+
+Boundary:
+
+- no HIR behavior changes;
+- no routing through `AstNodeRef` yet;
+- no replacement of raw reads until a follow-up ledger classifies the first bad
+  transition and a parity check proves the replacement is not another
+  containment heuristic.
+
+Next local track:
+
+- use the facade to add a shadow parity report for lower-call raw reads:
+  `current`, explicit `AstNodeRef` owner, and heuristic owner must be compared
+  before any consumer read is routed through the facade;
+- if parity still shows owner agreement at the crash edge, move the
+  investigation to `NodeSlot`/arena storage producer corruption rather than
+  arena selection.
+
 ### Slice A: CallResolution boundary
 
 Source/spec:

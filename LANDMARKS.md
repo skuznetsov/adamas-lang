@@ -1,6 +1,6 @@
 # LANDMARKS
 
-Updated: 2026-06-30
+Updated: 2026-07-01
 Context: compiler/bootstrap/stage2-stability
 
 This file is the active working set only. Historical landmarks before this
@@ -127,6 +127,21 @@ claim, but it makes a simple current-arena-drift consumer fix unlikely for the
 last observed edge. Decay trigger: a dynamic lower-call arena ledger refutes
 arena ownership as the active boundary, or `AstArena` / `ExprId` identity is
 redesigned into an explicit owner-scoped reference.
+
+[LM-ARCH-AST-NODE-REF-SHADOW-FACADE|guard-only 2026-07-01 {F:0.74 G:0.44 R:0.84}]:
+The ArenaOwnership slice now has a behavior-neutral `AstNodeRef` facade in
+`AstToHir`. `AstNodeRef` is a class, not a struct, so it does not copy an
+`ArenaLike` union through generated-stage value semantics. It records
+`arena_owner`, `expr_id`, source path, call span, and origin for lower-call raw
+AST-read ledger rows. The facade is allocated only when
+`ADAMAS_LOWER_CALL_ARENA_LEDGER=1`, and lowering still uses the legacy raw
+reads. Scope: this is a shadow identity boundary, not an arena-routing fix and
+not a green `s2b`/`s3b` claim. Next step: use `AstNodeRef` to compare current
+arena, explicit owner, and heuristic owner at raw-read sites; if these agree at
+the crash edge, investigate `NodeSlot`/arena storage producer corruption
+instead of adding another `arena_for_expr?` consumer patch. Decay trigger:
+`AstNodeRef` starts driving behavior, `ArenaLike` representation changes, or a
+future generated-stage ledger refutes the explicit-owner classification.
 
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in

@@ -1,6 +1,6 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-06-30
+Updated: 2026-07-01
 Branch: `work/s3-range-slice-frontier`
 
 This is the active working backlog only. Historical detail is in git history,
@@ -96,6 +96,19 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   current-arena-drift explanation for that last observed edge and raises the
   priority of an explicit `AstNodeRef`/`ArenaOwnership` facade over another
   broad `arena_for_expr?` consumer patch.
+
+- 2026-07-01 UPDATE: added the first behavior-neutral `AstNodeRef`
+  shadow facade for the ArenaOwnership slice. `AstNodeRef` is deliberately a
+  reference type because generated-stage binaries have already shown fragile
+  copies of structs carrying `ArenaLike` unions. The lower-call arena ledger now
+  records explicit owner-scoped refs (`ref_origin`, `ref_path`, `ref_span`) in
+  addition to current arena, preferred/ref arena, and heuristic owner arena.
+  The facade is not consumed by lowering and raw `@arena[...]` reads are still
+  untouched. Next behavior-changing AST-read work is still blocked: first add
+  a parity/classification report that compares current arena, explicit
+  `AstNodeRef` owner, and heuristic owner at each raw-read site; if they keep
+  agreeing at the crash edge, move to `NodeSlot`/arena storage producer
+  corruption instead of arena-selection fixes.
 
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
