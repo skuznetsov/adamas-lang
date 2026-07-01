@@ -12,6 +12,28 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-AK-POST-CONSUMER-DECAY-GATE|design-sealed 2026-07-01 {F:0.74 G:0.46 R:0.82}]:
+Slice 0k-AK is a docs-only stop checkpoint after the 0k-AJ generated-stage
+transaction/emission edge selector. An uncommitted behavior-neutral
+shadow-consumer WIP that copied `CallMaterializationTransaction` contract facts
+through MIR calls/extern-calls into backend `[MAT_EMIT]` rows was removed before
+commit. It was directionally aligned with Phase 2b, but it changed the old
+selector's meaning before the SDD defined post-consumer success states. Decision:
+the next production slice must first refresh the
+`CallMaterializationTransaction` row's DoD and explicitly classify the old
+selected edge as `selected_not_consumed`,
+`selected_consumed_by_contract_consumer`, or `selected_refuted_or_stale`.
+If adding a consumer makes the old 0k-AJ selected edge disappear, that is a
+decay event to record, not a reason to redefine rows until
+`REQUIRE_SELECTED=1` turns green. Rejected moves remain: backend forwarder or
+undefined-extern rescue, requested-name force, target keepalive,
+`NamedTuple`/`Tuple` normalization, global ambient-map policy change, direct
+segfault patch, and `BlockOwner` rollback. Scope: plan/SDD checkpoint only; no
+compiler behavior and no `s2b`/`s3b` green claim. Decay trigger: a future
+committed slice defines and verifies the post-consumer selector states or a
+fresh generated-stage run refutes `CallMaterializationTransaction` as the
+active owner boundary.
+
 [LM-ARCH-GENERATED-STAGE-TX-EMIT-EDGE-SELECTION|verified 2026-07-01 {F:0.86 G:0.36 R:0.88}]:
 Slice 0k-AJ adds an executable reached-edge selector:
 `scripts/generated_stage_transaction_edge_selection_report.sh`. It parses an

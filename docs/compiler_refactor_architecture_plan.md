@@ -306,6 +306,17 @@ shadow/parity consumer of the transaction contract facts, not a backend
 forwarder, requested-name force, target keepalive, `NamedTuple`/`Tuple`
 normalization, global ambient-map change, or direct segfault patch.
 
+2026-07-01 post-0k-AK checkpoint note: pause code before accepting that
+shadow-consumer as the next committed slice. A local uncommitted implementation
+that threaded transaction contract facts into MIR calls and backend `[MAT_EMIT]`
+rows was removed because it made the old 0k-AJ selector's success condition
+stale before the plan defined post-consumer semantics. The next plan step is to
+refresh the SDD board and define the selector states
+`selected_not_consumed`, `selected_consumed_by_contract_consumer`, and
+`selected_refuted_or_stale`. A consumer implementation is admissible only after
+that distinction is explicit; otherwise the work risks turning the selector
+into a value proxy and chasing its own changed output.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging

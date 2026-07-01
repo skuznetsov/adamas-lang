@@ -8,6 +8,22 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: added Slice 0k-AK, docs-only architecture
+  stop/checkpoint after the 0k-AJ reached-edge selector. An uncommitted
+  behavior-neutral shadow-consumer WIP that propagated
+  `CallMaterializationTransaction` contract facts into MIR call/extern-call
+  instructions and backend `[MAT_EMIT]` rows was intentionally removed before
+  commit. It was directionally aligned with Phase 2b, but it changed the old
+  selector's meaning before the SDD defined the post-consumer success states.
+  Decision: the next production slice must first refresh the
+  `CallMaterializationTransaction` row's DoD and explicitly classify the old
+  selected edge as `selected_not_consumed`,
+  `selected_consumed_by_contract_consumer`, or `selected_refuted_or_stale`.
+  Do not make `REQUIRE_SELECTED=1` green by redefining rows after the fact; do
+  not add backend forwarders, keep target bodies alive, force requested names,
+  normalize `NamedTuple`/`Tuple`, globally change ambient-map policy, patch the
+  segfault directly, or roll back `BlockOwner`.
+
 - 2026-07-01 UPDATE: implemented Slice 0k-AJ,
   generated-stage transaction/emission edge selection gate. New script:
   `scripts/generated_stage_transaction_edge_selection_report.sh`. It consumes
