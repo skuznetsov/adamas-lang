@@ -695,6 +695,22 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   is a shadow/parity helper for `prefer_callsite_specialization` only; it must
   make `REQUIRE_PROMOTED=1` green and keep `emitted_result == legacy_result`.
 
+- 2026-07-01 UPDATE: paused code after hostile self-review and added Slice
+  0k-Q as a docs-only `SemanticStateScope` ownership contract. A local
+  uncommitted `SemanticStateScopeSnapshot` / `[STATE_SCOPE_PROMOTION]` WIP was
+  removed instead of committed because it risked wrapping
+  `def_has_untyped_regular_param?` with more rows while leaving the old
+  ambient predicate as the hidden authority. The future code slice is admitted
+  only if it proves a real owner-contract for exactly
+  `prefer_callsite_specialization`: old direct edge removed from the selected
+  consumer, named owned record, separately computed owner result, legacy result
+  used only for parity, `emitted_result == legacy_result`, no other consumer
+  promoted, and existing state-scope/materialization/codepath reports still
+  green. If that receipt cannot be made root-sized, switch to runtime
+  `CodePathStatus` cleanup selection instead of adding another diagnostic
+  ledger/helper. No compiler behavior changed and no green `s2b`/`s3b` claim is
+  made.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was

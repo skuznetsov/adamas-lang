@@ -860,6 +860,25 @@ green `s2b`/`s3b` claim is made. Decay trigger: the selected
 green, live consumer rows change materially, or the owner switches the next lane
 to `CodePathStatus` cleanup.
 
+[LM-ARCH-SEMANTIC-STATE-SCOPE-OWNER-CONTRACT|design-sealed 2026-07-01 {F:0.78 G:0.50 R:0.86}]:
+Slice 0k-Q pauses code before accepting the first `SemanticStateScope` helper.
+A local uncommitted `SemanticStateScopeSnapshot` / `[STATE_SCOPE_PROMOTION]`
+WIP was removed as non-admitted because it did not yet prove that
+`def_has_untyped_regular_param?` had become parity-only instead of the hidden
+authority. The next code slice must implement an owner contract, not another
+diagnostic wrapper: exactly `prefer_callsite_specialization`, old direct edge
+removed from that selected consumer, owned record with requested/target/
+selected-def/maps/lifetime fields, owner result computed separately from
+legacy result, `emitted_result == legacy_result`, no other promoted consumer,
+and the existing state-scope/materialization/codepath gates still green. If
+the future helper only logs rows and returns the legacy predicate without a
+separate owner result and mismatch census, it is diagnostic-only and must not
+be counted as architecture progress. Scope: docs-only contract, no compiler
+behavior changed and no green `s2b`/`s3b` claim. Decay trigger: a concrete
+`prefer_callsite_specialization` owner helper lands with source-shape/report
+evidence, or the owner explicitly switches to `CodePathStatus` cleanup
+selection.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

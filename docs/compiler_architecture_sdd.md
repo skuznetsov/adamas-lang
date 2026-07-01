@@ -139,6 +139,19 @@ reached. If that receipt cannot be produced, the next track must switch to
 `CodePathStatus` cleanup or to a generated-stage reachability owner boundary
 instead of adding another materialization diagnostic.
 
+Current next-slice decision after the Slice 0k-P hostile self-review: pause
+code edits before accepting the first `SemanticStateScope` helper. The selected
+candidate, `prefer_callsite_specialization`, remains the right first seam only
+if the next implementation replaces a named authority edge, not if it merely
+wraps the old ambient predicate with a new row format. A local
+`SemanticStateScopeSnapshot` / `[STATE_SCOPE_PROMOTION]` WIP was removed as
+non-admitted because it did not yet prove that the old
+`def_has_untyped_regular_param?` oracle had become parity-only rather than the
+hidden authority. The next admitted step is Slice 0k-Q, a docs-only ownership
+contract: define what counts as a real `SemanticStateScope` migration, what
+remains wrapper theater, and which source-shape/report gates must be red
+before code and green after code.
+
 Bounded context: Crystal V2 compiler architecture:
 
 - HIR lowering and semantic registration (`src/compiler/hir/ast_to_hir.cr`)
@@ -3923,6 +3936,112 @@ Next local track:
   `REQUIRE_PROMOTED=1` mode turns green;
 - do not migrate `lower_call.remangle`, `lower_function_if_needed.*`, direct
   predicate helper rows, or any behavior result in the same slice.
+
+### Slice 0k-Q: SemanticStateScope ownership contract before helper code
+
+Status:
+
+- design-sealed docs-only checkpoint after Slice 0k-P hostile self-review;
+- no compiler behavior, materialization behavior, remangling behavior, backend
+  behavior, AST-read behavior, cleanup behavior, or `BlockOwner` carrier is
+  changed by this slice;
+- a local uncommitted helper/report WIP for `SemanticStateScopeSnapshot` was
+  removed before commit because it risked becoming another diagnostic wrapper
+  around the old ambient predicate instead of an authority-edge migration.
+
+Problem:
+
+- Slice 0k-P selected exactly one first `SemanticStateScope` seam:
+  `prefer_callsite_specialization`;
+- the tempting next move is to introduce a helper that logs a
+  `SemanticStateScopeSnapshot` and returns the legacy boolean;
+- that shape is admitted only if it proves that the selected consumer no longer
+  obtains its semantic authority from the old ambient-state path;
+- if the helper still treats `def_has_untyped_regular_param?` or
+  `raw_annotation_needs_callsite_specialization?` as the authority rather than
+  a parity source, the slice has not improved architecture. It has only moved
+  the same oracle behind a new name.
+
+Ownership contract:
+
+1. `decision`: the single semantic question owned by this slice is whether a
+   callsite-specialized symbol should be preferred for the selected definition.
+2. `selected_consumer`: exactly `prefer_callsite_specialization`.
+3. `old_authority_edge`: direct use of
+   `state_scope_consumer_def_has_untyped_regular_param?` /
+   `def_has_untyped_regular_param?` from the selected consumer.
+4. `owned_record`: a `SemanticStateScopeDecision` or equivalently named object
+   that records requested symbol, target symbol, selected definition, target
+   map, ambient map snapshot, callsite arg types, lifetime, authority class,
+   migration class, legacy parity result, owner result, and emitted result.
+5. `parity_only_source`: the legacy predicate may still be evaluated in the
+   helper, but only as `legacy_result` for parity. It is not allowed to be the
+   only named authority in the row/report.
+6. `owner_result`: the owned record must compute and print the owner decision
+   separately from `legacy_result`. While behavior remains unchanged,
+   `emitted_result` must equal `legacy_result`; a later would-change slice is
+   required before emitted behavior may equal `owner_result`.
+7. `source_shape`: the selected consumer must call the named owner helper and
+   must not call `state_scope_consumer_def_has_untyped_regular_param?`
+   directly. Other legacy consumers may remain unchanged and must be counted as
+   residual surface, not silently considered migrated.
+
+Wrapper-theater rejection test:
+
+- If the new helper only logs fields and returns
+  `def_has_untyped_regular_param?` without a separately named owner result, the
+  slice is diagnostic-only and must not be committed as architecture progress.
+- If the report cannot prove rows are limited to
+  `prefer_callsite_specialization`, the slice is too broad.
+- If `owner_result` is just a stringified copy of `legacy_result` for every
+  row without an owner computation and a mismatch bucket, the slice is not an
+  ownership contract.
+- If the helper requires a boolean mode on
+  `def_has_untyped_regular_param?` or
+  `raw_annotation_needs_callsite_specialization?`, stop; that repeats the
+  rejected consumer-predicate patch family.
+
+DoD for the future code slice:
+
+- pre-slice red gate: `REQUIRE_PROMOTED=1
+  scripts/semantic_state_scope_admission_report.sh <compiler>` fails because
+  the selected seam is still `legacy_direct_edge`;
+- green source-shape gate: the report identifies
+  `prefer_callsite_specialization` as `already_promoted_shadow`, and no other
+  consumer is counted as promoted;
+- green ownership gate: every promoted row has complete requested/target/
+  selected-def/map/lifetime fields, a nonempty owner-result field, and zero
+  malformed rows;
+- parity gate: `emitted_result == legacy_result` for all promoted rows;
+- mismatch census: if `owner_result != legacy_result` appears, it is reported
+  as would-change evidence only and does not change behavior in the same
+  commit;
+- compatibility gates: existing `state_scope_consumer_report`,
+  `materialization_promotion_selection_report`, `semantic_decision_census`,
+  and `codepath_status_census` still pass;
+- bootstrap guard: a fresh generated-s2 smoke is run or the residual boundary
+  is stated explicitly if the focused seam is not reached.
+
+Rejected next moves:
+
+- committing a helper/report whose only effect is new
+  `[STATE_SCOPE_PROMOTION]` rows;
+- treating the legacy predicate result as the owned state-scope result without
+  a separately named owner computation;
+- migrating `lower_call.remangle`, `lower_function_if_needed.*`, direct
+  predicate helper rows, or behavior results in the same commit;
+- resuming backend forwarder, requested-name materialization, target keepalive,
+  `NamedTuple`/`Tuple` normalization, or `BlockOwner` rollback work from this
+  seam;
+- deleting the old helper globally before all remaining consumers are
+  classified.
+
+Next local track:
+
+- implement the `prefer_callsite_specialization` owner helper only after this
+  contract is satisfied in the patch plan;
+- otherwise switch to runtime `CodePathStatus` cleanup selection rather than
+  adding more state-scope diagnostics.
 
 ### Slice A: CallResolution boundary
 

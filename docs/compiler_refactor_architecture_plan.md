@@ -63,6 +63,17 @@ migration classes for the selected seam and provides a red
 `REQUIRE_PROMOTED=1` gate that only the future shadow/parity helper should turn
 green.
 
+2026-07-01 post-0k-Q note: pause code before accepting the first
+`SemanticStateScope` helper. A helper/report that only wraps
+`def_has_untyped_regular_param?` and prints more rows is not architecture work;
+it is diagnostic debt. The next implementation must define a
+`SemanticStateScopeDecision`-style owned record for exactly
+`prefer_callsite_specialization`, compute an owner result separately from the
+legacy parity result, keep emitted behavior unchanged, and prove by source
+shape that the selected consumer no longer reaches directly for the old
+ambient-state helper. If that receipt is not root-sized, switch to
+`CodePathStatus` cleanup selection instead of adding more state-scope ledgers.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging
