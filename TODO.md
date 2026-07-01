@@ -21,6 +21,20 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   owner ledgers before further behavior-changing fixes. First executable slice:
   `scripts/semantic_decision_census.sh` (read-only static owner-map input).
 
+- 2026-07-01 UPDATE: first dynamic owner ledger slice landed locally after the
+  static census gate. `ADAMAS_MATERIALIZATION_IDENTITY_LEDGER=1` now emits
+  `[MAT_ID]` rows at the `lower_function_if_needed_impl` materialization seam,
+  including requested symbol, target symbol, materialization state key,
+  body symbol, call-symbol hint, override reason, lookup branch, ambient
+  type-param map, target map, and call arg types. Verification:
+  `crystal build src/adamas.cr -o /private/tmp/adamas_matid_stage1
+  --error-trace`; `scripts/materialization_identity_ledger_smoke.sh
+  /private/tmp/adamas_matid_stage1`; `regression_tests/run_all_suites.sh
+  /private/tmp/adamas_matid_stage1 4` passes `152/152 + 36/36`. This is
+  behavior-neutral instrumentation only; next behavior-changing bootstrap fix
+  must first use this ledger (or a sibling owner ledger) to classify the active
+  mismatch.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was

@@ -31,6 +31,24 @@ read-only executable census entry point. Decay trigger: any successful green
 `s2b`/`s3b` bootstrap, rewrite of `parse_file_recursive`/require loading, or
 replacement of the active architecture SDD execution order.
 
+[LM-ARCH-MATERIALIZATION-IDENTITY-LEDGER|verified 2026-07-01 {F:0.82 G:0.42 R:0.88}]:
+The first dynamic SDD owner ledger now exists at the HIR materialization seam.
+With `ADAMAS_MATERIALIZATION_IDENTITY_LEDGER=1`,
+`lower_function_if_needed_impl` emits `[MAT_ID]` rows containing phase,
+requested symbol, target symbol, materialization state key, body symbol,
+call-symbol hint, override reason, lookup branch, ambient `@type_param_map`,
+target/merged map, and call arg types. This directly supports the architecture
+SDD's `StateScope` and `Materialization` boundaries without changing default
+compiler behavior. Evidence: `crystal build src/adamas.cr -o
+/private/tmp/adamas_matid_stage1 --error-trace`;
+`scripts/materialization_identity_ledger_smoke.sh
+/private/tmp/adamas_matid_stage1` passes; `regression_tests/run_all_suites.sh
+/private/tmp/adamas_matid_stage1 4` passes 152/152 original + 36/36 combined.
+Scope: this is a behavior-neutral diagnostic/ledger, not a fix for any
+particular symbol mismatch or a green `s2b`/`s3b` claim. Decay trigger:
+rewrites of `lower_function_if_needed_impl`, materialization naming,
+`with_isolated_type_param_map`, or HIR call/body symbol creation.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

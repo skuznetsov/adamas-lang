@@ -2249,6 +2249,40 @@ module Adamas::HIR
       @module.mark_materialization_keepalive_function(target_name)
     end
 
+    private def log_materialization_identity_ledger(
+      phase : String,
+      requested_name : String,
+      target_name : String,
+      state_key : String,
+      body_symbol : String,
+      call_symbol_hint : String,
+      override_reason : String,
+      lookup_branch : String?,
+      call_arg_types : Array(TypeRef)?,
+      target_params : Hash(String, String)?,
+    ) : Nil
+      return unless env_has?("ADAMAS_MATERIALIZATION_IDENTITY_LEDGER")
+
+      ambient = type_param_map_debug_string
+      target_map = string_map_debug_string(target_params)
+      call_args = type_ref_array_debug_string(call_arg_types)
+      STDERR.puts "[MAT_ID] phase=#{phase} requested=#{requested_name} target=#{target_name} state_key=#{state_key} body_symbol=#{body_symbol} call_symbol_hint=#{call_symbol_hint} override_reason=#{override_reason} branch=#{lookup_branch || "?"} ambient_map=#{ambient} target_map=#{target_map} call_arg_types=#{call_args}"
+    end
+
+    private def string_map_debug_string(map : Hash(String, String)?) : String
+      return "" unless map
+      return "" if map.empty?
+
+      map.map { |key, value| "#{key}=#{value}" }.join(",")
+    end
+
+    private def type_ref_array_debug_string(types : Array(TypeRef)?) : String
+      return "nil" unless types
+      return "" if types.empty?
+
+      types.map { |type_ref| get_type_name_from_ref(type_ref) }.join(",")
+    end
+
     private def same_owner_class_method_exact_demand?(name : String) : Bool
       current_class = @current_class
       return false unless current_class
@@ -70740,17 +70774,25 @@ module Adamas::HIR
               # Use the resolved target by default. Keep the caller's requested
               # mangled name only for deferred/untyped cases that rely on
               # callsite-driven specialization.
+              override_reason = "target"
               override = if materialize_requested_instance_wrapper
+                           override_reason = "requested_wrapper"
                            name
-                         elsif deferred_lookup_used || def_has_untyped_regular_param?(resolved_func_def)
+                         elsif deferred_lookup_used
+                           override_reason = "deferred_lookup"
+                           name
+                         elsif def_has_untyped_regular_param?(resolved_func_def)
+                           override_reason = "untyped_regular_param"
                            name
                          else
+                           override_reason = "target_materialization"
                            target_name
                          end
               # Avoid per-receiver monomorphization for Object#in? by forcing the
               # base method name even when the call site is mangled.
               if resolved_parts.method == "in?" && target_name.starts_with?("Object#")
                 override = nil
+                override_reason = "object_in_base"
               end
               record_materialization_keepalive_candidate(name, target_name, override || target_name)
               # M4c0 (diagnostic-only): the materialization-binding decision. Logs the
@@ -70775,6 +70817,18 @@ module Adamas::HIR
                 extra_params = extra_params.merge({"UC" => "UInt8", "T" => "Float64"})
               end
               merged_params = extra_type_params ? extra_params.merge(extra_type_params) : extra_params
+              log_materialization_identity_ledger(
+                "instance_method",
+                name,
+                target_name,
+                materialized_name,
+                override || target_name,
+                name,
+                override_reason,
+                lookup_branch,
+                call_arg_types,
+                merged_params
+              )
               with_isolated_type_param_map(merged_params) do
                 with_namespace_override_or_clear(namespace_override) do
                   # Arity mismatch fix: if resolved_func_def has fewer params than
@@ -70914,6 +70968,18 @@ module Adamas::HIR
               old_class = @current_class
               @current_class = owner
               forced_method_name = method || ""
+              log_materialization_identity_ledger(
+                "class_method",
+                name,
+                target_name,
+                materialized_name,
+                target_for_lower,
+                name,
+                target_for_lower == name ? "requested_class_target" : "target_class_symbol",
+                lookup_branch,
+                call_arg_types,
+                extra_type_params
+              )
               if extra_type_params
                 with_isolated_type_param_map(extra_type_params) do
                   with_namespace_override_or_clear(namespace_override) do
@@ -70963,9 +71029,22 @@ module Adamas::HIR
             elsif name != canonical_name
               override_name = name
             end
+            override_reason = override_name ? "requested_or_canonical_def" : "target_def_symbol"
             # Phase 0 metric: count lower_def entries (full HIR body emission).
             canonical_key = override_name || target_name
             @phase0_lower_def_counts[canonical_key] = (@phase0_lower_def_counts[canonical_key]? || 0) + 1
+            log_materialization_identity_ledger(
+              "def",
+              name,
+              target_name,
+              materialized_name,
+              canonical_key,
+              name,
+              override_reason,
+              lookup_branch,
+              call_arg_types,
+              extra_type_params
+            )
 
             if extra_type_params && !extra_type_params.empty?
               with_isolated_type_param_map(extra_type_params) do

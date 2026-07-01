@@ -1014,6 +1014,42 @@ Next local track:
 - convert high-signal rows into dynamic ledgers, starting with
   `StateScope/materialization identity` or `NameResolution/file identity`.
 
+### Slice 0b: Materialization identity dynamic ledger
+
+Source/spec:
+
+- `src/compiler/hir/ast_to_hir.cr` `lower_function_if_needed_impl`
+  materialization seam;
+- `scripts/materialization_identity_ledger_smoke.sh`.
+
+Falsifiers:
+
+- with `ADAMAS_MATERIALIZATION_IDENTITY_LEDGER=1`, a small compile emits
+  `[MAT_ID]` rows;
+- each row contains requested symbol, target symbol, materialization state key,
+  body symbol, call-symbol hint, override reason, lookup branch, ambient map,
+  target map, and call arg types;
+- with the env var off, this slice changes no compiler behavior.
+
+Evidence:
+
+- `scripts/materialization_identity_ledger_smoke.sh <compiler>` proves the
+  ledger can be enabled without generated compiler artifacts;
+- future bootstrap probes can filter `[MAT_ID]` rows for mismatches such as
+  `state_key != body_symbol` or stale ambient-map authority.
+
+Boundary:
+
+- no call resolution, overload selection, ABI/layout, or backend emission
+  changes;
+- this ledger does not fix symbol mismatches by itself.
+
+Next local track:
+
+- run the ledger on the active s2b/s3b frontier and classify the first
+  mismatch as `StateScope`, `Materialization`, `CallResolution`, or
+  `NameResolution` before any behavior-changing fix.
+
 ### Slice A: CallResolution boundary
 
 Source/spec:
