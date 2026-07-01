@@ -314,6 +314,23 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   and run a would-change census before changing naming/materialization/backend
   behavior.
 
+- 2026-07-01 UPDATE: paused behavior work again after the first full
+  generated-s2 0k-B probe. A fresh stage1 built a fresh generated s2, but
+  `scripts/materialization_transaction_report.sh` on generated s2 compiling
+  full `src/adamas.cr` failed with
+  `FAIL: no [MAT_EMIT] materialization emitted-call rows emitted` and
+  `compiler_rc=139`. The run did emit HIR-side `[MAT_ID]` / `[MAT_TX]` rows
+  through `Adamas::Compiler::CLI#run$IO_IO`, then crashed before backend
+  emitted-call correlation. Interpretation: focused stage1 and generated-s2
+  no-prelude transaction reports are green, but the full generated-stage
+  frontier does not yet reach the emitted-call seam. Do not add another
+  backend/forwarder/materialization behavior patch from this report. The next
+  SDD slice must be a planning/owner-boundary slice: either make the full
+  generated-stage seam reachability itself a named owner problem, or start the
+  `SemanticStateScope` shadow facade that replaces ambient-map naming
+  decisions with explicit authority records. `CodePathStatus` remains the
+  cleanup track only.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was

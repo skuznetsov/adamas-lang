@@ -448,6 +448,14 @@ consumes only `[MAT_EMIT]` body-present/stub evidence, broad `tx=none`
 diagnostics, or backend `@undefined_externs`. The first behavior slice must
 now choose a targeted transaction row, run a would-change census, and prove the
 would-change set is not wider than the classified owner row set.
+The first full generated-s2 report after 0k-B is a new stop signal rather than
+a behavior-fix green light: generated s2 emits HIR-side `[MAT_TX]` rows while
+compiling full `src/adamas.cr`, then crashes with `compiler_rc=139` before any
+`[MAT_EMIT]` rows are emitted. Therefore the next correctness step is not a
+backend forwarder, keepalive, or requested-name materialization patch. It must
+either make generated-stage emitted-call seam reachability a named owner
+problem, or start the `SemanticStateScope` shadow facade so ambient-map naming
+authority becomes an explicit fact before behavior changes.
 
 Initial executable entry point:
 
@@ -490,6 +498,11 @@ Acceptance for this first architecture slice:
   still diagnostic. Do not start a forwarder, target keepalive, or
   requested-name materialization patch until the targeted row and would-change
   census are both named.
+- after the post-0k-B full generated-stage checkpoint, focused transaction
+  reports are not enough to justify a behavior change. The full generated-s2
+  corridor currently does not reach `[MAT_EMIT]`, so the next slice is
+  architecture planning/owner-boundary work unless a fresh run reaches a joined
+  transaction row for the intended target.
 
 ## 9. Decision Summary
 

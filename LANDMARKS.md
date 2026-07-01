@@ -405,6 +405,28 @@ changes, `lower_function_if_needed_impl` state-scope decisions move, or a
 completed `SemanticStateScope` / `MaterializationRegistry` facade replaces
 these diagnostic fields.
 
+[LM-ARCH-POST-0K-B-FULL-STAGE-STOP|verified-boundary 2026-07-01 {F:0.78 G:0.44 R:0.84}]:
+The first full generated-stage transaction report after Slice 0k-B is a stop
+signal, not a behavior-fix green light. Fresh stage1 built a fresh generated
+s2, but generated s2 compiling full `src/adamas.cr` under
+`scripts/materialization_transaction_report.sh` returned `compiler_rc=139` and
+failed with `FAIL: no [MAT_EMIT] materialization emitted-call rows emitted`.
+The run emitted HIR-side `[MAT_ID]` / `[MAT_TX]` rows through
+`Adamas::Compiler::CLI#run$IO_IO`, then crashed before backend emitted-call
+correlation. Scope: focused stage1 and generated-s2 no-prelude reports prove
+the transaction machinery and owner fields in focused corridors; they do not
+prove that full generated s2 reaches the emitted-call seam. Next behavior work
+is still blocked. The next admitted architecture move is either a named
+full-stage seam-reachability owner slice or a `SemanticStateScope` shadow
+facade that turns ambient-map naming authority into an explicit fact before
+behavior changes. Forbidden repeats: backend forwarders from
+`@undefined_externs`, target keepalive from backend body presence, forced
+requested-name materialization, global ambient-map ignore, `@block_owner`
+rollback, or NamedTuple/Tuple string normalization as a root fix. Decay
+trigger: a fresh generated-s2 full transaction report reaches joined
+`[MAT_TX]` / `[MAT_EMIT]` rows for the intended target, or a new owner-scope
+facade changes the next behavior-slice gate.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

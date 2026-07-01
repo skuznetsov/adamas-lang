@@ -18,15 +18,23 @@ materialized under a different target symbol because ambient `@type_param_map`
 leaked into a naming/materialization decision. Later generated-stage ledgers
 then refuted current-arena drift, out-of-range `ExprId`, and missing
 `NodeSlot` for the instrumented `lower_call` edge. That evidence remains
-valuable, but it is not the current next implementation track. The active
-correctness track is now transaction completeness: Slice 0k-A has a default-off
-correlation channel joining HIR materialization transactions to backend
-emitted-call facts, and the next admitted slice must add the missing
-state-scope authority and selected-definition ownership before any behavior
-change. The deeper architectural issue is still that symbol identity,
-type-param authority, AST node ownership, type identity, materialization
-ownership, and field/layout facts are inferred from mutable process state and
-rendered/index-only values instead of from owned typed facts.
+valuable, but it is not the current next implementation track. Slice 0k-A
+added default-off correlation between HIR materialization transactions and
+backend emitted-call facts; Slice 0k-B added selected-definition and
+state-scope owner fields. Those focused slices are not enough to authorize a
+behavior patch, because the full generated-stage run still does not reach the
+emitted-call seam. The deeper architectural issue is still that symbol
+identity, type-param authority, AST node ownership, type identity,
+materialization ownership, and field/layout facts are inferred from mutable
+process state and rendered/index-only values instead of from owned typed facts.
+
+Current next-slice decision after 0k-B: do not start a call/materialization
+behavior patch from focused transaction success alone. The full generated-s2
+transaction report does not reach `[MAT_EMIT]`, so the next admitted slice is
+either generated-stage seam reachability as an owner-boundary problem or the
+`SemanticStateScope` shadow facade. The default preferred direction is the
+facade, because the repeated verified roots involve ambient semantic state
+being treated as authority.
 
 Bounded context: Crystal V2 compiler architecture:
 
@@ -90,6 +98,20 @@ without changing default compiler behavior, but it does not classify any
 `delete_ready`. This slice chooses the cleanup/bloat evidence track for one
 small executable step. It does not replace the transaction-completeness track
 needed before call/materialization behavior patches.
+
+2026-07-01 architecture checkpoint after Slice 0k-B: focused transaction
+reports now carry selected-definition, state-scope, map-source, materialization
+action, and emitted-call correlation fields. That does not yet make the full
+generated-stage frontier transaction-complete. A fresh generated s2 compiling
+full `src/adamas.cr` emitted HIR-side `[MAT_ID]` / `[MAT_TX]` rows through
+`Adamas::Compiler::CLI#run$IO_IO`, then failed the transaction report with
+`FAIL: no [MAT_EMIT] materialization emitted-call rows emitted` and
+`compiler_rc=139`. This is a stop signal, not a backend fix invitation: the
+full generated-stage run does not reach the emitted-call seam, so no
+call/materialization behavior patch may consume backend/stub facts from this
+probe. The next admitted work must either name the full-stage seam reachability
+owner or start the `SemanticStateScope` shadow facade that replaces ambient
+state reads with explicit authority records.
 
 ## 1. Admitted surface
 
@@ -2028,6 +2050,80 @@ Residual boundary after Slice 0k-B:
   classified row set;
 - this does not make `Hash(UInt64, NamedTuple)#[]=` fixed and does not make
   `s2b`/`s3b` green.
+
+### Slice 0k-C: Post-0k-B generated-stage checkpoint and next-slice selection
+
+Status:
+
+- docs-only stop/checkpoint slice;
+- no compiler behavior change is admitted by this slice;
+- current decision: do not continue 0k as another backend or forwarder
+  diagnostic ladder.
+
+Source/spec:
+
+- Slice 0k-A/0k-B transaction reports;
+- full generated-s2 run compiling `src/adamas.cr`;
+- this SDD's stop rules for backend-only semantic discovery;
+- `TODO.md` and `LANDMARKS.md` active bootstrap ledgers.
+
+Fresh evidence:
+
+- a fresh stage1 built a fresh generated s2 with the 0k-B owner fields;
+- the generated s2 full transaction report returned `compiler_rc=139`;
+- the report failed with
+  `FAIL: no [MAT_EMIT] materialization emitted-call rows emitted`;
+- the run emitted HIR-side `[MAT_ID]` / `[MAT_TX]` rows through
+  `Adamas::Compiler::CLI#run$IO_IO`;
+- the crash happened before backend emitted-call correlation was available.
+
+Interpretation:
+
+- focused stage1 and generated-s2 no-prelude transaction reports prove the
+  transaction machinery is present and default-off, but only in those focused
+  corridors;
+- the full generated-stage frontier currently stops before the emitted-call
+  seam, so the completed transaction contract is not yet available for a
+  full-stage behavior slice;
+- a backend `@undefined_externs`, `@func_by_name`, stub, keepalive, or
+  forwarder patch would be a symptom fix unless a HIR-owned transaction row
+  reaches and classifies that seam first.
+
+Next allowed architecture moves:
+
+1. `SemanticStateScope` shadow facade:
+   introduce an explicit behavior-neutral record for naming/materialization
+   authority decisions, compare it against current ambient-map decisions, and
+   fail closed on unowned ambient reads. This is the preferred next correctness
+   architecture slice because repeated frontiers trace back to mutable ambient
+   state being treated as authority.
+2. Full-stage seam-reachability owner slice:
+   if the next step targets the current `compiler_rc=139`, it must name the
+   first owner boundary that prevents generated s2 from reaching `[MAT_EMIT]`.
+   It must not use backend stubs as the first semantic discovery point.
+3. Runtime `CodePathStatus` extension:
+   admissible only for cleanup/bloat work on a named cluster. It must not be
+   used as a substitute for semantic transaction identity.
+
+Stop conditions:
+
+- another report slice is proposed without saying which semantic owner it will
+  make explicit;
+- the proposed fix consumes only backend emitted/stub facts from a run that did
+  not reach a joined HIR-owned transaction;
+- the would-change census is wider than the classified owner row set;
+- the patch touches `@block_owner`, changes it back to a tuple/namedtuple
+  carrier, or relies on NamedTuple/Tuple string normalization as the root fix.
+
+Minimal evidence before resuming behavior fixes:
+
+- a named owner boundary for the next behavior row;
+- a red/green focused falsifier for that boundary;
+- a would-change census with unrelated rows classified as legitimate or
+  rejected before code changes;
+- static semantic and CodePathStatus censuses still pass;
+- generated-s2 evidence either reaches a joined transaction row for the target
+  or explicitly names why the next slice is still behavior-neutral.
 
 ### Slice A: CallResolution boundary
 
