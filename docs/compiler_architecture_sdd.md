@@ -364,10 +364,10 @@ Problem:
 
 Admitted next slices, in order:
 
-1. `FunctionBodyPresence`: add the missing falsifier for H5 before trusting
-   downstream call/materialization decisions. The test must distinguish a real
-   emitted body from an undefined/bodyless stub and state which phase owns the
-   fact.
+1. `FunctionBodyPresence`: H5 falsifier is now present as
+   `regression_tests/hir_function_body_presence_contract.sh`. It distinguishes
+   registered bodyless HIR functions from real body evidence and verifies the
+   HIR->MIR boundary preserves bodyless functions as unreachable stubs.
 2. `GenericIdentityKey`: add a semantic-key oracle for G3 before changing
    generic materialization or registration behavior. The oracle must compare
    owner, template/source identity, declared type parameters, and
@@ -396,6 +396,13 @@ DoD for the next production slice:
 - run the falsifier plus `git diff --check`;
 - update TODO/LANDMARKS/SDD with residual risk and no green `s2b`/`s3b` claim
   unless a generated stage actually proves it.
+
+Executed result after Slice 0k-AY: H5 is no longer missing a falsifier. The
+new focused guard `regression_tests/hir_function_body_presence_contract.sh`
+runs `spec/hir/function_body_presence_contract_spec.cr` and proves the HIR
+truth table for body presence plus the HIR->MIR bodyless-stub boundary. This is
+not a compiler behavior change. The next contract-first target is G3 generic
+template/instance semantic keys, not a generated-stage crash-stack patch.
 
 Current selected implementation status: Slice 0k-AH is a behavior-neutral
 consumer migration. Instance-method override, keepalive, and diagnostic

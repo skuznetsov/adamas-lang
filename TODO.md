@@ -8,6 +8,19 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: implemented Slice 0k-AY, the first contract burn-down
+  slice after the 0k-AX pivot. H5 in `docs/specs/05-falsifier-matrix.md` now
+  has an executable guard:
+  `regression_tests/hir_function_body_presence_contract.sh`. The guard runs a
+  focused spec that proves `HIR::Module#create_function` registers a function
+  without making `has_function_with_body?` true, proves instruction and real
+  terminator evidence do make it true, and proves HIR->MIR preserves a bodyless
+  registered function as an empty `MIR::Unreachable` stub while a real body
+  lowers to `MIR::Return`. This closes the missing H5 falsifier only; it does
+  not change compiler behavior and does not prove green `s2b`/`s3b`. Next
+  contract-first priority remains G3: generic template/instance semantic keys
+  versus rendered-name identity.
+
 - 2026-07-01 UPDATE: added Slice 0k-AX, a docs-only contract-first
   architecture pivot after 0k-AW. The next work must not be selected by the
   latest generated-stage crash stack. Before another behavior fix, pick one

@@ -105,6 +105,13 @@ keys, and B3 original-vs-stage semantic oracle coverage. A helper, ledger, or
 report is architecture work only when it closes one of those holes or removes a
 named old authority edge; otherwise it is diagnostic debt.
 
+2026-07-01 post-0k-AY note: H5 now has a focused executable guard,
+`regression_tests/hir_function_body_presence_contract.sh`, covering the HIR
+body-presence truth table and the HIR->MIR bodyless-stub boundary. The next
+contract burn-down target is G3: generic template/instance semantic identity
+must be keyed by owner/source/type-param/specialization facts, not by rendered
+names.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`

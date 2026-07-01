@@ -36,7 +36,7 @@ Each non-refuted row has a phase pressure:
 | H2 | Self-reopen wrappers must not recursively register the current owner. | `01-hir-name-resolution.md` section 2.2, LM-553 | `regression_tests/p2_self_nested_module_registration_frontier.sh <compiler>`. | current | [FALSIFIABLE] |
 | H3 | Nested builtin annotations must remain top-level unless structurally nested. | `01-hir-name-resolution.md` section 3, LM-554 | `regression_tests/p2_full_prelude_generic_template_namespace_no_pollution.sh <compiler>`. | current | [FALSIFIABLE] |
 | H4 | Type-literal name queries lower to literal strings, not static stubs. | `01-hir-name-resolution.md` section 4, LM-558 | `regression_tests/p2_type_literal_name_query_no_stub.sh <compiler>`. | current | [FALSIFIABLE] |
-| H5 | Function body presence must distinguish real bodies from stubs. | `01-hir-name-resolution.md` section 6 | Add no-prelude HIR/MIR guard that registers a bodyless function and proves downstream stages do not treat it as emitted. | next-touch | [MISSING-FALSIFIER] |
+| H5 | Function body presence must distinguish real bodies from stubs. | `01-hir-name-resolution.md` section 6 | `regression_tests/hir_function_body_presence_contract.sh` proves a registered bodyless HIR function is not `has_function_with_body?` and HIR->MIR preserves it as an empty unreachable stub, while real body evidence lowers as body. | current | [FALSIFIABLE] |
 
 ## 4. Generic Template Registration
 

@@ -12,6 +12,22 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-AY-H5-FUNCTION-BODY-PRESENCE-GUARD|verified 2026-07-01 {F:0.88 G:0.34 R:0.90}]:
+Slice 0k-AY closes the missing H5 falsifier without changing compiler
+behavior. New guard:
+`regression_tests/hir_function_body_presence_contract.sh`. It runs focused
+spec `spec/hir/function_body_presence_contract_spec.cr`, proving that
+`HIR::Module#create_function` registers a function but leaves
+`has_function_with_body?` false while the entry block still has only its
+initial placeholder `Unreachable`; adding an instruction, setting a `Return`,
+or explicitly setting an `Unreachable` terminator counts as emitted body
+evidence. The same guard proves the downstream HIR->MIR boundary keeps a
+bodyless registered HIR function as an empty MIR function with an
+`Unreachable` terminator while a real body lowers to `Return`. Scope: contract
+falsifier only; no production behavior changed and no green `s2b`/`s3b` claim.
+Decay trigger: `has_function_with_body?`, HIR block emission flags, or HIR->MIR
+function lowering semantics change.
+
 [LM-ARCH-0K-AX-CONTRACT-FIRST-PIVOT|design-sealed 2026-07-01 {F:0.82 G:0.60 R:0.86}]:
 Slice 0k-AX is a docs-only architecture pivot after 0k-AW. The repeated
 frontier pattern is now load-bearing evidence: local generated-stage symptoms
