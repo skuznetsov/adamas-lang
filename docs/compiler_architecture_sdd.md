@@ -296,10 +296,10 @@ DoD for the future production slice:
   fresh stage1 builds and compiles/runs at least one trivial program and one
   generic keep-requested-name stress program through `scripts/run_safe.sh`;
 - regression audit:
-  `hash_named_tuple_index_assign_materialization_repro.sh` must be checked
-  against the current `BlockOwner` carrier before use. If it still searches for
-  the obsolete `Hash(UInt64, NamedTuple)#[]=` symbol, replace it with a
-  `BlockOwner` successor or retire it as stale before using it as a gate;
+  the old `hash_named_tuple_index_assign_materialization_repro.sh` was retired
+  because it searched for the obsolete `Hash(UInt64, NamedTuple)#[]=` carrier.
+  Add a `BlockOwner` successor before using owner-cache materialization as a
+  gate;
 - generated-stage guard:
   run the existing generated-stage classifier or a narrower successor only as a
   guard. A crash-stack movement or a green source-shape gate is not a bootstrap
@@ -1747,9 +1747,11 @@ future architecture work:
 - `s2b_value_def_block_phantom_hash_probe.sh` or successor - phantom builtin
   base registration.
 - `hash_dual_typeref_phantom_repro.sh` - dual typeref phantom regression.
-- `hash_named_tuple_index_assign_materialization_repro.sh` or successor -
-  `Hash(UInt64, NamedTuple)#[]=` must not emit a call to a symbol whose body was
-  materialized only under a different target symbol.
+- `BlockOwner` owner-cache materialization successor - the current
+  `Hash(UInt64, BlockOwner)#[]=` carrier must not emit a call to a symbol whose
+  body was materialized only under a different target symbol. The old
+  `hash_named_tuple_index_assign_materialization_repro.sh` was retired because
+  it targeted the obsolete `Hash(UInt64, NamedTuple)#[]=` shape.
 - `type_param_scope_authority_probe.sh` or successor - distinguishes leaked
   ambient `@type_param_map` from legitimate current-instantiation maps in
   naming/materialization decisions.

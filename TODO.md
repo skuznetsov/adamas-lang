@@ -8,6 +8,16 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: retired stale regression
+  `regression_tests/hash_named_tuple_index_assign_materialization_repro.sh`.
+  The script searched self-IR for the obsolete
+  `Hash(UInt64, NamedTuple)#[]=` owner-cache shape, but the admitted carrier is
+  now `Hash(UInt64, BlockOwner)`. Keeping the script produced false red
+  evidence (`no Hash(UInt64, NamedTuple)#[]= materialization found`) after the
+  `BlockOwner` migration. Future 0k-AV implementation must add a successor
+  guard for the current `BlockOwner` carrier before using owner-cache
+  materialization as DoD.
+
 - 2026-07-01 UPDATE: added Slice 0k-AV, a docs-only hostile self-review
   checkpoint after the 0k-AU source selector. The selector correctly refused to
   choose between `lower_function_if_needed.callsite_args` and
@@ -17,10 +27,11 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   admitted production slice may introduce a shared keep-requested-name state
   model only if it first states the owned fact, legacy edge, emitted-behavior
   parity rule, stale-regression audit, and generated-stage guard. It must not
-  claim bootstrap progress from `state_model_redesign_complete=1` alone. If
-  `hash_named_tuple_index_assign_materialization_repro.sh` no longer matches
-  the `BlockOwner` carrier, replace or retire it before using it as DoD. Do not
-  add backend forwarders, target keepalive, requested-name forcing,
+  claim bootstrap progress from `state_model_redesign_complete=1` alone.
+  Because the retired `hash_named_tuple_index_assign_materialization_repro.sh`
+  no longer matches the `BlockOwner` carrier, add a successor guard before
+  using owner-cache materialization as DoD. Do not add backend forwarders,
+  target keepalive, requested-name forcing,
   `NamedTuple`/`Tuple` rendering changes, global ambient-map policy changes, or
   `BlockOwner` rollback.
 
@@ -2384,7 +2395,8 @@ Working policy:
   `regression_tests/stage2_indexable_range_materialization_repro.sh`.
 - Verified: `crystal build src/adamas.cr -o /tmp/adamas_commit_candidate
   --error-trace`; focused guards above; existing
-  `hash_named_tuple_index_assign_materialization_repro.sh`;
+  `hash_named_tuple_index_assign_materialization_repro.sh` (retired later after
+  the `BlockOwner` carrier replaced the old NamedTuple owner cache);
   `regression_tests/run_all_suites.sh /tmp/adamas_commit_candidate 4` passed
   originals 151/151 + combined 36/36.
 - PREVIOUS FRONTIER (closed by the section above): fresh
@@ -2471,7 +2483,9 @@ Working policy:
   for a distinct requested name, mark that target as a materialization keepalive
   root in `HIR::Module.reachable_function_names`.
 - Regression: `regression_tests/hash_named_tuple_index_assign_materialization_repro.sh`
-  builds self-IR through `run_safe` and fails on any matching abort stub.
+  built self-IR through `run_safe` and failed on any matching abort stub. This
+  guard was later retired after the owner cache moved from the old
+  `Hash(UInt64, NamedTuple)#[]=` carrier to `Hash(UInt64, BlockOwner)`.
 - Verified: stage1 build; focused Hash/NamedTuple self-IR regression; split
   materialization + `split(Char)` + short-circuit-narrowing guards; full suites
   149/149 originals + 36/36 combined. Fresh s2b builds and compiles a no-prelude

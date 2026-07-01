@@ -12,6 +12,20 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-AV-STALE-NAMEDTUPLE-HASH-GUARD-RETIRED|verified 2026-07-01 {F:0.86 G:0.32 R:0.90}]:
+The executable regression
+`regression_tests/hash_named_tuple_index_assign_materialization_repro.sh` was
+retired as stale. It searched generated self-IR for the old
+`Hash(UInt64, NamedTuple)#[]=` owner-cache materialization/stub shape, while the
+current admitted owner carrier is `Hash(UInt64, BlockOwner)`. Running the old
+script after the `BlockOwner` migration can produce a false red
+`no Hash(UInt64, NamedTuple)#[]= materialization found` even when the current
+carrier is not being tested. Future 0k-AV work must add a successor guard for
+the current `BlockOwner` carrier before using owner-cache materialization as
+DoD. Scope: stale regression retirement only; no compiler behavior changed and
+no bootstrap claim. Decay trigger: a successor `BlockOwner` owner-cache
+materialization regression lands or the owner carrier changes again.
+
 [LM-ARCH-0K-AV-PLAN-BEFORE-STATE-SCOPE-HELPER|design-sealed 2026-07-01 {F:0.84 G:0.54 R:0.88}]:
 Slice 0k-AV is a docs-only hostile self-review checkpoint after 0k-AU. The
 0k-AU selector correctly forced a state-model redesign because
@@ -24,10 +38,11 @@ from legacy ambient predicates. That WIP was reverted before this checkpoint.
 The next production slice is admitted only as a behavior-neutral shared
 keep-requested-name state model with an explicit owned fact, old authority edge,
 legacy parity rule, stale-regression audit, and generated-stage guard. It must
-not claim `s2b`/`s3b` progress from source shape alone. The old
-`hash_named_tuple_index_assign_materialization_repro.sh` gate must be audited
-against the current `BlockOwner` carrier before it is used as DoD; if stale, it
-must be replaced or retired. Rejected repeats remain backend forwarder, target
+not claim `s2b`/`s3b` progress from source shape alone. The stale
+`hash_named_tuple_index_assign_materialization_repro.sh` gate has been retired;
+a successor guard must target the current `BlockOwner` carrier before
+owner-cache materialization can be used as DoD. Rejected repeats remain backend
+forwarder, target
 keepalive, requested-name force, `NamedTuple`/`Tuple` rendering change, global
 ambient-map policy change, and `BlockOwner` rollback. Scope: plan/SDD
 checkpoint only; no compiler behavior changed and no bootstrap claim. Decay
