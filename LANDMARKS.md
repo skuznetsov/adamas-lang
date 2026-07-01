@@ -714,6 +714,25 @@ source-shape/report evidence, the SDD routes the next slice to `CodePathStatus`
 cleanup, or fresh generated-stage evidence invalidates the selected override
 consumer.
 
+[LM-ARCH-PIVOT-ANTI-TAIL-CHASE-GATE|design-sealed 2026-07-01 {F:0.78 G:0.56 R:0.84}]:
+Slice 0k-K is the current architecture pause/pivot gate before any 0k-J code
+helper. It records the anti-tail-chase rule for this frontier: the next code
+slice must present an authority-edge replacement receipt before it is admitted.
+The receipt must name `old_edge`, `owned_edge`, `legacy_parity`,
+`source_shape`, `report_shape`, `generated_stage_boundary`, and
+`cleanup_impact`. A helper that only prints `[MAT_PROMOTION]` rows, a crash
+probe that does not refute current owner evidence, a backend undefined-extern
+rescue, a target keepalive/forwarder, a requested-name materialization patch,
+global ambient-map changes, `NamedTuple`/`Tuple` display normalization, or a
+`BlockOwner` rollback remains non-admitted. If the receipt cannot be made
+concrete, the next track must explicitly switch to `CodePathStatus` cleanup
+selection or to a generated-stage reachability owner boundary. Scope:
+docs-only design seal; no compiler behavior changed and no green `s2b`/`s3b`
+claim. Decay trigger: a 0k-J implementation lands with source-shape/report
+evidence, `CodePathStatus` cleanup becomes the selected track, or fresh
+generated-stage evidence refutes the current MaterializationDecision owner
+route.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

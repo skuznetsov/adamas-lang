@@ -580,6 +580,19 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   `NamedTuple`/`Tuple` display normalization, and rolling `BlockOwner` back to
   tuple/namedtuple metadata.
 
+- 2026-07-01 UPDATE: added Slice 0k-K as an architecture pivot /
+  anti-tail-chase gate before any 0k-J code helper. This is docs-only and
+  records the current stop-rule from the owner review: the next code slice is
+  admitted only if it has an authority-edge replacement receipt (`old_edge`,
+  `owned_edge`, `legacy_parity`, `source_shape`, `report_shape`,
+  `generated_stage_boundary`, and `cleanup_impact`). A helper that only prints
+  `[MAT_PROMOTION]` rows, a crash probe that does not refute current owner
+  evidence, or a cleanup pass without `CodePathStatus` runtime/falsifier
+  evidence remains non-admitted. If the receipt cannot be made concrete, the
+  next track must switch explicitly to `CodePathStatus` cleanup selection or a
+  generated-stage reachability owner boundary. No compiler behavior changed and
+  no green `s2b`/`s3b` claim is made.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was

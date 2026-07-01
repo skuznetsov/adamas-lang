@@ -128,6 +128,17 @@ ambient predicate as its only authority. A local unfinished 0k-J WIP that added
 `[MAT_PROMOTION]` rows before this definition gate is classified as stale and
 non-admitted.
 
+Current next-slice decision after the architecture pause: do not start the
+0k-J helper until the implementation plan proves an authority-edge
+replacement, not only a row/report addition. Slice 0k-K is a docs-only
+anti-tail-chase gate: the next code slice must name the old authority edge it
+removes or shadows, the owned decision record that replaces it, the
+source-shape check that proves the consumer no longer depends on the old direct
+authority path, and the generated-stage residual if the focused seam is not
+reached. If that receipt cannot be produced, the next track must switch to
+`CodePathStatus` cleanup or to a generated-stage reachability owner boundary
+instead of adding another materialization diagnostic.
+
 Bounded context: Crystal V2 compiler architecture:
 
 - HIR lowering and semantic registration (`src/compiler/hir/ast_to_hir.cr`)
@@ -3251,6 +3262,112 @@ Next local track:
 - implement the behavior-neutral helper only after this gate is in place, or
   switch to `CodePathStatus` cleanup if the source-shape/report gates show that
   the helper would not reduce the selected seam's state contract.
+
+### Slice 0k-K: Architecture pivot and anti-tail-chase gate
+
+Status:
+
+- design-sealed docs-only checkpoint after the 0k-J definition gate and the
+  explicit architecture pause;
+- no compiler behavior, materialization behavior, remangling behavior, backend
+  behavior, AST-read behavior, cleanup behavior, or `BlockOwner` carrier is
+  changed by this slice.
+
+ProblemCard:
+
+- signal: repeated successful ledger/report slices still leave generated s2
+  crashing before the full `MaterializationDecision` seam;
+- why now: the selected 0k-J helper is locally plausible, but a locally
+  plausible helper is the same pattern that produced prior symptom loops unless
+  it proves a smaller state contract;
+- bounded context: HIR semantic ownership and materialization naming;
+- not merely: another report, crash probe, or helper wrapper;
+- improvement probe: require an authority-edge replacement receipt before any
+  code implementation;
+- unknowns: whether generated s2 reaches the promoted seam after the helper,
+  and whether the selected override seam is enough to move the full bootstrap;
+- safe next move: P2W-ready only for a docs-backed edge replacement plan;
+- validation boundary: source-shape evidence plus existing report
+  compatibility, not a green `s2b`/`s3b` claim.
+
+Architecture progress definition:
+
+1. A slice is architecture progress only if it does at least one of:
+   - replaces or shadows a named legacy authority edge with an owned record;
+   - classifies one stale/debug/fallback path with `CodePathStatus` and a
+     protecting falsifier;
+   - refutes the current owner evidence with fresher generated-stage data and
+     names the new owner boundary.
+2. A new report or env var is not progress unless it enables one of those
+   outcomes in the same slice.
+3. A helper is not progress if the selected consumer still obtains its decision
+   from the same direct predicate, ambient map, rendered-name comparison,
+   backend function presence, or raw index after the helper lands.
+4. A generated-stage crash movement is not progress unless the fixed invariant
+   has a guard and the new residual boundary is named in `TODO.md` /
+   `LANDMARKS.md`.
+
+Required receipt before any 0k-J code implementation:
+
+- `old_edge`: exact source seam and direct authority path to be replaced;
+- `owned_edge`: exact `MaterializationDecision` / `MaterializationRegistry`
+  record fields that the helper consumes;
+- `legacy_parity`: proof that emitted behavior still returns the legacy result
+  in this slice;
+- `source_shape`: static check proving the promoted seam no longer calls the
+  old direct authority path as its only authority;
+- `report_shape`: focused report fields proving complete owner fields, zero
+  malformed rows, and `emitted_result == legacy_result`;
+- `generated_stage_boundary`: either promoted generated-s2 rows or the explicit
+  `not_reached_named_residual` reason;
+- `cleanup_impact`: whether the slice marks any old debug/probe/fallback path
+  for later `CodePathStatus`, without deleting it in the same commit.
+
+Admitted next implementation choices:
+
+1. `0k-J owner-consumption helper`: behavior-neutral helper for exactly
+   `lower_function_if_needed.override`, admitted only with the receipt above.
+2. `CodePathStatus cleanup selection`: no semantic behavior change; choose one
+   stale/debug/fallback cluster and classify it as `live`, `legacy_shim`,
+   `debug_only`, `suspected_dead`, or `delete_blocked` with a protecting
+   falsifier.
+3. `Generated-stage reachability owner boundary`: behavior-neutral slice that
+   names why generated s2 does not reach the selected materialization seam,
+   without using backend stubs or undefined externs as the first semantic
+   discovery point.
+
+Rejected next moves:
+
+- implementing a 0k-J helper whose only effect is to print `[MAT_PROMOTION]`
+  rows;
+- direct patches to `def_has_untyped_regular_param?`,
+  `raw_annotation_needs_callsite_specialization?`,
+  `prefer_callsite_specialization`, `lower_call.remangle`, backend
+  undefined-extern handling, target keepalive, or requested-name materialization;
+- global ambient-map clearing, global short-type-param rebinding, or
+  `NamedTuple`/`Tuple` display normalization;
+- rolling `BlockOwner` back to tuple/namedtuple metadata;
+- deleting workaround/debug paths without runtime `CodePathStatus` evidence and
+  a protecting falsifier.
+
+Hostile self-review:
+
+- strongest objection: this slice can become another docs-only delay. The guard
+  is that it narrows the next code slice acceptance test to an edge-replacement
+  receipt; if the receipt is missing, code is not admitted;
+- second objection: selected `lower_function_if_needed.override` may be a
+  focused-stage artifact because generated s2 still does not reach the seam.
+  The guard is to keep generated-stage reachability as a first-class residual
+  rather than claiming bootstrap movement from a stage1 helper;
+- third objection: cleanup can distract from correctness. The guard is that
+  `CodePathStatus` cleanup is admitted only when owner-consumption cannot
+  produce the receipt, and cleanup must not substitute for semantic ownership.
+
+Next local track:
+
+- write the 0k-J implementation plan in terms of the required receipt above, or
+  explicitly switch to `CodePathStatus` cleanup / generated-stage reachability
+  if the receipt cannot be made concrete.
 
 ### Slice A: CallResolution boundary
 
