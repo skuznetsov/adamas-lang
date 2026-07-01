@@ -12,6 +12,25 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-BB-TYPEVALUE-RUNTIME-TYPE-IDENTITY|design-sealed 2026-07-01 {F:0.83 G:0.54 R:0.88}]:
+Slice 0k-BB is a docs-only hostile self-review checkpoint after the measured-red
+B3 oracle. The current type-visible semantic failure is now classified as a
+`TypeValue` / `RuntimeTypeIdentity` frontier, not as a standalone
+`lower_typeof` bug. The live source has multiple authority edges for the same
+semantic family: `typeof(...)` lowers to a nil placeholder, runtime `.class`
+creates a nil type-literal pointer, type-literal `.name` / `.to_s` / `inspect`
+queries use their own lowering path, and string interpolation has a dot-class
+literal special-case. The next admitted production slice must first add or
+extend a falsifier covering direct and interpolated `typeof`, runtime `.class`,
+nilable `.class`, and type-literal name/string queries, then introduce one
+HIR-owned type-visible value fact consumed by those paths. Rejected repeats:
+string-only `lower_typeof`, interpolation-only or direct-output-only special
+cases, backend stubs/forwarders, generic materialization changes, `BlockOwner`
+changes, and green `s2b`/`s3b` claims from B3 alone. Scope: planning/frontier
+control only; no compiler behavior changed and no bootstrap claim. Decay
+trigger: the TypeValue falsifier lands, HIR type-literal lowering is rewritten,
+or fresh original-vs-stage evidence selects a different root boundary.
+
 [LM-ARCH-0K-BA-B3-ORIGINAL-STAGE-SEMANTIC-ORACLE|measured-red 2026-07-01 {F:0.87 G:0.30 R:0.89}]:
 Slice 0k-BA adds the B3 original-vs-stage semantic oracle:
 `regression_tests/original_vs_stage_semantic_oracle_contract.sh <compiler>`.

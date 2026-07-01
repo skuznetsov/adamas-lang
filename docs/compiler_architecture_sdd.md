@@ -23,6 +23,7 @@ named path, or refuting a row with fresher generated-stage evidence.
 | Owner boundary | Current status | Next admitted movement | Forbidden repeat |
 | --- | --- | --- | --- |
 | `SemanticStateScope` | `prefer_callsite_specialization` is promoted in shadow/parity mode; emitted behavior still returns the legacy result. The `lower_function_if_needed.override` seam is also already promoted through the MaterializationDecision shadow helper and must not be reselected. Slice 0k-AU extends the existing admission report with a source-only no-repeat selector. It finds two unpromoted frontend direct consumers (`lower_function_if_needed.callsite_args` and `lower_function_if_needed.suffix_types`), rejects `lower_call.remangle` as backend-adjacent, and selects no single root-sized consumer. Slice 0k-AV defined the admitted shared state-model shape. Slice 0k-AW implements that shared `KeepRequestedNameDecision` state in behavior-neutral parity mode for both paired frontend consumers and replaces the stale `NamedTuple` owner-cache guard with a current `BlockOwner` guard. | The paired keep-requested-name inline edges are now consumed in parity mode. Next movement is not another crash-stack fix. Move to contract-first SDD hardening: close missing falsifiers for semantic identity, function-body presence, and generic instance/template keys, or select a fresh owner boundary only if it replaces a named authority edge with an owned fact and a falsifier. | Reselecting `prefer_callsite_specialization` or `lower_function_if_needed.override`; choosing either `callsite_args` or `suffix_types` by source order or convenience; treating `state_model_redesign_complete=1` as bootstrap progress; changing emitted behavior from a shadow row; globally clearing/ignoring `@type_param_map`; backend forwarders; requested-name forcing; `BlockOwner` rollback. |
+| `TypeValue` / `RuntimeTypeIdentity` | Slice 0k-BA made the original-vs-stage semantic oracle executable and measured-red: current stage preserves `CONST=7` but prints blank `TYPE=` / `UNION=` where original Crystal prints `Int32`. The observed source edges are split: `typeof` currently lowers to a `nil` placeholder, `.class` creates a nil type-literal pointer, type-literal name queries have their own path, and string interpolation has a special-case for dot-class literals. | Add a docs/falsifier-first `TypeValue` boundary before any behavior fix. The next production slice must define one HIR-owned type-visible value fact and extend the B3/HIR falsifier matrix so `typeof`, `.class`, type-literal `.name/.to_s`, direct output, and interpolation all consume the same representation. | A string-only `lower_typeof` fix; an interpolation-only fix; a direct `puts` special-case without a type-value owner; backend stubs/forwarders; treating a green single B3 line as green type semantics; changing `BlockOwner` or generic materialization in the same slice. |
 | `MaterializationIdentity` / `MaterializationRegistry` | Slice 0k-Z promotes the selected `lower_function_if_needed.symbol_binding` seam in behavior-neutral shadow/parity mode. `scripts/materialization_symbol_binding_admission_report.sh` now reports `already_promoted_shadow` even with `REQUIRE_PROMOTED=1`; keepalive and materialization-ledger consumers read from `MaterializationSymbolBinding` fields instead of recomputing split locals. | Do not flip emitted symbols from this slice. Next movement must either run a generated-stage materialization/symbol-binding classification on the residual full-prelude s2 crash, or select the next root-sized owner consumer with a red/green gate. | Backend undefined-extern rescue; target keepalive as a standalone patch; requested-name forcing; `NamedTuple`/`Tuple` display normalization; global ambient-map predicate changes; `BlockOwner` rollback; treating the green source-shape gate as green `s2b`/`s3b`. |
 | `NameResolution` / `MethodNameCodec` | File identity was fixed; method/symbol identity is still partly rendered-string driven. Slice 0k-V promotes the selected `lower_function_if_needed.exact_lookup_keep_requested_name` seam through `method_name_codec_exact_lookup_keep_requested_name?` in shadow/parity mode; emitted behavior still returns the legacy result. Slice 0k-W pauses standalone promotion-report proliferation. | Either select the next root-sized codec seam with a red/green source-shape gate, or define a generated-stage classification slice that consumes the existing promotion ledger to answer one blocking yes/no decision before changing emitted naming behavior. | String-slice parsing patches at individual callsites; treating rendered names as canonical identity; broad normalization without a falsifier; selecting lower-level helpers before a materialization seam; flipping owner-result behavior from shadow rows; committing another report surface that does not reduce or select an authority edge. |
 | `CallMaterializationTransaction` spine | Slice 0k-AJ selects the reached transaction/emission edge `call_materialization.wrapper_or_call_remap.extern_missing_body`. Slice 0k-AK adds the docs stop rule for post-consumer selector decay. Slice 0k-AL makes that rule executable. Slice 0k-AM implements the behavior-neutral consumer: HIR stores transaction contract facts by tx id, HIR-to-MIR attaches them to transaction-bound `Call`/`ExternCall`, backend `[MAT_EMIT]` logs them mechanically, and optimizer replacement preserves them. Slice 0k-AO extends the same selector with a post-consumer exact-contract residual split. Fresh generated-stage evidence reports `post_consumer_state=selected_consumed_by_contract_consumer`, `contract_mismatch_rows=0`, `residual_exact_missing_body_rows=14`, `residual_exact_missing_body_groups=9`, and `residual_selection_status=rejected_exact_missing_body_ambiguous`. | The 0k-AJ selected edge is consumed, and the immediate exact-contract residual is ambiguous rather than root-selected. The next movement must either add a stronger discriminator that can select exactly one old authority edge from the 9 residual groups, or switch to `consolidation` / `cleanup/delete` under the 0k-AN covenant. | Treating consumed edge disappearance as failure; making old `REQUIRE_SELECTED=1` green by redefining rows; behavior-patching any residual sample (`Array#<<`, `Slice#[]`, `IO#read`, etc.) without a unique selector; backend forwarder or undefined-extern rescue; requested-name forcing; broad `NamedTuple`/`Tuple` rendering changes; global ambient-map policy changes; `BlockOwner` rollback; another standalone report that does not remove ambiguity or retire/refute an older surface. |
@@ -429,6 +430,73 @@ the same source with original Crystal and the supplied stage compiler through
 frontier; it is not a compiler behavior fix and not a green `s2b`/`s3b` claim.
 Next work may either fix that original-vs-stage type-visible semantic frontier
 or begin migrating a named old generic-identity authority edge to the G3 keys.
+
+### Slice 0k-BB: TypeValue boundary before fixing B3
+
+Status:
+
+- docs-only hostile self-review checkpoint;
+- no compiler behavior, type-literal behavior, output behavior,
+  materialization behavior, generic behavior, backend behavior, cleanup
+  behavior, or `BlockOwner` carrier is changed by this slice.
+
+Problem:
+
+- B3 is now an executable original-vs-stage oracle, but its measured-red rows
+  are type-visible semantics, not an arbitrary runtime-output bug;
+- a local patch to `lower_typeof` would be tempting because current source
+  explicitly emits `nil` for `typeof(...)`, but that only covers one edge;
+- the same semantic surface crosses `typeof`, runtime `.class`, type literals,
+  `.name` / `.to_s` / `inspect`, direct `puts`, and string interpolation;
+- current implementation treats those as separate ad hoc paths: placeholder
+  nil values, nil type-literal pointers, name-query lowering, and interpolation
+  special cases.
+
+Design boundary:
+
+- introduce `TypeValue` / `RuntimeTypeIdentity` as the next owner boundary;
+- one HIR-owned fact must carry at least:
+  - the semantic `TypeRef`;
+  - the canonical type display name;
+  - the origin (`typeof`, runtime `.class`, explicit type literal, or type
+    literal query);
+  - whether the value is compile-time-only or needs runtime stringification;
+- consumers must read that fact instead of inferring type visibility from
+  runtime pointer nil-ness, dot-class side maps, or rendered-name shortcuts.
+
+Admitted next production slice:
+
+1. Extend the B3/HIR falsifier before behavior changes so it covers:
+   - direct `puts typeof(1)`;
+   - interpolated `"#{typeof(1)}"`;
+   - direct `puts 1.class`;
+   - interpolated `"#{1.class}"`;
+   - direct and interpolated `(true ? 1 : nil).class`;
+   - type literal `.name`, `.to_s`, and `inspect` queries.
+2. Add the smallest owner fact/helper that lets these edges share one
+   representation while preserving existing H4 type-literal name-query guard.
+3. Flip only the reached consumers needed by that falsifier.
+4. Run strict B3, H4, `git diff --check`, and the narrow new TypeValue guard.
+
+Stop rules:
+
+- do not make `lower_typeof` return a plain string as a standalone fix;
+- do not add another special case only inside string interpolation or direct
+  `puts`;
+- do not treat runtime pointer shape of a type literal as the semantic
+  authority;
+- do not use backend dead-code stubs, forwarders, or LLVM stringification as
+  the repair layer;
+- do not change generic materialization, `BlockOwner`, requested-name policy,
+  or ambient-map policy in the same slice;
+- do not claim green `s2b`/`s3b` from B3 alone.
+
+Next local track:
+
+- implement the TypeValue falsifier/owner slice, then use the strict B3 oracle
+  as the acceptance gate for this frontier. If the TypeValue scope becomes
+  broad or mixed, stop at classification and return to the G3 semantic-key
+  migration lane rather than patching one output path.
 
 Current selected implementation status: Slice 0k-AH is a behavior-neutral
 consumer migration. Instance-method override, keepalive, and diagnostic

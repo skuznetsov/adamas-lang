@@ -131,6 +131,16 @@ original prints `TYPE=Int32` and `UNION=Int32`, while the stage compiler emits
 blank `TYPE=` and `UNION=`. This is a named semantic frontier, not accepted
 bootstrap progress.
 
+2026-07-01 post-0k-BB note: the measured-red B3 frontier is now classified as
+`TypeValue` / `RuntimeTypeIdentity`, not a one-line `typeof` output bug. The
+next executable implementation unit should first add the narrow falsifier that
+proves direct and interpolated `typeof`, runtime `.class`, nilable `.class`,
+and type-literal `.name` / `.to_s` / `inspect` all agree with original Crystal.
+Only after that guard exists should production code introduce one HIR-owned
+type-visible value fact and migrate the reached consumers to it. Do not use a
+string-only `lower_typeof` patch, interpolation-only special-case, backend
+stub, generic materialization change, or `BlockOwner` change as a shortcut.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`

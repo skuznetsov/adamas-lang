@@ -37,6 +37,7 @@ Each non-refuted row has a phase pressure:
 | H3 | Nested builtin annotations must remain top-level unless structurally nested. | `01-hir-name-resolution.md` section 3, LM-554 | `regression_tests/p2_full_prelude_generic_template_namespace_no_pollution.sh <compiler>`. | current | [FALSIFIABLE] |
 | H4 | Type-literal name queries lower to literal strings, not static stubs. | `01-hir-name-resolution.md` section 4, LM-558 | `regression_tests/p2_type_literal_name_query_no_stub.sh <compiler>`. | current | [FALSIFIABLE] |
 | H5 | Function body presence must distinguish real bodies from stubs. | `01-hir-name-resolution.md` section 6 | `regression_tests/hir_function_body_presence_contract.sh` proves a registered bodyless HIR function is not `has_function_with_body?` and HIR->MIR preserves it as an empty unreachable stub, while real body evidence lowers as body. | current | [FALSIFIABLE] |
+| H6 | Type-visible runtime values must share one HIR-owned `TypeValue` / `RuntimeTypeIdentity` fact. | `01-hir-name-resolution.md` section 4.1, B3 frontier | Extend B3 or add a focused guard covering direct and interpolated `typeof(1)`, `1.class`, `(true ? 1 : nil).class`, and type-literal `.name` / `.to_s` / `inspect`; a one-path `lower_typeof` or interpolation-only guard is insufficient. | current | [MISSING-FALSIFIER] |
 
 ## 4. Generic Template Registration
 

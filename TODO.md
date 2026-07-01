@@ -8,6 +8,21 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: added Slice 0k-BB, a docs-only hostile
+  self-review checkpoint after the measured-red B3 oracle. The B3 failure is
+  now classified as a `TypeValue` / `RuntimeTypeIdentity` frontier, not as a
+  standalone `lower_typeof` output bug. Current implementation has split
+  authority edges: `typeof(...)` lowers to a nil placeholder, runtime `.class`
+  creates a nil type-literal pointer, type-literal name queries use a separate
+  path, and string interpolation has its own dot-class special-case. The next
+  admitted production slice must first extend the falsifier/contract to cover
+  direct and interpolated `typeof`, runtime `.class`, nilable `.class`, and
+  type-literal `.name` / `.to_s` / `inspect`, then introduce one HIR-owned
+  type-visible value fact consumed by those paths. Do not patch `lower_typeof`
+  as a string-only fix, add interpolation/direct-output special cases, use
+  backend stubs, change generic materialization, change `BlockOwner`, or claim
+  green `s2b`/`s3b` from B3 alone.
+
 - 2026-07-01 UPDATE: implemented Slice 0k-BA, the B3 original-vs-stage semantic
   oracle slice. New guard:
   `regression_tests/original_vs_stage_semantic_oracle_contract.sh <compiler>`.

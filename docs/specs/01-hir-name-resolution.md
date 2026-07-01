@@ -82,6 +82,30 @@ NameProbe.name -> "NameProbe"
 
 Guard: `regression_tests/p2_type_literal_name_query_no_stub.sh`.
 
+### 4.1 Type-Visible Runtime Values
+
+`typeof(expr)`, runtime `expr.class`, explicit type literals, and type-literal
+name queries are one semantic family. They MUST NOT be implemented as unrelated
+runtime pointer placeholders, interpolation-only side paths, or backend string
+stubs.
+
+HIR SHOULD own a single type-visible value fact that records:
+
+- the semantic `TypeRef`;
+- the canonical display name;
+- the origin of the value (`typeof`, runtime `.class`, explicit type literal,
+  or name query);
+- whether the value is compile-time-only or needs runtime stringification.
+
+Direct output and interpolation MUST consume the same fact. A guard that only
+proves one of `puts typeof(x)`, `"#{typeof(x)}"`, `puts x.class`, or
+`"#{x.class}"` is not wide enough to claim this contract fixed.
+
+Current frontier: the B3 original-vs-stage oracle prints blank `TYPE=` and
+`UNION=` lines in the stage output where original Crystal prints `Int32`. This
+is a `TypeValue` / `RuntimeTypeIdentity` frontier, not permission for a
+string-only `typeof` patch.
+
 ## 5. Source-Backed Recovery
 
 When generated stages cannot trust raw frontend slices, HIR MAY recover
