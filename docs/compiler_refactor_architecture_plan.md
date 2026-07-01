@@ -211,6 +211,18 @@ stack selection loop. Backend forwarders, requested-name forcing, target
 keepalive, `NamedTuple`/`Tuple` rendering changes, global ambient-map predicate
 changes, and `BlockOwner` rollback remain rejected.
 
+2026-07-01 post-0k-AE note: the transaction-spine source-shape gate now exists
+as `scripts/call_materialization_transaction_admission_report.sh`. Current
+source is intentionally measured-red:
+`preferred_source_shape=legacy_split_transaction_edge`,
+`transaction_type_count=0`, `transaction_helper_count=0`, and
+`REQUIRE_PROMOTED=1` exits 9. The next code slice is 0k-AF: add a
+behavior-neutral `CallMaterializationTransaction` record/helper for the selected
+`lower_function_if_needed.call_materialization_transaction` seam and make one
+selected consumer read that record in shadow/parity mode. This must preserve
+emitted behavior; flipping requested/target/body/call symbols is still rejected
+until a later would-change census proves the affected set is root-sized.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging
@@ -661,6 +673,7 @@ scripts/lower_call_arena_ledger_smoke.sh <compiler>
 scripts/node_slot_integrity_report.sh <compiler>
 scripts/materialization_transaction_report.sh <compiler>
 scripts/semantic_state_scope_report.sh <compiler>
+scripts/call_materialization_transaction_admission_report.sh
 ```
 
 Acceptance for this first architecture slice:

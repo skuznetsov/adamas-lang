@@ -12,6 +12,28 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-CALL-MATERIALIZATION-TRANSACTION-GATE|measured-red 2026-07-01 {F:0.78 G:0.44 R:0.86}]:
+The `CallMaterializationTransaction` spine now has an executable source-shape
+admission gate: `scripts/call_materialization_transaction_admission_report.sh`.
+It selects `lower_function_if_needed.call_materialization_transaction` and
+currently reports `preferred_source_shape=legacy_split_transaction_edge` with
+`selection_status=eligible_transaction_spine_owner`. Current counts:
+`transaction_type_count=0`, `transaction_helper_count=0`,
+`split_state_key_count=1`, `split_target_count=1`,
+`ambient_state_scope_consumer_count=1`, `legacy_ledger_call_count=3`,
+`direct_type_param_scope_count=5`, `direct_body_lowering_count=12`,
+`symbol_binding_field_read_count=24`, and `transaction_field_read_count=0`.
+`REQUIRE_PROMOTED=1
+scripts/call_materialization_transaction_admission_report.sh` exits 9, proving
+the selected seam has not been promoted yet. Scope: source-shape gate only; no
+compiler behavior, backend behavior, cleanup behavior, generated-stage status,
+or `BlockOwner` carrier changed. Next work: Slice 0k-AF must add a
+behavior-neutral `CallMaterializationTransaction` record/helper and make one
+selected consumer read that record in shadow/parity mode while preserving
+emitted behavior. Decay trigger: `lower_function_if_needed_impl` is rewritten,
+the selected seam stops being the split transaction authority, or the future
+helper turns `REQUIRE_PROMOTED=1` green.
+
 [LM-ARCH-CALL-MATERIALIZATION-TRANSACTION-SPINE|design-sealed 2026-07-01 {F:0.72 G:0.48 R:0.82}]:
 Slice 0k-AD pauses production-code and generated-stage crash-stack pursuit
 after the `InvocationContext` shadow/parity seam. The next correctness axis is

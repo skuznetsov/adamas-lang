@@ -8,6 +8,29 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: implemented Slice 0k-AE,
+  `CallMaterializationTransaction` source-shape admission gate. New script:
+  `scripts/call_materialization_transaction_admission_report.sh`. It selects
+  `lower_function_if_needed.call_materialization_transaction` and currently
+  reports `preferred_source_shape=legacy_split_transaction_edge`,
+  `selection_status=eligible_transaction_spine_owner`,
+  `transaction_type_count=0`, `transaction_helper_count=0`,
+  `split_state_key_count=1`, `split_target_count=1`,
+  `ambient_state_scope_consumer_count=1`, `legacy_ledger_call_count=3`,
+  `direct_type_param_scope_count=5`, `direct_body_lowering_count=12`,
+  `symbol_binding_field_read_count=24`, and `transaction_field_read_count=0`.
+  `REQUIRE_PROMOTED=1
+  scripts/call_materialization_transaction_admission_report.sh` intentionally
+  exits 9 until a future shadow/parity owner record removes the selected seam's
+  direct split-transaction authority. This is not a compiler behavior fix and
+  not `s2b`/`s3b` progress by itself. Next code slice: implement a
+  behavior-neutral `CallMaterializationTransaction` record/helper for exactly
+  this selected seam while preserving emitted behavior, then make one selected
+  consumer read that record. Do not add another transaction report, generated
+  crash probe, backend forwarder, requested-name force, target keepalive,
+  `NamedTuple`/`Tuple` normalization, global ambient-map predicate change, or
+  `BlockOwner` rollback.
+
 - 2026-07-01 UPDATE: paused production-code and generated-stage crash pursuit
   after the 0k-AC `InvocationContext` seam. Slice 0k-AD is now a docs-only
   architecture selection checkpoint: the next correctness axis is the vertical
