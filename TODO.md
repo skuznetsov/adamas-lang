@@ -8,24 +8,28 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
-- 2026-07-01 UPDATE: added Slice 0k-AI as a docs-only
-  anti-tail-chase checkpoint after the 0k-AH transaction-consumer promotion.
-  Production compiler edits are paused until the next slice answers a fresh
-  generated-stage transaction-spine question. The current source-shape evidence
-  is useful but insufficient by itself: transaction gates are green for the
-  selected consumers, yet the broader gate still reports
-  `residual_legacy_edge_count=20`, and mechanically reducing that count can
-  chase a local metric without moving the active full-prelude generated-stage
-  frontier. Next admitted executable slice: build/use a fresh generated s2 via
-  `scripts/run_safe.sh` and classify whether a full-prelude corridor reaches
-  joined `[MAT_TX]` / `[MAT_EMIT]` rows before the next failure. If reached,
-  select the next reached transaction consumer with a red/green source-shape
-  gate. If not reached, pause the transaction lane and switch to the reached
-  owner boundary or to a `CodePathStatus` cleanup slice. Do not add backend
-  forwarders, force requested names, keep target bodies alive, normalize
-  `NamedTuple`/`Tuple`, change ambient-map policy globally, roll back
-  `BlockOwner`, or continue transaction consumer migrations without this
-  generated-stage classifier.
+- 2026-07-01 UPDATE: implemented Slice 0k-AI,
+  generated-stage transaction-spine classifier. New script:
+  `scripts/generated_stage_transaction_spine_classifier.sh`. It builds a fresh
+  stage1 compiler unless `STAGE1_COMPILER` is provided, builds a fresh
+  generated s2 through `scripts/run_safe.sh` unless `GENERATED_S2` is provided,
+  compiles a full-prelude `puts 42` source with
+  `ADAMAS_MATERIALIZATION_IDENTITY_LEDGER=1`, and classifies transaction-spine
+  reachability as `reached_tx_and_emit`, `tx_only_no_emit`, `no_tx_rows`,
+  `s2_build_fails`, or `stage1_build_fails`. Measured result on fresh current
+  source: `s2_build_rc=0`, `compiler_rc=139`, `mat_id_rows=615`,
+  `mat_tx_rows=615`, `mat_emit_rows=69`,
+  `transaction_bound_mat_emit_rows=29`, `stub_rows=0`, and
+  `classification=reached_tx_and_emit`. Decision: the current generated-stage
+  full-prelude frontier does reach the `CallMaterializationTransaction` spine
+  and transaction-bound emitted-call rows before the segfault. Next admitted
+  production slice: select a reached transaction/emission edge with a red/green
+  source-shape gate, then migrate exactly one selected reached edge in
+  shadow/parity mode if the gate is root-sized. Do not patch the segfault,
+  add backend forwarders, force requested names, keep target bodies alive,
+  normalize `NamedTuple`/`Tuple`, change ambient-map policy globally, roll back
+  `BlockOwner`, or continue generic residual-edge reduction without naming the
+  reached edge.
 
 - 2026-07-01 UPDATE: implemented Slice 0k-AH,
   `CallMaterializationTransaction` instance-symbol consumer promotion in

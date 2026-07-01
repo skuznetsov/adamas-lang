@@ -12,7 +12,28 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
-[LM-ARCH-POST-0K-AH-TAIL-CHASE-CHECKPOINT|design-sealed 2026-07-01 {F:0.80 G:0.44 R:0.86}]:
+[LM-ARCH-GENERATED-STAGE-TX-SPINE-CLASSIFIER|verified 2026-07-01 {F:0.86 G:0.42 R:0.88}]:
+Slice 0k-AI adds an executable generated-stage transaction-spine classifier:
+`scripts/generated_stage_transaction_spine_classifier.sh`. It builds/uses a
+fresh generated s2 through `scripts/run_safe.sh`, compiles a full-prelude
+`puts 42` source with `ADAMAS_MATERIALIZATION_IDENTITY_LEDGER=1`, and
+classifies whether the active generated-stage frontier reaches
+`CallMaterializationTransaction` rows and transaction-bound emitted-call rows.
+Fresh current evidence: `s2_build_rc=0`, `compiler_rc=139`,
+`mat_id_rows=615`, `mat_tx_rows=615`, `mat_emit_rows=69`,
+`transaction_bound_mat_emit_rows=29`, `stub_rows=0`, and
+`classification=reached_tx_and_emit`. Decision: the transaction spine is
+reached before the current full-prelude generated-stage segfault, so the next
+production slice may stay on `CallMaterializationTransaction`, but only after a
+new gate selects one reached transaction/emission edge. Scope: classifier and
+plan evidence only; no compiler behavior, backend behavior, requested-name
+policy, target keepalive policy, `NamedTuple`/`Tuple` rendering, ambient-map
+policy, cleanup behavior, or `BlockOwner` changed. This is not green generated
+s2, `s2b`, or `s3b`. Decay trigger: a fresh generated-stage classifier reports
+`tx_only_no_emit`, `no_tx_rows`, or build-corridor failure, or a future reached
+edge selection refutes transaction/emission correlation as the active frontier.
+
+[LM-ARCH-POST-0K-AH-TAIL-CHASE-CHECKPOINT|superseded 2026-07-01 {F:0.80 G:0.44 R:0.86}]:
 After Slice 0k-AH, the architecture track is paused before more production
 transaction-consumer migrations. The selected instance-symbol consumers are
 already promoted, but the broader transaction source-shape gate still reports
@@ -31,7 +52,7 @@ surface. Scope: docs-only pacing checkpoint, not compiler behavior, not green
 full-prelude generated s2, not `s2b`, and not `s3b`. Decay trigger: a fresh
 generated-stage transaction classifier proves the transaction spine is reached,
 or a newer generated-stage run refutes transaction reachability as the active
-frontier.
+frontier. Superseded by [LM-ARCH-GENERATED-STAGE-TX-SPINE-CLASSIFIER].
 
 [LM-ARCH-CALL-MATERIALIZATION-INSTANCE-CONSUMER|verified 2026-07-01 {F:0.86 G:0.38 R:0.90}]:
 The selected `CallMaterializationTransaction` instance-symbol consumer group is

@@ -282,6 +282,16 @@ admits another reached transaction-consumer migration. The other outcomes route
 to transaction-to-emission correlation, a different owner boundary, or build
 corridor repair.
 
+2026-07-01 post-0k-AI implementation note: the generated-stage transaction
+classifier now exists as `scripts/generated_stage_transaction_spine_classifier.sh`.
+On fresh current source it builds generated s2 successfully and classifies the
+full-prelude corridor as `reached_tx_and_emit` (`compiler_rc=139`,
+`mat_tx_rows=615`, `transaction_bound_mat_emit_rows=29`, `stub_rows=0`). This
+keeps the `CallMaterializationTransaction` lane active, but narrows the next
+architecture step: select one reached transaction/emission edge with a
+red/green gate before any behavior fix. Do not continue by globally lowering
+`residual_legacy_edge_count` or by patching the segfault directly.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging
