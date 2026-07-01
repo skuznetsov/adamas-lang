@@ -409,10 +409,12 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   `migrate_to_materialization_registry=7544`. The report now classifies every
   blocked row (`unclassified_blocked=0`) into
   `legacy_shim.concrete_typed_params=4481`,
-  `legacy_shim.untyped_annotation_text_review=924`, and
-  `legacy_shim.no_regular_params=530`, with bounded samples for each class.
-  The `untyped_annotation_text_review` bucket is textual review evidence, not
-  proof that a regular-param predicate is wrong. Env-off focused compile emits no
+  `legacy_shim.skipped_untyped_params=924`,
+  `legacy_shim.no_regular_params=530`, and zero
+  `legacy_shim.regular_untyped_param_review` rows, with bounded samples for
+  each non-empty class. The skipped-untyped bucket contains splat,
+  double-splat, or block untyped annotations; it is not evidence for a regular
+  untyped-param predicate bug. Env-off focused compile emits no
   consumer rows and `basic_sanity` exits `0`; existing static
   `semantic_decision_census` / `codepath_status_census`, state-scope report,
   materialization transaction report, and focused split/proc reducers still
@@ -420,10 +422,10 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   passes `36/36`. A fresh generated s2 build exits `0`, but generated-s2 consumer report
   fails closed with `compiler_rc=139`, `rows=17`, and missing
   `callsite_args` / `suffix_types` consumers because the generated compiler
-  crashes before those sites are reached. Next work is not a behavior patch:
-  review the `legacy_shim.untyped_annotation_text_review` samples, classify
-  them into explicit `StateScope` or `MaterializationRegistry` migration
-  candidates, then run a bounded would-change census before changing any
+  crashes before those sites are reached. Next work is not a behavior patch on
+  diagnostic rows: use the already-owned `migrate_to_state_scope`,
+  `migrate_to_materialization_registry`, or `rejected_ambient` rows as the
+  input to a bounded would-change census before changing any
   naming/materialization decision.
 
 - 2026-06-30 UPDATE: the

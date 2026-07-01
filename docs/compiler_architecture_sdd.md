@@ -2471,11 +2471,12 @@ Current evidence:
   `migrate_to_materialization_registry=7544`;
 - blocker classification is now explicit and fail-closed:
   `unclassified_blocked=0`, with `legacy_shim.concrete_typed_params=4481`,
-  `legacy_shim.untyped_annotation_text_review=924`, and
-  `legacy_shim.no_regular_params=530`. The report also prints bounded samples
-  for each blocker class. The `untyped_annotation_text_review` bucket is a
-  textual review bucket, not proof that the old predicate is wrong for a
-  regular parameter;
+  `legacy_shim.skipped_untyped_params=924`,
+  `legacy_shim.no_regular_params=530`, and zero
+  `legacy_shim.regular_untyped_param_review` rows. The report also prints
+  bounded samples for each non-empty blocker class. The skipped-untyped bucket
+  contains splat, double-splat, or block untyped annotations and is not proof
+  that the old predicate is wrong for a regular parameter;
 - env-off focused compile emits `0` `[STATE_SCOPE_CONSUMER]` rows and the
   compiled `basic_sanity` binary exits `0`;
 - static gates still run:
@@ -2514,22 +2515,23 @@ Interpretation:
   patches on those surfaces, not invitations to patch
   `def_has_untyped_regular_param?` or `lower_call` locally;
 - the largest blocker class is concrete typed parameters and should not drive a
-  callsite-specialization behavior change. The next highest-signal class is
-  `legacy_shim.untyped_annotation_text_review`, but it still needs row-sample
-  review and a would-change census before any predicate or StateScope behavior
-  changes;
+  callsite-specialization behavior change. The `skipped_untyped_params` bucket
+  also does not justify a StateScope predicate patch; it explains why those
+  rows remain legacy shims under the current predicate. This closes the
+  diagnostic blocker surface as non-behavior evidence unless a future run
+  produces nonzero `regular_untyped_param_review` or `blocked_unknown` rows;
 - the generated-s2 `compiler_rc=139` residual is a stage frontier and must not
   be converted into a consumer predicate fix without a later owned
   StateScope/MaterializationRegistry migration row plus would-change census.
 
 Next local track:
 
-- classify the `diagnostic_only` / `keep_legacy_shim` rows into explicit
-  `StateScope` or `MaterializationRegistry` migration candidates, starting
-  with row-sample review of `legacy_shim.untyped_annotation_text_review`,
-  before any behavior patch. Do not modify naming/materialization semantics
-  until a later would-change census proves the changed set is bounded and
-  preserves legitimate current-instantiation behavior.
+- treat the current `diagnostic_only` / `keep_legacy_shim` rows as classified
+  legacy-shim blockers, not behavior candidates. The next migration step should
+  target already-owned rows (`migrate_to_state_scope`,
+  `migrate_to_materialization_registry`, or `rejected_ambient`) with a
+  bounded would-change census, while preserving legitimate
+  current-instantiation behavior.
 
 ### Slice A: CallResolution boundary
 

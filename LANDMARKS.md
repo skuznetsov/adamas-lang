@@ -501,10 +501,12 @@ report records the blocking migration surface instead of hiding it:
 `migrate_to_materialization_registry=7544`. The report classifies every
 blocked row (`unclassified_blocked=0`) into
 `legacy_shim.concrete_typed_params=4481`,
-`legacy_shim.untyped_annotation_text_review=924`, and
-`legacy_shim.no_regular_params=530`, and prints bounded samples for each class.
-The `untyped_annotation_text_review` bucket is only textual review evidence;
-it does not prove the old regular-param predicate is wrong. Env-off focused compile emits no
+`legacy_shim.skipped_untyped_params=924`,
+`legacy_shim.no_regular_params=530`, and zero
+`legacy_shim.regular_untyped_param_review` rows, and prints bounded samples
+for each non-empty class. The skipped-untyped bucket contains splat,
+double-splat, or block untyped annotations; it does not prove the old
+regular-param predicate is wrong. Env-off focused compile emits no
 consumer rows and the compiled `basic_sanity` binary exits `0`. Existing
 static censuses, `semantic_state_scope_report`, and
 `materialization_transaction_report` remain compatible; focused
@@ -517,12 +519,13 @@ reached. Scope: this is a migration gate, not a behavior fix and not a green
 `s2b`/`s3b` claim. Any `diagnostic_only` / `keep_legacy_shim` row blocks
 behavior patches on that decision surface until a later
 StateScope/MaterializationRegistry migration row and bounded would-change
-census exist. Next review should start with
-`legacy_shim.untyped_annotation_text_review` row samples, not a global
-predicate change. Decay trigger: the required consumer set moves, the report
-row format changes, a later `StateScope` facade starts driving behavior, or
-fresh generated-stage evidence reaches all required consumers with different
-migration buckets.
+census exist. The current diagnostic-shim buckets should not drive a global
+predicate change; the next behavior candidate must come from already-owned
+`migrate_to_state_scope`, `migrate_to_materialization_registry`, or
+`rejected_ambient` rows. Decay trigger: the required consumer set moves, the
+report row format changes, a later `StateScope` facade starts driving
+behavior, or fresh generated-stage evidence reaches all required consumers with
+different migration buckets.
 
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in

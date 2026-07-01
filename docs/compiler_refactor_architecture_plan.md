@@ -550,14 +550,15 @@ Recommended direction:
   / invalid rows, but it also reports `diagnostic_only=5935` and
   `keep_legacy_shim=5935`. Those blockers are now classified with
   `unclassified_blocked=0` into `legacy_shim.concrete_typed_params=4481`,
-  `legacy_shim.untyped_annotation_text_review=924`, and
-  `legacy_shim.no_regular_params=530`. Generated s2 self-builds, then its
-  consumer report fails closed with `compiler_rc=139` after `17` rows because
-  the generated compiler crashes before reaching every required consumer. The
-  next architecture step is therefore to review the
-  `legacy_shim.untyped_annotation_text_review` samples and classify them into
-  explicit `StateScope` or `MaterializationRegistry` migration candidates, not
-  to change naming/materialization behavior from the report alone.
+  `legacy_shim.skipped_untyped_params=924`,
+  `legacy_shim.no_regular_params=530`, and zero
+  `legacy_shim.regular_untyped_param_review` rows. Generated s2 self-builds,
+  then its consumer report fails closed with `compiler_rc=139` after `17` rows
+  because the generated compiler crashes before reaching every required
+  consumer. The next architecture step is therefore to use already-owned
+  `migrate_to_state_scope`, `migrate_to_materialization_registry`, or
+  `rejected_ambient` rows as the input to a bounded would-change census, not to
+  change naming/materialization behavior from diagnostic-shim rows alone.
 
 This plan should be revisited after the architecture SDD seals the active
 semantic-owner frontiers enough that backend-local refactoring cannot hide a

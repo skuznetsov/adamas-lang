@@ -113,6 +113,28 @@ awk -v samples="$SAMPLES" '
     return params ~ /(^|[|,:(])[_A-Z]($|[|,):])/
   }
 
+  function has_regular_untyped_param(params,    n, parts, i, token) {
+    n = split(params, parts, "|")
+    for (i = 1; i <= n; i++) {
+      token = parts[i]
+      if (token ~ /:untyped$/ && token !~ /^[*&]/) {
+        return 1
+      }
+    }
+    return 0
+  }
+
+  function has_skipped_untyped_param(params,    n, parts, i, token) {
+    n = split(params, parts, "|")
+    for (i = 1; i <= n; i++) {
+      token = parts[i]
+      if (token ~ /:untyped$/ && token ~ /^[*&]/) {
+        return 1
+      }
+    }
+    return 0
+  }
+
   function blocked_class(consumer, decision, selected_def, result, migration, validation, call_arg_types,    params) {
     if (migration == "blocked_unknown") {
       return "blocked_unknown.needs_owner"
@@ -132,8 +154,11 @@ awk -v samples="$SAMPLES" '
     if (result == "1" && call_arg_types == "") {
       return "legacy_shim.untyped_missing_callsite_args"
     }
-    if (params ~ /(^|[|])[^|]*:untyped($|[|])/) {
-      return "legacy_shim.untyped_annotation_text_review"
+    if (has_regular_untyped_param(params)) {
+      return "legacy_shim.regular_untyped_param_review"
+    }
+    if (has_skipped_untyped_param(params)) {
+      return "legacy_shim.skipped_untyped_params"
     }
     if (has_short_type_param_annotation(params)) {
       return "legacy_shim.short_type_param_review"
@@ -271,11 +296,21 @@ awk -v samples="$SAMPLES" '
 
     print ""
     print "## Blocked Classification"
-    for (bc in blocked_class_count) {
-      print bc "=" blocked_class_count[bc]
+    known_blocked[1] = "blocked_unknown.needs_owner"
+    known_blocked[2] = "legacy_shim.params_unparsed"
+    known_blocked[3] = "legacy_shim.no_regular_params"
+    known_blocked[4] = "legacy_shim.untyped_missing_callsite_args"
+    known_blocked[5] = "legacy_shim.regular_untyped_param_review"
+    known_blocked[6] = "legacy_shim.skipped_untyped_params"
+    known_blocked[7] = "legacy_shim.short_type_param_review"
+    known_blocked[8] = "legacy_shim.concrete_typed_params"
+    for (i = 1; i <= 8; i++) {
+      bc = known_blocked[i]
+      print bc "=" blocked_class_count[bc] + 0
     }
 
-    for (bc in blocked_class_count) {
+    for (i = 1; i <= 8; i++) {
+      bc = known_blocked[i]
       bucket = "blocked_class:" bc
       if (sample_count[bucket] > 0) {
         print ""
