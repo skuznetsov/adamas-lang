@@ -117,9 +117,16 @@ is rejected as too late/backend-adjacent for the first promotion, and
 the focused MaterializationRegistry row set. Generated s2 still crashes before
 `[MAT_DECISION]` on the focused full-prelude repro, and the report records
 that as `not_reached_named_residual`, not as a green generated-stage promotion.
-The next admitted implementation is therefore a narrow, behavior-neutral
-promotion helper for the selected override seam only, with legacy emitted
-behavior unchanged and no backend reconciliation or behavior flip.
+The next admitted step is not "add another promotion report". It is Slice
+0k-J, a promotion-definition gate: define the exact consumption effect that
+turns `MaterializationDecision` from a row-producing ledger into an owned
+facade at the selected override seam. A narrow helper is admitted only if the
+legacy consumer starts obtaining its parity/shadow input from the owned
+`MaterializationDecision` record, the old emitted behavior remains unchanged,
+and a source-shape check proves the seam no longer reaches directly for the
+ambient predicate as its only authority. A local unfinished 0k-J WIP that added
+`[MAT_PROMOTION]` rows before this definition gate is classified as stale and
+non-admitted.
 
 Bounded context: Crystal V2 compiler architecture:
 
@@ -3157,13 +3164,93 @@ Hostile self-review:
 
 Next local track:
 
-- implement a narrow behavior-neutral promotion helper for the selected
-  `lower_function_if_needed.override` consumer only. It must read the existing
-  `MaterializationDecision` owner record in shadow/parity mode, preserve the
-  legacy emitted result, and keep generated-stage `not_reached_named_residual`
-  as a residual boundary. Do not promote direct predicates, `lower_call`
-  remangling, backend undefined-extern handling, target keepalive, or
-  requested-name materialization in the same slice.
+- Slice 0k-J: define and then implement promotion as a consumption effect, not
+  as a new diagnostic row surface. The selected
+  `lower_function_if_needed.override` seam may get a behavior-neutral helper
+  only after the SDD states what old direct read is replaced by the owned
+  `MaterializationDecision` record, which source-shape check proves that
+  boundary, and which reports prove legacy behavior is preserved.
+
+### Slice 0k-J: Promotion-definition gate for override seam
+
+Status:
+
+- design-sealed docs-only checkpoint after Slice 0k-I;
+- current unfinished 0k-J code/report WIP is stale and non-admitted;
+- no compiler behavior, materialization behavior, remangling behavior, backend
+  behavior, AST-read behavior, or cleanup behavior is changed by this slice.
+
+Problem:
+
+- Slice 0k-I selected `lower_function_if_needed.override`, but selecting a
+  consumer is not the same as promoting an owner fact;
+- a report that only emits `[MAT_PROMOTION]` rows can recreate the same failure
+  pattern as the rejected 0k-H WIP: more evidence surface without a smaller
+  state contract;
+- the architecture objective is to reduce hidden authority, so 0k-J must prove
+  that the selected legacy seam starts consuming an owned decision object in
+  shadow/parity mode, not merely that the seam can print another row.
+
+Promotion definition:
+
+1. The promoted consumer is exactly `lower_function_if_needed.override`.
+2. The promoted owner is the existing `MaterializationDecision` /
+   `MaterializationRegistry` record from Slice 0k-G/0k-I.
+3. The first implementation remains behavior-neutral: emitted behavior must use
+   the legacy result, but parity/shadow computation must flow through the owner
+   record.
+4. The old direct predicate call at the override seam must be replaced by a
+   named helper whose contract is "owner decision plus legacy parity", not by a
+   wrapper that simply logs around the old predicate.
+5. The helper must fail closed to legacy behavior if it cannot construct a
+   complete owner record.
+6. The slice is not allowed to promote direct predicates,
+   `prefer_callsite_specialization`, `lower_call.remangle`, backend
+   undefined-extern handling, target keepalive, requested-name materialization,
+   global ambient-map changes, or `NamedTuple`/`Tuple` display normalization.
+
+Required source-shape gate:
+
+- before implementation, `lower_function_if_needed.override` reaches
+  `state_scope_consumer_def_has_untyped_regular_param?` directly;
+- after implementation, that seam reaches a named promotion helper instead;
+- direct callers of `state_scope_consumer_def_has_untyped_regular_param?` must
+  remain limited to their existing non-promoted consumers and must not be
+  silently widened or globally changed;
+- the helper must return the legacy result in this slice, so env-off behavior
+  is unchanged.
+
+Required report gate:
+
+- red gate: a pre-implementation compiler must fail the override promotion
+  report because no promoted override rows exist;
+- green focused gate: a fresh stage1 report must emit rows only for
+  `lower_function_if_needed.override`, with complete owner fields, zero
+  malformed rows, and `emitted_result == legacy_result`;
+- source-shape gate: static `rg` checks must prove the selected seam no longer
+  calls the ambient predicate directly;
+- compatibility gate: existing materialization decision, state-scope consumer,
+  semantic decision, and CodePathStatus reports still pass;
+- generated-stage gate: generated s2 must either emit promoted rows where the
+  seam is reached or preserve the explicit
+  `not_reached_named_residual` boundary. This remains a residual, not a green
+  `s2b`/`s3b` claim.
+
+Rejected 0k-J shapes:
+
+- adding a new compiler env/report without replacing the selected seam's
+  authority path;
+- logging `[MAT_PROMOTION]` rows while the override seam still calls the old
+  predicate directly;
+- using owner-result for emitted behavior in this slice;
+- making any backend, remangle, keepalive, requested-name, tuple rendering, or
+  `BlockOwner` carrier change in the same slice.
+
+Next local track:
+
+- implement the behavior-neutral helper only after this gate is in place, or
+  switch to `CodePathStatus` cleanup if the source-shape/report gates show that
+  the helper would not reduce the selected seam's state contract.
 
 ### Slice A: CallResolution boundary
 

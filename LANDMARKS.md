@@ -692,6 +692,28 @@ generated-stage run reaches `[MAT_DECISION]` with different candidate buckets,
 or the selected `lower_function_if_needed.override` promotion helper lands and
 starts driving behavior.
 
+[LM-ARCH-PROMOTION-DEFINITION-GATE|design-sealed 2026-07-01 {F:0.78 G:0.54 R:0.84}]:
+Slice 0k-J now defines promotion as a consumption effect, not a new diagnostic
+row surface. A local unfinished 0k-J WIP was removed because it added
+`[MAT_PROMOTION]` rows and a partial `MaterializationDecisionRecord` refactor
+while the selected `lower_function_if_needed.override` seam still called
+`state_scope_consumer_def_has_untyped_regular_param?` directly. That shape is
+classified as stale/non-admitted. The next code slice may introduce a
+behavior-neutral helper only if the override seam obtains parity/shadow input
+from the owned `MaterializationDecision` / `MaterializationRegistry` record,
+keeps emitted behavior equal to the legacy result, fails closed to legacy when
+the owner record is incomplete, and passes a source-shape gate proving the seam
+no longer reaches directly for the ambient predicate as its only authority.
+Rejected repeats remain direct predicate promotion, `lower_call.remangle`,
+backend undefined-extern handling, target keepalive, requested-name
+materialization, global ambient-map changes, `NamedTuple`/`Tuple` display
+normalization, and rolling `BlockOwner` back to tuple/namedtuple metadata.
+Scope: docs-only design seal; no compiler behavior changed and no green
+`s2b`/`s3b` claim. Decay trigger: a promoted override helper lands with
+source-shape/report evidence, the SDD routes the next slice to `CodePathStatus`
+cleanup, or fresh generated-stage evidence invalidates the selected override
+consumer.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

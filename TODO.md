@@ -564,6 +564,22 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   implementation: a narrow shadow/parity promotion helper for
   `lower_function_if_needed.override` only, preserving legacy emitted behavior.
 
+- 2026-07-01 UPDATE: paused the first 0k-J code attempt before implementation
+  and converted it into a docs-only promotion-definition gate. The removed WIP
+  added a `[MAT_PROMOTION]` report surface and partial
+  `MaterializationDecisionRecord` refactor, but the selected override seam still
+  called the old ambient predicate directly. That shape is now explicitly
+  stale/non-admitted: 0k-J promotion must mean a consumption effect, not another
+  diagnostic row. The next code slice may add a helper only if
+  `lower_function_if_needed.override` obtains its parity/shadow input through
+  the owned `MaterializationDecision` record, returns the legacy result for
+  emitted behavior, and passes a source-shape gate proving that this seam no
+  longer directly calls `state_scope_consumer_def_has_untyped_regular_param?`.
+  Forbidden repeats remain backend reconciliation, target keepalive,
+  requested-name materialization, remangle changes, global ambient-map changes,
+  `NamedTuple`/`Tuple` display normalization, and rolling `BlockOwner` back to
+  tuple/namedtuple metadata.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was
