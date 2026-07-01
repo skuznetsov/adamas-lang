@@ -237,6 +237,20 @@ must either select another transaction consumer with a red/green gate or run a
 generated-stage classifier only if it answers a transaction-spine yes/no
 question.
 
+2026-07-01 post-0k-AG note: the next transaction consumer is selected before
+more compiler behavior edits. The source-shape gate
+`scripts/call_materialization_transaction_consumer_selection_report.sh`
+selects `lower_function_if_needed.instance_symbol_consumers` because
+`CallMaterializationTransaction` records already exist in that branch, while
+override, keepalive, and diagnostic materialization-symbol consumers still
+bypass them through `MaterializationSymbolBinding` fields. This is an
+architecture stop-rule, not another diagnostic lane: the next code slice must
+move those selected consumers to transaction fields in shadow/parity mode, and
+`MaterializationSymbolBinding` may remain only as a parity input inside the
+transaction constructor/helper. A code slice that constructs transactions but
+leaves selected downstream consumers reading `symbol_binding.*` is wrapper
+theater, not transaction-spine progress.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging

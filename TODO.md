@@ -8,6 +8,31 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: added Slice 0k-AG,
+  `CallMaterializationTransaction` transaction-consumer stop-rule and
+  next-edge selection gate. New script:
+  `scripts/call_materialization_transaction_consumer_selection_report.sh`.
+  It selects `lower_function_if_needed.instance_symbol_consumers` as the next
+  transaction edge because the instance branch already constructs
+  `CallMaterializationTransaction` records but still lets selected consumers
+  bypass them through `MaterializationSymbolBinding` fields. Current measured
+  red signal: `preferred_source_shape=legacy_instance_symbol_consumers`,
+  `transaction_constructor_count=3`, `transaction_field_read_count=0`,
+  `instance_override_binding_count=2`, `keepalive_binding_count=3`,
+  `regmat_binding_count=1`, and `selected_binding_consumer_count=6`.
+  `REQUIRE_PROMOTED=1
+  scripts/call_materialization_transaction_consumer_selection_report.sh`
+  intentionally exits 9 until the selected override, keepalive, and diagnostic
+  materialization-symbol consumers read from `CallMaterializationTransaction`
+  fields in shadow/parity mode. This is a docs/tool selection slice only; it is
+  not a compiler behavior fix and not green `s2b`/`s3b` evidence. Next code
+  slice: migrate exactly this selected consumer group to transaction fields
+  while preserving emitted behavior. Do not run generated-stage crash
+  classification unless it answers a transaction-spine yes/no question; do not
+  add backend forwarders, force requested names, keep target bodies alive,
+  normalize `NamedTuple`/`Tuple`, change ambient-map policy globally, or roll
+  back `BlockOwner`.
+
 - 2026-07-01 UPDATE: implemented Slice 0k-AF,
   `CallMaterializationTransaction` ledger-consumer promotion in shadow/parity
   mode. `src/compiler/hir/ast_to_hir.cr` now has a

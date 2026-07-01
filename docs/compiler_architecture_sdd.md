@@ -14,7 +14,7 @@ fallbacks, and hard-to-localize bootstrap failures.
 
 ## Active Architecture Board
 
-Status: execution board after Slice 0k-AF. This board exists to
+Status: execution board after Slice 0k-AG. This board exists to
 prevent the next step from being selected by the latest generated-stage crash
 stack. A next slice is admitted only if it moves one board row by replacing or
 shadowing a named authority edge, producing `CodePathStatus` evidence for a
@@ -25,20 +25,24 @@ named path, or refuting a row with fresher generated-stage evidence.
 | `SemanticStateScope` | `prefer_callsite_specialization` is promoted in shadow/parity mode; emitted behavior still returns the legacy result. | Select a different root-sized consumer with a red/green source-shape gate, or explicitly leave this lane paused. | Reselecting `prefer_callsite_specialization`; wrapping `def_has_untyped_regular_param?` without a separate owner result; changing emitted behavior from the shadow row. |
 | `MaterializationIdentity` / `MaterializationRegistry` | Slice 0k-Z promotes the selected `lower_function_if_needed.symbol_binding` seam in behavior-neutral shadow/parity mode. `scripts/materialization_symbol_binding_admission_report.sh` now reports `already_promoted_shadow` even with `REQUIRE_PROMOTED=1`; keepalive and materialization-ledger consumers read from `MaterializationSymbolBinding` fields instead of recomputing split locals. | Do not flip emitted symbols from this slice. Next movement must either run a generated-stage materialization/symbol-binding classification on the residual full-prelude s2 crash, or select the next root-sized owner consumer with a red/green gate. | Backend undefined-extern rescue; target keepalive as a standalone patch; requested-name forcing; `NamedTuple`/`Tuple` display normalization; global ambient-map predicate changes; `BlockOwner` rollback; treating the green source-shape gate as green `s2b`/`s3b`. |
 | `NameResolution` / `MethodNameCodec` | File identity was fixed; method/symbol identity is still partly rendered-string driven. Slice 0k-V promotes the selected `lower_function_if_needed.exact_lookup_keep_requested_name` seam through `method_name_codec_exact_lookup_keep_requested_name?` in shadow/parity mode; emitted behavior still returns the legacy result. Slice 0k-W pauses standalone promotion-report proliferation. | Either select the next root-sized codec seam with a red/green source-shape gate, or define a generated-stage classification slice that consumes the existing promotion ledger to answer one blocking yes/no decision before changing emitted naming behavior. | String-slice parsing patches at individual callsites; treating rendered names as canonical identity; broad normalization without a falsifier; selecting lower-level helpers before a materialization seam; flipping owner-result behavior from shadow rows; committing another report surface that does not reduce or select an authority edge. |
-| `CallMaterializationTransaction` spine | Slice 0k-AF promotes the selected materialization ledger/state-scope consumer in behavior-neutral shadow/parity mode. `scripts/call_materialization_transaction_admission_report.sh` now reports `already_promoted_shadow` with `legacy_ledger_call_count=0`, `transaction_helper_count=3`, `transaction_ledger_call_count=3`, `ledger_transaction_field_read_count=4`, and residual legacy edge count still visible. | Do not flip emitted symbols from this slice. Next movement must either select the next transaction consumer to migrate with a source-shape gate or run generated-stage classification only if it answers a transaction-spine yes/no question. | Continuing seam-by-seam shadow migrations without a vertical transaction; generated-stage crash classification that does not answer a transaction yes/no question; backend forwarder or undefined-extern rescue; requested-name forcing; broad `NamedTuple`/`Tuple` rendering changes; another standalone report that does not select a consumer migration. |
+| `CallMaterializationTransaction` spine | Slice 0k-AF promotes the selected materialization ledger/state-scope consumer in behavior-neutral shadow/parity mode. Slice 0k-AG adds the stop-rule and measured-red selection gate for the next consumer: `lower_function_if_needed.instance_symbol_consumers` still has `selected_binding_consumer_count=6` and `transaction_field_read_count=0`. | The next code movement may only migrate the selected override, keepalive, and diagnostic materialization-symbol consumers from direct `MaterializationSymbolBinding` field reads to the existing `CallMaterializationTransaction` record in shadow/parity mode. Do not flip emitted symbols from this slice. Generated-stage classification remains admitted only if it answers a transaction-spine yes/no question. | Treating transaction construction as sufficient while consumers still bypass it through `symbol_binding.*`; continuing seam-by-seam shadow migrations without a vertical transaction stop-rule; generated-stage crash classification that does not answer a transaction yes/no question; backend forwarder or undefined-extern rescue; requested-name forcing; broad `NamedTuple`/`Tuple` rendering changes; another standalone report that does not select a consumer migration. |
 | `InvocationContext` / `InlineYieldFrame` | Slice 0k-AC promotes the selected `lower_super.previous_def.invocation_context` seam in behavior-neutral shadow/parity mode. `scripts/invocation_context_admission_report.sh` now reports `already_promoted_shadow` even with `REQUIRE_PROMOTED=1`; `lower_super` and `lower_previous_def` consume an `InvocationContext` owner fact instead of directly reading ambient owner/method, method-kind, super-source, and forward-policy state. | Do not flip super lookup, previous-def lookup, or argument-forwarding behavior from this slice. Next movement must either classify the residual generated-stage frontier with fresh owner-boundary evidence or select a different root-sized board row with a red/green source-shape gate. | A new `ADAMAS_SUPER_CALL_CONTEXT_LEDGER` report without a decision question; direct `lower_super` guards; changing super lookup or argument forwarding from a crash stack; inline-yield stack resets as a consumer fix; treating the green source-shape gate as green bootstrap evidence. |
 | `AstNodeRef` / `ArenaOwnership` | Explicit-owner lower-call rows and `NodeSlotIntegrity` refuted owner drift, out-of-range ids, and missing slots for the instrumented edge. | Resume only with a named payload/deep-read or uninstrumented-consumer falsifier, including cleanup rules for its ledger. | Lower-call arena routing, broad arena scans, parser allocation rewrites, or another unbounded crash-edge probe. |
 | `CodePathStatus` | `cli.metrics.identity_dry_run` is classified as `debug_only`, not `delete_ready`. | Classify another named path, or run a separate `delete_ready` slice with default-behavior, HIR/MIR/LLVM, bootstrap, and evidence-preservation guards. | Deleting debug/probe/fallback paths from static grep output; using runtime liveness as semantic ownership evidence. |
 
-Default next track: select the next transaction consumer to migrate, or run a
-generated-stage classifier only when it answers a transaction-spine yes/no
-question. A cleanup slice remains admitted, but only when the goal is explicitly
-bloat reduction and the selected path has its own `CodePathStatus` falsifier.
+Default next track: migrate the selected
+`lower_function_if_needed.instance_symbol_consumers` transaction edge in
+shadow/parity mode, or run a generated-stage classifier only when it answers a
+transaction-spine yes/no question. A cleanup slice remains admitted, but only
+when the goal is explicitly bloat reduction and the selected path has its own
+`CodePathStatus` falsifier.
 
-Current selected implementation status: Slice 0k-AF supplies the first
-behavior-neutral `CallMaterializationTransaction` owner record/helper and moves
-the materialization ledger/state-scope consumer to that record. This
-is not a behavior flip and not a green bootstrap claim. It deliberately pauses
+Current selected implementation status: Slice 0k-AG is a behavior-neutral
+architecture stop-rule plus source-shape selection gate. It preserves the 0k-AF
+`CallMaterializationTransaction` owner record/helper and selects the next
+consumer edge that must stop bypassing it: instance-method override,
+keepalive, and diagnostic materialization-symbol consumers. This is not a
+behavior flip and not a green bootstrap claim. It deliberately pauses
 generated-stage crash-stack pursuit unless the next generated-stage run answers
 a specific transaction-spine yes/no question.
 
@@ -493,6 +497,15 @@ remains unchanged until the declared falsifiers pass.
     mode, or one old path receives a `CodePathStatus` classification with a
     protecting falsifier. A ledger that only adds rows after the previous ledger
     refuted the local hypothesis is diagnostic debt, not a migration step.
+
+15. Transaction consumers cannot bypass the transaction.
+    A `CallMaterializationTransaction` slice is not complete merely because a
+    transaction record exists. The selected consumer must read the symbol, state,
+    ABI, and wrapper/forwarder facts from that transaction record; direct reads
+    from older local records such as `MaterializationSymbolBinding` may remain
+    only inside the transaction constructor/helper as parity inputs. If a
+    consumer still reads the older record directly, the transaction is a shadow
+    observation, not the owner boundary for that decision.
 
 ## 6. Target architecture
 
@@ -5238,6 +5251,88 @@ Next local track:
   source-shape gate, or run a generated-stage classifier only if it answers the
   transaction yes/no question for requested, selected, target, body, emitted
   call, state-scope, and ABI agreement under one transaction id.
+
+### Slice 0k-AG: Transaction consumer stop-rule and next-edge selection
+
+Status:
+
+- behavior-neutral source-shape selection after Slice 0k-AF;
+- no compiler source, emitted symbol behavior, backend behavior,
+  requested-name policy, target keepalive policy, `NamedTuple`/`Tuple`
+  rendering behavior, ambient-map policy, cleanup behavior, or `BlockOwner`
+  carrier changed;
+- the selected next edge is
+  `lower_function_if_needed.instance_symbol_consumers`.
+
+Problem:
+
+- 0k-AF introduced a `CallMaterializationTransaction` owner record, but only the
+  materialization identity/state-scope ledger path consumes it;
+- the instance branch still computes override, keepalive, and diagnostic
+  materialization-symbol facts from `MaterializationSymbolBinding` fields
+  directly;
+- continuing code slices without a transaction-consumer stop-rule would risk
+  converting the transaction into another shadow row while the real consumers
+  keep treating the older binding record as authority.
+
+Source/spec:
+
+- `scripts/call_materialization_transaction_consumer_selection_report.sh`;
+- `src/compiler/hir/ast_to_hir.cr`;
+- Slice 0k-AF `CallMaterializationTransaction` ledger-consumer promotion.
+
+Measured-red evidence:
+
+- `bash -n
+  scripts/call_materialization_transaction_consumer_selection_report.sh` exits
+  0;
+- `scripts/call_materialization_transaction_consumer_selection_report.sh`
+  reports `preferred_source_shape=legacy_instance_symbol_consumers`,
+  `transaction_constructor_count=3`, `transaction_field_read_count=0`,
+  `instance_override_binding_count=2`, `keepalive_binding_count=3`,
+  `regmat_binding_count=1`, and `selected_binding_consumer_count=6`;
+- `REQUIRE_PROMOTED=1
+  scripts/call_materialization_transaction_consumer_selection_report.sh`
+  intentionally exits 9 until the selected consumers read the transaction
+  record.
+
+Admitted next code slice:
+
+- migrate the selected instance-branch override, keepalive, and diagnostic
+  materialization-symbol consumers to read from
+  `CallMaterializationTransaction` fields in shadow/parity mode;
+- keep emitted behavior identical: the transaction constructor/helper may still
+  use the legacy `MaterializationSymbolBinding` values as parity inputs, but
+  downstream selected consumers must stop reading `symbol_binding.*` directly;
+- turn `REQUIRE_PROMOTED=1
+  scripts/call_materialization_transaction_consumer_selection_report.sh` green
+  without flipping requested/target/body/call symbols.
+
+Rejected next moves:
+
+- generated-stage crash classification that does not answer a
+  transaction-spine yes/no question;
+- backend undefined-extern rescue, backend forwarders, target keepalive as a
+  standalone patch, requested-name forcing, or broad `NamedTuple`/`Tuple`
+  rendering changes;
+- another report that only prints existing transaction rows without selecting
+  or migrating a consumer edge;
+- treating the 0k-AF transaction constructor as sufficient while selected
+  consumers still bypass it through `symbol_binding.*`.
+
+Boundary:
+
+- this slice selects a red implementation edge and strengthens the transaction
+  stop-rule; it does not claim `s2b`/`s3b` progress;
+- it is not a full transaction-spine completion claim because residual legacy
+  edges remain outside the selected instance-symbol consumer group.
+
+Next local track:
+
+- implement the selected shadow/parity transaction-consumer migration, then run
+  the existing transaction, symbol-binding, InvocationContext, MethodNameCodec,
+  semantic census, and full-suite guards before any generated-stage bootstrap
+  claim.
 
 ### Slice A: CallResolution boundary
 
