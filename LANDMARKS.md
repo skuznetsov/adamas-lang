@@ -794,6 +794,27 @@ does not make `s2b`/`s3b` green. Decay trigger: the override helper starts
 returning owner results, `MaterializationDecisionRecord` fields change, or a
 later lane replaces this seam with a different owner contract.
 
+[LM-ARCH-PROMOTION-SELECTION-NO-REPEAT|verified 2026-07-01 {F:0.82 G:0.42 R:0.88}]:
+Slice 0k-N hardens the promotion-selection report so it cannot select the
+already promoted `lower_function_if_needed.override` seam again. The report now
+auto-detects the 0k-L source shape and marks the seam
+`selection_status=already_promoted_shadow`. Evidence:
+`AUTO_DETECT_PROMOTED=0 scripts/materialization_promotion_selection_report.sh
+/private/tmp/adamas_0kn_stage1` preserves the old baseline
+(`eligible_promote_owner`, `eligible_count=1`, `selected_count=1`,
+`preferred_already_promoted=0`), while the default report prints
+`promoted_consumers=lower_function_if_needed.override`,
+`selection_status=already_promoted_shadow`, `eligible_count=0`,
+`selected_count=0`, and `preferred_already_promoted=1`. Scope: report/gate
+only; no compiler semantics changed and no green `s2b`/`s3b` claim. The
+focused post-0k-L `MaterializationDecision` lane therefore has no second
+eligible consumer in the current report surface; the next implementation lane
+should move to `SemanticStateScope` facade unless a fresh focused report names
+a different unpromoted MaterializationDecision consumer. Decay trigger:
+promotion-selection row semantics change, a second unpromoted consumer becomes
+eligible with complete owner fields, or the source-shape detector no longer
+matches the override seam.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

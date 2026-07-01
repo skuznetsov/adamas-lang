@@ -638,6 +638,23 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   Scope: no behavior change and no green `s2b`/`s3b` claim. Next work remains
   Slice 0k-M lane selection, not another crash-frontier fix.
 
+- 2026-07-01 UPDATE: implemented Slice 0k-N as a no-repeat gate for the
+  promotion-selection report. `scripts/materialization_promotion_selection_report.sh`
+  now auto-detects the 0k-L promoted override seam from source shape and marks
+  it `selection_status=already_promoted_shadow` instead of selecting it again.
+  Verification: with `AUTO_DETECT_PROMOTED=0`, a fresh stage1 report preserves
+  the old baseline (`lower_function_if_needed.override` remains
+  `eligible_promote_owner`, `eligible_count=1`, `selected_count=1`); with
+  default auto-detect, the report prints
+  `promoted_consumers=lower_function_if_needed.override`,
+  `selection_status=already_promoted_shadow`, `eligible_count=0`,
+  `selected_count=0`, and `preferred_already_promoted=1`. Scope: report/gate
+  only, no compiler behavior change and no green `s2b`/`s3b` claim. This means
+  the focused post-0k-L MaterializationDecision lane has no second eligible
+  consumer in the current report surface. Next implementation lane should be
+  `SemanticStateScope` facade unless a fresh focused report names a different
+  unpromoted MaterializationDecision consumer with complete owner fields.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was

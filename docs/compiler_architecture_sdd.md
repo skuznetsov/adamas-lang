@@ -3652,6 +3652,73 @@ Next local track:
   materialization behavior changes until the chosen lane states its owner fact
   and source-shape/falsifier gates.
 
+### Slice 0k-N: Post-promotion selection no-repeat gate
+
+Status:
+
+- implemented behavior-neutral report hardening after Slice 0k-L;
+- no compiler behavior, materialization behavior, remangling behavior, backend
+  behavior, AST-read behavior, cleanup behavior, or `BlockOwner` carrier is
+  changed by this slice.
+
+Problem:
+
+- Slice 0k-I selected `lower_function_if_needed.override` as the first
+  eligible `MaterializationDecision` promotion consumer;
+- Slice 0k-L promoted that seam in shadow/parity mode;
+- without a no-repeat gate, the promotion-selection report still selects the
+  already promoted seam as `eligible_promote_owner`, which would send the next
+  architecture step back through the same local lane and recreate the
+  tail-chase pattern this SDD is trying to prevent.
+
+Implementation:
+
+- `scripts/materialization_promotion_selection_report.sh` now accepts
+  `PROMOTED_CONSUMERS=<comma-list>` and, by default,
+  `AUTO_DETECT_PROMOTED=1`;
+- the report auto-detects the 0k-L source shape:
+  `materialization_override_shadow_untyped_regular_param?` exists, the
+  override seam assigns `has_untyped_regular_param` through that helper, and
+  the same assignment window no longer calls
+  `state_scope_consumer_def_has_untyped_regular_param?` directly;
+- detected promoted consumers receive
+  `selection_status=already_promoted_shadow`;
+- when the preferred consumer is already promoted, `selected_count=0` is the
+  expected green result and the report prints
+  `preferred_already_promoted=1`.
+
+Falsifiers:
+
+- `AUTO_DETECT_PROMOTED=0
+  scripts/materialization_promotion_selection_report.sh
+  /private/tmp/adamas_0kn_stage1` preserves the old baseline:
+  `lower_function_if_needed.override` has
+  `selection_status=eligible_promote_owner`, `eligible_count=1`,
+  `selected_count=1`, and `preferred_already_promoted=0`;
+- default
+  `scripts/materialization_promotion_selection_report.sh
+  /private/tmp/adamas_0kn_stage1` now reports
+  `promoted_consumers=lower_function_if_needed.override`, the override row has
+  `selection_status=already_promoted_shadow`, `eligible_count=0`,
+  `selected_count=0`, and `preferred_already_promoted=1`.
+
+Boundary:
+
+- this is a report/gate correction only;
+- it does not delete old consumers, change any compiler semantic decision, or
+  claim `s2b`/`s3b` progress;
+- it deliberately classifies the focused post-0k-L `MaterializationDecision`
+  lane as having no second eligible consumer in the current report surface.
+
+Next local track:
+
+- switch the next implementation lane to `SemanticStateScope facade` unless a
+  fresh report with a different focused repro names another unpromoted
+  `MaterializationDecision` consumer with complete owner fields and a
+  root-sized would-change census;
+- the next code slice should add a behavior-neutral scope snapshot at a naming
+  or materialization seam and prove parity against legacy ambient reads.
+
 ### Slice A: CallResolution boundary
 
 Source/spec:

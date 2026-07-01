@@ -5,6 +5,7 @@ if [[ $# -lt 1 ]]; then
   echo "usage: $0 <compiler> [source.cr [compiler-args...]]" >&2
   echo "env: TIMEOUT=180 MEM_MB=4096 SAMPLES=8 ALLOW_NO_ROWS=0 NO_ROW_REASON=<reason>" >&2
   echo "env: PREFERRED_CONSUMER=lower_function_if_needed.override GENERATED_STAGE_STATUS=not_checked" >&2
+  echo "env: PROMOTED_CONSUMERS=<comma-list> AUTO_DETECT_PROMOTED=1" >&2
   exit 2
 fi
 
@@ -19,6 +20,8 @@ ALLOW_NO_ROWS="${ALLOW_NO_ROWS:-0}"
 NO_ROW_REASON="${NO_ROW_REASON:-not_checked}"
 PREFERRED_CONSUMER="${PREFERRED_CONSUMER:-lower_function_if_needed.override}"
 GENERATED_STAGE_STATUS="${GENERATED_STAGE_STATUS:-not_checked}"
+AUTO_DETECT_PROMOTED="${AUTO_DETECT_PROMOTED:-1}"
+PROMOTED_CONSUMERS="${PROMOTED_CONSUMERS:-}"
 TMP_DIR="$(mktemp -d "$ROOT_DIR/tmp/materialization-promotion-selection.XXXXXX")"
 LOG="$TMP_DIR/compile.log"
 
@@ -84,6 +87,65 @@ known_consumers=(
   "raw_annotation_needs_callsite_specialization"
 )
 
+detect_promoted_consumers() {
+  local source_file="$ROOT_DIR/src/compiler/hir/ast_to_hir.cr"
+  local helper_name="materialization_override_shadow_untyped_regular_param?"
+  local promoted=""
+
+  if grep -q "def ${helper_name}" "$source_file" &&
+     awk -v helper="$helper_name" '
+       /has_untyped_regular_param =/ {
+         seen = 1
+         window = 0
+       }
+       seen {
+         window++
+         if (index($0, helper) > 0) {
+           found = 1
+         }
+         if (window > 8) {
+           seen = 0
+         }
+       }
+       END {
+         exit(found ? 0 : 1)
+       }
+     ' "$source_file" &&
+     ! awk '
+       /has_untyped_regular_param =/ {
+         seen = 1
+         window = 0
+       }
+       seen {
+         window++
+         if (index($0, "state_scope_consumer_def_has_untyped_regular_param?") > 0) {
+           bad = 1
+         }
+         if (window > 8) {
+           seen = 0
+         }
+       }
+       END {
+         exit(bad ? 0 : 1)
+       }
+     ' "$source_file"; then
+    promoted="lower_function_if_needed.override"
+  fi
+
+  echo "$promoted"
+}
+
+if [[ "$AUTO_DETECT_PROMOTED" == "1" ]]; then
+  detected_promoted="$(detect_promoted_consumers)"
+  if [[ -n "$detected_promoted" ]]; then
+    if [[ -n "$PROMOTED_CONSUMERS" ]]; then
+      PROMOTED_CONSUMERS="${PROMOTED_CONSUMERS},${detected_promoted}"
+    else
+      PROMOTED_CONSUMERS="$detected_promoted"
+    fi
+  fi
+fi
+
 if ! grep -q '^\[MAT_DECISION\]' "$LOG"; then
   if [[ "$ALLOW_NO_ROWS" == "1" ]]; then
     echo "# Materialization Promotion Selection Report"
@@ -92,6 +154,7 @@ if ! grep -q '^\[MAT_DECISION\]' "$LOG"; then
     echo "compiler_rc: $compiler_rc"
     echo "samples_per_section: $SAMPLES"
     echo "preferred_consumer: $PREFERRED_CONSUMER"
+    echo "promoted_consumers: ${PROMOTED_CONSUMERS:-none}"
     echo "generated_stage_status: $GENERATED_STAGE_STATUS"
     echo "no_row_reason: $NO_ROW_REASON"
     echo "note: no MaterializationDecision rows; reporting explicit seam residual"
@@ -121,12 +184,14 @@ echo "source: $SRC"
 echo "compiler_rc: $compiler_rc"
 echo "samples_per_section: $SAMPLES"
 echo "preferred_consumer: $PREFERRED_CONSUMER"
+echo "promoted_consumers: ${PROMOTED_CONSUMERS:-none}"
 echo "generated_stage_status: $GENERATED_STAGE_STATUS"
-echo "note: consumes existing MAT_DECISION rows; does not enable a new compiler ledger"
+echo "note: consumes existing MAT_DECISION rows; promoted consumers are not selected again"
 
 awk \
   -v samples="$SAMPLES" \
   -v preferred="$PREFERRED_CONSUMER" \
+  -v promoted_consumers="$PROMOTED_CONSUMERS" \
   -v generated_stage="$GENERATED_STAGE_STATUS" \
   -v known_consumers="$(IFS=,; echo "${known_consumers[*]}")" '
   function field(name,    i, p) {
@@ -161,9 +226,16 @@ awk \
     }
   }
 
+  function is_promoted(consumer) {
+    return consumer in promoted_seen
+  }
+
   function selection_status(consumer) {
     if (consumer_rows[consumer] == 0) {
       return "rejected_unreached"
+    }
+    if (is_promoted(consumer)) {
+      return "already_promoted_shadow"
     }
     if (consumer_missing[consumer] > 0 || consumer_invalid[consumer] > 0) {
       return "rejected_missing_owner_fields"
@@ -198,6 +270,12 @@ awk \
     known_count = split(known_consumers, known, ",")
     for (i = 1; i <= known_count; i++) {
       append_known(known[i])
+    }
+    promoted_count = split(promoted_consumers, promoted, ",")
+    for (i = 1; i <= promoted_count; i++) {
+      if (promoted[i] != "") {
+        promoted_seen[promoted[i]] = 1
+      }
     }
   }
 
@@ -303,6 +381,7 @@ awk \
     print "## Selection Counts"
     print "eligible_count=" eligible_count + 0
     print "selected_count=" selected_count + 0
+    print "preferred_already_promoted=" (is_promoted(preferred) ? 1 : 0)
 
     print ""
     print "## Consumer Decision Buckets"
@@ -366,9 +445,10 @@ awk \
       print last_row
     }
 
+    expected_selected_count = is_promoted(preferred) ? 0 : 1
     if (rows == 0 || malformed > 0 || invalid_owner > 0 ||
         invalid_legacy_result > 0 || invalid_would_change > 0 ||
-        selected_count != 1) {
+        selected_count != expected_selected_count) {
       exit 1
     }
   }

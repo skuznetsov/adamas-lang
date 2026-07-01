@@ -39,6 +39,16 @@ change. A new report without a promoted consumer, a backend forwarder without a
 HIR-owned transaction, or a consumer guard around the latest crash remains a
 symptom fix, not architecture work.
 
+2026-07-01 post-0k-N note: the first `MaterializationDecision` promotion seam
+is now closed in shadow mode, and the promotion-selection report marks it
+`already_promoted_shadow` rather than selecting it again. The focused report
+has no second eligible `MaterializationDecision` consumer, so the next
+near-term extraction lane should be `SemanticStateScope`: add a behavior-neutral
+scope snapshot at a naming/materialization seam and prove parity against the
+legacy ambient reads. Do not continue materialization-selection work unless a
+fresh focused report names a different unpromoted consumer with complete owner
+fields.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging
