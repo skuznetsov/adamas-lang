@@ -2526,6 +2526,31 @@ Post-0k-F owner-result preflight:
   `materialization_registry.legacy_result_1=3779` and
   `materialization_registry.legacy_result_0=3765`.
 
+Post-0k-F MaterializationRegistry attribution:
+
+- the report now breaks the mixed MaterializationRegistry rows down by
+  consumer, decision, selected-definition parameter class, target-map
+  presence, and callsite-arg shape;
+- focused stage1 evidence still reports
+  `materialization_registry_rows=7544`, split as
+  `legacy_result_1=3779` and `legacy_result_0=3765`;
+- the split is not owned by one consumer: all reached consumers are mixed
+  (`def_has_untyped_regular_param` 1775/1355,
+  `prefer_callsite_specialization` 580/483,
+  `raw_annotation_needs_callsite_specialization` 229/1055,
+  `lower_function_if_needed.override` 566/496, and
+  `lower_call.remangle` 629/376 for result 1/0 respectively);
+- the strongest observed separator is selected-definition parameter class:
+  `regular_untyped_params` is mostly result 1 (`3362/3`), while
+  `concrete_typed_params` is mostly result 0 (`2/2033`) and
+  `no_regular_params` is mostly result 0 (`4/572`). `short_type_params`
+  (`273/895`) and `skipped_untyped_params` (`138/262`) remain mixed;
+- all MaterializationRegistry rows have `target_map_present`
+  (`3779/3765`). Callsite-arg shape is also mixed:
+  `call_args_none` (`507/599`), `call_args_1` (`1864/2363`),
+  `call_args_2_4` (`1202/801`), `call_args_5_16` (`194/2`), and
+  `call_args_17_plus` (`12/0`), result 1/0 respectively.
+
 Interpretation:
 
 - Slice 0k-F is a migration gate. It proves the known consumer set is
@@ -2548,6 +2573,10 @@ Interpretation:
   MaterializationRegistry migration class is a mixed owner surface, not a
   boolean replacement rule. It needs per-consumer/per-decision classification
   before any behavior patch changes naming or materialization decisions.
+- the MaterializationRegistry attribution further refutes a single-consumer
+  fix. The next behavior design has to model the selected-definition parameter
+  contract and its exceptions; using consumer name, target-map presence, or
+  callsite-arg count alone would over-fire.
 
 Next local track:
 
@@ -2560,7 +2589,12 @@ Next local track:
 - because `migrate_to_materialization_registry` is measured-red under the
   proposed owner-result probe, the next MaterializationRegistry slice must
   classify rows by consumer, decision, selected definition, target map, and
-  callsite arg shape before it proposes any replacement rule.
+  callsite arg shape before it proposes any replacement rule;
+- the next design candidate is a MaterializationRegistry contract for
+  selected-definition parameter classes: regular untyped params, skipped
+  untyped params, short type params, concrete typed params, and no-param
+  definitions must each state whether callsite specialization, target
+  materialization, or legacy shim owns the symbol decision.
 
 ### Slice A: CallResolution boundary
 

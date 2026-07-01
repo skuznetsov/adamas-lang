@@ -568,6 +568,13 @@ Recommended direction:
   behavior replacement rule. The next MaterializationRegistry work must model
   the specific decision being owned before any naming or materialization
   behavior changes.
+- The first MaterializationRegistry attribution slice shows that the split is
+  not local to one consumer and not explained by target-map presence. Every
+  reached consumer is mixed, while selected-definition parameter class is the
+  strongest separator (`regular_untyped_params=3362/3`,
+  `concrete_typed_params=2/2033`, `no_regular_params=4/572`, with mixed
+  short/skipped untyped classes). That makes a parameter-class contract the
+  next planning surface before any behavior patch.
 
 This plan should be revisited after the architecture SDD seals the active
 semantic-owner frontiers enough that backend-local refactoring cannot hide a

@@ -536,10 +536,28 @@ StateScope (`legacy_result_1=25978`) and ambient rejection
 blocks any behavior patch that treats `migrate_to_materialization_registry` as
 one boolean rule. The next MaterializationRegistry step must classify by
 consumer, decision, selected definition, target map, and callsite arg shape
-before a behavior change is admissible. Decay trigger: the required consumer
-set moves, the report row format changes, a later `StateScope` facade starts
-driving behavior, or fresh generated-stage evidence reaches all required
-consumers with different migration buckets.
+before a behavior change is admissible.
+
+Follow-up attribution shows why this cannot be a one-consumer fix:
+`materialization_registry_rows=7544` split as `legacy_result_1=3779` and
+`legacy_result_0=3765`, with every reached consumer mixed:
+`def_has_untyped_regular_param` 1775/1355,
+`prefer_callsite_specialization` 580/483,
+`raw_annotation_needs_callsite_specialization` 229/1055,
+`lower_function_if_needed.override` 566/496, and
+`lower_call.remangle` 629/376 for result 1/0 respectively. The strongest
+observed separator is selected-definition parameter class:
+`regular_untyped_params` is mostly result 1 (`3362/3`), while
+`concrete_typed_params` is mostly result 0 (`2/2033`) and `no_regular_params`
+is mostly result 0 (`4/572`). `short_type_params` (`273/895`) and
+`skipped_untyped_params` (`138/262`) remain mixed. All rows have
+`target_map_present`, and callsite-arg shape remains mixed. The next
+MaterializationRegistry design slice must therefore model selected-definition
+parameter classes and exceptions instead of using consumer name, target-map
+presence, or call-arg count as a replacement rule. Decay trigger: the required
+consumer set moves, the report row format changes, a later `StateScope` facade
+starts driving behavior, or fresh generated-stage evidence reaches all
+required consumers with different migration buckets.
 
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in

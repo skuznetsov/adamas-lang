@@ -139,6 +139,49 @@ awk -v samples="$SAMPLES" '
     return 0
   }
 
+  function selected_param_class(params) {
+    if (params == "") {
+      return "params_unparsed"
+    }
+    if (params == "none") {
+      return "no_regular_params"
+    }
+    if (has_regular_untyped_param(params)) {
+      return "regular_untyped_params"
+    }
+    if (has_skipped_untyped_param(params)) {
+      return "skipped_untyped_params"
+    }
+    if (has_short_type_param_annotation(params)) {
+      return "short_type_params"
+    }
+    return "concrete_typed_params"
+  }
+
+  function target_map_class(target_map) {
+    if (target_map == "") {
+      return "target_map_empty"
+    }
+    return "target_map_present"
+  }
+
+  function call_arg_shape(call_arg_types,    n, parts) {
+    if (call_arg_types == "" || call_arg_types == "nil") {
+      return "call_args_none"
+    }
+    n = split(call_arg_types, parts, ",")
+    if (n == 1) {
+      return "call_args_1"
+    }
+    if (n <= 4) {
+      return "call_args_2_4"
+    }
+    if (n <= 16) {
+      return "call_args_5_16"
+    }
+    return "call_args_17_plus"
+  }
+
   function blocked_class(consumer, decision, selected_def, result, migration, validation, call_arg_types,    params) {
     if (migration == "blocked_unknown") {
       return "blocked_unknown.needs_owner"
@@ -295,6 +338,28 @@ awk -v samples="$SAMPLES" '
         keep_sample("owned_would_change", $0)
       }
     }
+
+    if (migration == "migrate_to_materialization_registry") {
+      matreg_rows++
+      mat_result = "legacy_result_" result
+      matreg_result_count[mat_result]++
+      matreg_consumer_result_count[consumer "." mat_result]++
+      matreg_decision_result_count[decision "." mat_result]++
+      matreg_consumer_decision_result_count[consumer "." decision "." mat_result]++
+
+      params = selected_params(selected_def)
+      param_class = selected_param_class(params)
+      matreg_param_result_count[param_class "." mat_result]++
+
+      tmap_class = target_map_class(target_map)
+      matreg_target_map_result_count[tmap_class "." mat_result]++
+
+      carg_shape = call_arg_shape(call_arg_types)
+      matreg_call_arg_result_count[carg_shape "." mat_result]++
+
+      keep_sample("materialization_registry:" mat_result, $0)
+      keep_sample("materialization_registry:" consumer "." decision "." mat_result, $0)
+    }
   }
 
   END {
@@ -380,6 +445,92 @@ awk -v samples="$SAMPLES" '
     for (i = 1; i <= 6; i++) {
       op = known_parity[i]
       print op "=" owner_result_count[op] + 0
+    }
+
+    print ""
+    print "## MaterializationRegistry Attribution"
+    print "materialization_registry_rows=" matreg_rows + 0
+
+    print ""
+    print "### MaterializationRegistry Result"
+    known_mat_result[1] = "legacy_result_1"
+    known_mat_result[2] = "legacy_result_0"
+    for (i = 1; i <= 2; i++) {
+      mr = known_mat_result[i]
+      print mr "=" matreg_result_count[mr] + 0
+    }
+
+    print ""
+    print "### MaterializationRegistry Consumer Result"
+    for (k in matreg_consumer_result_count) {
+      print k "=" matreg_consumer_result_count[k]
+    }
+
+    print ""
+    print "### MaterializationRegistry Decision Result"
+    for (k in matreg_decision_result_count) {
+      print k "=" matreg_decision_result_count[k]
+    }
+
+    print ""
+    print "### MaterializationRegistry Consumer Decision Result"
+    for (k in matreg_consumer_decision_result_count) {
+      print k "=" matreg_consumer_decision_result_count[k]
+    }
+
+    print ""
+    print "### MaterializationRegistry Selected Param Class Result"
+    known_param_class[1] = "params_unparsed"
+    known_param_class[2] = "no_regular_params"
+    known_param_class[3] = "regular_untyped_params"
+    known_param_class[4] = "skipped_untyped_params"
+    known_param_class[5] = "short_type_params"
+    known_param_class[6] = "concrete_typed_params"
+    for (i = 1; i <= 6; i++) {
+      pc = known_param_class[i]
+      for (j = 1; j <= 2; j++) {
+        mr = known_mat_result[j]
+        print pc "." mr "=" matreg_param_result_count[pc "." mr] + 0
+      }
+    }
+
+    print ""
+    print "### MaterializationRegistry Target Map Result"
+    known_tmap[1] = "target_map_empty"
+    known_tmap[2] = "target_map_present"
+    for (i = 1; i <= 2; i++) {
+      tm = known_tmap[i]
+      for (j = 1; j <= 2; j++) {
+        mr = known_mat_result[j]
+        print tm "." mr "=" matreg_target_map_result_count[tm "." mr] + 0
+      }
+    }
+
+    print ""
+    print "### MaterializationRegistry Call Arg Shape Result"
+    known_carg[1] = "call_args_none"
+    known_carg[2] = "call_args_1"
+    known_carg[3] = "call_args_2_4"
+    known_carg[4] = "call_args_5_16"
+    known_carg[5] = "call_args_17_plus"
+    for (i = 1; i <= 5; i++) {
+      ca = known_carg[i]
+      for (j = 1; j <= 2; j++) {
+        mr = known_mat_result[j]
+        print ca "." mr "=" matreg_call_arg_result_count[ca "." mr] + 0
+      }
+    }
+
+    for (i = 1; i <= 2; i++) {
+      mr = known_mat_result[i]
+      bucket = "materialization_registry:" mr
+      if (sample_count[bucket] > 0) {
+        print ""
+        print "## Sample " bucket
+        for (j = 1; j <= sample_count[bucket]; j++) {
+          print sample[bucket, j]
+        }
+      }
     }
 
     for (i = 1; i <= 3; i++) {

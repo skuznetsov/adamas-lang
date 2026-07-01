@@ -445,6 +445,23 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   map/callsite shape before proposing a behavior patch. No naming,
   materialization, backend, AST, or StateScope behavior changed.
 
+- 2026-07-01 UPDATE: attributed the mixed MaterializationRegistry owned rows
+  instead of trying a behavior rule. The focused stage1 report still records
+  `materialization_registry_rows=7544`, split as
+  `legacy_result_1=3779` and `legacy_result_0=3765`. No single consumer owns
+  the split: `def_has_untyped_regular_param` is `1775/1355`,
+  `prefer_callsite_specialization` is `580/483`,
+  `raw_annotation_needs_callsite_specialization` is `229/1055`,
+  `lower_function_if_needed.override` is `566/496`, and
+  `lower_call.remangle` is `629/376` for result 1/0 respectively. The strongest
+  separator is selected-definition parameter class:
+  `regular_untyped_params=3362/3`, `concrete_typed_params=2/2033`,
+  `no_regular_params=4/572`, with mixed `short_type_params=273/895` and
+  `skipped_untyped_params=138/262`. All rows have `target_map_present`; call
+  arg shape remains mixed. Next SDD work: define a MaterializationRegistry
+  contract for selected-definition parameter classes and their exceptions
+  before any consumer/naming/materialization behavior patch.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was
