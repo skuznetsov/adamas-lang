@@ -381,27 +381,29 @@ MIR call representation, `lower_function_if_needed_impl`, HIR-to-MIR call
 lowering, backend call emission, or the materialization transaction report row
 format changes.
 
-[LM-ARCH-SLICE-0K-B-STATESCOPE-AUTHORITY-NEXT|guard-only 2026-07-01 {F:0.78 G:0.54 R:0.84}]:
-The next correctness slice after Slice 0k-A is not a backend forwarder or a
-Hash-specific behavior patch. Slice 0k-A proves that HIR materialization
-transactions can be correlated to backend emitted-call facts, but it does not
-yet prove the selected definition identity or the semantic state scope that was
-authoritative for naming/materialization. The next admitted architecture slice
-must extend the same transaction contract with selected definition identity,
-state-scope authority (`callsite`, `target_materialization`,
-`body_substitution`, `current_instantiation`, or `ambient_rejected`), map-source
-evidence, materialization-registry action, and final emitted-call ABI shape
-before any behavior patch changes naming, materialization, or backend calls.
-Forbidden next moves: backend `@undefined_externs` rescue, force
-`override=name`, target keepalive from backend stubs, global ambient-map ignore,
-or using broad `[MAT_EMIT] tx=none` diagnostics as behavior evidence. Evidence:
-`docs/compiler_architecture_sdd.md` Slice 0k-B and
-`docs/compiler_refactor_architecture_plan.md` now make this the design-sealed
-next step. Scope: guard-only planning, not an implemented owner record and not
-a green `s2b`/`s3b` claim. Decay trigger: Slice 0k-B implementation lands,
-fresh generated-stage evidence invalidates transaction completeness as the
-active correctness track, or a completed StateScope/MaterializationRegistry
-facade replaces this temporary plan.
+[LM-ARCH-SLICE-0K-B-STATESCOPE-AUTHORITY-LEDGER|verified 2026-07-01 {F:0.84 G:0.46 R:0.88}]:
+Slice 0k-B now extends the behavior-neutral materialization transaction rows
+with selected-definition and state-scope owner fields. Red gate: a Slice 0k-A
+compiler built at `/private/tmp/adamas_0kb_red` emitted joined `[MAT_TX]` /
+`[MAT_EMIT]` rows but failed the upgraded report with `owner_malformed=2513`.
+Implementation shape: `[MAT_TX]` rows now include `selected_def`,
+`state_scope`, `map_source`, and `materialization_action`, produced at the HIR
+materialization seam; backend `[MAT_EMIT]` rows remain mechanical emitted-call
+facts and do not reconstruct source-level semantics. Evidence: focused stage1
+report emits `rows=2513`, `malformed=0`, `emit_rows=16995`,
+`malformed_emit=0`, `owner_malformed=0`, `joined_transactions=1349`, and
+`unjoined_emit_rows=0`; state-scope buckets are `callsite=871` and
+`target_materialization=1642`; map-source buckets are
+`callsite_arg_types=871`, `target_map=1165`,
+`ambient_snapshot_rejected=238`, and `empty_map=239`. Generated-s2 no-prelude
+report emits `rows=1`, `emit_rows=2`, `owner_malformed=0`,
+`joined_transactions=1`, and `unjoined_emit_rows=0`; full suites pass
+`152/152 + 36/36`. Scope: this proves owner fields are available in the
+transaction ledger, not that any materialization behavior is fixed and not that
+`s2b`/`s3b` are green. Decay trigger: materialization transaction row format
+changes, `lower_function_if_needed_impl` state-scope decisions move, or a
+completed `SemanticStateScope` / `MaterializationRegistry` facade replaces
+these diagnostic fields.
 
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in

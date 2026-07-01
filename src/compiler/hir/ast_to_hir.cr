@@ -2131,6 +2131,10 @@ module Adamas::HIR
       getter ambient_map : String
       getter target_map : String
       getter call_arg_types : String
+      getter selected_def : String
+      getter state_scope : String
+      getter map_source : String
+      getter materialization_action : String
 
       def initialize(
         @phase : String,
@@ -2144,6 +2148,10 @@ module Adamas::HIR
         @ambient_map : String,
         @target_map : String,
         @call_arg_types : String,
+        @selected_def : String,
+        @state_scope : String,
+        @map_source : String,
+        @materialization_action : String,
       )
       end
 
@@ -2349,12 +2357,18 @@ module Adamas::HIR
       lookup_branch : String?,
       call_arg_types : Array(TypeRef)?,
       target_params : Hash(String, String)?,
+      selected_def : Adamas::Compiler::Frontend::DefNode,
+      selected_owner : String,
     ) : Nil
       return unless env_has?("ADAMAS_MATERIALIZATION_IDENTITY_LEDGER")
 
       ambient = type_param_map_debug_string
       target_map = string_map_debug_string(target_params)
       call_args = type_ref_array_debug_string(call_arg_types)
+      selected_def_id = selected_definition_debug_string(selected_def, target_name, selected_owner)
+      state_scope = materialization_state_scope_authority(override_reason, target_params)
+      map_source = materialization_map_source(state_scope, target_params)
+      materialization_action = materialization_registry_action(body_symbol)
       transaction = MaterializationIdentityTransaction.new(
         phase,
         requested_name,
@@ -2367,11 +2381,86 @@ module Adamas::HIR
         ambient,
         target_map,
         call_args,
+        selected_def_id,
+        state_scope,
+        map_source,
+        materialization_action,
       )
       tx_id = ledger_token(transaction.debug_id)
       @module.remember_materialization_transaction(call_symbol_hint, tx_id)
-      STDERR.puts "[MAT_ID] phase=#{phase} requested=#{requested_name} target=#{target_name} state_key=#{state_key} body_symbol=#{body_symbol} call_symbol_hint=#{call_symbol_hint} override_reason=#{override_reason} branch=#{lookup_branch || "?"} ambient_map=#{ambient} target_map=#{target_map} call_arg_types=#{call_args}"
-      STDERR.puts "[MAT_TX] tx=#{tx_id} phase=#{ledger_token(transaction.phase)} requested=#{ledger_token(transaction.requested_name)} target=#{ledger_token(transaction.target_name)} state_key=#{ledger_token(transaction.state_key)} body_symbol=#{ledger_token(transaction.body_symbol)} call_symbol_hint=#{ledger_token(transaction.call_symbol_hint)} identity_status=#{ledger_token(transaction.identity_status)} symbol_relation=#{ledger_token(transaction.symbol_relation)} required_contract=#{ledger_token(transaction.required_contract)} override_reason=#{ledger_token(transaction.override_reason)} branch=#{ledger_token(transaction.lookup_branch)} ambient_map=#{ledger_token(transaction.ambient_map)} target_map=#{ledger_token(transaction.target_map)} call_arg_types=#{ledger_token(transaction.call_arg_types)}"
+      STDERR.puts "[MAT_ID] phase=#{phase} requested=#{requested_name} target=#{target_name} state_key=#{state_key} body_symbol=#{body_symbol} call_symbol_hint=#{call_symbol_hint} override_reason=#{override_reason} branch=#{lookup_branch || "?"} ambient_map=#{ambient} target_map=#{target_map} call_arg_types=#{call_args} selected_def=#{selected_def_id} state_scope=#{state_scope} map_source=#{map_source} materialization_action=#{materialization_action}"
+      STDERR.puts "[MAT_TX] tx=#{tx_id} phase=#{ledger_token(transaction.phase)} requested=#{ledger_token(transaction.requested_name)} target=#{ledger_token(transaction.target_name)} state_key=#{ledger_token(transaction.state_key)} body_symbol=#{ledger_token(transaction.body_symbol)} call_symbol_hint=#{ledger_token(transaction.call_symbol_hint)} identity_status=#{ledger_token(transaction.identity_status)} symbol_relation=#{ledger_token(transaction.symbol_relation)} required_contract=#{ledger_token(transaction.required_contract)} override_reason=#{ledger_token(transaction.override_reason)} branch=#{ledger_token(transaction.lookup_branch)} ambient_map=#{ledger_token(transaction.ambient_map)} target_map=#{ledger_token(transaction.target_map)} call_arg_types=#{ledger_token(transaction.call_arg_types)} selected_def=#{ledger_token(transaction.selected_def)} state_scope=#{ledger_token(transaction.state_scope)} map_source=#{ledger_token(transaction.map_source)} materialization_action=#{ledger_token(transaction.materialization_action)}"
+    end
+
+    private def selected_definition_debug_string(
+      func_def : Adamas::Compiler::Frontend::DefNode,
+      selected_symbol : String,
+      selected_owner : String,
+    ) : String
+      span = func_def.span
+      arena = @function_def_arenas[selected_symbol]? || resolve_arena_for_def(func_def, @arena)
+      path = source_path_for(arena) || "?"
+      def_name = safe_slice_to_string(func_def.name) || "?"
+      params = function_param_infos(selected_symbol, func_def).map do |param|
+        prefix = if param.is_block
+                   "&"
+                 elsif param.is_double_splat
+                   "**"
+                 elsif param.is_splat
+                   "*"
+                 else
+                   ""
+        end
+        name = param.name || "_"
+        ann_text = param.type_annotation || "untyped"
+        "#{prefix}#{name}:#{ann_text}"
+      end.join("|")
+      params = "none" if params.empty?
+
+      "symbol=#{selected_symbol};owner=#{selected_owner};def=#{def_name};id=#{func_def.object_id};file=#{path};span=#{span.start_line}:#{span.start_column};params=#{params}"
+    end
+
+    private def materialization_state_scope_authority(
+      override_reason : String,
+      target_params : Hash(String, String)?,
+    ) : String
+      return "target_materialization" if target_params && !target_params.empty?
+
+      case override_reason
+      when "requested_wrapper", "deferred_lookup", "untyped_regular_param",
+           "requested_class_target", "requested_or_canonical_def"
+        "callsite"
+      when "target_materialization", "target_class_symbol", "target_def_symbol", "object_in_base"
+        "target_materialization"
+      else
+        @type_param_map.empty? ? "callsite" : "ambient_rejected"
+      end
+    end
+
+    private def materialization_map_source(
+      state_scope : String,
+      target_params : Hash(String, String)?,
+    ) : String
+      return "target_map" if target_params && !target_params.empty?
+      return "callsite_arg_types" if state_scope == "callsite"
+      return "ambient_snapshot_rejected" unless @type_param_map.empty?
+
+      "empty_map"
+    end
+
+    private def materialization_registry_action(body_symbol : String) : String
+      return "reused_body" if @module.has_function_with_body?(body_symbol)
+
+      case @function_lowering_states[body_symbol]?
+      when FunctionLoweringState::Completed
+        "reused_body"
+      when FunctionLoweringState::Pending
+        "pending"
+      when FunctionLoweringState::InProgress
+        "created_body"
+      else
+        "created_body"
+      end
     end
 
     private def ledger_token(value : String) : String
@@ -71061,7 +71150,9 @@ module Adamas::HIR
                 override_reason,
                 lookup_branch,
                 call_arg_types,
-                merged_params
+                merged_params,
+                resolved_func_def,
+                owner
               )
               with_isolated_type_param_map(merged_params) do
                 with_namespace_override_or_clear(namespace_override) do
@@ -71212,7 +71303,9 @@ module Adamas::HIR
                 target_for_lower == name ? "requested_class_target" : "target_class_symbol",
                 lookup_branch,
                 call_arg_types,
-                extra_type_params
+                extra_type_params,
+                resolved_func_def,
+                owner
               )
               if extra_type_params
                 with_isolated_type_param_map(extra_type_params) do
@@ -71277,7 +71370,9 @@ module Adamas::HIR
               override_reason,
               lookup_branch,
               call_arg_types,
-              extra_type_params
+              extra_type_params,
+              resolved_func_def,
+              requested_parts.owner
             )
 
             if extra_type_params && !extra_type_params.empty?

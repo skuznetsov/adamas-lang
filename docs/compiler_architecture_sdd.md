@@ -1917,8 +1917,8 @@ Residual boundary after Slice 0k-A:
 
 Status:
 
-- design-sealed next correctness slice after Slice 0k-A;
-- docs-only guard in this revision;
+- Slice 0k-B default-off selected-definition and state-scope owner fields
+  implemented;
 - no compiler behavior change is admitted by this slice.
 
 Problem:
@@ -1986,6 +1986,48 @@ Minimal evidence before the first behavior slice:
 - static semantic and CodePathStatus censuses still pass;
 - the SDD/TODO/LANDMARKS ledger names the exact first behavior row to consume,
   or explicitly states why the next slice remains behavior-neutral.
+
+Slice 0k-B evidence:
+
+- red gate: a Slice 0k-A compiler built as `/private/tmp/adamas_0kb_red`
+  already emitted joined `[MAT_TX]` / `[MAT_EMIT]` rows, but the upgraded
+  report failed with `owner_malformed=2513`;
+- implementation: `[MAT_TX]` rows now include `selected_def`, `state_scope`,
+  `map_source`, and `materialization_action`, all produced at the HIR
+  materialization seam; backend `[MAT_EMIT]` rows remain mechanical and do not
+  reconstruct source-level owner facts;
+- focused stage1 report:
+  `scripts/materialization_transaction_report.sh /private/tmp/adamas_0kb_stage1`
+  reports `rows=2513`, `emit_rows=16995`, `owner_malformed=0`,
+  `joined_transactions=1349`, and `unjoined_emit_rows=0`;
+- focused stage1 owner buckets: `state_scope` reports `callsite=871` and
+  `target_materialization=1642`; `map_source` reports
+  `callsite_arg_types=871`, `target_map=1165`,
+  `ambient_snapshot_rejected=238`, and `empty_map=239`;
+- default-env check: compiling a focused Box reducer with no ledger env emits
+  no `[MAT_ID]`, `[MAT_TX]`, or `[MAT_EMIT]` rows;
+- generated-s2 no-prelude report:
+  `scripts/materialization_transaction_report.sh /private/tmp/adamas_0kb_s2
+  /private/tmp/adamas_0kb_np.cr --no-prelude -o
+  /private/tmp/adamas_0kb_np.bin` reports `rows=1`, `emit_rows=2`,
+  `owner_malformed=0`, `joined_transactions=1`, and `unjoined_emit_rows=0`;
+- static guards: `scripts/semantic_decision_census.sh` and
+  `scripts/codepath_status_census.sh` still pass.
+- broad guard: `regression_tests/run_all_suites.sh
+  /private/tmp/adamas_0kb_stage1 4` passes `152/152` original and `36/36`
+  combined tests.
+
+Residual boundary after Slice 0k-B:
+
+- owner fields are diagnostic and default-off; they do not change
+  materialization, state-scope isolation, or backend emission;
+- `ambient_snapshot_rejected` means ambient state was observed as a rejected
+  snapshot, not accepted as authority;
+- the next behavior slice is still blocked until it chooses a targeted
+  transaction row and proves the first would-change set is not wider than the
+  classified row set;
+- this does not make `Hash(UInt64, NamedTuple)#[]=` fixed and does not make
+  `s2b`/`s3b` green.
 
 ### Slice A: CallResolution boundary
 

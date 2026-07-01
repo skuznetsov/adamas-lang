@@ -95,12 +95,19 @@ awk -v samples="$SAMPLES" '
     target = field("target")
     body = field("body_symbol")
     call = field("call_symbol_hint")
+    selected_def = field("selected_def")
+    state_scope = field("state_scope")
+    map_source = field("map_source")
+    materialization_action = field("materialization_action")
     last_row = $0
 
     phase_count[phase]++
     status_count[status]++
     relation_count[relation]++
     contract_count[contract]++
+    state_scope_count[state_scope]++
+    map_source_count[map_source]++
+    materialization_action_count[materialization_action]++
 
     if (tx == "" || status == "" || relation == "" || requested == "" || target == "" || body == "" || call == "") {
       malformed++
@@ -116,6 +123,14 @@ awk -v samples="$SAMPLES" '
       if (sample_count[status] < samples) {
         sample_count[status]++
         sample[status, sample_count[status]] = "phase=" phase " relation=" relation " contract=" contract " requested=" requested " target=" target " body=" body " call=" call
+      }
+    }
+
+    if (selected_def == "" || state_scope == "" || map_source == "" || materialization_action == "") {
+      owner_malformed++
+      if (sample_count["owner_malformed"] < samples) {
+        sample_count["owner_malformed"]++
+        sample["owner_malformed", sample_count["owner_malformed"]] = $0
       }
     }
   }
@@ -175,6 +190,7 @@ awk -v samples="$SAMPLES" '
     print "malformed=" malformed + 0
     print "emit_rows=" emit_count + 0
     print "malformed_emit=" malformed_emit + 0
+    print "owner_malformed=" owner_malformed + 0
     print "transaction_ids=" tx_distinct + 0
     print "transaction_bound_emit_rows=" transaction_emit + 0
     print "non_transaction_emit_rows=" non_transaction_emit + 0
@@ -203,6 +219,24 @@ awk -v samples="$SAMPLES" '
     print "## Phases"
     for (p in phase_count) {
       print p "=" phase_count[p]
+    }
+
+    print ""
+    print "## State Scopes"
+    for (s in state_scope_count) {
+      print s "=" state_scope_count[s]
+    }
+
+    print ""
+    print "## Map Sources"
+    for (m in map_source_count) {
+      print m "=" map_source_count[m]
+    }
+
+    print ""
+    print "## Materialization Actions"
+    for (a in materialization_action_count) {
+      print a "=" materialization_action_count[a]
     }
 
     print ""
@@ -257,6 +291,16 @@ awk -v samples="$SAMPLES" '
     }
 
     print ""
+    print "## Owner Malformed Samples"
+    if ((sample_count["owner_malformed"] + 0) == 0) {
+      print "(none)"
+    } else {
+      for (i = 1; i <= sample_count["owner_malformed"]; i++) {
+        print sample["owner_malformed", i]
+      }
+    }
+
+    print ""
     print "## Unjoined Emit Samples"
     if ((sample_count["unjoined_emit"] + 0) == 0) {
       print "(none)"
@@ -275,7 +319,7 @@ awk -v samples="$SAMPLES" '
     print last_emit_row
 
     if ((row_count + 0) == 0 || (emit_count + 0) == 0 || (malformed + 0) != 0 ||
-        (malformed_emit + 0) != 0 || (transaction_emit + 0) == 0 ||
+        (malformed_emit + 0) != 0 || (owner_malformed + 0) != 0 || (transaction_emit + 0) == 0 ||
         (joined_tx + 0) == 0 || (unjoined_emit + 0) != 0) {
       exit 1
     }

@@ -295,19 +295,24 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   `SemanticStateScope` / `MaterializationRegistry` if selected-definition or
   state-authority evidence is still missing.
 
-- 2026-07-01 NEXT ARCHITECTURE SLICE: Slice 0k-B is now the design-sealed
-  correctness precondition after 0k-A. The emitted-call correlation channel is
-  useful, but a joined `[MAT_TX]` / `[MAT_EMIT]` row is not yet a root-cause
-  owner fact because it does not prove the selected definition or the
-  state-scope authority that chose the materialized symbol. The next
-  implementation must extend the transaction contract with selected definition
-  identity, state-scope authority (`callsite`, `target_materialization`,
-  `body_substitution`, `current_instantiation`, or `ambient_rejected`),
-  map-source evidence, and materialization-registry action before any behavior
-  patch changes naming/materialization/backend calls. Forbidden next moves:
-  backend `@undefined_externs` rescue, force `override=name`, target keepalive
-  from backend stubs, global ambient-map ignore, or using `[MAT_EMIT] tx=none`
-  diagnostics as a behavior signal.
+- 2026-07-01 UPDATE: implemented Slice 0k-B as default-off transaction owner
+  fields. The report was made red first: a Slice 0k-A compiler
+  (`/private/tmp/adamas_0kb_red`) still had joined `[MAT_TX]` / `[MAT_EMIT]`
+  rows but failed the upgraded report with `owner_malformed=2513`. The code
+  now emits `selected_def`, `state_scope`, `map_source`, and
+  `materialization_action` on `[MAT_TX]` rows at the HIR materialization seam;
+  backend `[MAT_EMIT]` remains mechanical. Focused stage1 report shows
+  `rows=2513`, `emit_rows=16995`, `owner_malformed=0`,
+  `joined_transactions=1349`, `unjoined_emit_rows=0`, `state_scope` buckets
+  `callsite=871` / `target_materialization=1642`, and `map_source` buckets
+  `callsite_arg_types=871`, `target_map=1165`,
+  `ambient_snapshot_rejected=238`, `empty_map=239`. A generated-s2
+  no-prelude report shows `rows=1`, `emit_rows=2`, `owner_malformed=0`,
+  `joined_transactions=1`, and `unjoined_emit_rows=0`. Full suites pass
+  `152/152 + 36/36`. This is still not a behavior fix and not green
+  `s2b`/`s3b`: the next behavior slice must choose a targeted transaction row
+  and run a would-change census before changing naming/materialization/backend
+  behavior.
 
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
