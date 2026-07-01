@@ -8,6 +8,21 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: selected the next implementation receipt without editing
+  compiler behavior. Slice 0k-X chooses
+  `MaterializationIdentity / lower_function_if_needed.symbol_binding` as the
+  next code unit. The old edge is the split inline logic that independently
+  computes `materialized_name`, `override`, keepalive target, and
+  materialization call-symbol hints. The future owned fact is a
+  `MaterializationSymbolBinding`-style helper/record carrying requested,
+  target, materialized body, override/call hint, state-scope, target-map,
+  call-arg, ABI, and keepalive facts in one place while returning legacy
+  behavior. The next production code slice must first add a red/green
+  source-shape gate for that seam and stop if it only adds another report.
+  Acceptance is stronger than "record exists": downstream consumers must read
+  body/call/keepalive symbols from the binding record, while legacy branches
+  may remain only inside the helper as parity or implementation details.
+
 - 2026-07-01 UPDATE: paused production-code and report-surface work after the
   `MethodNameCodec` 0k-V shadow helper. A local
   `scripts/method_name_codec_promotion_report.sh` scratch was classified as

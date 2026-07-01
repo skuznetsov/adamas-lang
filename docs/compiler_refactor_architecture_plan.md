@@ -132,6 +132,22 @@ fact at a time, but "owned fact" means a consumer stops treating rendered names,
 ambient maps, arena-local ids, or backend fallback state as authority; it does
 not mean another standalone ledger wrapper.
 
+2026-07-01 post-0k-X note: the next implementation unit is selected before
+production edits: `lower_function_if_needed.symbol_binding`. The current code
+still chooses `materialized_name`, `override`, keepalive target, and
+materialization ledger call-symbol hints through separate inline branches. The
+next code slice should introduce one behavior-neutral
+`MaterializationSymbolBinding`-style owner record/helper and make those
+consumers read from it while preserving legacy emitted symbols. This is the
+smallest useful step toward the larger `MaterializationDecision` /
+`MethodNameCodec` architecture: requested, target, body, call, state-scope,
+target-map, call-arg, and ABI facts must become one HIR-owned binding before
+any forwarder, remangle, requested-name, or keepalive behavior fix is allowed.
+This is not satisfied by constructing a record and then continuing to recompute
+the symbols at downstream consumers; the consumer-facing authority must move to
+the binding record while legacy branch logic remains confined to parity inside
+the helper.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging

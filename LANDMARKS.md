@@ -1023,6 +1023,33 @@ claim. Decay trigger: the next slice lands with a concrete authority-edge
 receipt, the active board is replaced, or a future generated-stage report
 refutes the current MethodNameCodec/MaterializationIdentity priority.
 
+[LM-ARCH-MATERIALIZATION-SYMBOL-BINDING-RECEIPT|design-sealed 2026-07-01 {F:0.78 G:0.54 R:0.84}]:
+Slice 0k-X selects the next implementation unit before production edits:
+`MaterializationIdentity / lower_function_if_needed.symbol_binding`. The old
+authority edge is the split inline symbol-binding logic in
+`lower_function_if_needed_impl`: `materialized_name` is chosen from requested
+wrapper / shape-specialization / resolved target branches; later `override` is
+chosen from requested-wrapper / deferred-lookup / untyped-param / target
+branches; keepalive and materialization ledgers consume those separately
+computed locals. The selected owned fact for the future code slice is a
+`MaterializationSymbolBinding`-style helper/record carrying requested symbol,
+resolved target symbol, materialized body symbol, override/call-symbol hint,
+selected definition, state-scope/materialization decision, target map, callsite
+arg types, ABI class, and keepalive requirement in one HIR-owned object.
+Future emitted behavior must stay legacy/parity-only until a separate
+would-change slice is admitted. Required next gate: red/green source-shape
+evidence proving the selected seam consumes the binding record and the old
+inline symbol-binding windows are removed or moved inside the helper as
+parity-only logic. Acceptance is stronger than a record-only refactor:
+downstream consumers must read body/call/keepalive symbols from the binding
+record and must not re-derive them from separate `name` / `target_name` locals
+after the helper returns. Scope: docs-only implementation receipt; no compiler
+behavior changed, no deletion, no backend remangling, no `BlockOwner` carrier
+change, and no green `s2b`/`s3b` claim. Decay trigger: the binding helper lands
+with source-shape and stage evidence, a fresh board update selects a different
+row, or generated-stage evidence refutes materialization symbol binding as the
+next useful authority edge.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-
