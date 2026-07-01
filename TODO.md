@@ -35,6 +35,23 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   must first use this ledger (or a sibling owner ledger) to classify the active
   mismatch.
 
+- 2026-07-01 UPDATE: the active frontier was reclassified before another
+  behavior fix. A fresh stage1 built a fresh s2, and s2->s3 with
+  `ADAMAS_MATERIALIZATION_IDENTITY_LEDGER=1` produced zero `[MAT_ID]` rows
+  because the generated compiler hit the 4GB safe-wrapper cap during
+  parse/register (`top-level collection done defs=80 classes=124 modules=271`,
+  last `module register idx=201/271`). That means the materialization seam is
+  not yet reached. Added `scripts/parse_path_identity_probe.sh` as a
+  behavior-neutral NameResolution/file-identity gate. Verification:
+  `bash -n scripts/parse_path_identity_probe.sh`; with the same fresh stage1,
+  the probe reports `raw=75 canonical=75` and `PASS parse_path_identity`; with
+  fresh generated s2, the probe intentionally fails with
+  `DUPLICATE_PATH_IDENTITY raw=138 canonical=75` and prints duplicate raw
+  aliases for files such as `frontend/ast.cr`, `frontend/span.cr`, and
+  `frontend/string_pool.cr`. Next behavior-changing work must make this gate
+  green for generated s2 or refute file identity as the active boundary with
+  newer evidence.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was

@@ -49,6 +49,28 @@ particular symbol mismatch or a green `s2b`/`s3b` claim. Decay trigger:
 rewrites of `lower_function_if_needed_impl`, materialization naming,
 `with_isolated_type_param_map`, or HIR call/body symbol creation.
 
+[LM-ARCH-PARSE-PATH-IDENTITY-PROBE|verified 2026-07-01 {F:0.86 G:0.38 R:0.90}]:
+The active bootstrap frontier currently reaches `NameResolution/file identity`
+before it reaches materialization. Fresh stage1 built fresh s2, but running
+s2->s3 with `ADAMAS_MATERIALIZATION_IDENTITY_LEDGER=1` produced zero `[MAT_ID]`
+rows and hit the 4GB safe-wrapper cap during parse/register after
+`top-level collection done defs=80 classes=124 modules=271`, with the last
+progress row at `module register idx=201/271`. The committed dynamic probe
+`scripts/parse_path_identity_probe.sh` uses `ADAMAS_STOP_AFTER_PARSE=1`,
+`--no-prelude`, and `--verbose` to compare raw `Loading:` path count with
+canonical filesystem identity. Evidence: `bash -n
+scripts/parse_path_identity_probe.sh`; `scripts/parse_path_identity_probe.sh
+/private/tmp/adamas_sdd_stage1` reports `raw=75 canonical=75` and
+`PASS parse_path_identity`; `scripts/parse_path_identity_probe.sh
+/private/tmp/adamas_sdd_s2` intentionally exits 3 with
+`DUPLICATE_PATH_IDENTITY raw=138 canonical=75`, listing duplicate aliases for
+the same files such as `frontend/ast.cr`, `frontend/span.cr`, and
+`frontend/string_pool.cr`. Scope: this is a behavior-neutral measured-red gate,
+not a path canonicalization fix and not a green `s2b`/`s3b` claim. Decay
+trigger: rewrites of `parse_file_recursive`, require path resolution,
+`ADAMAS_STOP_AFTER_PARSE`, verbose loading output, or a fresh generated s2 that
+passes raw/canonical path parity.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

@@ -60,8 +60,12 @@ canonical-loaded-path WIP reduced the generated s2 registration graph
 (`modules=224`, `classes=146`) but did not pass the bootstrap DoD: the fresh
 s2 build still timed out after `pass3 after lower_main call` around allocator
 flush. Treat that WIP as evidence for a `NameResolution/file identity` boundary,
-not as a shipped fix. The next admitted move is Phase 1/1b census and
-behavior-neutral ledgers, not another symptom patch.
+not as a shipped fix. The transition gate now includes
+`scripts/parse_path_identity_probe.sh`: stage1 is expected to pass raw/canonical
+path parity, while the current generated s2 is expected to fail with duplicate
+raw paths. The next behavior-changing bootstrap slice must either make this
+probe pass for generated s2 or explicitly refute file identity as the active
+frontier with fresher evidence.
 
 ## 1. Admitted surface
 
@@ -1049,6 +1053,45 @@ Next local track:
 - run the ledger on the active s2b/s3b frontier and classify the first
   mismatch as `StateScope`, `Materialization`, `CallResolution`, or
   `NameResolution` before any behavior-changing fix.
+
+### Slice 0c: Parse path identity dynamic probe
+
+Source/spec:
+
+- `scripts/parse_path_identity_probe.sh`;
+- `parse_file_recursive` and require-path loading in `src/compiler/cli.cr`;
+- the `NameResolution/file identity` owner boundary.
+
+Falsifiers:
+
+- a fresh stage1 compiler must report identical raw and canonical `Loading:`
+  counts for `src/adamas.cr --no-prelude --verbose` under
+  `ADAMAS_STOP_AFTER_PARSE=1`;
+- a generated s2 compiler that parses the same source with duplicate raw paths
+  must fail this probe and print representative raw aliases for the same
+  canonical file;
+- the probe must be read-only and must clean its own temporary directory.
+
+Evidence:
+
+- current stage1: `raw=75 canonical=75`, `PASS parse_path_identity`;
+- current generated s2: `raw=138 canonical=75`,
+  `DUPLICATE_PATH_IDENTITY`, including duplicate aliases such as
+  `frontend/parser/../ast.cr`, `semantic/../frontend/ast.cr`, and
+  `hir/../frontend/ast.cr` for the same canonical file.
+
+Boundary:
+
+- this probe does not canonicalize paths and does not change compiler behavior;
+- a future path-identity fix must prove that the generated compiler no longer
+  re-registers the same source file through multiple raw spellings before
+  claiming progress on later materialization or backend frontiers.
+
+Next local track:
+
+- design the `NameResolution/file identity` owner as a small keying boundary
+  around loaded source-file identity, then re-run this probe before any
+  `s2 -> s3` materialization ledger analysis.
 
 ### Slice A: CallResolution boundary
 
