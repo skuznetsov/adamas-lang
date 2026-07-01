@@ -8,6 +8,25 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: implemented Slice 0k-BI, the H6 split required by the
+  0k-BH pause gate. New guard:
+  `regression_tests/type_value_core_runtime_identity_contract.sh <compiler>`.
+  It compares original Crystal and the stage compiler on direct/interpolated
+  `typeof(1)`, direct/interpolated `1.class`, local nilable `.class`,
+  parenthesized nilable `.class`, and type-literal `.name/.to_s/inspect`,
+  deliberately excluding the parser-confounded no-parens
+  `puts (true ? 1 : nil).class` row. Fresh evidence with current `bin/adamas`:
+  strict mode exits 1; with `ADAMAS_EXPECT_TYPEVALUE_CORE_MISMATCH=1`, it exits
+  0 after the stage binary prints blank `typeof` rows and exits 139 at
+  `DIRECT_CLASS`. The existing
+  `regression_tests/command_call_member_access_preservation_contract.sh`
+  remains the separate measured-red frontend guard. Next admitted production
+  route is back to `contract-owner-migration`: introduce the smallest
+  HIR-owned `TypeValue` / `RuntimeTypeIdentity` fact that makes the new core
+  guard strict-green while keeping the command-call parser guard out of scope.
+  Do not claim the full old H6 guard green until the separate command-call
+  frontend guard is also resolved.
+
 - 2026-07-01 UPDATE: added Slice 0k-BH, a docs-only Architecture Pause Gate
   after the 0k-BG command-call parser guard and a reverted local parser WIP.
   The WIP widened `LParen` handling in the no-parens command-call parser path

@@ -14,6 +14,9 @@ Slice 0k-BH adds a narrower pause gate after the 0k-BG parser falsifier:
 the command-call parser frontier may get one bounded closure attempt, but a
 second parser loop, adjacent parser regression, or broadened command-call
 precedence work must stop and return to the split-H6 / TypeValue-owner route.
+Slice 0k-BI takes that split-H6 route: it adds a TypeValue-core guard that
+excludes the parser-confounded direct no-parens command-call row, leaving the
+command-call frontend guard as a separate measured-red frontier.
 
 Current frontier: the compiler can make progress through bounded bug slices,
 but many semantic decisions are still inferred repeatedly across HIR, MIR, and
@@ -31,7 +34,7 @@ named path, or refuting a row with fresher generated-stage evidence.
 | Owner boundary | Current status | Next admitted movement | Forbidden repeat |
 | --- | --- | --- | --- |
 | `SemanticStateScope` | `prefer_callsite_specialization` is promoted in shadow/parity mode; emitted behavior still returns the legacy result. The `lower_function_if_needed.override` seam is also already promoted through the MaterializationDecision shadow helper and must not be reselected. Slice 0k-AU extends the existing admission report with a source-only no-repeat selector. It finds two unpromoted frontend direct consumers (`lower_function_if_needed.callsite_args` and `lower_function_if_needed.suffix_types`), rejects `lower_call.remangle` as backend-adjacent, and selects no single root-sized consumer. Slice 0k-AV defined the admitted shared state-model shape. Slice 0k-AW implements that shared `KeepRequestedNameDecision` state in behavior-neutral parity mode for both paired frontend consumers and replaces the stale `NamedTuple` owner-cache guard with a current `BlockOwner` guard. | The paired keep-requested-name inline edges are now consumed in parity mode. Next movement is not another crash-stack fix. Move to contract-first SDD hardening: close missing falsifiers for semantic identity, function-body presence, and generic instance/template keys, or select a fresh owner boundary only if it replaces a named authority edge with an owned fact and a falsifier. | Reselecting `prefer_callsite_specialization` or `lower_function_if_needed.override`; choosing either `callsite_args` or `suffix_types` by source order or convenience; treating `state_model_redesign_complete=1` as bootstrap progress; changing emitted behavior from a shadow row; globally clearing/ignoring `@type_param_map`; backend forwarders; requested-name forcing; `BlockOwner` rollback. |
-| `TypeValue` / `RuntimeTypeIdentity` + frontend command-call preservation | Slice 0k-BA made the original-vs-stage semantic oracle executable and measured-red: current stage preserves `CONST=7` but prints blank `TYPE=` / `UNION=` where original Crystal prints `Int32`. Slice 0k-BC added the focused H6 guard, which is also measured-red: blank direct/interpolated `typeof` rows followed by exit 139 at direct `.class`. Slice 0k-BD seals the production implementation receipt: the observed source edges are split across `typeof`'s nil placeholder, runtime `.class` type-literal construction, dot-class side maps, direct-output conversion, interpolation conversion, and type-literal query lowering. Slice 0k-BE pauses automatic implementation and requires an architecture tranche declaration before code. Slice 0k-BF records a reverted local TypeValue owner preflight: B3/H4 went green, but strict H6 still failed on direct `puts (true ? 1 : nil).class`; controls with `puts((... ).class)`, a local `x.class`, and interpolation passed, and debug showed the command-call argument reached HIR as `TernaryNode` rather than `.class`. Slice 0k-BG adds the focused parser-shape guard and proves measured-red: `puts (true ? 1 : nil).class` parses as a root `MemberAccessNode` on the command-call result, while controls keep `.class` as an argument. Slice 0k-BH records a docs-only pause after a reverted local parser WIP widened `LParen`/no-parens command-call parsing without completed verification. | TypeValue remains admitted only as `contract-owner-migration` after the frontend gap is separated. The immediate next admitted movement is either one bounded `semantic-service-extraction` parser-frontier closure attempt for command-call member-access preservation, guarded by `regression_tests/command_call_member_access_preservation_contract.sh` plus targeted parser specs, or an explicit H6 split into TypeValue-core and command-call-frontend guards before resuming the TypeValue owner-fact migration for `typeof`, `.class`, type-literal `.name/.to_s`, direct output, and interpolation. The parser closure exception is one implementation loop only; if it broadens, regresses adjacent parser specs, or needs a second loop, stop and take the split-H6 route. | A string-only `lower_typeof` fix; an interpolation-only fix; a direct `puts` special-case without a type-value owner; a source-text direct-puts workaround for `puts (expr).class`; backend stubs/forwarders; treating a green single B3 line as green type semantics; changing `BlockOwner`, requested-name policy, ambient-map policy, broad `NamedTuple`/`Tuple` rendering, or generic materialization in the same slice; continuing parser precedence edits after a broad parser regression or second failed implementation loop; starting code without a tranche declaration. |
+| `TypeValue` / `RuntimeTypeIdentity` + frontend command-call preservation | Slice 0k-BA made the original-vs-stage semantic oracle executable and measured-red: current stage preserves `CONST=7` but prints blank `TYPE=` / `UNION=` where original Crystal prints `Int32`. Slice 0k-BC added the original H6 guard, which is measured-red but includes a parser-confounded direct no-parens `puts (true ? 1 : nil).class` row. Slice 0k-BD seals the TypeValue production receipt. Slice 0k-BF records a reverted TypeValue owner preflight: B3/H4 went green, but strict H6 still failed only on the direct command-call row. Slice 0k-BG adds the focused parser-shape guard and proves that row is a frontend command-call preservation frontier. Slice 0k-BH pauses parser production after a reverted local WIP. Slice 0k-BI implements the split-H6 route with `regression_tests/type_value_core_runtime_identity_contract.sh`, which excludes the parser-confounded row and remains measured-red on current `bin/adamas`: blank `typeof` rows, then exit 139 at `DIRECT_CLASS`. | TypeValue is now admitted again only as `contract-owner-migration` against the H6-core guard. The next production movement is to introduce the smallest HIR-owned `TypeValue` / `RuntimeTypeIdentity` fact consumed by `typeof`, runtime `.class`, nilable `.class` through local/parenthesized non-command-call forms, type-literal `.name/.to_s`, direct output, and interpolation. The command-call parser guard remains a separate measured-red `semantic-service-extraction` frontier and must not be mixed into the TypeValue owner-fact slice. | A string-only `lower_typeof` fix; an interpolation-only fix; a direct `puts` special-case without a type-value owner; a source-text direct-puts workaround for `puts (expr).class`; backend stubs/forwarders; treating a green core guard as full old H6 green while command-call remains red; changing `BlockOwner`, requested-name policy, ambient-map policy, broad `NamedTuple`/`Tuple` rendering, or generic materialization in the same slice; continuing parser precedence edits after a broad parser regression or second failed implementation loop; starting code without a tranche declaration. |
 | `MaterializationIdentity` / `MaterializationRegistry` | Slice 0k-Z promotes the selected `lower_function_if_needed.symbol_binding` seam in behavior-neutral shadow/parity mode. `scripts/materialization_symbol_binding_admission_report.sh` now reports `already_promoted_shadow` even with `REQUIRE_PROMOTED=1`; keepalive and materialization-ledger consumers read from `MaterializationSymbolBinding` fields instead of recomputing split locals. | Do not flip emitted symbols from this slice. Next movement must either run a generated-stage materialization/symbol-binding classification on the residual full-prelude s2 crash, or select the next root-sized owner consumer with a red/green gate. | Backend undefined-extern rescue; target keepalive as a standalone patch; requested-name forcing; `NamedTuple`/`Tuple` display normalization; global ambient-map predicate changes; `BlockOwner` rollback; treating the green source-shape gate as green `s2b`/`s3b`. |
 | `NameResolution` / `MethodNameCodec` | File identity was fixed; method/symbol identity is still partly rendered-string driven. Slice 0k-V promotes the selected `lower_function_if_needed.exact_lookup_keep_requested_name` seam through `method_name_codec_exact_lookup_keep_requested_name?` in shadow/parity mode; emitted behavior still returns the legacy result. Slice 0k-W pauses standalone promotion-report proliferation. | Either select the next root-sized codec seam with a red/green source-shape gate, or define a generated-stage classification slice that consumes the existing promotion ledger to answer one blocking yes/no decision before changing emitted naming behavior. | String-slice parsing patches at individual callsites; treating rendered names as canonical identity; broad normalization without a falsifier; selecting lower-level helpers before a materialization seam; flipping owner-result behavior from shadow rows; committing another report surface that does not reduce or select an authority edge. |
 | `CallMaterializationTransaction` spine | Slice 0k-AJ selects the reached transaction/emission edge `call_materialization.wrapper_or_call_remap.extern_missing_body`. Slice 0k-AK adds the docs stop rule for post-consumer selector decay. Slice 0k-AL makes that rule executable. Slice 0k-AM implements the behavior-neutral consumer: HIR stores transaction contract facts by tx id, HIR-to-MIR attaches them to transaction-bound `Call`/`ExternCall`, backend `[MAT_EMIT]` logs them mechanically, and optimizer replacement preserves them. Slice 0k-AO extends the same selector with a post-consumer exact-contract residual split. Fresh generated-stage evidence reports `post_consumer_state=selected_consumed_by_contract_consumer`, `contract_mismatch_rows=0`, `residual_exact_missing_body_rows=14`, `residual_exact_missing_body_groups=9`, and `residual_selection_status=rejected_exact_missing_body_ambiguous`. | The 0k-AJ selected edge is consumed, and the immediate exact-contract residual is ambiguous rather than root-selected. The next movement must either add a stronger discriminator that can select exactly one old authority edge from the 9 residual groups, or switch to `consolidation` / `cleanup/delete` under the 0k-AN covenant. | Treating consumed edge disappearance as failure; making old `REQUIRE_SELECTED=1` green by redefining rows; behavior-patching any residual sample (`Array#<<`, `Slice#[]`, `IO#read`, etc.) without a unique selector; backend forwarder or undefined-extern rescue; requested-name forcing; broad `NamedTuple`/`Tuple` rendering changes; global ambient-map policy changes; `BlockOwner` rollback; another standalone report that does not remove ambiguity or retire/refute an older surface. |
@@ -519,6 +522,10 @@ HIR-owned `TypeValue` fact, does not fix B3, and does not prove green
 `s2b`/`s3b`. The next production slice is the owner-fact
 implementation/migration for the reached type-visible consumers, or a
 stop-at-classification if that migration is broader than the H6 guard.
+Slice 0k-BI later split this guard for implementation: the old guard remains a
+wider full-surface acceptance check, while
+`regression_tests/type_value_core_runtime_identity_contract.sh` is the current
+TypeValue owner-fact implementation gate.
 
 ### Slice 0k-BD: TypeValue implementation receipt
 
@@ -532,9 +539,9 @@ Status:
 
 Problem:
 
-- the H6 guard is strong enough to admit implementation, but it is also narrow
-  enough that a local fix can still look green while preserving the old
-  scattered authority model;
+- the H6/H6-core guard family is strong enough to admit implementation, but it
+  is narrow enough that a local fix can still look green while preserving the
+  old scattered authority model;
 - `typeof`, runtime `.class`, direct output, interpolation, and type-literal
   name/string queries currently reach different source paths;
 - therefore the implementation needs a receipt that names which old authority
@@ -563,21 +570,24 @@ Implementation receipt for the next code slice:
   stringification;
 - emitted behavior may change only where the strict H6/B3/H4 gates cover it.
 
-DoD for the implementation slice:
+DoD for the implementation slice after 0k-BI:
 
-- strict `regression_tests/type_value_runtime_identity_contract.sh <compiler>`
-  passes;
+- strict `regression_tests/type_value_core_runtime_identity_contract.sh
+  <compiler>` passes;
 - strict `regression_tests/original_vs_stage_semantic_oracle_contract.sh
   <compiler>` passes for the B3 type-visible rows;
 - `regression_tests/p2_type_literal_name_query_no_stub.sh <compiler>` remains
   green;
+- `regression_tests/command_call_member_access_preservation_contract.sh`
+  remains a separate frontend frontier unless this same slice explicitly
+  chooses the parser route, which is currently rejected for TypeValue-core work;
 - `git diff --check` passes;
 - TODO/LANDMARKS/SDD state whether generated `s2b` / `s3b` was actually run;
   without that evidence, no green bootstrap claim is admitted.
 
 Stop rules:
 
-- if the needed consumer set expands beyond the H6 guard, stop at
+- if the needed consumer set expands beyond the H6-core guard, stop at
   classification and either widen H6 first or return to the G3 semantic-key
   migration lane;
 - if a fix wants generic materialization, `BlockOwner`, requested-name policy,
@@ -811,6 +821,72 @@ Boundary:
 - this pause gate does not implement TypeValue;
 - this pause gate exists to prevent the parser exception from overriding the
   broader architecture rule: one owner per semantic decision.
+
+### Slice 0k-BI: split H6 into TypeValue-core and command-call frontend
+
+Status:
+
+- guard/test plus ledger checkpoint;
+- no compiler behavior, parser behavior, TypeValue behavior, materialization
+  behavior, backend behavior, or `BlockOwner` carrier changed by this slice.
+
+Problem:
+
+- the original H6 guard correctly covered source-visible type values, but one
+  row (`puts (true ? 1 : nil).class`) is now known to be parser-confounded;
+- keeping that row inside the TypeValue implementation acceptance gate blocks
+  owner-fact work on a frontend command-call bug;
+- removing the row silently would weaken the contract unless the parser row has
+  its own guard.
+
+Implementation:
+
+- add `regression_tests/type_value_core_runtime_identity_contract.sh <compiler>`;
+- keep the old `regression_tests/type_value_runtime_identity_contract.sh`
+  available as the wider historical/full-surface H6 guard;
+- keep
+  `regression_tests/command_call_member_access_preservation_contract.sh` as the
+  separate measured-red frontend guard for the no-parens command-call row.
+
+Core guard rows:
+
+- direct `typeof(1)`;
+- interpolated `typeof(1)`;
+- direct `1.class`;
+- interpolated `1.class`;
+- local nilable `.class`;
+- interpolated local nilable `.class`;
+- parenthesized nilable `.class` through ordinary call parentheses;
+- `Int32.name`, `Int32.to_s`, and `Int32.inspect`.
+
+Fresh evidence:
+
+- `ADAMAS_EXPECT_TYPEVALUE_CORE_MISMATCH=1
+  regression_tests/type_value_core_runtime_identity_contract.sh bin/adamas`
+  exits 0 and reports measured-red after the stage binary prints blank direct
+  and interpolated `typeof` rows and exits 139 at `DIRECT_CLASS`;
+- strict `regression_tests/type_value_core_runtime_identity_contract.sh
+  bin/adamas` exits 1 on the same runtime failure;
+- `ADAMAS_EXPECT_COMMAND_CALL_MEMBER_MISMATCH=1
+  regression_tests/command_call_member_access_preservation_contract.sh`
+  exits 0, proving the frontend command-call row remains separately
+  measured-red.
+
+Next local track:
+
+- resume `contract-owner-migration` for a HIR-owned `TypeValue` /
+  `RuntimeTypeIdentity` fact against the H6-core guard;
+- after the core guard is strict-green, do not claim the full old H6 surface
+  green until the command-call frontend guard is also resolved.
+
+Forbidden repeats:
+
+- do not put the no-parens command-call row back into the core TypeValue guard;
+- do not make the core guard green with string-only `lower_typeof`,
+  interpolation-only, direct-output-only, backend, or parser special-cases;
+- do not change generic materialization, requested-name policy, ambient-map
+  policy, `BlockOwner`, or broad `NamedTuple`/`Tuple` rendering in the
+  TypeValue-core slice.
 
 Historical ledger resumes below. Entries after this point predate the current
 Active Architecture Board / 0k-BG receipt unless they are explicitly referenced

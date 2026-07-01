@@ -208,6 +208,15 @@ resuming TypeValue owner-fact migration. This pause is the refactor plan's
 current control point: do not let the parser exception reset the project back
 to crash-stack-first work.
 
+2026-07-01 post-0k-BI note: H6 is now split. New guard
+`regression_tests/type_value_core_runtime_identity_contract.sh` excludes the
+parser-confounded no-parens command-call row and remains measured-red on
+current `bin/adamas`; the existing command-call parser guard remains separately
+measured-red. This unblocks the intended `contract-owner-migration` lane again:
+the next implementation unit should introduce one HIR-owned
+`TypeValue` / `RuntimeTypeIdentity` fact for the core rows. A green core guard
+is not a full old-H6 claim while the command-call frontend guard is still red.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`

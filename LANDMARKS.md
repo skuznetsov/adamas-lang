@@ -12,6 +12,28 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-BI-H6-SPLIT-TYPEVALUE-CORE-GUARD|measured-red 2026-07-01 {F:0.87 G:0.42 R:0.89}]:
+Slice 0k-BI implements the H6 split route admitted by 0k-BH. New guard:
+`regression_tests/type_value_core_runtime_identity_contract.sh <compiler>`.
+It compares original Crystal and the supplied stage compiler through
+`scripts/run_safe.sh` on direct and interpolated `typeof(1)`, direct and
+interpolated `1.class`, local nilable `.class`, parenthesized nilable `.class`,
+and type-literal `.name` / `.to_s` / `inspect`, while deliberately excluding
+the parser-confounded no-parens command-call row
+`puts (true ? 1 : nil).class`. Fresh evidence on current `bin/adamas`: strict
+mode exits 1; `ADAMAS_EXPECT_TYPEVALUE_CORE_MISMATCH=1` exits 0 after the
+stage binary prints blank direct/interpolated `typeof` rows and exits 139 at
+`DIRECT_CLASS`. The existing
+`regression_tests/command_call_member_access_preservation_contract.sh` remains
+the separate measured-red frontend guard and exits 0 under
+`ADAMAS_EXPECT_COMMAND_CALL_MEMBER_MISMATCH=1`. Scope: guard/test plus ledgers
+only; no compiler behavior changed. Next admitted route:
+`contract-owner-migration` for a HIR-owned `TypeValue` /
+`RuntimeTypeIdentity` fact consumed by the core TypeValue rows. Do not claim
+the full old H6 surface green until the command-call frontend guard is also
+resolved. Decay trigger: the core guard becomes strict-green, the command-call
+guard is resolved, or the TypeValue contract rows are redefined.
+
 [LM-ARCH-0K-BH-ARCHITECTURE-PAUSE-GATE|design-sealed 2026-07-01 {F:0.82 G:0.58 R:0.86}]:
 Slice 0k-BH adds a docs-only Architecture Pause Gate after the 0k-BG
 command-call parser falsifier. A local uncommitted parser WIP widened
