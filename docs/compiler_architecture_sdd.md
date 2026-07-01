@@ -2506,6 +2506,26 @@ Current evidence:
   `lower_function_if_needed.suffix_types` because generated s2 crashes before
   those consumer sites are reached.
 
+Post-0k-F owner-result preflight:
+
+- `scripts/state_scope_consumer_report.sh` now includes an owned-candidate
+  census and a proposed owner-result probe. It keeps malformed/unknown owner
+  rows as failures, but treats result mismatches as measured-red evidence
+  rather than malformed report output. Bounded samples are truncated so large
+  `call_arg_types` rows do not turn the report into an artifact-size hazard;
+- focused stage1 report against `/private/tmp/adamas_ssc_owned_stage1`
+  exits `0` and reports `owned_candidate_rows=36289`,
+  `owner_result_unknown=0`, and `owned_would_change=3779`;
+- owned candidate classes are `state_scope=25978`,
+  `materialization_registry=7544`, and `ambient_rejected=2767`;
+- the proposed owner-result probe is parity-clean for
+  `state_scope.legacy_result_1=25978`, `state_scope.legacy_result_0=0`,
+  `ambient_rejected.legacy_result_1=0`, and
+  `ambient_rejected.legacy_result_0=2767`;
+- it is explicitly mixed for MaterializationRegistry rows:
+  `materialization_registry.legacy_result_1=3779` and
+  `materialization_registry.legacy_result_0=3765`.
+
 Interpretation:
 
 - Slice 0k-F is a migration gate. It proves the known consumer set is
@@ -2523,6 +2543,11 @@ Interpretation:
 - the generated-s2 `compiler_rc=139` residual is a stage frontier and must not
   be converted into a consumer predicate fix without a later owned
   StateScope/MaterializationRegistry migration row plus would-change census.
+- the owner-result preflight refutes a naive behavior rule such as
+  `migrate_to_materialization_registry => result=false`. The
+  MaterializationRegistry migration class is a mixed owner surface, not a
+  boolean replacement rule. It needs per-consumer/per-decision classification
+  before any behavior patch changes naming or materialization decisions.
 
 Next local track:
 
@@ -2531,7 +2556,11 @@ Next local track:
   target already-owned rows (`migrate_to_state_scope`,
   `migrate_to_materialization_registry`, or `rejected_ambient`) with a
   bounded would-change census, while preserving legitimate
-  current-instantiation behavior.
+  current-instantiation behavior;
+- because `migrate_to_materialization_registry` is measured-red under the
+  proposed owner-result probe, the next MaterializationRegistry slice must
+  classify rows by consumer, decision, selected definition, target map, and
+  callsite arg shape before it proposes any replacement rule.
 
 ### Slice A: CallResolution boundary
 

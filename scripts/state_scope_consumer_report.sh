@@ -97,7 +97,11 @@ awk -v samples="$SAMPLES" '
   function keep_sample(bucket, row) {
     if (sample_count[bucket] < samples) {
       sample_count[bucket]++
-      sample[bucket, sample_count[bucket]] = row
+      if (length(row) > 1200) {
+        sample[bucket, sample_count[bucket]] = substr(row, 1, 1200) "...<truncated>"
+      } else {
+        sample[bucket, sample_count[bucket]] = row
+      }
     }
   }
 
@@ -165,6 +169,32 @@ awk -v samples="$SAMPLES" '
     }
 
     return "legacy_shim.concrete_typed_params"
+  }
+
+  function owner_result_for(migration) {
+    if (migration == "migrate_to_state_scope") {
+      return "1"
+    }
+    if (migration == "migrate_to_materialization_registry" || migration == "rejected_ambient") {
+      return "0"
+    }
+    if (migration == "keep_legacy_shim") {
+      return "legacy"
+    }
+    return "unknown"
+  }
+
+  function owned_candidate_class(migration) {
+    if (migration == "migrate_to_state_scope") {
+      return "state_scope"
+    }
+    if (migration == "migrate_to_materialization_registry") {
+      return "materialization_registry"
+    }
+    if (migration == "rejected_ambient") {
+      return "ambient_rejected"
+    }
+    return ""
   }
 
   /^\[STATE_SCOPE_CONSUMER\]/ {
@@ -248,6 +278,23 @@ awk -v samples="$SAMPLES" '
       callsite_without_args++
       keep_sample("callsite_without_args", $0)
     }
+
+    owner_result = owner_result_for(migration)
+    candidate_class = owned_candidate_class(migration)
+    if (candidate_class != "") {
+      owned_candidate_rows++
+      owned_candidate_count[candidate_class]++
+      owner_key = candidate_class ".legacy_result_" result
+      owner_result_count[owner_key]++
+      keep_sample("owned_candidate:" candidate_class, $0)
+      if (owner_result == "unknown" || owner_result == "legacy") {
+        owner_result_unknown++
+        keep_sample("owner_result_unknown", $0)
+      } else if (owner_result != result) {
+        owned_would_change++
+        keep_sample("owned_would_change", $0)
+      }
+    }
   }
 
   END {
@@ -261,6 +308,9 @@ awk -v samples="$SAMPLES" '
     print "rejected_without_ambient=" rejected_without_ambient + 0
     print "blocked_rows=" blocked_rows + 0
     print "unclassified_blocked=" unclassified_blocked + 0
+    print "owned_candidate_rows=" owned_candidate_rows + 0
+    print "owner_result_unknown=" owner_result_unknown + 0
+    print "owned_would_change=" owned_would_change + 0
     print "target_without_map=" target_without_map + 0
     print "callsite_without_args=" callsite_without_args + 0
 
@@ -309,6 +359,41 @@ awk -v samples="$SAMPLES" '
       print bc "=" blocked_class_count[bc] + 0
     }
 
+    print ""
+    print "## Owned Candidate Classification"
+    known_owned[1] = "state_scope"
+    known_owned[2] = "materialization_registry"
+    known_owned[3] = "ambient_rejected"
+    for (i = 1; i <= 3; i++) {
+      oc = known_owned[i]
+      print oc "=" owned_candidate_count[oc] + 0
+    }
+
+    print ""
+    print "## Proposed Owner-Result Probe"
+    known_parity[1] = "state_scope.legacy_result_1"
+    known_parity[2] = "state_scope.legacy_result_0"
+    known_parity[3] = "materialization_registry.legacy_result_1"
+    known_parity[4] = "materialization_registry.legacy_result_0"
+    known_parity[5] = "ambient_rejected.legacy_result_1"
+    known_parity[6] = "ambient_rejected.legacy_result_0"
+    for (i = 1; i <= 6; i++) {
+      op = known_parity[i]
+      print op "=" owner_result_count[op] + 0
+    }
+
+    for (i = 1; i <= 3; i++) {
+      oc = known_owned[i]
+      bucket = "owned_candidate:" oc
+      if (sample_count[bucket] > 0) {
+        print ""
+        print "## Sample " bucket
+        for (j = 1; j <= sample_count[bucket]; j++) {
+          print sample[bucket, j]
+        }
+      }
+    }
+
     for (i = 1; i <= 8; i++) {
       bc = known_blocked[i]
       bucket = "blocked_class:" bc
@@ -334,7 +419,9 @@ awk -v samples="$SAMPLES" '
     buckets[7] = "target_without_map"
     buckets[8] = "callsite_without_args"
     buckets[9] = "unclassified_blocked"
-    for (i = 1; i <= 9; i++) {
+    buckets[10] = "owner_result_unknown"
+    buckets[11] = "owned_would_change"
+    for (i = 1; i <= 11; i++) {
       bucket = buckets[i]
       if (sample_count[bucket] > 0) {
         print ""
@@ -346,7 +433,8 @@ awk -v samples="$SAMPLES" '
     }
 
     if (malformed || invalid_authority || invalid_migration ||
-        invalid_validation || rejected_without_ambient || unclassified_blocked) {
+        invalid_validation || rejected_without_ambient || unclassified_blocked ||
+        owner_result_unknown) {
       exit 7
     }
   }

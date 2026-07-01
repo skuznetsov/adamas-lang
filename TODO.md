@@ -428,6 +428,23 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   input to a bounded would-change census before changing any
   naming/materialization decision.
 
+- 2026-07-01 UPDATE: upgraded the `StateScopeConsumerCensus` report with an
+  owned-candidate / proposed owner-result preflight and immediately got a
+  measured-red result that blocks naive behavior migration. The focused stage1
+  report still exits `0` and remains malformed-clean
+  (`owner_result_unknown=0`), but records `owned_candidate_rows=36289` and
+  `owned_would_change=3779`. Owned class counts are
+  `state_scope=25978`, `materialization_registry=7544`, and
+  `ambient_rejected=2767`. The proposed owner-result probe is parity-clean for
+  StateScope (`legacy_result_1=25978`) and ambient rejection
+  (`legacy_result_0=2767`), but MaterializationRegistry is mixed:
+  `legacy_result_1=3779` and `legacy_result_0=3765`. Interpretation: migration
+  class alone is not a replacement rule, especially not
+  `migrate_to_materialization_registry => false`. Next work must classify the
+  MaterializationRegistry rows by consumer/decision/selected definition/target
+  map/callsite shape before proposing a behavior patch. No naming,
+  materialization, backend, AST, or StateScope behavior changed.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was

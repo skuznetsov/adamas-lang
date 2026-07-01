@@ -559,6 +559,15 @@ Recommended direction:
   `migrate_to_state_scope`, `migrate_to_materialization_registry`, or
   `rejected_ambient` rows as the input to a bounded would-change census, not to
   change naming/materialization behavior from diagnostic-shim rows alone.
+- The first owned-row preflight is deliberately measured-red: a proposed
+  owner-result probe records `owned_candidate_rows=36289`,
+  `owner_result_unknown=0`, and `owned_would_change=3779`. StateScope and
+  ambient-rejected rows are parity-clean under the naive probe, but
+  MaterializationRegistry rows split (`legacy_result_1=3779`,
+  `legacy_result_0=3765`). This refutes using the migration class itself as a
+  behavior replacement rule. The next MaterializationRegistry work must model
+  the specific decision being owned before any naming or materialization
+  behavior changes.
 
 This plan should be revisited after the architecture SDD seals the active
 semantic-owner frontiers enough that backend-local refactoring cannot hide a

@@ -522,10 +522,24 @@ StateScope/MaterializationRegistry migration row and bounded would-change
 census exist. The current diagnostic-shim buckets should not drive a global
 predicate change; the next behavior candidate must come from already-owned
 `migrate_to_state_scope`, `migrate_to_materialization_registry`, or
-`rejected_ambient` rows. Decay trigger: the required consumer set moves, the
-report row format changes, a later `StateScope` facade starts driving
-behavior, or fresh generated-stage evidence reaches all required consumers with
-different migration buckets.
+`rejected_ambient` rows.
+
+Follow-up owner-result preflight refuted the naive shortcut that a migration
+class can be used directly as a replacement boolean. The upgraded report exits
+`0` and remains malformed-clean, with `owned_candidate_rows=36289`,
+`owner_result_unknown=0`, and `owned_would_change=3779`. Candidate classes are
+`state_scope=25978`, `materialization_registry=7544`, and
+`ambient_rejected=2767`. The proposed owner-result probe is parity-clean for
+StateScope (`legacy_result_1=25978`) and ambient rejection
+(`legacy_result_0=2767`), but mixed for MaterializationRegistry:
+`legacy_result_1=3779` and `legacy_result_0=3765`. This measured-red result
+blocks any behavior patch that treats `migrate_to_materialization_registry` as
+one boolean rule. The next MaterializationRegistry step must classify by
+consumer, decision, selected definition, target map, and callsite arg shape
+before a behavior change is admissible. Decay trigger: the required consumer
+set moves, the report row format changes, a later `StateScope` facade starts
+driving behavior, or fresh generated-stage evidence reaches all required
+consumers with different migration buckets.
 
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
