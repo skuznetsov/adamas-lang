@@ -8,6 +8,22 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: implemented the executable Slice 0k-AB source-shape gate
+  for the `InvocationContext / InlineYieldFrame` boundary. New script:
+  `scripts/invocation_context_admission_report.sh`. It selects
+  `lower_super.previous_def.invocation_context` and currently reports
+  `preferred_source_shape=legacy_ambient_context_edge`,
+  `selection_status=eligible_invocation_context_owner`,
+  `ambient_owner_method_count=4`, `ambient_kind_count=2`,
+  `ambient_super_source_count=9`, `direct_forward_policy_count=2`, and
+  `invocation_helper_count=0`. `REQUIRE_PROMOTED=1
+  scripts/invocation_context_admission_report.sh` intentionally exits 9 until a
+  future shadow/parity helper removes the selected seam's direct ambient
+  authority. This is not a compiler behavior fix and not `s2b`/`s3b` progress by
+  itself. Next code slice: implement the helper so `lower_super` /
+  `lower_previous_def` consume explicit invocation-frame owner facts while
+  returning legacy behavior.
+
 - 2026-07-01 UPDATE: paused the post-0k-Z `lower_super` / inline-yield
   diagnostic direction before it became another report ladder. A local
   `SUPER_CTX`-style env ledger WIP was classified as non-admitted

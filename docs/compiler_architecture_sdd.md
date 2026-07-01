@@ -14,7 +14,7 @@ fallbacks, and hard-to-localize bootstrap failures.
 
 ## Active Architecture Board
 
-Status: design-sealed execution board after Slice 0k-AA. This board exists to
+Status: design-sealed execution board after Slice 0k-AB. This board exists to
 prevent the next step from being selected by the latest generated-stage crash
 stack. A next slice is admitted only if it moves one board row by replacing or
 shadowing a named authority edge, producing `CodePathStatus` evidence for a
@@ -25,7 +25,7 @@ named path, or refuting a row with fresher generated-stage evidence.
 | `SemanticStateScope` | `prefer_callsite_specialization` is promoted in shadow/parity mode; emitted behavior still returns the legacy result. | Select a different root-sized consumer with a red/green source-shape gate, or explicitly leave this lane paused. | Reselecting `prefer_callsite_specialization`; wrapping `def_has_untyped_regular_param?` without a separate owner result; changing emitted behavior from the shadow row. |
 | `MaterializationIdentity` / `MaterializationRegistry` | Slice 0k-Z promotes the selected `lower_function_if_needed.symbol_binding` seam in behavior-neutral shadow/parity mode. `scripts/materialization_symbol_binding_admission_report.sh` now reports `already_promoted_shadow` even with `REQUIRE_PROMOTED=1`; keepalive and materialization-ledger consumers read from `MaterializationSymbolBinding` fields instead of recomputing split locals. | Do not flip emitted symbols from this slice. Next movement must either run a generated-stage materialization/symbol-binding classification on the residual full-prelude s2 crash, or select the next root-sized owner consumer with a red/green gate. | Backend undefined-extern rescue; target keepalive as a standalone patch; requested-name forcing; `NamedTuple`/`Tuple` display normalization; global ambient-map predicate changes; `BlockOwner` rollback; treating the green source-shape gate as green `s2b`/`s3b`. |
 | `NameResolution` / `MethodNameCodec` | File identity was fixed; method/symbol identity is still partly rendered-string driven. Slice 0k-V promotes the selected `lower_function_if_needed.exact_lookup_keep_requested_name` seam through `method_name_codec_exact_lookup_keep_requested_name?` in shadow/parity mode; emitted behavior still returns the legacy result. Slice 0k-W pauses standalone promotion-report proliferation. | Either select the next root-sized codec seam with a red/green source-shape gate, or define a generated-stage classification slice that consumes the existing promotion ledger to answer one blocking yes/no decision before changing emitted naming behavior. | String-slice parsing patches at individual callsites; treating rendered names as canonical identity; broad normalization without a falsifier; selecting lower-level helpers before a materialization seam; flipping owner-result behavior from shadow rows; committing another report surface that does not reduce or select an authority edge. |
-| `InvocationContext` / `InlineYieldFrame` | Slice 0k-AA is a docs-only gate after a local `SUPER_CTX` diagnostic WIP was classified as non-admitted report-surface growth and removed. The suspected residual class is ambient invocation state leaking across inline-yield/proc/block lowering (`@current_class`, `@current_method`, `@current_method_is_class`, `@current_super_source_module`, and inline-yield stacks), but no behavior fix or committed ledger is admitted yet. | First add a red/green source-shape gate that selects one consumer seam and proves the legacy direct ambient-state authority edge. The first likely seam is `lower_super` / `previous_def` context resolution inside inline-yield lowering, but code is admitted only after the gate names the owner fact and expected shadow/parity helper. | A new `ADAMAS_SUPER_CALL_CONTEXT_LEDGER` report without a decision question; direct `lower_super` guards; changing super lookup or argument forwarding from a crash stack; inline-yield stack resets as a consumer fix; treating local diagnostic rows as green bootstrap evidence. |
+| `InvocationContext` / `InlineYieldFrame` | Slice 0k-AB adds `scripts/invocation_context_admission_report.sh`, a source-shape gate that selects `lower_super.previous_def.invocation_context`. Current source is red under `REQUIRE_PROMOTED=1`: `source_shape=legacy_ambient_context_edge`, with direct ambient owner/method, method-kind, super-source, and forward-policy reads in `lower_super` / `lower_previous_def`. | Implement a behavior-neutral shadow/parity helper for the selected seam so consumers read an explicit invocation-frame owner fact while emitted behavior remains legacy. The helper must turn `REQUIRE_PROMOTED=1 scripts/invocation_context_admission_report.sh` green before any behavior flip. | A new `ADAMAS_SUPER_CALL_CONTEXT_LEDGER` report without a decision question; direct `lower_super` guards; changing super lookup or argument forwarding from a crash stack; inline-yield stack resets as a consumer fix; treating local diagnostic rows as green bootstrap evidence. |
 | `AstNodeRef` / `ArenaOwnership` | Explicit-owner lower-call rows and `NodeSlotIntegrity` refuted owner drift, out-of-range ids, and missing slots for the instrumented edge. | Resume only with a named payload/deep-read or uninstrumented-consumer falsifier, including cleanup rules for its ledger. | Lower-call arena routing, broad arena scans, parser allocation rewrites, or another unbounded crash-edge probe. |
 | `CodePathStatus` | `cli.metrics.identity_dry_run` is classified as `debug_only`, not `delete_ready`. | Classify another named path, or run a separate `delete_ready` slice with default-behavior, HIR/MIR/LLVM, bootstrap, and evidence-preservation guards. | Deleting debug/probe/fallback paths from static grep output; using runtime liveness as semantic ownership evidence. |
 
@@ -4874,6 +4874,59 @@ Next local track:
 - implement the source-shape gate for `InvocationContext` / `InlineYieldFrame`,
   or explicitly choose another active-board owner row if a fresher generated
   stage run refutes invocation context as the active boundary.
+
+### Slice 0k-AB: InvocationContext source-shape admission gate
+
+Status:
+
+- behavior-neutral source-shape gate;
+- no compiler behavior, super-call behavior, inline-yield behavior, backend
+  behavior, cleanup behavior, or `BlockOwner` carrier is changed by this slice;
+- the selected seam is `lower_super.previous_def.invocation_context`.
+
+Source/spec:
+
+- `src/compiler/hir/ast_to_hir.cr`;
+- `scripts/invocation_context_admission_report.sh`;
+- Slice 0k-AA `InvocationContext` / `InlineYieldFrame` gate.
+
+Implementation:
+
+- add `scripts/invocation_context_admission_report.sh`;
+- inspect only the source shape of `lower_super` and `lower_previous_def`;
+- classify the current source as `legacy_ambient_context_edge` when those
+  consumers still read ambient invocation state directly and no
+  invocation-frame helper is present;
+- classify future code as `already_promoted_shadow` only when both selected
+  consumers read an `InvocationContext` / `InlineYieldFrame` style helper and
+  no direct selected-seam ambient reads remain.
+
+Measured-red evidence:
+
+- `bash -n scripts/invocation_context_admission_report.sh` exits 0;
+- `scripts/invocation_context_admission_report.sh` exits 0 with
+  `preferred_source_shape=legacy_ambient_context_edge` and
+  `selection_status=eligible_invocation_context_owner`;
+- current counts: `ambient_owner_method_count=4`, `ambient_kind_count=2`,
+  `ambient_super_source_count=9`, `direct_forward_policy_count=2`,
+  `invocation_helper_count=0`;
+- `REQUIRE_PROMOTED=1 scripts/invocation_context_admission_report.sh` exits 9,
+  proving the selected seam has not been promoted yet.
+
+Boundary:
+
+- the gate is a source-shape falsifier, not a runtime proof and not a green
+  `s2b`/`s3b` claim;
+- it does not by itself prove that invocation context is the only remaining
+  generated-stage residual. It only prevents a direct `lower_super` consumer
+  patch before the owned frame exists.
+
+Next local track:
+
+- implement a behavior-neutral `InvocationContext` / `InlineYieldFrame`
+  shadow/parity helper for exactly this selected seam;
+- keep emitted behavior legacy until the source-shape gate is green and a later
+  would-change/generated-stage check is root-sized.
 
 ### Slice A: CallResolution boundary
 

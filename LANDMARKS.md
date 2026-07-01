@@ -12,6 +12,25 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-INVOCATION-CONTEXT-ADMISSION-GATE|measured-red 2026-07-01 {F:0.82 G:0.40 R:0.86}]:
+The `InvocationContext / InlineYieldFrame` boundary now has an executable
+source-shape admission gate. `scripts/invocation_context_admission_report.sh`
+selects the seam `lower_super.previous_def.invocation_context` and currently
+classifies the source as `legacy_ambient_context_edge` with
+`selection_status=eligible_invocation_context_owner`. The current selected
+seam still has direct ambient authority reads:
+`ambient_owner_method_count=4`, `ambient_kind_count=2`,
+`ambient_super_source_count=9`, `direct_forward_policy_count=2`, and
+`invocation_helper_count=0`. `REQUIRE_PROMOTED=1
+scripts/invocation_context_admission_report.sh` exits 9, so the gate is red
+until a future behavior-neutral shadow/parity helper makes `lower_super` and
+`lower_previous_def` consume explicit invocation-frame owner facts instead of
+direct ambient state. Scope: measured-red source-shape gate only; no compiler
+behavior changed and no green `s2b`/`s3b` claim. Decay trigger: the selected
+consumer seam is rewritten, a future gate reports `already_promoted_shadow`, or
+a fresh generated-stage owner-boundary run refutes invocation context as the
+active residual.
+
 [LM-ARCH-INVOCATION-CONTEXT-GATE|guard-only 2026-07-01 {F:0.70 G:0.44 R:0.78}]:
 After Slice 0k-Z, the next architecture movement must not be selected directly
 from the latest generated-s2 crash stack. A local `SUPER_CTX` /

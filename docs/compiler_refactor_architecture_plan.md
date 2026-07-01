@@ -176,6 +176,15 @@ consumer seam and proves where ambient invocation fields (`@current_class`,
 frame stacks) are still used as semantic authority. Only after that gate is
 red can a behavior-neutral shadow/parity owner helper be implemented.
 
+2026-07-01 post-0k-AB note: the `InvocationContext` source-shape gate now
+exists. `scripts/invocation_context_admission_report.sh` selects
+`lower_super.previous_def.invocation_context` and is intentionally red under
+`REQUIRE_PROMOTED=1`: current `lower_super` / `lower_previous_def` still have
+direct ambient owner/method, method-kind, super-source, and forward-policy
+reads, and no invocation-frame helper. The next code slice is therefore the
+shadow/parity helper that moves this selected consumer seam to an explicit
+invocation-frame owner fact while preserving emitted behavior.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging
