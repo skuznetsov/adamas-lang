@@ -1821,6 +1821,39 @@ Implementation guard for the first code slice:
   silent requested/target/body/emitted mismatch without an admitted contract;
 - keep env-off output and behavior unchanged.
 
+Slice 0k-A preflight plan:
+
+- `transaction-bound call` means a HIR-owned materialization transaction already
+  exists for the request, and the call lowering path can carry or re-emit that
+  transaction identity without deriving ownership from a backend string table.
+  Broad backend call rows are allowed as diagnostics, but they are not the gate.
+- `non-transaction call` must be reported explicitly as outside the contract
+  (`tx=none` or equivalent). It must not be silently promoted into a
+  transaction by matching only the mangled callee name.
+- The first code slice must be red before it is green: the report is upgraded
+  first so a compiler that emits only Slice 0h `[MAT_TX]` rows fails with a
+  missing emitted-call correlation signal. Only then may the code add
+  default-off correlation rows.
+- The intended first implementation shape is:
+  1. add a stable debug id to `MaterializationIdentityTransaction`;
+  2. expose a HIR-owned transaction lookup/attachment point for call lowering;
+  3. carry the id through HIR-to-MIR call/extern-call lowering where the call is
+     transaction-bound;
+  4. let backend emission log only mechanical `[MAT_EMIT]` facts:
+     transaction id or `none`, emitted callee, call kind, return/arg ABI shape,
+     and body-present status;
+  5. make `scripts/materialization_transaction_report.sh` join `[MAT_TX]` and
+     `[MAT_EMIT]` rows and fail closed on malformed transaction-bound joins.
+- Minimal green evidence for Slice 0k-A is deliberately narrower than green
+  `s2b`/`s3b`: focused stage1 and generated-s2 no-prelude reports must contain
+  parseable `[MAT_TX]` rows, parseable `[MAT_EMIT]` rows, at least one joined
+  transaction-bound emitted call, zero malformed transaction rows, and no
+  default-env output change.
+- The resulting report may classify many calls as non-transaction diagnostics.
+  That is acceptable only if the contract gate remains the joined
+  transaction-bound subset and if a targeted behavior slice later consumes a
+  joined row rather than a backend-only row.
+
 Stop conditions for the first code slice:
 
 - more than a small focused set of rows requires a wrapper/forwarder contract
@@ -1831,6 +1864,13 @@ Stop conditions for the first code slice:
   sets live without proving they are transaction-bound;
 - the report can observe emitted calls but cannot name selected definition or
   state-scope authority for the same transaction.
+- carrying the transaction id requires reconstructing source-level request,
+  overload, or state-scope facts in `llvm_backend.cr`;
+- the upgraded report's only useful failure signal is "backend emitted a dead
+  stub" rather than "a HIR-owned transaction failed to link to emitted-call
+  facts";
+- the joined transaction-bound subset is empty for focused stage1 or
+  generated-s2 no-prelude runs after the implementation.
 
 ### Slice A: CallResolution boundary
 

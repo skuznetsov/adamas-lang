@@ -264,6 +264,17 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   backend, or backend-only stub discovery after HIR/MIR pruning, stop and pivot
   back to `SemanticStateScope` / `MaterializationRegistry`.
 
+- 2026-07-01 UPDATE: paused behavior fixes and sharpened Slice 0k into a
+  concrete preflight. The first implementation step is Slice 0k-A:
+  transaction-correlation, not a forwarder. It must make the report red before
+  green by requiring emitted-call correlation for HIR-owned `[MAT_TX]` rows,
+  then add a default-off channel that carries a stable transaction id through
+  HIR/MIR call lowering into backend mechanical `[MAT_EMIT]` facts. The gate is
+  the joined transaction-bound subset only; broad backend call rows are
+  diagnostics. Stop immediately if the implementation needs source-level
+  reconstruction in `llvm_backend.cr`, broad live-target marking, or backend
+  `@undefined_externs` as the first useful semantic signal.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was
