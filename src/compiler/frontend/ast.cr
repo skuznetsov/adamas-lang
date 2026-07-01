@@ -4413,6 +4413,10 @@ module Adamas
           @raw = node
         end
 
+        def raw_address : UInt64
+          @raw.unsafe_as(Pointer(Void)).address.to_u64
+        end
+
         def node : TypedNode
           @raw.as(TypedNode)
         end
@@ -4548,6 +4552,13 @@ module Adamas
         def size
           @node_slots.size
         end
+
+        def debug_node_address(id : ExprId) : UInt64
+          return 0_u64 if id.null_ptr? || id.invalid?
+          idx = id.index
+          return 0_u64 if idx < 0 || idx >= @node_slots.size
+          @node_slots.unsafe_fetch(idx).raw_address
+        end
       end
 
       # VirtualArena: Multi-file arena with offset mapping
@@ -4651,6 +4662,20 @@ module Adamas
 
         def size
           @offsets.last + @generated_arena.size
+        end
+
+        def debug_node_address(id : ExprId) : UInt64
+          return 0_u64 if id.null_ptr? || id.invalid?
+          idx = id.index
+          return 0_u64 if idx < 0 || idx >= size
+          if idx >= @offsets.last
+            return @generated_arena.debug_node_address(ExprId.new(idx - @offsets.last))
+          end
+
+          arena_idx, local_idx = decompose_id(idx)
+          arena = @file_arenas[arena_idx]?
+          return 0_u64 unless arena
+          arena.debug_node_address(ExprId.new(local_idx))
         end
 
         # Compatibility helpers
@@ -4782,6 +4807,15 @@ module Adamas
 
         def size
           @count
+        end
+
+        def debug_node_address(id : ExprId) : UInt64
+          return 0_u64 if id.null_ptr? || id.invalid?
+          idx = id.index
+          return 0_u64 if idx < 0 || idx >= @count
+          page_index = idx // PAGE
+          offset = idx % PAGE
+          @pages[page_index][offset].unsafe_as(Pointer(Void)).address.to_u64
         end
 
         @[AlwaysInline]

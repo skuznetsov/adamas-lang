@@ -207,6 +207,34 @@ writer as postponed for the active bootstrap objective. Decay trigger: a fresh
 generated s2->s3 report shows owner divergence, the crash stack moves before
 `NodeSlot#node`, or `AstArena` / `NodeSlot` storage representation is rewritten.
 
+[LM-S2S3-NODESLOT-INTEGRITY-REFUTES-MISSING-SLOT|verified 2026-07-01 {F:0.84 G:0.28 R:0.88}]:
+Fresh generated-stage evidence refutes missing/uninitialized `NodeSlot` and
+out-of-range `ExprId` for the currently instrumented
+`AstToHir#lower_call` crash edge. The committed env-gated ledger
+`ADAMAS_NODE_SLOT_LEDGER=1` emits `[NODE_SLOT]` rows at existing lower-call
+raw-read trace points and reports arena owner, `ExprId`, range, slot presence,
+and node pointer presence without routing behavior through the ledger. Evidence:
+`crystal build src/adamas.cr -o /private/tmp/adamas_nodeslot_stage1
+--error-trace` passes; `scripts/node_slot_integrity_report.sh
+/private/tmp/adamas_nodeslot_stage1` reports `rows=9` and
+`healthy_present=9`; a default env-off no-prelude compile emits no
+`[NODE_SLOT]`; fresh stage1 builds fresh s2 under `scripts/run_safe.sh`
+(`EXIT: 0` after about 183s); generated s2->s3 with
+`scripts/node_slot_integrity_report.sh /private/tmp/adamas_nodeslot_s2
+src/adamas.cr -o /private/tmp/adamas_nodeslot_s3` returns `compiler_rc=139`,
+`rows=630`, `healthy_present=630`, and zero `missing_node_payload`,
+`missing_slot`, `out_of_range`, `invalid_expr`, or `null_expr` buckets. The
+last row is the same `Adamas::Compiler::CLI#run$IO_IO`
+`before.member_object_read`, `expr=2828`, with `in_range=1`,
+`slot_present=1`, and `node_present=1`. Scope: this does not make s2->s3
+green and does not prove the node payload/vtable/deep `node_kind` read is
+healthy, because default ledger intentionally avoids dereferencing node payload.
+Next read-only slice should target node payload/vtable/deep-read integrity or
+the exact uninstrumented consumer after `NodeSlot#node`, not arena owner
+selection or slot existence. Decay trigger: fresh generated s2->s3 shows a
+non-healthy `[NODE_SLOT]` bucket, the crash stack moves before this edge, or
+the arena storage representation changes.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

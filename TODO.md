@@ -147,6 +147,24 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   broad arena scans, parser allocation rewrites, or behavior fixes that do not
   name the first bad transition.
 
+- 2026-07-01 UPDATE: implemented the behavior-neutral
+  `NodeSlotIntegrity / AstArenaStorage` ledger and report. `AstArena`,
+  `VirtualArena`, and `PageArena` now expose debug-only node-address facts,
+  and `ADAMAS_NODE_SLOT_LEDGER=1` emits `[NODE_SLOT]` rows at the existing
+  lower-call raw-read trace points. `scripts/node_slot_integrity_report.sh`
+  summarizes healthy/missing/out-of-range/null buckets and accepts nonzero
+  compiler exit when rows exist. Verification: fresh stage1 builds; no-prelude
+  report emits `rows=9 healthy_present=9`; default env-off no-prelude compile
+  emits no `[NODE_SLOT]`; fresh stage1 builds fresh s2 (`EXIT: 0` after
+  ~183s); fresh s2->s3 report returns `compiler_rc=139`, `rows=630`,
+  `healthy_present=630`, and zero non-healthy buckets. The last crash-edge row
+  remains `Adamas::Compiler::CLI#run$IO_IO before.member_object_read expr=2828`
+  with `in_range=1`, `slot_present=1`, and `node_present=1`. This refutes
+  missing/uninitialized slot and out-of-range `ExprId` for the instrumented
+  edge. Next read-only slice should target node payload/vtable/deep-read
+  integrity or the exact uninstrumented consumer after `NodeSlot#node`, not
+  arena owner selection or slot existence.
+
 - 2026-07-01 UPDATE: added the Phase 1b static `CodePathStatus` census entry
   point, `scripts/codepath_status_census.sh`. This is the architecture-side
   answer to codebase bloat and stale workaround risk: it groups debug/probe

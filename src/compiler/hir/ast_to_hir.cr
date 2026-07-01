@@ -13013,6 +13013,11 @@ module Adamas::HIR
       env_has?("ADAMAS_LOWER_CALL_ARENA_LEDGER")
     end
 
+    @[AlwaysInline]
+    private def node_slot_ledger_enabled? : Bool
+      env_has?("ADAMAS_NODE_SLOT_LEDGER")
+    end
+
     private def lower_call_arena_desc(arena : Adamas::Compiler::Frontend::ArenaLike?) : String
       return "nil" unless arena
 
@@ -13064,7 +13069,9 @@ module Adamas::HIR
       arena_owner : Adamas::Compiler::Frontend::ArenaLike,
       origin : String,
     ) : Nil
-      return unless lower_call_arena_ledger_enabled?
+      arena_ledger = lower_call_arena_ledger_enabled?
+      slot_ledger = node_slot_ledger_enabled?
+      return unless arena_ledger || slot_ledger
 
       node_ref = lower_call_ast_node_ref(node, expr_id, arena_owner, origin)
       expr_id = node_ref.expr_id
@@ -13077,7 +13084,51 @@ module Adamas::HIR
       preferred_has = lower_call_arena_has_expr?(preferred_arena, expr_id)
       owner_has = lower_call_arena_has_expr?(owner, expr_id)
 
+      if slot_ledger
+        trace_node_slot_integrity(ctx, node, label, expr_id, node_ref, @arena, "current")
+        trace_node_slot_integrity(ctx, node, label, expr_id, node_ref, preferred_arena, "ref")
+        trace_node_slot_integrity(ctx, node, label, expr_id, node_ref, owner, "heuristic")
+      end
+
+      return unless arena_ledger
+
       STDERR.puts "[LC_ARENA] kind=expr label=#{label} func=#{ctx.function.name} expr=#{idx} null=#{is_null ? 1 : 0} invalid=#{is_invalid ? 1 : 0} current=#{lower_call_arena_desc(@arena)} current_has=#{cur_has ? 1 : 0} preferred=#{lower_call_arena_desc(preferred_arena)} preferred_has=#{preferred_has ? 1 : 0} owner=#{lower_call_arena_desc(owner)} owner_has=#{owner_has ? 1 : 0} ref_origin=#{node_ref.origin} ref_path=#{node_ref.source_path || "?"} ref_span=#{node_ref.span.start_offset}:#{node_ref.span.end_offset} span=#{node.span.start_offset}:#{node.span.end_offset} current_class=#{@current_class || ""} current_method=#{@current_method || ""}"
+    end
+
+    private def trace_node_slot_integrity(
+      ctx : LoweringContext,
+      node : Adamas::Compiler::Frontend::CallNode,
+      label : String,
+      expr_id : ExprId,
+      node_ref : AstNodeRef,
+      arena : Adamas::Compiler::Frontend::ArenaLike?,
+      role : String,
+    ) : Nil
+      is_null = expr_id.null_ptr?
+      is_invalid = !is_null && expr_id.invalid?
+      idx = is_null ? -1 : expr_id.index
+      arena_size = arena ? arena.not_nil!.size : -1
+      in_range = false
+      node_addr = 0_u64
+      node_kind = "?"
+      node_span = "?"
+
+      if arena && !is_null && !is_invalid && idx >= 0 && idx < arena_size
+        concrete_arena = arena.not_nil!
+        local_id = ExprId.new(idx)
+        in_range = true
+        node_addr = concrete_arena.debug_node_address(local_id)
+
+        if node_addr != 0_u64 && env_has?("ADAMAS_NODE_SLOT_LEDGER_DEEP")
+          if typed_node = concrete_arena[local_id]?
+            node_kind = Adamas::Compiler::Frontend.node_kind(typed_node).to_s
+            span = typed_node.span
+            node_span = "#{span.start_offset}:#{span.end_offset}"
+          end
+        end
+      end
+
+      STDERR.puts "[NODE_SLOT] label=#{label} role=#{role} func=#{ctx.function.name} expr=#{idx} null=#{is_null ? 1 : 0} invalid=#{is_invalid ? 1 : 0} arena=#{lower_call_arena_desc(arena)} arena_size=#{arena_size} in_range=#{in_range ? 1 : 0} slot_present=#{in_range ? 1 : 0} node_addr=#{node_addr} node_present=#{node_addr == 0_u64 ? 0 : 1} node_kind=#{node_kind} node_span=#{node_span} ref_origin=#{node_ref.origin} ref_path=#{node_ref.source_path || "?"} ref_span=#{node_ref.span.start_offset}:#{node_ref.span.end_offset} read_span=#{node.span.start_offset}:#{node.span.end_offset} current_class=#{@current_class || ""} current_method=#{@current_method || ""}"
     end
 
     private def span_fits_source?(arena : Adamas::Compiler::Frontend::ArenaLike, span : Adamas::Compiler::Frontend::Span) : Bool

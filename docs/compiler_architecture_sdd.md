@@ -1372,6 +1372,7 @@ Source/spec:
   current/ref/heuristic owner parity;
 - generated-stage crash corridor
   `NodeSlot#node <- AstArena#[] <- AstToHir#lower_call`.
+- `scripts/node_slot_integrity_report.sh`.
 
 Falsifiers:
 
@@ -1407,6 +1408,31 @@ Next local track:
   s2->s3 crash corridor under `scripts/run_safe.sh`;
 - only after the ledger names a producer boundary may a bounded behavior slice
   be designed.
+
+Current evidence:
+
+- `scripts/node_slot_integrity_report.sh /private/tmp/adamas_nodeslot_stage1`
+  on a no-prelude call reports `rows=9`, `healthy_present=9`, and zero
+  non-healthy buckets;
+- with no env gate, the same no-prelude compile emits no `[NODE_SLOT]` rows;
+- a fresh generated s2 built by the stage1 with this ledger exits 0 under
+  `scripts/run_safe.sh`;
+- generated s2->s3 with `ADAMAS_NODE_SLOT_LEDGER=1` returns
+  `compiler_rc=139`, `rows=630`, `healthy_present=630`, and zero
+  `missing_node_payload`, `missing_slot`, `out_of_range`, `invalid_expr`, or
+  `null_expr` buckets. The last row before the crash is the same
+  `Adamas::Compiler::CLI#run$IO_IO` `before.member_object_read` edge,
+  `expr=2828`, with `in_range=1`, `slot_present=1`, and `node_present=1`.
+
+Interpretation:
+
+- this refutes missing/uninitialized slot and out-of-range `ExprId` for the
+  currently instrumented crash edge;
+- it does not prove the payload/vtable/node-kind read is healthy, because the
+  default ledger intentionally avoids dereferencing the node payload;
+- the next read-only slice should therefore target payload/vtable/deep node
+  read integrity or the exact uninstrumented consumer after `NodeSlot#node`,
+  not arena owner selection or slot existence.
 
 ### Slice A: CallResolution boundary
 

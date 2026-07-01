@@ -422,6 +422,7 @@ Initial executable entry point:
 scripts/semantic_decision_census.sh
 scripts/arena_ownership_census.sh
 scripts/lower_call_arena_ledger_smoke.sh <compiler>
+scripts/node_slot_integrity_report.sh <compiler>
 ```
 
 Acceptance for this first architecture slice:
