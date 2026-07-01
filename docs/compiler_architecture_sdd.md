@@ -3497,11 +3497,160 @@ Rejected implementation shortcuts:
   receipt unless the generated-stage rows reach and contradict the promoted
   seam.
 
+Implementation evidence for the 0k-L code slice:
+
+- `MaterializationDecisionRecord` now exists inside `AstToHir` and is reused by
+  the existing `[MAT_DECISION]` report path, preserving the prior report shape.
+- The selected override seam now assigns `has_untyped_regular_param` through
+  `materialization_override_shadow_untyped_regular_param?`; that helper builds
+  the owner record for `lower_function_if_needed.override` /
+  `materialization_override`, emits `[MAT_PROMOTION]` only under
+  `ADAMAS_MATERIALIZATION_OVERRIDE_PROMOTION_LEDGER=1`, and returns the legacy
+  boolean.
+- Red gate:
+  `CHECK_SOURCE_SHAPE=0 scripts/materialization_override_promotion_report.sh
+  bin/adamas` exits `1` with
+  `FAIL: no [MAT_PROMOTION] override promotion rows emitted` while the compiler
+  itself exits `0`.
+- Focused green:
+  `scripts/materialization_override_promotion_report.sh
+  /private/tmp/adamas_0km_stage1` exits `0` with `rows=1062`, all malformed /
+  invalid counts at `0`, consumer limited to
+  `lower_function_if_needed.override`, `promotion=shadow_parity`, and
+  `emitted_mismatch=0`.
+- Compatibility gates:
+  `scripts/materialization_decision_report.sh
+  /private/tmp/adamas_0km_stage1` exits `0` with `rows=7544`,
+  `malformed=0`, and `would_change_rows=0`;
+  `scripts/materialization_promotion_selection_report.sh
+  /private/tmp/adamas_0km_stage1` exits `0` with exactly one selected eligible
+  consumer, `lower_function_if_needed.override`;
+  `scripts/state_scope_consumer_report.sh /private/tmp/adamas_0km_stage1`
+  exits `0` with `rows=42224`, `malformed=0`,
+  `unclassified_blocked=0`, and `materialization_registry_rows=7544`;
+  `scripts/semantic_decision_census.sh`, `scripts/codepath_status_census.sh`,
+  and `git diff --check` all exit `0`.
+- Broad guard:
+  `regression_tests/run_combined.sh /private/tmp/adamas_0km_stage1` passes
+  `36/36`.
+- Generated-stage residual:
+  fresh `/private/tmp/adamas_0km_stage1` builds fresh
+  `/private/tmp/adamas_0km_s2` under `scripts/run_safe.sh` with `EXIT: 0`;
+  `TIMEOUT=180 MEM_MB=8192 ALLOW_NO_ROWS=1
+  scripts/materialization_override_promotion_report.sh
+  /private/tmp/adamas_0km_s2 src/adamas.cr -o /private/tmp/adamas_0km_s3`
+  exits `0` with `compiler_rc=139`, `rows=3`, all malformed / invalid counts
+  at `0`, consumer limited to `lower_function_if_needed.override`, and
+  `promotion=shadow_parity`.
+
+Boundary after implementation:
+
+- this is an authority-edge shadow/promotion checkpoint, not a behavior change;
+- it does not claim `s2b`/`s3b` green;
+- generated s2 still reaches a later `compiler_rc=139` frontier after emitting
+  valid promotion rows;
+- the next step remains Slice 0k-M: choose one architecture lane before any
+  new behavior or generated-stage crash work.
+
 Next local track:
 
-- implement this receipt as the next code slice, or stop and switch tracks if
-  the source-shape/report preflight proves the helper would not actually replace
-  the override seam's authority edge.
+- commit/close this behavior-neutral receipt slice, then choose exactly one
+  Slice 0k-M architecture lane before any further behavior or generated-stage
+  crash work.
+
+### Slice 0k-M: Architecture implementation pivot after 0k-L
+
+Status:
+
+- design-sealed planning checkpoint for the work immediately after the 0k-L
+  owner-consumption helper;
+- no compiler behavior, materialization behavior, remangling behavior, backend
+  behavior, AST-read behavior, cleanup behavior, or `BlockOwner` carrier is
+  changed by this slice;
+- the purpose is to prevent the project from returning to local frontier fixes
+  as soon as the selected override seam has a behavior-neutral owner record.
+
+Problem:
+
+- the recent bootstrap history repeatedly exposed the same architecture class
+  through different symptoms: ambient `@type_param_map`, requested/target/body
+  symbol drift, raw AST index ownership, file identity, and backend-discovered
+  stubs;
+- a successful 0k-L helper would reduce one authority edge, but it would not by
+  itself extract the owning services or make `s2b`/`s3b` green;
+- continuing from 0k-L directly into the next crash or stub would recreate the
+  same tail-chase pattern under a better diagnostic vocabulary.
+
+Standing mini-Quadrumvirate gate for every next slice:
+
+1. `VERIFY`: name the current owner fact already available in code, docs, or a
+   report. If no owner fact exists, the slice is a census/facade slice, not a
+   behavior patch.
+2. `CRITICIZE`: ask whether the planned change only moves a symptom from one
+   consumer to another. If yes, reject it unless it also replaces an authority
+   edge or deletes a path with `CodePathStatus` evidence.
+3. `BUILD`: choose one of the admitted architecture lanes below and state the
+   exact old edge, new owner, source-shape guard, and falsifier.
+4. `ADVERSARY`: before claiming progress, prove the slice did not widen
+   behavior by accident and did not create a new ledger without a promotion or
+   deletion path.
+
+Admitted architecture lanes after 0k-L:
+
+1. `MaterializationDecision owner extraction`
+   - Goal: turn the current internal record/helpers into a side-effect-bounded
+     owner surface for requested, selected, target, materialized, and emitted
+     symbol identity.
+   - First slice: keep behavior unchanged, but make one additional legacy
+     materialization consumer obtain its parity input through the owner record
+     or explicitly classify why it cannot.
+   - Rejected shortcut: force requested-name materialization, target keepalive,
+     backend forwarders, or remangle changes before the transaction owner can
+     classify the row as `exact`, `materialization_keepalive`,
+     `wrapper_forwarder`, or `rejected_mismatch`.
+
+2. `SemanticStateScope facade`
+   - Goal: make ambient state such as `@type_param_map`, current class/method,
+     namespace owner, and pending arg maps readable only through an explicit
+     scope snapshot at naming/materialization seams.
+   - First slice: add a behavior-neutral scope snapshot at one selected seam and
+     prove parity against the legacy ambient reads.
+   - Rejected shortcut: globally clear or ignore ambient maps, or add a boolean
+     mode to old predicates that lets consumers choose semantics ad hoc.
+
+3. `NameResolution / MethodNameCodec boundary`
+   - Goal: make parsing, suffix interpretation, owner extraction, and mangled
+     name normalization a typed service rather than repeated string slicing.
+   - First slice: shadow-parse the names used by one materialization or overload
+     report and prove byte-equivalent legacy output for the regression corpus.
+   - Rejected shortcut: normalize `NamedTuple`/`Tuple`, owner strings, or
+     builtin names only at the failing consumer.
+
+4. `AstNodeRef / ArenaOwnership boundary`
+   - Goal: make AST reads use owner-scoped references instead of raw `ExprId`
+     indexes plus current-arena assumptions.
+   - First slice: route one read-only ledger or one non-behavioral helper
+     through `AstNodeRef` after owner parity is proven, without changing raw
+     read behavior.
+   - Rejected shortcut: broad arena scans, current-arena fallbacks, or
+     containment heuristics as authority.
+
+5. `Runtime CodePathStatus cleanup`
+   - Goal: reduce codebase bloat without deleting semantic carriers.
+   - First slice: choose one cluster from `scripts/codepath_status_census.sh`,
+     add runtime status rows if needed, and mark it `live`, `debug_only`,
+     `legacy_shim`, `suspected_dead`, or `delete_blocked` with a protecting
+     falsifier.
+   - Rejected shortcut: deleting debug/workaround/fallback paths because they
+     look old or because a newer owner facade exists nearby.
+
+Next local track:
+
+- close the 0k-L helper/report slice as behavior-neutral or revert it; then
+  choose exactly one admitted lane above for the next code slice;
+- do not resume generated-stage crash localization, backend stub work, or
+  materialization behavior changes until the chosen lane states its owner fact
+  and source-shape/falsifier gates.
 
 ### Slice A: CallResolution boundary
 

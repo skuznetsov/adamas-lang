@@ -608,6 +608,36 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   backend reconciliation, target keepalive, requested-name materialization,
   remangling, tuple rendering, global ambient-map rules, or `BlockOwner`.
 
+- 2026-07-01 UPDATE: added Slice 0k-M as the architecture implementation pivot
+  after the 0k-L receipt. The current rule is to close the 0k-L helper/report
+  slice as behavior-neutral or revert it, then choose exactly one architecture
+  lane before any further frontier work: `MaterializationDecision` owner
+  extraction, `SemanticStateScope` facade, `NameResolution` / `MethodNameCodec`,
+  `AstNodeRef` / `ArenaOwnership`, or runtime `CodePathStatus` cleanup. This is
+  the active anti-tail-chase gate: a next slice must replace or shadow a named
+  authority edge, classify/delete a path through `CodePathStatus`, or refute the
+  current owner evidence. Do not resume generated-stage crash localization,
+  backend stubs, forwarders, remangling, or materialization behavior changes
+  until the chosen lane states its owner fact, source-shape guard, and
+  falsifier.
+
+- 2026-07-01 UPDATE: implemented the 0k-L helper/report slice as a
+  behavior-neutral authority-edge shadow checkpoint. The override seam now
+  calls `materialization_override_shadow_untyped_regular_param?`, which builds
+  an owned `MaterializationDecisionRecord`, emits `[MAT_PROMOTION]` rows only
+  under `ADAMAS_MATERIALIZATION_OVERRIDE_PROMOTION_LEDGER=1`, and returns the
+  legacy boolean. Verification: red gate against `bin/adamas` fails with no
+  promotion rows while compiler exit is `0`; fresh
+  `/private/tmp/adamas_0km_stage1` green report emits `rows=1062`, only
+  `lower_function_if_needed.override`, malformed/invalid counts `0`, and
+  `emitted_mismatch=0`; materialization decision, promotion selection,
+  state-scope consumer, semantic census, codepath census, and `git diff --check`
+  gates all exit `0`; combined regression suite passes `36/36`; fresh stage1
+  builds fresh generated s2 with `EXIT: 0`; generated s2 promotion report emits
+  `rows=3` valid shadow-parity rows before the residual `compiler_rc=139`.
+  Scope: no behavior change and no green `s2b`/`s3b` claim. Next work remains
+  Slice 0k-M lane selection, not another crash-frontier fix.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was

@@ -755,6 +755,45 @@ docs-only implementation receipt; no compiler behavior changed and no green
 refute that this edge can be replaced cleanly, or fresh generated-stage evidence
 invalidates the selected override seam.
 
+[LM-ARCH-POST-0KL-IMPLEMENTATION-PIVOT|design-sealed 2026-07-01 {F:0.78 G:0.56 R:0.84}]:
+Slice 0k-M prevents the next step after the 0k-L helper from becoming another
+generated-stage crash chase. The admitted post-0k-L tracks are now explicit:
+`MaterializationDecision` owner extraction, `SemanticStateScope` facade,
+`NameResolution` / `MethodNameCodec`, `AstNodeRef` / `ArenaOwnership`, or
+runtime `CodePathStatus` cleanup. A next slice must replace or shadow a named
+authority edge, classify/delete a path through `CodePathStatus`, or refute the
+current owner evidence with fresher data. Rejected repeats remain backend stub
+rescues, forwarders, remangling, requested-name materialization,
+`NamedTuple`/`Tuple` normalization, global ambient-map changes, and rolling
+`BlockOwner` back to tuple/namedtuple metadata. Scope: docs-only architecture
+pivot; no compiler behavior changed and no green `s2b`/`s3b` claim. Decay
+trigger: one admitted lane lands with source-shape/report evidence, or fresh
+generated-stage evidence proves that a different owner boundary must replace
+the current lane set.
+
+[LM-ARCH-OVERRIDE-PROMOTION-SHADOW-HELPER|verified 2026-07-01 {F:0.84 G:0.42 R:0.88}]:
+The 0k-L code slice is implemented as a behavior-neutral authority-edge shadow
+checkpoint. `lower_function_if_needed.override` no longer reaches directly for
+`state_scope_consumer_def_has_untyped_regular_param?`; it now calls
+`materialization_override_shadow_untyped_regular_param?`, which builds an
+owned `MaterializationDecisionRecord`, emits `[MAT_PROMOTION]` rows only when
+`ADAMAS_MATERIALIZATION_OVERRIDE_PROMOTION_LEDGER=1`, and returns the legacy
+boolean. Evidence: red gate
+`CHECK_SOURCE_SHAPE=0 scripts/materialization_override_promotion_report.sh
+bin/adamas` exits `1` with no promotion rows while compiler exit is `0`;
+fresh `/private/tmp/adamas_0km_stage1` green report emits `rows=1062`, only
+`lower_function_if_needed.override`, malformed/invalid counts `0`, and
+`emitted_mismatch=0`; materialization decision, promotion selection,
+state-scope consumer, semantic census, codepath census, and `git diff --check`
+gates all exit `0`; `regression_tests/run_combined.sh
+/private/tmp/adamas_0km_stage1` passes `36/36`; fresh stage1 builds fresh s2
+with `EXIT: 0`; generated s2 emits `rows=3` valid shadow-parity promotion rows
+before residual `compiler_rc=139`. Scope: this changes authority plumbing and
+debug/report evidence only; it does not change emitted compiler semantics and
+does not make `s2b`/`s3b` green. Decay trigger: the override helper starts
+returning owner results, `MaterializationDecisionRecord` fields change, or a
+later lane replaces this seam with a different owner contract.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

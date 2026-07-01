@@ -18,6 +18,27 @@ scope, type/name identity, AST arena ownership, ABI facts, and file identity.
 The first executable architecture implementation is therefore Phase 1/1b census
 plus owner ledgers, not a broad backend writer slice.
 
+2026-07-01 pivot note: after the 0k-L override owner-consumption helper, the
+near-term path must stay on architecture implementation rather than returning
+to the next generated-stage crash. The first extraction work is not a physical
+file split. It is the promotion of one owned fact at a time:
+
+1. `MaterializationDecision` owner surface for requested, selected, target,
+   body, emitted call, state-scope authority, target map, call arg types, and
+   ABI shape.
+2. `SemanticStateScope` snapshots for naming/materialization decisions that
+   currently read ambient mutable maps.
+3. `NameResolution` / `MethodNameCodec` for typed parsing of owners, suffixes,
+   and mangled method names.
+4. `AstNodeRef` / `ArenaOwnership` for owner-scoped AST reads.
+5. `CodePathStatus` for deleting or quarantining stale debug, fallback, and
+   workaround paths only after runtime evidence and a protecting falsifier.
+
+Each slice must replace or shadow a named authority edge before any behavior
+change. A new report without a promoted consumer, a backend forwarder without a
+HIR-owned transaction, or a consumer guard around the latest crash remains a
+symptom fix, not architecture work.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging

@@ -2546,6 +2546,55 @@ module Adamas::HIR
       env_has?("ADAMAS_MATERIALIZATION_DECISION_LEDGER")
     end
 
+    private def materialization_override_promotion_ledger_enabled? : Bool
+      env_has?("ADAMAS_MATERIALIZATION_OVERRIDE_PROMOTION_LEDGER")
+    end
+
+    private class MaterializationDecisionRecord
+      getter consumer : String
+      getter source_decision : String
+      getter requested_name : String
+      getter target_name : String
+      getter selected_def : String
+      getter param_class : String
+      getter state_scope : String
+      getter owner : String
+      getter decision : String
+      getter reason : String
+      getter legacy_result : Bool
+      getter owner_result : String
+      getter emitted_result : Bool
+      getter would_change : String
+      getter target_map : String
+      getter call_arg_types : String
+      getter arg_abi : String
+      getter block_abi : String
+      getter validation : String
+
+      def initialize(
+        @consumer : String,
+        @source_decision : String,
+        @requested_name : String,
+        @target_name : String,
+        @selected_def : String,
+        @param_class : String,
+        @state_scope : String,
+        @owner : String,
+        @decision : String,
+        @reason : String,
+        @legacy_result : Bool,
+        @owner_result : String,
+        @emitted_result : Bool,
+        @would_change : String,
+        @target_map : String,
+        @call_arg_types : String,
+        @arg_abi : String,
+        @block_abi : String,
+        @validation : String,
+      )
+      end
+    end
+
     private def state_scope_consumer_target_map(
       requested_name : String,
       target_name : String,
@@ -2728,8 +2777,103 @@ module Adamas::HIR
       "0"
     end
 
+    private def materialization_decision_owner_result(decision : String) : String
+      expected = materialization_decision_expected_result(decision)
+      return expected ? "1" : "0" unless expected.nil?
+
+      "legacy"
+    end
+
     private def materialization_decision_field(value : String) : String
       value.empty? ? "none" : value
+    end
+
+    private def materialization_decision_bool_field(value : Bool) : String
+      value ? "1" : "0"
+    end
+
+    private def materialization_decision_record(
+      consumer : String,
+      source_decision : String,
+      requested_name : String,
+      target_name : String,
+      selected_def : String,
+      func_def : Adamas::Compiler::Frontend::DefNode,
+      effective_target : String,
+      legacy_result : Bool,
+      state_scope : String,
+      migration : String,
+      validation : String,
+      target_map : String,
+      call_arg_types : Array(TypeRef)?,
+    ) : MaterializationDecisionRecord?
+      return nil unless migration == "migrate_to_materialization_registry"
+
+      param_class = materialization_decision_param_class(func_def, effective_target)
+      decision = materialization_decision_kind(param_class, requested_name, target_name)
+      owner = materialization_decision_owner(decision)
+      reason = materialization_decision_reason(decision, param_class)
+      would_change = materialization_decision_would_change(decision, legacy_result)
+      call_args = type_ref_array_debug_string(call_arg_types)
+      arg_abi = materialization_decision_arg_abi(call_arg_types)
+      block_abi = materialization_decision_block_abi(func_def, effective_target)
+
+      MaterializationDecisionRecord.new(
+        consumer,
+        source_decision,
+        requested_name,
+        target_name,
+        selected_def,
+        param_class,
+        state_scope,
+        owner,
+        decision,
+        reason,
+        legacy_result,
+        materialization_decision_owner_result(decision),
+        legacy_result,
+        would_change,
+        materialization_decision_field(target_map),
+        materialization_decision_field(call_args),
+        arg_abi,
+        block_abi,
+        validation,
+      )
+    end
+
+    private def materialization_decision_record_for_consumer(
+      consumer : String,
+      source_decision : String,
+      requested_name : String,
+      target_name : String,
+      func_def : Adamas::Compiler::Frontend::DefNode,
+      legacy_result : Bool,
+      call_arg_types : Array(TypeRef)? = nil,
+      target_params : Hash(String, String)? = nil,
+    ) : MaterializationDecisionRecord?
+      effective_target = target_name.empty? ? requested_name : target_name
+      selected_owner = effective_target.empty? ? "?" : method_owner(effective_target)
+      target_map_hash = state_scope_consumer_target_map(requested_name, target_name, target_params)
+      authority = state_scope_consumer_authority(legacy_result, target_map_hash, call_arg_types)
+      migration = state_scope_consumer_migration(authority)
+      validation = state_scope_consumer_validation(authority)
+      selected_def = selected_definition_debug_string(func_def, effective_target, selected_owner)
+
+      materialization_decision_record(
+        consumer,
+        source_decision,
+        requested_name,
+        target_name,
+        selected_def,
+        func_def,
+        effective_target,
+        legacy_result,
+        authority,
+        migration,
+        validation,
+        string_map_debug_string(target_map_hash),
+        call_arg_types,
+      )
     end
 
     private def log_materialization_decision(
@@ -2747,18 +2891,31 @@ module Adamas::HIR
       target_map : String,
       call_arg_types : Array(TypeRef)?,
     ) : Nil
-      return unless migration == "migrate_to_materialization_registry"
+      if record = materialization_decision_record(
+           consumer,
+           source_decision,
+           requested_name,
+           target_name,
+           selected_def,
+           func_def,
+           effective_target,
+           legacy_result,
+           state_scope,
+           migration,
+           validation,
+           target_map,
+           call_arg_types,
+         )
+        log_materialization_decision(record)
+      end
+    end
 
-      param_class = materialization_decision_param_class(func_def, effective_target)
-      decision = materialization_decision_kind(param_class, requested_name, target_name)
-      owner = materialization_decision_owner(decision)
-      reason = materialization_decision_reason(decision, param_class)
-      would_change = materialization_decision_would_change(decision, legacy_result)
-      call_args = type_ref_array_debug_string(call_arg_types)
-      arg_abi = materialization_decision_arg_abi(call_arg_types)
-      block_abi = materialization_decision_block_abi(func_def, effective_target)
+    private def log_materialization_decision(record : MaterializationDecisionRecord) : Nil
+      STDERR.puts "[MAT_DECISION] consumer=#{ledger_token(record.consumer)} source_decision=#{ledger_token(record.source_decision)} requested=#{ledger_token(record.requested_name)} target=#{ledger_token(record.target_name)} selected_def=#{ledger_token(record.selected_def)} param_class=#{ledger_token(record.param_class)} state_scope=#{ledger_token(record.state_scope)} owner=#{ledger_token(record.owner)} decision=#{ledger_token(record.decision)} reason=#{ledger_token(record.reason)} legacy_result=#{materialization_decision_bool_field(record.legacy_result)} would_change=#{ledger_token(record.would_change)} target_map=#{ledger_token(record.target_map)} call_arg_types=#{ledger_token(record.call_arg_types)} arg_abi=#{ledger_token(record.arg_abi)} block_abi=#{ledger_token(record.block_abi)} validation=#{ledger_token(record.validation)}"
+    end
 
-      STDERR.puts "[MAT_DECISION] consumer=#{ledger_token(consumer)} source_decision=#{ledger_token(source_decision)} requested=#{ledger_token(requested_name)} target=#{ledger_token(target_name)} selected_def=#{ledger_token(selected_def)} param_class=#{ledger_token(param_class)} state_scope=#{ledger_token(state_scope)} owner=#{ledger_token(owner)} decision=#{ledger_token(decision)} reason=#{ledger_token(reason)} legacy_result=#{legacy_result ? 1 : 0} would_change=#{ledger_token(would_change)} target_map=#{ledger_token(materialization_decision_field(target_map))} call_arg_types=#{ledger_token(materialization_decision_field(call_args))} arg_abi=#{ledger_token(arg_abi)} block_abi=#{ledger_token(block_abi)} validation=#{ledger_token(validation)}"
+    private def log_materialization_override_promotion(record : MaterializationDecisionRecord) : Nil
+      STDERR.puts "[MAT_PROMOTION] consumer=#{ledger_token(record.consumer)} source_decision=#{ledger_token(record.source_decision)} requested=#{ledger_token(record.requested_name)} target=#{ledger_token(record.target_name)} selected_def=#{ledger_token(record.selected_def)} param_class=#{ledger_token(record.param_class)} state_scope=#{ledger_token(record.state_scope)} owner=#{ledger_token(record.owner)} decision=#{ledger_token(record.decision)} reason=#{ledger_token(record.reason)} legacy_result=#{materialization_decision_bool_field(record.legacy_result)} owner_result=#{ledger_token(record.owner_result)} emitted_result=#{materialization_decision_bool_field(record.emitted_result)} would_change=#{ledger_token(record.would_change)} promotion=shadow_parity target_map=#{ledger_token(record.target_map)} call_arg_types=#{ledger_token(record.call_arg_types)} arg_abi=#{ledger_token(record.arg_abi)} block_abi=#{ledger_token(record.block_abi)} validation=#{ledger_token(record.validation)}"
     end
 
     private def log_state_scope_consumer_decision(
@@ -2788,22 +2945,59 @@ module Adamas::HIR
       end
 
       if materialization_decision_enabled
-        log_materialization_decision(
-          consumer,
-          decision,
-          requested_name,
-          target_name,
-          selected_def,
-          func_def,
-          effective_target,
-          result,
-          authority,
-          migration,
-          validation,
-          string_map_debug_string(target_map_hash),
-          call_arg_types,
-        )
+        if record = materialization_decision_record(
+             consumer,
+             decision,
+             requested_name,
+             target_name,
+             selected_def,
+             func_def,
+             effective_target,
+             result,
+             authority,
+             migration,
+             validation,
+             string_map_debug_string(target_map_hash),
+             call_arg_types,
+           )
+          log_materialization_decision(record)
+        end
       end
+    end
+
+    private def materialization_override_shadow_untyped_regular_param?(
+      requested_name : String,
+      target_name : String,
+      func_def : Adamas::Compiler::Frontend::DefNode,
+      call_arg_types : Array(TypeRef)? = nil,
+      target_params : Hash(String, String)? = nil,
+    ) : Bool
+      legacy_result = def_has_untyped_regular_param?(func_def)
+
+      if state_scope_consumer_ledger_enabled? || materialization_decision_ledger_enabled?
+        log_state_scope_consumer_decision("lower_function_if_needed.override", "materialization_override", requested_name, target_name, func_def, legacy_result, call_arg_types, target_params)
+        log_state_scope_consumer_decision("def_has_untyped_regular_param", "materialization_override", requested_name, target_name, func_def, legacy_result, call_arg_types, target_params)
+        if def_has_regular_type_annotation_for_state_scope_consumer?(func_def)
+          log_state_scope_consumer_decision("raw_annotation_needs_callsite_specialization", "materialization_override", requested_name, target_name, func_def, legacy_result, call_arg_types, target_params)
+        end
+      end
+
+      if materialization_override_promotion_ledger_enabled?
+        if record = materialization_decision_record_for_consumer(
+             "lower_function_if_needed.override",
+             "materialization_override",
+             requested_name,
+             target_name,
+             func_def,
+             legacy_result,
+             call_arg_types,
+             target_params,
+           )
+          log_materialization_override_promotion(record)
+        end
+      end
+
+      legacy_result
     end
 
     private def state_scope_consumer_def_has_untyped_regular_param?(
@@ -71477,9 +71671,7 @@ module Adamas::HIR
               # Use the resolved target by default. Keep the caller's requested
               # mangled name only for deferred/untyped cases that rely on
               # callsite-driven specialization.
-              has_untyped_regular_param = state_scope_consumer_def_has_untyped_regular_param?(
-                "lower_function_if_needed.override",
-                "materialization_override",
+              has_untyped_regular_param = materialization_override_shadow_untyped_regular_param?(
                 name,
                 target_name,
                 resolved_func_def,
