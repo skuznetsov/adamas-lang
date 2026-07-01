@@ -85,6 +85,18 @@ full-prelude generated-s2 smoke still exits 139 after `pass3 after lower_main
 call`. The next architecture lane must choose a different root-sized
 state-scope consumer or move to `CodePathStatus` cleanup selection.
 
+2026-07-01 post-0k-AW note: the paired
+`lower_function_if_needed.callsite_args` and `.suffix_types` keep-requested-name
+consumers now share a `KeepRequestedNameDecision` state record in parity mode,
+and the current owner-cache materialization guard targets `BlockOwner` instead
+of the retired `NamedTuple` carrier. This closes the immediate 0k-AV
+state-model checkpoint but should not be treated as bootstrap progress by
+itself. The refactor track should now pivot from seam-by-seam helper promotion
+to contract burn-down: add or strengthen falsifiers for function-body presence,
+generic template/instance semantic keys, and original-vs-stage semantic
+oracles before admitting another behavior fix from a generated-stage crash
+stack.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`

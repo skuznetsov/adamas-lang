@@ -8,7 +8,7 @@ if [[ $# -lt 1 && "$SOURCE_SHAPE_ONLY" != "1" ]]; then
   echo "usage: $0 <compiler> [source.cr [compiler-args...]]" >&2
   echo "env: TIMEOUT=180 MEM_MB=4096 SAMPLES=8" >&2
   echo "env: PREFERRED_CONSUMER=prefer_callsite_specialization REQUIRE_PROMOTED=0" >&2
-  echo "env: SOURCE_SHAPE_ONLY=1 REQUIRE_SELECTED=0" >&2
+  echo "env: SOURCE_SHAPE_ONLY=1 REQUIRE_SELECTED=0 REQUIRE_REDESIGNED=0" >&2
   exit 2
 fi
 
@@ -23,6 +23,7 @@ SAMPLES="${SAMPLES:-8}"
 PREFERRED_CONSUMER="${PREFERRED_CONSUMER:-prefer_callsite_specialization}"
 REQUIRE_PROMOTED="${REQUIRE_PROMOTED:-0}"
 REQUIRE_SELECTED="${REQUIRE_SELECTED:-0}"
+REQUIRE_REDESIGNED="${REQUIRE_REDESIGNED:-0}"
 
 TMP_DIR=""
 LOG=""
@@ -47,13 +48,22 @@ class Box(T)
   end
 end
 
+class BlockOwner
+  getter class_name : String?
+  getter method_name : String?
+  getter is_class : Bool
+
+  def initialize(@class_name : String?, @method_name : String?, @is_class : Bool)
+  end
+end
+
 class OwnerCache
-  @owners = Hash(UInt64, NamedTuple(class_name: String?, method_name: String?, is_class: Bool)).new
+  @owners = Hash(UInt64, BlockOwner).new
 
   def write(id : UInt64, flag : Bool)
     class_name = flag ? "Box" : nil
     method_name = flag ? nil : "initialize"
-    @owners[id] = {class_name: class_name, method_name: method_name, is_class: flag}
+    @owners[id] = BlockOwner.new(class_name, method_name, flag)
   end
 
   def read(id : UInt64)
@@ -149,13 +159,15 @@ run_source_shape_selection() {
   echo "prefer_callsite_source_shape: $preferred_shape"
   echo "override_source_shape: $override_shape"
   echo "require_selected: $REQUIRE_SELECTED"
+  echo "require_redesigned: $REQUIRE_REDESIGNED"
   echo "note: source-shape gate only; no compiler execution and no behavior change"
 
   awk \
     -v preferred="$PREFERRED_CONSUMER" \
     -v preferred_shape="$preferred_shape" \
     -v override_shape="$override_shape" \
-    -v require_selected="$REQUIRE_SELECTED" '
+    -v require_selected="$REQUIRE_SELECTED" \
+    -v require_redesigned="$REQUIRE_REDESIGNED" '
     function append_known(consumer) {
       if (!(consumer in known_seen)) {
         known_seen[consumer] = 1
@@ -171,12 +183,23 @@ run_source_shape_selection() {
       }
     }
 
+    function append_shared(consumer, line) {
+      append_known(consumer)
+      shared_count[consumer]++
+      if (shared_line[consumer] == "") {
+        shared_line[consumer] = line
+      }
+    }
+
     function source_status(consumer) {
       if (consumer == "prefer_callsite_specialization") {
         return preferred_shape
       }
       if (consumer == "lower_function_if_needed.override") {
         return override_shape
+      }
+      if (shared_count[consumer] > 0 && direct_count[consumer] == 0) {
+        return "shared_keep_requested_name_model"
       }
       if (direct_count[consumer] > 0) {
         return "legacy_direct_edge"
@@ -198,10 +221,18 @@ run_source_shape_selection() {
       if (consumer == "lower_call.remangle") {
         return "rejected_backend_adjacent"
       }
+      if (shape == "shared_keep_requested_name_model") {
+        return "redesigned_shared_state_model"
+      }
       if (shape == "legacy_direct_edge") {
         return "candidate_unpromoted_frontend"
       }
       return "rejected_not_direct"
+    }
+
+    function is_frontend_keep_requested_name(consumer) {
+      return consumer == "lower_function_if_needed.callsite_args" ||
+             consumer == "lower_function_if_needed.suffix_types"
     }
 
     BEGIN {
@@ -223,14 +254,42 @@ run_source_shape_selection() {
       next
     }
 
+    /lower_function_keep_requested_name_decision\(/ {
+      if ($0 ~ /private def lower_function_keep_requested_name_decision/) {
+        next
+      }
+      pending_shared_line = NR
+      pending_shared = 1
+      next
+    }
+
     pending {
       if (match($0, /"[^"]+"/)) {
         consumer = substr($0, RSTART + 1, RLENGTH - 2)
-        append_direct(consumer, pending_line)
+        if (consumer in known_seen) {
+          append_direct(consumer, pending_line)
+        }
+        pending = 0
+      } else if ($0 ~ /\)/) {
         pending = 0
       } else if (NR - pending_line > 8) {
         malformed_direct++
         pending = 0
+      }
+    }
+
+    pending_shared {
+      if (match($0, /"[^"]+"/)) {
+        consumer = substr($0, RSTART + 1, RLENGTH - 2)
+        if (consumer in known_seen) {
+          append_shared(consumer, pending_shared_line)
+        }
+        pending_shared = 0
+      } else if ($0 ~ /\)/) {
+        pending_shared = 0
+      } else if (NR - pending_shared_line > 8) {
+        malformed_shared++
+        pending_shared = 0
       }
     }
 
@@ -241,7 +300,9 @@ run_source_shape_selection() {
         consumer = known_order[i]
         print "[STATE_SCOPE_SOURCE] consumer=" consumer \
           " direct_count=" direct_count[consumer] + 0 \
+          " shared_count=" shared_count[consumer] + 0 \
           " first_line=" (direct_line[consumer] == "" ? "none" : direct_line[consumer]) \
+          " shared_line=" (shared_line[consumer] == "" ? "none" : shared_line[consumer]) \
           " source_shape=" source_status(consumer)
       }
 
@@ -255,6 +316,9 @@ run_source_shape_selection() {
         }
         if (preliminary == "already_promoted_shadow") {
           already_promoted_count++
+        }
+        if (preliminary == "redesigned_shared_state_model" && is_frontend_keep_requested_name(consumer)) {
+          redesigned_frontend_count++
         }
       }
 
@@ -274,23 +338,31 @@ run_source_shape_selection() {
         }
         print "[STATE_SCOPE_NO_REPEAT] consumer=" consumer \
           " direct_count=" direct_count[consumer] + 0 \
+          " shared_count=" shared_count[consumer] + 0 \
           " source_shape=" source_status(consumer) \
           " selection_status=" status
       }
 
       print ""
       print "malformed_direct=" malformed_direct + 0
+      print "malformed_shared=" malformed_shared + 0
       print "frontend_candidate_count=" candidate_count + 0
+      print "redesigned_frontend_count=" redesigned_frontend_count + 0
       print "selected_count=" selected_count + 0
       print "already_promoted_count=" already_promoted_count + 0
-      redesign = (selected_count == 0 && candidate_count != 1) ? 1 : 0
+      redesign_complete = (redesigned_frontend_count == 2 && candidate_count == 0) ? 1 : 0
+      redesign = (redesign_complete == 0 && selected_count == 0 && candidate_count != 1) ? 1 : 0
+      print "state_model_redesign_complete=" redesign_complete
       print "state_model_redesign_required=" redesign
 
-      if (malformed_direct > 0 || selected_count > 1) {
+      if (malformed_direct > 0 || malformed_shared > 0 || selected_count > 1) {
         exit 7
       }
       if (require_selected == "1" && selected_count != 1) {
         exit 9
+      }
+      if (require_redesigned == "1" && redesign_complete != 1) {
+        exit 10
       }
     }
   ' "$source_file"

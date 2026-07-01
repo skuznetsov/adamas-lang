@@ -2711,6 +2711,10 @@ module Adamas::HIR
       env_has?("ADAMAS_SEMANTIC_STATE_SCOPE_PROMOTION_LEDGER")
     end
 
+    private def lower_function_keep_requested_name_ledger_enabled? : Bool
+      env_has?("ADAMAS_KEEP_REQUESTED_NAME_LEDGER")
+    end
+
     private def method_name_codec_promotion_ledger_enabled? : Bool
       env_has?("ADAMAS_METHOD_NAME_CODEC_PROMOTION_LEDGER")
     end
@@ -2793,6 +2797,41 @@ module Adamas::HIR
         @target_map : String,
         @call_arg_types : String,
         @lifetime : String,
+      )
+      end
+    end
+
+    private class KeepRequestedNameDecision
+      getter consumer : String
+      getter requested_name : String
+      getter resolved_entry_name : String
+      getter selected_def : String
+      getter legacy_result : Bool
+      getter owner_result : Bool
+      getter emitted_result : Bool
+      getter reason : String
+      getter untyped_regular_param : Bool
+      getter bare_collection_param : Bool
+      getter module_like_param : Bool
+      getter concrete_collection_arg : Bool
+      getter predicate_arg_types : String
+      getter collection_policy_types : String
+
+      def initialize(
+        @consumer : String,
+        @requested_name : String,
+        @resolved_entry_name : String,
+        @selected_def : String,
+        @legacy_result : Bool,
+        @owner_result : Bool,
+        @emitted_result : Bool,
+        @reason : String,
+        @untyped_regular_param : Bool,
+        @bare_collection_param : Bool,
+        @module_like_param : Bool,
+        @concrete_collection_arg : Bool,
+        @predicate_arg_types : String,
+        @collection_policy_types : String,
       )
       end
     end
@@ -3139,6 +3178,10 @@ module Adamas::HIR
       STDERR.puts "[STATE_SCOPE_PROMOTION] consumer=#{ledger_token(record.consumer)} source_decision=#{ledger_token(record.source_decision)} requested=#{ledger_token(record.requested_name)} target=#{ledger_token(record.target_name)} selected_def=#{ledger_token(record.selected_def)} authority=#{ledger_token(record.authority)} migration=#{ledger_token(record.migration)} validation=#{ledger_token(record.validation)} legacy_result=#{materialization_decision_bool_field(record.legacy_result)} owner_result=#{ledger_token(record.owner_result)} emitted_result=#{materialization_decision_bool_field(record.emitted_result)} promotion=shadow_parity ambient_map=#{ledger_token(record.ambient_map)} target_map=#{ledger_token(record.target_map)} call_arg_types=#{ledger_token(record.call_arg_types)} lifetime=#{ledger_token(record.lifetime)}"
     end
 
+    private def log_keep_requested_name_decision(record : KeepRequestedNameDecision) : Nil
+      STDERR.puts "[KEEP_REQUESTED_NAME] consumer=#{ledger_token(record.consumer)} requested=#{ledger_token(record.requested_name)} resolved=#{ledger_token(record.resolved_entry_name)} selected_def=#{ledger_token(record.selected_def)} legacy_result=#{materialization_decision_bool_field(record.legacy_result)} owner_result=#{materialization_decision_bool_field(record.owner_result)} emitted_result=#{materialization_decision_bool_field(record.emitted_result)} reason=#{ledger_token(record.reason)} untyped_regular_param=#{materialization_decision_bool_field(record.untyped_regular_param)} bare_collection_param=#{materialization_decision_bool_field(record.bare_collection_param)} module_like_param=#{materialization_decision_bool_field(record.module_like_param)} concrete_collection_arg=#{materialization_decision_bool_field(record.concrete_collection_arg)} predicate_arg_types=#{ledger_token(record.predicate_arg_types)} collection_policy_types=#{ledger_token(record.collection_policy_types)}"
+    end
+
     private def semantic_state_scope_decision_for_consumer(
       consumer : String,
       source_decision : String,
@@ -3387,6 +3430,79 @@ module Adamas::HIR
         end
       end
       result
+    end
+
+    private def lower_function_keep_requested_name_reason(
+      requested_has_suffix : Bool,
+      untyped_regular_param : Bool,
+      bare_collection_param : Bool,
+      module_like_param : Bool,
+    ) : String
+      return "requested_name_without_suffix" unless requested_has_suffix
+      return "untyped_regular_param" if untyped_regular_param
+      return "bare_collection_param" if bare_collection_param
+      return "module_like_param" if module_like_param
+
+      "use_resolved_entry_name"
+    end
+
+    private def lower_function_keep_requested_name_decision(
+      consumer : String,
+      requested_name : String,
+      resolved_entry_name : String,
+      resolved_entry_def : Adamas::Compiler::Frontend::DefNode,
+      predicate_arg_types : Array(TypeRef),
+      collection_policy_types : Array(TypeRef)? = nil,
+    ) : KeepRequestedNameDecision
+      untyped_regular_param = state_scope_consumer_def_has_untyped_regular_param?(
+        consumer,
+        "keep_requested_name",
+        requested_name,
+        resolved_entry_name,
+        resolved_entry_def,
+        predicate_arg_types
+      )
+
+      requested_has_suffix = requested_name.includes?('$')
+      policy_types = collection_policy_types || predicate_arg_types
+      concrete_collection_arg = policy_types.any? { |t| concrete_collection_type_ref?(t) }
+      bare_collection_param = def_has_bare_collection_regular_param?(resolved_entry_def) && concrete_collection_arg
+      module_like_param = def_has_module_like_regular_param?(resolved_entry_def) && concrete_collection_arg
+      owner_result = requested_has_suffix && (
+        untyped_regular_param ||
+        bare_collection_param ||
+        module_like_param
+      )
+      legacy_result = owner_result
+      selected_owner = method_owner(resolved_entry_name)
+      selected_def = selected_definition_debug_string(resolved_entry_def, resolved_entry_name, selected_owner)
+      predicate_args = materialization_decision_field(type_ref_array_debug_string(predicate_arg_types))
+      policy_args = materialization_decision_field(type_ref_array_debug_string(policy_types))
+
+      record = KeepRequestedNameDecision.new(
+        consumer,
+        requested_name,
+        resolved_entry_name,
+        selected_def,
+        legacy_result,
+        owner_result,
+        legacy_result,
+        lower_function_keep_requested_name_reason(
+          requested_has_suffix,
+          untyped_regular_param,
+          bare_collection_param,
+          module_like_param
+        ),
+        untyped_regular_param,
+        bare_collection_param,
+        module_like_param,
+        concrete_collection_arg,
+        predicate_args,
+        policy_args,
+      )
+
+      log_keep_requested_name_decision(record) if lower_function_keep_requested_name_ledger_enabled?
+      record
     end
 
     private def def_has_regular_type_annotation_for_state_scope_consumer?(func_def : Adamas::Compiler::Frontend::DefNode) : Bool
@@ -70532,40 +70648,19 @@ module Adamas::HIR
                 resolved_entry_def = entry[1]
                 func_def = resolved_entry_def
                 arena = @function_def_arenas[resolved_entry_name]
-                untyped_regular_param = state_scope_consumer_def_has_untyped_regular_param?(
+                collection_policy_types = if suffix_name = method_suffix(name)
+                                            parsed_name_types = parse_types_from_suffix(strip_mangled_suffix_flags(suffix_name))
+                                            parsed_name_types.empty? ? nil : parsed_name_types
+                                          end
+                keep_requested_name_decision = lower_function_keep_requested_name_decision(
                   "lower_function_if_needed.callsite_args",
-                  "keep_requested_name",
                   name,
                   resolved_entry_name,
                   resolved_entry_def,
-                  callsite.types
+                  callsite.types,
+                  collection_policy_types
                 )
-                keep_requested_name = name.includes?('$') && (
-                  untyped_regular_param ||
-                  (
-                    def_has_bare_collection_regular_param?(resolved_entry_def) &&
-                    begin
-                      if suffix_name = method_suffix(name)
-                        parsed_name_types = parse_types_from_suffix(strip_mangled_suffix_flags(suffix_name))
-                        parsed_name_types.any? { |t| concrete_collection_type_ref?(t) }
-                      else
-                        false
-                      end
-                    end
-                  ) ||
-                  (
-                    def_has_module_like_regular_param?(resolved_entry_def) &&
-                    begin
-                      if suffix_name = method_suffix(name)
-                        parsed_name_types = parse_types_from_suffix(strip_mangled_suffix_flags(suffix_name))
-                        parsed_name_types.any? { |t| concrete_collection_type_ref?(t) }
-                      else
-                        false
-                      end
-                    end
-                  )
-                )
-                target_name = keep_requested_name ? name : resolved_entry_name
+                target_name = keep_requested_name_decision.emitted_result ? name : resolved_entry_name
                 lookup_branch = "callsite_args"
               end
             end
@@ -70583,26 +70678,14 @@ module Adamas::HIR
                 resolved_entry_def = entry[1]
                 func_def = resolved_entry_def
                 arena = @function_def_arenas[resolved_entry_name]
-                untyped_regular_param = state_scope_consumer_def_has_untyped_regular_param?(
+                keep_requested_name_decision = lower_function_keep_requested_name_decision(
                   "lower_function_if_needed.suffix_types",
-                  "keep_requested_name",
                   name,
                   resolved_entry_name,
                   resolved_entry_def,
                   parsed_types
                 )
-                keep_requested_name = name.includes?('$') && (
-                  untyped_regular_param ||
-                  (
-                    def_has_bare_collection_regular_param?(resolved_entry_def) &&
-                    parsed_types.any? { |t| concrete_collection_type_ref?(t) }
-                  ) ||
-                  (
-                    def_has_module_like_regular_param?(resolved_entry_def) &&
-                    parsed_types.any? { |t| concrete_collection_type_ref?(t) }
-                  )
-                )
-                target_name = keep_requested_name ? name : resolved_entry_name
+                target_name = keep_requested_name_decision.emitted_result ? name : resolved_entry_name
                 lookup_branch = "suffix_types"
               end
             end

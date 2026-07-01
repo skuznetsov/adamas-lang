@@ -47,6 +47,7 @@ Each non-refuted row has a phase pressure:
 | G3 | Generic template and instance keys must be semantic keys, not rendered strings. | `02-generic-template-registration.md` section 3 | Add key-rendering oracle that compares canonical key fields against rendered names for nested generic owners. | pre-s2-clean | [MISSING-FALSIFIER] |
 | G4 | Broad source-gated generic-template body scan is not an acceptable fix. | `02-generic-template-registration.md` section 5 | Reverted experiment regressed earlier around `Crystal::PointerLinkedList` / trace paths. | current | [REFUTED] |
 | G5 | Produced `s2` full-prelude `puts 42` must get past the later generic/template registration frontier. | `TODO.md`, LM-559 | `ADAMAS_TRACE_CLASS_FRONTIER=1 scripts/run_safe.sh <produced-s2> 60 4096 /tmp/hello.cr -o /tmp/hello_bin`. | pre-s2-clean | [FRONTIER] |
+| G6 | The current owner-cache carrier must materialize `Hash(UInt64, BlockOwner)#[]=` as a real body, not an undefined-extern abort stub. | `TODO.md`, LM-ARCH-0K-AW | `regression_tests/block_owner_index_assign_materialization_repro.sh <compiler>` finds a non-stub self-IR body for the current `BlockOwner` carrier. | current | [FALSIFIABLE] |
 
 ## 5. MIR Call ABI
 

@@ -8,6 +8,25 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: implemented Slice 0k-AW, the behavior-neutral shared
+  keep-requested-name state model admitted by 0k-AV. The paired frontend
+  `lower_function_if_needed.callsite_args` and `.suffix_types` consumers now
+  construct a `KeepRequestedNameDecision` record and read its `emitted_result`
+  instead of recomputing the keep-requested-name expression inline. Emitted
+  behavior remains legacy/parity; this is not a requested-name policy flip and
+  not a green `s2b`/`s3b` claim. The source-shape gate now reports both
+  consumers as `shared_keep_requested_name_model` with
+  `state_model_redesign_complete=1`; the negative no-repeat gate
+  `REQUIRE_SELECTED=1` still exits `9`, proving no single consumer was silently
+  reselected. Added successor guard
+  `regression_tests/block_owner_index_assign_materialization_repro.sh` for the
+  current `Hash(UInt64, BlockOwner)#[]=` owner-cache carrier; the retired
+  `NamedTuple` guard must stay retired. Next work should not chase the next
+  crash frontier directly. Move the architecture track to contract-first SDD
+  hardening: close missing falsifiers for semantic identity, function-body
+  presence, and generic instance/template keys before admitting more behavior
+  fixes.
+
 - 2026-07-01 UPDATE: retired stale regression
   `regression_tests/hash_named_tuple_index_assign_materialization_repro.sh`.
   The script searched self-IR for the obsolete

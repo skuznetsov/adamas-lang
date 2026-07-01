@@ -12,6 +12,32 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-AW-SHARED-KEEP-REQUESTED-NAME-STATE|verified 2026-07-01 {F:0.86 G:0.40 R:0.88}]:
+Slice 0k-AW implements the behavior-neutral shared keep-requested-name state
+model admitted by 0k-AV. The paired frontend consumers
+`lower_function_if_needed.callsite_args` and
+`lower_function_if_needed.suffix_types` now construct a
+`KeepRequestedNameDecision` record and read `emitted_result` from that record
+instead of recomputing the keep-requested-name expression inline. The record
+captures requested symbol, resolved/materialized symbol, selected definition,
+predicate input types, collection-policy input types, legacy result, owner
+result, emitted result, and a reason. Emitted behavior remains legacy/parity;
+this is a state-model checkpoint, not a requested-name policy change and not a
+green `s2b`/`s3b` claim. Evidence:
+`SOURCE_SHAPE_ONLY=1 REQUIRE_REDESIGNED=1
+scripts/semantic_state_scope_admission_report.sh` reports both paired
+consumers as `shared_keep_requested_name_model`,
+`redesigned_frontend_count=2`, and `state_model_redesign_complete=1`; the
+negative no-repeat gate `SOURCE_SHAPE_ONLY=1 REQUIRE_SELECTED=1 ...` still
+exits `9`; `regression_tests/block_owner_index_assign_materialization_repro.sh
+/tmp/adamas_0kaw_stage1` reports a non-stub
+`Hash(UInt64, BlockOwner)#[]=` materialization; split materialization guards
+for `String#split(Char)` and coexisting Char/String separators pass on the same
+fresh stage1. Scope: shared parity state and guard replacement only. Decay
+trigger: emitted keep-requested-name behavior flips, the paired consumers stop
+using the record, the owner carrier changes again, or a future generated-stage
+run refutes this as the active semantic-state boundary.
+
 [LM-ARCH-0K-AV-STALE-NAMEDTUPLE-HASH-GUARD-RETIRED|verified 2026-07-01 {F:0.86 G:0.32 R:0.90}]:
 The executable regression
 `regression_tests/hash_named_tuple_index_assign_materialization_repro.sh` was
