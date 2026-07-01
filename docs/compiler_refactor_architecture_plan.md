@@ -349,6 +349,15 @@ previous report surface. This keeps the near-term refactor map aligned with
 bootstrap progress instead of growing another diagnostic layer around the same
 hidden ownership problem.
 
+2026-07-01 post-0k-AO selection note: the first correctness-selection pass after
+0k-AM did not produce a next behavior edge. The exact-contract missing-body
+residual is 14 rows across 9 root-sized groups, and
+`REQUIRE_RESIDUAL_SELECTED=1` rejects it as ambiguous. This pushes the refactor
+plan away from direct materialization patches for the sample methods and toward
+either a stronger discriminator that proves one old authority edge, or an
+explicit consolidation / cleanup lane. Treat the grouped samples as routing
+data, not as a prioritized fix list.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging

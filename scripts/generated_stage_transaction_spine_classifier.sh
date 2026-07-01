@@ -37,6 +37,7 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
+mkdir -p "$ROOT_DIR/tmp"
 TMP_DIR="$(mktemp -d "$ROOT_DIR/tmp/generated-stage-tx-spine.XXXXXX")"
 cleanup() {
   if [[ "${KEEP_TMP:-0}" == "1" ]]; then

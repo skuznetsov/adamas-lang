@@ -12,6 +12,31 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-AO-EXACT-RESIDUAL-AMBIGUOUS|verified 2026-07-01 {F:0.86 G:0.48 R:0.88}]:
+Slice 0k-AO extends the existing generated-stage transaction edge selector with
+a post-consumer exact-contract missing-body residual classifier. The selector
+now creates repo-local `tmp/` before `mktemp`, reports `MAX_RESIDUAL_ROWS`, and
+splits `call_materialization.exact_contract.extern_missing_body` by phase,
+branch, emitted owner, required contract, symbol relation, and identity status.
+Synthetic ledgers covered eligible, ambiguous, too-wide, and no-residual states.
+Fresh generated-stage evidence reports `classifier_classification=
+reached_tx_and_emit`, `post_consumer_state=
+selected_consumed_by_contract_consumer`, `contract_mismatch_rows=0`,
+`other_missing_body_rows=14`, `residual_exact_missing_body_rows=14`,
+`residual_exact_missing_body_groups=9`,
+`residual_exact_missing_body_root_sized_groups=9`, and
+`residual_selection_status=rejected_exact_missing_body_ambiguous`. Negative
+control: `REQUIRE_RESIDUAL_SELECTED=1` exits 9 on the same log. Decision: the
+post-0k-AM exact residual is ambiguous, not a selected behavior-fix edge.
+Samples such as `Array#<<`, `Slice#[]`, `IO#read`, `Atomic#get`,
+`StaticArray`, `String::Builder`, and `Int32` are routing evidence only. Next
+slice must either add a stronger discriminator that names exactly one old
+authority edge, or switch to `consolidation` / `cleanup/delete` under the 0k-AN
+covenant. Scope: selector/source-shape classification only; no compiler
+behavior and no green `s2b`/`s3b` claim. Decay trigger: a fresh generated-stage
+run selects exactly one residual group, the residual disappears, or the active
+board moves to a different owner boundary.
+
 [LM-ARCH-0K-AN-PACING-COVENANT|design-sealed 2026-07-01 {F:0.78 G:0.54 R:0.86}]:
 Slice 0k-AN adds a docs-only architecture pacing covenant after 0k-AM. It
 records that the next step must not replace consumer-patch tail-chasing with

@@ -8,6 +8,29 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: implemented Slice 0k-AO,
+  post-0k-AM exact-contract residual selector inside the existing generated
+  stage transaction edge selection script. The script now creates repo-local
+  `tmp/` before `mktemp`, reports `MAX_RESIDUAL_ROWS`, and classifies
+  `call_materialization.exact_contract.extern_missing_body` rows by phase,
+  branch, emitted owner, required contract, symbol relation, and identity
+  status. Synthetic ledger checks covered eligible, ambiguous, too-wide, and
+  no-residual states. Fresh generated-stage evidence reports
+  `classifier_classification=reached_tx_and_emit`,
+  `post_consumer_state=selected_consumed_by_contract_consumer`,
+  `contract_mismatch_rows=0`, `other_missing_body_rows=14`,
+  `residual_exact_missing_body_rows=14`,
+  `residual_exact_missing_body_groups=9`,
+  `residual_exact_missing_body_root_sized_groups=9`, and
+  `residual_selection_status=rejected_exact_missing_body_ambiguous`.
+  `REQUIRE_RESIDUAL_SELECTED=1` fails with exit 9 on the same log. Decision:
+  the immediate exact-contract residual is ambiguous, not a selected next
+  behavior edge. Do not patch any sample path (`Array#<<`, `Slice#[]`,
+  `IO#read`, `Atomic#get`, `StaticArray`, `String::Builder`, `Int32`) from this
+  report. Next slice must either add a stronger discriminator that selects one
+  old authority edge, or switch to `consolidation` / `cleanup/delete` under the
+  0k-AN covenant.
+
 - 2026-07-01 UPDATE: added Slice 0k-AN, docs-only
   architecture pacing covenant after 0k-AM. The purpose is to stop the next
   step from turning into selector/report tail-chasing. A future slice must

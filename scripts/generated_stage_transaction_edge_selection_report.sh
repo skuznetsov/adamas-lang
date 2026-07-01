@@ -18,6 +18,9 @@ Environment:
   REQUIRE_POST_CONSUMER_STATE
                        Exit nonzero unless post_consumer_state matches this value.
   MAX_SELECTED_ROWS    Maximum rows accepted as root-sized (default: 8).
+  REQUIRE_RESIDUAL_SELECTED=1
+                       Exit nonzero unless the post-consumer exact-missing-body residual selects one root-sized class.
+  MAX_RESIDUAL_ROWS    Maximum rows accepted for one residual class (default: 3).
   SAMPLES              Number of sample rows per section (default: 8).
 
 Classifier passthrough environment when LOG_FILE is not set:
@@ -39,6 +42,7 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 fi
 
 MAX_SELECTED_ROWS="${MAX_SELECTED_ROWS:-8}"
+MAX_RESIDUAL_ROWS="${MAX_RESIDUAL_ROWS:-3}"
 SAMPLES="${SAMPLES:-8}"
 TMP_DIR=""
 CLASSIFIER_TMP=""
@@ -65,6 +69,7 @@ if [[ -n "${LOG_FILE:-}" ]]; then
     exit 2
   fi
 else
+  mkdir -p "$ROOT_DIR/tmp"
   TMP_DIR="$(mktemp -d "$ROOT_DIR/tmp/generated-stage-edge-selection.XXXXXX")"
   classifier_output="$TMP_DIR/classifier.out"
 
@@ -93,14 +98,16 @@ echo "log_file=$LOG_FILE"
 echo "classifier_rc=$classifier_rc"
 echo "classifier_classification=$classifier_classification"
 echo "max_selected_rows=$MAX_SELECTED_ROWS"
+echo "max_residual_rows=$MAX_RESIDUAL_ROWS"
 echo "samples=$SAMPLES"
 echo "require_selected=${REQUIRE_SELECTED:-0}"
+echo "require_residual_selected=${REQUIRE_RESIDUAL_SELECTED:-0}"
 echo "require_post_consumer_state=${REQUIRE_POST_CONSUMER_STATE:-}"
 echo "note: source-shape/reachability gate only; no compiler behavior changes"
 echo ""
 
 report="$(
-  awk -v max_rows="$MAX_SELECTED_ROWS" -v samples="$SAMPLES" '
+  awk -v max_rows="$MAX_SELECTED_ROWS" -v max_residual_rows="$MAX_RESIDUAL_ROWS" -v samples="$SAMPLES" '
     function field(name,    i, p) {
       for (i = 1; i <= NF; i++) {
         p = index($i, "=")
@@ -115,6 +122,26 @@ report="$(
       if (sample_count[kind] < samples) {
         sample_count[kind]++
         sample[kind, sample_count[kind]] = row
+      }
+    }
+
+    function emitted_owner_of(emitted,    owner) {
+      owner = emitted
+      sub(/\$H.*/, "", owner)
+      return owner
+    }
+
+    function remember_residual_group(key, tx, emitted) {
+      if (!(key in residual_group_seen)) {
+        residual_group_seen[key] = 1
+        residual_group_order[++residual_group_total] = key
+        residual_group_phase[key] = phase[tx]
+        residual_group_branch[key] = branch[tx]
+        residual_group_owner[key] = selected_owner[tx]
+        residual_group_emitted_owner[key] = emitted_owner_of(emitted)
+        residual_group_required_contract[key] = required_contract[tx]
+        residual_group_symbol_relation[key] = symbol_relation[tx]
+        residual_group_identity_status[key] = identity_status[tx]
       }
     }
 
@@ -220,6 +247,17 @@ report="$(
       } else if (body_present == "0") {
         other_missing_body_rows++
         keep_sample("other_missing_body", $0)
+        if (required_contract[tx] == "none" &&
+            symbol_relation[tx] == "all_equal" &&
+            identity_status[tx] == "exact" &&
+            kind == "extern") {
+          residual_exact_missing_rows++
+          residual_key = phase[tx] "|" branch[tx] "|" emitted_owner_of(emitted) "|" required_contract[tx] "|" symbol_relation[tx] "|" identity_status[tx]
+          residual_group_count[residual_key]++
+          remember_residual_group(residual_key, tx, emitted)
+          residual_sample = "group=" residual_key " tx=" tx " requested=" requested[tx] " target=" target[tx] " body=" body_symbol[tx] " call=" call_symbol_hint[tx] " emitted=" emitted " owner=" selected_owner[tx] " branch=" branch[tx]
+          keep_sample("residual_exact_missing", residual_sample)
+        }
       }
     }
 
@@ -235,6 +273,14 @@ report="$(
       }
       for (branch_name in selected_branch_count) {
         selected_branch_kinds++
+      }
+      for (i = 1; i <= residual_group_total; i++) {
+        key = residual_group_order[i]
+        if ((residual_group_count[key] + 0) <= max_residual_rows) {
+          residual_root_sized_groups++
+          residual_candidate_key = key
+          residual_candidate_rows = residual_group_count[key] + 0
+        }
       }
 
       if (malformed_tx != 0 || malformed_emit != 0 || unjoined_emit_rows != 0 ||
@@ -260,6 +306,21 @@ report="$(
         post_consumer_state = "selected_not_consumed"
       }
 
+      if (malformed_tx != 0 || malformed_emit != 0 || unjoined_emit_rows != 0 ||
+          contract_mismatch_rows != 0) {
+        residual_selection_status = "rejected_malformed_ledger"
+      } else if ((residual_exact_missing_rows + 0) == 0) {
+        residual_selection_status = "no_exact_missing_body_residual"
+      } else if ((residual_root_sized_groups + 0) == 0) {
+        residual_selection_status = "rejected_exact_missing_body_too_wide"
+      } else if ((residual_root_sized_groups + 0) > 1) {
+        residual_selection_status = "rejected_exact_missing_body_ambiguous"
+      } else {
+        residual_selection_status = "eligible_exact_missing_body_edge"
+        residual_selected_key = residual_candidate_key
+        residual_selected_rows = residual_candidate_rows + 0
+      }
+
       print "## Counts"
       print "mat_tx_rows=" mat_tx_rows + 0
       print "mat_emit_rows=" mat_emit_rows + 0
@@ -276,6 +337,10 @@ report="$(
       print "contract_mismatch_rows=" contract_mismatch_rows + 0
       print "adjacent_wrapper_contract_rows=" adjacent_contract_rows + 0
       print "other_missing_body_rows=" other_missing_body_rows + 0
+      print "residual_exact_missing_body_rows=" residual_exact_missing_rows + 0
+      print "residual_exact_missing_body_groups=" residual_group_total + 0
+      print "residual_exact_missing_body_root_sized_groups=" residual_root_sized_groups + 0
+      print "residual_exact_missing_body_selected_rows=" residual_selected_rows + 0
       print "malformed_tx_rows=" malformed_tx + 0
       print "malformed_emit_rows=" malformed_emit + 0
       print "unjoined_emit_rows=" unjoined_emit_rows + 0
@@ -292,6 +357,29 @@ report="$(
       print "selection_status=" selection_status
       print "post_consumer_state=" post_consumer_state
       print "[GENERATED_STAGE_TRANSACTION_EDGE_SELECTION] edge=call_materialization.wrapper_or_call_remap.extern_missing_body owner=CallMaterializationTransaction old_edge=backend_extern_emission_from_call_symbol_hint_without_body owned_edge=transaction_required_contract_body_symbol_call_symbol_hint source_shape=" source_shape " selection_status=" selection_status " post_consumer_state=" post_consumer_state " next_action=refresh_consumer_state_gate_then_shadow_parity_consumer"
+
+      print ""
+      print "## Residual Exact Missing-Body Selection"
+      print "residual_edge=call_materialization.exact_contract.extern_missing_body"
+      print "residual_required_contract=none"
+      print "residual_symbol_relation=all_equal"
+      print "residual_identity_status=exact"
+      print "residual_emit_kind=extern"
+      print "residual_emit_body_present=0"
+      print "residual_selection_status=" residual_selection_status
+      print "residual_selected_key=" residual_selected_key
+      print "[GENERATED_STAGE_RESIDUAL_EDGE_SELECTION] edge=call_materialization.exact_contract.extern_missing_body owner=CallMaterializationTransaction old_edge=backend_extern_emission_from_exact_call_symbol_without_body owned_edge=transaction_body_symbol_call_symbol_hint_exact_identity source_shape=" residual_selection_status " selected_key=" residual_selected_key " selected_rows=" (residual_selected_rows + 0) " next_action=stop_if_broad_or_ambiguous_else_select_consumer_migration"
+
+      print ""
+      print "## Residual Exact Missing-Body Groups"
+      if ((residual_group_total + 0) == 0) {
+        print "(none)"
+      } else {
+        for (i = 1; i <= residual_group_total; i++) {
+          key = residual_group_order[i]
+          print "group=" key " rows=" (residual_group_count[key] + 0) " root_sized=" (((residual_group_count[key] + 0) <= max_residual_rows) ? 1 : 0) " phase=" residual_group_phase[key] " branch=" residual_group_branch[key] " owner=" residual_group_owner[key] " emitted_owner=" residual_group_emitted_owner[key]
+        }
+      }
 
       print ""
       print "## Selected Edge Samples"
@@ -334,6 +422,16 @@ report="$(
       }
 
       print ""
+      print "## Residual Exact Missing-Body Samples"
+      if ((sample_count["residual_exact_missing"] + 0) == 0) {
+        print "(none)"
+      } else {
+        for (i = 1; i <= sample_count["residual_exact_missing"]; i++) {
+          print sample["residual_exact_missing", i]
+        }
+      }
+
+      print ""
       print "## Malformed Samples"
       if ((sample_count["malformed_tx"] + 0) == 0 &&
           (sample_count["malformed_emit"] + 0) == 0 &&
@@ -354,6 +452,7 @@ printf '%s\n' "$report"
 
 selection_status="$(awk -F= '$1 == "selection_status" { value = $2 } END { print value }' <<<"$report")"
 post_consumer_state="$(awk -F= '$1 == "post_consumer_state" { value = $2 } END { print value }' <<<"$report")"
+residual_selection_status="$(awk -F= '$1 == "residual_selection_status" { value = $2 } END { print value }' <<<"$report")"
 
 if [[ "${REQUIRE_SELECTED:-0}" == "1" &&
       "$selection_status" != "eligible_reached_transaction_emission_edge" ]]; then
@@ -367,6 +466,12 @@ if [[ -n "${REQUIRE_POST_CONSUMER_STATE:-}" &&
   exit 9
 fi
 
+if [[ "${REQUIRE_RESIDUAL_SELECTED:-0}" == "1" &&
+      "$residual_selection_status" != "eligible_exact_missing_body_edge" ]]; then
+  echo "FAIL: residual_selection_status=$residual_selection_status expected=eligible_exact_missing_body_edge" >&2
+  exit 9
+fi
+
 if [[ "$selection_status" == "rejected_malformed_ledger" ]]; then
   echo "FAIL: malformed transaction/emission ledger" >&2
   exit 1
@@ -377,6 +482,15 @@ if [[ "$selection_status" != "eligible_reached_transaction_emission_edge" &&
       "$selection_status" != "rejected_missing_selected_edge" &&
       "$selection_status" != "rejected_selected_edge_too_wide" ]]; then
   echo "FAIL: unknown selection status: $selection_status" >&2
+  exit 1
+fi
+
+if [[ "$residual_selection_status" != "eligible_exact_missing_body_edge" &&
+      "$residual_selection_status" != "no_exact_missing_body_residual" &&
+      "$residual_selection_status" != "rejected_exact_missing_body_too_wide" &&
+      "$residual_selection_status" != "rejected_exact_missing_body_ambiguous" &&
+      "$residual_selection_status" != "rejected_malformed_ledger" ]]; then
+  echo "FAIL: unknown residual selection status: $residual_selection_status" >&2
   exit 1
 fi
 
