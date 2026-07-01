@@ -184,3 +184,9 @@ awk -v samples="$SAMPLES" '
     }
   }
 ' "$LOG"
+
+if [[ $compiler_rc -ne 0 ]]; then
+  echo ""
+  echo "## Nonzero Compiler Tail"
+  tail -60 "$LOG" || true
+fi

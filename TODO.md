@@ -120,6 +120,19 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   s2->s3 crash corridor before any raw `@arena[...]` consumer is routed through
   `AstNodeRef`.
 
+- 2026-07-01 UPDATE: ran the lower-call arena parity report on a fresh
+  generated s2 compiling `src/adamas.cr` to s3. Fresh stage1 built fresh s2
+  under `scripts/run_safe.sh` (`EXIT: 0` after ~178s). The s2->s3 parity report
+  returned `compiler_rc=139`, `phase_rows=265`, `expr_rows=210`,
+  `agree_all_have=210`, and zero current/ref/heuristic divergence buckets. The
+  last expr row before the crash was `Adamas::Compiler::CLI#run$IO_IO`
+  `before.member_object_read` with current arena, explicit `AstNodeRef` owner,
+  and heuristic owner all equal to `src/compiler/cli.cr` and all `*_has=1`.
+  This refutes arena-selection/current-arena drift as the root for the
+  instrumented crash edge. Next work should instrument `NodeSlot`/arena storage
+  producer/read integrity or find an uninstrumented raw read, not add another
+  `lower_call` arena consumer patch.
+
 - 2026-07-01 UPDATE: added the Phase 1b static `CodePathStatus` census entry
   point, `scripts/codepath_status_census.sh`. This is the architecture-side
   answer to codebase bloat and stale workaround risk: it groups debug/probe

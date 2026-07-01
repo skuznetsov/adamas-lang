@@ -1261,7 +1261,14 @@ Evidence:
   `ref_span=`;
 - `scripts/lower_call_arena_parity_report.sh <compiler>` summarizes
   `current`, explicit `AstNodeRef` owner, and heuristic owner parity into
-  `agree_all_have`, missing-has, and divergence buckets.
+  `agree_all_have`, missing-has, and divergence buckets;
+- fresh generated s2->s3 evidence with the parity report produced
+  `compiler_rc=139`, `phase_rows=265`, `expr_rows=210`,
+  `agree_all_have=210`, and zero divergence buckets. The last expr row before
+  the crash was `Adamas::Compiler::CLI#run$IO_IO`
+  `before.member_object_read`, with current arena, explicit ref owner, and
+  heuristic owner all equal to the same `src/compiler/cli.cr` arena and all
+  `*_has=1`.
 
 Boundary:
 
@@ -1280,9 +1287,9 @@ Next local track:
   routing change; the report should classify whether the crash-edge rows show
   owner agreement, current-vs-ref divergence, heuristic divergence, or missing
   ownership evidence;
-- if parity still shows owner agreement at the crash edge, move the
-  investigation to `NodeSlot`/arena storage producer corruption rather than
-  arena selection.
+- because parity shows owner agreement at the crash edge, move the next
+  read-only investigation to `NodeSlot` / arena storage producer corruption or
+  an uninstrumented raw read, not to another arena-selection consumer patch.
 
 ### Slice A: CallResolution boundary
 

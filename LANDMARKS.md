@@ -170,6 +170,24 @@ generated s2->s3 crash until run on that corridor. Decay trigger:
 `[LC_ARENA]` field format changes, lower-call raw-read labels change, or
 `AstNodeRef` starts driving behavior.
 
+[LM-S2S3-LOWER-CALL-ARENA-PARITY-REFUTES-OWNER-DRIFT|verified 2026-07-01 {F:0.84 G:0.30 R:0.88}]:
+Fresh generated-stage evidence refutes arena-selection/current-arena drift for
+the instrumented `AstToHir#lower_call` crash edge. A fresh stage1 built a fresh
+s2 under `scripts/run_safe.sh` (`EXIT: 0` after about 178s). Running
+`scripts/lower_call_arena_parity_report.sh` with that s2 compiling
+`src/adamas.cr` to s3 returned `compiler_rc=139`, `phase_rows=265`,
+`expr_rows=210`, `agree_all_have=210`, and zero divergence buckets. The last
+expr row before the crash was `Adamas::Compiler::CLI#run$IO_IO`
+`before.member_object_read`; current arena, explicit `AstNodeRef` owner, and
+heuristic `arena_for_expr?` owner were the same `src/compiler/cli.cr` arena,
+with `current_has=1`, `preferred_has=1`, and `owner_has=1`. Scope: this does
+not prove the full root and does not make s2->s3 green; it redirects the next
+read-only slice away from lower_call arena selection and toward
+`NodeSlot`/arena storage producer/read integrity or an uninstrumented raw read.
+Decay trigger: lower-call raw-read instrumentation changes, a fresh generated
+s2->s3 parity report shows divergence, or the crash stack moves before this
+edge.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-
