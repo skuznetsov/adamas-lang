@@ -12,6 +12,21 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-AZ-G3-GENERIC-SEMANTIC-KEY-GUARD|verified 2026-07-01 {F:0.86 G:0.38 R:0.90}]:
+Slice 0k-AZ closes the missing G3 falsifier without migrating generic
+materialization behavior. New guard:
+`regression_tests/generic_identity_key_contract.sh`. It runs focused spec
+`spec/semantic/generic_identity_key_spec.cr`, proving that
+`GenericTemplateKey` equality/hash use owner name, template leaf name, source
+`DefIdentity`, and declared type parameter names instead of display/rendered
+names. It also proves `GenericInstanceKey` separates instances by template key,
+specialization `SemanticTypeId` arguments, receiver identity when present, and
+lexical owner, with defensive copies for mutable arrays. Scope: semantic
+contract object and falsifier only; generic materialization/registration
+call-sites are not yet migrated, and no green `s2b`/`s3b` claim is made.
+Decay trigger: generic identity key fields, `DefIdentity`, `SemanticTypeId`, or
+the G3 contract in `docs/specs/02-generic-template-registration.md` changes.
+
 [LM-ARCH-0K-AY-H5-FUNCTION-BODY-PRESENCE-GUARD|verified 2026-07-01 {F:0.88 G:0.34 R:0.90}]:
 Slice 0k-AY closes the missing H5 falsifier without changing compiler
 behavior. New guard:

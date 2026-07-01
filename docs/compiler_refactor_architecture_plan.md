@@ -112,6 +112,16 @@ contract burn-down target is G3: generic template/instance semantic identity
 must be keyed by owner/source/type-param/specialization facts, not by rendered
 names.
 
+2026-07-01 post-0k-AZ note: G3 now has a focused executable guard,
+`regression_tests/generic_identity_key_contract.sh`. The slice adds
+`GenericTemplateKey` and `GenericInstanceKey` under
+`src/compiler/semantic/identity/` and proves semantic equality/hash are keyed by
+owner, source `DefIdentity`, declared type parameters, specialization argument
+identities, and lexical owner rather than display/rendered names. This is only
+the contract object and falsifier; generic materialization and registration
+call sites still need explicit authority-edge migration before claiming
+bootstrap behavior progress.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`

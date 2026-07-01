@@ -8,6 +8,20 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: implemented Slice 0k-AZ, the second contract burn-down
+  slice after the 0k-AX pivot. G3 in `docs/specs/05-falsifier-matrix.md` now
+  has an executable guard:
+  `regression_tests/generic_identity_key_contract.sh`. The slice adds
+  `GenericTemplateKey` and `GenericInstanceKey` under
+  `src/compiler/semantic/identity/` and proves generic template/instance
+  equality and hashing are keyed by owner, source `DefIdentity`, declared type
+  parameters, specialization argument identities, and lexical owner rather than
+  display/rendered names. This is a contract object plus falsifier only; it
+  does not migrate generic materialization/registration call sites and does not
+  prove green `s2b`/`s3b`. Next contract-first priority is B3 original-vs-stage
+  semantic oracle coverage unless the next slice explicitly replaces a named
+  old generic-identity authority edge with these keys.
+
 - 2026-07-01 UPDATE: implemented Slice 0k-AY, the first contract burn-down
   slice after the 0k-AX pivot. H5 in `docs/specs/05-falsifier-matrix.md` now
   has an executable guard:

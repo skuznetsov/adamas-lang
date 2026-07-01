@@ -368,10 +368,10 @@ Admitted next slices, in order:
    `regression_tests/hir_function_body_presence_contract.sh`. It distinguishes
    registered bodyless HIR functions from real body evidence and verifies the
    HIR->MIR boundary preserves bodyless functions as unreachable stubs.
-2. `GenericIdentityKey`: add a semantic-key oracle for G3 before changing
-   generic materialization or registration behavior. The oracle must compare
-   owner, template/source identity, declared type parameters, and
-   specialization argument identity against rendered names.
+2. `GenericIdentityKey`: G3 falsifier is now present as
+   `regression_tests/generic_identity_key_contract.sh`. It introduces first-class
+   semantic keys for generic templates and instances and proves equality/hash
+   are separated from display/rendered names.
 3. `StageSemanticOracle`: define the B3 original-vs-stage oracle shape for any
    future semantic behavior change. If no normalizer exists, the slice must
    state the exact semantic lines being compared.
@@ -403,6 +403,19 @@ runs `spec/hir/function_body_presence_contract_spec.cr` and proves the HIR
 truth table for body presence plus the HIR->MIR bodyless-stub boundary. This is
 not a compiler behavior change. The next contract-first target is G3 generic
 template/instance semantic keys, not a generated-stage crash-stack patch.
+
+Executed result after Slice 0k-AZ: G3 is no longer missing a falsifier. The
+new semantic identity objects live in
+`src/compiler/semantic/identity/generic_identity_key.cr`, and the guard
+`regression_tests/generic_identity_key_contract.sh` runs
+`spec/semantic/generic_identity_key_spec.cr`. The guard proves that generic
+template identity includes owner, source `DefIdentity`, and declared type
+parameters, and that generic instance identity includes the template key,
+specialization argument identities, and lexical owner even when display names
+match. This is not a migration of generic materialization call sites yet. The
+next contract-first target is B3 original-vs-stage semantic oracle coverage, or
+a separately admitted slice that replaces a named old generic-identity authority
+edge with these semantic keys.
 
 Current selected implementation status: Slice 0k-AH is a behavior-neutral
 consumer migration. Instance-method override, keepalive, and diagnostic

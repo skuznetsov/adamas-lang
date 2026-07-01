@@ -71,6 +71,12 @@ The rendered display name is derived from the key. It is not the key itself.
 The renderer MUST reject empty owner leaves and repeated adjacent owner
 segments unless the source explicitly declares that nesting.
 
+Current executable guard: `regression_tests/generic_identity_key_contract.sh`.
+It proves the first-class semantic key objects keep source `DefIdentity`,
+declared type parameter names, specialization argument identities, and lexical
+owner in equality/hash even when display names match. This guard does not by
+itself prove all generic materialization call sites have migrated to those keys.
+
 ## 4. Nested Types in Generic Owners
 
 Nested types inside generic owners MUST be recorded under the canonical owner
