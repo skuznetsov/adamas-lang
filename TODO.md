@@ -8,6 +8,29 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: implemented Slice 0k-AL,
+  executable post-consumer state gate for the generated-stage transaction edge
+  selector. `scripts/generated_stage_transaction_edge_selection_report.sh` now
+  prints `post_consumer_state` and supports
+  `REQUIRE_POST_CONSUMER_STATE=<state>` so the old 0k-AJ selected edge can be
+  classified as `selected_not_consumed`,
+  `selected_consumed_by_contract_consumer`, or `selected_refuted_or_stale`
+  after a future consumer migration. Synthetic ledger checks covered all three
+  states. Fresh generated-stage evidence with a fresh stage1 reports
+  `classifier_classification=reached_tx_and_emit`, `mat_tx_rows=591`,
+  `mat_emit_rows=69`, `transaction_bound_emit_rows=29`,
+  `candidate_selected_rows=4`, `candidate_selected_distinct_txs=3`,
+  `contract_consumer_rows=0`, `candidate_contract_consumer_rows=0`,
+  `contract_mismatch_rows=0`,
+  `selection_status=eligible_reached_transaction_emission_edge`, and
+  `post_consumer_state=selected_not_consumed`. Next admitted production slice:
+  implement the behavior-neutral `CallMaterializationTransaction` contract
+  consumer for the selected edge and prove
+  `REQUIRE_POST_CONSUMER_STATE=selected_consumed_by_contract_consumer` with
+  zero contract mismatches. Do not add backend forwarders, keep target bodies
+  alive, force requested names, normalize `NamedTuple`/`Tuple`, globally change
+  ambient-map policy, patch the segfault directly, or roll back `BlockOwner`.
+
 - 2026-07-01 UPDATE: added Slice 0k-AK, docs-only architecture
   stop/checkpoint after the 0k-AJ reached-edge selector. An uncommitted
   behavior-neutral shadow-consumer WIP that propagated

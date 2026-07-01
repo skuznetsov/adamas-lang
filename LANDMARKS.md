@@ -12,6 +12,32 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-AL-POST-CONSUMER-STATE-GATE|verified 2026-07-01 {F:0.86 G:0.42 R:0.88}]:
+Slice 0k-AL makes the 0k-AK post-consumer selector-state rule executable.
+`scripts/generated_stage_transaction_edge_selection_report.sh` now prints
+`post_consumer_state` and accepts `REQUIRE_POST_CONSUMER_STATE=<state>`.
+The state machine distinguishes `selected_not_consumed`,
+`selected_consumed_by_contract_consumer`, and `selected_refuted_or_stale`, so a
+future consumer migration does not have to pretend that the old 0k-AJ selector
+must stay green after its authority edge is consumed. Synthetic ledger checks
+covered all three states. Fresh generated-stage evidence with a fresh stage1:
+`classifier_classification=reached_tx_and_emit`, `mat_tx_rows=591`,
+`mat_emit_rows=69`, `transaction_bound_emit_rows=29`,
+`candidate_selected_rows=4`, `candidate_selected_distinct_txs=3`,
+`contract_consumer_rows=0`, `candidate_contract_consumer_rows=0`,
+`contract_mismatch_rows=0`, `selection_status=eligible_reached_transaction_emission_edge`,
+and `post_consumer_state=selected_not_consumed`. Decision: the next production
+slice may implement the behavior-neutral `CallMaterializationTransaction`
+contract consumer for the selected edge, but its success criterion is
+`selected_consumed_by_contract_consumer` with zero contract mismatches, not a
+backend forwarder, target keepalive, requested-name force,
+`NamedTuple`/`Tuple` normalization, global ambient-map policy change, direct
+segfault patch, or `BlockOwner` rollback. Scope: selector/tool gate only; no
+compiler behavior and no `s2b`/`s3b` green claim. Decay trigger:
+post-consumer state cannot be reproduced on a fresh generated-stage corridor,
+or a future generated-stage run refutes `CallMaterializationTransaction` as the
+active owner boundary.
+
 [LM-ARCH-0K-AK-POST-CONSUMER-DECAY-GATE|design-sealed 2026-07-01 {F:0.74 G:0.46 R:0.82}]:
 Slice 0k-AK is a docs-only stop checkpoint after the 0k-AJ generated-stage
 transaction/emission edge selector. An uncommitted behavior-neutral

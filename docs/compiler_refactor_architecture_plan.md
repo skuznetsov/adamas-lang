@@ -317,6 +317,18 @@ refresh the SDD board and define the selector states
 that distinction is explicit; otherwise the work risks turning the selector
 into a value proxy and chasing its own changed output.
 
+2026-07-01 post-0k-AL implementation note: the distinction is now executable.
+`scripts/generated_stage_transaction_edge_selection_report.sh` reports
+`post_consumer_state` and can require one state through
+`REQUIRE_POST_CONSUMER_STATE`. Synthetic ledger checks covered
+`selected_not_consumed`, `selected_consumed_by_contract_consumer`, and
+`selected_refuted_or_stale`; the fresh generated-stage corridor is currently
+`selected_not_consumed` with `candidate_selected_rows=4` and
+`contract_mismatch_rows=0`. The next admitted production slice is therefore the
+behavior-neutral transaction contract consumer. Its DoD is the state transition
+to `selected_consumed_by_contract_consumer`, not a behavior fix or backend
+rescue.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging

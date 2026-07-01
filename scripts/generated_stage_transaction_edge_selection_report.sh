@@ -15,6 +15,8 @@ Environment:
   LOG_FILE             Parse an existing classifier compile log instead of running the classifier.
   KEEP_TMP=1           Keep temporary classifier/wrapper directories.
   REQUIRE_SELECTED=1   Exit nonzero unless the selected edge is eligible.
+  REQUIRE_POST_CONSUMER_STATE
+                       Exit nonzero unless post_consumer_state matches this value.
   MAX_SELECTED_ROWS    Maximum rows accepted as root-sized (default: 8).
   SAMPLES              Number of sample rows per section (default: 8).
 
@@ -93,6 +95,7 @@ echo "classifier_classification=$classifier_classification"
 echo "max_selected_rows=$MAX_SELECTED_ROWS"
 echo "samples=$SAMPLES"
 echo "require_selected=${REQUIRE_SELECTED:-0}"
+echo "require_post_consumer_state=${REQUIRE_POST_CONSUMER_STATE:-}"
 echo "note: source-shape/reachability gate only; no compiler behavior changes"
 echo ""
 
@@ -149,6 +152,11 @@ report="$(
       kind = field("kind")
       emitted = field("emitted")
       body_present = field("body_present")
+      emit_required_contract = field("required_contract")
+      emit_body_symbol = field("body_symbol")
+      emit_call_symbol_hint = field("call_symbol_hint")
+      emit_symbol_relation = field("symbol_relation")
+      emit_identity_status = field("identity_status")
 
       if (tx == "" || kind == "" || emitted == "" || body_present == "") {
         malformed_emit++
@@ -173,6 +181,26 @@ report="$(
       if (body_present == "0") {
         missing_body_emit_rows++
         keep_sample("missing_body_emit", $0)
+      }
+
+      if (emit_required_contract != "" && emit_required_contract != "none") {
+        contract_consumer_rows++
+        if (emit_required_contract != required_contract[tx] ||
+            emit_body_symbol != body_symbol[tx] ||
+            emit_call_symbol_hint != call_symbol_hint[tx] ||
+            emit_symbol_relation != symbol_relation[tx] ||
+            emit_identity_status != identity_status[tx]) {
+          contract_mismatch_rows++
+          keep_sample("contract_mismatch", $0)
+        }
+        if (emit_required_contract == "wrapper_or_call_remap" &&
+            emit_symbol_relation == "body_eq_target_call_eq_requested" &&
+            emit_identity_status == "rejected_mismatch" &&
+            emit_body_symbol == body_symbol[tx] &&
+            emit_call_symbol_hint == call_symbol_hint[tx]) {
+          candidate_contract_consumer_rows++
+          keep_sample("contract_consumer", $0)
+        }
       }
 
       if (required_contract[tx] == "wrapper_or_call_remap" &&
@@ -209,18 +237,27 @@ report="$(
         selected_branch_kinds++
       }
 
-      if (selected_rows == 0) {
+      if (malformed_tx != 0 || malformed_emit != 0 || unjoined_emit_rows != 0 ||
+          contract_mismatch_rows != 0) {
+        source_shape = "malformed_ledger"
+        selection_status = "rejected_malformed_ledger"
+        post_consumer_state = "selected_refuted_or_stale"
+      } else if (selected_rows == 0 && candidate_contract_consumer_rows > 0) {
+        source_shape = "selected_consumed_by_contract_consumer"
+        selection_status = "eligible_contract_consumer_state"
+        post_consumer_state = "selected_consumed_by_contract_consumer"
+      } else if (selected_rows == 0) {
         source_shape = "missing_selected_edge"
         selection_status = "rejected_missing_selected_edge"
+        post_consumer_state = "selected_refuted_or_stale"
       } else if (selected_rows > max_rows) {
         source_shape = "selected_edge_too_wide"
         selection_status = "rejected_selected_edge_too_wide"
-      } else if (malformed_tx != 0 || malformed_emit != 0 || unjoined_emit_rows != 0) {
-        source_shape = "malformed_ledger"
-        selection_status = "rejected_malformed_ledger"
+        post_consumer_state = "selected_refuted_or_stale"
       } else {
         source_shape = "eligible_reached_edge"
         selection_status = "eligible_reached_transaction_emission_edge"
+        post_consumer_state = "selected_not_consumed"
       }
 
       print "## Counts"
@@ -234,6 +271,9 @@ report="$(
       print "candidate_selected_distinct_txs=" selected_distinct_txs + 0
       print "candidate_selected_owner_kinds=" selected_owner_kinds + 0
       print "candidate_selected_branch_kinds=" selected_branch_kinds + 0
+      print "contract_consumer_rows=" contract_consumer_rows + 0
+      print "candidate_contract_consumer_rows=" candidate_contract_consumer_rows + 0
+      print "contract_mismatch_rows=" contract_mismatch_rows + 0
       print "adjacent_wrapper_contract_rows=" adjacent_contract_rows + 0
       print "other_missing_body_rows=" other_missing_body_rows + 0
       print "malformed_tx_rows=" malformed_tx + 0
@@ -250,7 +290,8 @@ report="$(
       print "candidate_emit_body_present=0"
       print "source_shape=" source_shape
       print "selection_status=" selection_status
-      print "[GENERATED_STAGE_TRANSACTION_EDGE_SELECTION] edge=call_materialization.wrapper_or_call_remap.extern_missing_body owner=CallMaterializationTransaction old_edge=backend_extern_emission_from_call_symbol_hint_without_body owned_edge=transaction_required_contract_body_symbol_call_symbol_hint source_shape=" source_shape " selection_status=" selection_status " next_action=source_shape_gate_then_shadow_parity_consumer"
+      print "post_consumer_state=" post_consumer_state
+      print "[GENERATED_STAGE_TRANSACTION_EDGE_SELECTION] edge=call_materialization.wrapper_or_call_remap.extern_missing_body owner=CallMaterializationTransaction old_edge=backend_extern_emission_from_call_symbol_hint_without_body owned_edge=transaction_required_contract_body_symbol_call_symbol_hint source_shape=" source_shape " selection_status=" selection_status " post_consumer_state=" post_consumer_state " next_action=refresh_consumer_state_gate_then_shadow_parity_consumer"
 
       print ""
       print "## Selected Edge Samples"
@@ -259,6 +300,16 @@ report="$(
       } else {
         for (i = 1; i <= sample_count["selected_edge"]; i++) {
           print sample["selected_edge", i]
+        }
+      }
+
+      print ""
+      print "## Contract Consumer Samples"
+      if ((sample_count["contract_consumer"] + 0) == 0) {
+        print "(none)"
+      } else {
+        for (i = 1; i <= sample_count["contract_consumer"]; i++) {
+          print sample["contract_consumer", i]
         }
       }
 
@@ -286,12 +337,14 @@ report="$(
       print "## Malformed Samples"
       if ((sample_count["malformed_tx"] + 0) == 0 &&
           (sample_count["malformed_emit"] + 0) == 0 &&
-          (sample_count["unjoined_emit"] + 0) == 0) {
+          (sample_count["unjoined_emit"] + 0) == 0 &&
+          (sample_count["contract_mismatch"] + 0) == 0) {
         print "(none)"
       } else {
         for (i = 1; i <= sample_count["malformed_tx"]; i++) print sample["malformed_tx", i]
         for (i = 1; i <= sample_count["malformed_emit"]; i++) print sample["malformed_emit", i]
         for (i = 1; i <= sample_count["unjoined_emit"]; i++) print sample["unjoined_emit", i]
+        for (i = 1; i <= sample_count["contract_mismatch"]; i++) print sample["contract_mismatch", i]
       }
     }
   ' "$LOG_FILE"
@@ -300,10 +353,17 @@ report="$(
 printf '%s\n' "$report"
 
 selection_status="$(awk -F= '$1 == "selection_status" { value = $2 } END { print value }' <<<"$report")"
+post_consumer_state="$(awk -F= '$1 == "post_consumer_state" { value = $2 } END { print value }' <<<"$report")"
 
 if [[ "${REQUIRE_SELECTED:-0}" == "1" &&
       "$selection_status" != "eligible_reached_transaction_emission_edge" ]]; then
   echo "FAIL: no eligible reached transaction/emission edge selected" >&2
+  exit 9
+fi
+
+if [[ -n "${REQUIRE_POST_CONSUMER_STATE:-}" &&
+      "$post_consumer_state" != "$REQUIRE_POST_CONSUMER_STATE" ]]; then
+  echo "FAIL: post_consumer_state=$post_consumer_state expected=$REQUIRE_POST_CONSUMER_STATE" >&2
   exit 9
 fi
 
@@ -313,6 +373,7 @@ if [[ "$selection_status" == "rejected_malformed_ledger" ]]; then
 fi
 
 if [[ "$selection_status" != "eligible_reached_transaction_emission_edge" &&
+      "$selection_status" != "eligible_contract_consumer_state" &&
       "$selection_status" != "rejected_missing_selected_edge" &&
       "$selection_status" != "rejected_selected_edge_too_wide" ]]; then
   echo "FAIL: unknown selection status: $selection_status" >&2
