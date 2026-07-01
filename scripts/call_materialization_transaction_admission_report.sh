@@ -47,6 +47,24 @@ transaction_source_shape() {
       in_method = 0
     }
 
+    /private def log_call_materialization_transaction_ledger\(/ {
+      in_transaction_ledger = 1
+      next
+    }
+
+    in_transaction_ledger && /^    private def / {
+      in_transaction_ledger = 0
+    }
+
+    in_transaction_ledger {
+      code = $0
+      sub(/[[:space:]]+#.*/, "", code)
+      if (index(code, "transaction.") > 0) {
+        ledger_transaction_field_read++
+        keep_sample("ledger_transaction_field_read", NR ":" $0)
+      }
+    }
+
     in_method {
       code = $0
       sub(/[[:space:]]+#.*/, "", code)
@@ -55,7 +73,7 @@ transaction_source_shape() {
         transaction_type++
         keep_sample("transaction_type", NR ":" $0)
       }
-      if (index(code, "call_materialization_transaction") > 0) {
+      if (index(code, "= call_materialization_transaction(") > 0) {
         transaction_helper++
         keep_sample("transaction_helper", NR ":" $0)
       }
@@ -87,6 +105,10 @@ transaction_source_shape() {
         legacy_ledger_call++
         keep_sample("legacy_ledger_call", NR ":" $0)
       }
+      if (index(code, "log_call_materialization_transaction_ledger(") > 0) {
+        transaction_ledger_call++
+        keep_sample("transaction_ledger_call", NR ":" $0)
+      }
       if (index(code, "with_isolated_type_param_map(merged_params)") > 0 ||
           index(code, "with_isolated_type_param_map(extra_type_params)") > 0) {
         direct_type_param_scope++
@@ -110,9 +132,11 @@ transaction_source_shape() {
 
     END {
       legacy_edges = split_state_key + split_target + ambient_state_scope_consumer + legacy_ledger_call + direct_type_param_scope + direct_body_lowering + symbol_binding_field_read
+      residual_legacy_edges = split_state_key + split_target + ambient_state_scope_consumer + direct_type_param_scope + direct_body_lowering + symbol_binding_field_read
 
       if (transaction_type > 0 && transaction_helper > 0 &&
-          transaction_field_read > 0 && legacy_edges == 0) {
+          transaction_ledger_call > 0 && ledger_transaction_field_read > 0 &&
+          legacy_ledger_call == 0) {
         source_shape = "already_promoted_shadow"
       } else if (transaction_type > 0 || transaction_helper > 0) {
         source_shape = "partial_transaction_authority"
@@ -132,12 +156,15 @@ transaction_source_shape() {
       print "split_target_count=" split_target + 0
       print "ambient_state_scope_consumer_count=" ambient_state_scope_consumer + 0
       print "legacy_ledger_call_count=" legacy_ledger_call + 0
+      print "transaction_ledger_call_count=" transaction_ledger_call + 0
       print "direct_type_param_scope_count=" direct_type_param_scope + 0
       print "direct_body_lowering_count=" direct_body_lowering + 0
       print "symbol_binding_field_read_count=" symbol_binding_field_read + 0
       print "transaction_field_read_count=" transaction_field_read + 0
+      print "ledger_transaction_field_read_count=" ledger_transaction_field_read + 0
+      print "residual_legacy_edge_count=" residual_legacy_edges + 0
 
-      kind_order = "transaction_type transaction_helper legacy_identity_tx symbol_binding symbol_binding_helper split_state_key split_target ambient_state_scope_consumer legacy_ledger_call direct_type_param_scope direct_body_lowering symbol_binding_field_read transaction_field_read"
+      kind_order = "transaction_type transaction_helper legacy_identity_tx symbol_binding symbol_binding_helper split_state_key split_target ambient_state_scope_consumer legacy_ledger_call transaction_ledger_call direct_type_param_scope direct_body_lowering symbol_binding_field_read transaction_field_read ledger_transaction_field_read"
       kind_total = split(kind_order, kinds, " ")
       for (kind_idx = 1; kind_idx <= kind_total; kind_idx++) {
         kind = kinds[kind_idx]

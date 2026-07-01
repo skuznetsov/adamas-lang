@@ -88,12 +88,27 @@ source_shape_for_symbol_binding() {
           in_ledger_call = 0
         }
       }
+      if (index($0, "call_materialization_transaction(") > 0) {
+        in_transaction_call = 1
+        transaction_window = 0
+      }
+      if (in_transaction_call) {
+        transaction_window++
+        if (index($0, "symbol_binding,") > 0 ||
+            index($0, "class_symbol_binding,") > 0 ||
+            index($0, "def_symbol_binding,") > 0) {
+          binding_transaction_symbols = 1
+        }
+        if (transaction_window > 16) {
+          in_transaction_call = 0
+        }
+      }
     }
     END {
       if (binding_type && helper_call &&
           !old_materialized_branch && !old_override_branch &&
           !direct_keepalive && !direct_ledger_symbols &&
-          binding_keepalive && binding_ledger_symbols) {
+          binding_keepalive && (binding_ledger_symbols || binding_transaction_symbols)) {
         print "already_promoted_shadow"
       } else if (old_materialized_branch && old_override_branch && direct_keepalive && direct_ledger_symbols && !helper_call) {
         print "legacy_split_edge"
@@ -194,6 +209,26 @@ binding_ledger_count="$(
     END { print count + 0 }
   ' "$SOURCE_FILE"
 )"
+binding_transaction_count="$(
+  awk '
+    /call_materialization_transaction\(/ {
+      in_transaction_call = 1
+      transaction_window = 0
+    }
+    in_transaction_call {
+      transaction_window++
+      if (index($0, "symbol_binding,") > 0 ||
+          index($0, "class_symbol_binding,") > 0 ||
+          index($0, "def_symbol_binding,") > 0) {
+        count++
+      }
+      if (transaction_window > 16) {
+        in_transaction_call = 0
+      }
+    }
+    END { print count + 0 }
+  ' "$SOURCE_FILE"
+)"
 
 selection_status="rejected"
 case "$PREFERRED_SEAM:$source_shape" in
@@ -228,6 +263,7 @@ echo "direct_ledger_materialized_count=$direct_ledger_materialized_count"
 echo "direct_ledger_override_count=$direct_ledger_override_count"
 echo "binding_keepalive_count=$binding_keepalive_count"
 echo "binding_ledger_count=$binding_ledger_count"
+echo "binding_transaction_count=$binding_transaction_count"
 echo ""
 echo "## Candidate Selection"
 echo "[MATERIALIZATION_SYMBOL_BINDING_ADMISSION] seam=lower_function_if_needed.symbol_binding owner=MaterializationIdentity/MaterializationRegistry old_edge=split_inline_symbol_binding owned_edge=MaterializationSymbolBinding source_shape=$source_shape selection_status=$selection_status next_action=shadow_parity_helper"

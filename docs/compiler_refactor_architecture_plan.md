@@ -223,6 +223,20 @@ selected consumer read that record in shadow/parity mode. This must preserve
 emitted behavior; flipping requested/target/body/call symbols is still rejected
 until a later would-change census proves the affected set is root-sized.
 
+2026-07-01 post-0k-AF note: the first vertical transaction consumer is now
+promoted in shadow/parity mode. `CallMaterializationTransaction` owns request
+name parts, requested/target/body/call symbols, selected definition and owner,
+state scope, target map, call arg shape, ABI shape, wrapper/forwarder contract,
+and rejection reason for the materialization identity/state-scope ledger path.
+The old split-argument `log_materialization_identity_ledger(...)` calls are
+gone; `log_call_materialization_transaction_ledger(transaction)` reads the
+record instead. The transaction gate is green but still reports
+`residual_legacy_edge_count=26`, so this is selected-consumer promotion, not
+full transaction-spine completion and not a green `s2b`/`s3b` claim. Next work
+must either select another transaction consumer with a red/green gate or run a
+generated-stage classifier only if it answers a transaction-spine yes/no
+question.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging

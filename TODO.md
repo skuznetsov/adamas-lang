@@ -8,6 +8,38 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: implemented Slice 0k-AF,
+  `CallMaterializationTransaction` ledger-consumer promotion in shadow/parity
+  mode. `src/compiler/hir/ast_to_hir.cr` now has a
+  `CallMaterializationTransaction` owner record and
+  `call_materialization_transaction(...)` helper carrying request name parts,
+  requested/target/body/call symbols, selected definition and owner, state
+  scope, target map, call arg shape, ABI shape, wrapper/forwarder contract, and
+  rejection reason for the materialization identity/state-scope ledger path.
+  The three old split-argument `log_materialization_identity_ledger(...)` calls
+  are gone; `log_call_materialization_transaction_ledger(transaction)` reads the
+  record instead. The 0k-AF gate is green:
+  `REQUIRE_PROMOTED=1
+  scripts/call_materialization_transaction_admission_report.sh` reports
+  `preferred_source_shape=already_promoted_shadow`,
+  `transaction_type_count=3`, `transaction_helper_count=3`,
+  `legacy_ledger_call_count=0`, `transaction_ledger_call_count=3`,
+  `ledger_transaction_field_read_count=4`, and
+  `residual_legacy_edge_count=26`. The older
+  `MaterializationSymbolBinding` gate was updated to accept this forward
+  migration path and reports `binding_transaction_count=3`. This preserves
+  emitted behavior and is not a green `s2b`/`s3b` claim. Verification: fresh
+  stage1 build to `/private/tmp/adamas_0kaf_stage1`; transaction,
+  symbol-binding, InvocationContext, MethodNameCodec, semantic census, and
+  CodePathStatus gates run; `scripts/materialization_identity_ledger_smoke.sh`
+  and `scripts/materialization_transaction_report.sh` run; full suites pass
+  `152/152 + 36/36`. Next work: either select another transaction consumer with
+  a red/green source-shape gate, or run generated-stage classification only if
+  it answers the transaction-spine yes/no question under one transaction id. Do
+  not flip requested/target/body symbols, add backend forwarders, force
+  requested names, keep target bodies alive, normalize `NamedTuple`/`Tuple`,
+  change ambient-map policy globally, or roll back `BlockOwner`.
+
 - 2026-07-01 UPDATE: implemented Slice 0k-AE,
   `CallMaterializationTransaction` source-shape admission gate. New script:
   `scripts/call_materialization_transaction_admission_report.sh`. It selects

@@ -2138,8 +2138,9 @@ module Adamas::HIR
       Completed  # Successfully lowered
     end
 
-    private struct MaterializationIdentityTransaction
+    private struct CallMaterializationTransaction
       getter phase : String
+      getter request_name_parts : String
       getter requested_name : String
       getter target_name : String
       getter state_key : String
@@ -2151,12 +2152,17 @@ module Adamas::HIR
       getter target_map : String
       getter call_arg_types : String
       getter selected_def : String
+      getter selected_owner : String
       getter state_scope : String
       getter map_source : String
       getter materialization_action : String
+      getter abi_shape : String
+      getter wrapper_forwarder_contract : String
+      getter rejection_reason : String
 
       def initialize(
         @phase : String,
+        @request_name_parts : String,
         @requested_name : String,
         @target_name : String,
         @state_key : String,
@@ -2168,9 +2174,13 @@ module Adamas::HIR
         @target_map : String,
         @call_arg_types : String,
         @selected_def : String,
+        @selected_owner : String,
         @state_scope : String,
         @map_source : String,
         @materialization_action : String,
+        @abi_shape : String,
+        @wrapper_forwarder_contract : String,
+        @rejection_reason : String,
       )
       end
 
@@ -2181,15 +2191,7 @@ module Adamas::HIR
       end
 
       def required_contract : String
-        return "none" if @body_symbol == @call_symbol_hint
-
-        if @body_symbol == @target_name && @call_symbol_hint == @requested_name && @requested_name != @target_name
-          "wrapper_or_call_remap"
-        elsif @body_symbol == @requested_name && @call_symbol_hint == @target_name && @requested_name != @target_name
-          "call_remap_to_body"
-        else
-          "owner_review"
-        end
+        @wrapper_forwarder_contract
       end
 
       def symbol_relation : String
@@ -2441,59 +2443,108 @@ module Adamas::HIR
       )
     end
 
-    private def log_materialization_identity_ledger(
+    private def materialization_transaction_ledger_enabled? : Bool
+      env_has?("ADAMAS_MATERIALIZATION_IDENTITY_LEDGER") ||
+        env_has?("ADAMAS_SEMANTIC_STATE_SCOPE_LEDGER")
+    end
+
+    private def method_name_parts_debug_string(name : String) : String
+      parts = parse_method_name(name)
+      method = parts.method || ""
+      suffix = parts.suffix || ""
+      separator = parts.separator.try(&.to_s) || ""
+
+      "owner=#{parts.owner};method=#{method};separator=#{separator};suffix=#{suffix};base=#{parts.base}"
+    end
+
+    private def call_materialization_abi_shape(call_arg_types : Array(TypeRef)?) : String
+      "args=#{type_ref_array_debug_string(call_arg_types)};return=unknown"
+    end
+
+    private def call_materialization_wrapper_forwarder_contract(binding : MaterializationSymbolBinding) : String
+      return "none" if binding.body_symbol == binding.call_symbol_hint
+
+      if binding.body_symbol == binding.target_name &&
+         binding.call_symbol_hint == binding.requested_name &&
+         binding.requested_name != binding.target_name
+        "wrapper_or_call_remap"
+      elsif binding.body_symbol == binding.requested_name &&
+            binding.call_symbol_hint == binding.target_name &&
+            binding.requested_name != binding.target_name
+        "call_remap_to_body"
+      else
+        "owner_review"
+      end
+    end
+
+    private def call_materialization_rejection_reason(contract : String) : String
+      return "none" if contract == "none"
+
+      "shadow_only_requires_would_change_census"
+    end
+
+    private def call_materialization_transaction(
       phase : String,
-      requested_name : String,
-      target_name : String,
-      state_key : String,
-      body_symbol : String,
-      call_symbol_hint : String,
-      override_reason : String,
+      symbol_binding : MaterializationSymbolBinding,
       lookup_branch : String?,
       call_arg_types : Array(TypeRef)?,
       target_params : Hash(String, String)?,
       selected_def : Adamas::Compiler::Frontend::DefNode,
       selected_owner : String,
-    ) : Nil
-      materialization_ledger_enabled = env_has?("ADAMAS_MATERIALIZATION_IDENTITY_LEDGER")
-      state_scope_ledger_enabled = env_has?("ADAMAS_SEMANTIC_STATE_SCOPE_LEDGER")
-      return unless materialization_ledger_enabled || state_scope_ledger_enabled
+    ) : CallMaterializationTransaction
+      requested_name = symbol_binding.requested_name
+      target_name = symbol_binding.target_name
 
       ambient = type_param_map_debug_string
       target_map = string_map_debug_string(target_params)
       call_args = type_ref_array_debug_string(call_arg_types)
       selected_def_id = selected_definition_debug_string(selected_def, target_name, selected_owner)
-      state_scope = materialization_state_scope_authority(override_reason, target_params)
+      state_scope = materialization_state_scope_authority(symbol_binding.override_reason, target_params)
       map_source = materialization_map_source(state_scope, target_params)
-      materialization_action = materialization_registry_action(body_symbol)
-      transaction = MaterializationIdentityTransaction.new(
+      materialization_action = materialization_registry_action(symbol_binding.body_symbol)
+      wrapper_forwarder_contract = call_materialization_wrapper_forwarder_contract(symbol_binding)
+      CallMaterializationTransaction.new(
         phase,
+        method_name_parts_debug_string(requested_name),
         requested_name,
         target_name,
-        state_key,
-        body_symbol,
-        call_symbol_hint,
-        override_reason,
+        symbol_binding.state_key,
+        symbol_binding.body_symbol,
+        symbol_binding.call_symbol_hint,
+        symbol_binding.override_reason,
         lookup_branch || "?",
         ambient,
         target_map,
         call_args,
         selected_def_id,
+        selected_owner,
         state_scope,
         map_source,
         materialization_action,
+        call_materialization_abi_shape(call_arg_types),
+        wrapper_forwarder_contract,
+        call_materialization_rejection_reason(wrapper_forwarder_contract),
       )
+    end
+
+    private def log_call_materialization_transaction_ledger(
+      transaction : CallMaterializationTransaction,
+    ) : Nil
+      materialization_ledger_enabled = env_has?("ADAMAS_MATERIALIZATION_IDENTITY_LEDGER")
+      state_scope_ledger_enabled = env_has?("ADAMAS_SEMANTIC_STATE_SCOPE_LEDGER")
+      return unless materialization_ledger_enabled || state_scope_ledger_enabled
+
       tx_id = ledger_token(transaction.debug_id)
       if materialization_ledger_enabled
-        @module.remember_materialization_transaction(call_symbol_hint, tx_id)
-        STDERR.puts "[MAT_ID] phase=#{phase} requested=#{requested_name} target=#{target_name} state_key=#{state_key} body_symbol=#{body_symbol} call_symbol_hint=#{call_symbol_hint} override_reason=#{override_reason} branch=#{lookup_branch || "?"} ambient_map=#{ambient} target_map=#{target_map} call_arg_types=#{call_args} selected_def=#{selected_def_id} state_scope=#{state_scope} map_source=#{map_source} materialization_action=#{materialization_action}"
-        STDERR.puts "[MAT_TX] tx=#{tx_id} phase=#{ledger_token(transaction.phase)} requested=#{ledger_token(transaction.requested_name)} target=#{ledger_token(transaction.target_name)} state_key=#{ledger_token(transaction.state_key)} body_symbol=#{ledger_token(transaction.body_symbol)} call_symbol_hint=#{ledger_token(transaction.call_symbol_hint)} identity_status=#{ledger_token(transaction.identity_status)} symbol_relation=#{ledger_token(transaction.symbol_relation)} required_contract=#{ledger_token(transaction.required_contract)} override_reason=#{ledger_token(transaction.override_reason)} branch=#{ledger_token(transaction.lookup_branch)} ambient_map=#{ledger_token(transaction.ambient_map)} target_map=#{ledger_token(transaction.target_map)} call_arg_types=#{ledger_token(transaction.call_arg_types)} selected_def=#{ledger_token(transaction.selected_def)} state_scope=#{ledger_token(transaction.state_scope)} map_source=#{ledger_token(transaction.map_source)} materialization_action=#{ledger_token(transaction.materialization_action)}"
+        @module.remember_materialization_transaction(transaction.call_symbol_hint, tx_id)
+        STDERR.puts "[MAT_ID] phase=#{transaction.phase} requested=#{transaction.requested_name} target=#{transaction.target_name} state_key=#{transaction.state_key} body_symbol=#{transaction.body_symbol} call_symbol_hint=#{transaction.call_symbol_hint} override_reason=#{transaction.override_reason} branch=#{transaction.lookup_branch} ambient_map=#{transaction.ambient_map} target_map=#{transaction.target_map} call_arg_types=#{transaction.call_arg_types} selected_def=#{transaction.selected_def} selected_owner=#{transaction.selected_owner} state_scope=#{transaction.state_scope} map_source=#{transaction.map_source} materialization_action=#{transaction.materialization_action} request_name_parts=#{transaction.request_name_parts} abi_shape=#{transaction.abi_shape} wrapper_forwarder_contract=#{transaction.wrapper_forwarder_contract} rejection_reason=#{transaction.rejection_reason}"
+        STDERR.puts "[MAT_TX] tx=#{tx_id} phase=#{ledger_token(transaction.phase)} requested=#{ledger_token(transaction.requested_name)} target=#{ledger_token(transaction.target_name)} state_key=#{ledger_token(transaction.state_key)} body_symbol=#{ledger_token(transaction.body_symbol)} call_symbol_hint=#{ledger_token(transaction.call_symbol_hint)} identity_status=#{ledger_token(transaction.identity_status)} symbol_relation=#{ledger_token(transaction.symbol_relation)} required_contract=#{ledger_token(transaction.required_contract)} override_reason=#{ledger_token(transaction.override_reason)} branch=#{ledger_token(transaction.lookup_branch)} ambient_map=#{ledger_token(transaction.ambient_map)} target_map=#{ledger_token(transaction.target_map)} call_arg_types=#{ledger_token(transaction.call_arg_types)} selected_def=#{ledger_token(transaction.selected_def)} selected_owner=#{ledger_token(transaction.selected_owner)} state_scope=#{ledger_token(transaction.state_scope)} map_source=#{ledger_token(transaction.map_source)} materialization_action=#{ledger_token(transaction.materialization_action)} request_name_parts=#{ledger_token(transaction.request_name_parts)} abi_shape=#{ledger_token(transaction.abi_shape)} wrapper_forwarder_contract=#{ledger_token(transaction.wrapper_forwarder_contract)} rejection_reason=#{ledger_token(transaction.rejection_reason)}"
       end
       log_semantic_state_scope_shadow(transaction, tx_id) if state_scope_ledger_enabled
     end
 
     private def log_semantic_state_scope_shadow(
-      transaction : MaterializationIdentityTransaction,
+      transaction : CallMaterializationTransaction,
       tx_id : String,
     ) : Nil
       authority = transaction.state_scope
@@ -72041,20 +72092,18 @@ module Adamas::HIR
                 extra_params = extra_params.merge({"UC" => "UInt8", "T" => "Float64"})
               end
               merged_params = extra_type_params ? extra_params.merge(extra_type_params) : extra_params
-              log_materialization_identity_ledger(
-                "instance_method",
-                symbol_binding.requested_name,
-                symbol_binding.target_name,
-                symbol_binding.state_key,
-                symbol_binding.body_symbol,
-                symbol_binding.call_symbol_hint,
-                symbol_binding.override_reason,
-                lookup_branch,
-                call_arg_types,
-                merged_params,
-                resolved_func_def,
-                owner
-              )
+              if materialization_transaction_ledger_enabled?
+                instance_transaction : CallMaterializationTransaction = call_materialization_transaction(
+                  "instance_method",
+                  symbol_binding,
+                  lookup_branch,
+                  call_arg_types,
+                  merged_params,
+                  resolved_func_def,
+                  owner
+                )
+                log_call_materialization_transaction_ledger(instance_transaction)
+              end
               with_isolated_type_param_map(merged_params) do
                 with_namespace_override_or_clear(namespace_override) do
                   # Arity mismatch fix: if resolved_func_def has fewer params than
@@ -72203,20 +72252,18 @@ module Adamas::HIR
                 target_for_lower,
                 target_for_lower == name ? "requested_class_target" : "target_class_symbol"
               )
-              log_materialization_identity_ledger(
-                "class_method",
-                class_symbol_binding.requested_name,
-                class_symbol_binding.target_name,
-                class_symbol_binding.state_key,
-                class_symbol_binding.body_symbol,
-                class_symbol_binding.call_symbol_hint,
-                class_symbol_binding.override_reason,
-                lookup_branch,
-                call_arg_types,
-                extra_type_params,
-                resolved_func_def,
-                owner
-              )
+              if materialization_transaction_ledger_enabled?
+                class_transaction : CallMaterializationTransaction = call_materialization_transaction(
+                  "class_method",
+                  class_symbol_binding,
+                  lookup_branch,
+                  call_arg_types,
+                  extra_type_params,
+                  resolved_func_def,
+                  owner
+                )
+                log_call_materialization_transaction_ledger(class_transaction)
+              end
               if extra_type_params
                 with_isolated_type_param_map(extra_type_params) do
                   with_namespace_override_or_clear(namespace_override) do
@@ -72279,20 +72326,18 @@ module Adamas::HIR
               override_name,
               override_reason
             )
-            log_materialization_identity_ledger(
-              "def",
-              def_symbol_binding.requested_name,
-              def_symbol_binding.target_name,
-              def_symbol_binding.state_key,
-              def_symbol_binding.body_symbol,
-              def_symbol_binding.call_symbol_hint,
-              def_symbol_binding.override_reason,
-              lookup_branch,
-              call_arg_types,
-              extra_type_params,
-              resolved_func_def,
-              requested_parts.owner
-            )
+            if materialization_transaction_ledger_enabled?
+              def_transaction : CallMaterializationTransaction = call_materialization_transaction(
+                "def",
+                def_symbol_binding,
+                lookup_branch,
+                call_arg_types,
+                extra_type_params,
+                resolved_func_def,
+                requested_parts.owner
+              )
+              log_call_materialization_transaction_ledger(def_transaction)
+            end
 
             if extra_type_params && !extra_type_params.empty?
               with_isolated_type_param_map(extra_type_params) do

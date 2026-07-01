@@ -12,12 +12,46 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
-[LM-ARCH-CALL-MATERIALIZATION-TRANSACTION-GATE|measured-red 2026-07-01 {F:0.78 G:0.44 R:0.86}]:
+[LM-ARCH-CALL-MATERIALIZATION-TRANSACTION-CONSUMER|verified 2026-07-01 {F:0.84 G:0.40 R:0.88}]:
+The first selected `CallMaterializationTransaction` consumer is promoted in
+behavior-neutral shadow/parity mode. `src/compiler/hir/ast_to_hir.cr` now has a
+`CallMaterializationTransaction` owner record and
+`call_materialization_transaction(...)` helper joining request name parts,
+requested/target/body/call symbols, selected definition and owner, state scope,
+target map, call arg shape, ABI shape, wrapper/forwarder contract, and rejection
+reason for the materialization identity/state-scope ledger path. The old
+split-argument `log_materialization_identity_ledger(...)` calls are gone;
+`log_call_materialization_transaction_ledger(transaction)` reads the record
+instead. Evidence: `REQUIRE_PROMOTED=1
+scripts/call_materialization_transaction_admission_report.sh` exits 0 with
+`preferred_source_shape=already_promoted_shadow`, `transaction_type_count=3`,
+`transaction_helper_count=3`, `legacy_ledger_call_count=0`,
+`transaction_ledger_call_count=3`, `ledger_transaction_field_read_count=4`, and
+`residual_legacy_edge_count=26`; `REQUIRE_PROMOTED=1
+scripts/materialization_symbol_binding_admission_report.sh` exits 0 with
+`binding_transaction_count=3`; `crystal build src/adamas.cr -o
+/private/tmp/adamas_0kaf_stage1 --error-trace` exits 0; and
+`scripts/materialization_identity_ledger_smoke.sh
+/private/tmp/adamas_0kaf_stage1` exits 0; `scripts/materialization_transaction_report.sh
+/private/tmp/adamas_0kaf_stage1` exits 0 with `malformed=0`,
+`owner_malformed=0`, and `unjoined_emit_rows=0`; and
+`regression_tests/run_all_suites.sh /private/tmp/adamas_0kaf_stage1 4` passes
+`152/152 + 36/36`. Scope: selected-consumer source-shape and default-off ledger
+migration only. It does not flip emitted symbols, backend behavior,
+requested-name policy, target keepalive policy, `NamedTuple`/`Tuple` rendering,
+global ambient-map policy, cleanup behavior, or `BlockOwner`, and it is not
+green full-prelude generated s2, `s2b`, or `s3b`. Decay trigger:
+`lower_function_if_needed_impl` transaction construction is rewritten, ledger
+consumers stop reading the transaction record, or a future slice
+removes/changes the residual transaction edges.
+
+[LM-ARCH-CALL-MATERIALIZATION-TRANSACTION-GATE|superseded 2026-07-01 {F:0.78 G:0.44 R:0.86}]:
 The `CallMaterializationTransaction` spine now has an executable source-shape
 admission gate: `scripts/call_materialization_transaction_admission_report.sh`.
 It selects `lower_function_if_needed.call_materialization_transaction` and
-currently reports `preferred_source_shape=legacy_split_transaction_edge` with
-`selection_status=eligible_transaction_spine_owner`. Current counts:
+originally reported `preferred_source_shape=legacy_split_transaction_edge` with
+`selection_status=eligible_transaction_spine_owner`. Original measured-red
+counts:
 `transaction_type_count=0`, `transaction_helper_count=0`,
 `split_state_key_count=1`, `split_target_count=1`,
 `ambient_state_scope_consumer_count=1`, `legacy_ledger_call_count=3`,
@@ -32,7 +66,8 @@ behavior-neutral `CallMaterializationTransaction` record/helper and make one
 selected consumer read that record in shadow/parity mode while preserving
 emitted behavior. Decay trigger: `lower_function_if_needed_impl` is rewritten,
 the selected seam stops being the split transaction authority, or the future
-helper turns `REQUIRE_PROMOTED=1` green.
+helper turns `REQUIRE_PROMOTED=1` green. Superseded by
+[LM-ARCH-CALL-MATERIALIZATION-TRANSACTION-CONSUMER] after Slice 0k-AF.
 
 [LM-ARCH-CALL-MATERIALIZATION-TRANSACTION-SPINE|design-sealed 2026-07-01 {F:0.72 G:0.48 R:0.82}]:
 Slice 0k-AD pauses production-code and generated-stage crash-stack pursuit
