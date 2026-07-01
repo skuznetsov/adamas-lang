@@ -8,6 +8,18 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: added the red/green source-shape gate for the selected
+  Slice 0k-X implementation seam:
+  `scripts/materialization_symbol_binding_admission_report.sh`. Current source
+  reports `source_shape=legacy_split_edge` and
+  `selection_status=eligible_symbol_binding_owner`; `REQUIRE_PROMOTED=1`
+  intentionally exits nonzero until the future `MaterializationSymbolBinding`
+  helper is consumed by downstream keepalive/ledger symbol users. The next
+  production code slice must turn this exact gate green through authority
+  migration, not by adding another report, backend rescue, target keepalive
+  patch, remangle patch, `NamedTuple`/`Tuple` rendering change, ambient-map
+  policy change, or `BlockOwner` rollback.
+
 - 2026-07-01 UPDATE: selected the next implementation receipt without editing
   compiler behavior. Slice 0k-X chooses
   `MaterializationIdentity / lower_function_if_needed.symbol_binding` as the

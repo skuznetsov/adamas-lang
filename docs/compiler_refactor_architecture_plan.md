@@ -148,6 +148,13 @@ the symbols at downstream consumers; the consumer-facing authority must move to
 the binding record while legacy branch logic remains confined to parity inside
 the helper.
 
+2026-07-01 post-0k-Y note: the source-shape gate for that seam now exists:
+`scripts/materialization_symbol_binding_admission_report.sh`. The current
+source is intentionally red under `REQUIRE_PROMOTED=1` (`legacy_split_edge`),
+so the next code slice has a concrete movement target: turn the gate green by
+making keepalive and materialization-ledger consumers read from the binding
+record, without changing emitted symbols.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging

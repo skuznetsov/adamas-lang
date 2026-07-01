@@ -1050,6 +1050,25 @@ with source-shape and stage evidence, a fresh board update selects a different
 row, or generated-stage evidence refutes materialization symbol binding as the
 next useful authority edge.
 
+[LM-ARCH-MATERIALIZATION-SYMBOL-BINDING-GATE|design-sealed 2026-07-01 {F:0.82 G:0.46 R:0.88}]:
+Slice 0k-Y adds the executable source-shape admission gate for the selected
+`MaterializationIdentity / lower_function_if_needed.symbol_binding` seam:
+`scripts/materialization_symbol_binding_admission_report.sh`. On the current
+source it reports `source_shape=legacy_split_edge`,
+`selection_status=eligible_symbol_binding_owner`, one old materialized-name
+branch, one old override branch, one direct keepalive use, direct ledger symbol
+use, and zero binding consumers. With `REQUIRE_PROMOTED=1` it exits 9 today,
+which is intentional: the gate is red until a future
+`MaterializationSymbolBinding`-style helper/record becomes the consumer-facing
+authority for body/call/keepalive symbols. If a future implementation reports
+`partial_binding_authority`, it is not architecture progress. Scope:
+source-shape gate only; no compiler behavior changed, no backend rescue, no
+target keepalive patch, no remangling, no `NamedTuple`/`Tuple` rendering
+change, no ambient-map policy change, no `BlockOwner` carrier change, and no
+green `s2b`/`s3b` claim. Decay trigger: the gate turns green with a helper
+implementation, or the active board selects a different MaterializationIdentity
+authority edge.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-
