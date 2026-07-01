@@ -12,6 +12,30 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-BF-TYPEVALUE-PREFLIGHT-REFUTED-BY-COMMAND-CALL|design-sealed 2026-07-01 {F:0.78 G:0.40 R:0.82}]:
+Slice 0k-BF records a docs-only failed-preflight after a reverted local
+`contract-owner-migration` TypeValue implementation attempt. The WIP introduced
+one HIR-owned type-visible value fact and migrated the H6-reached `typeof`,
+`.class`, interpolation, direct-output, `<<`, and call-argument consumers. A
+fresh stage1 build of that WIP made B3 and H4 green, but strict H6 still
+failed only at direct `puts (true ? 1 : nil).class`: the stage output printed a
+blank row where original Crystal prints `Int32`. Controls showed
+`puts((true ? 1 : nil).class)`, `x = true ? 1 : nil; puts x.class`, and string
+interpolation all printed `Int32`. Debug evidence on the WIP showed the direct
+command-call argument was lowered as `Adamas::Compiler::Frontend::TernaryNode`,
+not as a `.class` member access. The first new boundary is therefore a
+frontend command-call expression-preservation gap, not another TypeValue
+consumer. Scope: no production code committed; WIP reverted before this
+landmark. Stop rule: do not make H6 green through a source-text direct-puts
+workaround, backend stub/forwarder, `BlockOwner` rollback, requested-name
+policy, ambient-map policy, or broad `NamedTuple`/`Tuple` rendering. Next
+track: classify/falsify the command-call parser/lowering boundary as its own
+`semantic-service-extraction` slice, or split H6 into a TypeValue core guard
+plus a separate measured-red frontend guard before resuming TypeValue
+production code. Decay trigger: command-call parsing/lowering changes, H6 rows
+change, or a committed TypeValue implementation produces fresh strict H6
+evidence.
+
 [LM-ARCH-0K-BE-ARCHITECTURE-TRANCHE-SELECTOR|design-sealed 2026-07-01 {F:0.84 G:0.62 R:0.88}]:
 Slice 0k-BE is a docs-only architecture tranche selector and tail-chasing stop
 after the TypeValue implementation receipt. It does not revoke 0k-BD, but it

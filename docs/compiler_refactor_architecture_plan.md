@@ -176,6 +176,16 @@ requested-name policy, ambient maps, backend stubs/forwarders, or broad
 `NamedTuple`/`Tuple` rendering, pause and return to G3 semantic-key migration
 or a narrower semantic-service extraction plan.
 
+2026-07-01 post-0k-BF note: the first local TypeValue owner-fact preflight was
+reverted and converted into a planning checkpoint. It made the B3 oracle and H4
+type-literal no-stub guard green, but strict H6 still failed only on direct
+`puts (true ? 1 : nil).class`. Controls showed `puts((true ? 1 : nil).class)`,
+`x.class`, and interpolation worked, while debug showed the command-call
+argument reached HIR as `TernaryNode` rather than `.class`. Do not force H6
+green with a source-text direct-output workaround. The next useful step is a
+frontend command-call preservation falsifier or an explicit split of H6 into a
+TypeValue core guard plus a separate measured-red parser/lowering guard.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`

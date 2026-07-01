@@ -8,6 +8,20 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: added Slice 0k-BF, a docs-only failed-preflight
+  checkpoint for the attempted `contract-owner-migration` TypeValue code
+  slice. A reverted local owner-fact patch made B3 and H4 green, but strict H6
+  still failed on direct `puts (true ? 1 : nil).class` while
+  `puts((true ? 1 : nil).class)`, `x.class`, and interpolation passed. The
+  first new boundary is therefore not another TypeValue consumer edge: Adamas
+  command-call parsing/lowering preserves the argument as a `TernaryNode` and
+  loses the `.class` suffix for this syntax. Do not green H6 by adding a
+  source-text direct-puts workaround. The next admitted movement is to
+  classify that frontend command-call preservation gap as its own
+  `semantic-service-extraction` / parser-frontier slice, or to split H6 into a
+  TypeValue core guard plus a separate measured-red frontend guard before any
+  production fix.
+
 - 2026-07-01 UPDATE: added Slice 0k-BE, a docs-only architecture
   tranche selector / tail-chasing stop after the TypeValue implementation
   receipt. Production code is paused again until the next code slice states
