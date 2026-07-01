@@ -3836,6 +3836,94 @@ Next local track:
   `CodePathStatus` cleanup selection rather than continuing diagnostic
   expansion.
 
+### Slice 0k-P: SemanticStateScope admission selection report
+
+Status:
+
+- implemented behavior-neutral report after Slice 0k-O;
+- no compiler behavior, materialization behavior, remangling behavior, backend
+  behavior, AST-read behavior, cleanup behavior, or `BlockOwner` carrier is
+  changed by this slice.
+
+Problem:
+
+- Slice 0k-O says that the next `SemanticStateScope` code slice must replace
+  one named ambient-state edge, but it deliberately does not choose that edge
+  from memory or source inspection alone;
+- the broad `StateScopeConsumer` report is useful but too wide to directly
+  authorize code: it reports tens of thousands of consumer rows and thousands of
+  owner-result would-change rows across unrelated consumers;
+- the next code slice therefore needs a selection/admission gate that consumes
+  the existing state-scope evidence, rejects broad or late seams, and exposes a
+  red mode for the future owner-consumption helper.
+
+Implementation:
+
+- added `scripts/semantic_state_scope_admission_report.sh`;
+- the report runs the existing compiler under
+  `ADAMAS_STATE_SCOPE_CONSUMER_LEDGER=1`, parses `[STATE_SCOPE_CONSUMER]` rows,
+  and emits `[STATE_SCOPE_ADMISSION]` candidate rows;
+- source-shape detection currently focuses on the expected first seam,
+  `prefer_callsite_specialization`:
+  - `legacy_direct_edge` means the method still calls
+    `state_scope_consumer_def_has_untyped_regular_param?` directly;
+  - `already_promoted_shadow` means a future
+    `semantic_state_scope_prefer_callsite_specialization_shadow_untyped_regular_param?`
+    helper is called and the legacy helper is no longer called directly;
+  - `missing_old_edge` fails selection because neither shape is admissible.
+- default mode selects exactly one `eligible_scope_owner`;
+- `REQUIRE_PROMOTED=1` is the red gate for the next code slice: it must fail
+  until the selected consumer is actually routed through the promoted
+  `SemanticStateScope` owner in shadow/parity mode.
+
+Fresh evidence:
+
+- fresh stage1 build:
+  `crystal build src/adamas.cr -o /private/tmp/adamas_0kp_stage1 --error-trace`;
+- default report:
+  `TIMEOUT=180 MEM_MB=4096 SAMPLES=3
+  scripts/semantic_state_scope_admission_report.sh
+  /private/tmp/adamas_0kp_stage1`;
+- observed selection:
+  - `rows=42224`;
+  - `malformed=0`;
+  - `preferred_consumer=prefer_callsite_specialization`;
+  - `preferred_source_shape=legacy_direct_edge`;
+  - `preferred_rows=3448`;
+  - migration buckets for the preferred seam:
+    `migrate_to_state_scope=1256`,
+    `migrate_to_materialization_registry=1063`,
+    `rejected_ambient=269`, `keep_legacy_shim=860`;
+  - `[STATE_SCOPE_ADMISSION] consumer=prefer_callsite_specialization ...
+    selection_status=eligible_scope_owner`;
+  - all other current consumers are rejected as later/too late/direct predicate
+    helpers/already materialization-promoted;
+  - `eligible_count=1`, `selected_count=1`, `already_promoted_count=0`.
+- red mode:
+  `REQUIRE_PROMOTED=1 ... semantic_state_scope_admission_report.sh ...`
+  exits `9` with `preferred_source_shape=legacy_direct_edge` and
+  `already_promoted_count=0`, proving the next code slice has a real red gate.
+
+Boundary:
+
+- this is a selection/report slice only;
+- it does not implement `SemanticStateScopeSnapshot` and does not change
+  emitted semantics;
+- the preferred seam is now selected for a future shadow/parity helper, but the
+  report also exposes why behavior changes remain blocked: the preferred seam
+  spans multiple migration classes and has `keep_legacy_shim` /
+  `rejected_ambient` rows that are not behavior authority.
+
+Next local track:
+
+- implement a `SemanticStateScope` owner-consumption helper for
+  `prefer_callsite_specialization` only if it satisfies the 0k-O receipt:
+  old edge removed from that seam, owned snapshot fields complete,
+  `emitted_result == legacy_result`, and the new report's
+  `REQUIRE_PROMOTED=1` mode turns green;
+- do not migrate `lower_call.remangle`, `lower_function_if_needed.*`, direct
+  predicate helper rows, or any behavior result in the same slice.
+
 ### Slice A: CallResolution boundary
 
 Source/spec:

@@ -675,6 +675,26 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   than expanding diagnostics again. No compiler behavior changed and no green
   `s2b`/`s3b` claim is made.
 
+- 2026-07-01 UPDATE: implemented Slice 0k-P as a behavior-neutral
+  `SemanticStateScope` admission selection report. New script:
+  `scripts/semantic_state_scope_admission_report.sh`. It consumes existing
+  `ADAMAS_STATE_SCOPE_CONSUMER_LEDGER=1` rows and emits
+  `[STATE_SCOPE_ADMISSION]` candidate rows; it does not add compiler
+  instrumentation or change semantics. Fresh stage1 evidence:
+  `crystal build src/adamas.cr -o /private/tmp/adamas_0kp_stage1 --error-trace`
+  succeeds; default report selects exactly one candidate,
+  `prefer_callsite_specialization`, with `preferred_source_shape=legacy_direct_edge`,
+  `preferred_rows=3448`, migration buckets
+  `migrate_to_state_scope=1256`, `migrate_to_materialization_registry=1063`,
+  `rejected_ambient=269`, `keep_legacy_shim=860`, and
+  `eligible_count=1` / `selected_count=1`. `REQUIRE_PROMOTED=1` is the red
+  gate for the next code slice and currently exits `9` because the selected
+  seam still calls the legacy helper directly (`already_promoted_count=0`).
+  Scope: selection/report only; no `SemanticStateScopeSnapshot` implementation,
+  no behavior change, no green `s2b`/`s3b` claim. Next code slice, if pursued,
+  is a shadow/parity helper for `prefer_callsite_specialization` only; it must
+  make `REQUIRE_PROMOTED=1` green and keep `emitted_result == legacy_result`.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was

@@ -837,6 +837,29 @@ and report evidence, the live consumer report refutes
 `prefer_callsite_specialization` as a root-sized seam, or the owner explicitly
 switches the next lane to runtime `CodePathStatus` cleanup.
 
+[LM-ARCH-SEMANTIC-STATE-SCOPE-ADMISSION-SELECTION|verified 2026-07-01 {F:0.84 G:0.42 R:0.88}]:
+Slice 0k-P adds the behavior-neutral
+`scripts/semantic_state_scope_admission_report.sh` selection gate. It consumes
+existing `[STATE_SCOPE_CONSUMER]` rows and emits `[STATE_SCOPE_ADMISSION]`
+candidate rows without changing compiler instrumentation or emitted semantics.
+Fresh stage1 evidence selects exactly one next state-scope owner-consumption
+candidate: `prefer_callsite_specialization`, with
+`preferred_source_shape=legacy_direct_edge`, `preferred_rows=3448`,
+`migrate_to_state_scope=1256`, `migrate_to_materialization_registry=1063`,
+`rejected_ambient=269`, `keep_legacy_shim=860`, `eligible_count=1`, and
+`selected_count=1`. Other current consumers are rejected as later
+keep-requested-name seams, backend-adjacent remangling, direct predicate helper
+rows, or already materialization-promoted override work. The report's
+`REQUIRE_PROMOTED=1` red mode currently exits `9` because
+`prefer_callsite_specialization` still calls
+`state_scope_consumer_def_has_untyped_regular_param?` directly and no promoted
+shadow helper is present. Scope: report/selection only; no
+`SemanticStateScopeSnapshot` exists yet, no compiler behavior changed, and no
+green `s2b`/`s3b` claim is made. Decay trigger: the selected
+`prefer_callsite_specialization` helper lands and turns `REQUIRE_PROMOTED=1`
+green, live consumer rows change materially, or the owner switches the next lane
+to `CodePathStatus` cleanup.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

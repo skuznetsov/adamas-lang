@@ -56,6 +56,13 @@ selected consumer no longer calls the old helper directly. If that receipt is
 not root-sized, switch to runtime `CodePathStatus` cleanup selection instead of
 adding another scope ledger.
 
+2026-07-01 post-0k-P note: the first `SemanticStateScope` owner-consumption
+candidate is now selected by report, not by memory: `prefer_callsite_specialization`.
+The selection report is intentionally not a behavior license. It exposes mixed
+migration classes for the selected seam and provides a red
+`REQUIRE_PROMOTED=1` gate that only the future shadow/parity helper should turn
+green.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging
