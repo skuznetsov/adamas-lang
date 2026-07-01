@@ -355,6 +355,27 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   full-stage seam-reachability slice names the owner boundary that prevents
   generated s2 from reaching `[MAT_EMIT]`.
 
+- 2026-07-01 UPDATE: paused code fixes again after a fresh post-StateScope
+  architecture review. The full generated-s2 state-scope corridor reaches the
+  HIR materialization seam (`11` valid owned `[STATE_SCOPE]` rows) but still
+  crashes before backend `[MAT_EMIT]`. lldb pins the crash to
+  `NodeSlot#node <- AstArena#[] <- AstToHir#lower_call` while draining pending
+  lower functions, and a fresh 8GB `NodeSlotIntegrity` report on the same
+  corridor reports `rows=639`, `healthy_present=639`, and zero
+  missing/out-of-range/null buckets. Interpretation: the next step is not a
+  `lower_call` guard, arena scan, backend forwarder, requested-name
+  materialization, global ambient-map change, or `NamedTuple`/`Tuple`
+  normalization. The active next slice is Slice 0k-E in
+  `docs/compiler_architecture_sdd.md`: an architecture migration contract that
+  turns the existing ledgers into a concrete migration plan for
+  `StateScope`, `MaterializationRegistry`, `AstNodeRef`, and `CodePathStatus`
+  consumers. First executable follow-up should be a
+  `StateScopeConsumerCensus` / shadow report over the known naming and
+  materialization consumers (`def_has_untyped_regular_param?`,
+  `raw_annotation_needs_callsite_specialization?`, type-param map helpers, and
+  materialization override sites), with a would-change census before any
+  behavior patch.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was

@@ -452,6 +452,30 @@ Decay trigger: `lower_function_if_needed_impl` moves, state-scope authority
 semantics change, a true `StateScope` facade starts driving behavior, or a
 fresh generated-stage report contradicts the focused authority buckets.
 
+[LM-ARCH-MIGRATION-CONTRACT-AFTER-STATESCOPE|design-sealed 2026-07-01 {F:0.78 G:0.56 R:0.84}]:
+The active architecture path is now a migration contract, not another
+crash-edge fix. Fresh post-StateScope generated-stage evidence shows that a
+full generated-s2 run emits `11` valid owned `[STATE_SCOPE]` rows and then
+crashes before `[MAT_EMIT]`. lldb pins that crash to
+`NodeSlot#node <- AstArena#[] <- AstToHir#lower_call` while draining pending
+lower functions. A fresh 8GB `NodeSlotIntegrity` report on the same corridor
+emits `rows=639`, `healthy_present=639`, and zero missing/out-of-range/null
+buckets. Combined with the earlier owner/parity ledgers, this refutes the
+tempting next consumer patches for this instrumented edge: lower-call guard,
+arena scan, slot-existence repair, backend forwarder, target keepalive,
+forced requested-name materialization, global ambient-map ignore, and
+`NamedTuple`/`Tuple` string normalization. The next executable slice must
+classify consumers under the owning architecture boundaries:
+`StateScope`, `MaterializationRegistry`, `AstNodeRef`, or `CodePathStatus`.
+Preferred first follow-up: a `StateScopeConsumerCensus` / shadow report over
+the known naming and materialization consumers before any behavior change.
+`BlockOwner` remains the admitted owner-metadata boundary and must not be
+rolled back to tuple/namedtuple metadata. Scope: docs-only design seal; no
+compiler behavior changed and no green `s2b`/`s3b` claim. Decay trigger: a
+fresh full generated-stage run reaches joined `[MAT_TX]` / `[MAT_EMIT]` rows,
+or one of the migration contracts lands as a behavior-driving facade with
+focused and generated-stage evidence.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

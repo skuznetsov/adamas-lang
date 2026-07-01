@@ -509,6 +509,15 @@ Acceptance for this first architecture slice:
   would-change-census input, not as a state-scope behavior fix. It self-applies
   far enough for a generated-s2 no-prelude report, but it does not make the
   full generated-stage frontier reach `[MAT_EMIT]`.
+- after the first full generated-s2 state-scope run, the next step is now an
+  explicit migration contract, not another local crash-edge patch. The full
+  corridor emits owned `[STATE_SCOPE]` rows but still crashes before
+  `[MAT_EMIT]`; the parallel `NodeSlotIntegrity` corridor reports only healthy
+  slots for the instrumented lower-call edge. Treat this as evidence that
+  `StateScope`, `MaterializationRegistry`, `AstNodeRef`, and `CodePathStatus`
+  need executable consumer-migration gates. Do not re-enter backend forwarder,
+  requested-name materialization, arena-scan, global ambient-map, or
+  `NamedTuple`/`Tuple` normalization work from this evidence.
 
 ## 9. Decision Summary
 
@@ -523,6 +532,12 @@ Recommended direction:
   are sealed. The active path is the architecture SDD sequence:
   semantic/CodePath census, owner ledgers, typed facades, and only then bounded
   behavior slices that consume named facts.
+- The immediate next executable architecture slice should classify and shadow
+  consumers, not change semantics: first choice is a
+  `StateScopeConsumerCensus`/shadow report for naming/materialization consumers;
+  second choice is a `MaterializationRegistry` transaction-consumer report; an
+  `AstNodeRef` raw-read migration or `CodePathStatus` deletion slice must carry
+  its own focused falsifiers.
 
 This plan should be revisited after the architecture SDD seals the active
 semantic-owner frontiers enough that backend-local refactoring cannot hide a

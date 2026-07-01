@@ -36,6 +36,18 @@ either generated-stage seam reachability as an owner-boundary problem or the
 facade, because the repeated verified roots involve ambient semantic state
 being treated as authority.
 
+Current next-slice decision after the first `SemanticStateScope` shadow ledger:
+do not turn the fresh generated-stage `NodeSlot#node` crash back into a
+consumer patch. A full generated-s2 `SemanticStateScope` report now reaches the
+HIR materialization seam and emits owned `[STATE_SCOPE]` rows, but it still
+crashes before `[MAT_EMIT]`. A fresh `NodeSlotIntegrity` report on the same
+full corridor reports only healthy slots for the instrumented lower-call edge.
+That means the next executable work is not another `lower_call` guard, arena
+scan, backend forwarder, or materialization-name tweak. The next work is an
+architecture migration contract: state which legacy consumers must become
+`StateScope`, `MaterializationRegistry`, `AstNodeRef`, or `CodePathStatus`
+consumers before a behavior-changing fix is allowed.
+
 Bounded context: Crystal V2 compiler architecture:
 
 - HIR lowering and semantic registration (`src/compiler/hir/ast_to_hir.cr`)
@@ -112,6 +124,22 @@ call/materialization behavior patch may consume backend/stub facts from this
 probe. The next admitted work must either name the full-stage seam reachability
 owner or start the `SemanticStateScope` shadow facade that replaces ambient
 state reads with explicit authority records.
+
+2026-07-01 architecture checkpoint after the `SemanticStateScope` shadow
+ledger: the facade exists and self-applies in focused and generated-s2
+no-prelude corridors, but the full generated-stage corridor still does not
+reach backend emitted-call correlation. A full generated-s2 state-scope report
+on `src/adamas.cr` emitted `11` valid owned rows and then exited `139` before
+`[MAT_EMIT]`. An lldb run with the same ledger pinned the crash stack to
+`NodeSlot#node <- AstArena#[] <- AstToHir#lower_call` while draining pending
+lower functions. A fresh 8GB `NodeSlotIntegrity` report on the same corridor
+emitted `639` rows with `healthy_present=639` and zero
+`missing_node_payload`, `missing_slot`, `out_of_range`, `invalid_expr`, or
+`null_expr` buckets. This refutes the next tempting consumer fixes for the
+instrumented edge. The next admitted work is Slice 0k-E: an architecture
+migration contract that names which existing state/name/AST/materialization
+consumers will be migrated to typed owner facts, and which symptom fixes remain
+rejected until that migration contract has executable gates.
 
 ## 1. Admitted surface
 
@@ -2200,6 +2228,109 @@ Next local track:
 - if the full generated-stage run still fails before `[MAT_EMIT]`, keep the
   next behavior work blocked and choose a named seam-reachability owner slice
   instead of a backend rescue.
+
+### Slice 0k-E: Architecture migration contract after StateScope shadowing
+
+Status:
+
+- design-sealed, docs-only checkpoint;
+- no compiler behavior, state-scope behavior, materialization behavior, AST
+  read behavior, or backend behavior is changed by this slice.
+
+Problem:
+
+- the active ledgers now refute the immediate symptom-level fixes for the
+  generated-stage crash corridor, but the codebase still allows the same
+  semantic question to be answered from ambient maps, rendered symbols, backend
+  lookup state, and raw `ExprId` indexes;
+- adding another probe or local guard without a migration contract would keep
+  the architecture in tail-chase mode.
+
+Source/spec:
+
+- `SemanticStateScope` section 6.4;
+- `Materialization` section 6.5;
+- `AstNodeIdentity / ArenaOwnership` sections 6.2a and 6.2b;
+- `Code Health and Dead-Code Control` section 6.8;
+- `TODO.md` active architecture backlog;
+- `LANDMARKS.md` active bootstrap gate.
+
+Migration contract:
+
+1. `StateScope` authority becomes the only admissible owner for type-param and
+   naming state used by materialization/naming decisions.
+   - First migration target: callsite-specialization and materialization naming
+     consumers around `def_has_untyped_regular_param?`,
+     `raw_annotation_needs_callsite_specialization?`,
+     `with_type_param_map`, `with_isolated_type_param_map`, and
+     `function_type_param_map_for`.
+   - Each consumer must be classified as `callsite`, `target_materialization`,
+     `body_substitution`, `legacy_shim`, or `rejected_ambient` before behavior
+     changes.
+2. `MaterializationRegistry` becomes the owner for requested, selected, target,
+   body, emitted-call, and wrapper/forwarder identity.
+   - First migration target: pending function replay and call emission paths
+     that currently join by rendered symbol or backend function presence.
+   - Each mismatch must classify as `exact`, `materialization_keepalive`,
+     `wrapper_forwarder`, or `rejected_mismatch` before a fix can emit or retarget
+     calls.
+3. `AstNodeRef` becomes the owner-scoped AST read contract.
+   - First migration target: raw `@arena[expr_id]` reads in lower-call and
+     semantic hot paths that currently rely on current arena or containment
+     heuristics.
+   - Each consumer must state whether it is `owner_ref`, `current_arena_owned`,
+     `legacy_shim`, or `rejected_raw_read`.
+4. `CodePathStatus` becomes the deletion authority for debug/probe/fallback
+   code.
+   - Static grep output is not enough. A path can become `delete_ready` only
+     after runtime evidence plus a protecting falsifier.
+
+Stop rules:
+
+- stop if a proposed code change changes behavior before one of the four
+  contracts above names its owner and DoD;
+- stop if a behavior patch consumes only crash stack, backend
+  `@undefined_externs`, `@func_by_name`, slot presence, arena containment, or
+  broad `tx=none` diagnostics;
+- stop if the proposed fix globally changes ambient `@type_param_map`, globally
+  forces requested-name materialization, normalizes `NamedTuple`/`Tuple` strings
+  as a symptom fix, or routes raw AST reads through a broad arena scan;
+- stop if `@block_owner` is converted back to tuple/namedtuple owner metadata.
+  `BlockOwner` remains the admitted owner-metadata boundary.
+
+DoD for the next executable slice:
+
+- update one of the four contracts above from design-sealed to shadow/ledger
+  implementation;
+- add or upgrade a report script that fails closed when the owner row is absent;
+- run the report on a focused stage1 corridor, generated-s2 no-prelude where
+  applicable, and the full generated-stage corridor when the seam is reachable;
+- run the static `semantic_decision_census.sh` and `codepath_status_census.sh`
+  gates to prove the slice did not silently broaden cleanup or semantic
+  ownership claims;
+- record the residual rejected surface in `TODO.md` and `LANDMARKS.md` before
+  any behavior-changing patch.
+
+Rejected immediate moves:
+
+- `lower_call` consumer guards around `NodeSlot#node`;
+- arena-wide searches to repair an `ExprId` read;
+- backend forwarder or undefined-extern rescue;
+- target keepalive driven by backend body presence;
+- forced requested-name materialization;
+- global ambient-map ignore/clear;
+- `NamedTuple`/`Tuple` display-string normalization as the root fix;
+- another diagnostic ledger without a named owner, cleanup rule, and
+  generated-stage evidence requirement.
+
+Next local track:
+
+- implement the first real migration slice against `SemanticStateScope` or
+  `MaterializationRegistry`, not another crash-edge local fix. The preferred
+  first slice is a `StateScopeConsumerCensus`/shadow report that classifies the
+  known naming/materialization consumers by allowed state authority and proves
+  which legacy consumers can be changed without over-firing legitimate
+  current-instantiation sites.
 
 ### Slice A: CallResolution boundary
 
