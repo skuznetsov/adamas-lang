@@ -197,6 +197,17 @@ requested-name or ambient-map policy, backend stubs/forwarders, or broad
 `NamedTuple`/`Tuple` rendering. After that, rerun H6 to separate remaining
 TypeValue rows from frontend syntax preservation.
 
+2026-07-01 post-0k-BH note: production work is paused again after a local
+parser WIP was reverted before verification. The WIP showed the risk: closing
+the 0k-BG guard by widening no-parens `LParen` parsing can quickly become a
+broad parser-precedence patch rather than architecture work. The parser
+frontier is still admitted, but only as one bounded exception: make the guard
+strict-green with targeted parser-spec evidence in one implementation loop, or
+stop and split H6 into TypeValue-core plus command-call-frontend guards before
+resuming TypeValue owner-fact migration. This pause is the refactor plan's
+current control point: do not let the parser exception reset the project back
+to crash-stack-first work.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`

@@ -8,6 +8,24 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: added Slice 0k-BH, a docs-only Architecture Pause Gate
+  after the 0k-BG command-call parser guard and a reverted local parser WIP.
+  The WIP widened `LParen` handling in the no-parens command-call parser path
+  and added a tight postfix hook, but it was not completed or verified and was
+  removed before this checkpoint. Production code is paused again. The next
+  code movement must explicitly choose one of two routes before editing:
+  (1) a single bounded `semantic-service-extraction` parser-frontier closure
+  attempt that makes
+  `regression_tests/command_call_member_access_preservation_contract.sh`
+  strict-green while preserving targeted parser specs; or (2) split H6 into a
+  TypeValue-core guard plus a measured-red command-call frontend guard, then
+  resume the TypeValue owner-fact migration. If the parser attempt needs a
+  second implementation loop, regresses adjacent parser specs, or broadens into
+  generic command-call precedence work, stop, revert/quarantine the WIP, and
+  return to the split-H6 / TypeValue-owner route. No TypeValue, `BlockOwner`,
+  generic materialization, requested-name, ambient-map, backend stub/forwarder,
+  or broad `NamedTuple`/`Tuple` behavior is admitted by this checkpoint.
+
 - 2026-07-01 UPDATE: implemented Slice 0k-BG, the frontend command-call
   member-access preservation falsifier. New guard:
   `regression_tests/command_call_member_access_preservation_contract.sh`.

@@ -12,6 +12,30 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-BH-ARCHITECTURE-PAUSE-GATE|design-sealed 2026-07-01 {F:0.82 G:0.58 R:0.86}]:
+Slice 0k-BH adds a docs-only Architecture Pause Gate after the 0k-BG
+command-call parser falsifier. A local uncommitted parser WIP widened
+`LParen` handling in no-parens command-call parsing and added a tight postfix
+hook for command-call arguments, but it was not completed or verified and was
+removed before this checkpoint. The lesson is not that the parser boundary is
+false; the 0k-BG guard remains measured-red. The lesson is that parser
+precedence is broad enough to re-enter tail-chasing unless the production
+slice is one bounded exception. Next admitted routes: either one parser-frontier
+closure attempt that makes
+`regression_tests/command_call_member_access_preservation_contract.sh`
+strict-green while preserving targeted parser specs, or an explicit split of
+H6 into TypeValue-core plus command-call-frontend guards before resuming the
+TypeValue owner-fact migration. Stop rule: if the parser attempt needs a
+second implementation loop, regresses adjacent parser specs, or grows into
+generic command-call precedence work, revert/quarantine it and return to the
+split-H6 / TypeValue-owner route. Scope: docs/frontier control only; no
+compiler behavior changed. Forbidden repeats remain TypeValue output
+special-cases, `BlockOwner` rollback, generic materialization changes,
+requested-name or ambient-map policy changes, backend stubs/forwarders, and
+broad `NamedTuple`/`Tuple` rendering. Decay trigger: the command-call guard is
+made strict-green with parser-spec evidence, H6 is split, or a committed
+TypeValue owner fact supersedes this gate.
+
 [LM-ARCH-0K-BG-COMMAND-CALL-MEMBER-ACCESS-GUARD|measured-red 2026-07-01 {F:0.86 G:0.36 R:0.88}]:
 Slice 0k-BG adds executable guard
 `regression_tests/command_call_member_access_preservation_contract.sh` for the
