@@ -639,6 +639,27 @@ Scope: docs-only design seal; no compiler behavior changed and no green
 generated-stage run reaches `[MAT_DECISION]` with contradictory owner rows, or
 the SDD chooses `CodePathStatus` cleanup instead of materialization promotion.
 
+[LM-ARCH-PROMOTION-FIRST-WIP-REFUTED|design-sealed 2026-07-01 {F:0.72 G:0.48 R:0.82}]:
+The first attempted 0k-H implementation direction was rejected before commit.
+The attempted shape was a dedicated promotion env/report around a preferred
+`MaterializationDecision` consumer. That was the wrong first move for the
+architecture SDD: it added a new row surface before proving which existing
+consumer is eligible for promotion, and it risked turning design law
+"promotion before proliferation" into another diagnostic ledger. The WIP was
+removed, and `docs/compiler_architecture_sdd.md` now introduces Slice 0k-I:
+`Promotion target selection gate`. The next executable step must consume
+existing `[STATE_SCOPE_CONSUMER]` / `[MAT_DECISION]` rows and select at most
+one `eligible_promote_owner` consumer, or explicitly route to
+`CodePathStatus` cleanup. Direct promotion-helper implementation, backend
+reconciliation, target keepalive, requested-name materialization, global
+ambient-map changes, `NamedTuple`/`Tuple` normalization, lower-call/arena/slot
+consumer patches, and `BlockOwner` rollback remain rejected until that
+selection gate is green. Scope: docs-only planning correction; no compiler
+behavior changed and no green `s2b`/`s3b` claim. Decay trigger: a
+promotion-selection report lands and chooses an eligible consumer, or fresh
+generated-stage evidence invalidates the current MaterializationDecision owner
+rows.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

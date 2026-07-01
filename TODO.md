@@ -526,6 +526,21 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   ambient-map ignore, `NamedTuple`/`Tuple` display normalization, or rolling
   `BlockOwner` back to tuple/namedtuple metadata.
 
+- 2026-07-01 UPDATE: stopped the first 0k-H implementation attempt before
+  committing it. The attempted direction added a dedicated promotion report/env
+  around a preferred consumer, but this repeated the planning mistake the SDD
+  is trying to eliminate: it chose a promoted seam before proving that the
+  consumer was the correct reached owner boundary for the focused report. The
+  WIP was removed and the SDD now has Slice 0k-I:
+  `Promotion target selection gate`. The next executable architecture step is
+  not a promotion helper and not another crash probe. It is a report over
+  existing `[STATE_SCOPE_CONSUMER]` / `[MAT_DECISION]` rows that selects at
+  most one `eligible_promote_owner` consumer or explicitly routes the next
+  slice to `CodePathStatus` cleanup. Any promotion helper, remangle change,
+  backend reconciliation, target keepalive, requested-name materialization,
+  global ambient-map change, `NamedTuple`/`Tuple` normalization, or
+  `BlockOwner` rollback remains forbidden until that selection gate is green.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was

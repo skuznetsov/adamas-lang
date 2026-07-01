@@ -93,6 +93,20 @@ admitted unless it either promotes an existing owner fact into a consumer seam,
 marks an existing path with a `CodePathStatus` status, or refutes the current
 owner evidence with fresher generated-stage data.
 
+Current next-slice decision after the 0k-H implementation preflight: do not
+start by adding a new promotion ledger or by hard-coding the first promoted
+consumer. A local preflight showed that a naive
+`ADAMAS_MATERIALIZATION_PROMOTION_LEDGER` report can fail before proving any
+architectural ownership: it can target `lower_function_if_needed.override`
+without first proving that this is the right reached seam for the focused
+report, and it can introduce another row format before selecting a behavior
+owner. That WIP was removed instead of patched. Slice 0k-H remains a design
+gate; the next admitted slice is 0k-I, a promotion-target selection gate that
+uses the existing `StateScopeConsumerCensus` and `MaterializationDecision`
+rows to choose exactly one legacy consumer or to explicitly switch to
+`CodePathStatus` cleanup. No promotion helper, forwarder, remangle change, or
+backend reconciliation is admitted until that selection gate is green.
+
 Bounded context: Crystal V2 compiler architecture:
 
 - HIR lowering and semantic registration (`src/compiler/hir/ast_to_hir.cr`)
@@ -2965,10 +2979,134 @@ Hostile self-review:
 
 Next local track:
 
-- implement the behavior-neutral `MaterializationDecision` promotion helper and
-  one promoted consumer report, or explicitly switch to a `CodePathStatus`
-  cleanup slice. Do not add another local crash probe unless fresh evidence
-  invalidates the current owner ledgers.
+- superseded by Slice 0k-I. Do not implement a promotion helper directly from
+  Slice 0k-H. First run a promotion-target selection gate that proves which
+  legacy consumer is eligible for shadow/parity promotion, or explicitly choose
+  `CodePathStatus` cleanup if no consumer is eligible. Do not add another local
+  crash probe unless fresh evidence invalidates the current owner ledgers.
+
+### Slice 0k-I: Promotion target selection gate
+
+Status:
+
+- design-sealed, docs-only checkpoint after the failed 0k-H implementation
+  preflight;
+- no compiler behavior, materialization behavior, remangling behavior, backend
+  behavior, AST-read behavior, or cleanup behavior is changed by this slice.
+
+Problem:
+
+- Slice 0k-H correctly says that ledgers must be promoted before more ledgers
+  are added, but it did not specify how to choose the first promoted consumer;
+- choosing a consumer by intuition, by the latest crash story, or by a
+  preferred seam such as `lower_function_if_needed.override` repeats the same
+  hidden-oracle problem at the planning layer;
+- adding a new promotion env/report before the consumer is selected can become
+  diagnostic proliferation even if the row format looks architectural.
+
+Source/spec:
+
+- Slice 0k-F `StateScopeConsumerCensus`;
+- Slice 0k-G `MaterializationDecision` shadow ledger;
+- Slice 0k-H promotion rule;
+- Design law 14, promotion before proliferation;
+- Stop rules for backend reconciliation, requested-name forcing, global
+  ambient-map changes, and `BlockOwner` rollback.
+
+Selection rule:
+
+1. Candidate consumers come only from already-reached rows in the existing
+   `StateScopeConsumerCensus` / `MaterializationDecision` reports.
+2. A candidate is eligible only if the report can show:
+   - nonzero focused stage1 rows for that consumer;
+   - complete owner fields: requested symbol, target symbol, selected
+     definition, state-scope authority, target map, callsite arg shape, and
+     ABI shape;
+   - bounded decision/reason buckets;
+   - legacy/parity result preservation under shadow consumption;
+   - a generated-stage status: reached, not reached with a named seam
+     residual, or explicitly not applicable to that generated-stage corridor.
+3. A candidate is rejected if selecting it requires a new compiler env solely
+   to make rows appear, backend `@undefined_externs` as the first semantic
+   signal, target keepalive, requested-name forcing, global ambient-map
+   ignore/clear, or `NamedTuple`/`Tuple` string normalization.
+4. If no candidate is eligible, the next local track is not another
+   materialization probe. It is either `CodePathStatus` cleanup selection or a
+   revision of the SDD contract.
+
+Admitted next implementation slice:
+
+- upgrade an existing report or add a report that consumes existing
+  `[STATE_SCOPE_CONSUMER]` / `[MAT_DECISION]` rows and prints a
+  promotion-selection table;
+- do not add new compiler instrumentation for this selection slice unless the
+  report proves an existing required field is absent from all current rows;
+- output for each candidate:
+  `consumer`, `row_count`, decision buckets, reason buckets, param-class
+  buckets, state-scope buckets, ABI buckets, legacy-result buckets,
+  would-change buckets, generated-stage reachability, and `selection_status`;
+- `selection_status` must be one of:
+  `eligible_promote_owner`, `rejected_unreached`,
+  `rejected_broad_would_change`, `rejected_missing_owner_fields`,
+  `rejected_backend_only`, `rejected_requires_new_oracle`, or
+  `defer_to_codepath_status`.
+
+Rejected moves:
+
+- implementing `ADAMAS_MATERIALIZATION_PROMOTION_LEDGER` or a new promotion
+  row format before the selection report chooses one eligible consumer;
+- using `lower_function_if_needed.override` as the first target merely because
+  Slice 0k-H called it preferable;
+- patching direct predicates, remangling, target keepalive, requested-name
+  materialization, backend undefined-extern handling, or `NamedTuple`/`Tuple`
+  rendering from this slice;
+- treating a failed generated-stage report with `compiler_rc=139` as proof
+  that the selected consumer is wrong unless the owner rows show the wrong
+  boundary.
+
+DoD for implementation:
+
+- red gate: the pre-slice selection report fails closed because no
+  promotion-selection table exists or because required fields are missing;
+- green focused gate: fresh stage1 report lists all reached
+  `MaterializationDecision` consumers and selects at most one
+  `eligible_promote_owner` consumer;
+- generated-stage gate: generated-s2 no-prelude or full-stage report records
+  either the selected consumer rows or a named seam-reachability residual;
+- compatibility gate: existing `state_scope_consumer_report.sh`,
+  `materialization_decision_report.sh`, `semantic_decision_census.sh`, and
+  `codepath_status_census.sh` still run;
+- cleanup gate: any rejected candidate is classified as a semantic rejection,
+  seam residual, or cleanup candidate, not silently ignored;
+- ledger sync: update `TODO.md` and `LANDMARKS.md` before any promotion helper
+  or behavior-changing patch.
+
+Current evidence:
+
+- the Slice 0k-G `MaterializationDecision` report already exposes multiple
+  candidate consumers and mixed materialization surfaces;
+- a local 0k-H WIP that tried to add a dedicated promotion ledger was removed
+  before commit because it did not first prove the selected consumer seam;
+- this is a planning/refutation result, not a compiler behavior result and not
+  a green `s2b`/`s3b` claim.
+
+Hostile self-review:
+
+- strongest objection: this selection gate can become another report instead
+  of a migration step. The guard is that it must select at most one eligible
+  consumer or explicitly route to `CodePathStatus` cleanup; a table with no
+  decision fails the slice;
+- second objection: using existing rows may hide a missing field. The guard is
+  fail-closed `rejected_missing_owner_fields`, not best-effort inference;
+- third objection: generated-stage does not reach many focused seams. The guard
+  is to record generated-stage seam residuals explicitly and keep the claim at
+  architecture-selection level, not bootstrap-green level.
+
+Next local track:
+
+- implement the selection report without changing compiler instrumentation, or
+  if existing rows lack required fields, revise Slice 0k-I before adding any
+  new env-gated compiler ledger.
 
 ### Slice A: CallResolution boundary
 
