@@ -406,7 +406,13 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   `raw_annotation_needs_callsite_specialization`). The report intentionally
   exposes blockers: `diagnostic_only=5935`, `keep_legacy_shim=5935`,
   `rejected_ambient=2767`, `migrate_to_state_scope=25978`, and
-  `migrate_to_materialization_registry=7544`. Env-off focused compile emits no
+  `migrate_to_materialization_registry=7544`. The report now classifies every
+  blocked row (`unclassified_blocked=0`) into
+  `legacy_shim.concrete_typed_params=4481`,
+  `legacy_shim.untyped_annotation_text_review=924`, and
+  `legacy_shim.no_regular_params=530`, with bounded samples for each class.
+  The `untyped_annotation_text_review` bucket is textual review evidence, not
+  proof that a regular-param predicate is wrong. Env-off focused compile emits no
   consumer rows and `basic_sanity` exits `0`; existing static
   `semantic_decision_census` / `codepath_status_census`, state-scope report,
   materialization transaction report, and focused split/proc reducers still
@@ -415,10 +421,10 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   fails closed with `compiler_rc=139`, `rows=17`, and missing
   `callsite_args` / `suffix_types` consumers because the generated compiler
   crashes before those sites are reached. Next work is not a behavior patch:
-  classify `diagnostic_only` / `keep_legacy_shim` rows into explicit
-  `StateScope` or `MaterializationRegistry` migration candidates, then run a
-  bounded would-change census before changing any naming/materialization
-  decision.
+  review the `legacy_shim.untyped_annotation_text_review` samples, classify
+  them into explicit `StateScope` or `MaterializationRegistry` migration
+  candidates, then run a bounded would-change census before changing any
+  naming/materialization decision.
 
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-

@@ -548,13 +548,16 @@ Recommended direction:
 - Slice 0k-F now supplies that default-off report/ledger. Focused stage1
   evidence covers all required consumers with `rows=42224` and zero malformed
   / invalid rows, but it also reports `diagnostic_only=5935` and
-  `keep_legacy_shim=5935`. Generated s2 self-builds, then its consumer report
-  fails closed with `compiler_rc=139` after `17` rows because the generated
-  compiler crashes before reaching every required consumer. The next
-  architecture step is therefore to classify the `diagnostic_only` /
-  `keep_legacy_shim` rows into explicit `StateScope` or
-  `MaterializationRegistry` migration candidates, not to change
-  naming/materialization behavior from the report alone.
+  `keep_legacy_shim=5935`. Those blockers are now classified with
+  `unclassified_blocked=0` into `legacy_shim.concrete_typed_params=4481`,
+  `legacy_shim.untyped_annotation_text_review=924`, and
+  `legacy_shim.no_regular_params=530`. Generated s2 self-builds, then its
+  consumer report fails closed with `compiler_rc=139` after `17` rows because
+  the generated compiler crashes before reaching every required consumer. The
+  next architecture step is therefore to review the
+  `legacy_shim.untyped_annotation_text_review` samples and classify them into
+  explicit `StateScope` or `MaterializationRegistry` migration candidates, not
+  to change naming/materialization behavior from the report alone.
 
 This plan should be revisited after the architecture SDD seals the active
 semantic-owner frontiers enough that backend-local refactoring cannot hide a

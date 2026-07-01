@@ -101,6 +101,47 @@ awk -v samples="$SAMPLES" '
     }
   }
 
+  function selected_params(selected_def,    p) {
+    p = index(selected_def, ";params=")
+    if (p == 0) {
+      return ""
+    }
+    return substr(selected_def, p + 8)
+  }
+
+  function has_short_type_param_annotation(params) {
+    return params ~ /(^|[|,:(])[_A-Z]($|[|,):])/
+  }
+
+  function blocked_class(consumer, decision, selected_def, result, migration, validation, call_arg_types,    params) {
+    if (migration == "blocked_unknown") {
+      return "blocked_unknown.needs_owner"
+    }
+
+    if (validation != "diagnostic_only") {
+      return ""
+    }
+
+    params = selected_params(selected_def)
+    if (params == "") {
+      return "legacy_shim.params_unparsed"
+    }
+    if (params == "none") {
+      return "legacy_shim.no_regular_params"
+    }
+    if (result == "1" && call_arg_types == "") {
+      return "legacy_shim.untyped_missing_callsite_args"
+    }
+    if (params ~ /(^|[|])[^|]*:untyped($|[|])/) {
+      return "legacy_shim.untyped_annotation_text_review"
+    }
+    if (has_short_type_param_annotation(params)) {
+      return "legacy_shim.short_type_param_review"
+    }
+
+    return "legacy_shim.concrete_typed_params"
+  }
+
   /^\[STATE_SCOPE_CONSUMER\]/ {
     rows++
     consumer = field("consumer")
@@ -163,6 +204,14 @@ awk -v samples="$SAMPLES" '
     if (validation == "diagnostic_only" || migration == "blocked_unknown") {
       blocked_rows++
       keep_sample("blocked_rows", $0)
+      bclass = blocked_class(consumer, decision, selected_def, result, migration, validation, call_arg_types)
+      if (bclass == "") {
+        unclassified_blocked++
+        keep_sample("unclassified_blocked", $0)
+      } else {
+        blocked_class_count[bclass]++
+        keep_sample("blocked_class:" bclass, $0)
+      }
     }
 
     if (authority == "target_materialization" && target_map == "") {
@@ -186,6 +235,7 @@ awk -v samples="$SAMPLES" '
     print "invalid_validation=" invalid_validation + 0
     print "rejected_without_ambient=" rejected_without_ambient + 0
     print "blocked_rows=" blocked_rows + 0
+    print "unclassified_blocked=" unclassified_blocked + 0
     print "target_without_map=" target_without_map + 0
     print "callsite_without_args=" callsite_without_args + 0
 
@@ -220,6 +270,23 @@ awk -v samples="$SAMPLES" '
     }
 
     print ""
+    print "## Blocked Classification"
+    for (bc in blocked_class_count) {
+      print bc "=" blocked_class_count[bc]
+    }
+
+    for (bc in blocked_class_count) {
+      bucket = "blocked_class:" bc
+      if (sample_count[bucket] > 0) {
+        print ""
+        print "## Sample " bucket
+        for (j = 1; j <= sample_count[bucket]; j++) {
+          print sample[bucket, j]
+        }
+      }
+    }
+
+    print ""
     print "## Last Row"
     print last_row
 
@@ -231,7 +298,8 @@ awk -v samples="$SAMPLES" '
     buckets[6] = "blocked_rows"
     buckets[7] = "target_without_map"
     buckets[8] = "callsite_without_args"
-    for (i = 1; i <= 8; i++) {
+    buckets[9] = "unclassified_blocked"
+    for (i = 1; i <= 9; i++) {
       bucket = buckets[i]
       if (sample_count[bucket] > 0) {
         print ""
@@ -243,7 +311,7 @@ awk -v samples="$SAMPLES" '
     }
 
     if (malformed || invalid_authority || invalid_migration ||
-        invalid_validation || rejected_without_ambient) {
+        invalid_validation || rejected_without_ambient || unclassified_blocked) {
       exit 7
     }
   }
