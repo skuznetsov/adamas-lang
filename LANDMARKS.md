@@ -583,6 +583,37 @@ implemented `MaterializationDecision` facade starts driving behavior, the
 StateScope consumer report row format changes, or fresh generated-stage
 evidence produces a materially different MaterializationRegistry split.
 
+[LM-ARCH-MATERIALIZATION-DECISION-LEDGER|verified 2026-07-01 {F:0.84 G:0.46 R:0.88}]:
+Slice 0k-G now has a behavior-neutral `MaterializationDecision` shadow
+ledger/report. Red gate: after adding
+`scripts/materialization_decision_report.sh` but before compiler
+instrumentation, fresh `/private/tmp/adamas_matdec_red` failed with
+`FAIL: no [MAT_DECISION] materialization decision rows emitted` and
+`compiler_rc=0`. Implementation: when
+`ADAMAS_MATERIALIZATION_DECISION_LEDGER=1`, the HIR
+naming/materialization consumer seam emits `[MAT_DECISION]` rows only for
+`migrate_to_materialization_registry` candidates. Focused stage1 evidence:
+`scripts/materialization_decision_report.sh /private/tmp/adamas_matdec_stage1`
+reports `rows=7544`, `malformed=0`, `invalid_decision=0`,
+`invalid_owner=0`, `invalid_reason=0`, `invalid_legacy_result=0`,
+`invalid_would_change=0`, `would_change_rows=0`, `legacy_shim_rows=891`,
+and `rejected_rows=0`. Decision buckets are `exact=2311`,
+`callsite_specialized=2245`, `target_materialized=2097`, and
+`legacy_shim=891`; parameter buckets are `regular_untyped_params=3365`,
+`concrete_typed_params=2495`, `short_type_params=708`,
+`no_regular_params=576`, and `skipped_untyped_params=400`. Existing
+StateScope/materialization reports still compose, env-off compile emits no
+`[MAT_DECISION]` rows and the tiny binary exits `0`, static censuses run, and
+`regression_tests/run_all_suites.sh /private/tmp/adamas_matdec_stage1 4`
+passes `152/152 + 36/36`. Generated-stage boundary: fresh generated s2 builds,
+but the focused generated-s2 report still fails before the decision seam with
+no rows and `compiler_rc=139`; a tiny no-prelude source exits `0` but emits no
+rows because it does not reach MaterializationRegistry candidates. Scope: this
+is a shadow architecture ledger, not a behavior fix and not a green
+`s2b`/`s3b` claim. Decay trigger: the report row format changes, a behavior
+consumer starts using `MaterializationDecision`, or fresh generated-stage
+evidence reaches the focused decision seam with different buckets.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

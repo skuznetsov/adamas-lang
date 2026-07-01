@@ -480,6 +480,31 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   display-string normalization, or rolling `BlockOwner` back to tuple or
   namedtuple metadata.
 
+- 2026-07-01 UPDATE: implemented Slice 0k-G as a behavior-neutral
+  `MaterializationDecision` shadow ledger/report. Red gate: after adding the
+  report but before compiler instrumentation, `/private/tmp/adamas_matdec_red`
+  failed with `FAIL: no [MAT_DECISION] materialization decision rows emitted`
+  and `compiler_rc=0`. With `ADAMAS_MATERIALIZATION_DECISION_LEDGER=1`, the HIR
+  naming/materialization consumer seam now emits `[MAT_DECISION]` rows only for
+  `migrate_to_materialization_registry` candidates. Focused stage1 report:
+  `rows=7544`, `malformed=0`, `invalid_decision=0`, `invalid_owner=0`,
+  `invalid_reason=0`, `invalid_legacy_result=0`,
+  `invalid_would_change=0`, `would_change_rows=0`,
+  `legacy_shim_rows=891`, and `rejected_rows=0`; decision buckets are
+  `exact=2311`, `callsite_specialized=2245`,
+  `target_materialized=2097`, and `legacy_shim=891`. Existing
+  `StateScopeConsumer`, `SemanticStateScope`, and materialization transaction
+  reports still compose; env-off compile emits no `[MAT_DECISION]` rows and
+  the tiny binary exits `0`; static semantic/codepath censuses run; full suites
+  pass `152/152 + 36/36`. Fresh generated s2 builds, but the generated compiler
+  still does not reach the focused `[MAT_DECISION]` seam before its existing
+  crash (`compiler_rc=139`), and a tiny no-prelude source compiles with no rows
+  because it does not reach MaterializationRegistry candidates. This remains a
+  behavior-neutral architecture slice, not a materialization fix or green
+  `s2b`/`s3b`. Next behavior work must choose an owned decision row and run a
+  bounded would-change census; otherwise continue seam-reachability or cleanup
+  architecture work.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was

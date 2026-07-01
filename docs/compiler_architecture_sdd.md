@@ -71,6 +71,17 @@ behavior changes. That record must explain the decision from
 `NamedTuple`/`Tuple` display strings is explicitly rejected until it consumes
 that owner record and passes a bounded would-change census.
 
+Current next-slice decision after Slice 0k-G implementation: the
+`MaterializationDecision` shadow record now exists for the focused stage1
+MaterializationRegistry surface, but it is still behavior-neutral. It does not
+authorize a consumer patch by itself, because generated-s2 still does not reach
+the full focused decision seam before its existing crash. The next behavior
+work must choose a bounded owned `MaterializationDecision` row and run a
+would-change census; otherwise continue architecture work by improving
+generated-stage seam reachability or by extending `CodePathStatus` cleanup
+evidence. Do not treat the all-zero focused `would_change_rows` count as proof
+that materialization behavior is correct globally.
+
 Bounded context: Crystal V2 compiler architecture:
 
 - HIR lowering and semantic registration (`src/compiler/hir/ast_to_hir.cr`)
@@ -2615,7 +2626,7 @@ Next local track:
 
 Status:
 
-- docs-only design checkpoint after Slice 0k-F;
+- implemented behavior-neutral contract checkpoint after Slice 0k-F;
 - no compiler behavior, state-scope behavior, materialization behavior,
   remangling behavior, backend behavior, or cleanup behavior is changed by
   this slice.
@@ -2731,6 +2742,59 @@ DoD for implementation:
   row formats still compose;
 - ledger sync: update `TODO.md` and `LANDMARKS.md` with accepted, rejected, and
   residual surfaces before any behavior-changing patch.
+
+Slice 0k-G evidence:
+
+- red gate: after adding `scripts/materialization_decision_report.sh` but before
+  compiler instrumentation, a fresh compiler
+  `/private/tmp/adamas_matdec_red` failed the report with
+  `FAIL: no [MAT_DECISION] materialization decision rows emitted` and
+  `compiler_rc=0`;
+- implementation: `ADAMAS_MATERIALIZATION_DECISION_LEDGER=1` now emits
+  `[MAT_DECISION]` rows from the existing naming/materialization consumer seam
+  only for `migrate_to_materialization_registry` candidates. Env-off behavior
+  is unchanged;
+- focused stage1 report:
+  `scripts/materialization_decision_report.sh
+  /private/tmp/adamas_matdec_stage1` reports `rows=7544`,
+  `malformed=0`, `invalid_decision=0`, `invalid_owner=0`,
+  `invalid_reason=0`, `invalid_legacy_result=0`,
+  `invalid_would_change=0`, `would_change_rows=0`,
+  `legacy_shim_rows=891`, and `rejected_rows=0`;
+- focused decision buckets:
+  `exact=2311`, `callsite_specialized=2245`,
+  `target_materialized=2097`, and `legacy_shim=891`;
+- focused parameter buckets:
+  `regular_untyped_params=3365`, `concrete_typed_params=2495`,
+  `short_type_params=708`, `no_regular_params=576`, and
+  `skipped_untyped_params=400`;
+- existing reports still compose:
+  `scripts/state_scope_consumer_report.sh /private/tmp/adamas_matdec_stage1`
+  reports `rows=42224`, `malformed=0`, `owned_candidate_rows=36289`,
+  `owner_result_unknown=0`, `owned_would_change=3779`, and
+  `materialization_registry_rows=7544`; `scripts/semantic_state_scope_report.sh`
+  reports `rows=2513`, `malformed=0`; and
+  `scripts/materialization_transaction_report.sh` reports `rows=2513`,
+  `owner_malformed=0`, `joined_transactions=1349`, and
+  `unjoined_emit_rows=0`;
+- env-off check: compiling and running a tiny `puts 7` program with the same
+  stage1 emits `0` `[MAT_DECISION]` rows and the binary exits `0` under
+  `scripts/run_safe.sh`;
+- static guards still run:
+  `scripts/semantic_decision_census.sh` and
+  `scripts/codepath_status_census.sh`;
+- broad guard:
+  `regression_tests/run_all_suites.sh /private/tmp/adamas_matdec_stage1 4`
+  passes `152/152` original tests and `36/36` combined tests;
+- generated-stage evidence: fresh stage1 builds fresh generated s2
+  `/private/tmp/adamas_matdec_s2` (`EXIT: 0` after about 178s). The generated
+  compiler does not yet reach this decision seam on the focused full-prelude
+  report: `scripts/materialization_decision_report.sh
+  /private/tmp/adamas_matdec_s2` fails with no `[MAT_DECISION]` rows and
+  `compiler_rc=139`. A tiny no-prelude source compiles with `compiler_rc=0`
+  but emits no rows because that corridor does not reach
+  `MaterializationRegistry` candidates. This is a named seam-reachability
+  residual, not an invalid row-format failure.
 
 Hostile self-review:
 
