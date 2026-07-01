@@ -909,6 +909,28 @@ future behavior slice consumes `owner_result`, or the state-scope admission
 report selects the same seam again instead of treating it as
 `already_promoted_shadow`.
 
+[LM-ARCH-CODEPATH-IDENTITY-DRY-RUN-DEBUG-ONLY|verified 2026-07-01 {F:0.80 G:0.34 R:0.86}]:
+Slice 0k-S adds the first runtime `CodePathStatus` cleanup selection report
+after the promoted `SemanticStateScope` seam. The selected path is
+`cli.metrics.identity_dry_run`, classified as `debug_only` and
+`classify_only`, not `delete_ready`. Evidence:
+`scripts/codepath_status_cleanup_selection_report.sh` runs a default
+`ADAMAS_CODEPATH_STATUS_LEDGER=1` no-prelude compile and an enabled
+`ADAMAS_CODEPATH_STATUS_LEDGER=1 ADAMAS_IDENTITY_DRY_RUN=1` no-prelude compile;
+with fresh `/private/tmp/adamas_0ks_stage1`, both compiler runs exit `0`, each
+has exactly one selected row, the default selected status is `not_taken`, the
+enabled selected status is `taken`, category is `cli.metrics`, owner is `CLI`,
+and the report emits `[CODEPATH_CLEANUP_SELECTION] cluster=cli.metrics
+path=identity_dry_run owner=CLI status=debug_only
+protecting_falsifier=env_off_not_taken_env_on_taken action=classify_only`.
+Existing `codepath_status_runtime_report` still reports `rows=26`,
+`malformed=0`, `taken=8`, `not_taken=18`; static codepath and semantic censuses
+still run; `bash -n` and `git diff --check` pass. Scope: no deletion, no
+compiler behavior change, no green `s2b`/`s3b` claim. Decay trigger: the
+runtime path name changes, `ADAMAS_IDENTITY_DRY_RUN` becomes default behavior,
+or a future deletion slice promotes this path to `delete_ready` with
+HIR/MIR/LLVM and bootstrap guards.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

@@ -741,6 +741,27 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   root-sized state-scope consumer or switch to runtime `CodePathStatus`
   cleanup selection.
 
+- 2026-07-01 UPDATE: implemented Slice 0k-S, the first runtime
+  `CodePathStatus` cleanup selection report after the SemanticStateScope seam.
+  New script: `scripts/codepath_status_cleanup_selection_report.sh`. It
+  selects exactly one debug/probe path, `cli.metrics.identity_dry_run`, and
+  classifies it as `debug_only` by running the compiler twice with
+  `ADAMAS_CODEPATH_STATUS_LEDGER=1`: default run reports the selected path as
+  `not_taken`, while `ADAMAS_IDENTITY_DRY_RUN=1` reports it as `taken`.
+  Verification with fresh `/private/tmp/adamas_0ks_stage1`:
+  `SELECTED_CLEANUP_PATH=identity_dry_run
+  scripts/codepath_status_cleanup_selection_report.sh
+  /private/tmp/adamas_0ks_stage1` exits `0` with default/enabled compiler
+  rc `0`, selected rows `1/1`, default status `not_taken`, enabled status
+  `taken`, category `cli.metrics`, owner `CLI`, and
+  `[CODEPATH_CLEANUP_SELECTION] ... status=debug_only ...
+  action=classify_only`. Existing `codepath_status_runtime_report` still
+  reports `rows=26`, `malformed=0`, `taken=8`, `not_taken=18`; static
+  codepath and semantic censuses still run; `bash -n` and `git diff --check`
+  pass. Scope: classify-only, no deletion, no compiler behavior change, no
+  green `s2b`/`s3b` claim. A later deletion/quarantine step requires
+  `delete_ready` evidence and bootstrap guards.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was

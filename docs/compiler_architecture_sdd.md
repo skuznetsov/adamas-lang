@@ -166,6 +166,17 @@ no-repeat state-scope selection gate for a genuinely different consumer, or
 switch to runtime `CodePathStatus` cleanup selection if no root-sized
 state-scope consumer is admitted.
 
+Current next-slice decision after Slice 0k-S implementation: the architecture
+track has explicitly switched to runtime `CodePathStatus` cleanup selection
+for one small cluster instead of adding another state-scope helper. The first
+cleanup selection report classifies `cli.metrics.identity_dry_run` as
+`debug_only` with a protecting falsifier: default runtime status is
+`not_taken`, and `ADAMAS_IDENTITY_DRY_RUN=1` makes the same path `taken`.
+This is not delete-ready proof and does not remove code; it is the first
+cleanup/bloat control record. The next cleanup step must either add a second
+runtime-observed status for a named path or propose a deletion only after
+`CodePathStatus` says `delete_ready` with HIR/MIR/LLVM and bootstrap guards.
+
 Bounded context: Crystal V2 compiler architecture:
 
 - HIR lowering and semantic registration (`src/compiler/hir/ast_to_hir.cr`)
@@ -4138,6 +4149,75 @@ Next local track:
 - behavior-changing call/materialization work remains blocked until a future
   would-change census consumes an owned record and proves a root-sized change
   set.
+
+### Slice 0k-S: CodePathStatus cleanup selection for identity_dry_run
+
+Status:
+
+- implemented behavior-neutral cleanup selection report after Slice 0k-R;
+- no compiler behavior, materialization behavior, remangling behavior, backend
+  behavior, AST-read behavior, deletion behavior, or `BlockOwner` carrier is
+  changed by this slice;
+- the selected path is classified, not deleted.
+
+Problem:
+
+- after the first `SemanticStateScope` seam was promoted, the active SDD
+  required either a different root-sized state-scope seam or an explicit switch
+  to runtime `CodePathStatus` cleanup selection;
+- the current state-scope admission report does not name a second admitted
+  consumer;
+- cleanup must start with a runtime-observed path and a protecting falsifier,
+  not with deletion of old debug/probe code.
+
+Implementation:
+
+- added `scripts/codepath_status_cleanup_selection_report.sh`;
+- default selected path: `identity_dry_run`;
+- the report runs the compiler twice with `ADAMAS_CODEPATH_STATUS_LEDGER=1`:
+  one default run, and one run with `ADAMAS_IDENTITY_DRY_RUN=1`;
+- it requires exactly one selected runtime row in each run, no malformed rows,
+  default status `not_taken`, enabled status `taken`, category `cli.metrics`,
+  and owner `CLI`;
+- it emits one `[CODEPATH_CLEANUP_SELECTION]` row with
+  `status=debug_only`, `protecting_falsifier=env_off_not_taken_env_on_taken`,
+  and `action=classify_only`.
+
+Falsifiers and evidence:
+
+- fresh stage1 build:
+  `crystal build src/adamas.cr -o /private/tmp/adamas_0ks_stage1
+  --error-trace`;
+- cleanup selection:
+  `SELECTED_CLEANUP_PATH=identity_dry_run
+  scripts/codepath_status_cleanup_selection_report.sh
+  /private/tmp/adamas_0ks_stage1` exits `0` with `default_rc=0`,
+  `enabled_rc=0`, default `rows=26`, default selected status `not_taken`,
+  enabled `rows=26`, enabled selected status `taken`, and
+  `[CODEPATH_CLEANUP_SELECTION] cluster=cli.metrics path=identity_dry_run
+  owner=CLI status=debug_only ... action=classify_only`;
+- existing `scripts/codepath_status_runtime_report.sh` still reports
+  `rows=26`, `malformed=0`, `taken=8`, and `not_taken=18` on the focused
+  no-prelude run;
+- static `scripts/codepath_status_census.sh` and
+  `scripts/semantic_decision_census.sh` still run;
+- `bash -n` and `git diff --check` pass.
+
+Boundary:
+
+- this is a cleanup-selection slice only;
+- `identity_dry_run` is `debug_only`, not `delete_ready`;
+- no deletion, quarantine, behavior change, or bootstrap claim is made;
+- runtime liveness is not a substitute for semantic ownership.
+
+Next local track:
+
+- either add another CodePathStatus cleanup selection for a named path from the
+  static census, or promote `identity_dry_run` toward deletion only after a
+  separate `delete_ready` slice proves no default behavior change and preserves
+  any useful evidence in docs/regressions;
+- do not remove debug/probe gates merely because this report classified one
+  path as `debug_only`.
 
 ### Slice A: CallResolution boundary
 

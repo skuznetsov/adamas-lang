@@ -85,6 +85,15 @@ full-prelude generated-s2 smoke still exits 139 after `pass3 after lower_main
 call`. The next architecture lane must choose a different root-sized
 state-scope consumer or move to `CodePathStatus` cleanup selection.
 
+2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
+cleanup selection for one debug/probe cluster instead of adding another
+state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`
+classifies `cli.metrics.identity_dry_run` as `debug_only` by proving the
+selected path is `not_taken` by default and `taken` with
+`ADAMAS_IDENTITY_DRY_RUN=1`. This is classify-only; no deletion is admitted
+until a later `delete_ready` slice proves default behavior, HIR/MIR/LLVM shape,
+and bootstrap guards.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging
