@@ -505,6 +505,27 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   bounded would-change census; otherwise continue seam-reachability or cleanup
   architecture work.
 
+- 2026-07-01 UPDATE: paused again after a hostile promotion review. Slice 0k-G
+  is useful, but it is still a shadow ledger; adding a new ledger after every
+  refuted local hypothesis is now classified as diagnostic tail-chasing unless
+  the slice promotes an owner fact into a consumer seam, classifies an existing
+  path through `CodePathStatus`, or refutes the current owner evidence with
+  fresher generated-stage data. `docs/compiler_architecture_sdd.md` now has
+  Slice 0k-H, the `MaterializationDecision` promotion gate. The next admitted
+  implementation is behavior-neutral: expose the `MaterializationDecision`
+  owner object/helper to exactly one naming/materialization consumer in
+  shadow/parity mode, with legacy behavior unchanged and a bounded
+  would-change census. Fresh focused generated-s2 recheck still does not
+  justify a local crash fix: `materialization_decision_report` emits no
+  `[MAT_DECISION]` rows and exits with `compiler_rc=139`; the same corridor's
+  `NodeSlotIntegrity` report shows `rows=105 healthy_present=105` with zero
+  bad buckets, and lower-call arena parity shows `expr_rows=35
+  agree_all_have=35` with zero owner divergence. Forbidden next moves remain:
+  lower-call/arena/slot consumer patches, backend undefined-extern rescue,
+  target keepalive/forwarder, forced requested-name materialization, global
+  ambient-map ignore, `NamedTuple`/`Tuple` display normalization, or rolling
+  `BlockOwner` back to tuple/namedtuple metadata.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was

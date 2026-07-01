@@ -614,6 +614,31 @@ is a shadow architecture ledger, not a behavior fix and not a green
 consumer starts using `MaterializationDecision`, or fresh generated-stage
 evidence reaches the focused decision seam with different buckets.
 
+[LM-ARCH-MATERIALIZATION-PROMOTION-GATE|design-sealed 2026-07-01 {F:0.78 G:0.52 R:0.84}]:
+After Slice 0k-G, the active architecture risk is no longer lack of another
+diagnostic row; it is ledger proliferation without owner promotion. The SDD now
+has Slice 0k-H, a `MaterializationDecision` promotion gate: a new diagnostic
+ledger is admitted only if it promotes an existing owner fact into a
+legacy-consumer seam in parity/shadow mode, classifies an existing path through
+`CodePathStatus`, or refutes the current owner evidence with fresher
+generated-stage data. The next admitted implementation is behavior-neutral:
+expose a real `MaterializationDecision` owner object/helper to one
+naming/materialization consumer while preserving legacy emitted behavior and
+printing bounded would-change buckets. Fresh focused generated-s2 recheck
+reinforces the stop-rule rather than authorizing a local crash fix: the
+`MaterializationDecision` report still emits no rows and exits with
+`compiler_rc=139`; the same corridor's `NodeSlotIntegrity` report shows
+`rows=105`, `healthy_present=105`, and zero bad buckets, while lower-call arena
+parity reports `expr_rows=35`, `agree_all_have=35`, and zero owner divergence.
+Rejected next moves remain lower-call/arena/slot consumer patches, backend
+undefined-extern rescue, target keepalive/forwarder, forced requested-name
+materialization, global ambient-map ignore, `NamedTuple`/`Tuple` display-string
+normalization, and rolling `BlockOwner` back to tuple/namedtuple metadata.
+Scope: docs-only design seal; no compiler behavior changed and no green
+`s2b`/`s3b` claim. Decay trigger: a promoted owner helper lands, a later
+generated-stage run reaches `[MAT_DECISION]` with contradictory owner rows, or
+the SDD chooses `CodePathStatus` cleanup instead of materialization promotion.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

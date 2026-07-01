@@ -82,6 +82,17 @@ generated-stage seam reachability or by extending `CodePathStatus` cleanup
 evidence. Do not treat the all-zero focused `would_change_rows` count as proof
 that materialization behavior is correct globally.
 
+Current next-slice decision after the 0k-G hostile promotion review: pause
+behavior fixes and pause new diagnostic-ledger proliferation. Slice 0k-G is
+useful only if it becomes an authority boundary for at least one legacy
+consumer, or if it retires a legacy/debug path through `CodePathStatus`. The
+next admitted slice is therefore Slice 0k-H: a docs-first promotion gate that
+turns `MaterializationDecision` from a row-producing shadow ledger into the
+next behavior-neutral owner/facade contract. No new local crash probe is
+admitted unless it either promotes an existing owner fact into a consumer seam,
+marks an existing path with a `CodePathStatus` status, or refutes the current
+owner evidence with fresher generated-stage data.
+
 Bounded context: Crystal V2 compiler architecture:
 
 - HIR lowering and semantic registration (`src/compiler/hir/ast_to_hir.cr`)
@@ -332,6 +343,13 @@ remains unchanged until the declared falsifiers pass.
     after a read-only ledger proves that the predicate is the owning boundary.
     If the predicate merely consumes a hidden oracle, the fix belongs at the
     oracle owner or at the boundary that passes the fact.
+
+14. Promotion before proliferation.
+    A new shadow ledger is architectural progress only when it has a promotion
+    path: one legacy consumer starts reading the owned fact in parity/shadow
+    mode, or one old path receives a `CodePathStatus` classification with a
+    protecting falsifier. A ledger that only adds rows after the previous ledger
+    refuted the local hypothesis is diagnostic debt, not a migration step.
 
 ## 6. Target architecture
 
@@ -2814,11 +2832,143 @@ Hostile self-review:
 
 Next local track:
 
-- implement the behavior-neutral `MaterializationDecision` record/report as
-  the next architecture slice, or explicitly choose `CodePathStatus` cleanup
-  work instead. Do not resume behavior fixes from the `Hash#[]=`,
-  `@type_param_map`, `NamedTuple`/`Tuple`, or backend stub corridor until this
-  contract exists and selects an owned behavior row.
+- superseded by Slice 0k-H. The `MaterializationDecision` record/report exists;
+  the next architecture step is promotion of that owner fact into one
+  behavior-neutral consumer seam, or an explicit switch to `CodePathStatus`
+  cleanup work. Do not resume behavior fixes from the `Hash#[]=`,
+  `@type_param_map`, `NamedTuple`/`Tuple`, or backend stub corridor until a
+  promoted owner row selects a bounded behavior change.
+
+### Slice 0k-H: MaterializationDecision promotion gate
+
+Status:
+
+- design-sealed, docs-only checkpoint after Slice 0k-G;
+- no compiler behavior, state-scope behavior, materialization behavior,
+  remangling behavior, backend behavior, AST-read behavior, or cleanup behavior
+  is changed by this slice.
+
+Problem:
+
+- Slice 0k-G created a useful `MaterializationDecision` shadow record, but a
+  shadow record by itself does not reduce architectural coupling;
+- the failure pattern across the recent frontier is not "missing one more
+  observation". It is repeated semantic ownership leakage: a later phase or a
+  local consumer reconstructs a decision from ambient state, rendered names,
+  backend function presence, or raw indexes instead of consuming an owned fact;
+- continuing with another payload/deep-read/local crash probe before promoting
+  an existing owner fact would keep the architecture in diagnostic tail-chase
+  mode.
+
+Source/spec:
+
+- Slice 0k-E migration contract;
+- Slice 0k-F `StateScopeConsumerCensus`;
+- Slice 0k-G `MaterializationDecision` shadow ledger;
+- `CodePathStatus` section 6.8;
+- `TODO.md` active architecture backlog;
+- `LANDMARKS.md` active bootstrap gate.
+
+Promotion rule:
+
+1. A new ledger is admitted only if it has one of these outcomes:
+   - `promote_owner`: one legacy consumer starts reading the typed owner record
+     in parity/shadow mode, while emitted behavior remains unchanged;
+   - `classify_codepath`: one old debug/probe/fallback/shim path receives a
+     `CodePathStatus` status plus a protecting falsifier;
+   - `refute_current_owner`: fresh generated-stage evidence contradicts the
+     current owner evidence and names the new boundary.
+2. If none of those outcomes is available, the next step is design work or
+   cleanup planning, not another diagnostic probe.
+3. A promoted owner record must preserve the old result as `legacy_result`
+   only for parity reporting. The old result is not authority.
+4. A consumer may move from legacy logic to an owner record only after a
+   would-change census proves the row set is bounded and classified by owner,
+   decision, reason, selected-definition parameter class, state-scope authority,
+   target-map class, callsite-arg shape, and ABI shape.
+
+Admitted next implementation slice:
+
+- add a behavior-neutral `MaterializationDecision` promotion helper/facade that
+  computes the existing Slice 0k-G decision object in one place and exposes it
+  to exactly one naming/materialization consumer in shadow/parity mode;
+- the first candidate consumer should be one already covered by
+  `StateScopeConsumerCensus` and `MaterializationDecision`, preferably the
+  materialization naming/override seam rather than backend undefined-extern
+  handling;
+- keep legacy behavior as the emitted result until the would-change census is
+  root-sized and the SDD admits the behavior flip;
+- fail closed if the consumer cannot obtain a complete owner record.
+
+Rejected moves:
+
+- adding a fresh crash-edge ledger without a promotion/classification/refutation
+  outcome;
+- using generated-stage `compiler_rc=139` alone as the reason for another
+  `lower_call`, backend, arena, `NodeSlot`, or payload consumer patch;
+- using all-zero focused `would_change_rows` from Slice 0k-G as proof that
+  materialization is globally correct;
+- using `CodePathStatus` branch liveness as a substitute for semantic ownership;
+- backend undefined-extern rescue, target keepalive, or forwarder emission
+  before a `MaterializationDecision` row says `wrapper_required` and a
+  root-sized would-change census exists;
+- rolling `BlockOwner` back to tuple/namedtuple metadata.
+
+DoD for implementation:
+
+- red gate: the pre-slice report must fail because no promoted
+  `MaterializationDecision` consumer rows are emitted;
+- green focused gate: fresh stage1 report emits promoted consumer rows with
+  malformed/unknown owner counts at zero and legacy/parity result preserved;
+- generated-stage gate: generated-s2 no-prelude runs the report where
+  reachable, and full generated-stage evidence is recorded as either promoted
+  rows or a named seam-reachability residual;
+- over-fire gate: the report prints would-change buckets and treats broad or
+  mixed would-change sets as measured-red;
+- cleanup gate: if the slice discovers stale debug/probe/fallback paths, it
+  marks them only as `suspected_dead`, `legacy_shim`, or `debug_only` until a
+  protecting falsifier can prove `delete_ready`;
+- compatibility gate: static `semantic_decision_census.sh` and
+  `codepath_status_census.sh` still run, existing state/materialization reports
+  still compose, and env-off compiler behavior is unchanged;
+- ledger sync: update `TODO.md` and `LANDMARKS.md` with promoted, rejected, and
+  residual surfaces before any behavior-changing patch.
+
+Current evidence:
+
+- focused generated-s2 seam recheck after Slice 0k-G still fails before
+  `[MAT_DECISION]`: the materialization decision report has no rows and
+  `compiler_rc=139`;
+- a fresh `NodeSlotIntegrity` report on the same focused corridor reports only
+  healthy rows (`rows=105`, `healthy_present=105`, and zero missing/out-of-range
+  buckets);
+- a fresh lower-call arena parity report on the same focused corridor reports
+  `compiler_rc=139`, `expr_rows=35`, `agree_all_have=35`, and zero owner
+  divergence buckets;
+- this reinforces the stop rule: do not spend the next slice on arena owner,
+  slot existence, or lower-call consumer routing. Those are not currently the
+  promoted owner boundary.
+
+Hostile self-review:
+
+- strongest objection: this promotion gate can become more process text without
+  changing code. The guard is that the next implementation must expose a real
+  owner object/helper to one legacy consumer in shadow/parity mode, not merely
+  print a new report line;
+- second objection: a parity consumer can hide old behavior under a new facade.
+  The guard is that every row carries owner, decision, reason, legacy result,
+  and would-change classification, and broad/mixed would-change remains red;
+- third objection: generated-stage still fails before the full seam, so a
+  focused stage1 promotion might not help bootstrap immediately. The guard is
+  to keep the claim narrow: promotion reduces architectural coupling and is a
+  prerequisite for behavior flips; it is not a green `s2b`/`s3b` claim.
+
+Next local track:
+
+- implement the behavior-neutral `MaterializationDecision` promotion helper and
+  one promoted consumer report, or explicitly switch to a `CodePathStatus`
+  cleanup slice. Do not add another local crash probe unless fresh evidence
+  invalidates the current owner ledgers.
 
 ### Slice A: CallResolution boundary
 
