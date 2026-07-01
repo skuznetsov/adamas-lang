@@ -94,6 +94,16 @@ selected path is `not_taken` by default and `taken` with
 until a later `delete_ready` slice proves default behavior, HIR/MIR/LLVM shape,
 and bootstrap guards.
 
+2026-07-01 post-0k-T note: the active SDD now has one authoritative
+`Active Architecture Board`. Older "Current next-slice decision after ..."
+paragraphs in the SDD are historical ledger entries, not competing next-step
+selectors. The board's default correctness lane is `NameResolution` /
+`MethodNameCodec` plus `MaterializationIdentity`, because repeated expensive
+frontiers are still symbol/owner identity failures. That does not authorize a
+behavior fix: the next slice must first name one board row, one old authority
+edge, one owned fact replacing or shadowing it, and one falsifier/DoD. Cleanup
+work remains an explicit `CodePathStatus` lane, not an architecture substitute.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging

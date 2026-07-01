@@ -3,11 +3,48 @@
 Document status: ACTIVE FRONTIER SDD. Behavior-neutral architecture slices are
 landing as bootstrap control gates. This is not approval to start a broad
 refactor while the current `s2b`/`s3b` bug frontiers are still moving.
+The authoritative current decision surface is the "Active Architecture Board"
+below. The older "Current next-slice decision after ..." paragraphs are kept as
+historical ledger entries and must not override the board.
 
 Current frontier: the compiler can make progress through bounded bug slices,
 but many semantic decisions are still inferred repeatedly across HIR, MIR, and
 LLVM lowering. This creates hidden oracles, string-name coupling, phase-local
 fallbacks, and hard-to-localize bootstrap failures.
+
+## Active Architecture Board
+
+Status: design-sealed execution board after Slice 0k-S. This board exists to
+prevent the next step from being selected by the latest generated-stage crash
+stack. A next slice is admitted only if it moves one board row by replacing or
+shadowing a named authority edge, producing `CodePathStatus` evidence for a
+named path, or refuting a row with fresher generated-stage evidence.
+
+| Owner boundary | Current status | Next admitted movement | Forbidden repeat |
+| --- | --- | --- | --- |
+| `SemanticStateScope` | `prefer_callsite_specialization` is promoted in shadow/parity mode; emitted behavior still returns the legacy result. | Select a different root-sized consumer with a red/green source-shape gate, or explicitly leave this lane paused. | Reselecting `prefer_callsite_specialization`; wrapping `def_has_untyped_regular_param?` without a separate owner result; changing emitted behavior from the shadow row. |
+| `MaterializationIdentity` / `MaterializationRegistry` | Transaction and decision ledgers exist, but focused generated-stage runs still do not authorize a behavior patch. | Define a typed registry/authority seam that owns requested, selected, target, body, emitted-call, state-scope, target-map, call-arg, and ABI facts before any forwarder/name/remangle fix. | Backend undefined-extern rescue; target keepalive; requested-name forcing; `NamedTuple`/`Tuple` display normalization; global ambient-map predicate changes. |
+| `NameResolution` / `MethodNameCodec` | File identity was fixed; method/symbol identity is still partly rendered-string driven. | Add a design or shadow slice that parses/compares owners, suffixes, and method identities as typed facts, and connects to materialization naming before behavior changes. | String-slice parsing patches at individual callsites; treating rendered names as canonical identity; broad normalization without a falsifier. |
+| `AstNodeRef` / `ArenaOwnership` | Explicit-owner lower-call rows and `NodeSlotIntegrity` refuted owner drift, out-of-range ids, and missing slots for the instrumented edge. | Resume only with a named payload/deep-read or uninstrumented-consumer falsifier, including cleanup rules for its ledger. | Lower-call arena routing, broad arena scans, parser allocation rewrites, or another unbounded crash-edge probe. |
+| `CodePathStatus` | `cli.metrics.identity_dry_run` is classified as `debug_only`, not `delete_ready`. | Classify another named path, or run a separate `delete_ready` slice with default-behavior, HIR/MIR/LLVM, bootstrap, and evidence-preservation guards. | Deleting debug/probe/fallback paths from static grep output; using runtime liveness as semantic ownership evidence. |
+
+Default next track: plan the next correctness architecture slice around
+`NameResolution` / `MethodNameCodec` plus `MaterializationIdentity`, because
+the repeated high-cost frontiers are symbol/owner identity failures. A cleanup
+slice remains admitted, but only when the goal is explicitly bloat reduction
+and the selected path has its own `CodePathStatus` falsifier.
+
+Mini-Quadrumvirate gate for every future slice:
+
+1. `VERIFY`: name the live board row and cite the current source/report that
+   proves its status.
+2. `CRITICIZE`: state the strongest symptom-fix interpretation and why the
+   proposed move avoids it.
+3. `BUILD`: name the old authority edge, the owned fact replacing or shadowing
+   it, and the DoD command that proves the movement.
+4. `ADVERSARY`: before claiming progress, check whether the slice merely added
+   another row/report without consumer migration, deletion classification, or a
+   refuted owner hypothesis.
 
 Current hostile-review frontier: the latest bootstrap work keeps exposing the
 same ownership class under different symptoms, but the active implementation
@@ -4218,6 +4255,56 @@ Next local track:
   any useful evidence in docs/regressions;
 - do not remove debug/probe gates merely because this report classified one
   path as `debug_only`.
+
+### Slice 0k-T: Active architecture board consolidation
+
+Status:
+
+- design-sealed docs/control-plane checkpoint after Slice 0k-S;
+- no compiler behavior, materialization behavior, remangling behavior, backend
+  behavior, AST-read behavior, deletion behavior, or `BlockOwner` carrier is
+  changed by this slice;
+- the SDD now has one authoritative current decision surface:
+  `Active Architecture Board`.
+
+Problem:
+
+- the SDD intentionally preserves many historical "Current next-slice decision
+  after ..." paragraphs;
+- those entries are valuable evidence, but they had grown into a competing
+  set of apparent next steps;
+- selecting work from that append-only history risks repeating the same
+  tail-chase pattern under better terminology.
+
+Implementation:
+
+- added an `Active Architecture Board` near the top of this SDD;
+- declared the board authoritative over older current-decision ledger
+  paragraphs;
+- bucketed the current architecture surface into five owner boundaries:
+  `SemanticStateScope`, `MaterializationIdentity` / `MaterializationRegistry`,
+  `NameResolution` / `MethodNameCodec`, `AstNodeRef` / `ArenaOwnership`, and
+  `CodePathStatus`;
+- recorded the admitted movement and forbidden repeat for each boundary;
+- added a compact mini-Quadrumvirate gate for every future slice.
+
+Boundary:
+
+- this is not a new diagnostic ledger and not a correctness fix;
+- it does not claim green full-prelude generated s2, `s2b`, or `s3b`;
+- it does not delete `identity_dry_run` or any other debug/probe path;
+- it makes stale decision history subordinate to the active board.
+
+Next local track:
+
+- default correctness architecture lane:
+  `NameResolution` / `MethodNameCodec` plus
+  `MaterializationIdentity` ownership, because repeated frontiers are still
+  symbol/owner identity failures;
+- cleanup lane remains admitted only as an explicit `CodePathStatus` slice
+  with its own path, falsifier, and deletion/quarantine boundary;
+- no future slice should start from an old "Current next-slice decision after
+  ..." paragraph without first mapping it to one active board row.
 
 ### Slice A: CallResolution boundary
 

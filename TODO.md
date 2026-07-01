@@ -762,6 +762,24 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   green `s2b`/`s3b` claim. A later deletion/quarantine step requires
   `delete_ready` evidence and bootstrap guards.
 
+- 2026-07-01 UPDATE: added Slice 0k-T, an active architecture execution board
+  for the SDD. This is a control-plane checkpoint, not a compiler behavior
+  change. The top of `docs/compiler_architecture_sdd.md` now says that the
+  `Active Architecture Board` is the authoritative current decision surface,
+  while older "Current next-slice decision after ..." paragraphs are historical
+  ledger entries. The board buckets the live work into five owner boundaries:
+  `SemanticStateScope`, `MaterializationIdentity` / `MaterializationRegistry`,
+  `NameResolution` / `MethodNameCodec`, `AstNodeRef` / `ArenaOwnership`, and
+  `CodePathStatus`. Next work must move exactly one board row by replacing or
+  shadowing a named authority edge, producing runtime `CodePathStatus`
+  classification for a named path, or refuting a row with fresher generated
+  stage evidence. Default correctness lane after this checkpoint is
+  `NameResolution` / `MethodNameCodec` plus `MaterializationIdentity`
+  ownership, because the repeated high-cost frontiers are still symbol/owner
+  identity failures. Cleanup remains admitted only as an explicit
+  `CodePathStatus` slice with its own falsifier. No green `s2b`/`s3b` claim is
+  made.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was

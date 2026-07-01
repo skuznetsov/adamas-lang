@@ -931,6 +931,24 @@ runtime path name changes, `ADAMAS_IDENTITY_DRY_RUN` becomes default behavior,
 or a future deletion slice promotes this path to `delete_ready` with
 HIR/MIR/LLVM and bootstrap guards.
 
+[LM-ARCH-ACTIVE-BOARD-CONTROLS-NEXT-SLICE|design-sealed 2026-07-01 {F:0.78 G:0.58 R:0.84}]:
+Slice 0k-T makes the SDD's `Active Architecture Board` the authoritative
+current decision surface. The many older "Current next-slice decision after
+..." paragraphs are preserved as historical ledger entries, but they no longer
+select the next slice by themselves. The board buckets active work into
+`SemanticStateScope`, `MaterializationIdentity` / `MaterializationRegistry`,
+`NameResolution` / `MethodNameCodec`, `AstNodeRef` / `ArenaOwnership`, and
+`CodePathStatus`. A future slice must move exactly one board row by replacing
+or shadowing a named authority edge, classifying a named path through runtime
+`CodePathStatus`, or refuting the current row with fresher generated-stage
+evidence. Default correctness lane after this checkpoint is
+`NameResolution` / `MethodNameCodec` plus `MaterializationIdentity` ownership;
+cleanup remains admitted only as an explicit `CodePathStatus` slice. Scope:
+docs/control-plane only, no compiler behavior changed, no deletion, no
+`BlockOwner` rollback, and no green `s2b`/`s3b` claim. Decay trigger: the SDD
+board is replaced, a later slice lands without mapping to a board row, or a
+green generated-stage bootstrap invalidates the current row priorities.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-
