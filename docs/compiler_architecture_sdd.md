@@ -24,7 +24,7 @@ named path, or refuting a row with fresher generated-stage evidence.
 | --- | --- | --- | --- |
 | `SemanticStateScope` | `prefer_callsite_specialization` is promoted in shadow/parity mode; emitted behavior still returns the legacy result. | Select a different root-sized consumer with a red/green source-shape gate, or explicitly leave this lane paused. | Reselecting `prefer_callsite_specialization`; wrapping `def_has_untyped_regular_param?` without a separate owner result; changing emitted behavior from the shadow row. |
 | `MaterializationIdentity` / `MaterializationRegistry` | Transaction and decision ledgers exist, but focused generated-stage runs still do not authorize a behavior patch. | Define a typed registry/authority seam that owns requested, selected, target, body, emitted-call, state-scope, target-map, call-arg, and ABI facts before any forwarder/name/remangle fix. | Backend undefined-extern rescue; target keepalive; requested-name forcing; `NamedTuple`/`Tuple` display normalization; global ambient-map predicate changes. |
-| `NameResolution` / `MethodNameCodec` | File identity was fixed; method/symbol identity is still partly rendered-string driven. | Add a design or shadow slice that parses/compares owners, suffixes, and method identities as typed facts, and connects to materialization naming before behavior changes. | String-slice parsing patches at individual callsites; treating rendered names as canonical identity; broad normalization without a falsifier. |
+| `NameResolution` / `MethodNameCodec` | File identity was fixed; method/symbol identity is still partly rendered-string driven. Slice 0k-U selects `lower_function_if_needed.exact_lookup_keep_requested_name` as the first codec seam. | Promote the selected seam through a shadow/parity `method_name_codec_exact_lookup_keep_requested_name?` helper before changing emitted naming behavior. | String-slice parsing patches at individual callsites; treating rendered names as canonical identity; broad normalization without a falsifier; selecting lower-level helpers before the chosen materialization seam. |
 | `AstNodeRef` / `ArenaOwnership` | Explicit-owner lower-call rows and `NodeSlotIntegrity` refuted owner drift, out-of-range ids, and missing slots for the instrumented edge. | Resume only with a named payload/deep-read or uninstrumented-consumer falsifier, including cleanup rules for its ledger. | Lower-call arena routing, broad arena scans, parser allocation rewrites, or another unbounded crash-edge probe. |
 | `CodePathStatus` | `cli.metrics.identity_dry_run` is classified as `debug_only`, not `delete_ready`. | Classify another named path, or run a separate `delete_ready` slice with default-behavior, HIR/MIR/LLVM, bootstrap, and evidence-preservation guards. | Deleting debug/probe/fallback paths from static grep output; using runtime liveness as semantic ownership evidence. |
 
@@ -4305,6 +4305,75 @@ Next local track:
   with its own path, falsifier, and deletion/quarantine boundary;
 - no future slice should start from an old "Current next-slice decision after
   ..." paragraph without first mapping it to one active board row.
+
+### Slice 0k-U: MethodNameCodec admission selection
+
+Status:
+
+- implemented behavior-neutral source-shape admission report after Slice 0k-T;
+- no compiler behavior, materialization behavior, remangling behavior, backend
+  behavior, AST-read behavior, deletion behavior, or `BlockOwner` carrier is
+  changed by this slice;
+- the selected owner boundary is `NameResolution` / `MethodNameCodec`.
+
+Problem:
+
+- the active board points the correctness lane at typed symbol/method identity,
+  but the code already contains a mix of `MethodNameParts`, compact legacy
+  helpers, and direct rendered-string checks;
+- implementing another parser or normalizer without selecting a consumer seam
+  would repeat the diagnostic-wrapper pattern;
+- the next code slice needs a red/green source-shape gate that names one old
+  authority edge and one intended owned helper.
+
+Implementation:
+
+- added `scripts/method_name_codec_admission_report.sh`;
+- the report selects exactly one first seam:
+  `lower_function_if_needed.exact_lookup_keep_requested_name`;
+- the old authority edge is the exact-lookup naming branch that decides
+  `keep_requested_name` from rendered suffix/arity checks:
+  `name.includes?('$')`, `!name.includes?("$arity")`, and
+  `resolved_entry_name.includes?("$arity")`;
+- the intended owned edge for a future code slice is
+  `method_name_codec_exact_lookup_keep_requested_name?`;
+- sibling keep-requested-name seams are reported but rejected for now because
+  they mix state-scope, collection/module parameter policy, and suffix parsing;
+- low-level helpers such as `method_suffix` and `method_owner_from_name` are
+  rejected as first migration targets because they are not materialization
+  authority seams.
+
+Falsifiers and evidence:
+
+- default source-shape selection:
+  `scripts/method_name_codec_admission_report.sh` exits `0` with
+  `preferred_source_shape=legacy_string_edge`,
+  `selection_status=eligible_codec_owner`,
+  `exact_old_requested_suffix_count=1`,
+  `exact_old_resolved_arity_count=1`, and `exact_helper_count=0`;
+- red gate for the future code slice:
+  `REQUIRE_PROMOTED=1 scripts/method_name_codec_admission_report.sh` exits
+  `9` with the same selected seam, proving the seam has not yet been promoted;
+- this report is source-shape only and does not run or change the compiler.
+
+Boundary:
+
+- this is a MethodNameCodec admission gate, not a behavior fix;
+- it does not change requested-name vs target-name materialization behavior;
+- it does not claim green full-prelude generated s2, `s2b`, or `s3b`;
+- it does not authorize global method-name normalization, backend remangling,
+  or a lower-level helper rewrite.
+
+Next local track:
+
+- implement a shadow/parity helper for exactly
+  `lower_function_if_needed.exact_lookup_keep_requested_name`;
+- future green criteria: the selected source shape becomes
+  `already_promoted_shadow`, `REQUIRE_PROMOTED=1` exits `0`, behavior remains
+  unchanged, and sibling seams remain unselected residual surface;
+- no behavior-changing naming/materialization patch is admitted until this
+  selected seam consumes a typed MethodNameCodec-owned fact in shadow/parity
+  mode.
 
 ### Slice A: CallResolution boundary
 

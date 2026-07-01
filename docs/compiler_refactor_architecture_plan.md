@@ -104,6 +104,15 @@ behavior fix: the next slice must first name one board row, one old authority
 edge, one owned fact replacing or shadowing it, and one falsifier/DoD. Cleanup
 work remains an explicit `CodePathStatus` lane, not an architecture substitute.
 
+2026-07-01 post-0k-U note: the first `MethodNameCodec` seam is now selected by
+source-shape report, not by memory. The selected seam is
+`lower_function_if_needed.exact_lookup_keep_requested_name`: the exact-lookup
+materialization branch still decides requested-name vs resolved-name from
+rendered suffix/arity checks. The next code slice is admitted only as a
+shadow/parity helper for this seam. Do not start with low-level helper
+rewrites, global method-name normalization, backend remangling, or behavior
+changes to materialization naming.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging

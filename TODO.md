@@ -780,6 +780,26 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   `CodePathStatus` slice with its own falsifier. No green `s2b`/`s3b` claim is
   made.
 
+- 2026-07-01 UPDATE: implemented Slice 0k-U, the MethodNameCodec admission
+  selection report. New script:
+  `scripts/method_name_codec_admission_report.sh`. It selects one
+  `NameResolution` / `MethodNameCodec` seam:
+  `lower_function_if_needed.exact_lookup_keep_requested_name`. The old
+  authority edge is the exact-lookup `keep_requested_name` branch that still
+  uses rendered string checks for concrete suffix and arity wildcard
+  (`name.includes?('$')`, `!name.includes?("$arity")`,
+  `resolved_entry_name.includes?("$arity")`). The future owned edge is a
+  shadow/parity helper named
+  `method_name_codec_exact_lookup_keep_requested_name?`. Verification:
+  `scripts/method_name_codec_admission_report.sh` exits `0` with
+  `preferred_source_shape=legacy_string_edge`,
+  `selection_status=eligible_codec_owner`,
+  `exact_old_requested_suffix_count=1`, `exact_old_resolved_arity_count=1`,
+  and `exact_helper_count=0`; `REQUIRE_PROMOTED=1
+  scripts/method_name_codec_admission_report.sh` exits `9`, proving the future
+  code slice has a red source-shape gate. Scope: source-shape/admission only,
+  no compiler behavior change and no green `s2b`/`s3b` claim.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was

@@ -949,6 +949,28 @@ docs/control-plane only, no compiler behavior changed, no deletion, no
 board is replaced, a later slice lands without mapping to a board row, or a
 green generated-stage bootstrap invalidates the current row priorities.
 
+[LM-ARCH-METHOD-NAME-CODEC-ADMISSION-SELECTION|verified 2026-07-01 {F:0.82 G:0.42 R:0.88}]:
+Slice 0k-U adds a behavior-neutral source-shape gate for the
+`NameResolution` / `MethodNameCodec` board row:
+`scripts/method_name_codec_admission_report.sh`. The selected first seam is
+`lower_function_if_needed.exact_lookup_keep_requested_name`, where
+`keep_requested_name` still depends on rendered suffix/arity string checks:
+`name.includes?('$')`, `!name.includes?("$arity")`, and
+`resolved_entry_name.includes?("$arity")`. The future owned edge is a
+shadow/parity helper named
+`method_name_codec_exact_lookup_keep_requested_name?`. Evidence:
+`scripts/method_name_codec_admission_report.sh` exits `0` with
+`preferred_source_shape=legacy_string_edge`,
+`selection_status=eligible_codec_owner`,
+`exact_old_requested_suffix_count=1`, `exact_old_resolved_arity_count=1`, and
+`exact_helper_count=0`; `REQUIRE_PROMOTED=1
+scripts/method_name_codec_admission_report.sh` exits `9`, proving the future
+helper has a red source-shape gate. Scope: source-shape/admission only, no
+compiler behavior changed, no materialization naming behavior changed, no
+deletion, no `BlockOwner` rollback, and no green `s2b`/`s3b` claim. Decay
+trigger: the exact-lookup keep-requested-name branch is rewritten, the helper
+lands, or a fresh board update chooses a different MethodNameCodec seam.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-
