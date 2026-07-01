@@ -25,16 +25,21 @@ named path, or refuting a row with fresher generated-stage evidence.
 | `SemanticStateScope` | `prefer_callsite_specialization` is promoted in shadow/parity mode; emitted behavior still returns the legacy result. | Select a different root-sized consumer with a red/green source-shape gate, or explicitly leave this lane paused. | Reselecting `prefer_callsite_specialization`; wrapping `def_has_untyped_regular_param?` without a separate owner result; changing emitted behavior from the shadow row. |
 | `MaterializationIdentity` / `MaterializationRegistry` | Slice 0k-Z promotes the selected `lower_function_if_needed.symbol_binding` seam in behavior-neutral shadow/parity mode. `scripts/materialization_symbol_binding_admission_report.sh` now reports `already_promoted_shadow` even with `REQUIRE_PROMOTED=1`; keepalive and materialization-ledger consumers read from `MaterializationSymbolBinding` fields instead of recomputing split locals. | Do not flip emitted symbols from this slice. Next movement must either run a generated-stage materialization/symbol-binding classification on the residual full-prelude s2 crash, or select the next root-sized owner consumer with a red/green gate. | Backend undefined-extern rescue; target keepalive as a standalone patch; requested-name forcing; `NamedTuple`/`Tuple` display normalization; global ambient-map predicate changes; `BlockOwner` rollback; treating the green source-shape gate as green `s2b`/`s3b`. |
 | `NameResolution` / `MethodNameCodec` | File identity was fixed; method/symbol identity is still partly rendered-string driven. Slice 0k-V promotes the selected `lower_function_if_needed.exact_lookup_keep_requested_name` seam through `method_name_codec_exact_lookup_keep_requested_name?` in shadow/parity mode; emitted behavior still returns the legacy result. Slice 0k-W pauses standalone promotion-report proliferation. | Either select the next root-sized codec seam with a red/green source-shape gate, or define a generated-stage classification slice that consumes the existing promotion ledger to answer one blocking yes/no decision before changing emitted naming behavior. | String-slice parsing patches at individual callsites; treating rendered names as canonical identity; broad normalization without a falsifier; selecting lower-level helpers before a materialization seam; flipping owner-result behavior from shadow rows; committing another report surface that does not reduce or select an authority edge. |
-| `CallMaterializationTransaction` spine | Slice 0k-AH promotes the selected instance-symbol consumer group in behavior-neutral shadow/parity mode. `REQUIRE_PROMOTED=1 scripts/call_materialization_transaction_consumer_selection_report.sh` is green with `selected_binding_consumer_count=0`, `transaction_field_read_count=6`, and the broader transaction gate reports `residual_legacy_edge_count=20`. | Do not flip emitted symbols from this slice. Next movement must either select the next transaction consumer to migrate with a source-shape gate, or run generated-stage classification only if it answers a transaction-spine yes/no question. | Treating transaction construction as sufficient while consumers still bypass it through older locals; continuing seam-by-seam shadow migrations without a vertical transaction stop-rule; generated-stage crash classification that does not answer a transaction yes/no question; backend forwarder or undefined-extern rescue; requested-name forcing; broad `NamedTuple`/`Tuple` rendering changes; another standalone report that does not select a consumer migration. |
+| `CallMaterializationTransaction` spine | Slice 0k-AH promotes the selected instance-symbol consumer group in behavior-neutral shadow/parity mode. `REQUIRE_PROMOTED=1 scripts/call_materialization_transaction_consumer_selection_report.sh` is green with `selected_binding_consumer_count=0`, `transaction_field_read_count=6`, and the broader transaction gate reports `residual_legacy_edge_count=20`. | Pause production consumer migrations until Slice 0k-AI classifies whether a fresh generated s2 full-prelude corridor reaches the transaction spine. If it reaches `[MAT_TX]` / `[MAT_EMIT]` rows, the next transaction slice may select the next reached transaction consumer. If it does not reach the spine, switch to the reached owner boundary or a `CodePathStatus` cleanup slice. | Treating transaction construction as sufficient while consumers still bypass it through older locals; mechanically reducing `residual_legacy_edge_count` without generated-stage reachability evidence; continuing seam-by-seam shadow migrations without a vertical transaction stop-rule; generated-stage crash classification that does not answer a transaction yes/no question; backend forwarder or undefined-extern rescue; requested-name forcing; broad `NamedTuple`/`Tuple` rendering changes; another standalone report that does not select a consumer migration. |
 | `InvocationContext` / `InlineYieldFrame` | Slice 0k-AC promotes the selected `lower_super.previous_def.invocation_context` seam in behavior-neutral shadow/parity mode. `scripts/invocation_context_admission_report.sh` now reports `already_promoted_shadow` even with `REQUIRE_PROMOTED=1`; `lower_super` and `lower_previous_def` consume an `InvocationContext` owner fact instead of directly reading ambient owner/method, method-kind, super-source, and forward-policy state. | Do not flip super lookup, previous-def lookup, or argument-forwarding behavior from this slice. Next movement must either classify the residual generated-stage frontier with fresh owner-boundary evidence or select a different root-sized board row with a red/green source-shape gate. | A new `ADAMAS_SUPER_CALL_CONTEXT_LEDGER` report without a decision question; direct `lower_super` guards; changing super lookup or argument forwarding from a crash stack; inline-yield stack resets as a consumer fix; treating the green source-shape gate as green bootstrap evidence. |
 | `AstNodeRef` / `ArenaOwnership` | Explicit-owner lower-call rows and `NodeSlotIntegrity` refuted owner drift, out-of-range ids, and missing slots for the instrumented edge. | Resume only with a named payload/deep-read or uninstrumented-consumer falsifier, including cleanup rules for its ledger. | Lower-call arena routing, broad arena scans, parser allocation rewrites, or another unbounded crash-edge probe. |
 | `CodePathStatus` | `cli.metrics.identity_dry_run` is classified as `debug_only`, not `delete_ready`. | Classify another named path, or run a separate `delete_ready` slice with default-behavior, HIR/MIR/LLVM, bootstrap, and evidence-preservation guards. | Deleting debug/probe/fallback paths from static grep output; using runtime liveness as semantic ownership evidence. |
 
-Default next track: select the next transaction consumer to migrate with a
-source-shape gate, or run a generated-stage classifier only when it answers a
-transaction-spine yes/no question. A cleanup slice remains admitted, but only
-when the goal is explicitly bloat reduction and the selected path has its own
-`CodePathStatus` falsifier.
+Default next track after the 0k-AI planning checkpoint: do not start another
+production transaction-consumer migration yet. First run a generated-stage
+transaction-spine classifier that answers one binary question on a fresh
+generated s2 full-prelude corridor: does the active frontier reach joined
+`CallMaterializationTransaction` facts (`[MAT_TX]` / `[MAT_EMIT]`) before the
+next failure? If yes, select the next reached transaction consumer with a
+red/green source-shape gate. If no, pause the transaction lane and switch to
+the reached owner boundary or to a `CodePathStatus` cleanup slice. A cleanup
+slice remains admitted, but only when the goal is explicitly bloat reduction
+and the selected path has its own `CodePathStatus` falsifier.
 
 Current selected implementation status: Slice 0k-AH is a behavior-neutral
 consumer migration. Instance-method override, keepalive, and diagnostic
@@ -44,7 +49,34 @@ fields instead of direct `MaterializationSymbolBinding` field reads.
 construction, not the downstream authority for the selected consumer group.
 This is not a behavior flip and not a green bootstrap claim. It deliberately
 pauses generated-stage crash-stack pursuit unless the next generated-stage run
-answers a specific transaction-spine yes/no question.
+answers a specific transaction-spine yes/no question. After 0k-AH, continuing
+to reduce `residual_legacy_edge_count` without that generated-stage reachability
+answer is classified as tail-chasing: it may make the source-shape metric
+smaller while leaving the active `s2b`/`s3b` frontier untouched.
+
+Architecture pacing checkpoint after Slice 0k-AH:
+
+- Claim under review: another transaction-consumer migration is the best next
+  move.
+- Strongest hostile interpretation: this can become metric chasing. The current
+  `residual_legacy_edge_count=20` is a useful source-shape debt counter, but it
+  does not prove that the remaining generated-stage failure is still on the
+  transaction path.
+- Required falsifier before more production transaction work: a fresh generated
+  s2 full-prelude classifier must report whether `[MAT_TX]` and `[MAT_EMIT]`
+  are reached before the frontier. `scripts/materialization_transaction_report.sh`
+  is the existing lower-level report; a wrapper script is admitted only if it
+  builds/uses a fresh generated s2 through `scripts/run_safe.sh`, records
+  reached/not-reached status, and deletes its temporary artifacts.
+- Decision table:
+  - `reached_tx_and_emit`: continue with a reached transaction consumer
+    selection gate.
+  - `tx_only_no_emit`: next owner is transaction-to-MIR/backend emission
+    correlation, not another HIR consumer migration.
+  - `no_tx_rows`: transaction lane is not currently reached; switch to the
+    reached owner boundary or `CodePathStatus` cleanup.
+  - `s2_build_fails`: do not infer transaction status; first restore the
+    generated compiler build corridor.
 
 Mini-Quadrumvirate gate for every future slice:
 

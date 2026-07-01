@@ -12,6 +12,27 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-POST-0K-AH-TAIL-CHASE-CHECKPOINT|design-sealed 2026-07-01 {F:0.80 G:0.44 R:0.86}]:
+After Slice 0k-AH, the architecture track is paused before more production
+transaction-consumer migrations. The selected instance-symbol consumers are
+already promoted, but the broader transaction source-shape gate still reports
+`residual_legacy_edge_count=20`; lowering that number without generated-stage
+reachability evidence can become metric chasing rather than bootstrap progress.
+The next admitted executable slice must classify a fresh generated s2
+full-prelude corridor: does it reach joined `CallMaterializationTransaction`
+facts (`[MAT_TX]` / `[MAT_EMIT]`) before the next failure? If yes, the next
+transaction slice may select a reached transaction consumer. If no, the
+transaction lane pauses and work moves to the reached owner boundary or to a
+`CodePathStatus` cleanup slice. Evidence: current `TODO.md` and
+`docs/compiler_architecture_sdd.md` record the 0k-AI decision table; current
+source-shape gates show `selected_binding_consumer_count=0` for the promoted
+consumer group and `residual_legacy_edge_count=20` for the broader transaction
+surface. Scope: docs-only pacing checkpoint, not compiler behavior, not green
+full-prelude generated s2, not `s2b`, and not `s3b`. Decay trigger: a fresh
+generated-stage transaction classifier proves the transaction spine is reached,
+or a newer generated-stage run refutes transaction reachability as the active
+frontier.
+
 [LM-ARCH-CALL-MATERIALIZATION-INSTANCE-CONSUMER|verified 2026-07-01 {F:0.86 G:0.38 R:0.90}]:
 The selected `CallMaterializationTransaction` instance-symbol consumer group is
 promoted in behavior-neutral shadow/parity mode. The instance-method override,

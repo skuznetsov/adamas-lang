@@ -267,6 +267,21 @@ classifier that answers whether the transaction spine is still on the active
 frontier. Before adding more default-path transaction fields, consider splitting
 a cheap owner-core record from debug-payload ledger fields.
 
+2026-07-01 post-0k-AI note: pause further production transaction-consumer
+migrations until generated-stage reachability is classified. The current
+transaction source-shape metric is no longer enough by itself: after 0k-AH, the
+selected consumers are promoted, but the broader transaction gate still reports
+`residual_legacy_edge_count=20`. Continuing to lower that counter without a
+fresh generated s2 full-prelude signal risks optimizing the architecture metric
+instead of the bootstrap frontier. The next executable slice should be a
+generated-stage transaction-spine classifier: build/use a fresh generated s2
+through `scripts/run_safe.sh`, run the existing materialization transaction
+ledger on a full-prelude corridor, and classify `reached_tx_and_emit`,
+`tx_only_no_emit`, `no_tx_rows`, or `s2_build_fails`. Only the first result
+admits another reached transaction-consumer migration. The other outcomes route
+to transaction-to-emission correlation, a different owner boundary, or build
+corridor repair.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging
