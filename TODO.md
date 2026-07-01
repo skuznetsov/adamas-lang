@@ -52,6 +52,26 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   green for generated s2 or refute file identity as the active boundary with
   newer evidence.
 
+- 2026-07-01 UPDATE: fixed the generated-s2 parse path identity boundary.
+  `parse_file_recursive` now runs every loaded source path through a dedicated
+  `source_file_identity_key` that collapses lexical `.` / `..` path segments
+  before using it as the `loaded_files` key, and require fallback checks compare
+  through the same key. This is deliberately scoped to loaded source-file
+  identity; it does not change `path_join`, overload resolution,
+  materialization, or backend lowering. Verification:
+  `crystal build src/adamas.cr -o /private/tmp/adamas_pathid_stage1
+  --error-trace`; `scripts/parse_path_identity_probe.sh
+  /private/tmp/adamas_pathid_stage1` reports `raw=75 canonical=75`; fresh
+  stage1 builds fresh s2; `scripts/parse_path_identity_probe.sh
+  /private/tmp/adamas_pathid_s2` now reports `raw=75 canonical=75`;
+  `regression_tests/run_all_suites.sh /private/tmp/adamas_pathid_stage1 4`
+  passes `152/152 + 36/36`; generated s2 compiles and runs a no-prelude
+  `x = 1` smoke. Residual frontier: generated s2 full-prelude `x = 1` still
+  exits 139 after allocator flush / LLVM emission fallback, and generated
+  s2->s3 with the materialization ledger now reaches 11 `[MAT_ID]` rows before
+  crashing in `NodeSlot#node <- AstArena#[] <- AstToHir#lower_call` while
+  draining missing call targets. Do not claim green s2/s3.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was

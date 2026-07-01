@@ -937,6 +937,72 @@ module Adamas
         path.byte_slice(0, last_sep)
       end
 
+      # Source-file identity is a compiler semantic key, not just a display
+      # path. Stage2 can reach the same file through raw spellings such as
+      # `frontend/parser/../ast.cr`; collapse lexical dot segments before using
+      # a path as the loaded-file key.
+      private def source_file_identity_key(path : String) : String
+        return path unless path.includes?("/.") || path.includes?("//")
+
+        absolute = path.bytesize > 0 && path.byte_at(0) == '/'.ord.to_u8
+        parts = [] of String
+        start = absolute ? 1 : 0
+        i = start
+        size = path.bytesize
+        while i <= size
+          if i == size || path.byte_at(i) == '/'.ord.to_u8
+            part_size = i - start
+            if part_size > 0
+              part = path.byte_slice(start, part_size)
+              if part == "."
+                # skip
+              elsif part == ".."
+                if parts.empty?
+                  parts << part unless absolute
+                else
+                  last = parts.last
+                  if last == ".." && !absolute
+                    parts << part
+                  else
+                    parts.pop
+                  end
+                end
+              else
+                parts << part
+              end
+            end
+            start = i + 1
+          end
+          i += 1
+        end
+
+        if absolute
+          return "/" if parts.empty?
+          result = ""
+          idx = 0
+          while idx < parts.size
+            result += "/"
+            result += parts.unsafe_fetch(idx)
+            idx += 1
+          end
+          result
+        else
+          return "." if parts.empty?
+          result = parts.unsafe_fetch(0)
+          idx = 1
+          while idx < parts.size
+            result += "/"
+            result += parts.unsafe_fetch(idx)
+            idx += 1
+          end
+          result
+        end
+      end
+
+      private def loaded_file_includes?(loaded : Set(String), path : String) : Bool
+        loaded.includes?(source_file_identity_key(path))
+      end
+
       # V2 workaround: String#rindex(Char) can misresolve under self-hosting
       # and return a non-separator position. Keep path splitting byte-local.
       private def last_path_separator_index(path : String) : Int32?
@@ -3529,11 +3595,12 @@ module Adamas
           out_io.puts "[STAGE2_DEBUG] parse_file_recursive start file_path=#{file_path} size=#{file_path.size} first=#{file_path.byte_at(0)} last=#{file_path.byte_at(file_path.size - 1)}"
         end
         bootstrap_trace_puts "[S2_PARSE] expand_path('#{file_path}')"; STDERR.flush
-        abs_path = if file_path.bytesize > 0 && file_path.byte_at(0) == '/'.ord.to_u8
-                     file_path
-                   else
-                     File.expand_path(file_path)
-                   end
+        abs_path_raw = if file_path.bytesize > 0 && file_path.byte_at(0) == '/'.ord.to_u8
+                         file_path
+                       else
+                         File.expand_path(file_path)
+                       end
+        abs_path = source_file_identity_key(abs_path_raw)
         bootstrap_trace_puts "[S2_PARSE] abs_path='#{abs_path}'"; STDERR.flush
         if debug_parse && abs_path.size > 0
           out_io.puts "[STAGE2_DEBUG] parse_file_recursive expanded=#{abs_path} size=#{abs_path.size} first=#{abs_path.byte_at(0)} last=#{abs_path.byte_at(abs_path.size - 1)}"
@@ -3626,7 +3693,7 @@ module Adamas
                 if options.verbose && !requires.empty?
                   missing = 0
                   requires.each do |req|
-                    unless loaded.includes?(req)
+                    unless loaded_file_includes?(loaded, req)
                       missing += 1
                     end
                   end
@@ -3758,7 +3825,7 @@ module Adamas
           if options.verbose && !requires.empty?
             missing = 0
             requires.each do |req|
-              unless loaded.includes?(req)
+              unless loaded_file_includes?(loaded, req)
                 missing += 1
               end
             end
@@ -3826,13 +3893,14 @@ module Adamas
       end
 
       private def source_requires_fallback?(source : String, requires : Array(String), loaded : Set(String)) : Bool
-        # `requires` stores already-resolved absolute paths, so re-expanding them
-        # here only adds extra string work in the hot recursive scan path.
+        # `requires` stores resolved paths, but stage2 may spell the same file
+        # through raw `..` aliases. Compare through the same identity key used by
+        # parse_file_recursive's loaded-file set.
         unresolved_requires = false
         req_i = 0
         while req_i < requires.size
           req = requires.unsafe_fetch(req_i)
-          unless loaded.includes?(req)
+          unless loaded_file_includes?(loaded, req)
             unresolved_requires = true
             break
           end

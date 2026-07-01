@@ -1075,23 +1075,29 @@ Falsifiers:
 Evidence:
 
 - current stage1: `raw=75 canonical=75`, `PASS parse_path_identity`;
-- current generated s2: `raw=138 canonical=75`,
+- pre-fix generated s2: `raw=138 canonical=75`,
   `DUPLICATE_PATH_IDENTITY`, including duplicate aliases such as
   `frontend/parser/../ast.cr`, `semantic/../frontend/ast.cr`, and
-  `hir/../frontend/ast.cr` for the same canonical file.
+  `hir/../frontend/ast.cr` for the same canonical file;
+- fixed generated s2: `raw=75 canonical=75`, `PASS parse_path_identity`.
 
 Boundary:
 
-- this probe does not canonicalize paths and does not change compiler behavior;
-- a future path-identity fix must prove that the generated compiler no longer
-  re-registers the same source file through multiple raw spellings before
-  claiming progress on later materialization or backend frontiers.
+- the probe itself does not canonicalize paths and does not change compiler
+  behavior;
+- the behavior slice owns only the loaded-source-file identity key. It does not
+  change overload resolution, type identity, materialization, or backend
+  emission;
+- no later materialization or backend frontier may be claimed from this slice
+  unless the generated compiler first passes raw/canonical path parity.
 
 Next local track:
 
-- design the `NameResolution/file identity` owner as a small keying boundary
-  around loaded source-file identity, then re-run this probe before any
-  `s2 -> s3` materialization ledger analysis.
+- use the now-green path-identity gate as the required precondition for the
+  next owner-ledger step. The current residual generated-s2 frontier reaches
+  materialization and then crashes in
+  `NodeSlot#node <- AstArena#[] <- AstToHir#lower_call` while draining missing
+  call targets.
 
 ### Slice A: CallResolution boundary
 

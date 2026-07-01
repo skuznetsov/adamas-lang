@@ -71,6 +71,31 @@ trigger: rewrites of `parse_file_recursive`, require path resolution,
 `ADAMAS_STOP_AFTER_PARSE`, verbose loading output, or a fresh generated s2 that
 passes raw/canonical path parity.
 
+[LM-S2S3-PARSE-PATH-IDENTITY-FIX|verified 2026-07-01 {F:0.88 G:0.36 R:0.90}]:
+Generated s2 no longer re-registers the same source files through raw `..`
+path aliases while parsing `src/adamas.cr`. Root-shaped boundary:
+`parse_file_recursive` used raw absolute path spellings as loaded-file identity,
+so generated s2 loaded 138 raw paths that canonicalized to 75 files before
+HIR setup. Fix slice: introduce `source_file_identity_key` and route
+`parse_file_recursive` loaded-key insertion plus require-fallback
+`loaded` checks through that lexical dot-segment identity key. This is a
+`NameResolution/file identity` owner fix, not a global path resolver rewrite.
+Evidence: `crystal build src/adamas.cr -o /private/tmp/adamas_pathid_stage1
+--error-trace`; `scripts/parse_path_identity_probe.sh
+/private/tmp/adamas_pathid_stage1` reports `raw=75 canonical=75`; fresh
+stage1 builds fresh s2; `scripts/parse_path_identity_probe.sh
+/private/tmp/adamas_pathid_s2` reports `raw=75 canonical=75`;
+`regression_tests/run_all_suites.sh /private/tmp/adamas_pathid_stage1 4`
+passes 152/152 original + 36/36 combined; generated s2 compiles and runs a
+no-prelude `x = 1` smoke. Bootstrap movement: generated s2->s3 no longer dies
+before materialization solely because of duplicate parse/register shape; with
+8GB it reaches 11 `[MAT_ID]` rows, then crashes in
+`NodeSlot#node <- AstArena#[] <- AstToHir#lower_call` while draining missing
+call targets. Scope: this does not make full-prelude generated s2 or s3 green;
+full-prelude `x = 1` still exits 139 after allocator flush / LLVM emission
+fallback. Decay trigger: rewrites of source file loading, require fallback,
+`source_file_identity_key`, or parse/register bootstrap tracing.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-
