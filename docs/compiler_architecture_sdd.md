@@ -1170,6 +1170,7 @@ Next local track:
 Source/spec:
 
 - `scripts/arena_ownership_census.sh`;
+- `scripts/lower_call_arena_ledger_smoke.sh`;
 - `src/compiler/hir/ast_to_hir.cr` arena helpers (`with_arena`,
   `arena_for_expr?`, `node_for_expr`, `node_for_call_expr`);
 - raw `@arena[expr_id]` read sites in `lower_call` and related HIR lowering
@@ -1182,14 +1183,24 @@ Falsifiers:
 - output separately lists owner helpers, global raw arena reads, lower-call raw
   arena reads, and containment-heuristic sites;
 - the census does not classify a raw read as safe or unsafe by itself.
+- with `ADAMAS_LOWER_CALL_ARENA_LEDGER=1`, a small no-prelude call compile
+  emits `[LC_ARENA]` phase and expr rows without dereferencing the logged node
+  slots.
 
 Evidence:
 
 - `scripts/arena_ownership_census.sh` reports the static raw-read surface and
   identifies `lower_call` as the active residual frontier surface after the
   parse-path identity fix;
+- `scripts/lower_call_arena_ledger_smoke.sh <compiler>` proves the dynamic
+  ledger channel is available without generated compiler artifacts;
 - the next dynamic ledger must bind a crashing/generated `ExprId` to a
   preferred arena and current arena without dereferencing the node slot.
+- current generated-s2 evidence produced `475` `[LC_ARENA]` rows and `11`
+  `[MAT_ID]` rows before `EXIT 139`; the final observed lower-call row had
+  current, preferred, and heuristic owner all on the same `src/compiler/cli.cr`
+  arena with `*_has=1`, which refutes a simple current-arena-drift explanation
+  for that last observed edge but does not yet prove the producer root.
 
 Boundary:
 
@@ -1201,9 +1212,12 @@ Boundary:
 
 Next local track:
 
-- add an env-gated dynamic `lower_call` arena ledger, or refute arena ownership
-  as the active boundary with stronger evidence before any behavior-changing
-  `lower_call` patch.
+- consume the dynamic `lower_call` arena ledger to classify the first bad
+  transition as current-arena drift, stale/corrupt `ExprId`, `NodeSlot`/arena
+  storage corruption, or an uninstrumented raw read;
+- if the ledger continues to show current/preferred/owner agreement, introduce
+  a behavior-neutral `AstNodeRef` / `ArenaOwnership` facade instead of patching
+  another `lower_call` consumer.
 
 ### Slice A: CallResolution boundary
 

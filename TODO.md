@@ -77,13 +77,25 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   frontier. The next slice is `AstNodeIdentity / ArenaOwnership`: an `ExprId`
   index is not a global node identity, and `expr_id.index < arena.size` is only
   a containment heuristic. Added `scripts/arena_ownership_census.sh` and wired
-  the main semantic census to report arena-owner surfaces. Next
-  behavior-changing `lower_call` work must first produce an owner ledger row
-  for the failing generated-s2 callsite: current arena, preferred/call arena,
-  resolved owner, `ExprId`, and raw-read site, without dereferencing the
-  crashing node slot. If that row shows stale/corrupt `ExprId` or `NodeSlot`
-  producer corruption instead of arena drift, patch the producer, not the
-  `lower_call` consumer.
+  the main semantic census to report arena-owner surfaces. Added the
+  env-gated dynamic lower-call arena ledger
+  (`ADAMAS_LOWER_CALL_ARENA_LEDGER=1`) plus
+  `scripts/lower_call_arena_ledger_smoke.sh` to prove the ledger channel on a
+  no-prelude call without generated compiler artifacts. Next behavior-changing
+  `lower_call` work must first run that ledger on the failing generated-s2
+  callsite: current arena, preferred/call arena, resolved owner, `ExprId`, and
+  raw-read site, without dereferencing the crashing node slot. If that row
+  shows stale/corrupt `ExprId` or `NodeSlot` producer corruption instead of
+  arena drift, patch the producer, not the `lower_call` consumer. Fresh
+  ledger evidence from generated s2->s3 produced `475` `[LC_ARENA]` rows and
+  `11` `[MAT_ID]` rows before the residual `EXIT 139`; the last lower-call
+  row before the crash was `Adamas::Compiler::CLI#run$IO_IO`
+  `before.member_object_read`, with current, preferred, and heuristic owner
+  all pointing at the same `src/compiler/cli.cr` arena and all reporting
+  `*_has=1`. This does not prove the root, but it refutes a simple
+  current-arena-drift explanation for that last observed edge and raises the
+  priority of an explicit `AstNodeRef`/`ArenaOwnership` facade over another
+  broad `arena_for_expr?` consumer patch.
 
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-

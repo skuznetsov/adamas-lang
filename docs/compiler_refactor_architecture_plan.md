@@ -417,6 +417,7 @@ Initial executable entry point:
 ```bash
 scripts/semantic_decision_census.sh
 scripts/arena_ownership_census.sh
+scripts/lower_call_arena_ledger_smoke.sh <compiler>
 ```
 
 Acceptance for this first architecture slice:
@@ -428,6 +429,10 @@ Acceptance for this first architecture slice:
 - TODO/LANDMARKS identify the next dynamic ledger to implement before the next
   behavior-changing bootstrap fix;
 - the script does not classify dead/live status by itself.
+- if the generated-stage `lower_call` ledger shows current/preferred/owner
+  arena agreement at the last observed edge, the next architecture slice is a
+  behavior-neutral `AstNodeRef` / `ArenaOwnership` facade rather than another
+  raw-read consumer patch.
 
 ## 9. Decision Summary
 

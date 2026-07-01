@@ -108,14 +108,25 @@ call targets. The architecture claim is deliberately narrower than a fix:
 proof. The committed static census `scripts/arena_ownership_census.sh` reports
 owner helpers, raw `@arena[...]` reads, lower-call raw reads, containment
 heuristics, and existing arena debug gates without changing compiler behavior.
-Next behavior-changing `lower_call` work must first add or consume a dynamic
-arena-owner ledger that records current arena, preferred/call arena, resolved
-owner arena, `ExprId`, and raw-read site without dereferencing the crashing
-node slot. If the ledger proves stale/corrupt `ExprId` or `NodeSlot` producer
-corruption instead of arena drift, the patch belongs at that producer, not at
-the `lower_call` consumer. Decay trigger: a dynamic lower-call arena ledger
-refutes arena ownership as the active boundary, or `AstArena` / `ExprId`
-identity is redesigned into an explicit owner-scoped reference.
+The env-gated dynamic ledger `ADAMAS_LOWER_CALL_ARENA_LEDGER=1` emits
+`[LC_ARENA]` phase/expr rows from `lower_call`, and
+`scripts/lower_call_arena_ledger_smoke.sh` verifies that the channel works on a
+no-prelude call without generated compiler artifacts. Next behavior-changing
+`lower_call` work must first consume dynamic rows for the failing generated-s2
+callsite: current arena, preferred/call arena, resolved owner arena, `ExprId`,
+and raw-read site without dereferencing the crashing node slot. If the ledger
+proves stale/corrupt `ExprId` or `NodeSlot` producer corruption instead of
+arena drift, the patch belongs at that producer, not at the `lower_call`
+consumer. Fresh generated-s2 evidence produced `475` `[LC_ARENA]` rows and
+`11` `[MAT_ID]` rows before the residual `EXIT 139`. The final observed
+lower-call row was `Adamas::Compiler::CLI#run$IO_IO` at
+`before.member_object_read`, and current arena, preferred/call arena, and
+heuristic owner arena were the same `src/compiler/cli.cr` arena with
+`current_has=1`, `preferred_has=1`, and `owner_has=1`. This is not a root-cause
+claim, but it makes a simple current-arena-drift consumer fix unlikely for the
+last observed edge. Decay trigger: a dynamic lower-call arena ledger refutes
+arena ownership as the active boundary, or `AstArena` / `ExprId` identity is
+redesigned into an explicit owner-scoped reference.
 
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
