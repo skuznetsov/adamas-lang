@@ -165,6 +165,17 @@ next slice must classify that residual with fresh generated-stage evidence or
 select another owner seam; do not jump to backend rescue or keepalive/remangle
 behavior patches.
 
+2026-07-01 post-0k-AA note: pause the fresh `lower_super` / inline-yield
+diagnostic direction until it has an owner-boundary gate. A local
+`SUPER_CTX`-style ledger WIP was removed because it would have added another
+env-gated report without first naming the authority edge it reduces. The next
+admitted implementation is not a `lower_super` guard. It is an
+`InvocationContext` / `InlineYieldFrame` source-shape gate that selects one
+consumer seam and proves where ambient invocation fields (`@current_class`,
+`@current_method`, class-vs-instance state, source module, and inline-yield
+frame stacks) are still used as semantic authority. Only after that gate is
+red can a behavior-neutral shadow/parity owner helper be implemented.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging

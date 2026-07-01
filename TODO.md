@@ -8,6 +8,21 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: paused the post-0k-Z `lower_super` / inline-yield
+  diagnostic direction before it became another report ladder. A local
+  `SUPER_CTX`-style env ledger WIP was classified as non-admitted
+  report-surface growth and removed: it did not first name the decision
+  question, source-shape gate, owner fact, or cleanup rule required by
+  `docs/compiler_architecture_sdd.md`. The next admitted movement is docs Slice
+  0k-AA: design the `InvocationContext / InlineYieldFrame` boundary and then add
+  a red/green source-shape gate, not a direct `lower_super` guard. Future code
+  must prove one selected consumer seam stops treating ambient invocation state
+  (`@current_class`, `@current_method`, class-vs-instance state, source module,
+  inline-yield/proc/block frame stacks, and current function params) as its only
+  authority before any behavior change. Do not re-add `ADAMAS_SUPER_CALL_CONTEXT`
+  style logging, patch super argument forwarding, reset inline-yield state, or
+  claim `s2b`/`s3b` progress from this docs-only checkpoint.
+
 - 2026-07-01 UPDATE: implemented Slice 0k-Z,
   `MaterializationSymbolBinding` shadow/parity promotion. The selected
   `lower_function_if_needed.symbol_binding` seam now owns requested, target,

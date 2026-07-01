@@ -12,6 +12,30 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-INVOCATION-CONTEXT-GATE|guard-only 2026-07-01 {F:0.70 G:0.44 R:0.78}]:
+After Slice 0k-Z, the next architecture movement must not be selected directly
+from the latest generated-s2 crash stack. A local `SUPER_CTX` /
+`ADAMAS_SUPER_CALL_CONTEXT_LEDGER` WIP around `lower_super` and inline-yield
+context was classified as non-admitted report-surface growth and removed,
+because it added another env-gated ledger before the SDD named a decision
+question, source-shape gate, owner fact, or cleanup rule. The reusable
+architecture fact is the boundary, not the scratch report: invocation context is
+still represented by ambient mutable fields such as `@current_class`,
+`@current_method`, `@current_method_is_class`, `@current_super_source_module`,
+inline-yield/proc/block stacks, and current `LoweringContext` params. The next
+admitted code movement is a red/green `InvocationContext` / `InlineYieldFrame`
+source-shape gate selecting one consumer seam, likely `lower_super` /
+`lower_previous_def`, followed only later by a behavior-neutral shadow/parity
+owner helper. Rejected moves: re-adding a `SUPER_CTX` ledger without the gate,
+patching `lower_super` directly, changing implicit `super` forwarding from a
+crash stack, resetting inline-yield state as a guard, backend undefined-extern
+rescue, or rolling `BlockOwner` back to tuple/namedtuple metadata. Scope: this
+is a guard-only planning landmark; it does not claim the generated-s2
+full-prelude residual is fixed or that `s2b`/`s3b` is green. Decay trigger: a
+fresh generated-stage owner-boundary run refutes invocation context as the
+active residual, or a future slice promotes an explicit invocation-frame helper
+with source-shape and bootstrap evidence.
+
 [LM-ARCH-SDD-PHASE0B-TRANSITION-GATE|verified 2026-07-01 {F:0.74 G:0.48 R:0.82}]:
 The active path to green `s2b`/`s3b` is no longer an unbounded sequence of
 local crash/RSS fixes. Live evidence from the latest parse-path identity WIP
