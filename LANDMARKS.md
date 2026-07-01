@@ -12,6 +12,25 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-SDD-PHASE0B-TRANSITION-GATE|verified 2026-07-01 {F:0.74 G:0.48 R:0.82}]:
+The active path to green `s2b`/`s3b` is no longer an unbounded sequence of
+local crash/RSS fixes. Live evidence from the latest parse-path identity WIP
+showed a real boundary signal: generated s2 loaded 138 raw `Loading:` paths
+that canonicalize to 75 files, while stage1 loaded 75 raw / 75 canonical paths.
+The WIP reduced generated s2 registration shape to `modules=224`,
+`classes=146`, but it did not satisfy the bootstrap DoD: fresh s2 still timed
+out after `pass3 after lower_main call` around allocator flush. Therefore the
+parse-path canonicalization WIP is evidence for a `NameResolution/file
+identity` owner boundary, not a shipped fix. Current next move is the
+architecture SDD transition gate: Phase 1 semantic decision census plus Phase
+1b dead-code/workaround census, followed by dynamic ledgers for
+StateScope/materialization identity or NameResolution/file identity before the
+next behavior-changing compiler fix. Evidence: `docs/compiler_architecture_sdd.md`
+now records Phase 0b and `scripts/semantic_decision_census.sh` is the first
+read-only executable census entry point. Decay trigger: any successful green
+`s2b`/`s3b` bootstrap, rewrite of `parse_file_recursive`/require loading, or
+replacement of the active architecture SDD execution order.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

@@ -1,11 +1,22 @@
 # Compiler Refactor Architecture Plan
 
-Status: Draft
+Status: Draft; superseded for near-term bootstrap work by
+`docs/compiler_architecture_sdd.md`
 Date: 2026-04-11
 Scope: compile pipeline maintainability, LLVM IR emission, and HIR service
 boundaries
 Related: `PLAN_DEMAND_DRIVEN_REWRITE_RFC.md`, `docs/ast_to_hir_audit.md`,
 `docs/codegen_architecture.md`
+
+2026-07-01 alignment note: this plan remains the long-term refactor map, but
+the active path to green `s2b`/`s3b` is now governed by
+`docs/compiler_architecture_sdd.md`. Do not start with physical extraction or
+the LLVM writer merely because this older plan lists it as the safest first
+candidate. The current bootstrap evidence shows repeated failures in semantic
+ownership boundaries: call/materialization symbol identity, ambient state
+scope, type/name identity, ABI facts, and file identity. The first executable
+architecture implementation is therefore Phase 1/1b census plus owner ledgers,
+not a broad backend writer slice.
 
 ## 1. Purpose
 
@@ -212,6 +223,19 @@ fragments.
 
 ## 5. Rollout Plan
 
+Near-term override: while `s2b`/`s3b` are not stable, execute the rollout in
+the order declared by `docs/compiler_architecture_sdd.md`:
+
+1. Phase 0b architecture transition gate.
+2. Phase 1 static/dynamic semantic decision census.
+3. Phase 1b dead-code and workaround census.
+4. Phase 2/2a typed facades and state-scope/materialization identity ledgers.
+5. Only then resume behavior-changing compiler fixes unless a bootstrap
+   emergency fix also adds a surviving owner ledger or falsifier.
+
+The backend writer plan below is still valid, but it is no longer the first
+implementation candidate for the active bootstrap objective.
+
 ### Phase 0: Contracts and metrics
 
 Purpose: make the current behavior observable before refactoring.
@@ -367,7 +391,8 @@ For runtime-visible codegen changes, a produced binary must run through
 
 ## 8. First Implementation Candidate
 
-The safest first implementation candidate is a backend-only writer slice:
+Historical candidate: the safest first implementation candidate was a
+backend-only writer slice:
 
 1. Create `src/compiler/mir/llvm_text_writer.cr`.
 2. Add `LlType`, `LlValue`, `LlParam`, `LlArg`, and `LlWriter`.
@@ -380,8 +405,28 @@ The safest first implementation candidate is a backend-only writer slice:
    - debug metadata enabled
    - entry function opt guard attributes
 
-This is intentionally small. It proves the typed writer seam without changing
-call coercion, metadata ownership, or worker merging.
+This remains intentionally small and useful after semantic ownership is under
+control. It proves the typed writer seam without changing call coercion,
+metadata ownership, or worker merging.
+
+Active candidate for the 2026-07 bootstrap objective: implement the
+architecture SDD's Phase 1/1b census and owner-ledger path first.
+
+Initial executable entry point:
+
+```bash
+scripts/semantic_decision_census.sh
+```
+
+Acceptance for this first architecture slice:
+
+- no compiler behavior changes;
+- output contains concrete candidate sites for NameResolution, TypeIdentity,
+  SemanticStateScope, CallResolution, Materialization, AbiFacts/LayoutContract,
+  backend semantic leakage, and debug/workaround gates;
+- TODO/LANDMARKS identify the next dynamic ledger to implement before the next
+  behavior-changing bootstrap fix;
+- the script does not classify dead/live status by itself.
 
 ## 9. Decision Summary
 

@@ -52,6 +52,17 @@ part of that goal, but only when the path is proven not to be a live semantic
 carrier, bootstrap fallback, compatibility shim, or intentionally gated debug
 surface.
 
+2026-07-01 execution checkpoint: do not continue the bootstrap frontier as an
+unbounded sequence of local consumer fixes. The latest read-only parse frontier
+evidence showed generated s2 loading 138 raw `Loading:` paths that canonicalize
+to 75 real files, while stage1 loads 75 raw / 75 canonical paths. A local
+canonical-loaded-path WIP reduced the generated s2 registration graph
+(`modules=224`, `classes=146`) but did not pass the bootstrap DoD: the fresh
+s2 build still timed out after `pass3 after lower_main call` around allocator
+flush. Treat that WIP as evidence for a `NameResolution/file identity` boundary,
+not as a shipped fix. The next admitted move is Phase 1/1b census and
+behavior-neutral ledgers, not another symptom patch.
+
 ## 1. Admitted surface
 
 This SDD admits only future architecture work that:
@@ -629,11 +640,47 @@ Do not start broad refactor while current `s2b`/`s3b` bug frontiers are moving.
 Only add SDDs, probes, and small tactical fixes needed to restore the bootstrap
 corridor.
 
+Additional stop-rule after the 2026-07-01 checkpoint: a tactical fix is allowed
+only when it names the owning semantic boundary and either consumes an existing
+ledger row or adds a new behavior-neutral ledger/falsifier that will survive the
+fix. If a slice only moves the crash/RSS frontier without adding an owner
+boundary, stop and route the work to Phase 1 census.
+
 Exit signal:
 
 - `s2b` reaches a stable smoke target;
 - `s3b` status is known;
 - active frontiers have problem cards and reducers or smoke scripts.
+
+### Phase 0b: Architecture transition gate
+
+Purpose: prevent the bootstrap loop from becoming a tail-chase while still
+allowing evidence-producing fixes.
+
+Admitted work:
+
+- read-only or docs-only owner ledgers;
+- scripts that census semantic decision sites without changing compiler output;
+- focused reducers that prove a boundary before a behavior change;
+- emergency bootstrap fixes only when they update the owner ledger or falsifier
+  roster in the same logical change.
+
+Rejected work:
+
+- another local predicate/backend guard whose owner is only "the current stack";
+- broad canonicalization or wrapper patches that pass one reducer but do not
+  state requested, selected, materialized, and emitted identity;
+- deleting "dead" branches before `CodePathStatus` marks them `delete_ready`;
+- continuing a behavior patch after its focused DoD moves only memory/time but
+  not the intended semantic boundary.
+
+Exit signal:
+
+- Phase 1 census command exists and is committed;
+- at least one active frontier is represented as a row in the semantic owner
+  map;
+- `TODO.md` points at the architecture-first next slice rather than only the
+  latest crash stack.
 
 ### Phase 1: Architecture census
 
@@ -654,6 +701,16 @@ Exit signal:
 - a table of writers/readers per semantic decision;
 - a list of hidden fallback sites;
 - no production behavior changes.
+
+Executable entry point:
+
+```bash
+scripts/semantic_decision_census.sh
+```
+
+This command is static grep only. It is allowed to produce broad candidate
+sets, but no candidate becomes `live`, `dead`, or `owner` without a follow-up
+dynamic ledger or reducer.
 
 ### Phase 1b: Dead-code and bloat census
 
@@ -923,6 +980,39 @@ Boundary:
 Next local track:
 
 - CallResolution can consume `state_scope` once the ledger is stable.
+
+### Slice 0a: Static semantic decision census
+
+Source/spec:
+
+- `scripts/semantic_decision_census.sh`
+- this SDD's Phase 1/1b owner-map requirements
+
+Falsifiers:
+
+- the script must be read-only and must not require generated compiler
+  artifacts;
+- broad output is acceptable, but each section must point to concrete source
+  paths and patterns;
+- the script must not classify a path as dead or live by itself.
+
+Evidence:
+
+- checked-in script output can be captured in review logs;
+- source sections cover `NameResolution`, `TypeIdentity`,
+  `SemanticStateScope`, `CallResolution`, `Materialization`,
+  `AbiFacts/LayoutContract`, backend semantic leakage, and debug/workaround
+  gates.
+
+Boundary:
+
+- no compiler behavior changes;
+- no deletion or refactor decisions from static grep alone.
+
+Next local track:
+
+- convert high-signal rows into dynamic ledgers, starting with
+  `StateScope/materialization identity` or `NameResolution/file identity`.
 
 ### Slice A: CallResolution boundary
 

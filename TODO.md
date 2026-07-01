@@ -8,6 +8,19 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: switch the active path from unbounded bootstrap
+  symptom-fixing to implementation of the architecture SDD. A parse-path
+  identity WIP showed useful evidence (`s2` loaded 138 raw paths that
+  canonicalize to 75 files; stage1 loaded 75/75, and the WIP reduced generated
+  s2 registration to `modules=224`, `classes=146`), but it did not pass the
+  bootstrap DoD: fresh s2 still timed out after `pass3 after lower_main call`.
+  That evidence is now classified as a `NameResolution/file identity` boundary
+  signal, not a shipped fix. Current work must follow
+  `docs/compiler_architecture_sdd.md`: Phase 0b transition gate, Phase 1
+  semantic decision census, Phase 1b dead-code/workaround census, then dynamic
+  owner ledgers before further behavior-changing fixes. First executable slice:
+  `scripts/semantic_decision_census.sh` (read-only static owner-map input).
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was
