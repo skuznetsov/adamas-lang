@@ -197,6 +197,20 @@ a red/green gate. Do not continue by adding another context report, changing
 super forwarding, resetting inline-yield stacks, or treating this helper as a
 bootstrap fix.
 
+2026-07-01 post-0k-AD note: the near-term plan now pauses seam-by-seam
+production work and selects a vertical `CallMaterializationTransaction` spine
+as the next correctness axis. This is a docs-only checkpoint, not a behavior
+change. The next executable slice is 0k-AE: a red/green source-shape gate for
+one consumer that still splits requested symbol, selected definition, state
+scope, target/body symbol, emitted call symbol, callsite arg types, target map,
+and ABI shape across local strings or ambient maps. The next code slice must
+make that selected consumer read a single owner record in shadow/parity mode
+before any behavior flip. Generated-stage runs are admitted only when they
+answer a transaction-spine yes/no question; otherwise they repeat the crash
+stack selection loop. Backend forwarders, requested-name forcing, target
+keepalive, `NamedTuple`/`Tuple` rendering changes, global ambient-map predicate
+changes, and `BlockOwner` rollback remain rejected.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging

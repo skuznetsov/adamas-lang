@@ -14,7 +14,7 @@ fallbacks, and hard-to-localize bootstrap failures.
 
 ## Active Architecture Board
 
-Status: design-sealed execution board after Slice 0k-AC. This board exists to
+Status: design-sealed execution board after Slice 0k-AD. This board exists to
 prevent the next step from being selected by the latest generated-stage crash
 stack. A next slice is admitted only if it moves one board row by replacing or
 shadowing a named authority edge, producing `CodePathStatus` evidence for a
@@ -25,24 +25,23 @@ named path, or refuting a row with fresher generated-stage evidence.
 | `SemanticStateScope` | `prefer_callsite_specialization` is promoted in shadow/parity mode; emitted behavior still returns the legacy result. | Select a different root-sized consumer with a red/green source-shape gate, or explicitly leave this lane paused. | Reselecting `prefer_callsite_specialization`; wrapping `def_has_untyped_regular_param?` without a separate owner result; changing emitted behavior from the shadow row. |
 | `MaterializationIdentity` / `MaterializationRegistry` | Slice 0k-Z promotes the selected `lower_function_if_needed.symbol_binding` seam in behavior-neutral shadow/parity mode. `scripts/materialization_symbol_binding_admission_report.sh` now reports `already_promoted_shadow` even with `REQUIRE_PROMOTED=1`; keepalive and materialization-ledger consumers read from `MaterializationSymbolBinding` fields instead of recomputing split locals. | Do not flip emitted symbols from this slice. Next movement must either run a generated-stage materialization/symbol-binding classification on the residual full-prelude s2 crash, or select the next root-sized owner consumer with a red/green gate. | Backend undefined-extern rescue; target keepalive as a standalone patch; requested-name forcing; `NamedTuple`/`Tuple` display normalization; global ambient-map predicate changes; `BlockOwner` rollback; treating the green source-shape gate as green `s2b`/`s3b`. |
 | `NameResolution` / `MethodNameCodec` | File identity was fixed; method/symbol identity is still partly rendered-string driven. Slice 0k-V promotes the selected `lower_function_if_needed.exact_lookup_keep_requested_name` seam through `method_name_codec_exact_lookup_keep_requested_name?` in shadow/parity mode; emitted behavior still returns the legacy result. Slice 0k-W pauses standalone promotion-report proliferation. | Either select the next root-sized codec seam with a red/green source-shape gate, or define a generated-stage classification slice that consumes the existing promotion ledger to answer one blocking yes/no decision before changing emitted naming behavior. | String-slice parsing patches at individual callsites; treating rendered names as canonical identity; broad normalization without a falsifier; selecting lower-level helpers before a materialization seam; flipping owner-result behavior from shadow rows; committing another report surface that does not reduce or select an authority edge. |
+| `CallMaterializationTransaction` spine | Slice 0k-AD selects the next correctness axis as one vertical transaction record joining `NameResolution` / `MethodNameCodec`, `SemanticStateScope`, selected definition, requested symbol, target symbol, body/materialized symbol, emitted call symbol, callsite arg types, target map, and ABI shape. No source or behavior has been changed by this selection checkpoint. | Add a red/green source-shape gate for the transaction spine, then a behavior-neutral owner record consumed by exactly one selected call/materialization consumer. | Continuing seam-by-seam shadow migrations without a vertical transaction; generated-stage crash classification that does not answer a transaction yes/no question; backend forwarder or undefined-extern rescue; requested-name forcing; broad `NamedTuple`/`Tuple` rendering changes; another standalone report that does not select a consumer migration. |
 | `InvocationContext` / `InlineYieldFrame` | Slice 0k-AC promotes the selected `lower_super.previous_def.invocation_context` seam in behavior-neutral shadow/parity mode. `scripts/invocation_context_admission_report.sh` now reports `already_promoted_shadow` even with `REQUIRE_PROMOTED=1`; `lower_super` and `lower_previous_def` consume an `InvocationContext` owner fact instead of directly reading ambient owner/method, method-kind, super-source, and forward-policy state. | Do not flip super lookup, previous-def lookup, or argument-forwarding behavior from this slice. Next movement must either classify the residual generated-stage frontier with fresh owner-boundary evidence or select a different root-sized board row with a red/green source-shape gate. | A new `ADAMAS_SUPER_CALL_CONTEXT_LEDGER` report without a decision question; direct `lower_super` guards; changing super lookup or argument forwarding from a crash stack; inline-yield stack resets as a consumer fix; treating the green source-shape gate as green bootstrap evidence. |
 | `AstNodeRef` / `ArenaOwnership` | Explicit-owner lower-call rows and `NodeSlotIntegrity` refuted owner drift, out-of-range ids, and missing slots for the instrumented edge. | Resume only with a named payload/deep-read or uninstrumented-consumer falsifier, including cleanup rules for its ledger. | Lower-call arena routing, broad arena scans, parser allocation rewrites, or another unbounded crash-edge probe. |
 | `CodePathStatus` | `cli.metrics.identity_dry_run` is classified as `debug_only`, not `delete_ready`. | Classify another named path, or run a separate `delete_ready` slice with default-behavior, HIR/MIR/LLVM, bootstrap, and evidence-preservation guards. | Deleting debug/probe/fallback paths from static grep output; using runtime liveness as semantic ownership evidence. |
 
-Default next track: plan the next correctness architecture slice around
-`NameResolution` / `MethodNameCodec` plus `MaterializationIdentity`, because
-the repeated high-cost frontiers are symbol/owner identity failures. A cleanup
+Default next track: implement Slice 0k-AE, a red/green source-shape admission
+gate for the `CallMaterializationTransaction` spine selected by Slice 0k-AD.
+The gate must name one legacy consumer edge that still recomputes or splits the
+transaction facts instead of consuming a single HIR-owned record. A cleanup
 slice remains admitted, but only when the goal is explicitly bloat reduction
 and the selected path has its own `CodePathStatus` falsifier.
 
-Current selected implementation status: `InvocationContext` /
-`InlineYieldFrame`, `lower_super.previous_def.invocation_context` is now
-promoted in shadow/parity mode. This is not a behavior flip and not a green
-bootstrap claim. The fresh stage1 build and full regression suites pass, but no
-generated-s2 full-prelude or `s2b`/`s3b` green claim is made by this slice. The
-residual generated-stage frontier must still be classified through an admitted
-owner-boundary gate before any super, previous-def, materialization, backend,
-or inline-yield behavior patch is admitted.
+Current selected implementation status: docs-only Slice 0k-AD selects the
+vertical call/materialization transaction spine as the next correctness axis.
+This is not a behavior flip and not a green bootstrap claim. It deliberately
+pauses generated-stage crash-stack pursuit unless the next generated-stage run
+answers a specific transaction-spine yes/no question.
 
 Mini-Quadrumvirate gate for every future slice:
 
@@ -4998,6 +4997,107 @@ Next local track:
   shadow migration, or select another active-board row with a red/green gate;
 - do not add another `InvocationContext` report unless the SDD names the
   decision question, cleanup rule, and consumer edge it will reduce or refute.
+
+### Slice 0k-AD: Call/Materialization Transaction Spine checkpoint
+
+Status:
+
+- docs-only architecture selection checkpoint after Slice 0k-AC;
+- no compiler behavior, source code, report script, backend behavior,
+  cleanup behavior, or `BlockOwner` carrier changed;
+- selects the next correctness axis as a vertical
+  `CallMaterializationTransaction` spine rather than another generated-stage
+  crash-stack-local seam.
+
+Problem:
+
+- recent slices correctly promoted several small owner facts in shadow/parity
+  mode, but the repeated expensive bootstrap frontiers still share one broader
+  failure shape: call, selected definition, materialization, emitted call, state
+  scope, name parsing, and ABI facts can disagree because no single transaction
+  owns the decision end to end;
+- continuing seam-by-seam shadow migration without a vertical transaction risks
+  replacing symptom patches with shadow-seam tail-chasing.
+
+Selected owned fact:
+
+```text
+CallMaterializationTransaction {
+  request_name_parts
+  requested_symbol
+  selected_def
+  selected_owner
+  state_scope
+  target_symbol
+  materialization_key
+  body_symbol
+  emitted_call_symbol
+  callsite_arg_types
+  target_type_param_map
+  abi_shape
+  wrapper_forwarder_contract
+  rejection_reason
+}
+```
+
+Old authority edges to reduce:
+
+- rendered-name parsing at individual materialization and lookup callsites;
+- ambient `@type_param_map` / state-scope reads during naming decisions;
+- split requested/target/body/call symbol locals in
+  `lower_function_if_needed_impl`;
+- backend undefined-extern or emitted-call state as the first authority for
+  whether a body/call mismatch is valid;
+- generated-stage crash stacks that select the next patch before the
+  transaction identity question is named.
+
+Next executable slice:
+
+- Slice 0k-AE: add a red/green source-shape gate for this transaction spine;
+- the gate must be red on current source until it proves that exactly one
+  selected legacy consumer still obtains transaction facts from split locals,
+  rendered strings, or ambient maps instead of from a single owner record;
+- the future 0k-AF code slice may only add a behavior-neutral transaction
+  record/helper if that 0k-AE gate exists and names the consumer to migrate.
+
+Stop rules:
+
+- a generated-stage report is not progress unless it answers a
+  transaction-spine yes/no question such as "did requested, selected, target,
+  body, and emitted call agree under one transaction id?";
+- a source-shape report is not progress if it only prints existing ledger rows
+  without selecting a consumer edge;
+- a backend forwarder, requested-name force, target keepalive patch,
+  `NamedTuple`/`Tuple` rendering change, or global ambient-map predicate change
+  remains rejected until it consumes a transaction row and a would-change
+  census proves the affected set is root-sized;
+- `BlockOwner` remains the admitted owner-metadata carrier and must not be
+  rolled back to tuple/namedtuple metadata as part of this slice.
+
+DoD for 0k-AD:
+
+- the Active Architecture Board names `CallMaterializationTransaction` as the
+  selected next correctness axis;
+- `TODO.md`, `LANDMARKS.md`, and
+  `docs/compiler_refactor_architecture_plan.md` point the next executable work
+  at Slice 0k-AE rather than at the latest generated-stage crash;
+- no production code or report script changed in this slice.
+
+Boundary:
+
+- this is a plan/selection checkpoint, not an implementation and not a green
+  full-prelude generated s2, `s2b`, or `s3b` claim;
+- it does not refute the existing Active Board rows. It requires the next
+  correctness move to connect the most relevant rows vertically before any
+  behavior flip.
+
+Next local track:
+
+- implement the 0k-AE source-shape admission gate for one
+  `CallMaterializationTransaction` consumer seam;
+- the likely first seam is still in `lower_function_if_needed_impl`, but the
+  gate must select it by authority edge and source shape, not by memory of the
+  last stub or crash.
 
 ### Slice A: CallResolution boundary
 

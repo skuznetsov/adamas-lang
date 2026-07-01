@@ -12,6 +12,27 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-CALL-MATERIALIZATION-TRANSACTION-SPINE|design-sealed 2026-07-01 {F:0.72 G:0.48 R:0.82}]:
+Slice 0k-AD pauses production-code and generated-stage crash-stack pursuit
+after the `InvocationContext` shadow/parity seam. The next correctness axis is
+now the vertical `CallMaterializationTransaction` spine, not another local seam
+chosen from the latest stack. The selected owned fact must join
+`request_name_parts`, requested symbol, selected definition, state scope,
+target symbol, materialization key, body/materialized symbol, emitted call
+symbol, callsite argument types, target type-param map, ABI shape, and
+wrapper/forwarder status. Evidence: `docs/compiler_architecture_sdd.md` Active
+Architecture Board now names `CallMaterializationTransaction`; Slice 0k-AD
+records the old authority edges to reduce and the next executable slice
+0k-AE. Scope: docs-only design seal; no compiler source, report script,
+backend behavior, cleanup behavior, or `BlockOwner` carrier changed, and no
+green full-prelude generated s2, `s2b`, or `s3b` claim is made. Next work:
+0k-AE must add a red/green source-shape admission gate for exactly one legacy
+consumer that still obtains transaction facts from split locals, rendered
+strings, or ambient maps instead of one owner record. Decay trigger: a future
+source-shape gate selects a different axis, a generated-stage run refutes
+call/materialization transaction identity as relevant, or production code
+changes transaction behavior before the 0k-AE gate exists.
+
 [LM-ARCH-INVOCATION-CONTEXT-SHADOW-SEAM|verified 2026-07-01 {F:0.86 G:0.38 R:0.90}]:
 The selected `InvocationContext / InlineYieldFrame` seam is now promoted in
 behavior-neutral shadow/parity mode. `scripts/invocation_context_admission_report.sh`

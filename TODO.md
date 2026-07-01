@@ -8,6 +8,23 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: paused production-code and generated-stage crash pursuit
+  after the 0k-AC `InvocationContext` seam. Slice 0k-AD is now a docs-only
+  architecture selection checkpoint: the next correctness axis is the vertical
+  `CallMaterializationTransaction` spine, not another seam chosen from the
+  latest generated-stage stack. The owned fact must join request name parts,
+  requested symbol, selected definition, state scope, target symbol,
+  materialization key/body symbol, emitted call symbol, callsite arg types,
+  target type-param map, ABI shape, and wrapper/forwarder status. Next
+  executable work is Slice 0k-AE: add a red/green source-shape admission gate
+  for exactly one legacy consumer that still obtains those facts from split
+  locals, rendered strings, or ambient maps instead of from one owner record.
+  Do not run another generated-stage diagnostic unless it answers a named
+  transaction-spine yes/no question; do not implement backend forwarders,
+  requested-name forcing, target keepalive, `NamedTuple`/`Tuple` rendering
+  normalization, global ambient-map predicate changes, or any `BlockOwner`
+  rollback from this checkpoint.
+
 - 2026-07-01 UPDATE: implemented Slice 0k-AC,
   `InvocationContext` shadow/parity promotion. The selected
   `lower_super.previous_def.invocation_context` seam now has an
