@@ -593,6 +593,21 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   generated-stage reachability owner boundary. No compiler behavior changed and
   no green `s2b`/`s3b` claim is made.
 
+- 2026-07-01 UPDATE: added Slice 0k-L as the concrete 0k-J implementation
+  receipt. This is still docs-only. The admitted next code slice is now
+  specific: at the `lower_function_if_needed.override` seam, replace the direct
+  `state_scope_consumer_def_has_untyped_regular_param?` authority edge with a
+  named shadow/parity helper that builds and consumes an owned
+  `MaterializationDecisionRecord`, returns the legacy boolean for emitted
+  behavior, and emits promotion rows only as evidence. The required next report
+  is `scripts/materialization_override_promotion_report.sh`, red on a
+  pre-slice compiler with no promoted rows and green only if the selected seam
+  no longer calls the old predicate directly, rows are limited to
+  `lower_function_if_needed.override`, owner fields are complete, and
+  `emitted_result == legacy_result`. Do not change owner-result behavior,
+  backend reconciliation, target keepalive, requested-name materialization,
+  remangling, tuple rendering, global ambient-map rules, or `BlockOwner`.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was

@@ -733,6 +733,28 @@ evidence, `CodePathStatus` cleanup becomes the selected track, or fresh
 generated-stage evidence refutes the current MaterializationDecision owner
 route.
 
+[LM-ARCH-OVERRIDE-PROMOTION-RECEIPT|design-sealed 2026-07-01 {F:0.80 G:0.50 R:0.86}]:
+Slice 0k-L records the concrete receipt for the next 0k-J code slice. The
+`old_edge` is the `lower_function_if_needed.override` seam in
+`src/compiler/hir/ast_to_hir.cr`, where `has_untyped_regular_param` currently
+comes from a direct call to
+`state_scope_consumer_def_has_untyped_regular_param?` and then decides
+requested-name vs target-name materialization. The `owned_edge` is an internal
+`MaterializationDecisionRecord` built from the same fields already emitted by
+`[MAT_DECISION]`: consumer/source decision, requested and target names,
+selected definition, param class, state scope, owner, decision, reason, legacy
+result, would-change, target map, call arg types, arg ABI, block ABI, and
+validation. The admitted helper must use that record for shadow/parity input
+but return the legacy boolean for emitted behavior. Required next report:
+`scripts/materialization_override_promotion_report.sh`, red on a pre-slice
+compiler with no promoted override rows, green only with rows limited to
+`lower_function_if_needed.override`, `promotion=shadow_parity`, complete owner
+fields, zero malformed rows, and `emitted_result == legacy_result`. Scope:
+docs-only implementation receipt; no compiler behavior changed and no green
+`s2b`/`s3b` claim. Decay trigger: the helper/report lands, source-shape checks
+refute that this edge can be replaced cleanly, or fresh generated-stage evidence
+invalidates the selected override seam.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

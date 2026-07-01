@@ -3369,6 +3369,140 @@ Next local track:
   explicitly switch to `CodePathStatus` cleanup / generated-stage reachability
   if the receipt cannot be made concrete.
 
+### Slice 0k-L: 0k-J override owner-consumption receipt
+
+Status:
+
+- design-sealed docs-only receipt after Slice 0k-K;
+- no compiler behavior, materialization behavior, remangling behavior, backend
+  behavior, AST-read behavior, cleanup behavior, or `BlockOwner` carrier is
+  changed by this slice;
+- the next code slice is admitted only if it implements this receipt
+  behavior-neutrally.
+
+Receipt:
+
+- `old_edge`:
+  `src/compiler/hir/ast_to_hir.cr` in `lower_function_if_needed_impl`, at the
+  materialization override seam, currently computes
+  `has_untyped_regular_param` by calling
+  `state_scope_consumer_def_has_untyped_regular_param?` directly with
+  consumer `lower_function_if_needed.override`, source decision
+  `materialization_override`, requested name `name`, target `target_name`,
+  selected `resolved_func_def`, and `call_arg_types`. That boolean directly
+  decides whether the materialized function name is the requested call symbol
+  (`name`) or the resolved target symbol (`target_name`).
+- `owned_edge`:
+  extract the existing `[MAT_DECISION]` computation into an owned
+  `MaterializationDecisionRecord` (or equivalently named internal owner object)
+  built from the same facts already printed by
+  `log_materialization_decision`: `consumer`, `source_decision`, `requested`,
+  `target`, `selected_def`, `param_class`, `state_scope`, `owner`, `decision`,
+  `reason`, `legacy_result`, `would_change`, `target_map`, `call_arg_types`,
+  `arg_abi`, `block_abi`, and `validation`. The helper must use this record as
+  its parity/shadow input; it must not recompute authority from backend function
+  presence, rendered-name normalization, or a new ambient-map rule.
+- `legacy_parity`:
+  the first helper returns exactly the legacy boolean used today. The owner
+  record may compute and report an `owner_result`, but emitted behavior must be
+  `legacy_result` until a later behavior slice has a root-sized would-change
+  census admitted by this SDD.
+- `source_shape`:
+  after implementation, the override seam's assignment to
+  `has_untyped_regular_param` must call a named promotion helper such as
+  `materialization_override_shadow_untyped_regular_param?`, not
+  `state_scope_consumer_def_has_untyped_regular_param?` directly. Existing
+  non-promoted consumers may keep their direct calls.
+- `report_shape`:
+  add a focused override promotion report that is red on the pre-slice compiler
+  because no promoted override rows exist, then green with rows only for
+  `lower_function_if_needed.override`. Required row fields are the owned record
+  fields plus `owner_result`, `emitted_result`, and `promotion`. The green gate
+  requires complete owner fields, zero malformed rows, `promotion=shadow_parity`,
+  and `emitted_result == legacy_result`.
+- `generated_stage_boundary`:
+  generated s2 must either emit promoted override rows where the seam is
+  reached or preserve the explicit
+  `generated_stage_status=not_reached_named_residual` /
+  `no_row_reason=generated_s2_crashes_before_materialization_decision`
+  boundary. This remains a residual, not a green bootstrap claim.
+- `cleanup_impact`:
+  this slice does not delete debug/probe/fallback paths. If it discovers stale
+  helper/report paths, it may only mark them as candidates for the
+  `CodePathStatus` track.
+
+Implementation outline for the next code slice:
+
+1. Add an internal `MaterializationDecisionRecord` builder next to the existing
+   `materialization_decision_*` helpers. Reuse it from
+   `log_state_scope_consumer_decision` so existing `[MAT_DECISION]` output stays
+   byte-shape compatible.
+2. Add a named override helper that:
+   - computes `legacy_result = def_has_untyped_regular_param?(resolved_func_def)`;
+   - builds the owner record for
+     `consumer=lower_function_if_needed.override` /
+     `source_decision=materialization_override`;
+   - emits existing state-scope/materialization decision rows through the shared
+     record path when those ledgers are enabled;
+   - emits promotion rows only under the new promotion-report env;
+   - returns `legacy_result` in all cases, including incomplete owner record
+     fallback.
+3. Replace only the override seam's direct call with that helper. Do not change
+   `prefer_callsite_specialization`, `lower_function_if_needed.callsite_args`,
+   `lower_function_if_needed.suffix_types`, `lower_call.remangle`, direct
+   predicate behavior, remangling, target keepalive, requested-name
+   materialization, or backend behavior.
+4. Add `scripts/materialization_override_promotion_report.sh` as the executable
+   red/green gate and source-shape check for this receipt.
+
+DoD for the next code slice:
+
+- red first:
+  `CHECK_SOURCE_SHAPE=0 scripts/materialization_override_promotion_report.sh
+  <pre-slice-compiler>` fails with no `[MAT_PROMOTION]` override rows;
+- focused green:
+  `scripts/materialization_override_promotion_report.sh <fresh-stage1>` exits
+  `0` with rows only for `lower_function_if_needed.override`,
+  `promotion=shadow_parity`, malformed/invalid counts at zero, and
+  `emitted_result == legacy_result`;
+- source-shape:
+  the report or a paired static check proves the override seam calls the named
+  helper and no longer calls
+  `state_scope_consumer_def_has_untyped_regular_param?` directly;
+- compatibility:
+  `scripts/materialization_decision_report.sh <fresh-stage1>`,
+  `scripts/materialization_promotion_selection_report.sh <fresh-stage1>`,
+  `scripts/state_scope_consumer_report.sh <fresh-stage1>`,
+  `scripts/semantic_decision_census.sh`, and
+  `scripts/codepath_status_census.sh` all exit `0`;
+- generated-stage residual:
+  generated s2 either emits promoted rows on the focused report or reports the
+  named `not_reached_named_residual` boundary with `ALLOW_NO_ROWS=1`;
+- broad guard:
+  run the existing focused regression suite appropriate to a behavior-neutral
+  HIR helper refactor. If the helper touches only reporting/shape, `git diff
+  --check` plus the report suite above is the minimum; if any compiler semantic
+  path changes beyond returning the legacy boolean, run the full combined suite.
+
+Rejected implementation shortcuts:
+
+- returning the owner result from the helper in this slice;
+- changing the old predicate globally or passing a broad boolean flag through it;
+- adding a promotion row while leaving the override seam's authority path
+  unchanged;
+- adding backend reconciliation, keepalive, forwarder, requested-name
+  materialization, remangle, or tuple-rendering changes to make the report
+  greener;
+- treating generated-stage `compiler_rc=139` as failure of the selected
+  receipt unless the generated-stage rows reach and contradict the promoted
+  seam.
+
+Next local track:
+
+- implement this receipt as the next code slice, or stop and switch tracks if
+  the source-shape/report preflight proves the helper would not actually replace
+  the override seam's authority edge.
+
 ### Slice A: CallResolution boundary
 
 Source/spec:
