@@ -8,6 +8,31 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: implemented Slice 0k-AM,
+  behavior-neutral `CallMaterializationTransaction` contract consumer for the
+  selected 0k-AJ transaction/emission edge. HIR now stores
+  `MaterializationTransactionContract` facts by transaction id; HIR-to-MIR
+  attaches `MaterializationContractFacts` to transaction-bound `Call` and
+  `ExternCall`; backend `[MAT_EMIT]` rows print those contract fields
+  mechanically; optimizer call replacement preserves both transaction id and
+  contract metadata. No emitted call target, body materialization, backend
+  forwarder, requested-name policy, target keepalive policy, ambient-map policy,
+  `NamedTuple`/`Tuple` rendering, or `BlockOwner` carrier changed. Fresh
+  generated-stage evidence with a fresh stage1 reports
+  `classifier_classification=reached_tx_and_emit`, `mat_tx_rows=735`,
+  `mat_emit_rows=173`, `transaction_bound_emit_rows=68`,
+  `candidate_selected_rows=0`, `contract_consumer_rows=2`,
+  `candidate_contract_consumer_rows=2`, `contract_mismatch_rows=0`,
+  `selection_status=eligible_contract_consumer_state`, and
+  `post_consumer_state=selected_consumed_by_contract_consumer`. Full suites pass
+  `152/152 + 36/36`. The 0k-AJ selected edge is now consumed, not a behavior
+  fix target. Next admitted slice: select the next reached transaction/emission
+  edge, likely by splitting the broad exact-contract missing-body residual
+  (`other_missing_body_rows=14`) into a root-sized class before any behavior
+  change. Do not add backend forwarders, keep target bodies alive, force
+  requested names, normalize `NamedTuple`/`Tuple`, globally change ambient-map
+  policy, patch the segfault directly, or roll back `BlockOwner`.
+
 - 2026-07-01 UPDATE: implemented Slice 0k-AL,
   executable post-consumer state gate for the generated-stage transaction edge
   selector. `scripts/generated_stage_transaction_edge_selection_report.sh` now

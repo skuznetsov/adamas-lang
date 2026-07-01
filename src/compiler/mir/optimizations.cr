@@ -1560,11 +1560,20 @@ module Adamas::MIR
       when Call
         new_args = inst.args.map { |a| resolve(a, replacements, block_id, inst_index, def_blocks, def_index, dominance_info) }
         return inst if new_args == inst.args
-        Call.new(inst.id, inst.type, inst.callee, new_args)
+        copy = Call.new(inst.id, inst.type, inst.callee, new_args, inst.materialization_tx_id, inst.materialization_contract)
+        copy.array_bulk_op = inst.array_bulk_op
+        copy.array_bulk_stride = inst.array_bulk_stride
+        copy.array_bulk_logical_count = inst.array_bulk_logical_count
+        copy.cnarrow_a_candidate = inst.cnarrow_a_candidate
+        copy
       when ExternCall
         new_args = inst.args.map { |a| resolve(a, replacements, block_id, inst_index, def_blocks, def_index, dominance_info) }
         return inst if new_args == inst.args
-        ExternCall.new(inst.id, inst.type, inst.extern_name, new_args)
+        copy = ExternCall.new(inst.id, inst.type, inst.extern_name, new_args, inst.materialization_tx_id, inst.materialization_contract)
+        copy.array_bulk_op = inst.array_bulk_op
+        copy.array_bulk_stride = inst.array_bulk_stride
+        copy.array_bulk_logical_count = inst.array_bulk_logical_count
+        copy
       when AddressOf
         operand = resolve(inst.operand, replacements, block_id, inst_index, def_blocks, def_index, dominance_info)
         return inst if operand == inst.operand

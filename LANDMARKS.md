@@ -12,6 +12,33 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-AM-CONTRACT-CONSUMER|verified 2026-07-01 {F:0.88 G:0.44 R:0.90}]:
+Slice 0k-AM implements the behavior-neutral `CallMaterializationTransaction`
+contract consumer for the selected 0k-AJ transaction/emission edge. HIR now
+stores `MaterializationTransactionContract` facts by transaction id; HIR-to-MIR
+attaches `MaterializationContractFacts` to transaction-bound `Call` and
+`ExternCall`; backend `[MAT_EMIT]` rows print those contract fields
+mechanically; optimizer call replacement preserves both transaction id and
+contract metadata. This changes ledger authority only: no emitted call target,
+body materialization, backend forwarder, requested-name policy, target keepalive
+policy, ambient-map policy, `NamedTuple`/`Tuple` rendering, cleanup behavior, or
+`BlockOwner` carrier changed. Fresh generated-stage evidence with a fresh
+stage1 reports `classifier_classification=reached_tx_and_emit`,
+`mat_tx_rows=735`, `mat_emit_rows=173`, `transaction_bound_emit_rows=68`,
+`candidate_selected_rows=0`, `contract_consumer_rows=2`,
+`candidate_contract_consumer_rows=2`, `contract_mismatch_rows=0`,
+`selection_status=eligible_contract_consumer_state`, and
+`post_consumer_state=selected_consumed_by_contract_consumer`. Broader guard:
+full suites pass `152/152 + 36/36`. Decision: the 0k-AJ selected edge is now
+consumed, not a behavior-fix target. Next admitted slice must select the next
+reached transaction/emission edge, likely by splitting the broad exact-contract
+missing-body residual (`other_missing_body_rows=14`) into a root-sized class
+before any behavior change. Scope: metadata/ledger authority migration only; no
+green `s2b`/`s3b` claim. Decay trigger: a fresh generated-stage gate no longer
+reports `selected_consumed_by_contract_consumer`, contract mismatches appear,
+optimizer copies drop contract metadata, or future generated-stage evidence
+refutes `CallMaterializationTransaction` as the active owner boundary.
+
 [LM-ARCH-0K-AL-POST-CONSUMER-STATE-GATE|verified 2026-07-01 {F:0.86 G:0.42 R:0.88}]:
 Slice 0k-AL makes the 0k-AK post-consumer selector-state rule executable.
 `scripts/generated_stage_transaction_edge_selection_report.sh` now prints

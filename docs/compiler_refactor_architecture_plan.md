@@ -329,6 +329,16 @@ behavior-neutral transaction contract consumer. Its DoD is the state transition
 to `selected_consumed_by_contract_consumer`, not a behavior fix or backend
 rescue.
 
+2026-07-01 post-0k-AM implementation note: the behavior-neutral transaction
+contract consumer is now landed. HIR owns the transaction contract facts by
+transaction id, MIR `Call`/`ExternCall` carry them as metadata, backend
+`[MAT_EMIT]` rows print them, and optimizer call copies preserve them. The fresh
+generated-stage gate is `selected_consumed_by_contract_consumer` with
+`contract_mismatch_rows=0`, and full suites pass. The next architecture step is
+not to patch the old wrapper/remap symptom. That edge is consumed. Re-select the
+next reached transaction/emission edge, with the current broad residual being
+exact-contract missing-body emits that must be split before any behavior change.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging

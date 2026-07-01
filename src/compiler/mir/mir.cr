@@ -192,6 +192,23 @@ module Adamas::MIR
     UnsupportedOp       # a bulk op the rewrite does not (yet) handle
   end
 
+  struct MaterializationContractFacts
+    getter required_contract : String
+    getter body_symbol : String
+    getter call_symbol_hint : String
+    getter symbol_relation : String
+    getter identity_status : String
+
+    def initialize(
+      @required_contract : String,
+      @body_symbol : String,
+      @call_symbol_hint : String,
+      @symbol_relation : String,
+      @identity_status : String,
+    )
+    end
+  end
+
   # ═══════════════════════════════════════════════════════════════════════════
   # FIELD - Struct/class field definition
   # ═══════════════════════════════════════════════════════════════════════════
@@ -1730,6 +1747,7 @@ module Adamas::MIR
     getter callee : FunctionId
     getter args : Array(ValueId)
     property materialization_tx_id : String? = nil
+    property materialization_contract : MaterializationContractFacts? = nil
 
     # A' mini-AbiFacts: durable per-site classification of an Array(C) @buffer bulk
     # op that lowers as a Call to a shared `Pointer(C)#` body (clear / move_from /
@@ -1760,6 +1778,7 @@ module Adamas::MIR
       @callee : FunctionId,
       @args : Array(ValueId),
       @materialization_tx_id : String? = nil,
+      @materialization_contract : MaterializationContractFacts? = nil,
     )
       super(id, type)
     end
@@ -1783,6 +1802,7 @@ module Adamas::MIR
     getter extern_name : String
     getter args : Array(ValueId)
     property materialization_tx_id : String? = nil
+    property materialization_contract : MaterializationContractFacts? = nil
 
     # A' mini-AbiFacts: durable per-site classification of an Array(C) @buffer bulk
     # op (memmove/memcpy/memset/malloc/realloc) found inside a monomorphic Array(C)#
@@ -1808,6 +1828,7 @@ module Adamas::MIR
       @extern_name : String,
       @args : Array(ValueId),
       @materialization_tx_id : String? = nil,
+      @materialization_contract : MaterializationContractFacts? = nil,
     )
       super(id, type)
     end
@@ -2739,8 +2760,9 @@ module Adamas::MIR
       args : Array(ValueId),
       return_type : TypeRef,
       materialization_tx_id : String? = nil,
+      materialization_contract : MaterializationContractFacts? = nil,
     ) : ValueId
-      emit(Call.new(@function.next_value_id, return_type, callee, args, materialization_tx_id))
+      emit(Call.new(@function.next_value_id, return_type, callee, args, materialization_tx_id, materialization_contract))
     end
 
     def call_indirect(callee_ptr : ValueId, args : Array(ValueId), return_type : TypeRef, unwrap_union_args : Bool = true) : ValueId
@@ -2752,8 +2774,9 @@ module Adamas::MIR
       args : Array(ValueId),
       return_type : TypeRef,
       materialization_tx_id : String? = nil,
+      materialization_contract : MaterializationContractFacts? = nil,
     ) : ValueId
-      emit(ExternCall.new(@function.next_value_id, return_type, extern_name, args, materialization_tx_id))
+      emit(ExternCall.new(@function.next_value_id, return_type, extern_name, args, materialization_tx_id, materialization_contract))
     end
 
     # Union operations

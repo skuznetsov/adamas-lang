@@ -14,7 +14,7 @@ fallbacks, and hard-to-localize bootstrap failures.
 
 ## Active Architecture Board
 
-Status: execution board after Slice 0k-AL. This board exists to
+Status: execution board after Slice 0k-AM. This board exists to
 prevent the next step from being selected by the latest generated-stage crash
 stack. A next slice is admitted only if it moves one board row by replacing or
 shadowing a named authority edge, producing `CodePathStatus` evidence for a
@@ -25,24 +25,23 @@ named path, or refuting a row with fresher generated-stage evidence.
 | `SemanticStateScope` | `prefer_callsite_specialization` is promoted in shadow/parity mode; emitted behavior still returns the legacy result. | Select a different root-sized consumer with a red/green source-shape gate, or explicitly leave this lane paused. | Reselecting `prefer_callsite_specialization`; wrapping `def_has_untyped_regular_param?` without a separate owner result; changing emitted behavior from the shadow row. |
 | `MaterializationIdentity` / `MaterializationRegistry` | Slice 0k-Z promotes the selected `lower_function_if_needed.symbol_binding` seam in behavior-neutral shadow/parity mode. `scripts/materialization_symbol_binding_admission_report.sh` now reports `already_promoted_shadow` even with `REQUIRE_PROMOTED=1`; keepalive and materialization-ledger consumers read from `MaterializationSymbolBinding` fields instead of recomputing split locals. | Do not flip emitted symbols from this slice. Next movement must either run a generated-stage materialization/symbol-binding classification on the residual full-prelude s2 crash, or select the next root-sized owner consumer with a red/green gate. | Backend undefined-extern rescue; target keepalive as a standalone patch; requested-name forcing; `NamedTuple`/`Tuple` display normalization; global ambient-map predicate changes; `BlockOwner` rollback; treating the green source-shape gate as green `s2b`/`s3b`. |
 | `NameResolution` / `MethodNameCodec` | File identity was fixed; method/symbol identity is still partly rendered-string driven. Slice 0k-V promotes the selected `lower_function_if_needed.exact_lookup_keep_requested_name` seam through `method_name_codec_exact_lookup_keep_requested_name?` in shadow/parity mode; emitted behavior still returns the legacy result. Slice 0k-W pauses standalone promotion-report proliferation. | Either select the next root-sized codec seam with a red/green source-shape gate, or define a generated-stage classification slice that consumes the existing promotion ledger to answer one blocking yes/no decision before changing emitted naming behavior. | String-slice parsing patches at individual callsites; treating rendered names as canonical identity; broad normalization without a falsifier; selecting lower-level helpers before a materialization seam; flipping owner-result behavior from shadow rows; committing another report surface that does not reduce or select an authority edge. |
-| `CallMaterializationTransaction` spine | Slice 0k-AJ selects the reached transaction/emission edge `call_materialization.wrapper_or_call_remap.extern_missing_body`. Slice 0k-AK adds the docs stop rule for post-consumer selector decay. Slice 0k-AL makes that rule executable: `scripts/generated_stage_transaction_edge_selection_report.sh` now reports `post_consumer_state`. Fresh generated-stage evidence reports `selection_status=eligible_reached_transaction_emission_edge`, `post_consumer_state=selected_not_consumed`, `candidate_selected_rows=4`, `candidate_selected_distinct_txs=3`, `contract_consumer_rows=0`, and `contract_mismatch_rows=0`. | Implement the behavior-neutral consumer for this selected edge. The expected post-consumer proof is no longer "make old `REQUIRE_SELECTED=1` green"; it is `post_consumer_state=selected_consumed_by_contract_consumer` with zero contract mismatches, proving downstream emission reads the HIR-owned transaction contract without requiring backend semantic reconstruction. | Treating a stale selector as a failure to patch around; making the selector green by redefining rows after the fact; treating transaction construction as sufficient while consumers still bypass it through older locals; mechanically reducing `residual_legacy_edge_count` without generated-stage reachability evidence; behavior-patching the segfault before selecting the reached transaction/emission edge; backend forwarder or undefined-extern rescue; requested-name forcing; broad `NamedTuple`/`Tuple` rendering changes; another standalone report that does not select a consumer migration. |
+| `CallMaterializationTransaction` spine | Slice 0k-AJ selects the reached transaction/emission edge `call_materialization.wrapper_or_call_remap.extern_missing_body`. Slice 0k-AK adds the docs stop rule for post-consumer selector decay. Slice 0k-AL makes that rule executable. Slice 0k-AM implements the behavior-neutral consumer: HIR stores transaction contract facts by tx id, HIR-to-MIR attaches them to transaction-bound `Call`/`ExternCall`, backend `[MAT_EMIT]` logs them mechanically, and optimizer replacement preserves them. Fresh generated-stage evidence reports `post_consumer_state=selected_consumed_by_contract_consumer`, `contract_consumer_rows=2`, `candidate_contract_consumer_rows=2`, `contract_mismatch_rows=0`, and `candidate_selected_rows=0`. | The 0k-AJ selected edge is consumed. The next movement must re-select a new reached edge or switch board rows; current broad residual is `other_missing_body_rows=14` exact-contract missing-body emits, so the next gate must split/select a root-sized exact missing-body class before any behavior change. | Treating consumed edge disappearance as failure; making old `REQUIRE_SELECTED=1` green by redefining rows; behavior-patching the new exact missing-body residual without a selector; backend forwarder or undefined-extern rescue; requested-name forcing; broad `NamedTuple`/`Tuple` rendering changes; global ambient-map policy changes; `BlockOwner` rollback; another standalone report that does not select a consumer migration. |
 | `InvocationContext` / `InlineYieldFrame` | Slice 0k-AC promotes the selected `lower_super.previous_def.invocation_context` seam in behavior-neutral shadow/parity mode. `scripts/invocation_context_admission_report.sh` now reports `already_promoted_shadow` even with `REQUIRE_PROMOTED=1`; `lower_super` and `lower_previous_def` consume an `InvocationContext` owner fact instead of directly reading ambient owner/method, method-kind, super-source, and forward-policy state. | Do not flip super lookup, previous-def lookup, or argument-forwarding behavior from this slice. Next movement must either classify the residual generated-stage frontier with fresh owner-boundary evidence or select a different root-sized board row with a red/green source-shape gate. | A new `ADAMAS_SUPER_CALL_CONTEXT_LEDGER` report without a decision question; direct `lower_super` guards; changing super lookup or argument forwarding from a crash stack; inline-yield stack resets as a consumer fix; treating the green source-shape gate as green bootstrap evidence. |
 | `AstNodeRef` / `ArenaOwnership` | Explicit-owner lower-call rows and `NodeSlotIntegrity` refuted owner drift, out-of-range ids, and missing slots for the instrumented edge. | Resume only with a named payload/deep-read or uninstrumented-consumer falsifier, including cleanup rules for its ledger. | Lower-call arena routing, broad arena scans, parser allocation rewrites, or another unbounded crash-edge probe. |
 | `CodePathStatus` | `cli.metrics.identity_dry_run` is classified as `debug_only`, not `delete_ready`. | Classify another named path, or run a separate `delete_ready` slice with default-behavior, HIR/MIR/LLVM, bootstrap, and evidence-preservation guards. | Deleting debug/probe/fallback paths from static grep output; using runtime liveness as semantic ownership evidence. |
 
-Default next track after Slice 0k-AL: implement the behavior-neutral
-`CallMaterializationTransaction` contract consumer for the selected
-`call_materialization.wrapper_or_call_remap.extern_missing_body` edge. The
-movement is admitted only as metadata/authority migration: no emitted behavior,
-backend forwarder, requested-name force, target keepalive, direct segfault
-patch, broad normalization, ambient-map policy change, or `BlockOwner` carrier
-change. The DoD is the new post-consumer state gate:
-`REQUIRE_POST_CONSUMER_STATE=selected_consumed_by_contract_consumer` with zero
-contract mismatches. If the future consumer instead reports
-`selected_refuted_or_stale`, return to the board rather than redefining rows
-until the old selector is green. A cleanup slice remains admitted only when the
-goal is explicitly bloat reduction and the selected path has its own
-`CodePathStatus` falsifier.
+Default next track after Slice 0k-AM: the selected
+`wrapper_or_call_remap.extern_missing_body` edge is consumed, not fixed by a
+behavior change. Do not implement a backend forwarder or requested-name/materialized-body
+repair from this consumed edge. The next executable architecture slice must
+select the next reached transaction/emission edge. The current generated-stage
+residual signal is broad exact-contract missing-body emission
+(`other_missing_body_rows=14`), so the next selector must split by owner,
+branch, emitted symbol, ABI shape, or another HIR-owned transaction fact until
+the selected class is root-sized and has an explicit old authority edge to
+replace or shadow. A cleanup slice remains admitted only when the goal is
+explicitly bloat reduction and the selected path has its own `CodePathStatus`
+falsifier.
 
 Current selected implementation status: Slice 0k-AH is a behavior-neutral
 consumer migration. Instance-method override, keepalive, and diagnostic
@@ -133,6 +132,22 @@ A fresh generated-stage corridor using a freshly built stage1 reports
 and `post_consumer_state=selected_not_consumed`. This is executable permission
 for the next behavior-neutral consumer slice, not permission for a behavior
 fix.
+
+Executed result after Slice 0k-AM: the behavior-neutral contract consumer is
+implemented. The HIR module records `MaterializationTransactionContract` facts
+by transaction id, HIR-to-MIR lowers them into `MaterializationContractFacts` on
+transaction-bound `Call` and `ExternCall`, backend `[MAT_EMIT]` prints the
+contract fields, and MIR optimizer call copies preserve both transaction id and
+contract metadata. A fresh generated-stage corridor reports
+`classifier_classification=reached_tx_and_emit`, `mat_tx_rows=735`,
+`mat_emit_rows=173`, `transaction_bound_emit_rows=68`,
+`candidate_selected_rows=0`, `contract_consumer_rows=2`,
+`candidate_contract_consumer_rows=2`, `contract_mismatch_rows=0`,
+`selection_status=eligible_contract_consumer_state`, and
+`post_consumer_state=selected_consumed_by_contract_consumer`. The old selected
+edge is therefore consumed. Remaining generated-stage residual includes
+`other_missing_body_rows=14` exact-contract missing-body rows, which is too
+broad for a behavior patch and requires a new selector.
 
 Mini-Quadrumvirate gate for every future slice:
 
@@ -5633,6 +5648,10 @@ Measured evidence:
 - `scripts/generated_stage_transaction_edge_selection_report.sh --help` prints
   the selector contract;
 - `bash -n scripts/generated_stage_transaction_edge_selection_report.sh` passes.
+- Superseded continuation: Slice 0k-AM consumes this selected edge in
+  behavior-neutral metadata mode. After 0k-AM, the expected gate is
+  `REQUIRE_POST_CONSUMER_STATE=selected_consumed_by_contract_consumer`, not
+  old `REQUIRE_SELECTED=1`.
 
 Decision:
 
@@ -5656,14 +5675,10 @@ Boundary:
 
 Next local track:
 
-- superseded by the 0k-AK checkpoint above: before implementing a
-  shadow/parity consumer for the selected contract class, define the
-  post-consumer selector states and refresh this row's DoD;
-- after that refresh, the consumer gate must prove that downstream emission
-  reads the HIR-owned transaction contract instead of recomputing the old
-  backend emission authority;
-- if the consumer gate is not root-sized, pause production code and split the
-  edge more narrowly rather than broadening the backend.
+- superseded by the 0k-AM consumer above: the selected contract class is now
+  consumed by downstream emission metadata, and the next work is to select the
+  next reached transaction/emission edge;
+- do not reuse this historical selected edge as a behavior-fix license.
 
 ### Slice A: CallResolution boundary
 

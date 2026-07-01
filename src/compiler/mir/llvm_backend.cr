@@ -21171,11 +21171,17 @@ module Adamas::MIR
       ret : String,
       arg_types : Array(String),
       body_present : Bool,
+      contract : MaterializationContractFacts? = nil,
     ) : Nil
       return unless materialization_emit_ledger_enabled?
 
       arg_token = materialization_emit_token(arg_types.join(","))
-      STDERR.puts "[MAT_EMIT] tx=#{materialization_emit_token(tx_id)} kind=#{materialization_emit_token(kind)} emitted=#{materialization_emit_token(emitted)} ret=#{materialization_emit_token(ret)} argc=#{arg_types.size} arg_types=#{arg_token} body_present=#{body_present ? 1 : 0}"
+      required_contract = contract.try(&.required_contract)
+      body_symbol = contract.try(&.body_symbol)
+      call_symbol_hint = contract.try(&.call_symbol_hint)
+      symbol_relation = contract.try(&.symbol_relation)
+      identity_status = contract.try(&.identity_status)
+      STDERR.puts "[MAT_EMIT] tx=#{materialization_emit_token(tx_id)} kind=#{materialization_emit_token(kind)} emitted=#{materialization_emit_token(emitted)} ret=#{materialization_emit_token(ret)} argc=#{arg_types.size} arg_types=#{arg_token} body_present=#{body_present ? 1 : 0} required_contract=#{materialization_emit_token(required_contract)} body_symbol=#{materialization_emit_token(body_symbol)} call_symbol_hint=#{materialization_emit_token(call_symbol_hint)} symbol_relation=#{materialization_emit_token(symbol_relation)} identity_status=#{materialization_emit_token(identity_status)}"
     end
 
     private def emit_call(inst : Call, name : String, func : Function)
@@ -22677,7 +22683,8 @@ module Adamas::MIR
         callee_name,
         return_type == "void" ? "ptr" : return_type,
         arg_type_strs,
-        !!callee_func || @func_by_name.has_key?(callee_name)
+        !!callee_func || @func_by_name.has_key?(callee_name),
+        inst.materialization_contract
       )
       @called_crystal_functions[callee_name] = {(return_type == "void" ? "ptr" : return_type), arg_type_strs.size, arg_type_strs}
     end
@@ -23709,7 +23716,8 @@ module Adamas::MIR
         mangled_extern_name,
         return_type == "void" ? "ptr" : return_type,
         extern_arg_types,
-        !!matching_func || @func_by_name.has_key?(mangled_extern_name)
+        !!matching_func || @func_by_name.has_key?(mangled_extern_name),
+        inst.materialization_contract
       )
       @called_crystal_functions[mangled_extern_name] = {(return_type == "void" ? "ptr" : return_type), extern_arg_types.size, extern_arg_types}
     end

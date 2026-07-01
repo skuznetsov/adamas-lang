@@ -6365,19 +6365,34 @@ module Adamas
       # ─────────────────────────────────────────────────────────────────────────
 
       # Lower HIR::ExternCall to MIR::ExternCall (direct C function call)
+      private def materialization_contract_facts_for(tx_id : String?) : MaterializationContractFacts?
+        contract = @hir_module.materialization_transaction_contract_for_id(tx_id)
+        return nil unless contract
+
+        MaterializationContractFacts.new(
+          contract.required_contract,
+          contract.body_symbol,
+          contract.call_symbol_hint,
+          contract.symbol_relation,
+          contract.identity_status
+        )
+      end
+
       private def lower_hir_extern_call(extern_call : HIR::ExternCall) : ValueId
         builder = @builder.not_nil!
 
         # Get arguments
         args = extern_call.args.map { |arg| get_value(arg) }
         materialization_tx_id = @hir_module.materialization_transaction_id_for_call_symbol(extern_call.extern_name)
+        materialization_contract = materialization_contract_facts_for(materialization_tx_id)
 
         # Emit MIR extern_call with the real C function name
         builder.extern_call(
           extern_call.extern_name,
           args,
           convert_type(extern_call.type),
-          materialization_tx_id: materialization_tx_id
+          materialization_tx_id: materialization_tx_id,
+          materialization_contract: materialization_contract
         )
       end
 
@@ -6385,6 +6400,7 @@ module Adamas
         builder = @builder.not_nil!
         debug_virtual = ENV.has_key?("DEBUG_VIRTUAL_CALLS")
         materialization_tx_id = @hir_module.materialization_transaction_id_for_call_symbol(call.method_name)
+        materialization_contract = materialization_contract_facts_for(materialization_tx_id)
 
         # Get arguments
         begin
@@ -6410,7 +6426,7 @@ module Adamas
               elsif call_return_type == TypeRef::VOID && hir_call_return_type != TypeRef::VOID
                 call_return_type = hir_call_return_type
               end
-              return builder.call(exact_static_func.id, coerced_args, call_return_type, materialization_tx_id: materialization_tx_id)
+              return builder.call(exact_static_func.id, coerced_args, call_return_type, materialization_tx_id: materialization_tx_id, materialization_contract: materialization_contract)
             end
           end
         end
@@ -6478,7 +6494,7 @@ module Adamas
             elsif call_return_type == TypeRef::VOID && hir_call_return_type != TypeRef::VOID
               call_return_type = hir_call_return_type
             end
-            return builder.call(exact_func.id, coerced_args, call_return_type, materialization_tx_id: materialization_tx_id)
+            return builder.call(exact_func.id, coerced_args, call_return_type, materialization_tx_id: materialization_tx_id, materialization_contract: materialization_contract)
           end
         end
 
@@ -6937,7 +6953,7 @@ module Adamas
             elsif call_return_type == TypeRef::VOID && hir_call_return_type != TypeRef::VOID
               call_return_type = hir_call_return_type
             end
-            return builder.call(callee_id, coerced_args, call_return_type, materialization_tx_id: materialization_tx_id)
+            return builder.call(callee_id, coerced_args, call_return_type, materialization_tx_id: materialization_tx_id, materialization_contract: materialization_contract)
           else
             effective_args = args
             effective_hir_args = hir_args_for_coerce
@@ -6960,7 +6976,7 @@ module Adamas
             elsif call_return_type == TypeRef::VOID && hir_call_return_type != TypeRef::VOID
               call_return_type = hir_call_return_type
             end
-            return builder.call(callee_id, coerced_args, call_return_type, materialization_tx_id: materialization_tx_id)
+            return builder.call(callee_id, coerced_args, call_return_type, materialization_tx_id: materialization_tx_id, materialization_contract: materialization_contract)
           end
         end
 
@@ -7068,7 +7084,7 @@ module Adamas
             if call_return_type == TypeRef::VOID && hir_call_return_type != TypeRef::VOID
               call_return_type = hir_call_return_type
             end
-            return builder.call(func.id, coerced_args, call_return_type, materialization_tx_id: materialization_tx_id)
+            return builder.call(func.id, coerced_args, call_return_type, materialization_tx_id: materialization_tx_id, materialization_contract: materialization_contract)
           end
         end
         if ENV.has_key?("ADAMAS_UNRESOLVED_CALL_TRACE")
@@ -7113,7 +7129,7 @@ module Adamas
             return builder.const_nil_typed(extern_return_type)
           end
         end
-        builder.extern_call(call.method_name, args, extern_return_type, materialization_tx_id: materialization_tx_id)
+        builder.extern_call(call.method_name, args, extern_return_type, materialization_tx_id: materialization_tx_id, materialization_contract: materialization_contract)
       end
 
       private def extract_method_suffix_loose(full_name : String) : String?

@@ -32,6 +32,23 @@ module Adamas::HIR
   # Unique ID for interned strings
   alias StringId = UInt32
 
+  struct MaterializationTransactionContract
+    getter required_contract : String
+    getter body_symbol : String
+    getter call_symbol_hint : String
+    getter symbol_relation : String
+    getter identity_status : String
+
+    def initialize(
+      @required_contract : String,
+      @body_symbol : String,
+      @call_symbol_hint : String,
+      @symbol_relation : String,
+      @identity_status : String,
+    )
+    end
+  end
+
   def self.write_value_id_list(io : IO, ids : Array(ValueId), separator : String = ", ") : Nil
     first = true
     ids.each do |id|
@@ -1970,6 +1987,7 @@ module Adamas::HIR
     getter virtual_dispatch_target_functions : Set(String)
     getter materialization_keepalive_functions : Set(String)
     getter materialization_transaction_ids_by_call_symbol : Hash(String, String)
+    getter materialization_transaction_contracts_by_id : Hash(String, MaterializationTransactionContract)
     getter lib_names : Set(String)
     getter lib_structs : Set(String)
     getter primitive_methods : Hash(String, String)
@@ -2007,6 +2025,7 @@ module Adamas::HIR
       @virtual_dispatch_target_functions = Set(String).new
       @materialization_keepalive_functions = Set(String).new
       @materialization_transaction_ids_by_call_symbol = {} of String => String
+      @materialization_transaction_contracts_by_id = {} of String => MaterializationTransactionContract
       @lib_names = Set(String).new
       @lib_structs = Set(String).new
       @primitive_methods = {} of String => String
@@ -2041,6 +2060,7 @@ module Adamas::HIR
       @module_includers = {} of String => Array(String)
       @materialization_keepalive_functions = Set(String).new
       @materialization_transaction_ids_by_call_symbol = {} of String => String
+      @materialization_transaction_contracts_by_id = {} of String => MaterializationTransactionContract
       @lib_names = Set(String).new
       @lib_structs = Set(String).new
       @primitive_methods = {} of String => String
@@ -2112,14 +2132,37 @@ module Adamas::HIR
       @materialization_keepalive_functions << name unless name.empty?
     end
 
-    def remember_materialization_transaction(call_symbol : String, tx_id : String) : Nil
+    def remember_materialization_transaction(
+      call_symbol : String,
+      tx_id : String,
+      required_contract : String? = nil,
+      body_symbol : String? = nil,
+      call_symbol_hint : String? = nil,
+      symbol_relation : String? = nil,
+      identity_status : String? = nil,
+    ) : Nil
       return if call_symbol.empty? || tx_id.empty?
 
       @materialization_transaction_ids_by_call_symbol[call_symbol] ||= tx_id
+      if required_contract && body_symbol && call_symbol_hint && symbol_relation && identity_status
+        @materialization_transaction_contracts_by_id[tx_id] ||= MaterializationTransactionContract.new(
+          required_contract,
+          body_symbol,
+          call_symbol_hint,
+          symbol_relation,
+          identity_status
+        )
+      end
     end
 
     def materialization_transaction_id_for_call_symbol(call_symbol : String) : String?
       @materialization_transaction_ids_by_call_symbol[call_symbol]?
+    end
+
+    def materialization_transaction_contract_for_id(tx_id : String?) : MaterializationTransactionContract?
+      return nil unless tx_id
+
+      @materialization_transaction_contracts_by_id[tx_id]?
     end
 
     def register_primitive(name : String, kind : String) : Nil
