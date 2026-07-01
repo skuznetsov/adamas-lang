@@ -2554,6 +2554,10 @@ module Adamas::HIR
       env_has?("ADAMAS_SEMANTIC_STATE_SCOPE_PROMOTION_LEDGER")
     end
 
+    private def method_name_codec_promotion_ledger_enabled? : Bool
+      env_has?("ADAMAS_METHOD_NAME_CODEC_PROMOTION_LEDGER")
+    end
+
     private class MaterializationDecisionRecord
       getter consumer : String
       getter source_decision : String
@@ -3129,6 +3133,80 @@ module Adamas::HIR
             "callsite_specialization"
           )
         )
+      end
+
+      legacy_result
+    end
+
+    private def method_name_codec_arity_wildcard_suffix?(suffix : String?) : Bool
+      return false unless suffix
+
+      suffix.starts_with?("arity")
+    end
+
+    private def method_name_codec_concrete_type_suffix?(parts : MethodNameParts) : Bool
+      if suffix = parts.suffix
+        !method_name_codec_arity_wildcard_suffix?(suffix)
+      else
+        false
+      end
+    end
+
+    private def method_name_codec_exact_lookup_owner_keep_requested_name?(
+      requested_name : String,
+      resolved_entry_name : String,
+      base_name : String,
+      exact_arg_types : Array(TypeRef),
+      lookup_expect_block : Bool,
+    ) : Bool
+      requested_parts = parse_method_name_uncached(requested_name)
+      resolved_parts = parse_method_name_uncached(resolved_entry_name)
+
+      requested_has_concrete_type = method_name_codec_concrete_type_suffix?(requested_parts)
+      resolved_has_arity_wildcard = method_name_codec_arity_wildcard_suffix?(resolved_parts.suffix)
+      return true if requested_has_concrete_type && resolved_has_arity_wildcard
+      return true if preserve_requested_value_owner_specialization?(requested_name, resolved_entry_name)
+
+      if requested_parts.suffix
+        !prefer_callsite_specialization(base_name, resolved_entry_name, exact_arg_types, lookup_expect_block).nil?
+      else
+        false
+      end
+    end
+
+    private def method_name_codec_exact_lookup_keep_requested_name?(
+      requested_name : String,
+      resolved_entry_name : String,
+      base_name : String,
+      exact_arg_types : Array(TypeRef),
+      lookup_expect_block : Bool,
+    ) : Bool
+      legacy_requested_concrete = requested_name.includes?('$') && !requested_name.includes?("$arity")
+      legacy_resolved_arity = resolved_entry_name.includes?("$arity")
+      legacy_result = if legacy_requested_concrete && legacy_resolved_arity
+                        true
+                      elsif preserve_requested_value_owner_specialization?(requested_name, resolved_entry_name)
+                        true
+                      elsif requested_name.includes?('$')
+                        !prefer_callsite_specialization(base_name, resolved_entry_name, exact_arg_types, lookup_expect_block).nil?
+                      else
+                        false
+                      end
+
+      if method_name_codec_promotion_ledger_enabled?
+        owner_result = method_name_codec_exact_lookup_owner_keep_requested_name?(
+          requested_name,
+          resolved_entry_name,
+          base_name,
+          exact_arg_types,
+          lookup_expect_block
+        )
+        status = owner_result == legacy_result ? "parity" : "divergence"
+        requested_parts = parse_method_name_uncached(requested_name)
+        resolved_parts = parse_method_name_uncached(resolved_entry_name)
+        requested_suffix = requested_parts.suffix || "none"
+        resolved_suffix = resolved_parts.suffix || "none"
+        STDERR.puts "[METHOD_NAME_CODEC_PROMOTION] seam=lower_function_if_needed.exact_lookup_keep_requested_name requested=#{ledger_token(requested_name)} resolved=#{ledger_token(resolved_entry_name)} base=#{ledger_token(base_name)} requested_suffix=#{ledger_token(requested_suffix)} resolved_suffix=#{ledger_token(resolved_suffix)} legacy_result=#{materialization_decision_bool_field(legacy_result)} owner_result=#{materialization_decision_bool_field(owner_result)} emitted_result=#{materialization_decision_bool_field(legacy_result)} status=#{ledger_token(status)} promotion=shadow_parity"
       end
 
       legacy_result
@@ -69930,13 +70008,13 @@ module Adamas::HIR
             # If the requested name has a concrete type suffix (e.g. IO#puts$Int32)
             # but the resolved overload is an arity-wildcard (e.g. IO#puts$arity1),
             # keep the requested name so the caller can find it.
-            requested_has_concrete_type = name.includes?('$') && !name.includes?("$arity")
-            resolved_is_arity_wildcard = resolved_entry_name.includes?("$arity")
-            keep_requested_name =
-              (requested_has_concrete_type && resolved_is_arity_wildcard) ||
-                preserve_requested_value_owner_specialization?(name, resolved_entry_name) ||
-                (name.includes?('$') &&
-                  !prefer_callsite_specialization(base_name, resolved_entry_name, exact_arg_types, lookup_expect_block).nil?)
+            keep_requested_name = method_name_codec_exact_lookup_keep_requested_name?(
+              name,
+              resolved_entry_name,
+              base_name,
+              exact_arg_types,
+              lookup_expect_block
+            )
             target_name = keep_requested_name ? name : resolved_entry_name
             lookup_branch = "exact_lookup"
           end

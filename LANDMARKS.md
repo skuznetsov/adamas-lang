@@ -971,6 +971,36 @@ deletion, no `BlockOwner` rollback, and no green `s2b`/`s3b` claim. Decay
 trigger: the exact-lookup keep-requested-name branch is rewritten, the helper
 lands, or a fresh board update chooses a different MethodNameCodec seam.
 
+[LM-ARCH-METHOD-NAME-CODEC-EXACT-LOOKUP-SHADOW|verified 2026-07-01 {F:0.84 G:0.36 R:0.88}]:
+Slice 0k-V promotes the first `MethodNameCodec` consumer in shadow/parity mode.
+The exact-lookup `keep_requested_name` branch in
+`lower_function_if_needed_impl` no longer directly owns rendered suffix/arity
+checks; it calls `method_name_codec_exact_lookup_keep_requested_name?`.
+Default emitted behavior still returns the legacy short-circuit result. The
+default-off `ADAMAS_METHOD_NAME_CODEC_PROMOTION_LEDGER=1` path computes the
+typed owner-result through `MethodNameParts` suffix facts and logs
+legacy/owner/emitted parity for this selected seam. Evidence:
+`crystal build src/adamas.cr -o /private/tmp/adamas_method_codec_stage1
+--error-trace` passes; `scripts/method_name_codec_admission_report.sh` reports
+`preferred_source_shape=already_promoted_shadow`,
+`selection_status=already_promoted_shadow`,
+`exact_old_requested_suffix_count=0`, `exact_old_resolved_arity_count=0`, and
+`exact_helper_count=2`; `REQUIRE_PROMOTED=1
+scripts/method_name_codec_admission_report.sh` exits `0`; static semantic and
+CodePathStatus censuses still run; focused split/materialization/dispatch
+guards pass (`string_split_char_delimiter`,
+`string_split_separator_materialization_collision`,
+`string_split_default_nil_limit`, `string_split_int32_nil_limit_collision`,
+`class_arg_overload_dispatch`, and `stage2_method_name_corruption`); fresh
+stage1 builds fresh s2 under `scripts/run_safe.sh` (`EXIT: 0` after ~190s),
+and that generated s2 compiles and runs a no-prelude `x = 1` smoke. Scope:
+behavior-neutral consumer ownership only, no materialization naming behavior
+flip, no backend remangling, no `BlockOwner` carrier change, and no green
+`s2b`/`s3b` claim. Decay trigger:
+the helper starts returning owner-result behavior, sibling keep-requested-name
+seams are promoted, `MethodNameParts` suffix semantics change, or generated
+stage evidence shows this helper is not self-host safe.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

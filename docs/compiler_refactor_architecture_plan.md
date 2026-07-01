@@ -113,6 +113,15 @@ shadow/parity helper for this seam. Do not start with low-level helper
 rewrites, global method-name normalization, backend remangling, or behavior
 changes to materialization naming.
 
+2026-07-01 post-0k-V note: the selected `MethodNameCodec` seam is now promoted
+in shadow/parity mode. `lower_function_if_needed.exact_lookup_keep_requested_name`
+calls `method_name_codec_exact_lookup_keep_requested_name?`; default behavior
+still returns the legacy result, while the optional promotion ledger computes a
+typed `MethodNameParts` owner-result. Do not flip the owner-result into emitted
+behavior from this slice. The next slice must either run/extend the promotion
+ledger on a generated-stage corridor or explicitly select another active-board
+authority edge with a red/green gate.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging

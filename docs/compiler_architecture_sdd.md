@@ -24,7 +24,7 @@ named path, or refuting a row with fresher generated-stage evidence.
 | --- | --- | --- | --- |
 | `SemanticStateScope` | `prefer_callsite_specialization` is promoted in shadow/parity mode; emitted behavior still returns the legacy result. | Select a different root-sized consumer with a red/green source-shape gate, or explicitly leave this lane paused. | Reselecting `prefer_callsite_specialization`; wrapping `def_has_untyped_regular_param?` without a separate owner result; changing emitted behavior from the shadow row. |
 | `MaterializationIdentity` / `MaterializationRegistry` | Transaction and decision ledgers exist, but focused generated-stage runs still do not authorize a behavior patch. | Define a typed registry/authority seam that owns requested, selected, target, body, emitted-call, state-scope, target-map, call-arg, and ABI facts before any forwarder/name/remangle fix. | Backend undefined-extern rescue; target keepalive; requested-name forcing; `NamedTuple`/`Tuple` display normalization; global ambient-map predicate changes. |
-| `NameResolution` / `MethodNameCodec` | File identity was fixed; method/symbol identity is still partly rendered-string driven. Slice 0k-U selects `lower_function_if_needed.exact_lookup_keep_requested_name` as the first codec seam. | Promote the selected seam through a shadow/parity `method_name_codec_exact_lookup_keep_requested_name?` helper before changing emitted naming behavior. | String-slice parsing patches at individual callsites; treating rendered names as canonical identity; broad normalization without a falsifier; selecting lower-level helpers before the chosen materialization seam. |
+| `NameResolution` / `MethodNameCodec` | File identity was fixed; method/symbol identity is still partly rendered-string driven. Slice 0k-V promotes the selected `lower_function_if_needed.exact_lookup_keep_requested_name` seam through `method_name_codec_exact_lookup_keep_requested_name?` in shadow/parity mode; emitted behavior still returns the legacy result. | Either run/extend the MethodNameCodec promotion ledger on a generated-stage corridor, or select the next root-sized codec seam with a red/green source-shape gate before changing emitted naming behavior. | String-slice parsing patches at individual callsites; treating rendered names as canonical identity; broad normalization without a falsifier; selecting lower-level helpers before a materialization seam; flipping owner-result behavior from shadow rows. |
 | `AstNodeRef` / `ArenaOwnership` | Explicit-owner lower-call rows and `NodeSlotIntegrity` refuted owner drift, out-of-range ids, and missing slots for the instrumented edge. | Resume only with a named payload/deep-read or uninstrumented-consumer falsifier, including cleanup rules for its ledger. | Lower-call arena routing, broad arena scans, parser allocation rewrites, or another unbounded crash-edge probe. |
 | `CodePathStatus` | `cli.metrics.identity_dry_run` is classified as `debug_only`, not `delete_ready`. | Classify another named path, or run a separate `delete_ready` slice with default-behavior, HIR/MIR/LLVM, bootstrap, and evidence-preservation guards. | Deleting debug/probe/fallback paths from static grep output; using runtime liveness as semantic ownership evidence. |
 
@@ -4374,6 +4374,75 @@ Next local track:
 - no behavior-changing naming/materialization patch is admitted until this
   selected seam consumes a typed MethodNameCodec-owned fact in shadow/parity
   mode.
+
+### Slice 0k-V: MethodNameCodec exact-lookup shadow helper
+
+Status:
+
+- implemented a behavior-neutral shadow/parity helper for the seam selected by
+  Slice 0k-U;
+- no default compiler behavior, materialization naming behavior, backend
+  remangling behavior, `BlockOwner` carrier, or deletion behavior changed;
+- emitted behavior still returns the legacy string-check result.
+
+Problem:
+
+- Slice 0k-U selected the exact-lookup `keep_requested_name` branch as the first
+  `MethodNameCodec` authority seam;
+- before this slice, `lower_function_if_needed_impl` still directly decided the
+  exact-lookup requested-name preservation from rendered string checks:
+  `name.includes?('$')`, `!name.includes?("$arity")`, and
+  `resolved_entry_name.includes?("$arity")`;
+- leaving those checks inline meant the board had a selected seam but no
+  promoted consumer.
+
+Implementation:
+
+- added `method_name_codec_exact_lookup_keep_requested_name?`;
+- the helper preserves legacy short-circuit behavior for the emitted result;
+- added `method_name_codec_exact_lookup_owner_keep_requested_name?`, which uses
+  `MethodNameParts` / suffix facts as the shadow owner result;
+- added default-off `ADAMAS_METHOD_NAME_CODEC_PROMOTION_LEDGER=1` rows with
+  requested/resolved/base names, requested/resolved suffixes, legacy result,
+  owner result, emitted result, and parity status;
+- replaced only the selected exact-lookup consumer with the helper call;
+- intentionally left sibling `callsite_args_keep_requested_name` and
+  `suffix_types_keep_requested_name` seams untouched because Slice 0k-U
+  classified them as mixed state-scope/suffix policy.
+
+Falsifiers and evidence:
+
+- source-shape promotion:
+  `scripts/method_name_codec_admission_report.sh` exits `0` with
+  `preferred_source_shape=already_promoted_shadow`,
+  `selection_status=already_promoted_shadow`,
+  `exact_old_requested_suffix_count=0`,
+  `exact_old_resolved_arity_count=0`, and `exact_helper_count=2`;
+- red-to-green gate:
+  `REQUIRE_PROMOTED=1 scripts/method_name_codec_admission_report.sh` exits
+  `0`;
+- build and regression evidence are recorded in `TODO.md` / `LANDMARKS.md` for
+  the commit that lands this slice:
+  `crystal build src/adamas.cr -o /private/tmp/adamas_method_codec_stage1
+  --error-trace`, focused split/materialization/dispatch guards, fresh stage1
+  -> fresh s2 under `scripts/run_safe.sh`, and generated-s2 no-prelude `x = 1`
+  compile/run smoke all pass within the stated scope.
+
+Boundary:
+
+- this is a MethodNameCodec consumer-promotion slice, not a behavior fix;
+- the owner result is shadow evidence, not the emitted decision;
+- it does not claim green full-prelude generated s2, `s2b`, or `s3b`;
+- it does not authorize global method-name normalization, backend remangling,
+  lower-level helper rewrites, or a `NamedTuple`/`Tuple` display fix.
+
+Next local track:
+
+- if staying on `MethodNameCodec`, run or extend the promotion ledger on a
+  generated-stage corridor and classify parity/divergence rows before any
+  behavior flip;
+- otherwise choose the next active-board row explicitly, with one old authority
+  edge, one owned fact, and one red/green falsifier.
 
 ### Slice A: CallResolution boundary
 

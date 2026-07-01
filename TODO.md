@@ -800,6 +800,45 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   code slice has a red source-shape gate. Scope: source-shape/admission only,
   no compiler behavior change and no green `s2b`/`s3b` claim.
 
+- 2026-07-01 UPDATE: implemented Slice 0k-V, the first MethodNameCodec
+  consumer promotion in shadow/parity mode. The selected exact-lookup
+  `keep_requested_name` branch now calls
+  `method_name_codec_exact_lookup_keep_requested_name?` instead of directly
+  deciding from rendered suffix/arity string checks inside
+  `lower_function_if_needed_impl`. Default emitted behavior is unchanged: the
+  helper preserves the legacy short-circuit result. A default-off
+  `ADAMAS_METHOD_NAME_CODEC_PROMOTION_LEDGER=1` path computes a typed
+  `MethodNameParts` owner-result and logs legacy/owner/emitted parity for the
+  selected seam. Verification: `crystal build src/adamas.cr -o
+  /private/tmp/adamas_method_codec_stage1 --error-trace` passes;
+  `scripts/method_name_codec_admission_report.sh` reports
+  `preferred_source_shape=already_promoted_shadow`,
+  `selection_status=already_promoted_shadow`,
+  `exact_old_requested_suffix_count=0`, `exact_old_resolved_arity_count=0`,
+  and `exact_helper_count=2`; `REQUIRE_PROMOTED=1
+  scripts/method_name_codec_admission_report.sh` exits `0`;
+  `scripts/semantic_decision_census.sh` and
+  `scripts/codepath_status_census.sh` still run; focused guards pass:
+  `regression_tests/string_split_char_delimiter_repro.sh
+  /private/tmp/adamas_method_codec_stage1`,
+  `regression_tests/string_split_separator_materialization_collision_repro.sh
+  /private/tmp/adamas_method_codec_stage1`,
+  `regression_tests/string_split_default_nil_limit_repro.sh
+  /private/tmp/adamas_method_codec_stage1`,
+  `regression_tests/string_split_int32_nil_limit_collision_repro.sh
+  /private/tmp/adamas_method_codec_stage1`,
+  `regression_tests/class_arg_overload_dispatch_repro.sh
+  /private/tmp/adamas_method_codec_stage1`, and
+  `regression_tests/stage2_method_name_corruption_repro.sh
+  /private/tmp/adamas_method_codec_stage1`; fresh stage1 builds fresh s2 under
+  `scripts/run_safe.sh` (`EXIT: 0` after ~190s), and that generated s2 compiles
+  and runs a no-prelude `x = 1` smoke through `scripts/run_safe.sh`. Scope:
+  behavior-neutral consumer ownership only, no naming/materialization behavior flip, no
+  `BlockOwner` rollback, and no green `s2b`/`s3b` claim. Next work must either
+  run/extend this promotion ledger on a generated-stage corridor or explicitly
+  choose the next active-board row; do not flip MethodNameCodec owner-result
+  behavior from focused source-shape evidence alone.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was
