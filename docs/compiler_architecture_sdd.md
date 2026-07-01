@@ -1524,6 +1524,61 @@ Next local track:
 - only then pick the next bounded behavior slice or local payload/deep-read
   falsifier.
 
+### Slice 0h: Materialization pre-call transaction ledger
+
+Source/spec:
+
+- `src/compiler/hir/ast_to_hir.cr` `lower_function_if_needed_impl`
+  materialization seam;
+- `MaterializationIdentityTransaction` debug record;
+- `scripts/materialization_identity_ledger_smoke.sh`;
+- `scripts/materialization_transaction_report.sh`.
+
+Falsifiers:
+
+- before the slice exists, the transaction report must fail closed with
+  `FAIL: no [MAT_TX] materialization transaction rows emitted`;
+- with `ADAMAS_MATERIALIZATION_IDENTITY_LEDGER=1`, a small compile emits both
+  the legacy `[MAT_ID]` row and the structured `[MAT_TX]` row;
+- each `[MAT_TX]` row has parseable `identity_status`, `symbol_relation`, and
+  `required_contract` fields;
+- with the env var off, the compiler emits no `[MAT_TX]` rows and default
+  behavior is unchanged.
+
+Evidence:
+
+- the first stage1 report classified `2513` materialization transactions:
+  `2504` exact rows and `9` `body_eq_target_call_eq_requested` rows requiring
+  `wrapper_or_call_remap`;
+- the report found `0` malformed rows and grouped rows by phase, identity
+  status, symbol relation, and required contract;
+- full stage1 regression suites passed after the ledger change:
+  `152/152` original tests and `36/36` combined tests.
+- a fresh generated s2 compiled a no-prelude report repro with `1` exact
+  `[MAT_TX]` row and `0` malformed rows.
+
+Boundary:
+
+- this is a pre-call materialization transaction ledger. It records
+  `call_symbol_hint`, not a backend-proven final emitted call symbol;
+- it does not emit wrappers, remap calls, change pending-function replay, or
+  fix any `s2b`/`s3b` frontier by itself;
+- a future behavior patch that changes requested/target/body/call symbol
+  selection must either upgrade this transaction to include the final emitted
+  call symbol or consume a downstream ledger that proves the emitted call
+  contract.
+
+Next local track:
+
+- connect the transaction record to final call emission, or add a sibling
+  emitted-call ledger at the HIR/MIR boundary, before attempting a
+  materialization forwarder or producer-side identity fix;
+- add runtime `CodePathStatus` evidence before deleting stale workarounds or
+  old debug gates;
+- do not continue to the next crash stack unless the new slice consumes an
+  owned transaction row or explicitly adds an owner ledger/falsifier that
+  survives the fix.
+
 ### Slice A: CallResolution boundary
 
 Source/spec:
@@ -1659,7 +1714,8 @@ This SDD moves from PROPOSED to DESIGN-SEALED only after:
   chase a moving crash frontier;
 - Phase 1 architecture census exists;
 - Phase 2a state-scope/materialization-identity ledger exists for the active
-  call/materialization frontier;
+  call/materialization frontier, and Phase 2b has at least a pre-call
+  transaction record plus a named route to final emitted-call proof;
 - the first boundary slice has a falsifier matrix and a behavior-neutral
   facade plan;
 - owner explicitly chooses the first slice.

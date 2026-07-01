@@ -421,6 +421,11 @@ probe. Payload/deep-read integrity is an allowed future falsifier only as a
 named SDD slice. The active architecture plan now pivots to sealing the
 `SemanticStateScope` / `MaterializationIdentity` transaction record and adding
 runtime `CodePathStatus` evidence before deletion or physical extraction.
+The first transaction-record slice is intentionally limited: it records
+pre-call requested/target/body/call-hint relations and required contracts, but
+it does not yet prove final backend emitted-call identity. The next
+architecture step is final-call linkage or a sibling emitted-call ledger, not a
+materialization behavior fix.
 
 Initial executable entry point:
 
@@ -429,6 +434,7 @@ scripts/semantic_decision_census.sh
 scripts/arena_ownership_census.sh
 scripts/lower_call_arena_ledger_smoke.sh <compiler>
 scripts/node_slot_integrity_report.sh <compiler>
+scripts/materialization_transaction_report.sh <compiler>
 ```
 
 Acceptance for this first architecture slice:

@@ -50,9 +50,21 @@ if ! grep -q '^\[MAT_ID\]' "$LOG"; then
   exit 1
 fi
 
+if ! grep -q '^\[MAT_TX\]' "$LOG"; then
+  echo "FAIL: materialization transaction ledger emitted no rows" >&2
+  tail -120 "$LOG" >&2 || true
+  exit 1
+fi
+
 if ! grep -q 'state_key=' "$LOG" || ! grep -q 'body_symbol=' "$LOG" || ! grep -q 'override_reason=' "$LOG"; then
   echo "FAIL: materialization identity rows are missing required fields" >&2
   grep '^\[MAT_ID\]' "$LOG" >&2 || true
+  exit 1
+fi
+
+if ! grep -q 'identity_status=' "$LOG" || ! grep -q 'symbol_relation=' "$LOG" || ! grep -q 'required_contract=' "$LOG"; then
+  echo "FAIL: materialization transaction rows are missing required fields" >&2
+  grep '^\[MAT_TX\]' "$LOG" >&2 || true
   exit 1
 fi
 

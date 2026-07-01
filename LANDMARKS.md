@@ -254,6 +254,28 @@ resumes the payload/deep-read frontier as a named SDD slice, a fresh crash
 frontier invalidates Slice 0f evidence, or a transaction-record facade lands
 and changes the next sealing target.
 
+[LM-ARCH-MATERIALIZATION-PRECALL-TRANSACTION-LEDGER|verified 2026-07-01 {F:0.82 G:0.46 R:0.88}]:
+The architecture SDD now has a behavior-neutral pre-call materialization
+transaction ledger. With `ADAMAS_MATERIALIZATION_IDENTITY_LEDGER=1`,
+`lower_function_if_needed_impl` emits `[MAT_TX]` rows alongside `[MAT_ID]`
+rows. Each transaction records requested symbol, target symbol,
+materialization state key, body symbol, call-symbol hint, override reason,
+lookup branch, ambient map, target map, call arg types, plus computed
+`identity_status`, `symbol_relation`, and `required_contract`. Evidence:
+`scripts/materialization_transaction_report.sh` fails closed on compilers that
+emit no `[MAT_TX]`; after the slice, a focused stage1 report produced `2513`
+rows, `0` malformed rows, `2504` exact rows, and `9`
+`body_eq_target_call_eq_requested` rows requiring `wrapper_or_call_remap`.
+Full stage1 suites pass (`152/152` original + `36/36` combined). A fresh
+generated s2 build exits 0 and the generated s2 emits a no-prelude report with
+`1` exact `[MAT_TX]` row and `0` malformed rows. Scope: this is not a behavior
+fix and not a green full-prelude `s2b`/`s3b` claim. It records a
+`call_symbol_hint`, not a backend-proven final emitted call, so behavior
+patches that change materialization or forwarder contracts must either upgrade
+this ledger to include final call emission or consume a sibling emitted-call
+ledger. Decay trigger: rewrites of `lower_function_if_needed_impl`,
+materialization naming, HIR/MIR call lowering, or backend call-target emission.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

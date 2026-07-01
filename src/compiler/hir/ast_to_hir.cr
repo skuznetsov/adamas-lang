@@ -2119,6 +2119,67 @@ module Adamas::HIR
       Completed  # Successfully lowered
     end
 
+    private struct MaterializationIdentityTransaction
+      getter phase : String
+      getter requested_name : String
+      getter target_name : String
+      getter state_key : String
+      getter body_symbol : String
+      getter call_symbol_hint : String
+      getter override_reason : String
+      getter lookup_branch : String
+      getter ambient_map : String
+      getter target_map : String
+      getter call_arg_types : String
+
+      def initialize(
+        @phase : String,
+        @requested_name : String,
+        @target_name : String,
+        @state_key : String,
+        @body_symbol : String,
+        @call_symbol_hint : String,
+        @override_reason : String,
+        @lookup_branch : String,
+        @ambient_map : String,
+        @target_map : String,
+        @call_arg_types : String,
+      )
+      end
+
+      def identity_status : String
+        return "exact" if @body_symbol == @call_symbol_hint
+
+        "rejected_mismatch"
+      end
+
+      def required_contract : String
+        return "none" if @body_symbol == @call_symbol_hint
+
+        if @body_symbol == @target_name && @call_symbol_hint == @requested_name && @requested_name != @target_name
+          "wrapper_or_call_remap"
+        elsif @body_symbol == @requested_name && @call_symbol_hint == @target_name && @requested_name != @target_name
+          "call_remap_to_body"
+        else
+          "owner_review"
+        end
+      end
+
+      def symbol_relation : String
+        if @requested_name == @target_name && @target_name == @body_symbol && @body_symbol == @call_symbol_hint
+          "all_equal"
+        elsif @body_symbol == @call_symbol_hint
+          "body_eq_call"
+        elsif @body_symbol == @target_name && @call_symbol_hint == @requested_name
+          "body_eq_target_call_eq_requested"
+        elsif @body_symbol == @requested_name && @call_symbol_hint == @target_name
+          "body_eq_requested_call_eq_target"
+        else
+          "diverge"
+        end
+      end
+    end
+
     # Per-function lowering state
     @function_lowering_states : Hash(String, FunctionLoweringState) = Hash(String, FunctionLoweringState).new(initial_capacity: 32768)
     # Queue for pending lower requests to avoid O(n^2) scans of the state hash.
@@ -2290,7 +2351,27 @@ module Adamas::HIR
       ambient = type_param_map_debug_string
       target_map = string_map_debug_string(target_params)
       call_args = type_ref_array_debug_string(call_arg_types)
+      transaction = MaterializationIdentityTransaction.new(
+        phase,
+        requested_name,
+        target_name,
+        state_key,
+        body_symbol,
+        call_symbol_hint,
+        override_reason,
+        lookup_branch || "?",
+        ambient,
+        target_map,
+        call_args,
+      )
       STDERR.puts "[MAT_ID] phase=#{phase} requested=#{requested_name} target=#{target_name} state_key=#{state_key} body_symbol=#{body_symbol} call_symbol_hint=#{call_symbol_hint} override_reason=#{override_reason} branch=#{lookup_branch || "?"} ambient_map=#{ambient} target_map=#{target_map} call_arg_types=#{call_args}"
+      STDERR.puts "[MAT_TX] phase=#{ledger_token(transaction.phase)} requested=#{ledger_token(transaction.requested_name)} target=#{ledger_token(transaction.target_name)} state_key=#{ledger_token(transaction.state_key)} body_symbol=#{ledger_token(transaction.body_symbol)} call_symbol_hint=#{ledger_token(transaction.call_symbol_hint)} identity_status=#{ledger_token(transaction.identity_status)} symbol_relation=#{ledger_token(transaction.symbol_relation)} required_contract=#{ledger_token(transaction.required_contract)} override_reason=#{ledger_token(transaction.override_reason)} branch=#{ledger_token(transaction.lookup_branch)} ambient_map=#{ledger_token(transaction.ambient_map)} target_map=#{ledger_token(transaction.target_map)} call_arg_types=#{ledger_token(transaction.call_arg_types)}"
+    end
+
+    private def ledger_token(value : String) : String
+      return "" if value.empty?
+
+      value.gsub(' ', "%20").gsub('\t', "%09").gsub('\n', "%0A").gsub('\r', "%0D")
     end
 
     private def string_map_debug_string(map : Hash(String, String)?) : String

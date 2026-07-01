@@ -188,6 +188,25 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   existing owner ledger or add a surviving owner ledger/falsifier in the same
   logical change.
 
+- 2026-07-01 UPDATE: added the behavior-neutral
+  `MaterializationIdentityTransaction` pre-call ledger as Slice 0h of the
+  architecture SDD. With `ADAMAS_MATERIALIZATION_IDENTITY_LEDGER=1`, the
+  materialization seam now emits structured `[MAT_TX]` rows alongside the
+  existing `[MAT_ID]` rows and classifies requested/target/body/call-hint
+  relations into `identity_status`, `symbol_relation`, and
+  `required_contract`. `scripts/materialization_transaction_report.sh` is the
+  executable report/falsifier: before this slice it fails with no `[MAT_TX]`
+  rows; after the slice it reports `2513` rows on the focused stage1 repro,
+  including `2504` exact rows and `9` rows requiring
+  `wrapper_or_call_remap`, with `0` malformed rows. Full stage1 suites pass
+  (`152/152` original + `36/36` combined). A fresh generated s2 build exits 0
+  and the generated s2 can emit a no-prelude `[MAT_TX]` report with `1` exact
+  row and `0` malformed rows. Residual boundary: this is a pre-call ledger
+  using `call_symbol_hint`, not a backend-proven final emitted call symbol. The
+  next architecture step is final-call linkage or a sibling emitted-call
+  ledger, plus runtime `CodePathStatus`; do not treat this as a materialization
+  forwarder fix or green `s2b`/`s3b` evidence.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was
