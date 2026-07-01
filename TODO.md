@@ -8,6 +8,20 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: added Slice 0k-AR, fail-closed runtime
+  inventory mode for the `CodePathStatus` cleanup-entry report. With
+  `LIST_RUNTIME_PATHS=1`, a fresh stage1 no-prelude compile reports
+  `inventory_rows=26`, `inventory_paths=26`, `inventory_malformed=0`,
+  `inventory_delete_ready_rows=0`, and
+  `inventory_status=no_delete_ready_candidate`. Negative control:
+  `LIST_RUNTIME_PATHS=1 REQUIRE_DELETE_READY=1` exits 9. Decision: no
+  cleanup/delete behavior change is admitted yet. Inventory `not_taken` rows
+  are `not_taken_unproven`, not deletion targets. The next cleanup slice must
+  pick one such path and add a protecting falsifier, or define a stricter
+  `eligible_delete_ready_candidate` class before deleting code.
+  `scripts/codepath_status_runtime_report.sh` now also creates repo-local
+  `tmp/` before `mktemp`.
+
 - 2026-07-01 UPDATE: ran the post-0k-AP cleanup-entry preflight
   on a freshly built stage1 compiler. Both currently supported cleanup paths
   remain classify-only: `SELECTED_CLEANUP_PATH=identity_dry_run` and

@@ -12,6 +12,25 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-AR-CLEANUP-INVENTORY|verified 2026-07-01 {F:0.84 G:0.42 R:0.88}]:
+Slice 0k-AR extends the `CodePathStatus` cleanup-entry report with a
+fail-closed runtime inventory mode. With `LIST_RUNTIME_PATHS=1`, a fresh stage1
+no-prelude compile reports `inventory_rows=26`, `inventory_paths=26`,
+`inventory_malformed=0`, `inventory_delete_ready_rows=0`, and
+`inventory_status=no_delete_ready_candidate`. Negative control:
+`LIST_RUNTIME_PATHS=1 REQUIRE_DELETE_READY=1` exits 9 with
+`inventory_status=no_delete_ready_candidate`. The inventory marks default-live
+paths as `live_default` and default-not-taken paths as `not_taken_unproven`; it
+does not promote any row to `delete_ready`. Decision: no cleanup/delete behavior
+change is admitted yet. The next cleanup slice must select one
+`not_taken_unproven` path and add a protecting falsifier, or define a stricter
+`eligible_delete_ready_candidate` class before deleting code. The cleanup
+runtime-support report now creates repo-local `tmp/` before `mktemp`. Scope:
+cleanup selector coverage only; no compiler behavior and no bootstrap claim.
+Decay trigger: a future inventory reports an eligible delete-ready candidate,
+runtime path semantics change, or the cleanup lane is paused in favor of a
+root-sized correctness edge.
+
 [LM-ARCH-0K-AQ-CLEANUP-PREFLIGHT|verified 2026-07-01 {F:0.82 G:0.34 R:0.88}]:
 After Slice 0k-AP, a fresh stage1 ran the existing
 `scripts/codepath_status_cleanup_selection_report.sh` cleanup-entry gate for

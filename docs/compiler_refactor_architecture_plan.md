@@ -375,6 +375,14 @@ paths, `identity_dry_run` and `phase0_metrics`, as `debug_only` with env-off
 cleanup/delete slice must select another path or extend the selector before
 claiming delete readiness.
 
+2026-07-01 post-0k-AR cleanup inventory note: the cleanup selector now has a
+fail-closed runtime inventory mode. A fresh stage1 no-prelude compile reports
+26 runtime paths and zero delete-ready rows; `REQUIRE_DELETE_READY=1` fails.
+Default-not-taken rows are explicitly `not_taken_unproven`, not deletion
+targets. The next cleanup/delete step must add a protecting falsifier for one
+named path or define a stricter `eligible_delete_ready_candidate` class before
+removing code.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging

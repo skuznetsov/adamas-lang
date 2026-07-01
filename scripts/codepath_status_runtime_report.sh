@@ -14,6 +14,7 @@ shift
 TIMEOUT="${TIMEOUT:-180}"
 MEM_MB="${MEM_MB:-4096}"
 SAMPLES="${SAMPLES:-8}"
+mkdir -p "$ROOT_DIR/tmp"
 TMP_DIR="$(mktemp -d "$ROOT_DIR/tmp/codepath-status-runtime.XXXXXX")"
 LOG="$TMP_DIR/compile.log"
 
