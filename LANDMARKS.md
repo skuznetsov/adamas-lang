@@ -315,6 +315,25 @@ changes, runtime `CodePathStatus` is extended into semantic hot paths, or a
 cleanup slice tries to use this evidence as deletion authority without a
 protecting falsifier.
 
+[LM-ARCH-TRANSACTION-COMPLETENESS-NEXT-SLICE|guard-only 2026-07-01 {F:0.76 G:0.52 R:0.82}]:
+The next correctness-oriented architecture slice is transaction completeness,
+not another crash-stack-local behavior patch. Before changing
+call/materialization behavior, one report must join requested symbol, selected
+definition, target materialization symbol, created body symbol, emitted backend
+call symbol, state-scope authority, target map, callsite arg types, and ABI
+shape. Each candidate must classify as `exact`, `materialization_keepalive`,
+`wrapper_forwarder`, or `rejected_mismatch`. Forbidden next moves: backend
+undefined-extern rescue as the first semantic discovery point, forced
+materialization to the requested name, global ambient-map ignore, or using
+runtime `CodePathStatus` liveness as a substitute for transaction identity.
+Evidence: `docs/compiler_architecture_sdd.md` Slice 0k and
+`docs/compiler_refactor_architecture_plan.md` now name this as the next
+correctness implementation track. Scope: this is a design/guard landmark, not
+an implemented transaction-completeness report and not a green `s2b`/`s3b`
+claim. Decay trigger: a completed emitted-call transaction report lands, or
+fresh generated-stage evidence invalidates the materialization transaction
+path.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

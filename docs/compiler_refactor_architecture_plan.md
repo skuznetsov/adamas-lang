@@ -437,6 +437,10 @@ not as a semantic owner boundary: it can show that a branch was observed or not
 observed in a focused run, but deletion still requires the SDD's protecting
 falsifier and bootstrap guard. The bootstrap-correctness path remains
 `SemanticStateScope` / `MaterializationIdentity` transaction completeness.
+The next correctness slice is therefore design-sealed as transaction
+completion: join requested symbol, selected definition, target symbol, created
+body symbol, emitted backend call symbol, state-scope authority, target map,
+callsite arg types, and ABI shape before any behavior patch.
 
 Initial executable entry point:
 
@@ -470,6 +474,11 @@ Acceptance for this first architecture slice:
   still blocked until a candidate path reaches `delete_ready` with a protecting
   falsifier. Correctness work should continue through transaction completeness,
   not through another crash-stack-local patch.
+- the next correctness implementation should upgrade
+  `scripts/materialization_transaction_report.sh` or add a sibling emitted-call
+  transaction report. It must classify call/materialization rows as `exact`,
+  `materialization_keepalive`, `wrapper_forwarder`, or `rejected_mismatch`
+  before any behavior patch changes naming, materialization, or backend calls.
 
 ## 9. Decision Summary
 

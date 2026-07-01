@@ -1714,6 +1714,77 @@ Next local track:
   call, state-scope authority, and ABI shape must be one owned fact before the
   next behavior-changing call/materialization patch.
 
+### Slice 0k: Transaction-completeness execution plan
+
+Status:
+
+- design-only next correctness slice after Slice 0j;
+- no production behavior change is admitted by this slice.
+
+Source/spec:
+
+- `MaterializationIdentityTransaction` rows from Slice 0h;
+- `src/compiler/hir/ast_to_hir.cr` call resolution, pending lowering, and
+  materialization sites;
+- `src/compiler/mir/hir_to_mir.cr` HIR call to MIR call lowering;
+- `src/compiler/mir/llvm_backend.cr` final call/extern-call emission;
+- `scripts/materialization_transaction_report.sh`.
+
+Problem:
+
+- Slice 0h records a pre-call `call_symbol_hint`, but not the final backend
+  callee that is actually emitted;
+- without the emitted callee and ABI shape, a behavior patch can still confuse
+  requested symbol, target symbol, body symbol, backend call symbol, and
+  wrapper/keepalive policy;
+- backend undefined-extern stubs are too late to discover this semantic
+  mismatch, because target HIR/MIR bodies may already have been pruned.
+
+Required transaction fields before a behavior patch:
+
+- request symbol;
+- selected definition identity;
+- target materialization symbol;
+- created body symbol;
+- emitted call symbol;
+- state-scope authority used for naming and type-param maps;
+- target-materialization map;
+- callsite arg types;
+- ABI shape used at the emitted call;
+- admitted contract: `exact`, `materialization_keepalive`,
+  `wrapper_forwarder`, or `rejected_mismatch`.
+
+Falsifiers:
+
+- the transaction report must fail closed when it cannot link a requested
+  symbol to a final emitted call symbol for a call/materialization candidate;
+- the known `Hash(UInt64, NamedTuple)#[]=` corridor must classify as an
+  explicit contract, not as a backend stub surprise;
+- current-instantiation remangle cases must remain distinct from leaked
+  ambient state-scope cases;
+- stage1 and generated-s2 no-prelude reports must emit parseable transaction
+  rows with zero malformed rows;
+- no behavior change is allowed until this report can name the contract for the
+  targeted behavior slice.
+
+Rejected implementation moves:
+
+- emitting backend forwarders from `@undefined_externs` as the first point of
+  semantic discovery;
+- forcing materialization to the requested name without proving ABI agreement;
+- globally ignoring ambient `@type_param_map` in naming decisions;
+- relying on `CodePathStatus` runtime liveness rows as a substitute for
+  transaction identity.
+
+Next local implementation step:
+
+- upgrade the existing materialization transaction report, or add a sibling
+  emitted-call transaction report, so one report can join requested, target,
+  body, emitted call, state-scope authority, and ABI shape for focused stage1
+  and generated-s2 runs;
+- only after that, choose the first behavior slice that consumes the completed
+  transaction as its owner fact.
+
 ### Slice A: CallResolution boundary
 
 Source/spec:

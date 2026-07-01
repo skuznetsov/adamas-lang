@@ -242,6 +242,19 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   `MaterializationIdentity` transaction-completeness path, not a backend
   forwarder or crash-stack patch.
 
+- 2026-07-01 NEXT ARCHITECTURE SLICE: Slice 0k is design-only and names the
+  next correctness track: complete the materialization transaction before any
+  call/materialization behavior patch. The next implementation should upgrade
+  `scripts/materialization_transaction_report.sh` or add a sibling emitted-call
+  transaction report so one focused run can join requested symbol, selected
+  definition, target symbol, created body symbol, emitted backend call symbol,
+  state-scope authority, target map, callsite arg types, and ABI shape. It must
+  classify each candidate as `exact`, `materialization_keepalive`,
+  `wrapper_forwarder`, or `rejected_mismatch`. Forbidden moves remain:
+  backend undefined-extern rescue as first discovery point, forced
+  materialization to the requested name, global ambient-map ignore, or using
+  `CodePathStatus` liveness as a substitute for semantic transaction identity.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was
