@@ -1785,6 +1785,53 @@ Next local implementation step:
 - only after that, choose the first behavior slice that consumes the completed
   transaction as its owner fact.
 
+Hostile self-review of the next step:
+
+- continuing Slice 0k is architecture work only if the emitted-call evidence
+  is joined to a HIR-owned transaction identity. It is tail-chasing if it is a
+  standalone backend log keyed by `@undefined_externs`, `@func_by_name`, or
+  "whatever crashed next";
+- the backend is allowed to report the final callee and ABI shape, but it must
+  not create or repair the semantic transaction. The transaction owner is
+  materialization/state-scope, not LLVM undefined-extern recovery;
+- a report row that cannot tie emitted call back to request, selected def,
+  target symbol, body symbol, and state-scope authority is evidence of an
+  incomplete transaction, not a reason to emit a backend wrapper;
+- broad emitted-call rows are acceptable only as diagnostics. The contract
+  gate is the subset whose transaction id links every required field and
+  classifies the row as `exact`, `materialization_keepalive`,
+  `wrapper_forwarder`, or `rejected_mismatch`;
+- if implementing the report requires reconstructing source-level facts in
+  the backend, the slice fails the architecture gate and must pivot back to
+  `SemanticStateScope` / `MaterializationRegistry`.
+
+Implementation guard for the first code slice:
+
+- introduce a default-off transaction-correlation channel, not a behavior
+  change;
+- give each HIR materialization transaction a stable debug identity that can be
+  carried or re-emitted at HIR/MIR/backend seams;
+- make HIR/MIR call lowering preserve the transaction identity when it lowers a
+  transaction-bound call, and mark non-transaction calls explicitly rather than
+  inferring ownership from a mangled string;
+- make backend emission log only mechanical facts: emitted callee, return/arg
+  ABI shape, extern-vs-crystal call kind, and whether the callee body is present
+  in the backend function table;
+- update the report to fail closed on missing joins, malformed rows, or any
+  silent requested/target/body/emitted mismatch without an admitted contract;
+- keep env-off output and behavior unchanged.
+
+Stop conditions for the first code slice:
+
+- more than a small focused set of rows requires a wrapper/forwarder contract
+  before the report can classify them;
+- the only way to identify real stub rows is to wait until backend
+  `@undefined_externs` after HIR/MIR has already pruned target bodies;
+- the implementation would preserve target bodies by marking broad candidate
+  sets live without proving they are transaction-bound;
+- the report can observe emitted calls but cannot name selected definition or
+  state-scope authority for the same transaction.
+
 ### Slice A: CallResolution boundary
 
 Source/spec:

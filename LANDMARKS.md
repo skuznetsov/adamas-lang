@@ -334,6 +334,27 @@ claim. Decay trigger: a completed emitted-call transaction report lands, or
 fresh generated-stage evidence invalidates the materialization transaction
 path.
 
+[LM-ARCH-TRANSACTION-CONTRACT-NOT-BACKEND-LOG|guard-only 2026-07-01 {F:0.78 G:0.58 R:0.84}]:
+Hostile self-review of Slice 0k tightened the next-step boundary: final-call
+visibility is architecture work only when it is joined to a HIR-owned
+materialization transaction identity. A standalone backend emitted-call log, an
+`@undefined_externs`-driven forwarder, or a report that discovers the semantic
+mismatch only after HIR/MIR has pruned the target body is a tail-chasing
+diagnostic, not the next architecture slice. The backend may report mechanical
+facts (emitted callee, ABI shape, extern-vs-crystal kind, body presence), but
+it must not create or repair the semantic transaction. The first code slice
+should be default-off transaction correlation that preserves env-off behavior,
+passes transaction identity through HIR/MIR/backend seams, and fails closed on
+missing joins or silent requested/target/body/emitted mismatches without an
+admitted `exact`, `materialization_keepalive`, `wrapper_forwarder`, or
+`rejected_mismatch` contract. Evidence: `docs/compiler_architecture_sdd.md`
+Slice 0k now records the hostile self-review, implementation guard, and stop
+conditions; current static census still shows broad semantic surfaces, so the
+boundary deliberately rejects backend-only rescue. Scope: design/guard only,
+not an implemented report and not a green `s2b`/`s3b` claim. Decay trigger: a
+transaction-correlation implementation lands, or fresh generated-stage evidence
+shows materialization transaction identity is not the active correctness path.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

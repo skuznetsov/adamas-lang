@@ -254,6 +254,15 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   backend undefined-extern rescue as first discovery point, forced
   materialization to the requested name, global ambient-map ignore, or using
   `CodePathStatus` liveness as a substitute for semantic transaction identity.
+  Hostile self-review hardened this direction: an emitted-call report is
+  admissible only if it carries or joins a HIR-owned transaction identity.
+  Backend rows may report the final callee and ABI shape, but the backend must
+  not create, repair, or infer the semantic transaction from
+  `@undefined_externs` / `@func_by_name`. The first code slice should be a
+  default-off transaction-correlation channel with env-off behavior unchanged;
+  if it needs broad live-target marking, source-level reconstruction in the
+  backend, or backend-only stub discovery after HIR/MIR pruning, stop and pivot
+  back to `SemanticStateScope` / `MaterializationRegistry`.
 
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
