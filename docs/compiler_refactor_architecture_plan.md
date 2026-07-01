@@ -14,9 +14,9 @@ the active path to green `s2b`/`s3b` is now governed by
 the LLVM writer merely because this older plan lists it as the safest first
 candidate. The current bootstrap evidence shows repeated failures in semantic
 ownership boundaries: call/materialization symbol identity, ambient state
-scope, type/name identity, ABI facts, and file identity. The first executable
-architecture implementation is therefore Phase 1/1b census plus owner ledgers,
-not a broad backend writer slice.
+scope, type/name identity, AST arena ownership, ABI facts, and file identity.
+The first executable architecture implementation is therefore Phase 1/1b census
+plus owner ledgers, not a broad backend writer slice.
 
 ## 1. Purpose
 
@@ -416,6 +416,7 @@ Initial executable entry point:
 
 ```bash
 scripts/semantic_decision_census.sh
+scripts/arena_ownership_census.sh
 ```
 
 Acceptance for this first architecture slice:

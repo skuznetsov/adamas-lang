@@ -72,6 +72,19 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   crashing in `NodeSlot#node <- AstArena#[] <- AstToHir#lower_call` while
   draining missing call targets. Do not claim green s2/s3.
 
+- 2026-07-01 UPDATE: paused before another `lower_call` behavior patch and
+  added an architecture gate for the residual `NodeSlot#node <- AstArena#[]`
+  frontier. The next slice is `AstNodeIdentity / ArenaOwnership`: an `ExprId`
+  index is not a global node identity, and `expr_id.index < arena.size` is only
+  a containment heuristic. Added `scripts/arena_ownership_census.sh` and wired
+  the main semantic census to report arena-owner surfaces. Next
+  behavior-changing `lower_call` work must first produce an owner ledger row
+  for the failing generated-s2 callsite: current arena, preferred/call arena,
+  resolved owner, `ExprId`, and raw-read site, without dereferencing the
+  crashing node slot. If that row shows stale/corrupt `ExprId` or `NodeSlot`
+  producer corruption instead of arena drift, patch the producer, not the
+  `lower_call` consumer.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was

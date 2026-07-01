@@ -96,6 +96,27 @@ full-prelude `x = 1` still exits 139 after allocator flush / LLVM emission
 fallback. Decay trigger: rewrites of source file loading, require fallback,
 `source_file_identity_key`, or parse/register bootstrap tracing.
 
+[LM-ARCH-AST-ARENA-OWNERSHIP-GATE|guard-only 2026-07-01 {F:0.72 G:0.44 R:0.84}]:
+The residual generated-s2 frontier after the parse-path identity fix is now
+classified as an `AstNodeIdentity / ArenaOwnership` boundary before any
+`lower_call` behavior patch. Evidence: generated s2->s3 reaches 11 `[MAT_ID]`
+rows and then crashes in
+`NodeSlot#node <- AstArena#[] <- AstToHir#lower_call` while draining missing
+call targets. The architecture claim is deliberately narrower than a fix:
+`ExprId.index` alone is not a globally unique AST node identity, and
+`expr_id.index < arena.size` is a containment heuristic rather than an owner
+proof. The committed static census `scripts/arena_ownership_census.sh` reports
+owner helpers, raw `@arena[...]` reads, lower-call raw reads, containment
+heuristics, and existing arena debug gates without changing compiler behavior.
+Next behavior-changing `lower_call` work must first add or consume a dynamic
+arena-owner ledger that records current arena, preferred/call arena, resolved
+owner arena, `ExprId`, and raw-read site without dereferencing the crashing
+node slot. If the ledger proves stale/corrupt `ExprId` or `NodeSlot` producer
+corruption instead of arena drift, the patch belongs at that producer, not at
+the `lower_call` consumer. Decay trigger: a dynamic lower-call arena ledger
+refutes arena ownership as the active boundary, or `AstArena` / `ExprId`
+identity is redesigned into an explicit owner-scoped reference.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

@@ -10,32 +10,23 @@ LLVM lowering. This creates hidden oracles, string-name coupling, phase-local
 fallbacks, and hard-to-localize bootstrap failures.
 
 Current hostile-review frontier: the latest bootstrap work keeps exposing the
-same ownership class under different symptoms. The earlier `s2b` stub family
-showed a materialization identity failure, not a backend stub bug: a call to
-`Hash(UInt64, {class_name: String?, method_name: String?, is_class: Bool})#[]=`
-could be emitted under the requested call symbol while the body was
-materialized under a different target symbol. The proximate cause was an
-ambient `@type_param_map` leak into a naming/materialization decision
-(`def_has_untyped_regular_param?` at the `lower_function_if_needed_impl`
-override seam). A later `work/s3-range-slice-frontier` checkpoint exposed an
-`IO#<<(String) -> Reference#to_s` runtime recursion, but that evidence is now
-stale after the escaped-interpolation parser fix. Subsequent full-prelude
-frontiers moved through `lower_field_get`, `Time::Format`, `Random#rand_int`,
-inline `try`, and implicit `super` forwarding. The current verified red is
-generated s3 compiling a trivial program and aborting at `STUB CALLED:
-get$Q$$String`, with focused no-prelude evidence showing the same
-static-call owner-loss class on `Exception::CallStack.skip("x")`: stage1 HIR
-keeps `Exception::CallStack.skip$String`, while generated s2 HIR emits a bare
-`skip$String` call and no matching owner-qualified body. A later
-explicit-return raw-pointer reducer refuted the broad claim that produced-code
-raw pointer/int literal lowering is the next root; that reducer is no longer a
-sound architecture direction without a stronger falsifier. Treat the active
-bug as a symbol-identity / nested registration / materialization boundary until
-a ledger names the writer that drops the owner-qualified selected call. The
-deeper architectural issue is still that symbol identity, type-param
-authority, type identity, materialization ownership, and field/layout facts are
-inferred from mutable process state and rendered strings instead of from owned
-typed facts.
+same ownership class under different symptoms, but the active red has moved.
+The earlier `s2b` stub family showed a materialization identity failure, not a
+backend stub bug: a call could be emitted under the requested symbol while the
+body was materialized under a different target symbol because ambient
+`@type_param_map` leaked into a naming/materialization decision. The current
+checked-in architecture path has since added a static semantic census, a
+materialization identity ledger, and a parse-path identity gate. The active
+verified residual after the parse-path identity fix is generated s2->s3
+reaching materialization (`11` `[MAT_ID]` rows) and then crashing in
+`NodeSlot#node <- AstArena#[] <- AstToHir#lower_call` while draining missing
+call targets. Treat this as an `AstNodeIdentity / ArenaOwnership` boundary
+until a dynamic ledger proves whether the first bad transition is current-arena
+drift, stale/corrupt `ExprId`, or `NodeSlot`/arena storage corruption. The
+deeper architectural issue is still that symbol identity, type-param authority,
+AST node ownership, type identity, materialization ownership, and field/layout
+facts are inferred from mutable process state and rendered/index-only values
+instead of from owned typed facts.
 
 Bounded context: Crystal V2 compiler architecture:
 
@@ -79,6 +70,8 @@ This SDD admits only future architecture work that:
   semantics from names, types, or local helper guesses,
 - reduces hidden state coupling between registration, resolution,
   materialization, ABI layout, and backend emission,
+- makes AST node identity and arena ownership explicit before HIR lowering
+  reads an `ExprId` through a mutable current arena,
 - makes semantic state scopes explicit before any decision reads ambient
   mutable maps such as `@type_param_map`,
 - enforces that a materialized body and the emitted call agree on the same
@@ -113,6 +106,8 @@ The following are explicitly rejected by this SDD:
   some sites are legitimate current-instantiation contexts,
 - deleting code because it looks dead without a read/write census and a
   negative-use falsifier,
+- consumer patches that replace one raw `@arena[expr_id]` read with another
+  heuristic arena scan without proving the `ExprId` owner boundary,
 - replacing dead code with equally broad compatibility wrappers that preserve
   the same hidden state contract,
 - preserving stale debug gates, one-off probes, or old workaround paths after
@@ -157,6 +152,13 @@ remains unchanged until the declared falsifiers pass.
 2. Facts over names.
    Mangled names, string prefixes, and function-name substrings are transport
    details, not authorities for semantics.
+
+2a. AST identity is owner-scoped.
+   An `ExprId` index is not a globally unique node identity. A lowering path
+   that reads an AST node must know the owning arena, carry an explicit
+   owner-scoped reference, or emit a ledger row proving why the current arena is
+   authoritative. `expr_id.index < arena.size` is a containment heuristic, not
+   an ownership proof.
 
 3. No silent fallback across semantic classes.
    A block call must not fall back to a non-block overload of different arity;
@@ -309,6 +311,62 @@ Key falsifiers:
   `Adamas::MIR::Array` classes are minted from absolute builtin reopens;
 - `hash_dual_typeref_phantom_repro` stays green;
 - type aliases do not create a second incompatible base identity.
+
+### 6.2a AstNodeIdentity and ArenaOwnership
+
+Owns the link between parser arenas, expression ids, source spans, and HIR
+lowering consumers.
+
+Input:
+
+```text
+AstNodeRef {
+  arena_owner
+  expr_id
+  source_path
+  span
+  origin              # source | macro_expansion | inline_block | reparsed
+}
+```
+
+Output:
+
+```text
+AstNodeIdentity {
+  arena_owner
+  expr_id
+  node_kind
+  source_path
+  span
+  dominance_region    # current lowering region where the reference is valid
+}
+```
+
+Responsibilities:
+
+- distinguish node id equality from arena ownership,
+- make block, macro, inline, and reparsed AST arenas explicit in lowering,
+- provide a behavior-neutral ledger for raw `@arena[expr_id]` reads,
+- reject or route through an explicit owner when the current arena differs from
+  the callsite/block owner,
+- prevent fallback scans over `@main_arenas` from silently choosing an arena
+  only because the index fits its size.
+
+Non-responsibilities:
+
+- resolving method overloads,
+- deciding type identity,
+- materializing function bodies,
+- choosing ABI layout.
+
+Key falsifiers:
+
+- generated s2->s3 `NodeSlot#node <- AstArena#[] <- AstToHir#lower_call`
+  must be classified by a ledger row before any `lower_call` consumer patch;
+- a callsite `ExprId` from a block or inline arena must not be read through the
+  caller arena merely because the numeric index fits;
+- a genuine current-arena local expression should remain readable without
+  routing every access through a broad global arena scan.
 
 ### 6.3 CallResolution
 
@@ -698,6 +756,9 @@ Read-only census of semantic writers/readers:
 - where requested, target, materialized, and emitted call symbols can diverge;
 - where block/yield function names are canonicalized;
 - where `Hash`, `Array`, `Set`, and other builtin base names are qualified;
+- where `ExprId` values are read through raw `@arena[...]`, where current arena
+  can differ from the owning call/block/macro arena, and where `arena_for_expr?`
+  uses index containment as a fallback;
 - where layout/ABI/storage decisions are made or inferred.
 
 Exit signal:
@@ -747,6 +808,8 @@ Examples:
 - `NameRegistry` facade over name qualification and class registration,
 - `CallResolver` facade over overload selection,
 - `StateScope` facade over type-param and namespace authority,
+- `AstNodeIdentity` facade over parser arenas and owner-scoped `ExprId`
+  references,
 - `MaterializationRegistry` facade over pending/lazy/block-shape functions,
 - `AbiFacts` facade over layout/provenance facts.
 
@@ -922,6 +985,9 @@ Stop and return to census/design when any of these occurs:
   symbols agree;
 - a body is created under one symbol while the emitted call names another
   symbol and there is no explicit wrapper/forwarder contract;
+- an AST-node consumer patch is proposed before the raw `@arena[expr_id]` read
+  has been classified as current-arena-owned, call-arena-owned, block-owned,
+  macro-owned, reparsed-owned, or stale/corrupt;
 - a behavior-neutral extraction changes emitted HIR/MIR/LLVM under default
   gates;
 - a backend patch needs source-level knowledge to decide a call, owner, block
@@ -1098,6 +1164,46 @@ Next local track:
   materialization and then crashes in
   `NodeSlot#node <- AstArena#[] <- AstToHir#lower_call` while draining missing
   call targets.
+
+### Slice 0d: AstNodeIdentity / ArenaOwnership census
+
+Source/spec:
+
+- `scripts/arena_ownership_census.sh`;
+- `src/compiler/hir/ast_to_hir.cr` arena helpers (`with_arena`,
+  `arena_for_expr?`, `node_for_expr`, `node_for_call_expr`);
+- raw `@arena[expr_id]` read sites in `lower_call` and related HIR lowering
+  helpers.
+
+Falsifiers:
+
+- the census is read-only, grep/awk-based, and does not require generated
+  compiler artifacts;
+- output separately lists owner helpers, global raw arena reads, lower-call raw
+  arena reads, and containment-heuristic sites;
+- the census does not classify a raw read as safe or unsafe by itself.
+
+Evidence:
+
+- `scripts/arena_ownership_census.sh` reports the static raw-read surface and
+  identifies `lower_call` as the active residual frontier surface after the
+  parse-path identity fix;
+- the next dynamic ledger must bind a crashing/generated `ExprId` to a
+  preferred arena and current arena without dereferencing the node slot.
+
+Boundary:
+
+- no HIR behavior changes;
+- no replacement of raw reads with broad `arena_for_expr?` scans from this
+  slice alone;
+- no claim that `NodeSlot#node` corruption is an arena-ownership bug until a
+  dynamic ledger proves the first bad transition.
+
+Next local track:
+
+- add an env-gated dynamic `lower_call` arena ledger, or refute arena ownership
+  as the active boundary with stronger evidence before any behavior-changing
+  `lower_call` patch.
 
 ### Slice A: CallResolution boundary
 

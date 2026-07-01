@@ -52,6 +52,11 @@ census \
   "@class_info|@generic_templates|@generic_reopenings|register_class|register_struct|register_module|intern_type|TypeDescriptor|type_registry|get_or_create_type|register_concrete"
 
 census \
+  "AstNodeIdentity / arena ownership" \
+  "src/compiler/hir/ast_to_hir.cr" \
+  "with_arena|arena_for_expr|node_for_expr|node_for_call_expr|@arena\\[|@main_arenas|@inline_arenas|source_for_arena"
+
+census \
   "SemanticStateScope / ambient maps" \
   "src/compiler/hir/ast_to_hir.cr" \
   "@type_param_map|with_type_param_map|with_isolated_type_param_map|function_type_param_map_for|@function_type_param_maps|def_has_untyped_regular_param|raw_annotation_needs_callsite_specialization|current_type_param"
