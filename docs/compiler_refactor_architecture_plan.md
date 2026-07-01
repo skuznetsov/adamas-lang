@@ -122,6 +122,15 @@ the contract object and falsifier; generic materialization and registration
 call sites still need explicit authority-edge migration before claiming
 bootstrap behavior progress.
 
+2026-07-01 post-0k-BA note: B3 now has an executable original-vs-stage semantic
+oracle, `regression_tests/original_vs_stage_semantic_oracle_contract.sh`. It is
+intentionally strict by default and measured-red only when
+`ADAMAS_EXPECT_ORIGINAL_STAGE_MISMATCH=1` is set. Current stage output matches
+original Crystal for `CONST=7` but diverges on source-visible type lines:
+original prints `TYPE=Int32` and `UNION=Int32`, while the stage compiler emits
+blank `TYPE=` and `UNION=`. This is a named semantic frontier, not accepted
+bootstrap progress.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`

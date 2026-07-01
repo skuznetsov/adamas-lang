@@ -372,9 +372,10 @@ Admitted next slices, in order:
    `regression_tests/generic_identity_key_contract.sh`. It introduces first-class
    semantic keys for generic templates and instances and proves equality/hash
    are separated from display/rendered names.
-3. `StageSemanticOracle`: define the B3 original-vs-stage oracle shape for any
-   future semantic behavior change. If no normalizer exists, the slice must
-   state the exact semantic lines being compared.
+3. `StageSemanticOracle`: B3 oracle shape is now present as
+   `regression_tests/original_vs_stage_semantic_oracle_contract.sh`. It states
+   exact semantic output lines and is currently measured-red for type-visible
+   behavior.
 
 Stop rules:
 
@@ -416,6 +417,18 @@ match. This is not a migration of generic materialization call sites yet. The
 next contract-first target is B3 original-vs-stage semantic oracle coverage, or
 a separately admitted slice that replaces a named old generic-identity authority
 edge with these semantic keys.
+
+Executed result after Slice 0k-BA: B3 is no longer missing an executable oracle,
+but the oracle is measured-red. The new guard
+`regression_tests/original_vs_stage_semantic_oracle_contract.sh` builds and runs
+the same source with original Crystal and the supplied stage compiler through
+`scripts/run_safe.sh`, then compares explicit source-visible lines:
+`TYPE=...`, `CONST=...`, and `UNION=...`. Current stage output preserves
+`CONST=7` but prints blank `TYPE=` and `UNION=` where original Crystal prints
+`Int32`. This closes the missing-oracle hole and opens a named semantic
+frontier; it is not a compiler behavior fix and not a green `s2b`/`s3b` claim.
+Next work may either fix that original-vs-stage type-visible semantic frontier
+or begin migrating a named old generic-identity authority edge to the G3 keys.
 
 Current selected implementation status: Slice 0k-AH is a behavior-neutral
 consumer migration. Instance-method override, keepalive, and diagnostic

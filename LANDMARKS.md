@@ -12,6 +12,21 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-BA-B3-ORIGINAL-STAGE-SEMANTIC-ORACLE|measured-red 2026-07-01 {F:0.87 G:0.30 R:0.89}]:
+Slice 0k-BA adds the B3 original-vs-stage semantic oracle:
+`regression_tests/original_vs_stage_semantic_oracle_contract.sh <compiler>`.
+It builds the same generated source with original Crystal and the supplied
+stage compiler, runs both binaries through `scripts/run_safe.sh`, and compares
+explicit source-visible semantic lines: `TYPE=`, `CONST=`, and `UNION=`.
+Current stage output is measured-red: it preserves `CONST=7` but prints blank
+`TYPE=` and `UNION=` where original Crystal prints `Int32`. The env
+`ADAMAS_EXPECT_ORIGINAL_STAGE_MISMATCH=1` is only for asserting that known
+frontier; strict mode remains the acceptance gate. Scope: missing-oracle hole
+closed, type-visible semantic mismatch not fixed, no green `s2b`/`s3b` claim.
+Decay trigger: `typeof` stringification, runtime `.class` stringification,
+original Crystal version, `scripts/run_safe.sh` output format, or the B3
+contract changes.
+
 [LM-ARCH-0K-AZ-G3-GENERIC-SEMANTIC-KEY-GUARD|verified 2026-07-01 {F:0.86 G:0.38 R:0.90}]:
 Slice 0k-AZ closes the missing G3 falsifier without migrating generic
 materialization behavior. New guard:

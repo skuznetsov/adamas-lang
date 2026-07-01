@@ -26,7 +26,7 @@ Each non-refuted row has a phase pressure:
 |----|-------|--------|--------------------|-------|--------|
 | B1 | Produced stage must be built through `scripts/run_safe.sh`. | `00-bootstrap-contract.md` section 4 | Review/CI command check; direct produced binary execution is protocol violation. | current | [FALSIFIABLE] |
 | B2 | A moved frontier is acceptable only with a guard and a named residual boundary. | `00-bootstrap-contract.md` section 5 | Commit lacks guard or TODO/LANDMARK boundary for a claimed fix. | current | [FALSIFIABLE] |
-| B3 | Original-vs-stage semantic oracle is required when a change touches language behavior. | `00-bootstrap-contract.md` section 3.1 | A semantic change has only stage1-vs-s2 evidence and no original comparison or stated semantic-line oracle. | next-touch | [MISSING-FALSIFIER] |
+| B3 | Original-vs-stage semantic oracle is required when a change touches language behavior. | `00-bootstrap-contract.md` section 3.1 | `regression_tests/original_vs_stage_semantic_oracle_contract.sh <compiler>` compares original Crystal and stage output for explicit semantic lines (`TYPE=`, `CONST=`, `UNION=`); current stage is measured-red under `ADAMAS_EXPECT_ORIGINAL_STAGE_MISMATCH=1`. | current | [FRONTIER] |
 
 ## 3. HIR Name Resolution
 

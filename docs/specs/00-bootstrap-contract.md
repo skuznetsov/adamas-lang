@@ -61,6 +61,19 @@ The comparison MUST normalize non-semantic ids and metadata before deciding
 equivalence. If no normalizer exists for the feature, the guard must state the
 specific semantic lines it compares.
 
+Current B3 executable oracle:
+`regression_tests/original_vs_stage_semantic_oracle_contract.sh <compiler>`.
+It compares original Crystal and the supplied stage compiler on explicit
+source-visible semantic lines:
+
+- `TYPE=<typeof expression result>`;
+- `CONST=<constant-folded arithmetic result>`;
+- `UNION=<runtime class result for a nilable expression>`.
+
+The current stage is measured-red for the type-visible lines; use
+`ADAMAS_EXPECT_ORIGINAL_STAGE_MISMATCH=1` only to assert that known frontier,
+not as an acceptance gate.
+
 ### 3.2 HIR Equivalence
 
 Normalized HIR equivalence ignores:

@@ -8,6 +8,19 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: implemented Slice 0k-BA, the B3 original-vs-stage semantic
+  oracle slice. New guard:
+  `regression_tests/original_vs_stage_semantic_oracle_contract.sh <compiler>`.
+  The script builds and runs the same source with original Crystal and the
+  supplied stage compiler through `scripts/run_safe.sh`, then compares explicit
+  semantic lines: `TYPE=`, `CONST=`, and `UNION=`. This is currently
+  measured-red: current stage preserves `CONST=7`, but emits blank `TYPE=` and
+  `UNION=` where original Crystal emits `Int32`. Use
+  `ADAMAS_EXPECT_ORIGINAL_STAGE_MISMATCH=1` only to assert the known frontier.
+  Strict mode remains the acceptance gate. This closes the missing B3 oracle
+  but does not fix the type-visible semantic mismatch and does not prove green
+  `s2b`/`s3b`.
+
 - 2026-07-01 UPDATE: implemented Slice 0k-AZ, the second contract burn-down
   slice after the 0k-AX pivot. G3 in `docs/specs/05-falsifier-matrix.md` now
   has an executable guard:
