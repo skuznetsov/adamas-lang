@@ -339,6 +339,16 @@ not to patch the old wrapper/remap symptom. That edge is consumed. Re-select the
 next reached transaction/emission edge, with the current broad residual being
 exact-contract missing-body emits that must be split before any behavior change.
 
+2026-07-01 post-0k-AN pacing note: before the next production edit, choose one
+explicit lane: correctness-selection, consumer-migration, cleanup/delete, or
+consolidation. This is now part of the active SDD guard. A new selector is not
+progress unless it has a decision question, root-size budget, negative control,
+and a named old authority edge. If it only prints a broader residual, it stops at
+classification. A second report-only slice must retire, merge, or refute a
+previous report surface. This keeps the near-term refactor map aligned with
+bootstrap progress instead of growing another diagnostic layer around the same
+hidden ownership problem.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging

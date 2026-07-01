@@ -43,6 +43,35 @@ replace or shadow. A cleanup slice remains admitted only when the goal is
 explicitly bloat reduction and the selected path has its own `CodePathStatus`
 falsifier.
 
+Post-0k-AM architecture pacing covenant:
+
+- A next slice must choose exactly one lane before it edits production code:
+  `correctness-selection`, `consumer-migration`, `cleanup/delete`, or
+  `consolidation`.
+- `correctness-selection` may add or extend a selector only when it states a
+  decision question, declares a root-size budget, has a negative control, and
+  names the old authority edge that a future consumer would replace or shadow.
+  If the result is broad, such as the current `other_missing_body_rows=14`, the
+  slice stops at classification; it does not authorize behavior changes.
+- `consumer-migration` is admitted only after a selected edge is already
+  root-sized and has a named owned fact. The DoD must prove that at least one
+  legacy consumer reads that fact in shadow/parity mode, or that the old edge is
+  explicitly refuted.
+- `cleanup/delete` is admitted only through `CodePathStatus` with default
+  behavior, HIR/MIR/LLVM shape, bootstrap guard, and a protecting falsifier.
+- `consolidation` is admitted when the current architecture surface has too
+  many reports/ledgers for the evidence they carry. It must retire, merge, or
+  mark stale at least one older report/gate or historical next-step paragraph;
+  otherwise it is another report slice in disguise.
+- No two consecutive report-only slices are allowed unless the second one
+  deletes, retires, or refutes a previous report surface. `residual_*` counters,
+  row counts, and crash-stack movement are routing signals, not progress
+  metrics.
+
+This covenant is a stop rule, not a new behavior plan. It exists to prevent the
+architecture track from replacing consumer-patch tail-chasing with
+selector/report tail-chasing.
+
 Current selected implementation status: Slice 0k-AH is a behavior-neutral
 consumer migration. Instance-method override, keepalive, and diagnostic
 materialization-symbol consumers now read from `CallMaterializationTransaction`

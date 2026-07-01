@@ -8,6 +8,24 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: added Slice 0k-AN, docs-only
+  architecture pacing covenant after 0k-AM. The purpose is to stop the next
+  step from turning into selector/report tail-chasing. A future slice must
+  choose exactly one lane before production edits:
+  `correctness-selection`, `consumer-migration`, `cleanup/delete`, or
+  `consolidation`. New selectors are admitted only with a decision question,
+  root-size budget, negative control, and named old authority edge. Broad
+  results, including the current `other_missing_body_rows=14`, stop at
+  classification and do not authorize behavior changes. Consumer migration is
+  admitted only after a selected root-sized edge has an owned fact and a DoD
+  proving that a legacy consumer reads that fact in shadow/parity mode or that
+  the old edge is refuted. Cleanup requires `CodePathStatus` and a protecting
+  falsifier. Consolidation must retire, merge, or mark stale an older
+  report/gate or historical next-step paragraph; otherwise it is just another
+  report slice. No two consecutive report-only slices are allowed unless the
+  second one removes or refutes a previous report surface. This is not a
+  behavior fix and not a green `s2b`/`s3b` claim.
+
 - 2026-07-01 UPDATE: implemented Slice 0k-AM,
   behavior-neutral `CallMaterializationTransaction` contract consumer for the
   selected 0k-AJ transaction/emission edge. HIR now stores

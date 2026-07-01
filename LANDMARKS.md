@@ -12,6 +12,27 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-AN-PACING-COVENANT|design-sealed 2026-07-01 {F:0.78 G:0.54 R:0.86}]:
+Slice 0k-AN adds a docs-only architecture pacing covenant after 0k-AM. It
+records that the next step must not replace consumer-patch tail-chasing with
+selector/report tail-chasing. Future slices must choose exactly one lane before
+production edits: `correctness-selection`, `consumer-migration`,
+`cleanup/delete`, or `consolidation`. A selector/report slice must state its
+decision question, root-size budget, negative control, and the old authority
+edge a future consumer would replace or shadow. A broad result such as the
+current `other_missing_body_rows=14` stops at classification and does not
+authorize behavior changes. A consumer migration requires a root-sized selected
+edge plus a DoD proving a legacy consumer reads the owned fact in shadow/parity
+mode or that the old edge is refuted. Cleanup requires `CodePathStatus` with a
+protecting falsifier. Consolidation must retire, merge, or mark stale an older
+report/gate or historical next-step paragraph. No two consecutive report-only
+slices are admitted unless the second removes or refutes a previous report
+surface. Scope: SDD/TODO/LANDMARKS pacing rule only; no compiler behavior and no
+green `s2b`/`s3b` claim. Decay trigger: a future slice proves this covenant is
+too restrictive for a root-sized generated-stage edge, or the active board is
+replaced by a narrower executable roadmap with equivalent anti-tail-chase
+guards.
+
 [LM-ARCH-0K-AM-CONTRACT-CONSUMER|verified 2026-07-01 {F:0.88 G:0.44 R:0.90}]:
 Slice 0k-AM implements the behavior-neutral `CallMaterializationTransaction`
 contract consumer for the selected 0k-AJ transaction/emission edge. HIR now
