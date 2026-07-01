@@ -185,6 +185,18 @@ reads, and no invocation-frame helper. The next code slice is therefore the
 shadow/parity helper that moves this selected consumer seam to an explicit
 invocation-frame owner fact while preserving emitted behavior.
 
+2026-07-01 post-0k-AC note: the selected `InvocationContext` seam is now
+promoted in shadow/parity mode. `lower_super` / `lower_previous_def` consume an
+`InvocationContext` owner fact for owner class, method name, class-vs-instance
+state, super-source module, function name, and legacy forwardable argument ids.
+The source-shape gate is green under `REQUIRE_PROMOTED=1`, and full suites pass,
+but this is not a behavior flip and not a green `s2b`/`s3b` claim. The next
+slice must either classify the residual generated-stage frontier with fresh
+owner-boundary evidence or select a different active-board authority edge with
+a red/green gate. Do not continue by adding another context report, changing
+super forwarding, resetting inline-yield stacks, or treating this helper as a
+bootstrap fix.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging

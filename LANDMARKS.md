@@ -12,24 +12,29 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
-[LM-ARCH-INVOCATION-CONTEXT-ADMISSION-GATE|measured-red 2026-07-01 {F:0.82 G:0.40 R:0.86}]:
-The `InvocationContext / InlineYieldFrame` boundary now has an executable
-source-shape admission gate. `scripts/invocation_context_admission_report.sh`
-selects the seam `lower_super.previous_def.invocation_context` and currently
-classifies the source as `legacy_ambient_context_edge` with
-`selection_status=eligible_invocation_context_owner`. The current selected
-seam still has direct ambient authority reads:
-`ambient_owner_method_count=4`, `ambient_kind_count=2`,
-`ambient_super_source_count=9`, `direct_forward_policy_count=2`, and
-`invocation_helper_count=0`. `REQUIRE_PROMOTED=1
-scripts/invocation_context_admission_report.sh` exits 9, so the gate is red
-until a future behavior-neutral shadow/parity helper makes `lower_super` and
-`lower_previous_def` consume explicit invocation-frame owner facts instead of
-direct ambient state. Scope: measured-red source-shape gate only; no compiler
-behavior changed and no green `s2b`/`s3b` claim. Decay trigger: the selected
-consumer seam is rewritten, a future gate reports `already_promoted_shadow`, or
-a fresh generated-stage owner-boundary run refutes invocation context as the
-active residual.
+[LM-ARCH-INVOCATION-CONTEXT-SHADOW-SEAM|verified 2026-07-01 {F:0.86 G:0.38 R:0.90}]:
+The selected `InvocationContext / InlineYieldFrame` seam is now promoted in
+behavior-neutral shadow/parity mode. `scripts/invocation_context_admission_report.sh`
+selects `lower_super.previous_def.invocation_context` and now classifies the
+source as `already_promoted_shadow`; `REQUIRE_PROMOTED=1
+scripts/invocation_context_admission_report.sh` exits 0. The selected
+consumers no longer directly read `@current_class`, `@current_method`,
+`@current_method_is_class`, `@current_super_source_module`, or
+`current_method_forward_arg_ids(ctx)`: direct selected-seam counts are
+`ambient_owner_method_count=0`, `ambient_kind_count=0`,
+`ambient_super_source_count=0`, and `direct_forward_policy_count=0`.
+`lower_super` and `lower_previous_def` instead consume an `InvocationContext`
+owner fact carrying owner class, method name, class-vs-instance bit,
+super-source module, current function name, and legacy forwardable argument ids.
+Evidence: fresh stage1 build to `/private/tmp/adamas_invctx_stage1`; the
+InvocationContext gate, MaterializationSymbolBinding gate, MethodNameCodec
+gate, semantic census, and CodePathStatus census run; full suites pass
+`152/152 + 36/36`. Scope: this is a source-shape and broad-regression
+authority migration, not a super/previous-def behavior fix and not green
+full-prelude generated s2, `s2b`, or `s3b`. Decay trigger: `lower_super` or
+`lower_previous_def` starts reading ambient invocation state again, a future
+generated-stage owner-boundary run refutes InvocationContext as relevant, or an
+InvocationContext behavior flip changes super/previous-def semantics.
 
 [LM-ARCH-INVOCATION-CONTEXT-GATE|guard-only 2026-07-01 {F:0.70 G:0.44 R:0.78}]:
 After Slice 0k-Z, the next architecture movement must not be selected directly

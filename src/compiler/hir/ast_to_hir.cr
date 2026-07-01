@@ -651,6 +651,25 @@ module Adamas::HIR
       end
     end
 
+    private class InvocationContext
+      getter class_name : String?
+      getter method_name : String?
+      getter method_is_class : Bool
+      getter super_source_module : String?
+      getter function_name : String
+      getter forward_arg_ids : Array(ValueId)
+
+      def initialize(
+        @class_name : String?,
+        @method_name : String?,
+        @method_is_class : Bool,
+        @super_source_module : String?,
+        @function_name : String,
+        @forward_arg_ids : Array(ValueId),
+      )
+      end
+    end
+
     # V2 safety: was NamedTuple, but V2 compiles NamedTuple[:key] as runtime lookups that crash.
     # - `base` is the registered generic template key (e.g. `Crystal::EventLoop::Timers`) after
     #   `resolve_generic_template_base`, used for `@generic_templates` lookup and
@@ -60303,10 +60322,32 @@ module Adamas::HIR
       args
     end
 
+    private def invocation_context_for_current_method(ctx : LoweringContext) : InvocationContext
+      InvocationContext.new(
+        @current_class,
+        @current_method,
+        @current_method_is_class,
+        @current_super_source_module,
+        ctx.function.name,
+        current_method_forward_arg_ids(ctx),
+      )
+    end
+
+    private def with_invocation_super_source(source_module : String?, &)
+      old_super_source = @current_super_source_module
+      @current_super_source_module = source_module
+      begin
+        yield
+      ensure
+        @current_super_source_module = old_super_source
+      end
+    end
+
     # Lower super call - calls parent class method with same name
     private def lower_super(ctx : LoweringContext, node : Adamas::Compiler::Frontend::SuperNode) : ValueId
-      class_name = @current_class
-      method_name = @current_method
+      invocation_context = invocation_context_for_current_method(ctx)
+      class_name = invocation_context.class_name
+      method_name = invocation_context.method_name
       debug_argerr_super = ENV.has_key?("DEBUG_ARGERR_SUPER") && class_name == "ArgumentError"
       if debug_argerr_super
         STDERR.puts "[ARGERR_SUPER] phase=enter class=#{class_name || "nil"} method=#{method_name || "nil"} func=#{ctx.function.name}"
@@ -60340,7 +60381,7 @@ module Adamas::HIR
                # Skip the synthetic instance `self` param when present. Class/static
                # methods and top-level fun wrappers may have no `self`, so slicing
                # from index 1 is not safe.
-               current_method_forward_arg_ids(ctx)
+               invocation_context.forward_arg_ids
              end
 
       # Get argument types for mangling
@@ -60399,7 +60440,7 @@ module Adamas::HIR
             # Skip the module that provided the current _super body to avoid infinite recursion.
             # E.g., IO::FileDescriptor includes IO::Buffered; IO::Buffered#write_byte calls super
             # → should skip IO::Buffered and go to parent class IO, not back to IO::Buffered.
-            if skip_mod = @current_super_source_module
+            if skip_mod = invocation_context.super_source_module
               next if module_base == skip_mod || module_name == skip_mod
             end
             visited = Set(String).new
@@ -60412,7 +60453,7 @@ module Adamas::HIR
               actual_func_def = found[0]
               def_arena = found[1]
               actual_module_base = found[2]
-              if skip_mod = @current_super_source_module
+              if skip_mod = invocation_context.super_source_module
                 next if actual_module_base == skip_mod || module_base == skip_mod
               end
               if params = actual_func_def.params
@@ -60449,20 +60490,19 @@ module Adamas::HIR
               unless @module.has_function?(super_name)
                 register_deferred_module_type_params(class_name, actual_module_base, super_name, super_base)
                 receiver_map = type_param_map_for_receiver_name("#{class_name}##{method_name}")
-                old_super_source = @current_super_source_module
-                @current_super_source_module = actual_module_base
                 # Resolve the correct arena for the DefNode's body.
                 # def_arena is the module's outer body arena, but the DefNode's
                 # own body expressions may live in a different arena (same file,
                 # different parse pass). resolve_arena_for_def searches all known
                 # arenas to find one where body ExprIds actually resolve correctly.
-                resolved_def_arena = resolve_arena_for_def(actual_func_def, def_arena)
-                with_arena(resolved_def_arena) do
-                  with_type_param_map(receiver_map) do
-                    lower_method(class_name, class_info, actual_func_def, arg_types, nil, nil, super_name, force_class_method: @current_method_is_class)
+                with_invocation_super_source(actual_module_base) do
+                  resolved_def_arena = resolve_arena_for_def(actual_func_def, def_arena)
+                  with_arena(resolved_def_arena) do
+                    with_type_param_map(receiver_map) do
+                      lower_method(class_name, class_info, actual_func_def, arg_types, nil, nil, super_name, force_class_method: invocation_context.method_is_class)
+                    end
                   end
                 end
-                @current_super_source_module = old_super_source
               end
               return_type = @function_types[super_name]? || TypeRef::VOID
               self_id = emit_self(ctx)
@@ -60478,7 +60518,7 @@ module Adamas::HIR
         end
       end
 
-      if source_module = @current_super_source_module
+      if source_module = invocation_context.super_source_module
         class_info_for_super = class_info
         typed_lookup_arg_types = if NILABLE_QUERY_METHODS.includes?(method_name) && !arg_types.empty?
                                    arg_types
@@ -60518,15 +60558,14 @@ module Adamas::HIR
           unless @module.has_function?(super_name)
             register_deferred_module_type_params(class_name, module_owner, super_name, super_base)
             receiver_map = type_param_map_for_receiver_name("#{class_name}##{method_name}")
-            old_super_source = @current_super_source_module
-            @current_super_source_module = module_owner
-            resolved_def_arena = resolve_arena_for_def(actual_func_def, def_arena)
-            with_arena(resolved_def_arena) do
-              with_type_param_map(receiver_map) do
-                lower_method(class_name, class_info_for_super, actual_func_def, arg_types, nil, nil, super_name, force_class_method: @current_method_is_class)
+            with_invocation_super_source(module_owner) do
+              resolved_def_arena = resolve_arena_for_def(actual_func_def, def_arena)
+              with_arena(resolved_def_arena) do
+                with_type_param_map(receiver_map) do
+                  lower_method(class_name, class_info_for_super, actual_func_def, arg_types, nil, nil, super_name, force_class_method: invocation_context.method_is_class)
+                end
               end
             end
-            @current_super_source_module = old_super_source
           end
           return_type = @function_types[super_name]? || TypeRef::VOID
           self_id = emit_self(ctx)
@@ -60695,8 +60734,9 @@ module Adamas::HIR
     private def lower_previous_def(ctx : LoweringContext, node : Adamas::Compiler::Frontend::PreviousDefNode) : ValueId
       # previous_def calls the previous definition of the current method
       # This is used when reopening classes/methods
-      class_name = @current_class
-      method_name = @current_method
+      invocation_context = invocation_context_for_current_method(ctx)
+      class_name = invocation_context.class_name
+      method_name = invocation_context.method_name
 
       unless class_name && method_name
         # No current method context - return nil
@@ -60713,7 +60753,7 @@ module Adamas::HIR
                # Skip the synthetic instance `self` param when present. Class/static
                # methods and top-level fun wrappers may have no `self`, so slicing
                # from index 1 is not safe.
-               current_method_forward_arg_ids(ctx)
+               invocation_context.forward_arg_ids
              end
 
       # Get argument types for mangling

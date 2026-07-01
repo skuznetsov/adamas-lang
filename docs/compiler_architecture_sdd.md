@@ -14,7 +14,7 @@ fallbacks, and hard-to-localize bootstrap failures.
 
 ## Active Architecture Board
 
-Status: design-sealed execution board after Slice 0k-AB. This board exists to
+Status: design-sealed execution board after Slice 0k-AC. This board exists to
 prevent the next step from being selected by the latest generated-stage crash
 stack. A next slice is admitted only if it moves one board row by replacing or
 shadowing a named authority edge, producing `CodePathStatus` evidence for a
@@ -25,7 +25,7 @@ named path, or refuting a row with fresher generated-stage evidence.
 | `SemanticStateScope` | `prefer_callsite_specialization` is promoted in shadow/parity mode; emitted behavior still returns the legacy result. | Select a different root-sized consumer with a red/green source-shape gate, or explicitly leave this lane paused. | Reselecting `prefer_callsite_specialization`; wrapping `def_has_untyped_regular_param?` without a separate owner result; changing emitted behavior from the shadow row. |
 | `MaterializationIdentity` / `MaterializationRegistry` | Slice 0k-Z promotes the selected `lower_function_if_needed.symbol_binding` seam in behavior-neutral shadow/parity mode. `scripts/materialization_symbol_binding_admission_report.sh` now reports `already_promoted_shadow` even with `REQUIRE_PROMOTED=1`; keepalive and materialization-ledger consumers read from `MaterializationSymbolBinding` fields instead of recomputing split locals. | Do not flip emitted symbols from this slice. Next movement must either run a generated-stage materialization/symbol-binding classification on the residual full-prelude s2 crash, or select the next root-sized owner consumer with a red/green gate. | Backend undefined-extern rescue; target keepalive as a standalone patch; requested-name forcing; `NamedTuple`/`Tuple` display normalization; global ambient-map predicate changes; `BlockOwner` rollback; treating the green source-shape gate as green `s2b`/`s3b`. |
 | `NameResolution` / `MethodNameCodec` | File identity was fixed; method/symbol identity is still partly rendered-string driven. Slice 0k-V promotes the selected `lower_function_if_needed.exact_lookup_keep_requested_name` seam through `method_name_codec_exact_lookup_keep_requested_name?` in shadow/parity mode; emitted behavior still returns the legacy result. Slice 0k-W pauses standalone promotion-report proliferation. | Either select the next root-sized codec seam with a red/green source-shape gate, or define a generated-stage classification slice that consumes the existing promotion ledger to answer one blocking yes/no decision before changing emitted naming behavior. | String-slice parsing patches at individual callsites; treating rendered names as canonical identity; broad normalization without a falsifier; selecting lower-level helpers before a materialization seam; flipping owner-result behavior from shadow rows; committing another report surface that does not reduce or select an authority edge. |
-| `InvocationContext` / `InlineYieldFrame` | Slice 0k-AB adds `scripts/invocation_context_admission_report.sh`, a source-shape gate that selects `lower_super.previous_def.invocation_context`. Current source is red under `REQUIRE_PROMOTED=1`: `source_shape=legacy_ambient_context_edge`, with direct ambient owner/method, method-kind, super-source, and forward-policy reads in `lower_super` / `lower_previous_def`. | Implement a behavior-neutral shadow/parity helper for the selected seam so consumers read an explicit invocation-frame owner fact while emitted behavior remains legacy. The helper must turn `REQUIRE_PROMOTED=1 scripts/invocation_context_admission_report.sh` green before any behavior flip. | A new `ADAMAS_SUPER_CALL_CONTEXT_LEDGER` report without a decision question; direct `lower_super` guards; changing super lookup or argument forwarding from a crash stack; inline-yield stack resets as a consumer fix; treating local diagnostic rows as green bootstrap evidence. |
+| `InvocationContext` / `InlineYieldFrame` | Slice 0k-AC promotes the selected `lower_super.previous_def.invocation_context` seam in behavior-neutral shadow/parity mode. `scripts/invocation_context_admission_report.sh` now reports `already_promoted_shadow` even with `REQUIRE_PROMOTED=1`; `lower_super` and `lower_previous_def` consume an `InvocationContext` owner fact instead of directly reading ambient owner/method, method-kind, super-source, and forward-policy state. | Do not flip super lookup, previous-def lookup, or argument-forwarding behavior from this slice. Next movement must either classify the residual generated-stage frontier with fresh owner-boundary evidence or select a different root-sized board row with a red/green source-shape gate. | A new `ADAMAS_SUPER_CALL_CONTEXT_LEDGER` report without a decision question; direct `lower_super` guards; changing super lookup or argument forwarding from a crash stack; inline-yield stack resets as a consumer fix; treating the green source-shape gate as green bootstrap evidence. |
 | `AstNodeRef` / `ArenaOwnership` | Explicit-owner lower-call rows and `NodeSlotIntegrity` refuted owner drift, out-of-range ids, and missing slots for the instrumented edge. | Resume only with a named payload/deep-read or uninstrumented-consumer falsifier, including cleanup rules for its ledger. | Lower-call arena routing, broad arena scans, parser allocation rewrites, or another unbounded crash-edge probe. |
 | `CodePathStatus` | `cli.metrics.identity_dry_run` is classified as `debug_only`, not `delete_ready`. | Classify another named path, or run a separate `delete_ready` slice with default-behavior, HIR/MIR/LLVM, bootstrap, and evidence-preservation guards. | Deleting debug/probe/fallback paths from static grep output; using runtime liveness as semantic ownership evidence. |
 
@@ -35,13 +35,14 @@ the repeated high-cost frontiers are symbol/owner identity failures. A cleanup
 slice remains admitted, but only when the goal is explicitly bloat reduction
 and the selected path has its own `CodePathStatus` falsifier.
 
-Current selected implementation status: `MaterializationIdentity /
-MaterializationRegistry`, `lower_function_if_needed.symbol_binding` is now
+Current selected implementation status: `InvocationContext` /
+`InlineYieldFrame`, `lower_super.previous_def.invocation_context` is now
 promoted in shadow/parity mode. This is not a behavior flip and not a green
-bootstrap claim. Fresh generated s2 builds and no-prelude smoke passes, but the
-generated-s2 full-prelude smoke still exits 139 after `pass3 after lower_main
-call`; that residual must be classified through an admitted owner-boundary gate
-before any materialization or invocation-context behavior patch is admitted.
+bootstrap claim. The fresh stage1 build and full regression suites pass, but no
+generated-s2 full-prelude or `s2b`/`s3b` green claim is made by this slice. The
+residual generated-stage frontier must still be classified through an admitted
+owner-boundary gate before any super, previous-def, materialization, backend,
+or inline-yield behavior patch is admitted.
 
 Mini-Quadrumvirate gate for every future slice:
 
@@ -4927,6 +4928,76 @@ Next local track:
   shadow/parity helper for exactly this selected seam;
 - keep emitted behavior legacy until the source-shape gate is green and a later
   would-change/generated-stage check is root-sized.
+
+### Slice 0k-AC: InvocationContext shadow seam
+
+Status:
+
+- behavior-neutral owner-consumption helper after Slice 0k-AB;
+- no super-call lookup, previous-def lookup, argument-forwarding behavior,
+  inline-yield behavior, backend behavior, cleanup behavior, or `BlockOwner`
+  carrier changed;
+- the selected seam remains `lower_super.previous_def.invocation_context`.
+
+Source/spec:
+
+- `src/compiler/hir/ast_to_hir.cr`;
+- `scripts/invocation_context_admission_report.sh`;
+- Slice 0k-AA / 0k-AB `InvocationContext` / `InlineYieldFrame` gate.
+
+Implementation:
+
+- add `InvocationContext`, carrying current owner class, method name,
+  class-vs-instance bit, current super-source module, current function name,
+  and legacy forwardable argument ids;
+- add `invocation_context_for_current_method(ctx)` as the only selected-seam
+  owner-fact constructor;
+- add `with_invocation_super_source` so nested module-super lowering still
+  scopes `@current_super_source_module` with the legacy save/restore behavior
+  while the selected consumers no longer mutate the ambient field directly;
+- update `lower_super` and `lower_previous_def` to consume the
+  `InvocationContext` fields instead of direct reads of `@current_class`,
+  `@current_method`, `@current_method_is_class`,
+  `@current_super_source_module`, or `current_method_forward_arg_ids(ctx)`.
+
+Evidence:
+
+- `bash -n scripts/invocation_context_admission_report.sh`;
+- `scripts/invocation_context_admission_report.sh` reports
+  `preferred_source_shape=already_promoted_shadow` with
+  `ambient_owner_method_count=0`, `ambient_kind_count=0`,
+  `ambient_super_source_count=0`, `direct_forward_policy_count=0`,
+  `lower_super_helper_count=9`, and `lower_previous_def_helper_count=4`;
+- `REQUIRE_PROMOTED=1 scripts/invocation_context_admission_report.sh` exits 0;
+- `scripts/materialization_symbol_binding_admission_report.sh` and
+  `REQUIRE_PROMOTED=1 scripts/materialization_symbol_binding_admission_report.sh`
+  still report `already_promoted_shadow`;
+- `scripts/method_name_codec_admission_report.sh` and
+  `REQUIRE_PROMOTED=1 scripts/method_name_codec_admission_report.sh` still
+  report `already_promoted_shadow`;
+- `scripts/semantic_decision_census.sh` and
+  `scripts/codepath_status_census.sh` run;
+- `crystal build src/adamas.cr -o /private/tmp/adamas_invctx_stage1
+  --error-trace` exits 0;
+- `regression_tests/run_all_suites.sh /private/tmp/adamas_invctx_stage1 4`
+  passes `152/152 + 36/36`.
+
+Boundary:
+
+- this is a source-shape and broad-regression proof for the selected
+  consumer-migration seam, not a runtime proof that invocation context is the
+  only remaining generated-stage residual;
+- it does not claim green full-prelude generated s2, `s2b`, or `s3b`;
+- it does not authorize super/previous-def behavior changes, inline-yield
+  stack resets, backend undefined-extern rescue, materialization-name flips,
+  or `BlockOwner` carrier changes.
+
+Next local track:
+
+- either run a fresh generated-stage owner-boundary classification after this
+  shadow migration, or select another active-board row with a red/green gate;
+- do not add another `InvocationContext` report unless the SDD names the
+  decision question, cleanup rule, and consumer edge it will reduce or refute.
 
 ### Slice A: CallResolution boundary
 

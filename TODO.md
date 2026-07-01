@@ -8,6 +8,26 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: implemented Slice 0k-AC,
+  `InvocationContext` shadow/parity promotion. The selected
+  `lower_super.previous_def.invocation_context` seam now has an
+  `InvocationContext` owner fact carrying current owner class, method name,
+  class-vs-instance bit, super-source module, function name, and legacy
+  forwardable argument ids. `lower_super` and `lower_previous_def` consume this
+  owner fact instead of directly reading `@current_class`, `@current_method`,
+  `@current_method_is_class`, `@current_super_source_module`, or
+  `current_method_forward_arg_ids(ctx)`. `REQUIRE_PROMOTED=1
+  scripts/invocation_context_admission_report.sh` is green with all selected
+  direct ambient counts at zero. Verification: fresh stage1 builds;
+  InvocationContext, MaterializationSymbolBinding, MethodNameCodec, semantic
+  census, and CodePathStatus gates run; full suites pass `152/152 + 36/36`.
+  This is not a super/previous-def behavior fix and not a green `s2b`/`s3b`
+  claim. Next work must either run a fresh generated-stage owner-boundary
+  classification after this shadow migration or select another active-board row
+  with a red/green gate; do not add another context ledger, patch `lower_super`,
+  reset inline-yield stacks, or treat the green source-shape gate as bootstrap
+  completion.
+
 - 2026-07-01 UPDATE: implemented the executable Slice 0k-AB source-shape gate
   for the `InvocationContext / InlineYieldFrame` boundary. New script:
   `scripts/invocation_context_admission_report.sh`. It selects
