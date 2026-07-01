@@ -12,6 +12,23 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-BG-COMMAND-CALL-MEMBER-ACCESS-GUARD|measured-red 2026-07-01 {F:0.86 G:0.36 R:0.88}]:
+Slice 0k-BG adds executable guard
+`regression_tests/command_call_member_access_preservation_contract.sh` for the
+frontend command-call expression-preservation boundary found in 0k-BF. The
+guard builds a small parser-shape probe and runs it through `scripts/run_safe.sh`.
+Strict mode currently exits 1 because `puts (true ? 1 : nil).class` parses as
+a root `Adamas::Compiler::Frontend::MemberAccessNode` on the command-call
+result, not as a command `CallNode` with a `.class` argument. With
+`ADAMAS_EXPECT_COMMAND_CALL_MEMBER_MISMATCH=1`, the same guard exits 0 and
+records the measured-red frontier. Negative controls in the guard assert that
+`puts((true ? 1 : nil).class)` and `x = true ? 1 : nil; puts x.class` keep
+`.class` as the command argument, while `puts (true ? 1 : nil)` remains a
+command call with a ternary argument. Scope: falsifier only, no compiler
+behavior change, no TypeValue owner migration, no bootstrap claim. Decay
+trigger: parser command-call precedence changes, `CallNode`/`MemberAccessNode`
+shape changes, or H6 is split/redefined.
+
 [LM-ARCH-0K-BF-TYPEVALUE-PREFLIGHT-REFUTED-BY-COMMAND-CALL|design-sealed 2026-07-01 {F:0.78 G:0.40 R:0.82}]:
 Slice 0k-BF records a docs-only failed-preflight after a reverted local
 `contract-owner-migration` TypeValue implementation attempt. The WIP introduced

@@ -8,6 +8,20 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: implemented Slice 0k-BG, the frontend command-call
+  member-access preservation falsifier. New guard:
+  `regression_tests/command_call_member_access_preservation_contract.sh`.
+  It is strict by default and measured-red with
+  `ADAMAS_EXPECT_COMMAND_CALL_MEMBER_MISMATCH=1`. Current evidence: strict mode
+  exits 1 because `puts (true ? 1 : nil).class` parses as a root
+  `MemberAccessNode` on the command-call result instead of a command `CallNode`
+  whose argument is `.class`; measured-red mode exits 0. Controls in the same
+  guard require `puts((true ? 1 : nil).class)`, `x.class`, and bare
+  `puts (true ? 1 : nil)` to keep their expected shapes. This closes the
+  missing parser-frontier falsifier from 0k-BF; no compiler behavior changed
+  and TypeValue production remains paused until this frontend boundary is
+  fixed or H6 is split into TypeValue-core plus frontend-command guards.
+
 - 2026-07-01 UPDATE: added Slice 0k-BF, a docs-only failed-preflight
   checkpoint for the attempted `contract-owner-migration` TypeValue code
   slice. A reverted local owner-fact patch made B3 and H4 green, but strict H6

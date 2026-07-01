@@ -186,6 +186,17 @@ green with a source-text direct-output workaround. The next useful step is a
 frontend command-call preservation falsifier or an explicit split of H6 into a
 TypeValue core guard plus a separate measured-red parser/lowering guard.
 
+2026-07-01 post-0k-BG note: the command-call preservation falsifier now exists
+as `regression_tests/command_call_member_access_preservation_contract.sh`.
+Strict mode is measured-red: `puts (true ? 1 : nil).class` parses as a root
+`MemberAccessNode` on the command-call result, while controls preserve
+`puts((true ? 1 : nil).class)`, `x.class`, and bare ternary command calls. The
+next production slice should make this parser-frontier guard strict-green
+without touching TypeValue, `BlockOwner`, generic materialization,
+requested-name or ambient-map policy, backend stubs/forwarders, or broad
+`NamedTuple`/`Tuple` rendering. After that, rerun H6 to separate remaining
+TypeValue rows from frontend syntax preservation.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`
