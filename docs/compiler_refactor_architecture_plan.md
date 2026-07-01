@@ -538,6 +538,13 @@ Recommended direction:
   second choice is a `MaterializationRegistry` transaction-consumer report; an
   `AstNodeRef` raw-read migration or `CodePathStatus` deletion slice must carry
   its own focused falsifiers.
+- `StateScopeConsumerCensus` must be implemented as a migration gate, not as a
+  row-producing diagnostic report. It must enumerate the known
+  naming/materialization consumers, emit one authority and one migration
+  decision per reached consumer, and block later behavior patches on any
+  `diagnostic_only` or `blocked_unknown` row. The implementation commit should
+  add only the default-off report/ledger; changing naming or materialization
+  semantics requires a later would-change census.
 
 This plan should be revisited after the architecture SDD seals the active
 semantic-owner frontiers enough that backend-local refactoring cannot hide a

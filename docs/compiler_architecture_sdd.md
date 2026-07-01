@@ -48,6 +48,14 @@ architecture migration contract: state which legacy consumers must become
 `StateScope`, `MaterializationRegistry`, `AstNodeRef`, or `CodePathStatus`
 consumers before a behavior-changing fix is allowed.
 
+Current next-slice decision after the Slice 0k-E hostile self-review: the
+preferred `StateScopeConsumerCensus` is admissible only as a migration gate,
+not as another diagnostic ladder. The report must classify every known
+naming/materialization consumer by the authority it is allowed to read and must
+emit a migration decision for that consumer. A report that only prints rows,
+ambient maps, or suspicious examples remains diagnostic-only and authorizes no
+behavior change.
+
 Bounded context: Crystal V2 compiler architecture:
 
 - HIR lowering and semantic registration (`src/compiler/hir/ast_to_hir.cr`)
@@ -2331,6 +2339,118 @@ Next local track:
   known naming/materialization consumers by allowed state authority and proves
   which legacy consumers can be changed without over-firing legitimate
   current-instantiation sites.
+
+### Slice 0k-F: StateScope consumer migration gate
+
+Status:
+
+- design-sealed follow-up to Slice 0k-E;
+- docs-only in this checkpoint;
+- no compiler behavior, state-scope behavior, materialization behavior, AST
+  read behavior, or backend behavior is changed by this slice.
+
+Problem:
+
+- `SemanticStateScope` rows currently describe the materialization seam, but
+  legacy consumers still call predicates and helpers that can read ambient
+  `@type_param_map` or rendered symbols directly;
+- if the next report merely logs those calls, it becomes another diagnostic
+  ladder. The report must instead classify each consumer into a migration
+  status that can block or permit later behavior work.
+
+Source/spec:
+
+- `SemanticStateScope` section 6.4;
+- `Materialization` section 6.5;
+- `lower_function_if_needed_impl` callsite-args, suffix-types, and override
+  naming decisions;
+- `prefer_callsite_specialization` and `lower_call` remangling decisions;
+- `def_has_untyped_regular_param?`,
+  `raw_annotation_needs_callsite_specialization?`, and the type-param map
+  helpers they currently consult.
+
+Required consumer set:
+
+The first executable report must cover at least these legacy consumers:
+
+1. `prefer_callsite_specialization` deciding whether to preserve or remangle a
+   callsite-specialized symbol.
+2. `lower_function_if_needed_impl` `callsite_args` `keep_requested_name`.
+3. `lower_function_if_needed_impl` `suffix_types` `keep_requested_name`.
+4. `lower_function_if_needed_impl` materialization `override`.
+5. `lower_call` call-target remangling / entry-name suffix preservation.
+6. Direct predicate helpers used by those decisions:
+   `def_has_untyped_regular_param?` and
+   `raw_annotation_needs_callsite_specialization?`.
+
+Required row shape:
+
+Each row must carry enough information to make the consumer decision auditable:
+
+- `consumer` and `decision`;
+- requested symbol and target/materialized symbol when available;
+- selected definition identity;
+- current ambient map snapshot;
+- target-materialization map when available;
+- callsite arg types when available;
+- selected authority:
+  `callsite`, `target_materialization`, `body_substitution`,
+  `legacy_shim`, or `rejected_ambient`;
+- migration decision:
+  `migrate_to_state_scope`, `migrate_to_materialization_registry`,
+  `keep_legacy_shim`, `blocked_unknown`, or `rejected_ambient`;
+- validation:
+  `owned`, `ambient_rejected`, or `diagnostic_only`.
+
+Acceptance gate:
+
+- the report script fails closed when no consumer rows are emitted;
+- malformed rows are failures, not warnings;
+- every required consumer appears at least once in a focused stage1 corridor or
+  is explicitly recorded as `not_reached` with a reason;
+- every reached consumer has a migration decision;
+- any `diagnostic_only` or `blocked_unknown` row blocks behavior patches that
+  consume that decision surface;
+- a would-change census is required before any later behavior patch changes a
+  consumer decision. The would-change set must be no wider than the classified
+  owner row set and must preserve legitimate current-instantiation cases.
+
+Rejected shortcuts:
+
+- treating row count as evidence that the migration is safe;
+- changing `def_has_untyped_regular_param?` globally before the consumer
+  authority split is classified;
+- adding a boolean `ignore_ambient` mode passed through arbitrary callers;
+- forcing requested-name materialization from this report alone;
+- using backend `@undefined_externs` or `@func_by_name` as the first place to
+  decide the consumer status;
+- using `NamedTuple`/`Tuple` string normalization as the discriminator;
+- converting `BlockOwner` back to tuple/namedtuple metadata.
+
+DoD for implementation:
+
+- add or upgrade one report script, likely
+  `scripts/state_scope_consumer_report.sh`, that enforces the acceptance gate;
+- prove the red state against a pre-slice compiler or with the missing-row
+  failure mode before adding instrumentation;
+- keep the compiler env-off behavior unchanged;
+- run the focused report on a fresh stage1 compiler;
+- run generated-s2 no-prelude when applicable;
+- run the existing static gates:
+  `scripts/semantic_decision_census.sh` and
+  `scripts/codepath_status_census.sh`;
+- run the existing materialization/state-scope reports to prove row formats
+  still compose;
+- update `TODO.md` and `LANDMARKS.md` with residual `blocked_unknown` and
+  `diagnostic_only` surfaces before any behavior-changing patch.
+
+Next local track:
+
+- implement the report and default-off ledger described above. Do not modify
+  naming/materialization semantics in the same commit. A later behavior slice
+  may only target a consumer whose migration decision is owned, whose
+  would-change set is bounded, and whose negative controls preserve
+  legitimate ambient current-instantiation behavior.
 
 ### Slice A: CallResolution boundary
 

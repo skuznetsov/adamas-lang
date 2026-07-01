@@ -476,6 +476,26 @@ fresh full generated-stage run reaches joined `[MAT_TX]` / `[MAT_EMIT]` rows,
 or one of the migration contracts lands as a behavior-driving facade with
 focused and generated-stage evidence.
 
+[LM-ARCH-STATESCOPE-CONSUMER-MIGRATION-GATE|design-sealed 2026-07-01 {F:0.74 G:0.54 R:0.82}]:
+The next executable `StateScopeConsumerCensus` slice is now constrained as a
+migration gate rather than a diagnostic ladder. Slice 0k-F in
+`docs/compiler_architecture_sdd.md` requires the report to classify the known
+naming/materialization consumers, including `prefer_callsite_specialization`,
+`lower_function_if_needed_impl` `callsite_args` / `suffix_types` / `override`,
+`lower_call` remangling, and the direct type-param predicates
+`def_has_untyped_regular_param?` /
+`raw_annotation_needs_callsite_specialization?`. Each reached consumer must
+emit an authority and migration decision:
+`migrate_to_state_scope`, `migrate_to_materialization_registry`,
+`keep_legacy_shim`, `blocked_unknown`, or `rejected_ambient`. A row that is
+only `diagnostic_only`, or any `blocked_unknown` row, blocks behavior patches
+on that surface. This landmark is docs-only and changes no compiler behavior.
+Scope: it prevents another ambient-map or materialization consumer patch from
+being justified by row count alone; it does not implement the report and does
+not make `s2b`/`s3b` green. Decay trigger: the consumer report/ledger lands,
+the required consumer set moves, or a later `StateScope` facade starts driving
+behavior with focused and generated-stage evidence.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

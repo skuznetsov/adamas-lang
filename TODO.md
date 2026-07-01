@@ -376,6 +376,22 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   materialization override sites), with a would-change census before any
   behavior patch.
 
+- 2026-07-01 UPDATE: hardened the next slice before implementation. Slice
+  0k-F in `docs/compiler_architecture_sdd.md` now defines
+  `StateScopeConsumerCensus` as a migration gate, not a diagnostic ladder. The
+  future report must cover the known naming/materialization consumers
+  (`prefer_callsite_specialization`, `lower_function_if_needed_impl`
+  `callsite_args` / `suffix_types` / `override`, `lower_call` remangling, and
+  the direct type-param predicates), and each reached consumer must emit a
+  migration decision: `migrate_to_state_scope`,
+  `migrate_to_materialization_registry`, `keep_legacy_shim`,
+  `blocked_unknown`, or `rejected_ambient`. Any `diagnostic_only` or
+  `blocked_unknown` row blocks behavior patches on that surface. This is
+  docs-only; no compiler behavior changed. Next implementation remains the
+  default-off report/ledger with red gate first, env-off behavior unchanged,
+  focused stage1 evidence, existing static census gates, and no naming /
+  materialization semantic change in the same commit.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was
