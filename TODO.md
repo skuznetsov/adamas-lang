@@ -174,6 +174,20 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   Cleanup remains blocked on a runtime census plus a protecting falsifier for
   each candidate path.
 
+- 2026-07-01 UPDATE: paused the diagnostic ladder after the
+  `NodeSlotIntegrity` slice instead of adding another unbounded payload probe.
+  A local `ADAMAS_NODE_PAYLOAD_LEDGER` WIP was removed because it had no named
+  SDD slice, no completed generated-stage evidence, and no cleanup rule. The
+  payload/vtable/deep-read check remains an allowed future falsifier for the
+  current crash corridor, but it is not the default next move. Current next
+  architecture work: seal the `SemanticStateScope` / `MaterializationIdentity`
+  transaction record enough that requested, selected, target, materialized, and
+  emitted call symbols are one owned fact; then add a runtime
+  `CodePathStatus` census before deleting stale workarounds or debug gates.
+  Behavior-changing bootstrap fixes remain blocked unless they consume an
+  existing owner ledger or add a surviving owner ledger/falsifier in the same
+  logical change.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was

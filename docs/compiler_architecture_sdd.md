@@ -62,6 +62,18 @@ raw paths. The next behavior-changing bootstrap slice must either make this
 probe pass for generated s2 or explicitly refute file identity as the active
 frontier with fresher evidence.
 
+2026-07-01 architecture-execution checkpoint after Slice 0f: the
+`NodeSlotIntegrity` ledger refuted owner drift, out-of-range `ExprId`, and
+missing/uninitialized slot for the instrumented `lower_call` edge, but it did
+not yet name a behavior fix. That is the intended point to stop the diagnostic
+ladder and update the architecture plan, not to automatically add another
+probe. A payload/vtable/deep-read ledger remains an allowed falsifier only if
+it is admitted as a named SDD slice with generated-stage evidence and a
+cleanup plan. The default next track is architecture sealing:
+`SemanticStateScope` / `MaterializationIdentity` identity records plus
+`CodePathStatus` runtime census, so future behavior fixes consume owned facts
+instead of chasing the latest crash stack.
+
 ## 1. Admitted surface
 
 This SDD admits only future architecture work that:
@@ -804,6 +816,11 @@ Rejected work:
   parity has already shown current/ref/heuristic owner agreement at the crash
   edge. The next slice must inspect `NodeSlot` / arena storage producer/read
   integrity or name an uninstrumented raw read first.
+- extending a frontier with a second or third diagnostic ledger by inertia. If
+  a ledger refutes the current local hypothesis without naming a fix owner, the
+  next move is an SDD checkpoint or sealing plan unless a new diagnostic slice
+  has its own falsifier roster, generated-stage evidence requirement, and
+  cleanup rule.
 
 Exit signal:
 
@@ -924,6 +941,31 @@ Exit signal:
   as legitimate ambient scopes, not false positives;
 - a proposed behavior patch proves, before implementation, which symbol it will
   materialize and why.
+
+### Phase 2b: Materialization identity transaction record
+
+Before any behavior patch that changes pending-function replay,
+requested/target/body/call symbol selection, wrapper/forwarder emission, or
+backend undefined-extern recovery, introduce an explicit transaction record:
+
+- call request symbol,
+- selected definition identity,
+- target materialization symbol,
+- created body symbol,
+- emitted call symbol,
+- wrapper/forwarder contract when symbols differ,
+- state-scope authority used to derive the names,
+- ABI shape used by the emitted call.
+
+Exit signal:
+
+- a body created under one symbol while the emitted call names another symbol is
+  represented as `exact`, `wrapper_forwarder`, or `rejected_mismatch`; there is
+  no silent fourth state;
+- known `Hash(UInt64, NamedTuple)#[]=` evidence is classified by this record
+  before any forwarder or producer-side fix is attempted;
+- backend undefined-extern stubs cannot be used as the first place where this
+  semantic transaction is discovered.
 
 ### Phase 3: Seal CallResolution first
 
@@ -1430,9 +1472,57 @@ Interpretation:
   currently instrumented crash edge;
 - it does not prove the payload/vtable/node-kind read is healthy, because the
   default ledger intentionally avoids dereferencing the node payload;
-- the next read-only slice should therefore target payload/vtable/deep node
-  read integrity or the exact uninstrumented consumer after `NodeSlot#node`,
-  not arena owner selection or slot existence.
+- payload/vtable/deep node read integrity or the exact uninstrumented consumer
+  after `NodeSlot#node` remains the allowed local falsifier for this crash
+  corridor, but it is no longer an automatic next step. After this diagnostic
+  ladder refuted three local hypotheses, the default next step is an
+  architecture-sealing checkpoint unless the payload/deep-read work is promoted
+  into a named SDD slice with generated-stage evidence, residual boundary, and
+  cleanup rule.
+
+### Slice 0g: Architecture execution checkpoint after diagnostic ladders
+
+Source/spec:
+
+- this SDD's Phase 0b stop rules;
+- `TODO.md` active backlog;
+- `LANDMARKS.md` active bootstrap gate;
+- any uncommitted diagnostic WIP that exists when a checkpoint starts.
+
+Falsifiers:
+
+- `git status --short --branch` must be checked before planning;
+- uncommitted probe code is either committed as a named SDD slice with evidence
+  or removed before architecture planning continues;
+- the plan must name whether the next work is a local falsifier, a typed facade,
+  a runtime dead-code census, or a behavior slice;
+- behavior slices remain rejected unless they consume an existing owner ledger
+  or add one in the same logical change.
+
+Evidence:
+
+- the first application removed an uncommitted `ADAMAS_NODE_PAYLOAD_LEDGER` WIP
+  because it had no SDD slice, no completed generated-stage evidence, and no
+  cleanup rule;
+- the committed Slice 0f evidence remains the last verified crash-edge ledger:
+  `compiler_rc=139`, `rows=630`, `healthy_present=630`, and zero non-healthy
+  `NodeSlot` buckets.
+
+Boundary:
+
+- this slice does not change compiler behavior;
+- it does not declare `s2b`/`s3b` green;
+- it does not forbid future payload/deep-read probes, but requires them to be
+  explicit SDD slices instead of tail-chase continuation.
+
+Next local track:
+
+- seal the `SemanticStateScope` / `MaterializationIdentity` transaction record
+  enough that future call/materialization fixes consume a single identity fact;
+- add a runtime `CodePathStatus` census before deleting stale workarounds or
+  debug gates;
+- only then pick the next bounded behavior slice or local payload/deep-read
+  falsifier.
 
 ### Slice A: CallResolution boundary
 

@@ -235,6 +235,25 @@ selection or slot existence. Decay trigger: fresh generated s2->s3 shows a
 non-healthy `[NODE_SLOT]` bucket, the crash stack moves before this edge, or
 the arena storage representation changes.
 
+[LM-ARCH-DIAGNOSTIC-LADDER-CHECKPOINT|verified 2026-07-01 {F:0.78 G:0.50 R:0.86}]:
+The architecture SDD now treats repeated diagnostic extension as its own
+tail-chase risk. After Slice 0f, the live evidence refutes current-arena drift,
+out-of-range `ExprId`, and missing/uninitialized `NodeSlot` for the
+instrumented `lower_call` edge, but does not name a behavior fix. A local
+uncommitted `ADAMAS_NODE_PAYLOAD_LEDGER` WIP was removed rather than carried
+forward, because it lacked a named SDD slice, completed generated-stage
+evidence, and a cleanup rule. Payload/vtable/deep-read integrity remains an
+allowed future falsifier for this corridor, but only as an explicit SDD slice.
+The default next track is architecture sealing: make
+`SemanticStateScope`/`MaterializationIdentity` carry requested, selected,
+target, materialized, and emitted symbol identity as one transaction record,
+and add runtime `CodePathStatus` evidence before deleting stale workarounds or
+debug gates. Scope: this is a process/architecture checkpoint, not a compiler
+behavior fix and not a green `s2b`/`s3b` claim. Decay trigger: owner explicitly
+resumes the payload/deep-read frontier as a named SDD slice, a fresh crash
+frontier invalidates Slice 0f evidence, or a transaction-record facade lands
+and changes the next sealing target.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

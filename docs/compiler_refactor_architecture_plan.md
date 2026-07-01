@@ -415,6 +415,12 @@ fresh generated-stage lower-call arena parity report showed
 `210/210 agree_all_have` with zero owner divergence buckets, the next
 architecture slice is `NodeSlotIntegrity / AstArenaStorage`, not another
 `lower_call` arena-selection consumer patch and not the LLVM writer.
+After the `NodeSlotIntegrity` report also refuted missing slot and
+out-of-range `ExprId`, the plan must not automatically add another diagnostic
+probe. Payload/deep-read integrity is an allowed future falsifier only as a
+named SDD slice. The active architecture plan now pivots to sealing the
+`SemanticStateScope` / `MaterializationIdentity` transaction record and adding
+runtime `CodePathStatus` evidence before deletion or physical extraction.
 
 Initial executable entry point:
 
@@ -438,7 +444,9 @@ Acceptance for this first architecture slice:
   current/ref/heuristic owner agreement at the generated-stage crash edge;
 - the next architecture slice is therefore a behavior-neutral
   `NodeSlotIntegrity / AstArenaStorage` ledger, not another raw-read consumer
-  patch.
+  patch;
+- after `NodeSlotIntegrity` evidence refutes the local slot hypotheses, the
+  next default slice is architecture sealing, not a second diagnostic ladder.
 
 ## 9. Decision Summary
 
