@@ -2125,6 +2125,82 @@ Minimal evidence before resuming behavior fixes:
 - generated-s2 evidence either reaches a joined transaction row for the target
   or explicitly names why the next slice is still behavior-neutral.
 
+### Slice 0k-D: SemanticStateScope shadow ledger
+
+Status:
+
+- default-off behavior-neutral shadow ledger implemented;
+- no state-scope behavior, materialization behavior, backend behavior, or
+  type-param-map lifetime is changed by this slice.
+
+Source/spec:
+
+- `src/compiler/hir/ast_to_hir.cr` materialization seam;
+- `scripts/semantic_state_scope_report.sh`;
+- `SemanticStateScope` target architecture in section 6.4;
+- Slice 0k-C stop rule: make semantic authority explicit before behavior
+  fixes.
+
+Red gate:
+
+- before the slice, `scripts/semantic_state_scope_report.sh <compiler>` fails
+  with `FAIL: no [STATE_SCOPE] semantic state-scope rows emitted`.
+
+Implementation:
+
+- `ADAMAS_SEMANTIC_STATE_SCOPE_LEDGER=1` emits `[STATE_SCOPE]` rows at the HIR
+  materialization seam;
+- each row carries transaction id, phase, requested symbol, target symbol,
+  selected definition identity, explicit authority, map source,
+  allowed/forbidden consumers, lifetime region, validation status, ambient map,
+  target map, callsite arg types, override reason, and lookup branch;
+- the new ledger env is independent from
+  `ADAMAS_MATERIALIZATION_IDENTITY_LEDGER`. Enabling only the state-scope ledger
+  does not remember backend transaction ids and does not emit `[MAT_ID]`,
+  `[MAT_TX]`, or `[MAT_EMIT]`;
+- the existing materialization transaction report remains compatible when only
+  `ADAMAS_MATERIALIZATION_IDENTITY_LEDGER=1` is enabled.
+
+Focused evidence:
+
+- fresh stage1 build passes;
+- focused state-scope report emits `rows=2513`, `malformed=0`,
+  `invalid_validation=0`, and `rejected_without_ambient=0`;
+- authority buckets match the current owner classification:
+  `callsite=871` and `target_materialization=1642`;
+- map-source buckets are `callsite_arg_types=871`, `target_map=1165`,
+  `ambient_snapshot_rejected=238`, and `empty_map=239`;
+- default env-off focused compile emits no `[STATE_SCOPE]` or materialization
+  ledger rows;
+- the existing materialization transaction report still emits joined
+  `[MAT_TX]` / `[MAT_EMIT]` rows with `owner_malformed=0`;
+- full stage1 suites pass `152/152` original tests and `36/36` combined tests;
+- fresh stage1 builds fresh generated s2, and generated-s2 no-prelude
+  state-scope report emits `rows=1`, `malformed=0`,
+  `invalid_validation=0`, and `rejected_without_ambient=0`.
+
+Boundary:
+
+- this is an observability/facade slice only. It does not isolate
+  `@type_param_map`, does not change naming/materialization, and does not fix
+  `Hash(UInt64, NamedTuple)#[]=`;
+- `target_materialization` rows without a target map are diagnostic, not
+  malformed, because non-generic target materialization can be authoritative
+  without a type-param map;
+- `ambient_snapshot_rejected` rows identify places where ambient mutable state
+  was observed as a rejected snapshot, not accepted as authority.
+
+Next local track:
+
+- run the state-scope report on generated-s2 no-prelude and, if the full
+  generated-stage run reaches this seam, on the full frontier;
+- before any behavior change, add a would-change census that names which
+  `[STATE_SCOPE]` rows would change and classifies unrelated rows as legitimate
+  current-instantiation or rejected ambient snapshots;
+- if the full generated-stage run still fails before `[MAT_EMIT]`, keep the
+  next behavior work blocked and choose a named seam-reachability owner slice
+  instead of a backend rescue.
+
 ### Slice A: CallResolution boundary
 
 Source/spec:

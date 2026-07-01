@@ -331,6 +331,30 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   decisions with explicit authority records. `CodePathStatus` remains the
   cleanup track only.
 
+- 2026-07-01 UPDATE: implemented the first behavior-neutral
+  `SemanticStateScope` shadow ledger slice. A new
+  `scripts/semantic_state_scope_report.sh` is red on pre-slice compilers with
+  `FAIL: no [STATE_SCOPE] semantic state-scope rows emitted`. With
+  `ADAMAS_SEMANTIC_STATE_SCOPE_LEDGER=1`, the HIR materialization seam now
+  emits `[STATE_SCOPE]` rows containing transaction id, requested/target
+  symbols, selected definition, explicit authority, map source,
+  allowed/forbidden consumers, lifetime region, validation status, and ambient
+  / target / callsite maps. The env is independent of
+  `ADAMAS_MATERIALIZATION_IDENTITY_LEDGER`: state-scope reporting does not
+  remember backend transaction ids or emit `[MAT_*]` rows unless the
+  materialization ledger env is also enabled. Focused stage1 report shows
+  `rows=2513`, `malformed=0`, `invalid_validation=0`, and
+  `rejected_without_ambient=0`; default env-off focused compile emits no
+  `[STATE_SCOPE]` / `[MAT_*]` rows. The existing materialization transaction
+  report still passes on the same stage1 (`rows=2513`, `emit_rows=16995`,
+  `owner_malformed=0`, `joined_transactions=1349`); full suites pass
+  `152/152 + 36/36`; fresh stage1 builds fresh generated s2; generated-s2
+  no-prelude state-scope report emits `rows=1`, `malformed=0`. This still is
+  not a behavior fix and not green `s2b`/`s3b`. The next behavior slice remains
+  blocked until a would-change census consumes an owner row, or until a
+  full-stage seam-reachability slice names the owner boundary that prevents
+  generated s2 from reaching `[MAT_EMIT]`.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was

@@ -427,6 +427,31 @@ trigger: a fresh generated-s2 full transaction report reaches joined
 `[MAT_TX]` / `[MAT_EMIT]` rows for the intended target, or a new owner-scope
 facade changes the next behavior-slice gate.
 
+[LM-ARCH-SEMANTIC-STATESCOPE-SHADOW-LEDGER|verified 2026-07-01 {F:0.82 G:0.44 R:0.88}]:
+The first behavior-neutral `SemanticStateScope` shadow ledger now exists at
+the HIR materialization seam. Red gate: before the slice,
+`scripts/semantic_state_scope_report.sh <compiler>` fails with
+`FAIL: no [STATE_SCOPE] semantic state-scope rows emitted`. Implementation
+shape: `ADAMAS_SEMANTIC_STATE_SCOPE_LEDGER=1` emits `[STATE_SCOPE]` rows with
+transaction id, requested/target symbols, selected definition, explicit
+authority, map source, allowed/forbidden consumers, lifetime region,
+validation status, and ambient/target/callsite maps. The env is independent of
+`ADAMAS_MATERIALIZATION_IDENTITY_LEDGER`: enabling only state-scope reporting
+does not remember backend transaction ids and does not emit `[MAT_ID]`,
+`[MAT_TX]`, or `[MAT_EMIT]`. Focused evidence: fresh stage1 report emits
+`rows=2513`, `malformed=0`, `invalid_validation=0`, and
+`rejected_without_ambient=0`; authority buckets are `callsite=871` and
+`target_materialization=1642`; default env-off focused compile emits no
+ledger rows; existing materialization transaction report still passes with
+`owner_malformed=0`; full stage1 suites pass `152/152 + 36/36`; fresh stage1
+builds fresh generated s2, and generated-s2 no-prelude state-scope report
+emits `rows=1` with `malformed=0`. Scope: this is an observability/facade
+slice, not a behavior fix, not an `@type_param_map` lifetime change, and not a
+green `s2b`/`s3b` claim.
+Decay trigger: `lower_function_if_needed_impl` moves, state-scope authority
+semantics change, a true `StateScope` facade starts driving behavior, or a
+fresh generated-stage report contradicts the focused authority buckets.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

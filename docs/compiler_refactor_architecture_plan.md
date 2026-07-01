@@ -467,6 +467,7 @@ scripts/arena_ownership_census.sh
 scripts/lower_call_arena_ledger_smoke.sh <compiler>
 scripts/node_slot_integrity_report.sh <compiler>
 scripts/materialization_transaction_report.sh <compiler>
+scripts/semantic_state_scope_report.sh <compiler>
 ```
 
 Acceptance for this first architecture slice:
@@ -503,6 +504,11 @@ Acceptance for this first architecture slice:
   corridor currently does not reach `[MAT_EMIT]`, so the next slice is
   architecture planning/owner-boundary work unless a fresh run reaches a joined
   transaction row for the intended target.
+- the first `SemanticStateScope` shadow ledger now makes naming/materialization
+  authority explicit at the HIR materialization seam. Treat it as a facade and
+  would-change-census input, not as a state-scope behavior fix. It self-applies
+  far enough for a generated-s2 no-prelude report, but it does not make the
+  full generated-stage frontier reach `[MAT_EMIT]`.
 
 ## 9. Decision Summary
 

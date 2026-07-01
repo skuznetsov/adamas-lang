@@ -2360,7 +2360,9 @@ module Adamas::HIR
       selected_def : Adamas::Compiler::Frontend::DefNode,
       selected_owner : String,
     ) : Nil
-      return unless env_has?("ADAMAS_MATERIALIZATION_IDENTITY_LEDGER")
+      materialization_ledger_enabled = env_has?("ADAMAS_MATERIALIZATION_IDENTITY_LEDGER")
+      state_scope_ledger_enabled = env_has?("ADAMAS_SEMANTIC_STATE_SCOPE_LEDGER")
+      return unless materialization_ledger_enabled || state_scope_ledger_enabled
 
       ambient = type_param_map_debug_string
       target_map = string_map_debug_string(target_params)
@@ -2387,9 +2389,62 @@ module Adamas::HIR
         materialization_action,
       )
       tx_id = ledger_token(transaction.debug_id)
-      @module.remember_materialization_transaction(call_symbol_hint, tx_id)
-      STDERR.puts "[MAT_ID] phase=#{phase} requested=#{requested_name} target=#{target_name} state_key=#{state_key} body_symbol=#{body_symbol} call_symbol_hint=#{call_symbol_hint} override_reason=#{override_reason} branch=#{lookup_branch || "?"} ambient_map=#{ambient} target_map=#{target_map} call_arg_types=#{call_args} selected_def=#{selected_def_id} state_scope=#{state_scope} map_source=#{map_source} materialization_action=#{materialization_action}"
-      STDERR.puts "[MAT_TX] tx=#{tx_id} phase=#{ledger_token(transaction.phase)} requested=#{ledger_token(transaction.requested_name)} target=#{ledger_token(transaction.target_name)} state_key=#{ledger_token(transaction.state_key)} body_symbol=#{ledger_token(transaction.body_symbol)} call_symbol_hint=#{ledger_token(transaction.call_symbol_hint)} identity_status=#{ledger_token(transaction.identity_status)} symbol_relation=#{ledger_token(transaction.symbol_relation)} required_contract=#{ledger_token(transaction.required_contract)} override_reason=#{ledger_token(transaction.override_reason)} branch=#{ledger_token(transaction.lookup_branch)} ambient_map=#{ledger_token(transaction.ambient_map)} target_map=#{ledger_token(transaction.target_map)} call_arg_types=#{ledger_token(transaction.call_arg_types)} selected_def=#{ledger_token(transaction.selected_def)} state_scope=#{ledger_token(transaction.state_scope)} map_source=#{ledger_token(transaction.map_source)} materialization_action=#{ledger_token(transaction.materialization_action)}"
+      if materialization_ledger_enabled
+        @module.remember_materialization_transaction(call_symbol_hint, tx_id)
+        STDERR.puts "[MAT_ID] phase=#{phase} requested=#{requested_name} target=#{target_name} state_key=#{state_key} body_symbol=#{body_symbol} call_symbol_hint=#{call_symbol_hint} override_reason=#{override_reason} branch=#{lookup_branch || "?"} ambient_map=#{ambient} target_map=#{target_map} call_arg_types=#{call_args} selected_def=#{selected_def_id} state_scope=#{state_scope} map_source=#{map_source} materialization_action=#{materialization_action}"
+        STDERR.puts "[MAT_TX] tx=#{tx_id} phase=#{ledger_token(transaction.phase)} requested=#{ledger_token(transaction.requested_name)} target=#{ledger_token(transaction.target_name)} state_key=#{ledger_token(transaction.state_key)} body_symbol=#{ledger_token(transaction.body_symbol)} call_symbol_hint=#{ledger_token(transaction.call_symbol_hint)} identity_status=#{ledger_token(transaction.identity_status)} symbol_relation=#{ledger_token(transaction.symbol_relation)} required_contract=#{ledger_token(transaction.required_contract)} override_reason=#{ledger_token(transaction.override_reason)} branch=#{ledger_token(transaction.lookup_branch)} ambient_map=#{ledger_token(transaction.ambient_map)} target_map=#{ledger_token(transaction.target_map)} call_arg_types=#{ledger_token(transaction.call_arg_types)} selected_def=#{ledger_token(transaction.selected_def)} state_scope=#{ledger_token(transaction.state_scope)} map_source=#{ledger_token(transaction.map_source)} materialization_action=#{ledger_token(transaction.materialization_action)}"
+      end
+      log_semantic_state_scope_shadow(transaction, tx_id) if state_scope_ledger_enabled
+    end
+
+    private def log_semantic_state_scope_shadow(
+      transaction : MaterializationIdentityTransaction,
+      tx_id : String,
+    ) : Nil
+      authority = transaction.state_scope
+      validation = semantic_state_scope_validation(authority)
+      allowed = semantic_state_scope_allowed_consumers(authority)
+      forbidden = semantic_state_scope_forbidden_consumers(authority)
+      lifetime = semantic_state_scope_lifetime_region(authority)
+
+      STDERR.puts "[STATE_SCOPE] tx=#{tx_id} phase=#{ledger_token(transaction.phase)} requested=#{ledger_token(transaction.requested_name)} target=#{ledger_token(transaction.target_name)} selected_def=#{ledger_token(transaction.selected_def)} authority=#{ledger_token(authority)} map_source=#{ledger_token(transaction.map_source)} allowed_consumers=#{ledger_token(allowed)} forbidden_consumers=#{ledger_token(forbidden)} lifetime_region=#{ledger_token(lifetime)} validation=#{ledger_token(validation)} ambient_map=#{ledger_token(transaction.ambient_map)} target_map=#{ledger_token(transaction.target_map)} call_arg_types=#{ledger_token(transaction.call_arg_types)} override_reason=#{ledger_token(transaction.override_reason)} branch=#{ledger_token(transaction.lookup_branch)}"
+    end
+
+    private def semantic_state_scope_validation(authority : String) : String
+      return "ambient_rejected" if authority == "ambient_rejected"
+
+      "owned"
+    end
+
+    private def semantic_state_scope_allowed_consumers(authority : String) : String
+      case authority
+      when "callsite"
+        "naming,materialization"
+      when "target_materialization"
+        "materialization,body_lowering"
+      when "ambient_rejected"
+        "none"
+      else
+        "naming_review"
+      end
+    end
+
+    private def semantic_state_scope_forbidden_consumers(authority : String) : String
+      case authority
+      when "ambient_rejected"
+        "naming,materialization,backend"
+      else
+        "ambient_map,backend_semantics"
+      end
+    end
+
+    private def semantic_state_scope_lifetime_region(authority : String) : String
+      case authority
+      when "ambient_rejected"
+        "none"
+      else
+        "materialization_transaction"
+      end
     end
 
     private def selected_definition_debug_string(
