@@ -276,6 +276,24 @@ this ledger to include final call emission or consume a sibling emitted-call
 ledger. Decay trigger: rewrites of `lower_function_if_needed_impl`,
 materialization naming, HIR/MIR call lowering, or backend call-target emission.
 
+[LM-ARCH-TAIL-CHASE-PAUSE-AFTER-MAT-TX|verified-boundary 2026-07-01 {F:0.78 G:0.54 R:0.84}]:
+The architecture plan has an explicit stop after the pre-call materialization
+transaction ledger. A downstream emitted-call ledger is still allowed, but only
+as transaction-completeness evidence for Phase 2b: requested, selected, target,
+body, emitted call, state-scope authority, and ABI shape must become one owned
+fact before a call/materialization behavior patch. It is not allowed as a
+backend undefined-extern rescue or as a way to keep chasing the latest stub.
+Static census evidence confirms that cleanup and bloat work also needs runtime
+ownership evidence before deletion: the semantic census reports broad
+`SemanticStateScope`, `Materialization`, `CallResolution`, backend leakage, and
+debug/workaround surfaces, while the `CodePathStatus` census reports broad
+env/debug, fallback/recovery, legacy/shim, semantic-scan, backend-leakage, and
+layout/ABI candidate surfaces. Scope: this is a planning/stop-rule landmark,
+not a compiler behavior fix and not a green `s2b`/`s3b` claim. Decay trigger:
+a transaction-completeness slice lands, a runtime `CodePathStatus` ledger
+replaces the static census as cleanup authority, or fresh generated-stage
+evidence invalidates the current owner-ledger path.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

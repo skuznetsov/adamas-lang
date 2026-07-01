@@ -207,6 +207,24 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   ledger, plus runtime `CodePathStatus`; do not treat this as a materialization
   forwarder fix or green `s2b`/`s3b` evidence.
 
+- 2026-07-01 UPDATE: paused again before turning final-call linkage into the
+  next diagnostic ladder. The active SDD now has Slice 0i: architecture pause
+  and next-track selection. A stale uncommitted
+  `scripts/emitted_call_linkage_report.sh` WIP was removed rather than carried
+  forward, because a backend emitted-call report is admissible only as
+  transaction-completeness evidence, not as a backend stub rescue or forwarder
+  shortcut. Fresh static gates still run and show why ad hoc cleanup is unsafe:
+  `scripts/semantic_decision_census.sh` reports broad owner surfaces
+  (`SemanticStateScope`, `Materialization`, `CallResolution`, backend semantic
+  leakage, debug/workaround gates), while `scripts/codepath_status_census.sh`
+  reports broad env/debug, fallback/recovery, legacy/shim, broad-scan,
+  backend-leakage, and layout/ABI candidate surfaces without classifying any
+  path as live/dead/delete-ready. Current next work must explicitly choose one
+  architecture track: runtime `CodePathStatus` if the goal is bloat/deletion,
+  transaction-completeness if the goal is a call/materialization behavior fix,
+  or a local falsifier only if fresh generated-stage evidence invalidates the
+  current owner ledgers.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was

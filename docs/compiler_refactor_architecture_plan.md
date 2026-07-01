@@ -424,8 +424,12 @@ runtime `CodePathStatus` evidence before deletion or physical extraction.
 The first transaction-record slice is intentionally limited: it records
 pre-call requested/target/body/call-hint relations and required contracts, but
 it does not yet prove final backend emitted-call identity. The next
-architecture step is final-call linkage or a sibling emitted-call ledger, not a
-materialization behavior fix.
+architecture step is either transaction-completeness or runtime
+`CodePathStatus`, not a materialization behavior fix. Final-call linkage or a
+sibling emitted-call ledger is admissible only when it closes the Phase 2b
+transaction contract; it must not become a backend undefined-extern rescue or
+another diagnostic ladder after a ledger has already refuted the local
+hypothesis.
 
 Initial executable entry point:
 

@@ -74,6 +74,18 @@ cleanup plan. The default next track is architecture sealing:
 `CodePathStatus` runtime census, so future behavior fixes consume owned facts
 instead of chasing the latest crash stack.
 
+2026-07-01 architecture-pause checkpoint after Slice 0h: the pre-call
+`MaterializationIdentityTransaction` ledger is useful but not sufficient to
+justify a behavior fix. It records `call_symbol_hint`, not the backend-proven
+emitted call. A downstream emitted-call ledger remains admissible only if it is
+framed as completing the transaction contract from Phase 2b. It is not
+admissible as a backend undefined-extern rescue, a forwarder shortcut, or a
+way to keep chasing the latest stub. Before the next production behavior
+change, the plan must choose one of two architecture tracks: complete the
+transaction identity contract, or build runtime `CodePathStatus` evidence for
+cleanup and bloat reduction. Both tracks must preserve the same rule: no
+compiler behavior changes until the owning semantic fact is named.
+
 ## 1. Admitted surface
 
 This SDD admits only future architecture work that:
@@ -1123,6 +1135,14 @@ Stop and return to census/design when any of these occurs:
 - a cleanup patch deletes code before proving the path is `delete_ready`;
 - a cleanup patch replaces deleted code with a new broad shim that preserves
   the same hidden oracle.
+- a downstream ledger is proposed only because the previous ledger did not
+  produce a fix owner. The new ledger must either complete an existing
+  transaction contract or be admitted as its own SDD slice with generated-stage
+  evidence, residual boundary, and cleanup rule.
+- a backend reconciliation/forwarder path needs knowledge that exists only
+  after HIR/MIR materialization has already dropped the target body. That is an
+  architecture ordering failure, not permission to re-run HIR lowering from the
+  backend.
 
 ## 10. Ledger sync
 
@@ -1571,13 +1591,67 @@ Boundary:
 Next local track:
 
 - connect the transaction record to final call emission, or add a sibling
-  emitted-call ledger at the HIR/MIR boundary, before attempting a
-  materialization forwarder or producer-side identity fix;
+  emitted-call ledger at the HIR/MIR boundary, only when the slice is explicitly
+  framed as transaction-completeness evidence from Phase 2b;
+- do not use backend undefined-extern stubs as the first authority for
+  requested/target/body/call identity. If backend visibility is required, the
+  slice must also prove that the target body still exists before backend
+  emission and that the backend is not re-running source-level resolution;
 - add runtime `CodePathStatus` evidence before deleting stale workarounds or
   old debug gates;
 - do not continue to the next crash stack unless the new slice consumes an
   owned transaction row or explicitly adds an owner ledger/falsifier that
   survives the fix.
+
+### Slice 0i: Architecture pause and next-track selection
+
+Source/spec:
+
+- this SDD's Phase 0b stop rules;
+- `TODO.md` active backlog;
+- `LANDMARKS.md` active bootstrap gate;
+- static census scripts:
+  `scripts/semantic_decision_census.sh` and
+  `scripts/codepath_status_census.sh`.
+
+Falsifiers:
+
+- `git status --short --branch` must be checked before choosing the next
+  implementation slice;
+- stale uncommitted probes must be removed or promoted to a named SDD slice
+  before planning continues;
+- static census scripts must still run successfully and must not classify
+  anything as live/dead/delete-ready by themselves;
+- the plan must name whether the next work is transaction-completeness,
+  runtime `CodePathStatus`, a local falsifier, or a behavior slice.
+
+Evidence:
+
+- current static census scale is broad enough to reject ad hoc cleanup:
+  `SemanticStateScope` rows are counted separately from
+  `Materialization`, `CallResolution`, backend semantic leakage, and
+  debug/workaround surfaces;
+- current `CodePathStatus` census reports large env/debug, fallback/recovery,
+  legacy/shim, semantic-scan, backend-leakage, and layout/ABI candidate
+  surfaces, but remains static-only.
+
+Boundary:
+
+- this slice is docs/plan-only and changes no compiler behavior;
+- it does not declare `s2b`/`s3b` green;
+- it does not forbid final-call linkage, payload/deep-read probes, or
+  behavior fixes. It requires each of those to be selected as an architecture
+  track, not as a reaction to the latest crash/stub.
+
+Next local track:
+
+1. Prefer runtime `CodePathStatus` if the next goal is reducing bloat,
+   deleting stale gates, or retiring workarounds.
+2. Prefer transaction-completeness if the next goal is a call/materialization
+   behavior fix. The slice must prove requested, selected, target, body,
+   emitted call, state-scope authority, and ABI shape as one owned fact.
+3. Prefer a local falsifier only if a fresh generated-stage frontier invalidates
+   the current owner ledgers or exposes a new uninstrumented boundary.
 
 ### Slice A: CallResolution boundary
 
