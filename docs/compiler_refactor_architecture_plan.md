@@ -390,6 +390,19 @@ path is selectable and still compiles the no-prelude reducer when enabled. This
 keeps cleanup honest: reduce unknowns one path at a time, but do not turn
 experimental-live evidence into deletion.
 
+2026-07-01 post-0k-AT architecture pivot note: pause the cleanup/report lane
+for the bootstrap objective. It has produced negative facts, not a route to
+green `s2b`/`s3b`. The next implementation unit is not the already promoted
+`lower_function_if_needed.override` seam. It is a no-repeat
+`SemanticStateScope` selector that enumerates the remaining direct
+`state_scope_consumer_def_has_untyped_regular_param?` callers, rejects promoted
+and backend-adjacent seams, and selects at most one root-sized consumer for a
+future shadow/parity owner decision. If no such consumer exists, move up to a
+state-model redesign checkpoint instead of adding more ledgers. Rejected
+repeats: backend forwarder, requested-name forcing, target keepalive,
+`NamedTuple`/`Tuple` rendering changes, global ambient-map policy changes,
+cleanup classification as bootstrap progress, and `BlockOwner` rollback.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging

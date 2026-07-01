@@ -8,6 +8,20 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: added Slice 0k-AT, an architecture pivot checkpoint after
+  the cleanup lane produced only negative cleanup facts. The active bootstrap
+  lane is now a no-repeat `SemanticStateScope` selection gate, not another
+  cleanup classification and not the already promoted
+  `lower_function_if_needed.override` seam. The next code slice must enumerate
+  remaining direct `state_scope_consumer_def_has_untyped_regular_param?`
+  consumers, reject already-promoted and backend-adjacent seams, and select at
+  most one unpromoted root-sized consumer before any behavior-neutral owner
+  decision is implemented. If no such consumer exists, move up to a state-model
+  redesign checkpoint. Do not add backend forwarders, target keepalive,
+  requested-name forcing, `NamedTuple`/`Tuple` rendering changes, global
+  ambient-map policy changes, another cleanup classification, or `BlockOwner`
+  rollback.
+
 - 2026-07-01 UPDATE: added Slice 0k-AS, a focused
   `CodePathStatus` cleanup classification for
   `fused_parallel_requested`. The cleanup-entry report now supports

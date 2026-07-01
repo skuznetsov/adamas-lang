@@ -14,7 +14,7 @@ fallbacks, and hard-to-localize bootstrap failures.
 
 ## Active Architecture Board
 
-Status: execution board after Slice 0k-AP. This board exists to
+Status: execution board after Slice 0k-AT. This board exists to
 prevent the next step from being selected by the latest generated-stage crash
 stack. A next slice is admitted only if it moves one board row by replacing or
 shadowing a named authority edge, producing `CodePathStatus` evidence for a
@@ -22,13 +22,13 @@ named path, or refuting a row with fresher generated-stage evidence.
 
 | Owner boundary | Current status | Next admitted movement | Forbidden repeat |
 | --- | --- | --- | --- |
-| `SemanticStateScope` | `prefer_callsite_specialization` is promoted in shadow/parity mode; emitted behavior still returns the legacy result. | Select a different root-sized consumer with a red/green source-shape gate, or explicitly leave this lane paused. | Reselecting `prefer_callsite_specialization`; wrapping `def_has_untyped_regular_param?` without a separate owner result; changing emitted behavior from the shadow row. |
+| `SemanticStateScope` | `prefer_callsite_specialization` is promoted in shadow/parity mode; emitted behavior still returns the legacy result. The `lower_function_if_needed.override` seam is also already promoted through the MaterializationDecision shadow helper and must not be reselected. Slice 0k-AT selects the next architecture unit: a no-repeat SemanticStateScope selector for the remaining direct ambient-predicate consumers. | Add a red/green source-shape gate that enumerates remaining direct calls to `state_scope_consumer_def_has_untyped_regular_param?` (currently including `lower_function_if_needed.callsite_args`, `lower_function_if_needed.suffix_types`, and `lower_call.remangle`) and selects at most one unpromoted, non-backend-adjacent, root-sized consumer for a future behavior-neutral owner decision. | Reselecting `prefer_callsite_specialization` or `lower_function_if_needed.override`; wrapping `def_has_untyped_regular_param?` without a separate owner result; changing emitted behavior from a shadow row; globally clearing/ignoring `@type_param_map`; backend forwarders; requested-name forcing. |
 | `MaterializationIdentity` / `MaterializationRegistry` | Slice 0k-Z promotes the selected `lower_function_if_needed.symbol_binding` seam in behavior-neutral shadow/parity mode. `scripts/materialization_symbol_binding_admission_report.sh` now reports `already_promoted_shadow` even with `REQUIRE_PROMOTED=1`; keepalive and materialization-ledger consumers read from `MaterializationSymbolBinding` fields instead of recomputing split locals. | Do not flip emitted symbols from this slice. Next movement must either run a generated-stage materialization/symbol-binding classification on the residual full-prelude s2 crash, or select the next root-sized owner consumer with a red/green gate. | Backend undefined-extern rescue; target keepalive as a standalone patch; requested-name forcing; `NamedTuple`/`Tuple` display normalization; global ambient-map predicate changes; `BlockOwner` rollback; treating the green source-shape gate as green `s2b`/`s3b`. |
 | `NameResolution` / `MethodNameCodec` | File identity was fixed; method/symbol identity is still partly rendered-string driven. Slice 0k-V promotes the selected `lower_function_if_needed.exact_lookup_keep_requested_name` seam through `method_name_codec_exact_lookup_keep_requested_name?` in shadow/parity mode; emitted behavior still returns the legacy result. Slice 0k-W pauses standalone promotion-report proliferation. | Either select the next root-sized codec seam with a red/green source-shape gate, or define a generated-stage classification slice that consumes the existing promotion ledger to answer one blocking yes/no decision before changing emitted naming behavior. | String-slice parsing patches at individual callsites; treating rendered names as canonical identity; broad normalization without a falsifier; selecting lower-level helpers before a materialization seam; flipping owner-result behavior from shadow rows; committing another report surface that does not reduce or select an authority edge. |
 | `CallMaterializationTransaction` spine | Slice 0k-AJ selects the reached transaction/emission edge `call_materialization.wrapper_or_call_remap.extern_missing_body`. Slice 0k-AK adds the docs stop rule for post-consumer selector decay. Slice 0k-AL makes that rule executable. Slice 0k-AM implements the behavior-neutral consumer: HIR stores transaction contract facts by tx id, HIR-to-MIR attaches them to transaction-bound `Call`/`ExternCall`, backend `[MAT_EMIT]` logs them mechanically, and optimizer replacement preserves them. Slice 0k-AO extends the same selector with a post-consumer exact-contract residual split. Fresh generated-stage evidence reports `post_consumer_state=selected_consumed_by_contract_consumer`, `contract_mismatch_rows=0`, `residual_exact_missing_body_rows=14`, `residual_exact_missing_body_groups=9`, and `residual_selection_status=rejected_exact_missing_body_ambiguous`. | The 0k-AJ selected edge is consumed, and the immediate exact-contract residual is ambiguous rather than root-selected. The next movement must either add a stronger discriminator that can select exactly one old authority edge from the 9 residual groups, or switch to `consolidation` / `cleanup/delete` under the 0k-AN covenant. | Treating consumed edge disappearance as failure; making old `REQUIRE_SELECTED=1` green by redefining rows; behavior-patching any residual sample (`Array#<<`, `Slice#[]`, `IO#read`, etc.) without a unique selector; backend forwarder or undefined-extern rescue; requested-name forcing; broad `NamedTuple`/`Tuple` rendering changes; global ambient-map policy changes; `BlockOwner` rollback; another standalone report that does not remove ambiguity or retire/refute an older surface. |
 | `InvocationContext` / `InlineYieldFrame` | Slice 0k-AC promotes the selected `lower_super.previous_def.invocation_context` seam in behavior-neutral shadow/parity mode. `scripts/invocation_context_admission_report.sh` now reports `already_promoted_shadow` even with `REQUIRE_PROMOTED=1`; `lower_super` and `lower_previous_def` consume an `InvocationContext` owner fact instead of directly reading ambient owner/method, method-kind, super-source, and forward-policy state. | Do not flip super lookup, previous-def lookup, or argument-forwarding behavior from this slice. Next movement must either classify the residual generated-stage frontier with fresh owner-boundary evidence or select a different root-sized board row with a red/green source-shape gate. | A new `ADAMAS_SUPER_CALL_CONTEXT_LEDGER` report without a decision question; direct `lower_super` guards; changing super lookup or argument forwarding from a crash stack; inline-yield stack resets as a consumer fix; treating the green source-shape gate as green bootstrap evidence. |
 | `AstNodeRef` / `ArenaOwnership` | Explicit-owner lower-call rows and `NodeSlotIntegrity` refuted owner drift, out-of-range ids, and missing slots for the instrumented edge. | Resume only with a named payload/deep-read or uninstrumented-consumer falsifier, including cleanup rules for its ledger. | Lower-call arena routing, broad arena scans, parser allocation rewrites, or another unbounded crash-edge probe. |
-| `CodePathStatus` | Runtime cleanup inventory now reports 26 no-prelude CLI paths and `inventory_delete_ready_rows=0`. `identity_dry_run` and `phase0_metrics` are `debug_only`; `fused_parallel_requested` is `experimental_live`; none are `delete_ready`. | Select one remaining `not_taken_unproven` path and add a protecting falsifier before any deletion, or extend the selector with a real `eligible_delete_ready_candidate` class. | Deleting `identity_dry_run`, `phase0_metrics`, or `fused_parallel_requested`; deleting any `not_taken_unproven` path from inventory alone; deleting debug/probe/fallback paths from static grep output; using runtime liveness as semantic ownership evidence. |
+| `CodePathStatus` | Runtime cleanup inventory now reports 26 no-prelude CLI paths and `inventory_delete_ready_rows=0`. `identity_dry_run` and `phase0_metrics` are `debug_only`; `fused_parallel_requested` is `experimental_live`; none are `delete_ready`. Slice 0k-AT pauses cleanup as the default bootstrap lane because no delete-ready row exists and bloat is not the active constraint for green `s2b`/`s3b`. | Resume only if the user explicitly selects bloat reduction, or if a future run produces an `eligible_delete_ready_candidate` with default-behavior, HIR/MIR/LLVM, bootstrap, and protecting-falsifier evidence. | Deleting `identity_dry_run`, `phase0_metrics`, or `fused_parallel_requested`; deleting any `not_taken_unproven` path from inventory alone; adding more cleanup classifications as a substitute for semantic owner migration; using runtime liveness as semantic ownership evidence. |
 
 Slice 0k-AP consolidation result: the architecture report surface is now
 treated as a registry, not as a menu of competing next steps. Existing reports
@@ -137,6 +137,36 @@ default_status=not_taken enabled_status=taken ... action=keep_experimental_live`
 Decision: the fused parallel MIR path remains an opt-in experimental path, not
 a deletion target from current cleanup evidence. `REQUIRE_DELETE_READY=1` still
 fails with `inventory_status=no_delete_ready_candidate`.
+
+Slice 0k-AT architecture pivot: cleanup/report pursuit is paused for the
+bootstrap objective. The last three cleanup steps proved useful negative facts
+(`debug_only`, `experimental_live`, and zero delete-ready rows), but they do not
+move the root architecture condition for green `s2b`/`s3b`: semantic identity is
+still reconstructed from rendered names, ambient maps, and phase-local fallback
+state. The next admitted slice is therefore not another cleanup classification
+and not a generated-stage behavior fix. It is a no-repeat
+`SemanticStateScope` selection gate over the remaining direct ambient-predicate
+consumers. This gate must enumerate current direct calls to
+`state_scope_consumer_def_has_untyped_regular_param?`, reject already-promoted
+seams (`prefer_callsite_specialization` and `lower_function_if_needed.override`)
+and backend-adjacent seams, then select at most one root-sized consumer for a
+future behavior-neutral owner decision. If no such consumer exists, the next
+movement is a higher-level state-model redesign checkpoint, not another report
+or cleanup classification.
+
+0k-AT stop rules:
+
+- do not add a backend forwarder, target keepalive, requested-name force, or
+  `NamedTuple`/`Tuple` rendering change for the `@block_owner Hash#[]=`
+  frontier;
+- do not resume `CodePathStatus` classification unless cleanup/bloat is
+  explicitly selected as the active constraint;
+- do not globally clear, ignore, or reinterpret `@type_param_map`;
+- do not patch `raw_annotation_needs_callsite_specialization?` directly or
+  choose a consumer by intuition; first prove the selected consumer is
+  unpromoted, root-sized, and not backend-adjacent;
+- keep `BlockOwner`; converting it back to tuple/namedtuple owner metadata is
+  outside the admitted surface.
 
 Current selected implementation status: Slice 0k-AH is a behavior-neutral
 consumer migration. Instance-method override, keepalive, and diagnostic

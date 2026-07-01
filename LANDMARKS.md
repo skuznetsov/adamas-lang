@@ -12,6 +12,28 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-AT-SEMANTIC-IDENTITY-PIVOT|design-sealed 2026-07-01 {F:0.82 G:0.50 R:0.86}]:
+Slice 0k-AT pauses cleanup/report pursuit for the bootstrap objective and
+selects the next root architecture lane: a no-repeat `SemanticStateScope`
+selection gate for remaining direct ambient-predicate consumers. The already
+promoted `prefer_callsite_specialization` and `lower_function_if_needed.override`
+seams must not be selected again. The live source still has direct
+`state_scope_consumer_def_has_untyped_regular_param?` callers in
+`lower_function_if_needed.callsite_args`,
+`lower_function_if_needed.suffix_types`, and `lower_call.remangle`; the selector
+must reject promoted and backend-adjacent seams and select at most one
+unpromoted root-sized consumer for a future behavior-neutral owner decision. If
+no such consumer exists, the next movement is a higher-level state-model
+redesign checkpoint, not another report or cleanup classification. Rejected
+repeats: backend forwarder, target keepalive, requested-name force,
+`NamedTuple`/`Tuple` rendering normalization, global ambient-map policy changes,
+additional cleanup classification as bootstrap progress, and `BlockOwner`
+rollback. Scope: planning/frontier control only; no compiler behavior and no
+bootstrap claim. Decay trigger: the direct ambient-predicate caller set changes,
+a future SDD slice explicitly selects cleanup/bloat as the active constraint, or
+fresh generated-stage evidence refutes this as the active semantic-identity
+boundary.
+
 [LM-ARCH-0K-AS-FUSED-PARALLEL-CLASSIFIED|verified 2026-07-01 {F:0.84 G:0.30 R:0.88}]:
 Slice 0k-AS adds a focused `CodePathStatus` cleanup classification for
 `fused_parallel_requested`. The cleanup-entry report now supports
