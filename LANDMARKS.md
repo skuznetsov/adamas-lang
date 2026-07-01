@@ -381,6 +381,28 @@ MIR call representation, `lower_function_if_needed_impl`, HIR-to-MIR call
 lowering, backend call emission, or the materialization transaction report row
 format changes.
 
+[LM-ARCH-SLICE-0K-B-STATESCOPE-AUTHORITY-NEXT|guard-only 2026-07-01 {F:0.78 G:0.54 R:0.84}]:
+The next correctness slice after Slice 0k-A is not a backend forwarder or a
+Hash-specific behavior patch. Slice 0k-A proves that HIR materialization
+transactions can be correlated to backend emitted-call facts, but it does not
+yet prove the selected definition identity or the semantic state scope that was
+authoritative for naming/materialization. The next admitted architecture slice
+must extend the same transaction contract with selected definition identity,
+state-scope authority (`callsite`, `target_materialization`,
+`body_substitution`, `current_instantiation`, or `ambient_rejected`), map-source
+evidence, materialization-registry action, and final emitted-call ABI shape
+before any behavior patch changes naming, materialization, or backend calls.
+Forbidden next moves: backend `@undefined_externs` rescue, force
+`override=name`, target keepalive from backend stubs, global ambient-map ignore,
+or using broad `[MAT_EMIT] tx=none` diagnostics as behavior evidence. Evidence:
+`docs/compiler_architecture_sdd.md` Slice 0k-B and
+`docs/compiler_refactor_architecture_plan.md` now make this the design-sealed
+next step. Scope: guard-only planning, not an implemented owner record and not
+a green `s2b`/`s3b` claim. Decay trigger: Slice 0k-B implementation lands,
+fresh generated-stage evidence invalidates transaction completeness as the
+active correctness track, or a completed StateScope/MaterializationRegistry
+facade replaces this temporary plan.
+
 [LM-S2S3-FUNCTION-TYPE-PARAM-MAP-DIG-OPTIONAL-LOOKUP|verified 2026-06-30 {F:0.84 G:0.24 R:0.88}]:
 Fresh generated s2 no longer stops in
 `__adamas_string_eq <- __crystal_proc_1627 <-

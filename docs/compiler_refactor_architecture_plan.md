@@ -441,6 +441,12 @@ The next correctness slice is therefore design-sealed as transaction
 completion: join requested symbol, selected definition, target symbol, created
 body symbol, emitted backend call symbol, state-scope authority, target map,
 callsite arg types, and ABI shape before any behavior patch.
+Slice 0k-A has now supplied the default-off emitted-call correlation channel,
+but not the selected-definition or state-scope authority. The next correctness
+slice is Slice 0k-B: make the transaction owner record state which definition
+was selected and which semantic state scope was authoritative for naming and
+materialization. A behavior fix is still premature if it consumes only
+`[MAT_EMIT]` body-present/stub evidence or backend `@undefined_externs`.
 
 Initial executable entry point:
 
@@ -479,6 +485,10 @@ Acceptance for this first architecture slice:
   transaction report. It must classify call/materialization rows as `exact`,
   `materialization_keepalive`, `wrapper_forwarder`, or `rejected_mismatch`
   before any behavior patch changes naming, materialization, or backend calls.
+- after Slice 0k-A, the next implementation must add selected-definition and
+  state-scope authority to the same transaction contract. Do not start a
+  forwarder, target keepalive, or requested-name materialization patch from
+  emitted-call rows alone.
 
 ## 9. Decision Summary
 

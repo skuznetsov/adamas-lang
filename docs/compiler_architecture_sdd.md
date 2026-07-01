@@ -10,27 +10,23 @@ LLVM lowering. This creates hidden oracles, string-name coupling, phase-local
 fallbacks, and hard-to-localize bootstrap failures.
 
 Current hostile-review frontier: the latest bootstrap work keeps exposing the
-same ownership class under different symptoms, but the active red has moved.
-The earlier `s2b` stub family showed a materialization identity failure, not a
-backend stub bug: a call could be emitted under the requested symbol while the
-body was materialized under a different target symbol because ambient
-`@type_param_map` leaked into a naming/materialization decision. The current
-checked-in architecture path has since added a static semantic census, a
-materialization identity ledger, and a parse-path identity gate. The active
-verified residual after the parse-path identity fix is generated s2->s3
-reaching materialization (`11` `[MAT_ID]` rows) and then crashing in
-`NodeSlot#node <- AstArena#[] <- AstToHir#lower_call` while draining missing
-call targets. The generated-stage lower-call arena parity report then returned
-`compiler_rc=139`, `phase_rows=265`, `expr_rows=210`,
-`agree_all_have=210`, and zero current/ref/heuristic owner divergence buckets.
-That refutes current-arena drift for the instrumented edge. The next admitted
-architecture slice is therefore `NodeSlotIntegrity / AstArenaStorage`: name
-the producer/read boundary for the crashing slot, or find an uninstrumented raw
-read, before any lower-call consumer routing change. The deeper architectural
-issue is still that symbol identity, type-param authority, AST node ownership,
-type identity, materialization ownership, and field/layout facts are inferred
-from mutable process state and rendered/index-only values instead of from owned
-typed facts.
+same ownership class under different symptoms, but the active implementation
+track is no longer the old crash-edge diagnostic ladder. The earlier `s2b`
+stub family showed a materialization identity failure, not a backend stub bug:
+a call could be emitted under the requested symbol while the body was
+materialized under a different target symbol because ambient `@type_param_map`
+leaked into a naming/materialization decision. Later generated-stage ledgers
+then refuted current-arena drift, out-of-range `ExprId`, and missing
+`NodeSlot` for the instrumented `lower_call` edge. That evidence remains
+valuable, but it is not the current next implementation track. The active
+correctness track is now transaction completeness: Slice 0k-A has a default-off
+correlation channel joining HIR materialization transactions to backend
+emitted-call facts, and the next admitted slice must add the missing
+state-scope authority and selected-definition ownership before any behavior
+change. The deeper architectural issue is still that symbol identity,
+type-param authority, AST node ownership, type identity, materialization
+ownership, and field/layout facts are inferred from mutable process state and
+rendered/index-only values instead of from owned typed facts.
 
 Bounded context: Crystal V2 compiler architecture:
 
@@ -1916,6 +1912,80 @@ Residual boundary after Slice 0k-A:
 - the next behavior slice must choose a targeted transaction-bound row or add a
   `SemanticStateScope` / `MaterializationRegistry` owner record if the row still
   lacks selected-definition or state-authority evidence.
+
+### Slice 0k-B: StateScope-authorized materialization transaction plan
+
+Status:
+
+- design-sealed next correctness slice after Slice 0k-A;
+- docs-only guard in this revision;
+- no compiler behavior change is admitted by this slice.
+
+Problem:
+
+- Slice 0k-A links a HIR-owned transaction id to emitted backend call facts, but
+  the id is still attached by call symbol and does not itself prove which
+  selected definition, state-scope authority, or materialized body owner
+  created the row;
+- using a joined `[MAT_TX]` / `[MAT_EMIT]` row alone would still allow a
+  consumer patch to treat a symptom as root when the real boundary is ambient
+  state authority or materialization registry ownership;
+- the known `Hash(UInt64, NamedTuple)#[]=` corridor requires distinguishing
+  three facts in one record: selected stdlib `Hash#[]=` definition,
+  requested/call symbol, and target/body symbol chosen under a state-scope
+  decision.
+
+Required owner fields before behavior changes:
+
+- selected definition identity: source file, line/column when available,
+  declaring owner, method name, and declared parameter annotations;
+- state-scope authority used by the naming/materialization decision:
+  `callsite`, `target_materialization`, `body_substitution`,
+  `current_instantiation`, or `ambient_rejected`;
+- map source and map keys: ambient map snapshot, target-materialization map,
+  callsite arg types, and the reason one map was authoritative;
+- materialization registry action: created body, reused body, keepalive-only,
+  pending/deferred, or rejected mismatch;
+- final emitted call facts from Slice 0k-A: call kind, emitted symbol, return
+  type, arg ABI shape, and backend body-present bit.
+
+Implementation preflight for the next code slice:
+
+1. extend the existing materialization transaction report, or add a sibling
+   state-scope transaction report, so a single transaction id can print the
+   fields above without deriving source-level semantics in `llvm_backend.cr`;
+2. make the report classify each targeted transaction as one of:
+   `exact`, `materialization_keepalive`, `wrapper_forwarder`,
+   `state_scope_rejected`, or `rejected_mismatch`;
+3. run the report first on focused stage1 and generated-s2 no-prelude cases,
+   then on the known `@block_owner Hash#[]=` frontier if the generated-stage
+   run reaches that seam;
+4. require a negative control where current-instantiation remangle is
+   legitimate, such as an `Array(Bool)`/`Array(Int32)` style generic method
+   call, so the slice does not globally reject ambient maps that are actually
+   owned by the current instantiation.
+
+Stop conditions:
+
+- the only available discriminator is backend `@undefined_externs`,
+  `@func_by_name`, or final stub emission;
+- the proposed fix would force `override=name` or force materialization to the
+  requested symbol without selected-definition and ABI evidence;
+- the proposed fix globally ignores `@type_param_map` or globally treats short
+  type parameters as unbound;
+- the owner fields require source-level reconstruction in backend code;
+- the first would-change census for a behavior patch is wider than the
+  targeted row set and cannot classify unrelated rows as legitimate.
+
+Minimal evidence before the first behavior slice:
+
+- focused stage1 transaction report includes selected-definition and
+  state-scope fields with zero malformed owner rows;
+- generated-s2 no-prelude report includes at least one joined transaction with
+  selected-definition and state-scope fields;
+- static semantic and CodePathStatus censuses still pass;
+- the SDD/TODO/LANDMARKS ledger names the exact first behavior row to consume,
+  or explicitly states why the next slice remains behavior-neutral.
 
 ### Slice A: CallResolution boundary
 

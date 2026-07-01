@@ -295,6 +295,20 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   `SemanticStateScope` / `MaterializationRegistry` if selected-definition or
   state-authority evidence is still missing.
 
+- 2026-07-01 NEXT ARCHITECTURE SLICE: Slice 0k-B is now the design-sealed
+  correctness precondition after 0k-A. The emitted-call correlation channel is
+  useful, but a joined `[MAT_TX]` / `[MAT_EMIT]` row is not yet a root-cause
+  owner fact because it does not prove the selected definition or the
+  state-scope authority that chose the materialized symbol. The next
+  implementation must extend the transaction contract with selected definition
+  identity, state-scope authority (`callsite`, `target_materialization`,
+  `body_substitution`, `current_instantiation`, or `ambient_rejected`),
+  map-source evidence, and materialization-registry action before any behavior
+  patch changes naming/materialization/backend calls. Forbidden next moves:
+  backend `@undefined_externs` rescue, force `override=name`, target keepalive
+  from backend stubs, global ambient-map ignore, or using `[MAT_EMIT] tx=none`
+  diagnostics as a behavior signal.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was
