@@ -711,6 +711,36 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   ledger/helper. No compiler behavior changed and no green `s2b`/`s3b` claim is
   made.
 
+- 2026-07-01 UPDATE: implemented Slice 0k-R, the first
+  `SemanticStateScope` owner-consumption helper, in shadow/parity mode. The
+  selected seam `prefer_callsite_specialization` now calls a named
+  `SemanticStateScopeDecision` helper instead of calling the old
+  `state_scope_consumer_def_has_untyped_regular_param?` edge directly. The
+  helper evaluates `def_has_untyped_regular_param?` only as legacy parity,
+  emits `[STATE_SCOPE_PROMOTION]` rows under
+  `ADAMAS_SEMANTIC_STATE_SCOPE_PROMOTION_LEDGER=1`, records owner-result
+  classes (`state_scope`, `materialization_registry`, `rejected_ambient`,
+  `legacy_shim`), and returns the legacy result as emitted behavior.
+  Verification: pre-slice red gate exited `9` with
+  `preferred_source_shape=legacy_direct_edge`; fresh stage1 build succeeded;
+  `REQUIRE_PROMOTED=1 scripts/semantic_state_scope_admission_report.sh
+  /private/tmp/adamas_0kq2_stage1` exits `0` with
+  `preferred_source_shape=already_promoted_shadow`, `promotion_rows=3448`,
+  `promotion_non_preferred=0`, `promotion_malformed=0`,
+  `promotion_invalid=0`, `promotion_emitted_mismatch=0`,
+  `already_promoted_count=1`; owner-result buckets are
+  `state_scope=1256`, `materialization_registry=1063`,
+  `rejected_ambient=269`, `legacy_shim=860`; existing state-scope,
+  materialization-selection, semantic-decision, and codepath-status reports
+  still pass; env-off smoke emits no promotion rows and prints `1`;
+  regression suites pass `152/152 + 36/36`; fresh generated s2 builds with
+  `EXIT: 0` and compiles/runs a no-prelude `x = 1` smoke. Residual boundary:
+  generated-s2 full-prelude `x = 1` still exits `139` after
+  `pass3 after lower_main call`; no green `s2b`/`s3b` claim is made. Next work
+  must not reselect `prefer_callsite_specialization`; choose a different
+  root-sized state-scope consumer or switch to runtime `CodePathStatus`
+  cleanup selection.
+
 - 2026-06-30 UPDATE: the
   `__adamas_string_eq <- __crystal_proc_1627 <-
   AstToHir#lower_generic_type_ref` s2->s3 SIGSEGV moved. The crashing Proc was

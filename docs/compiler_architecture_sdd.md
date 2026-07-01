@@ -152,6 +152,20 @@ contract: define what counts as a real `SemanticStateScope` migration, what
 remains wrapper theater, and which source-shape/report gates must be red
 before code and green after code.
 
+Current next-slice decision after Slice 0k-R implementation: the first
+`SemanticStateScope` owner-consumption seam is now promoted in shadow/parity
+mode, but it is not a behavior fix. `prefer_callsite_specialization` no longer
+calls the old state-scope consumer helper directly; it calls a named
+`SemanticStateScopeDecision` helper that evaluates the legacy predicate only as
+parity, emits an owner-result classification, and returns the legacy result as
+the emitted result. The admission report now marks the seam
+`already_promoted_shadow`. The generated-s2 full-prelude smoke still exits 139
+after `pass3 after lower_main call`, so this slice is not green `s2b`/`s3b`
+evidence. The next work must not reselect this same seam; either add a
+no-repeat state-scope selection gate for a genuinely different consumer, or
+switch to runtime `CodePathStatus` cleanup selection if no root-sized
+state-scope consumer is admitted.
+
 Bounded context: Crystal V2 compiler architecture:
 
 - HIR lowering and semantic registration (`src/compiler/hir/ast_to_hir.cr`)
@@ -4042,6 +4056,88 @@ Next local track:
   contract is satisfied in the patch plan;
 - otherwise switch to runtime `CodePathStatus` cleanup selection rather than
   adding more state-scope diagnostics.
+
+### Slice 0k-R: prefer_callsite SemanticStateScope owner helper
+
+Status:
+
+- implemented behavior-neutral owner-consumption helper after Slice 0k-Q;
+- one selected consumer, `prefer_callsite_specialization`, now routes through
+  a named `SemanticStateScopeDecision` helper;
+- compiler behavior remains unchanged because the helper returns
+  `legacy_result` as `emitted_result`;
+- no materialization behavior, remangling behavior, backend behavior,
+  AST-read behavior, cleanup behavior, or `BlockOwner` carrier changed.
+
+Implementation:
+
+- added default-off `ADAMAS_SEMANTIC_STATE_SCOPE_PROMOTION_LEDGER`;
+- added an internal `SemanticStateScopeDecision` record with requested symbol,
+  target symbol, selected definition, authority, migration, validation, legacy
+  result, owner result, emitted result, ambient map snapshot, target map,
+  callsite arg types, and lifetime;
+- `owner_result` is an owner classification
+  (`state_scope`, `materialization_registry`, `rejected_ambient`,
+  `legacy_shim`), not a behavior result;
+- `prefer_callsite_specialization` now calls
+  `semantic_state_scope_prefer_callsite_specialization_shadow_untyped_regular_param?`;
+- the legacy predicate is still evaluated, but only inside the helper as
+  parity input. The selected consumer no longer calls
+  `state_scope_consumer_def_has_untyped_regular_param?` directly.
+
+Falsifiers and evidence:
+
+- pre-slice red gate:
+  `REQUIRE_PROMOTED=1 scripts/semantic_state_scope_admission_report.sh
+  /private/tmp/adamas_0kq2_red` exited `9` with
+  `preferred_source_shape=legacy_direct_edge`, `selected_count=1`, and
+  `already_promoted_count=0`;
+- fresh stage1 build:
+  `crystal build src/adamas.cr -o /private/tmp/adamas_0kq2_stage1
+  --error-trace`;
+- green promotion gate:
+  `REQUIRE_PROMOTED=1 scripts/semantic_state_scope_admission_report.sh
+  /private/tmp/adamas_0kq2_stage1` exits `0` with
+  `preferred_source_shape=already_promoted_shadow`, `promotion_rows=3448`,
+  `promotion_non_preferred=0`, `promotion_malformed=0`,
+  `promotion_invalid=0`, `promotion_emitted_mismatch=0`,
+  `eligible_count=0`, `selected_count=0`, and `already_promoted_count=1`;
+- owner-result buckets for promoted rows:
+  `state_scope=1256`, `materialization_registry=1063`,
+  `rejected_ambient=269`, `legacy_shim=860`;
+- default admission report also marks only
+  `prefer_callsite_specialization` as `already_promoted_shadow`;
+- compatibility reports remain green:
+  `scripts/state_scope_consumer_report.sh`,
+  `scripts/materialization_promotion_selection_report.sh`,
+  `scripts/semantic_decision_census.sh`, and
+  `scripts/codepath_status_census.sh`;
+- env-off smoke emits no `[STATE_SCOPE_PROMOTION]` rows and the produced
+  binary prints `1`;
+- full stage1 regression suites pass: `152/152` original and `36/36`
+  combined;
+- fresh generated s2 builds with `EXIT: 0` and compiles/runs a no-prelude
+  `x = 1` smoke; generated-s2 full-prelude `x = 1` still exits `139` after
+  `pass3 after lower_main call`.
+
+Boundary:
+
+- this is a shadow/parity owner-consumption slice, not a behavior change;
+- it does not claim green full-prelude generated s2, `s2b`, or `s3b`;
+- it does not authorize changing emitted behavior to `owner_result`;
+- it does not migrate `lower_call.remangle`, `lower_function_if_needed.*`,
+  direct predicate helper rows, or any backend/materialization behavior.
+
+Next local track:
+
+- do not reselect `prefer_callsite_specialization` in the next state-scope
+  slice; it is already promoted in shadow mode;
+- either add a no-repeat selection gate for a genuinely different
+  `SemanticStateScope` consumer, or switch to runtime `CodePathStatus` cleanup
+  selection if no root-sized consumer can be admitted;
+- behavior-changing call/materialization work remains blocked until a future
+  would-change census consumes an owned record and proves a root-sized change
+  set.
 
 ### Slice A: CallResolution boundary
 

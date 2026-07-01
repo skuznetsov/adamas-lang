@@ -74,6 +74,17 @@ shape that the selected consumer no longer reaches directly for the old
 ambient-state helper. If that receipt is not root-sized, switch to
 `CodePathStatus` cleanup selection instead of adding more state-scope ledgers.
 
+2026-07-01 post-0k-R note: the first `SemanticStateScope` seam is now promoted
+in shadow/parity mode. `prefer_callsite_specialization` calls a named
+`SemanticStateScopeDecision` helper, the helper emits owner-result
+classification under a default-off promotion ledger, and emitted behavior still
+returns the legacy result. The admission report marks the seam
+`already_promoted_shadow`; do not select it again. This is still not a green
+bootstrap claim: generated s2 builds and passes a no-prelude smoke, but the
+full-prelude generated-s2 smoke still exits 139 after `pass3 after lower_main
+call`. The next architecture lane must choose a different root-sized
+state-scope consumer or move to `CodePathStatus` cleanup selection.
+
 ## 1. Purpose
 
 This document captures a staged architecture plan for reducing the debugging

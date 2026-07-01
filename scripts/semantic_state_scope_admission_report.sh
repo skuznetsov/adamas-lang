@@ -100,6 +100,7 @@ source_shape_for_prefer_callsite_specialization() {
 
 set +e
 ADAMAS_STATE_SCOPE_CONSUMER_LEDGER=1 \
+ADAMAS_SEMANTIC_STATE_SCOPE_PROMOTION_LEDGER=1 \
   "$ROOT_DIR/scripts/run_safe.sh" "$COMPILER" "$TIMEOUT" "$MEM_MB" \
   "${COMPILE_ARGS[@]}" >"$LOG" 2>&1
 compiler_rc=$?
@@ -140,6 +141,16 @@ awk \
       }
     }
     return ""
+  }
+
+  function has_field(name,    i, p) {
+    for (i = 1; i <= NF; i++) {
+      p = index($i, "=")
+      if (p > 0 && substr($i, 1, p - 1) == name) {
+        return 1
+      }
+    }
+    return 0
   }
 
   function keep_sample(bucket, row) {
@@ -258,6 +269,53 @@ awk \
     }
   }
 
+  /^\[STATE_SCOPE_PROMOTION\]/ {
+    promotion_rows++
+    promoted_consumer = field("consumer")
+    promoted_source_decision = field("source_decision")
+    promoted_requested = field("requested")
+    promoted_target = field("target")
+    promoted_selected_def = field("selected_def")
+    promoted_authority = field("authority")
+    promoted_migration = field("migration")
+    promoted_validation = field("validation")
+    promoted_legacy_result = field("legacy_result")
+    promoted_owner_result = field("owner_result")
+    promoted_emitted_result = field("emitted_result")
+    promoted_promotion = field("promotion")
+    promoted_lifetime = field("lifetime")
+
+    keep_sample("promotion", $0)
+    promotion_owner_result_count[promoted_owner_result]++
+
+    if (promoted_consumer != preferred) {
+      promotion_non_preferred++
+      keep_sample("promotion_non_preferred", $0)
+    }
+
+    if (promoted_consumer == "" || promoted_source_decision == "" ||
+        promoted_requested == "" || promoted_target == "" ||
+        promoted_selected_def == "" || promoted_authority == "" ||
+        promoted_migration == "" || promoted_validation == "" ||
+        promoted_legacy_result == "" || promoted_owner_result == "" ||
+        promoted_emitted_result == "" || promoted_promotion == "" ||
+        !has_field("ambient_map") || !has_field("target_map") ||
+        !has_field("call_arg_types") || promoted_lifetime == "") {
+      promotion_malformed++
+      keep_sample("promotion_malformed", $0)
+    }
+
+    if (promoted_promotion != "shadow_parity") {
+      promotion_invalid++
+      keep_sample("promotion_invalid", $0)
+    }
+
+    if (promoted_legacy_result != promoted_emitted_result) {
+      promotion_emitted_mismatch++
+      keep_sample("promotion_emitted_mismatch", $0)
+    }
+  }
+
   END {
     print ""
     print "## Counts"
@@ -269,6 +327,11 @@ awk \
     print "preferred_rejected_ambient_rows=" preferred_rejected_ambient_rows + 0
     print "preferred_legacy_shim_rows=" preferred_legacy_shim_rows + 0
     print "preferred_blocked_rows=" preferred_blocked_rows + 0
+    print "promotion_rows=" promotion_rows + 0
+    print "promotion_malformed=" promotion_malformed + 0
+    print "promotion_non_preferred=" promotion_non_preferred + 0
+    print "promotion_invalid=" promotion_invalid + 0
+    print "promotion_emitted_mismatch=" promotion_emitted_mismatch + 0
 
     print ""
     print "## Candidate Selection"
@@ -302,6 +365,14 @@ awk \
     print "keep_legacy_shim=" preferred_legacy_shim_rows + 0
     print "other_migration=" preferred_other_migration_rows + 0
 
+    if (promotion_rows > 0) {
+      print ""
+      print "## Promotion Owner Results"
+      for (owner_result in promotion_owner_result_count) {
+        print owner_result "=" promotion_owner_result_count[owner_result] + 0
+      }
+    }
+
     print ""
     print "## Preferred Samples"
     for (j = 1; j <= sample_count["preferred"]; j++) {
@@ -316,19 +387,31 @@ awk \
       }
     }
 
+    if (sample_count["promotion"] > 0) {
+      print ""
+      print "## Promotion Samples"
+      for (j = 1; j <= sample_count["promotion"]; j++) {
+        print sample["promotion", j]
+      }
+    }
+
     print ""
     print "## Last Row"
     print last_row
 
-    if (malformed > 0) {
+    if (malformed > 0 || promotion_malformed > 0 ||
+        promotion_non_preferred > 0 || promotion_invalid > 0 ||
+        promotion_emitted_mismatch > 0) {
       exit 7
     }
     if (require_promoted == "1") {
-      if (already_promoted_count != 1 || preferred_source_shape != "already_promoted_shadow") {
+      if (already_promoted_count != 1 ||
+          preferred_source_shape != "already_promoted_shadow" ||
+          promotion_rows == 0) {
         exit 9
       }
     } else {
-      if (selected_count != 1) {
+      if (selected_count != 1 && already_promoted_count != 1) {
         exit 8
       }
     }

@@ -2550,6 +2550,10 @@ module Adamas::HIR
       env_has?("ADAMAS_MATERIALIZATION_OVERRIDE_PROMOTION_LEDGER")
     end
 
+    private def semantic_state_scope_promotion_ledger_enabled? : Bool
+      env_has?("ADAMAS_SEMANTIC_STATE_SCOPE_PROMOTION_LEDGER")
+    end
+
     private class MaterializationDecisionRecord
       getter consumer : String
       getter source_decision : String
@@ -2591,6 +2595,43 @@ module Adamas::HIR
         @arg_abi : String,
         @block_abi : String,
         @validation : String,
+      )
+      end
+    end
+
+    private class SemanticStateScopeDecision
+      getter consumer : String
+      getter source_decision : String
+      getter requested_name : String
+      getter target_name : String
+      getter selected_def : String
+      getter authority : String
+      getter migration : String
+      getter validation : String
+      getter legacy_result : Bool
+      getter owner_result : String
+      getter emitted_result : Bool
+      getter ambient_map : String
+      getter target_map : String
+      getter call_arg_types : String
+      getter lifetime : String
+
+      def initialize(
+        @consumer : String,
+        @source_decision : String,
+        @requested_name : String,
+        @target_name : String,
+        @selected_def : String,
+        @authority : String,
+        @migration : String,
+        @validation : String,
+        @legacy_result : Bool,
+        @owner_result : String,
+        @emitted_result : Bool,
+        @ambient_map : String,
+        @target_map : String,
+        @call_arg_types : String,
+        @lifetime : String,
       )
       end
     end
@@ -2649,6 +2690,21 @@ module Adamas::HIR
         "diagnostic_only"
       else
         "owned"
+      end
+    end
+
+    private def semantic_state_scope_owner_result(authority : String) : String
+      case authority
+      when "callsite"
+        "state_scope"
+      when "target_materialization"
+        "materialization_registry"
+      when "rejected_ambient"
+        "rejected_ambient"
+      when "legacy_shim"
+        "legacy_shim"
+      else
+        "unknown"
       end
     end
 
@@ -2918,6 +2974,49 @@ module Adamas::HIR
       STDERR.puts "[MAT_PROMOTION] consumer=#{ledger_token(record.consumer)} source_decision=#{ledger_token(record.source_decision)} requested=#{ledger_token(record.requested_name)} target=#{ledger_token(record.target_name)} selected_def=#{ledger_token(record.selected_def)} param_class=#{ledger_token(record.param_class)} state_scope=#{ledger_token(record.state_scope)} owner=#{ledger_token(record.owner)} decision=#{ledger_token(record.decision)} reason=#{ledger_token(record.reason)} legacy_result=#{materialization_decision_bool_field(record.legacy_result)} owner_result=#{ledger_token(record.owner_result)} emitted_result=#{materialization_decision_bool_field(record.emitted_result)} would_change=#{ledger_token(record.would_change)} promotion=shadow_parity target_map=#{ledger_token(record.target_map)} call_arg_types=#{ledger_token(record.call_arg_types)} arg_abi=#{ledger_token(record.arg_abi)} block_abi=#{ledger_token(record.block_abi)} validation=#{ledger_token(record.validation)}"
     end
 
+    private def log_semantic_state_scope_promotion(record : SemanticStateScopeDecision) : Nil
+      STDERR.puts "[STATE_SCOPE_PROMOTION] consumer=#{ledger_token(record.consumer)} source_decision=#{ledger_token(record.source_decision)} requested=#{ledger_token(record.requested_name)} target=#{ledger_token(record.target_name)} selected_def=#{ledger_token(record.selected_def)} authority=#{ledger_token(record.authority)} migration=#{ledger_token(record.migration)} validation=#{ledger_token(record.validation)} legacy_result=#{materialization_decision_bool_field(record.legacy_result)} owner_result=#{ledger_token(record.owner_result)} emitted_result=#{materialization_decision_bool_field(record.emitted_result)} promotion=shadow_parity ambient_map=#{ledger_token(record.ambient_map)} target_map=#{ledger_token(record.target_map)} call_arg_types=#{ledger_token(record.call_arg_types)} lifetime=#{ledger_token(record.lifetime)}"
+    end
+
+    private def semantic_state_scope_decision_for_consumer(
+      consumer : String,
+      source_decision : String,
+      requested_name : String,
+      target_name : String,
+      func_def : Adamas::Compiler::Frontend::DefNode,
+      legacy_result : Bool,
+      call_arg_types : Array(TypeRef)? = nil,
+      target_params : Hash(String, String)? = nil,
+      lifetime : String = "callsite",
+    ) : SemanticStateScopeDecision
+      effective_target = target_name.empty? ? requested_name : target_name
+      selected_owner = effective_target.empty? ? "?" : method_owner(effective_target)
+      target_map_hash = state_scope_consumer_target_map(requested_name, target_name, target_params)
+      authority = state_scope_consumer_authority(legacy_result, target_map_hash, call_arg_types)
+      migration = state_scope_consumer_migration(authority)
+      validation = state_scope_consumer_validation(authority)
+      selected_def = selected_definition_debug_string(func_def, effective_target, selected_owner)
+      call_args = type_ref_array_debug_string(call_arg_types)
+
+      SemanticStateScopeDecision.new(
+        consumer,
+        source_decision,
+        requested_name,
+        target_name,
+        selected_def,
+        authority,
+        migration,
+        validation,
+        legacy_result,
+        semantic_state_scope_owner_result(authority),
+        legacy_result,
+        type_param_map_debug_string,
+        string_map_debug_string(target_map_hash),
+        materialization_decision_field(call_args),
+        lifetime,
+      )
+    end
+
     private def log_state_scope_consumer_decision(
       consumer : String,
       decision : String,
@@ -2995,6 +3094,41 @@ module Adamas::HIR
            )
           log_materialization_override_promotion(record)
         end
+      end
+
+      legacy_result
+    end
+
+    private def semantic_state_scope_prefer_callsite_specialization_shadow_untyped_regular_param?(
+      requested_name : String,
+      target_name : String,
+      func_def : Adamas::Compiler::Frontend::DefNode,
+      call_arg_types : Array(TypeRef)? = nil,
+    ) : Bool
+      legacy_result = def_has_untyped_regular_param?(func_def)
+
+      if state_scope_consumer_ledger_enabled? || materialization_decision_ledger_enabled?
+        log_state_scope_consumer_decision("prefer_callsite_specialization", "callsite_specialization", requested_name, target_name, func_def, legacy_result, call_arg_types)
+        log_state_scope_consumer_decision("def_has_untyped_regular_param", "callsite_specialization", requested_name, target_name, func_def, legacy_result, call_arg_types)
+        if def_has_regular_type_annotation_for_state_scope_consumer?(func_def)
+          log_state_scope_consumer_decision("raw_annotation_needs_callsite_specialization", "callsite_specialization", requested_name, target_name, func_def, legacy_result, call_arg_types)
+        end
+      end
+
+      if semantic_state_scope_promotion_ledger_enabled?
+        log_semantic_state_scope_promotion(
+          semantic_state_scope_decision_for_consumer(
+            "prefer_callsite_specialization",
+            "callsite_specialization",
+            requested_name,
+            target_name,
+            func_def,
+            legacy_result,
+            call_arg_types,
+            nil,
+            "callsite_specialization"
+          )
+        )
       end
 
       legacy_result
@@ -38269,9 +38403,7 @@ module Adamas::HIR
       def_node = @function_defs[base_method_name]? || @function_defs[resolved_name]?
       return nil unless def_node
 
-      needs_callsite_specialization = state_scope_consumer_def_has_untyped_regular_param?(
-        "prefer_callsite_specialization",
-        "callsite_specialization",
+      needs_callsite_specialization = semantic_state_scope_prefer_callsite_specialization_shadow_untyped_regular_param?(
         base_method_name,
         resolved_name,
         def_node,
