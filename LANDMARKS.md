@@ -12,6 +12,29 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-BZ-RUNTIME-ROWS-STOP-RULE|design-sealed 2026-07-02 {F:0.83 G:0.60 R:0.84}]:
+Slice 0k-BZ records a docs-only hostile Quadrumvirate checkpoint over the
+post-0k-BY path. The reviewed risk is not lack of another local compiler fix;
+it is report inflation: adding more generated-stage rows without producing a
+transaction-owned decision that can admit or reject a behavior slice. Current
+evidence remains the 0k-BY report state:
+`final_classification=abort_unjoined_evidence`,
+`join_status=phase_local_only`, and
+`admission_status=rejected_unjoined_evidence`. The next executable movement is
+still default-off runtime transaction-row production, but its completion signal
+is narrowed: either the report reaches `join_status=joined` and selects exactly
+one root-sized transaction-owned old authority edge, reaches `joined` and
+explicitly refutes `GeneratedStageExecution` as the wrong owner boundary, or
+stops with a named missing runtime row that cannot be produced without changing
+compiler semantics. Rejected repeats: worker fixes, tail-stub fixes,
+side-effect semantic changes, output/resource behavior changes, backend
+forwarders, `ADAMAS_LLVM_WORKERS=1`, broad `NamedTuple`/`Tuple` rendering,
+ambient-map policy changes, parser behavior changes, or `BlockOwner` rollback
+before joined transaction evidence. Scope: docs/control-plane only; no compiler
+production behavior changed and no green `s2b`/`s3b` claim. Decay trigger: the
+transaction report reaches `joined`, refutes the owner boundary, or B4 changes
+to a different first-bad boundary.
+
 [LM-ARCH-0K-BY-GENERATED-STAGE-TRANSACTION-REPORT|implemented 2026-07-02 {F:0.86 G:0.50 R:0.86}]:
 Slice 0k-BY implements the first executable
 `GeneratedStageExecutionTransaction` report:

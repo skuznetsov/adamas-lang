@@ -156,6 +156,15 @@ rows for HIR/MIR module identity, `LLVMEmissionSession` id, side-effect row
 counts, tail semantic-vs-input split, and output commit record. LLVM-emission
 behavior changes remain rejected while the report is phase-local only.
 
+Slice 0k-BZ adds the hostile stop-rule for the missing runtime rows. Adding
+rows is not sufficient; the report must become joined evidence and either
+select exactly one root-sized transaction-owned old authority edge, refute the
+`GeneratedStageExecution` boundary, or stop with a named row that cannot be
+produced without semantic behavior changes. If joined evidence is broad or only
+restates local session state, the next step is a selector/falsifier or SDD
+refutation, not a worker, tail, output, resource, backend-forwarder, or
+memory-budget behavior patch.
+
 Generated-stage owner carriers SHOULD use explicit private classes/methods
 until their materialization surface is proven. A rejected 0k-BR preflight using
 Crystal `record` macros preserved local checks but changed B4 to a produced

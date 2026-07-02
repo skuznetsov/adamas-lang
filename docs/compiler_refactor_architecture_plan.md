@@ -425,6 +425,18 @@ add default-off runtime transaction rows for HIR/MIR module identity,
 and output commit record. Do not move to worker/tail/output/resource behavior
 while the report remains phase-local only.
 
+2026-07-02 post-0k-BZ note: the post-0k-BY hostile Quadrumvirate review keeps
+that next slice but tightens its completion rule. Runtime rows are not an
+architecture win by themselves. The slice must move the transaction report to
+joined evidence and produce one of three outcomes: exactly one root-sized
+transaction-owned old authority edge, an explicit refutation of
+`GeneratedStageExecution` as the wrong owner boundary, or a named stop because a
+required row cannot be produced default-off. If joined evidence is broad or
+ambiguous, the next movement is a selector/falsifier slice, not a behavior
+patch. Worker/tail/output/resource fixes, backend forwarders, `NamedTuple` /
+`Tuple` rendering, ambient-map policy, parser behavior, and `BlockOwner`
+changes remain rejected while this decision is missing.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`

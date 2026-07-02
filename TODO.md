@@ -8,6 +8,22 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: added Slice 0k-BZ, a docs-only hostile
+  Quadrumvirate checkpoint after reviewing the 0k-BY path for tail-chasing.
+  Production compiler behavior remains frozen. The next executable slice is
+  still the 0k-BY missing-row follow-up, but it is now narrowed: it may add only
+  default-off runtime transaction rows needed to move
+  `scripts/generated_stage_execution_transaction_report.sh` from
+  `phase_local_only` toward `joined`. It must not change worker behavior, tail
+  stubs, side-effect semantics, output behavior, resource limits, backend
+  forwarders, `NamedTuple`/`Tuple` rendering, ambient-map policy, parser
+  behavior, or `BlockOwner`. Success is not "more rows exist"; success is one
+  of: `joined` plus exactly one root-sized transaction-owned old authority edge,
+  `joined` plus explicit refutation of the `GeneratedStageExecution` boundary,
+  or a named stop because a required runtime row cannot be produced without a
+  semantic behavior change. If the joined report is broad or ambiguous, the
+  next slice must be a selector/falsifier, not a behavior patch.
+
 - 2026-07-02 UPDATE: implemented Slice 0k-BY, the first executable
   `GeneratedStageExecutionTransaction` report. New script:
   `scripts/generated_stage_execution_transaction_report.sh`. It wraps the B4
