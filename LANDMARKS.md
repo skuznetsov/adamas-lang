@@ -12,6 +12,33 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-CU-ASSIGNED-TAIL-BLOCK-RETURN-RECEIPT|design-sealed 2026-07-02 {F:0.88 G:0.68 R:0.88}]:
+Slice 0k-CU is the pre-code `SliceReceipt` required by 0k-CT for the only
+currently admitted `bootstrap-emergency-with-ledger` behavior lane. Fresh
+baseline evidence still matches the breakglass assumptions. Strict census
+`REQUIRE_CURRENT_CP_BROAD=1 scripts/hir_block_return_shape_census.sh` reports
+the broad rejected shape scope (`classification=current_0k_cp_hir_block_return_shape_broad`,
+`candidate_multi_shape_keys=208`,
+`candidate_nil_value_coexist_keys=206`,
+`candidate_additional_return_shape_bodies=228`) and the root-sized
+assigned-tail discriminator (`assigned_tail_multi_shape_keys=1`,
+`assigned_tail_additional_return_shape_bodies=4`,
+`timed_cp_phase_assigned_tail_passthrough_keys=1`). Strict O1 classifier
+`REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh`
+reports `b4_classification=current_0k_bn_frontier`,
+`classification=current_0k_ck_mir_cp_container_frontier`, and
+`bad_container_candidate=affected_block_ids`. The admitted future production
+slice is CAUTION-tier and must implement a HIR `BlockCallReturnContract` for
+assigned-tail yield-passthrough helpers, then use that owner fact to
+materialize non-nil block-return-specific wrappers only inside the root-sized
+contract. It must keep nil/non-returning `timed_cp_phase` callsites and
+ordinary iterator/scope helpers as negative controls, and it must run
+generated-stage evidence. Scope: pre-code receipt only; no compiler production
+behavior changed and no green `s2b`/`s3b` claim. Decay trigger: assigned-tail
+census grows beyond the root-sized current class, O1 no longer reports
+`affected_block_ids`, the behavior slice lands/fails/widens, or B4 reaches
+`REQUIRE_CLEAN=1`.
+
 [LM-ARCH-0K-CT-CURRENT-EXECUTION-BOARD|design-sealed 2026-07-02 {F:0.84 G:0.74 R:0.86}]:
 Slice 0k-CT is a docs-only active-board compression checkpoint after hostile
 review of the post-0k-CS route. It adds an operator-facing

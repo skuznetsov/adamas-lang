@@ -8,6 +8,29 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: added Slice 0k-CU, the pre-code `SliceReceipt` required
+  by 0k-CT for the only currently admitted breakglass production lane. Fresh
+  baseline evidence still matches the assumptions:
+  `REQUIRE_CURRENT_CP_BROAD=1 scripts/hir_block_return_shape_census.sh`
+  reports the broad rejected shape scope (`candidate_multi_shape_keys=208`,
+  `candidate_nil_value_coexist_keys=206`,
+  `candidate_additional_return_shape_bodies=228`) and the root-sized
+  assigned-tail discriminator (`assigned_tail_multi_shape_keys=1`,
+  `assigned_tail_additional_return_shape_bodies=4`,
+  `timed_cp_phase_assigned_tail_passthrough_keys=1`). Fresh
+  `REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh`
+  preserves B4/O1 pressure with
+  `b4_classification=current_0k_bn_frontier`,
+  `classification=current_0k_ck_mir_cp_container_frontier`, and
+  `bad_container_candidate=affected_block_ids`. The next source movement, if
+  taken, is CAUTION-tier and must implement the full HIR
+  `BlockCallReturnContract` receipt for assigned-tail yield-passthrough helpers:
+  classify the helper, key/materialize wrappers by non-nil block-return shape
+  only inside that contract, keep nil/non-returning and ordinary iterator/scope
+  helpers as negative controls, and run generated-stage evidence. If the slice
+  widens, fails, or lands, return to the Current Execution Board before
+  selecting any new crash-stack classifier or local fix.
+
 - 2026-07-02 UPDATE: added Slice 0k-CT, a docs-only active-board compression
   checkpoint after hostile review of the post-0k-CS route. Production compiler
   source remains paused. The SDD now has an operator-facing

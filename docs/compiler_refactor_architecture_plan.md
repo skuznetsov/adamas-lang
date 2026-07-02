@@ -33,6 +33,19 @@ generated-stage gate, negative controls, rejected shortcuts, and residual
 boundary. If a proposed slice cannot fill those fields, the next movement is
 docs/probe work or architecture burn-down, not production code.
 
+2026-07-02 post-0k-CU note: the SDD now contains the pre-code receipt for the
+one admitted breakglass lane. Fresh current evidence keeps the broad
+return-shape scope rejected while preserving the root-sized assigned-tail
+passthrough discriminator (`assigned_tail_multi_shape_keys=1`) and the current
+O1 `affected_block_ids` frontier. The next production slice is therefore not a
+new design search and not a crash-stack classifier: if taken, it must implement
+the HIR `BlockCallReturnContract` receipt for assigned-tail yield-passthrough
+helpers and run the receipt's negative controls and generated-stage gate. If
+the implementation needs broader untyped-`&` return-shape specialization, a
+CopyPropagation guard, backend rescue, `timed_cp_phase` special-case,
+`NamedTuple`/`Tuple` rendering, ambient-map policy, or `BlockOwner` changes,
+the slice fails closed and returns to the Current Execution Board.
+
 2026-07-02 post-0k-CR note: the return-shape census now also measures
 assigned-tail yield passthrough (`result = yield; ...; result`). Strict current
 evidence keeps the broad 0k-CQ result for naive `contains_yield` scope, but

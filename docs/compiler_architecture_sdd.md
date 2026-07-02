@@ -153,6 +153,27 @@ missing falsifier, or select a durable owner spine. No new crash-stack
 classifier, local CopyPropagation guard, backend rescue, broad
 `NamedTuple`/`Tuple` rendering change, global ambient-map policy change, or
 `BlockOwner` rollback is admitted by this checkpoint.
+Slice 0k-CU is that pre-code receipt for the one currently admitted breakglass
+lane. Fresh baseline evidence still matches the 0k-CR assumptions:
+`REQUIRE_CURRENT_CP_BROAD=1 scripts/hir_block_return_shape_census.sh` reports
+the broad rejected scope (`candidate_multi_shape_keys=208`,
+`candidate_nil_value_coexist_keys=206`,
+`candidate_additional_return_shape_bodies=228`) and the root-sized
+assigned-tail discriminator (`assigned_tail_multi_shape_keys=1`,
+`assigned_tail_additional_return_shape_bodies=4`,
+`timed_cp_phase_assigned_tail_passthrough_keys=1`). Fresh
+`REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh`
+preserves B4/O1 pressure:
+`b4_classification=current_0k_bn_frontier`,
+`classification=current_0k_ck_mir_cp_container_frontier`, and
+`bad_container_candidate=affected_block_ids`. This receipt admits exactly one
+future CAUTION-tier production slice: implement an owned HIR
+`BlockCallReturnContract` for assigned-tail yield-passthrough helpers and make
+wrapper materialization include the non-nil block-return shape only for that
+contract. It rejects classification-only changes, broad return-shape
+specialization, and any patch that leaves the `apply_collect_affected_blocks`
+wrapper body with `yield : Void`. After the slice lands, fails, or widens, the
+next movement must return to the Current Execution Board.
 Slice 0k-BH adds a narrower pause gate after the 0k-BG parser falsifier:
 the command-call parser frontier may get one bounded closure attempt, but a
 second parser loop, adjacent parser regression, or broadened command-call
@@ -392,6 +413,8 @@ crash-stack classifier or local fix is selected.
 Slice 0k-CT adds the operator-facing short board below. If a future slice must
 read the historical ledger to discover what it is allowed to do, the slice has
 already failed the process gate.
+Slice 0k-CU fills the first receipt for the breakglass row. It is a pre-code
+admission, not the implementation.
 
 ### Current Execution Board
 
@@ -430,6 +453,82 @@ SliceReceipt {
 Hard stop: if the receipt cannot identify a producer-to-consumer authority edge
 or can only say "the latest crash moved", the work is a probe/SDD update, not a
 production architecture slice.
+
+#### Slice 0k-CU receipt: assigned-tail block-return contract
+
+```text
+SliceReceipt {
+  board_lane: bootstrap-emergency-with-ledger / B4-O1
+  tranche: bootstrap-emergency-with-ledger
+  old_authority_edge:
+    Shared HIR block wrapper identity for untyped `&` helpers is keyed by
+    callee/argument shape but not by the value-return contract of helpers that
+    return the yielded value. The first nil/non-returning callsite can therefore
+    materialize `CopyPropagationPass#timed_cp_phase$String_block` with
+    `yield : Void` before a later Set-return callsite records its block return.
+  owner_fact_or_service:
+    HIR `BlockCallReturnContract`, scoped to helpers proven to be
+    assigned-tail yield-passthrough (`result = yield; ...; result`) and to
+    callsites with a non-nil, non-void block-return shape.
+  producers:
+    - assigned-tail yield-passthrough classifier for `DefNode` bodies;
+    - block-return discovery / `block_return_name` recording at block-bearing
+      callsites;
+    - existing shape-keyed block target creation.
+  consumers:
+    - wrapper materialization symbol/key selection for shape-keyed block
+      helpers;
+    - `record_block_return_type_for_call` / exact wrapper return-map storage;
+    - `infer_yield_return_type` / `lower_yield` for the wrapper body;
+    - emitted block call target selection for the affected callsite.
+  measured_red_baseline:
+    - `REQUIRE_CURRENT_CP_BROAD=1 scripts/hir_block_return_shape_census.sh`
+      reports `classification=current_0k_cp_hir_block_return_shape_broad`,
+      `candidate_multi_shape_keys=208`,
+      `candidate_nil_value_coexist_keys=206`,
+      `candidate_additional_return_shape_bodies=228`,
+      `assigned_tail_multi_shape_keys=1`,
+      `assigned_tail_additional_return_shape_bodies=4`, and
+      `timed_cp_phase_assigned_tail_passthrough_keys=1`.
+    - `REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh`
+      reports `b4_classification=current_0k_bn_frontier`,
+      `classification=current_0k_ck_mir_cp_container_frontier`, and
+      `bad_container_candidate=affected_block_ids`.
+  focused_DoD:
+    - HIR for `apply_collect_affected_blocks` no longer routes through a
+      wrapper body containing `yield : Void`.
+    - The Set-return timed phase callsite gets a non-void wrapper/call return.
+    - Nil/non-returning `timed_cp_phase` callsites remain nil/void.
+    - Ordinary iterator/scope helpers from the broad census sample remain
+      un-specialized by return shape.
+  architecture_DoD:
+    - A source-shape or executable guard proves assigned-tail passthrough is
+      the owner discriminator and the implementation does not key all untyped
+      `&` helpers by return shape.
+    - `REQUIRE_CURRENT_CP_BROAD=1 scripts/hir_block_return_shape_census.sh`
+      still reports the assigned-tail multi-shape set as root-sized for the
+      current helper class, or the slice stops and returns to the board.
+  generated_stage_gate:
+    - `scripts/generated_stage_llvm_entry_classifier.sh` must move past the
+      current `affected_block_ids` / `Set(UInt32)#includes?` frontier or report
+      a new residual boundary without worker-only masking.
+  negative_controls:
+    - No direct CopyPropagation null guard or empty-Set substitution.
+    - No `timed_cp_phase` annotation, inlining, deletion, or special-case name.
+    - No MIR/LLVM/backend block-return rescue.
+    - No backend Set/Hash rescue.
+    - No broad `NamedTuple`/`Tuple` rendering or ambient-map policy change.
+    - No `BlockOwner` rollback.
+  rejected_shortcuts:
+    - classifier-only patch;
+    - broad return-shape specialization for all untyped `&` helpers;
+    - accepting focused HIR improvement without generated-stage evidence.
+  residual_boundary:
+    - Even if this breakglass slice moves B4, it does not complete `s2b`/`s3b`.
+      The next movement must return to the Current Execution Board before any
+      new crash-stack classifier or local fix.
+}
+```
 
 - `SemanticIdentity`: semantic owners, rendered names, generic keys,
   type-visible values, and ambient state scope;
