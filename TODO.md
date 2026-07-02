@@ -8,6 +8,23 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: added Slice 0k-CG, a docs-only
+  `GeneratedStageExecution` planning reset after the G6 availability guard.
+  Production compiler edits remain paused. The phrase "select a root-sized
+  consumer edge" is now constrained: the next movement may not be another
+  selector/report that chooses among worker, resource, output, tail, backend, or
+  crash-marker symptoms. It must first write a pre-code
+  `GeneratedStageExecutionOutcome` / phase-outcome authority plan under
+  `PhaseAuthority`: selected B4/L6 row, `contract-owner-migration` tranche, old
+  authority edge, owner fact/service and lifetime, producer/consumer inventory,
+  measured-red baseline, focused DoD, generated-stage gate, and residual
+  boundary. If no root-sized code-owned edge can be named, stop and refute this
+  boundary or route to another owner spine. Still rejected: worker forcing,
+  memory-limit acceptance, output/tail/backend fixes, side-effect semantic
+  changes, materialization behavior, parser behavior, broad `NamedTuple`/`Tuple`
+  rendering, global ambient-map changes, physical extraction, and `BlockOwner`
+  rollback.
+
 - 2026-07-02 UPDATE: added Slice 0k-CF, an executable G6
   `MaterializationTransaction` availability guard:
   `scripts/block_owner_materialization_transaction_availability_report.sh
@@ -19,7 +36,9 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   `b4.classification=current_0k_bn_frontier`, `join_status=joined`, and
   `admission_status=rejected_no_root_sized_consumer`. Next work therefore moves
   back to `GeneratedStageExecution` root-sized consumer selection, not another
-  G6/materialization behavior patch unless the new guard regresses.
+  G6/materialization behavior patch unless the new guard regresses. Slice 0k-CG
+  above tightens that route: selection must first become a pre-code
+  phase-outcome owner-edge plan, not another standalone report.
 
 - 2026-07-02 UPDATE: added Slice 0k-CE, the G6 pre-code
   `MaterializationTransaction` plan. Production source is still paused. The

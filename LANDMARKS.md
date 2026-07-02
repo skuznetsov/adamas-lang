@@ -12,6 +12,26 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-CG-GENERATED-STAGE-PLANNING-RESET|design-sealed 2026-07-02 {F:0.84 G:0.70 R:0.86}]:
+Slice 0k-CG is a docs-only architecture reset after the 0k-CF G6 guard. It
+tightens the post-G6 route: B4/L6 remain active `PhaseAuthority` /
+`GeneratedStageExecution` pressure gates, but production compiler edits are
+paused until a pre-code `GeneratedStageExecutionOutcome` / phase-outcome
+authority plan exists. The old wording "select a root-sized consumer edge" is
+not a license for another selector/report loop or a patch selected from local
+joined-row symptoms. The next valid movement must name B4/L6 as the selected
+board row, choose `contract-owner-migration`, identify one old authority edge,
+define the owner fact/service and lifetime, enumerate producers and consumers,
+state the measured-red baseline and generated-stage gate, and record residual
+rejected surface. Worker forcing, memory-limit acceptance, output/tail/backend
+fixes, side-effect semantic changes, materialization behavior, parser behavior,
+broad `NamedTuple`/`Tuple` rendering, global ambient-map changes, physical
+extraction, and `BlockOwner` rollback remain rejected. Scope: docs/control-plane
+only; no production source changes, no new scripts, and no green `s2b`/`s3b`
+claim. Decay trigger: a committed `GeneratedStageExecutionOutcome` pre-code plan
+lands, B4 reaches `REQUIRE_CLEAN=1`, or fresh evidence refutes B4/L6 as the
+active pressure gate.
+
 [LM-ARCH-0K-CF-G6-AVAILABILITY-GUARD|implemented 2026-07-02 {F:0.88 G:0.64 R:0.88}]:
 Slice 0k-CF adds executable guard
 `scripts/block_owner_materialization_transaction_availability_report.sh` for
@@ -29,6 +49,8 @@ current stage1 compiler unless the guard regresses. It is not a green
 `admission_status=rejected_no_root_sized_consumer`. Next movement is therefore
 GeneratedStageExecution root-sized consumer selection; worker/resource/backend
 patches remain rejected until a transaction-owned behavior edge is selected.
+Slice 0k-CG tightens this historical route: selection must first become a
+pre-code phase-outcome owner-edge plan, not another standalone report.
 Scope: one behavior-neutral script plus docs/control-plane updates; no compiler
 production source changed. Decay trigger: the G6 guard fails, `BlockOwner`
 setter write-path changes, or B4 reaches `REQUIRE_CLEAN=1`.

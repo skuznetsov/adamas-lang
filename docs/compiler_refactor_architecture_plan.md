@@ -511,6 +511,21 @@ select one root-sized joined consumer edge before changing workers, resources,
 output commit behavior, tail stubs, or backend missing-body behavior. Do not
 continue materialization behavior work unless the new G6 guard regresses.
 
+2026-07-02 post-0k-CG note: the post-G6 route is tightened again to avoid
+selector/report tail-chasing. "Select one root-sized joined consumer edge" now
+means "write the pre-code owner-edge plan for a
+`GeneratedStageExecutionOutcome` / phase-outcome authority" before any
+production source edit. A standalone selector, extra transaction report, or
+crash-marker narrowing is not architecture work unless it retires/refutes a
+previous report surface and names one code-owned authority edge. The next valid
+slice must choose B4/L6 under `PhaseAuthority` / `GeneratedStageExecution`,
+declare `contract-owner-migration`, name the old authority edge and owner
+fact/service, enumerate producers/consumers, and state the measured-red baseline
+plus generated-stage gate. Worker/resource/output/tail/backend fixes,
+materialization behavior, parser behavior, broad `NamedTuple`/`Tuple` rendering,
+global ambient-map changes, physical file extraction, and `BlockOwner` rollback
+remain rejected.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`
