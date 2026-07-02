@@ -2726,6 +2726,7 @@ module Adamas::MIR
       @func_by_name = {} of String => Function
       @func_by_suffix = {} of String => Function
       @func_by_id = [] of Function?
+      @planned_function_names = ::Set(String).new
       bootstrap_trace_puts "[LLVM_INIT] func indexes about to build"
       build_function_lookup_indexes
       bootstrap_trace_puts "[LLVM_INIT] func indexes done"
@@ -3172,6 +3173,8 @@ module Adamas::MIR
         end
       end
 
+      remember_planned_function_names(functions_to_emit)
+
       LLVMEmissionFunctionPlan.new(
         original_count,
         reachable_count,
@@ -3179,6 +3182,14 @@ module Adamas::MIR
         deduped_mangled_names,
         functions_to_emit
       )
+    end
+
+    private def remember_planned_function_names(functions_to_emit : ::Array(Function)) : Nil
+      @planned_function_names.clear
+      functions_to_emit.each do |func|
+        @planned_function_names << func.name
+        @planned_function_names << mangle_function_name(func.name)
+      end
     end
 
     private def build_llvm_emission_worker_plan : Tuple(Int32, Int32, Int32)
@@ -21410,6 +21421,11 @@ module Adamas::MIR
       arg_types : Array(String),
       body_present : Bool,
       contract : MaterializationContractFacts? = nil,
+      lookup_present : Bool = false,
+      module_present : Bool = false,
+      plan_present : Bool = false,
+      emitted_present : Bool = false,
+      undefined_present : Bool = false,
     ) : Nil
       return unless materialization_emit_ledger_enabled?
 
@@ -21419,7 +21435,41 @@ module Adamas::MIR
       call_symbol_hint = contract.try(&.call_symbol_hint)
       symbol_relation = contract.try(&.symbol_relation)
       identity_status = contract.try(&.identity_status)
-      STDERR.puts "[MAT_EMIT] tx=#{materialization_emit_token(tx_id)} kind=#{materialization_emit_token(kind)} emitted=#{materialization_emit_token(emitted)} ret=#{materialization_emit_token(ret)} argc=#{arg_types.size} arg_types=#{arg_token} body_present=#{body_present ? 1 : 0} required_contract=#{materialization_emit_token(required_contract)} body_symbol=#{materialization_emit_token(body_symbol)} call_symbol_hint=#{materialization_emit_token(call_symbol_hint)} symbol_relation=#{materialization_emit_token(symbol_relation)} identity_status=#{materialization_emit_token(identity_status)}"
+      STDERR.puts "[MAT_EMIT] tx=#{materialization_emit_token(tx_id)} kind=#{materialization_emit_token(kind)} emitted=#{materialization_emit_token(emitted)} ret=#{materialization_emit_token(ret)} argc=#{arg_types.size} arg_types=#{arg_token} body_present=#{body_present ? 1 : 0} lookup_present=#{lookup_present ? 1 : 0} module_present=#{module_present ? 1 : 0} plan_present=#{plan_present ? 1 : 0} emitted_present=#{emitted_present ? 1 : 0} undefined_present=#{undefined_present ? 1 : 0} required_contract=#{materialization_emit_token(required_contract)} body_symbol=#{materialization_emit_token(body_symbol)} call_symbol_hint=#{materialization_emit_token(call_symbol_hint)} symbol_relation=#{materialization_emit_token(symbol_relation)} identity_status=#{materialization_emit_token(identity_status)}"
+    end
+
+    private def backend_function_present_in_index?(primary_name : String, alternate_name : String? = nil) : Bool
+      return true if @func_by_name.has_key?(primary_name)
+      return true if @func_by_suffix.has_key?(primary_name)
+      if alt = alternate_name
+        return true if @func_by_name.has_key?(alt)
+        return true if @func_by_suffix.has_key?(alt)
+      end
+      false
+    end
+
+    private def backend_function_planned?(primary_name : String, alternate_name : String? = nil) : Bool
+      return true if @planned_function_names.includes?(primary_name)
+      if alt = alternate_name
+        return true if @planned_function_names.includes?(alt)
+      end
+      false
+    end
+
+    private def backend_function_emitted?(primary_name : String, alternate_name : String? = nil) : Bool
+      return true if @emitted_functions.includes?(primary_name)
+      if alt = alternate_name
+        return true if @emitted_functions.includes?(alt)
+      end
+      false
+    end
+
+    private def backend_function_undefined?(primary_name : String, alternate_name : String? = nil) : Bool
+      return true if @undefined_externs.has_key?(primary_name)
+      if alt = alternate_name
+        return true if @undefined_externs.has_key?(alt)
+      end
+      false
     end
 
     private def emit_call(inst : Call, name : String, func : Function)
@@ -22922,7 +22972,12 @@ module Adamas::MIR
         return_type == "void" ? "ptr" : return_type,
         arg_type_strs,
         !!callee_func || @func_by_name.has_key?(callee_name),
-        inst.materialization_contract
+        inst.materialization_contract,
+        !!callee_func,
+        backend_function_present_in_index?(callee_name, raw_callee_name),
+        backend_function_planned?(callee_name, raw_callee_name),
+        backend_function_emitted?(callee_name, raw_callee_name),
+        backend_function_undefined?(callee_name, raw_callee_name)
       )
       @called_crystal_functions[callee_name] = {(return_type == "void" ? "ptr" : return_type), arg_type_strs.size, arg_type_strs}
     end
@@ -23955,7 +24010,12 @@ module Adamas::MIR
         return_type == "void" ? "ptr" : return_type,
         extern_arg_types,
         !!matching_func || @func_by_name.has_key?(mangled_extern_name),
-        inst.materialization_contract
+        inst.materialization_contract,
+        !!matching_func,
+        backend_function_present_in_index?(mangled_extern_name, extern_name),
+        backend_function_planned?(mangled_extern_name, extern_name),
+        backend_function_emitted?(mangled_extern_name, extern_name),
+        backend_function_undefined?(mangled_extern_name, extern_name)
       )
       @called_crystal_functions[mangled_extern_name] = {(return_type == "void" ? "ptr" : return_type), extern_arg_types.size, extern_arg_types}
     end

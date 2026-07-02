@@ -8,6 +8,29 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: added Slice 0k-CY, extending the self-applying
+  materialization ledger and adding
+  `scripts/generated_stage_created_body_visibility_classifier.sh`. Fresh
+  current-source stage1 evidence:
+  `crystal build src/adamas.cr -o /tmp/adamas_visibility_ledger_stage1 --error-trace`
+  succeeded, and
+  `STAGE1_COMPILER=/tmp/adamas_visibility_ledger_stage1 SAMPLES=8 scripts/generated_stage_created_body_visibility_classifier.sh`
+  reports `classifier_classification=reached_tx_and_emit`,
+  `created_body_missing_visibility_rows=14`, `visibility_cause_kinds=1`,
+  `selected_cause=state_in_progress_without_hir_function`, `selected_rows=14`,
+  `classification=rejected_visibility_class_too_wide`, 9 visibility groups,
+  and `missing_visibility_field_rows=0`. This corrects the 0k-CX
+  interpretation: `materialization_action=created_body` is only an in-progress
+  lowering-state label for this residual, not proof that a HIR body exists.
+  Residual samples report `body_function_present=0`, `body_has_body=0`,
+  `body_state=in_progress`, and backend `lookup/module/plan/emitted` visibility
+  all zero. The next executable slice must be read-only and split why exact
+  `body_symbol` rows can have `function_state=InProgress` while
+  `@module.has_function?=false`: state set before `create_function`, symbol-key
+  mismatch, early return/reentrant defer, or another named state transition.
+  Stop if the selected class stays broad; do not patch backend lookup/emission
+  or sampled methods.
+
 - 2026-07-02 UPDATE: added Slice 0k-CX and
   `scripts/generated_stage_exact_body_availability_classifier.sh`, a read-only
   exact-body lifecycle classifier for the 0k-CW residual. Fresh current-source

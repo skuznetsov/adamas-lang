@@ -12,6 +12,38 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-CY-INPROGRESS-WITHOUT-HIR-FUNCTION|design-sealed 2026-07-02 {F:0.87 G:0.70 R:0.87}]:
+Slice 0k-CY refines 0k-CX with self-applying body lifecycle and backend
+visibility facts in `[MAT_TX]` / `[MAT_EMIT]`, plus the read-only classifier
+`scripts/generated_stage_created_body_visibility_classifier.sh`. Fresh
+current-source stage1 evidence:
+`crystal build src/adamas.cr -o /tmp/adamas_visibility_ledger_stage1 --error-trace`
+succeeded, and
+`STAGE1_COMPILER=/tmp/adamas_visibility_ledger_stage1 SAMPLES=8 scripts/generated_stage_created_body_visibility_classifier.sh`
+reports `classifier_classification=reached_tx_and_emit`,
+`created_body_missing_visibility_rows=14`, `visibility_cause_kinds=1`,
+`selected_cause=state_in_progress_without_hir_function`, `selected_rows=14`,
+`classification=rejected_visibility_class_too_wide`, 9 visibility groups, and
+`missing_visibility_field_rows=0`. The residual samples all show
+`materialization_action=created_body`, but the stronger facts are
+`body_function_present=0`, `body_has_body=0`, `body_state=in_progress`,
+`lookup=0`, `module=0`, `plan=0`, `emitted_present=0`, and `undefined=1`.
+This corrects the prior 0k-CX reading: `created_body` is only an in-progress
+lowering-state label for this residual, not proof that a HIR function body was
+present. Scope: behavior-neutral ledger fields plus a read-only classifier; no
+compiler production behavior changed and no green `s2b`/`s3b` claim. The next
+executable movement must split the HIR producer boundary that can leave exact
+`body_symbol` rows with `function_state=InProgress` while
+`@module.has_function?=false` (state set before `create_function`, symbol-key
+mismatch, early return/reentrant defer, or another named transition), and must
+stop if the class remains broad. Rejected next moves: backend lookup/emission
+fixes, undefined-extern rescue, forwarders, requested-name forcing, sampled
+Array/Slice/IO/Atomic/String::Builder/Int32 patches, broad `NamedTuple`/`Tuple`
+rendering, global ambient-map policy, and `BlockOwner` rollback. Decay trigger:
+a finer HIR producer classifier selects a root-sized transition, the exact
+residual disappears, or newer generated-stage transaction evidence refutes the
+`state_in_progress_without_hir_function` shape.
+
 [LM-ARCH-0K-CX-CREATED-BODY-BACKEND-MISSING|design-sealed 2026-07-02 {F:0.86 G:0.70 R:0.86}]:
 Slice 0k-CX implements the read-only exact-body lifecycle classifier selected
 by 0k-CW as `scripts/generated_stage_exact_body_availability_classifier.sh`.

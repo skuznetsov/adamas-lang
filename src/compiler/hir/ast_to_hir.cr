@@ -2173,6 +2173,9 @@ module Adamas::HIR
       getter state_scope : String
       getter map_source : String
       getter materialization_action : String
+      getter body_function_present : String
+      getter body_has_body : String
+      getter body_state : String
       getter abi_shape : String
       getter wrapper_forwarder_contract : String
       getter rejection_reason : String
@@ -2196,6 +2199,9 @@ module Adamas::HIR
         @state_scope : String,
         @map_source : String,
         @materialization_action : String,
+        @body_function_present : String,
+        @body_has_body : String,
+        @body_state : String,
         @abi_shape : String,
         @wrapper_forwarder_contract : String,
         @rejection_reason : String,
@@ -2520,6 +2526,9 @@ module Adamas::HIR
       state_scope = materialization_state_scope_authority(symbol_binding.override_reason, target_params)
       map_source = materialization_map_source(state_scope, target_params)
       materialization_action = materialization_registry_action(symbol_binding.body_symbol)
+      body_function_present = @module.has_function?(symbol_binding.body_symbol) ? "1" : "0"
+      body_has_body = @module.has_function_with_body?(symbol_binding.body_symbol) ? "1" : "0"
+      body_state = function_lowering_state_label(symbol_binding.body_symbol)
       wrapper_forwarder_contract = call_materialization_wrapper_forwarder_contract(symbol_binding)
       CallMaterializationTransaction.new(
         phase,
@@ -2540,6 +2549,9 @@ module Adamas::HIR
         state_scope,
         map_source,
         materialization_action,
+        body_function_present,
+        body_has_body,
+        body_state,
         call_materialization_abi_shape(call_arg_types),
         wrapper_forwarder_contract,
         call_materialization_rejection_reason(wrapper_forwarder_contract),
@@ -2564,8 +2576,8 @@ module Adamas::HIR
           transaction.symbol_relation,
           transaction.identity_status
         )
-        STDERR.puts "[MAT_ID] phase=#{transaction.phase} requested=#{transaction.requested_name} target=#{transaction.target_name} state_key=#{transaction.state_key} body_symbol=#{transaction.body_symbol} call_symbol_hint=#{transaction.call_symbol_hint} override_reason=#{transaction.override_reason} branch=#{transaction.lookup_branch} ambient_map=#{transaction.ambient_map} target_map=#{transaction.target_map} call_arg_types=#{transaction.call_arg_types} selected_def=#{transaction.selected_def} selected_owner=#{transaction.selected_owner} state_scope=#{transaction.state_scope} map_source=#{transaction.map_source} materialization_action=#{transaction.materialization_action} request_name_parts=#{transaction.request_name_parts} abi_shape=#{transaction.abi_shape} wrapper_forwarder_contract=#{transaction.wrapper_forwarder_contract} rejection_reason=#{transaction.rejection_reason}"
-        STDERR.puts "[MAT_TX] tx=#{tx_id} phase=#{ledger_token(transaction.phase)} requested=#{ledger_token(transaction.requested_name)} target=#{ledger_token(transaction.target_name)} state_key=#{ledger_token(transaction.state_key)} body_symbol=#{ledger_token(transaction.body_symbol)} call_symbol_hint=#{ledger_token(transaction.call_symbol_hint)} identity_status=#{ledger_token(transaction.identity_status)} symbol_relation=#{ledger_token(transaction.symbol_relation)} required_contract=#{ledger_token(transaction.required_contract)} override_reason=#{ledger_token(transaction.override_reason)} branch=#{ledger_token(transaction.lookup_branch)} ambient_map=#{ledger_token(transaction.ambient_map)} target_map=#{ledger_token(transaction.target_map)} call_arg_types=#{ledger_token(transaction.call_arg_types)} selected_def=#{ledger_token(transaction.selected_def)} selected_owner=#{ledger_token(transaction.selected_owner)} state_scope=#{ledger_token(transaction.state_scope)} map_source=#{ledger_token(transaction.map_source)} materialization_action=#{ledger_token(transaction.materialization_action)} request_name_parts=#{ledger_token(transaction.request_name_parts)} abi_shape=#{ledger_token(transaction.abi_shape)} wrapper_forwarder_contract=#{ledger_token(transaction.wrapper_forwarder_contract)} rejection_reason=#{ledger_token(transaction.rejection_reason)}"
+        STDERR.puts "[MAT_ID] phase=#{transaction.phase} requested=#{transaction.requested_name} target=#{transaction.target_name} state_key=#{transaction.state_key} body_symbol=#{transaction.body_symbol} call_symbol_hint=#{transaction.call_symbol_hint} override_reason=#{transaction.override_reason} branch=#{transaction.lookup_branch} ambient_map=#{transaction.ambient_map} target_map=#{transaction.target_map} call_arg_types=#{transaction.call_arg_types} selected_def=#{transaction.selected_def} selected_owner=#{transaction.selected_owner} state_scope=#{transaction.state_scope} map_source=#{transaction.map_source} materialization_action=#{transaction.materialization_action} body_function_present=#{transaction.body_function_present} body_has_body=#{transaction.body_has_body} body_state=#{transaction.body_state} request_name_parts=#{transaction.request_name_parts} abi_shape=#{transaction.abi_shape} wrapper_forwarder_contract=#{transaction.wrapper_forwarder_contract} rejection_reason=#{transaction.rejection_reason}"
+        STDERR.puts "[MAT_TX] tx=#{tx_id} phase=#{ledger_token(transaction.phase)} requested=#{ledger_token(transaction.requested_name)} target=#{ledger_token(transaction.target_name)} state_key=#{ledger_token(transaction.state_key)} body_symbol=#{ledger_token(transaction.body_symbol)} call_symbol_hint=#{ledger_token(transaction.call_symbol_hint)} identity_status=#{ledger_token(transaction.identity_status)} symbol_relation=#{ledger_token(transaction.symbol_relation)} required_contract=#{ledger_token(transaction.required_contract)} override_reason=#{ledger_token(transaction.override_reason)} branch=#{ledger_token(transaction.lookup_branch)} ambient_map=#{ledger_token(transaction.ambient_map)} target_map=#{ledger_token(transaction.target_map)} call_arg_types=#{ledger_token(transaction.call_arg_types)} selected_def=#{ledger_token(transaction.selected_def)} selected_owner=#{ledger_token(transaction.selected_owner)} state_scope=#{ledger_token(transaction.state_scope)} map_source=#{ledger_token(transaction.map_source)} materialization_action=#{ledger_token(transaction.materialization_action)} body_function_present=#{ledger_token(transaction.body_function_present)} body_has_body=#{ledger_token(transaction.body_has_body)} body_state=#{ledger_token(transaction.body_state)} request_name_parts=#{ledger_token(transaction.request_name_parts)} abi_shape=#{ledger_token(transaction.abi_shape)} wrapper_forwarder_contract=#{ledger_token(transaction.wrapper_forwarder_contract)} rejection_reason=#{ledger_token(transaction.rejection_reason)}"
       end
       log_semantic_state_scope_shadow(transaction, tx_id) if state_scope_ledger_enabled
     end
@@ -2688,6 +2700,21 @@ module Adamas::HIR
         "created_body"
       else
         "created_body"
+      end
+    end
+
+    private def function_lowering_state_label(name : String) : String
+      case function_state(name)
+      when FunctionLoweringState::NotStarted
+        "not_started"
+      when FunctionLoweringState::Pending
+        "pending"
+      when FunctionLoweringState::InProgress
+        "in_progress"
+      when FunctionLoweringState::Completed
+        "completed"
+      else
+        "unknown"
       end
     end
 

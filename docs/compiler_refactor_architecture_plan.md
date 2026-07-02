@@ -52,6 +52,22 @@ or legitimate extern/runtime helper. Do not use the sampled method names,
 backend rescue, forwarders, requested-name forcing, `NamedTuple`/`Tuple`
 rendering, ambient-map policy, or `BlockOwner` changes as shortcuts.
 
+2026-07-02 post-0k-CY note: the active SDD has refined 0k-CX with
+`scripts/generated_stage_created_body_visibility_classifier.sh` and extra
+self-applying `[MAT_TX]` / `[MAT_EMIT]` visibility facts. Fresh current-source
+stage1 evidence reports `classifier_classification=reached_tx_and_emit`,
+`created_body_missing_visibility_rows=14`, `visibility_cause_kinds=1`,
+`selected_cause=state_in_progress_without_hir_function`, `selected_rows=14`,
+`classification=rejected_visibility_class_too_wide`, 9 visibility groups, and
+`missing_visibility_field_rows=0`. This corrects the 0k-CX reading:
+`materialization_action=created_body` is not proof that a HIR function body was
+present for this residual. The stronger facts are `body_function_present=0`,
+`body_has_body=0`, `body_state=in_progress`, and backend
+`lookup/module/plan/emitted` visibility all zero. The next executable movement
+is not a backend plan/lookup fix; it is a read-only HIR producer classifier for
+the transition that marks exact `body_symbol` rows `InProgress` without a
+matching HIR function.
+
 2026-07-02 post-0k-CS note: hostile review of the post-0k-CR route found that
 the active SDD is still being followed, but the emergency B4/O1 lane can become
 another symptom scheduler if every moved crash stack automatically selects the
