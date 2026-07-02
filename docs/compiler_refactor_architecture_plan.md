@@ -300,6 +300,20 @@ must choose one mode-local resource lane explicitly: default-mode sequential
 LLVM function emission, or workers=1 HIR-final-to-MIR-final resource growth.
 The unchosen lane remains a residual and must stay in the DoD.
 
+2026-07-02 post-0k-DO note: the active SDD selected the default-mode
+function-emission sink boundary as the first default-lane receipt, then refuted
+the direct external-sink behavior slice before it landed. A temporary env-gated
+`llvm_gen.generate(file_io)` path was host-stage green on a small `puts 42`
+program, but in the generated-stage transaction report it moved default workers
+to `resource.default_mode_boundary=after_output_start_before_llvm_generate`
+with no joined `llvm.generate_phase` rows; the kept produced-stage log linked a
+`0B` `default_workers_out.ll` and failed with missing `_main`. The probe source
+was reverted. This means the old external-sink hazard is still real in produced
+stages, so "stream LLVM IR to file" is not an admitted resource fix. A future
+default-lane slice must either own/falsify produced-stage external-sink
+entrypoint emission, or choose a different function-emission resource edge
+while preserving the workers=1 `after_hir_final_before_mir_final` residual.
+
 2026-07-02 post-0k-CR note: the return-shape census now also measures
 assigned-tail yield passthrough (`result = yield; ...; result`). Strict current
 evidence keeps the broad 0k-CQ result for naive `contains_yield` scope, but

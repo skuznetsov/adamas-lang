@@ -8,6 +8,23 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: Slice 0k-DO selects the default-mode function-emission
+  sink boundary as the next `PhaseAuthority` / `GeneratedStageExecution`
+  receipt, then immediately refutes the direct external-sink behavior slice.
+  Temporary source probe was reverted. Evidence: a stage1 env-gated
+  `llvm_gen.generate(file_io)` path compiled and ran a small `puts 42`
+  program through `scripts/run_safe.sh`, but the generated-stage transaction
+  report with the same probe changed default workers to
+  `resource.default_mode_boundary=after_output_start_before_llvm_generate`,
+  `join_status=phase_local_only`, `runtime.default_llvm_generate_phase_rows=0`,
+  `resource.default_memory_kill=0`, and `output.commit_record=binary_compile_rc:1`.
+  The kept produced-stage default log linked an empty `default_workers_out.ll`
+  (`0B`) and failed with missing `_main`. Therefore external sink is not an
+  admitted resource fix; the next default-lane slice must either own/falsify
+  produced-stage external-sink entrypoint emission, or choose a different
+  function-emission resource edge. The workers=1 lane remains the named
+  `after_hir_final_before_mir_final` residual.
+
 - 2026-07-02 UPDATE: the 0k-DM workers=1 observability gap is now a named
   per-mode transaction boundary rather than an ambiguous missing-row symptom.
   `scripts/generated_stage_execution_transaction_report.sh` adds

@@ -627,6 +627,117 @@ Hard stop: if the receipt cannot identify a producer-to-consumer authority edge
 or can only say "the latest crash moved", the work is a probe/SDD update, not a
 production architecture slice.
 
+#### Slice 0k-DO receipt: default-mode function-emission sink boundary
+
+```text
+SliceReceipt {
+  board_lane: PhaseAuthority / GeneratedStageExecution
+  tranche: contract-owner-migration
+  old_authority_edge:
+    The normal CLI path calls `LLVMIRGenerator#generate` with no output sink
+    and therefore forces the whole LLVM IR stream through an internal
+    `IO::Memory` during function emission. The generated string is written to
+    `options.output + ".ll"` only after `generate` returns. This is an old
+    defensive authority edge: `src/compiler/cli.cr` still says external
+    `LLVMIRGenerator` sinks are avoided because produced stage2 used to crash
+    when returning through an external IO sink. Current post-0k-DN evidence
+    shows the default generated-stage run dies inside function emission before
+    `generate` returns, so this stale sink boundary is now a plausible
+    transaction-owned resource edge. The slice does not select worker policy,
+    the parallel rand fallback, metadata, DWARF, type-name tables, tail stubs,
+    or backend semantics.
+  owner_fact_or_service:
+    `GeneratedStageExecutionOutcome` plus `LLVMEmissionSession` must own the
+    default-mode function-emission sink decision and the evidence that proves
+    whether function emission is using bounded external output or an unbounded
+    in-memory stream. A later source slice may introduce a small
+    `LLVMFunctionEmissionCursor` / sink fact if it is consumed by the function
+    emission path and by the generated-stage transaction rows; adding a
+    reporting-only cursor is not enough.
+  producers:
+    `src/compiler/cli.cr` chooses the LLVM IR sink and records output outcome;
+    `LLVMIRGenerator#generate` chooses `generated_in_memory` vs `external_io`;
+    `emit_functions_parallel` and `emit_functions_sequential` append function
+    bodies to that sink and emit `llvm.function_emission_phase` rows.
+  consumers:
+    The produced compiler's default-worker B4 run, the generated-stage
+    transaction report, the CLI `.ll` writer/linker path, and the existing
+    `LLVMEmissionSession` source-shape guard.
+  measured_red_baseline:
+    0k-DN strict evidence:
+    `STAGE1_COMPILER=/tmp/adamas_worker_boundary_stage1 TAIL_LINES=30
+    REQUIRE_JOINED=1 REQUIRE_POST_CU_RESOURCE=1
+    REQUIRE_RESOURCE_PHASE_SPLIT=1 REQUIRE_FUNCTION_EMISSION_SPLIT=1
+    REQUIRE_WORKER_MODE_BOUNDARY=1
+    scripts/generated_stage_execution_transaction_report.sh`
+    reports `final_classification=abort_resource_after_lower_main`,
+    `resource.default_mode_boundary=reached_function_emission`,
+    `resource.workers1_mode_boundary=after_hir_final_before_mir_final`,
+    `runtime.default_mir_final_rows=1`, `runtime.workers1_mir_final_rows=0`,
+    `runtime.default_function_emission_phase_rows=13`, and
+    `runtime.workers1_function_emission_phase_rows=0`.
+  focused_DoD:
+    First falsifier: add an explicit generated-stage external-sink preflight
+    path or source-shape guard that proves whether the old "external sink
+    crashes produced stage2" edge is still true. If it is still true, this
+    receipt is refuted and the next default-mode resource slice must choose a
+    different function-emission owner edge. If it is false, a behavior slice may
+    make the normal non-`--emit llvm-ir` path emit LLVM IR through an owned
+    bounded sink while preserving identical `.ll` bytes or a documented
+    normalized equivalence.
+  architecture_DoD:
+    The strict 0k-DN transaction report must either move the default lane past
+    `resource.default_mode_boundary=reached_function_emission` or report a more
+    specific default-mode function-emission sink boundary. It must continue to
+    print the workers=1 residual as
+    `resource.workers1_mode_boundary=after_hir_final_before_mir_final` unless a
+    separate receipt selects that lane.
+  generated_stage_gate:
+    `scripts/generated_stage_execution_transaction_report.sh` with
+    `REQUIRE_JOINED=1 REQUIRE_POST_CU_RESOURCE=1
+    REQUIRE_RESOURCE_PHASE_SPLIT=1 REQUIRE_FUNCTION_EMISSION_SPLIT=1
+    REQUIRE_WORKER_MODE_BOUNDARY=1`, plus a focused external-sink guard added
+    by the next source slice if the preflight admits it.
+  negative_controls:
+    `--emit llvm-ir` must keep stdout semantics; the normal binary-output path
+    must still write the same `.ll` file before linking; stage1 must still
+    compile no-prelude and full-prelude reducer programs; the workers=1
+    HIR-final-to-MIR-final residual must remain visible.
+  rejected_shortcuts:
+    Treating external output as a fix without falsifying the old produced-stage
+    crash comment; raising memory limits; forcing `ADAMAS_LLVM_WORKERS=1`;
+    patching the parallel rand fallback; changing tail stubs, metadata, DWARF,
+    type-name tables, undefined-extern behavior, materialization, `NamedTuple`
+    / `Tuple`, ambient maps, or `BlockOwner`; claiming green `s2b`/`s3b` from
+    a default-mode movement while workers=1 remains red.
+  residual_boundary:
+    The unselected workers=1 lane remains
+    `after_hir_final_before_mir_final`. If the external-sink falsifier is red,
+    the default lane remains `reached_function_emission` and the next slice
+    must choose another default-mode function-emission owner edge such as
+    function-state retention, side-effect merge retention, or function-plan
+    scheduling.
+}
+```
+
+0k-DO preflight result: the first external-sink probe refuted the direct
+behavior slice before it landed. A temporary env-gated CLI path using
+`llvm_gen.generate(file_io)` compiled in stage1 and could compile/run a small
+`puts 42` program (`RESULT=42` through `scripts/run_safe.sh`), but the
+generated-stage transaction report with the same probe changed the default
+worker mode to `resource.default_mode_boundary=after_output_start_before_llvm_generate`,
+`join_status=phase_local_only`, `runtime.default_llvm_generate_phase_rows=0`,
+`resource.default_memory_kill=0`, and `output.commit_record=binary_compile_rc:1`.
+The kept produced-stage default log showed link failure with missing `_main`,
+and the produced `default_workers_out.ll` was `0B`. Therefore the old external
+sink hazard is still real in produced stages, but its current manifestation is
+empty IR / missing entrypoint rather than the previous in-memory function
+emission kill. The env-gated source probe was reverted. A future source slice
+must not enable external sinks as a resource fix until it owns and falsifies the
+produced-stage external-sink entrypoint/main-emission contract; otherwise this
+receipt is refuted and the default lane must choose a different function
+emission resource edge.
+
 #### Slice 0k-DH receipt: materialization scope-entry contract
 
 ```text
