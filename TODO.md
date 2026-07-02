@@ -8,6 +8,29 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: implemented Slice 0k-CM, the executable read-only
+  producer-localization classifier after 0k-CL. New script:
+  `scripts/mir_timed_phase_return_frontier_classifier.sh`. Strict mode
+  `REQUIRE_CURRENT_CM=1 scripts/mir_timed_phase_return_frontier_classifier.sh`
+  reuses the O1 classifier and reports
+  `classification=current_0k_cm_timed_cp_phase_block_return_frontier`.
+  Current evidence: `o1_classification=current_0k_ck_mir_cp_container_frontier`,
+  `can_skip_affected_block_ids_x3_zero=1`, `timed_calls_block=1`,
+  `timed_zeroes_after_block=1`, `timed_enabled_branch_returns_zero=1`,
+  `apply_collect_uses_timed_phase=1`,
+  `apply_collect_result_is_nil_void=1`, `collect_block_builds_set=1`, and
+  `collect_block_returns_set_slot=1`. This refutes the Set/Hash constructor
+  and `Set#includes?` body as first-bad for this frontier: the collect block
+  builds and returns a `Set(UInt32)`, but produced `s2b` materializes
+  `CopyPropagationPass#timed_cp_phase(String, &)` as a `String_block` wrapper
+  that returns null/void instead of the block result. This is still not a fix
+  and not green `s2b`/`s3b`; the next read-only question is the compiler-source
+  seam that turns a bare `&` / `yield` helper into a void-return block wrapper.
+  Still rejected: directly inlining or deleting `timed_cp_phase`, adding an
+  explicit tactical return type without naming the lowering seam, `CopyPropagation`
+  null guards, backend block-return rescue, backend Set/Hash rescue, and
+  `BlockOwner` rollback.
+
 - 2026-07-02 UPDATE: implemented Slice 0k-CL, the executable read-only O1
   classifier selected by 0k-CK. New script:
   `scripts/mir_optimization_container_frontier_classifier.sh`. Strict mode

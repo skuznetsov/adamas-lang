@@ -60,6 +60,16 @@ the bad container to `bad_container_candidate=affected_block_ids` with
 admit a behavior patch; the next movement must localize the producer of the
 null `affected_block_ids` Set returned by `apply_replacements`' affected-block
 collection path.
+Slice 0k-CM implements that producer-localization classifier as
+`scripts/mir_timed_phase_return_frontier_classifier.sh`. Strict mode reports
+`classification=current_0k_cm_timed_cp_phase_block_return_frontier`: the
+collect block constructs and returns a `Set(UInt32)`, but produced `s2b`
+materializes `CopyPropagationPass#timed_cp_phase(String, &)` as a
+void/null-return `String_block` wrapper and `apply_replacements` consumes that
+result as `Nil|Void`. This refutes Set/Hash construction and `Set#includes?`
+as the first bad transition for this frontier. It still does not admit a
+behavior patch; the next movement must name the compiler-source seam that
+turns the bare `&` / `yield` helper into a void-return wrapper.
 Slice 0k-BH adds a narrower pause gate after the 0k-BG parser falsifier:
 the command-call parser frontier may get one bounded closure attempt, but a
 second parser loop, adjacent parser regression, or broadened command-call
@@ -306,7 +316,7 @@ The active rows are currently classified as follows:
 
 | Row | Spine | Current status | Reason |
 | --- | --- | --- | --- |
-| B4 | `MIROptimizationInvariant` / compiler-runtime containers, with `PhaseAuthority` kept as pressure evidence | active root-spine reclassification after 0k-CL; production source movement paused until producer localization names why `affected_block_ids` becomes a null Set receiver | strict 0k-CL classifier reports `classification=current_0k_ck_mir_cp_container_frontier`, `bad_container_state=set_receiver_base_register_null`, and `bad_container_candidate=affected_block_ids` |
+| B4 | `MIROptimizationInvariant` / compiler-runtime containers, with `PhaseAuthority` kept as pressure evidence | active root-spine reclassification after 0k-CM; production source movement paused until source-seam localization names why `timed_cp_phase(String, &)` is materialized as a void/null-return block wrapper | strict 0k-CM classifier reports `classification=current_0k_cm_timed_cp_phase_block_return_frontier`, `can_skip_affected_block_ids_x3_zero=1`, `timed_zeroes_after_block=1`, `timed_enabled_branch_returns_zero=1`, and `collect_block_returns_set_slot=1` |
 | L6 | `PhaseAuthority` / `GeneratedStageExecution` | active joined-transaction pressure after 0k-CK; report surface remains guard-only and no longer selects the next implementation edge | fresh 0k-CJ evidence reports `join_status=joined`, `final_classification=abort_resource`, and `admission_status=rejected_no_root_sized_consumer`; 0k-CK demotes another output/resource/tail/backend edge because direct crash evidence points into MIR optimization |
 | G6 | `MaterializationTransaction` | executable availability guard green; no longer active implementation selector unless it regresses | 0k-CF adds a guard proving the current `Hash(UInt64, BlockOwner)#[]=` setter has exact/all-equal transaction identity, joined emissions, body-present backend visibility, and a non-stub LLVM body for current `bin/adamas` |
 | H7 | `SemanticIdentity` | pre-s2-clean residual | parser command-call preservation is real but does not move the active generated LLVM-entry gate |
@@ -317,7 +327,7 @@ The active rows are currently classified as follows:
 | `SemanticStateScope` | `prefer_callsite_specialization` is promoted in shadow/parity mode; emitted behavior still returns the legacy result. The `lower_function_if_needed.override` seam is also already promoted through the MaterializationDecision shadow helper and must not be reselected. Slice 0k-AU extends the existing admission report with a source-only no-repeat selector. It finds two unpromoted frontend direct consumers (`lower_function_if_needed.callsite_args` and `lower_function_if_needed.suffix_types`), rejects `lower_call.remangle` as backend-adjacent, and selects no single root-sized consumer. Slice 0k-AV defined the admitted shared state-model shape. Slice 0k-AW implements that shared `KeepRequestedNameDecision` state in behavior-neutral parity mode for both paired frontend consumers and replaces the stale `NamedTuple` owner-cache guard with a current `BlockOwner` guard. | The paired keep-requested-name inline edges are now consumed in parity mode. Next movement is not another crash-stack fix. Move to contract-first SDD hardening: close missing falsifiers for semantic identity, function-body presence, and generic instance/template keys, or select a fresh owner boundary only if it replaces a named authority edge with an owned fact and a falsifier. | Reselecting `prefer_callsite_specialization` or `lower_function_if_needed.override`; choosing either `callsite_args` or `suffix_types` by source order or convenience; treating `state_model_redesign_complete=1` as bootstrap progress; changing emitted behavior from a shadow row; globally clearing/ignoring `@type_param_map`; backend forwarders; requested-name forcing; `BlockOwner` rollback. |
 | `TypeValue` / `RuntimeTypeIdentity` + frontend command-call preservation | Slice 0k-BA made the original-vs-stage semantic oracle executable and measured-red: current stage preserves `CONST=7` but prints blank `TYPE=` / `UNION=` where original Crystal prints `Int32`. Slice 0k-BC added the original H6 guard, which is measured-red but includes a parser-confounded direct no-parens `puts (true ? 1 : nil).class` row. Slice 0k-BD seals the TypeValue production receipt. Slice 0k-BF records a reverted TypeValue owner preflight: B3/H4 went green, but strict H6 still failed only on the direct command-call row. Slice 0k-BG adds the focused parser-shape guard and proves that row is a frontend command-call preservation frontier. Slice 0k-BH pauses parser production after a reverted local WIP. Slice 0k-BI implements the split-H6 route with `regression_tests/type_value_core_runtime_identity_contract.sh`. Slice 0k-BJ/0k-BL gate the owner-fact implementation and quarantine WIP inertia. Slice 0k-BM implements the H6-core owner fact: H6-core, B3, and H4 are strict-green on a fresh stage1 compiler, while H7 command-call parsing remains measured-red and H8 dynamic multi-variant union `.class` is now an explicit pre-s2-clean residual guard. | The next TypeValue movement is no longer H6-core row-greening. It must choose one of two separate lanes: H7 parser `semantic-service-extraction` for no-parens command-call preservation, or H8 runtime type-name service for dynamic multi-variant union `.class`. H8 may use the HIR `RuntimeTypeIdentity.runtime_stringification_required` policy as the source-level owner fact, but must not implement backend stringification without a new SDD slice naming the HIR/MIR/runtime boundary. | A string-only `lower_typeof` fix; an interpolation-only fix; a direct `puts` special-case without a type-value owner; source-text direct-puts workaround for `puts (expr).class`; using a stashed WIP as evidence without fresh baseline; backend stubs/forwarders; treating green H6-core as full old H6 green while command-call/dynamic-union guards remain red; changing `BlockOwner`, requested-name policy, ambient-map policy, broad `NamedTuple`/`Tuple` rendering, or generic materialization in the same slice; starting H7 or H8 code without a new row-specific SDD entry and measured-red baseline. |
 | `GeneratedStageExecution` / `LLVMEmissionSession` | Slice 0k-BN records the first post-0k-BM integration check: stage1 can produce `s2b`, but produced `s2b` compiling a full-prelude tiny source fails after `pass3 after lower_main call`. Slice 0k-BO adds `scripts/generated_stage_llvm_entry_classifier.sh`; fresh `REQUIRE_CURRENT_FRONTIER=1` evidence reports `classification=current_0k_bn_frontier`, default LLVM workers hit `Invalid bound for rand: 0` plus RSS-kill, and `ADAMAS_LLVM_WORKERS=1` removes that worker symptom but still exits 139 at the same transition. This refutes treating parallel scheduling or memory budget alone as the root. Slice 0k-BP freezes production fixes from this symptom and reclassifies B4 as a pressure gate for a higher owner boundary: `PhaseAuthority` / `GeneratedStageExecution`. Slice 0k-BQ design-seals the first concrete owner: `LLVMEmissionSession`, with source anchors in CLI step 5 and `LLVMIRGenerator#generate` / `emit_functions_parallel`. Slice 0k-BR implements the first behavior-neutral owner slice: `scripts/llvm_emission_session_source_shape_guard.sh` proves `generate` consumes the function-list plan through `LLVMEmissionSession`; B4 remains `classification=current_0k_bn_frontier`. Slice 0k-BS consumes the second edge, `worker-policy-inline`: `generate` reads effective worker count from the session, while worker behavior and fallback remain unchanged. Slice 0k-BT rejects field/tag/getter/report-only session slices as standalone progress. Slice 0k-BU selects `SideEffectMergeContract`; Slice 0k-BV adds the convergence gate; Slice 0k-BW implements the side-effect writer/merge consumer migration and makes the source-shape guard green, while B4 and all convergence-vector rows remain unchanged. Slice 0k-BX records the resulting stop rule. Slice 0k-BY implements `scripts/generated_stage_execution_transaction_report.sh`; current output preserves B4 but reports `abort_unjoined_evidence` because runtime transaction rows are missing. Slice 0k-BZ adds a hostile stop-rule checkpoint. Slice 0k-CA implements the missing default-off runtime rows and moves the current report to `join_status=joined`, `final_classification=abort_resource`, and `admission_status=rejected_no_root_sized_consumer`. Slice 0k-CB reclassifies that joined evidence as guard-only until it selects a durable owner spine rather than the next local LLVM symptom. Slice 0k-CC classifies B4/L6 as guard-only pressure while G6 is checked. Slice 0k-CF reruns B4/L6 after the G6 availability guard and preserves `classification=current_0k_bn_frontier`, `join_status=joined`, and `admission_status=rejected_no_root_sized_consumer`. Slice 0k-CG pauses report/selector growth and reframes the next movement as a pre-code `GeneratedStageExecutionOutcome` owner-edge plan. Slice 0k-CH supplies that plan and selects `cli.output_commit_record`. Slice 0k-CI adds the bootstrap-potential stop rule. Slice 0k-CJ implements the output-row owner checkpoint: the CLI serializes output start/write/compile-result rows through `GeneratedStageExecutionOutcome`, the strict source-shape guard is green, B4/L6 remains measured-red, and suites pass. | No further behavior-neutral `GeneratedStageExecution` source movement is admitted from 0k-CJ alone. The next movement must reduce B4/L6 phase, plausible owner-spine count, or live proxy-surface count; otherwise it must be SDD redesign, owner-spine refutation, direct root localization, or explicit `bootstrap-emergency-with-ledger`. | Patching `emit_functions_parallel` because of the rand symptom; raising `run_safe` memory as acceptance evidence; forcing `ADAMAS_LLVM_WORKERS=1` as a fix; treating green `SideEffectMergeContract` source shape, transaction-report presence, joined evidence, green G6 availability, 0k-CH docs, or 0k-CJ output-owner source shape as green `s2b`/`s3b`; selecting `TailDeclarationPlan`, `OutputOwnership`, `ResourceEvidence`, worker policy, or memory-budget acceptance simply because joined rows mention output/resource state; adding another classifier that only narrows a crash offset without naming a transaction fact and owner spine; adding a report-only selector that does not retire/refute an older report surface; committing the stashed side-effect-tag vocabulary WIP as standalone progress; changing side-effect merge semantics, tail missing-body stubs, undefined-extern rescue, output files, or resource gates without an owner-spine decision; introducing extra generated-stage owner classes without B4 evidence; reusing Crystal `record` macros for generated-stage owner objects without B4 evidence; selecting H7/H8 code as bootstrap-moving work without showing it changes this produced-stage LLVM-entry boundary. |
-| `MIROptimizationInvariant` / compiler-runtime containers | Slice 0k-CK adds fresh direct evidence that the workers=1 B4 crash executes inside produced-s2 MIR optimization. Slice 0k-CL makes that evidence executable: `scripts/mir_optimization_container_frontier_classifier.sh` reports the current bad container as `affected_block_ids`, with a null Set receiver base register at `Set(UInt32)#includes?`. Historical landmarks already show self-host sensitivity around compiler-internal `Set`/`Hash` initialization and namespace aliases, so this row must still distinguish container producer failure from malformed CopyPropagation invariant before behavior edits. | Localize the producer of the null `affected_block_ids` Set returned by `apply_replacements`' `apply_collect_affected_blocks` timed block. The next classifier should separate a bad block-return / timed-phase yield from wrong Set constructor/namespace initialization and from malformed replacement-state invariants. Only after that may a production slice choose `contract-owner-migration`, `semantic-service-extraction`, or `bootstrap-emergency-with-ledger`. | Direct null guards in CopyPropagation; backend Set/Hash rescue without producer proof; changing dominance/local-replacement behavior because the stack mentions CopyPropagation; broad namespace/container normalization; treating `affected_block_ids` as an ordinary empty set; returning to output/resource/tail/worker edges without refuting 0k-CL. |
+| `MIROptimizationInvariant` / compiler-runtime containers | Slice 0k-CK adds fresh direct evidence that the workers=1 B4 crash executes inside produced-s2 MIR optimization. Slice 0k-CL makes that evidence executable and narrows the bad value to `affected_block_ids`. Slice 0k-CM localizes the producer boundary: `__crystal_block_proc_1756` builds and returns a `Set(UInt32)`, while produced `s2b` materializes `CopyPropagationPass#timed_cp_phase(String, &)` as a `String_block` wrapper that returns null/void and makes `apply_replacements` treat the collect result as `Nil|Void`. | Localize the compiler-source seam that makes a bare block helper with `yield` result materialize as a void/null-return wrapper under produced `s2b`. The next classifier should distinguish HIR block-return type inference, block wrapper materialization, MIR call/lambda return lowering, and LLVM backend block-call return handling before any behavior patch. Only after that may a production slice choose `contract-owner-migration`, `semantic-service-extraction`, or `bootstrap-emergency-with-ledger`. | Direct null guards in CopyPropagation; direct `timed_cp_phase` inlining/deletion as a workaround; adding an explicit tactical return type before naming the lowering seam; backend block-return rescue without producer proof; backend Set/Hash rescue; changing dominance/local-replacement behavior because the stack mentions CopyPropagation; broad namespace/container normalization; treating `affected_block_ids` as an ordinary empty set; returning to output/resource/tail/worker edges without refuting 0k-CM. |
 | `MaterializationIdentity` / `MaterializationRegistry` | Slice 0k-Z promotes the selected `lower_function_if_needed.symbol_binding` seam in behavior-neutral shadow/parity mode. `scripts/materialization_symbol_binding_admission_report.sh` now reports `already_promoted_shadow` even with `REQUIRE_PROMOTED=1`; keepalive and materialization-ledger consumers read from `MaterializationSymbolBinding` fields instead of recomputing split locals. | Do not flip emitted symbols from this slice. Next movement must either run a generated-stage materialization/symbol-binding classification on the residual full-prelude s2 crash, or select the next root-sized owner consumer with a red/green gate. | Backend undefined-extern rescue; target keepalive as a standalone patch; requested-name forcing; `NamedTuple`/`Tuple` display normalization; global ambient-map predicate changes; `BlockOwner` rollback; treating the green source-shape gate as green `s2b`/`s3b`. |
 | `NameResolution` / `MethodNameCodec` | File identity was fixed; method/symbol identity is still partly rendered-string driven. Slice 0k-V promotes the selected `lower_function_if_needed.exact_lookup_keep_requested_name` seam through `method_name_codec_exact_lookup_keep_requested_name?` in shadow/parity mode; emitted behavior still returns the legacy result. Slice 0k-W pauses standalone promotion-report proliferation. | Either select the next root-sized codec seam with a red/green source-shape gate, or define a generated-stage classification slice that consumes the existing promotion ledger to answer one blocking yes/no decision before changing emitted naming behavior. | String-slice parsing patches at individual callsites; treating rendered names as canonical identity; broad normalization without a falsifier; selecting lower-level helpers before a materialization seam; flipping owner-result behavior from shadow rows; committing another report surface that does not reduce or select an authority edge. |
 | `CallMaterializationTransaction` / `MaterializationTransaction` spine | Slice 0k-AJ selects the reached transaction/emission edge `call_materialization.wrapper_or_call_remap.extern_missing_body`. Slice 0k-AK adds the docs stop rule for post-consumer selector decay. Slice 0k-AL makes that rule executable. Slice 0k-AM implements the behavior-neutral consumer: HIR stores transaction contract facts by tx id, HIR-to-MIR attaches them to transaction-bound `Call`/`ExternCall`, backend `[MAT_EMIT]` logs them mechanically, and optimizer replacement preserves them. Slice 0k-AO extends the same selector with a post-consumer exact-contract residual split. Fresh generated-stage evidence reports `post_consumer_state=selected_consumed_by_contract_consumer`, `contract_mismatch_rows=0`, `residual_exact_missing_body_rows=14`, `residual_exact_missing_body_groups=9`, and `residual_selection_status=rejected_exact_missing_body_ambiguous`. Slice 0k-CC selects G6 as the next concrete `MaterializationTransaction` lane: current `BlockOwner` owner-cache index assignment must materialize `Hash(UInt64, BlockOwner)#[]=` as a real body. Slice 0k-CD pauses code before that implementation and requires a transaction-invariant plan gate first. Slice 0k-CE completes that pre-code gate by pinning the setter producer, old split authority edge, owner surface, producer/consumer chain, invariant, negative controls, and residual pressure gates. Slice 0k-CF adds the executable guard and proves the current G6 setter availability is exact/all-equal, joined, body-present, and non-stub for `bin/adamas`. | Keep the G6 guard as regression protection. Do not continue materialization behavior work unless the guard regresses or a later generated-stage selector points back to this spine with a root-sized edge. | Treating green G6 as green `s2b`/`s3b`; treating consumed edge disappearance as failure; making old `REQUIRE_SELECTED=1` green by redefining rows; behavior-patching any residual sample (`Array#<<`, `Slice#[]`, `IO#read`, etc.) without a unique selector; backend forwarder or undefined-extern rescue; requested-name forcing; broad `NamedTuple`/`Tuple` rendering changes; global ambient-map policy changes; `BlockOwner` rollback; another standalone report that does not remove ambiguity or retire/refute an older surface. |
@@ -2187,6 +2197,100 @@ Stop rules:
 - Do not skip `can_skip_dominators_for_local_replacements?` as a workaround.
 - Do not add or broaden backend Set/Hash delegate overrides until the Set
   constructor/body path is proven first-bad for this value.
+- Do not return to output/resource/tail/worker fixes without refuting this
+  classifier on current HEAD.
+
+### Slice 0k-CM: Timed phase block-return frontier classifier
+
+Status:
+
+- executable read-only producer-localization classifier after 0k-CL;
+- no compiler production behavior, optimizer behavior, block lowering behavior,
+  backend behavior, Set/Hash behavior, worker/resource/output/tail behavior,
+  materialization behavior, parser behavior, physical extraction, or
+  `BlockOwner` carrier behavior changed;
+- not a green `s2b`/`s3b` claim.
+
+New classifier:
+
+```bash
+REQUIRE_CURRENT_CM=1 \
+  scripts/mir_timed_phase_return_frontier_classifier.sh
+```
+
+The script:
+
+1. invokes `scripts/mir_optimization_container_frontier_classifier.sh` with
+   `KEEP_TMP=1` internally so it can reuse the current O1 produced compiler;
+2. confirms the O1 shape remains
+   `current_0k_ck_mir_cp_container_frontier`;
+3. stops produced `s2b` at
+   `CopyPropagationPass#can_skip_dominators_for_local_replacements?` and
+   checks that the `affected_block_ids` argument register is already null;
+4. disassembles
+   `CopyPropagationPass#timed_cp_phase(String, &)`,
+   `CopyPropagationPass#apply_replacements`, and the collect block
+   `__crystal_block_proc_1756`;
+5. cleans generated-stage and repo-local temp artifacts unless `KEEP_TMP=1` is
+   requested.
+
+Observed strict-mode signals:
+
+- `o1_classification=current_0k_ck_mir_cp_container_frontier`;
+- `bad_container_state=set_receiver_base_register_null`;
+- `bad_container_candidate=affected_block_ids`;
+- `can_skip_entry_hit=1`;
+- `can_skip_affected_block_ids_x3_zero=1`;
+- `timed_calls_block=1`;
+- `timed_zeroes_after_block=1`;
+- `timed_enabled_branch_returns_zero=1`;
+- `apply_collect_uses_timed_phase=1`;
+- `apply_collect_result_is_nil_void=1`;
+- `collect_block_builds_set=1`;
+- `collect_block_returns_set_slot=1`;
+- `classification=current_0k_cm_timed_cp_phase_block_return_frontier`.
+
+Result:
+
+0k-CM answers the 0k-CL producer question:
+
+1. `Set(UInt32)` construction is not the first bad transition for this
+   frontier. The collect block `__crystal_block_proc_1756` calls
+   `Set(UInt32).new`, appends block ids through `Set#<<`, and returns the Set
+   slot.
+2. `Set#includes?` is not the first bad transition. The caller already passes
+   `affected_block_ids` as null into
+   `can_skip_dominators_for_local_replacements?`.
+3. The first named bad layer is the block-return wrapper for
+   `CopyPropagationPass#timed_cp_phase(String, &)`: produced `s2b` emits a
+   `String_block` wrapper that calls the block and then zeroes the return
+   value; its timing-enabled path returns zero without yielding. The caller
+   then treats the collect result as `Nil|Void`.
+
+Admitted next movement:
+
+Still no production behavior patch. Add a read-only source-seam localization
+probe that distinguishes:
+
+- HIR return type inference for methods with a bare `&` block parameter and a
+  `yield` expression result;
+- block wrapper materialization for `String_block`;
+- MIR lowering of block calls and block return values;
+- LLVM backend call result handling for block procedure pointers.
+
+The next producer-localization slice should name the exact source seam that
+turned this helper into a void/null-return wrapper before any production fix.
+
+Stop rules:
+
+- Do not inline, delete, or special-case `timed_cp_phase` as a tactical fix
+  before naming the lowering seam.
+- Do not add an explicit tactical return annotation to `timed_cp_phase` as a
+  fix without a source-seam classifier proving why it is the right owner
+  boundary.
+- Do not add a null guard around `affected_block_ids`.
+- Do not add backend block-return, Set, or Hash rescue paths without producer
+  proof.
 - Do not return to output/resource/tail/worker fixes without refuting this
   classifier on current HEAD.
 

@@ -12,6 +12,33 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-CM-TIMED-PHASE-BLOCK-RETURN-FRONTIER|implemented 2026-07-02 {F:0.91 G:0.56 R:0.90}]:
+Slice 0k-CM adds executable read-only producer-localization classifier
+`scripts/mir_timed_phase_return_frontier_classifier.sh` after the 0k-CL O1
+container classifier. Strict evidence:
+`REQUIRE_CURRENT_CM=1 scripts/mir_timed_phase_return_frontier_classifier.sh`
+reports `classification=current_0k_cm_timed_cp_phase_block_return_frontier`,
+`o1_classification=current_0k_ck_mir_cp_container_frontier`,
+`can_skip_affected_block_ids_x3_zero=1`, `timed_calls_block=1`,
+`timed_zeroes_after_block=1`, `timed_enabled_branch_returns_zero=1`,
+`apply_collect_uses_timed_phase=1`, `apply_collect_result_is_nil_void=1`,
+`collect_block_builds_set=1`, and `collect_block_returns_set_slot=1`.
+Interpretation: the `apply_collect_affected_blocks` block
+`__crystal_block_proc_1756` constructs a `Set(UInt32)`, adds block ids through
+`Set#<<`, and returns the Set slot, but the produced `s2b`
+`CopyPropagationPass#timed_cp_phase(String, &)` wrapper calls the block and
+then zeroes the return value; its timing-enabled branch also returns zero
+without yielding. `apply_replacements` then treats the collect result as
+`Nil|Void`, stores null into the closure cell consumed as `affected_block_ids`,
+and `can_skip_dominators_for_local_replacements?` receives `x3=0`. Scope:
+executable classifier only; no compiler production behavior changed and no
+green `s2b`/`s3b` claim. The next admitted movement is read-only source-seam
+localization for why a bare `&` / `yield` helper is materialized as a
+void-return `String_block` wrapper. Decay trigger: classifier no longer
+reports current 0k-CM, a fresh source-seam probe proves the void wrapper is
+downstream of a different materialization decision, or B4 reaches
+`REQUIRE_CLEAN=1`.
+
 [LM-ARCH-0K-CL-MIR-OPT-CONTAINER-CLASSIFIER|implemented 2026-07-02 {F:0.90 G:0.58 R:0.90}]:
 Slice 0k-CL adds executable read-only classifier
 `scripts/mir_optimization_container_frontier_classifier.sh` for the O1

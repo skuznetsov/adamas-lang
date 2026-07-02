@@ -8,6 +8,18 @@ boundaries
 Related: `PLAN_DEMAND_DRIVEN_REWRITE_RFC.md`, `docs/ast_to_hir_audit.md`,
 `docs/codegen_architecture.md`
 
+2026-07-02 post-0k-CM note: the MIR optimization/container frontier is now
+localized past Set/Hash construction. New classifier:
+`scripts/mir_timed_phase_return_frontier_classifier.sh`. Strict mode reports
+`current_0k_cm_timed_cp_phase_block_return_frontier`: the
+`apply_collect_affected_blocks` block builds and returns a `Set(UInt32)`, but
+produced `s2b` materializes `CopyPropagationPass#timed_cp_phase(String, &)` as
+a void/null-return `String_block` wrapper and `apply_replacements` consumes the
+result as `Nil|Void`. The near-term refactor lane must now localize the
+compiler-source seam for bare-block/yield return materialization. Do not patch
+`Set#includes?`, guard `affected_block_ids`, inline `timed_cp_phase`, or add a
+backend block-return rescue before that seam is named.
+
 2026-07-02 post-0k-CL note: the first `MIROptimizationInvariant` classifier
 exists as `scripts/mir_optimization_container_frontier_classifier.sh`. It is
 read-only and confirms the current produced-s2 crash as
