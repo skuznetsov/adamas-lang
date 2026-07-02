@@ -8,6 +8,22 @@ boundaries
 Related: `PLAN_DEMAND_DRIVEN_REWRITE_RFC.md`, `docs/ast_to_hir_audit.md`,
 `docs/codegen_architecture.md`
 
+2026-07-02 post-0k-CK note: after 0k-CJ the active architecture path is no
+longer allowed to continue by consuming another `GeneratedStageExecution`
+helper edge. Fresh B4 evidence keeps the produced-stage classifier red, but a
+workers=1 `lldb` run localizes the current crash inside MIR optimization:
+`Set(UInt32)#includes?` is called by
+`CopyPropagationPass#affected_blocks_use_only_local_replacements?` during
+`Function#optimize_with_potential`, with null registers at the Set load. The
+near-term refactor lane must therefore add a read-only
+`MIROptimizationInvariant` / compiler-runtime-container classifier before any
+source fix. The classifier must distinguish: bad `Set(UInt32)` receiver,
+valid Set with null `@hash`, wrong namespaced Set/Hash constructor body,
+constant/default initialization failure, or malformed CopyPropagation
+local-replacement state. Do not resume output/resource/tail/worker,
+backend Set/Hash rescue, direct CopyPropagation guards, broad namespace
+normalization, physical extraction, or `BlockOwner` rollback from this stack.
+
 2026-07-01 alignment note: this plan remains the long-term refactor map, but
 the active path to green `s2b`/`s3b` is now governed by
 `docs/compiler_architecture_sdd.md`. Do not start with physical extraction or

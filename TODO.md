@@ -8,6 +8,28 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: added Slice 0k-CK, a docs-only post-0k-CJ
+  architecture pause after fresh B4 root-localization. Production compiler
+  edits remain paused. Fresh
+  `KEEP_TMP=1 STAGE1_COMPILER=bin/adamas TAIL_LINES=120
+  REQUIRE_CURRENT_FRONTIER=1 scripts/generated_stage_llvm_entry_classifier.sh`
+  preserves the current B4 shape (`default_workers` rand/RSS and
+  `ADAMAS_LLVM_WORKERS=1` exit 139 after `pass3 after lower_main call`), but a
+  fresh `lldb` workers=1 backtrace stops in `Set(UInt32)#includes?`, called by
+  `Adamas::MIR::CopyPropagationPass#affected_blocks_use_only_local_replacements?`
+  during `Function#optimize_with_potential`; registers show `x0=0` and `x8=0`
+  at the `Set#includes?` null load. This lowers `BootstrapPotential` by
+  decreasing plausible owner-spine ambiguity: the next root-sized question is
+  not another `GeneratedStageExecutionOutcome`, worker/resource/output/tail, or
+  LLVM emission edge. The admitted next movement is a read-only
+  `MIROptimizationInvariant` / compiler-runtime-container root classifier that
+  distinguishes malformed CopyPropagation local-replacement state from
+  self-hosted `Set`/`Hash` constructor or namespace-initialization failure.
+  Still rejected: direct `CopyPropagation` guard patches, backend Set/Hash
+  rescue, LLVM worker/resource/output/tail behavior, memory-budget acceptance,
+  broad container/namespace normalization, physical extraction, and
+  `BlockOwner` rollback.
+
 - 2026-07-02 UPDATE: implemented Slice 0k-CJ, the behavior-neutral
   `GeneratedStageExecutionOutcome` output-row checkpoint selected by 0k-CH and
   bounded by 0k-CI. `src/compiler/cli.cr` now owns one

@@ -12,6 +12,33 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-CK-MIR-OPT-CONTAINER-ROOT-SPINE|design-sealed 2026-07-02 {F:0.86 G:0.60 R:0.88}]:
+Slice 0k-CK is a docs-only architecture pause after the 0k-CJ
+`GeneratedStageExecutionOutcome` checkpoint. Fresh B4 evidence on HEAD
+`b9b1457f` preserves the known classifier shape:
+`KEEP_TMP=1 STAGE1_COMPILER=bin/adamas TAIL_LINES=120
+REQUIRE_CURRENT_FRONTIER=1 scripts/generated_stage_llvm_entry_classifier.sh`
+reports `classification=current_0k_bn_frontier`, default-worker
+`parallel_rand=1` plus `memory_kill=1`, and workers=1 `exit139=1` after
+`pass3 after lower_main call`. A fresh workers=1 `lldb` run narrows the
+actual crash stack to `Set(UInt32)#includes?` from
+`Adamas::MIR::CopyPropagationPass#affected_blocks_use_only_local_replacements?`
+via `can_skip_dominators_for_local_replacements?`,
+`apply_replacements`, `OptimizationPipeline#run`, and
+`Function#optimize_with_potential`; registers show `x0=0` and `x8=0` at the
+`Set#includes?` null load. Scope: this is not a compiler behavior fix and not
+a green `s2b`/`s3b` claim. It decreases `BootstrapPotential` by reducing the
+plausible owner-spine count: `GeneratedStageExecutionOutcome`,
+worker/resource/output/tail, and local LLVM-emission edges are demoted to
+pressure/proxy surfaces for the next slice. The admitted next movement is a
+read-only `MIROptimizationInvariant` / compiler-runtime-container classifier
+that distinguishes malformed CopyPropagation local-replacement state from a
+self-hosted `Set`/`Hash` constructor or namespace-initialization failure.
+Decay trigger: B4 reaches `REQUIRE_CLEAN=1`, the workers=1 crash stack moves
+away from MIR optimization / `Set(UInt32)#includes?`, or a future classifier
+proves the null Set/Hash state is only a downstream symptom of a named
+semantic owner spine.
+
 [LM-ARCH-0K-CJ-GENERATED-STAGE-OUTCOME-SOURCE-CHECKPOINT|implemented 2026-07-02 {F:0.90 G:0.52 R:0.90}]:
 Slice 0k-CJ implements the 0k-CH `cli.output_commit_record` owner migration
 under the 0k-CI anti-proxy gate. `src/compiler/cli.cr` now creates one
