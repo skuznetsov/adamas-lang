@@ -8,6 +8,29 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: implemented Slice 0k-CA, the default-off runtime
+  transaction-row follow-up selected by 0k-BZ. `scripts/generated_stage_llvm_entry_classifier.sh`
+  now passes `GSETX_TRANSACTION_ID` / `GSETX_LEDGER` into only the produced-s2
+  smoke runs, tagging them as `default_workers` and `workers1`. The compiler
+  writes runtime rows only when `ADAMAS_GSETX_ID` and `ADAMAS_GSETX_LEDGER` are
+  present: HIR module identity, MIR module identity, `LLVMEmissionSession` id
+  and function plan, side-effect runtime counts, tail semantic-vs-input rows,
+  and output commit/start rows. `scripts/generated_stage_execution_transaction_report.sh`
+  now joins those rows under one transaction id. Fresh evidence:
+  `STAGE1_COMPILER=bin/adamas REQUIRE_CURRENT_FRONTIER=1 REQUIRE_JOINED=1
+  scripts/generated_stage_execution_transaction_report.sh` preserves
+  `b4.classification=current_0k_bn_frontier`, but now reports
+  `join_status=joined`, `final_classification=abort_resource`, runtime HIR/MIR
+  ids, runtime session id, side-effect counts, `tail_not_reached_after_output_start`,
+  and `output.commit_record=llvm_ir_started_without_commit:file`. Negative
+  evidence: `STAGE1_COMPILER=bin/adamas GENERATED_S2=bin/adamas
+  REQUIRE_ADMIT_BEHAVIOR=1 scripts/generated_stage_execution_transaction_report.sh`
+  still exits 9 with `admission_status=rejected_no_root_sized_consumer`. This
+  is still not green `s2b` or `s3b`; it only moves the active gate from
+  unjoined evidence to joined abort evidence. The next slice must select exactly
+  one root-sized transaction-owned old authority edge or refute
+  `GeneratedStageExecution`; broad behavior fixes remain rejected.
+
 - 2026-07-02 UPDATE: added Slice 0k-BZ, a docs-only hostile
   Quadrumvirate checkpoint after reviewing the 0k-BY path for tail-chasing.
   Production compiler behavior remains frozen. The next executable slice is

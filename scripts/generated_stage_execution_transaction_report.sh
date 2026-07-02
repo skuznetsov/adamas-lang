@@ -26,9 +26,10 @@ Pass-through classifier environment:
 
 Current expected state:
   The report should reach B4's measured-red generated-stage frontier, print one
-  transaction_id, and classify admission as rejected_unjoined_evidence until
-  runtime transaction rows exist. It is a guard/report, not a compiler behavior
-  change and not green s2b/s3b evidence.
+  transaction_id, join default-off runtime rows, and classify admission as
+  rejected_no_root_sized_consumer until a later selector chooses exactly one
+  transaction-owned behavior edge. It is a guard/report, not green s2b/s3b
+  evidence.
 USAGE
 }
 
@@ -41,6 +42,7 @@ mkdir -p "$ROOT_DIR/tmp"
 TMP_DIR="$(mktemp -d "$ROOT_DIR/tmp/generated-stage-execution-tx.XXXXXX")"
 CLASSIFIER_OUT="$TMP_DIR/classifier.out"
 SHAPE_OUT="$TMP_DIR/source_shape.out"
+RUNTIME_LEDGER="$TMP_DIR/runtime_ledger.tsv"
 NESTED_TMP=""
 
 cleanup() {
@@ -108,8 +110,13 @@ file_sha1() {
   fi
 }
 
+tx_seed="$ROOT_DIR|${1:-default-source}|$TMP_DIR|generated-stage-execution"
+transaction_id="gsetx_$(printf '%s' "$tx_seed" | sha1_text | cut -c1-16)"
+: >"$RUNTIME_LEDGER"
+
 set +e
-KEEP_TMP=1 "$ROOT_DIR/scripts/generated_stage_llvm_entry_classifier.sh" "$@" >"$CLASSIFIER_OUT" 2>&1
+GSETX_TRANSACTION_ID="$transaction_id" GSETX_LEDGER="$RUNTIME_LEDGER" \
+  KEEP_TMP=1 "$ROOT_DIR/scripts/generated_stage_llvm_entry_classifier.sh" "$@" >"$CLASSIFIER_OUT" 2>&1
 classifier_rc=$?
 set -e
 
@@ -150,8 +157,91 @@ parallel_contract_merge_call_count="$(required_value "parallel_contract_merge_ca
 parallel_raw_side_effect_writer_tags="$(required_value "parallel_raw_side_effect_writer_tags" "$SHAPE_OUT")"
 parallel_raw_side_effect_merge_tags="$(required_value "parallel_raw_side_effect_merge_tags" "$SHAPE_OUT")"
 
-tx_seed="$repo|$source_path|$stage1_path|$generated_s2_path|$b4_classification|$source_shape|$worker_shape|$side_effect_contract_shape"
-transaction_id="gsetx_$(printf '%s' "$tx_seed" | sha1_text | cut -c1-16)"
+runtime_field() {
+  local row="$1"
+  local key="$2"
+  awk -F'\t' -v tx="$transaction_id" -v row="$row" -v key="$key" '
+    $1 == "GSETX" && $2 == tx && $4 == row {
+      for (i = 5; i <= NF; i++) {
+        n = split($i, parts, " ")
+        for (j = 1; j <= n; j++) {
+          if (index(parts[j], key "=") == 1) {
+            print substr(parts[j], length(key) + 2)
+            found = 1
+          }
+        }
+      }
+    }
+    END {
+      if (!found) {
+        exit 1
+      }
+    }
+  ' "$RUNTIME_LEDGER" 2>/dev/null | tail -1 || true
+}
+
+runtime_row_count() {
+  local row="$1"
+  awk -F'\t' -v tx="$transaction_id" -v row="$row" '
+    $1 == "GSETX" && $2 == tx && $4 == row { count++ }
+    END { print count + 0 }
+  ' "$RUNTIME_LEDGER" 2>/dev/null || echo 0
+}
+
+runtime_hir_module_id="$(runtime_field "setup.hir_final" "hir_module_id")"
+if [[ -z "$runtime_hir_module_id" ]]; then
+  runtime_hir_module_id="$(runtime_field "setup.hir_module" "hir_module_id")"
+fi
+runtime_hir_functions="$(runtime_field "setup.hir_final" "hir_functions")"
+runtime_mir_module_id="$(runtime_field "setup.mir_final" "mir_module_id")"
+runtime_mir_functions="$(runtime_field "setup.mir_final" "mir_functions")"
+runtime_session_id="$(runtime_field "llvm.session" "llvm_emission_session_id")"
+runtime_planned_functions="$(runtime_field "llvm.session" "planned_functions")"
+runtime_side_effect_phase="$(runtime_field "side_effect.runtime_counts" "phase")"
+runtime_side_effect_emitted="$(runtime_field "side_effect.runtime_counts" "emitted")"
+runtime_side_effect_called="$(runtime_field "side_effect.runtime_counts" "called")"
+runtime_side_effect_undefined="$(runtime_field "side_effect.runtime_counts" "undefined")"
+runtime_tail_phase="$(runtime_field "tail.semantic_split" "phase")"
+runtime_output_rc="$(runtime_field "output.binary_compile_result" "rc")"
+runtime_output_bytes="$(runtime_field "output.llvm_ir_written" "bytes")"
+runtime_output_start_mode="$(runtime_field "output.llvm_ir_start" "emit_mode")"
+
+if [[ -n "$runtime_side_effect_phase" ]]; then
+  runtime_side_effect_row_counts="phase:${runtime_side_effect_phase},emitted:${runtime_side_effect_emitted:-missing},called:${runtime_side_effect_called:-missing},undefined:${runtime_side_effect_undefined:-missing}"
+else
+  runtime_side_effect_row_counts=""
+fi
+
+if [[ -n "$runtime_tail_phase" ]]; then
+  runtime_tail_semantic_vs_input_split="runtime_tail:${runtime_tail_phase}"
+elif [[ -n "$runtime_output_start_mode" ]]; then
+  runtime_tail_semantic_vs_input_split="tail_not_reached_after_output_start"
+else
+  runtime_tail_semantic_vs_input_split=""
+fi
+
+if [[ -n "$runtime_output_rc" ]]; then
+  runtime_output_commit_record="binary_compile_rc:${runtime_output_rc}"
+elif [[ -n "$runtime_output_bytes" ]]; then
+  runtime_output_commit_record="llvm_ir_written:${runtime_output_bytes}"
+elif [[ -n "$runtime_output_start_mode" ]]; then
+  runtime_output_commit_record="llvm_ir_started_without_commit:${runtime_output_start_mode}"
+else
+  runtime_output_commit_record=""
+fi
+
+missing_runtime_rows=()
+[[ -z "$runtime_hir_module_id" ]] && missing_runtime_rows+=("hir_module_id")
+[[ -z "$runtime_mir_module_id" ]] && missing_runtime_rows+=("mir_module_id")
+[[ -z "$runtime_session_id" ]] && missing_runtime_rows+=("llvm_emission_session_id")
+[[ -z "$runtime_side_effect_row_counts" ]] && missing_runtime_rows+=("runtime_side_effect_row_counts")
+[[ -z "$runtime_tail_semantic_vs_input_split" ]] && missing_runtime_rows+=("tail_semantic_vs_input_split")
+[[ -z "$runtime_output_commit_record" ]] && missing_runtime_rows+=("output_commit_record")
+
+runtime_joined=0
+if [[ ${#missing_runtime_rows[@]} -eq 0 ]]; then
+  runtime_joined=1
+fi
 
 malformed=0
 for value in \
@@ -169,20 +259,48 @@ if [[ $shape_rc -ne 0 || $malformed -eq 1 ]]; then
   join_status="malformed"
 elif [[ "$b4_classification" == "clean_both_modes" ]]; then
   final_classification="commit_clean"
-  admission_status="candidate_clean_requires_joined_runtime_rows"
-  join_status="phase_local_only"
+  if [[ $runtime_joined -eq 1 ]]; then
+    admission_status="rejected_no_root_sized_consumer"
+    join_status="joined"
+  else
+    admission_status="candidate_clean_requires_joined_runtime_rows"
+    join_status="phase_local_only"
+  fi
 elif [[ "$b4_classification" == "current_0k_bn_frontier" ]]; then
-  final_classification="abort_unjoined_evidence"
-  admission_status="rejected_unjoined_evidence"
-  join_status="phase_local_only"
+  if [[ $runtime_joined -eq 1 ]]; then
+    if [[ "$default_workers_memory_kill" == "1" ]]; then
+      final_classification="abort_resource"
+    elif [[ "$workers1_exit139" == "1" ]]; then
+      final_classification="abort_signal"
+    else
+      final_classification="abort_joined_current_frontier"
+    fi
+    admission_status="rejected_no_root_sized_consumer"
+    join_status="joined"
+  else
+    final_classification="abort_unjoined_evidence"
+    admission_status="rejected_unjoined_evidence"
+    join_status="phase_local_only"
+  fi
 else
-  final_classification="abort_unjoined_evidence"
-  admission_status="rejected_unjoined_evidence"
-  join_status="phase_local_only"
+  if [[ $runtime_joined -eq 1 ]]; then
+    final_classification="abort_joined_unclassified"
+    admission_status="rejected_no_root_sized_consumer"
+    join_status="joined"
+  else
+    final_classification="abort_unjoined_evidence"
+    admission_status="rejected_unjoined_evidence"
+    join_status="phase_local_only"
+  fi
 fi
 
 if [[ "$join_status" == "phase_local_only" ]]; then
-  unjoined_reason="missing_runtime_transaction_rows:hir_module_id,mir_module_id,llvm_emission_session_id,runtime_side_effect_row_counts,tail_semantic_vs_input_split,output_commit_record"
+  if [[ ${#missing_runtime_rows[@]} -gt 0 ]]; then
+    missing_joined="$(IFS=,; echo "${missing_runtime_rows[*]}")"
+    unjoined_reason="missing_runtime_transaction_rows:${missing_joined}"
+  else
+    unjoined_reason="missing_runtime_transaction_rows:unknown"
+  fi
 else
   unjoined_reason="none"
 fi
@@ -206,9 +324,13 @@ echo "invocation.generated_s2_sha1=$generated_s2_sha1"
 echo "setup.source_shape=$source_shape"
 echo "setup.worker_shape=$worker_shape"
 echo "setup.side_effect_contract_shape=$side_effect_contract_shape"
-echo "setup.runtime_session_id=unjoined"
+echo "setup.runtime_hir_module_id=${runtime_hir_module_id:-unjoined}"
+echo "setup.runtime_hir_functions=${runtime_hir_functions:-unjoined}"
+echo "setup.runtime_mir_module_id=${runtime_mir_module_id:-unjoined}"
+echo "setup.runtime_mir_functions=${runtime_mir_functions:-unjoined}"
+echo "setup.runtime_session_id=${runtime_session_id:-unjoined}"
 echo "function_plan.source_status=$source_shape"
-echo "function_plan.runtime_plan_rows=unjoined"
+echo "function_plan.runtime_plan_rows=${runtime_planned_functions:-unjoined}"
 echo "worker_plan.default_rc=$default_workers_rc"
 echo "worker_plan.workers1_rc=$workers1_rc"
 echo "worker_plan.default_after_lower_main=$default_workers_after_lower_main"
@@ -219,16 +341,23 @@ echo "side_effect.contract_writer_calls=$parallel_contract_writer_call_count"
 echo "side_effect.contract_merge_calls=$parallel_contract_merge_call_count"
 echo "side_effect.raw_writer_tags=$parallel_raw_side_effect_writer_tags"
 echo "side_effect.raw_merge_tags=$parallel_raw_side_effect_merge_tags"
-echo "side_effect.runtime_row_counts=unjoined"
+echo "side_effect.runtime_row_counts=${runtime_side_effect_row_counts:-unjoined}"
 echo "tail.default_parallel_rand=$default_workers_parallel_rand"
 echo "tail.workers1_exit139=$workers1_exit139"
-echo "tail.semantic_vs_input_split=unjoined"
+echo "tail.semantic_vs_input_split=${runtime_tail_semantic_vs_input_split:-unjoined}"
 echo "output.default_binary_present=$default_workers_binary_present"
 echo "output.workers1_binary_present=$workers1_binary_present"
-echo "output.commit_record=unjoined"
+echo "output.commit_record=${runtime_output_commit_record:-unjoined}"
 echo "resource.default_memory_kill=$default_workers_memory_kill"
 echo "resource.workers1_exit139=$workers1_exit139"
 echo "resource.worker_mode_split=default_vs_workers1"
+echo "runtime.ledger_rows=$(awk -F'\t' -v tx="$transaction_id" '$1 == "GSETX" && $2 == tx { count++ } END { print count + 0 }' "$RUNTIME_LEDGER" 2>/dev/null || echo 0)"
+echo "runtime.hir_rows=$(runtime_row_count "setup.hir_final")"
+echo "runtime.mir_rows=$(runtime_row_count "setup.mir_final")"
+echo "runtime.session_rows=$(runtime_row_count "llvm.session")"
+echo "runtime.side_effect_rows=$(runtime_row_count "side_effect.runtime_counts")"
+echo "runtime.tail_rows=$(runtime_row_count "tail.semantic_split")"
+echo "runtime.output_rows=$(( $(runtime_row_count "output.llvm_ir_start") + $(runtime_row_count "output.llvm_ir_written") + $(runtime_row_count "output.binary_compile_result") ))"
 echo "b4.classification=$b4_classification"
 echo "final_classification=$final_classification"
 echo "join_status=$join_status"

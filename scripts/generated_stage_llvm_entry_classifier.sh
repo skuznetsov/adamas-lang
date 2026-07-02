@@ -22,6 +22,8 @@ Environment:
   SMOKE_TIMEOUT              run_safe timeout for produced-s2 compiles (default: 120).
   SMOKE_MEM_MB               run_safe RSS cap for produced-s2 compiles (default: 4096).
   TAIL_LINES                 Failure/frontier tail lines to print per mode (default: 50).
+  GSETX_TRANSACTION_ID       Optional transaction id passed to produced-s2 smoke runs.
+  GSETX_LEDGER               Optional runtime ledger path passed to produced-s2 smoke runs.
 
 Classifications:
   clean_both_modes                 Both default workers and ADAMAS_LLVM_WORKERS=1 compile.
@@ -198,9 +200,15 @@ else
 fi
 
 set +e
-"$ROOT_DIR/scripts/run_safe.sh" "$S2" "$SMOKE_TIMEOUT" "$SMOKE_MEM_MB" \
+ADAMAS_GSETX_ID="${GSETX_TRANSACTION_ID:-}" \
+ADAMAS_GSETX_LEDGER="${GSETX_LEDGER:-}" \
+ADAMAS_GSETX_RUN_MODE=default_workers \
+  "$ROOT_DIR/scripts/run_safe.sh" "$S2" "$SMOKE_TIMEOUT" "$SMOKE_MEM_MB" \
   "$SOURCE" -o "$DEFAULT_OUT" >"$DEFAULT_LOG" 2>&1
 default_rc=$?
+ADAMAS_GSETX_ID="${GSETX_TRANSACTION_ID:-}" \
+ADAMAS_GSETX_LEDGER="${GSETX_LEDGER:-}" \
+ADAMAS_GSETX_RUN_MODE=workers1 \
 ADAMAS_LLVM_WORKERS=1 \
   "$ROOT_DIR/scripts/run_safe.sh" "$S2" "$SMOKE_TIMEOUT" "$SMOKE_MEM_MB" \
     "$SOURCE" -o "$WORKERS1_OUT" >"$WORKERS1_LOG" 2>&1

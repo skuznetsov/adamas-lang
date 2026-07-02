@@ -437,6 +437,18 @@ patch. Worker/tail/output/resource fixes, backend forwarders, `NamedTuple` /
 `Tuple` rendering, ambient-map policy, parser behavior, and `BlockOwner`
 changes remain rejected while this decision is missing.
 
+2026-07-02 post-0k-CA note: the runtime-row join slice landed. The active
+transaction report now reaches `join_status=joined` on the real current B4
+frontier while preserving `b4.classification=current_0k_bn_frontier` and
+classifying the result as `final_classification=abort_resource` /
+`admission_status=rejected_no_root_sized_consumer`. This converts the gate from
+unjoined evidence to joined abort evidence, but it is still not behavior
+admission and not green `s2b`/`s3b`. The next architecture movement must select
+one root-sized transaction-owned old authority edge from the joined rows, or
+refute `GeneratedStageExecution`; do not patch workers, tail stubs, output,
+resources, backend forwarders, `NamedTuple`/`Tuple`, ambient maps, parser
+behavior, or `BlockOwner` from the joined row alone.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`

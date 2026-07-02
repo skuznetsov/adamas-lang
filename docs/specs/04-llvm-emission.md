@@ -165,6 +165,15 @@ restates local session state, the next step is a selector/falsifier or SDD
 refutation, not a worker, tail, output, resource, backend-forwarder, or
 memory-budget behavior patch.
 
+Slice 0k-CA implements that runtime-row join. The report now joins default-off
+runtime HIR/MIR module ids, `LLVMEmissionSession` id, side-effect counts, tail
+state, and output start/commit rows. Current real B4 evidence is joined but
+still rejected: `b4.classification=current_0k_bn_frontier`,
+`final_classification=abort_resource`, and
+`admission_status=rejected_no_root_sized_consumer`. This proves the next
+movement must be a selector over joined transaction rows, not a direct LLVM
+behavior patch.
+
 Generated-stage owner carriers SHOULD use explicit private classes/methods
 until their materialization surface is proven. A rejected 0k-BR preflight using
 Crystal `record` macros preserved local checks but changed B4 to a produced

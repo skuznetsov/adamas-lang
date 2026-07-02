@@ -1953,6 +1953,64 @@ module Adamas::MIR
       !::Adamas::Compiler::BootstrapEnv.get?(name2).nil?
     end
 
+    private def generated_stage_transaction_token(value : String) : String
+      return "" if value.empty?
+
+      value.gsub(' ', "%20").gsub('\t', "%09").gsub('\n', "%0A").gsub('\r', "%0D")
+    end
+
+    private def generated_stage_transaction_enabled? : Bool
+      tx_id = ::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_GSETX_ID")
+      ledger = ::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_GSETX_LEDGER")
+      !!(tx_id && !tx_id.empty? && ledger && !ledger.empty?)
+    end
+
+    private def log_generated_stage_transaction_row(row : String, fields : String) : Nil
+      tx_id = ::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_GSETX_ID")
+      ledger = ::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_GSETX_LEDGER")
+      return unless tx_id && !tx_id.empty? && ledger && !ledger.empty?
+
+      run_mode = ::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_GSETX_RUN_MODE") || "unspecified"
+      line = String.build do |io|
+        io << "GSETX\t"
+        io << generated_stage_transaction_token(tx_id)
+        io << '\t'
+        io << generated_stage_transaction_token(run_mode)
+        io << '\t'
+        io << generated_stage_transaction_token(row)
+        io << '\t'
+        io << fields
+        io << '\n'
+      end
+
+      fd = LibC.open(ledger.to_unsafe, LibC::O_WRONLY | LibC::O_CREAT | LibC::O_APPEND, 0o644)
+      return if fd < 0
+
+      begin
+        offset = 0
+        bytes = line.to_slice
+        while offset < bytes.size
+          written = LibC.write(fd, bytes.to_unsafe + offset, bytes.size - offset)
+          break if written <= 0
+          offset += written.to_i
+        end
+      ensure
+        LibC.close(fd)
+      end
+    rescue
+      # Transaction rows are default-off evidence only. They must not affect
+      # LLVM emission or hide the original generated-stage frontier.
+    end
+
+    private def log_generated_stage_side_effect_counts(phase : String) : Nil
+      return unless generated_stage_transaction_enabled?
+
+      log_generated_stage_transaction_row(
+        "side_effect.runtime_counts",
+        "phase=#{generated_stage_transaction_token(phase)} emitted=#{@emitted_functions.size} called=#{@called_crystal_functions.size} undefined=#{@undefined_extern_names.size} strings=#{@string_constant_values.size} aliases=#{@string_aliases.size}"
+      )
+    end
+
     private def llvm_entry_opt_guard_enabled? : Bool
       raw = (::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_LLVM_ENTRY_OPT_GUARD") || "").strip.downcase
       return true if raw.empty?
@@ -3168,6 +3226,13 @@ module Adamas::MIR
       functions_to_emit = emission_session.functions_to_emit
       total_funcs = emission_session.total_funcs
       n_workers = emission_session.effective_worker_count
+      if generated_stage_transaction_enabled?
+        log_generated_stage_transaction_row(
+          "llvm.session",
+          "llvm_emission_session_id=#{emission_session.object_id} original_functions=#{emission_session.original_function_count} planned_functions=#{total_funcs} pruned_functions=#{emission_session.pruned_function_count} requested_workers=#{emission_session.requested_worker_count} effective_workers=#{n_workers} sequential_reason=#{emission_session.worker_sequential_reason_code}"
+        )
+        log_generated_stage_side_effect_counts("session_start")
+      end
       STDERR.puts "  [LLVM] emitting #{total_funcs} functions (#{emission_session.original_function_count} total, #{emission_session.pruned_function_count} pruned, workers=#{n_workers})..." if @progress
       func_emit_start = @progress ? Time.instant : nil
 
@@ -3181,6 +3246,7 @@ module Adamas::MIR
         func_emit_elapsed = (Time.instant - func_emit_start.not_nil!).total_milliseconds
         STDERR.puts "  [LLVM] function emission: #{func_emit_elapsed.round(1)}ms for #{total_funcs} functions (workers=#{n_workers})"
       end
+      log_generated_stage_side_effect_counts("post_function_emission")
 
       emit_entrypoint_if_needed(functions_to_emit)
 
@@ -3210,6 +3276,12 @@ module Adamas::MIR
       @module.symbol_names.each { |name| get_or_create_string_global(name) }
 
       tail_stats = bootstrap_env_enabled?("ADAMAS_LLVM_TAIL_STATS")
+      if generated_stage_transaction_enabled?
+        log_generated_stage_transaction_row(
+          "tail.semantic_split",
+          "phase=tail_enter undefined=#{@undefined_extern_names.size} called=#{@called_crystal_functions.size} emitted=#{@emitted_functions.size}"
+        )
+      end
 
       # Emit string constants at end (LLVM allows globals anywhere)
       STDERR.puts "  [LLVM] emit_string_constants..." if @progress
@@ -3282,6 +3354,13 @@ module Adamas::MIR
 
       tail_t0 = Time.instant if tail_stats
       emit_missing_crystal_function_stubs
+      if generated_stage_transaction_enabled?
+        log_generated_stage_transaction_row(
+          "tail.semantic_split",
+          "phase=post_missing_stubs undefined=#{@undefined_extern_names.size} called=#{@called_crystal_functions.size} emitted=#{@emitted_functions.size}"
+        )
+        log_generated_stage_side_effect_counts("post_tail")
+      end
       if tail_stats
         bootstrap_trace_puts "[LLVM_TAIL_GEN] phase=missing_crystal_stubs ms=#{(Time.instant - tail_t0.not_nil!).total_milliseconds.round(1)} out=#{@output.pos} called=#{@called_crystal_functions.size} emitted=#{@emitted_functions.size}"
       end

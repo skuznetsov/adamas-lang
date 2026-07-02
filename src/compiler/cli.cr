@@ -612,6 +612,43 @@ module Adamas
         log_codepath_status(category, path, taken ? "taken" : "not_taken", owner, note)
       end
 
+      private def generated_stage_transaction_enabled? : Bool
+        tx_id = env_get("ADAMAS_GSETX_ID")
+        ledger = env_get("ADAMAS_GSETX_LEDGER")
+        !!(tx_id && !tx_id.empty? && ledger && !ledger.empty?)
+      end
+
+      private def log_generated_stage_transaction_row(row : String, fields : String) : Nil
+        tx_id = env_get("ADAMAS_GSETX_ID")
+        ledger = env_get("ADAMAS_GSETX_LEDGER")
+        return unless tx_id && !tx_id.empty? && ledger && !ledger.empty?
+
+        run_mode = env_get("ADAMAS_GSETX_RUN_MODE") || "unspecified"
+        line = String.build do |io|
+          io << "GSETX\t"
+          io << codepath_status_token(tx_id)
+          io << '\t'
+          io << codepath_status_token(run_mode)
+          io << '\t'
+          io << codepath_status_token(row)
+          io << '\t'
+          io << fields
+          io << '\n'
+        end
+
+        fd = LibC.open(ledger.to_unsafe, LibC::O_WRONLY | LibC::O_CREAT | LibC::O_APPEND, 0o644)
+        return if fd < 0
+
+        begin
+          write_all_fd(fd, line.to_slice)
+        ensure
+          LibC.close(fd)
+        end
+      rescue
+        # Transaction rows are default-off evidence only. They must never affect
+        # compiler semantics or mask the original generated-stage frontier.
+      end
+
       private def write_all_fd(fd : IO::FileDescriptor::Handle, bytes : Bytes) : Int64
         offset = 0
         while offset < bytes.size
@@ -1673,6 +1710,12 @@ module Adamas
         stage2_debug("[STAGE2_DEBUG] hir setup maps ready size=#{main_arenas.size}", err_io)
         hir_mod = HIR::Module.new(input_file)
         hir_mod.bootstrap_reinitialize_runtime_state
+        if generated_stage_transaction_enabled?
+          log_generated_stage_transaction_row(
+            "setup.hir_module",
+            "hir_module_id=#{hir_mod.object_id} hir_functions=#{hir_mod.functions.size}"
+          )
+        end
         bootstrap_trace_puts "[S2_HIR_SETUP] phase=module_ready"; STDERR.flush
         # Self-hosted stage2 has repeatedly miscompiled the wide AstToHir
         # constructor path. Keep constructor arguments minimal, then rebind
@@ -2393,6 +2436,12 @@ module Adamas
 
         bootstrap_trace_puts "  Getting HIR module..." if options.progress
         hir_module = hir_mod
+        if generated_stage_transaction_enabled?
+          log_generated_stage_transaction_row(
+            "setup.hir_final",
+            "hir_module_id=#{hir_module.object_id} hir_functions=#{hir_module.functions.size}"
+          )
+        end
         bootstrap_trace_puts "  Got HIR module with #{hir_module.functions.size} functions" if options.progress
         timings["dbg_count_hir_funcs_before_rta"] = hir_module.functions.size.to_f if debug_profile
         options.link_libraries = link_libs.dup
@@ -2870,6 +2919,13 @@ module Adamas
           fused_parallel = false  # already lowered serially
         end
 
+        if generated_stage_transaction_enabled?
+          log_generated_stage_transaction_row(
+            "setup.mir_final",
+            "mir_module_id=#{mir_module.object_id} mir_functions=#{mir_module.functions.size}"
+          )
+        end
+
         # Step 5: Generate LLVM IR
         bootstrap_trace_puts "[STAGE2_TRACE] step5: LLVM IR generation start"; STDERR.flush
         log(options, out_io, "\n[5/6] Generating LLVM IR...")
@@ -2942,12 +2998,24 @@ module Adamas
         llvm_ir = ""
         llvm_ir_bytes = 0_i64
         if options.emit_llvm
+          if generated_stage_transaction_enabled?
+            log_generated_stage_transaction_row(
+              "output.llvm_ir_start",
+              "emit_mode=stdout ll_file=#{codepath_status_token(ll_file)}"
+            )
+          end
           bootstrap_trace_puts "[LLVM_SETUP] generate(string) start" if llvm_setup_trace
           llvm_ir = llvm_gen.generate
           bootstrap_trace_puts "[LLVM_SETUP] generate(string) done bytes=#{llvm_ir.size}" if llvm_setup_trace
           llvm_ir_bytes = llvm_ir.size.to_i64
           log(options, out_io, "  LLVM IR size: #{llvm_ir_bytes} bytes")
           File.write(ll_file, llvm_ir)
+          if generated_stage_transaction_enabled?
+            log_generated_stage_transaction_row(
+              "output.llvm_ir_written",
+              "emit_mode=stdout ll_file=#{codepath_status_token(ll_file)} bytes=#{llvm_ir_bytes}"
+            )
+          end
           timings["llvm"] = (Time.instant - llvm_start).total_milliseconds if options.stats
           timings["dbg_count_llvm_ir_bytes"] = llvm_ir_bytes.to_f if debug_profile
           if options.stats
@@ -2964,6 +3032,12 @@ module Adamas
           write_text(out_io, llvm_ir, newline: true)
           return 0
         else
+          if generated_stage_transaction_enabled?
+            log_generated_stage_transaction_row(
+              "output.llvm_ir_start",
+              "emit_mode=file ll_file=#{codepath_status_token(ll_file)}"
+            )
+          end
           llvm_ir = llvm_gen.generate
           if BootstrapEnv.enabled?("ADAMAS_TRACE_STDERR")
             LibC.write(2, "[STAGE2_TRACE] step5: generate done\n".to_unsafe, 36_u64)
@@ -2982,6 +3056,12 @@ module Adamas
             llvm_ir_bytes = write_all_fd(fd, llvm_ir.to_slice)
           ensure
             LibC.close(fd)
+          end
+          if generated_stage_transaction_enabled?
+            log_generated_stage_transaction_row(
+              "output.llvm_ir_written",
+              "emit_mode=file ll_file=#{codepath_status_token(ll_file)} bytes=#{llvm_ir_bytes}"
+            )
           end
 
           log(options, out_io, "  LLVM IR size: #{llvm_ir_bytes} bytes") if options.verbose
@@ -3030,6 +3110,12 @@ module Adamas
         log(options, out_io, "\n[6/6] Compiling to binary...")
         compile_start = Time.instant
         result = compile_llvm_ir(ll_file, options, out_io, err_io, timings)
+        if generated_stage_transaction_enabled?
+          log_generated_stage_transaction_row(
+            "output.binary_compile_result",
+            "rc=#{result} output=#{codepath_status_token(options.output)}"
+          )
+        end
         timings["compile"] = (Time.instant - compile_start).total_milliseconds if options.stats
         if options.stats
           compile_details = [] of String

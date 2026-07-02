@@ -12,6 +12,35 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-CA-RUNTIME-TRANSACTION-ROWS|implemented 2026-07-02 {F:0.88 G:0.48 R:0.88}]:
+Slice 0k-CA implements the default-off runtime transaction rows selected by
+0k-BZ. The classifier now passes `GSETX_TRANSACTION_ID` and `GSETX_LEDGER` only
+to produced-s2 smoke runs and labels them `default_workers` / `workers1`; stage1
+and s2-build phases do not inherit the compiler-facing ledger variables. The
+compiler writes `GSETX` rows only when `ADAMAS_GSETX_ID` and
+`ADAMAS_GSETX_LEDGER` are set: CLI rows for HIR module identity, MIR module
+identity, LLVM output start/write/compile result, and backend rows for
+`LLVMEmissionSession` id/function plan, side-effect runtime counts, and tail
+semantic-vs-input state. Fresh current-frontier evidence:
+`STAGE1_COMPILER=bin/adamas REQUIRE_CURRENT_FRONTIER=1 REQUIRE_JOINED=1
+scripts/generated_stage_execution_transaction_report.sh` reports
+`b4.classification=current_0k_bn_frontier`, `join_status=joined`,
+`final_classification=abort_resource`, runtime HIR/MIR/session ids,
+`side_effect.runtime_row_counts=phase:session_start,emitted:0,called:0,undefined:0`,
+`tail.semantic_vs_input_split=tail_not_reached_after_output_start`, and
+`output.commit_record=llvm_ir_started_without_commit:file`. Negative evidence:
+with `GENERATED_S2=bin/adamas`, `REQUIRE_ADMIT_BEHAVIOR=1` still exits 9 and
+reports `admission_status=rejected_no_root_sized_consumer`; joined evidence is
+not behavior admission. Scope: default-off instrumentation/report join only;
+no worker behavior, side-effect semantics, tail stubs, output behavior,
+resource limits, backend forwarders, `NamedTuple`/`Tuple` rendering,
+ambient-map policy, parser behavior, or `BlockOwner` changed. No green
+`s2b`/`s3b` claim. Next movement: a selector/falsifier must choose exactly one
+root-sized transaction-owned old authority edge or refute
+`GeneratedStageExecution` before any behavior fix. Decay trigger: report schema
+changes, B4 changes to a different first-bad boundary, or a selector admits a
+root-sized behavior edge.
+
 [LM-ARCH-0K-BZ-RUNTIME-ROWS-STOP-RULE|design-sealed 2026-07-02 {F:0.83 G:0.60 R:0.84}]:
 Slice 0k-BZ records a docs-only hostile Quadrumvirate checkpoint over the
 post-0k-BY path. The reviewed risk is not lack of another local compiler fix;
