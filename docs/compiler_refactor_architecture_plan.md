@@ -486,6 +486,19 @@ extern rescue, forwarders, requested-name forcing, broad `NamedTuple`/`Tuple`
 rendering, global ambient-map policy changes, parser changes, and `BlockOwner`
 rollback remain rejected.
 
+2026-07-02 post-0k-CE note: the G6 pre-code plan gate is now design-sealed. The
+next implementation is not a generic materialization experiment and not a backend
+stub workaround. It is a transaction-owned availability slice over the exact
+setter chain: `lower_assign` index-target `[]=` demand, `lower_function_if_needed`
+materialization binding, HIR transaction contract, HIR-to-MIR contract
+attachment, and backend body visibility. The code slice must prove the demanded
+`Hash(UInt64, BlockOwner)#[]=` call-visible symbol, selected semantic target,
+materialized body symbol, HIR/MIR body presence, and backend-visible body are one
+semantic function before it changes emitted behavior. Stop if the setter demand
+has no transaction id, if only a sibling body exists, if MIR falls back to
+`ExternCall`, if backend alone knows the missing body, or if the would-change set
+is broader than the current `BlockOwner` setter family.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`

@@ -12,6 +12,28 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-CE-G6-MATERIALIZATION-PRECODE-PLAN|design-sealed 2026-07-02 {F:0.86 G:0.68 R:0.87}]:
+Slice 0k-CE converts the 0k-CD pause into a concrete pre-code
+`MaterializationTransaction` plan. Live source inspection pins the G6 producer
+as the `lower_assign` index-target setter path that resolves `[]=` and calls
+`remember_callsite_arg_types`, `lower_function_if_needed`, and
+`Call.with_receiver`; the materialization owner is the existing
+`CallMaterializationTransaction` / HIR `MaterializationTransactionContract`
+chain; the downstream consumers are HIR-to-MIR contract attachment and backend
+call/extern-call body visibility. The old authority edge is split because
+materialization completion is checked under the selected/body symbol while MIR
+and backend execution are keyed by the call-visible symbol. The next production
+slice may only add a transaction-owned demanded-setter availability proof and a
+root-sized behavior flip after the ledger proves the same semantic setter flows
+through demand, selected identity, body symbol, HIR body presence, MIR call
+resolution, and backend body visibility. Backend undefined-extern rescue,
+forwarders, requested-name forcing, broad `NamedTuple`/`Tuple` rendering,
+global ambient-map policy changes, parser changes, and rolling `BlockOwner`
+back to tuple/namedtuple remain rejected. Scope: docs/control-plane only; no
+compiler production behavior changed and no green `s2b`/`s3b` claim. Decay
+trigger: a G6 implementation lands, the setter write-path changes, or B4 reaches
+`REQUIRE_CLEAN=1`.
+
 [LM-ARCH-0K-CD-G6-PRECODE-PAUSE|design-sealed 2026-07-02 {F:0.84 G:0.66 R:0.86}]:
 Slice 0k-CD is a docs-only hostile review checkpoint that pauses production
 compiler edits before the G6 implementation. G6 remains the selected
@@ -28,8 +50,9 @@ production edit. Rejected repeats remain backend undefined-extern rescue,
 forwarders, requested-name forcing, broad `NamedTuple`/`Tuple` rendering,
 global ambient-map policy changes, parser changes, and `BlockOwner` rollback.
 Scope: docs/control-plane only; no compiler production behavior changed and no
-green `s2b`/`s3b` claim. Decay trigger: the G6 pre-code plan gate lands, G6
-falsifier changes shape, or B4 reaches `REQUIRE_CLEAN=1`.
+green `s2b`/`s3b` claim. Decay trigger: superseded by
+LM-ARCH-0K-CE-G6-MATERIALIZATION-PRECODE-PLAN, G6 falsifier changes shape, or
+B4 reaches `REQUIRE_CLEAN=1`.
 
 [LM-ARCH-0K-CC-OWNER-SPINE-CONSOLIDATION|design-sealed 2026-07-02 {F:0.84 G:0.68 R:0.85}]:
 Slice 0k-CC executes the 0k-CB reset by classifying active frontier rows under

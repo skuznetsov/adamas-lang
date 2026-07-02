@@ -8,6 +8,23 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: added Slice 0k-CE, the G6 pre-code
+  `MaterializationTransaction` plan. Production source is still paused. The
+  plan pins the actual setter producer path (`lower_assign` index target ->
+  `resolve_method_call(..., "[]=")` -> `remember_callsite_arg_types` ->
+  `lower_function_if_needed` -> `Call.with_receiver`), the materialization
+  binding path (`materialized_name` body checks plus `CallMaterializationTransaction`
+  override/body/call symbols), the HIR transaction contract keyed by call
+  symbol, and the MIR/backend consumers that attach contract facts to
+  `Call`/`ExternCall` and later decide body visibility. The next code slice is
+  therefore not "make the grep green"; it must add a transaction-owned
+  availability proof for the demanded `Hash(UInt64, BlockOwner)#[]=` setter
+  before changing emitted behavior. Stop if the candidate set is broad, if the
+  demand is not transaction-bound, or if the only proposed fix is backend
+  rescue/forwarding, requested-name forcing, broad `NamedTuple`/`Tuple`
+  rendering, global ambient-map policy change, parser work, or `BlockOwner`
+  rollback.
+
 - 2026-07-02 UPDATE: added Slice 0k-CD, a docs-only hostile review checkpoint
   that pauses production code before the G6 implementation. G6 remains the
   selected `MaterializationTransaction` lane, but the next movement is now a
