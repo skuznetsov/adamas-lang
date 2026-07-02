@@ -241,6 +241,17 @@ residual, not proof that a HIR function body was present. The next executable
 movement must split the HIR producer boundary that can leave
 `function_state(body_symbol)=InProgress` while `@module.has_function?(body_symbol)`
 is false.
+Slice 0k-CZ is a docs-only hostile correction to that next-step wording. Source
+inspection shows the 0k-CY body visibility fields are logged after
+`@function_lowering_states[materialized_name] = InProgress` but before
+`lower_method(...)` creates or completes the materialized function body; the
+`ensure` block updates or deletes the lowering state only after the attempt
+finishes. Therefore `state_in_progress_without_hir_function` is a pre-lowering
+visibility fact, not a root claim. The active next executable movement is a
+post-lowering completion contract: add a behavior-neutral completion fact after
+the materialization attempt finishes and join it with `[MAT_TX]` / `[MAT_EMIT]`
+before classifying true body absence, HIR-to-MIR visibility, backend visibility,
+or missing completion observation.
 Slice 0k-BH adds a narrower pause gate after the 0k-BG parser falsifier:
 the command-call parser frontier may get one bounded closure attempt, but a
 second parser loop, adjacent parser regression, or broadened command-call
@@ -424,7 +435,7 @@ latest emitted symptom.
 
 ## Active Architecture Board
 
-Status: execution board after Slice 0k-CY. This board exists to
+Status: execution board after Slice 0k-CZ. This board exists to
 prevent the next step from being selected by the latest generated-stage crash
 stack. A next slice is admitted only if it moves one board row by replacing or
 shadowing a named authority edge, producing `CodePathStatus` evidence for a
@@ -493,10 +504,12 @@ Slice 0k-CX consumes that classifier and leaves the active selector on
 `MaterializationTransaction` / `created_body_backend_missing` backend
 visibility. The self-applying transaction ledger says the bodies were created,
 but the broad 14-row / 9-group residual is still too wide for production code.
-Slice 0k-CY tightens that selector again: the actual boundary is not backend
-visibility yet. The residual has state `in_progress` but no HIR function for
-the exact `body_symbol`, so the active selector is
-`MaterializationTransaction` / HIR lowering-state-to-function consistency.
+Slice 0k-CY tightens that selector again but only as a pre-lowering visibility
+fact: `created_body` is not body-present evidence. Slice 0k-CZ corrects the
+active selector before another code slice: because `[MAT_TX]` is logged before
+`lower_method(...)`, `state_in_progress_without_hir_function` must not be
+treated as a completed-body root. The active selector is now
+`MaterializationTransaction` / post-lowering function availability completion.
 
 ### Current Execution Board
 
@@ -507,7 +520,7 @@ evidence, not next-step selectors.
 | --- | --- | --- | --- |
 | `bootstrap-emergency-with-ledger` / B4-O1 | Paused breakglass. The 0k-CR assigned-tail passthrough plus return-shape wrapper-materialization slice remains documented, but after 0k-CV it is not the current selector and may not resume from an uncommitted WIP. | Re-admit only with a fresh receipt that names: old authority edge = shared untyped `&` wrapper keyed without return contract; owner fact = HIR `BlockCallReturnContract`; producers = block-return recording and assigned-tail classifier; consumers = wrapper materialization, yield return inference, call target emission; baseline = current O1/B4 classifiers plus `REQUIRE_CURRENT_CP_BROAD=1 scripts/hir_block_return_shape_census.sh`; negative controls = nil/non-returning timed phases and ordinary iterator/scope helpers; stage gate = B4 future-clean or current-frontier movement; residual boundary. | Continuing the local WIP by inertia; starting from the next crash stack; classifier-only patch; broad return-shape specialization; direct CopyPropagation guard; `timed_cp_phase` annotation/inlining/deletion; MIR/LLVM/backend block-return rescue. |
 | `architecture-burn-down` / owner-spine plan | Consumed by 0k-CW. The active burn-down selection is `MaterializationTransaction` exact body availability, based on generated-stage residual evidence rather than the latest crash stack. | Do not add another planning/report row unless it retires/refutes this selection or the residual classifier proves the selected edge is not root-sized. | Treating a moved crash stack as architecture progress; adding another report that does not retire/refute an older surface; committing WIP helpers that do not consume an old authority edge; claiming source-shape green as bootstrap green. |
-| `MaterializationTransaction` / exact body availability | Current active selector after 0k-CY. G6 `BlockOwner` setter availability is guard-green; the live exact/all-equal residual is classified as `state_in_progress_without_hir_function`, 14 rows across 9 groups. | Next executable receipt: read-only HIR producer classifier for exact `body_symbol` rows where `function_state=InProgress` but `@module.has_function?=false`. It must split whether the in-progress state is set before `create_function`, keyed under a different symbol than the function body, left behind by an early return/reentrant defer, or caused by another named lowering-state transition. It must stop if the selected class is broad or ambiguous. | Backend undefined-extern rescue, forwarder rescue, requested-name forcing, per-method Array/Slice/IO/Atomic/String::Builder/Int32 patches, broad `NamedTuple`/`Tuple` rendering, global ambient-map policy, `BlockOwner` rollback, or treating `created_body` as proof of a present HIR body. |
+| `MaterializationTransaction` / exact body availability | Current active selector after 0k-CZ. G6 `BlockOwner` setter availability is guard-green. The 0k-CY live exact/all-equal residual reports `state_in_progress_without_hir_function`, 14 rows across 9 groups, but that fact is pre-lowering because `[MAT_TX]` is logged before `lower_method(...)`; it is not a completion root. | Next executable receipt: read-only post-lowering `FunctionAvailabilityContract` completion classifier for exact `body_symbol` rows. It must join `[MAT_TX]` / `[MAT_EMIT]` with a completion fact emitted after the materialization attempt finishes, then split whether completion is missing, the body is truly absent after completion, the HIR body exists but is missing from MIR/backend visibility, or a legitimate extern/runtime helper is involved. It must stop if the selected class is broad or ambiguous. | Backend undefined-extern rescue, forwarder rescue, requested-name forcing, per-method Array/Slice/IO/Atomic/String::Builder/Int32 patches, broad `NamedTuple`/`Tuple` rendering, global ambient-map policy, `BlockOwner` rollback, treating `created_body` as proof of a present HIR body, or treating pre-lowering `InProgress` as a completed-body root. |
 | `PhaseAuthority` / `GeneratedStageExecution` | B4/L6 remain pressure evidence, not an implementation selector. | Resume only with a slice that reduces B4/L6 phase, owner-spine ambiguity, or live proxy surface. | More behavior-neutral row owners, output/resource/tail/worker patches, memory-budget acceptance, `ADAMAS_LLVM_WORKERS=1` as a fix. |
 | `SemanticIdentity` | H7/H8 remain pre-s2-clean residuals. They are real, but not the active generated-stage blocker. | Resume with a row-specific SDD entry and measured-red baseline if the goal is semantic-service extraction. | TypeValue/stringification/parser shortcuts bundled with B4, generic materialization, ambient-map, or `BlockOwner` work. |
 | `CodePathStatus` | Cleanup is not the active bootstrap constraint. | Resume only with `delete_ready` evidence and a protecting falsifier, or by explicit user selection of bloat reduction. | Deleting suspected-dead code from grep/runtime absence alone; adding cleanup reports as a substitute for owner migration. |

@@ -8,6 +8,25 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: added Slice 0k-CZ, a docs-only hostile
+  correction to the 0k-CY interpretation. Fresh source inspection shows the
+  0k-CY `[MAT_TX]` body visibility facts are recorded after
+  `@function_lowering_states[materialized_name] = InProgress` but before
+  `lower_method(...)` creates or completes the body, and the `ensure` block
+  updates/deletes the state only after lowering completes. Therefore
+  `state_in_progress_without_hir_function` is a pre-lowering visibility fact,
+  not a proven root cause. 0k-CY remains valid only as a refutation of
+  `materialization_action=created_body` as body-present evidence. The active
+  next executable slice remains read-only/behavior-neutral, but it must now be
+  a post-lowering `FunctionAvailabilityContract` completion ledger: join
+  `[MAT_TX]` / `[MAT_EMIT]` with a completion fact emitted after the
+  materialization attempt finishes, then classify whether the body is absent
+  after completion, present in HIR but missing in MIR/backend visibility, or
+  only unobserved because completion facts are missing. Stop if the selected
+  class remains broad. Do not patch backend lookup/emission, undefined externs,
+  forwarders, requested-name policy, sampled methods, `NamedTuple`/`Tuple`
+  rendering, ambient-map policy, or `BlockOwner`.
+
 - 2026-07-02 UPDATE: added Slice 0k-CY, extending the self-applying
   materialization ledger and adding
   `scripts/generated_stage_created_body_visibility_classifier.sh`. Fresh

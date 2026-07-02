@@ -64,9 +64,23 @@ stage1 evidence reports `classifier_classification=reached_tx_and_emit`,
 present for this residual. The stronger facts are `body_function_present=0`,
 `body_has_body=0`, `body_state=in_progress`, and backend
 `lookup/module/plan/emitted` visibility all zero. The next executable movement
-is not a backend plan/lookup fix; it is a read-only HIR producer classifier for
-the transition that marks exact `body_symbol` rows `InProgress` without a
-matching HIR function.
+is not a backend plan/lookup fix. This post-0k-CY next-step wording is
+superseded by the post-0k-CZ correction below: the next classifier must measure
+post-lowering completion rather than treating pre-lowering `InProgress` as a
+completed-body root.
+
+2026-07-02 post-0k-CZ note: hostile review corrected the post-0k-CY next-step
+wording. Source inspection shows `[MAT_TX]` body visibility is recorded before
+`lower_method(...)`, while the `ensure` block updates/deletes the lowering
+state only after the materialization attempt finishes. Therefore
+`state_in_progress_without_hir_function` is a pre-lowering visibility fact, not
+a proven root. The next executable architecture movement remains read-only and
+behavior-neutral, but it must measure post-lowering completion: add a
+`FunctionAvailabilityContract` completion ledger fact after materialization
+finishes, join it to `[MAT_TX]` / `[MAT_EMIT]`, and only then classify true
+body absence versus HIR-to-MIR/backend visibility. Do not patch the old
+0k-CY sample rows, backend stubs, forwarders, requested-name policy,
+`NamedTuple`/`Tuple`, ambient maps, or `BlockOwner` from pre-lowering evidence.
 
 2026-07-02 post-0k-CS note: hostile review of the post-0k-CR route found that
 the active SDD is still being followed, but the emergency B4/O1 lane can become

@@ -12,6 +12,33 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-CZ-PRELOWERING-VISIBILITY-CORRECTION|design-sealed 2026-07-02 {F:0.90 G:0.72 R:0.90}]:
+Slice 0k-CZ is a docs-only hostile correction to the active 0k-CY
+interpretation. Direct source inspection of
+`src/compiler/hir/ast_to_hir.cr` shows the 0k-CY `[MAT_TX]` body visibility
+fields are computed and logged after
+`@function_lowering_states[materialized_name] = FunctionLoweringState::InProgress`
+but before `lower_method(...)` creates or completes the materialized body; the
+`ensure` block updates the lowering state to `Completed` or deletes it only
+after the lowering attempt finishes. Therefore the current
+`state_in_progress_without_hir_function` classifier output is a pre-lowering
+visibility fact, not a proven root cause and not evidence that lowering
+completed without creating a function. The retained verified fact is narrower:
+`materialization_action=created_body` is only a lowering-state label and must
+not be treated as body-present evidence. The next admitted executable movement
+is still read-only/behavior-neutral under `MaterializationTransaction`, but it
+must measure post-lowering completion: add a completion ledger fact after the
+materialization attempt finishes and join it with `[MAT_TX]` / `[MAT_EMIT]`.
+Only that completion fact may split true body absence, HIR-to-MIR visibility,
+backend emission visibility, or missing completion observation. Rejected next
+moves remain backend lookup/emission fixes, undefined-extern rescue,
+forwarders, requested-name forcing, sampled method patches, broad
+`NamedTuple`/`Tuple` rendering, global ambient-map policy, and `BlockOwner`
+rollback. Scope: docs/control-plane correction only; no compiler production
+behavior changed and no green `s2b`/`s3b` claim. Decay trigger: a
+post-lowering completion ledger/classifier supersedes the pre-lowering 0k-CY
+evidence, or newer generated-stage evidence refutes the exact-body residual.
+
 [LM-ARCH-0K-CY-INPROGRESS-WITHOUT-HIR-FUNCTION|design-sealed 2026-07-02 {F:0.87 G:0.70 R:0.87}]:
 Slice 0k-CY refines 0k-CX with self-applying body lifecycle and backend
 visibility facts in `[MAT_TX]` / `[MAT_EMIT]`, plus the read-only classifier
@@ -40,9 +67,9 @@ stop if the class remains broad. Rejected next moves: backend lookup/emission
 fixes, undefined-extern rescue, forwarders, requested-name forcing, sampled
 Array/Slice/IO/Atomic/String::Builder/Int32 patches, broad `NamedTuple`/`Tuple`
 rendering, global ambient-map policy, and `BlockOwner` rollback. Decay trigger:
-a finer HIR producer classifier selects a root-sized transition, the exact
-residual disappears, or newer generated-stage transaction evidence refutes the
-`state_in_progress_without_hir_function` shape.
+a post-lowering completion classifier supersedes this pre-lowering visibility
+fact, the exact residual disappears, or newer generated-stage transaction
+evidence refutes the `state_in_progress_without_hir_function` shape.
 
 [LM-ARCH-0K-CX-CREATED-BODY-BACKEND-MISSING|design-sealed 2026-07-02 {F:0.86 G:0.70 R:0.86}]:
 Slice 0k-CX implements the read-only exact-body lifecycle classifier selected
