@@ -12,6 +12,30 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-DT-MODE-RESOURCE-LANE-SELECTOR|implemented 2026-07-02 {F:0.90 G:0.61 R:0.87}]:
+`scripts/generated_stage_mode_resource_lane_classifier.sh` selects the next
+mode-local `GeneratedStageExecution` resource lane using OS RSS stop-gate
+evidence, not GC `non_gc`. Fresh
+`REQUIRE_CLASSIFICATION=1 REQUIRE_LANE_SELECTION=1` evidence reports
+`classification=select_workers1_hir_to_mir_resource_lane`. Controls:
+`stage1_workers1_mir_peak_rss_mb=343`; produced-s2 HIR stop gates are clean in
+both modes (`s2_default_hir_peak_rss_mb=1168`,
+`s2_workers1_hir_peak_rss_mb=1167`); produced-s2 default MIR stop gate is clean
+(`s2_default_mir_peak_rss_mb=1172`). The produced-s2 workers=1 MIR stop gate
+fails by resource pressure (`s2_workers1_mir_rc=1`,
+`s2_workers1_mir_peak_rss_mb=4105`, `s2_workers1_mir_memory_kill=1`). The
+joined transaction report in the same classifier still records
+`transaction.default_mode_boundary=reached_function_emission`,
+`transaction.default_function_emission_rows=13`,
+`transaction.workers1_mode_boundary=after_hir_final_before_mir_final`, and
+both mode memory-kill flags. Scope: this is a lane selector, not a resource
+fix. It selects workers=1 HIR-to-MIR resource growth as the next production
+resource target and preserves default late LLVM/function-emission as residual
+evidence. Decay trigger: the mode classifier stops selecting workers=1
+HIR-to-MIR, the workers=1 MIR stop gate becomes clean below threshold, the
+default MIR stop gate becomes high, transaction rows stop joining, or
+generated-stage worker-mode semantics change.
+
 [LM-ARCH-0K-DS-STARTUP-RESOURCE-BASELINE-CLASSIFIER|implemented 2026-07-02 {F:0.89 G:0.58 R:0.86}]:
 `scripts/generated_stage_startup_resource_baseline_classifier.sh` resolves the
 startup/process-baseline question opened by 0k-DR. It uses the debug-only

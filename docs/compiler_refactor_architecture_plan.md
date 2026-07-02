@@ -380,6 +380,19 @@ ownership, but it must use OS RSS / stop-gate evidence and must not patch
 startup, parse, HIR, MIR, GC accounting, memory budgets, or worker policy from
 the 0k-DR `non_gc` row.
 
+2026-07-02 post-0k-DT note: the mode-local OS-RSS selector is now executable as
+`scripts/generated_stage_mode_resource_lane_classifier.sh`. Fresh
+`REQUIRE_CLASSIFICATION=1 REQUIRE_LANE_SELECTION=1` evidence selects
+`classification=select_workers1_hir_to_mir_resource_lane`: produced-s2 HIR
+stop gates are clean in both modes (`1168`/`1167` MB), produced-s2 default MIR
+is clean (`1172` MB), and produced-s2 workers=1 MIR memory-kills at `4105` MB.
+The joined transaction report still preserves the default residual
+(`reached_function_emission`, 13 function-emission rows) and the workers=1 row
+boundary (`after_hir_final_before_mir_final`). Therefore the next production
+resource work should not chase the default sequential-emission stack first. It
+must target the workers=1 HIR-to-MIR resource-growth lane, while keeping
+default late LLVM/function-emission as residual evidence.
+
 2026-07-02 post-0k-CR note: the return-shape census now also measures
 assigned-tail yield passthrough (`result = yield; ...; result`). Strict current
 evidence keeps the broad 0k-CQ result for naive `contains_yield` scope, but

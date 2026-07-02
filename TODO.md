@@ -8,6 +8,24 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: Slice 0k-DT selects the mode-local resource lane with
+  OS-RSS stop-gate evidence. New executable classifier:
+  `scripts/generated_stage_mode_resource_lane_classifier.sh`. Fresh
+  `REQUIRE_CLASSIFICATION=1 REQUIRE_LANE_SELECTION=1` evidence reports
+  `classification=select_workers1_hir_to_mir_resource_lane`: stage1
+  workers=1 MIR stop-gate is clean (`343` MB), produced-s2 HIR stop-gates are
+  clean in both modes (`default=1168` MB, `workers1=1167` MB), produced-s2
+  default MIR stop-gate is clean (`1172` MB), but produced-s2 workers=1 MIR
+  stop-gate memory-kills at `4105` MB (`memory_kill=1`). The joined
+  transaction report still records the default residual as
+  `reached_function_emission` with 13 function-emission rows and the workers=1
+  residual as `after_hir_final_before_mir_final`, both memory-killed. Therefore
+  the next production resource receipt must target the workers=1 HIR-to-MIR
+  resource growth lane first and preserve default-mode late LLVM/function
+  emission as a residual. Do not patch default sequential function emission,
+  worker policy, memory budgets, startup/parse/HIR retention, backend rescue,
+  `NamedTuple`/`Tuple`, ambient maps, or `BlockOwner` from this evidence.
+
 - 2026-07-02 UPDATE: Slice 0k-DS resolves the startup/process-baseline problem
   card required by 0k-DR. New executable classifier:
   `scripts/generated_stage_startup_resource_baseline_classifier.sh`, using the
