@@ -8,6 +8,25 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: added Slice 0k-CH, the docs-only
+  `GeneratedStageExecutionOutcome` pre-code plan requested by 0k-CG. Production
+  compiler edits remain paused. The selected B4/L6 edge is now
+  `cli.output_commit_record`: `src/compiler/cli.cr` currently emits
+  `output.llvm_ir_start`, `output.llvm_ir_written`, and
+  `output.binary_compile_result` rows directly, while
+  `scripts/generated_stage_execution_transaction_report.sh` reconstructs
+  `output.commit_record` and final classification from those phase-local rows.
+  The next admitted source slice is a behavior-neutral
+  `contract-owner-migration`: introduce a code-owned
+  `GeneratedStageExecutionOutcome` helper/record with one produced-compiler
+  invocation lifetime, make the CLI output row producer serialize from it, keep
+  existing `GSETX` row format and B4/L6 measured-red state, and add a
+  source-shape guard proving the direct scattered row writes are no longer the
+  authority. Still rejected: worker/resource/tail/backend behavior, output
+  semantics, side-effect semantics, memory-budget acceptance, materialization,
+  parser behavior, broad `NamedTuple`/`Tuple` rendering, global ambient-map
+  changes, physical extraction, and `BlockOwner` rollback.
+
 - 2026-07-02 UPDATE: added Slice 0k-CG, a docs-only
   `GeneratedStageExecution` planning reset after the G6 availability guard.
   Production compiler edits remain paused. The phrase "select a root-sized

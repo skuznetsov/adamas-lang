@@ -526,6 +526,21 @@ materialization behavior, parser behavior, broad `NamedTuple`/`Tuple` rendering,
 global ambient-map changes, physical file extraction, and `BlockOwner` rollback
 remain rejected.
 
+2026-07-02 post-0k-CH note: the pre-code owner-edge plan now exists. The first
+`GeneratedStageExecutionOutcome` edge is `cli.output_commit_record`: the CLI
+directly emits `output.llvm_ir_start`, `output.llvm_ir_written`, and
+`output.binary_compile_result` transaction rows, and the shell report derives
+`output.commit_record` / final classification from those rows. The next source
+slice, if taken, must be behavior-neutral and root-sized: add an
+invocation-lifetime outcome owner/helper for the CLI output corridor, make the
+output row producer serialize from that owner while preserving the current
+`GSETX` row format, add a source-shape guard that rejects direct scattered row
+writes, and rerun the joined B4/L6 pressure gate expecting the same measured-red
+classification unless a separate behavior slice is explicitly admitted. Do not
+reselect worker/resource/tail/backend, parser, materialization,
+`NamedTuple`/`Tuple`, ambient-map, physical extraction, or `BlockOwner` work
+from this edge.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`

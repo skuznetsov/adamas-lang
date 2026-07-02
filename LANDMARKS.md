@@ -12,6 +12,31 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-CH-GENERATED-STAGE-OUTCOME-PRECODE|design-sealed 2026-07-02 {F:0.86 G:0.68 R:0.87}]:
+Slice 0k-CH completes the 0k-CG pre-code requirement without changing compiler
+source. It selects B4/L6 under `PhaseAuthority` / `GeneratedStageExecution`,
+declares `contract-owner-migration`, and names the first old authority edge:
+`cli.output_commit_record`. Today `src/compiler/cli.cr` directly logs
+`output.llvm_ir_start`, `output.llvm_ir_written`, and
+`output.binary_compile_result` rows from scattered output locals, while
+`scripts/generated_stage_execution_transaction_report.sh` reconstructs
+`output.commit_record` and folds it into `final_classification`,
+`join_status`, and `admission_status`. The next admitted source slice is only a
+behavior-neutral owner migration: introduce a code-owned
+`GeneratedStageExecutionOutcome` helper/record with one produced-compiler
+invocation lifetime and make the CLI output row producer serialize from it
+while preserving the existing `GSETX` row format and current B4/L6 measured-red
+state. A source-shape guard must prove the output rows are no longer emitted
+directly from scattered CLI locals. Worker/resource/tail/backend behavior,
+output semantics, side-effect semantics, memory-budget acceptance,
+materialization, parser behavior, broad `NamedTuple`/`Tuple` rendering, global
+ambient-map changes, physical extraction, and `BlockOwner` rollback remain
+rejected. Scope: docs/control-plane only; no compiler production source changes,
+no new scripts, and no green `s2b`/`s3b` claim. Decay trigger: a committed
+behavior-neutral `GeneratedStageExecutionOutcome` output-row owner migration
+lands, B4 reaches `REQUIRE_CLEAN=1`, or fresh evidence refutes
+`cli.output_commit_record` as a root-sized phase-outcome edge.
+
 [LM-ARCH-0K-CG-GENERATED-STAGE-PLANNING-RESET|design-sealed 2026-07-02 {F:0.84 G:0.70 R:0.86}]:
 Slice 0k-CG is a docs-only architecture reset after the 0k-CF G6 guard. It
 tightens the post-G6 route: B4/L6 remain active `PhaseAuthority` /
