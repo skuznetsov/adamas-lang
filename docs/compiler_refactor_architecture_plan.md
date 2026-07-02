@@ -8,6 +8,20 @@ boundaries
 Related: `PLAN_DEMAND_DRIVEN_REWRITE_RFC.md`, `docs/ast_to_hir_audit.md`,
 `docs/codegen_architecture.md`
 
+2026-07-02 post-0k-CO note: the timed phase HIR source seam is now pinned to
+producer ordering. New classifier:
+`scripts/mir_timed_phase_hir_producer_order_classifier.sh`. Strict mode reports
+`current_0k_co_hir_timed_phase_shared_wrapper_order_frontier`: the shared
+`timed_cp_phase$String_block` wrapper is first lowered from an earlier callsite
+with `block_return=nil`, so yield fallback returns nil/`Void`; later the
+`apply_collect_affected_blocks` callsite records `block_return=Set(UInt32)` for
+the same wrapper name, but the wrapper is already void-yielded and
+`yield_return_function_for_block_call?` is false. The near-term refactor lane is
+now a pre-code fix design for callsite block-return specialization /
+wrapper-materialization ownership for untyped `&` helpers. Do not use
+CopyPropagation guards, `timed_cp_phase` annotation/inlining, or MIR/LLVM
+backend rescue as the next move.
+
 2026-07-02 post-0k-CN note: the timed phase frontier is now localized above
 HIR->MIR and LLVM backend return handling. New classifier:
 `scripts/mir_timed_phase_source_seam_classifier.sh`. Strict mode reports

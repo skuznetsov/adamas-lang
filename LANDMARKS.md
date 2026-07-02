@@ -12,6 +12,36 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-CO-HIR-TIMED-PHASE-PRODUCER-ORDER|implemented 2026-07-02 {F:0.89 G:0.55 R:0.88}]:
+Slice 0k-CO adds executable read-only producer-order classifier
+`scripts/mir_timed_phase_hir_producer_order_classifier.sh` after the 0k-CN HIR
+source-seam boundary. The script does not edit tracked compiler source: it
+copies `src/` into `tmp`, injects default-off probes into the temporary
+`ast_to_hir.cr`, builds a temporary probe compiler, runs it through
+`scripts/run_safe.sh`, and removes the temp source/probe/HIR artifacts unless
+`KEEP_TMP=1`. Strict evidence:
+`REQUIRE_CURRENT_CO=1 scripts/mir_timed_phase_hir_producer_order_classifier.sh`
+reports
+`classification=current_0k_co_hir_timed_phase_shared_wrapper_order_frontier`,
+`first_fallback_nil_line=108`, `first_set_before_record_line=115`,
+`first_set_record_line=117`, `first_set_yieldret_zero_line=118`,
+`early_void_before_set=1`, `set_recorded_later=1`, and
+`set_yield_return_not_classified=1`. Interpretation: the shared
+`CopyPropagationPass#timed_cp_phase$String_block` wrapper is first lowered for
+an earlier callsite with `block_return=nil`; `infer_yield_fallback_return_type`
+sees `block_ret=nil`, `candidate=Void`, and returns nil, so `lower_yield`
+emits `yield : Void`. Later the `apply_collect_affected_blocks` callsite
+discovers and records `block_return=Set(UInt32)` for the same
+`timed_cp_phase$String_block` name, but `yield_return_function_for_block_call?`
+still reports `result=0`, and the already-materialized shared wrapper remains
+void-yielded. Scope: executable classifier only; no compiler production
+behavior changed and no green `s2b`/`s3b` claim. The next admitted movement is
+a pre-code fix design for HIR block-return specialization / wrapper
+materialization ownership for untyped `&` helpers. Decay trigger: the
+classifier stops reporting current 0k-CO, a future HIR producer-order probe
+shows the Set-return callsite records before wrapper materialization, or B4
+reaches `REQUIRE_CLEAN=1`.
+
 [LM-ARCH-0K-CN-HIR-TIMED-PHASE-SOURCE-SEAM|implemented 2026-07-02 {F:0.90 G:0.55 R:0.90}]:
 Slice 0k-CN adds executable read-only source-seam classifier
 `scripts/mir_timed_phase_source_seam_classifier.sh` after the 0k-CM

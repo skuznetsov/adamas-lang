@@ -8,6 +8,29 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: implemented Slice 0k-CO, the read-only HIR producer-order
+  classifier selected by 0k-CN. New script:
+  `scripts/mir_timed_phase_hir_producer_order_classifier.sh`. It copies `src/`
+  to `tmp`, injects probes only into the temporary copy, builds a temporary
+  probe compiler, runs it under `scripts/run_safe.sh`, and removes all temp
+  artifacts unless `KEEP_TMP=1`. Strict mode
+  `REQUIRE_CURRENT_CO=1 scripts/mir_timed_phase_hir_producer_order_classifier.sh`
+  reports
+  `classification=current_0k_co_hir_timed_phase_shared_wrapper_order_frontier`.
+  Current evidence: `first_fallback_nil_line=108`,
+  `first_set_record_line=117`, `early_void_before_set=1`,
+  `set_recorded_later=1`, and `set_yield_return_not_classified=1`. The first
+  materialization of the shared `timed_cp_phase$String_block` wrapper happens
+  at an earlier callsite whose block return is `nil`; `infer_yield_fallback`
+  sees `block_ret=nil`, `candidate=Void`, and returns `nil`, so `lower_yield`
+  emits `yield : Void`. The later `apply_collect_affected_blocks` callsite
+  correctly discovers and records `block_return=Set(UInt32)`, but the same
+  shared wrapper is already void-yielded and `yield_return_function_for_block_call?`
+  reports `result=0`. This is still not a fix and not green `s2b`/`s3b`; the
+  next admitted movement is a pre-code fix design for callsite block-return
+  specialization / wrapper materialization ownership, not a local
+  CopyPropagation or backend rescue.
+
 - 2026-07-02 UPDATE: implemented Slice 0k-CN, the read-only
   compiler-source seam classifier required by 0k-CM. New script:
   `scripts/mir_timed_phase_source_seam_classifier.sh`. Strict mode
