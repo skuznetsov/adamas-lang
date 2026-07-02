@@ -12,6 +12,34 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-DD-LOWER-METHOD-TERMINAL-SPLIT|implemented 2026-07-02 {F:0.91 G:0.72 R:0.90}]:
+Slice 0k-DD adds `scripts/generated_stage_lower_method_terminal_classifier.sh`,
+a temp-source classifier for the 0k-DC residual. The script copies `src/`,
+injects default-off `[MAT_METHOD_EXIT]` probes only into the temporary
+`ast_to_hir.cr`, builds a generated probe compiler by running current stage1 on
+that temporary source, then runs the existing created-body completion
+classifier with `GENERATED_S2=<probe>`. This avoids the refuted production
+`lower_method` trace-object path and keeps tracked compiler source behavior
+unchanged. Fresh evidence using
+`REQUIRE_REACHED=1 SAMPLES=8 scripts/generated_stage_lower_method_terminal_classifier.sh`
+reports `completion_classifier_classification=reached_tx_and_emit`,
+`method_exit_rows=338`, `residual_rows=14`, `terminal_cause_kinds=3`,
+`terminal_groups=9`, and `terminal_root_sized_groups=9`. The terminal buckets
+are `lower_method_terminal_no_exact_method_exit` (9 rows),
+`lower_method_terminal_abstract_method` (4 rows), and
+`lower_method_terminal_created_hir_function` (1 row); classification is
+`rejected_mixed_lower_method_terminals`. Scope: read-only/temp-source
+classifier only; no compiler production behavior changed and no green
+`s2b`/`s3b` claim. The next valid movement must pick and split one terminal
+class, with the broad `no_exact_method_exit` class the likely highest-value
+target, by source identity / resolved DefNode / full-name derivation. Rejected
+moves remain sampled method patches, backend rescue, forwarders,
+requested-name forcing, broad rendering/ambient-map policy, `BlockOwner`
+rollback, and production trace-object plumbing through `lower_method`. Decay
+trigger: a finer generated-stage classifier selects a root-sized
+`lower_method` terminal sub-branch, or newer evidence refutes these terminal
+buckets.
+
 [LM-ARCH-0K-DC-MATERIALIZATION-PRODUCER-PATH-BROAD|implemented 2026-07-02 {F:0.91 G:0.72 R:0.90}]:
 Slice 0k-DC splits the 0k-DB terminal cause at the outer HIR producer branch
 without adding a new result or consumer surface. `src/compiler/hir/ast_to_hir.cr`

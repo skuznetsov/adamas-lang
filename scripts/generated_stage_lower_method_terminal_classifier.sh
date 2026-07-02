@@ -1,0 +1,458 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+usage() {
+  cat <<'USAGE'
+usage: scripts/generated_stage_lower_method_terminal_classifier.sh [source.cr]
+
+Temp-source classifier for Slice 0k-DD.
+
+It copies src/ to a temporary directory, injects default-off [MAT_METHOD_EXIT]
+probes into the temporary ast_to_hir.cr, builds a temporary probe compiler, and
+uses that probe as GENERATED_S2 for the existing created-body completion
+classifier. Tracked compiler source is not edited.
+
+Environment:
+  STAGE1_COMPILER      Use an existing stage1 compiler instead of building one.
+  STAGE2_BUILD_TIMEOUT run_safe timeout for building the generated probe (default: 600).
+  STAGE2_BUILD_MEM_MB  run_safe RSS cap for building the generated probe (default: 4096).
+  KEEP_TMP=1           Keep temporary artifacts and nested classifier dirs.
+  MAX_CLASS_ROWS=N     Root-sized row threshold (default: 3).
+  SAMPLES=N            Sample rows per section (default: 8).
+  REQUIRE_REACHED=1    Exit nonzero unless the nested classifier reaches [MAT_EMIT].
+  REQUIRE_ROOT_SIZED=1 Exit nonzero unless exactly one root-sized terminal class is selected.
+
+This is a read-only classifier. It does not add backend rescue, forwarders,
+requested-name forcing, per-method patches, NamedTuple/Tuple normalization,
+ambient-map policy changes, lower_method signature changes, or BlockOwner
+changes.
+USAGE
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+mkdir -p "$ROOT_DIR/tmp"
+TMP_DIR="$(mktemp -d "$ROOT_DIR/tmp/lower-method-terminal.XXXXXX")"
+
+cleanup() {
+  if [[ "${KEEP_TMP:-0}" == "1" ]]; then
+    echo "kept_tmp=$TMP_DIR"
+  else
+    rm -rf "$TMP_DIR"
+  fi
+}
+trap cleanup EXIT
+
+MAX_CLASS_ROWS="${MAX_CLASS_ROWS:-3}"
+SAMPLES="${SAMPLES:-8}"
+TMP_SRC="$TMP_DIR/src"
+PROBE_BIN="$TMP_DIR/adamas_lower_method_terminal_probe"
+STAGE1="${STAGE1_COMPILER:-$TMP_DIR/adamas_stage1}"
+STAGE1_BUILD_LOG="$TMP_DIR/stage1_build.log"
+PROBE_BUILD_LOG="$TMP_DIR/probe_build.log"
+CLASSIFIER_OUT="$TMP_DIR/completion_classifier.out"
+SUMMARY_LOG="$TMP_DIR/terminal_summary.out"
+STAGE2_BUILD_TIMEOUT="${STAGE2_BUILD_TIMEOUT:-600}"
+STAGE2_BUILD_MEM_MB="${STAGE2_BUILD_MEM_MB:-4096}"
+
+echo "# Generated Stage LowerMethod Terminal Classifier"
+echo "repo=$ROOT_DIR"
+echo "stage1=$STAGE1"
+echo "stage2_build_timeout=$STAGE2_BUILD_TIMEOUT"
+echo "stage2_build_mem_mb=$STAGE2_BUILD_MEM_MB"
+echo "max_class_rows=$MAX_CLASS_ROWS"
+echo "samples=$SAMPLES"
+echo "require_reached=${REQUIRE_REACHED:-0}"
+echo "require_root_sized=${REQUIRE_ROOT_SIZED:-0}"
+echo "note: temp-source-copy classifier; tracked compiler source is not edited"
+
+cp -R "$ROOT_DIR/src" "$TMP_SRC"
+
+AST_FILE="$TMP_SRC/compiler/hir/ast_to_hir.cr"
+ruby - "$AST_FILE" <<'RUBY'
+path = ARGV.fetch(0)
+src = File.read(path)
+
+helper_anchor = "    # Lower a method within a class\n"
+helper = <<'CRYSTAL'
+    private def lower_method_terminal_probe(
+      reason : String,
+      class_name : String,
+      method_name : String,
+      full_name : String,
+      override_name : String,
+    ) : Nil
+      return unless env_has?("ADAMAS_LOWER_METHOD_TERMINAL_PROBE")
+
+      STDERR.puts "[MAT_METHOD_EXIT] reason=#{ledger_token(reason)} class=#{ledger_token(class_name)} method=#{ledger_token(method_name)} full=#{ledger_token(full_name)} override=#{ledger_token(override_name)}"
+    end
+
+CRYSTAL
+
+unless src.include?(helper_anchor)
+  warn "missing lower_method helper anchor"
+  exit 2
+end
+src = src.sub(helper_anchor, helper + helper_anchor)
+
+replacements = [
+  [
+    "      if node.is_abstract\n        clear_pending_effect_annotations\n        return\n      end\n",
+    "      if node.is_abstract\n" \
+    "        clear_pending_effect_annotations\n" \
+    "        lower_method_terminal_probe(\"abstract_method\", class_name, method_name, base_name, effective_full_name_override)\n" \
+    "        return\n" \
+    "      end\n",
+  ],
+  [
+    "        clear_pending_effect_annotations\n        return\n      end\n\n      # Skip pointer primitives with no body",
+    "        clear_pending_effect_annotations\n" \
+    "        lower_method_terminal_probe(\"primitive_method\", class_name, method_name, base_name, effective_full_name_override)\n" \
+    "        return\n" \
+    "      end\n\n" \
+    "      # Skip pointer primitives with no body",
+  ],
+  [
+    "      if class_name.starts_with?(\"Pointer(\") || class_name.starts_with?(\"Pointer_\")\n        return if node.body.nil?\n      end\n",
+    "      if class_name.starts_with?(\"Pointer(\") || class_name.starts_with?(\"Pointer_\")\n" \
+    "        if node.body.nil?\n" \
+    "          lower_method_terminal_probe(\"pointer_primitive_no_body\", class_name, method_name, base_name, effective_full_name_override)\n" \
+    "          return\n" \
+    "        end\n" \
+    "      end\n",
+  ],
+  [
+    "          register_pending_method_effects(base_name, 0)\n          return\n        end\n",
+    "          register_pending_method_effects(base_name, 0)\n" \
+    "          lower_method_terminal_probe(\"defer_untyped_params\", class_name, method_name, base_name, effective_full_name_override)\n" \
+    "          return\n" \
+    "        end\n",
+  ],
+  [
+    %q{          debug_hook("method.lower.defer", "class=#{class_name} method=#{method_name} reason=partial_untyped_params") if DebugHooks::ENABLED
+          register_pending_method_effects(base_name, 0)
+          return
+        end
+},
+    %q{          debug_hook("method.lower.defer", "class=#{class_name} method=#{method_name} reason=partial_untyped_params") if DebugHooks::ENABLED
+} \
+    "          register_pending_method_effects(base_name, 0)\n" \
+    "          lower_method_terminal_probe(\"defer_partial_untyped_params\", class_name, method_name, base_name, effective_full_name_override)\n" \
+    "          return\n" \
+    "        end\n",
+  ],
+  [
+    "      return unless v2_string_readable?(full_name)\n      return if full_name.empty?\n",
+    "      unless v2_string_readable?(full_name)\n" \
+    "        lower_method_terminal_probe(\"unreadable_full_name\", class_name, method_name, full_name, effective_full_name_override)\n" \
+    "        return\n" \
+    "      end\n" \
+    "      if full_name.empty?\n" \
+    "        lower_method_terminal_probe(\"empty_full_name\", class_name, method_name, full_name, effective_full_name_override)\n" \
+    "        return\n" \
+    "      end\n",
+  ],
+  [
+    "        @current_method_is_class = old_method_is_class\n        return\n      end\n\n      func = @module.create_function(full_name, return_type)\n",
+    "        @current_method_is_class = old_method_is_class\n" \
+    "        lower_method_terminal_probe(\"already_has_body\", class_name, method_name, full_name, effective_full_name_override)\n" \
+    "        return\n" \
+    "      end\n\n" \
+    "      func = @module.create_function(full_name, return_type)\n" \
+    "      lower_method_terminal_probe(\"created_hir_function\", class_name, method_name, full_name, effective_full_name_override)\n",
+  ],
+]
+
+replacements.each do |before, after|
+  unless src.include?(before)
+    warn "missing instrumentation anchor"
+    warn before
+    exit 3
+  end
+  src = src.sub(before, after)
+end
+
+File.write(path, src)
+RUBY
+
+if [[ -z "${STAGE1_COMPILER:-}" ]]; then
+  set +e
+  "$ROOT_DIR/scripts/build_stage1_original_cached.sh" debug "$STAGE1" --error-trace >"$STAGE1_BUILD_LOG" 2>&1
+  stage1_rc=$?
+  set -e
+else
+  stage1_rc=0
+fi
+
+echo "stage1_build_rc=$stage1_rc"
+if [[ $stage1_rc -ne 0 || ! -x "$STAGE1" ]]; then
+  echo "classification=stage1_build_failed"
+  tail -120 "$STAGE1_BUILD_LOG" || true
+  exit 20
+fi
+
+set +e
+"$ROOT_DIR/scripts/run_safe.sh" "$STAGE1" "$STAGE2_BUILD_TIMEOUT" "$STAGE2_BUILD_MEM_MB" \
+  "$TMP_SRC/adamas.cr" -o "$PROBE_BIN" >"$PROBE_BUILD_LOG" 2>&1
+probe_build_rc=$?
+set -e
+
+echo "probe_build_rc=$probe_build_rc"
+if [[ $probe_build_rc -ne 0 || ! -x "$PROBE_BIN" ]]; then
+  echo "classification=probe_build_failed"
+  tail -160 "$PROBE_BUILD_LOG" || true
+  exit 21
+fi
+
+set +e
+ADAMAS_LOWER_METHOD_TERMINAL_PROBE=1 \
+  GENERATED_S2="$PROBE_BIN" \
+  MAX_CLASS_ROWS="$MAX_CLASS_ROWS" \
+  SAMPLES="$SAMPLES" \
+  KEEP_TMP=1 \
+  "$ROOT_DIR/scripts/generated_stage_created_body_visibility_classifier.sh" "$@" >"$CLASSIFIER_OUT" 2>&1
+classifier_rc=$?
+set -e
+
+log_file="$(awk -F= '$1 == "log_file" { print $2; exit }' "$CLASSIFIER_OUT")"
+classifier_classification="$(awk -F= '$1 == "classifier_classification" { print $2; exit }' "$CLASSIFIER_OUT")"
+kept_classifier_tmp="$(awk -F= '$1 == "kept_classifier_tmp" { print $2; exit }' "$CLASSIFIER_OUT")"
+nested_tmp="$(awk -F= '$1 == "kept_tmp" { print $2; exit }' "$CLASSIFIER_OUT" | tail -1)"
+
+if [[ -z "$log_file" || ! -f "$log_file" ]]; then
+  echo "classification=classifier_log_missing"
+  echo "completion_classifier_rc=$classifier_rc"
+  tail -160 "$CLASSIFIER_OUT" || true
+  exit 22
+fi
+
+echo "completion_classifier_rc=$classifier_rc"
+echo "completion_classifier_classification=$classifier_classification"
+echo "completion_classifier_log=$log_file"
+
+awk -v max_class_rows="$MAX_CLASS_ROWS" -v samples="$SAMPLES" '
+  function field(name,    i, p) {
+    for (i = 1; i <= NF; i++) {
+      p = index($i, "=")
+      if (p > 0 && substr($i, 1, p - 1) == name) {
+        return substr($i, p + 1)
+      }
+    }
+    return ""
+  }
+
+  function keep_sample(kind, row) {
+    if (sample_count[kind] < samples) {
+      sample_count[kind]++
+      sample[kind, sample_count[kind]] = row
+    }
+  }
+
+  function method_key(symbol,    key) {
+    key = symbol
+    sub(/\$.*/, "", key)
+    return key
+  }
+
+  function emitted_owner_of(emitted,    owner) {
+    owner = emitted
+    sub(/\$H.*/, "", owner)
+    return owner
+  }
+
+  /^\[MAT_METHOD_EXIT\]/ {
+    method_exit_rows++
+    reason = field("reason")
+    full = field("full")
+    override = field("override")
+    class_name = field("class")
+    method_name = field("method")
+    if (full != "") {
+      exact_exit_reason[full] = reason
+      exact_exit_rows[full]++
+    }
+    if (override != "") {
+      exact_exit_reason[override] = reason
+      exact_exit_rows[override]++
+    }
+    key = class_name "#" method_name
+    base_exit_reason[key] = reason
+    base_exit_rows[key]++
+    next
+  }
+
+  /^\[MAT_TX\]/ {
+    tx = field("tx")
+    if (tx == "") next
+    phase[tx] = field("phase")
+    requested[tx] = field("requested")
+    target[tx] = field("target")
+    state_key[tx] = field("state_key")
+    body_symbol[tx] = field("body_symbol")
+    identity_status[tx] = field("identity_status")
+    symbol_relation[tx] = field("symbol_relation")
+    required_contract[tx] = field("required_contract")
+    branch[tx] = field("branch")
+    selected_owner[tx] = field("selected_owner")
+    materialization_action[tx] = field("materialization_action")
+    body_function_present[tx] = field("body_function_present")
+    body_has_body[tx] = field("body_has_body")
+    body_state[tx] = field("body_state")
+    next
+  }
+
+  /^\[MAT_DONE\]/ {
+    key = field("requested") "|" field("target") "|" field("materialized")
+    done_seen[key] = 1
+    done_has_function[key] = field("has_function")
+    done_has_body[key] = field("has_body")
+    done_state[key] = field("state")
+    done_status[key] = field("status")
+    done_reason[key] = field("reason")
+    done_producer_path[key] = field("producer_path")
+    done_created_symbol_relation[key] = field("created_symbol_relation")
+    next
+  }
+
+  /^\[MAT_EMIT\]/ {
+    tx = field("tx")
+    if (tx == "" || tx == "none") next
+    kind = field("kind")
+    body_present = field("body_present")
+    lookup = field("lookup_present")
+    module = field("module_present")
+    plan = field("plan_present")
+    emitted_flag = field("emitted_present")
+    undefined = field("undefined_present")
+    emitted = field("emitted")
+    emit_required_contract = field("required_contract")
+    emit_symbol_relation = field("symbol_relation")
+    emit_identity_status = field("identity_status")
+
+    if (body_present == "0" &&
+        kind == "extern" &&
+        required_contract[tx] == "none" &&
+        symbol_relation[tx] == "all_equal" &&
+        identity_status[tx] == "exact" &&
+        materialization_action[tx] == "created_body" &&
+        emit_required_contract == required_contract[tx] &&
+        emit_symbol_relation == symbol_relation[tx] &&
+        emit_identity_status == identity_status[tx]) {
+      residual_rows++
+      done_key = requested[tx] "|" target[tx] "|" body_symbol[tx]
+      if (!(done_key in done_seen) && state_key[tx] != "") {
+        done_key = requested[tx] "|" target[tx] "|" state_key[tx]
+      }
+      terminal = "no_exact_method_exit"
+      if (body_symbol[tx] in exact_exit_reason) {
+        terminal = exact_exit_reason[body_symbol[tx]]
+      } else {
+        base_key = method_key(body_symbol[tx])
+        if (base_key in base_exit_reason) {
+          terminal = "base_only_" base_exit_reason[base_key]
+        }
+      }
+      cause = "lower_method_terminal_" terminal
+      cause_count[cause]++
+      group_key = cause "|" phase[tx] "|" branch[tx] "|" done_producer_path[done_key] "|" done_created_symbol_relation[done_key] "|" emitted_owner_of(emitted)
+      group_count[group_key]++
+      if (!(group_key in group_seen)) {
+        group_seen[group_key] = 1
+        group_order[++group_total] = group_key
+        group_cause[group_key] = cause
+      }
+      row = "cause=" cause " tx=" tx " requested=" requested[tx] " body=" body_symbol[tx] " branch=" branch[tx] " producer=" done_producer_path[done_key] " created_relation=" done_created_symbol_relation[done_key] " exact_exit_rows=" (exact_exit_rows[body_symbol[tx]] + 0) " base_exit_rows=" (base_exit_rows[method_key(body_symbol[tx])] + 0)
+      keep_sample("residual", row)
+    }
+  }
+
+  END {
+    for (cause in cause_count) {
+      cause_kinds++
+      selected_cause = cause
+      selected_rows = cause_count[cause] + 0
+      if ((cause_count[cause] + 0) <= max_class_rows) root_sized_cause_count++
+    }
+    for (i = 1; i <= group_total; i++) {
+      key = group_order[i]
+      if ((group_count[key] + 0) <= max_class_rows) root_sized_groups++
+    }
+
+    if ((residual_rows + 0) == 0) {
+      classification = "no_lower_method_terminal_residual"
+    } else if ((method_exit_rows + 0) == 0) {
+      classification = "rejected_no_method_exit_probe_rows"
+    } else if (cause_kinds > 1) {
+      classification = "rejected_mixed_lower_method_terminals"
+    } else if (selected_rows > max_class_rows || selected_rows == 0) {
+      classification = "rejected_lower_method_terminal_class_too_wide"
+    } else {
+      classification = "eligible_lower_method_terminal_edge"
+    }
+
+    print ""
+    print "## LowerMethod Terminal Counts"
+    print "method_exit_rows=" method_exit_rows + 0
+    print "residual_rows=" residual_rows + 0
+    print "terminal_cause_kinds=" cause_kinds + 0
+    print "terminal_groups=" group_total + 0
+    print "terminal_root_sized_groups=" root_sized_groups + 0
+    print ""
+    print "## LowerMethod Terminal Classification"
+    print "selected_cause=" selected_cause
+    print "selected_rows=" selected_rows + 0
+    print "classification=" classification
+    print "[GENERATED_STAGE_LOWER_METHOD_TERMINAL] owner=MaterializationTransaction old_edge=instance_class_info_lower_method_created_none classification=" classification " selected_cause=" selected_cause " selected_rows=" (selected_rows + 0)
+    print ""
+    print "## Terminal Buckets"
+    if (cause_kinds == 0) {
+      print "(none)"
+    } else {
+      for (cause in cause_count) {
+        print "cause=" cause " rows=" cause_count[cause] + 0 " root_sized=" (((cause_count[cause] + 0) <= max_class_rows) ? 1 : 0)
+      }
+    }
+    print ""
+    print "## Terminal Groups"
+    if (group_total == 0) {
+      print "(none)"
+    } else {
+      for (i = 1; i <= group_total; i++) {
+        key = group_order[i]
+        print "group=" key " rows=" group_count[key] + 0 " root_sized=" (((group_count[key] + 0) <= max_class_rows) ? 1 : 0) " cause=" group_cause[key]
+      }
+    }
+    print ""
+    print "## Terminal Residual Samples"
+    if ((sample_count["residual"] + 0) == 0) {
+      print "(none)"
+    } else {
+      for (i = 1; i <= sample_count["residual"]; i++) print sample["residual", i]
+    }
+  }
+' "$log_file" | tee "$SUMMARY_LOG"
+
+terminal_classification="$(awk -F= '$1 == "classification" { value = $2 } END { print value }' "$SUMMARY_LOG")"
+
+if [[ -n "$kept_classifier_tmp" && -d "$kept_classifier_tmp" && "${KEEP_TMP:-0}" != "1" ]]; then
+  rm -rf "$kept_classifier_tmp"
+fi
+if [[ -n "$nested_tmp" && -d "$nested_tmp" && "${KEEP_TMP:-0}" != "1" ]]; then
+  rm -rf "$nested_tmp"
+fi
+
+if [[ "${REQUIRE_REACHED:-0}" == "1" && "$classifier_classification" != "reached_tx_and_emit" ]]; then
+  echo "FAIL: nested classifier did not reach [MAT_EMIT]" >&2
+  exit 9
+fi
+
+if [[ "${REQUIRE_ROOT_SIZED:-0}" == "1" &&
+      "$terminal_classification" != "eligible_lower_method_terminal_edge" ]]; then
+  echo "FAIL: no root-sized lower_method terminal edge selected" >&2
+  exit 9
+fi

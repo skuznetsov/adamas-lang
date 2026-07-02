@@ -121,6 +121,20 @@ architecture movement should split `lower_method` terminal behavior with a
 self-host-safe producer observation, preferably a temp-source classifier or a
 field that does not alter `lower_method` call ABI.
 
+2026-07-02 post-0k-DD note: that self-host-safe observation now exists as
+`scripts/generated_stage_lower_method_terminal_classifier.sh`. It injects
+`[MAT_METHOD_EXIT]` probes only into copied temp source, builds a generated
+probe `s2` from that copy, and runs the existing completion classifier with
+`GENERATED_S2=<probe>`. Fresh evidence preserves `[MAT_EMIT]` reachability and
+splits the 14-row residual into three terminal buckets:
+`lower_method_terminal_no_exact_method_exit` (9 rows),
+`lower_method_terminal_abstract_method` (4 rows), and
+`lower_method_terminal_created_hir_function` (1 row). The result is mixed, so
+it is still not a behavior license. The next architecture movement should
+split the broad `no_exact_method_exit` bucket by source identity / resolved
+DefNode / full-name derivation, not patch the sampled methods or backend
+fallback.
+
 2026-07-02 post-0k-CS note: hostile review of the post-0k-CR route found that
 the active SDD is still being followed, but the emergency B4/O1 lane can become
 another symptom scheduler if every moved crash stack automatically selects the

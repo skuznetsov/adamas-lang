@@ -8,6 +8,29 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: added Slice 0k-DD, the temp-source `lower_method`
+  terminal classifier required by 0k-DC. New script:
+  `scripts/generated_stage_lower_method_terminal_classifier.sh`. It copies
+  `src/`, injects default-off `[MAT_METHOD_EXIT]` probes only into the
+  temporary `ast_to_hir.cr`, uses current stage1 to compile that temp source
+  into a generated probe `s2`, then runs the existing created-body completion
+  classifier with `GENERATED_S2=<probe>`. Tracked production compiler source is
+  not edited and no `lower_method` signature/ABI trace object is introduced.
+  Fresh evidence from
+  `REQUIRE_REACHED=1 SAMPLES=8 scripts/generated_stage_lower_method_terminal_classifier.sh`
+  reports `completion_classifier_classification=reached_tx_and_emit`,
+  `method_exit_rows=338`, `residual_rows=14`, `terminal_cause_kinds=3`,
+  `terminal_groups=9`, and `terminal_root_sized_groups=9`. The current
+  terminal buckets are `lower_method_terminal_no_exact_method_exit` (9 rows),
+  `lower_method_terminal_abstract_method` (4 rows), and
+  `lower_method_terminal_created_hir_function` (1 row). The classifier result
+  is `rejected_mixed_lower_method_terminals`, so no behavior patch is admitted.
+  The next movement must choose one of these terminal classes, preferably the
+  broad `no_exact_method_exit` class, and split it by self-host-safe source
+  identity / resolved DefNode / full-name derivation. Do not patch sampled
+  Array/Slice/Atomic/IO/String::Builder/Int32 methods directly, and do not
+  reintroduce production `lower_method` trace-object plumbing.
+
 - 2026-07-02 UPDATE: added Slice 0k-DC, the producer-path split required by
   0k-DB while keeping `[MAT_DONE]` as the authority. `[MAT_DONE]` now records
   `producer_path`, `created_symbol_relation`, and capped `created_symbols`;
