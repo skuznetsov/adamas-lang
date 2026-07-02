@@ -12,6 +12,30 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-BL-ARCHITECTURE-EXECUTION-LADDER|design-sealed 2026-07-01 {F:0.84 G:0.64 R:0.88}]:
+Slice 0k-BL converts the 0k-BK pause into an execution ladder for all future
+production slices. A local uncommitted `TypeValue` / `RuntimeTypeIdentity`
+owner-fact WIP existed, but it was quarantined in git stash before this
+docs-only checkpoint and is not completion evidence. The next production slice
+must select exactly one Active Architecture Board row and tranche, name the
+legacy authority edge being retired/shadowed/refuted, name the new owner
+fact/service and lifetime, enumerate producers and consumers before editing,
+run a fresh measured-red baseline, prove the old authority edge is no longer
+the sole authority, state generated-stage relevance, and record residual red
+boundaries. Immediate consequence for TypeValue: the stashed WIP may be resumed
+only as H6-core `contract-owner-migration`, with fresh H6-core/B3 baselines,
+multi-argument `typeof` either fixed or explicitly scoped, remaining
+`dot_class_literal?` / touched `type_literal?` consumers classified as
+compatibility-only or still-authoritative, and the H7 command-call parser guard
+kept separate unless a new parser `semantic-service-extraction` slice is
+selected first. Rejected repeats remain backend forwarders, target keepalive,
+materialization rescue, parser-precedence loops, global ambient-map policy
+changes, broad `NamedTuple`/`Tuple` rendering patches, and `BlockOwner`
+rollback. Scope: docs/frontier control only; no compiler behavior changed and
+no green `s2b`/`s3b` claim is made. Decay trigger: a future production slice
+passes this ladder and lands, the Active Architecture Board is superseded, or
+fresh generated-stage evidence selects a different owner boundary.
+
 [LM-ARCH-0K-BK-ARCHITECTURE-PAUSE-AFTER-HOSTILE-REVIEW|design-sealed 2026-07-01 {F:0.84 G:0.62 R:0.87}]:
 Slice 0k-BK records the explicit architecture pause after hostile review of the
 recent repeated pattern: local crash/root probes kept drifting toward backend

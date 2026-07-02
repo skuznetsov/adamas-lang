@@ -243,6 +243,19 @@ ambient-map, `NamedTuple`/`Tuple`, or `BlockOwner` work from the latest
 frontier unless a new SDD slice first names the old authority edge, falsifier,
 root-size budget, and residual boundary.
 
+2026-07-01 post-0k-BL note: the architecture pause now has an execution
+ladder, and the uncommitted TypeValue owner-fact WIP has been quarantined
+instead of allowed to steer by inertia. The refactor track should now treat
+every production slice as a small owner-boundary migration: row selection,
+legacy authority edge, owner fact/service, producer/consumer inventory,
+measured-red baseline, focused DoD, architecture DoD, generated-stage
+relevance, and residual boundary. Resuming the TypeValue WIP is still admitted,
+but only through that ladder and only as H6-core `contract-owner-migration`;
+it must not be used as proof that the broader compiler architecture has been
+rewritten. If a next fix cannot name the owner fact/service or generated-stage
+gate it moves, it belongs in SDD planning or cleanup classification, not in
+production code.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`

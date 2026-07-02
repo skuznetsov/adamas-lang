@@ -8,6 +8,23 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: added Slice 0k-BL, a docs-only architecture
+  execution-ladder checkpoint after pausing production edits. The uncommitted
+  TypeValue / RuntimeTypeIdentity owner-fact WIP was quarantined in git stash
+  (`wip: typevalue runtime identity owner fact before architecture plan`) and
+  is not completion evidence. The next production slice must now pass the
+  ladder in `docs/compiler_architecture_sdd.md`: select one active-board row
+  and tranche, name the old authority edge, name the owner fact/service,
+  enumerate producers and consumers, rerun the measured-red baseline before
+  patching, prove the old edge is no longer sole authority, state generated
+  stage relevance, and record residual red boundaries. For TypeValue
+  specifically, resuming the WIP is admitted only as H6-core
+  `contract-owner-migration`; it must rebaseline H6-core/B3, fix or explicitly
+  scope multi-argument `typeof`, list remaining `dot_class_literal?` /
+  `type_literal?` consumers as compatibility-only or authoritative, and keep
+  the H7 command-call parser guard separate. No compiler behavior changed in
+  this checkpoint.
+
 - 2026-07-01 UPDATE: added Slice 0k-BK, a docs-only architecture pause
   checkpoint after hostile review of the repeated local-fix pattern. Production
   code remains paused. The next implementation may proceed only if it declares
