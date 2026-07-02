@@ -318,6 +318,22 @@ produced-stage external-sink entrypoint emission, or choose a different
 function-emission resource edge while preserving the workers=1
 `after_hir_final_before_mir_final` residual.
 
+2026-07-02 post-0k-DP note: the default-mode function-emission resource lane now
+has an executable memory-shape discriminator rather than a manual grep. Fresh
+`REQUIRE_CURRENT=1 scripts/generated_stage_function_emission_memory_discriminator.sh`
+preserves the current boundary (`reached_function_emission`,
+workers=1 `after_hir_final_before_mir_final`, memory kill after sequential
+`80/150`) but classifies `function_emission_preexisting_non_gc_pressure`.
+Produced s2 starts sequential snapshots with `non_gc` already around 4.3GB at
+`idx=11/150`, while emitted text/state counters are tiny and stage1 workers=1
+control reports `non_gc=0` while compiling/running the same source. This refutes
+incremental function-output growth and external sink work as the next default
+edge. The next selector should move earlier: identify which produced-stage
+phase-owned state or runtime allocation is already resident before/at function
+emission. Do not patch memory budgets, sink mode, worker policy, rand fallback,
+tail, metadata, backend semantics, materialization, `NamedTuple`/`Tuple`,
+ambient maps, or `BlockOwner` from this evidence.
+
 2026-07-02 post-0k-CR note: the return-shape census now also measures
 assigned-tail yield passthrough (`result = yield; ...; result`). Strict current
 evidence keeps the broad 0k-CQ result for naive `contains_yield` scope, but

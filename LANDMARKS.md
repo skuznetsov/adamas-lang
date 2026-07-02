@@ -12,6 +12,26 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-DP-FUNCTION-EMISSION-MEMORY-DISCRIMINATOR|implemented 2026-07-02 {F:0.88 G:0.55 R:0.86}]:
+`scripts/generated_stage_function_emission_memory_discriminator.sh` makes the
+default-mode function-emission memory-shape discriminator executable. Fresh
+`REQUIRE_CURRENT=1` evidence preserves the current transaction boundary:
+`report.default_mode_boundary=reached_function_emission`,
+`report.workers1_mode_boundary=after_hir_final_before_mir_final`,
+`report.default_memory_kill=1`, and `last_index=80/150`, but classifies
+`function_emission_preexisting_non_gc_pressure`. Produced s2 default snapshots
+already have `default_first_non_gc=4353564448` at `idx=11/150`, unchanged at the
+last snapshot, while incremental text/state counters are small
+(`default_first_emit_raw_out=157628`, `default_last_emit_raw_out=239160`,
+`default_first_func_state=7220`, `default_last_func_state=18452`). Stage1
+workers=1 control on the same source compiles/runs with `stage1_first_non_gc=0`,
+`stage1_last_non_gc=0`, `stage1_snapshot_rows=314`, and stdout `42`. Scope:
+this refutes incremental function-output/state growth and external sinks as the
+next default-lane resource edge; the next selector should classify pre-existing
+produced-stage non-GC pressure before/at function emission. Decay trigger: a
+fresh strict discriminator reports low first-snapshot non-GC, large incremental
+output/state growth, missing snapshots, or a changed mode boundary.
+
 [LM-ARCH-0K-DO-EXTERNAL-SINK-PREFLIGHT-REFUTED|design-refuted 2026-07-02 {F:0.89 G:0.58 R:0.88}]:
 Slice 0k-DO selects the default-mode LLVM function-emission sink boundary as a
 `PhaseAuthority` / `GeneratedStageExecution` receipt, but the direct

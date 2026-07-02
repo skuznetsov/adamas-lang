@@ -8,6 +8,26 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: Slice 0k-DP adds executable discriminator
+  `scripts/generated_stage_function_emission_memory_discriminator.sh` for the
+  default-mode function-emission resource lane. Fresh
+  `REQUIRE_CURRENT=1` evidence preserves the current transaction boundary
+  (`report.default_mode_boundary=reached_function_emission`,
+  `report.workers1_mode_boundary=after_hir_final_before_mir_final`,
+  `report.default_memory_kill=1`, `last_index=80/150`) but classifies the
+  memory shape as `function_emission_preexisting_non_gc_pressure`. Produced s2
+  default-worker snapshots show `default_first_non_gc=4353564448` already at
+  `idx=11/150`, unchanged at the last snapshot, while text/state counters remain
+  small (`default_first_emit_raw_out=157628`,
+  `default_last_emit_raw_out=239160`, `default_first_func_state=7220`,
+  `default_last_func_state=18452`). The stage1 workers=1 control compiles/runs
+  the same source with `stage1_first_non_gc=0`, `stage1_last_non_gc=0`,
+  `stage1_snapshot_rows=314`, and stdout `42`. Therefore the next default-lane
+  selector must move earlier than output sink or incremental function text
+  growth: classify the owner of pre-existing produced-stage non-GC pressure
+  present before/at function emission. Workers=1 remains the separate
+  `after_hir_final_before_mir_final` residual.
+
 - 2026-07-02 UPDATE: Slice 0k-DO selects the default-mode function-emission
   sink boundary as the next `PhaseAuthority` / `GeneratedStageExecution`
   receipt, then adds executable falsifier

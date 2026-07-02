@@ -598,7 +598,7 @@ evidence, not next-step selectors.
 | `bootstrap-emergency-with-ledger` / B4-O1 | Consumed by 0k-CU. The HIR `BlockCallReturnContract` implementation moves the generated-stage gate past the old O1 `affected_block_ids` / `Set(UInt32)#includes?` frontier: `REQUIRE_CURRENT_CU_CONTRACT=1 scripts/hir_block_return_shape_census.sh` reports `classification=current_0k_cu_block_call_return_contract_applied`, and `STAGE1_COMPILER=/tmp/adamas_0kcu_stage1 REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh` exits at the expected non-current boundary with `b4_classification=llvm_entry_failure_after_lower_main` and `workers1_exit139=0`. The new residual is post-`lower_main` RSS pressure in both worker modes, with the default worker-mode rand fallback still present. | Return to the board before any new production source slice. The next receipt must reselect an owner spine from fresh generated-stage evidence; if it targets the new residual, it must name the old authority edge behind post-`lower_main` memory/resource growth rather than treating higher memory limits, worker count, or the rand fallback as acceptance evidence. | Continuing the 0k-CU breakglass lane by inertia; starting from the new RSS-kill stack; raising memory as a fix; forcing `ADAMAS_LLVM_WORKERS=1`; worker/rand/output/resource patches without a new receipt; CopyPropagation, Set/Hash, backend block-return, `NamedTuple`/`Tuple`, ambient-map, or `BlockOwner` changes. |
 | `architecture-burn-down` / owner-spine plan | Consumed by 0k-CW. The active burn-down selection is `MaterializationTransaction` exact body availability, based on generated-stage residual evidence rather than the latest crash stack. | Do not add another planning/report row unless it retires/refutes this selection or the residual classifier proves the selected edge is not root-sized. | Treating a moved crash stack as architecture progress; adding another report that does not retire/refute an older surface; committing WIP helpers that do not consume an old authority edge; claiming source-shape green as bootstrap green. |
 | `MaterializationTransaction` / exact body availability | Consumed through 0k-DI for the active `after_tx -> inside_type_params` edge. G6 `BlockOwner` setter availability is guard-green. The explicit materialization scope-entry slice preserves `[MAT_EMIT]` reachability and changes the lower-method terminal classifier from the old mixed 14-row / 4-cause state with `no_exact_after_tx_no_call` (6 rows) to a root-sized abstract-method residual: `residual_rows=3`, `terminal_cause_kinds=1`, `selected_cause=lower_method_terminal_abstract_method`, and `classification=eligible_lower_method_terminal_edge`. Residual rows now traverse `after_tx -> inside_type_params -> inside_namespace -> before_arity -> after_arity` and join to `[MAT_METHOD_CALL]`. This is focused authority-edge movement, not green bootstrap. | Return to the board before selecting another production edge. The next movement should first remeasure the generated-stage pressure gate and choose whether the active constraint is still `MaterializationTransaction` exact body availability, B4/O1 `PhaseAuthority`, or a `SemanticIdentity` pre-s2-clean row. | Backend undefined-extern rescue, forwarder rescue, requested-name forcing, per-method Array/Slice/IO/Atomic/String::Builder/Int32 patches, broad `NamedTuple`/`Tuple` rendering, global ambient-map policy, `BlockOwner` rollback, treating abstract-method residuals as a local method patch, adding another result/consumer layer, adding another generic pre-call marker, or threading a trace object through production `lower_method`. |
-| `PhaseAuthority` / `GeneratedStageExecution` | Post-0k-DN evidence is joined, resource-classified, phase-split, function-emission-split, and mode-boundary-split, but still not behavior-admissible. `STAGE1_COMPILER=/tmp/adamas_worker_boundary_stage1 TAIL_LINES=30 REQUIRE_JOINED=1 REQUIRE_POST_CU_RESOURCE=1 REQUIRE_RESOURCE_PHASE_SPLIT=1 REQUIRE_FUNCTION_EMISSION_SPLIT=1 REQUIRE_WORKER_MODE_BOUNDARY=1 scripts/generated_stage_execution_transaction_report.sh` exits 0 with `final_classification=abort_resource_after_lower_main`, `resource.default_mode_boundary=reached_function_emission`, `resource.workers1_mode_boundary=after_hir_final_before_mir_final`, `runtime.default_mir_final_rows=1`, `runtime.workers1_mir_final_rows=0`, `runtime.default_function_emission_phase_rows=13`, and `runtime.workers1_function_emission_phase_rows=0`. | A production slice on this lane must now choose one explicit transaction-owned resource lane: default-mode LLVM function emission (`sequential_progress` around 80/150), or workers=1 HIR-final-to-MIR-final resource growth. The unchosen lane must remain a named residual in the receipt and DoD. | Memory-budget acceptance, forced `ADAMAS_LLVM_WORKERS=1`, worker/rand patches, output-file behavior changes, tail stubs, metadata/DWARF/type-name patches, backend semantic changes, or treating either single-mode boundary as green bootstrap without the other mode's residual statement. |
+| `PhaseAuthority` / `GeneratedStageExecution` | Post-0k-DP evidence is joined, resource-classified, phase-split, function-emission-split, mode-boundary-split, and memory-shape-discriminated, but still not behavior-admissible. The strict transaction report preserves `final_classification=abort_resource_after_lower_main`, `resource.default_mode_boundary=reached_function_emission`, `resource.workers1_mode_boundary=after_hir_final_before_mir_final`, `runtime.default_mir_final_rows=1`, `runtime.workers1_mir_final_rows=0`, `runtime.default_function_emission_phase_rows=13`, and `runtime.workers1_function_emission_phase_rows=0`. `REQUIRE_CURRENT=1 scripts/generated_stage_function_emission_memory_discriminator.sh` classifies the default lane as `function_emission_preexisting_non_gc_pressure`: produced-s2 starts sequential snapshots above 4GB non-GC by `idx=11/150`, while stage1 workers=1 control on the same source reports zero non-GC. | A production slice on this lane must now choose one explicit transaction-owned resource lane: default-mode pre-existing produced-stage non-GC pressure before/at function emission, or workers=1 HIR-final-to-MIR-final resource growth. If the default lane is selected, the next selector must identify the owner of the pre-existing non-GC pressure, not patch output sinks or incremental function text growth. The unchosen lane must remain a named residual in the receipt and DoD. | Memory-budget acceptance, forced `ADAMAS_LLVM_WORKERS=1`, worker/rand patches, output-file behavior changes, external sink enablement, incremental output-buffer fixes, tail stubs, metadata/DWARF/type-name patches, backend semantic changes, or treating either single-mode boundary as green bootstrap without the other mode's residual statement. |
 | `SemanticIdentity` | H7/H8 remain pre-s2-clean residuals. They are real, but not the active generated-stage blocker. | Resume with a row-specific SDD entry and measured-red baseline if the goal is semantic-service extraction. | TypeValue/stringification/parser shortcuts bundled with B4, generic materialization, ambient-map, or `BlockOwner` work. |
 | `CodePathStatus` | Cleanup is not the active bootstrap constraint. | Resume only with `delete_ready` evidence and a protecting falsifier, or by explicit user selection of bloat reduction. | Deleting suspected-dead code from grep/runtime absence alone; adding cleanup reports as a substitute for owner migration. |
 
@@ -746,6 +746,67 @@ external sinks as a resource fix until it owns and falsifies the produced-stage
 external-sink entrypoint/main-emission contract; otherwise this receipt is
 refuted and the default lane must choose a different function emission resource
 edge.
+
+#### Slice 0k-DP receipt: default-mode function-emission memory discriminator
+
+```text
+SliceReceipt {
+  board_lane: PhaseAuthority / GeneratedStageExecution
+  tranche: bootstrap-emergency-with-ledger
+  old_authority_edge:
+    The post-0k-DN default-mode residual was localized inside LLVM function
+    emission, but 0k-DO refuted direct external sinks as the next edge. The
+    remaining ambiguity is whether the default memory kill is caused by
+    incremental function-output/function-state growth during sequential emission,
+    or by produced-stage non-GC pressure that is already resident before/at the
+    first sequential function-emission snapshots.
+  owner_fact_or_service:
+    Existing `LLVMIRGenerator` memory snapshots plus the
+    `GeneratedStageExecution` transaction report are treated as a discriminator,
+    not as behavior admission. A future owner service must be selected only after
+    this discriminator says which state is growing.
+  producers:
+    `emit_functions_sequential` produces `[LLVM_MEM]` snapshots when
+    `ADAMAS_LLVM_MEM_SNAPSHOT_EVERY` is set; the generated-stage transaction
+    report produces the mode boundaries and kept compile logs.
+  consumers:
+    `scripts/generated_stage_function_emission_memory_discriminator.sh`, the
+    SDD current board, and future default-lane resource receipts.
+  measured_red_baseline:
+    Fresh `REQUIRE_CURRENT=1` evidence preserves
+    `report.default_mode_boundary=reached_function_emission`,
+    `report.workers1_mode_boundary=after_hir_final_before_mir_final`,
+    `report.default_memory_kill=1`, and `last_index=80/150`.
+  focused_DoD:
+    `REQUIRE_CURRENT=1 scripts/generated_stage_function_emission_memory_discriminator.sh`
+    must report `classification=function_emission_preexisting_non_gc_pressure`.
+  architecture_DoD:
+    The discriminator must include a stage1 workers=1 control on the same source
+    so produced-stage counters are not accepted without a negative control.
+  generated_stage_gate:
+    The same strict transaction report requirements as 0k-DN/0k-DO, plus
+    memory snapshots from the default produced-s2 run and stage1 control.
+  negative_controls:
+    Stage1 workers=1 must compile and run the same source and report zero
+    first/last non-GC in the same snapshot format.
+  rejected_shortcuts:
+    Memory-budget acceptance, forcing worker count, external sink enablement,
+    incremental output-buffer fixes, worker/rand patches, tail/metadata/backend
+    semantic changes, materialization, `NamedTuple`/`Tuple`, ambient maps, or
+    `BlockOwner` rollback.
+  residual_boundary:
+    Current evidence reports produced-s2 default snapshots with
+    `default_first_non_gc=4353564448` already at `idx=11/150`, unchanged at the
+    last snapshot, while `default_first_emit_raw_out=157628`,
+    `default_last_emit_raw_out=239160`, `default_first_func_state=7220`, and
+    `default_last_func_state=18452`. Stage1 workers=1 control reports
+    `stage1_first_non_gc=0`, `stage1_last_non_gc=0`, `stage1_snapshot_rows=314`,
+    and stdout `42`. Therefore the next default-lane selector must move earlier
+    than output sink or incremental function text growth and classify the owner
+    of pre-existing produced-stage non-GC pressure before/at function emission.
+    Workers=1 remains `after_hir_final_before_mir_final`.
+}
+```
 
 #### Slice 0k-DH receipt: materialization scope-entry contract
 
