@@ -12,6 +12,28 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-BK-ARCHITECTURE-PAUSE-AFTER-HOSTILE-REVIEW|design-sealed 2026-07-01 {F:0.84 G:0.62 R:0.87}]:
+Slice 0k-BK records the explicit architecture pause after hostile review of the
+recent repeated pattern: local crash/root probes kept drifting toward backend
+forwarders, target keepalive, materialization rescues, ambient-map policy
+patches, parser loops, `NamedTuple`/`Tuple` rendering changes, or `BlockOwner`
+rollback pressure. The current live guards still show two separate frontiers:
+H6-core `TypeValue` / `RuntimeTypeIdentity` remains measured-red, and the
+command-call member-access parser guard remains measured-red. The pause does
+not revoke the admitted TypeValue lane; it tightens it. The only admitted
+behavior movement is still H6-core `contract-owner-migration`, and it must
+install a named HIR-owned `TypeValue` / `RuntimeTypeIdentity` fact keyed by
+`ValueId` and consumed by the core producer/consumer set. Any future code slice
+that needs backend stubs/forwarders, target keepalive, generic materialization,
+requested-name or ambient-map policy, parser-precedence loops, broad
+`NamedTuple`/`Tuple` behavior, or `BlockOwner` changes must stop before editing
+and add a new SDD slice with a named authority edge, falsifier, root-size
+budget, and residual boundary. Scope: docs/frontier control only; no compiler
+behavior changed and no green `s2b`/`s3b` claim is made. Decay trigger: a
+committed TypeValue owner fact lands, the active board is superseded, or fresh
+generated-stage evidence proves a different owner boundary is the next
+root-sized architecture movement.
+
 [LM-ARCH-0K-BJ-TYPEVALUE-OWNER-FACT-GATE|design-sealed 2026-07-01 {F:0.84 G:0.56 R:0.87}]:
 Slice 0k-BJ adds a docs-only implementation gate before the TypeValue
 production slice. The next code movement remains `contract-owner-migration`,

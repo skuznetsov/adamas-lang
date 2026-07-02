@@ -8,6 +8,19 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: added Slice 0k-BK, a docs-only architecture pause
+  checkpoint after hostile review of the repeated local-fix pattern. Production
+  code remains paused. The next implementation may proceed only if it declares
+  one tranche and stays inside it: currently the only admitted behavior tranche
+  is H6-core `contract-owner-migration` for a HIR-owned
+  `TypeValue` / `RuntimeTypeIdentity` fact. A backend forwarder, target
+  keepalive, materialization rescue, global ambient-map policy change,
+  parser-precedence loop, `NamedTuple`/`Tuple` rendering patch, or `BlockOwner`
+  rollback is not an admitted shortcut. If a future code slice needs any of
+  those surfaces, stop before editing and write a new SDD slice that names the
+  authority edge, falsifier, root-size budget, and residual boundary. No
+  compiler behavior changed in this checkpoint.
+
 - 2026-07-01 UPDATE: added Slice 0k-BJ, a docs-only TypeValue
   owner-fact implementation gate. Production code remains paused until the next
   slice can name the `TypeValue` / `RuntimeTypeIdentity` owner fact, its

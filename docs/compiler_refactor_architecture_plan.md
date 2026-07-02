@@ -230,6 +230,19 @@ source-visible type behavior. Parser, generic materialization, `BlockOwner`,
 requested-name, ambient-map, backend forwarder/stub, and broad
 `NamedTuple`/`Tuple` work remain out of scope for this slice.
 
+2026-07-01 post-0k-BK note: production work is paused again after hostile
+review of the repeated local-fix pattern. The architecture issue is no longer
+"which current symptom can be made green fastest"; it is that HIR/MIR/backend
+paths keep deriving semantic facts from rendered names, ambient maps, side
+sets, and phase-local fallback state. The next movement must therefore be
+either a docs/planning consolidation that retires or tightens a stale lane, or
+the already-admitted H6-core `contract-owner-migration` for a named HIR-owned
+`TypeValue` / `RuntimeTypeIdentity` fact. Do not resume backend forwarder,
+target keepalive, materialization rescue, parser-precedence, global
+ambient-map, `NamedTuple`/`Tuple`, or `BlockOwner` work from the latest
+frontier unless a new SDD slice first names the old authority edge, falsifier,
+root-size budget, and residual boundary.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`
