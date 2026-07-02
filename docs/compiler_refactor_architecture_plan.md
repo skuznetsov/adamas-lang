@@ -82,6 +82,18 @@ body absence versus HIR-to-MIR/backend visibility. Do not patch the old
 0k-CY sample rows, backend stubs, forwarders, requested-name policy,
 `NamedTuple`/`Tuple`, ambient maps, or `BlockOwner` from pre-lowering evidence.
 
+2026-07-02 post-0k-DA note: the post-lowering completion ledger now exists and
+the generated-stage classifier consumes `[MAT_TX]`, `[MAT_DONE]`, and
+`[MAT_EMIT]`. Fresh evidence reports `mat_tx_rows=724`, `mat_done_rows=794`,
+`created_body_missing_completion_rows=14`,
+`selected_cause=lowering_completed_without_hir_function`, and
+`classification=rejected_completion_class_too_wide` across 9 completion groups.
+This confirms the residual survives completion but remains too broad for a
+behavior fix. The acceleration path is not another standalone census: introduce
+a `MaterializationAttemptResult` terminal-status owner so the next split is a
+contract consumed by materialization/ExternCall fallback decisions, not another
+log surface.
+
 2026-07-02 post-0k-CS note: hostile review of the post-0k-CR route found that
 the active SDD is still being followed, but the emergency B4/O1 lane can become
 another symptom scheduler if every moved crash stack automatically selects the

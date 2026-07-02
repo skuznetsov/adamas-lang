@@ -12,6 +12,33 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-DA-MATERIALIZATION-COMPLETION-BROAD|implemented 2026-07-02 {F:0.90 G:0.72 R:0.90}]:
+Slice 0k-DA adds the executable post-lowering completion fact required by
+0k-CZ. `src/compiler/hir/ast_to_hir.cr` emits default-off `[MAT_DONE]` rows
+under `ADAMAS_MATERIALIZATION_IDENTITY_LEDGER` after the materialization
+attempt finishes, and
+`scripts/generated_stage_created_body_visibility_classifier.sh` now joins
+`[MAT_TX]`, `[MAT_DONE]`, and `[MAT_EMIT]`. Fresh current-source evidence using
+`STAGE1_COMPILER=/tmp/adamas_mat_done_stage1 SAMPLES=8 scripts/generated_stage_created_body_visibility_classifier.sh`
+reports `classifier_classification=reached_tx_and_emit`,
+`mat_tx_rows=724`, `mat_done_rows=794`,
+`created_body_missing_completion_rows=14`,
+`completion_cause_kinds=1`,
+`selected_cause=lowering_completed_without_hir_function`,
+`selected_rows=14`, `classification=rejected_completion_class_too_wide`, 9
+completion groups, `missing_completion_rows=0`, and zero malformed/unjoined
+ledger rows. This confirms the current residual survives post-lowering
+completion and is not merely a missing completion observation. It is still too
+broad for a behavior patch. The next admitted movement must turn the
+materialization attempt into an owned terminal-status contract such as
+`MaterializationAttemptResult`, then split the broad
+`lowering_completed_without_hir_function` class by named terminal reason before
+any consumer or emitted behavior changes. Rejected moves remain backend
+undefined-extern rescue, forwarders, requested-name forcing, sampled method
+patches, broad `NamedTuple`/`Tuple` rendering, global ambient-map policy, and
+`BlockOwner` rollback. Scope: default-off ledger/classifier only; no compiler
+production behavior changed and no green `s2b`/`s3b` claim.
+
 [LM-ARCH-0K-CZ-PRELOWERING-VISIBILITY-CORRECTION|design-sealed 2026-07-02 {F:0.90 G:0.72 R:0.90}]:
 Slice 0k-CZ is a docs-only hostile correction to the active 0k-CY
 interpretation. Direct source inspection of

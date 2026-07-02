@@ -8,6 +8,29 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: added Slice 0k-DA, the executable post-lowering
+  completion fact required by 0k-CZ. `src/compiler/hir/ast_to_hir.cr` now emits
+  default-off `[MAT_DONE]` rows under `ADAMAS_MATERIALIZATION_IDENTITY_LEDGER`
+  after a materialization attempt finishes, and
+  `scripts/generated_stage_created_body_visibility_classifier.sh` consumes
+  `[MAT_TX]` + `[MAT_DONE]` + `[MAT_EMIT]` as a completion classifier. Fresh
+  evidence from
+  `STAGE1_COMPILER=/tmp/adamas_mat_done_stage1 SAMPLES=8 scripts/generated_stage_created_body_visibility_classifier.sh`
+  reports `classifier_classification=reached_tx_and_emit`,
+  `mat_tx_rows=724`, `mat_done_rows=794`,
+  `created_body_missing_completion_rows=14`,
+  `completion_cause_kinds=1`,
+  `selected_cause=lowering_completed_without_hir_function`,
+  `selected_rows=14`, `classification=rejected_completion_class_too_wide`,
+  9 completion groups, `missing_completion_rows=0`, and no malformed or
+  unjoined ledger rows. This refutes the weakest 0k-CZ possibility
+  (`missing_completion_fact`) and confirms the residual is post-lowering, but
+  it is still broad and not a behavior license. The next movement must not add
+  another report-only layer; it must introduce a behavior-neutral
+  `MaterializationAttemptResult` / terminal-status owner for the lowering
+  attempt, so the broad `lowering_completed_without_hir_function` class can be
+  split by named terminal reason before any consumer or behavior patch.
+
 - 2026-07-02 UPDATE: added Slice 0k-CZ, a docs-only hostile
   correction to the 0k-CY interpretation. Fresh source inspection shows the
   0k-CY `[MAT_TX]` body visibility facts are recorded after

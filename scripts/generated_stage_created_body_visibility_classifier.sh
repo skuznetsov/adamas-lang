@@ -8,8 +8,9 @@ usage() {
 usage: scripts/generated_stage_created_body_visibility_classifier.sh [source.cr]
 
 Build/use a generated-stage materialization transaction log and split the
-created_body_backend_missing residual by the next self-applying visibility
-boundary. This classifier consumes only [MAT_TX] and [MAT_EMIT] ledger facts.
+created_body_backend_missing residual by the next self-applying completion
+boundary. This classifier consumes [MAT_TX], [MAT_DONE], and [MAT_EMIT] ledger
+facts.
 
 Environment:
   LOG_FILE               Parse an existing classifier compile log.
@@ -90,7 +91,7 @@ else
   fi
 fi
 
-echo "# Generated Stage Created-Body Visibility Classifier"
+echo "# Generated Stage Created-Body Completion Classifier"
 echo "log_file=$LOG_FILE"
 echo "classifier_rc=$classifier_rc"
 echo "classifier_classification=$classifier_classification"
@@ -144,13 +145,25 @@ report="$(
       return miss
     }
 
-    function visibility_cause(tx, lookup, module, plan, emitted, undefined,    miss) {
+    function done_key_for(tx,    key) {
+      key = requested[tx] "|" target[tx] "|" body_symbol[tx]
+      if (!(key in done_seen) && state_key[tx] != "") {
+        key = requested[tx] "|" target[tx] "|" state_key[tx]
+      }
+      return key
+    }
+
+    function completion_cause(tx, lookup, module, plan, emitted, undefined, done_key,    miss, done_function, done_body, done_final_state) {
       miss = missing_required_fields(tx) missing_emit_fields(lookup, module, plan, emitted, undefined)
       if (miss != "") return "missing_visibility_fields"
-      if (body_function_present[tx] != "1" && body_state[tx] == "in_progress") return "state_in_progress_without_hir_function"
-      if (body_function_present[tx] != "1") return "hir_function_absent_after_created_body"
-      if (body_has_body[tx] != "1") return "hir_body_absent_after_created_body"
-      if (module != "1") return "mir_function_missing_after_hir_body"
+      if (!(done_key in done_seen)) return "missing_lowering_completion_fact"
+      done_function = done_has_function[done_key]
+      done_body = done_has_body[done_key]
+      done_final_state = done_state[done_key]
+      if (done_function == "" || done_body == "" || done_final_state == "") return "missing_completion_fields"
+      if (done_function != "1") return "lowering_completed_without_hir_function"
+      if (done_body != "1") return "lowering_completed_without_hir_body"
+      if (module != "1") return "mir_function_missing_after_hir_completion"
       if (plan != "1") return "emission_plan_pruned_after_mir"
       if (lookup != "1") return "backend_lookup_miss_despite_mir"
       if (emitted != "1") return "planned_but_not_emitted_at_call_site"
@@ -183,6 +196,7 @@ report="$(
       phase[tx] = field("phase")
       requested[tx] = field("requested")
       target[tx] = field("target")
+      state_key[tx] = field("state_key")
       body_symbol[tx] = field("body_symbol")
       call_symbol_hint[tx] = field("call_symbol_hint")
       identity_status[tx] = field("identity_status")
@@ -194,6 +208,23 @@ report="$(
       body_function_present[tx] = field("body_function_present")
       body_has_body[tx] = field("body_has_body")
       body_state[tx] = field("body_state")
+    }
+
+    /^\[MAT_DONE\]/ {
+      mat_done_rows++
+      requested_done = field("requested")
+      target_done = field("target")
+      materialized_done = field("materialized")
+      if (requested_done == "" || target_done == "" || materialized_done == "") {
+        malformed_done++
+        keep_sample("malformed", $0)
+        next
+      }
+      key = requested_done "|" target_done "|" materialized_done
+      done_seen[key] = 1
+      done_has_function[key] = field("has_function")
+      done_has_body[key] = field("has_body")
+      done_state[key] = field("state")
     }
 
     /^\[MAT_EMIT\]/ {
@@ -238,13 +269,17 @@ report="$(
           emit_symbol_relation == symbol_relation[tx] &&
           emit_identity_status == identity_status[tx]) {
         residual_rows++
-        cause = visibility_cause(tx, lookup, module, plan, emitted_flag, undefined)
+        done_key = done_key_for(tx)
+        done_present = (done_key in done_seen) ? "1" : "0"
+        cause = completion_cause(tx, lookup, module, plan, emitted_flag, undefined, done_key)
         cause_count[cause]++
         if (cause == "missing_visibility_fields") missing_visibility_field_rows++
-        group_key = cause "|" phase[tx] "|" branch[tx] "|" body_state[tx] "|" emitted_owner_of(emitted)
+        if (cause == "missing_lowering_completion_fact") missing_completion_rows++
+        if (cause == "missing_completion_fields") missing_completion_field_rows++
+        group_key = cause "|" phase[tx] "|" branch[tx] "|" body_state[tx] "|" done_state[done_key] "|" emitted_owner_of(emitted)
         group_count[group_key]++
         remember_group(group_key, cause, tx, emitted)
-        residual_sample = "cause=" cause " tx=" tx " requested=" requested[tx] " body=" body_symbol[tx] " emitted=" emitted " action=" materialization_action[tx] " hir_func=" body_function_present[tx] " hir_body=" body_has_body[tx] " hir_state=" body_state[tx] " lookup=" lookup " module=" module " plan=" plan " emitted_present=" emitted_flag " undefined=" undefined " owner=" selected_owner[tx] " branch=" branch[tx]
+        residual_sample = "cause=" cause " tx=" tx " requested=" requested[tx] " body=" body_symbol[tx] " emitted=" emitted " action=" materialization_action[tx] " hir_func=" body_function_present[tx] " hir_body=" body_has_body[tx] " hir_state=" body_state[tx] " done_present=" done_present " done_func=" done_has_function[done_key] " done_body=" done_has_body[done_key] " done_state=" done_state[done_key] " lookup=" lookup " module=" module " plan=" plan " emitted_present=" emitted_flag " undefined=" undefined " owner=" selected_owner[tx] " branch=" branch[tx]
         keep_sample(cause, residual_sample)
         keep_sample("residual", residual_sample)
       }
@@ -266,44 +301,50 @@ report="$(
         }
       }
 
-      if (malformed_tx != 0 || malformed_emit != 0 || unjoined_emit_rows != 0) {
+      if (malformed_tx != 0 || malformed_emit != 0 || malformed_done != 0 || unjoined_emit_rows != 0) {
         classification = "rejected_malformed_ledger"
       } else if ((residual_rows + 0) == 0) {
-        classification = "no_created_body_missing_visibility_residual"
+        classification = "no_created_body_missing_completion_residual"
       } else if (cause_kinds == 0) {
         classification = "rejected_unclassified_residual"
       } else if (missing_visibility_field_rows != 0) {
         classification = "rejected_missing_visibility_fields"
+      } else if (missing_completion_field_rows != 0) {
+        classification = "rejected_missing_completion_fields"
       } else if (cause_kinds > 1) {
-        classification = "rejected_mixed_visibility_causes"
+        classification = "rejected_mixed_completion_causes"
       } else if (selected_rows > max_class_rows || selected_rows == 0) {
-        classification = "rejected_visibility_class_too_wide"
+        classification = "rejected_completion_class_too_wide"
       } else {
-        classification = "eligible_visibility_edge"
+        classification = "eligible_completion_edge"
       }
 
       print "## Counts"
       print "mat_tx_rows=" mat_tx_rows + 0
+      print "mat_done_rows=" mat_done_rows + 0
       print "mat_emit_rows=" mat_emit_rows + 0
       print "transaction_bound_emit_rows=" transaction_bound_emit_rows + 0
       print "non_transaction_emit_rows=" non_transaction_emit_rows + 0
       print "missing_body_emit_rows=" missing_body_emit_rows + 0
-      print "created_body_missing_visibility_rows=" residual_rows + 0
-      print "visibility_cause_kinds=" cause_kinds + 0
-      print "visibility_groups=" group_total + 0
-      print "visibility_root_sized_groups=" root_sized_groups + 0
+      print "created_body_missing_completion_rows=" residual_rows + 0
+      print "completion_cause_kinds=" cause_kinds + 0
+      print "completion_groups=" group_total + 0
+      print "completion_root_sized_groups=" root_sized_groups + 0
       print "missing_visibility_field_rows=" missing_visibility_field_rows + 0
+      print "missing_completion_rows=" missing_completion_rows + 0
+      print "missing_completion_field_rows=" missing_completion_field_rows + 0
       print "malformed_tx_rows=" malformed_tx + 0
+      print "malformed_done_rows=" malformed_done + 0
       print "malformed_emit_rows=" malformed_emit + 0
       print "unjoined_emit_rows=" unjoined_emit_rows + 0
 
       print ""
-      print "## Visibility Classification"
-      print "selected_edge=call_materialization.created_body_backend_visibility"
+      print "## Completion Classification"
+      print "selected_edge=call_materialization.created_body_completion"
       print "selected_cause=" selected_cause
       print "selected_rows=" selected_rows + 0
       print "classification=" classification
-      print "[GENERATED_STAGE_CREATED_BODY_VISIBILITY] edge=call_materialization.created_body_backend_visibility owner=MaterializationTransaction old_edge=created_body_backend_missing classification=" classification " selected_cause=" selected_cause " selected_rows=" (selected_rows + 0) " next_action=" (classification == "eligible_visibility_edge" ? "write_behavior_receipt_for_selected_visibility_cause" : "stop_if_broad_or_ambiguous")
+      print "[GENERATED_STAGE_CREATED_BODY_COMPLETION] edge=call_materialization.created_body_completion owner=MaterializationTransaction old_edge=created_body_backend_missing classification=" classification " selected_cause=" selected_cause " selected_rows=" (selected_rows + 0) " next_action=" (classification == "eligible_completion_edge" ? "write_behavior_receipt_for_selected_completion_cause" : "stop_if_broad_or_ambiguous")
 
       print ""
       print "## Cause Buckets"
@@ -360,7 +401,7 @@ if [[ "${REQUIRE_CLASSIFIED:-0}" == "1" &&
 fi
 
 if [[ "${REQUIRE_ROOT_SIZED:-0}" == "1" &&
-      "$classification" != "eligible_visibility_edge" ]]; then
-  echo "FAIL: no root-sized created-body visibility edge selected" >&2
+      "$classification" != "eligible_completion_edge" ]]; then
+  echo "FAIL: no root-sized created-body completion edge selected" >&2
   exit 9
 fi

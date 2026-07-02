@@ -2582,6 +2582,19 @@ module Adamas::HIR
       log_semantic_state_scope_shadow(transaction, tx_id) if state_scope_ledger_enabled
     end
 
+    private def log_materialization_completion_ledger(
+      requested_name : String,
+      target_name : String,
+      materialized_name : String,
+    ) : Nil
+      return unless env_has?("ADAMAS_MATERIALIZATION_IDENTITY_LEDGER")
+
+      has_function = @module.has_function?(materialized_name) ? "1" : "0"
+      has_body = @module.has_function_with_body?(materialized_name) ? "1" : "0"
+      state = function_lowering_state_label(materialized_name)
+      STDERR.puts "[MAT_DONE] requested=#{ledger_token(requested_name)} target=#{ledger_token(target_name)} materialized=#{ledger_token(materialized_name)} has_function=#{has_function} has_body=#{has_body} state=#{ledger_token(state)}"
+    end
+
     private def log_semantic_state_scope_shadow(
       transaction : CallMaterializationTransaction,
       tx_id : String,
@@ -72597,6 +72610,7 @@ module Adamas::HIR
         else
           @function_lowering_states.delete(materialized_name)
         end
+        log_materialization_completion_ledger(name, target_name, materialized_name)
         debug_hook("function.lower.done", "name=#{materialized_name}")
         if start_time
           elapsed_ms = (Time.instant - start_time).total_milliseconds
