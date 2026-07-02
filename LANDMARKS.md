@@ -12,6 +12,26 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-CC-OWNER-SPINE-CONSOLIDATION|design-sealed 2026-07-02 {F:0.84 G:0.68 R:0.85}]:
+Slice 0k-CC executes the 0k-CB reset by classifying active frontier rows under
+owner spines and selecting the next implementation lane without using the latest
+LLVM crash stack as the selector. B4 and L6 remain
+`PhaseAuthority`/`GeneratedStageExecution` guard-only pressure gates; they do
+not admit resource, output, tail, worker, or backend behavior. H7 and H8 remain
+`SemanticIdentity` pre-s2-clean residuals and do not move the active generated
+LLVM-entry frontier. G6 is selected as the next admitted implementation lane
+under `MaterializationTransaction`: `Hash(UInt64, BlockOwner)#[]=` must have a
+real materialized body under the call-visible identity. The next code slice must
+start from `regression_tests/block_owner_index_assign_materialization_repro.sh`,
+keep `BlockOwner` as the owner carrier, and replace or shadow the
+producer-to-consumer authority edge for call demand -> body materialization ->
+HIR/MIR/backend body presence. Rejected repeats: backend undefined-extern
+rescue, forwarders, `NamedTuple`/`Tuple` rendering normalization, global
+ambient-map policy changes, parser changes, or `BlockOwner` rollback. Scope:
+docs/control-plane only; no compiler production behavior changed and no green
+`s2b`/`s3b` claim. Decay trigger: the G6 lane lands, G6 repro changes shape, or
+B4 reaches `REQUIRE_CLEAN=1`.
+
 [LM-ARCH-0K-CB-ARCHITECTURE-RESET|design-sealed 2026-07-02 {F:0.83 G:0.70 R:0.84}]:
 Slice 0k-CB records a docs-only architecture reset after hostile review of the
 post-0k-CA route. The reset does not discard the 0k-CA joined transaction

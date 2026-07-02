@@ -184,6 +184,12 @@ changes. The next design movement is owner-spine consolidation across
 `SemanticIdentity`, `MaterializationTransaction`, and
 `PhaseAuthority` / `GeneratedStageExecution`.
 
+Slice 0k-CC completes that consolidation for the current active rows. B4 and
+L6 remain `PhaseAuthority` guard-only pressure gates. The next implementation
+lane is G6 under `MaterializationTransaction`: prove and fix the body
+materialization authority for `Hash(UInt64, BlockOwner)#[]=` without changing
+LLVM worker/resource/output/tail behavior or rolling back `BlockOwner`.
+
 Generated-stage owner carriers SHOULD use explicit private classes/methods
 until their materialization surface is proven. A rejected 0k-BR preflight using
 Crystal `record` macros preserved local checks but changed B4 to a produced

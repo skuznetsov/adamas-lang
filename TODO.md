@@ -8,6 +8,20 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: added Slice 0k-CC, a docs-only owner-spine
+  consolidation that executes the 0k-CB reset. Active rows are now classified
+  instead of selected from the latest crash stack: B4 and L6 stay
+  `PhaseAuthority` guard-only pressure, H7/H8 stay `SemanticIdentity`
+  pre-s2-clean residuals, and G6 is the next admitted implementation lane under
+  `MaterializationTransaction`. The selected next code slice must start from
+  `regression_tests/block_owner_index_assign_materialization_repro.sh` and keep
+  `BlockOwner` as the owner carrier. It must fix or shadow the
+  producer-to-consumer authority edge that proves `Hash(UInt64, BlockOwner)#[]=`
+  has a real materialized body under the call-visible identity. It must not
+  patch backend undefined externs, add forwarders, normalize
+  `NamedTuple`/`Tuple`, globally change ambient maps, change parser behavior,
+  or treat B4/L6 joined resource rows as behavior admission.
+
 - 2026-07-02 UPDATE: added Slice 0k-CB, a docs-only architecture reset after
   hostile review of the post-0k-CA route. Production compiler behavior remains
   frozen. The joined transaction report is still the active B4 pressure gate,

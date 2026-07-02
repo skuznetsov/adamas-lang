@@ -462,6 +462,16 @@ output/tail fixes, worker/memory-budget behavior, backend forwarders,
 `BlockOwner` changes merely because the current joined rows mention output
 start, resource abort, or missing tail rows.
 
+2026-07-02 post-0k-CC note: owner-spine consolidation is now design-sealed.
+B4 and L6 remain `PhaseAuthority` guard-only pressure gates, H7/H8 remain
+`SemanticIdentity` pre-s2-clean residuals, and G6 is selected as the next
+implementation lane under `MaterializationTransaction`. The next code slice is
+not a backend rescue and not a carrier rollback. It must start from
+`regression_tests/block_owner_index_assign_materialization_repro.sh`, preserve
+`BlockOwner`, and prove that `Hash(UInt64, BlockOwner)#[]=` is demanded,
+materialized, and visible to HIR/MIR/backend body-presence checks under one
+semantic identity before changing behavior.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`
