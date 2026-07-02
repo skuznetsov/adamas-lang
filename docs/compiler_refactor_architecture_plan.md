@@ -449,6 +449,19 @@ refute `GeneratedStageExecution`; do not patch workers, tail stubs, output,
 resources, backend forwarders, `NamedTuple`/`Tuple`, ambient maps, parser
 behavior, or `BlockOwner` from the joined row alone.
 
+2026-07-02 post-0k-CB note: hostile review of the post-0k-CA route found that
+even a joined transaction selector can become another proxy metric if it only
+chooses the next local LLVM symptom. The refactor plan is therefore reset to
+owner-spine consolidation before more production compiler behavior. The active
+spines are `SemanticIdentity`, `MaterializationTransaction`, and
+`PhaseAuthority` / `GeneratedStageExecution`. A future selector over joined
+rows is guard-only unless it maps evidence to one of those spines and names a
+producer-to-consumer authority edge. Do not implement `ResourceEvidence`,
+output/tail fixes, worker/memory-budget behavior, backend forwarders,
+`NamedTuple`/`Tuple` rendering, ambient-map policy, parser behavior, or
+`BlockOwner` changes merely because the current joined rows mention output
+start, resource abort, or missing tail rows.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`

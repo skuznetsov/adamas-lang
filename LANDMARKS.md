@@ -12,6 +12,26 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-CB-ARCHITECTURE-RESET|design-sealed 2026-07-02 {F:0.83 G:0.70 R:0.84}]:
+Slice 0k-CB records a docs-only architecture reset after hostile review of the
+post-0k-CA route. The reset does not discard the 0k-CA joined transaction
+evidence; it downgrades the next selector from implementation driver to
+guard-only unless it chooses a durable owner-spine decision. Current joined B4
+facts (`final_classification=abort_resource`,
+`tail.semantic_vs_input_split=tail_not_reached_after_output_start`, and
+`output.commit_record=llvm_ir_started_without_commit:file`) are too close to the
+latest LLVM symptom to admit `ResourceEvidence`, worker, tail, output,
+memory-budget, backend-forwarder, parser, ambient-map, `NamedTuple`/`Tuple`, or
+`BlockOwner` behavior changes. The next movement is an owner-spine consolidation
+slice: classify active architecture work under `SemanticIdentity`,
+`MaterializationTransaction`, or `PhaseAuthority`/`GeneratedStageExecution`,
+retire or stale-mark lanes that no longer move bootstrap, and admit production
+implementation only when a producer-to-consumer authority edge is named with a
+falsifier. Scope: docs/control-plane only; no compiler production behavior
+changed and no green `s2b`/`s3b` claim. Decay trigger: a future owner-spine
+slice selects one producer-to-consumer authority edge with executable evidence,
+or B4 reaches `REQUIRE_CLEAN=1`.
+
 [LM-ARCH-0K-CA-RUNTIME-TRANSACTION-ROWS|implemented 2026-07-02 {F:0.88 G:0.48 R:0.88}]:
 Slice 0k-CA implements the default-off runtime transaction rows selected by
 0k-BZ. The classifier now passes `GSETX_TRANSACTION_ID` and `GSETX_LEDGER` only

@@ -8,6 +8,24 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: added Slice 0k-CB, a docs-only architecture reset after
+  hostile review of the post-0k-CA route. Production compiler behavior remains
+  frozen. The joined transaction report is still the active B4 pressure gate,
+  but a selector over joined rows is now guard-only unless it chooses a durable
+  owner-spine decision, not merely the next local LLVM symptom. In particular,
+  `final_classification=abort_resource`,
+  `tail_not_reached_after_output_start`, and
+  `llvm_ir_started_without_commit:file` are not sufficient to admit
+  `ResourceEvidence`, worker, tail, output, memory-budget, backend-forwarder,
+  parser, ambient-map, `NamedTuple`/`Tuple`, or `BlockOwner` changes. The next
+  movement is an owner-spine consolidation slice: classify active work under
+  `SemanticIdentity`, `MaterializationTransaction`, or
+  `PhaseAuthority`/`GeneratedStageExecution`, retire or stale-mark symptom
+  lanes that no longer move bootstrap, and select implementation only when a
+  producer-to-consumer authority edge is named with a falsifier. This is still
+  not green `s2b` or `s3b`; it prevents the joined report from becoming the
+  next proxy metric.
+
 - 2026-07-02 UPDATE: implemented Slice 0k-CA, the default-off runtime
   transaction-row follow-up selected by 0k-BZ. `scripts/generated_stage_llvm_entry_classifier.sh`
   now passes `GSETX_TRANSACTION_ID` / `GSETX_LEDGER` into only the produced-s2

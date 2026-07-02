@@ -174,6 +174,16 @@ still rejected: `b4.classification=current_0k_bn_frontier`,
 movement must be a selector over joined transaction rows, not a direct LLVM
 behavior patch.
 
+Slice 0k-CB tightens that conclusion after hostile review. A joined transaction
+selector is guard evidence unless it chooses a durable owner spine and
+producer-to-consumer authority edge. The current joined rows (`abort_resource`,
+output started without commit, tail not reached) do not by themselves admit
+`ResourceEvidence`, output ownership, tail-stub, worker, memory-budget,
+backend-forwarder, parser, ambient-map, `NamedTuple`/`Tuple`, or `BlockOwner`
+changes. The next design movement is owner-spine consolidation across
+`SemanticIdentity`, `MaterializationTransaction`, and
+`PhaseAuthority` / `GeneratedStageExecution`.
+
 Generated-stage owner carriers SHOULD use explicit private classes/methods
 until their materialization surface is proven. A rejected 0k-BR preflight using
 Crystal `record` macros preserved local checks but changed B4 to a produced
