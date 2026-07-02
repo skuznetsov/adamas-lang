@@ -379,8 +379,9 @@ B4 green claim.
 the side-effect contract. Hostile review found a second-order metric drift:
 `LLVMEmissionSession` edge consumption can become the new local progress proxy
 even while B4 remains at the same produced-stage boundary. The
-`SideEffectMergeContract` implementation is still admitted, but it is now
-future Slice 0k-BW and must include the convergence vector from the SDD:
+`SideEffectMergeContract` implementation is still admitted, but at that point
+it is the then-future Slice 0k-BW and must include the convergence vector from
+the SDD:
 B4 before/after, default-worker versus `ADAMAS_LLVM_WORKERS=1` split,
 side-effect source shape, tail-input versus semantic-failure classification,
 output/resource evidence boundary, and post-edge routing. If 0k-BW makes the
@@ -401,6 +402,16 @@ next unconsumed local session edge. The next refactor movement should be a
 docs/design `GeneratedStageExecution` transaction checkpoint that models the
 whole generated-stage LLVM-entry product and its commit/abort evidence before
 any more production compiler edits.
+
+2026-07-02 post-0k-BX note: that checkpoint is now design-sealed. The next
+executable refactor slice is not `TailDeclarationPlan`, `OutputOwnership`,
+`ResourceEvidence`, worker policy, side-effect semantics, or a backend
+forwarder. It is a default-off generated-stage execution transaction report
+that joins invocation setup, function plan, worker/fallback, side-effect
+contract, tail inputs, output ownership, resource evidence, and B4 final
+classification under one transaction id. A future behavior slice must consume a
+root-sized transaction-owned row or explicitly refute this boundary; local
+LLVM logs and source-shape success are not enough.
 
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another

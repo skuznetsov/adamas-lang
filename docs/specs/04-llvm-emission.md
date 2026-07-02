@@ -140,6 +140,14 @@ tail-stub, output-ownership, resource, worker, or green-bootstrap claims. The
 next LLVM-emission architecture movement must model the generated-stage
 transaction boundary before another local session edge is selected.
 
+Slice 0k-BX design-seals that transaction boundary. A future LLVM-emission
+behavior change MUST be preceded by a generated-stage transaction report that
+joins invocation setup, function plan, worker/fallback policy, side-effect
+contract rows, tail declaration/stub inputs, output ownership, resource
+evidence, and final B4 classification for the same produced-compiler run. A
+source-shape guard that only proves another `LLVMEmissionSession` field or
+consumer moved is no longer sufficient admission evidence.
+
 Generated-stage owner carriers SHOULD use explicit private classes/methods
 until their materialization surface is proven. A rejected 0k-BR preflight using
 Crystal `record` macros preserved local checks but changed B4 to a produced

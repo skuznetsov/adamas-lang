@@ -8,6 +8,24 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: added Slice 0k-BX, a docs-only
+  `GeneratedStageExecutionTransaction` checkpoint after 0k-BW. Production
+  compiler edits are paused again. The previous three `LLVMEmissionSession`
+  ownership migrations are useful, but B4 stayed at
+  `classification=current_0k_bn_frontier`; therefore "consume the next local
+  session edge" is now rejected as the default move. The next executable slice
+  must be a generated-stage transaction report/guard, not a behavior patch:
+  one transaction row must join compiler invocation setup, function plan,
+  worker/fallback policy, side-effect contract, tail declaration/stub inputs,
+  output ownership, resource evidence, and B4 commit/abort classification for
+  the same produced-compiler run. If that report cannot link the rows or only
+  restates local session fields, stop before production code. If it links rows
+  and selects a root-sized old authority edge, a later code slice may consume
+  that transaction-owned edge in behavior-neutral mode. Still rejected:
+  `TailDeclarationPlan`, `OutputOwnership`, `ResourceEvidence`, worker policy,
+  side-effect semantics, backend stub rescue, memory-budget acceptance, or
+  `ADAMAS_LLVM_WORKERS=1` as a fix without the transaction checkpoint.
+
 - 2026-07-02 UPDATE: implemented Slice 0k-BW, the behavior-neutral
   `SideEffectMergeContract` consumer migration. `LLVMEmissionSession` now owns
   the worker side-effect row vocabulary, `emit_functions_parallel` receives the

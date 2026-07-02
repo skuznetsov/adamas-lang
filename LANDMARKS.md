@@ -12,6 +12,28 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-BX-GENERATED-STAGE-EXECUTION-TRANSACTION|design-sealed 2026-07-02 {F:0.84 G:0.66 R:0.86}]:
+Slice 0k-BX is a docs-only `GeneratedStageExecutionTransaction` checkpoint
+after 0k-BW. It records that three useful local `LLVMEmissionSession` ownership
+migrations did not narrow B4: the produced compiler still reports
+`classification=current_0k_bn_frontier`, default LLVM workers still expose the
+parallel-rand/RSS path, and `ADAMAS_LLVM_WORKERS=1` still exits 139 after
+`lower_main`. New stop rule: the next movement is not another local
+`LLVMEmissionSession` edge hoist by default. Before any production compiler
+edit to tail declarations/stubs, output ownership, resource evidence, worker
+policy, side-effect semantics, backend stubs, or resource limits, an executable
+generated-stage transaction report must join one produced-compiler invocation's
+setup facts, function plan, worker/fallback facts, side-effect contract facts,
+tail declaration/stub inputs, output ownership, resource evidence, and B4
+commit/abort classification under one transaction identity. The report must
+fail closed on malformed, unjoined, or phase-local-only rows. A later code slice
+is admitted only if that report selects a root-sized old authority edge or
+refutes the current `LLVMEmissionSession` boundary with fresh generated-stage
+evidence. Scope: docs/design only; no compiler behavior changed and no green
+`s2b`/`s3b` claim. Decay trigger: a committed transaction report lands, B4
+changes to a different first-bad boundary, or generated-stage execution reaches
+clean `REQUIRE_CLEAN=1`.
+
 [LM-ARCH-0K-BW-SIDE-EFFECT-MERGE-CONTRACT|implemented 2026-07-02 {F:0.88 G:0.42 R:0.88}]:
 Slice 0k-BW implements the behavior-neutral `SideEffectMergeContract`
 consumer migration. `LLVMEmissionSession` now owns the worker side-effect tag
@@ -55,7 +77,7 @@ Slice 0k-BV adds a convergence checkpoint before the next
 review found a new tail-chasing risk: the project can keep consuming local
 `LLVMEmissionSession` authority edges while B4 remains at the same
 `current_0k_bn_frontier`. The selected 0k-BU `SideEffectMergeContract` remains
-admitted, but implementation is moved to future Slice 0k-BW and must carry a
+admitted, but implementation is moved to then-future Slice 0k-BW and must carry a
 generated-stage convergence vector: B4 before/after, default-worker versus
 `ADAMAS_LLVM_WORKERS=1` split, side-effect writer/merge source shape,
 tail-input versus semantic-failure classification, output/resource evidence
