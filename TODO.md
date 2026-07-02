@@ -8,6 +8,29 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: added Slice 0k-BN, a docs-only generated-stage
+  LLVM-entry checkpoint after the 0k-BM owner-fact slice. Production code is
+  paused again. Fresh post-0k-BM evidence shows the next `s2b`/`s3b` movement
+  must not be selected from stale guard order alone: a fresh stage1 builds a
+  produced `s2b`, but that produced compiler compiling a full-prelude
+  `puts 42`/hello source does not reach a clean binary. With default LLVM
+  workers, the produced compiler reports
+  `parallel emission failed: Invalid bound for rand: 0`, falls back to
+  sequential emission, and is killed by `scripts/run_safe.sh` at the 4096MB
+  RSS limit. With `ADAMAS_LLVM_WORKERS=1`, the parallel-rand path disappears
+  but the same produced compiler still exits 139 immediately after
+  `pass3 after lower_main call`. This falsifies treating the parallel worker
+  failure as the sole root and also falsifies picking H7 parser or H8 runtime
+  `.class` work as the next bootstrap-moving implementation merely because
+  those guards are red. The next admitted movement is a generated-stage
+  `LLVMEmissionSession` / LLVM-entry classification slice: name the first
+  bad boundary between MIR setup, function emission scheduling, worker/fallback
+  policy, side-effect tables, output buffers, and backend memory/resource
+  ownership before any behavior patch. Do not patch `emit_functions_parallel`,
+  raise memory limits, force `ADAMAS_LLVM_WORKERS=1`, or resume
+  `fused_parallel_requested` cleanup as a bootstrap fix from this evidence
+  alone.
+
 - 2026-07-01 UPDATE: implemented Slice 0k-BM, the H6-core
   `TypeValue` / `RuntimeTypeIdentity` owner-fact migration admitted by 0k-BL.
   The slice adds a HIR-owned `RuntimeTypeIdentity` fact keyed by `ValueId`,

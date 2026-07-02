@@ -266,6 +266,21 @@ between H7 parser `semantic-service-extraction` and H8 runtime union
 `.class` type-name service; neither should be folded back into the H6-core
 commit or implemented as backend-only stringification.
 
+2026-07-01 post-0k-BN note: the first integration check after the TypeValue
+owner-fact slice changes the near-term priority. H7 and H8 remain real
+frontiers, but the produced-stage bootstrap blocker now occurs when the
+produced `s2b` enters LLVM function emission for a full-prelude tiny source.
+Default workers expose a parallel-emission `Invalid bound for rand: 0`
+symptom and then a 4096MB RSS kill; `ADAMAS_LLVM_WORKERS=1` removes that
+symptom but still exits 139 after `pass3 after lower_main call`. The next
+refactor movement should therefore be a generated-stage
+`LLVMEmissionSession` classification slice: identify the owner boundary for
+function-list selection, worker/fallback policy, side-effect tables,
+output-buffer lifetime, and memory/resource growth before changing behavior.
+Do not treat raising memory limits, disabling workers, patching the rand
+symptom, or resuming cleanup of `fused_parallel_requested` as architecture
+progress.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`

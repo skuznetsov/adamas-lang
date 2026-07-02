@@ -12,6 +12,33 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-BN-GENERATED-STAGE-LLVM-ENTRY-FRONTIER|measured-red 2026-07-01 {F:0.78 G:0.42 R:0.84}]:
+Slice 0k-BN records the post-0k-BM generated-stage checkpoint. A fresh stage1
+compiler built `src/adamas.cr` into a produced `s2b` through
+`scripts/run_safe.sh`, so the H6-core `RuntimeTypeIdentity` owner fact does
+not by itself block producing the next compiler. The produced `s2b` is not
+clean: compiling a full-prelude `puts 42`/hello source with default LLVM
+workers reports `parallel emission failed: Invalid bound for rand: 0`, falls
+back to sequential emission, and is killed by `scripts/run_safe.sh` at the
+4096MB RSS limit. Re-running the same produced compiler with
+`ADAMAS_LLVM_WORKERS=1` removes the parallel-rand message and memory kill, but
+still exits 139 immediately after `pass3 after lower_main call`. Boundary:
+the current bootstrap blocker is a generated-stage transition into LLVM
+emission after HIR/MIR setup, not H6-core TypeValue, not the H7 no-parens
+parser guard, and not the H8 dynamic union `.class` guard. The next admitted
+movement is a docs/falsifier-first `LLVMEmissionSession` classification slice
+that names the first bad owner boundary across MIR setup, function emission
+scheduling, worker/fallback policy, side-effect tables, output buffering, and
+backend memory/resource ownership before behavior changes. Rejected repeats:
+patching `emit_functions_parallel` from the rand symptom, raising the memory
+budget as acceptance evidence, forcing `ADAMAS_LLVM_WORKERS=1`, treating
+`fused_parallel_requested` cleanup as bootstrap progress, or selecting H7/H8
+code solely because their focused guards remain red. Scope: docs/frontier
+control only; no compiler behavior changed. Decay trigger: a fresh produced
+`s2b` full-prelude compile reaches a different first-bad boundary, a focused
+LLVM-entry falsifier supersedes the manual command pair, or a committed
+`LLVMEmissionSession` owner slice changes the emission boundary.
+
 [LM-ARCH-0K-BM-TYPEVALUE-OWNER-FACT-CORE|verified 2026-07-01 {F:0.88 G:0.48 R:0.90}]:
 Slice 0k-BM implements the H6-core `TypeValue` / `RuntimeTypeIdentity`
 contract-owner migration. HIR now owns a `RuntimeTypeIdentity` fact keyed by
