@@ -8,6 +8,23 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: implemented Slice 0k-CR by extending
+  `scripts/hir_block_return_shape_census.sh` with an assigned-tail
+  yield-passthrough discriminator (`result = yield; ...; result`). Strict
+  current evidence from
+  `REQUIRE_CURRENT_CP_BROAD=1 scripts/hir_block_return_shape_census.sh` still
+  reports the broad 0k-CQ classification for naive `contains_yield` scope, but
+  adds root-sized discriminator rows:
+  `assigned_tail_multi_shape_keys=1`,
+  `assigned_tail_nil_value_coexist_keys=1`,
+  `assigned_tail_additional_return_shape_bodies=4`, and
+  `timed_cp_phase_assigned_tail_passthrough_keys=1`. This admits a future
+  behavior slice only as a paired owner-contract migration: classify
+  assigned-tail yield passthrough and use that fact to materialize
+  return-shape-specific wrappers for the narrowed helper set. A
+  classification-only patch remains rejected if the wrapper body can still be
+  lowered with `yield : Void`.
+
 - 2026-07-02 UPDATE: implemented Slice 0k-CQ, the read-only return-shape census
   required by 0k-CP. New script:
   `scripts/hir_block_return_shape_census.sh`. It copies `src/` to `tmp`,

@@ -13,7 +13,9 @@ It copies src/ to a temporary directory, injects default-off probes into the
 temporary copy of ast_to_hir.cr, builds a temporary probe compiler, and counts
 block-call wrapper names that observe multiple callsite block-return shapes.
 The census is a falsifier for the proposed BlockCallReturnContract: if the
-shape space is broad, production wrapper specialization remains rejected.
+shape space is broad, production wrapper specialization remains rejected. It
+also reports an assigned-tail passthrough discriminator for helpers shaped like
+`result = yield; ...; result`.
 
 Environment:
   CRYSTAL_BIN                         Crystal compiler used to build the temp probe (default: crystal).
@@ -80,6 +82,63 @@ src = File.read(path)
 
 helper_anchor = "    private def record_block_return_type_for_call(\n"
 helper = <<'CRYSTAL'
+    private def block_return_census_identifier_name(expr_id : ExprId) : String?
+      loop do
+        node = @arena[expr_id]
+        case node
+        when Adamas::Compiler::Frontend::GroupingNode
+          expr_id = node.expression
+        when Adamas::Compiler::Frontend::MacroExpressionNode
+          expr_id = node.expression
+        when Adamas::Compiler::Frontend::IdentifierNode
+          return safe_slice_to_string(node.name)
+        else
+          return nil
+        end
+      end
+    end
+
+    private def block_return_census_tail_identifier_name(expr_id : ExprId) : String?
+      loop do
+        node = @arena[expr_id]
+        case node
+        when Adamas::Compiler::Frontend::GroupingNode
+          expr_id = node.expression
+        when Adamas::Compiler::Frontend::MacroExpressionNode
+          expr_id = node.expression
+        when Adamas::Compiler::Frontend::BeginNode
+          if clauses = node.rescue_clauses
+            return nil unless clauses.empty?
+          end
+          return nil if node.else_body
+          return nil if node.body.empty?
+          expr_id = node.body.last
+        when Adamas::Compiler::Frontend::IdentifierNode
+          return safe_slice_to_string(node.name)
+        else
+          return nil
+        end
+      end
+    end
+
+    private def block_return_census_assigned_yield_tail_passthrough?(body : Array(ExprId)) : Bool
+      return false if body.empty?
+      tail_name = block_return_census_tail_identifier_name(body.last)
+      return false unless tail_name && !tail_name.empty?
+
+      assigned_from_yield = false
+      body.each do |expr_id|
+        node = @arena[expr_id]
+        case node
+        when Adamas::Compiler::Frontend::AssignNode
+          target_name = block_return_census_identifier_name(node.target)
+          next unless target_name == tail_name
+          assigned_from_yield = yield_return_expr?(node.value)
+        end
+      end
+      assigned_from_yield
+    end
+
     private def trace_block_return_shape_census(
       stage : String,
       mangled_method_name : String,
@@ -93,6 +152,7 @@ helper = <<'CRYSTAL'
       func_def = @function_defs[mangled_method_name]? || @function_defs[base_method_name]?
       block_param_state = "none"
       contains_yield_value = false
+      assigned_tail_passthrough_value = false
       has_def_value = false
       if defn = func_def
         has_def_value = true
@@ -102,18 +162,28 @@ helper = <<'CRYSTAL'
           end
         end
 
-        arena = @function_def_arenas[mangled_method_name]? ||
-                @function_def_arenas[strip_type_suffix(mangled_method_name)]? ||
-                @function_def_arenas[base_method_name]? ||
-                @function_def_arenas[strip_type_suffix(base_method_name)]? ||
-                @arena
-        contains_yield_value = def_contains_yield?(defn, arena)
+        initial_arena = @function_def_arenas[mangled_method_name]? ||
+                        @function_def_arenas[strip_type_suffix(mangled_method_name)]? ||
+                        @function_def_arenas[base_method_name]? ||
+                        @function_def_arenas[strip_type_suffix(base_method_name)]? ||
+                        @arena
+        resolved_arena = arena_fits_def?(initial_arena, defn) ? initial_arena : resolve_arena_for_def(defn, initial_arena)
+        contains_yield_value = def_contains_yield?(defn, resolved_arena)
+        begin
+          with_arena(resolved_arena) do
+            if body = defn.body
+              assigned_tail_passthrough_value = block_return_census_assigned_yield_tail_passthrough?(body)
+            end
+          end
+        rescue
+          assigned_tail_passthrough_value = false
+        end
       end
 
       yield_return_value = yield_return_function_for_call(mangled_method_name, base_method_name)
       type_param_name = block_return_type_param_name(mangled_method_name, base_method_name)
 
-      STDERR.puts "[BRC_CENSUS]\t#{stage}\t#{mangled_method_name}\t#{base_method_name}\t#{raw_name}\t#{stable_name}\t#{block_param_state}\t#{contains_yield_value ? 1 : 0}\t#{yield_return_value ? 1 : 0}\t#{has_def_value ? 1 : 0}\t#{type_param_name || "nil"}"
+      STDERR.puts "[BRC_CENSUS]\t#{stage}\t#{mangled_method_name}\t#{base_method_name}\t#{raw_name}\t#{stable_name}\t#{block_param_state}\t#{contains_yield_value ? 1 : 0}\t#{yield_return_value ? 1 : 0}\t#{has_def_value ? 1 : 0}\t#{type_param_name || "nil"}\t#{assigned_tail_passthrough_value ? 1 : 0}"
     end
 
 CRYSTAL
@@ -193,6 +263,7 @@ Entry = Struct.new(
   :yield_return,
   :has_def,
   :type_params,
+  :assigned_tail_passthrough,
   keyword_init: true
 )
 
@@ -206,7 +277,8 @@ entries = Hash.new do |h, k|
     contains_yield: false,
     yield_return: false,
     has_def: false,
-    type_params: {}
+    type_params: {},
+    assigned_tail_passthrough: false
   )
 end
 
@@ -217,9 +289,10 @@ record_rows = 0
 File.foreach(run_log) do |line|
   next unless line.start_with?("[BRC_CENSUS]\t")
   total_rows += 1
-  parts = line.chomp.split("\t", 11)
+  parts = line.chomp.split("\t", 12)
   next unless parts.size >= 11
-  _, stage, name, base, raw, stable, block_state, contains_yield, yield_return, has_def, type_param = parts
+  _, stage, name, base, raw, stable, block_state, contains_yield, yield_return, has_def, type_param, assigned_tail = parts
+  assigned_tail ||= "0"
 
   if stage == "call"
     call_rows += 1
@@ -241,11 +314,15 @@ File.foreach(run_log) do |line|
   entry.yield_return ||= yield_return == "1"
   entry.has_def ||= has_def == "1"
   entry.type_params[type_param] = true
+  entry.assigned_tail_passthrough ||= assigned_tail == "1"
 end
 
 nilish = ->(shape) { shape == "nil" || shape == "Nil" || shape == "Void" }
 candidate = ->(entry) {
   entry.block_param_states.key?("untyped") && entry.contains_yield
+}
+assigned_tail_candidate = ->(entry) {
+  candidate.call(entry) && entry.assigned_tail_passthrough
 }
 
 multi_shape = entries.values.select { |e| e.shapes.size > 1 }
@@ -258,13 +335,18 @@ value_shape_multi = entries.values.select do |e|
   e.shapes.keys.reject { |s| nilish.call(s) }.uniq.size > 1
 end
 candidate_value_shape_multi = value_shape_multi.select { |e| candidate.call(e) }
+assigned_tail_multi = multi_shape.select { |e| assigned_tail_candidate.call(e) }
+assigned_tail_nil_value = nil_value_coexist.select { |e| assigned_tail_candidate.call(e) }
+assigned_tail_value_shape_multi = value_shape_multi.select { |e| assigned_tail_candidate.call(e) }
 
 additional_bodies = candidate_multi.map { |e| e.shapes.size - 1 }.sum
+assigned_tail_additional_bodies = assigned_tail_multi.map { |e| e.shapes.size - 1 }.sum
 timed_entries = entries.values.select { |e| e.name.include?("CopyPropagationPass#timed_cp_phase") || e.base.include?("CopyPropagationPass#timed_cp_phase") }
 timed_multi = timed_entries.select { |e| e.shapes.size > 1 }
 timed_nil_value = timed_entries.select do |e|
   e.shapes.keys.any? { |s| nilish.call(s) } && e.shapes.keys.any? { |s| !nilish.call(s) }
 end
+timed_assigned_tail = timed_entries.select { |e| e.assigned_tail_passthrough }
 
 classification =
   if timed_nil_value.any? && candidate_multi.size <= key_limit && additional_bodies <= body_limit
@@ -286,9 +368,14 @@ puts "candidate_nil_value_coexist_keys=#{candidate_nil_value.size}"
 puts "value_shape_multi_keys=#{value_shape_multi.size}"
 puts "candidate_value_shape_multi_keys=#{candidate_value_shape_multi.size}"
 puts "candidate_additional_return_shape_bodies=#{additional_bodies}"
+puts "assigned_tail_multi_shape_keys=#{assigned_tail_multi.size}"
+puts "assigned_tail_nil_value_coexist_keys=#{assigned_tail_nil_value.size}"
+puts "assigned_tail_value_shape_multi_keys=#{assigned_tail_value_shape_multi.size}"
+puts "assigned_tail_additional_return_shape_bodies=#{assigned_tail_additional_bodies}"
 puts "timed_cp_phase_keys=#{timed_entries.size}"
 puts "timed_cp_phase_multi_shape_keys=#{timed_multi.size}"
 puts "timed_cp_phase_nil_value_coexist_keys=#{timed_nil_value.size}"
+puts "timed_cp_phase_assigned_tail_passthrough_keys=#{timed_assigned_tail.size}"
 puts "classification=#{classification}"
 
 puts "candidate_multi_shape_sample:"
@@ -300,7 +387,19 @@ candidate_multi
     puts "    base=#{e.base}"
     puts "    shapes=#{e.shapes.keys.sort.join(' || ')}"
     puts "    block_param=#{e.block_param_states.keys.sort.join(',')}"
-    puts "    contains_yield=#{e.contains_yield ? 1 : 0} yield_return=#{e.yield_return ? 1 : 0} type_params=#{e.type_params.keys.sort.join(',')}"
+    puts "    contains_yield=#{e.contains_yield ? 1 : 0} yield_return=#{e.yield_return ? 1 : 0} assigned_tail=#{e.assigned_tail_passthrough ? 1 : 0} type_params=#{e.type_params.keys.sort.join(',')}"
+  end
+
+puts "assigned_tail_multi_shape_sample:"
+assigned_tail_multi
+  .sort_by { |e| [-e.shapes.size, e.name] }
+  .first(20)
+  .each do |e|
+    puts "  key=#{e.name}"
+    puts "    base=#{e.base}"
+    puts "    shapes=#{e.shapes.keys.sort.join(' || ')}"
+    puts "    block_param=#{e.block_param_states.keys.sort.join(',')}"
+    puts "    contains_yield=#{e.contains_yield ? 1 : 0} yield_return=#{e.yield_return ? 1 : 0} assigned_tail=#{e.assigned_tail_passthrough ? 1 : 0} type_params=#{e.type_params.keys.sort.join(',')}"
   end
 
 puts "timed_cp_phase_shape_sample:"
@@ -312,7 +411,7 @@ timed_entries
     puts "    base=#{e.base}"
     puts "    shapes=#{e.shapes.keys.sort.join(' || ')}"
     puts "    block_param=#{e.block_param_states.keys.sort.join(',')}"
-    puts "    contains_yield=#{e.contains_yield ? 1 : 0} yield_return=#{e.yield_return ? 1 : 0} type_params=#{e.type_params.keys.sort.join(',')}"
+    puts "    contains_yield=#{e.contains_yield ? 1 : 0} yield_return=#{e.yield_return ? 1 : 0} assigned_tail=#{e.assigned_tail_passthrough ? 1 : 0} type_params=#{e.type_params.keys.sort.join(',')}"
   end
 RUBY
 

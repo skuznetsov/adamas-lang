@@ -12,6 +12,31 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-CR-ASSIGNED-TAIL-YIELD-PASSTHROUGH|implemented 2026-07-02 {F:0.88 G:0.66 R:0.87}]:
+Slice 0k-CR extends `scripts/hir_block_return_shape_census.sh` with a
+read-only assigned-tail yield-passthrough discriminator for helpers shaped like
+`result = yield; ...; result`. Strict evidence from
+`REQUIRE_CURRENT_CP_BROAD=1 scripts/hir_block_return_shape_census.sh` preserves
+the broad 0k-CQ classification but reports
+`assigned_tail_multi_shape_keys=1`,
+`assigned_tail_nil_value_coexist_keys=1`,
+`assigned_tail_value_shape_multi_keys=1`,
+`assigned_tail_additional_return_shape_bodies=4`, and
+`timed_cp_phase_assigned_tail_passthrough_keys=1`. Interpretation:
+`contains_yield` remains too broad, but assigned-tail passthrough is root-sized
+for the current B4 frontier and selects exactly
+`Adamas::MIR::CopyPropagationPass#timed_cp_phase$String_block`. The selected
+helper still has current `yield_return_function?=0`, which confirms that the
+existing classifier misses this pattern. Scope: executable classifier
+extension only; no compiler production behavior changed and no green
+`s2b`/`s3b` claim. Next admitted movement is a paired behavior slice that both
+classifies assigned-tail yield passthrough as block-return-dependent and uses
+that fact to materialize return-shape-specific wrappers. A classifier-only
+patch remains rejected if a wrapper body can still lower `yield : Void`. Decay
+trigger: assigned-tail multi-shape keys grow beyond the root-sized current set,
+the helper no longer matches the assigned-tail pattern, or B4 reaches
+`REQUIRE_CLEAN=1`.
+
 [LM-ARCH-0K-CQ-HIR-BLOCK-RETURN-SHAPE-CENSUS|implemented 2026-07-02 {F:0.88 G:0.72 R:0.88}]:
 Slice 0k-CQ adds executable read-only census
 `scripts/hir_block_return_shape_census.sh` after the 0k-CP design gate. The

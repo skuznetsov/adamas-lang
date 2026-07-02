@@ -8,6 +8,19 @@ boundaries
 Related: `PLAN_DEMAND_DRIVEN_REWRITE_RFC.md`, `docs/ast_to_hir_audit.md`,
 `docs/codegen_architecture.md`
 
+2026-07-02 post-0k-CR note: the return-shape census now also measures
+assigned-tail yield passthrough (`result = yield; ...; result`). Strict current
+evidence keeps the broad 0k-CQ result for naive `contains_yield` scope, but
+narrows assigned-tail passthrough to one multi-shape key:
+`CopyPropagationPass#timed_cp_phase$String_block`
+(`assigned_tail_multi_shape_keys=1`,
+`timed_cp_phase_assigned_tail_passthrough_keys=1`). The next behavior slice is
+admitted only as a paired owner-contract migration: make assigned-tail
+passthrough block-return-dependent and use that owner fact to choose
+return-shape-specific wrapper materialization. A classifier-only change is not
+enough because the current failure requires the wrapper body itself to stop
+lowering `yield : Void`.
+
 2026-07-02 post-0k-CQ note: the first 0k-CP return-shape census exists as
 `scripts/hir_block_return_shape_census.sh`, and it refutes naive
 block-return-shape specialization for all untyped `&` helpers. Current
