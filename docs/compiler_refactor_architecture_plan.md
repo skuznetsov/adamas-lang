@@ -472,6 +472,20 @@ not a backend rescue and not a carrier rollback. It must start from
 materialized, and visible to HIR/MIR/backend body-presence checks under one
 semantic identity before changing behavior.
 
+2026-07-02 post-0k-CD note: production compiler edits are paused before the G6
+implementation. Hostile review found that the current G6 row is still vulnerable
+as a value proxy: a patch can make the `Hash(UInt64, BlockOwner)#[]=`
+self-IR body non-stub while leaving the deeper materialization authority split in
+place. The next executable planning unit is a pre-code
+`MaterializationTransaction` gate. It must name the old authority edge, owner
+record/consumer, producer and consumer chain, invariant, negative controls, and
+residual generated-stage pressure before any `ast_to_hir.cr`, `hir_to_mir.cr`,
+or `llvm_backend.cr` production edit. Accepted implementation after that gate is
+only an owner-edge migration or root-sized behavior flip; backend undefined
+extern rescue, forwarders, requested-name forcing, broad `NamedTuple`/`Tuple`
+rendering, global ambient-map policy changes, parser changes, and `BlockOwner`
+rollback remain rejected.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`

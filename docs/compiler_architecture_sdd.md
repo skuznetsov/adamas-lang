@@ -172,6 +172,15 @@ residuals, and G6 becomes the next admitted implementation lane under
 keep `BlockOwner` as the owner carrier while replacing or shadowing the
 call-demand/body-materialization authority edge for
 `Hash(UInt64, BlockOwner)#[]=`.
+Slice 0k-CD pauses production code before implementing G6. Hostile review of the
+post-0k-CC route found a remaining tail-chasing gap: the G6 falsifier can make a
+local stub disappear without proving the architecture was improved. The next
+movement is therefore a pre-code `MaterializationTransaction` plan gate. It must
+name the old authority edge, the owner record/consumer to promote or introduce,
+the invariant that connects call demand to body presence, the negative controls
+that reject backend rescue/name forcing/carrier rollback, and the generated-stage
+pressure gates that remain after G6. No production compiler source may change
+until that gate exists.
 
 Current frontier: the compiler can make progress through bounded bug slices,
 but many semantic decisions are still inferred repeatedly across HIR, MIR, and
@@ -209,7 +218,7 @@ Slice 0k-CC classifies the currently active rows as follows:
 | --- | --- | --- | --- |
 | B4 | `PhaseAuthority` / `GeneratedStageExecution` | guard-only pressure | still required for future green `s2b`, but current joined rows are output/resource-local and do not select a durable producer-to-consumer authority edge |
 | L6 | `PhaseAuthority` / `GeneratedStageExecution` | guard-only pressure | protects transaction-level evidence; after 0k-CB it cannot drive a local resource/tail/output behavior patch |
-| G6 | `MaterializationTransaction` | next admitted implementation lane | current falsifier exists and the failure is a body-materialization authority edge for the current `BlockOwner` carrier, not a backend rescue or carrier rollback |
+| G6 | `MaterializationTransaction` | pre-code plan gate, then admitted implementation lane | current falsifier exists and the failure is a body-materialization authority edge for the current `BlockOwner` carrier, but 0k-CD requires a transaction-invariant plan before any production source edit |
 | H7 | `SemanticIdentity` | pre-s2-clean residual | parser command-call preservation is real but does not move the active generated LLVM-entry gate |
 | H8 | `SemanticIdentity` | pre-s2-clean residual | runtime dynamic-union `.class` needs a semantic service slice, not a B4-driven fix |
 
@@ -220,7 +229,7 @@ Slice 0k-CC classifies the currently active rows as follows:
 | `GeneratedStageExecution` / `LLVMEmissionSession` | Slice 0k-BN records the first post-0k-BM integration check: stage1 can produce `s2b`, but produced `s2b` compiling a full-prelude tiny source fails after `pass3 after lower_main call`. Slice 0k-BO adds `scripts/generated_stage_llvm_entry_classifier.sh`; fresh `REQUIRE_CURRENT_FRONTIER=1` evidence reports `classification=current_0k_bn_frontier`, default LLVM workers hit `Invalid bound for rand: 0` plus RSS-kill, and `ADAMAS_LLVM_WORKERS=1` removes that worker symptom but still exits 139 at the same transition. This refutes treating parallel scheduling or memory budget alone as the root. Slice 0k-BP freezes production fixes from this symptom and reclassifies B4 as a pressure gate for a higher owner boundary: `PhaseAuthority` / `GeneratedStageExecution`. Slice 0k-BQ design-seals the first concrete owner: `LLVMEmissionSession`, with source anchors in CLI step 5 and `LLVMIRGenerator#generate` / `emit_functions_parallel`. Slice 0k-BR implements the first behavior-neutral owner slice: `scripts/llvm_emission_session_source_shape_guard.sh` proves `generate` consumes the function-list plan through `LLVMEmissionSession`; B4 remains `classification=current_0k_bn_frontier`. Slice 0k-BS consumes the second edge, `worker-policy-inline`: `generate` reads effective worker count from the session, while worker behavior and fallback remain unchanged. Slice 0k-BT rejects field/tag/getter/report-only session slices as standalone progress. Slice 0k-BU selects `SideEffectMergeContract`; Slice 0k-BV adds the convergence gate; Slice 0k-BW implements the side-effect writer/merge consumer migration and makes the source-shape guard green, while B4 and all convergence-vector rows remain unchanged. Slice 0k-BX records the resulting stop rule. Slice 0k-BY implements `scripts/generated_stage_execution_transaction_report.sh`; current output preserves B4 but reports `abort_unjoined_evidence` because runtime transaction rows are missing. Slice 0k-BZ adds a hostile stop-rule checkpoint. Slice 0k-CA implements the missing default-off runtime rows and moves the current report to `join_status=joined`, `final_classification=abort_resource`, and `admission_status=rejected_no_root_sized_consumer`. Slice 0k-CB reclassifies that joined evidence as guard-only until it selects a durable owner spine rather than the next local LLVM symptom. Slice 0k-CC classifies B4/L6 as guard-only pressure rather than the next implementation lane. | No production movement is admitted from this row now. Keep B4/L6 as pressure gates while the next code slice moves the selected `MaterializationTransaction` G6 lane. Return here only if G6 lands and B4 still selects a fresh producer-to-consumer authority edge, or B4 reaches `REQUIRE_CLEAN=1`. | Patching `emit_functions_parallel` because of the rand symptom; raising `run_safe` memory as acceptance evidence; forcing `ADAMAS_LLVM_WORKERS=1` as a fix; treating green `SideEffectMergeContract` source shape, transaction-report presence, or joined evidence alone as green `s2b`/`s3b`; selecting `TailDeclarationPlan`, `OutputOwnership`, `ResourceEvidence`, worker policy, or memory-budget acceptance simply because joined rows mention output/resource state; adding another classifier that only narrows a crash offset without naming a transaction fact and owner spine; committing the stashed side-effect-tag vocabulary WIP as standalone progress; changing side-effect merge semantics, tail missing-body stubs, undefined-extern rescue, output files, or resource gates without an owner-spine decision; introducing extra generated-stage owner classes without B4 evidence; reusing Crystal `record` macros for generated-stage owner objects without B4 evidence; selecting H7/H8 code as bootstrap-moving work without showing it changes this produced-stage LLVM-entry boundary. |
 | `MaterializationIdentity` / `MaterializationRegistry` | Slice 0k-Z promotes the selected `lower_function_if_needed.symbol_binding` seam in behavior-neutral shadow/parity mode. `scripts/materialization_symbol_binding_admission_report.sh` now reports `already_promoted_shadow` even with `REQUIRE_PROMOTED=1`; keepalive and materialization-ledger consumers read from `MaterializationSymbolBinding` fields instead of recomputing split locals. | Do not flip emitted symbols from this slice. Next movement must either run a generated-stage materialization/symbol-binding classification on the residual full-prelude s2 crash, or select the next root-sized owner consumer with a red/green gate. | Backend undefined-extern rescue; target keepalive as a standalone patch; requested-name forcing; `NamedTuple`/`Tuple` display normalization; global ambient-map predicate changes; `BlockOwner` rollback; treating the green source-shape gate as green `s2b`/`s3b`. |
 | `NameResolution` / `MethodNameCodec` | File identity was fixed; method/symbol identity is still partly rendered-string driven. Slice 0k-V promotes the selected `lower_function_if_needed.exact_lookup_keep_requested_name` seam through `method_name_codec_exact_lookup_keep_requested_name?` in shadow/parity mode; emitted behavior still returns the legacy result. Slice 0k-W pauses standalone promotion-report proliferation. | Either select the next root-sized codec seam with a red/green source-shape gate, or define a generated-stage classification slice that consumes the existing promotion ledger to answer one blocking yes/no decision before changing emitted naming behavior. | String-slice parsing patches at individual callsites; treating rendered names as canonical identity; broad normalization without a falsifier; selecting lower-level helpers before a materialization seam; flipping owner-result behavior from shadow rows; committing another report surface that does not reduce or select an authority edge. |
-| `CallMaterializationTransaction` / `MaterializationTransaction` spine | Slice 0k-AJ selects the reached transaction/emission edge `call_materialization.wrapper_or_call_remap.extern_missing_body`. Slice 0k-AK adds the docs stop rule for post-consumer selector decay. Slice 0k-AL makes that rule executable. Slice 0k-AM implements the behavior-neutral consumer: HIR stores transaction contract facts by tx id, HIR-to-MIR attaches them to transaction-bound `Call`/`ExternCall`, backend `[MAT_EMIT]` logs them mechanically, and optimizer replacement preserves them. Slice 0k-AO extends the same selector with a post-consumer exact-contract residual split. Fresh generated-stage evidence reports `post_consumer_state=selected_consumed_by_contract_consumer`, `contract_mismatch_rows=0`, `residual_exact_missing_body_rows=14`, `residual_exact_missing_body_groups=9`, and `residual_selection_status=rejected_exact_missing_body_ambiguous`. Slice 0k-CC selects G6 as the next concrete `MaterializationTransaction` lane: current `BlockOwner` owner-cache index assignment must materialize `Hash(UInt64, BlockOwner)#[]=` as a real body. | Next executable code slice: start from `regression_tests/block_owner_index_assign_materialization_repro.sh`, preserve `BlockOwner`, and replace or shadow the authority edge that connects call demand, selected/body identity, function body materialization, and HIR/MIR/backend body presence for `Hash(UInt64, BlockOwner)#[]=`. The slice must prove the call-visible symbol and materialized body are the same semantic function before changing emitted behavior. | Treating consumed edge disappearance as failure; making old `REQUIRE_SELECTED=1` green by redefining rows; behavior-patching any residual sample (`Array#<<`, `Slice#[]`, `IO#read`, etc.) without a unique selector; backend forwarder or undefined-extern rescue; requested-name forcing; broad `NamedTuple`/`Tuple` rendering changes; global ambient-map policy changes; `BlockOwner` rollback; another standalone report that does not remove ambiguity or retire/refute an older surface. |
+| `CallMaterializationTransaction` / `MaterializationTransaction` spine | Slice 0k-AJ selects the reached transaction/emission edge `call_materialization.wrapper_or_call_remap.extern_missing_body`. Slice 0k-AK adds the docs stop rule for post-consumer selector decay. Slice 0k-AL makes that rule executable. Slice 0k-AM implements the behavior-neutral consumer: HIR stores transaction contract facts by tx id, HIR-to-MIR attaches them to transaction-bound `Call`/`ExternCall`, backend `[MAT_EMIT]` logs them mechanically, and optimizer replacement preserves them. Slice 0k-AO extends the same selector with a post-consumer exact-contract residual split. Fresh generated-stage evidence reports `post_consumer_state=selected_consumed_by_contract_consumer`, `contract_mismatch_rows=0`, `residual_exact_missing_body_rows=14`, `residual_exact_missing_body_groups=9`, and `residual_selection_status=rejected_exact_missing_body_ambiguous`. Slice 0k-CC selects G6 as the next concrete `MaterializationTransaction` lane: current `BlockOwner` owner-cache index assignment must materialize `Hash(UInt64, BlockOwner)#[]=` as a real body. Slice 0k-CD pauses code before that implementation and requires a transaction-invariant plan gate first. | Next movement: write the G6 pre-code `MaterializationTransaction` plan gate, then implement only if it names the old authority edge, owner record/consumer, invariant, producer/consumer chain, negative controls, and residual generated-stage pressure. The later executable code slice must start from `regression_tests/block_owner_index_assign_materialization_repro.sh`, preserve `BlockOwner`, and prove the call-visible symbol and materialized body are the same semantic function before changing emitted behavior. | Treating green G6 as proof of architecture progress without the invariant; treating consumed edge disappearance as failure; making old `REQUIRE_SELECTED=1` green by redefining rows; behavior-patching any residual sample (`Array#<<`, `Slice#[]`, `IO#read`, etc.) without a unique selector; backend forwarder or undefined-extern rescue; requested-name forcing; broad `NamedTuple`/`Tuple` rendering changes; global ambient-map policy changes; `BlockOwner` rollback; another standalone report that does not remove ambiguity or retire/refute an older surface. |
 | `InvocationContext` / `InlineYieldFrame` | Slice 0k-AC promotes the selected `lower_super.previous_def.invocation_context` seam in behavior-neutral shadow/parity mode. `scripts/invocation_context_admission_report.sh` now reports `already_promoted_shadow` even with `REQUIRE_PROMOTED=1`; `lower_super` and `lower_previous_def` consume an `InvocationContext` owner fact instead of directly reading ambient owner/method, method-kind, super-source, and forward-policy state. | Do not flip super lookup, previous-def lookup, or argument-forwarding behavior from this slice. Next movement must either classify the residual generated-stage frontier with fresh owner-boundary evidence or select a different root-sized board row with a red/green source-shape gate. | A new `ADAMAS_SUPER_CALL_CONTEXT_LEDGER` report without a decision question; direct `lower_super` guards; changing super lookup or argument forwarding from a crash stack; inline-yield stack resets as a consumer fix; treating the green source-shape gate as green bootstrap evidence. |
 | `AstNodeRef` / `ArenaOwnership` | Explicit-owner lower-call rows and `NodeSlotIntegrity` refuted owner drift, out-of-range ids, and missing slots for the instrumented edge. | Resume only with a named payload/deep-read or uninstrumented-consumer falsifier, including cleanup rules for its ledger. | Lower-call arena routing, broad arena scans, parser allocation rewrites, or another unbounded crash-edge probe. |
 | `CodePathStatus` | Runtime cleanup inventory now reports 26 no-prelude CLI paths and `inventory_delete_ready_rows=0`. `identity_dry_run` and `phase0_metrics` are `debug_only`; `fused_parallel_requested` is `experimental_live`; none are `delete_ready`. Slice 0k-AT pauses cleanup as the default bootstrap lane because no delete-ready row exists and bloat is not the active constraint for green `s2b`/`s3b`. | Resume only if the user explicitly selects bloat reduction, or if a future run produces an `eligible_delete_ready_candidate` with default-behavior, HIR/MIR/LLVM, bootstrap, and protecting-falsifier evidence. | Deleting `identity_dry_run`, `phase0_metrics`, or `fused_parallel_requested`; deleting any `not_taken_unproven` path from inventory alone; adding more cleanup classifications as a substitute for semantic owner migration; using runtime liveness as semantic ownership evidence. |
@@ -1251,6 +1260,86 @@ Rejected shortcuts:
 - changing the `BlockOwner` carrier;
 - normalizing `NamedTuple`/`Tuple` display as a symptom fix;
 - using current joined resource/output rows to skip the G6 lane.
+
+### Slice 0k-CD: G6 pre-code architecture pause
+
+Status:
+
+- docs-only hostile review checkpoint after 0k-CC;
+- production compiler source remains paused;
+- G6 remains the selected `MaterializationTransaction` lane, but implementation
+  is gated by a pre-code transaction-invariant plan.
+
+Problem:
+
+- the current G6 falsifier is necessary but not sufficient: it detects whether
+  `Hash(UInt64, BlockOwner)#[]=` has a non-stub self-IR body, but a local patch
+  could make that one body appear without removing the old authority split;
+- previous attempts around materialization repeatedly confused late symptoms
+  with roots: backend undefined-extern stubs, target keepalive, forwarders,
+  requested-name forcing, ambient-map policy, and `NamedTuple`/`Tuple` rendering
+  all looked plausible until censuses showed broad blast radius or wrong layer;
+- therefore "make G6 green" is not the next action by itself. The next action is
+  to define the transaction invariant that makes G6 green for the right reason.
+
+Mini-Quadrumvirate:
+
+- Cassandra: the likely failure mode is a symptom-local fix that removes the
+  `BlockOwner` setter stub while leaving call demand, selected semantic identity,
+  body materialization, HIR/MIR body presence, and backend visibility split
+  across rendered names or phase-local sets.
+- Maieutic: the hidden assumption in a direct fix is that body disappearance is
+  the root. The required falsifier is stronger: the same semantic function must
+  be observed at every step from index-assignment demand to emitted body.
+- Daedalus: the frame shift is from "which branch chooses the wrong symbol?" to
+  "which owner record makes demanded function availability a transaction fact?"
+- Adversary: green `block_owner_index_assign_materialization_repro.sh` alone is
+  vulnerable unless it is paired with negative controls proving no backend
+  rescue, no requested-name force, no carrier rollback, no broad rendering
+  normalization, and no global ambient-map policy change.
+
+Admitted next movement:
+
+1. Write the G6 pre-code plan before production source edits. It must name:
+   - old authority edge: the exact split between call demand / selected identity
+     / materialized body / HIR-MIR body presence / backend function visibility;
+   - owner surface: existing `CallMaterializationTransaction` / sibling
+     `MaterializationTransaction` record, or a named reason why a new owner
+     fact is required;
+   - producers and consumers: index-assignment lowering, materialization
+     scheduling, HIR function registry, MIR lowering, and backend body lookup;
+   - invariant: one semantic function identity flows through all those steps;
+   - falsifiers: G6 focused repro, H5 body-presence guard, B3 semantic oracle if
+     any language-visible behavior changes, and B4/L6 as pressure-only guards;
+   - residual boundary: what remains red if G6 becomes green.
+2. Only then implement the smallest owner-edge migration. The implementation may
+   be behavior-neutral shadowing if that is enough to prove the invariant, or a
+   behavior flip only after the would-change set is root-sized.
+
+Rejected next movements:
+
+- opening `ast_to_hir.cr`, `hir_to_mir.cr`, or `llvm_backend.cr` for production
+  edits before the G6 plan gate exists;
+- backend undefined-extern rescue, backend forwarders, or target keepalive as a
+  way to make the IR body visible;
+- requested-name forcing or `override=name` without a transaction-owned body
+  identity proof;
+- broad `NamedTuple`/`Tuple` rendering normalization;
+- global ambient-map policy changes;
+- parser or command-call changes;
+- converting `BlockOwner` back to tuple/namedtuple metadata;
+- claiming architecture progress from a single green G6 row without the
+  producer-to-consumer invariant.
+
+DoD for this pause slice:
+
+1. TODO, LANDMARKS, this SDD, the refactor plan, and the falsifier matrix agree
+   that production code is paused before G6 implementation.
+2. The next executable work item is the G6 pre-code
+   `MaterializationTransaction` plan gate, not an `ast_to_hir.cr` patch.
+3. No compiler production source changes are included.
+4. Existing G6/B4/L6 guard names are preserved; this slice changes admission
+   rules, not compiler behavior.
 
 Slice 0k-AP consolidation result: the architecture report surface is now
 treated as a registry, not as a menu of competing next steps. Existing reports

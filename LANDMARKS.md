@@ -12,6 +12,25 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-CD-G6-PRECODE-PAUSE|design-sealed 2026-07-02 {F:0.84 G:0.66 R:0.86}]:
+Slice 0k-CD is a docs-only hostile review checkpoint that pauses production
+compiler edits before the G6 implementation. G6 remains the selected
+`MaterializationTransaction` lane, but the current focused falsifier is not
+enough by itself: a local patch could make
+`Hash(UInt64, BlockOwner)#[]=` appear as a non-stub self-IR body without proving
+that call demand, selected semantic identity, materialized body, HIR/MIR body
+presence, and backend visibility are one transaction-owned semantic function.
+The next movement is therefore a pre-code G6 `MaterializationTransaction` plan
+gate. It must name the old authority edge, owner record or consumer, producer
+and consumer chain, invariant, negative controls, and residual generated-stage
+pressure before any `ast_to_hir.cr`, `hir_to_mir.cr`, or `llvm_backend.cr`
+production edit. Rejected repeats remain backend undefined-extern rescue,
+forwarders, requested-name forcing, broad `NamedTuple`/`Tuple` rendering,
+global ambient-map policy changes, parser changes, and `BlockOwner` rollback.
+Scope: docs/control-plane only; no compiler production behavior changed and no
+green `s2b`/`s3b` claim. Decay trigger: the G6 pre-code plan gate lands, G6
+falsifier changes shape, or B4 reaches `REQUIRE_CLEAN=1`.
+
 [LM-ARCH-0K-CC-OWNER-SPINE-CONSOLIDATION|design-sealed 2026-07-02 {F:0.84 G:0.68 R:0.85}]:
 Slice 0k-CC executes the 0k-CB reset by classifying active frontier rows under
 owner spines and selecting the next implementation lane without using the latest

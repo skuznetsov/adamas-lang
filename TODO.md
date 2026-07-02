@@ -8,6 +8,20 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: added Slice 0k-CD, a docs-only hostile review checkpoint
+  that pauses production code before the G6 implementation. G6 remains the
+  selected `MaterializationTransaction` lane, but the next movement is now a
+  pre-code plan gate, not an `ast_to_hir.cr` patch. That gate must name the old
+  authority edge, the owner record or consumer, the invariant that connects
+  index-assignment demand to selected semantic identity to materialized body to
+  HIR/MIR/backend body presence, and the negative controls that reject backend
+  undefined-extern rescue, forwarders, requested-name forcing, broad
+  `NamedTuple`/`Tuple` rendering, global ambient-map policy changes, parser
+  changes, and `BlockOwner` rollback. Only after that plan exists may a code
+  slice start from `regression_tests/block_owner_index_assign_materialization_repro.sh`.
+  Green G6 alone will not be accepted as green `s2b`/`s3b` or as architecture
+  progress unless the producer-to-consumer materialization invariant is proven.
+
 - 2026-07-02 UPDATE: added Slice 0k-CC, a docs-only owner-spine
   consolidation that executes the 0k-CB reset. Active rows are now classified
   instead of selected from the latest crash stack: B4 and L6 stay
