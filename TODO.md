@@ -8,6 +8,26 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: refined Slice 0k-DD with the 0k-DE no-exact splitter.
+  `scripts/generated_stage_lower_method_terminal_classifier.sh` now logs
+  temp-only `[MAT_METHOD_ENTRY]`, `[MAT_METHOD_NAME]`, and final
+  `completed_method` rows in the copied source, so `created_hir_function` is
+  no longer treated as a terminal completion. Fresh evidence from
+  `REQUIRE_REACHED=1 SAMPLES=8 scripts/generated_stage_lower_method_terminal_classifier.sh`
+  reports `completion_classifier_classification=reached_tx_and_emit`,
+  `method_entry_rows=338`, `method_name_rows=285`, `method_exit_rows=623`,
+  `residual_rows=14`, `terminal_cause_kinds=4`, `terminal_groups=12`, and
+  `terminal_root_sized_groups=12`. Buckets are
+  `lower_method_terminal_no_exact_no_entry` (6 rows),
+  `lower_method_terminal_abstract_method` (4 rows),
+  `lower_method_terminal_no_exact_matching_full_name_without_exit` (3 rows),
+  and `lower_method_terminal_completed_method` (1 row). This refutes the
+  earlier proxy framing that `created_hir_function` was a terminal state and
+  proves the broadest remaining class is exact/base lower_method non-entry, not
+  just terminal-join ambiguity. No behavior patch is admitted. The next
+  movement must split `no_exact_no_entry` by actual lower_method call input,
+  selected DefNode/source owner, and requested/target/body symbol relation.
+
 - 2026-07-02 UPDATE: added Slice 0k-DD, the temp-source `lower_method`
   terminal classifier required by 0k-DC. New script:
   `scripts/generated_stage_lower_method_terminal_classifier.sh`. It copies

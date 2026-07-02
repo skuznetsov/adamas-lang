@@ -135,6 +135,19 @@ split the broad `no_exact_method_exit` bucket by source identity / resolved
 DefNode / full-name derivation, not patch the sampled methods or backend
 fallback.
 
+2026-07-02 post-0k-DE note: the `lower_method` terminal classifier was refined
+after hostile review found that `created_hir_function` is not a real terminal
+state. The classifier now logs temp-only entry/name rows and a final
+`completed_method` terminal. Fresh evidence preserves `[MAT_EMIT]` reachability
+and reports `method_entry_rows=338`, `method_name_rows=285`,
+`method_exit_rows=623`, `residual_rows=14`, and four buckets:
+`no_exact_no_entry` (6 rows), `abstract_method` (4 rows),
+`no_exact_matching_full_name_without_exit` (3 rows), and `completed_method`
+(1 row). The next architecture movement should split `no_exact_no_entry` by
+actual lower_method call input, selected DefNode/source owner, and
+requested/target/body symbol relation. This is still classifier-only evidence,
+not a behavior license.
+
 2026-07-02 post-0k-CS note: hostile review of the post-0k-CR route found that
 the active SDD is still being followed, but the emergency B4/O1 lane can become
 another symptom scheduler if every moved crash stack automatically selects the

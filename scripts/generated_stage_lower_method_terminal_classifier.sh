@@ -7,7 +7,7 @@ usage() {
   cat <<'USAGE'
 usage: scripts/generated_stage_lower_method_terminal_classifier.sh [source.cr]
 
-Temp-source classifier for Slice 0k-DD.
+Temp-source classifier for Slices 0k-DD/0k-DE.
 
 It copies src/ to a temporary directory, injects default-off [MAT_METHOD_EXIT]
 probes into the temporary ast_to_hir.cr, builds a temporary probe compiler, and
@@ -92,6 +92,39 @@ helper = <<'CRYSTAL'
       STDERR.puts "[MAT_METHOD_EXIT] reason=#{ledger_token(reason)} class=#{ledger_token(class_name)} method=#{ledger_token(method_name)} full=#{ledger_token(full_name)} override=#{ledger_token(override_name)}"
     end
 
+    private def lower_method_entry_probe(
+      class_name : String,
+      method_name : String,
+      override_name : String,
+      call_arg_types : Array(TypeRef)?,
+      node : Adamas::Compiler::Frontend::DefNode,
+    ) : Nil
+      return unless env_has?("ADAMAS_LOWER_METHOD_TERMINAL_PROBE")
+
+      arg_ids = if types = call_arg_types
+                  types.map { |type_ref| type_ref.id.to_s }.join(",")
+                else
+                  "nil"
+                end
+      source_path = source_path_for(@arena) || ""
+      STDERR.puts "[MAT_METHOD_ENTRY] class=#{ledger_token(class_name)} method=#{ledger_token(method_name)} override=#{ledger_token(override_name)} call_arg_ids=#{ledger_token(arg_ids)} source=#{ledger_token(source_path)} line=#{node.span.start_line} col=#{node.span.start_column}"
+    end
+
+    private def lower_method_name_probe(
+      class_name : String,
+      method_name : String,
+      base_name : String,
+      candidate_full_name : String,
+      full_name : String,
+      override_name : String,
+      param_types : Array(TypeRef),
+    ) : Nil
+      return unless env_has?("ADAMAS_LOWER_METHOD_TERMINAL_PROBE")
+
+      param_ids = param_types.map { |type_ref| type_ref.id.to_s }.join(",")
+      STDERR.puts "[MAT_METHOD_NAME] class=#{ledger_token(class_name)} method=#{ledger_token(method_name)} base=#{ledger_token(base_name)} candidate=#{ledger_token(candidate_full_name)} full=#{ledger_token(full_name)} override=#{ledger_token(override_name)} param_ids=#{ledger_token(param_ids)}"
+    end
+
 CRYSTAL
 
 unless src.include?(helper_anchor)
@@ -101,6 +134,13 @@ end
 src = src.sub(helper_anchor, helper + helper_anchor)
 
 replacements = [
+  [
+    "      method_name = forced_method_name.empty? ? (safe_slice_to_string(node.name) || \"\") : forced_method_name\n      effective_full_name_override = forced_full_name.empty? ? (full_name_override || \"\") : forced_full_name\n      is_initialize_method = method_name == \"initialize\"\n",
+    "      method_name = forced_method_name.empty? ? (safe_slice_to_string(node.name) || \"\") : forced_method_name\n" \
+    "      effective_full_name_override = forced_full_name.empty? ? (full_name_override || \"\") : forced_full_name\n" \
+    "      is_initialize_method = method_name == \"initialize\"\n" \
+    "      lower_method_entry_probe(class_name, method_name, effective_full_name_override, call_arg_types, node)\n",
+  ],
   [
     "      if node.is_abstract\n        clear_pending_effect_annotations\n        return\n      end\n",
     "      if node.is_abstract\n" \
@@ -158,6 +198,19 @@ replacements = [
     "      end\n",
   ],
   [
+    "      if full_name.empty?\n" \
+    "        lower_method_terminal_probe(\"empty_full_name\", class_name, method_name, full_name, effective_full_name_override)\n" \
+    "        return\n" \
+    "      end\n\n" \
+    "      register_pending_method_effects(full_name, param_types.size)\n",
+    "      if full_name.empty?\n" \
+    "        lower_method_terminal_probe(\"empty_full_name\", class_name, method_name, full_name, effective_full_name_override)\n" \
+    "        return\n" \
+    "      end\n\n" \
+    "      lower_method_name_probe(class_name, method_name, base_name, candidate_full_name, full_name, effective_full_name_override, param_types)\n" \
+    "      register_pending_method_effects(full_name, param_types.size)\n",
+  ],
+  [
     "        @current_method_is_class = old_method_is_class\n        return\n      end\n\n      func = @module.create_function(full_name, return_type)\n",
     "        @current_method_is_class = old_method_is_class\n" \
     "        lower_method_terminal_probe(\"already_has_body\", class_name, method_name, full_name, effective_full_name_override)\n" \
@@ -165,6 +218,12 @@ replacements = [
     "      end\n\n" \
     "      func = @module.create_function(full_name, return_type)\n" \
     "      lower_method_terminal_probe(\"created_hir_function\", class_name, method_name, full_name, effective_full_name_override)\n",
+  ],
+  [
+    "      @function_lowering_states[full_name] = FunctionLoweringState::Completed\n\n      # Restore previous method context\n",
+    "      @function_lowering_states[full_name] = FunctionLoweringState::Completed\n" \
+    "      lower_method_terminal_probe(\"completed_method\", class_name, method_name, full_name, effective_full_name_override)\n\n" \
+    "      # Restore previous method context\n",
   ],
 ]
 
@@ -286,6 +345,50 @@ awk -v max_class_rows="$MAX_CLASS_ROWS" -v samples="$SAMPLES" '
     next
   }
 
+  /^\[MAT_METHOD_ENTRY\]/ {
+    method_entry_rows++
+    class_name = field("class")
+    method_name = field("method")
+    key = class_name "#" method_name
+    base_entry_rows[key]++
+    next
+  }
+
+  /^\[MAT_METHOD_NAME\]/ {
+    method_name_rows++
+    class_name = field("class")
+    method_name = field("method")
+    base = field("base")
+    full = field("full")
+    candidate = field("candidate")
+    key = class_name "#" method_name
+    if (full != "") {
+      exact_name_rows[full]++
+      full_to_base[full] = base
+    }
+    if (base != "") {
+      base_name_rows[base]++
+      if (base_name_sample_count[base] < 3) {
+        base_name_sample_count[base]++
+        if (base_name_samples[base] == "") {
+          base_name_samples[base] = full
+        } else {
+          base_name_samples[base] = base_name_samples[base] "," full
+        }
+      }
+    }
+    base_name_rows[key]++
+    if (base_name_sample_count[key] < 3) {
+      base_name_sample_count[key]++
+      if (base_name_samples[key] == "") {
+        base_name_samples[key] = full
+      } else {
+        base_name_samples[key] = base_name_samples[key] "," full
+      }
+    }
+    next
+  }
+
   /^\[MAT_TX\]/ {
     tx = field("tx")
     if (tx == "") next
@@ -349,12 +452,20 @@ awk -v max_class_rows="$MAX_CLASS_ROWS" -v samples="$SAMPLES" '
         done_key = requested[tx] "|" target[tx] "|" state_key[tx]
       }
       terminal = "no_exact_method_exit"
+      base_key = method_key(body_symbol[tx])
       if (body_symbol[tx] in exact_exit_reason) {
         terminal = exact_exit_reason[body_symbol[tx]]
       } else {
-        base_key = method_key(body_symbol[tx])
         if (base_key in base_exit_reason) {
           terminal = "base_only_" base_exit_reason[base_key]
+        } else if (body_symbol[tx] in exact_name_rows) {
+          terminal = "no_exact_matching_full_name_without_exit"
+        } else if (base_key in base_name_rows) {
+          terminal = "no_exact_sibling_full_name"
+        } else if (base_key in base_entry_rows) {
+          terminal = "no_exact_entry_without_name"
+        } else {
+          terminal = "no_exact_no_entry"
         }
       }
       cause = "lower_method_terminal_" terminal
@@ -366,7 +477,7 @@ awk -v max_class_rows="$MAX_CLASS_ROWS" -v samples="$SAMPLES" '
         group_order[++group_total] = group_key
         group_cause[group_key] = cause
       }
-      row = "cause=" cause " tx=" tx " requested=" requested[tx] " body=" body_symbol[tx] " branch=" branch[tx] " producer=" done_producer_path[done_key] " created_relation=" done_created_symbol_relation[done_key] " exact_exit_rows=" (exact_exit_rows[body_symbol[tx]] + 0) " base_exit_rows=" (base_exit_rows[method_key(body_symbol[tx])] + 0)
+      row = "cause=" cause " tx=" tx " requested=" requested[tx] " body=" body_symbol[tx] " branch=" branch[tx] " producer=" done_producer_path[done_key] " created_relation=" done_created_symbol_relation[done_key] " exact_exit_rows=" (exact_exit_rows[body_symbol[tx]] + 0) " base_exit_rows=" (base_exit_rows[base_key] + 0) " exact_name_rows=" (exact_name_rows[body_symbol[tx]] + 0) " base_name_rows=" (base_name_rows[base_key] + 0) " base_entry_rows=" (base_entry_rows[base_key] + 0) " sibling_fulls=" base_name_samples[base_key]
       keep_sample("residual", row)
     }
   }
@@ -397,6 +508,8 @@ awk -v max_class_rows="$MAX_CLASS_ROWS" -v samples="$SAMPLES" '
 
     print ""
     print "## LowerMethod Terminal Counts"
+    print "method_entry_rows=" method_entry_rows + 0
+    print "method_name_rows=" method_name_rows + 0
     print "method_exit_rows=" method_exit_rows + 0
     print "residual_rows=" residual_rows + 0
     print "terminal_cause_kinds=" cause_kinds + 0

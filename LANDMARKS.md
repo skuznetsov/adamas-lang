@@ -12,6 +12,32 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-DE-NO-EXACT-LOWER-METHOD-SPLIT|implemented 2026-07-02 {F:0.91 G:0.70 R:0.90}]:
+Slice 0k-DE refines the 0k-DD temp-source classifier instead of changing
+production compiler behavior. `scripts/generated_stage_lower_method_terminal_classifier.sh`
+now injects `[MAT_METHOD_ENTRY]`, `[MAT_METHOD_NAME]`, and a final
+`completed_method` terminal row into copied source only. This corrects the
+previous proxy weakness where `created_hir_function` was treated like a
+terminal state. Fresh evidence using
+`REQUIRE_REACHED=1 SAMPLES=8 scripts/generated_stage_lower_method_terminal_classifier.sh`
+reports `completion_classifier_classification=reached_tx_and_emit`,
+`method_entry_rows=338`, `method_name_rows=285`, `method_exit_rows=623`,
+`residual_rows=14`, `terminal_cause_kinds=4`, `terminal_groups=12`, and
+`terminal_root_sized_groups=12`. The buckets are
+`lower_method_terminal_no_exact_no_entry` (6 rows),
+`lower_method_terminal_abstract_method` (4 rows),
+`lower_method_terminal_no_exact_matching_full_name_without_exit` (3 rows), and
+`lower_method_terminal_completed_method` (1 row). Scope: read-only/temp-source
+classifier only; no production behavior changed and no green `s2b`/`s3b`
+claim. The next valid movement is to split the still-broad
+`no_exact_no_entry` class by the actual lower_method call input, selected
+DefNode/source owner, and requested/target/body symbol relation. Rejected moves
+remain backend rescue, sampled-method patches, requested-name forcing,
+forwarders, broad rendering/ambient-map policy, `BlockOwner` rollback, and
+production `lower_method` trace-object plumbing. Decay trigger: a finer
+generated-stage classifier selects a root-sized `no_exact_no_entry` sub-branch
+or newer evidence refutes these entry/name/terminal buckets.
+
 [LM-ARCH-0K-DD-LOWER-METHOD-TERMINAL-SPLIT|implemented 2026-07-02 {F:0.91 G:0.72 R:0.90}]:
 Slice 0k-DD adds `scripts/generated_stage_lower_method_terminal_classifier.sh`,
 a temp-source classifier for the 0k-DC residual. The script copies `src/`,
