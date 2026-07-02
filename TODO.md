@@ -8,6 +8,20 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: added Slice 0k-DH, a compact pre-code receipt in
+  `docs/compiler_architecture_sdd.md` for the `after_tx -> inside_type_params`
+  boundary selected by 0k-DG. The selected old authority edge is now explicit:
+  after `CallMaterializationTransaction` logging, body-lowering scope entry is
+  still implicit in nested block helpers (`with_isolated_type_param_map` /
+  `with_namespace_override_or_clear`). The admitted next production movement is
+  a `contract-owner-migration` that makes existing
+  `CallMaterializationTransaction` plus `SemanticStateScope` own that
+  scope-entry contract, preserving generated-stage `[MAT_EMIT]` reachability
+  and the abstract-method controls. If that cannot remove or root-size the
+  `after_tx_no_call` class, this `MaterializationTransaction` row must return
+  to the Current Execution Board instead of spawning another generic pre-call
+  marker.
+
 - 2026-07-02 UPDATE: refined the classifier as Slice 0k-DG with temp-only
   `[MAT_PRECALL]` checkpoints around the exact pre-call region between
   transaction logging and `lower_method`: `after_tx`, `inside_type_params`,

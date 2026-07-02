@@ -12,6 +12,23 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-DH-MATERIALIZATION-SCOPE-ENTRY-RECEIPT|design-sealed 2026-07-02 {F:0.86 G:0.66 R:0.86}]:
+Slice 0k-DH adds the pre-code receipt required by 0k-DG in
+`docs/compiler_architecture_sdd.md`. The selected old authority edge is the
+implicit body-lowering scope entry after `CallMaterializationTransaction`
+logging: `with_isolated_type_param_map` and
+`with_namespace_override_or_clear` are still responsible for reaching arity
+repair / `lower_method`, but 0k-DG selected rows reach `after_tx` and do not
+reach `inside_type_params`. The admitted next production movement is therefore
+a `contract-owner-migration` where existing `CallMaterializationTransaction`
+plus `SemanticStateScope` own the materialization scope-entry contract. Focused
+DoD: remove or root-size the six-row `after_tx_no_call` class while preserving
+generated-stage `[MAT_EMIT]` reachability and abstract-method controls. If that
+cannot be done, this `MaterializationTransaction` row is not root-sized enough
+and the next movement must return to the Current Execution Board. Scope:
+docs/design receipt only; no production behavior changed and no green
+`s2b`/`s3b` claim.
+
 [LM-ARCH-0K-DG-PRECALL-AFTER-TX-BOUNDARY|implemented 2026-07-02 {F:0.92 G:0.67 R:0.90}]:
 Slice 0k-DG extends the temp-source
 `scripts/generated_stage_lower_method_terminal_classifier.sh` with

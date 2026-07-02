@@ -627,6 +627,79 @@ Hard stop: if the receipt cannot identify a producer-to-consumer authority edge
 or can only say "the latest crash moved", the work is a probe/SDD update, not a
 production architecture slice.
 
+#### Slice 0k-DH receipt: materialization scope-entry contract
+
+```text
+SliceReceipt {
+  board_lane: MaterializationTransaction / exact body availability
+  tranche: contract-owner-migration
+  old_authority_edge:
+    After `CallMaterializationTransaction` is logged, the materialization path
+    relies on nested block helpers (`with_isolated_type_param_map` and
+    `with_namespace_override_or_clear`) to apply body-lowering state before
+    `lower_method`. The transaction records the intended state scope, but the
+    actual scope-entry/yield-to-body-lowering edge is implicit in those helpers.
+    Slice 0k-DG shows the selected generated-stage rows reach `after_tx` but not
+    the first helper-body checkpoint `inside_type_params`.
+  owner_fact_or_service:
+    Existing `CallMaterializationTransaction` plus `SemanticStateScope` must own
+    a body-lowering scope-entry contract for materialization attempts. The
+    contract is not a new backend rescue and not a new rendered-name policy; it
+    is the source authority that says whether the target type-param map and
+    namespace override were entered before arity repair / `lower_method`.
+  producers:
+    - `call_materialization_transaction(...)` and its `state_scope` /
+      `map_source` fields;
+    - `merged_params` / `target_map` construction;
+    - `namespace_override` selection;
+    - the existing `with_isolated_type_param_map` and
+      `with_namespace_override_or_clear` state application helpers.
+  consumers:
+    - arity repair inside the materialization path;
+    - `lower_method(...)` invocation;
+    - `[MAT_DONE]` terminal classification;
+    - generated-stage `lower_method` terminal classifier.
+  measured_red_baseline:
+    - `REQUIRE_REACHED=1 SAMPLES=8 scripts/generated_stage_lower_method_terminal_classifier.sh`
+      reports `completion_classifier_classification=reached_tx_and_emit`,
+      `precall_rows=1628`, `selected_cause=lower_method_terminal_no_exact_after_tx_no_call`,
+      `selected_rows=6`, and `classification=rejected_mixed_lower_method_terminals`.
+    - selected samples reach `after_tx` but not `inside_type_params`;
+      abstract controls traverse all pre-call checkpoints and join to
+      `[MAT_METHOD_CALL]` rows.
+  focused_DoD:
+    - the selected six-row `after_tx_no_call` class disappears or is replaced by
+      a root-sized named terminal reason;
+    - abstract controls still traverse the full pre-call chain and remain
+      abstract / non-body materializations;
+    - no sampled Array/Slice/Atomic method is special-cased.
+  architecture_DoD:
+    - the next source slice consumes the implicit scope-entry authority edge
+      instead of adding another generic marker;
+    - generated-stage `[MAT_EMIT]` reachability is preserved;
+    - `CallMaterializationTransaction` remains the owner for the current row,
+      unless fresh evidence refutes this row and returns to the board.
+  generated_stage_gate:
+    - `REQUIRE_REACHED=1 SAMPLES=8 scripts/generated_stage_lower_method_terminal_classifier.sh`
+      must keep `completion_classifier_classification=reached_tx_and_emit`.
+  negative_controls:
+    - no backend undefined-extern rescue or forwarder;
+    - no requested-name forcing;
+    - no broad `NamedTuple`/`Tuple` rendering change;
+    - no global ambient-map policy change;
+    - no `BlockOwner` rollback;
+    - no production `lower_method` trace-object plumbing.
+  rejected_shortcuts:
+    - adding another pre-call checkpoint without an owner edge;
+    - patching sampled Array/Slice/Atomic methods;
+    - treating this as green `s2b`/`s3b`.
+  residual_boundary:
+    - If the scope-entry contract still leaves a broad after-tx-only class, this
+      `MaterializationTransaction` row is not root-sized enough for production
+      behavior and the next movement must return to the Current Execution Board.
+}
+```
+
 #### Slice 0k-CU receipt: assigned-tail block-return contract
 
 ```text

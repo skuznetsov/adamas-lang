@@ -173,6 +173,16 @@ write a pre-code receipt for the scoped type-param/block-yield owner edge after
 transaction logging, or refute the current `MaterializationTransaction` row and
 return to the Current Execution Board.
 
+2026-07-02 post-0k-DH note: that receipt is now written in
+`docs/compiler_architecture_sdd.md`. It selects a `contract-owner-migration`
+for the implicit body-lowering scope-entry edge after
+`CallMaterializationTransaction` logging: existing
+`CallMaterializationTransaction` plus `SemanticStateScope` must own the
+`after_tx -> inside_type_params` contract instead of leaving it implicit in
+nested block helpers. The next source slice is admitted only if it removes or
+root-sizes the six-row `after_tx_no_call` class while preserving generated-stage
+`[MAT_EMIT]` reachability and abstract-method controls.
+
 2026-07-02 post-0k-CS note: hostile review of the post-0k-CR route found that
 the active SDD is still being followed, but the emergency B4/O1 lane can become
 another symptom scheduler if every moved crash stack automatically selects the
