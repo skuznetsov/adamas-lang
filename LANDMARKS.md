@@ -12,6 +12,41 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-CW-MATERIALIZATION-EXACT-BODY-AVAILABILITY|design-sealed 2026-07-02 {F:0.87 G:0.72 R:0.86}]:
+Slice 0k-CW selects the architecture-burn-down target after 0k-CV. Fresh
+source-shape evidence shows the obvious semantic-state and symbol-binding seams
+are already promoted or guard-only:
+`SOURCE_SHAPE_ONLY=1 scripts/semantic_state_scope_admission_report.sh` reports
+`state_model_redesign_complete=1`,
+`scripts/materialization_symbol_binding_admission_report.sh` reports
+`already_promoted_shadow`, and
+`scripts/call_materialization_transaction_admission_report.sh` reports the
+main transaction seam `already_promoted_shadow` while still showing residual
+legacy edges. Fresh generated-stage transaction evidence from
+`scripts/generated_stage_transaction_edge_selection_report.sh` reports
+`post_consumer_state=selected_consumed_by_contract_consumer`,
+`contract_mismatch_rows=0`, `residual_exact_missing_body_rows=14`,
+`residual_exact_missing_body_groups=9`,
+`residual_exact_missing_body_root_sized_groups=9`, and
+`residual_selection_status=rejected_exact_missing_body_ambiguous`. The selected
+owner spine is `MaterializationTransaction` exact body availability: for
+transaction rows where requested, target, body, and call symbols are all equal,
+the compiler needs a transaction-owned proof of body availability before
+HIR/MIR/LLVM falls back to `ExternCall`, backend `@undefined_externs`, or stub
+emission. The next executable movement is read-only: classify the exact
+missing-body residual by producer cause (HIR body absent, HIR body present but
+not lowered to MIR, MIR function absent, backend emitted-set miss, or
+legitimate extern/runtime helper) and stop if the selected class remains broad
+or ambiguous. Rejected next moves: backend undefined-extern rescue, forwarder
+rescue, requested-name forcing, per-method patches for the sampled
+Array/Slice/IO/Atomic/String::Builder/Int32 rows, broad `NamedTuple`/`Tuple`
+rendering, global ambient-map policy, `BlockOwner` rollback, or another report
+that does not retire/refute this selection. Scope: docs/control-plane
+selection; no compiler production behavior changed and no green `s2b`/`s3b`
+claim. Decay trigger: the exact missing-body residual disappears, a classifier
+selects a root-sized producer edge, or a newer generated-stage transaction
+report refutes the residual shape.
+
 [LM-ARCH-0K-CV-WIP-QUARANTINE-ARCHITECTURE-PAUSE|design-sealed 2026-07-02 {F:0.86 G:0.76 R:0.88}]:
 Slice 0k-CV is an architecture-pause checkpoint after reviewing and removing
 an unfinished local 0k-CU source WIP in `src/compiler/hir/ast_to_hir.cr`. The

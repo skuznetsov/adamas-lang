@@ -8,6 +8,31 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: added Slice 0k-CW, the architecture-burn-down owner-spine
+  selection required by 0k-CV. Fresh source-shape evidence rejects reselection
+  of already-promoted seams:
+  `SOURCE_SHAPE_ONLY=1 scripts/semantic_state_scope_admission_report.sh`
+  reports `state_model_redesign_complete=1`,
+  `scripts/materialization_symbol_binding_admission_report.sh` reports
+  `already_promoted_shadow`, and
+  `scripts/call_materialization_transaction_admission_report.sh` reports the
+  main transaction seam `already_promoted_shadow`. Fresh generated-stage
+  transaction evidence from
+  `scripts/generated_stage_transaction_edge_selection_report.sh` reports
+  `post_consumer_state=selected_consumed_by_contract_consumer`,
+  `contract_mismatch_rows=0`, `residual_exact_missing_body_rows=14`,
+  `residual_exact_missing_body_groups=9`, and
+  `residual_selection_status=rejected_exact_missing_body_ambiguous`. The
+  selected next architecture lane is therefore `MaterializationTransaction` /
+  exact body availability, not B4 crash-stack pursuit and not the paused 0k-CU
+  helper WIP. The next executable slice should be read-only: add or extend a
+  `FunctionAvailabilityContract` / exact-missing-body classifier that splits
+  those all-equal missing-body rows by producer cause (HIR body absent, HIR body
+  present but not lowered to MIR, MIR function absent, backend emitted-set miss,
+  or legitimate extern/runtime helper). Stop if the class stays broad or
+  ambiguous; do not patch Array/Slice/IO/Atomic/String::Builder/Int32 samples
+  directly.
+
 - 2026-07-02 UPDATE: added Slice 0k-CV, an architecture-pause checkpoint after
   reviewing and removing the unfinished local 0k-CU `ast_to_hir.cr` WIP. The
   WIP was not completion evidence: it started adding a HIR

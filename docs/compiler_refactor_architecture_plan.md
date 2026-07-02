@@ -18,6 +18,22 @@ contract falsifier. A source-shape helper, crash-stack movement, or partial
 local WIP is not progress toward green `s2b`/`s3b` unless it consumes an old
 authority edge and runs the generated-stage gate named by a fresh receipt.
 
+2026-07-02 post-0k-CW note: architecture burn-down selected
+`MaterializationTransaction` exact body availability. Source-shape evidence
+shows `SemanticStateScope`, `MaterializationSymbolBinding`, and the main
+`CallMaterializationTransaction` seam are already promoted or shadow-only, so
+they are not the next owner-spine selection. Generated-stage transaction
+evidence reports `post_consumer_state=selected_consumed_by_contract_consumer`,
+`contract_mismatch_rows=0`, `residual_exact_missing_body_rows=14`,
+`residual_exact_missing_body_groups=9`, and
+`residual_selection_status=rejected_exact_missing_body_ambiguous`. The next
+executable movement is a read-only `FunctionAvailabilityContract` /
+exact-missing-body classifier that splits those all-equal rows by producer
+cause: HIR body absent, HIR body present but not lowered to MIR, MIR function
+absent, backend emitted-set miss, or legitimate extern/runtime helper. Do not
+patch sampled Array/Slice/IO/Atomic/String::Builder/Int32 methods directly and
+do not add backend undefined-extern rescue or forwarders from this evidence.
+
 2026-07-02 post-0k-CS note: hostile review of the post-0k-CR route found that
 the active SDD is still being followed, but the emergency B4/O1 lane can become
 another symptom scheduler if every moved crash stack automatically selects the
