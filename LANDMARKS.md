@@ -12,6 +12,32 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-BQ-LLVM-EMISSION-SESSION-CONTRACT|design-sealed 2026-07-01 {F:0.84 G:0.58 R:0.88}]:
+Slice 0k-BQ design-seals `LLVMEmissionSession` as the first concrete
+`PhaseAuthority` owner record for the B4 generated-stage corridor. Source
+inventory names the old authority edges: `src/compiler/cli.cr:2873-2979`
+constructs/configures the backend, assigns HIR extern maps and constant
+initializers, and owns `.ll` output file writing; `src/compiler/mir/llvm_backend.cr:2932-3044`
+selects, filters, precomputes, dedups, and emits the function list;
+`src/compiler/mir/llvm_backend.cr:17414-17776` chooses worker assignments,
+forks workers, serializes side effects, merges side-effect tables, and silently
+falls back to sequential emission on parallel failure; `src/compiler/mir/llvm_backend.cr:2087-2133`
+holds emitted/called/undefined/string/function-index state as mutable backend
+fields; `src/compiler/mir/llvm_backend.cr:3125-3144`, `3493-3638`, and
+`3705-3798` derive tail extern declarations and missing-body stubs from those
+sets. The next production code slice is admitted only as behavior-neutral
+`contract-owner-migration`: introduce an `LLVMEmissionSession` record carrying
+setup facts, function plan, worker plan, side-effect merge contract, tail plan,
+output ownership, resource evidence, and generated-stage gate linkage, plus a
+source-shape guard proving at least one old authority edge is consumed by the
+record. Rejected in the first slice: changing emitted LLVM semantics, worker
+defaults, fallback behavior, undefined extern declarations, missing-body stubs,
+output-file behavior, resource acceptance thresholds, or `BlockOwner`. Scope:
+docs/design only; B4 remains measured-red and no green `s2b`/`s3b` claim is
+made. Decay trigger: a committed `LLVMEmissionSession` implementation slice
+lands, B4 reaches a different first-bad boundary, or a stronger
+`PhaseAuthority` owner contract supersedes this record.
+
 [LM-ARCH-0K-BP-PHASE-AUTHORITY-FREEZE|design-sealed 2026-07-01 {F:0.83 G:0.62 R:0.87}]:
 Slice 0k-BP freezes production symptom fixes after hostile review of the
 post-0k-BO decision. `scripts/generated_stage_llvm_entry_classifier.sh`

@@ -288,9 +288,11 @@ gate is `REQUIRE_CURRENT_FRONTIER=1`; the future green gate is
 next architecture movement: stage1 and produced `s2b` build successfully,
 default LLVM workers reach `pass3 after lower_main call` and then hit the
 parallel-rand/RSS symptom, while `ADAMAS_LLVM_WORKERS=1` reaches the same
-transition and exits 139 without the rand symptom. The next implementation
-should extend this classifier toward a first-bad `LLVMEmissionSession` owner
-boundary, not patch the worker symptom directly.
+transition and exits 139 without the rand symptom. At 0k-BO this selected a
+first-bad `LLVMEmissionSession` owner-boundary question rather than a worker
+patch. This sentence is superseded by 0k-BP/0k-BQ: the next implementation is
+not a classifier extension by default; it is the behavior-neutral
+`LLVMEmissionSession` owner-record migration and source-shape guard.
 
 2026-07-01 post-0k-BP note: production fixes from the B4 crash stack are
 paused. The next movement is not "extend the classifier" by default; it is to
@@ -305,6 +307,21 @@ A behavior slice is admitted only after the owner contract and focused guard
 name the old authority edge being replaced, shadowed, or refuted. This keeps B4
 as the active bootstrap pressure gate without letting it become another
 crash-stack-first implementation lane.
+
+2026-07-01 post-0k-BQ note: the `PhaseAuthority` tranche now has a concrete
+first owner contract: `LLVMEmissionSession`. The source inventory pins the
+legacy edges to CLI step 5 and `LLVMIRGenerator#generate` /
+`emit_functions_parallel`: CLI mutates backend setup flags and owns `.ll` file
+writing, while the backend selects/filter/dedups functions, chooses workers,
+forks/merges worker side effects, emits tail declarations/stubs, and records
+memory evidence through mutable fields. The next code slice is admitted only
+as behavior-neutral `contract-owner-migration`: introduce a session/plan record
+that captures setup facts, function plan, worker plan, side-effect merge
+contract, tail plan, output ownership, and generated-stage evidence. It must
+add a source-shape guard proving at least one old authority edge is consumed by
+the session record. Do not change emitted LLVM semantics, worker defaults,
+fallback behavior, undefined externs, missing-body stubs, output-file behavior,
+or `BlockOwner` in that first slice.
 
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another

@@ -8,6 +8,24 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: added Slice 0k-BQ, a docs-only
+  `LLVMEmissionSession` owner-contract design under the 0k-BP
+  `PhaseAuthority` freeze. Source inventory pins the current legacy authority
+  edges: CLI step 5 creates/configures `LLVMIRGenerator`, assigns HIR extern
+  maps and constant initializers, and owns `.ll` file output; the backend
+  chooses the final function list, unresolved-pattern skip set, return-type
+  precompute, mangled-name dedup set, worker count, sequential/parallel path,
+  worker side-effect merge, tail undefined-extern declarations, missing-body
+  stubs, and memory snapshots through mutable fields and locals. The next code
+  slice is now admitted only as behavior-neutral `contract-owner-migration`:
+  introduce one `LLVMEmissionSession` session/plan record that captures setup
+  facts, function plan, worker plan, side-effect merge contract, tail plan,
+  output ownership, resource evidence, and generated-stage gate linkage. It
+  must add a source-shape guard proving at least one old authority edge is
+  consumed by the session record. It must not change emitted LLVM semantics,
+  worker defaults, fallback behavior, undefined externs, missing-body stubs,
+  output-file behavior, or `BlockOwner` in the first implementation slice.
+
 - 2026-07-01 UPDATE: added Slice 0k-BP, a docs-only architecture freeze after
   hostile review of the post-0k-BO decision. Production compiler fixes from
   the B4 crash stack are paused. `scripts/generated_stage_llvm_entry_classifier.sh`

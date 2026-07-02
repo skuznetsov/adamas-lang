@@ -78,3 +78,19 @@ Every LLVM-emission contract fix SHOULD have a guard that:
 - runs `llc` when available.
 
 Guard: `regression_tests/p2_stage2_static_call_named_llvm_no_prelude.sh`.
+
+## 7. LLVMEmissionSession
+
+Generated-stage LLVM entry is now governed by Slice 0k-BQ in
+`docs/compiler_architecture_sdd.md`.
+
+Before changing worker policy, side-effect merge behavior, undefined-extern or
+missing-body stubs, output-file ownership, or resource acceptance, the compiler
+MUST introduce an explicit `LLVMEmissionSession` owner record in behavior-neutral
+mode. The session record must capture the setup facts, final function plan,
+worker plan, side-effect merge contract, tail declaration/stub plan, output
+ownership boundary, and generated-stage evidence for one LLVM generation run.
+
+The first implementation slice MUST include a source-shape guard proving that at
+least one old authority edge is consumed by the session record instead of living
+only as scattered CLI locals, backend locals, or mutable backend fields.
