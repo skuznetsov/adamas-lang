@@ -8,6 +8,26 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: post-0k-DK resource corridor is now split by default-off
+  LLVM generate phase rows. `LLVMIRGenerator#generate` records
+  `llvm.generate_phase` rows under the existing `GSETX` transaction, and
+  `scripts/generated_stage_execution_transaction_report.sh` adds
+  `REQUIRE_RESOURCE_PHASE_SPLIT=1`. Fresh evidence:
+  `STAGE1_COMPILER=/tmp/adamas_phase_stage1 TAIL_LINES=30 REQUIRE_JOINED=1 REQUIRE_POST_CU_RESOURCE=1 REQUIRE_RESOURCE_PHASE_SPLIT=1 scripts/generated_stage_execution_transaction_report.sh`
+  exits 0 with `final_classification=abort_resource_after_lower_main`,
+  `resource.llvm_generate_last_phase=function_emission_start`,
+  `resource.llvm_generate_phase_split=during_function_emission`,
+  `resource.llvm_generate_last_out_pos=147350`,
+  `runtime.llvm_generate_phase_rows=2`, and
+  `output.commit_record=llvm_ir_started_without_commit:file`. This refutes
+  tail/stub/metadata/type-name/DWARF/final `IO::Memory#to_s` as the first
+  observed boundary for the current resource residual. The next production
+  slice, if any, must name a transaction-owned function-emission edge
+  (`emit_functions_parallel`/sequential function chunking, worker/parent output
+  buffering, or function-plan memory growth) before changing worker policy,
+  memory budgets, output behavior, tail stubs, rand fallback, or backend
+  semantics.
+
 - 2026-07-02 UPDATE: post-0k-CU generated-stage transaction remeasurement now
   has an executable classifier gate instead of a vague RSS tail. The updated
   `scripts/generated_stage_execution_transaction_report.sh` recognizes

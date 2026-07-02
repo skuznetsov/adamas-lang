@@ -12,6 +12,32 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-DL-LLVM-GENERATE-PHASE-SPLIT|implemented 2026-07-02 {F:0.91 G:0.64 R:0.90}]:
+The post-0k-DK `PhaseAuthority` / `GeneratedStageExecution` resource corridor
+is now split by default-off LLVM generate phase rows. `LLVMIRGenerator#generate`
+emits `llvm.generate_phase` rows only under the existing `GSETX` transaction,
+and `scripts/generated_stage_execution_transaction_report.sh` adds
+`REQUIRE_RESOURCE_PHASE_SPLIT=1` plus
+`resource.llvm_generate_last_phase`,
+`resource.llvm_generate_last_out_pos`, and
+`resource.llvm_generate_phase_split`. Evidence:
+`STAGE1_COMPILER=/tmp/adamas_phase_stage1 TAIL_LINES=30 REQUIRE_JOINED=1 REQUIRE_POST_CU_RESOURCE=1 REQUIRE_RESOURCE_PHASE_SPLIT=1 scripts/generated_stage_execution_transaction_report.sh`
+exits 0 with `final_classification=abort_resource_after_lower_main`,
+`join_status=joined`, `resource.default_memory_kill=1`,
+`resource.workers1_memory_kill=1`,
+`output.commit_record=llvm_ir_started_without_commit:file`,
+`resource.llvm_generate_last_phase=function_emission_start`,
+`resource.llvm_generate_last_out_pos=147350`,
+`resource.llvm_generate_phase_split=during_function_emission`, and
+`runtime.llvm_generate_phase_rows=2`. Scope: behavior-neutral evidence only.
+This refutes tail/stub/metadata/type-name/DWARF/final `IO::Memory#to_s` as the
+first observed boundary for the current post-`lower_main` resource residual. It
+does not admit worker-policy, memory-budget, output-file, tail-stub, rand
+fallback, or backend semantic changes. Decay trigger: a fresh current-source
+transaction report with `REQUIRE_RESOURCE_PHASE_SPLIT=1` stops reporting
+`during_function_emission`, or the generated-stage gate reaches
+`function_emission_done`.
+
 [LM-ARCH-0K-DK-POSTCU-RESOURCE-TX-CLASSIFIED|implemented 2026-07-02 {F:0.90 G:0.62 R:0.90}]:
 After 0k-CU, the generated-stage execution transaction report now classifies the
 new joined resource residual directly. The old report treated

@@ -2011,6 +2011,39 @@ module Adamas::MIR
       )
     end
 
+    private def log_generated_stage_llvm_generate_phase(
+      phase : String,
+      output_mode : String,
+      extra_fields : String = ""
+    ) : Nil
+      return unless generated_stage_transaction_enabled?
+
+      fields = String.build do |io|
+        io << "phase="
+        io << generated_stage_transaction_token(phase)
+        io << " output_mode="
+        io << generated_stage_transaction_token(output_mode)
+        io << " out_pos="
+        io << @output.pos
+        io << " emitted="
+        io << @emitted_functions.size
+        io << " called="
+        io << @called_crystal_functions.size
+        io << " undefined="
+        io << @undefined_extern_names.size
+        io << " strings="
+        io << @string_constant_values.size
+        io << " aliases="
+        io << @string_aliases.size
+        unless extra_fields.empty?
+          io << ' '
+          io << extra_fields
+        end
+      end
+
+      log_generated_stage_transaction_row("llvm.generate_phase", fields)
+    end
+
     private def llvm_entry_opt_guard_enabled? : Bool
       raw = (::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_LLVM_ENTRY_OPT_GUARD") || "").strip.downcase
       return true if raw.empty?
@@ -3211,6 +3244,8 @@ module Adamas::MIR
       @output = output || IO::Memory.new
       @toplevel_output = nil
       generated_in_memory = output.nil?
+      output_mode = generated_in_memory ? "memory" : "external_io"
+      log_generated_stage_llvm_generate_phase("generate_start", output_mode)
       @emit_regex_runtime = regex_runtime_needed?(@module.functions)
 
       bootstrap_trace_puts "  [LLVM] emit_header..." if @progress
@@ -3246,6 +3281,11 @@ module Adamas::MIR
       end
       STDERR.puts "  [LLVM] emitting #{total_funcs} functions (#{emission_session.original_function_count} total, #{emission_session.pruned_function_count} pruned, workers=#{n_workers})..." if @progress
       func_emit_start = @progress ? Time.instant : nil
+      log_generated_stage_llvm_generate_phase(
+        "function_emission_start",
+        output_mode,
+        "planned_functions=#{total_funcs} requested_workers=#{emission_session.requested_worker_count} effective_workers=#{n_workers}"
+      )
 
       if n_workers > 1 && total_funcs >= n_workers * 4
         emit_functions_parallel(emission_session, functions_to_emit, n_workers)
@@ -3257,6 +3297,7 @@ module Adamas::MIR
         func_emit_elapsed = (Time.instant - func_emit_start.not_nil!).total_milliseconds
         STDERR.puts "  [LLVM] function emission: #{func_emit_elapsed.round(1)}ms for #{total_funcs} functions (workers=#{n_workers})"
       end
+      log_generated_stage_llvm_generate_phase("function_emission_done", output_mode)
       log_generated_stage_side_effect_counts("post_function_emission")
 
       emit_entrypoint_if_needed(functions_to_emit)
@@ -3287,6 +3328,7 @@ module Adamas::MIR
       @module.symbol_names.each { |name| get_or_create_string_global(name) }
 
       tail_stats = bootstrap_env_enabled?("ADAMAS_LLVM_TAIL_STATS")
+      log_generated_stage_llvm_generate_phase("tail_enter", output_mode)
       if generated_stage_transaction_enabled?
         log_generated_stage_transaction_row(
           "tail.semantic_split",
@@ -3372,10 +3414,16 @@ module Adamas::MIR
         )
         log_generated_stage_side_effect_counts("post_tail")
       end
+      log_generated_stage_llvm_generate_phase("tail_done", output_mode)
       if tail_stats
         bootstrap_trace_puts "[LLVM_TAIL_GEN] phase=missing_crystal_stubs ms=#{(Time.instant - tail_t0.not_nil!).total_milliseconds.round(1)} out=#{@output.pos} called=#{@called_crystal_functions.size} emitted=#{@emitted_functions.size}"
       end
 
+      log_generated_stage_llvm_generate_phase(
+        "metadata_enter",
+        output_mode,
+        "emit_type_metadata=#{@emit_type_metadata ? 1 : 0} type_entries=#{@type_info_entries.size} field_entries=#{@field_info_entries.size} union_entries=#{@union_info_entries.size}"
+      )
       if @emit_type_metadata
         # Metadata is debug DX only. For large stage2 builds IR can approach the
         # IO::Memory ceiling (~2GB), so emit metadata into a temporary buffer and
@@ -3432,27 +3480,41 @@ module Adamas::MIR
           end
         end
       end
+      log_generated_stage_llvm_generate_phase("metadata_done", output_mode)
 
       # Always emit type name table (needed for self.class at runtime)
       STDERR.puts "  [LLVM] emit_type_name_table..." if @progress
+      log_generated_stage_llvm_generate_phase("type_name_table_enter", output_mode)
       tail_t0 = Time.instant if tail_stats
       emit_type_name_table
+      log_generated_stage_llvm_generate_phase("type_name_table_done", output_mode)
       if tail_stats
         bootstrap_trace_puts "[LLVM_TAIL_GEN] phase=type_name_table ms=#{(Time.instant - tail_t0.not_nil!).total_milliseconds.round(1)} out=#{@output.pos} types=#{@type_info_entries.size}"
       end
 
       # DWARF: emit debug metadata at end of module
+      log_generated_stage_llvm_generate_phase("dwarf_enter", output_mode)
       tail_t0 = Time.instant if tail_stats
       emit_dwarf_metadata
+      log_generated_stage_llvm_generate_phase("dwarf_done", output_mode)
       if tail_stats
         bootstrap_trace_puts "[LLVM_TAIL_GEN] phase=dwarf_metadata ms=#{(Time.instant - tail_t0.not_nil!).total_milliseconds.round(1)} out=#{@output.pos}"
       end
 
       STDERR.puts "  [LLVM] finalizing output..." if @progress
+      log_generated_stage_llvm_generate_phase("finalize_enter", output_mode)
       bootstrap_trace_puts "[LLVM_TAIL_GEN] phase=finalize_enter out=#{@output.pos}" if tail_stats
       if generated_in_memory
-        @output.as(IO::Memory).to_s
+        log_generated_stage_llvm_generate_phase("finalize_to_s_enter", output_mode)
+        generated = @output.as(IO::Memory).to_s
+        log_generated_stage_llvm_generate_phase(
+          "finalize_to_s_done",
+          output_mode,
+          "bytes=#{generated.bytesize}"
+        )
+        generated
       else
+        log_generated_stage_llvm_generate_phase("finalize_external_done", output_mode)
         ""
       end
     end

@@ -251,6 +251,21 @@ slice must split a transaction-owned resource/output/function-plan edge before
 changing memory limits, worker policy, rand fallback, output behavior, tail
 stubs, or backend emission.
 
+2026-07-02 post-0k-DL note: the resource/output/function-plan ambiguity is now
+split one level deeper with default-off `llvm.generate_phase` rows. Fresh
+evidence from
+`STAGE1_COMPILER=/tmp/adamas_phase_stage1 TAIL_LINES=30 REQUIRE_JOINED=1 REQUIRE_POST_CU_RESOURCE=1 REQUIRE_RESOURCE_PHASE_SPLIT=1 scripts/generated_stage_execution_transaction_report.sh`
+preserves `final_classification=abort_resource_after_lower_main` and
+`admission_status=rejected_no_root_sized_consumer`, but reports
+`resource.llvm_generate_last_phase=function_emission_start`,
+`resource.llvm_generate_phase_split=during_function_emission`, and
+`runtime.llvm_generate_phase_rows=2`. The next executable movement is therefore
+not tail/output/metadata/DWARF/type-name cleanup and not resource-budget
+acceptance. It must name a root-sized function-emission authority edge inside
+`LLVMIRGenerator#generate`: function-plan memory growth, sequential/parallel
+chunk emission, worker/parent output buffering, or another measured
+function-emission consumer.
+
 2026-07-02 post-0k-CR note: the return-shape census now also measures
 assigned-tail yield passthrough (`result = yield; ...; result`). Strict current
 evidence keeps the broad 0k-CQ result for naive `contains_yield` scope, but
