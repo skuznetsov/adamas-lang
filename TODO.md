@@ -8,6 +8,27 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: implemented Slice 0k-CJ, the behavior-neutral
+  `GeneratedStageExecutionOutcome` output-row checkpoint selected by 0k-CH and
+  bounded by 0k-CI. `src/compiler/cli.cr` now owns one
+  `GeneratedStageExecutionOutcome` per produced-compiler output corridor and
+  serializes `output.llvm_ir_start`, `output.llvm_ir_written`, and
+  `output.binary_compile_result` through outcome helper methods instead of
+  direct scattered CLI row writes. New guard:
+  `scripts/generated_stage_outcome_source_shape_guard.sh`; strict mode reports
+  `source_shape=outcome_serializes_output_commit_rows` and zero direct output
+  rows outside helpers. Verification kept the intended state: `crystal build`
+  passes; `LLVMEmissionSession` guard passes; G6 `BlockOwner` guard reports
+  `body_present_rows=7`, `real_defs=1`, `stub_defs=0`; B4/L6 joined report
+  still reports `b4.classification=current_0k_bn_frontier`,
+  `final_classification=abort_resource`, `join_status=joined`, and
+  `admission_status=rejected_no_root_sized_consumer`; full regression suites
+  pass `152/152 + 36/36`. This checkpoint only decreases
+  `BootstrapPotential`'s last component, so the next source movement is still
+  barred unless it decreases B4/L6 phase, owner-spine ambiguity, or live proxy
+  surfaces, or declares an explicit `bootstrap-emergency-with-ledger` behavior
+  slice.
+
 - 2026-07-02 UPDATE: added Slice 0k-CI, a docs-only
   anti-proxy bootstrap-potential gate after hostile review of the repeated
   behavior-neutral owner/guard pattern. Production compiler edits remain paused

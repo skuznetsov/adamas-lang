@@ -554,6 +554,17 @@ SDD redesign, owner-spine refutation, direct root localization, or an explicitly
 bounded `bootstrap-emergency-with-ledger` behavior slice. This is the current
 control point for avoiding source-shape theater.
 
+2026-07-02 post-0k-CJ note: the 0k-CH output-owner checkpoint is implemented
+and verified. `GeneratedStageExecutionOutcome` now owns the CLI output
+start/write/compile-result row serialization, with
+`scripts/generated_stage_outcome_source_shape_guard.sh` proving no direct
+scattered output row writes remain outside the helpers. This is a completed
+checkpoint, not a new bootstrap claim: B4/L6 remains
+`current_0k_bn_frontier` / `abort_resource` / `joined` /
+`rejected_no_root_sized_consumer`. Per 0k-CI, the next source slice must not
+select another behavior-neutral owner edge unless it decreases B4/L6 phase,
+plausible owner-spine count, or live proxy-surface count.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`

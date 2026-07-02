@@ -12,6 +12,34 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-CJ-GENERATED-STAGE-OUTCOME-SOURCE-CHECKPOINT|implemented 2026-07-02 {F:0.90 G:0.52 R:0.90}]:
+Slice 0k-CJ implements the 0k-CH `cli.output_commit_record` owner migration
+under the 0k-CI anti-proxy gate. `src/compiler/cli.cr` now creates one
+`GeneratedStageExecutionOutcome` for the produced-compiler output corridor and
+serializes `output.llvm_ir_start`, `output.llvm_ir_written`, and
+`output.binary_compile_result` through outcome helper methods. New guard
+`scripts/generated_stage_outcome_source_shape_guard.sh` strict mode reports
+`source_shape=outcome_serializes_output_commit_rows`,
+`start_helper_calls=2`, `written_helper_calls=2`,
+`compile_helper_calls=1`, and zero direct output rows outside outcome helpers.
+Verification: `crystal build src/adamas.cr -o bin/adamas --error-trace`
+passes; the existing `LLVMEmissionSession` source-shape guard passes; the G6
+`BlockOwner` availability guard reports `body_present_rows=7`, `real_defs=1`,
+and `stub_defs=0`; the joined B4/L6 report preserves the measured-red state
+with `b4.classification=current_0k_bn_frontier`,
+`final_classification=abort_resource`, `join_status=joined`, and
+`admission_status=rejected_no_root_sized_consumer`; full regression suites pass
+`152/152 + 36/36`. Scope: behavior-neutral output-row owner checkpoint only;
+no worker/resource/tail/backend behavior, output semantics, materialization,
+parser, ambient-map, broad `NamedTuple`/`Tuple`, physical extraction, or
+`BlockOwner` behavior changed. BootstrapPotential impact: only the
+`unmigrated authority-edge count` component decreased, so the next source
+movement remains barred unless it decreases B4/L6 phase, plausible owner-spine
+count, or live proxy-surface count, or is an explicit
+`bootstrap-emergency-with-ledger` behavior slice. Decay trigger: the guard
+fails, row format changes, B4/L6 reaches `REQUIRE_CLEAN=1`, or a future slice
+refutes `GeneratedStageExecutionOutcome` as the output-row authority.
+
 [LM-ARCH-0K-CI-BOOTSTRAP-POTENTIAL-GATE|design-sealed 2026-07-02 {F:0.84 G:0.72 R:0.86}]:
 Slice 0k-CI adds a docs-only anti-proxy gate after hostile review of the
 repeated behavior-neutral owner/guard pattern. It does not replace the 0k-CH

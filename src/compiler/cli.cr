@@ -612,6 +612,33 @@ module Adamas
         log_codepath_status(category, path, taken ? "taken" : "not_taken", owner, note)
       end
 
+      private class GeneratedStageExecutionOutcome
+        getter ll_file : String
+        getter output_path : String
+        getter emit_mode : String
+
+        def initialize(@ll_file : String, @output_path : String, @emit_mode : String)
+          @llvm_ir_bytes = 0_i64
+          @binary_compile_result = 0
+        end
+
+        def record_llvm_ir_written(bytes : Int64) : Nil
+          @llvm_ir_bytes = bytes
+        end
+
+        def record_binary_compile_result(result : Int32) : Nil
+          @binary_compile_result = result
+        end
+
+        def llvm_ir_bytes : Int64
+          @llvm_ir_bytes
+        end
+
+        def binary_compile_result : Int32
+          @binary_compile_result
+        end
+      end
+
       private def generated_stage_transaction_enabled? : Bool
         tx_id = env_get("ADAMAS_GSETX_ID")
         ledger = env_get("ADAMAS_GSETX_LEDGER")
@@ -647,6 +674,33 @@ module Adamas
       rescue
         # Transaction rows are default-off evidence only. They must never affect
         # compiler semantics or mask the original generated-stage frontier.
+      end
+
+      private def log_generated_stage_outcome_llvm_ir_start(output_outcome : GeneratedStageExecutionOutcome) : Nil
+        return unless generated_stage_transaction_enabled?
+
+        log_generated_stage_transaction_row(
+          "output.llvm_ir_start",
+          "emit_mode=#{output_outcome.emit_mode} ll_file=#{codepath_status_token(output_outcome.ll_file)}"
+        )
+      end
+
+      private def log_generated_stage_outcome_llvm_ir_written(output_outcome : GeneratedStageExecutionOutcome) : Nil
+        return unless generated_stage_transaction_enabled?
+
+        log_generated_stage_transaction_row(
+          "output.llvm_ir_written",
+          "emit_mode=#{output_outcome.emit_mode} ll_file=#{codepath_status_token(output_outcome.ll_file)} bytes=#{output_outcome.llvm_ir_bytes}"
+        )
+      end
+
+      private def log_generated_stage_outcome_binary_compile_result(output_outcome : GeneratedStageExecutionOutcome) : Nil
+        return unless generated_stage_transaction_enabled?
+
+        log_generated_stage_transaction_row(
+          "output.binary_compile_result",
+          "rc=#{output_outcome.binary_compile_result} output=#{codepath_status_token(output_outcome.output_path)}"
+        )
       end
 
       private def write_all_fd(fd : IO::FileDescriptor::Handle, bytes : Bytes) : Int64
@@ -1638,6 +1692,11 @@ module Adamas
         pipeline_cache_hit = false
         pipeline_cache_file = ""
         ll_file = options.output + ".ll"
+        output_outcome = GeneratedStageExecutionOutcome.new(
+          ll_file,
+          options.output,
+          options.emit_llvm ? "stdout" : "file"
+        )
 
         if options.pipeline_cache
           pipeline_cache_dir = File.expand_path("tmp/pipeline_cache", Dir.current)
@@ -2998,24 +3057,15 @@ module Adamas
         llvm_ir = ""
         llvm_ir_bytes = 0_i64
         if options.emit_llvm
-          if generated_stage_transaction_enabled?
-            log_generated_stage_transaction_row(
-              "output.llvm_ir_start",
-              "emit_mode=stdout ll_file=#{codepath_status_token(ll_file)}"
-            )
-          end
+          log_generated_stage_outcome_llvm_ir_start(output_outcome)
           bootstrap_trace_puts "[LLVM_SETUP] generate(string) start" if llvm_setup_trace
           llvm_ir = llvm_gen.generate
           bootstrap_trace_puts "[LLVM_SETUP] generate(string) done bytes=#{llvm_ir.size}" if llvm_setup_trace
           llvm_ir_bytes = llvm_ir.size.to_i64
           log(options, out_io, "  LLVM IR size: #{llvm_ir_bytes} bytes")
           File.write(ll_file, llvm_ir)
-          if generated_stage_transaction_enabled?
-            log_generated_stage_transaction_row(
-              "output.llvm_ir_written",
-              "emit_mode=stdout ll_file=#{codepath_status_token(ll_file)} bytes=#{llvm_ir_bytes}"
-            )
-          end
+          output_outcome.record_llvm_ir_written(llvm_ir_bytes)
+          log_generated_stage_outcome_llvm_ir_written(output_outcome)
           timings["llvm"] = (Time.instant - llvm_start).total_milliseconds if options.stats
           timings["dbg_count_llvm_ir_bytes"] = llvm_ir_bytes.to_f if debug_profile
           if options.stats
@@ -3032,12 +3082,7 @@ module Adamas
           write_text(out_io, llvm_ir, newline: true)
           return 0
         else
-          if generated_stage_transaction_enabled?
-            log_generated_stage_transaction_row(
-              "output.llvm_ir_start",
-              "emit_mode=file ll_file=#{codepath_status_token(ll_file)}"
-            )
-          end
+          log_generated_stage_outcome_llvm_ir_start(output_outcome)
           llvm_ir = llvm_gen.generate
           if BootstrapEnv.enabled?("ADAMAS_TRACE_STDERR")
             LibC.write(2, "[STAGE2_TRACE] step5: generate done\n".to_unsafe, 36_u64)
@@ -3057,12 +3102,8 @@ module Adamas
           ensure
             LibC.close(fd)
           end
-          if generated_stage_transaction_enabled?
-            log_generated_stage_transaction_row(
-              "output.llvm_ir_written",
-              "emit_mode=file ll_file=#{codepath_status_token(ll_file)} bytes=#{llvm_ir_bytes}"
-            )
-          end
+          output_outcome.record_llvm_ir_written(llvm_ir_bytes)
+          log_generated_stage_outcome_llvm_ir_written(output_outcome)
 
           log(options, out_io, "  LLVM IR size: #{llvm_ir_bytes} bytes") if options.verbose
         end
@@ -3110,12 +3151,8 @@ module Adamas
         log(options, out_io, "\n[6/6] Compiling to binary...")
         compile_start = Time.instant
         result = compile_llvm_ir(ll_file, options, out_io, err_io, timings)
-        if generated_stage_transaction_enabled?
-          log_generated_stage_transaction_row(
-            "output.binary_compile_result",
-            "rc=#{result} output=#{codepath_status_token(options.output)}"
-          )
-        end
+        output_outcome.record_binary_compile_result(result)
+        log_generated_stage_outcome_binary_compile_result(output_outcome)
         timings["compile"] = (Time.instant - compile_start).total_milliseconds if options.stats
         if options.stats
           compile_details = [] of String
