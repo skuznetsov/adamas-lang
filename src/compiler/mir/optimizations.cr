@@ -2003,6 +2003,7 @@ module Adamas::MIR
     getter function : Function
     getter stats : OptimizationStats
     @@pass_timing_enabled : Bool = ENV["ADAMAS_MIR_PASS_TIMING"]? == "1"
+    @@stop_after_pass : String? = ENV["ADAMAS_MIR_OPT_THROUGH_PASS"]?
     @@pass_time_totals : ::Hash(String, Float64) = ::Hash(String, Float64).new(0.0)
     @@pass_call_counts : ::Hash(String, Int32) = ::Hash(String, Int32).new(0)
     @@pass_timing_lock : Mutex = Mutex.new
@@ -2050,6 +2051,7 @@ module Adamas::MIR
           ConstantFoldingPass.new(@function).run
         end
       end
+      return @stats if stop_after_pass?("constant_folding")
 
       # Pass 1.5: Local CSE for pure ops within blocks
       if hints.has_cse_candidate
@@ -2057,6 +2059,7 @@ module Adamas::MIR
           LocalCSEPass.new(@function).run
         end
       end
+      return @stats if stop_after_pass?("local_cse")
 
       # Pass 2: RC elision (Crystal-specific)
       if hints.has_rc_ops
@@ -2064,6 +2067,7 @@ module Adamas::MIR
           RCElisionPass.new(@function).run
         end
       end
+      return @stats if stop_after_pass?("rc_elision")
 
       # Pass 2.5: Copy propagation (light)
       if hints.has_cp_candidate
@@ -2071,11 +2075,13 @@ module Adamas::MIR
           CopyPropagationPass.new(@function).run
         end
       end
+      return @stats if stop_after_pass?("copy_propagation")
 
       # Pass 2.75: Peephole simplifications
       @stats.peephole_simplified = timed_pass("peephole") do
         PeepholePass.new(@function).run
       end
+      return @stats if stop_after_pass?("peephole")
 
       # Pass 3: Lock elision (thread-safety optimization)
       if hints.has_lock_ops
@@ -2083,11 +2089,13 @@ module Adamas::MIR
           LockElisionPass.new(@function).run
         end
       end
+      return @stats if stop_after_pass?("lock_elision")
 
       # Pass 4: Dead code elimination
       @stats.dead_eliminated = timed_pass("dce") do
         DeadCodeEliminationPass.new(@function).run
       end
+      return @stats if stop_after_pass?("dce")
 
       # Pass 5: DCE again only when the first pass changed the block graph.
       # If pass 4 removed nothing, pass 5 is guaranteed to be a no-op.
@@ -2096,6 +2104,7 @@ module Adamas::MIR
           DeadCodeEliminationPass.new(@function).run
         end
       end
+      return @stats if stop_after_pass?("dce_2")
 
       @stats
     end
@@ -2106,6 +2115,10 @@ module Adamas::MIR
       result = yield
       self.class.record_pass_timing(pass_name, (Time.instant - started_at).total_milliseconds)
       result
+    end
+
+    private def stop_after_pass?(pass_name : String) : Bool
+      @@stop_after_pass == pass_name
     end
 
     private def collect_hints : OptimizationHints

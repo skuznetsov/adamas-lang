@@ -1970,6 +1970,14 @@ Recommended direction:
   `concrete_typed_params=2/2033`, `no_regular_params=4/572`, with mixed
   short/skipped untyped classes). That makes a parameter-class contract the
   next planning surface before any behavior patch.
+- The current generated-stage resource board has moved past generic
+  materialization/name ownership and into `PhaseAuthority` resource ownership:
+  Slice 0k-DV selects workers=1 `CopyPropagationPass` as the first high
+  pass-level MIR optimization resource lane. The next implementation movement
+  should treat CopyPropagation state/resource ownership as the active
+  architecture unit. Another broad optimizer selector, memory-budget increase,
+  worker forcing, backend rescue, or return to `NamedTuple`/ambient/BlockOwner
+  surfaces would be a retreat to symptom chasing unless 0k-DV decays.
 
 This plan should be revisited after the architecture SDD seals the active
 semantic-owner frontiers enough that backend-local refactoring cannot hide a

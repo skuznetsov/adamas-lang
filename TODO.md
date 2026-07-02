@@ -8,6 +8,25 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: Slice 0k-DV splits the selected workers=1 MIR
+  optimization lane by pass-level OS-RSS cutoff. New debug-only cutoff:
+  `ADAMAS_MIR_OPT_THROUGH_PASS=<pass>`; new executable classifier:
+  `scripts/generated_stage_workers1_mir_opt_pass_classifier.sh`. Fresh
+  `REQUIRE_CLASSIFICATION=1 REQUIRE_PASS=1` evidence first re-confirms 0k-DU
+  (`subphase.classification=select_workers1_mir_optimization_resource_lane`,
+  stage1 control `334` MB, produced-s2 MIR bodies `1173` MB, produced-s2 MIR
+  opt memory-kill `4334` MB), then selects
+  `classification=select_workers1_mir_opt_copy_propagation_resource_lane`.
+  Pass cutoff controls are clean through `rc_elision` (`1174`/`1175`/`1174`
+  MB for constant folding, local CSE, RC elision), while `copy_propagation`
+  memory-kills at `4218` MB and later cutoffs remain high. Therefore the next
+  production resource receipt must target `CopyPropagationPass` state/resource
+  growth first, not generic optimizer work. Do not add another pass selector
+  unless it refutes this result, and do not patch earlier MIR passes, HIR/MIR
+  lowering, default LLVM emission, worker policy, memory budgets, backend
+  rescue, `NamedTuple`/`Tuple`, ambient maps, or `BlockOwner` from this
+  evidence.
+
 - 2026-07-02 UPDATE: Slice 0k-DU splits the selected workers=1 HIR-to-MIR
   resource lane by MIR subphase using OS-RSS stop gates. New debug-only gates:
   `ADAMAS_STOP_AFTER_MIR_TYPE_REGISTRATION`,

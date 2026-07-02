@@ -12,6 +12,26 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-DV-WORKERS1-MIR-OPT-COPY-PROP-RESOURCE-LANE|implemented 2026-07-02 {F:0.90 G:0.59 R:0.86}]:
+`scripts/generated_stage_workers1_mir_opt_pass_classifier.sh` splits the 0k-DU
+workers=1 MIR optimization resource lane by pass-level OS RSS cutoff. It uses
+new debug-only `ADAMAS_MIR_OPT_THROUGH_PASS=<pass>` in
+`MIR::OptimizationPipeline`, then stops after the whole serial MIR optimization
+loop with `ADAMAS_STOP_AFTER_MIR_OPT`. Fresh
+`REQUIRE_CLASSIFICATION=1 REQUIRE_PASS=1` evidence first re-confirms 0k-DU:
+`subphase.classification=select_workers1_mir_optimization_resource_lane`,
+stage1 control `334` MB, produced-s2 MIR bodies `1173` MB, produced-s2 MIR opt
+memory-kill `4334` MB. Pass cutoffs are clean through `rc_elision`
+(`constant_folding=1174` MB, `local_cse=1175` MB, `rc_elision=1174` MB), then
+`copy_propagation` memory-kills at `4218` MB. Later cutoffs remain high:
+`peephole=4166` MB, `lock_elision=4248` MB, `dce=4232` MB, and `dce_2=4334`
+MB. Scope: this is a pass-level selector, not a resource fix. It selects
+`CopyPropagationPass` state/resource growth as the next production target and
+forbids further generic optimizer selectors unless this result decays. Decay
+trigger: the pass classifier stops selecting copy propagation, an earlier pass
+becomes high, the stage1 or MIR-bodies controls become high, or MIR pass order
+/ optimizer routing changes.
+
 [LM-ARCH-0K-DU-WORKERS1-MIR-OPT-RESOURCE-LANE|implemented 2026-07-02 {F:0.91 G:0.62 R:0.88}]:
 `scripts/generated_stage_workers1_mir_subphase_classifier.sh` splits the 0k-DT
 workers=1 HIR-to-MIR resource lane by OS RSS stop gates. It uses new

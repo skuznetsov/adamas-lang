@@ -598,7 +598,7 @@ evidence, not next-step selectors.
 | `bootstrap-emergency-with-ledger` / B4-O1 | Consumed by 0k-CU. The HIR `BlockCallReturnContract` implementation moves the generated-stage gate past the old O1 `affected_block_ids` / `Set(UInt32)#includes?` frontier: `REQUIRE_CURRENT_CU_CONTRACT=1 scripts/hir_block_return_shape_census.sh` reports `classification=current_0k_cu_block_call_return_contract_applied`, and `STAGE1_COMPILER=/tmp/adamas_0kcu_stage1 REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh` exits at the expected non-current boundary with `b4_classification=llvm_entry_failure_after_lower_main` and `workers1_exit139=0`. The new residual is post-`lower_main` RSS pressure in both worker modes, with the default worker-mode rand fallback still present. | Return to the board before any new production source slice. The next receipt must reselect an owner spine from fresh generated-stage evidence; if it targets the new residual, it must name the old authority edge behind post-`lower_main` memory/resource growth rather than treating higher memory limits, worker count, or the rand fallback as acceptance evidence. | Continuing the 0k-CU breakglass lane by inertia; starting from the new RSS-kill stack; raising memory as a fix; forcing `ADAMAS_LLVM_WORKERS=1`; worker/rand/output/resource patches without a new receipt; CopyPropagation, Set/Hash, backend block-return, `NamedTuple`/`Tuple`, ambient-map, or `BlockOwner` changes. |
 | `architecture-burn-down` / owner-spine plan | Consumed by 0k-CW. The active burn-down selection is `MaterializationTransaction` exact body availability, based on generated-stage residual evidence rather than the latest crash stack. | Do not add another planning/report row unless it retires/refutes this selection or the residual classifier proves the selected edge is not root-sized. | Treating a moved crash stack as architecture progress; adding another report that does not retire/refute an older surface; committing WIP helpers that do not consume an old authority edge; claiming source-shape green as bootstrap green. |
 | `MaterializationTransaction` / exact body availability | Consumed through 0k-DI for the active `after_tx -> inside_type_params` edge. G6 `BlockOwner` setter availability is guard-green. The explicit materialization scope-entry slice preserves `[MAT_EMIT]` reachability and changes the lower-method terminal classifier from the old mixed 14-row / 4-cause state with `no_exact_after_tx_no_call` (6 rows) to a root-sized abstract-method residual: `residual_rows=3`, `terminal_cause_kinds=1`, `selected_cause=lower_method_terminal_abstract_method`, and `classification=eligible_lower_method_terminal_edge`. Residual rows now traverse `after_tx -> inside_type_params -> inside_namespace -> before_arity -> after_arity` and join to `[MAT_METHOD_CALL]`. This is focused authority-edge movement, not green bootstrap. | Return to the board before selecting another production edge. The next movement should first remeasure the generated-stage pressure gate and choose whether the active constraint is still `MaterializationTransaction` exact body availability, B4/O1 `PhaseAuthority`, or a `SemanticIdentity` pre-s2-clean row. | Backend undefined-extern rescue, forwarder rescue, requested-name forcing, per-method Array/Slice/IO/Atomic/String::Builder/Int32 patches, broad `NamedTuple`/`Tuple` rendering, global ambient-map policy, `BlockOwner` rollback, treating abstract-method residuals as a local method patch, adding another result/consumer layer, adding another generic pre-call marker, or threading a trace object through production `lower_method`. |
-| `PhaseAuthority` / `GeneratedStageExecution` | 0k-DR consumed the default-lane `memory.phase` surface; 0k-DS refuted startup/process-baseline ownership with OS RSS; 0k-DT selected workers=1 HIR-to-MIR as the mode-local lane; 0k-DU now selects the subphase. `REQUIRE_CLASSIFICATION=1 REQUIRE_SUBPHASE=1 scripts/generated_stage_workers1_mir_subphase_classifier.sh` reports `classification=select_workers1_mir_optimization_resource_lane`: produced-s2 workers=1 HIR/type-registration/prepare/bodies stop gates remain clean (`1167`/`1170`/`1170`/`1172` MB), while workers=1 MIR optimization memory-kills at `4149` MB and full MIR memory-kills at `4408` MB. | The next production receipt may re-enter `GeneratedStageExecution` only through the workers=1 MIR optimization resource-growth lane selected by 0k-DU. It must preserve HIR/type-registration/prepare/body-lowering controls and default-mode late LLVM/function-emission residual evidence, and it must not claim both-mode bootstrap progress from a single-mode fix. | Adding another GC `non_gc` memory selector; treating 0k-DR compile-entry `non_gc` as startup RSS; patching startup/parse/HIR retention; patching MIR type registration, MIR prepare, or body lowering from this evidence; memory-budget acceptance; forced `ADAMAS_LLVM_WORKERS=1`; worker/rand patches; default sequential function-emission patches before the workers=1 MIR optimization lane is consumed or refuted; output-file behavior changes; external sink enablement; incremental output-buffer fixes; LLVM function plan/session patches without workers=1 MIR-optimization owner evidence; tail stubs; metadata/DWARF/type-name patches; backend semantic changes; materialization; `NamedTuple`/`Tuple`; ambient maps; `BlockOwner` rollback; or treating either single-mode boundary as green bootstrap without the other mode's residual statement. |
+| `PhaseAuthority` / `GeneratedStageExecution` | 0k-DR consumed the default-lane `memory.phase` surface; 0k-DS refuted startup/process-baseline ownership with OS RSS; 0k-DT selected workers=1 HIR-to-MIR as the mode-local lane; 0k-DU selected MIR optimization as the subphase; 0k-DV now selects the pass. `REQUIRE_CLASSIFICATION=1 REQUIRE_PASS=1 scripts/generated_stage_workers1_mir_opt_pass_classifier.sh` reports `classification=select_workers1_mir_opt_copy_propagation_resource_lane`: produced-s2 workers=1 cutoffs through constant folding/local CSE/RC elision remain clean (`1174`/`1175`/`1174` MB), while copy propagation memory-kills at `4218` MB and later cutoffs remain high. The same run re-confirms 0k-DU controls: stage1 `334` MB, produced-s2 MIR bodies `1173` MB, produced-s2 full MIR opt memory-kill `4334` MB. | The next production receipt may re-enter `GeneratedStageExecution` only through `CopyPropagationPass` state/resource ownership. It must preserve earlier pass cutoffs, HIR/type-registration/prepare/body-lowering controls, and default-mode late LLVM/function-emission residual evidence, and it must not claim both-mode bootstrap progress from a single-mode fix. | Adding another generic optimizer selector after 0k-DV; adding another GC `non_gc` memory selector; treating 0k-DR compile-entry `non_gc` as startup RSS; patching startup/parse/HIR retention; patching MIR type registration, MIR prepare, body lowering, constant folding, local CSE, or RC elision from this evidence; memory-budget acceptance; forced `ADAMAS_LLVM_WORKERS=1`; worker/rand patches; default sequential function-emission patches before the workers=1 CopyPropagation lane is consumed or refuted; output-file behavior changes; external sink enablement; incremental output-buffer fixes; LLVM function plan/session patches without workers=1 CopyPropagation owner evidence; tail stubs; metadata/DWARF/type-name patches; backend semantic changes; materialization; `NamedTuple`/`Tuple`; ambient maps; `BlockOwner` rollback; or treating either single-mode boundary as green bootstrap without the other mode's residual statement. |
 | `SemanticIdentity` | H7/H8 remain pre-s2-clean residuals. They are real, but not the active generated-stage blocker. | Resume with a row-specific SDD entry and measured-red baseline if the goal is semantic-service extraction. | TypeValue/stringification/parser shortcuts bundled with B4, generic materialization, ambient-map, or `BlockOwner` work. |
 | `CodePathStatus` | Cleanup is not the active bootstrap constraint. | Resume only with `delete_ready` evidence and a protecting falsifier, or by explicit user selection of bloat reduction. | Deleting suspected-dead code from grep/runtime absence alone; adding cleanup reports as a substitute for owner migration. |
 
@@ -1020,6 +1020,82 @@ SliceReceipt {
     resource owner edge. Late LLVM/function-emission resource remains measured
     red and must be selected with mode-local OS RSS evidence before behavior
     changes.
+}
+```
+
+#### Slice 0k-DV receipt: workers=1 MIR optimization pass selector
+
+```text
+SliceReceipt {
+  board_lane: PhaseAuthority / GeneratedStageExecution
+  tranche: bootstrap-emergency-with-ledger
+  old_authority_edge:
+    Slice 0k-DU selected workers=1 MIR optimization as the first high OS-RSS
+    subphase but still treated the optimizer as one broad authority.
+  owner_fact_or_service:
+    `scripts/generated_stage_workers1_mir_opt_pass_classifier.sh` is the
+    pass-level selector. It uses debug-only `ADAMAS_MIR_OPT_THROUGH_PASS=<pass>`
+    in `MIR::OptimizationPipeline` so every function runs only through the
+    selected pass, then uses `ADAMAS_STOP_AFTER_MIR_OPT` to stop after the full
+    serial MIR optimization loop. This measures module-wide pass ownership, not
+    first-function noise.
+  producers:
+    - `ADAMAS_MIR_OPT_THROUGH_PASS`;
+    - `ADAMAS_STOP_AFTER_MIR_OPT`;
+    - `scripts/generated_stage_workers1_mir_subphase_classifier.sh` for 0k-DU
+      freshness and produced-s2 reuse;
+    - `/usr/bin/time -l` plus `scripts/run_safe.sh` OS-RSS evidence.
+  consumers:
+    - this SDD current board;
+    - TODO/LANDMARKS/falsifier matrix;
+    - the next production resource receipt, which must target
+      `CopyPropagationPass` state/resource ownership unless this selector
+      decays.
+  measured_red_baseline:
+    Fresh `REQUIRE_CLASSIFICATION=1 REQUIRE_PASS=1` evidence reports
+    `classification=select_workers1_mir_opt_copy_propagation_resource_lane`.
+    The same run first re-confirms 0k-DU:
+    `subphase.classification=select_workers1_mir_optimization_resource_lane`,
+    `subphase.stage1_mir_peak_rss_mb=334`,
+    `subphase.s2_mir_bodies_peak_rss_mb=1173`,
+    `subphase.s2_mir_opt_peak_rss_mb=4334`, and
+    `subphase.s2_mir_opt_memory_kill=1`.
+    Pass cutoff OS RSS:
+    `constant_folding=1174` MB,
+    `local_cse=1175` MB,
+    `rc_elision=1174` MB,
+    `copy_propagation=4218` MB with memory-kill,
+    `peephole=4166` MB with memory-kill,
+    `lock_elision=4248` MB with memory-kill,
+    `dce=4232` MB with memory-kill, and
+    `dce_2=4334` MB with memory-kill.
+  focused_DoD:
+    `REQUIRE_CLASSIFICATION=1 REQUIRE_PASS=1 scripts/generated_stage_workers1_mir_opt_pass_classifier.sh`
+    returns a terminal pass selection and includes OS-RSS evidence for the
+    earlier-pass controls plus the selected copy-propagation cutoff.
+  architecture_DoD:
+    The selector must not use GC `non_gc` as the owner signal and must not be
+    extended into another generic optimizer selector unless the copy-propagation
+    result decays. The next code slice must explain the owned
+    `CopyPropagationPass` state/resource boundary it changes.
+  generated_stage_gate:
+    The nested subphase classifier must still select workers=1 MIR optimization
+    before pass-level evidence is accepted.
+  negative_controls:
+    Stage1 control remains low. Produced-s2 MIR bodies and cutoffs through
+    `rc_elision` remain below threshold. If any earlier pass becomes high, this
+    selector decays and must be reclassified before a copy-propagation change.
+  rejected_shortcuts:
+    Another generic optimizer selector, HIR lowering, MIR type registration,
+    MIR prepare, body lowering, constant folding, local CSE, RC elision, default
+    sequential function-emission, worker policy, memory-budget acceptance,
+    backend rescue, output sinks, metadata/DWARF/type-name patches,
+    materialization, `NamedTuple`/`Tuple`, ambient maps, or `BlockOwner`
+    changes from this evidence.
+  residual_boundary:
+    Workers=1 `CopyPropagationPass` resource growth is the selected next target.
+    Default-mode late LLVM/function-emission remains measured-red residual
+    evidence and must be preserved by any single-mode fix.
 }
 ```
 
