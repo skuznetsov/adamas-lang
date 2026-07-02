@@ -157,6 +157,22 @@ movement should split the control region after transaction logging but before
 the actual `lower_method` call, especially type-param isolation, namespace
 override, arity fallback, and any pre-call return/skip edge.
 
+2026-07-02 post-0k-DG note: that pre-call split now exists in
+`scripts/generated_stage_lower_method_terminal_classifier.sh` as temp-only
+`[MAT_PRECALL]` checkpoints. Fresh evidence reports
+`completion_classifier_classification=reached_tx_and_emit`,
+`method_call_rows=242`, `precall_rows=1628`, `method_entry_rows=338`,
+`method_name_rows=285`, `method_exit_rows=623`, `residual_rows=14`, and the
+selected broad class `lower_method_terminal_no_exact_after_tx_no_call` (6
+rows). The selected samples reach `after_tx` but not `inside_type_params`;
+abstract controls traverse all pre-call checkpoints and join to call rows.
+This refutes namespace override and arity repair as the first boundary for the
+selected six rows, but it is still not a behavior license. The acceleration
+path is no longer another local marker. The next architecture movement should
+write a pre-code receipt for the scoped type-param/block-yield owner edge after
+transaction logging, or refute the current `MaterializationTransaction` row and
+return to the Current Execution Board.
+
 2026-07-02 post-0k-CS note: hostile review of the post-0k-CR route found that
 the active SDD is still being followed, but the emergency B4/O1 lane can become
 another symptom scheduler if every moved crash stack automatically selects the

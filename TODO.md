@@ -8,6 +8,30 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: refined the classifier as Slice 0k-DG with temp-only
+  `[MAT_PRECALL]` checkpoints around the exact pre-call region between
+  transaction logging and `lower_method`: `after_tx`, `inside_type_params`,
+  `inside_namespace`, `before_arity`, and `after_arity`. Fresh evidence from
+  `REQUIRE_REACHED=1 SAMPLES=8 scripts/generated_stage_lower_method_terminal_classifier.sh`
+  still reaches backend emission and reports `method_call_rows=242`,
+  `precall_rows=1628`, `method_entry_rows=338`, `method_name_rows=285`,
+  `method_exit_rows=623`, `residual_rows=14`, `terminal_cause_kinds=4`,
+  `terminal_groups=12`, and `terminal_root_sized_groups=12`. The selected broad
+  bucket is now `lower_method_terminal_no_exact_after_tx_no_call` (6 rows).
+  Samples for `Array(String)#<<`, `Slice(UInt8)#+`, `Atomic(Bool)#get`,
+  `Slice(UInt8)#to_unsafe`, `Slice(UInt8)#index`, and `Slice(UInt8)#[]` show
+  repeated `after_tx` rows but no `inside_type_params`, while abstract controls
+  such as `IO#read` and `String::Builder#write` traverse
+  `after_tx -> inside_type_params -> inside_namespace -> before_arity ->
+  after_arity` and join to call rows. This refutes namespace override and arity
+  repair as the first boundary for the selected six rows and makes the
+  remaining gap the scoped type-param/block-yield boundary immediately after
+  transaction logging. No behavior patch is admitted. The next movement must
+  stop adding local pre-call markers unless it names that owner edge directly:
+  write a pre-code receipt for a `MaterializationTransaction` /
+  scoped-type-param-isolation or block-yield contract, or refute this
+  materialization row and return to the Current Execution Board.
+
 - 2026-07-02 UPDATE: refined the classifier again as Slice 0k-DF with a
   temp-only `[MAT_METHOD_CALL]` probe at the `instance_class_info_lower_method`
   call site. Fresh evidence from

@@ -12,6 +12,37 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-DG-PRECALL-AFTER-TX-BOUNDARY|implemented 2026-07-02 {F:0.92 G:0.67 R:0.90}]:
+Slice 0k-DG extends the temp-source
+`scripts/generated_stage_lower_method_terminal_classifier.sh` with
+`[MAT_PRECALL]` checkpoints around the exact region between
+`CallMaterializationTransaction` logging and the actual `lower_method` call:
+`after_tx`, `inside_type_params`, `inside_namespace`, `before_arity`, and
+`after_arity`. Fresh evidence using
+`REQUIRE_REACHED=1 SAMPLES=8 scripts/generated_stage_lower_method_terminal_classifier.sh`
+reports `completion_classifier_classification=reached_tx_and_emit`,
+`method_call_rows=242`, `precall_rows=1628`, `method_entry_rows=338`,
+`method_name_rows=285`, `method_exit_rows=623`, `residual_rows=14`,
+`terminal_cause_kinds=4`, `terminal_groups=12`, and
+`terminal_root_sized_groups=12`. The selected broad class is
+`lower_method_terminal_no_exact_after_tx_no_call` (6 rows): sampled
+`Array(String)`, `Slice(UInt8)`, and `Atomic(Bool)` rows repeatedly log
+`after_tx` but do not reach `inside_type_params`, while abstract controls such
+as `IO#read` and `String::Builder#write` traverse all pre-call checkpoints and
+join to `[MAT_METHOD_CALL]` rows. This refutes namespace override and arity
+repair as the first boundary for the selected six rows. Scope:
+read-only/temp-source classifier only; no production compiler behavior changed
+and no green `s2b`/`s3b` claim. The next valid movement must not be another
+generic pre-call marker. It must name the owner edge at the scoped
+type-param/block-yield boundary after transaction logging (for example a
+`MaterializationTransaction` scoped-isolation contract or a block-yield owner
+contract), or refute this row and return to the Current Execution Board.
+Rejected moves remain backend rescue, forwarders, sampled-method patches,
+requested-name forcing, broad rendering/ambient-map policy, `BlockOwner`
+rollback, and production `lower_method` trace-object plumbing. Decay trigger:
+a root-sized owner-edge receipt supersedes this after-tx boundary, or newer
+generated-stage evidence refutes the after-tx-only rows.
+
 [LM-ARCH-0K-DF-MATERIALIZATION-PRECALL-GAP|implemented 2026-07-02 {F:0.92 G:0.69 R:0.90}]:
 Slice 0k-DF adds a temp-only `[MAT_METHOD_CALL]` probe at the
 `instance_class_info_lower_method` call site in the copied source used by
