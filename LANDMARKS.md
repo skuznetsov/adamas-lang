@@ -12,7 +12,28 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
-[LM-ARCH-0K-DQ-PRE-FUNCTION-MEMORY-OWNER-SELECTOR|implemented 2026-07-02 {F:0.88 G:0.56 R:0.84}]:
+[LM-ARCH-0K-DR-PRE-HIR-MEMORY-SPLIT-LANE-REFUTATION|implemented 2026-07-02 {F:0.90 G:0.58 R:0.86}]:
+`scripts/generated_stage_pre_hir_memory_split_classifier.sh` consumes the L9
+no-more-selector-chain gate for the default-lane memory surface. Fresh
+`REQUIRE_SPLIT=1` evidence reports
+`classification=pre_hir_pressure_compile_entry`, `terminal_status=terminal`,
+`default_memory_rows=33`, `default_first_phase=cli.compile_entry`,
+`default_first_high_owner=cli.compile`,
+`default_first_high_non_gc=4323300568`, `default_max_phase=cli.compile_entry`,
+and `default_last_phase=llvm.sequential_start`. Stage1 workers=1 control on the
+same source remains clean: `stage1_control_rc=0`, `stage1_control_run_rc=0`,
+stdout `42`, `stage1_memory_rows=35`, and `stage1_max_non_gc=0`. Scope: this is
+a lane refutation, not a behavior fix. It shows the old 0k-DQ
+`pre_function_pressure_hir_owned` result was late-row aliasing: produced-s2
+non-GC pressure is already present at compile entry and does not select
+parse/source/prelude/HIR/LLVM pipeline retention as a first owner edge. Next
+movement must return to the SDD Current Execution Board, or open a separate
+generated-stage startup/process-baseline problem card if resource pressure stays
+active. Decay trigger: first high moves after compile entry, stage1-control
+non-GC becomes high, `memory.phase` rows disappear, or generated-stage startup
+initialization is redesigned.
+
+[LM-ARCH-0K-DQ-PRE-FUNCTION-MEMORY-OWNER-SELECTOR|superseded-by-0k-DR 2026-07-02 {F:0.88 G:0.40 R:0.84}]:
 Default-off `memory.phase` rows in `src/compiler/cli.cr` and
 `src/compiler/mir/llvm_backend.cr` plus
 `scripts/generated_stage_pre_function_memory_owner_classifier.sh` select the
@@ -31,9 +52,15 @@ workers=1 control on the same source reports `stage1_control_rc=0`,
 refutes LLVM output/session/function-emission ownership as the first default
 edge for the current pressure; the next selector must move before HIR final and
 distinguish parse/source/prelude/HIR-lowering retention from produced-stage
-GC/non-GC accounting. Decay trigger: the owner classifier reports missing
-`memory.phase` rows, high stage1-control non-GC, first high later than HIR
-final, or a changed mode boundary.
+GC/non-GC accounting. The active SDD adds a no-more-selector-chain gate for this
+surface: the L9 pre-HIR split is the only admitted next selector unless it
+terminates in an owner-edge receipt, lane refutation, board pivot, explicit
+impasse, or retirement/deletion of this report surface through a protecting
+falsifier. Decay trigger: the owner classifier reports missing `memory.phase`
+rows, high stage1-control non-GC, first high later than HIR final, or a changed
+mode boundary. Supersession: 0k-DR added earlier rows and showed this was
+late-row aliasing; keep DQ as historical evidence that LLVM function emission
+was not the first owner, not as an active HIR-owner receipt.
 
 [LM-ARCH-0K-DP-FUNCTION-EMISSION-MEMORY-DISCRIMINATOR|implemented 2026-07-02 {F:0.88 G:0.55 R:0.86}]:
 `scripts/generated_stage_function_emission_memory_discriminator.sh` makes the

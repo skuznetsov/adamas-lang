@@ -28,6 +28,16 @@ Environment:
                          (default: 1000000000).
 
 Classifications:
+  pre_function_pressure_compile_entry
+  pre_function_pressure_parse_owned
+  pre_function_pressure_semantic_owned
+  pre_function_pressure_hir_setup_owned
+  pre_function_pressure_hir_collect_owned
+  pre_function_pressure_hir_type_registration_owned
+  pre_function_pressure_hir_function_registration_owned
+  pre_function_pressure_hir_layout_owned
+  pre_function_pressure_hir_lower_main_owned
+  pre_function_pressure_hir_pending_flush_owned
   pre_function_pressure_hir_owned
   pre_function_pressure_escape_owned
   pre_function_pressure_mir_owned
@@ -177,6 +187,36 @@ get_summary_value() {
 classify_phase() {
   local phase="$1"
   case "$phase" in
+    cli.compile_entry)
+      echo "pre_function_pressure_compile_entry"
+      ;;
+    cli.parse_start|cli.parse_prelude_done|cli.parse_user_done|cli.parse_done)
+      echo "pre_function_pressure_parse_owned"
+      ;;
+    cli.semantic_compile_done|cli.semantic_shadow_done|cli.link_libraries_done)
+      echo "pre_function_pressure_semantic_owned"
+      ;;
+    cli.hir_entry|cli.hir_maps_ready|cli.hir_module_ready|cli.hir_converter_bound)
+      echo "pre_function_pressure_hir_setup_owned"
+      ;;
+    cli.hir_collect_done)
+      echo "pre_function_pressure_hir_collect_owned"
+      ;;
+    cli.hir_register_types_done)
+      echo "pre_function_pressure_hir_type_registration_owned"
+      ;;
+    cli.hir_register_functions_done)
+      echo "pre_function_pressure_hir_function_registration_owned"
+      ;;
+    cli.hir_fixup_ivars_done)
+      echo "pre_function_pressure_hir_layout_owned"
+      ;;
+    cli.hir_lower_main_done)
+      echo "pre_function_pressure_hir_lower_main_owned"
+      ;;
+    cli.hir_flush_pending_done)
+      echo "pre_function_pressure_hir_pending_flush_owned"
+      ;;
     cli.hir_final|cli.hir_after_rta)
       echo "pre_function_pressure_hir_owned"
       ;;
@@ -322,7 +362,7 @@ fi
 
 if [[ "${REQUIRE_OWNER:-0}" == "1" ]]; then
   case "$classification" in
-    pre_function_pressure_hir_owned|pre_function_pressure_escape_owned|pre_function_pressure_mir_owned|pre_function_pressure_llvm_generator_entry|pre_function_pressure_llvm_setup_owned|pre_function_pressure_llvm_session_owned|pre_function_pressure_function_emission_entry|pre_function_pressure_low_until_snapshot)
+    pre_function_pressure_compile_entry|pre_function_pressure_parse_owned|pre_function_pressure_semantic_owned|pre_function_pressure_hir_setup_owned|pre_function_pressure_hir_collect_owned|pre_function_pressure_hir_type_registration_owned|pre_function_pressure_hir_function_registration_owned|pre_function_pressure_hir_layout_owned|pre_function_pressure_hir_lower_main_owned|pre_function_pressure_hir_pending_flush_owned|pre_function_pressure_hir_owned|pre_function_pressure_escape_owned|pre_function_pressure_mir_owned|pre_function_pressure_llvm_generator_entry|pre_function_pressure_llvm_setup_owned|pre_function_pressure_llvm_session_owned|pre_function_pressure_function_emission_entry|pre_function_pressure_low_until_snapshot)
       ;;
     *)
       exit 9

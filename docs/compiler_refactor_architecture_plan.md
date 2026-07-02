@@ -349,6 +349,22 @@ split parse/source/prelude/HIR-lowering retention from produced-stage
 GC/non-GC accounting before HIR final, while preserving the workers=1
 `after_hir_final_before_mir_final` residual.
 
+2026-07-02 post-0k-DR note: the admitted L9 pre-HIR split consumed the
+no-more-selector-chain gate and refuted the DQ HIR-owner interpretation.
+`REQUIRE_SPLIT=1 scripts/generated_stage_pre_hir_memory_split_classifier.sh`
+reports `classification=pre_hir_pressure_compile_entry`,
+`terminal_status=terminal`, `default_first_phase=cli.compile_entry`,
+`default_first_high_owner=cli.compile`,
+`default_first_high_non_gc=4323300568`,
+`default_max_phase=cli.compile_entry`, and
+`default_last_phase=llvm.sequential_start`; stage1 workers=1 control remains
+clean (`stage1_control_rc=0`, `stage1_control_run_rc=0`, stdout `42`,
+`stage1_memory_rows=35`, `stage1_max_non_gc=0`). This means the memory lane is
+not a parse/source/prelude/HIR/LLVM pipeline-retention owner. If generated-stage
+resource pressure remains the priority, open a startup/process-baseline problem
+card. Otherwise, return to the Current Execution Board and select a behavior or
+state authority edge; do not add another pre-HIR memory selector.
+
 2026-07-02 post-0k-CR note: the return-shape census now also measures
 assigned-tail yield passthrough (`result = yield; ...; result`). Strict current
 evidence keeps the broad 0k-CQ result for naive `contains_yield` scope, but

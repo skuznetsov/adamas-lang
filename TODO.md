@@ -8,6 +8,23 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: Slice 0k-DR consumes the L9 pre-HIR split and terminates
+  the no-more-selector-chain gate for the default-lane memory surface.
+  `REQUIRE_SPLIT=1 scripts/generated_stage_pre_hir_memory_split_classifier.sh`
+  reports `classification=pre_hir_pressure_compile_entry`,
+  `terminal_status=terminal`, `default_first_phase=cli.compile_entry`,
+  `default_first_high_owner=cli.compile`,
+  `default_first_high_non_gc=4323300568`,
+  `default_max_phase=cli.compile_entry`, and
+  `default_last_phase=llvm.sequential_start`; stage1 workers=1 control remains
+  clean (`stage1_control_rc=0`, `stage1_control_run_rc=0`, stdout `42`,
+  `stage1_memory_rows=35`, `stage1_max_non_gc=0`). Therefore the earlier
+  `pre_function_pressure_hir_owned` row was late-row aliasing, not a HIR owner
+  edge. Do not add another pre-HIR pipeline memory selector. If resource
+  pressure remains the target, write a startup/process-baseline problem card;
+  otherwise return to the SDD Current Execution Board and select a behavior or
+  state authority edge.
+
 - 2026-07-02 UPDATE: Slice 0k-DQ adds default-off `memory.phase` rows and
   executable owner selector
   `scripts/generated_stage_pre_function_memory_owner_classifier.sh`. Fresh
@@ -18,11 +35,11 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   and `default_last_phase=llvm.sequential_start` remains at the same non-GC
   level. Stage1 workers=1 control compiles/runs the same source with stdout
   `42`, `stage1_memory_rows=19`, and `stage1_max_non_gc=0`. Therefore the
-  default-lane owner moved earlier than LLVM setup/session/function emission:
-  the next selector must split pre-HIR-final pressure (parse/source/prelude/HIR
-  lowering/state retention vs produced-stage GC/non-GC accounting), while
-  preserving workers=1 as a separate residual. Do not patch LLVM output,
-  function plan/session, metadata, workers, memory budget, materialization,
+  default-lane owner moved earlier than LLVM setup/session/function emission.
+  This note is now superseded by 0k-DR above: the admitted L9 pre-HIR split
+  returned a compile-entry lane refutation, not a HIR owner receipt. Do not
+  patch LLVM output, function
+  plan/session, metadata, workers, memory budget, materialization,
   `NamedTuple`/`Tuple`, ambient maps, or `BlockOwner` from this evidence.
 
 - 2026-07-02 UPDATE: Slice 0k-DP adds executable discriminator

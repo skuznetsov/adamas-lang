@@ -598,9 +598,32 @@ evidence, not next-step selectors.
 | `bootstrap-emergency-with-ledger` / B4-O1 | Consumed by 0k-CU. The HIR `BlockCallReturnContract` implementation moves the generated-stage gate past the old O1 `affected_block_ids` / `Set(UInt32)#includes?` frontier: `REQUIRE_CURRENT_CU_CONTRACT=1 scripts/hir_block_return_shape_census.sh` reports `classification=current_0k_cu_block_call_return_contract_applied`, and `STAGE1_COMPILER=/tmp/adamas_0kcu_stage1 REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh` exits at the expected non-current boundary with `b4_classification=llvm_entry_failure_after_lower_main` and `workers1_exit139=0`. The new residual is post-`lower_main` RSS pressure in both worker modes, with the default worker-mode rand fallback still present. | Return to the board before any new production source slice. The next receipt must reselect an owner spine from fresh generated-stage evidence; if it targets the new residual, it must name the old authority edge behind post-`lower_main` memory/resource growth rather than treating higher memory limits, worker count, or the rand fallback as acceptance evidence. | Continuing the 0k-CU breakglass lane by inertia; starting from the new RSS-kill stack; raising memory as a fix; forcing `ADAMAS_LLVM_WORKERS=1`; worker/rand/output/resource patches without a new receipt; CopyPropagation, Set/Hash, backend block-return, `NamedTuple`/`Tuple`, ambient-map, or `BlockOwner` changes. |
 | `architecture-burn-down` / owner-spine plan | Consumed by 0k-CW. The active burn-down selection is `MaterializationTransaction` exact body availability, based on generated-stage residual evidence rather than the latest crash stack. | Do not add another planning/report row unless it retires/refutes this selection or the residual classifier proves the selected edge is not root-sized. | Treating a moved crash stack as architecture progress; adding another report that does not retire/refute an older surface; committing WIP helpers that do not consume an old authority edge; claiming source-shape green as bootstrap green. |
 | `MaterializationTransaction` / exact body availability | Consumed through 0k-DI for the active `after_tx -> inside_type_params` edge. G6 `BlockOwner` setter availability is guard-green. The explicit materialization scope-entry slice preserves `[MAT_EMIT]` reachability and changes the lower-method terminal classifier from the old mixed 14-row / 4-cause state with `no_exact_after_tx_no_call` (6 rows) to a root-sized abstract-method residual: `residual_rows=3`, `terminal_cause_kinds=1`, `selected_cause=lower_method_terminal_abstract_method`, and `classification=eligible_lower_method_terminal_edge`. Residual rows now traverse `after_tx -> inside_type_params -> inside_namespace -> before_arity -> after_arity` and join to `[MAT_METHOD_CALL]`. This is focused authority-edge movement, not green bootstrap. | Return to the board before selecting another production edge. The next movement should first remeasure the generated-stage pressure gate and choose whether the active constraint is still `MaterializationTransaction` exact body availability, B4/O1 `PhaseAuthority`, or a `SemanticIdentity` pre-s2-clean row. | Backend undefined-extern rescue, forwarder rescue, requested-name forcing, per-method Array/Slice/IO/Atomic/String::Builder/Int32 patches, broad `NamedTuple`/`Tuple` rendering, global ambient-map policy, `BlockOwner` rollback, treating abstract-method residuals as a local method patch, adding another result/consumer layer, adding another generic pre-call marker, or threading a trace object through production `lower_method`. |
-| `PhaseAuthority` / `GeneratedStageExecution` | Post-0k-DQ evidence is joined, resource-classified, phase-split, function-emission-split, mode-boundary-split, memory-shape-discriminated, and owner-selected, but still not behavior-admissible. `REQUIRE_OWNER=1 scripts/generated_stage_pre_function_memory_owner_classifier.sh` classifies the default lane as `pre_function_pressure_hir_owned`: produced-s2 first high non-GC row is already `cli.hir_final` (`default_first_high_non_gc=4314198280`) and remains high through `llvm.sequential_start`, while stage1 workers=1 control on the same source reports `stage1_max_non_gc=0` and stdout `42`. The strict transaction report still preserves `final_classification=abort_resource_after_lower_main`, `resource.default_mode_boundary=reached_function_emission`, `resource.workers1_mode_boundary=after_hir_final_before_mir_final`, `runtime.default_mir_final_rows=1`, `runtime.workers1_mir_final_rows=0`, `runtime.default_function_emission_phase_rows=13`, and `runtime.workers1_function_emission_phase_rows=0`. | A production slice on this lane must now move earlier than LLVM: split default-mode pre-HIR-final pressure into parse/source/prelude/HIR-lowering/state retention versus produced-stage GC/non-GC accounting. The workers=1 HIR-final-to-MIR-final residual must remain named. If a future selector makes stage1-control non-GC high or moves first-high later than HIR final, return to this board before any behavior change. | Memory-budget acceptance, forced `ADAMAS_LLVM_WORKERS=1`, worker/rand patches, output-file behavior changes, external sink enablement, incremental output-buffer fixes, LLVM function plan/session patches, tail stubs, metadata/DWARF/type-name patches, backend semantic changes, materialization, `NamedTuple`/`Tuple`, ambient maps, `BlockOwner` rollback, or treating either single-mode boundary as green bootstrap without the other mode's residual statement. |
+| `PhaseAuthority` / `GeneratedStageExecution` | Consumed by 0k-DR for the default-lane memory surface. The admitted L9 selector `REQUIRE_SPLIT=1 scripts/generated_stage_pre_hir_memory_split_classifier.sh` replays the current GSETX path and reports `classification=pre_hir_pressure_compile_entry`: produced-s2 is already high at the first row, `default_first_phase=cli.compile_entry`, `default_first_high_owner=cli.compile`, `default_first_high_non_gc=4323300568`, `default_max_phase=cli.compile_entry`, and `default_last_phase=llvm.sequential_start` at the same level. Stage1 workers=1 control remains clean (`stage1_control_rc=0`, `stage1_control_run_rc=0`, stdout `42`, `stage1_memory_rows=35`, `stage1_max_non_gc=0`). This refutes parse/source/prelude/HIR/LLVM pipeline retention as the first owner edge for this `memory.phase` non-GC lane; the old `pre_function_pressure_hir_owned` result was late-row aliasing, not an owner receipt. | Return to the board before selecting another production edge. If resource pressure remains the target, it needs a new startup/process-baseline problem card, not another pre-HIR pipeline selector. The workers=1 HIR-final-to-MIR-final residual remains named and unsolved. | Adding another default-lane memory selector on this surface, patching parse/HIR/LLVM retention from the 0k-DQ row, memory-budget acceptance, forced `ADAMAS_LLVM_WORKERS=1`, worker/rand patches, output-file behavior changes, external sink enablement, incremental output-buffer fixes, LLVM function plan/session patches, tail stubs, metadata/DWARF/type-name patches, backend semantic changes, materialization, `NamedTuple`/`Tuple`, ambient maps, `BlockOwner` rollback, or treating either single-mode boundary as green bootstrap without the other mode's residual statement. |
 | `SemanticIdentity` | H7/H8 remain pre-s2-clean residuals. They are real, but not the active generated-stage blocker. | Resume with a row-specific SDD entry and measured-red baseline if the goal is semantic-service extraction. | TypeValue/stringification/parser shortcuts bundled with B4, generic materialization, ambient-map, or `BlockOwner` work. |
 | `CodePathStatus` | Cleanup is not the active bootstrap constraint. | Resume only with `delete_ready` evidence and a protecting falsifier, or by explicit user selection of bloat reduction. | Deleting suspected-dead code from grep/runtime absence alone; adding cleanup reports as a substitute for owner migration. |
+
+No-more-selector-chain gate after 0k-DQ:
+
+- the next `PhaseAuthority` movement may add exactly one executable pre-HIR
+  split selector for L9;
+- that selector must terminate in one of four outcomes before another report or
+  phase row is admitted:
+  1. a named owner-edge receipt for a behavior or state-retention slice;
+  2. a refutation of produced-stage memory accounting as a valid
+     `PhaseAuthority` lane;
+  3. a return to the board selecting a different owner spine; or
+  4. an explicit `[IMPASSE]` with the unfalsified alternatives and the cheapest
+     next discriminating experiment;
+- a second selector on the same default-lane pre-HIR pressure surface is invalid
+  unless it retires this selector or deletes an older report surface through a
+  `CodePathStatus` / protecting-falsifier path;
+- the selector must preserve the workers=1 HIR-final-to-MIR-final residual and
+  must not present a single-mode movement as green `s2b`/`s3b`.
+
+0k-DR consumed this gate: the selector returned `pre_hir_pressure_compile_entry`,
+so further movement on this memory surface must be a board pivot, a startup
+baseline problem card, or deletion/retirement of stale report surfaces through a
+protecting falsifier.
 
 Before any non-doc production slice, write the slice receipt in this SDD or a
 linked plan:
@@ -867,6 +890,67 @@ SliceReceipt {
     `stage1_max_non_gc=0`. The next selector must move before HIR final and
     distinguish parse/source/prelude/HIR-lowering retention from produced-stage
     GC/non-GC accounting. Workers=1 remains `after_hir_final_before_mir_final`.
+}
+```
+
+#### Slice 0k-DR receipt: pre-HIR memory split lane refutation
+
+```text
+SliceReceipt {
+  board_lane: PhaseAuthority / GeneratedStageExecution
+  tranche: bootstrap-emergency-with-ledger
+  old_authority_edge:
+    Slice 0k-DQ selected `pre_function_pressure_hir_owned`, but that result was
+    bounded by the first available CLI memory row at `cli.hir_final`.
+  owner_fact_or_service:
+    `scripts/generated_stage_pre_hir_memory_split_classifier.sh` is the single
+    admitted L9 selector. It reuses the strict pre-function owner harness, adds
+    earlier default-off CLI `memory.phase` rows, runs the stage1 workers=1
+    control, and classifies the first high produced-s2 non-GC row before HIR
+    final.
+  producers:
+    `Compiler::CLI#log_generated_stage_memory_phase` records compile-entry,
+    parse, semantic, HIR setup, HIR collection, registration, lower-main, and
+    pending-flush rows before the existing `cli.hir_final` row.
+  consumers:
+    `scripts/generated_stage_pre_hir_memory_split_classifier.sh`,
+    this SDD current board, TODO, LANDMARKS, and the falsifier matrix.
+  measured_red_baseline:
+    Fresh `REQUIRE_SPLIT=1` evidence reports
+    `owner.classification=pre_function_pressure_compile_entry`. The new selector
+    reports `classification=pre_hir_pressure_compile_entry`,
+    `terminal_status=terminal`, `default_memory_rows=33`,
+    `default_first_phase=cli.compile_entry`,
+    `default_first_high_owner=cli.compile`,
+    `default_first_high_non_gc=4323300568`,
+    `default_max_phase=cli.compile_entry`, and
+    `default_last_phase=llvm.sequential_start`.
+  focused_DoD:
+    `REQUIRE_SPLIT=1 scripts/generated_stage_pre_hir_memory_split_classifier.sh`
+    must return a terminal classification and must not require another selector
+    on the same pre-HIR memory surface.
+  architecture_DoD:
+    The selector must preserve the stage1 workers=1 negative control. The fresh
+    run reports `stage1_control_rc=0`, `stage1_control_run_rc=0`, stdout `42`,
+    `stage1_memory_rows=35`, and `stage1_max_non_gc=0`.
+  generated_stage_gate:
+    Same strict transaction requirements as 0k-DQ, with
+    `ADAMAS_GSETX_MEMORY_PHASES=1` enabled only for the selector run.
+  negative_controls:
+    Stage1 workers=1 compiles and runs the same source and keeps non-GC below
+    the high threshold. If this becomes high, the 0k-DR lane refutation decays.
+  rejected_shortcuts:
+    Another pre-HIR pipeline-retention selector, parse/HIR/LLVM memory patches
+    from the old `cli.hir_final` row, memory-budget acceptance, worker policy,
+    output sinks, incremental function text/state, LLVM session/function-plan
+    changes, tail, metadata, backend semantics, materialization,
+    `NamedTuple`/`Tuple`, ambient maps, or `BlockOwner` rollback.
+  residual_boundary:
+    The default-lane `memory.phase` non-GC pressure is already present at
+    compile entry and does not identify a parse/source/prelude/HIR/LLVM
+    pipeline-retention owner edge. If resource pressure remains active, it needs
+    a new generated-stage startup/process-baseline problem card. Workers=1
+    remains `after_hir_final_before_mir_final`.
 }
 ```
 

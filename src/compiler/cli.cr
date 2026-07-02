@@ -1546,6 +1546,11 @@ module Adamas
         debug_profile = options.debug_profile
         stage2_debug("[STAGE2_DEBUG] compile start", err_io)
         log_codepath_status("cli.compile", "compile", "taken", "CLI", "no_prelude=#{options.no_prelude}")
+        log_generated_stage_memory_phase(
+          "cli.compile_entry",
+          "cli.compile",
+          "no_prelude=#{options.no_prelude}"
+        )
         total_start = Time.instant
         @ast_cache_hits = 0
         @ast_cache_misses = 0
@@ -1566,6 +1571,11 @@ module Adamas
         stage2_debug("[STAGE2_DEBUG] loaded_files init", err_io)
         loaded_files = Set(String).new
         all_arenas = [] of ParsedUnit
+        log_generated_stage_memory_phase(
+          "cli.parse_start",
+          "cli.parse",
+          "loaded=#{loaded_files.size} arenas=#{all_arenas.size}"
+        )
 
         bootstrap_trace_puts "[S2_COMPILE] before expand_path input='#{input_file}'"; STDERR.flush
         expanded = File.expand_path(input_file)
@@ -1598,6 +1608,11 @@ module Adamas
           end
         end
         bootstrap_trace_puts "[S2_COMPILE] prelude phase done"; STDERR.flush
+        log_generated_stage_memory_phase(
+          "cli.parse_prelude_done",
+          "cli.parse",
+          "loaded=#{loaded_files.size} arenas=#{all_arenas.size}"
+        )
 
         # Parse user's input file
         user_parse_start = Time.instant
@@ -1605,6 +1620,11 @@ module Adamas
         parse_file_recursive(input_file, all_arenas, loaded_files, input_file, input_base_dir, options, out_io)
         stage2_debug("[STAGE2_DEBUG] user file parsed", err_io)
         bootstrap_trace_puts "[S2_COMPILE] parse done arenas=#{all_arenas.size}"; STDERR.flush
+        log_generated_stage_memory_phase(
+          "cli.parse_user_done",
+          "cli.parse",
+          "loaded=#{loaded_files.size} arenas=#{all_arenas.size}"
+        )
         if options.stats
           timings["parse_user"] = (Time.instant - user_parse_start).total_milliseconds
           timings["parse_total"] = (Time.instant - parse_start).total_milliseconds
@@ -1645,6 +1665,11 @@ module Adamas
         if debug_trace_enabled
           stage2_debug("[STAGE2_DEBUG] lowering start (all_arenas=#{all_arenas.size})", err_io)
         end
+        log_generated_stage_memory_phase(
+          "cli.parse_done",
+          "cli.parse",
+          "loaded=#{loaded_files.size} arenas=#{all_arenas.size}"
+        )
 
         if stop_after_parse
           log(options, out_io, "  Stop after parse (ADAMAS_STOP_AFTER_PARSE)")
@@ -1662,6 +1687,11 @@ module Adamas
             return status
           end
           timings["semantic_compile_prepass"] = (Time.instant - semantic_compile_start).total_milliseconds if options.stats
+          log_generated_stage_memory_phase(
+            "cli.semantic_compile_done",
+            "cli.semantic",
+            "loaded=#{loaded_files.size} arenas=#{all_arenas.size}"
+          )
         end
 
         semantic_shadow_active = semantic_shadow_enabled?
@@ -1727,6 +1757,11 @@ module Adamas
               end
             end
           end
+          log_generated_stage_memory_phase(
+            "cli.semantic_shadow_done",
+            "cli.semantic",
+            "loaded=#{loaded_files.size} arenas=#{all_arenas.size}"
+          )
         end
 
         if debug_trace_enabled
@@ -1736,6 +1771,11 @@ module Adamas
         if debug_trace_enabled
           stage2_debug("[STAGE2_DEBUG] collect_link_libraries done count=#{link_libs.size}", err_io)
         end
+        log_generated_stage_memory_phase(
+          "cli.link_libraries_done",
+          "cli.semantic",
+          "link_libs=#{link_libs.size} loaded=#{loaded_files.size} arenas=#{all_arenas.size}"
+        )
 
         # Pipeline cache: hash all source files → skip HIR/MIR/LLVM on hit
         pipeline_cache_hit = false
@@ -1790,6 +1830,11 @@ module Adamas
         # Step 2: Lower to HIR
         log(options, out_io, "\n[2/6] Lowering to HIR...")
         hir_start = Time.instant
+        log_generated_stage_memory_phase(
+          "cli.hir_entry",
+          "cli.hir",
+          "loaded=#{loaded_files.size} arenas=#{all_arenas.size}"
+        )
 
         stage2_debug("[STAGE2_DEBUG] hir setup start", err_io)
         bootstrap_trace_puts "[S2_HIR_SETUP] phase=enter arenas=#{all_arenas.size}"; STDERR.flush
@@ -1816,6 +1861,11 @@ module Adamas
         end
         bootstrap_trace_puts "[S2_HIR_SETUP] phase=maps_ready main_arenas=#{main_arenas.size}"; STDERR.flush
         stage2_debug("[STAGE2_DEBUG] hir setup maps ready size=#{main_arenas.size}", err_io)
+        log_generated_stage_memory_phase(
+          "cli.hir_maps_ready",
+          "cli.hir",
+          "main_arenas=#{main_arenas.size} source_maps=#{sources_by_arena.size} path_maps=#{paths_by_arena.size}"
+        )
         hir_mod = HIR::Module.new(input_file)
         hir_mod.bootstrap_reinitialize_runtime_state
         if generated_stage_transaction_enabled?
@@ -1825,6 +1875,11 @@ module Adamas
           )
         end
         bootstrap_trace_puts "[S2_HIR_SETUP] phase=module_ready"; STDERR.flush
+        log_generated_stage_memory_phase(
+          "cli.hir_module_ready",
+          "cli.hir",
+          "hir_functions=#{hir_mod.functions.size}"
+        )
         # Self-hosted stage2 has repeatedly miscompiled the wide AstToHir
         # constructor path. Keep constructor arguments minimal, then rebind
         # the mutable bootstrap state through the narrower recovery helpers.
@@ -1838,6 +1893,11 @@ module Adamas
         hir_converter.bootstrap_reset_constructor_tail
         bootstrap_trace_puts "[S2_HIR_SETUP] phase=converter_bound"; STDERR.flush
         stage2_debug("[STAGE2_DEBUG] hir converter created", err_io)
+        log_generated_stage_memory_phase(
+          "cli.hir_converter_bound",
+          "cli.hir",
+          "link_libs=#{link_libs.size} main_arenas=#{main_arenas.size}"
+        )
         const_map_trace = BootstrapEnv.enabled?("ADAMAS_CONST_MAP_TRACE")
         if const_map_trace
           bootstrap_trace_puts "[CONST_MAP] phase=hir_converter_created literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
@@ -1917,6 +1977,11 @@ module Adamas
         end
         bootstrap_trace_puts "[S2_HIR_SETUP] phase=collect_done defs=#{def_nodes.size} classes=#{class_nodes.size} modules=#{module_nodes.size} enums=#{enum_nodes.size} aliases=#{alias_nodes.size} libs=#{lib_nodes.size} type_names=#{top_level_type_names.size}"; STDERR.flush
         stage2_debug("[STAGE2_DEBUG] top-level collection done defs=#{def_nodes.size} classes=#{class_nodes.size} modules=#{module_nodes.size} constants=#{constant_exprs.size} main=#{main_exprs.size}", err_io)
+        log_generated_stage_memory_phase(
+          "cli.hir_collect_done",
+          "cli.hir",
+          "defs=#{def_nodes.size} classes=#{class_nodes.size} modules=#{module_nodes.size} enums=#{enum_nodes.size} aliases=#{alias_nodes.size} libs=#{lib_nodes.size} main=#{main_exprs.size}"
+        )
         if const_map_trace
           bootstrap_trace_puts "[CONST_MAP] phase=top_level_collection_done literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
         end
@@ -2371,6 +2436,11 @@ module Adamas
         log(options, out_io, "  Flushing pending monomorphizations...")
         hir_converter.flush_pending_monomorphizations
         stage2_debug("[STAGE2_DEBUG] flush_pending_monomorphizations done", err_io)
+        log_generated_stage_memory_phase(
+          "cli.hir_register_types_done",
+          "cli.hir",
+          "libs=#{lib_nodes.size} enums=#{enum_nodes.size} aliases=#{alias_nodes.size} macros=#{macro_nodes.size} modules=#{module_nodes.size} classes=#{class_nodes.size} constants=#{constant_exprs.size}"
+        )
         if debug_profile
           timings["dbg_ms_hir_flush_mono"] = (Time.instant - hir_phase_start.not_nil!).total_milliseconds
           hir_phase_start = Time.instant
@@ -2421,6 +2491,11 @@ module Adamas
           i += 1
         end
         stage2_debug("[STAGE2_DEBUG] pass2 register_functions done", err_io)
+        log_generated_stage_memory_phase(
+          "cli.hir_register_functions_done",
+          "cli.hir",
+          "defs=#{def_nodes.size} hir_functions=#{hir_mod.functions.size}"
+        )
         if debug_profile
           timings["dbg_ms_hir_reg_funcs"] = (Time.instant - hir_phase_start.not_nil!).total_milliseconds
           hir_phase_start = Time.instant
@@ -2435,6 +2510,11 @@ module Adamas
         stage2_debug("[STAGE2_DEBUG] fixup_inherited_ivars start", err_io)
         hir_converter.fixup_inherited_ivars
         stage2_debug("[STAGE2_DEBUG] fixup_inherited_ivars done", err_io)
+        log_generated_stage_memory_phase(
+          "cli.hir_fixup_ivars_done",
+          "cli.hir",
+          "hir_functions=#{hir_mod.functions.size}"
+        )
         if debug_profile
           timings["dbg_ms_hir_fixup_ivars"] = (Time.instant - hir_phase_start.not_nil!).total_milliseconds
           hir_phase_start = Time.instant
@@ -2486,6 +2566,11 @@ module Adamas
         after_lower_main = hir_mod.function_count
         bootstrap_trace_puts "  lower_main done, #{after_lower_main} functions" if options.progress
         bootstrap_trace_puts "[PHASE_STATS] After lower_main: #{after_lower_main} functions" if BootstrapEnv.enabled?("ADAMAS_PHASE_STATS")
+        log_generated_stage_memory_phase(
+          "cli.hir_lower_main_done",
+          "cli.hir",
+          "hir_functions=#{after_lower_main} main_exprs=#{main_exprs.size}"
+        )
 
         # Pass 2.5: AST reachability pre-filter (experimental, opt-in)
         # AST reachability pre-filter: skip functions whose method name was never
@@ -2533,6 +2618,11 @@ module Adamas
         log_codepath_status("cli.hir", "flush_pending_functions", did_flush ? "skipped_after_fun_main" : "taken", "CLI")
         hir_converter.flush_pending_functions unless did_flush
         bootstrap_trace_puts "  Main function created" if options.progress
+        log_generated_stage_memory_phase(
+          "cli.hir_flush_pending_done",
+          "cli.hir",
+          "hir_functions=#{hir_mod.functions.size} did_flush=#{did_flush}"
+        )
 
         if debug_profile
           timings["dbg_ms_hir_lower_bodies"] = (Time.instant - hir_phase_start.not_nil!).total_milliseconds
