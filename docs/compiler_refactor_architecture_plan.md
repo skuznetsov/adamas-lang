@@ -375,6 +375,20 @@ when both writer and parent merge consumers delegate through the contract. This
 is not a tail-stub fix, output-ownership fix, resource fix, worker-count fix, or
 B4 green claim.
 
+2026-07-02 post-0k-BV note: pause production code again before implementing
+the side-effect contract. Hostile review found a second-order metric drift:
+`LLVMEmissionSession` edge consumption can become the new local progress proxy
+even while B4 remains at the same produced-stage boundary. The
+`SideEffectMergeContract` implementation is still admitted, but it is now
+future Slice 0k-BW and must include the convergence vector from the SDD:
+B4 before/after, default-worker versus `ADAMAS_LLVM_WORKERS=1` split,
+side-effect source shape, tail-input versus semantic-failure classification,
+output/resource evidence boundary, and post-edge routing. If 0k-BW makes the
+source-shape guard green while preserving B4 and every vector row unchanged,
+do not select `TailDeclarationPlan`, `OutputOwnership`, or `ResourceEvidence`
+by inertia; write a higher-level `GeneratedStageExecution` transaction
+redesign checkpoint first.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`

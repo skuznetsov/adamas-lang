@@ -1,12 +1,33 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-01
+Updated: 2026-07-02
 Branch: `work/s3-range-slice-frontier`
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
+
+- 2026-07-02 UPDATE: added Slice 0k-BV, a docs/guard convergence checkpoint
+  before any production compiler edits. Hostile review found that
+  `LLVMEmissionSession` edge-consumption can itself become a proxy metric:
+  0k-BR and 0k-BS moved real authority edges but B4 remained at the same
+  `current_0k_bn_frontier`. The selected `SideEffectMergeContract` route is
+  retained, but implementation is now the future 0k-BW slice. 0k-BW must carry
+  a convergence vector, not just source-shape success: B4 before/after, default
+  worker vs `ADAMAS_LLVM_WORKERS=1` split, side-effect writer/merge source
+  shape, tail-input vs semantic-failure classification, output/resource
+  evidence boundary, and post-edge routing. If 0k-BW leaves B4 and every vector
+  row unchanged, the next movement is a higher-level
+  `GeneratedStageExecution` transaction redesign checkpoint, not another
+  `LLVMEmissionSession` edge hoist. The side-effect source-shape guard now
+  exists and is intentionally red on current source:
+  `REQUIRE_SESSION=1 REQUIRE_WORKER_PLAN=1 REQUIRE_SIDE_EFFECT_CONTRACT=1
+  scripts/llvm_emission_session_source_shape_guard.sh` reports
+  `side_effect_contract_shape=legacy_parallel_side_effect_merge`,
+  `parallel_raw_side_effect_writer_tags=10`, and
+  `parallel_raw_side_effect_merge_tags=9`, then exits non-zero. No compiler
+  production behavior changed.
 
 - 2026-07-01 UPDATE: added Slice 0k-BU, a docs-only
   `SideEffectMergeContract` implementation plan selected from the 0k-BT

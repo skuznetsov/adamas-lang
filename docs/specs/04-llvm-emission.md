@@ -120,6 +120,17 @@ semantics, but `emit_functions_parallel` must stop being the inline owner of bot
 raw worker side-effect row writing and parent raw-tag merge switching. The
 session contract owns the schema and the writer/merge consumer boundary.
 
+Slice 0k-BV adds the convergence gate before that implementation. The
+side-effect implementation is now the future 0k-BW slice. A green
+`REQUIRE_SIDE_EFFECT_CONTRACT=1` source-shape row is necessary but not
+sufficient: the slice must also report the generated-stage convergence vector
+from the SDD, including B4 before/after, worker-mode split, tail-input versus
+semantic-failure classification, and output/resource evidence boundaries. If
+another behavior-neutral `LLVMEmissionSession` edge preserves the same B4
+frontier and narrows no vector row, the next admitted movement is a
+`GeneratedStageExecution` transaction redesign checkpoint rather than another
+session edge hoist.
+
 Generated-stage owner carriers SHOULD use explicit private classes/methods
 until their materialization surface is proven. A rejected 0k-BR preflight using
 Crystal `record` macros preserved local checks but changed B4 to a produced

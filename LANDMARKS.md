@@ -1,6 +1,6 @@
 # LANDMARKS
 
-Updated: 2026-07-01
+Updated: 2026-07-02
 Context: compiler/bootstrap/stage2-stability
 
 This file is the active working set only. Historical landmarks before this
@@ -11,6 +11,30 @@ checkpoint remain recoverable from git history, especially:
   `d43826fdcc2277b6075026244764a84d0069d1a30b675642b603f3511b14a1e5`
 
 ## Active Bootstrap Gate
+
+[LM-ARCH-0K-BV-GENERATED-STAGE-CONVERGENCE-GATE|design-sealed 2026-07-02 {F:0.84 G:0.62 R:0.86}]:
+Slice 0k-BV adds a convergence checkpoint before the next
+`GeneratedStageExecution` / `LLVMEmissionSession` production edit. Hostile
+review found a new tail-chasing risk: the project can keep consuming local
+`LLVMEmissionSession` authority edges while B4 remains at the same
+`current_0k_bn_frontier`. The selected 0k-BU `SideEffectMergeContract` remains
+admitted, but implementation is moved to future Slice 0k-BW and must carry a
+generated-stage convergence vector: B4 before/after, default-worker versus
+`ADAMAS_LLVM_WORKERS=1` split, side-effect writer/merge source shape,
+tail-input versus semantic-failure classification, output/resource evidence
+boundary, and post-edge routing. Fresh source-shape evidence for the side-effect
+guard is intentionally red on current source:
+`REQUIRE_SESSION=1 REQUIRE_WORKER_PLAN=1 REQUIRE_SIDE_EFFECT_CONTRACT=1
+scripts/llvm_emission_session_source_shape_guard.sh` reports
+`side_effect_contract_shape=legacy_parallel_side_effect_merge`,
+`parallel_raw_side_effect_writer_tags=10`, and
+`parallel_raw_side_effect_merge_tags=9`, then exits non-zero. Stop rule: if
+0k-BW preserves B4 and all convergence-vector rows unchanged, the next movement
+is a higher-level `GeneratedStageExecution` transaction redesign checkpoint,
+not another session field/edge hoist. Scope: docs/guard only; no compiler
+production behavior changed and no green `s2b`/`s3b` claim. Decay trigger:
+0k-BW lands, B4 changes to a different first-bad boundary, or fresh evidence
+refutes `LLVMEmissionSession` as the active generated-stage owner boundary.
 
 [LM-ARCH-0K-BU-SIDE-EFFECT-MERGE-CONTRACT-PLAN|design-sealed 2026-07-01 {F:0.84 G:0.55 R:0.87}]:
 Slice 0k-BU selects `SideEffectMergeContract` as the next
