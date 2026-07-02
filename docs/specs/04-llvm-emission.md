@@ -101,7 +101,16 @@ Slice 0k-BR consumes the first edge, `function-list-inline`.
 final function plan through it, while rejecting reachability, skip-set, or
 dedup authority that still lives inline in `generate`.
 
+Slice 0k-BS consumes the second edge, `worker-policy-inline`. The same guard
+with `REQUIRE_WORKER_PLAN=1` requires `generate` to consume effective worker
+count through `LLVMEmissionSession`, while rejecting inline
+`parallel_llvm_workers` and debug-info sequential override logic in `generate`.
+The slice does not change worker defaults or fallback behavior.
+
 Generated-stage owner carriers SHOULD use explicit private classes/methods
 until their materialization surface is proven. A rejected 0k-BR preflight using
 Crystal `record` macros preserved local checks but changed B4 to a produced
 stage stub for `LLVMEmissionFunctionPlan#functions_to_emit`.
+Slice 0k-BS adds the narrower caution that separate helper classes can still be
+too expensive for generated-stage bootstrap; keep small plan facts on the
+existing session carrier when scalar fields are enough.

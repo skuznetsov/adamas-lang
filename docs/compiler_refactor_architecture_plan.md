@@ -334,10 +334,24 @@ finding: Crystal `record` macro carriers are not safe by default for generated
 stage owner objects; a rejected preflight changed B4 to a
 `LLVMEmissionFunctionPlan#functions_to_emit` stub. The committed carrier uses
 explicit private classes/methods and preserves B4 as
-`classification=current_0k_bn_frontier`. The next architecture movement should
-select one remaining `LLVMEmissionSession` edge, not patch the B4 crash stack:
-worker/fallback policy, side-effect merge contract, tail declarations/stubs,
-output ownership, or resource evidence.
+`classification=current_0k_bn_frontier`. At 0k-BR the next architecture movement
+still had to select one remaining `LLVMEmissionSession` edge, not patch the B4
+crash stack: worker/fallback policy, side-effect merge contract, tail
+declarations/stubs, output ownership, or resource evidence. Slice 0k-BS below
+then consumes the worker-policy edge.
+
+2026-07-01 post-0k-BS note: the second `LLVMEmissionSession` implementation
+slice is in place and behavior-neutral. It consumes `worker-policy-inline`:
+`generate` now reads effective worker count from the session, while
+`build_llvm_emission_worker_plan` preserves the existing `parallel_llvm_workers`
+policy and debug-metadata sequential override. The first worker-plan shape with
+a separate helper class failed B4 during stage1->s2 build under the 4096MB
+gate; the committed shape stores requested/effective worker count and reason
+code directly on `LLVMEmissionSession`. This keeps B4 at
+`classification=current_0k_bn_frontier` and does not fix worker rand/RSS,
+workers=1 exit 139, fallback behavior, side-effect merging, tail stubs, output
+ownership, or resource gates. Next candidates are side-effect merge contract,
+tail declaration/stub plan, output ownership, or resource evidence.
 
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another

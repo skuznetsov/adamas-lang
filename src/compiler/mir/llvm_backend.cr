@@ -646,7 +646,10 @@ module Adamas::MIR
   end
 
   private class LLVMEmissionSession
-    def initialize(@function_plan : LLVMEmissionFunctionPlan)
+    def initialize(@function_plan : LLVMEmissionFunctionPlan,
+                   @requested_worker_count : Int32,
+                   @effective_worker_count : Int32,
+                   @worker_sequential_reason_code : Int32)
     end
 
     def total_funcs : Int32
@@ -663,6 +666,18 @@ module Adamas::MIR
 
     def functions_to_emit : ::Array(Function)
       @function_plan.functions_to_emit
+    end
+
+    def effective_worker_count : Int32
+      @effective_worker_count
+    end
+
+    def requested_worker_count : Int32
+      @requested_worker_count
+    end
+
+    def worker_sequential_reason_code : Int32
+      @worker_sequential_reason_code
     end
   end
 
@@ -2951,7 +2966,13 @@ module Adamas::MIR
     end
 
     private def build_llvm_emission_session : LLVMEmissionSession
-      LLVMEmissionSession.new(build_llvm_emission_function_plan)
+      requested_workers, effective_workers, sequential_reason_code = build_llvm_emission_worker_plan
+      LLVMEmissionSession.new(
+        build_llvm_emission_function_plan,
+        requested_workers,
+        effective_workers,
+        sequential_reason_code
+      )
     end
 
     private def build_llvm_emission_function_plan : LLVMEmissionFunctionPlan
@@ -3066,6 +3087,21 @@ module Adamas::MIR
       )
     end
 
+    private def build_llvm_emission_worker_plan : Tuple(Int32, Int32, Int32)
+      requested_workers = parallel_llvm_workers
+      effective_workers = requested_workers
+      sequential_reason_code = 0
+
+      # Keep debug metadata in one emitter process so generic types and file caches
+      # don't get split across worker-local DWARF graphs.
+      if @debug_emit_anchors
+        effective_workers = 1
+        sequential_reason_code = 1
+      end
+
+      {requested_workers, effective_workers, sequential_reason_code}
+    end
+
     def generate(output : IO? = nil) : String
       @output = output || IO::Memory.new
       @toplevel_output = nil
@@ -3095,10 +3131,7 @@ module Adamas::MIR
       emission_session = build_llvm_emission_session
       functions_to_emit = emission_session.functions_to_emit
       total_funcs = emission_session.total_funcs
-      n_workers = parallel_llvm_workers
-      # Keep debug metadata in one emitter process so generic types and file caches
-      # don't get split across worker-local DWARF graphs.
-      n_workers = 1 if @debug_emit_anchors
+      n_workers = emission_session.effective_worker_count
       STDERR.puts "  [LLVM] emitting #{total_funcs} functions (#{emission_session.original_function_count} total, #{emission_session.pruned_function_count} pruned, workers=#{n_workers})..." if @progress
       func_emit_start = @progress ? Time.instant : nil
 

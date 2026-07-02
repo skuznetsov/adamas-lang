@@ -8,6 +8,23 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: implemented Slice 0k-BS, the second behavior-neutral
+  `LLVMEmissionSession` owner migration. The existing guard
+  `scripts/llvm_emission_session_source_shape_guard.sh` now has
+  `REQUIRE_WORKER_PLAN=1` and proves that `LLVMIRGenerator#generate` consumes
+  effective worker count through the session instead of computing
+  `parallel_llvm_workers` and the debug-info sequential override inline. The
+  slice consumes `worker-policy-inline` only: requested worker count, effective
+  worker count, and a compact sequential reason code are now session facts.
+  `emit_functions_parallel`, its fallback-to-sequential behavior,
+  side-effect merging, tail stubs, output ownership, resource acceptance, and
+  `BlockOwner` are unchanged. Adversary result: a separate
+  `LLVMEmissionWorkerPlan` class made B4 fail during stage1->s2 build under the
+  4096MB gate, so the committed shape stores worker-plan scalars inside
+  `LLVMEmissionSession`. Fresh B4 returns to
+  `classification=current_0k_bn_frontier`; this is still not a green
+  `s2b`/`s3b` claim.
+
 - 2026-07-01 UPDATE: implemented Slice 0k-BR, the first behavior-neutral
   `LLVMEmissionSession` owner migration. New guard:
   `scripts/llvm_emission_session_source_shape_guard.sh`. The slice consumes

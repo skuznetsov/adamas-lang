@@ -12,6 +12,28 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-BS-LLVM-EMISSION-SESSION-WORKER-PLAN|implemented 2026-07-01 {F:0.86 G:0.34 R:0.88}]:
+Slice 0k-BS implements the second behavior-neutral `LLVMEmissionSession`
+owner migration. It consumes exactly the `worker-policy-inline` authority edge:
+`LLVMIRGenerator#generate` now reads `effective_worker_count` from the session
+instead of calling `parallel_llvm_workers` and applying the debug-info
+sequential override inline. The session carries requested worker count,
+effective worker count, and a compact sequential reason code; `emit_functions_parallel`
+and its fallback-to-sequential behavior are unchanged. Guard:
+`REQUIRE_SESSION=1 REQUIRE_WORKER_PLAN=1 scripts/llvm_emission_session_source_shape_guard.sh`
+reports `worker_shape=session_consumes_worker_plan`,
+`generate_inline_worker_count=0`, and
+`generate_inline_debug_override_count=0`. Adversary refutation: a separate
+`LLVMEmissionWorkerPlan` class made B4 fail during stage1->s2 build under the
+4096MB gate, so the committed shape keeps worker-plan scalars inside
+`LLVMEmissionSession`. Fresh B4 evidence returns to
+`classification=current_0k_bn_frontier`. Scope: behavior-neutral worker-policy
+ownership only; no side-effect merge, tail stub, output-file, resource
+acceptance, materialization, parser, or `BlockOwner` behavior changed. B4
+remains measured-red and no green `s2b` or `s3b` claim is made. Decay trigger:
+`LLVMEmissionSession` moves another authority edge, B4 reaches a different
+first-bad boundary, or worker/fallback behavior changes.
+
 [LM-ARCH-0K-BR-LLVM-EMISSION-SESSION-FUNCTION-PLAN|implemented 2026-07-01 {F:0.86 G:0.36 R:0.88}]:
 Slice 0k-BR implements the first behavior-neutral `LLVMEmissionSession`
 owner migration. It consumes exactly the `function-list-inline` authority edge:
