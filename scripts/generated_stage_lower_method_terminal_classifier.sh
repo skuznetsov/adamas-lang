@@ -125,6 +125,29 @@ helper = <<'CRYSTAL'
       STDERR.puts "[MAT_METHOD_NAME] class=#{ledger_token(class_name)} method=#{ledger_token(method_name)} base=#{ledger_token(base_name)} candidate=#{ledger_token(candidate_full_name)} full=#{ledger_token(full_name)} override=#{ledger_token(override_name)} param_ids=#{ledger_token(param_ids)}"
     end
 
+    private def lower_method_call_probe(
+      path : String,
+      requested_name : String,
+      target_name : String,
+      body_symbol : String,
+      owner : String,
+      method_name : String,
+      override_name : String,
+      call_arg_types : Array(TypeRef)?,
+      node : Adamas::Compiler::Frontend::DefNode,
+    ) : Nil
+      return unless env_has?("ADAMAS_LOWER_METHOD_TERMINAL_PROBE")
+
+      arg_ids = if types = call_arg_types
+                  types.map { |type_ref| type_ref.id.to_s }.join(",")
+                else
+                  "nil"
+                end
+      def_name = safe_slice_to_string(node.name) || ""
+      source_path = source_path_for(@arena) || ""
+      STDERR.puts "[MAT_METHOD_CALL] path=#{ledger_token(path)} requested=#{ledger_token(requested_name)} target=#{ledger_token(target_name)} body=#{ledger_token(body_symbol)} owner=#{ledger_token(owner)} method=#{ledger_token(method_name)} override=#{ledger_token(override_name)} def=#{ledger_token(def_name)} call_arg_ids=#{ledger_token(arg_ids)} source=#{ledger_token(source_path)} line=#{node.span.start_line} col=#{node.span.start_column}"
+    end
+
 CRYSTAL
 
 unless src.include?(helper_anchor)
@@ -224,6 +247,11 @@ replacements = [
     "      @function_lowering_states[full_name] = FunctionLoweringState::Completed\n" \
     "      lower_method_terminal_probe(\"completed_method\", class_name, method_name, full_name, effective_full_name_override)\n\n" \
     "      # Restore previous method context\n",
+  ],
+  [
+    "                  lower_method(owner, class_info, resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, override, force_class_method: force_class_method)\n",
+    "                  lower_method_call_probe(\"instance_class_info_lower_method\", instance_transaction.requested_name, instance_transaction.target_name, instance_transaction.body_symbol, owner, resolved_parts.method || \"\", override, call_arg_types, resolved_func_def)\n" \
+    "                  lower_method(owner, class_info, resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, override, force_class_method: force_class_method)\n",
   ],
 ]
 
@@ -389,6 +417,36 @@ awk -v max_class_rows="$MAX_CLASS_ROWS" -v samples="$SAMPLES" '
     next
   }
 
+  /^\[MAT_METHOD_CALL\]/ {
+    method_call_rows++
+    body = field("body")
+    requested_name = field("requested")
+    owner = field("owner")
+    method_name = field("method")
+    override_name = field("override")
+    key = owner "#" method_name
+    if (body != "") {
+      call_body_rows[body]++
+      call_body_owner[body] = owner
+      call_body_method[body] = method_name
+      call_body_override[body] = override_name
+    }
+    if (requested_name != "") {
+      call_requested_rows[requested_name]++
+      if (call_requested_sample_count[requested_name] < 3) {
+        call_requested_sample_count[requested_name]++
+        sample_value = body "|" owner "#" method_name "|" override_name
+        if (call_requested_samples[requested_name] == "") {
+          call_requested_samples[requested_name] = sample_value
+        } else {
+          call_requested_samples[requested_name] = call_requested_samples[requested_name] "," sample_value
+        }
+      }
+    }
+    call_base_rows[key]++
+    next
+  }
+
   /^\[MAT_TX\]/ {
     tx = field("tx")
     if (tx == "") next
@@ -462,10 +520,14 @@ awk -v max_class_rows="$MAX_CLASS_ROWS" -v samples="$SAMPLES" '
           terminal = "no_exact_matching_full_name_without_exit"
         } else if (base_key in base_name_rows) {
           terminal = "no_exact_sibling_full_name"
+        } else if (body_symbol[tx] in call_body_rows) {
+          terminal = "no_exact_call_exact_without_entry"
+        } else if (requested[tx] in call_requested_rows) {
+          terminal = "no_exact_requested_call_symbol_mismatch"
         } else if (base_key in base_entry_rows) {
           terminal = "no_exact_entry_without_name"
         } else {
-          terminal = "no_exact_no_entry"
+          terminal = "no_exact_no_call"
         }
       }
       cause = "lower_method_terminal_" terminal
@@ -477,7 +539,7 @@ awk -v max_class_rows="$MAX_CLASS_ROWS" -v samples="$SAMPLES" '
         group_order[++group_total] = group_key
         group_cause[group_key] = cause
       }
-      row = "cause=" cause " tx=" tx " requested=" requested[tx] " body=" body_symbol[tx] " branch=" branch[tx] " producer=" done_producer_path[done_key] " created_relation=" done_created_symbol_relation[done_key] " exact_exit_rows=" (exact_exit_rows[body_symbol[tx]] + 0) " base_exit_rows=" (base_exit_rows[base_key] + 0) " exact_name_rows=" (exact_name_rows[body_symbol[tx]] + 0) " base_name_rows=" (base_name_rows[base_key] + 0) " base_entry_rows=" (base_entry_rows[base_key] + 0) " sibling_fulls=" base_name_samples[base_key]
+      row = "cause=" cause " tx=" tx " requested=" requested[tx] " body=" body_symbol[tx] " branch=" branch[tx] " producer=" done_producer_path[done_key] " created_relation=" done_created_symbol_relation[done_key] " exact_exit_rows=" (exact_exit_rows[body_symbol[tx]] + 0) " base_exit_rows=" (base_exit_rows[base_key] + 0) " exact_name_rows=" (exact_name_rows[body_symbol[tx]] + 0) " base_name_rows=" (base_name_rows[base_key] + 0) " base_entry_rows=" (base_entry_rows[base_key] + 0) " call_body_rows=" (call_body_rows[body_symbol[tx]] + 0) " call_requested_rows=" (call_requested_rows[requested[tx]] + 0) " call_owner=" call_body_owner[body_symbol[tx]] " call_method=" call_body_method[body_symbol[tx]] " call_override=" call_body_override[body_symbol[tx]] " sibling_fulls=" base_name_samples[base_key] " requested_call_samples=" call_requested_samples[requested[tx]]
       keep_sample("residual", row)
     }
   }
@@ -510,6 +572,7 @@ awk -v max_class_rows="$MAX_CLASS_ROWS" -v samples="$SAMPLES" '
     print "## LowerMethod Terminal Counts"
     print "method_entry_rows=" method_entry_rows + 0
     print "method_name_rows=" method_name_rows + 0
+    print "method_call_rows=" method_call_rows + 0
     print "method_exit_rows=" method_exit_rows + 0
     print "residual_rows=" residual_rows + 0
     print "terminal_cause_kinds=" cause_kinds + 0

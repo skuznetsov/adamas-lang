@@ -148,6 +148,15 @@ actual lower_method call input, selected DefNode/source owner, and
 requested/target/body symbol relation. This is still classifier-only evidence,
 not a behavior license.
 
+2026-07-02 post-0k-DF note: a temp-only `[MAT_METHOD_CALL]` row was added at
+the `instance_class_info_lower_method` call site. Fresh evidence still reaches
+`[MAT_EMIT]` and reports `method_call_rows=242`. The broad bucket is now
+`no_exact_no_call` (6 rows): sampled rows have zero exact/requested call rows,
+while abstract controls join to matching call rows. The next architecture
+movement should split the control region after transaction logging but before
+the actual `lower_method` call, especially type-param isolation, namespace
+override, arity fallback, and any pre-call return/skip edge.
+
 2026-07-02 post-0k-CS note: hostile review of the post-0k-CR route found that
 the active SDD is still being followed, but the emergency B4/O1 lane can become
 another symptom scheduler if every moved crash stack automatically selects the

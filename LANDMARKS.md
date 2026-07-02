@@ -12,6 +12,31 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-DF-MATERIALIZATION-PRECALL-GAP|implemented 2026-07-02 {F:0.92 G:0.69 R:0.90}]:
+Slice 0k-DF adds a temp-only `[MAT_METHOD_CALL]` probe at the
+`instance_class_info_lower_method` call site in the copied source used by
+`scripts/generated_stage_lower_method_terminal_classifier.sh`. Fresh evidence
+using `REQUIRE_REACHED=1 SAMPLES=8 scripts/generated_stage_lower_method_terminal_classifier.sh`
+reports `completion_classifier_classification=reached_tx_and_emit`,
+`method_call_rows=242`, `method_entry_rows=338`, `method_name_rows=285`,
+`method_exit_rows=623`, `residual_rows=14`, `terminal_cause_kinds=4`,
+`terminal_groups=12`, and `terminal_root_sized_groups=12`. The broad class is
+now `lower_method_terminal_no_exact_no_call` (6 rows); its samples have
+`call_body_rows=0` and `call_requested_rows=0`, while abstract controls such as
+`IO#read` and `String::Builder#write` have matching call rows. This proves the
+coarse producer path can reach transaction/completion logging as
+`instance_class_info_lower_method` without reaching the actual `lower_method`
+call for those exact symbols. Scope: read-only/temp-source classifier only; no
+production behavior changed and no green `s2b`/`s3b` claim. The next valid
+movement is to split the pre-call control gap between transaction logging and
+`lower_method` invocation: type-param isolation, namespace override, arity
+fallback, or another pre-call edge. Rejected moves remain backend rescue,
+sampled-method patches, requested-name forcing, forwarders, broad rendering or
+ambient-map policy, `BlockOwner` rollback, and production `lower_method`
+trace-object plumbing. Decay trigger: a finer generated-stage classifier
+selects a root-sized pre-call sub-branch or newer evidence refutes the
+zero-call rows.
+
 [LM-ARCH-0K-DE-NO-EXACT-LOWER-METHOD-SPLIT|implemented 2026-07-02 {F:0.91 G:0.70 R:0.90}]:
 Slice 0k-DE refines the 0k-DD temp-source classifier instead of changing
 production compiler behavior. `scripts/generated_stage_lower_method_terminal_classifier.sh`

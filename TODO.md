@@ -8,6 +8,24 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: refined the classifier again as Slice 0k-DF with a
+  temp-only `[MAT_METHOD_CALL]` probe at the `instance_class_info_lower_method`
+  call site. Fresh evidence from
+  `REQUIRE_REACHED=1 SAMPLES=8 scripts/generated_stage_lower_method_terminal_classifier.sh`
+  still reaches backend emission and reports `method_call_rows=242`,
+  `method_entry_rows=338`, `method_name_rows=285`, `method_exit_rows=623`,
+  `residual_rows=14`, `terminal_cause_kinds=4`, `terminal_groups=12`, and
+  `terminal_root_sized_groups=12`. The broad bucket is now
+  `lower_method_terminal_no_exact_no_call` (6 rows): every sampled row has
+  `call_body_rows=0` and `call_requested_rows=0`, while abstract controls such
+  as `IO#read` and `String::Builder#write` have matching call rows. This proves
+  the coarse producer path can log `[MAT_TX]` and `[MAT_DONE]` as
+  `instance_class_info_lower_method` without reaching the actual `lower_method`
+  call for those six exact symbols. No behavior patch is admitted. The next
+  movement must split the gap between transaction logging and the
+  `lower_method` call: type-param isolation, namespace override, arity fallback,
+  or another pre-call control edge.
+
 - 2026-07-02 UPDATE: refined Slice 0k-DD with the 0k-DE no-exact splitter.
   `scripts/generated_stage_lower_method_terminal_classifier.sh` now logs
   temp-only `[MAT_METHOD_ENTRY]`, `[MAT_METHOD_NAME]`, and final
