@@ -12,6 +12,43 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-BW-SIDE-EFFECT-MERGE-CONTRACT|implemented 2026-07-02 {F:0.88 G:0.42 R:0.88}]:
+Slice 0k-BW implements the behavior-neutral `SideEffectMergeContract`
+consumer migration. `LLVMEmissionSession` now owns the worker side-effect tag
+vocabulary; `LLVMIRGenerator#generate` passes the session into
+`emit_functions_parallel`; worker `.se` writing delegates to
+`write_worker_side_effects_with_contract`; and parent side-effect merging
+delegates to `merge_worker_side_effects_with_contract`. The current `.se` file
+format and merge policy are preserved: strings dedupe/alias by value, zero
+struct globals dedupe by struct key when possible, undefined externs use
+`record_undefined_extern`, called Crystal functions keep first-seen call info,
+emitted functions are unioned, emitted return types keep first entry, module
+singleton globals keep first entry per type, debug files route through the
+debug context, malformed rows still skip via size checks, and string counters
+use the max worker high-water mark. Verification: prepatch B4 was
+`classification=current_0k_bn_frontier`; prepatch side-effect source-shape
+guard was red with `parallel_raw_side_effect_writer_tags=10` and
+`parallel_raw_side_effect_merge_tags=9`; postpatch
+`REQUIRE_SESSION=1 REQUIRE_WORKER_PLAN=1 REQUIRE_SIDE_EFFECT_CONTRACT=1
+scripts/llvm_emission_session_source_shape_guard.sh` reports
+`side_effect_contract_shape=session_consumes_side_effect_merge_contract`,
+`parallel_contract_writer_call_count=1`,
+`parallel_contract_merge_call_count=1`, and raw writer/merge counts `0/0`;
+`crystal build src/adamas.cr -o bin/adamas --error-trace`,
+`regression_tests/type_value_core_runtime_identity_contract.sh bin/adamas`,
+`regression_tests/original_vs_stage_semantic_oracle_contract.sh bin/adamas`,
+and `regression_tests/p2_stage2_static_call_named_llvm_no_prelude.sh
+bin/adamas` all pass. Postpatch B4 remains `classification=current_0k_bn_frontier`
+with the same default-worker rand+RSS symptom and workers=1 exit 139. Scope:
+behavior-neutral side-effect contract ownership only; no side-effect semantics,
+tail declarations/stubs, output ownership, resource acceptance, worker
+fallback, parser, materialization, or `BlockOwner` behavior changed. Per 0k-BV,
+because all generated-stage convergence-vector rows were preserved unchanged,
+the next movement is a `GeneratedStageExecution` transaction redesign
+checkpoint, not another session edge hoist by default. Decay trigger: B4
+changes to a different first-bad boundary, side-effect merge semantics change,
+or a later generated-stage transaction owner supersedes this contract.
+
 [LM-ARCH-0K-BV-GENERATED-STAGE-CONVERGENCE-GATE|design-sealed 2026-07-02 {F:0.84 G:0.62 R:0.86}]:
 Slice 0k-BV adds a convergence checkpoint before the next
 `GeneratedStageExecution` / `LLVMEmissionSession` production edit. Hostile

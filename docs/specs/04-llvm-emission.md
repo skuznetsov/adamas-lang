@@ -131,6 +131,15 @@ frontier and narrows no vector row, the next admitted movement is a
 `GeneratedStageExecution` transaction redesign checkpoint rather than another
 session edge hoist.
 
+Slice 0k-BW implements the side-effect consumer migration in behavior-neutral
+mode. `emit_functions_parallel` delegates worker side-effect writing and parent
+side-effect merging through session-contract helpers, preserving the existing
+`.se` row format and merge policy. The source-shape guard is green, but B4 and
+the convergence vector remain unchanged. Therefore this slice does not admit
+tail-stub, output-ownership, resource, worker, or green-bootstrap claims. The
+next LLVM-emission architecture movement must model the generated-stage
+transaction boundary before another local session edge is selected.
+
 Generated-stage owner carriers SHOULD use explicit private classes/methods
 until their materialization surface is proven. A rejected 0k-BR preflight using
 Crystal `record` macros preserved local checks but changed B4 to a produced

@@ -679,6 +679,42 @@ module Adamas::MIR
     def worker_sequential_reason_code : Int32
       @worker_sequential_reason_code
     end
+
+    def side_effect_string_constant_tag : String
+      "STR"
+    end
+
+    def side_effect_zero_struct_global_tag : String
+      "ZSG"
+    end
+
+    def side_effect_undefined_extern_tag : String
+      "EXT"
+    end
+
+    def side_effect_called_crystal_function_tag : String
+      "CCF"
+    end
+
+    def side_effect_emitted_function_tag : String
+      "EMF"
+    end
+
+    def side_effect_emitted_return_type_tag : String
+      "ERT"
+    end
+
+    def side_effect_module_singleton_global_tag : String
+      "MSG"
+    end
+
+    def side_effect_debug_file_tag : String
+      "DGF"
+    end
+
+    def side_effect_string_counter_tag : String
+      "SCN"
+    end
   end
 
   class DwarfDebugContext
@@ -3136,7 +3172,7 @@ module Adamas::MIR
       func_emit_start = @progress ? Time.instant : nil
 
       if n_workers > 1 && total_funcs >= n_workers * 4
-        emit_functions_parallel(functions_to_emit, n_workers)
+        emit_functions_parallel(emission_session, functions_to_emit, n_workers)
       else
         emit_functions_sequential(functions_to_emit)
       end
@@ -17509,7 +17545,7 @@ module Adamas::MIR
     # Parallel function emission using Process.fork
     # Each worker emits its chunk of functions to a temp file.
     # Parent concatenates results and merges side-effect data.
-    private def emit_functions_parallel(functions : ::Array(Function), n_workers : Int32)
+    private def emit_functions_parallel(emission_session : LLVMEmissionSession, functions : ::Array(Function), n_workers : Int32)
       total = functions.size
 
       # Create temp directory for worker outputs
@@ -17657,63 +17693,7 @@ module Adamas::MIR
           # Write function IR to temp file
           File.write(ir_file, worker_output.to_s)
 
-          # Write side-effect data: string constants, zero-struct globals, externs, called functions
-          File.open(se_file, "w") do |f|
-            # String constants: "STR\tglobal_name\tstring_value_base64"
-            i = 0
-            while i < @string_constant_values.size
-              f.puts "STR\t#{@string_constant_names.unsafe_fetch(i)}\t#{Base64.strict_encode(@string_constant_values.unsafe_fetch(i))}"
-              i += 1
-            end
-            # Zero-struct globals
-            if @zero_struct_global_decls.pos > 0
-              zsg_bytes = @zero_struct_global_decls.to_slice
-              zsg_line_start = 0
-              zsg_i = 0
-              while zsg_i < zsg_bytes.size
-                if zsg_bytes[zsg_i] == 10_u8
-                  f.puts "ZSG\t#{String.new(zsg_bytes[zsg_line_start, zsg_i - zsg_line_start])}"
-                  zsg_line_start = zsg_i + 1
-                end
-                zsg_i += 1
-              end
-              if zsg_line_start < zsg_bytes.size
-                f.puts "ZSG\t#{String.new(zsg_bytes[zsg_line_start, zsg_bytes.size - zsg_line_start])}"
-              end
-            end
-            # Undefined externs
-            undefined_idx = 0
-            while undefined_idx < @undefined_extern_names.size
-              name = @undefined_extern_names.unsafe_fetch(undefined_idx)
-              ret_type = @undefined_extern_return_types.unsafe_fetch(undefined_idx)
-              f.puts "EXT\t#{name}\t#{ret_type}"
-              undefined_idx += 1
-            end
-            # Called crystal functions
-            @called_crystal_functions.each do |name, info|
-              ret_type, arg_count, arg_types = info
-              f.puts "CCF\t#{name}\t#{ret_type}\t#{arg_count}\t#{arg_types.join(",")}"
-            end
-            # Emitted functions (for dedup tracking)
-            @emitted_functions.each do |fname|
-              f.puts "EMF\t#{fname}"
-            end
-            # Emitted function return types
-            @emitted_function_return_types.each do |fname, ret_type|
-              f.puts "ERT\t#{fname}\t#{ret_type}"
-            end
-            # Module singleton globals
-            @module_singleton_globals.each do |type_ref, global_name|
-              f.puts "MSG\t#{type_ref.id}\t#{global_name}"
-            end
-            if @debug_emit_anchors
-              @dwarf_debug.used_files.each do |filename|
-                f.puts "DGF\t#{Base64.strict_encode(filename)}"
-              end
-            end
-            # String counter high-water mark
-            f.puts "SCN\t#{@string_counter}"
-          end
+          write_worker_side_effects_with_contract(emission_session, se_file)
 
           w_t6 = Time.instant
           STDERR.puts "  [W#{worker_idx}] total=#{(w_t6 - w_t0).total_milliseconds.round(1)}ms ir_size=#{worker_output.pos}B" if @progress
@@ -17794,68 +17774,7 @@ module Adamas::MIR
           append_output(File.read(ir_file))
         end
 
-        # Merge side-effects
-        if File.exists?(se_file)
-          File.each_line(se_file) do |line|
-            parts = line.split('\t')
-            next if parts.empty?
-            case parts[0]
-            when "STR"
-              next if parts.size < 3
-              global_name = parts[1]
-              str_val = Base64.decode_string(parts[2])
-              if existing = string_constant_name_for(str_val)
-                # String already exists with a different name — need alias
-                @string_aliases[global_name] = existing if global_name != existing
-              else
-                record_string_constant(str_val, global_name)
-              end
-            when "ZSG"
-              next if parts.size < 2
-              decl_line = parts[1]
-              # Extract struct name from "global_name = internal global %StructName zeroinitializer"
-              # to deduplicate across workers
-              if m = decl_line.match(/@__zero\.(\S+)\s*=/)
-                struct_key = m[1]
-                unless @zero_struct_globals.includes?(struct_key)
-                  @zero_struct_globals << struct_key
-                  @zero_struct_global_decls << decl_line << "\n"
-                end
-              else
-                @zero_struct_global_decls << decl_line << "\n"
-              end
-            when "EXT"
-              next if parts.size < 3
-              record_undefined_extern(parts[1], parts[2])
-            when "CCF"
-              next if parts.size < 5
-              name = parts[1]
-              unless @called_crystal_functions.has_key?(name)
-                arg_types = parts[4].split(",").reject(&.empty?)
-                @called_crystal_functions[name] = {parts[2], parts[3].to_i, arg_types}
-              end
-            when "EMF"
-              next if parts.size < 2
-              @emitted_functions << parts[1]
-            when "ERT"
-              next if parts.size < 3
-              @emitted_function_return_types[parts[1]] ||= parts[2]
-            when "MSG"
-              next if parts.size < 3
-              type_id = parts[1].to_u32
-              global_name = parts[2]
-              type_ref = TypeRef.new(type_id)
-              @module_singleton_globals[type_ref] ||= global_name
-            when "DGF"
-              next if parts.size < 2
-              @dwarf_debug.register_external_file(Base64.decode_string(parts[1]))
-            when "SCN"
-              next if parts.size < 2
-              worker_counter = parts[1].to_i
-              max_string_counter = worker_counter if worker_counter > max_string_counter
-            end
-          end
-        end
+        max_string_counter = merge_worker_side_effects_with_contract(emission_session, se_file, max_string_counter)
       end
 
       @string_counter = max_string_counter
@@ -17871,6 +17790,148 @@ module Adamas::MIR
       STDERR.puts "  [LLVM] parallel emission failed: #{ex.message}, falling back to sequential"
       @output = saved_output if saved_output
       emit_functions_sequential(functions)
+    end
+
+    private def write_worker_side_effects_with_contract(emission_session : LLVMEmissionSession, se_file : String) : Nil
+      side_effect_string_constant_tag = emission_session.side_effect_string_constant_tag
+      side_effect_zero_struct_global_tag = emission_session.side_effect_zero_struct_global_tag
+      side_effect_undefined_extern_tag = emission_session.side_effect_undefined_extern_tag
+      side_effect_called_crystal_function_tag = emission_session.side_effect_called_crystal_function_tag
+      side_effect_emitted_function_tag = emission_session.side_effect_emitted_function_tag
+      side_effect_emitted_return_type_tag = emission_session.side_effect_emitted_return_type_tag
+      side_effect_module_singleton_global_tag = emission_session.side_effect_module_singleton_global_tag
+      side_effect_debug_file_tag = emission_session.side_effect_debug_file_tag
+      side_effect_string_counter_tag = emission_session.side_effect_string_counter_tag
+
+      File.open(se_file, "w") do |f|
+        i = 0
+        while i < @string_constant_values.size
+          f.puts "#{side_effect_string_constant_tag}\t#{@string_constant_names.unsafe_fetch(i)}\t#{Base64.strict_encode(@string_constant_values.unsafe_fetch(i))}"
+          i += 1
+        end
+
+        if @zero_struct_global_decls.pos > 0
+          zsg_bytes = @zero_struct_global_decls.to_slice
+          zsg_line_start = 0
+          zsg_i = 0
+          while zsg_i < zsg_bytes.size
+            if zsg_bytes[zsg_i] == 10_u8
+              f.puts "#{side_effect_zero_struct_global_tag}\t#{String.new(zsg_bytes[zsg_line_start, zsg_i - zsg_line_start])}"
+              zsg_line_start = zsg_i + 1
+            end
+            zsg_i += 1
+          end
+          if zsg_line_start < zsg_bytes.size
+            f.puts "#{side_effect_zero_struct_global_tag}\t#{String.new(zsg_bytes[zsg_line_start, zsg_bytes.size - zsg_line_start])}"
+          end
+        end
+
+        undefined_idx = 0
+        while undefined_idx < @undefined_extern_names.size
+          name = @undefined_extern_names.unsafe_fetch(undefined_idx)
+          ret_type = @undefined_extern_return_types.unsafe_fetch(undefined_idx)
+          f.puts "#{side_effect_undefined_extern_tag}\t#{name}\t#{ret_type}"
+          undefined_idx += 1
+        end
+
+        @called_crystal_functions.each do |name, info|
+          ret_type, arg_count, arg_types = info
+          f.puts "#{side_effect_called_crystal_function_tag}\t#{name}\t#{ret_type}\t#{arg_count}\t#{arg_types.join(",")}"
+        end
+
+        @emitted_functions.each do |fname|
+          f.puts "#{side_effect_emitted_function_tag}\t#{fname}"
+        end
+
+        @emitted_function_return_types.each do |fname, ret_type|
+          f.puts "#{side_effect_emitted_return_type_tag}\t#{fname}\t#{ret_type}"
+        end
+
+        @module_singleton_globals.each do |type_ref, global_name|
+          f.puts "#{side_effect_module_singleton_global_tag}\t#{type_ref.id}\t#{global_name}"
+        end
+
+        if @debug_emit_anchors
+          @dwarf_debug.used_files.each do |filename|
+            f.puts "#{side_effect_debug_file_tag}\t#{Base64.strict_encode(filename)}"
+          end
+        end
+
+        f.puts "#{side_effect_string_counter_tag}\t#{@string_counter}"
+      end
+    end
+
+    private def merge_worker_side_effects_with_contract(emission_session : LLVMEmissionSession, se_file : String, max_string_counter : Int32) : Int32
+      side_effect_string_constant_tag = emission_session.side_effect_string_constant_tag
+      side_effect_zero_struct_global_tag = emission_session.side_effect_zero_struct_global_tag
+      side_effect_undefined_extern_tag = emission_session.side_effect_undefined_extern_tag
+      side_effect_called_crystal_function_tag = emission_session.side_effect_called_crystal_function_tag
+      side_effect_emitted_function_tag = emission_session.side_effect_emitted_function_tag
+      side_effect_emitted_return_type_tag = emission_session.side_effect_emitted_return_type_tag
+      side_effect_module_singleton_global_tag = emission_session.side_effect_module_singleton_global_tag
+      side_effect_debug_file_tag = emission_session.side_effect_debug_file_tag
+      side_effect_string_counter_tag = emission_session.side_effect_string_counter_tag
+
+      if File.exists?(se_file)
+        File.each_line(se_file) do |line|
+          parts = line.split('\t')
+          next if parts.empty?
+          case parts[0]
+          when side_effect_string_constant_tag
+            next if parts.size < 3
+            global_name = parts[1]
+            str_val = Base64.decode_string(parts[2])
+            if existing = string_constant_name_for(str_val)
+              @string_aliases[global_name] = existing if global_name != existing
+            else
+              record_string_constant(str_val, global_name)
+            end
+          when side_effect_zero_struct_global_tag
+            next if parts.size < 2
+            decl_line = parts[1]
+            if m = decl_line.match(/@__zero\.(\S+)\s*=/)
+              struct_key = m[1]
+              unless @zero_struct_globals.includes?(struct_key)
+                @zero_struct_globals << struct_key
+                @zero_struct_global_decls << decl_line << "\n"
+              end
+            else
+              @zero_struct_global_decls << decl_line << "\n"
+            end
+          when side_effect_undefined_extern_tag
+            next if parts.size < 3
+            record_undefined_extern(parts[1], parts[2])
+          when side_effect_called_crystal_function_tag
+            next if parts.size < 5
+            name = parts[1]
+            unless @called_crystal_functions.has_key?(name)
+              arg_types = parts[4].split(",").reject(&.empty?)
+              @called_crystal_functions[name] = {parts[2], parts[3].to_i, arg_types}
+            end
+          when side_effect_emitted_function_tag
+            next if parts.size < 2
+            @emitted_functions << parts[1]
+          when side_effect_emitted_return_type_tag
+            next if parts.size < 3
+            @emitted_function_return_types[parts[1]] ||= parts[2]
+          when side_effect_module_singleton_global_tag
+            next if parts.size < 3
+            type_id = parts[1].to_u32
+            global_name = parts[2]
+            type_ref = TypeRef.new(type_id)
+            @module_singleton_globals[type_ref] ||= global_name
+          when side_effect_debug_file_tag
+            next if parts.size < 2
+            @dwarf_debug.register_external_file(Base64.decode_string(parts[1]))
+          when side_effect_string_counter_tag
+            next if parts.size < 2
+            worker_counter = parts[1].to_i
+            max_string_counter = worker_counter if worker_counter > max_string_counter
+          end
+        end
+      end
+
+      max_string_counter
     end
 
     private def get_or_create_string_global(str : String) : String

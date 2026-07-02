@@ -389,6 +389,19 @@ do not select `TailDeclarationPlan`, `OutputOwnership`, or `ResourceEvidence`
 by inertia; write a higher-level `GeneratedStageExecution` transaction
 redesign checkpoint first.
 
+2026-07-02 post-0k-BW note: the side-effect contract consumer migration landed
+in behavior-neutral mode. `emit_functions_parallel` no longer owns the raw
+worker `.se` writer tags or parent raw-tag merge switch inline; the source-shape
+guard is green. The convergence vector did not narrow: B4 remains
+`classification=current_0k_bn_frontier`, default workers still hit the
+parallel-rand/RSS path, and `ADAMAS_LLVM_WORKERS=1` still exits 139 after
+`pass3 after lower_main call`. This is useful ownership progress but not
+bootstrap progress by itself. Per the 0k-BV stop rule, do not continue with the
+next unconsumed local session edge. The next refactor movement should be a
+docs/design `GeneratedStageExecution` transaction checkpoint that models the
+whole generated-stage LLVM-entry product and its commit/abort evidence before
+any more production compiler edits.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`

@@ -8,6 +8,32 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: implemented Slice 0k-BW, the behavior-neutral
+  `SideEffectMergeContract` consumer migration. `LLVMEmissionSession` now owns
+  the worker side-effect row vocabulary, `emit_functions_parallel` receives the
+  session, worker `.se` writing delegates to
+  `write_worker_side_effects_with_contract`, and parent side-effect merging
+  delegates to `merge_worker_side_effects_with_contract`. The `.se` file format,
+  duplicate/malformed-row policy, undefined extern recording, called/emitted
+  function set handling, debug-file registration, worker fallback behavior,
+  tail declarations/stubs, output ownership, resource acceptance, and
+  `BlockOwner` are unchanged. Verification: prepatch B4 was
+  `classification=current_0k_bn_frontier`; prepatch side-effect guard was red
+  with writer tags `10` and merge tags `9`; postpatch
+  `REQUIRE_SESSION=1 REQUIRE_WORKER_PLAN=1 REQUIRE_SIDE_EFFECT_CONTRACT=1
+  scripts/llvm_emission_session_source_shape_guard.sh` reports
+  `side_effect_contract_shape=session_consumes_side_effect_merge_contract`,
+  writer/merge call counts `1/1`, and inline raw writer/merge tags `0/0`;
+  `crystal build src/adamas.cr -o bin/adamas --error-trace`, H6-core, B3, and
+  static-call LLVM guards pass. Postpatch B4 remains exactly
+  `classification=current_0k_bn_frontier` with the same default-worker
+  rand+RSS split and workers=1 exit 139. Per 0k-BV, all convergence-vector rows
+  were preserved unchanged, so the next movement is NOT another
+  `LLVMEmissionSession` edge hoist (`TailDeclarationPlan`, `OutputOwnership`,
+  or `ResourceEvidence`) by default; write a higher-level
+  `GeneratedStageExecution` transaction checkpoint before the next production
+  compiler edit.
+
 - 2026-07-02 UPDATE: added Slice 0k-BV, a docs/guard convergence checkpoint
   before any production compiler edits. Hostile review found that
   `LLVMEmissionSession` edge-consumption can itself become a proxy metric:
