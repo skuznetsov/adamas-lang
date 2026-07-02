@@ -12,6 +12,35 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-DB-MATERIALIZATION-TERMINAL-DONE|implemented 2026-07-02 {F:0.91 G:0.72 R:0.90}]:
+Slice 0k-DB refines 0k-DA by adding terminal-status evidence to the existing
+default-off `[MAT_DONE]` completion row instead of introducing a new result
+storage surface. `src/compiler/hir/ast_to_hir.cr` now reports `status`,
+`reason`, and `created_function_count` after each materialization attempt, and
+`scripts/generated_stage_created_body_visibility_classifier.sh` classifies
+those fields. Fresh current-source evidence using
+`STAGE1_COMPILER=/tmp/adamas_mat_done_terminal_stage1 SAMPLES=8 scripts/generated_stage_created_body_visibility_classifier.sh`
+reports `classifier_classification=reached_tx_and_emit`,
+`mat_tx_rows=735`, `mat_done_rows=805`, `mat_emit_rows=173`,
+`created_body_missing_completion_rows=14`,
+`completion_cause_kinds=1`,
+`selected_cause=attempt_lowering_returned_no_hir_function`,
+`selected_rows=14`, `classification=rejected_completion_class_too_wide`, 9
+completion groups, and zero malformed/unjoined rows. This verifies the
+terminal refinement is self-host safe at the generated-stage classifier level
+and proves the residual class is still too broad for behavior changes.
+Refuted during preflight: a separate `MaterializationAttemptResult` row/storage
+surface and a HIR-to-MIR consumer ledger caused generated-stage tx-only runs
+with `mat_emit_rows=0` before backend emission, so they are not admitted as the
+next architecture move. The next valid movement must split
+`attempt_lowering_returned_no_hir_function` at the HIR producer boundary that
+returns from lowering without registering the exact materialized function, or
+return to the Current Execution Board. Rejected moves remain backend
+undefined-extern rescue, forwarders, requested-name forcing, sampled method
+patches, broad `NamedTuple`/`Tuple` rendering, global ambient-map policy, and
+`BlockOwner` rollback. Scope: default-off ledger/classifier only; no compiler
+production behavior changed and no green `s2b`/`s3b` claim.
+
 [LM-ARCH-0K-DA-MATERIALIZATION-COMPLETION-BROAD|implemented 2026-07-02 {F:0.90 G:0.72 R:0.90}]:
 Slice 0k-DA adds the executable post-lowering completion fact required by
 0k-CZ. `src/compiler/hir/ast_to_hir.cr` emits default-off `[MAT_DONE]` rows

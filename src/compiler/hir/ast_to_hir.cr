@@ -2565,7 +2565,7 @@ module Adamas::HIR
       state_scope_ledger_enabled = env_has?("ADAMAS_SEMANTIC_STATE_SCOPE_LEDGER")
       return unless materialization_ledger_enabled || state_scope_ledger_enabled
 
-      tx_id = ledger_token(transaction.debug_id)
+      tx_id = materialization_transaction_id(transaction)
       if materialization_ledger_enabled
         @module.remember_materialization_transaction(
           transaction.call_symbol_hint,
@@ -2582,17 +2582,50 @@ module Adamas::HIR
       log_semantic_state_scope_shadow(transaction, tx_id) if state_scope_ledger_enabled
     end
 
+    private def materialization_transaction_id(transaction : CallMaterializationTransaction) : String
+      ledger_token(transaction.debug_id)
+    end
+
+    private def materialization_attempt_terminal_status(
+      has_function : Bool,
+      has_body : Bool,
+    ) : String
+      return "completed_with_hir_body" if has_body
+      return "completed_with_hir_function_without_body" if has_function
+
+      "completed_without_hir_function"
+    end
+
+    private def materialization_attempt_terminal_reason(
+      has_function : Bool,
+      has_body : Bool,
+      created_function_count : Int32,
+    ) : String
+      return "materialized_body_present" if has_body
+      return "hir_function_declaration_only" if has_function
+      return "created_other_hir_function" if created_function_count > 0
+
+      "lowering_returned_no_hir_function"
+    end
+
     private def log_materialization_completion_ledger(
       requested_name : String,
       target_name : String,
       materialized_name : String,
+      function_count_before : Int32,
     ) : Nil
       return unless env_has?("ADAMAS_MATERIALIZATION_IDENTITY_LEDGER")
 
-      has_function = @module.has_function?(materialized_name) ? "1" : "0"
-      has_body = @module.has_function_with_body?(materialized_name) ? "1" : "0"
+      has_function_bool = @module.has_function?(materialized_name)
+      has_body_bool = @module.has_function_with_body?(materialized_name)
+      has_function = has_function_bool ? "1" : "0"
+      has_body = has_body_bool ? "1" : "0"
       state = function_lowering_state_label(materialized_name)
-      STDERR.puts "[MAT_DONE] requested=#{ledger_token(requested_name)} target=#{ledger_token(target_name)} materialized=#{ledger_token(materialized_name)} has_function=#{has_function} has_body=#{has_body} state=#{ledger_token(state)}"
+      created_function_count = @module.functions.size - function_count_before
+      created_function_count = 0 if created_function_count < 0
+      status = materialization_attempt_terminal_status(has_function_bool, has_body_bool)
+      reason = materialization_attempt_terminal_reason(has_function_bool, has_body_bool, created_function_count)
+      STDERR.puts "[MAT_DONE] requested=#{ledger_token(requested_name)} target=#{ledger_token(target_name)} materialized=#{ledger_token(materialized_name)} has_function=#{has_function} has_body=#{has_body} state=#{ledger_token(state)} status=#{ledger_token(status)} reason=#{ledger_token(reason)} created_function_count=#{created_function_count}"
     end
 
     private def log_semantic_state_scope_shadow(
@@ -72240,6 +72273,7 @@ module Adamas::HIR
       # Re-parse resolved target name once for use in the rest of this function
       resolved_parts = parse_method_name(target_name)
       @function_lowering_states[materialized_name] = FunctionLoweringState::InProgress
+      materialization_function_count_before = @module.functions.size
 
       # WORK QUEUE: Track that we're inside lowering to defer nested calls
       @lowering_depth += 1
@@ -72610,7 +72644,7 @@ module Adamas::HIR
         else
           @function_lowering_states.delete(materialized_name)
         end
-        log_materialization_completion_ledger(name, target_name, materialized_name)
+        log_materialization_completion_ledger(name, target_name, materialized_name, materialization_function_count_before)
         debug_hook("function.lower.done", "name=#{materialized_name}")
         if start_time
           elapsed_ms = (Time.instant - start_time).total_milliseconds

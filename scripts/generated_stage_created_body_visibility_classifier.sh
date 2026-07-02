@@ -8,9 +8,9 @@ usage() {
 usage: scripts/generated_stage_created_body_visibility_classifier.sh [source.cr]
 
 Build/use a generated-stage materialization transaction log and split the
-created_body_backend_missing residual by the next self-applying completion
-boundary. This classifier consumes [MAT_TX], [MAT_DONE], and [MAT_EMIT] ledger
-facts.
+created_body_backend_missing residual by the self-applying materialization
+attempt terminal-status fields on the post-lowering completion fact. This
+classifier consumes [MAT_TX], [MAT_DONE], and [MAT_EMIT] ledger facts.
 
 Environment:
   LOG_FILE               Parse an existing classifier compile log.
@@ -153,14 +153,17 @@ report="$(
       return key
     }
 
-    function completion_cause(tx, lookup, module, plan, emitted, undefined, done_key,    miss, done_function, done_body, done_final_state) {
+    function completion_cause(tx, lookup, module, plan, emitted, undefined, done_key,    miss, done_function, done_body, done_final_state, status, reason) {
       miss = missing_required_fields(tx) missing_emit_fields(lookup, module, plan, emitted, undefined)
       if (miss != "") return "missing_visibility_fields"
       if (!(done_key in done_seen)) return "missing_lowering_completion_fact"
       done_function = done_has_function[done_key]
       done_body = done_has_body[done_key]
       done_final_state = done_state[done_key]
-      if (done_function == "" || done_body == "" || done_final_state == "") return "missing_completion_fields"
+      status = done_status[done_key]
+      reason = done_reason[done_key]
+      if (done_function == "" || done_body == "" || done_final_state == "" || status == "" || reason == "") return "missing_completion_fields"
+      if (status == "completed_without_hir_function") return "attempt_" reason
       if (done_function != "1") return "lowering_completed_without_hir_function"
       if (done_body != "1") return "lowering_completed_without_hir_body"
       if (module != "1") return "mir_function_missing_after_hir_completion"
@@ -225,6 +228,9 @@ report="$(
       done_has_function[key] = field("has_function")
       done_has_body[key] = field("has_body")
       done_state[key] = field("state")
+      done_status[key] = field("status")
+      done_reason[key] = field("reason")
+      done_created_function_count[key] = field("created_function_count")
     }
 
     /^\[MAT_EMIT\]/ {
@@ -276,10 +282,10 @@ report="$(
         if (cause == "missing_visibility_fields") missing_visibility_field_rows++
         if (cause == "missing_lowering_completion_fact") missing_completion_rows++
         if (cause == "missing_completion_fields") missing_completion_field_rows++
-        group_key = cause "|" phase[tx] "|" branch[tx] "|" body_state[tx] "|" done_state[done_key] "|" emitted_owner_of(emitted)
+        group_key = cause "|" phase[tx] "|" branch[tx] "|" body_state[tx] "|" done_state[done_key] "|" done_status[done_key] "|" done_reason[done_key] "|" emitted_owner_of(emitted)
         group_count[group_key]++
         remember_group(group_key, cause, tx, emitted)
-        residual_sample = "cause=" cause " tx=" tx " requested=" requested[tx] " body=" body_symbol[tx] " emitted=" emitted " action=" materialization_action[tx] " hir_func=" body_function_present[tx] " hir_body=" body_has_body[tx] " hir_state=" body_state[tx] " done_present=" done_present " done_func=" done_has_function[done_key] " done_body=" done_has_body[done_key] " done_state=" done_state[done_key] " lookup=" lookup " module=" module " plan=" plan " emitted_present=" emitted_flag " undefined=" undefined " owner=" selected_owner[tx] " branch=" branch[tx]
+        residual_sample = "cause=" cause " tx=" tx " requested=" requested[tx] " body=" body_symbol[tx] " emitted=" emitted " action=" materialization_action[tx] " hir_func=" body_function_present[tx] " hir_body=" body_has_body[tx] " hir_state=" body_state[tx] " done_present=" done_present " done_func=" done_has_function[done_key] " done_body=" done_has_body[done_key] " done_state=" done_state[done_key] " done_status=" done_status[done_key] " done_reason=" done_reason[done_key] " done_created=" done_created_function_count[done_key] " lookup=" lookup " module=" module " plan=" plan " emitted_present=" emitted_flag " undefined=" undefined " owner=" selected_owner[tx] " branch=" branch[tx]
         keep_sample(cause, residual_sample)
         keep_sample("residual", residual_sample)
       }

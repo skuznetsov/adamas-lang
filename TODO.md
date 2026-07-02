@@ -8,6 +8,30 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: added Slice 0k-DB, the terminal-status refinement of the
+  post-lowering completion fact from 0k-DA. The implementation deliberately
+  keeps the new terminal evidence inside the existing default-off `[MAT_DONE]`
+  row (`status`, `reason`, `created_function_count`) and updates
+  `scripts/generated_stage_created_body_visibility_classifier.sh` to classify
+  those fields. Fresh evidence from
+  `STAGE1_COMPILER=/tmp/adamas_mat_done_terminal_stage1 SAMPLES=8 scripts/generated_stage_created_body_visibility_classifier.sh`
+  reports `classifier_classification=reached_tx_and_emit`,
+  `mat_tx_rows=735`, `mat_done_rows=805`, `mat_emit_rows=173`,
+  `created_body_missing_completion_rows=14`,
+  `completion_cause_kinds=1`,
+  `selected_cause=attempt_lowering_returned_no_hir_function`,
+  `selected_rows=14`, `classification=rejected_completion_class_too_wide`,
+  9 completion groups, and no malformed/unjoined rows. This preserves the
+  generated-stage backend path while proving the residual terminal class is
+  still broad. A separate `MaterializationAttemptResult` storage/log surface
+  and a HIR-to-MIR consumer ledger were explicitly refuted during preflight:
+  generated-stage runs stopped before backend emission with `mat_emit_rows=0`
+  / tx-only evidence. The next movement must not add another consumer/result
+  layer by inertia. It must split `attempt_lowering_returned_no_hir_function`
+  at the producer boundary that returns from lowering without registering the
+  exact materialized HIR function, or return to the Current Execution Board if
+  that class cannot be narrowed.
+
 - 2026-07-02 UPDATE: added Slice 0k-DA, the executable post-lowering
   completion fact required by 0k-CZ. `src/compiler/hir/ast_to_hir.cr` now emits
   default-off `[MAT_DONE]` rows under `ADAMAS_MATERIALIZATION_IDENTITY_LEDGER`

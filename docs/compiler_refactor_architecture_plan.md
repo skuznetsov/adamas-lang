@@ -94,6 +94,18 @@ a `MaterializationAttemptResult` terminal-status owner so the next split is a
 contract consumed by materialization/ExternCall fallback decisions, not another
 log surface.
 
+2026-07-02 post-0k-DB note: the attempted acceleration path was corrected by
+falsifier. A separate `MaterializationAttemptResult` row/storage surface and a
+HIR-to-MIR consumer ledger caused generated-stage tx-only runs that never
+reached backend emission (`mat_emit_rows=0`). The accepted behavior-neutral
+slice instead enriches the existing `[MAT_DONE]` row with `status`, `reason`,
+and `created_function_count`. Fresh classifier evidence reaches
+`[MAT_EMIT]` again (`mat_emit_rows=173`) and selects the still-broad terminal
+cause `attempt_lowering_returned_no_hir_function` with 14 rows across 9
+groups. The next architecture movement should split that producer path
+directly; it should not reintroduce an independent result store or consumer
+ledger until a generated-stage falsifier proves that surface is self-host safe.
+
 2026-07-02 post-0k-CS note: hostile review of the post-0k-CR route found that
 the active SDD is still being followed, but the emergency B4/O1 lane can become
 another symptom scheduler if every moved crash stack automatically selects the
