@@ -12,6 +12,27 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-DK-POSTCU-RESOURCE-TX-CLASSIFIED|implemented 2026-07-02 {F:0.90 G:0.62 R:0.90}]:
+After 0k-CU, the generated-stage execution transaction report now classifies the
+new joined resource residual directly. The old report treated
+`b4.classification=llvm_entry_failure_after_lower_main` as
+`abort_joined_unclassified`; the updated
+`scripts/generated_stage_execution_transaction_report.sh` recognizes joined
+post-`lower_main` resource kills as
+`final_classification=abort_resource_after_lower_main` and adds
+`REQUIRE_POST_CU_RESOURCE=1`. Evidence:
+`STAGE1_COMPILER=/tmp/adamas_postcu_stage1 TAIL_LINES=30 REQUIRE_JOINED=1 REQUIRE_POST_CU_RESOURCE=1 scripts/generated_stage_execution_transaction_report.sh`
+exits 0 with `join_status=joined`, `resource.default_memory_kill=1`,
+`resource.workers1_memory_kill=1`, `resource.workers1_exit139=0`,
+`output.commit_record=llvm_ir_started_without_commit:file`,
+`tail.semantic_vs_input_split=tail_not_reached_after_output_start`, and
+`admission_status=rejected_no_root_sized_consumer`. Scope: behavior-neutral
+classifier/receipt movement only. It does not admit memory-budget increases,
+forced worker policy, rand fallback patches, output/tail/backend behavior, or a
+green `s2b`/`s3b` claim. Decay trigger: the transaction report stops joining
+runtime rows or the post-0k-CU residual no longer reports resource kills after
+`lower_main`.
+
 [LM-ARCH-0K-CU-BLOCK-CALL-RETURN-CONTRACT-IMPLEMENTED|implemented 2026-07-02 {F:0.92 G:0.60 R:0.91}]:
 Slice 0k-CU implements the HIR `BlockCallReturnContract` for assigned-tail
 yield-passthrough helpers. The wrapper materialization key gains a block-return

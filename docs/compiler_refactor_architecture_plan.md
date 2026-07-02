@@ -239,6 +239,18 @@ movement must return to the Current Execution Board and reselect an owner edge
 for the post-`lower_main` RSS/resource residual instead of continuing the
 0k-CU lane by inertia.
 
+2026-07-02 post-0k-DK note: the post-0k-CU residual is now classified through
+the generated-stage transaction report rather than a raw RSS tail. The gate
+`STAGE1_COMPILER=/tmp/adamas_postcu_stage1 TAIL_LINES=30 REQUIRE_JOINED=1 REQUIRE_POST_CU_RESOURCE=1 scripts/generated_stage_execution_transaction_report.sh`
+exits 0 with `final_classification=abort_resource_after_lower_main`,
+`join_status=joined`, `resource.default_memory_kill=1`,
+`resource.workers1_memory_kill=1`, `output.commit_record=llvm_ir_started_without_commit:file`,
+and `tail.semantic_vs_input_split=tail_not_reached_after_output_start`. This is
+still `admission_status=rejected_no_root_sized_consumer`: the next production
+slice must split a transaction-owned resource/output/function-plan edge before
+changing memory limits, worker policy, rand fallback, output behavior, tail
+stubs, or backend emission.
+
 2026-07-02 post-0k-CR note: the return-shape census now also measures
 assigned-tail yield passthrough (`result = yield; ...; result`). Strict current
 evidence keeps the broad 0k-CQ result for naive `contains_yield` scope, but

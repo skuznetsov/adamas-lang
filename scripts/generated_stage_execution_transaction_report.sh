@@ -17,6 +17,7 @@ Environment:
   REQUIRE_CLEAN=1             Require final_classification=commit_clean.
   REQUIRE_JOINED=1            Require joined runtime evidence instead of
                               abort_unjoined_evidence.
+  REQUIRE_POST_CU_RESOURCE=1  Require the post-0k-CU joined resource frontier.
   REQUIRE_ADMIT_BEHAVIOR=1    Require the report to select a behavior-admissible
                               root-sized transaction-owned edge.
 
@@ -145,6 +146,7 @@ workers1_after_lower_main="$(required_value "workers1_after_lower_main" "$CLASSI
 default_workers_parallel_rand="$(required_value "default_workers_parallel_rand" "$CLASSIFIER_OUT")"
 default_workers_memory_kill="$(required_value "default_workers_memory_kill" "$CLASSIFIER_OUT")"
 workers1_parallel_rand="$(required_value "workers1_parallel_rand" "$CLASSIFIER_OUT")"
+workers1_memory_kill="$(required_value "workers1_memory_kill" "$CLASSIFIER_OUT")"
 workers1_exit139="$(required_value "workers1_exit139" "$CLASSIFIER_OUT")"
 default_workers_binary_present="$(required_value "default_workers_binary_present" "$CLASSIFIER_OUT")"
 workers1_binary_present="$(required_value "workers1_binary_present" "$CLASSIFIER_OUT")"
@@ -282,6 +284,20 @@ elif [[ "$b4_classification" == "current_0k_bn_frontier" ]]; then
     admission_status="rejected_unjoined_evidence"
     join_status="phase_local_only"
   fi
+elif [[ "$b4_classification" == "llvm_entry_failure_after_lower_main" ]]; then
+  if [[ $runtime_joined -eq 1 ]]; then
+    if [[ "$default_workers_memory_kill" == "1" || "$workers1_memory_kill" == "1" ]]; then
+      final_classification="abort_resource_after_lower_main"
+    else
+      final_classification="abort_after_lower_main_unclassified"
+    fi
+    admission_status="rejected_no_root_sized_consumer"
+    join_status="joined"
+  else
+    final_classification="abort_unjoined_evidence"
+    admission_status="rejected_unjoined_evidence"
+    join_status="phase_local_only"
+  fi
 else
   if [[ $runtime_joined -eq 1 ]]; then
     final_classification="abort_joined_unclassified"
@@ -314,6 +330,7 @@ echo "shape_guard_rc=$shape_rc"
 echo "require_current_frontier=${REQUIRE_CURRENT_FRONTIER:-0}"
 echo "require_clean=${REQUIRE_CLEAN:-0}"
 echo "require_joined=${REQUIRE_JOINED:-0}"
+echo "require_post_cu_resource=${REQUIRE_POST_CU_RESOURCE:-0}"
 echo "require_admit_behavior=${REQUIRE_ADMIT_BEHAVIOR:-0}"
 echo "invocation.source=$source_path"
 echo "invocation.source_sha1=$source_sha1"
@@ -349,6 +366,7 @@ echo "output.default_binary_present=$default_workers_binary_present"
 echo "output.workers1_binary_present=$workers1_binary_present"
 echo "output.commit_record=${runtime_output_commit_record:-unjoined}"
 echo "resource.default_memory_kill=$default_workers_memory_kill"
+echo "resource.workers1_memory_kill=$workers1_memory_kill"
 echo "resource.workers1_exit139=$workers1_exit139"
 echo "resource.worker_mode_split=default_vs_workers1"
 echo "runtime.ledger_rows=$(awk -F'\t' -v tx="$transaction_id" '$1 == "GSETX" && $2 == tx { count++ } END { print count + 0 }' "$RUNTIME_LEDGER" 2>/dev/null || echo 0)"
@@ -372,6 +390,10 @@ if [[ "${REQUIRE_CLEAN:-0}" == "1" && "$final_classification" != "commit_clean" 
   exit_code=9
 fi
 if [[ "${REQUIRE_JOINED:-0}" == "1" && "$join_status" != "joined" ]]; then
+  exit_code=9
+fi
+if [[ "${REQUIRE_POST_CU_RESOURCE:-0}" == "1" &&
+      "$final_classification" != "abort_resource_after_lower_main" ]]; then
   exit_code=9
 fi
 if [[ "${REQUIRE_ADMIT_BEHAVIOR:-0}" == "1" && "$admission_status" != "admit_behavior_candidate" ]]; then

@@ -8,6 +8,22 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: post-0k-CU generated-stage transaction remeasurement now
+  has an executable classifier gate instead of a vague RSS tail. The updated
+  `scripts/generated_stage_execution_transaction_report.sh` recognizes
+  `b4.classification=llvm_entry_failure_after_lower_main` with joined runtime
+  rows and resource kills as `final_classification=abort_resource_after_lower_main`.
+  Fresh evidence:
+  `STAGE1_COMPILER=/tmp/adamas_postcu_stage1 TAIL_LINES=30 REQUIRE_JOINED=1 REQUIRE_POST_CU_RESOURCE=1 scripts/generated_stage_execution_transaction_report.sh`
+  exits 0 with `join_status=joined`, `resource.default_memory_kill=1`,
+  `resource.workers1_memory_kill=1`, `resource.workers1_exit139=0`,
+  `output.commit_record=llvm_ir_started_without_commit:file`, and
+  `tail.semantic_vs_input_split=tail_not_reached_after_output_start`. This still
+  rejects behavior admission: the next production slice must name a
+  `PhaseAuthority` / `GeneratedStageExecution` owner edge for the
+  post-`lower_main` resource corridor before changing memory budgets, worker
+  policy, rand fallback, output behavior, tail stubs, or backend emission.
+
 - 2026-07-02 UPDATE: implemented Slice 0k-CU, the assigned-tail
   `BlockCallReturnContract` behavior slice admitted by the Current Execution
   Board. The HIR wrapper materialization path now records a return contract only
