@@ -8,6 +8,22 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: added Slice 0k-CI, a docs-only
+  anti-proxy bootstrap-potential gate after hostile review of the repeated
+  behavior-neutral owner/guard pattern. Production compiler edits remain paused
+  except for resolving the already-selected 0k-CH
+  `cli.output_commit_record` implementation candidate as a checkpoint or
+  reverting it. Before any later source movement, write
+  `BootstrapPotential = (B4/L6 phase, plausible owner-spine count, live
+  proxy-surface count, unmigrated authority-edge count)` and name which
+  component decreases. Reducing only the last component while B4/L6,
+  owner-spine ambiguity, and live proxy surfaces stay unchanged is now
+  bookkeeping, not bootstrap progress. The next movement after the current
+  candidate must be SDD redesign, owner-spine refutation, direct root
+  localization, or an explicitly bounded `bootstrap-emergency-with-ledger`
+  behavior slice; not another automatic behavior-neutral
+  `GeneratedStageExecution` edge.
+
 - 2026-07-02 UPDATE: added Slice 0k-CH, the docs-only
   `GeneratedStageExecutionOutcome` pre-code plan requested by 0k-CG. Production
   compiler edits remain paused. The selected B4/L6 edge is now

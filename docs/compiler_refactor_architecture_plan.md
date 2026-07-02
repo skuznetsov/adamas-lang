@@ -541,6 +541,19 @@ reselect worker/resource/tail/backend, parser, materialization,
 `NamedTuple`/`Tuple`, ambient-map, physical extraction, or `BlockOwner` work
 from this edge.
 
+2026-07-02 post-0k-CI note: the refactor track now has a bootstrap-potential
+gate to stop disciplined proxy descent. The current 0k-CH implementation
+candidate may be finished as a checkpoint or reverted, but it must not
+automatically select another behavior-neutral edge. Before any later production
+slice, write
+`BootstrapPotential = (B4/L6 phase, plausible owner-spine count, live
+proxy-surface count, unmigrated authority-edge count)` and state the
+lexicographic descent. If only `unmigrated authority-edge count` decreases while
+B4/L6, owner-spine ambiguity, and proxy surfaces stay fixed, the next work is
+SDD redesign, owner-spine refutation, direct root localization, or an explicitly
+bounded `bootstrap-emergency-with-ledger` behavior slice. This is the current
+control point for avoiding source-shape theater.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`

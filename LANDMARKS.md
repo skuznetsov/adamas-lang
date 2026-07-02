@@ -12,6 +12,29 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-CI-BOOTSTRAP-POTENTIAL-GATE|design-sealed 2026-07-02 {F:0.84 G:0.72 R:0.86}]:
+Slice 0k-CI adds a docs-only anti-proxy gate after hostile review of the
+repeated behavior-neutral owner/guard pattern. It does not replace the 0k-CH
+`cli.output_commit_record` edge; it prevents the architecture track from
+automatically selecting another nearby `GeneratedStageExecution` edge after the
+current implementation candidate. Future source slices must state
+`BootstrapPotential = (B4/L6 phase, plausible owner-spine count, live
+proxy-surface count, unmigrated authority-edge count)` before edits and name
+the lexicographic component they decrease. A slice that only lowers the last
+component while B4/L6, owner-spine ambiguity, and proxy surfaces remain
+unchanged is bookkeeping rather than bootstrap progress. Admitted immediate
+actions are limited to finishing the already-selected output-owner candidate as
+a checkpoint with DoD evidence, reverting or retiring it if it is helper
+theater, or writing a new SDD/root-localization slice that decreases one of the
+first three components. This keeps `BlockOwner`, materialization, parser,
+ambient-map, broad `NamedTuple`/`Tuple`, worker/resource/tail/backend, and
+physical extraction changes rejected unless a fresh SDD slice proves a
+bootstrap-potential descent. Scope: docs/control-plane only; no compiler source
+behavior changed and no green `s2b`/`s3b` claim. Decay trigger: a future slice
+proves B4/L6 reaches `REQUIRE_CLEAN=1`, refutes the potential components, or
+commits a source slice that explicitly decreases one of the first three
+components with evidence.
+
 [LM-ARCH-0K-CH-GENERATED-STAGE-OUTCOME-PRECODE|design-sealed 2026-07-02 {F:0.86 G:0.68 R:0.87}]:
 Slice 0k-CH completes the 0k-CG pre-code requirement without changing compiler
 source. It selects B4/L6 under `PhaseAuthority` / `GeneratedStageExecution`,

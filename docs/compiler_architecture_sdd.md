@@ -23,6 +23,17 @@ outcome owner while preserving the current `GSETX` row format and B4/L6 red
 pressure gate. Worker/resource/output behavior, tail, backend, materialization,
 parser, ambient-map, `NamedTuple`/`Tuple`, and `BlockOwner` behavior remain
 rejected until that owner edge is consumed by code and verified.
+Slice 0k-CI adds the anti-proxy bootstrap-potential gate. It does not replace
+the 0k-CH output-owner edge; it prevents the architecture track from choosing a
+new behavior-neutral owner edge merely because the previous source-shape guard
+turned green. Before any source movement after the current 0k-CH implementation
+candidate is either committed as a checkpoint or reverted, the next slice must
+state the current `BootstrapPotential = (B4/L6 phase, plausible owner spines,
+live proxy surfaces, unmigrated authority edges)` and the lexicographic
+component it will decrease. A slice that only reduces the last component while
+B4/L6, owner-spine ambiguity, and proxy surfaces remain unchanged is bookkeeping,
+not bootstrap progress; the following move must be SDD redesign, owner-spine
+refutation, or direct root localization rather than another guard/helper edge.
 Slice 0k-BH adds a narrower pause gate after the 0k-BG parser falsifier:
 the command-call parser frontier may get one bounded closure attempt, but a
 second parser loop, adjacent parser regression, or broadened command-call
@@ -227,6 +238,25 @@ currently emits output start/write/compile result rows directly and the shell
 report reconstructs commit/abort status from them. The next source slice must
 move that row producer to a code-owned `GeneratedStageExecutionOutcome` helper
 or stop; it must not reselect worker/resource/tail/backend symptoms.
+After 0k-CI, that source movement is no longer allowed to create an automatic
+next movement. The active bootstrap potential is:
+
+```text
+BootstrapPotential =
+  (B4/L6 phase,
+   plausible owner-spine count,
+   live proxy-surface count,
+   unmigrated authority-edge count)
+```
+
+The only admitted post-0k-CH code actions are:
+
+- finish and verify the already-selected `cli.output_commit_record` owner
+  migration as a checkpoint, preserving the measured-red B4/L6 state;
+- revert or retire that candidate if verification shows it is only helper
+  theater;
+- write an SDD/plan slice that decreases one of the first three potential
+  components before selecting any new behavior-neutral owner edge.
 
 - `SemanticIdentity`: semantic owners, rendered names, generic keys,
   type-visible values, and ambient state scope;
@@ -239,8 +269,8 @@ Slice 0k-CC classifies the currently active rows as follows:
 
 | Row | Spine | 0k-CC status | Reason |
 | --- | --- | --- | --- |
-| B4 | `PhaseAuthority` / `GeneratedStageExecution` | active pressure frontier after G6 guard; implementation paused by 0k-CH until `cli.output_commit_record` is consumed by a phase-outcome owner | fresh 0k-CF evidence still reports `classification=current_0k_bn_frontier`; the next frontier movement is only the behavior-neutral output commit-record owner migration, not worker/resource/backend patches or another crash-marker selector |
-| L6 | `PhaseAuthority` / `GeneratedStageExecution` | active joined-transaction pressure after G6 guard; report surface remains guard-only by 0k-CH | fresh 0k-CF evidence reports `join_status=joined` and `admission_status=rejected_no_root_sized_consumer`; 0k-CH selects `cli.output_commit_record` as the first transaction-owned phase-outcome authority edge |
+| B4 | `PhaseAuthority` / `GeneratedStageExecution` | active pressure frontier after G6 guard; implementation paused by 0k-CH/0k-CI until `cli.output_commit_record` is either consumed as a checkpoint or retired | fresh 0k-CF evidence still reports `classification=current_0k_bn_frontier`; the next frontier movement may finish the behavior-neutral output commit-record owner migration, but no following source slice is admitted unless it decreases `BootstrapPotential` beyond the last component |
+| L6 | `PhaseAuthority` / `GeneratedStageExecution` | active joined-transaction pressure after G6 guard; report surface remains guard-only by 0k-CH/0k-CI | fresh 0k-CF evidence reports `join_status=joined` and `admission_status=rejected_no_root_sized_consumer`; 0k-CH selects `cli.output_commit_record` as the first transaction-owned phase-outcome authority edge, while 0k-CI blocks automatic selection of another output/resource/tail/backend edge after it |
 | G6 | `MaterializationTransaction` | executable availability guard green; no longer active implementation selector unless it regresses | 0k-CF adds a guard proving the current `Hash(UInt64, BlockOwner)#[]=` setter has exact/all-equal transaction identity, joined emissions, body-present backend visibility, and a non-stub LLVM body for current `bin/adamas` |
 | H7 | `SemanticIdentity` | pre-s2-clean residual | parser command-call preservation is real but does not move the active generated LLVM-entry gate |
 | H8 | `SemanticIdentity` | pre-s2-clean residual | runtime dynamic-union `.class` needs a semantic service slice, not a B4-driven fix |
@@ -1831,6 +1861,82 @@ Mini-Quadrumvirate receipt:
 - Adversary: this slice is vulnerable if a future implementation uses the new
   owner as a bag of fields while direct row writes remain the authority; the
   future source-shape guard must attack exactly that.
+
+### Slice 0k-CI: Bootstrap potential anti-proxy gate
+
+Status:
+
+- docs-only architecture-control slice;
+- no production source behavior is admitted;
+- no new report or selector is admitted;
+- the current `cli.output_commit_record` implementation candidate may be
+  finished as a checkpoint or reverted, but it does not authorize a next
+  behavior-neutral edge by itself.
+
+Problem:
+
+0k-CH correctly selected one narrow old authority edge, but the surrounding
+history shows a repeating failure mode: a behavior-neutral guard turns green,
+the generated-stage B4/L6 state remains red, and the next slice selects another
+nearby authority edge. That can be locally disciplined and still globally
+tail-chasing.
+
+Bootstrap potential:
+
+Future architecture slices must state this vector before changing source:
+
+```text
+BootstrapPotential =
+  (B4/L6 phase,
+   plausible owner-spine count,
+   live proxy-surface count,
+   unmigrated authority-edge count)
+```
+
+Definitions:
+
+- `B4/L6 phase`: current generated-stage state, with `REQUIRE_CLEAN=1` as the
+  green target and measured-red states ordered below it by freshness and
+  specificity.
+- `plausible owner-spine count`: number of owner spines still plausibly
+  responsible for the active generated-stage blocker.
+- `live proxy-surface count`: number of metrics/guards/reports that can turn
+  green without moving the produced-stage bootstrap boundary.
+- `unmigrated authority-edge count`: named old edges that still feed the active
+  chosen owner fact/service.
+
+Admitted post-0k-CH actions:
+
+1. Finish the current output-owner candidate as a checkpoint only if its DoD
+   proves the existing row format is preserved, B4/L6 stays measured-red, G6
+   stays green, and scratch output is cleaned.
+2. Revert or retire the candidate if verification shows it is only helper
+   theater or changes behavior under a behavior-neutral claim.
+3. Select a new code slice only if it decreases one of the first three
+   potential components, or if it is an explicitly bounded
+   `bootstrap-emergency-with-ledger` behavior slice.
+
+Rejected repeats:
+
+- selecting another behavior-neutral `GeneratedStageExecution` edge solely
+  because the previous source-shape guard turned green;
+- adding another report-only selector for B4/L6;
+- treating a lower `unmigrated authority-edge count` as bootstrap progress when
+  B4/L6, owner-spine ambiguity, and live proxy surfaces are unchanged;
+- using the current dirty source candidate as evidence until it is either
+  committed with DoD evidence or reverted.
+
+Mini-Quadrumvirate receipt:
+
+- Cassandra: the likely failure mode is disciplined proxy descent, not a sloppy
+  local bugfix.
+- Maieutic: the hard assumption is that consuming authority edges eventually
+  lowers the produced-stage blocker; after several unchanged B4/L6 slices this
+  must be re-proven, not assumed.
+- Daedalus: the frame shift is from "which edge is next?" to "which potential
+  component descends?"
+- Adversary: this gate is vulnerable if future slices define the potential
+  after choosing the patch. The vector must be written before source edits.
 
 Slice 0k-AP consolidation result: the architecture report surface is now
 treated as a registry, not as a menu of competing next steps. Existing reports
