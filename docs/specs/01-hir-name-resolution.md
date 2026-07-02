@@ -110,6 +110,24 @@ Focused guard: `regression_tests/type_value_runtime_identity_contract.sh`.
 It is strict by default and measured-red only with
 `ADAMAS_EXPECT_TYPEVALUE_MISMATCH=1`.
 
+Current H6-core guard:
+`regression_tests/type_value_core_runtime_identity_contract.sh`. It covers the
+bounded owner-fact surface for direct/interpolated `typeof(1)`, multi-arg
+`typeof(1, "x")`, direct/interpolated `1.class`, local and parenthesized
+nilable `.class`, and type-literal name/string queries.
+
+Known residual: dynamic multi-variant union `.class` still requires a runtime
+type-name service rather than compile-time union display. Guard:
+`regression_tests/type_value_dynamic_union_class_residual.sh`, measured-red
+with `ADAMAS_EXPECT_DYNAMIC_UNION_CLASS_MISMATCH=1`.
+
+Important boundary: a `RuntimeTypeIdentity` fact is not automatically a string.
+Explicit type literals may carry identity for name/query semantics but must not
+be stringified when used as normal call arguments. The concrete guard is
+`regression_tests/test_byteformat_decode_u32.cr`: `IO::ByteFormat::LittleEndian`
+must remain a format/type value so `String#encode(UInt32, IO)` materializes
+normally.
+
 ## 5. Source-Backed Recovery
 
 When generated stages cannot trust raw frontend slices, HIR MAY recover

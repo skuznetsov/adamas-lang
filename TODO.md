@@ -8,6 +8,31 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: implemented Slice 0k-BM, the H6-core
+  `TypeValue` / `RuntimeTypeIdentity` owner-fact migration admitted by 0k-BL.
+  The slice adds a HIR-owned `RuntimeTypeIdentity` fact keyed by `ValueId`,
+  with semantic `TypeRef`, display name, origin, and runtime stringification
+  policy; producers now cover `lower_typeof` (including multi-arg union
+  construction), runtime `.class`, explicit type literals, and type-literal
+  name/string queries; consumers now cover string interpolation, direct
+  `puts`/`print`, `<<`, general call-argument conversion, and local/copy
+  propagation. Fresh clean-HEAD baselines reproduced H6-core and B3
+  measured-red and H7 measured-red. Fresh patched evidence:
+  `type_value_core_runtime_identity_contract.sh`, B3
+  `original_vs_stage_semantic_oracle_contract.sh`, and H4
+  `p2_type_literal_name_query_no_stub.sh` pass strict; the explicit-type-literal
+  adversary `test_byteformat_decode_u32.cr` passes after gating string
+  materialization by `runtime_stringification_required`; full
+  `run_all_suites.sh /tmp/adamas_0kbl_typevalue 4` passes `152/152 + 36/36`.
+  H7 remains measured-red under
+  `ADAMAS_EXPECT_COMMAND_CALL_MEMBER_MISMATCH=1`. New residual guard:
+  `regression_tests/type_value_dynamic_union_class_residual.sh <compiler>`,
+  measured-red with `ADAMAS_EXPECT_DYNAMIC_UNION_CLASS_MISMATCH=1`, proves the
+  remaining H8 edge case: runtime `.class` on dynamic `Int32 | String` prints
+  static union display where original Crystal prints the concrete runtime
+  class. Do not claim full old H6, green `s2b`, or green `s3b` from this
+  slice.
+
 - 2026-07-01 UPDATE: added Slice 0k-BL, a docs-only architecture
   execution-ladder checkpoint after pausing production edits. The uncommitted
   TypeValue / RuntimeTypeIdentity owner-fact WIP was quarantined in git stash

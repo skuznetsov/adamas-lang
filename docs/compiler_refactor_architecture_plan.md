@@ -256,6 +256,16 @@ rewritten. If a next fix cannot name the owner fact/service or generated-stage
 gate it moves, it belongs in SDD planning or cleanup classification, not in
 production code.
 
+2026-07-01 post-0k-BM note: the first post-ladder production slice landed the
+H6-core TypeValue owner fact. This is an example of the intended architecture
+movement: the slice added one HIR-owned fact, migrated a bounded producer and
+consumer set to that fact, strengthened the falsifier with multi-argument
+`typeof`, and recorded the next edge case instead of hiding it. It is not a
+general runtime type-name service. The next TypeValue-related work must choose
+between H7 parser `semantic-service-extraction` and H8 runtime union
+`.class` type-name service; neither should be folded back into the H6-core
+commit or implemented as backend-only stringification.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`

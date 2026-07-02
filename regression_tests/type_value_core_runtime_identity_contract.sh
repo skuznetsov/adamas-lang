@@ -39,6 +39,9 @@ nilable = true ? 1 : nil
 puts "DIRECT_TYPEOF"
 puts typeof(1)
 puts "INTERP_TYPEOF=#{typeof(1)}"
+puts "MULTI_TYPEOF"
+puts typeof(1, "x")
+puts "INTERP_MULTI_TYPEOF=#{typeof(1, "x")}"
 
 puts "DIRECT_CLASS"
 puts 1.class

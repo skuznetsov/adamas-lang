@@ -158,6 +158,19 @@ module Adamas::HIR
     end
   end
 
+  enum TypeValueOrigin : UInt8
+    Typeof
+    RuntimeClass
+    ExplicitTypeLiteral
+    TypeLiteralQuery
+  end
+
+  record RuntimeTypeIdentity,
+    semantic_type : TypeRef,
+    display_name : String,
+    origin : TypeValueOrigin,
+    runtime_stringification_required : Bool
+
   # ═══════════════════════════════════════════════════════════════════════════
   # SOURCE LOCATIONS
   # ═══════════════════════════════════════════════════════════════════════════

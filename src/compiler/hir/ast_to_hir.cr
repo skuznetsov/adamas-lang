@@ -68,6 +68,7 @@ module Adamas::HIR
     @value_types : Hash(ValueId, TypeRef)
     @values : Hash(ValueId, Value)
     @value_blocks : Hash(ValueId, BlockId)
+    @runtime_type_identities : Hash(ValueId, RuntimeTypeIdentity)
     @type_literal_values : Set(ValueId)
     # Type literals produced by `.class` calls (distinct from direct type refs like `Int32`).
     # These should be converted to String when used as call arguments.
@@ -147,6 +148,7 @@ module Adamas::HIR
       @value_types = {} of ValueId => TypeRef
       @values = {} of ValueId => Value
       @value_blocks = {} of ValueId => BlockId
+      @runtime_type_identities = {} of ValueId => RuntimeTypeIdentity
       @type_literal_values = Set(ValueId).new
       @dot_class_literals = Set(ValueId).new
       @boxed_locals = {} of String => BoxedLocal
@@ -173,6 +175,20 @@ module Adamas::HIR
 
     def dot_class_literal?(id : ValueId) : Bool
       @dot_class_literals.includes?(id)
+    end
+
+    def mark_runtime_type_identity(id : ValueId, identity : RuntimeTypeIdentity) : Nil
+      @runtime_type_identities[id] = identity
+    end
+
+    def runtime_type_identity?(id : ValueId) : RuntimeTypeIdentity?
+      @runtime_type_identities[id]?
+    end
+
+    def propagate_runtime_type_identity(source_id : ValueId, target_id : ValueId) : Nil
+      if identity = @runtime_type_identities[source_id]?
+        @runtime_type_identities[target_id] = identity
+      end
     end
 
     # Get current scope
@@ -33031,6 +33047,15 @@ module Adamas::HIR
       lit = Literal.new(ctx.next_id, TypeRef::STRING, literal_owner)
       ctx.emit(lit)
       ctx.register_type(lit.id, TypeRef::STRING)
+      owner_ref = type_ref_for_name(literal_owner)
+      mark_runtime_type_identity(
+        ctx,
+        lit.id,
+        owner_ref,
+        TypeValueOrigin::TypeLiteralQuery,
+        runtime_stringification_required: false,
+        display_name: literal_owner
+      )
       lit.id
     end
 
@@ -59387,15 +59412,83 @@ module Adamas::HIR
     # METAPROGRAMMING (typeof, sizeof, etc.)
     # ═══════════════════════════════════════════════════════════════════════
 
+    private def type_value_display_name(type_ref : TypeRef) : String
+      type_name = get_type_name_from_ref(type_ref)
+      if is_union_type?(type_ref)
+        non_nil_variants = [] of String
+        split_union_type_name(type_name).each do |part|
+          trimmed = part.strip
+          next if trimmed.empty? || trimmed == "Nil" || trimmed.ends_with?("::Nil")
+          non_nil_variants << trimmed
+        end
+        return non_nil_variants.first if non_nil_variants.size == 1
+      end
+      type_name
+    end
+
+    private def typeof_type_value_display_name(type_ref : TypeRef) : String
+      type_name = get_type_name_from_ref(type_ref)
+      if is_union_type?(type_ref) && !type_name.starts_with?('(')
+        return "(#{type_name})"
+      end
+      type_name
+    end
+
+    private def mark_runtime_type_identity(
+      ctx : LoweringContext,
+      value_id : ValueId,
+      semantic_type : TypeRef,
+      origin : TypeValueOrigin,
+      runtime_stringification_required : Bool,
+      display_name : String? = nil,
+    ) : Nil
+      display = display_name || type_value_display_name(semantic_type)
+      ctx.mark_runtime_type_identity(
+        value_id,
+        RuntimeTypeIdentity.new(
+          semantic_type,
+          display,
+          origin,
+          runtime_stringification_required
+        )
+      )
+    end
+
+    private def emit_runtime_type_identity_string(ctx : LoweringContext, identity : RuntimeTypeIdentity) : ValueId
+      lit = Literal.new(ctx.next_id, TypeRef::STRING, identity.display_name)
+      ctx.emit(lit)
+      ctx.register_type(lit.id, TypeRef::STRING)
+      lit.id
+    end
+
+    private def materialize_runtime_type_identity_string(ctx : LoweringContext, value_id : ValueId) : ValueId?
+      if identity = ctx.runtime_type_identity?(value_id)
+        return nil unless identity.runtime_stringification_required
+        return emit_runtime_type_identity_string(ctx, identity)
+      end
+      nil
+    end
+
     private def lower_typeof(ctx : LoweringContext, node : Adamas::Compiler::Frontend::TypeofNode) : ValueId
       # typeof(x) returns the type of x at compile time
       # At runtime, we evaluate the expressions for side effects and return a type placeholder
-      # For now, just lower the args and return a nil (type info is compile-time only)
+      semantic_type = TypeRef::VOID
       node.args.each do |arg_id|
-        lower_expr(ctx, arg_id)
+        lowered_arg_id = lower_expr(ctx, arg_id)
+        arg_type = ctx.type_of(lowered_arg_id)
+        next if arg_type == TypeRef::VOID
+        semantic_type = semantic_type == TypeRef::VOID ? arg_type : union_type_for_values(semantic_type, arg_type)
       end
       nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
       ctx.emit(nil_lit)
+      mark_runtime_type_identity(
+        ctx,
+        nil_lit.id,
+        semantic_type,
+        TypeValueOrigin::Typeof,
+        runtime_stringification_required: true,
+        display_name: typeof_type_value_display_name(semantic_type)
+      )
       nil_lit.id
     end
 
@@ -59785,6 +59878,10 @@ module Adamas::HIR
             next if expr_id.invalid?
             val_id = lower_expr(ctx, expr_id)
             val_type = ctx.type_of(val_id)
+            if type_string_id = materialize_runtime_type_identity_string(ctx, val_id)
+              parts << type_string_id
+              next
+            end
             # Enum values have a user-defined TypeRef that the LLVM string
             # interpolation backend doesn't recognize → cast to the enum's
             # base integer type so they get converted to a number string.
@@ -59938,6 +60035,7 @@ module Adamas::HIR
         copy = Copy.new(ctx.next_id, ctx.type_of(local_id), local_id)
         ctx.emit(copy)
         ctx.mark_type_literal(copy.id) if ctx.type_literal?(local_id)
+        ctx.propagate_runtime_type_identity(local_id, copy.id)
         if enum_name = enum_value_name_for(ctx, local_id)
           enum_map = @enum_value_types ||= {} of ValueId => String
           enum_map[copy.id] = enum_name
@@ -59963,6 +60061,7 @@ module Adamas::HIR
             copy = Copy.new(ctx.next_id, ctx.type_of(value_id), value_id)
             ctx.emit(copy)
             ctx.mark_type_literal(copy.id) if ctx.type_literal?(value_id)
+            ctx.propagate_runtime_type_identity(value_id, copy.id)
             if enum_name = enum_value_name_for(ctx, value_id)
               enum_map = @enum_value_types ||= {} of ValueId => String
               enum_map[copy.id] = enum_name
@@ -61426,6 +61525,14 @@ module Adamas::HIR
       ctx.register_type(lit.id, type_ref)
       ctx.mark_type_literal(lit.id)
       @type_literal_values.add(lit.id)
+      mark_runtime_type_identity(
+        ctx,
+        lit.id,
+        type_ref,
+        TypeValueOrigin::ExplicitTypeLiteral,
+        runtime_stringification_required: false,
+        display_name: class_name
+      )
       lit.id
     end
 
@@ -61456,6 +61563,14 @@ module Adamas::HIR
       ctx.register_type(lit.id, type_ref)
       ctx.mark_type_literal(lit.id)
       @type_literal_values.add(lit.id)
+      mark_runtime_type_identity(
+        ctx,
+        lit.id,
+        type_ref,
+        TypeValueOrigin::ExplicitTypeLiteral,
+        runtime_stringification_required: false,
+        display_name: type_name
+      )
       lit.id
     end
 
@@ -61829,10 +61944,15 @@ module Adamas::HIR
         primary_mangled_name = mangle_function_name(base_method_name, [right_type])
         # Debug: log the resolution attempt
         method_name = resolve_method_call(ctx, left_id, "<<", [right_type], false)
-        # Convert .class type literal to String when used as << argument (e.g., io << self.class)
-        # For static (monomorphized) methods, use compile-time class name string.
-        # For dynamic dispatch (union types), will use __adamas_type_name(type_id) in the future.
-        if ctx.dot_class_literal?(right_id)
+        # Convert type-visible values to String when used as << arguments
+        # (e.g., io << self.class). RuntimeTypeIdentity is the authoritative
+        # source; dot_class_literal? remains only as a legacy compatibility shim.
+        if type_string_id = materialize_runtime_type_identity_string(ctx, right_id)
+          right_id = type_string_id
+          right_type = TypeRef::STRING
+          primary_mangled_name = mangle_function_name(base_method_name, [right_type])
+          method_name = resolve_method_call(ctx, left_id, "<<", [right_type], false)
+        elsif ctx.dot_class_literal?(right_id)
           dcl_class_name = get_type_name_from_ref(right_type)
           unless dcl_class_name.empty?
             str_lit = Literal.new(ctx.next_id, TypeRef::STRING, dcl_class_name)
@@ -75364,6 +75484,11 @@ module Adamas::HIR
           STDERR.puts "[PUTS_BODY2] after_fallbacks arg_type_nil=#{_at2_nil} arg_type_id=#{_at2_id}"
         end
         if arg_type && arg_type != TypeRef::VOID
+          arg_id = eager_arg_id || with_arena(call_arena) { lower_expr(ctx, call_args[0]) }
+          if type_string_id = materialize_runtime_type_identity_string(ctx, arg_id)
+            arg_id = type_string_id
+            arg_type = TypeRef::STRING
+          end
           type_suffix = type_name_for_mangling(arg_type)
           if env_has?("DEBUG_PUTS_INTERCEPT")
             STDERR.puts "[PUTS_BODY3] type_suffix=#{type_suffix}"
@@ -75394,8 +75519,6 @@ module Adamas::HIR
               end
               return to_s_call.id
             end
-            # Lower the argument (reuse eagerly lowered result if available)
-            arg_id = eager_arg_id || with_arena(call_arena) { lower_expr(ctx, call_args[0]) }
 
             if runtime_print = emit_runtime_print_fallback(ctx, method_name, arg_id, arg_type)
               return runtime_print
@@ -77027,20 +77150,23 @@ module Adamas::HIR
           end
         end
       end
-      # Convert .class type literal args to String (compile-time class name).
-      # Type literals (from .class calls) are nil pointers at runtime.
-      # When used as call args (e.g., `io << self.class`), they must become
-      # actual String values. Receivers (e.g., `self.class.new`) are unaffected.
-      # For dynamic dispatch (union types), __adamas_type_name(type_id) will be used.
+      # Convert type-visible value args to String (compile-time class name).
+      # RuntimeTypeIdentity is the authoritative source; dot_class_literal? is
+      # retained only as a legacy compatibility shim. Receivers
+      # (e.g., `self.class.new`) are unaffected.
       args.each_with_index do |arg_id, i|
-        next unless ctx.dot_class_literal?(arg_id)
-        class_name_for_lit = get_type_name_from_ref(arg_types[i])
-        next if class_name_for_lit.empty?
-        str_lit = Literal.new(ctx.next_id, TypeRef::STRING, class_name_for_lit)
-        ctx.emit(str_lit)
-        ctx.register_type(str_lit.id, TypeRef::STRING)
-        args[i] = str_lit.id
-        arg_types[i] = TypeRef::STRING
+        if type_string_id = materialize_runtime_type_identity_string(ctx, arg_id)
+          args[i] = type_string_id
+          arg_types[i] = TypeRef::STRING
+        elsif ctx.dot_class_literal?(arg_id)
+          class_name_for_lit = get_type_name_from_ref(arg_types[i])
+          next if class_name_for_lit.empty?
+          str_lit = Literal.new(ctx.next_id, TypeRef::STRING, class_name_for_lit)
+          ctx.emit(str_lit)
+          ctx.register_type(str_lit.id, TypeRef::STRING)
+          args[i] = str_lit.id
+          arg_types[i] = TypeRef::STRING
+        end
       end
 
       has_unknown_arg_types = arg_types.any? { |t| t == TypeRef::VOID }
@@ -92101,6 +92227,14 @@ module Adamas::HIR
         unless type_name.empty?
           lit_id = lower_type_literal_from_name(ctx, type_name)
           ctx.mark_dot_class_literal(lit_id)
+          mark_runtime_type_identity(
+            ctx,
+            lit_id,
+            receiver_type,
+            TypeValueOrigin::RuntimeClass,
+            runtime_stringification_required: true,
+            display_name: type_value_display_name(receiver_type)
+          )
           return lit_id
         end
       end
@@ -93505,6 +93639,7 @@ module Adamas::HIR
           copy = Copy.new(ctx.next_id, value_type, value_id)
           ctx.emit(copy)
           ctx.register_local(name, copy.id)
+          ctx.propagate_runtime_type_identity(value_id, copy.id)
           if enum_name = enum_value_name_for(ctx, value_id)
             enum_map = @enum_value_types ||= {} of ValueId => String
             enum_map[copy.id] = enum_name
@@ -93539,6 +93674,8 @@ module Adamas::HIR
           copy = Copy.new(ctx.next_id, value_type, value_id)
           ctx.emit(copy)
           ctx.register_local(name, copy.id)
+          ctx.propagate_runtime_type_identity(value_id, local.id)
+          ctx.propagate_runtime_type_identity(value_id, copy.id)
           if enum_name = enum_value_name_for(ctx, value_id)
             enum_map = @enum_value_types ||= {} of ValueId => String
             enum_map[local.id] = enum_name

@@ -12,6 +12,38 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-BM-TYPEVALUE-OWNER-FACT-CORE|verified 2026-07-01 {F:0.88 G:0.48 R:0.90}]:
+Slice 0k-BM implements the H6-core `TypeValue` / `RuntimeTypeIdentity`
+contract-owner migration. HIR now owns a `RuntimeTypeIdentity` fact keyed by
+`ValueId`, carrying semantic `TypeRef`, display name, origin (`typeof`,
+runtime `.class`, explicit type literal, or type-literal query), and runtime
+stringification policy. The slice shadows the old authority edges for
+`typeof` nil placeholders, runtime `.class` type-literal construction,
+`dot_class_literal?` stringification, direct output, interpolation, `<<`,
+general call-argument conversion, type-literal query lowering, and local/copy
+propagation for the H6-core rows. Multi-argument `typeof` now constructs and
+prints the compile-time union, so the owner fact is not limited to
+single-argument `typeof`. Fresh baseline evidence on clean HEAD reproduced
+H6-core and B3 measured-red and H7 command-call measured-red. Fresh patched
+evidence: `regression_tests/type_value_core_runtime_identity_contract.sh
+/tmp/adamas_0kbl_typevalue`, `regression_tests/original_vs_stage_semantic_oracle_contract.sh
+/tmp/adamas_0kbl_typevalue`, and `regression_tests/p2_type_literal_name_query_no_stub.sh
+/tmp/adamas_0kbl_typevalue` all exit 0; the `IO::ByteFormat::LittleEndian`
+adversary row `regression_tests/test_byteformat_decode_u32.cr` also exits 0,
+proving explicit type literals are not stringified as call arguments; full
+`regression_tests/run_all_suites.sh /tmp/adamas_0kbl_typevalue 4` exits 0
+with `152/152 + 36/36`. H7 still exits 0 only in measured-red mode with
+`ADAMAS_EXPECT_COMMAND_CALL_MEMBER_MISMATCH=1`. New residual:
+`regression_tests/type_value_dynamic_union_class_residual.sh` records H8 as
+measured-red with `ADAMAS_EXPECT_DYNAMIC_UNION_CLASS_MISMATCH=1`: dynamic
+multi-variant union `.class` still prints static union display
+`Int32 | String` where original Crystal prints runtime concrete `Int32`. Scope:
+H6-core only; no parser behavior, generic materialization, requested-name
+policy, ambient-map policy, backend stub/forwarder behavior, `BlockOwner`, or
+broad `NamedTuple`/`Tuple` rendering changed. No green full-H6, `s2b`, or
+`s3b` claim is made. Decay trigger: TypeValue consumers are rewritten again,
+H7/H8 changes, or generated-stage evidence refutes the owner fact in s2b.
+
 [LM-ARCH-0K-BL-ARCHITECTURE-EXECUTION-LADDER|design-sealed 2026-07-01 {F:0.84 G:0.64 R:0.88}]:
 Slice 0k-BL converts the 0k-BK pause into an execution ladder for all future
 production slices. A local uncommitted `TypeValue` / `RuntimeTypeIdentity`
