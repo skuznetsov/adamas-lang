@@ -12,6 +12,29 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-BO-GENERATED-STAGE-LLVM-ENTRY-CLASSIFIER|measured-red 2026-07-01 {F:0.84 G:0.48 R:0.87}]:
+Slice 0k-BO adds executable classifier
+`scripts/generated_stage_llvm_entry_classifier.sh` for the 0k-BN / B4
+generated-stage LLVM-entry frontier. The script builds or accepts a stage1
+compiler, builds or accepts a produced `s2b`, and then compiles a full-prelude
+tiny source twice with the produced compiler: default LLVM workers and
+`ADAMAS_LLVM_WORKERS=1`. It is behavior-neutral and exposes two gates:
+`REQUIRE_CURRENT_FRONTIER=1` asserts the current measured-red pattern, while
+`REQUIRE_CLEAN=1` is the future green gate. Fresh evidence:
+`REQUIRE_CURRENT_FRONTIER=1 scripts/generated_stage_llvm_entry_classifier.sh`
+exits 0 with `classification=current_0k_bn_frontier`, `stage1_build_rc=0`,
+`s2_build_rc=0`, `default_workers_after_lower_main=1`,
+`default_workers_parallel_rand=1`, `default_workers_memory_kill=1`,
+`workers1_after_lower_main=1`, `workers1_parallel_rand=0`, and
+`workers1_exit139=1`. The classifier therefore turns the manual 0k-BN command
+pair into a reproducible stop gate: next behavior work must name the first bad
+owner boundary within the produced-stage LLVM emission entry path before
+patching worker scheduling, memory limits, fallback behavior, output buffers,
+or backend emission state. Scope: script + ledgers only; no compiler behavior
+changed. Decay trigger: the classifier stops reproducing the current frontier,
+`REQUIRE_CLEAN=1` passes, or a narrower `LLVMEmissionSession` owner-boundary
+guard supersedes it.
+
 [LM-ARCH-0K-BN-GENERATED-STAGE-LLVM-ENTRY-FRONTIER|measured-red 2026-07-01 {F:0.78 G:0.42 R:0.84}]:
 Slice 0k-BN records the post-0k-BM generated-stage checkpoint. A fresh stage1
 compiler built `src/adamas.cr` into a produced `s2b` through

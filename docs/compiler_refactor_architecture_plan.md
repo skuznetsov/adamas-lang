@@ -281,6 +281,17 @@ Do not treat raising memory limits, disabling workers, patching the rand
 symptom, or resuming cleanup of `fused_parallel_requested` as architecture
 progress.
 
+2026-07-01 post-0k-BO note: B4 now has an executable classifier:
+`scripts/generated_stage_llvm_entry_classifier.sh`. The current measured-red
+gate is `REQUIRE_CURRENT_FRONTIER=1`; the future green gate is
+`REQUIRE_CLEAN=1`. Fresh evidence reproduces the split that matters for the
+next architecture movement: stage1 and produced `s2b` build successfully,
+default LLVM workers reach `pass3 after lower_main call` and then hit the
+parallel-rand/RSS symptom, while `ADAMAS_LLVM_WORKERS=1` reaches the same
+transition and exits 139 without the rand symptom. The next implementation
+should extend this classifier toward a first-bad `LLVMEmissionSession` owner
+boundary, not patch the worker symptom directly.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`

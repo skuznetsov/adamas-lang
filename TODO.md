@@ -8,6 +8,25 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: implemented Slice 0k-BO, the executable B4
+  generated-stage LLVM-entry classifier. New script:
+  `scripts/generated_stage_llvm_entry_classifier.sh`. It builds or accepts a
+  stage1 compiler, builds or accepts a produced `s2b`, then compiles a
+  full-prelude tiny source with the produced compiler in two modes: default
+  LLVM workers and `ADAMAS_LLVM_WORKERS=1`. It prints machine-readable
+  evidence rows and has two explicit gates: `REQUIRE_CURRENT_FRONTIER=1` for
+  the current measured-red 0k-BN boundary, and `REQUIRE_CLEAN=1` for the future
+  green bootstrap gate. Fresh evidence:
+  `REQUIRE_CURRENT_FRONTIER=1 scripts/generated_stage_llvm_entry_classifier.sh`
+  exits 0 with `classification=current_0k_bn_frontier`, `stage1_build_rc=0`,
+  `s2_build_rc=0`, `default_workers_parallel_rand=1`,
+  `default_workers_memory_kill=1`, `workers1_parallel_rand=0`, and
+  `workers1_exit139=1` after `pass3 after lower_main call`. This remains
+  behavior-neutral: it does not patch LLVM workers, raise memory as acceptance,
+  force worker count, or make `s2b` green. The next production movement must
+  extend or consume this classifier to name the first bad owner boundary inside
+  `LLVMEmissionSession`.
+
 - 2026-07-01 UPDATE: added Slice 0k-BN, a docs-only generated-stage
   LLVM-entry checkpoint after the 0k-BM owner-fact slice. Production code is
   paused again. Fresh post-0k-BM evidence shows the next `s2b`/`s3b` movement
