@@ -8,6 +8,29 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: implemented Slice 0k-CN, the read-only
+  compiler-source seam classifier required by 0k-CM. New script:
+  `scripts/mir_timed_phase_source_seam_classifier.sh`. Strict mode
+  `REQUIRE_CURRENT_CN=1 scripts/mir_timed_phase_source_seam_classifier.sh`
+  reports `classification=current_0k_cn_hir_timed_phase_source_seam`.
+  Current evidence: `timed_wrapper_return_type=2698`,
+  `wrapper_yield_void=1`, `collect_proc_return_type=1268`,
+  `collect_block_builds_set=1`, `collect_block_proc_returns_set=1`,
+  `apply_collect_call_type=2698`, `affected_block_ids_local_type=2698`,
+  `apply_collect_result_nil_void=1`, and
+  `call_differs_from_collect_proc=1`. This localizes the current
+  `timed_cp_phase("apply_collect_affected_blocks")` return loss before
+  HIR->MIR and LLVM backend handling: HIR already has a collect block proc
+  returning `Set(UInt32)`, while the `timed_cp_phase$String_block` wrapper
+  yields `Void` and the call/local are typed `Nil|Void`. This is still not a
+  fix and not green `s2b`/`s3b`; the next admitted movement is a read-only
+  HIR producer pin distinguishing `block_return_name` recording,
+  `yield_return_function_for_block_call?`, `record_block_return_type_for_call`,
+  and `infer_yield_return_type` fallback for untyped `&` helpers. Still
+  rejected: production CopyPropagation guards, `timed_cp_phase` inlining or
+  tactical return annotation, backend block-return rescue, Set/Hash rescue,
+  and `BlockOwner` rollback.
+
 - 2026-07-02 UPDATE: implemented Slice 0k-CM, the executable read-only
   producer-localization classifier after 0k-CL. New script:
   `scripts/mir_timed_phase_return_frontier_classifier.sh`. Strict mode

@@ -12,6 +12,33 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-CN-HIR-TIMED-PHASE-SOURCE-SEAM|implemented 2026-07-02 {F:0.90 G:0.55 R:0.90}]:
+Slice 0k-CN adds executable read-only source-seam classifier
+`scripts/mir_timed_phase_source_seam_classifier.sh` after the 0k-CM
+block-return frontier. Strict evidence:
+`REQUIRE_CURRENT_CN=1 scripts/mir_timed_phase_source_seam_classifier.sh`
+reports `classification=current_0k_cn_hir_timed_phase_source_seam`,
+`timed_wrapper_return_type=2698`, `wrapper_yield_void=1`,
+`wrapper_wraps_void_to_return=1`, `collect_proc_return_type=1268`,
+`collect_block_builds_set=1`, `collect_block_proc_returns_set=1`,
+`apply_collect_uses_timed_phase=1`, `apply_collect_call_type=2698`,
+`affected_block_ids_local_type=2698`, `apply_collect_result_nil_void=1`, and
+`call_differs_from_collect_proc=1`. Interpretation: the HIR dump already
+contains `__crystal_block_proc_1756` returning the `Set(UInt32)` type id seen
+at `Set(UInt32).new`, while
+`CopyPropagationPass#timed_cp_phase$String_block` contains `yield : Void`, wraps
+that void result into its `Nil|Void` return type, and the
+`apply_collect_affected_blocks` call/local are also `Nil|Void`. This moves the
+first-bad boundary above HIR->MIR and LLVM backend return handling for this
+frontier. Scope: executable classifier only; no compiler production behavior
+changed and no green `s2b`/`s3b` claim. The next admitted movement is a
+read-only producer pin inside HIR block/call return typing: distinguish
+`block_return_name`, `yield_return_function_for_block_call?`,
+`record_block_return_type_for_call`, and `infer_yield_return_type` fallback for
+untyped `&` helpers. Decay trigger: the classifier stops reporting current
+0k-CN, a fresh HIR dump shows the wrapper/call return types are no longer
+`Nil|Void`, or B4 reaches `REQUIRE_CLEAN=1`.
+
 [LM-ARCH-0K-CM-TIMED-PHASE-BLOCK-RETURN-FRONTIER|implemented 2026-07-02 {F:0.91 G:0.56 R:0.90}]:
 Slice 0k-CM adds executable read-only producer-localization classifier
 `scripts/mir_timed_phase_return_frontier_classifier.sh` after the 0k-CL O1

@@ -8,6 +8,19 @@ boundaries
 Related: `PLAN_DEMAND_DRIVEN_REWRITE_RFC.md`, `docs/ast_to_hir_audit.md`,
 `docs/codegen_architecture.md`
 
+2026-07-02 post-0k-CN note: the timed phase frontier is now localized above
+HIR->MIR and LLVM backend return handling. New classifier:
+`scripts/mir_timed_phase_source_seam_classifier.sh`. Strict mode reports
+`current_0k_cn_hir_timed_phase_source_seam`: the HIR collect block proc returns
+`Set(UInt32)`, but the HIR `timed_cp_phase$String_block` wrapper has
+`yield : Void` and the `apply_collect_affected_blocks` call/local are already
+typed `Nil|Void`. The next near-term refactor lane is still read-only:
+pin which HIR producer chose the void block/call return, among block-return
+name recording, yield-return function selection, block-return callsite
+recording, and untyped-`&` fallback. Do not patch CopyPropagation,
+`timed_cp_phase`, MIR lowering, LLVM backend block calls, or Set/Hash
+delegates before that producer is named.
+
 2026-07-02 post-0k-CM note: the MIR optimization/container frontier is now
 localized past Set/Hash construction. New classifier:
 `scripts/mir_timed_phase_return_frontier_classifier.sh`. Strict mode reports
