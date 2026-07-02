@@ -12,6 +12,32 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-BY-GENERATED-STAGE-TRANSACTION-REPORT|implemented 2026-07-02 {F:0.86 G:0.50 R:0.86}]:
+Slice 0k-BY implements the first executable
+`GeneratedStageExecutionTransaction` report:
+`scripts/generated_stage_execution_transaction_report.sh`. The report wraps the
+B4 generated-stage LLVM-entry classifier, runs the `LLVMEmissionSession`
+source-shape guard, and emits exactly one transaction row set for the produced
+compiler invocation. Current evidence with
+`STAGE1_COMPILER=bin/adamas REQUIRE_CURRENT_FRONTIER=1` reports one
+`transaction_id`, `b4.classification=current_0k_bn_frontier`,
+`setup.source_shape=session_consumes_function_plan`,
+`setup.worker_shape=session_consumes_worker_plan`,
+`setup.side_effect_contract_shape=session_consumes_side_effect_merge_contract`,
+`final_classification=abort_unjoined_evidence`,
+`join_status=phase_local_only`, and
+`admission_status=rejected_unjoined_evidence`. The report also prints stable
+SHA1s for source/stage1/generated-s2 inputs so evidence is not only a cleaned
+tmp path. Negative evidence: `REQUIRE_JOINED=1` exits 9 even when
+`GENERATED_S2=bin/adamas` classifies as `clean_both_modes`, because runtime
+transaction rows are still missing. Scope: guard/report only; no compiler
+production behavior changed and no green `s2b`/`s3b` claim. Next movement:
+produce default-off runtime transaction rows for HIR/MIR module identity,
+`LLVMEmissionSession` id, runtime side-effect row counts,
+tail semantic-vs-input split, and output commit record. Decay trigger: the
+report reaches `join_status=joined`, B4 changes to a different first-bad
+boundary, or a later transaction owner supersedes this report.
+
 [LM-ARCH-0K-BX-GENERATED-STAGE-EXECUTION-TRANSACTION|design-sealed 2026-07-02 {F:0.84 G:0.66 R:0.86}]:
 Slice 0k-BX is a docs-only `GeneratedStageExecutionTransaction` checkpoint
 after 0k-BW. It records that three useful local `LLVMEmissionSession` ownership

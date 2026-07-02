@@ -8,6 +8,27 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: implemented Slice 0k-BY, the first executable
+  `GeneratedStageExecutionTransaction` report. New script:
+  `scripts/generated_stage_execution_transaction_report.sh`. It wraps the B4
+  generated-stage LLVM-entry classifier, joins that output with the
+  `LLVMEmissionSession` source-shape guard, and emits one transaction row set
+  for the produced-compiler invocation. Current evidence with
+  `STAGE1_COMPILER=bin/adamas REQUIRE_CURRENT_FRONTIER=1` prints exactly one
+  `transaction_id`, preserves `b4.classification=current_0k_bn_frontier`, and
+  reports `final_classification=abort_unjoined_evidence`,
+  `join_status=phase_local_only`, and
+  `admission_status=rejected_unjoined_evidence`. Negative guard:
+  `REQUIRE_JOINED=1` exits 9 even when `GENERATED_S2=bin/adamas` compiles the
+  tiny source cleanly, proving clean local compile output is not behavior
+  admission without runtime transaction rows. This is still not green `s2b` or
+  `s3b`; it names the next missing authority edge. The next admitted code slice
+  is default-off runtime transaction-row production for HIR/MIR module identity,
+  `LLVMEmissionSession` id, side-effect row counts, tail semantic-vs-input
+  split, and output commit record. Behavior fixes remain rejected until the
+  report reaches joined evidence and selects a root-sized transaction-owned
+  consumer.
+
 - 2026-07-02 UPDATE: added Slice 0k-BX, a docs-only
   `GeneratedStageExecutionTransaction` checkpoint after 0k-BW. Production
   compiler edits are paused again. The previous three `LLVMEmissionSession`

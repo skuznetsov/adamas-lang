@@ -148,6 +148,14 @@ evidence, and final B4 classification for the same produced-compiler run. A
 source-shape guard that only proves another `LLVMEmissionSession` field or
 consumer moved is no longer sufficient admission evidence.
 
+Slice 0k-BY adds that first report:
+`scripts/generated_stage_execution_transaction_report.sh`. Current output is
+intentionally `admission_status=rejected_unjoined_evidence`: it joins B4 and
+source-shape evidence under one transaction id, but lacks runtime transaction
+rows for HIR/MIR module identity, `LLVMEmissionSession` id, side-effect row
+counts, tail semantic-vs-input split, and output commit record. LLVM-emission
+behavior changes remain rejected while the report is phase-local only.
+
 Generated-stage owner carriers SHOULD use explicit private classes/methods
 until their materialization surface is proven. A rejected 0k-BR preflight using
 Crystal `record` macros preserved local checks but changed B4 to a produced

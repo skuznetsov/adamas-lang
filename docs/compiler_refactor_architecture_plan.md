@@ -413,6 +413,18 @@ classification under one transaction id. A future behavior slice must consume a
 root-sized transaction-owned row or explicitly refute this boundary; local
 LLVM logs and source-shape success are not enough.
 
+2026-07-02 post-0k-BY note: the first generated-stage execution transaction
+report now exists as `scripts/generated_stage_execution_transaction_report.sh`.
+It preserves the B4 current-frontier pressure and emits one transaction id, but
+current source is still rejected for behavior admission:
+`final_classification=abort_unjoined_evidence`,
+`join_status=phase_local_only`, and
+`admission_status=rejected_unjoined_evidence`. The next refactor slice should
+add default-off runtime transaction rows for HIR/MIR module identity,
+`LLVMEmissionSession` id, side-effect row counts, tail semantic-vs-input split,
+and output commit record. Do not move to worker/tail/output/resource behavior
+while the report remains phase-local only.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`
