@@ -2608,11 +2608,37 @@ module Adamas::HIR
       "lowering_returned_no_hir_function"
     end
 
+    private def materialization_created_function_summary(
+      materialized_name : String,
+      function_count_before : Int32,
+    ) : Tuple(String, String)
+      function_count_after = @module.functions.size
+      created_count = function_count_after - function_count_before
+      return {"none", "none"} if created_count <= 0
+
+      names = [] of String
+      idx = function_count_before
+      created_exact = false
+      while idx < function_count_after
+        func = @module.functions.unsafe_fetch(idx)
+        created_exact = true if func.name == materialized_name
+        names << func.name if names.size < 8
+        idx += 1
+      end
+
+      if created_count > names.size
+        names << "...(+#{created_count - names.size})"
+      end
+      relation = created_exact ? "created_exact_symbol" : "created_other_symbol"
+      {relation, names.join(";")}
+    end
+
     private def log_materialization_completion_ledger(
       requested_name : String,
       target_name : String,
       materialized_name : String,
       function_count_before : Int32,
+      producer_path : String,
     ) : Nil
       return unless env_has?("ADAMAS_MATERIALIZATION_IDENTITY_LEDGER")
 
@@ -2625,7 +2651,8 @@ module Adamas::HIR
       created_function_count = 0 if created_function_count < 0
       status = materialization_attempt_terminal_status(has_function_bool, has_body_bool)
       reason = materialization_attempt_terminal_reason(has_function_bool, has_body_bool, created_function_count)
-      STDERR.puts "[MAT_DONE] requested=#{ledger_token(requested_name)} target=#{ledger_token(target_name)} materialized=#{ledger_token(materialized_name)} has_function=#{has_function} has_body=#{has_body} state=#{ledger_token(state)} status=#{ledger_token(status)} reason=#{ledger_token(reason)} created_function_count=#{created_function_count}"
+      created_relation, created_symbols = materialization_created_function_summary(materialized_name, function_count_before)
+      STDERR.puts "[MAT_DONE] requested=#{ledger_token(requested_name)} target=#{ledger_token(target_name)} materialized=#{ledger_token(materialized_name)} has_function=#{has_function} has_body=#{has_body} state=#{ledger_token(state)} status=#{ledger_token(status)} reason=#{ledger_token(reason)} created_function_count=#{created_function_count} producer_path=#{ledger_token(producer_path)} created_symbol_relation=#{ledger_token(created_relation)} created_symbols=#{ledger_token(created_symbols)}"
     end
 
     private def log_semantic_state_scope_shadow(
@@ -72274,6 +72301,7 @@ module Adamas::HIR
       resolved_parts = parse_method_name(target_name)
       @function_lowering_states[materialized_name] = FunctionLoweringState::InProgress
       materialization_function_count_before = @module.functions.size
+      materialization_producer_path = "not_entered"
 
       # WORK QUEUE: Track that we're inside lowering to defer nested calls
       @lowering_depth += 1
@@ -72322,6 +72350,7 @@ module Adamas::HIR
               STDERR.puts "[BYTE_RANGE_LOWER] owner=#{owner} target=#{target_name} has_class_info=#{@class_info.has_key?(owner)} deferred=#{deferred_lookup_used}"
             end
             if class_info = @class_info[owner]?
+              materialization_producer_path = "instance_class_info_lower_method"
               if DebugHooks::ENABLED && unresolved_generic_receiver?(owner)
                 debug_hook(
                   "lower.class_receiver.unresolved",
@@ -72433,6 +72462,7 @@ module Adamas::HIR
               @current_class = old_class
             elsif enum_info = @enum_info
               if enum_info.has_key?(owner)
+                materialization_producer_path = "instance_enum_lower_method"
                 old_class = @current_class
                 @current_class = owner
                 dummy_info = ClassInfo.new(owner, TypeRef::INT32, [] of IVarInfo, [] of ClassVarInfo, 0, false, nil)
@@ -72445,6 +72475,7 @@ module Adamas::HIR
                 if module_ref != TypeRef::VOID
                   if desc = @module.get_type_descriptor(module_ref)
                     if desc.kind == TypeKind::Module || module_like_type_name?(desc.name)
+                      materialization_producer_path = "instance_module_lower_method"
                       old_class = @current_class
                       @current_class = owner
                       dummy_info = ClassInfo.new(owner, module_ref, [] of IVarInfo, [] of ClassVarInfo, 0, false, nil)
@@ -72454,12 +72485,16 @@ module Adamas::HIR
                     end
                   end
                 end
+                materialization_producer_path = "instance_no_owner_info"
                 if debug_env_filter_match?("DEBUG_FROM_CHARS", target_name, name)
                   STDERR.puts "[LOWERING] No class_info for #{owner}"
                 end
               end
-            elsif debug_env_filter_match?("DEBUG_FROM_CHARS", target_name, name)
-              STDERR.puts "[LOWERING] No class_info for #{owner}"
+            else
+              materialization_producer_path = "instance_no_class_or_enum_info"
+              if debug_env_filter_match?("DEBUG_FROM_CHARS", target_name, name)
+                STDERR.puts "[LOWERING] No class_info for #{owner}"
+              end
             end
           elsif resolved_parts.is_class
             owner = resolved_owner || resolved_parts.owner
@@ -72516,10 +72551,12 @@ module Adamas::HIR
                       )
                     end
                     unless matched
+                      materialization_producer_path = "class_allocator_generated_no_matching_new"
                       generate_allocator(owner, class_info, call_arg_types, call_has_named_args: call_has_named_new, call_has_block: expects_block_new)
                       return
                     end
                   elsif !explicit_new
+                    materialization_producer_path = "class_allocator_generated_no_explicit_new"
                     generate_allocator(owner, class_info, call_arg_types, call_has_block: expects_block_new)
                     # The function was just generated (or already existed), return
                     return
@@ -72528,6 +72565,7 @@ module Adamas::HIR
               end
             end
             if class_info = @class_info[owner]?
+              materialization_producer_path = "class_info_lower_method"
               old_class = @current_class
               @current_class = owner
               forced_method_name = method || ""
@@ -72566,6 +72604,7 @@ module Adamas::HIR
               @current_class = old_class
             elsif enum_info = @enum_info
               if enum_info.has_key?(owner)
+                materialization_producer_path = "class_enum_lower_method"
                 old_class = @current_class
                 @current_class = owner
                 dummy_info = ClassInfo.new(owner, TypeRef::INT32, [] of IVarInfo, [] of ClassVarInfo, 0, false, nil)
@@ -72573,6 +72612,7 @@ module Adamas::HIR
                 @current_class = old_class
               else
                 # Apply type param map for generic module methods
+                materialization_producer_path = "class_module_lower_method"
                 if extra_type_params && !extra_type_params.empty?
                   with_isolated_type_param_map(extra_type_params) do
                     lower_module_method(owner, resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, target_for_lower)
@@ -72583,6 +72623,7 @@ module Adamas::HIR
               end
             else
               # Apply type param map for generic module methods
+              materialization_producer_path = "class_module_lower_method"
               if extra_type_params && !extra_type_params.empty?
                 with_isolated_type_param_map(extra_type_params) do
                   lower_module_method(owner, resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, target_for_lower)
@@ -72628,10 +72669,12 @@ module Adamas::HIR
             end
 
             if extra_type_params && !extra_type_params.empty?
+              materialization_producer_path = "def_lower_def"
               with_isolated_type_param_map(extra_type_params) do
                 lower_def(resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, override_name)
               end
             else
+              materialization_producer_path = "def_lower_def"
               lower_def(resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, override_name)
             end
           end
@@ -72644,7 +72687,7 @@ module Adamas::HIR
         else
           @function_lowering_states.delete(materialized_name)
         end
-        log_materialization_completion_ledger(name, target_name, materialized_name, materialization_function_count_before)
+        log_materialization_completion_ledger(name, target_name, materialized_name, materialization_function_count_before, materialization_producer_path)
         debug_hook("function.lower.done", "name=#{materialized_name}")
         if start_time
           elapsed_ms = (Time.instant - start_time).total_milliseconds

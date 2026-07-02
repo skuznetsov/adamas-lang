@@ -8,6 +8,31 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: added Slice 0k-DC, the producer-path split required by
+  0k-DB while keeping `[MAT_DONE]` as the authority. `[MAT_DONE]` now records
+  `producer_path`, `created_symbol_relation`, and capped `created_symbols`;
+  `scripts/generated_stage_created_body_visibility_classifier.sh` classifies
+  those fields. Fresh evidence from
+  `STAGE1_COMPILER=/tmp/adamas_producer_path_stage1 SAMPLES=8 scripts/generated_stage_created_body_visibility_classifier.sh`
+  reports `classifier_classification=reached_tx_and_emit`,
+  `mat_tx_rows=717`, `mat_done_rows=787`, `mat_emit_rows=173`,
+  `created_body_missing_completion_rows=14`,
+  `completion_cause_kinds=1`,
+  `selected_cause=attempt_lowering_returned_no_hir_function__producer_instance_class_info_lower_method__created_none`,
+  `selected_rows=14`, `classification=rejected_completion_class_too_wide`,
+  9 root-sized groups, and zero malformed/unjoined rows. This refutes the
+  outer materialization branch as the discriminator: every residual enters the
+  instance/class-info `lower_method` path and creates no HIR function at all.
+  A deeper optional `lower_method` trace object was also preflight-refuted:
+  produced-stage runs regressed to `tx_only_no_emit` with `mat_emit_rows=0`,
+  so it was reverted. The next movement must split this exact
+  `instance_class_info_lower_method` / `created_none` class using a
+  self-host-safe producer observation, most likely via a temp-source classifier
+  or another generated-stage-safe field, and must stop again if the class stays
+  broad. Do not add a `lower_method` trace object, backend rescue, forwarder,
+  sampled method patch, broad rendering policy, ambient-map policy, or
+  `BlockOwner` rollback.
+
 - 2026-07-02 UPDATE: added Slice 0k-DB, the terminal-status refinement of the
   post-lowering completion fact from 0k-DA. The implementation deliberately
   keeps the new terminal evidence inside the existing default-off `[MAT_DONE]`

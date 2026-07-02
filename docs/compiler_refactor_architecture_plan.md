@@ -106,6 +106,21 @@ groups. The next architecture movement should split that producer path
 directly; it should not reintroduce an independent result store or consumer
 ledger until a generated-stage falsifier proves that surface is self-host safe.
 
+2026-07-02 post-0k-DC note: the producer path was split one level deeper while
+keeping `[MAT_DONE]` as the authority. Fresh current-source evidence from
+`STAGE1_COMPILER=/tmp/adamas_producer_path_stage1 SAMPLES=8 scripts/generated_stage_created_body_visibility_classifier.sh`
+reaches `[MAT_EMIT]` (`mat_emit_rows=173`) and selects a single still-broad
+producer class:
+`attempt_lowering_returned_no_hir_function__producer_instance_class_info_lower_method__created_none`
+with 14 rows across 9 root-sized groups. This refutes outer
+materialization-path ambiguity: every residual reaches the instance
+class-info `lower_method` branch and creates no HIR function. A deeper
+optional trace object threaded through `lower_method` was preflight-refuted
+because it regressed generated-stage runs to `tx_only_no_emit`. The next
+architecture movement should split `lower_method` terminal behavior with a
+self-host-safe producer observation, preferably a temp-source classifier or a
+field that does not alter `lower_method` call ABI.
+
 2026-07-02 post-0k-CS note: hostile review of the post-0k-CR route found that
 the active SDD is still being followed, but the emergency B4/O1 lane can become
 another symptom scheduler if every moved crash stack automatically selects the

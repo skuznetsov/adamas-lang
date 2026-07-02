@@ -12,6 +12,37 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-DC-MATERIALIZATION-PRODUCER-PATH-BROAD|implemented 2026-07-02 {F:0.91 G:0.72 R:0.90}]:
+Slice 0k-DC splits the 0k-DB terminal cause at the outer HIR producer branch
+without adding a new result or consumer surface. `src/compiler/hir/ast_to_hir.cr`
+now enriches the existing default-off `[MAT_DONE]` row with `producer_path`,
+`created_symbol_relation`, and capped `created_symbols`; the generated-stage
+classifier consumes those fields. Fresh current-source evidence using
+`STAGE1_COMPILER=/tmp/adamas_producer_path_stage1 SAMPLES=8 scripts/generated_stage_created_body_visibility_classifier.sh`
+reports `classifier_classification=reached_tx_and_emit`,
+`mat_tx_rows=717`, `mat_done_rows=787`, `mat_emit_rows=173`,
+`created_body_missing_completion_rows=14`, `completion_cause_kinds=1`,
+`selected_cause=attempt_lowering_returned_no_hir_function__producer_instance_class_info_lower_method__created_none`,
+`selected_rows=14`, `classification=rejected_completion_class_too_wide`, 9
+root-sized groups, and zero malformed/unjoined rows. The result is a verified
+refutation of the outer materialization branch as the missing discriminator:
+every residual goes through `instance_class_info_lower_method`, creates no HIR
+function, and still has no exact body. A deeper optional `lower_method`
+terminal trace object was preflight-refuted during the slice because it caused
+generated-stage runs to stop before backend emission (`classifier_classification=tx_only_no_emit`,
+`mat_tx_rows=2`, `mat_done_rows=1`, `mat_emit_rows=0`) and was reverted. Scope:
+behavior-neutral default-off ledger/classifier only; no production compiler
+behavior changed and no green `s2b`/`s3b` claim. The next valid movement must
+split the `instance_class_info_lower_method` / `created_none` class inside or
+immediately around `lower_method` using a self-host-safe producer observation
+(for example a temp-source classifier), and must stop if that class remains
+broad. Rejected moves remain backend undefined-extern rescue, forwarders,
+requested-name forcing, sampled method patches, broad `NamedTuple`/`Tuple`
+rendering, global ambient-map policy, `BlockOwner` rollback, and optional
+trace-object plumbing through `lower_method`. Decay trigger: a finer
+generated-stage classifier selects a root-sized `lower_method` terminal branch,
+or newer evidence refutes this producer-path shape.
+
 [LM-ARCH-0K-DB-MATERIALIZATION-TERMINAL-DONE|implemented 2026-07-02 {F:0.91 G:0.72 R:0.90}]:
 Slice 0k-DB refines 0k-DA by adding terminal-status evidence to the existing
 default-off `[MAT_DONE]` completion row instead of introducing a new result
