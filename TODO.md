@@ -8,6 +8,27 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: implemented Slice 0k-CL, the executable read-only O1
+  classifier selected by 0k-CK. New script:
+  `scripts/mir_optimization_container_frontier_classifier.sh`. Strict mode
+  `REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh`
+  reuses the B4 classifier, runs the workers=1 produced `s2b` path under
+  `lldb`, and reports `classification=current_0k_ck_mir_cp_container_frontier`.
+  Current evidence: `b4_classification=current_0k_bn_frontier`,
+  `workers1_after_lower_main=1`, `workers1_exit139=1`,
+  `has_set_uint32_includes=1`, `has_copyprop_affected=1`,
+  `has_copyprop_can_skip=1`, `has_optimize_with_potential=1`,
+  `register_x0_zero=1`, `register_x8_zero=1`, `set_load_from_x8=1`,
+  `affected_method_includes_count=1`,
+  `bad_container_state=set_receiver_base_register_null`, and
+  `bad_container_candidate=affected_block_ids`. This is still not a fix and
+  not green `s2b`/`s3b`; it narrows the next read-only question to the
+  producer of the null `affected_block_ids` set returned by
+  `apply_replacements`' `apply_collect_affected_blocks` timed block. Still
+  rejected: direct `CopyPropagation` null guards, backend Set/Hash rescue,
+  worker/resource/output/tail behavior, broad namespace/container
+  normalization, physical extraction, and `BlockOwner` rollback.
+
 - 2026-07-02 UPDATE: added Slice 0k-CK, a docs-only post-0k-CJ
   architecture pause after fresh B4 root-localization. Production compiler
   edits remain paused. Fresh

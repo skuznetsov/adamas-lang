@@ -8,6 +8,18 @@ boundaries
 Related: `PLAN_DEMAND_DRIVEN_REWRITE_RFC.md`, `docs/ast_to_hir_audit.md`,
 `docs/codegen_architecture.md`
 
+2026-07-02 post-0k-CL note: the first `MIROptimizationInvariant` classifier
+exists as `scripts/mir_optimization_container_frontier_classifier.sh`. It is
+read-only and confirms the current produced-s2 crash as
+`current_0k_ck_mir_cp_container_frontier`, with the null Set load owned by
+`CopyPropagationPass#affected_blocks_use_only_local_replacements?` and the
+source-level candidate container narrowed to `affected_block_ids`. The next
+near-term work is still producer localization, not a fix: trace how
+`apply_replacements`' `apply_collect_affected_blocks` timed block returns a
+null Set receiver under produced `s2b`. Do not patch `includes?`, add a null
+guard around `affected_block_ids`, or add backend Set/Hash rescue before that
+producer is named.
+
 2026-07-02 post-0k-CK note: after 0k-CJ the active architecture path is no
 longer allowed to continue by consuming another `GeneratedStageExecution`
 helper edge. Fresh B4 evidence keeps the produced-stage classifier red, but a

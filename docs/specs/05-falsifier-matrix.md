@@ -66,7 +66,7 @@ Each non-refuted row has a phase pressure:
 
 | ID | Claim | Source | Smallest Falsifier | Phase | Status |
 |----|-------|--------|--------------------|-------|--------|
-| O1 | Produced-stage MIR optimization must not read null or uninitialized compiler-runtime `Set`/`Hash` state while validating CopyPropagation local replacements. | Slice 0k-CK | Current measured-red evidence: after `KEEP_TMP=1 STAGE1_COMPILER=bin/adamas TAIL_LINES=120 REQUIRE_CURRENT_FRONTIER=1 scripts/generated_stage_llvm_entry_classifier.sh`, run workers=1 `lldb` on the kept `adamas_s2`; it stops in `Set(UInt32)#includes?` from `CopyPropagationPass#affected_blocks_use_only_local_replacements?`. The next guard/classifier must name whether the bad object is a null `Set(UInt32)`, a valid Set with null `@hash`, a wrong namespaced Set/Hash constructor body, a default/constant initialization corridor, or malformed CopyPropagation replacement state before any behavior patch. | current | [FRONTIER] |
+| O1 | Produced-stage MIR optimization must not read null or uninitialized compiler-runtime `Set`/`Hash` state while validating CopyPropagation local replacements. | Slice 0k-CK/0k-CL | `REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh` reuses B4, runs workers=1 under `lldb`, and currently reports `classification=current_0k_ck_mir_cp_container_frontier`, `bad_container_state=set_receiver_base_register_null`, and `bad_container_candidate=affected_block_ids`. The next classifier must name the producer of the null `affected_block_ids` Set value from `apply_replacements`' `apply_collect_affected_blocks` timed block, or refute that candidate before any behavior patch. | current | [FRONTIER] |
 
 ## 6. LLVM Emission
 

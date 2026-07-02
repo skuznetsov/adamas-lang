@@ -12,6 +12,32 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-CL-MIR-OPT-CONTAINER-CLASSIFIER|implemented 2026-07-02 {F:0.90 G:0.58 R:0.90}]:
+Slice 0k-CL adds executable read-only classifier
+`scripts/mir_optimization_container_frontier_classifier.sh` for the O1
+frontier selected by 0k-CK. The script reuses the generated-stage B4
+classifier, keeps the produced `s2b` only for the run, executes the workers=1
+path under `lldb`, parses the backtrace/register evidence, and removes
+repo-local temp artifacts including `tmp/llvm_cache` unless `KEEP_TMP=1`.
+Strict evidence:
+`REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh`
+reports `classification=current_0k_ck_mir_cp_container_frontier`,
+`b4_classification=current_0k_bn_frontier`, `workers1_after_lower_main=1`,
+`workers1_exit139=1`, `has_set_uint32_includes=1`,
+`has_copyprop_affected=1`, `has_copyprop_can_skip=1`,
+`has_optimize_with_potential=1`, `register_x0_zero=1`,
+`register_x8_zero=1`, `set_load_from_x8=1`,
+`affected_method_includes_count=1`,
+`bad_container_state=set_receiver_base_register_null`, and
+`bad_container_candidate=affected_block_ids`. Scope: executable classifier
+only; no compiler production behavior changed and no green `s2b`/`s3b` claim.
+The next admitted movement is still read-only producer localization for the
+null `affected_block_ids` Set value returned by
+`CopyPropagationPass#apply_replacements`' `apply_collect_affected_blocks`
+timed block. Decay trigger: classifier no longer reports current O1, B4
+reaches `REQUIRE_CLEAN=1`, or a producer-localization slice names a different
+first bad transition before `affected_blocks_use_only_local_replacements?`.
+
 [LM-ARCH-0K-CK-MIR-OPT-CONTAINER-ROOT-SPINE|design-sealed 2026-07-02 {F:0.86 G:0.60 R:0.88}]:
 Slice 0k-CK is a docs-only architecture pause after the 0k-CJ
 `GeneratedStageExecutionOutcome` checkpoint. Fresh B4 evidence on HEAD
