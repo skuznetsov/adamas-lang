@@ -8,6 +8,19 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: added Slice 0k-CS, a docs-only architecture-board
+  consolidation after hostile review of the post-0k-CR route. It does not
+  retract 0k-CR, but it prevents the B4/O1 emergency lane from becoming the
+  default development loop. One paired behavior slice remains admitted as
+  `bootstrap-emergency-with-ledger`: assigned-tail yield-passthrough
+  classification plus return-shape-specific wrapper materialization for the
+  narrowed helper set. After that slice, or if it widens beyond the root-sized
+  assigned-tail class, production code must return to the Active Architecture
+  Board before selecting any new crash-stack classifier or local fix. The next
+  non-emergency movement must select a durable owner spine, retire/refute a
+  stale report surface, or promote a missing contract falsifier from
+  `docs/specs/05-falsifier-matrix.md`.
+
 - 2026-07-02 UPDATE: implemented Slice 0k-CR by extending
   `scripts/hir_block_return_shape_census.sh` with an assigned-tail
   yield-passthrough discriminator (`result = yield; ...; result`). Strict

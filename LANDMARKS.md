@@ -12,6 +12,22 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-CS-POST-CR-BOARD-FREEZE|design-sealed 2026-07-02 {F:0.84 G:0.72 R:0.86}]:
+Slice 0k-CS is a docs-only architecture-board consolidation after hostile
+review of the post-0k-CR route. It preserves the 0k-CR admission but narrows
+its interpretation: one paired `bootstrap-emergency-with-ledger` behavior slice
+may implement assigned-tail yield-passthrough classification plus
+return-shape-specific wrapper materialization for the current root-sized class.
+After that slice, or if the implementation widens beyond the assigned-tail
+discriminator, production source movement must return to the Active
+Architecture Board before another crash-stack classifier or local fix is
+selected. The next non-emergency movement must select a durable owner spine,
+retire or refute a stale report surface, or promote a missing contract
+falsifier from `docs/specs/05-falsifier-matrix.md`. Scope: control-plane/docs
+only; no compiler production behavior changed and no green `s2b`/`s3b` claim.
+Decay trigger: 0k-CR behavior lands and a fresh B4/O1 result selects a new
+owner spine, or the board is superseded by a newer SDD slice.
+
 [LM-ARCH-0K-CR-ASSIGNED-TAIL-YIELD-PASSTHROUGH|implemented 2026-07-02 {F:0.88 G:0.66 R:0.87}]:
 Slice 0k-CR extends `scripts/hir_block_return_shape_census.sh` with a
 read-only assigned-tail yield-passthrough discriminator for helpers shaped like

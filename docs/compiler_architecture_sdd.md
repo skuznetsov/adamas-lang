@@ -129,6 +129,17 @@ assigned-tail yield-passthrough classification and return-shape-specific
 wrapper materialization for that narrowed helper set. A classification-only
 change remains rejected if the wrapper body can still be materialized with
 `yield : Void`.
+Slice 0k-CS is a docs-only architecture-board consolidation after hostile
+review of the post-0k-CR path. It does not retract 0k-CR, but it prevents the
+emergency B4/O1 lane from becoming the new default development loop. One paired
+0k-CR behavior slice remains admitted as `bootstrap-emergency-with-ledger` only
+if it implements the full owner contract and moves B4 past the current
+`affected_block_ids` / `Set(UInt32)#includes?` frontier. After that slice, or
+if the paired slice widens beyond the root-sized assigned-tail class, production
+code must stop and return to the architecture board: select a durable owner
+spine, retire or refute a stale report surface, or promote one missing contract
+falsifier from the specs matrix. A fresh crash-stack classifier is not admitted
+as the automatic next step.
 Slice 0k-BH adds a narrower pause gate after the 0k-BG parser falsifier:
 the command-call parser frontier may get one bounded closure attempt, but a
 second parser loop, adjacent parser regression, or broadened command-call
@@ -312,7 +323,7 @@ latest emitted symptom.
 
 ## Active Architecture Board
 
-Status: execution board after Slice 0k-CK. This board exists to
+Status: execution board after Slice 0k-CS. This board exists to
 prevent the next step from being selected by the latest generated-stage crash
 stack. A next slice is admitted only if it moves one board row by replacing or
 shadowing a named authority edge, producing `CodePathStatus` evidence for a
@@ -360,6 +371,11 @@ that decreases plausible owner-spine ambiguity. It does not admit production
 source movement yet; it admits only the next read-only classifier that can
 prove which owner spine owns the null `Set(UInt32)` / `Hash(UInt32, Nil)` state
 observed inside produced-s2 MIR optimization.
+Slice 0k-CS tightens the current B4/O1 interpretation: the admitted 0k-CR
+behavior slice is an emergency owner-contract slice, not a standing license to
+keep following the next produced-stage symptom. If that paired slice lands, the
+next production movement must pass through this board again before any new
+crash-stack classifier or local fix is selected.
 
 - `SemanticIdentity`: semantic owners, rendered names, generic keys,
   type-visible values, and ambient state scope;
@@ -375,7 +391,7 @@ The active rows are currently classified as follows:
 
 | Row | Spine | Current status | Reason |
 | --- | --- | --- | --- |
-| B4 | `MIROptimizationInvariant` / compiler-runtime containers, with `PhaseAuthority` kept as pressure evidence | active root-spine reclassification after 0k-CR; a production slice is admitted only for the paired assigned-tail passthrough + return-shape wrapper-materialization contract | 0k-CQ refutes naive shape-only specialization as broad, while 0k-CR narrows the assigned-tail passthrough discriminator to exactly one multi-shape key: `CopyPropagationPass#timed_cp_phase$String_block` |
+| B4 | `MIROptimizationInvariant` / compiler-runtime containers, with `PhaseAuthority` kept as pressure evidence | active root-spine reclassification after 0k-CS; at most one emergency production slice is admitted for the paired assigned-tail passthrough + return-shape wrapper-materialization contract, then the board must reselect the next owner spine | 0k-CQ refutes naive shape-only specialization as broad, 0k-CR narrows the assigned-tail passthrough discriminator to exactly one multi-shape key, and 0k-CS forbids turning that emergency lane into an automatic next-symptom loop |
 | L6 | `PhaseAuthority` / `GeneratedStageExecution` | active joined-transaction pressure after 0k-CK; report surface remains guard-only and no longer selects the next implementation edge | fresh 0k-CJ evidence reports `join_status=joined`, `final_classification=abort_resource`, and `admission_status=rejected_no_root_sized_consumer`; 0k-CK demotes another output/resource/tail/backend edge because direct crash evidence points into MIR optimization |
 | G6 | `MaterializationTransaction` | executable availability guard green; no longer active implementation selector unless it regresses | 0k-CF adds a guard proving the current `Hash(UInt64, BlockOwner)#[]=` setter has exact/all-equal transaction identity, joined emissions, body-present backend visibility, and a non-stub LLVM body for current `bin/adamas` |
 | H7 | `SemanticIdentity` | pre-s2-clean residual | parser command-call preservation is real but does not move the active generated LLVM-entry gate |
@@ -2831,6 +2847,80 @@ Stop rules:
 - Do not special-case `CopyPropagationPass#timed_cp_phase` by name unless a
   future emergency SDD slice explicitly accepts that narrower non-architectural
   boundary.
+
+### Slice 0k-CS: Architecture board consolidation after 0k-CR
+
+Status:
+
+- docs-only architecture-control slice;
+- no compiler production behavior changed;
+- not a green `s2b`/`s3b` claim;
+- selected because hostile review found the active SDD was still formally
+  followed, but the B4/O1 emergency lane could become another symptom loop.
+
+Problem:
+
+The recent slices correctly localized the produced-stage B4 crash from
+generated-stage execution into MIR optimization container state, then into a
+HIR block-return materialization owner gap. That was useful evidence. The
+failure pattern is still dangerous: each newly localized symptom can select one
+more classifier or local behavior slice unless the board explicitly forces a
+return to durable owner-spine work.
+
+Current evidence:
+
+- 0k-CQ refutes naive return-shape specialization as broad:
+  `candidate_multi_shape_keys=208`,
+  `candidate_additional_return_shape_bodies=228`.
+- 0k-CR narrows assigned-tail passthrough to one current multi-shape key:
+  `Adamas::MIR::CopyPropagationPass#timed_cp_phase$String_block`.
+- The active specs matrix still has missing or pre-s2-clean contract rows
+  outside the current B4 symptom path, including generic owner rendering,
+  receiver/static MIR shape, null/missing HIR `TypeRef`, and hardcoded IO
+  override layout guards.
+
+Decision:
+
+0k-CR remains admitted, but only as one bounded
+`bootstrap-emergency-with-ledger` behavior slice. That slice must implement
+the paired owner contract:
+
+1. classify assigned-tail yield passthrough as block-return-dependent;
+2. materialize return-shape-specific wrappers only for that narrowed class;
+3. keep nil/non-returning callsites nil/void;
+4. keep ordinary iterator/scope helpers un-specialized;
+5. prove the B4 produced-stage frontier moved without backend, Set/Hash,
+   CopyPropagation, worker, output, resource, tail, `NamedTuple`/`Tuple`,
+   ambient-map, or `BlockOwner` rescue.
+
+After that slice, or if the implementation scope grows beyond the current
+root-sized discriminator, production code must stop and return to the Active
+Architecture Board. The next movement must be one of:
+
+- a durable owner-spine selection from the board;
+- retirement or refutation of a stale report/ledger surface;
+- promotion of a missing contract falsifier from `docs/specs/05-falsifier-matrix.md`;
+- an explicit new SDD slice showing why another emergency behavior slice is
+  safer than architecture burn-down.
+
+Rejected next moves:
+
+- automatically following the next generated-stage crash stack after 0k-CR;
+- adding another B4/O1 classifier that only narrows a crash marker or offset;
+- treating a green 0k-CR focused row as green `s2b`/`s3b`;
+- extending return-shape specialization to all untyped `&` helpers;
+- re-opening backend forwarder, broad `NamedTuple`/`Tuple`, global ambient-map,
+  worker/resource/output/tail, direct CopyPropagation, Set/Hash rescue, or
+  `BlockOwner` rollback lanes.
+
+DoD for resuming production code after 0k-CR:
+
+- state the current `BootstrapPotential` and which component decreases;
+- name the selected board row and old authority edge;
+- name the owner fact/service and producer/consumer set;
+- name the focused falsifier plus the broader generated-stage guard;
+- update `TODO.md`, `LANDMARKS.md`, and `docs/specs/05-falsifier-matrix.md`
+  before or in the same commit as the source change.
 
 Slice 0k-AP consolidation result: the architecture report surface is now
 treated as a registry, not as a menu of competing next steps. Existing reports

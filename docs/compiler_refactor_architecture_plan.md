@@ -8,6 +8,20 @@ boundaries
 Related: `PLAN_DEMAND_DRIVEN_REWRITE_RFC.md`, `docs/ast_to_hir_audit.md`,
 `docs/codegen_architecture.md`
 
+2026-07-02 post-0k-CS note: hostile review of the post-0k-CR route found that
+the active SDD is still being followed, but the emergency B4/O1 lane can become
+another symptom scheduler if every moved crash stack automatically selects the
+next classifier. This plan remains a reference map only. The active execution
+surface is now the 0k-CS board rule in `docs/compiler_architecture_sdd.md`:
+the paired assigned-tail passthrough + return-shape wrapper materialization
+slice may proceed as one `bootstrap-emergency-with-ledger` behavior slice, but
+after it lands, or if it widens beyond the root-sized discriminator, production
+code must return to the Active Architecture Board. The next non-emergency
+movement should be architecture burn-down: select a durable owner spine, retire
+or refute a stale report surface, or promote one missing contract falsifier
+from `docs/specs/05-falsifier-matrix.md`. Do not keep appending near-term
+crash-stack decisions here as if this document were the authoritative backlog.
+
 2026-07-02 post-0k-CR note: the return-shape census now also measures
 assigned-tail yield passthrough (`result = yield; ...; result`). Strict current
 evidence keeps the broad 0k-CQ result for naive `contains_yield` scope, but
