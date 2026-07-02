@@ -34,6 +34,24 @@ absent, backend emitted-set miss, or legitimate extern/runtime helper. Do not
 patch sampled Array/Slice/IO/Atomic/String::Builder/Int32 methods directly and
 do not add backend undefined-extern rescue or forwarders from this evidence.
 
+2026-07-02 post-0k-CX note: the read-only exact-body lifecycle classifier is
+now implemented as `scripts/generated_stage_exact_body_availability_classifier.sh`.
+A fresh current-source stage1 run reports
+`classifier_classification=reached_tx_and_emit`,
+`residual_exact_missing_body_rows=14`,
+`residual_body_lifecycle_cause_kinds=1`,
+`selected_cause=created_body_backend_missing`, `selected_rows=14`,
+`classification=rejected_body_lifecycle_class_too_wide`, and 9 lifecycle
+groups. This changes the next question: the residual is not explained by "HIR
+materializer never created the bodies", because the self-applying transaction
+ledger records `materialization_action=created_body`. It is still too broad for
+a behavior patch. The next executable step is another read-only split inside
+`created_body_backend_missing`: HIR body still visible after materialization,
+HIR/RTA prune before MIR, MIR function missing, backend lookup/emitted-set miss,
+or legitimate extern/runtime helper. Do not use the sampled method names,
+backend rescue, forwarders, requested-name forcing, `NamedTuple`/`Tuple`
+rendering, ambient-map policy, or `BlockOwner` changes as shortcuts.
+
 2026-07-02 post-0k-CS note: hostile review of the post-0k-CR route found that
 the active SDD is still being followed, but the emergency B4/O1 lane can become
 another symptom scheduler if every moved crash stack automatically selects the

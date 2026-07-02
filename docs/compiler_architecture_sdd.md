@@ -208,6 +208,22 @@ equal must have a transaction-owned proof of body availability before MIR/LLVM
 falls back to `ExternCall` / `@undefined_externs`. The next executable movement
 is a read-only residual classifier that splits those 14 rows by producer cause
 before any Array/Slice/IO/Atomic/String::Builder/Int32 behavior patch.
+Slice 0k-CX implements that read-only exact-body lifecycle classifier as
+`scripts/generated_stage_exact_body_availability_classifier.sh`. A fresh
+current-source stage1 run reports
+`classifier_classification=reached_tx_and_emit`,
+`residual_exact_missing_body_rows=14`,
+`residual_body_lifecycle_cause_kinds=1`,
+`selected_cause=created_body_backend_missing`, `selected_rows=14`, and
+`classification=rejected_body_lifecycle_class_too_wide`, with 9 lifecycle
+groups. This refutes "HIR materializer never created the bodies" for the
+current residual: the self-applying `[MAT_TX]` fact records
+`materialization_action=created_body`. It still does not admit a behavior patch
+because the class is broad. The next executable movement must split
+`created_body_backend_missing` by the next self-applying producer boundary
+before touching sampled Array/Slice/IO/Atomic/String::Builder/Int32 methods,
+backend rescue, forwarders, requested-name forcing, `NamedTuple`/`Tuple`
+rendering, ambient-map policy, or `BlockOwner`.
 Slice 0k-BH adds a narrower pause gate after the 0k-BG parser falsifier:
 the command-call parser frontier may get one bounded closure attempt, but a
 second parser loop, adjacent parser regression, or broadened command-call
@@ -391,7 +407,7 @@ latest emitted symptom.
 
 ## Active Architecture Board
 
-Status: execution board after Slice 0k-CW. This board exists to
+Status: execution board after Slice 0k-CX. This board exists to
 prevent the next step from being selected by the latest generated-stage crash
 stack. A next slice is admitted only if it moves one board row by replacing or
 shadowing a named authority edge, producing `CodePathStatus` evidence for a
@@ -456,6 +472,10 @@ slice with the full generated-stage gate.
 Slice 0k-CW selects the burn-down target: `MaterializationTransaction` exact
 body availability. It does not admit a behavior patch; it admits a read-only
 classifier for the broad exact-missing-body residual.
+Slice 0k-CX consumes that classifier and leaves the active selector on
+`MaterializationTransaction` / `created_body_backend_missing` backend
+visibility. The self-applying transaction ledger says the bodies were created,
+but the broad 14-row / 9-group residual is still too wide for production code.
 
 ### Current Execution Board
 
@@ -466,7 +486,7 @@ evidence, not next-step selectors.
 | --- | --- | --- | --- |
 | `bootstrap-emergency-with-ledger` / B4-O1 | Paused breakglass. The 0k-CR assigned-tail passthrough plus return-shape wrapper-materialization slice remains documented, but after 0k-CV it is not the current selector and may not resume from an uncommitted WIP. | Re-admit only with a fresh receipt that names: old authority edge = shared untyped `&` wrapper keyed without return contract; owner fact = HIR `BlockCallReturnContract`; producers = block-return recording and assigned-tail classifier; consumers = wrapper materialization, yield return inference, call target emission; baseline = current O1/B4 classifiers plus `REQUIRE_CURRENT_CP_BROAD=1 scripts/hir_block_return_shape_census.sh`; negative controls = nil/non-returning timed phases and ordinary iterator/scope helpers; stage gate = B4 future-clean or current-frontier movement; residual boundary. | Continuing the local WIP by inertia; starting from the next crash stack; classifier-only patch; broad return-shape specialization; direct CopyPropagation guard; `timed_cp_phase` annotation/inlining/deletion; MIR/LLVM/backend block-return rescue. |
 | `architecture-burn-down` / owner-spine plan | Consumed by 0k-CW. The active burn-down selection is `MaterializationTransaction` exact body availability, based on generated-stage residual evidence rather than the latest crash stack. | Do not add another planning/report row unless it retires/refutes this selection or the residual classifier proves the selected edge is not root-sized. | Treating a moved crash stack as architecture progress; adding another report that does not retire/refute an older surface; committing WIP helpers that do not consume an old authority edge; claiming source-shape green as bootstrap green. |
-| `MaterializationTransaction` / exact body availability | Current active selector. G6 `BlockOwner` setter availability is guard-green; the live residual is 14 exact/all-equal missing-body rows across 9 groups under generated-stage transaction evidence. | Next executable receipt: read-only `FunctionAvailabilityContract` / exact-missing-body classifier. It must split `body_present=0`, `required_contract=none`, `symbol_relation=all_equal`, `identity_status=exact` rows by producer cause: HIR body absent, HIR body present but not lowered to MIR, MIR function absent, backend emitted-set miss, or legitimate extern/runtime helper. It must stop if the selected class is broad or ambiguous. | Backend undefined-extern rescue, forwarder rescue, requested-name forcing, per-method Array/Slice/IO/Atomic/String::Builder/Int32 patches, broad `NamedTuple`/`Tuple` rendering, global ambient-map policy, `BlockOwner` rollback. |
+| `MaterializationTransaction` / exact body availability | Current active selector after 0k-CX. G6 `BlockOwner` setter availability is guard-green; the live exact/all-equal residual is classified as `created_body_backend_missing`, 14 rows across 9 groups. | Next executable receipt: read-only finer classifier for `created_body_backend_missing`. It must split by the next self-applying boundary: HIR body still present after materialization, HIR/RTA prune before MIR, MIR function missing, backend lookup/emitted-set miss, or legitimate extern/runtime helper. It must stop if the selected class is broad or ambiguous. | Backend undefined-extern rescue, forwarder rescue, requested-name forcing, per-method Array/Slice/IO/Atomic/String::Builder/Int32 patches, broad `NamedTuple`/`Tuple` rendering, global ambient-map policy, `BlockOwner` rollback. |
 | `PhaseAuthority` / `GeneratedStageExecution` | B4/L6 remain pressure evidence, not an implementation selector. | Resume only with a slice that reduces B4/L6 phase, owner-spine ambiguity, or live proxy surface. | More behavior-neutral row owners, output/resource/tail/worker patches, memory-budget acceptance, `ADAMAS_LLVM_WORKERS=1` as a fix. |
 | `SemanticIdentity` | H7/H8 remain pre-s2-clean residuals. They are real, but not the active generated-stage blocker. | Resume with a row-specific SDD entry and measured-red baseline if the goal is semantic-service extraction. | TypeValue/stringification/parser shortcuts bundled with B4, generic materialization, ambient-map, or `BlockOwner` work. |
 | `CodePathStatus` | Cleanup is not the active bootstrap constraint. | Resume only with `delete_ready` evidence and a protecting falsifier, or by explicit user selection of bloat reduction. | Deleting suspected-dead code from grep/runtime absence alone; adding cleanup reports as a substitute for owner migration. |

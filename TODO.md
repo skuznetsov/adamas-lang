@@ -8,6 +8,28 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: added Slice 0k-CX and
+  `scripts/generated_stage_exact_body_availability_classifier.sh`, a read-only
+  exact-body lifecycle classifier for the 0k-CW residual. Fresh current-source
+  stage1 evidence:
+  `crystal build src/adamas.cr -o /tmp/adamas_exact_body_classifier_stage1 --error-trace`
+  succeeded, and
+  `STAGE1_COMPILER=/tmp/adamas_exact_body_classifier_stage1 SAMPLES=8 scripts/generated_stage_exact_body_availability_classifier.sh`
+  reports `classifier_classification=reached_tx_and_emit`,
+  `residual_exact_missing_body_rows=14`,
+  `residual_body_lifecycle_cause_kinds=1`,
+  `selected_cause=created_body_backend_missing`, `selected_rows=14`,
+  `classification=rejected_body_lifecycle_class_too_wide`, and 9 lifecycle
+  groups. The result refutes "HIR materializer never created the bodies" for
+  this residual: self-applying `[MAT_TX]` rows already record
+  `materialization_action=created_body`. The class is still broad, so no
+  behavior patch is admitted. The next executable slice must split
+  `created_body_backend_missing` by the next self-applying boundary: HIR body
+  still present after materialization, HIR/RTA prune before MIR, MIR function
+  missing, backend lookup/emitted-set miss, or legitimate extern/runtime helper.
+  Stop if that class remains broad; do not patch sampled
+  Array/Slice/IO/Atomic/String::Builder/Int32 methods directly.
+
 - 2026-07-02 UPDATE: added Slice 0k-CW, the architecture-burn-down owner-spine
   selection required by 0k-CV. Fresh source-shape evidence rejects reselection
   of already-promoted seams:

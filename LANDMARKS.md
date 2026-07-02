@@ -12,6 +12,37 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-CX-CREATED-BODY-BACKEND-MISSING|design-sealed 2026-07-02 {F:0.86 G:0.70 R:0.86}]:
+Slice 0k-CX implements the read-only exact-body lifecycle classifier selected
+by 0k-CW as `scripts/generated_stage_exact_body_availability_classifier.sh`.
+Fresh current-source stage1 evidence:
+`crystal build src/adamas.cr -o /tmp/adamas_exact_body_classifier_stage1 --error-trace`
+succeeded, and
+`STAGE1_COMPILER=/tmp/adamas_exact_body_classifier_stage1 SAMPLES=8 scripts/generated_stage_exact_body_availability_classifier.sh`
+reports `classifier_classification=reached_tx_and_emit`,
+`residual_exact_missing_body_rows=14`,
+`residual_body_lifecycle_cause_kinds=1`,
+`selected_cause=created_body_backend_missing`, `selected_rows=14`,
+`classification=rejected_body_lifecycle_class_too_wide`, and 9 lifecycle
+groups. This refutes "HIR materializer never created the bodies" for the
+current exact/all-equal residual: self-applying `[MAT_TX]` rows already record
+`materialization_action=created_body`. A source-level HIR/MIR availability dump
+hook was rejected during the same slice because the produced `s2` did not
+self-apply the HIR/MIR env-gated dump reliably; the committed classifier uses
+the existing self-applying `[MAT_TX]` / `[MAT_EMIT]` ledger instead. Scope:
+script/docs/control-plane only; no compiler production behavior changed and no
+green `s2b`/`s3b` claim. The next executable movement must split
+`created_body_backend_missing` by the next self-applying producer boundary
+(HIR body still visible after materialization, HIR/RTA prune before MIR, MIR
+function missing, backend lookup/emitted-set miss, or legitimate extern/runtime
+helper) and stop if the selected class remains broad. Rejected next moves:
+sampled Array/Slice/IO/Atomic/String::Builder/Int32 patches, backend rescue,
+forwarders, requested-name forcing, broad `NamedTuple`/`Tuple` rendering,
+global ambient-map policy, and `BlockOwner` rollback. Decay trigger: a finer
+classifier selects a root-sized producer edge, the exact residual disappears,
+or newer generated-stage transaction evidence refutes the
+`created_body_backend_missing` shape.
+
 [LM-ARCH-0K-CW-MATERIALIZATION-EXACT-BODY-AVAILABILITY|design-sealed 2026-07-02 {F:0.87 G:0.72 R:0.86}]:
 Slice 0k-CW selects the architecture-burn-down target after 0k-CV. Fresh
 source-shape evidence shows the obvious semantic-state and symbol-binding seams
