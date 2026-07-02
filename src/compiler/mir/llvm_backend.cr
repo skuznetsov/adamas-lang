@@ -620,6 +620,52 @@ module Adamas::MIR
     local_debug_shadow_stores : Hash(ValueId, Array(DwarfLocalShadowStoreBinding)),
     value_locations : Hash(ValueId, Int32)
 
+  private class LLVMEmissionFunctionPlan
+    def initialize(@original_count : Int32,
+                   @reachable_count : Int32?,
+                   @skipped_ids : ::Set(FunctionId),
+                   @deduped_mangled_names : ::Set(String),
+                   @functions_to_emit : ::Array(Function))
+    end
+
+    def functions_to_emit : ::Array(Function)
+      @functions_to_emit
+    end
+
+    def original_count : Int32
+      @original_count
+    end
+
+    def final_count : Int32
+      @functions_to_emit.size
+    end
+
+    def pruned_count : Int32
+      @original_count - final_count
+    end
+  end
+
+  private class LLVMEmissionSession
+    def initialize(@function_plan : LLVMEmissionFunctionPlan)
+    end
+
+    def total_funcs : Int32
+      @function_plan.final_count
+    end
+
+    def original_function_count : Int32
+      @function_plan.original_count
+    end
+
+    def pruned_function_count : Int32
+      @function_plan.pruned_count
+    end
+
+    def functions_to_emit : ::Array(Function)
+      @function_plan.functions_to_emit
+    end
+  end
+
   class DwarfDebugContext
     COMPILE_UNIT_ID       = 0
     MODULE_FLAG_DWARF_ID  = 1
@@ -2904,47 +2950,28 @@ module Adamas::MIR
       elem_llvm == "void" ? "ptr" : elem_llvm
     end
 
-    def generate(output : IO? = nil) : String
-      @output = output || IO::Memory.new
-      @toplevel_output = nil
-      generated_in_memory = output.nil?
-      @emit_regex_runtime = regex_runtime_needed?(@module.functions)
+    private def build_llvm_emission_session : LLVMEmissionSession
+      LLVMEmissionSession.new(build_llvm_emission_function_plan)
+    end
 
-      bootstrap_trace_puts "  [LLVM] emit_header..." if @progress
-      emit_header
-      bootstrap_trace_puts "  [LLVM] emit_type_definitions..." if @progress
-      emit_type_definitions
-      bootstrap_trace_puts "  [LLVM] emit_runtime_declarations..." if @progress
-      emit_runtime_declarations
-      bootstrap_trace_puts "  [LLVM] emit_union_debug_helpers..." if @progress
-      emit_union_debug_helpers
-      bootstrap_trace_puts "  [LLVM] emit_arc_destructors..." if @progress
-      emit_arc_destructors
-      bootstrap_trace_puts "  [LLVM] emit_global_variables..." if @progress
-      emit_global_variables
+    private def build_llvm_emission_function_plan : LLVMEmissionFunctionPlan
+      original_count = @module.functions.size
 
-      if @emit_type_metadata
-        bootstrap_trace_puts "  [LLVM] collect_type_metadata..." if @progress
-        collect_type_metadata
-        bootstrap_trace_puts "  [LLVM] collect_union_metadata..." if @progress
-        collect_union_metadata
-      end
-
-      # Determine which functions to emit
-      bootstrap_trace_puts "  [LLVM] total MIR functions: #{@module.functions.size}"
+      bootstrap_trace_puts "  [LLVM] total MIR functions: #{original_count}"
       functions_to_emit = if @reachability
                             bootstrap_trace_puts "  [LLVM] computing reachable functions..." if @progress
                             reachable_ids = compute_reachable_functions
                             rta_count = reachable_ids.size
                             result = @module.functions.select { |f| reachable_ids.includes?(f.id) }
-                            bootstrap_trace_puts "  [LLVM] RTA kept: #{rta_count} (pruned #{@module.functions.size - rta_count})"
+                            bootstrap_trace_puts "  [LLVM] RTA kept: #{rta_count} (pruned #{original_count - rta_count})"
                             result
                           else
                             @module.functions
                           end
+      reachable_count = @reachability ? functions_to_emit.size : nil
 
-      # Filter out functions with unresolved type patterns (typeof, unsubstituted type params)
-      # These are functions that were partially created but couldn't be monomorphized
+      # Filter out functions with unresolved type patterns (typeof, unsubstituted type params).
+      # These are functions that were partially created but could not be monomorphized.
       unresolved_patterns = ["typeof("]
 
       # Build a skip set by FunctionId so we can propagate skips through the call graph.
@@ -3003,7 +3030,6 @@ module Adamas::MIR
         end
       end
 
-      # Apply filter
       functions_to_emit = functions_to_emit.reject { |func| skip_ids.includes?(func.id) }
 
       # Pre-compute return types for ALL module functions.  This fixes a class of bugs
@@ -3019,9 +3045,11 @@ module Adamas::MIR
       # Deduplicate functions by mangled name (keep first occurrence).
       dedup_seen = ::Set(String).new(@emitted_functions.size + functions_to_emit.size)
       @emitted_functions.each { |n| dedup_seen << n }
+      deduped_mangled_names = ::Set(String).new
       functions_to_emit = functions_to_emit.reject do |func|
         mangled = mangle_function_name(func.name)
         if dedup_seen.includes?(mangled)
+          deduped_mangled_names << mangled
           true
         else
           dedup_seen << mangled
@@ -3029,12 +3057,49 @@ module Adamas::MIR
         end
       end
 
-      total_funcs = functions_to_emit.size
+      LLVMEmissionFunctionPlan.new(
+        original_count,
+        reachable_count,
+        skip_ids,
+        deduped_mangled_names,
+        functions_to_emit
+      )
+    end
+
+    def generate(output : IO? = nil) : String
+      @output = output || IO::Memory.new
+      @toplevel_output = nil
+      generated_in_memory = output.nil?
+      @emit_regex_runtime = regex_runtime_needed?(@module.functions)
+
+      bootstrap_trace_puts "  [LLVM] emit_header..." if @progress
+      emit_header
+      bootstrap_trace_puts "  [LLVM] emit_type_definitions..." if @progress
+      emit_type_definitions
+      bootstrap_trace_puts "  [LLVM] emit_runtime_declarations..." if @progress
+      emit_runtime_declarations
+      bootstrap_trace_puts "  [LLVM] emit_union_debug_helpers..." if @progress
+      emit_union_debug_helpers
+      bootstrap_trace_puts "  [LLVM] emit_arc_destructors..." if @progress
+      emit_arc_destructors
+      bootstrap_trace_puts "  [LLVM] emit_global_variables..." if @progress
+      emit_global_variables
+
+      if @emit_type_metadata
+        bootstrap_trace_puts "  [LLVM] collect_type_metadata..." if @progress
+        collect_type_metadata
+        bootstrap_trace_puts "  [LLVM] collect_union_metadata..." if @progress
+        collect_union_metadata
+      end
+
+      emission_session = build_llvm_emission_session
+      functions_to_emit = emission_session.functions_to_emit
+      total_funcs = emission_session.total_funcs
       n_workers = parallel_llvm_workers
       # Keep debug metadata in one emitter process so generic types and file caches
       # don't get split across worker-local DWARF graphs.
       n_workers = 1 if @debug_emit_anchors
-      STDERR.puts "  [LLVM] emitting #{total_funcs} functions (#{@module.functions.size} total, #{@module.functions.size - total_funcs} pruned, workers=#{n_workers})..." if @progress
+      STDERR.puts "  [LLVM] emitting #{total_funcs} functions (#{emission_session.original_function_count} total, #{emission_session.pruned_function_count} pruned, workers=#{n_workers})..." if @progress
       func_emit_start = @progress ? Time.instant : nil
 
       if n_workers > 1 && total_funcs >= n_workers * 4

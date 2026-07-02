@@ -323,6 +323,22 @@ the session record. Do not change emitted LLVM semantics, worker defaults,
 fallback behavior, undefined externs, missing-body stubs, output-file behavior,
 or `BlockOwner` in that first slice.
 
+2026-07-01 post-0k-BR note: the first `LLVMEmissionSession` implementation
+slice is in place and behavior-neutral. It consumes `function-list-inline` only:
+`generate` now builds an `LLVMEmissionSession` and reads the final
+`functions_to_emit` plan from it, while the previous reachability / unresolved
+skip propagation / return-type precompute / dedup algorithm lives in
+`build_llvm_emission_function_plan`. New source-shape guard:
+`scripts/llvm_emission_session_source_shape_guard.sh`. Important adversary
+finding: Crystal `record` macro carriers are not safe by default for generated
+stage owner objects; a rejected preflight changed B4 to a
+`LLVMEmissionFunctionPlan#functions_to_emit` stub. The committed carrier uses
+explicit private classes/methods and preserves B4 as
+`classification=current_0k_bn_frontier`. The next architecture movement should
+select one remaining `LLVMEmissionSession` edge, not patch the B4 crash stack:
+worker/fallback policy, side-effect merge contract, tail declarations/stubs,
+output ownership, or resource evidence.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`

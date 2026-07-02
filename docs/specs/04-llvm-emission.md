@@ -94,3 +94,14 @@ ownership boundary, and generated-stage evidence for one LLVM generation run.
 The first implementation slice MUST include a source-shape guard proving that at
 least one old authority edge is consumed by the session record instead of living
 only as scattered CLI locals, backend locals, or mutable backend fields.
+
+Slice 0k-BR consumes the first edge, `function-list-inline`.
+`scripts/llvm_emission_session_source_shape_guard.sh` is the guard. It requires
+`LLVMIRGenerator#generate` to build an `LLVMEmissionSession` and consume the
+final function plan through it, while rejecting reachability, skip-set, or
+dedup authority that still lives inline in `generate`.
+
+Generated-stage owner carriers SHOULD use explicit private classes/methods
+until their materialization surface is proven. A rejected 0k-BR preflight using
+Crystal `record` macros preserved local checks but changed B4 to a produced
+stage stub for `LLVMEmissionFunctionPlan#functions_to_emit`.

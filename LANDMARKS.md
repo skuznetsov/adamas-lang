@@ -12,6 +12,28 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-BR-LLVM-EMISSION-SESSION-FUNCTION-PLAN|implemented 2026-07-01 {F:0.86 G:0.36 R:0.88}]:
+Slice 0k-BR implements the first behavior-neutral `LLVMEmissionSession`
+owner migration. It consumes exactly the `function-list-inline` authority edge:
+`LLVMIRGenerator#generate` now builds an `LLVMEmissionSession` and reads
+`functions_to_emit` from it, while reachability selection, unresolved-pattern
+skip propagation, return-type precompute, and mangled-name dedup live in
+`build_llvm_emission_function_plan`. New guard:
+`scripts/llvm_emission_session_source_shape_guard.sh`; with
+`REQUIRE_SESSION=1` it reports `source_shape=session_consumes_function_plan`,
+`generate_inline_reachability_count=0`, `generate_inline_skip_set_count=0`,
+and `generate_inline_dedup_count=0`. Adversary refutation: implementing the
+owner with Crystal `record` macros changed B4 to
+`STUB CALLED: Adamas::MIR::LLVMEmissionFunctionPlan#functions_to_emit`; the
+committed shape uses explicit private classes/methods and fresh B4 evidence
+returns to `classification=current_0k_bn_frontier`. Scope: behavior-neutral
+function-plan ownership only; no worker policy, fallback, side-effect merge,
+tail stub, output-file, resource-acceptance, materialization, parser, or
+`BlockOwner` behavior changed. B4 remains measured-red and no green `s2b` or
+`s3b` claim is made. Decay trigger: `LLVMEmissionSession` moves another
+authority edge, B4 reaches a different first-bad boundary, or the guard no
+longer distinguishes session-owned plan construction from inline locals.
+
 [LM-ARCH-0K-BQ-LLVM-EMISSION-SESSION-CONTRACT|design-sealed 2026-07-01 {F:0.84 G:0.58 R:0.88}]:
 Slice 0k-BQ design-seals `LLVMEmissionSession` as the first concrete
 `PhaseAuthority` owner record for the B4 generated-stage corridor. Source

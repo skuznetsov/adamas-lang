@@ -8,6 +8,23 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: implemented Slice 0k-BR, the first behavior-neutral
+  `LLVMEmissionSession` owner migration. New guard:
+  `scripts/llvm_emission_session_source_shape_guard.sh`. The slice consumes
+  the `function-list-inline` authority edge only: `LLVMIRGenerator#generate`
+  now obtains `functions_to_emit` through an explicit
+  `LLVMEmissionSession` / `LLVMEmissionFunctionPlan` owner object instead of
+  keeping reachability, unresolved-pattern skip propagation, return-type
+  precompute, and mangled-name dedup as inline locals in `generate`. Worker
+  policy, parallel fallback, side-effect merging, tail undefined externs,
+  missing-body stubs, output-file ownership, resource acceptance, and
+  `BlockOwner` are unchanged. Adversary result: a first implementation using
+  Crystal `record` macros was rejected because produced `s2b` changed B4 to
+  `STUB CALLED: Adamas::MIR::LLVMEmissionFunctionPlan#functions_to_emit`; the
+  committed shape uses explicit private classes/methods and B4 returns to
+  `classification=current_0k_bn_frontier`. This is not a green `s2b`/`s3b`
+  claim; it only installs the first owner boundary and guard.
+
 - 2026-07-01 UPDATE: added Slice 0k-BQ, a docs-only
   `LLVMEmissionSession` owner-contract design under the 0k-BP
   `PhaseAuthority` freeze. Source inventory pins the current legacy authority
