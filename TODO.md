@@ -8,6 +8,19 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: added Slice 0k-CF, an executable G6
+  `MaterializationTransaction` availability guard:
+  `scripts/block_owner_materialization_transaction_availability_report.sh
+  bin/adamas` reports `tx_rows=1`, `joined_emit_rows=7`,
+  `body_present_rows=7`, `real_defs=1`, and `stub_defs=0`. The older G6
+  repro also passes. This proves the current `Hash(UInt64, BlockOwner)#[]=`
+  lane is transaction-joined and body-present for the current stage1 compiler;
+  it does not claim green `s2b`/`s3b`. Fresh pressure gates still report
+  `b4.classification=current_0k_bn_frontier`, `join_status=joined`, and
+  `admission_status=rejected_no_root_sized_consumer`. Next work therefore moves
+  back to `GeneratedStageExecution` root-sized consumer selection, not another
+  G6/materialization behavior patch unless the new guard regresses.
+
 - 2026-07-02 UPDATE: added Slice 0k-CE, the G6 pre-code
   `MaterializationTransaction` plan. Production source is still paused. The
   plan pins the actual setter producer path (`lower_assign` index target ->

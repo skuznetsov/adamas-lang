@@ -12,6 +12,27 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-CF-G6-AVAILABILITY-GUARD|implemented 2026-07-02 {F:0.88 G:0.64 R:0.88}]:
+Slice 0k-CF adds executable guard
+`scripts/block_owner_materialization_transaction_availability_report.sh` for
+the 0k-CE G6 invariant. Fresh evidence with `bin/adamas` reports
+`tx_rows=1`, `exact_tx=1`, `all_equal_tx=1`, `instance_tx=1`,
+`body_eq_call_tx=1`, `emit_rows=7`, `joined_emit_rows=7`,
+`body_present_rows=7`, `body_missing_rows=0`, `real_defs=1`, and
+`stub_defs=0`; the older
+`regression_tests/block_owner_index_assign_materialization_repro.sh bin/adamas`
+also passes. This closes G6 as the active implementation selector for the
+current stage1 compiler unless the guard regresses. It is not a green
+`s2b`/`s3b` claim: fresh B4/L6 pressure evidence still reports
+`b4.classification=current_0k_bn_frontier`, `final_classification=abort_resource`,
+`join_status=joined`, and
+`admission_status=rejected_no_root_sized_consumer`. Next movement is therefore
+GeneratedStageExecution root-sized consumer selection; worker/resource/backend
+patches remain rejected until a transaction-owned behavior edge is selected.
+Scope: one behavior-neutral script plus docs/control-plane updates; no compiler
+production source changed. Decay trigger: the G6 guard fails, `BlockOwner`
+setter write-path changes, or B4 reaches `REQUIRE_CLEAN=1`.
+
 [LM-ARCH-0K-CE-G6-MATERIALIZATION-PRECODE-PLAN|design-sealed 2026-07-02 {F:0.86 G:0.68 R:0.87}]:
 Slice 0k-CE converts the 0k-CD pause into a concrete pre-code
 `MaterializationTransaction` plan. Live source inspection pins the G6 producer
@@ -31,8 +52,8 @@ forwarders, requested-name forcing, broad `NamedTuple`/`Tuple` rendering,
 global ambient-map policy changes, parser changes, and rolling `BlockOwner`
 back to tuple/namedtuple remain rejected. Scope: docs/control-plane only; no
 compiler production behavior changed and no green `s2b`/`s3b` claim. Decay
-trigger: a G6 implementation lands, the setter write-path changes, or B4 reaches
-`REQUIRE_CLEAN=1`.
+trigger: superseded by LM-ARCH-0K-CF-G6-AVAILABILITY-GUARD, the setter
+write-path changes, or B4 reaches `REQUIRE_CLEAN=1`.
 
 [LM-ARCH-0K-CD-G6-PRECODE-PAUSE|design-sealed 2026-07-02 {F:0.84 G:0.66 R:0.86}]:
 Slice 0k-CD is a docs-only hostile review checkpoint that pauses production

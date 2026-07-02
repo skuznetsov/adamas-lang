@@ -499,6 +499,18 @@ has no transaction id, if only a sibling body exists, if MIR falls back to
 `ExternCall`, if backend alone knows the missing body, or if the would-change set
 is broader than the current `BlockOwner` setter family.
 
+2026-07-02 post-0k-CF note: the G6 availability slice landed as a
+behavior-neutral executable guard, not as a compiler source patch. Fresh
+`scripts/block_owner_materialization_transaction_availability_report.sh
+bin/adamas` reports one exact/all-equal BlockOwner setter transaction, seven
+joined body-present emissions, one non-stub LLVM body, and zero setter stubs.
+Fresh B4/L6 pressure gates still report `classification=current_0k_bn_frontier`,
+`join_status=joined`, and `admission_status=rejected_no_root_sized_consumer`.
+Therefore the next architecture movement is back under `GeneratedStageExecution`:
+select one root-sized joined consumer edge before changing workers, resources,
+output commit behavior, tail stubs, or backend missing-body behavior. Do not
+continue materialization behavior work unless the new G6 guard regresses.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`
