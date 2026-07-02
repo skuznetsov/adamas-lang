@@ -12,6 +12,27 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-DU-WORKERS1-MIR-OPT-RESOURCE-LANE|implemented 2026-07-02 {F:0.91 G:0.62 R:0.88}]:
+`scripts/generated_stage_workers1_mir_subphase_classifier.sh` splits the 0k-DT
+workers=1 HIR-to-MIR resource lane by OS RSS stop gates. It uses new
+debug-only gates `ADAMAS_STOP_AFTER_MIR_TYPE_REGISTRATION`,
+`ADAMAS_STOP_AFTER_MIR_PREPARE`, `ADAMAS_STOP_AFTER_MIR_BODIES`, and
+`ADAMAS_STOP_AFTER_MIR_OPT`, plus `/usr/bin/time -l` and `scripts/run_safe.sh`.
+Fresh `REQUIRE_CLASSIFICATION=1 REQUIRE_SUBPHASE=1` evidence reports
+`classification=select_workers1_mir_optimization_resource_lane`. Controls:
+`stage1_mir_peak_rss_mb=345`; produced-s2 workers=1 HIR, MIR type
+registration, MIR prepare, and MIR bodies stop gates remain below threshold
+(`1167`, `1170`, `1170`, and `1172` MB). The first high selected stop gate is
+MIR optimization (`s2_mir_opt_peak_rss_mb=4149`,
+`s2_mir_opt_memory_kill=1`); the full MIR stop gate also memory-kills
+(`s2_mir_peak_rss_mb=4408`, `s2_mir_memory_kill=1`). Scope: this is a subphase
+selector, not a resource fix. It selects workers=1 MIR optimization resource
+growth as the next production resource target; HIR, type registration,
+function-stub prepare, and body lowering are clean controls for this lane.
+Decay trigger: the subphase classifier stops selecting MIR optimization, an
+earlier MIR stop gate becomes high, stage1 control becomes high, or generated
+MIR optimization routing changes.
+
 [LM-ARCH-0K-DT-MODE-RESOURCE-LANE-SELECTOR|implemented 2026-07-02 {F:0.90 G:0.61 R:0.87}]:
 `scripts/generated_stage_mode_resource_lane_classifier.sh` selects the next
 mode-local `GeneratedStageExecution` resource lane using OS RSS stop-gate

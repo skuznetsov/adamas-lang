@@ -2982,6 +2982,14 @@ module Adamas
           "cli.mir",
           "hir_functions=#{hir_module.functions.size} hir_types=#{hir_module.types.size} globals=#{globals.size}"
         )
+        if BootstrapEnv.enabled?("ADAMAS_STOP_AFTER_MIR_TYPE_REGISTRATION")
+          log_codepath_status("cli.gate", "stop_after_mir_type_registration", "taken", "CLI")
+          log(options, out_io, "  Stop after MIR type registration (ADAMAS_STOP_AFTER_MIR_TYPE_REGISTRATION)")
+          emit_timings(options, out_io, timings, total_start)
+          return 0
+        else
+          log_codepath_status("cli.gate", "stop_after_mir_type_registration", "not_taken", "CLI")
+        end
 
         # Fused parallel mode: MIR lowering + optimization + LLVM emission in one parallel step.
         # Default off — fused mode has correctness issues with worker-side state (symbols,
@@ -3002,6 +3010,14 @@ module Adamas
             "cli.mir",
             "mir_functions=#{mir_module.functions.size} mode=fused_stubs"
           )
+          if BootstrapEnv.enabled?("ADAMAS_STOP_AFTER_MIR_PREPARE")
+            log_codepath_status("cli.gate", "stop_after_mir_prepare", "taken", "CLI")
+            log(options, out_io, "  Stop after MIR prepare (ADAMAS_STOP_AFTER_MIR_PREPARE)")
+            emit_timings(options, out_io, timings, total_start)
+            return 0
+          else
+            log_codepath_status("cli.gate", "stop_after_mir_prepare", "not_taken", "CLI")
+          end
           timings["dbg_count_mir_funcs"] = mir_module.functions.size.to_f if debug_profile
           log(options, out_io, "  Functions: #{mir_module.functions.size} (stubs, fused parallel)")
           timings["mir"] = (Time.instant - mir_start).total_milliseconds if options.stats
@@ -3029,6 +3045,14 @@ module Adamas
             "cli.mir",
             "mir_functions=#{mir_module.functions.size} mode=serial"
           )
+          if BootstrapEnv.enabled?("ADAMAS_STOP_AFTER_MIR_PREPARE")
+            log_codepath_status("cli.gate", "stop_after_mir_prepare", "taken", "CLI")
+            log(options, out_io, "  Stop after MIR prepare (ADAMAS_STOP_AFTER_MIR_PREPARE)")
+            emit_timings(options, out_io, timings, total_start)
+            return 0
+          else
+            log_codepath_status("cli.gate", "stop_after_mir_prepare", "not_taken", "CLI")
+          end
           mir_prepare_ms = if start = mir_prepare_start
                              (Time.instant - start).total_milliseconds
                            else
@@ -3042,6 +3066,14 @@ module Adamas
             "cli.mir",
             "mir_functions=#{mir_module.functions.size}"
           )
+          if BootstrapEnv.enabled?("ADAMAS_STOP_AFTER_MIR_BODIES")
+            log_codepath_status("cli.gate", "stop_after_mir_bodies", "taken", "CLI")
+            log(options, out_io, "  Stop after MIR bodies (ADAMAS_STOP_AFTER_MIR_BODIES)")
+            emit_timings(options, out_io, timings, total_start)
+            return 0
+          else
+            log_codepath_status("cli.gate", "stop_after_mir_bodies", "not_taken", "CLI")
+          end
           mir_lower_ms = if start = mir_lower_start
                            (Time.instant - start).total_milliseconds
                          else
@@ -3114,6 +3146,14 @@ module Adamas
               "cli.mir",
               "mir_functions=#{mir_module.functions.size}"
             )
+          end
+          if BootstrapEnv.enabled?("ADAMAS_STOP_AFTER_MIR_OPT")
+            log_codepath_status("cli.gate", "stop_after_mir_opt", "taken", "CLI")
+            log(options, out_io, "  Stop after MIR opt (ADAMAS_STOP_AFTER_MIR_OPT)")
+            emit_timings(options, out_io, timings, total_start)
+            return 0
+          else
+            log_codepath_status("cli.gate", "stop_after_mir_opt", "not_taken", "CLI")
           end
 
           # A' BEHAVIOR: the inline-Array-storage facts must be populated on the FINAL

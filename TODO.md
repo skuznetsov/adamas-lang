@@ -8,6 +8,25 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: Slice 0k-DU splits the selected workers=1 HIR-to-MIR
+  resource lane by MIR subphase using OS-RSS stop gates. New debug-only gates:
+  `ADAMAS_STOP_AFTER_MIR_TYPE_REGISTRATION`,
+  `ADAMAS_STOP_AFTER_MIR_PREPARE`, `ADAMAS_STOP_AFTER_MIR_BODIES`, and
+  `ADAMAS_STOP_AFTER_MIR_OPT`; new executable classifier:
+  `scripts/generated_stage_workers1_mir_subphase_classifier.sh`. Fresh
+  `REQUIRE_CLASSIFICATION=1 REQUIRE_SUBPHASE=1` evidence reports
+  `classification=select_workers1_mir_optimization_resource_lane`: stage1
+  workers=1 MIR control is clean (`345` MB); produced-s2 workers=1 HIR/type
+  registration/prepare/bodies stop gates are clean (`1167`/`1170`/`1170`/`1172`
+  MB); produced-s2 workers=1 `MIR_OPT` memory-kills at `4149` MB and full MIR
+  stop-gate memory-kills at `4408` MB. Therefore the next production resource
+  receipt must target workers=1 MIR optimization resource growth first and
+  preserve HIR/body-lowering as clean controls plus default late LLVM/function
+  emission as residual. Do not patch HIR lowering, MIR type registration,
+  function-stub prepare, body lowering, default function emission, worker
+  policy, memory budgets, backend rescue, `NamedTuple`/`Tuple`, ambient maps,
+  or `BlockOwner` from this evidence.
+
 - 2026-07-02 UPDATE: Slice 0k-DT selects the mode-local resource lane with
   OS-RSS stop-gate evidence. New executable classifier:
   `scripts/generated_stage_mode_resource_lane_classifier.sh`. Fresh

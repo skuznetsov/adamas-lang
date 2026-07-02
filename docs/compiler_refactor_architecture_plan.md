@@ -393,6 +393,20 @@ resource work should not chase the default sequential-emission stack first. It
 must target the workers=1 HIR-to-MIR resource-growth lane, while keeping
 default late LLVM/function-emission as residual evidence.
 
+2026-07-02 post-0k-DU note: the selected workers=1 HIR-to-MIR lane is now split
+by MIR subphase with OS-RSS stop gates. New gates:
+`ADAMAS_STOP_AFTER_MIR_TYPE_REGISTRATION`, `ADAMAS_STOP_AFTER_MIR_PREPARE`,
+`ADAMAS_STOP_AFTER_MIR_BODIES`, and `ADAMAS_STOP_AFTER_MIR_OPT`; new classifier:
+`scripts/generated_stage_workers1_mir_subphase_classifier.sh`. Fresh
+`REQUIRE_CLASSIFICATION=1 REQUIRE_SUBPHASE=1` evidence selects
+`classification=select_workers1_mir_optimization_resource_lane`: produced-s2
+workers=1 HIR/type-registration/prepare/bodies stop gates remain clean
+(`1167`/`1170`/`1170`/`1172` MB), while workers=1 MIR optimization memory-kills
+at `4149` MB and full MIR at `4408` MB. The next production resource work
+should therefore target workers=1 MIR optimization resource growth, not HIR
+lowering, type registration, function-stub prepare, body lowering, default LLVM
+function emission, worker policy, or memory budgets.
+
 2026-07-02 post-0k-CR note: the return-shape census now also measures
 assigned-tail yield passthrough (`result = yield; ...; result`). Strict current
 evidence keeps the broad 0k-CQ result for naive `contains_yield` scope, but
