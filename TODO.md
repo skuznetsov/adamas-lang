@@ -8,6 +8,23 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: added Slice 0k-BP, a docs-only architecture freeze after
+  hostile review of the post-0k-BO decision. Production compiler fixes from
+  the B4 crash stack are paused. `scripts/generated_stage_llvm_entry_classifier.sh`
+  remains the active measured-red/future-green pressure gate, but it is not a
+  license to patch LLVM workers, memory limits, backend fallback, output
+  buffers, or direct segfault symptoms. The next movement must first define a
+  `PhaseAuthority` / `GeneratedStageExecution` owner contract: which facts are
+  semantic across stage1/s2b/s3b, which are phase-local, which are owned by a
+  single `LLVMEmissionSession`, and which are debug/probe-only. A classifier
+  extension is admitted only if it answers one of those owner questions
+  (function-list identity, worker/fallback policy, side-effect table merge,
+  output-buffer lifetime, resource-budget accounting, or generated-stage
+  evidence). A behavior slice is admitted only after that owner contract names
+  the old authority edge being replaced, shadowed, or refuted. This slice
+  changes planning only; it does not make `s2b`/`s3b` green and does not weaken
+  B4.
+
 - 2026-07-01 UPDATE: implemented Slice 0k-BO, the executable B4
   generated-stage LLVM-entry classifier. New script:
   `scripts/generated_stage_llvm_entry_classifier.sh`. It builds or accepts a

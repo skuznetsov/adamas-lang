@@ -12,6 +12,31 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-BP-PHASE-AUTHORITY-FREEZE|design-sealed 2026-07-01 {F:0.83 G:0.62 R:0.87}]:
+Slice 0k-BP freezes production symptom fixes after hostile review of the
+post-0k-BO decision. `scripts/generated_stage_llvm_entry_classifier.sh`
+remains the active B4 bootstrap pressure gate, but B4 is no longer treated as
+permission to patch the latest LLVM-entry symptom. The next architecture
+movement must first define the `PhaseAuthority` / `GeneratedStageExecution`
+owner contract: which facts crossing stage1, produced `s2b`, LLVM emission,
+and later generated stages are semantic, phase-local, emission-session-owned,
+or debug/probe-only. Required fact families before behavior edits are
+function-list identity, worker/fallback policy, side-effect table merge,
+output-buffer lifetime, resource-budget accounting, and generated-stage
+evidence. A future classifier extension is admitted only when it answers one
+of those owner-boundary questions; a production behavior slice is admitted only
+after the owner contract and focused guard name the old authority edge being
+replaced, shadowed, or refuted. Rejected repeats: patching
+`emit_functions_parallel` from the rand symptom, raising memory limits as
+acceptance evidence, forcing `ADAMAS_LLVM_WORKERS=1`, backend undefined-extern
+rescue, target keepalive/forwarders, another diagnostic report without an
+owner question, H7/H8 bootstrap claims that do not move B4, or rolling
+`BlockOwner` back to tuple/namedtuple metadata. Scope: docs/frontier control
+only; no compiler behavior changed and no green `s2b`/`s3b` claim is made.
+Decay trigger: a committed `PhaseAuthority` / `GeneratedStageExecution` owner
+contract lands, B4 `REQUIRE_CLEAN=1` passes with generated-stage evidence, or
+fresh evidence proves a different active bootstrap pressure gate.
+
 [LM-ARCH-0K-BO-GENERATED-STAGE-LLVM-ENTRY-CLASSIFIER|measured-red 2026-07-01 {F:0.84 G:0.48 R:0.87}]:
 Slice 0k-BO adds executable classifier
 `scripts/generated_stage_llvm_entry_classifier.sh` for the 0k-BN / B4

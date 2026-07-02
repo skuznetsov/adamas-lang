@@ -292,6 +292,20 @@ transition and exits 139 without the rand symptom. The next implementation
 should extend this classifier toward a first-bad `LLVMEmissionSession` owner
 boundary, not patch the worker symptom directly.
 
+2026-07-01 post-0k-BP note: production fixes from the B4 crash stack are
+paused. The next movement is not "extend the classifier" by default; it is to
+design the owner contract that such a classifier would exercise.
+`PhaseAuthority` / `GeneratedStageExecution` is the next architecture tranche:
+classify phase facts as semantic, phase-local, emission-session-owned, or
+debug-only; name old authority edges for function-list identity,
+worker/fallback policy, side-effect table merge, output-buffer lifetime,
+resource-budget accounting, and generated-stage evidence. A B4 classifier
+extension is architecture work only if it answers one of those owner questions.
+A behavior slice is admitted only after the owner contract and focused guard
+name the old authority edge being replaced, shadowed, or refuted. This keeps B4
+as the active bootstrap pressure gate without letting it become another
+crash-stack-first implementation lane.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`

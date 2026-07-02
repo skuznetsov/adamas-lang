@@ -58,17 +58,30 @@ Slice 0k-BO makes that lane executable with
 `scripts/generated_stage_llvm_entry_classifier.sh`. The classifier is a
 measured-red/current-frontier gate today and a future clean gate through
 `REQUIRE_CLEAN=1`; it does not change compiler behavior.
+Slice 0k-BP is a docs-only architecture freeze after hostile review of the
+post-0k-BO decision. It pauses production symptom fixes from the B4 crash stack.
+The B4 classifier remains the active bootstrap pressure gate, but the next
+architecture movement must first define the owner boundary it is meant to
+exercise. That boundary is tentatively named `PhaseAuthority` /
+`GeneratedStageExecution`: the contract that decides which phase facts cross
+HIR, MIR, LLVM emission, and generated-stage execution, and which facts are
+only phase-local implementation details. A future classifier extension is
+admitted only if it answers one of those owner-boundary questions; a worker
+patch, memory-budget patch, backend fallback patch, or direct segfault fix is
+not admitted by this checkpoint.
 
 Current frontier: the compiler can make progress through bounded bug slices,
 but many semantic decisions are still inferred repeatedly across HIR, MIR, and
 LLVM lowering. This creates hidden oracles, string-name coupling, phase-local
 fallbacks, and hard-to-localize bootstrap failures. The immediate live
 bootstrap boundary after 0k-BM is the produced-stage entry into LLVM function
-emission, not another TypeValue core row.
+emission, not another TypeValue core row. After 0k-BP, this boundary is treated
+as an architecture-design pressure point rather than a license to patch the
+latest emitted symptom.
 
 ## Active Architecture Board
 
-Status: execution board after Slice 0k-BN. This board exists to
+Status: execution board after Slice 0k-BP. This board exists to
 prevent the next step from being selected by the latest generated-stage crash
 stack. A next slice is admitted only if it moves one board row by replacing or
 shadowing a named authority edge, producing `CodePathStatus` evidence for a
@@ -78,13 +91,107 @@ named path, or refuting a row with fresher generated-stage evidence.
 | --- | --- | --- | --- |
 | `SemanticStateScope` | `prefer_callsite_specialization` is promoted in shadow/parity mode; emitted behavior still returns the legacy result. The `lower_function_if_needed.override` seam is also already promoted through the MaterializationDecision shadow helper and must not be reselected. Slice 0k-AU extends the existing admission report with a source-only no-repeat selector. It finds two unpromoted frontend direct consumers (`lower_function_if_needed.callsite_args` and `lower_function_if_needed.suffix_types`), rejects `lower_call.remangle` as backend-adjacent, and selects no single root-sized consumer. Slice 0k-AV defined the admitted shared state-model shape. Slice 0k-AW implements that shared `KeepRequestedNameDecision` state in behavior-neutral parity mode for both paired frontend consumers and replaces the stale `NamedTuple` owner-cache guard with a current `BlockOwner` guard. | The paired keep-requested-name inline edges are now consumed in parity mode. Next movement is not another crash-stack fix. Move to contract-first SDD hardening: close missing falsifiers for semantic identity, function-body presence, and generic instance/template keys, or select a fresh owner boundary only if it replaces a named authority edge with an owned fact and a falsifier. | Reselecting `prefer_callsite_specialization` or `lower_function_if_needed.override`; choosing either `callsite_args` or `suffix_types` by source order or convenience; treating `state_model_redesign_complete=1` as bootstrap progress; changing emitted behavior from a shadow row; globally clearing/ignoring `@type_param_map`; backend forwarders; requested-name forcing; `BlockOwner` rollback. |
 | `TypeValue` / `RuntimeTypeIdentity` + frontend command-call preservation | Slice 0k-BA made the original-vs-stage semantic oracle executable and measured-red: current stage preserves `CONST=7` but prints blank `TYPE=` / `UNION=` where original Crystal prints `Int32`. Slice 0k-BC added the original H6 guard, which is measured-red but includes a parser-confounded direct no-parens `puts (true ? 1 : nil).class` row. Slice 0k-BD seals the TypeValue production receipt. Slice 0k-BF records a reverted TypeValue owner preflight: B3/H4 went green, but strict H6 still failed only on the direct command-call row. Slice 0k-BG adds the focused parser-shape guard and proves that row is a frontend command-call preservation frontier. Slice 0k-BH pauses parser production after a reverted local WIP. Slice 0k-BI implements the split-H6 route with `regression_tests/type_value_core_runtime_identity_contract.sh`. Slice 0k-BJ/0k-BL gate the owner-fact implementation and quarantine WIP inertia. Slice 0k-BM implements the H6-core owner fact: H6-core, B3, and H4 are strict-green on a fresh stage1 compiler, while H7 command-call parsing remains measured-red and H8 dynamic multi-variant union `.class` is now an explicit pre-s2-clean residual guard. | The next TypeValue movement is no longer H6-core row-greening. It must choose one of two separate lanes: H7 parser `semantic-service-extraction` for no-parens command-call preservation, or H8 runtime type-name service for dynamic multi-variant union `.class`. H8 may use the HIR `RuntimeTypeIdentity.runtime_stringification_required` policy as the source-level owner fact, but must not implement backend stringification without a new SDD slice naming the HIR/MIR/runtime boundary. | A string-only `lower_typeof` fix; an interpolation-only fix; a direct `puts` special-case without a type-value owner; source-text direct-puts workaround for `puts (expr).class`; using a stashed WIP as evidence without fresh baseline; backend stubs/forwarders; treating green H6-core as full old H6 green while command-call/dynamic-union guards remain red; changing `BlockOwner`, requested-name policy, ambient-map policy, broad `NamedTuple`/`Tuple` rendering, or generic materialization in the same slice; starting H7 or H8 code without a new row-specific SDD entry and measured-red baseline. |
-| `GeneratedStageExecution` / `LLVMEmissionSession` | Slice 0k-BN records the first post-0k-BM integration check: stage1 can produce `s2b`, but produced `s2b` compiling a full-prelude tiny source fails after `pass3 after lower_main call`. Slice 0k-BO adds `scripts/generated_stage_llvm_entry_classifier.sh`; fresh `REQUIRE_CURRENT_FRONTIER=1` evidence reports `classification=current_0k_bn_frontier`, default LLVM workers hit `Invalid bound for rand: 0` plus RSS-kill, and `ADAMAS_LLVM_WORKERS=1` removes that worker symptom but still exits 139 at the same transition. This refutes treating parallel scheduling or memory budget alone as the root. | Next movement is `bootstrap-emergency-with-ledger` or `correctness-selection`, but behavior-neutral first: extend or consume the LLVM-entry classifier to distinguish MIR setup, function-list selection, worker/fallback scheduling, side-effect table merge, output-buffer ownership, and memory-resource growth. A behavior slice is admitted only after that classifier names one first-bad owner boundary and a focused guard. | Patching `emit_functions_parallel` because of the rand symptom; raising `run_safe` memory as acceptance evidence; forcing `ADAMAS_LLVM_WORKERS=1` as a fix; deleting or resuming `fused_parallel_requested` cleanup as bootstrap progress; backend undefined-extern rescue; selecting H7/H8 code as bootstrap-moving work without showing it changes this produced-stage LLVM-entry boundary. |
+| `GeneratedStageExecution` / `LLVMEmissionSession` | Slice 0k-BN records the first post-0k-BM integration check: stage1 can produce `s2b`, but produced `s2b` compiling a full-prelude tiny source fails after `pass3 after lower_main call`. Slice 0k-BO adds `scripts/generated_stage_llvm_entry_classifier.sh`; fresh `REQUIRE_CURRENT_FRONTIER=1` evidence reports `classification=current_0k_bn_frontier`, default LLVM workers hit `Invalid bound for rand: 0` plus RSS-kill, and `ADAMAS_LLVM_WORKERS=1` removes that worker symptom but still exits 139 at the same transition. This refutes treating parallel scheduling or memory budget alone as the root. Slice 0k-BP freezes production fixes from this symptom and reclassifies B4 as a pressure gate for a higher owner boundary: `PhaseAuthority` / `GeneratedStageExecution`. | Next movement is docs/design first. Define the owner contract for generated-stage phase facts before extending the classifier or patching behavior: function-list identity, emission session lifetime, worker/fallback policy, side-effect table merge, output-buffer ownership, resource-budget accounting, and generated-stage acceptance evidence. A classifier extension is admitted only when it answers one of those owner questions. A behavior slice is admitted only after the owner contract and focused guard name the old authority edge being replaced or refuted. | Patching `emit_functions_parallel` because of the rand symptom; raising `run_safe` memory as acceptance evidence; forcing `ADAMAS_LLVM_WORKERS=1` as a fix; adding another classifier that only narrows a crash offset without naming a phase owner fact; deleting or resuming `fused_parallel_requested` cleanup as bootstrap progress; backend undefined-extern rescue; selecting H7/H8 code as bootstrap-moving work without showing it changes this produced-stage LLVM-entry boundary. |
 | `MaterializationIdentity` / `MaterializationRegistry` | Slice 0k-Z promotes the selected `lower_function_if_needed.symbol_binding` seam in behavior-neutral shadow/parity mode. `scripts/materialization_symbol_binding_admission_report.sh` now reports `already_promoted_shadow` even with `REQUIRE_PROMOTED=1`; keepalive and materialization-ledger consumers read from `MaterializationSymbolBinding` fields instead of recomputing split locals. | Do not flip emitted symbols from this slice. Next movement must either run a generated-stage materialization/symbol-binding classification on the residual full-prelude s2 crash, or select the next root-sized owner consumer with a red/green gate. | Backend undefined-extern rescue; target keepalive as a standalone patch; requested-name forcing; `NamedTuple`/`Tuple` display normalization; global ambient-map predicate changes; `BlockOwner` rollback; treating the green source-shape gate as green `s2b`/`s3b`. |
 | `NameResolution` / `MethodNameCodec` | File identity was fixed; method/symbol identity is still partly rendered-string driven. Slice 0k-V promotes the selected `lower_function_if_needed.exact_lookup_keep_requested_name` seam through `method_name_codec_exact_lookup_keep_requested_name?` in shadow/parity mode; emitted behavior still returns the legacy result. Slice 0k-W pauses standalone promotion-report proliferation. | Either select the next root-sized codec seam with a red/green source-shape gate, or define a generated-stage classification slice that consumes the existing promotion ledger to answer one blocking yes/no decision before changing emitted naming behavior. | String-slice parsing patches at individual callsites; treating rendered names as canonical identity; broad normalization without a falsifier; selecting lower-level helpers before a materialization seam; flipping owner-result behavior from shadow rows; committing another report surface that does not reduce or select an authority edge. |
 | `CallMaterializationTransaction` spine | Slice 0k-AJ selects the reached transaction/emission edge `call_materialization.wrapper_or_call_remap.extern_missing_body`. Slice 0k-AK adds the docs stop rule for post-consumer selector decay. Slice 0k-AL makes that rule executable. Slice 0k-AM implements the behavior-neutral consumer: HIR stores transaction contract facts by tx id, HIR-to-MIR attaches them to transaction-bound `Call`/`ExternCall`, backend `[MAT_EMIT]` logs them mechanically, and optimizer replacement preserves them. Slice 0k-AO extends the same selector with a post-consumer exact-contract residual split. Fresh generated-stage evidence reports `post_consumer_state=selected_consumed_by_contract_consumer`, `contract_mismatch_rows=0`, `residual_exact_missing_body_rows=14`, `residual_exact_missing_body_groups=9`, and `residual_selection_status=rejected_exact_missing_body_ambiguous`. | The 0k-AJ selected edge is consumed, and the immediate exact-contract residual is ambiguous rather than root-selected. The next movement must either add a stronger discriminator that can select exactly one old authority edge from the 9 residual groups, or switch to `consolidation` / `cleanup/delete` under the 0k-AN covenant. | Treating consumed edge disappearance as failure; making old `REQUIRE_SELECTED=1` green by redefining rows; behavior-patching any residual sample (`Array#<<`, `Slice#[]`, `IO#read`, etc.) without a unique selector; backend forwarder or undefined-extern rescue; requested-name forcing; broad `NamedTuple`/`Tuple` rendering changes; global ambient-map policy changes; `BlockOwner` rollback; another standalone report that does not remove ambiguity or retire/refute an older surface. |
 | `InvocationContext` / `InlineYieldFrame` | Slice 0k-AC promotes the selected `lower_super.previous_def.invocation_context` seam in behavior-neutral shadow/parity mode. `scripts/invocation_context_admission_report.sh` now reports `already_promoted_shadow` even with `REQUIRE_PROMOTED=1`; `lower_super` and `lower_previous_def` consume an `InvocationContext` owner fact instead of directly reading ambient owner/method, method-kind, super-source, and forward-policy state. | Do not flip super lookup, previous-def lookup, or argument-forwarding behavior from this slice. Next movement must either classify the residual generated-stage frontier with fresh owner-boundary evidence or select a different root-sized board row with a red/green source-shape gate. | A new `ADAMAS_SUPER_CALL_CONTEXT_LEDGER` report without a decision question; direct `lower_super` guards; changing super lookup or argument forwarding from a crash stack; inline-yield stack resets as a consumer fix; treating the green source-shape gate as green bootstrap evidence. |
 | `AstNodeRef` / `ArenaOwnership` | Explicit-owner lower-call rows and `NodeSlotIntegrity` refuted owner drift, out-of-range ids, and missing slots for the instrumented edge. | Resume only with a named payload/deep-read or uninstrumented-consumer falsifier, including cleanup rules for its ledger. | Lower-call arena routing, broad arena scans, parser allocation rewrites, or another unbounded crash-edge probe. |
 | `CodePathStatus` | Runtime cleanup inventory now reports 26 no-prelude CLI paths and `inventory_delete_ready_rows=0`. `identity_dry_run` and `phase0_metrics` are `debug_only`; `fused_parallel_requested` is `experimental_live`; none are `delete_ready`. Slice 0k-AT pauses cleanup as the default bootstrap lane because no delete-ready row exists and bloat is not the active constraint for green `s2b`/`s3b`. | Resume only if the user explicitly selects bloat reduction, or if a future run produces an `eligible_delete_ready_candidate` with default-behavior, HIR/MIR/LLVM, bootstrap, and protecting-falsifier evidence. | Deleting `identity_dry_run`, `phase0_metrics`, or `fused_parallel_requested`; deleting any `not_taken_unproven` path from inventory alone; adding more cleanup classifications as a substitute for semantic owner migration; using runtime liveness as semantic ownership evidence. |
+
+### Slice 0k-BP: Architecture freeze after B4 classifier
+
+Status:
+
+- docs-only planning/control slice;
+- production compiler behavior is frozen for the B4 crash stack;
+- `scripts/generated_stage_llvm_entry_classifier.sh` remains the active
+  measured-red/future-green bootstrap pressure gate;
+- no source behavior, parser behavior, materialization behavior, backend
+  emission behavior, cleanup behavior, or `BlockOwner` carrier changes are
+  admitted by this slice.
+
+Problem:
+
+- the project can now localize generated-stage failures quickly enough that
+  "find the next first bad transition" has become a tail-chasing risk;
+- B4 names a real live bootstrap blocker, but by itself it only says that the
+  produced compiler fails entering LLVM emission after `lower_main`;
+- another local classifier or backend patch could make that symptom move while
+  preserving the same architectural weakness: facts crossing HIR, MIR, LLVM,
+  and generated-stage execution are still inferred from phase-local state,
+  rendered names, fallback globals, and backend side effects.
+
+Hostile self-review:
+
+- **Claim under attack:** "Extending the B4 classifier is the next architecture
+  implementation." That is only true if the extension answers an owner-boundary
+  question. A classifier that only says "crashes between marker X and marker Y"
+  is useful debug evidence, not architecture work.
+- **Opposite hypothesis:** "Stop all B4 work and design in the abstract."
+  That is also unsafe: the active objective is green `s2b`/`s3b`, and B4 is the
+  current integration pressure gate that prevents the plan from drifting away
+  from generated-stage reality.
+- **Decision:** freeze production fixes, keep B4 as pressure evidence, and
+  make the next movement a `PhaseAuthority` / `GeneratedStageExecution` owner
+  contract before any behavior patch.
+
+Owner contract to design next:
+
+`PhaseAuthority` / `GeneratedStageExecution` is the proposed owner boundary for
+facts that must survive from stage1 execution into generated-stage compiler
+execution. It is not a physical file split. It must state, for each phase fact,
+whether the fact is:
+
+1. **Semantic:** must be preserved across stage1, produced `s2b`, and later
+   `s3b` compilers.
+2. **Phase-local:** may be recomputed or discarded inside one HIR/MIR/LLVM
+   lowering session.
+3. **Emission-session state:** must be owned by a single `LLVMEmissionSession`
+   object or equivalent record during one LLVM generation run.
+4. **Debug/probe-only:** may not affect acceptance or generated-stage behavior.
+
+Minimum fact inventory before behavior edits:
+
+| Fact family | Current risk | Owner question |
+| --- | --- | --- |
+| Function-list identity | function emission may depend on order, missing bodies, fallback externs, or post-DCE visibility | Which list is authoritative for LLVM emission and generated-stage body presence? |
+| Worker/fallback policy | default workers show `Invalid bound for rand: 0`; single worker still crashes | Is worker selection semantic, resource policy, or debug execution mode? |
+| Side-effect tables | backend tables such as emitted functions, undefined externs, string/name caches, and parallel merge products can diverge | Which tables are session-owned and how are parallel results merged or rejected? |
+| Output buffers and files | produced-stage output can fail after HIR/MIR success | Which phase owns `.ll`, object, binary, and temp-file lifetimes? |
+| Resource budgets | `run_safe` RSS kill is currently evidence, not an accepted workaround | Which memory counters are evidence only, and which are acceptance gates? |
+| Generated-stage evidence | stage1 green guards can hide self-host-only failures | Which guards must run on produced `s2b` before a slice can claim bootstrap progress? |
+
+Admitted next step:
+
+1. Write or update the architecture plan so it has an explicit
+   `PhaseAuthority` / `GeneratedStageExecution` tranche with producer/consumer
+   inventory and old authority edges.
+2. Only after that plan exists, extend the B4 classifier if the extension maps
+   directly to one of the fact families above.
+3. Only after a classifier names a first bad owner boundary, write a focused
+   production slice that replaces, shadows, or refutes that old authority edge.
+
+Rejected shortcuts:
+
+- patching `emit_functions_parallel`, worker count, random bound handling, or
+  memory limits from the current B4 output;
+- adding backend undefined-extern rescue, target keepalive, or forwarders;
+- using B4 to justify H7/H8 parser/type-name work as bootstrap-moving;
+- adding another diagnostic report that does not retire, merge, or select a
+  named authority edge;
+- rolling `BlockOwner` back to tuple/namedtuple owner metadata;
+- claiming `s2b` or `s3b` progress from stage1-only source guards.
+
+DoD for this planning slice:
+
+- `TODO.md`, `LANDMARKS.md`, this SDD, the refactor plan, and the falsifier
+  matrix identify 0k-BP consistently;
+- B4 remains `[FRONTIER]` and executable, not deleted or weakened;
+- no compiler production code changes are included;
+- the next production movement has an execution ladder: row, tranche, old
+  authority edge, owner service/fact, producer/consumer map, baseline guard,
+  architecture guard, generated-stage relevance, residual boundary.
 
 Slice 0k-AP consolidation result: the architecture report surface is now
 treated as a registry, not as a menu of competing next steps. Existing reports
