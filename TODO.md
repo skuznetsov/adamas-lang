@@ -8,6 +8,27 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: the 0k-DM workers=1 observability gap is now a named
+  per-mode transaction boundary rather than an ambiguous missing-row symptom.
+  `scripts/generated_stage_execution_transaction_report.sh` adds
+  `REQUIRE_WORKER_MODE_BOUNDARY=1`, mode-local stage row counts, and
+  `resource.default_mode_boundary` / `resource.workers1_mode_boundary`.
+  Fresh evidence:
+  `STAGE1_COMPILER=/tmp/adamas_worker_boundary_stage1 TAIL_LINES=30 REQUIRE_JOINED=1 REQUIRE_POST_CU_RESOURCE=1 REQUIRE_RESOURCE_PHASE_SPLIT=1 REQUIRE_FUNCTION_EMISSION_SPLIT=1 REQUIRE_WORKER_MODE_BOUNDARY=1 scripts/generated_stage_execution_transaction_report.sh`
+  exits 0 with `resource.default_mode_boundary=reached_function_emission`,
+  `resource.workers1_mode_boundary=after_hir_final_before_mir_final`,
+  `runtime.default_mir_final_rows=1`, `runtime.workers1_mir_final_rows=0`,
+  `runtime.default_llvm_generate_phase_rows=2`,
+  `runtime.workers1_llvm_generate_phase_rows=0`,
+  `runtime.default_function_emission_phase_rows=13`, and
+  `runtime.workers1_function_emission_phase_rows=0`. This closes the L8
+  ambiguity: default worker mode reaches LLVM function emission and dies during
+  fallback sequential function emission, while workers=1 dies earlier after HIR
+  finalization and before MIR finalization. The next production slice must pick
+  one of those two transaction-owned resource lanes explicitly and preserve the
+  other as a residual; it must not present a default-mode fix as both-mode
+  bootstrap progress.
+
 - 2026-07-02 UPDATE: the 0k-DL function-emission corridor is now split one
   level deeper. `LLVMIRGenerator` records default-off
   `llvm.function_emission_phase` rows for dispatch, sequential progress,

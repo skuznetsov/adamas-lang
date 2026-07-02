@@ -24,6 +24,9 @@ Environment:
   REQUIRE_FUNCTION_EMISSION_SPLIT=1
                               Require LLVM function-emission subphase evidence
                               for the current resource corridor.
+  REQUIRE_WORKER_MODE_BOUNDARY=1
+                              Require mode-local boundary classification for
+                              the default and workers=1 resource corridors.
   REQUIRE_ADMIT_BEHAVIOR=1    Require the report to select a behavior-admissible
                               root-sized transaction-owned edge.
 
@@ -370,6 +373,14 @@ esac
 
 runtime_default_function_emission_rows="$(runtime_row_count_for_mode "default_workers" "llvm.function_emission_phase")"
 runtime_workers1_function_emission_rows="$(runtime_row_count_for_mode "workers1" "llvm.function_emission_phase")"
+runtime_default_hir_final_rows="$(runtime_row_count_for_mode "default_workers" "setup.hir_final")"
+runtime_workers1_hir_final_rows="$(runtime_row_count_for_mode "workers1" "setup.hir_final")"
+runtime_default_mir_final_rows="$(runtime_row_count_for_mode "default_workers" "setup.mir_final")"
+runtime_workers1_mir_final_rows="$(runtime_row_count_for_mode "workers1" "setup.mir_final")"
+runtime_default_output_start_rows="$(runtime_row_count_for_mode "default_workers" "output.llvm_ir_start")"
+runtime_workers1_output_start_rows="$(runtime_row_count_for_mode "workers1" "output.llvm_ir_start")"
+runtime_default_llvm_generate_rows="$(runtime_row_count_for_mode "default_workers" "llvm.generate_phase")"
+runtime_workers1_llvm_generate_rows="$(runtime_row_count_for_mode "workers1" "llvm.generate_phase")"
 if [[ "$runtime_default_function_emission_rows" -gt 0 && "$runtime_workers1_function_emission_rows" -gt 0 ]]; then
   runtime_function_emission_mode_join="both_modes"
 elif [[ "$runtime_default_function_emission_rows" -gt 0 ]]; then
@@ -379,6 +390,45 @@ elif [[ "$runtime_workers1_function_emission_rows" -gt 0 ]]; then
 else
   runtime_function_emission_mode_join="unjoined"
 fi
+
+mode_boundary_from_rows() {
+  local hir_rows="$1"
+  local mir_rows="$2"
+  local output_rows="$3"
+  local llvm_rows="$4"
+  local function_rows="$5"
+
+  if [[ "$function_rows" -gt 0 ]]; then
+    echo "reached_function_emission"
+  elif [[ "$llvm_rows" -gt 0 ]]; then
+    echo "after_llvm_generate_start_before_function_emission"
+  elif [[ "$output_rows" -gt 0 ]]; then
+    echo "after_output_start_before_llvm_generate"
+  elif [[ "$mir_rows" -gt 0 ]]; then
+    echo "after_mir_final_before_output_start"
+  elif [[ "$hir_rows" -gt 0 ]]; then
+    echo "after_hir_final_before_mir_final"
+  else
+    echo "before_hir_final_or_unjoined"
+  fi
+}
+
+runtime_default_mode_boundary="$(
+  mode_boundary_from_rows \
+    "$runtime_default_hir_final_rows" \
+    "$runtime_default_mir_final_rows" \
+    "$runtime_default_output_start_rows" \
+    "$runtime_default_llvm_generate_rows" \
+    "$runtime_default_function_emission_rows"
+)"
+runtime_workers1_mode_boundary="$(
+  mode_boundary_from_rows \
+    "$runtime_workers1_hir_final_rows" \
+    "$runtime_workers1_mir_final_rows" \
+    "$runtime_workers1_output_start_rows" \
+    "$runtime_workers1_llvm_generate_rows" \
+    "$runtime_workers1_function_emission_rows"
+)"
 
 missing_runtime_rows=()
 [[ -z "$runtime_hir_module_id" ]] && missing_runtime_rows+=("hir_module_id")
@@ -481,6 +531,7 @@ echo "require_joined=${REQUIRE_JOINED:-0}"
 echo "require_post_cu_resource=${REQUIRE_POST_CU_RESOURCE:-0}"
 echo "require_resource_phase_split=${REQUIRE_RESOURCE_PHASE_SPLIT:-0}"
 echo "require_function_emission_split=${REQUIRE_FUNCTION_EMISSION_SPLIT:-0}"
+echo "require_worker_mode_boundary=${REQUIRE_WORKER_MODE_BOUNDARY:-0}"
 echo "require_admit_behavior=${REQUIRE_ADMIT_BEHAVIOR:-0}"
 echo "invocation.source=$source_path"
 echo "invocation.source_sha1=$source_sha1"
@@ -535,6 +586,8 @@ echo "resource.default_function_emission_last_index=${runtime_default_function_e
 echo "resource.workers1_function_emission_last_phase=${runtime_workers1_function_emission_phase:-unjoined}"
 echo "resource.workers1_function_emission_last_mode=${runtime_workers1_function_emission_mode:-unjoined}"
 echo "resource.workers1_function_emission_last_index=${runtime_workers1_function_emission_index:-unjoined}"
+echo "resource.default_mode_boundary=$runtime_default_mode_boundary"
+echo "resource.workers1_mode_boundary=$runtime_workers1_mode_boundary"
 echo "runtime.ledger_rows=$(awk -F'\t' -v tx="$transaction_id" '$1 == "GSETX" && $2 == tx { count++ } END { print count + 0 }' "$RUNTIME_LEDGER" 2>/dev/null || echo 0)"
 echo "runtime.hir_rows=$(runtime_row_count "setup.hir_final")"
 echo "runtime.mir_rows=$(runtime_row_count "setup.mir_final")"
@@ -542,6 +595,14 @@ echo "runtime.session_rows=$(runtime_row_count "llvm.session")"
 echo "runtime.side_effect_rows=$(runtime_row_count "side_effect.runtime_counts")"
 echo "runtime.llvm_generate_phase_rows=$(runtime_row_count "llvm.generate_phase")"
 echo "runtime.function_emission_phase_rows=$(runtime_row_count "llvm.function_emission_phase")"
+echo "runtime.default_hir_final_rows=$runtime_default_hir_final_rows"
+echo "runtime.workers1_hir_final_rows=$runtime_workers1_hir_final_rows"
+echo "runtime.default_mir_final_rows=$runtime_default_mir_final_rows"
+echo "runtime.workers1_mir_final_rows=$runtime_workers1_mir_final_rows"
+echo "runtime.default_output_start_rows=$runtime_default_output_start_rows"
+echo "runtime.workers1_output_start_rows=$runtime_workers1_output_start_rows"
+echo "runtime.default_llvm_generate_phase_rows=$runtime_default_llvm_generate_rows"
+echo "runtime.workers1_llvm_generate_phase_rows=$runtime_workers1_llvm_generate_rows"
 echo "runtime.default_function_emission_phase_rows=$runtime_default_function_emission_rows"
 echo "runtime.workers1_function_emission_phase_rows=$runtime_workers1_function_emission_rows"
 echo "runtime.tail_rows=$(runtime_row_count "tail.semantic_split")"
@@ -572,6 +633,11 @@ if [[ "${REQUIRE_RESOURCE_PHASE_SPLIT:-0}" == "1" &&
 fi
 if [[ "${REQUIRE_FUNCTION_EMISSION_SPLIT:-0}" == "1" &&
       "$runtime_function_emission_split" == "function_emission_phase_unjoined" ]]; then
+  exit_code=9
+fi
+if [[ "${REQUIRE_WORKER_MODE_BOUNDARY:-0}" == "1" &&
+      ( "$runtime_default_mode_boundary" == "before_hir_final_or_unjoined" ||
+        "$runtime_workers1_mode_boundary" == "before_hir_final_or_unjoined" ) ]]; then
   exit_code=9
 fi
 if [[ "${REQUIRE_ADMIT_BEHAVIOR:-0}" == "1" && "$admission_status" != "admit_behavior_candidate" ]]; then

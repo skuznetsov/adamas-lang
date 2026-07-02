@@ -12,6 +12,29 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-DN-WORKER-MODE-BOUNDARY-SPLIT|implemented 2026-07-02 {F:0.91 G:0.64 R:0.90}]:
+The 0k-DM workers=1 missing function-emission rows are now classified from
+existing per-mode `GSETX` rows instead of treated as an ambiguous observability
+gap. `scripts/generated_stage_execution_transaction_report.sh` adds
+`REQUIRE_WORKER_MODE_BOUNDARY=1`, mode-local row counts for HIR final, MIR
+final, output start, LLVM generate, and function emission, plus
+`resource.default_mode_boundary` / `resource.workers1_mode_boundary`. Evidence:
+`STAGE1_COMPILER=/tmp/adamas_worker_boundary_stage1 TAIL_LINES=30 REQUIRE_JOINED=1 REQUIRE_POST_CU_RESOURCE=1 REQUIRE_RESOURCE_PHASE_SPLIT=1 REQUIRE_FUNCTION_EMISSION_SPLIT=1 REQUIRE_WORKER_MODE_BOUNDARY=1 scripts/generated_stage_execution_transaction_report.sh`
+exits 0 with `final_classification=abort_resource_after_lower_main`,
+`resource.default_mode_boundary=reached_function_emission`,
+`resource.workers1_mode_boundary=after_hir_final_before_mir_final`,
+`runtime.default_mir_final_rows=1`, `runtime.workers1_mir_final_rows=0`,
+`runtime.default_llvm_generate_phase_rows=2`,
+`runtime.workers1_llvm_generate_phase_rows=0`,
+`runtime.default_function_emission_phase_rows=13`, and
+`runtime.workers1_function_emission_phase_rows=0`. Scope: behavior-neutral
+report/classifier movement only. It proves the current B4/L6 residual is
+mode-divergent: default workers reach LLVM function emission, while workers=1
+dies after HIR finalization and before MIR finalization. A later fix must not
+claim both-mode bootstrap progress from a single-mode edge. Decay trigger: a
+fresh strict report joins workers=1 MIR final rows, reaches workers=1 function
+emission, or changes either mode boundary.
+
 [LM-ARCH-0K-DM-FUNCTION-EMISSION-SUBPHASE-SPLIT|implemented 2026-07-02 {F:0.91 G:0.63 R:0.90}]:
 The 0k-DL `during_function_emission` resource corridor is now split by
 default-off `llvm.function_emission_phase` rows. `LLVMIRGenerator#generate`

@@ -285,6 +285,21 @@ either make the workers=1 function-emission observability gap root-sized, or
 select a transaction-owned default-mode sequential emission edge with the
 workers=1 residual stated.
 
+2026-07-02 post-0k-DN note: the workers=1 gap is now root-sized from existing
+mode-local transaction rows, without adding compiler probes. Fresh evidence from
+`STAGE1_COMPILER=/tmp/adamas_worker_boundary_stage1 TAIL_LINES=30 REQUIRE_JOINED=1 REQUIRE_POST_CU_RESOURCE=1 REQUIRE_RESOURCE_PHASE_SPLIT=1 REQUIRE_FUNCTION_EMISSION_SPLIT=1 REQUIRE_WORKER_MODE_BOUNDARY=1 scripts/generated_stage_execution_transaction_report.sh`
+preserves `final_classification=abort_resource_after_lower_main` but reports
+`resource.default_mode_boundary=reached_function_emission`,
+`resource.workers1_mode_boundary=after_hir_final_before_mir_final`,
+`runtime.default_mir_final_rows=1`, `runtime.workers1_mir_final_rows=0`,
+`runtime.default_llvm_generate_phase_rows=2`,
+`runtime.workers1_llvm_generate_phase_rows=0`,
+`runtime.default_function_emission_phase_rows=13`, and
+`runtime.workers1_function_emission_phase_rows=0`. The next executable movement
+must choose one mode-local resource lane explicitly: default-mode sequential
+LLVM function emission, or workers=1 HIR-final-to-MIR-final resource growth.
+The unchosen lane remains a residual and must stay in the DoD.
+
 2026-07-02 post-0k-CR note: the return-shape census now also measures
 assigned-tail yield passthrough (`result = yield; ...; result`). Strict current
 evidence keeps the broad 0k-CQ result for naive `contains_yield` scope, but
