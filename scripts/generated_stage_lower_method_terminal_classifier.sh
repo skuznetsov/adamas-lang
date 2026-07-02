@@ -270,28 +270,35 @@ replacements = [
     "      # Restore previous method context\n",
   ],
   [
-    "                  lower_method(owner, class_info, resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, override, force_class_method: force_class_method)\n",
-    "                  lower_method_call_probe(\"instance_class_info_lower_method\", instance_transaction.requested_name, instance_transaction.target_name, instance_transaction.body_symbol, owner, resolved_parts.method || \"\", override, call_arg_types, resolved_func_def)\n" \
-    "                  lower_method(owner, class_info, resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, override, force_class_method: force_class_method)\n",
+    "                lower_method(owner, class_info, resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, override, force_class_method: force_class_method)\n",
+    "                lower_method_call_probe(\"instance_class_info_lower_method\", instance_transaction.requested_name, instance_transaction.target_name, instance_transaction.body_symbol, owner, resolved_parts.method || \"\", override, call_arg_types, resolved_func_def)\n" \
+    "                lower_method(owner, class_info, resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, override, force_class_method: force_class_method)\n",
   ],
   [
-    "              with_isolated_type_param_map(merged_params) do\n                with_namespace_override_or_clear(namespace_override) do\n",
+    "              if materialization_transaction_ledger_enabled?\n                log_call_materialization_transaction_ledger(instance_transaction)\n              end\n              old_type_param_map = @type_param_map\n",
+    "              if materialization_transaction_ledger_enabled?\n" \
+    "                log_call_materialization_transaction_ledger(instance_transaction)\n" \
+    "              end\n" \
     "              lower_method_precall_probe(\"after_tx\", instance_transaction.requested_name, instance_transaction.target_name, instance_transaction.body_symbol, owner, override, call_arg_types, resolved_func_def)\n" \
-    "              with_isolated_type_param_map(merged_params) do\n" \
-    "                lower_method_precall_probe(\"inside_type_params\", instance_transaction.requested_name, instance_transaction.target_name, instance_transaction.body_symbol, owner, override, call_arg_types, resolved_func_def)\n" \
-    "                with_namespace_override_or_clear(namespace_override) do\n" \
-    "                  lower_method_precall_probe(\"inside_namespace\", instance_transaction.requested_name, instance_transaction.target_name, instance_transaction.body_symbol, owner, override, call_arg_types, resolved_func_def)\n",
+    "              old_type_param_map = @type_param_map\n",
   ],
   [
-    "                  if call_arg_types && call_arg_types.size > 0\n                    actual_arity = count_non_block_params(resolved_func_def)\n",
-    "                  lower_method_precall_probe(\"before_arity\", instance_transaction.requested_name, instance_transaction.target_name, instance_transaction.body_symbol, owner, override, call_arg_types, resolved_func_def)\n" \
-    "                  if call_arg_types && call_arg_types.size > 0\n" \
-    "                    actual_arity = count_non_block_params(resolved_func_def)\n",
+    "              @current_namespace_override = namespace_override\n              begin\n",
+    "              lower_method_precall_probe(\"inside_type_params\", instance_transaction.requested_name, instance_transaction.target_name, instance_transaction.body_symbol, owner, override, call_arg_types, resolved_func_def)\n" \
+    "              @current_namespace_override = namespace_override\n" \
+    "              lower_method_precall_probe(\"inside_namespace\", instance_transaction.requested_name, instance_transaction.target_name, instance_transaction.body_symbol, owner, override, call_arg_types, resolved_func_def)\n" \
+    "              begin\n",
   ],
   [
-    "                  if env_get(\"DEBUG_ENTRY_MATCHES\") && name.includes?(\"entry_matches\")\n",
-    "                  lower_method_precall_probe(\"after_arity\", instance_transaction.requested_name, instance_transaction.target_name, instance_transaction.body_symbol, owner, override, call_arg_types, resolved_func_def)\n" \
-    "                  if env_get(\"DEBUG_ENTRY_MATCHES\") && name.includes?(\"entry_matches\")\n",
+    "                if call_arg_types && call_arg_types.size > 0\n                  actual_arity = count_non_block_params(resolved_func_def)\n",
+    "                lower_method_precall_probe(\"before_arity\", instance_transaction.requested_name, instance_transaction.target_name, instance_transaction.body_symbol, owner, override, call_arg_types, resolved_func_def)\n" \
+    "                if call_arg_types && call_arg_types.size > 0\n" \
+    "                  actual_arity = count_non_block_params(resolved_func_def)\n",
+  ],
+  [
+    "                if env_get(\"DEBUG_ENTRY_MATCHES\") && name.includes?(\"entry_matches\")\n",
+    "                lower_method_precall_probe(\"after_arity\", instance_transaction.requested_name, instance_transaction.target_name, instance_transaction.body_symbol, owner, override, call_arg_types, resolved_func_def)\n" \
+    "                if env_get(\"DEBUG_ENTRY_MATCHES\") && name.includes?(\"entry_matches\")\n",
   ],
 ]
 

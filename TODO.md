@@ -8,6 +8,26 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: implemented the Slice 0k-DH materialization scope-entry
+  contract. The instance materialization path now applies the target
+  type-param map and namespace override as an explicit scope-entry block owned by
+  the existing `CallMaterializationTransaction` / `SemanticStateScope` boundary,
+  instead of hiding that edge inside nested helper blocks. The temp-source
+  classifier was updated to instrument that explicit shape. Fresh evidence from
+  `STAGE1_COMPILER=/tmp/adamas_scope_entry_stage1 REQUIRE_REACHED=1 SAMPLES=8 scripts/generated_stage_lower_method_terminal_classifier.sh`
+  reports `completion_classifier_classification=reached_tx_and_emit`,
+  `method_call_rows=266`, `precall_rows=1330`, `method_entry_rows=356`,
+  `method_name_rows=310`, `method_exit_rows=666`, `residual_rows=3`,
+  `terminal_cause_kinds=1`, `terminal_groups=2`, and
+  `selected_cause=lower_method_terminal_abstract_method` with `selected_rows=3`
+  / `classification=eligible_lower_method_terminal_edge`. The previous six-row
+  `lower_method_terminal_no_exact_after_tx_no_call` bucket is gone; residual rows
+  now traverse `after_tx -> inside_type_params -> inside_namespace ->
+  before_arity -> after_arity -> [MAT_METHOD_CALL]` and terminate as abstract
+  methods. This completes the focused 0k-DH DoD but does not claim green
+  `s2b`/`s3b`. The next movement must return to the Current Execution Board and
+  remeasure the bootstrap pressure gate before selecting another owner edge.
+
 - 2026-07-02 UPDATE: added Slice 0k-DH, a compact pre-code receipt in
   `docs/compiler_architecture_sdd.md` for the `after_tx -> inside_type_params`
   boundary selected by 0k-DG. The selected old authority edge is now explicit:

@@ -183,6 +183,22 @@ nested block helpers. The next source slice is admitted only if it removes or
 root-sizes the six-row `after_tx_no_call` class while preserving generated-stage
 `[MAT_EMIT]` reachability and abstract-method controls.
 
+2026-07-02 post-0k-DI note: that source slice is implemented for the instance
+materialization path. Scope entry now applies `merged_params` and
+`namespace_override` explicitly after transaction logging, with restore in
+`ensure`, instead of relying on nested helper blocks as the only authority edge.
+The focused generated-stage gate
+`STAGE1_COMPILER=/tmp/adamas_scope_entry_stage1 REQUIRE_REACHED=1 SAMPLES=8 scripts/generated_stage_lower_method_terminal_classifier.sh`
+reports `completion_classifier_classification=reached_tx_and_emit`,
+`method_call_rows=266`, `precall_rows=1330`, `method_entry_rows=356`,
+`method_name_rows=310`, `method_exit_rows=666`, `residual_rows=3`,
+`terminal_cause_kinds=1`, `terminal_groups=2`,
+`selected_cause=lower_method_terminal_abstract_method`, `selected_rows=3`, and
+`classification=eligible_lower_method_terminal_edge`. The old six-row
+`after_tx_no_call` class is consumed. This is not a green `s2b`/`s3b` claim; the
+next production decision must return to the Current Execution Board and remeasure
+the generated-stage pressure gate before choosing another owner edge.
+
 2026-07-02 post-0k-CS note: hostile review of the post-0k-CR route found that
 the active SDD is still being followed, but the emergency B4/O1 lane can become
 another symptom scheduler if every moved crash stack automatically selects the

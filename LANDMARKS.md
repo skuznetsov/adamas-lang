@@ -12,6 +12,33 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-DI-MATERIALIZATION-SCOPE-ENTRY-IMPLEMENTED|implemented 2026-07-02 {F:0.91 G:0.62 R:0.90}]:
+The Slice 0k-DH materialization scope-entry contract is implemented for the
+instance materialization path. The path now applies `merged_params` and
+`namespace_override` in an explicit scope-entry block after
+`CallMaterializationTransaction` logging and before arity repair /
+`lower_method`, so the old authority edge is no longer hidden inside nested
+`with_isolated_type_param_map` / `with_namespace_override_or_clear` helpers. The
+temp-source `scripts/generated_stage_lower_method_terminal_classifier.sh` was
+updated to instrument the explicit shape. Evidence:
+`STAGE1_COMPILER=/tmp/adamas_scope_entry_stage1 REQUIRE_REACHED=1 SAMPLES=8 scripts/generated_stage_lower_method_terminal_classifier.sh`
+reports `completion_classifier_classification=reached_tx_and_emit`,
+`method_call_rows=266`, `precall_rows=1330`, `method_entry_rows=356`,
+`method_name_rows=310`, `method_exit_rows=666`, `residual_rows=3`,
+`terminal_cause_kinds=1`, `terminal_groups=2`,
+`terminal_root_sized_groups=2`,
+`selected_cause=lower_method_terminal_abstract_method`, `selected_rows=3`, and
+`classification=eligible_lower_method_terminal_edge`. This consumes/refutes the
+old selected six-row `lower_method_terminal_no_exact_after_tx_no_call` bucket:
+residual rows now reach the full pre-call chain and `[MAT_METHOD_CALL]`, then
+terminate as abstract methods. Scope: focused `MaterializationTransaction`
+authority-edge migration only; no backend rescue, no sampled method patch, no
+requested-name forcing, no ambient-map or `NamedTuple`/`Tuple` policy change, no
+`BlockOwner` rollback, and no green `s2b`/`s3b` claim. Decay trigger: a later
+generated-stage classifier reintroduces after-tx-only rows, `[MAT_EMIT]`
+reachability regresses, or the Current Execution Board selects a different owner
+spine for exact body availability.
+
 [LM-ARCH-0K-DH-MATERIALIZATION-SCOPE-ENTRY-RECEIPT|design-sealed 2026-07-02 {F:0.86 G:0.66 R:0.86}]:
 Slice 0k-DH adds the pre-code receipt required by 0k-DG in
 `docs/compiler_architecture_sdd.md`. The selected old authority edge is the

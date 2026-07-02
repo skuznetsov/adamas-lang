@@ -72421,42 +72421,54 @@ module Adamas::HIR
               if materialization_transaction_ledger_enabled?
                 log_call_materialization_transaction_ledger(instance_transaction)
               end
-              with_isolated_type_param_map(merged_params) do
-                with_namespace_override_or_clear(namespace_override) do
-                  # Arity mismatch fix: if resolved_func_def has fewer params than
-                  # call_arg_types, the base-name lookup found the wrong
-                  # overload. Try to find the correct arity version.
-                  if call_arg_types && call_arg_types.size > 0
-                    actual_arity = count_non_block_params(resolved_func_def)
-                    expected_arity = call_arg_types.size
-                    if expected_arity > actual_arity &&
-                       !exact_bare_target_def?(name, target_name, resolved_func_def)
-                      base_for_arity = strip_type_suffix(target_name)
-                      arity_key = "#{base_for_arity}$arity#{expected_arity}"
-                      if arity_def = @function_defs[arity_key]?
-                        resolved_func_def = arity_def
-                        arena_override = @function_def_arenas[arity_key]?
-                      else
-                        # Try generic template base
-                        if (ginfo = generic_owner_info(owner))
-                          sep = resolved_parts.separator || '#'
-                          mpart = resolved_parts.method
-                          if mpart
-                            template_arity = "#{ginfo.base}#{sep}#{mpart}$arity#{expected_arity}"
-                            if arity_def = @function_defs[template_arity]?
-                              resolved_func_def = arity_def
-                              arena_override = @function_def_arenas[template_arity]?
-                            end
+              old_type_param_map = @type_param_map
+              old_namespace_override = @current_namespace_override
+              type_param_map_changed = old_type_param_map != merged_params
+              if type_param_map_changed
+                @type_param_map = merged_params.dup
+                @subst_cache_gen &+= 1
+              end
+              @current_namespace_override = namespace_override
+              begin
+                # Arity mismatch fix: if resolved_func_def has fewer params than
+                # call_arg_types, the base-name lookup found the wrong
+                # overload. Try to find the correct arity version.
+                if call_arg_types && call_arg_types.size > 0
+                  actual_arity = count_non_block_params(resolved_func_def)
+                  expected_arity = call_arg_types.size
+                  if expected_arity > actual_arity &&
+                     !exact_bare_target_def?(name, target_name, resolved_func_def)
+                    base_for_arity = strip_type_suffix(target_name)
+                    arity_key = "#{base_for_arity}$arity#{expected_arity}"
+                    if arity_def = @function_defs[arity_key]?
+                      resolved_func_def = arity_def
+                      arena_override = @function_def_arenas[arity_key]?
+                    else
+                      # Try generic template base
+                      if (ginfo = generic_owner_info(owner))
+                        sep = resolved_parts.separator || '#'
+                        mpart = resolved_parts.method
+                        if mpart
+                          template_arity = "#{ginfo.base}#{sep}#{mpart}$arity#{expected_arity}"
+                          if arity_def = @function_defs[template_arity]?
+                            resolved_func_def = arity_def
+                            arena_override = @function_def_arenas[template_arity]?
                           end
                         end
                       end
                     end
                   end
-                  if env_get("DEBUG_ENTRY_MATCHES") && name.includes?("entry_matches")
-                    param_count = resolved_func_def.params.try(&.size) || 0
-                    STDERR.puts "[ENTRY_MATCHES_LOWER] name=#{name} target=#{target_name} owner=#{owner} override=#{override} param_count=#{param_count} call_arg_types=#{call_arg_types.try(&.map(&.id).join(",")) || "nil"} type_params=#{type_param_map_debug_string}"
-                  end
-                  lower_method(owner, class_info, resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, override, force_class_method: force_class_method)
+                end
+                if env_get("DEBUG_ENTRY_MATCHES") && name.includes?("entry_matches")
+                  param_count = resolved_func_def.params.try(&.size) || 0
+                  STDERR.puts "[ENTRY_MATCHES_LOWER] name=#{name} target=#{target_name} owner=#{owner} override=#{override} param_count=#{param_count} call_arg_types=#{call_arg_types.try(&.map(&.id).join(",")) || "nil"} type_params=#{type_param_map_debug_string}"
+                end
+                lower_method(owner, class_info, resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, override, force_class_method: force_class_method)
+              ensure
+                @current_namespace_override = old_namespace_override
+                if type_param_map_changed
+                  @type_param_map = old_type_param_map
+                  @subst_cache_gen &+= 1
                 end
               end
               @current_class = old_class

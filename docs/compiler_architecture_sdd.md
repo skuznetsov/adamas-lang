@@ -445,7 +445,7 @@ latest emitted symptom.
 
 ## Active Architecture Board
 
-Status: execution board after Slice 0k-CZ. This board exists to
+Status: execution board after Slice 0k-DI. This board exists to
 prevent the next step from being selected by the latest generated-stage crash
 stack. A next slice is admitted only if it moves one board row by replacing or
 shadowing a named authority edge, producing `CodePathStatus` evidence for a
@@ -597,7 +597,7 @@ evidence, not next-step selectors.
 | --- | --- | --- | --- |
 | `bootstrap-emergency-with-ledger` / B4-O1 | Paused breakglass. The 0k-CR assigned-tail passthrough plus return-shape wrapper-materialization slice remains documented, but after 0k-CV it is not the current selector and may not resume from an uncommitted WIP. | Re-admit only with a fresh receipt that names: old authority edge = shared untyped `&` wrapper keyed without return contract; owner fact = HIR `BlockCallReturnContract`; producers = block-return recording and assigned-tail classifier; consumers = wrapper materialization, yield return inference, call target emission; baseline = current O1/B4 classifiers plus `REQUIRE_CURRENT_CP_BROAD=1 scripts/hir_block_return_shape_census.sh`; negative controls = nil/non-returning timed phases and ordinary iterator/scope helpers; stage gate = B4 future-clean or current-frontier movement; residual boundary. | Continuing the local WIP by inertia; starting from the next crash stack; classifier-only patch; broad return-shape specialization; direct CopyPropagation guard; `timed_cp_phase` annotation/inlining/deletion; MIR/LLVM/backend block-return rescue. |
 | `architecture-burn-down` / owner-spine plan | Consumed by 0k-CW. The active burn-down selection is `MaterializationTransaction` exact body availability, based on generated-stage residual evidence rather than the latest crash stack. | Do not add another planning/report row unless it retires/refutes this selection or the residual classifier proves the selected edge is not root-sized. | Treating a moved crash stack as architecture progress; adding another report that does not retire/refute an older surface; committing WIP helpers that do not consume an old authority edge; claiming source-shape green as bootstrap green. |
-| `MaterializationTransaction` / exact body availability | Current active selector after 0k-DG. G6 `BlockOwner` setter availability is guard-green. The temp-source `lower_method` terminal classifier preserves `[MAT_EMIT]` reachability and now splits the selected pre-call residual to `no_exact_after_tx_no_call` (6 rows), alongside `abstract_method` (4 rows), `no_exact_matching_full_name_without_exit` (3 rows), and `completed_method` (1 row), across 12 root-sized groups. The selected samples have `after_tx` rows but no `inside_type_params`, while abstract controls traverse `after_tx -> inside_type_params -> inside_namespace -> before_arity -> after_arity` and join to call rows. This is still mixed/broad, so no behavior patch is admitted. Separate `MaterializationAttemptResult` / consumer-ledger surfaces and production `lower_method` trace-object plumbing are refuted for this path because they stopped generated-stage runs before backend emission. | Next executable receipt: stop generic pre-call marker growth and name the scoped type-param/block-yield owner edge immediately after transaction logging. The receipt must state the old authority edge, owner fact/service, producers, consumers, generated-stage gate, and negative controls for the `after_tx -> inside_type_params` boundary, or refute this `MaterializationTransaction` row and return to the board. | Backend undefined-extern rescue, forwarder rescue, requested-name forcing, per-method Array/Slice/IO/Atomic/String::Builder/Int32 patches, broad `NamedTuple`/`Tuple` rendering, global ambient-map policy, `BlockOwner` rollback, treating `created_body` as proof of a present HIR body, treating pre-lowering `InProgress` as a completed-body root, adding another result/consumer layer that does not first pass generated-stage emission, adding another generic pre-call marker without a named owner edge, or threading a trace object through production `lower_method`. |
+| `MaterializationTransaction` / exact body availability | Consumed through 0k-DI for the active `after_tx -> inside_type_params` edge. G6 `BlockOwner` setter availability is guard-green. The explicit materialization scope-entry slice preserves `[MAT_EMIT]` reachability and changes the lower-method terminal classifier from the old mixed 14-row / 4-cause state with `no_exact_after_tx_no_call` (6 rows) to a root-sized abstract-method residual: `residual_rows=3`, `terminal_cause_kinds=1`, `selected_cause=lower_method_terminal_abstract_method`, and `classification=eligible_lower_method_terminal_edge`. Residual rows now traverse `after_tx -> inside_type_params -> inside_namespace -> before_arity -> after_arity` and join to `[MAT_METHOD_CALL]`. This is focused authority-edge movement, not green bootstrap. | Return to the board before selecting another production edge. The next movement should first remeasure the generated-stage pressure gate and choose whether the active constraint is still `MaterializationTransaction` exact body availability, B4/O1 `PhaseAuthority`, or a `SemanticIdentity` pre-s2-clean row. | Backend undefined-extern rescue, forwarder rescue, requested-name forcing, per-method Array/Slice/IO/Atomic/String::Builder/Int32 patches, broad `NamedTuple`/`Tuple` rendering, global ambient-map policy, `BlockOwner` rollback, treating abstract-method residuals as a local method patch, adding another result/consumer layer, adding another generic pre-call marker, or threading a trace object through production `lower_method`. |
 | `PhaseAuthority` / `GeneratedStageExecution` | B4/L6 remain pressure evidence, not an implementation selector. | Resume only with a slice that reduces B4/L6 phase, owner-spine ambiguity, or live proxy surface. | More behavior-neutral row owners, output/resource/tail/worker patches, memory-budget acceptance, `ADAMAS_LLVM_WORKERS=1` as a fix. |
 | `SemanticIdentity` | H7/H8 remain pre-s2-clean residuals. They are real, but not the active generated-stage blocker. | Resume with a row-specific SDD entry and measured-red baseline if the goal is semantic-service extraction. | TypeValue/stringification/parser shortcuts bundled with B4, generic materialization, ambient-map, or `BlockOwner` work. |
 | `CodePathStatus` | Cleanup is not the active bootstrap constraint. | Resume only with `delete_ready` evidence and a protecting falsifier, or by explicit user selection of bloat reduction. | Deleting suspected-dead code from grep/runtime absence alone; adding cleanup reports as a substitute for owner migration. |
@@ -699,6 +699,40 @@ SliceReceipt {
       behavior and the next movement must return to the Current Execution Board.
 }
 ```
+
+#### Slice 0k-DI implementation: explicit materialization scope entry
+
+Slice 0k-DI implements the 0k-DH receipt for the instance materialization path.
+The old shape delegated scope entry to nested `with_isolated_type_param_map` and
+`with_namespace_override_or_clear` blocks after transaction logging. The new
+shape makes the scope-entry edge explicit at the materialization site: snapshot
+`@type_param_map` and `@current_namespace_override`, apply `merged_params` and
+`namespace_override`, execute arity repair and `lower_method`, then restore in an
+`ensure`. This keeps the owner boundary at existing
+`CallMaterializationTransaction` / `SemanticStateScope`; it does not introduce a
+backend rescue, forwarder, requested-name policy, ambient-map policy, or
+rendering normalization.
+
+Focused DoD evidence:
+
+- `STAGE1_COMPILER=/tmp/adamas_scope_entry_stage1 REQUIRE_REACHED=1 SAMPLES=8 scripts/generated_stage_lower_method_terminal_classifier.sh`
+  reports `completion_classifier_classification=reached_tx_and_emit`,
+  `method_call_rows=266`, `precall_rows=1330`, `method_entry_rows=356`,
+  `method_name_rows=310`, `method_exit_rows=666`, `residual_rows=3`,
+  `terminal_cause_kinds=1`, `terminal_groups=2`,
+  `terminal_root_sized_groups=2`,
+  `selected_cause=lower_method_terminal_abstract_method`,
+  `selected_rows=3`, and `classification=eligible_lower_method_terminal_edge`.
+- The previous selected six-row
+  `lower_method_terminal_no_exact_after_tx_no_call` bucket disappears.
+- Residual rows now traverse `after_tx -> inside_type_params ->
+  inside_namespace -> before_arity -> after_arity` and join to
+  `[MAT_METHOD_CALL]`, then terminate as abstract methods.
+
+Residual boundary: this completes the focused 0k-DH authority-edge slice only.
+It does not prove green `s2b`/`s3b` and does not admit a local abstract-method
+patch. The next movement must return to the Current Execution Board and remeasure
+the bootstrap pressure gate before selecting another owner edge.
 
 #### Slice 0k-CU receipt: assigned-tail block-return contract
 
