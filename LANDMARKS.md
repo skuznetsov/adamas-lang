@@ -12,6 +12,26 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-DS-STARTUP-RESOURCE-BASELINE-CLASSIFIER|implemented 2026-07-02 {F:0.89 G:0.58 R:0.86}]:
+`scripts/generated_stage_startup_resource_baseline_classifier.sh` resolves the
+startup/process-baseline question opened by 0k-DR. It uses the debug-only
+`ADAMAS_STOP_AFTER_COMPILE_ENTRY` gate plus existing parse/HIR/MIR stop gates
+and `/usr/bin/time -l` OS RSS, not GC `non_gc`, as the owner signal. Fresh
+`REQUIRE_CLASSIFICATION=1` evidence reports
+`classification=llvm_or_later_resource_boundary`,
+`stage1_compile_entry_peak_rss_mb=4`, `s2_compile_entry_peak_rss_mb=6`,
+`s2_parse_peak_rss_mb=305`, `s2_hir_peak_rss_mb=1168`,
+`s2_mir_peak_rss_mb=1171`, `nested.classification=llvm_entry_failure_after_lower_main`,
+`nested.default_workers_memory_kill=1`, and
+`nested.workers1_memory_kill=1`. Scope: this is a baseline classifier, not a
+resource fix. It refutes startup, parse, HIR, and MIR retention as the first
+actual OS RSS owner edge and also refutes 0k-DR GC `non_gc` as process-start RSS.
+Next movement may re-enter late `GeneratedStageExecution` resource work only
+with OS RSS / stop-gate evidence naming a mode-local owner edge. Decay trigger:
+compile-entry or parse/HIR/MIR stop-gate RSS crosses the high threshold, nested
+full generated-stage no longer memory-kills after lower_main, or stop-gate
+semantics change.
+
 [LM-ARCH-0K-DR-PRE-HIR-MEMORY-SPLIT-LANE-REFUTATION|implemented 2026-07-02 {F:0.90 G:0.58 R:0.86}]:
 `scripts/generated_stage_pre_hir_memory_split_classifier.sh` consumes the L9
 no-more-selector-chain gate for the default-lane memory surface. Fresh

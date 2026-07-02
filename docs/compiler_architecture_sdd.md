@@ -598,7 +598,7 @@ evidence, not next-step selectors.
 | `bootstrap-emergency-with-ledger` / B4-O1 | Consumed by 0k-CU. The HIR `BlockCallReturnContract` implementation moves the generated-stage gate past the old O1 `affected_block_ids` / `Set(UInt32)#includes?` frontier: `REQUIRE_CURRENT_CU_CONTRACT=1 scripts/hir_block_return_shape_census.sh` reports `classification=current_0k_cu_block_call_return_contract_applied`, and `STAGE1_COMPILER=/tmp/adamas_0kcu_stage1 REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh` exits at the expected non-current boundary with `b4_classification=llvm_entry_failure_after_lower_main` and `workers1_exit139=0`. The new residual is post-`lower_main` RSS pressure in both worker modes, with the default worker-mode rand fallback still present. | Return to the board before any new production source slice. The next receipt must reselect an owner spine from fresh generated-stage evidence; if it targets the new residual, it must name the old authority edge behind post-`lower_main` memory/resource growth rather than treating higher memory limits, worker count, or the rand fallback as acceptance evidence. | Continuing the 0k-CU breakglass lane by inertia; starting from the new RSS-kill stack; raising memory as a fix; forcing `ADAMAS_LLVM_WORKERS=1`; worker/rand/output/resource patches without a new receipt; CopyPropagation, Set/Hash, backend block-return, `NamedTuple`/`Tuple`, ambient-map, or `BlockOwner` changes. |
 | `architecture-burn-down` / owner-spine plan | Consumed by 0k-CW. The active burn-down selection is `MaterializationTransaction` exact body availability, based on generated-stage residual evidence rather than the latest crash stack. | Do not add another planning/report row unless it retires/refutes this selection or the residual classifier proves the selected edge is not root-sized. | Treating a moved crash stack as architecture progress; adding another report that does not retire/refute an older surface; committing WIP helpers that do not consume an old authority edge; claiming source-shape green as bootstrap green. |
 | `MaterializationTransaction` / exact body availability | Consumed through 0k-DI for the active `after_tx -> inside_type_params` edge. G6 `BlockOwner` setter availability is guard-green. The explicit materialization scope-entry slice preserves `[MAT_EMIT]` reachability and changes the lower-method terminal classifier from the old mixed 14-row / 4-cause state with `no_exact_after_tx_no_call` (6 rows) to a root-sized abstract-method residual: `residual_rows=3`, `terminal_cause_kinds=1`, `selected_cause=lower_method_terminal_abstract_method`, and `classification=eligible_lower_method_terminal_edge`. Residual rows now traverse `after_tx -> inside_type_params -> inside_namespace -> before_arity -> after_arity` and join to `[MAT_METHOD_CALL]`. This is focused authority-edge movement, not green bootstrap. | Return to the board before selecting another production edge. The next movement should first remeasure the generated-stage pressure gate and choose whether the active constraint is still `MaterializationTransaction` exact body availability, B4/O1 `PhaseAuthority`, or a `SemanticIdentity` pre-s2-clean row. | Backend undefined-extern rescue, forwarder rescue, requested-name forcing, per-method Array/Slice/IO/Atomic/String::Builder/Int32 patches, broad `NamedTuple`/`Tuple` rendering, global ambient-map policy, `BlockOwner` rollback, treating abstract-method residuals as a local method patch, adding another result/consumer layer, adding another generic pre-call marker, or threading a trace object through production `lower_method`. |
-| `PhaseAuthority` / `GeneratedStageExecution` | Consumed by 0k-DR for the default-lane memory surface. The admitted L9 selector `REQUIRE_SPLIT=1 scripts/generated_stage_pre_hir_memory_split_classifier.sh` replays the current GSETX path and reports `classification=pre_hir_pressure_compile_entry`: produced-s2 is already high at the first row, `default_first_phase=cli.compile_entry`, `default_first_high_owner=cli.compile`, `default_first_high_non_gc=4323300568`, `default_max_phase=cli.compile_entry`, and `default_last_phase=llvm.sequential_start` at the same level. Stage1 workers=1 control remains clean (`stage1_control_rc=0`, `stage1_control_run_rc=0`, stdout `42`, `stage1_memory_rows=35`, `stage1_max_non_gc=0`). This refutes parse/source/prelude/HIR/LLVM pipeline retention as the first owner edge for this `memory.phase` non-GC lane; the old `pre_function_pressure_hir_owned` result was late-row aliasing, not an owner receipt. | Return to the board before selecting another production edge. If resource pressure remains the target, it needs a new startup/process-baseline problem card, not another pre-HIR pipeline selector. The workers=1 HIR-final-to-MIR-final residual remains named and unsolved. | Adding another default-lane memory selector on this surface, patching parse/HIR/LLVM retention from the 0k-DQ row, memory-budget acceptance, forced `ADAMAS_LLVM_WORKERS=1`, worker/rand patches, output-file behavior changes, external sink enablement, incremental output-buffer fixes, LLVM function plan/session patches, tail stubs, metadata/DWARF/type-name patches, backend semantic changes, materialization, `NamedTuple`/`Tuple`, ambient maps, `BlockOwner` rollback, or treating either single-mode boundary as green bootstrap without the other mode's residual statement. |
+| `PhaseAuthority` / `GeneratedStageExecution` | 0k-DR consumed the default-lane `memory.phase` surface, and 0k-DS resolves the required startup/process-baseline problem card with OS RSS evidence. `REQUIRE_CLASSIFICATION=1 scripts/generated_stage_startup_resource_baseline_classifier.sh` reports `classification=llvm_or_later_resource_boundary`: actual produced-s2 peak RSS is tiny at compile entry (`s2_compile_entry_peak_rss_mb=6`), below threshold after parse (`305` MB), HIR (`1168` MB), and MIR (`1171` MB), while the nested full generated-stage run remains `llvm_entry_failure_after_lower_main` with both modes memory-killed after lower_main. Therefore 0k-DR's high compile-entry GC `non_gc` is telemetry/accounting noise for owner selection, not process-start RSS. | The next production receipt may re-enter a late `GeneratedStageExecution` resource lane, but only with OS RSS / stop-gate evidence and only if it names the mode-local owner edge it consumes. Valid candidates are late LLVM/function-emission resource ownership or a worker-mode-specific residual. Startup, parse, HIR, and MIR retention are rejected as first owner edges by 0k-DS. | Adding another GC `non_gc` memory selector; treating 0k-DR compile-entry `non_gc` as startup RSS; patching startup/parse/HIR/MIR retention; memory-budget acceptance; forced `ADAMAS_LLVM_WORKERS=1`; worker/rand patches; output-file behavior changes; external sink enablement; incremental output-buffer fixes; LLVM function plan/session patches without OS RSS owner evidence; tail stubs; metadata/DWARF/type-name patches; backend semantic changes; materialization; `NamedTuple`/`Tuple`; ambient maps; `BlockOwner` rollback; or treating either single-mode boundary as green bootstrap without the other mode's residual statement. |
 | `SemanticIdentity` | H7/H8 remain pre-s2-clean residuals. They are real, but not the active generated-stage blocker. | Resume with a row-specific SDD entry and measured-red baseline if the goal is semantic-service extraction. | TypeValue/stringification/parser shortcuts bundled with B4, generic materialization, ambient-map, or `BlockOwner` work. |
 | `CodePathStatus` | Cleanup is not the active bootstrap constraint. | Resume only with `delete_ready` evidence and a protecting falsifier, or by explicit user selection of bloat reduction. | Deleting suspected-dead code from grep/runtime absence alone; adding cleanup reports as a substitute for owner migration. |
 
@@ -951,6 +951,75 @@ SliceReceipt {
     pipeline-retention owner edge. If resource pressure remains active, it needs
     a new generated-stage startup/process-baseline problem card. Workers=1
     remains `after_hir_final_before_mir_final`.
+}
+```
+
+#### Slice 0k-DS receipt: startup/process resource baseline classifier
+
+```text
+SliceReceipt {
+  board_lane: PhaseAuthority / GeneratedStageExecution
+  tranche: bootstrap-emergency-with-ledger
+  old_authority_edge:
+    Slice 0k-DR proved that GC `non_gc` is already high at `cli.compile_entry`,
+    but that did not prove actual process RSS was high at startup.
+  owner_fact_or_service:
+    `scripts/generated_stage_startup_resource_baseline_classifier.sh` is the
+    startup/process-baseline falsifier required by 0k-DR before any resource
+    lane continues. It adds and uses the debug-only
+    `ADAMAS_STOP_AFTER_COMPILE_ENTRY` gate, then compares OS peak RSS at
+    compile-entry, parse, HIR, and MIR stop gates for a fresh produced s2.
+  producers:
+    - `Compiler::CLI#compile` debug stop gate
+      `ADAMAS_STOP_AFTER_COMPILE_ENTRY`;
+    - existing `ADAMAS_STOP_AFTER_PARSE`, `ADAMAS_STOP_AFTER_HIR`, and
+      `ADAMAS_STOP_AFTER_MIR` gates;
+    - `scripts/generated_stage_llvm_entry_classifier.sh` for the fresh produced
+      s2 and full generated-stage nested boundary.
+  consumers:
+    - this SDD current board;
+    - TODO/LANDMARKS/falsifier matrix;
+    - future late-resource receipts that must cite OS RSS stop-gate evidence
+      instead of GC `non_gc` telemetry.
+  measured_red_baseline:
+    Fresh `REQUIRE_CLASSIFICATION=1` evidence reports
+    `classification=llvm_or_later_resource_boundary`.
+    Stop-gate OS RSS evidence:
+    `stage1_compile_entry_peak_rss_mb=4`,
+    `s2_compile_entry_peak_rss_mb=6`,
+    `s2_parse_peak_rss_mb=305`,
+    `s2_hir_peak_rss_mb=1168`, and
+    `s2_mir_peak_rss_mb=1171`.
+    The nested full generated-stage classifier remains
+    `nested.classification=llvm_entry_failure_after_lower_main`, with
+    `nested.default_workers_memory_kill=1` and
+    `nested.workers1_memory_kill=1`.
+  focused_DoD:
+    `REQUIRE_CLASSIFICATION=1 scripts/generated_stage_startup_resource_baseline_classifier.sh`
+    returns a terminal classification and includes compile-entry, parse, HIR,
+    MIR, and nested full generated-stage resource signals.
+  architecture_DoD:
+    The classifier must not use GC `non_gc` as the owner signal. Its evidence
+    must be OS RSS / run_safe / stop-gate based.
+  generated_stage_gate:
+    The nested generated-stage classifier must still build a fresh produced s2
+    or consume an explicit `GENERATED_S2` and report the full generated-stage
+    boundary.
+  negative_controls:
+    Stage1 compile-entry RSS remains low. If compile-entry RSS becomes high for
+    both stage1 and produced s2, this slice decays into a host/process
+    measurement problem rather than a generated-stage owner edge.
+  rejected_shortcuts:
+    Startup, parse, HIR, and MIR retention patches from the 0k-DR `non_gc` row;
+    another GC-memory selector; memory-budget acceptance; worker forcing;
+    backend rescue; output sinks; metadata/DWARF/type-name patches;
+    materialization, `NamedTuple`/`Tuple`, ambient maps, or `BlockOwner`
+    changes.
+  residual_boundary:
+    Actual OS RSS does not select startup, parse, HIR, or MIR as the first
+    resource owner edge. Late LLVM/function-emission resource remains measured
+    red and must be selected with mode-local OS RSS evidence before behavior
+    changes.
 }
 ```
 

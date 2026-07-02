@@ -8,6 +8,24 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: Slice 0k-DS resolves the startup/process-baseline problem
+  card required by 0k-DR. New executable classifier:
+  `scripts/generated_stage_startup_resource_baseline_classifier.sh`, using the
+  debug-only `ADAMAS_STOP_AFTER_COMPILE_ENTRY` gate plus existing parse/HIR/MIR
+  stop gates and `/usr/bin/time -l` OS RSS evidence. Fresh
+  `REQUIRE_CLASSIFICATION=1` evidence reports
+  `classification=llvm_or_later_resource_boundary`:
+  `stage1_compile_entry_peak_rss_mb=4`, `s2_compile_entry_peak_rss_mb=6`,
+  `s2_parse_peak_rss_mb=305`, `s2_hir_peak_rss_mb=1168`,
+  `s2_mir_peak_rss_mb=1171`, while the nested full generated-stage classifier
+  remains `nested.classification=llvm_entry_failure_after_lower_main` with both
+  default and workers=1 memory-killed after lower_main. Therefore 0k-DR's high
+  compile-entry GC `non_gc` is telemetry/accounting noise for owner selection,
+  not actual startup RSS. Do not patch startup/parse/HIR/MIR retention or add
+  another GC memory selector. If resource pressure remains the active target,
+  the next receipt must select a late LLVM/function-emission or mode-local
+  resource owner edge using OS RSS evidence.
+
 - 2026-07-02 UPDATE: Slice 0k-DR consumes the L9 pre-HIR split and terminates
   the no-more-selector-chain gate for the default-lane memory surface.
   `REQUIRE_SPLIT=1 scripts/generated_stage_pre_hir_memory_split_classifier.sh`

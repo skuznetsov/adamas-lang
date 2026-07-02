@@ -365,6 +365,21 @@ resource pressure remains the priority, open a startup/process-baseline problem
 card. Otherwise, return to the Current Execution Board and select a behavior or
 state authority edge; do not add another pre-HIR memory selector.
 
+2026-07-02 post-0k-DS note: the startup/process-baseline problem card has an
+executable OS-RSS classifier, not another GC `non_gc` selector.
+`REQUIRE_CLASSIFICATION=1 scripts/generated_stage_startup_resource_baseline_classifier.sh`
+reports `classification=llvm_or_later_resource_boundary`:
+`stage1_compile_entry_peak_rss_mb=4`, `s2_compile_entry_peak_rss_mb=6`,
+`s2_parse_peak_rss_mb=305`, `s2_hir_peak_rss_mb=1168`,
+`s2_mir_peak_rss_mb=1171`, while the nested full generated-stage classifier
+remains `llvm_entry_failure_after_lower_main` with both worker modes
+memory-killed after lower_main. Therefore the 0k-DR compile-entry `non_gc` row is
+telemetry/accounting noise for owner selection, not process-start RSS. The next
+resource movement may target late LLVM/function-emission or mode-local resource
+ownership, but it must use OS RSS / stop-gate evidence and must not patch
+startup, parse, HIR, MIR, GC accounting, memory budgets, or worker policy from
+the 0k-DR `non_gc` row.
+
 2026-07-02 post-0k-CR note: the return-shape census now also measures
 assigned-tail yield passthrough (`result = yield; ...; result`). Strict current
 evidence keeps the broad 0k-CQ result for naive `contains_yield` scope, but

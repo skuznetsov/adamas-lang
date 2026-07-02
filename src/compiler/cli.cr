@@ -1551,6 +1551,12 @@ module Adamas
           "cli.compile",
           "no_prelude=#{options.no_prelude}"
         )
+        stop_after_compile_entry = BootstrapEnv.enabled?("ADAMAS_STOP_AFTER_COMPILE_ENTRY")
+        log_codepath_branch("cli.gate", "stop_after_compile_entry", stop_after_compile_entry, "CLI")
+        if stop_after_compile_entry
+          log(options, out_io, "  Stop after compile entry (ADAMAS_STOP_AFTER_COMPILE_ENTRY)")
+          return 0
+        end
         total_start = Time.instant
         @ast_cache_hits = 0
         @ast_cache_misses = 0
