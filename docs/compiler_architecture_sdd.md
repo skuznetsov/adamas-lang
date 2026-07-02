@@ -677,14 +677,17 @@ SliceReceipt {
     `runtime.default_function_emission_phase_rows=13`, and
     `runtime.workers1_function_emission_phase_rows=0`.
   focused_DoD:
-    First falsifier: add an explicit generated-stage external-sink preflight
-    path or source-shape guard that proves whether the old "external sink
-    crashes produced stage2" edge is still true. If it is still true, this
-    receipt is refuted and the next default-mode resource slice must choose a
-    different function-emission owner edge. If it is false, a behavior slice may
-    make the normal non-`--emit llvm-ir` path emit LLVM IR through an owned
-    bounded sink while preserving identical `.ll` bytes or a documented
-    normalized equivalence.
+    The first falsifier is
+    `REQUIRE_REFUTED=1 scripts/generated_stage_external_sink_preflight.sh`.
+    It injects an external-sink path into a temporary source copy, builds both
+    temp stage1 and temp generated s2 from that copy, and distinguishes
+    host-stage API viability from produced-stage sink behavior. If a future run
+    no longer reports `external_sink_preflight_refuted_empty_ir`, this receipt
+    has decayed and the next default-mode resource slice must reclassify the
+    sink boundary. If the guard becomes green by emitting non-empty produced
+    LLVM IR with `_main`, a behavior slice may make the normal non-`--emit
+    llvm-ir` path emit LLVM IR through an owned bounded sink while preserving
+    identical `.ll` bytes or a documented normalized equivalence.
   architecture_DoD:
     The strict 0k-DN transaction report must either move the default lane past
     `resource.default_mode_boundary=reached_function_emission` or report a more
@@ -720,23 +723,29 @@ SliceReceipt {
 }
 ```
 
-0k-DO preflight result: the first external-sink probe refuted the direct
-behavior slice before it landed. A temporary env-gated CLI path using
-`llvm_gen.generate(file_io)` compiled in stage1 and could compile/run a small
-`puts 42` program (`RESULT=42` through `scripts/run_safe.sh`), but the
-generated-stage transaction report with the same probe changed the default
-worker mode to `resource.default_mode_boundary=after_output_start_before_llvm_generate`,
-`join_status=phase_local_only`, `runtime.default_llvm_generate_phase_rows=0`,
-`resource.default_memory_kill=0`, and `output.commit_record=binary_compile_rc:1`.
-The kept produced-stage default log showed link failure with missing `_main`,
-and the produced `default_workers_out.ll` was `0B`. Therefore the old external
-sink hazard is still real in produced stages, but its current manifestation is
-empty IR / missing entrypoint rather than the previous in-memory function
-emission kill. The env-gated source probe was reverted. A future source slice
-must not enable external sinks as a resource fix until it owns and falsifies the
-produced-stage external-sink entrypoint/main-emission contract; otherwise this
-receipt is refuted and the default lane must choose a different function
-emission resource edge.
+0k-DO preflight result: `scripts/generated_stage_external_sink_preflight.sh`
+makes the first external-sink probe executable and refutes the direct behavior
+slice before it lands. The script uses a temporary source copy only. It injects
+`llvm_gen.generate(file_io)` behind `ADAMAS_LLVM_EXTERNAL_SINK_PROBE`, builds a
+temp stage1 and a temp generated s2 from that modified copy, and cleans its temp
+artifacts by default. Fresh evidence with `REQUIRE_REFUTED=1` reports
+`host_compile_rc=0`, `host_run_rc=0`, `host_stdout=42`,
+`host_ll_size>0`, `s2_build_rc=0`, and
+`classification=external_sink_preflight_refuted_empty_ir`. The generated-stage
+part reports
+`report.default_mode_boundary=after_output_start_before_llvm_generate`,
+`report.join_status=phase_local_only`,
+`report.default_llvm_generate_phase_rows=0`,
+`report.default_memory_kill=0`,
+`report.output_commit_record=binary_compile_rc:1`,
+`default_workers_ll_size=0`, and `default_workers_missing_main=1`. Therefore
+the old external sink hazard is still real in produced stages, but its current
+manifestation is empty IR / missing entrypoint rather than the previous
+in-memory function emission kill. A future source slice must not enable
+external sinks as a resource fix until it owns and falsifies the produced-stage
+external-sink entrypoint/main-emission contract; otherwise this receipt is
+refuted and the default lane must choose a different function emission resource
+edge.
 
 #### Slice 0k-DH receipt: materialization scope-entry contract
 

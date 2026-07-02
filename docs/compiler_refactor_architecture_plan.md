@@ -302,17 +302,21 @@ The unchosen lane remains a residual and must stay in the DoD.
 
 2026-07-02 post-0k-DO note: the active SDD selected the default-mode
 function-emission sink boundary as the first default-lane receipt, then refuted
-the direct external-sink behavior slice before it landed. A temporary env-gated
-`llvm_gen.generate(file_io)` path was host-stage green on a small `puts 42`
-program, but in the generated-stage transaction report it moved default workers
-to `resource.default_mode_boundary=after_output_start_before_llvm_generate`
-with no joined `llvm.generate_phase` rows; the kept produced-stage log linked a
-`0B` `default_workers_out.ll` and failed with missing `_main`. The probe source
-was reverted. This means the old external-sink hazard is still real in produced
-stages, so "stream LLVM IR to file" is not an admitted resource fix. A future
-default-lane slice must either own/falsify produced-stage external-sink
-entrypoint emission, or choose a different function-emission resource edge
-while preserving the workers=1 `after_hir_final_before_mir_final` residual.
+the direct external-sink behavior slice before it landed. The refutation is now
+executable as `REQUIRE_REFUTED=1 scripts/generated_stage_external_sink_preflight.sh`.
+That script copies `src/`, injects `llvm_gen.generate(file_io)` only into the
+temp copy, builds both temp stage1 and temp generated s2 from that copy, and
+cleans temp artifacts by default. Fresh evidence reports host-stage success
+(`host_stdout=42`, non-empty `.ll`) but produced-stage failure:
+`classification=external_sink_preflight_refuted_empty_ir`,
+`report.default_mode_boundary=after_output_start_before_llvm_generate`,
+`report.default_llvm_generate_phase_rows=0`, `default_workers_ll_size=0`, and
+`default_workers_missing_main=1`. This means the old external-sink hazard is
+still real in produced stages, so "stream LLVM IR to file" is not an admitted
+resource fix. A future default-lane slice must either own/falsify
+produced-stage external-sink entrypoint emission, or choose a different
+function-emission resource edge while preserving the workers=1
+`after_hir_final_before_mir_final` residual.
 
 2026-07-02 post-0k-CR note: the return-shape census now also measures
 assigned-tail yield passthrough (`result = yield; ...; result`). Strict current

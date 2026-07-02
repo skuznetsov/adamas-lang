@@ -15,16 +15,20 @@ checkpoint remain recoverable from git history, especially:
 [LM-ARCH-0K-DO-EXTERNAL-SINK-PREFLIGHT-REFUTED|design-refuted 2026-07-02 {F:0.89 G:0.58 R:0.88}]:
 Slice 0k-DO selects the default-mode LLVM function-emission sink boundary as a
 `PhaseAuthority` / `GeneratedStageExecution` receipt, but the direct
-external-sink behavior slice is refuted before landing. A temporary env-gated
-CLI path using `llvm_gen.generate(file_io)` compiled in stage1 and compiled/ran
-a small `puts 42` program through `scripts/run_safe.sh`, so the API is not
-host-stage-dead. The generated-stage transaction report with that same probe
-changed the default worker mode to
-`resource.default_mode_boundary=after_output_start_before_llvm_generate`,
-`join_status=phase_local_only`, `runtime.default_llvm_generate_phase_rows=0`,
-`resource.default_memory_kill=0`, and `output.commit_record=binary_compile_rc:1`.
-The kept produced-stage default log showed linker failure with missing `_main`,
-and `default_workers_out.ll` was `0B`. The probe source was reverted. Scope:
+external-sink behavior slice is refuted before landing. New executable guard:
+`REQUIRE_REFUTED=1 scripts/generated_stage_external_sink_preflight.sh`. The
+guard copies `src/`, injects `llvm_gen.generate(file_io)` behind
+`ADAMAS_LLVM_EXTERNAL_SINK_PROBE` only in the temp copy, builds both temp stage1
+and temp generated s2 from that copy, and cleans temp artifacts by default.
+Fresh evidence reports `host_compile_rc=0`, `host_run_rc=0`, `host_stdout=42`,
+`host_ll_size>0`, `s2_build_rc=0`, and
+`classification=external_sink_preflight_refuted_empty_ir`. The generated-stage
+part reports
+`report.default_mode_boundary=after_output_start_before_llvm_generate`,
+`report.join_status=phase_local_only`,
+`report.default_llvm_generate_phase_rows=0`, `report.default_memory_kill=0`,
+`report.output_commit_record=binary_compile_rc:1`,
+`default_workers_ll_size=0`, and `default_workers_missing_main=1`. Scope:
 external `LLVMIRGenerator` sinks remain rejected as a resource fix until a
 future slice owns and falsifies produced-stage external-sink entrypoint/main
 emission; otherwise the default lane must choose another function-emission
