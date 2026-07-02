@@ -12,6 +12,33 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-DM-FUNCTION-EMISSION-SUBPHASE-SPLIT|implemented 2026-07-02 {F:0.91 G:0.63 R:0.90}]:
+The 0k-DL `during_function_emission` resource corridor is now split by
+default-off `llvm.function_emission_phase` rows. `LLVMIRGenerator#generate`
+logs dispatch rows, `emit_functions_sequential` logs coarse progress every 10
+functions, and `emit_functions_parallel` logs plan/fork/parent/wait/merge,
+cleanup, and fallback rows. The transaction report adds
+`REQUIRE_FUNCTION_EMISSION_SPLIT=1` plus mode-aware default/workers=1 row counts.
+Evidence:
+`STAGE1_COMPILER=/tmp/adamas_function_phase_stage1 TAIL_LINES=30 REQUIRE_JOINED=1 REQUIRE_POST_CU_RESOURCE=1 REQUIRE_RESOURCE_PHASE_SPLIT=1 REQUIRE_FUNCTION_EMISSION_SPLIT=1 scripts/generated_stage_execution_transaction_report.sh`
+exits 0 with `final_classification=abort_resource_after_lower_main`,
+`resource.function_emission_split=during_sequential_function_emit`,
+`resource.function_emission_last_phase=sequential_progress`,
+`resource.function_emission_last_index=80`,
+`resource.function_emission_last_total=150`,
+`resource.function_emission_mode_join_status=default_only`,
+`runtime.function_emission_phase_rows=13`,
+`runtime.default_function_emission_phase_rows=13`, and
+`runtime.workers1_function_emission_phase_rows=0`. Scope: behavior-neutral
+evidence only. The default worker mode reaches the known parallel rand fallback
+and then dies during sequential function emission around function 80/150; the
+workers=1 mode still reports after-`lower_main` memory kill through classifier
+logs but has no joined function-emission runtime rows. This does not admit
+worker policy, memory budget, rand fallback, output, tail, metadata, or backend
+semantic changes. Decay trigger: a fresh strict report reaches
+`sequential_done`, joins workers=1 function-emission rows, or changes the
+resource phase away from `during_sequential_function_emit`.
+
 [LM-ARCH-0K-DL-LLVM-GENERATE-PHASE-SPLIT|implemented 2026-07-02 {F:0.91 G:0.64 R:0.90}]:
 The post-0k-DK `PhaseAuthority` / `GeneratedStageExecution` resource corridor
 is now split by default-off LLVM generate phase rows. `LLVMIRGenerator#generate`

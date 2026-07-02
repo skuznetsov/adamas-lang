@@ -2044,6 +2044,35 @@ module Adamas::MIR
       log_generated_stage_transaction_row("llvm.generate_phase", fields)
     end
 
+    private def log_generated_stage_function_emission_phase(
+      phase : String,
+      mode : String,
+      extra_fields : String = ""
+    ) : Nil
+      return unless generated_stage_transaction_enabled?
+
+      fields = String.build do |io|
+        io << "phase="
+        io << generated_stage_transaction_token(phase)
+        io << " mode="
+        io << generated_stage_transaction_token(mode)
+        io << " out_pos="
+        io << @output.pos
+        io << " emitted="
+        io << @emitted_functions.size
+        io << " called="
+        io << @called_crystal_functions.size
+        io << " undefined="
+        io << @undefined_extern_names.size
+        unless extra_fields.empty?
+          io << ' '
+          io << extra_fields
+        end
+      end
+
+      log_generated_stage_transaction_row("llvm.function_emission_phase", fields)
+    end
+
     private def llvm_entry_opt_guard_enabled? : Bool
       raw = (::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_LLVM_ENTRY_OPT_GUARD") || "").strip.downcase
       return true if raw.empty?
@@ -3288,8 +3317,18 @@ module Adamas::MIR
       )
 
       if n_workers > 1 && total_funcs >= n_workers * 4
+        log_generated_stage_function_emission_phase(
+          "dispatch_parallel",
+          "parallel",
+          "planned_functions=#{total_funcs} requested_workers=#{emission_session.requested_worker_count} effective_workers=#{n_workers}"
+        )
         emit_functions_parallel(emission_session, functions_to_emit, n_workers)
       else
+        log_generated_stage_function_emission_phase(
+          "dispatch_sequential",
+          "sequential",
+          "planned_functions=#{total_funcs} requested_workers=#{emission_session.requested_worker_count} effective_workers=#{n_workers}"
+        )
         emit_functions_sequential(functions_to_emit)
       end
 
@@ -17350,9 +17389,21 @@ module Adamas::MIR
     # Sequential function emission (original path)
     private def emit_functions_sequential(functions : ::Array(Function))
       snapshot_every = ::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_LLVM_MEM_SNAPSHOT_EVERY").try(&.to_i?)
+      log_generated_stage_function_emission_phase(
+        "sequential_start",
+        "sequential",
+        "total_functions=#{functions.size}"
+      )
       functions.each_with_index do |func, idx|
         if @progress && (idx % 100 == 0 || idx == functions.size - 1)
           STDERR.puts "    Emitting function #{idx + 1}/#{functions.size}: #{func.name}"
+        end
+        if idx == 0 || ((idx + 1) % 10) == 0 || idx == functions.size - 1
+          log_generated_stage_function_emission_phase(
+            "sequential_progress",
+            "sequential",
+            "index=#{idx + 1} total_functions=#{functions.size} function=#{generated_stage_transaction_token(func.name)}"
+          )
         end
         if snapshot_every && snapshot_every > 0 && idx > 0 && (idx % snapshot_every) == 0
           emit_memory_snapshot(idx + 1, functions.size)
@@ -17364,6 +17415,11 @@ module Adamas::MIR
           raise "Index error in emit_function for: #{func.name}\n#{ex.message}\n#{bt}"
         end
       end
+      log_generated_stage_function_emission_phase(
+        "sequential_done",
+        "sequential",
+        "total_functions=#{functions.size}"
+      )
     end
 
     private def emit_memory_snapshot(current_index : Int32, total_functions : Int32) : Nil
@@ -17699,6 +17755,11 @@ module Adamas::MIR
     # Parent concatenates results and merges side-effect data.
     private def emit_functions_parallel(emission_session : LLVMEmissionSession, functions : ::Array(Function), n_workers : Int32)
       total = functions.size
+      log_generated_stage_function_emission_phase(
+        "parallel_start",
+        "parallel",
+        "total_functions=#{total} workers=#{n_workers}"
+      )
 
       # Create temp directory for worker outputs
       tmp_dir = File.tempname("adamas_llvm_par", "")
@@ -17765,6 +17826,12 @@ module Adamas::MIR
         parent_func_indices = worker_assignments[heaviest_worker]
         worker_assignments[heaviest_worker] = [] of Int32
       end
+      active_worker_count = worker_assignments.count { |assignment| !assignment.empty? }
+      log_generated_stage_function_emission_phase(
+        "parallel_plan_done",
+        "parallel",
+        "total_functions=#{total} workers=#{n_workers} active_workers=#{active_worker_count} parent_functions=#{parent_func_indices.size} max_cost=#{max_cost} max_cost_name=#{generated_stage_transaction_token(max_cost_name)}"
+      )
 
       n_workers.times do |worker_idx|
         next if worker_assignments[worker_idx].empty?
@@ -17858,6 +17925,11 @@ module Adamas::MIR
 
         workers << {pid, ir_file, se_file}
       end
+      log_generated_stage_function_emission_phase(
+        "parallel_workers_forked",
+        "parallel",
+        "worker_processes=#{workers.size} parent_functions=#{parent_func_indices.size}"
+      )
 
       # Parent: emit large functions concurrently with workers.
       # While workers handle the bulk of functions (finishing in ~300ms), the parent
@@ -17866,6 +17938,11 @@ module Adamas::MIR
       parent_t0 = Time.instant
       parent_opt_ms = 0.0
       unless parent_func_indices.empty?
+        log_generated_stage_function_emission_phase(
+          "parallel_parent_emit_start",
+          "parallel",
+          "parent_functions=#{parent_func_indices.size}"
+        )
         old_output = @output
         @output = parent_output
         parent_func_indices.each do |fi|
@@ -17894,11 +17971,21 @@ module Adamas::MIR
           end
         end
         @output = old_output
+        log_generated_stage_function_emission_phase(
+          "parallel_parent_emit_done",
+          "parallel",
+          "parent_functions=#{parent_func_indices.size} parent_bytes=#{parent_output.pos}"
+        )
       end
       parent_elapsed = (Time.instant - parent_t0).total_milliseconds
       STDERR.puts "  [LLVM] parent emitted #{parent_func_indices.size} funcs in #{parent_elapsed.round(1)}ms (opt=#{parent_opt_ms.round(1)}ms, #{parent_output.pos}B)" if @progress && !parent_func_indices.empty?
 
       # Wait for all workers
+      log_generated_stage_function_emission_phase(
+        "parallel_wait_start",
+        "parallel",
+        "worker_processes=#{workers.size}"
+      )
       workers.each do |pid, _, _|
         ret = LibC.waitpid(pid, out status, 0)
         if ret == -1
@@ -17909,6 +17996,11 @@ module Adamas::MIR
           raise "LLVM worker pid #{pid} failed with exit code #{exit_code}"
         end
       end
+      log_generated_stage_function_emission_phase(
+        "parallel_wait_done",
+        "parallel",
+        "worker_processes=#{workers.size}"
+      )
 
       # Merge results in order
       @output = saved_output
@@ -17916,6 +18008,11 @@ module Adamas::MIR
       # Track worker string names that need aliases (worker_name => canonical_name)
 
       # Append parent-emitted functions first
+      log_generated_stage_function_emission_phase(
+        "parallel_merge_start",
+        "parallel",
+        "worker_processes=#{workers.size} parent_bytes=#{parent_output.pos}"
+      )
       if parent_output.pos > 0
         append_output(parent_output.to_s)
       end
@@ -17930,6 +18027,11 @@ module Adamas::MIR
       end
 
       @string_counter = max_string_counter
+      log_generated_stage_function_emission_phase(
+        "parallel_merge_done",
+        "parallel",
+        "worker_processes=#{workers.size}"
+      )
 
       # Clean up temp files
       workers.each do |_, ir_file, se_file|
@@ -17937,8 +18039,18 @@ module Adamas::MIR
         File.delete?(se_file)
       end
       Dir.delete?(tmp_dir)
+      log_generated_stage_function_emission_phase(
+        "parallel_cleanup_done",
+        "parallel",
+        "worker_processes=#{workers.size}"
+      )
     rescue ex
       # On failure, fall back to sequential emission
+      log_generated_stage_function_emission_phase(
+        "parallel_rescue_fallback_sequential",
+        "parallel",
+        "error=#{generated_stage_transaction_token(ex.message || ex.class.name)}"
+      )
       STDERR.puts "  [LLVM] parallel emission failed: #{ex.message}, falling back to sequential"
       @output = saved_output if saved_output
       emit_functions_sequential(functions)

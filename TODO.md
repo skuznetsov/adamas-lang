@@ -8,6 +8,28 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: the 0k-DL function-emission corridor is now split one
+  level deeper. `LLVMIRGenerator` records default-off
+  `llvm.function_emission_phase` rows for dispatch, sequential progress,
+  parallel planning/fork/wait/merge, and fallback, and the transaction report
+  adds `REQUIRE_FUNCTION_EMISSION_SPLIT=1`. Fresh evidence:
+  `STAGE1_COMPILER=/tmp/adamas_function_phase_stage1 TAIL_LINES=30 REQUIRE_JOINED=1 REQUIRE_POST_CU_RESOURCE=1 REQUIRE_RESOURCE_PHASE_SPLIT=1 REQUIRE_FUNCTION_EMISSION_SPLIT=1 scripts/generated_stage_execution_transaction_report.sh`
+  exits 0 with `final_classification=abort_resource_after_lower_main`,
+  `resource.function_emission_split=during_sequential_function_emit`,
+  `resource.function_emission_last_phase=sequential_progress`,
+  `resource.function_emission_last_index=80`,
+  `resource.function_emission_last_total=150`,
+  `resource.function_emission_mode_join_status=default_only`,
+  `runtime.default_function_emission_phase_rows=13`, and
+  `runtime.workers1_function_emission_phase_rows=0`. This means the default
+  worker mode reaches the known parallel rand fallback and then dies during
+  sequential function emission; workers=1 still reports after-`lower_main`
+  memory kill via classifier logs but does not join function-emission runtime
+  rows. The next slice must either make that workers=1 observability gap
+  root-sized or select a transaction-owned default-mode sequential emission
+  edge; worker policy, memory budgets, output behavior, tail stubs, metadata,
+  rand fallback, and backend semantic changes remain rejected.
+
 - 2026-07-02 UPDATE: post-0k-DK resource corridor is now split by default-off
   LLVM generate phase rows. `LLVMIRGenerator#generate` records
   `llvm.generate_phase` rows under the existing `GSETX` transaction, and

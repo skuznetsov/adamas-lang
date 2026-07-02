@@ -21,6 +21,9 @@ Environment:
   REQUIRE_RESOURCE_PHASE_SPLIT=1
                               Require LLVM generate phase evidence for the
                               post-lower_main resource corridor.
+  REQUIRE_FUNCTION_EMISSION_SPLIT=1
+                              Require LLVM function-emission subphase evidence
+                              for the current resource corridor.
   REQUIRE_ADMIT_BEHAVIOR=1    Require the report to select a behavior-admissible
                               root-sized transaction-owned edge.
 
@@ -193,6 +196,39 @@ runtime_row_count() {
   ' "$RUNTIME_LEDGER" 2>/dev/null || echo 0
 }
 
+runtime_field_for_mode() {
+  local mode="$1"
+  local row="$2"
+  local key="$3"
+  awk -F'\t' -v tx="$transaction_id" -v mode="$mode" -v row="$row" -v key="$key" '
+    $1 == "GSETX" && $2 == tx && $3 == mode && $4 == row {
+      for (i = 5; i <= NF; i++) {
+        n = split($i, parts, " ")
+        for (j = 1; j <= n; j++) {
+          if (index(parts[j], key "=") == 1) {
+            print substr(parts[j], length(key) + 2)
+            found = 1
+          }
+        }
+      }
+    }
+    END {
+      if (!found) {
+        exit 1
+      }
+    }
+  ' "$RUNTIME_LEDGER" 2>/dev/null | tail -1 || true
+}
+
+runtime_row_count_for_mode() {
+  local mode="$1"
+  local row="$2"
+  awk -F'\t' -v tx="$transaction_id" -v mode="$mode" -v row="$row" '
+    $1 == "GSETX" && $2 == tx && $3 == mode && $4 == row { count++ }
+    END { print count + 0 }
+  ' "$RUNTIME_LEDGER" 2>/dev/null || echo 0
+}
+
 runtime_hir_module_id="$(runtime_field "setup.hir_final" "hir_module_id")"
 if [[ -z "$runtime_hir_module_id" ]]; then
   runtime_hir_module_id="$(runtime_field "setup.hir_module" "hir_module_id")"
@@ -208,6 +244,17 @@ runtime_side_effect_called="$(runtime_field "side_effect.runtime_counts" "called
 runtime_side_effect_undefined="$(runtime_field "side_effect.runtime_counts" "undefined")"
 runtime_llvm_generate_phase="$(runtime_field "llvm.generate_phase" "phase")"
 runtime_llvm_generate_out_pos="$(runtime_field "llvm.generate_phase" "out_pos")"
+runtime_function_emission_phase="$(runtime_field "llvm.function_emission_phase" "phase")"
+runtime_function_emission_mode="$(runtime_field "llvm.function_emission_phase" "mode")"
+runtime_function_emission_out_pos="$(runtime_field "llvm.function_emission_phase" "out_pos")"
+runtime_function_emission_index="$(runtime_field "llvm.function_emission_phase" "index")"
+runtime_function_emission_total="$(runtime_field "llvm.function_emission_phase" "total_functions")"
+runtime_default_function_emission_phase="$(runtime_field_for_mode "default_workers" "llvm.function_emission_phase" "phase")"
+runtime_default_function_emission_mode="$(runtime_field_for_mode "default_workers" "llvm.function_emission_phase" "mode")"
+runtime_default_function_emission_index="$(runtime_field_for_mode "default_workers" "llvm.function_emission_phase" "index")"
+runtime_workers1_function_emission_phase="$(runtime_field_for_mode "workers1" "llvm.function_emission_phase" "phase")"
+runtime_workers1_function_emission_mode="$(runtime_field_for_mode "workers1" "llvm.function_emission_phase" "mode")"
+runtime_workers1_function_emission_index="$(runtime_field_for_mode "workers1" "llvm.function_emission_phase" "index")"
 runtime_tail_phase="$(runtime_field "tail.semantic_split" "phase")"
 runtime_output_rc="$(runtime_field "output.binary_compile_result" "rc")"
 runtime_output_bytes="$(runtime_field "output.llvm_ir_written" "bytes")"
@@ -287,6 +334,51 @@ case "$runtime_llvm_generate_phase" in
     runtime_llvm_generate_phase_split="unknown_llvm_generate_phase:${runtime_llvm_generate_phase}"
     ;;
 esac
+
+case "$runtime_function_emission_phase" in
+  "")
+    runtime_function_emission_split="function_emission_phase_unjoined"
+    ;;
+  dispatch_parallel|parallel_start|parallel_plan_done|parallel_workers_forked)
+    runtime_function_emission_split="during_parallel_setup"
+    ;;
+  parallel_parent_emit_start|parallel_parent_emit_done)
+    runtime_function_emission_split="during_parallel_parent_emit"
+    ;;
+  parallel_wait_start|parallel_wait_done)
+    runtime_function_emission_split="during_parallel_worker_wait"
+    ;;
+  parallel_merge_start|parallel_merge_done)
+    runtime_function_emission_split="during_parallel_merge"
+    ;;
+  parallel_cleanup_done)
+    runtime_function_emission_split="after_parallel_cleanup"
+    ;;
+  parallel_rescue_fallback_sequential)
+    runtime_function_emission_split="parallel_fallback_to_sequential"
+    ;;
+  dispatch_sequential|sequential_start|sequential_progress)
+    runtime_function_emission_split="during_sequential_function_emit"
+    ;;
+  sequential_done)
+    runtime_function_emission_split="after_sequential_function_emit"
+    ;;
+  *)
+    runtime_function_emission_split="unknown_function_emission_phase:${runtime_function_emission_phase}"
+    ;;
+esac
+
+runtime_default_function_emission_rows="$(runtime_row_count_for_mode "default_workers" "llvm.function_emission_phase")"
+runtime_workers1_function_emission_rows="$(runtime_row_count_for_mode "workers1" "llvm.function_emission_phase")"
+if [[ "$runtime_default_function_emission_rows" -gt 0 && "$runtime_workers1_function_emission_rows" -gt 0 ]]; then
+  runtime_function_emission_mode_join="both_modes"
+elif [[ "$runtime_default_function_emission_rows" -gt 0 ]]; then
+  runtime_function_emission_mode_join="default_only"
+elif [[ "$runtime_workers1_function_emission_rows" -gt 0 ]]; then
+  runtime_function_emission_mode_join="workers1_only"
+else
+  runtime_function_emission_mode_join="unjoined"
+fi
 
 missing_runtime_rows=()
 [[ -z "$runtime_hir_module_id" ]] && missing_runtime_rows+=("hir_module_id")
@@ -388,6 +480,7 @@ echo "require_clean=${REQUIRE_CLEAN:-0}"
 echo "require_joined=${REQUIRE_JOINED:-0}"
 echo "require_post_cu_resource=${REQUIRE_POST_CU_RESOURCE:-0}"
 echo "require_resource_phase_split=${REQUIRE_RESOURCE_PHASE_SPLIT:-0}"
+echo "require_function_emission_split=${REQUIRE_FUNCTION_EMISSION_SPLIT:-0}"
 echo "require_admit_behavior=${REQUIRE_ADMIT_BEHAVIOR:-0}"
 echo "invocation.source=$source_path"
 echo "invocation.source_sha1=$source_sha1"
@@ -429,12 +522,28 @@ echo "resource.worker_mode_split=default_vs_workers1"
 echo "resource.llvm_generate_last_phase=${runtime_llvm_generate_phase:-unjoined}"
 echo "resource.llvm_generate_last_out_pos=${runtime_llvm_generate_out_pos:-unjoined}"
 echo "resource.llvm_generate_phase_split=$runtime_llvm_generate_phase_split"
+echo "resource.function_emission_last_phase=${runtime_function_emission_phase:-unjoined}"
+echo "resource.function_emission_last_mode=${runtime_function_emission_mode:-unjoined}"
+echo "resource.function_emission_last_index=${runtime_function_emission_index:-unjoined}"
+echo "resource.function_emission_last_total=${runtime_function_emission_total:-unjoined}"
+echo "resource.function_emission_last_out_pos=${runtime_function_emission_out_pos:-unjoined}"
+echo "resource.function_emission_split=$runtime_function_emission_split"
+echo "resource.function_emission_mode_join_status=$runtime_function_emission_mode_join"
+echo "resource.default_function_emission_last_phase=${runtime_default_function_emission_phase:-unjoined}"
+echo "resource.default_function_emission_last_mode=${runtime_default_function_emission_mode:-unjoined}"
+echo "resource.default_function_emission_last_index=${runtime_default_function_emission_index:-unjoined}"
+echo "resource.workers1_function_emission_last_phase=${runtime_workers1_function_emission_phase:-unjoined}"
+echo "resource.workers1_function_emission_last_mode=${runtime_workers1_function_emission_mode:-unjoined}"
+echo "resource.workers1_function_emission_last_index=${runtime_workers1_function_emission_index:-unjoined}"
 echo "runtime.ledger_rows=$(awk -F'\t' -v tx="$transaction_id" '$1 == "GSETX" && $2 == tx { count++ } END { print count + 0 }' "$RUNTIME_LEDGER" 2>/dev/null || echo 0)"
 echo "runtime.hir_rows=$(runtime_row_count "setup.hir_final")"
 echo "runtime.mir_rows=$(runtime_row_count "setup.mir_final")"
 echo "runtime.session_rows=$(runtime_row_count "llvm.session")"
 echo "runtime.side_effect_rows=$(runtime_row_count "side_effect.runtime_counts")"
 echo "runtime.llvm_generate_phase_rows=$(runtime_row_count "llvm.generate_phase")"
+echo "runtime.function_emission_phase_rows=$(runtime_row_count "llvm.function_emission_phase")"
+echo "runtime.default_function_emission_phase_rows=$runtime_default_function_emission_rows"
+echo "runtime.workers1_function_emission_phase_rows=$runtime_workers1_function_emission_rows"
 echo "runtime.tail_rows=$(runtime_row_count "tail.semantic_split")"
 echo "runtime.output_rows=$(( $(runtime_row_count "output.llvm_ir_start") + $(runtime_row_count "output.llvm_ir_written") + $(runtime_row_count "output.binary_compile_result") ))"
 echo "b4.classification=$b4_classification"
@@ -459,6 +568,10 @@ if [[ "${REQUIRE_POST_CU_RESOURCE:-0}" == "1" &&
 fi
 if [[ "${REQUIRE_RESOURCE_PHASE_SPLIT:-0}" == "1" &&
       "$runtime_llvm_generate_phase_split" == "llvm_generate_phase_unjoined" ]]; then
+  exit_code=9
+fi
+if [[ "${REQUIRE_FUNCTION_EMISSION_SPLIT:-0}" == "1" &&
+      "$runtime_function_emission_split" == "function_emission_phase_unjoined" ]]; then
   exit_code=9
 fi
 if [[ "${REQUIRE_ADMIT_BEHAVIOR:-0}" == "1" && "$admission_status" != "admit_behavior_candidate" ]]; then

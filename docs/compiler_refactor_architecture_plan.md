@@ -266,6 +266,25 @@ acceptance. It must name a root-sized function-emission authority edge inside
 chunk emission, worker/parent output buffering, or another measured
 function-emission consumer.
 
+2026-07-02 post-0k-DM note: the function-emission corridor is now split one
+level deeper, but this is still measured-red architecture evidence rather than
+behavior admission. Fresh evidence from
+`STAGE1_COMPILER=/tmp/adamas_function_phase_stage1 TAIL_LINES=30 REQUIRE_JOINED=1 REQUIRE_POST_CU_RESOURCE=1 REQUIRE_RESOURCE_PHASE_SPLIT=1 REQUIRE_FUNCTION_EMISSION_SPLIT=1 scripts/generated_stage_execution_transaction_report.sh`
+preserves `final_classification=abort_resource_after_lower_main` and
+`admission_status=rejected_no_root_sized_consumer`, but reports
+`resource.function_emission_split=during_sequential_function_emit`,
+`resource.function_emission_last_phase=sequential_progress`,
+`resource.function_emission_last_index=80`,
+`resource.function_emission_last_total=150`,
+`resource.function_emission_mode_join_status=default_only`,
+`runtime.default_function_emission_phase_rows=13`, and
+`runtime.workers1_function_emission_phase_rows=0`. The next executable movement
+must not treat this as a license to patch worker policy, rand fallback, memory
+limits, tail stubs, metadata, output behavior, or backend semantics. It must
+either make the workers=1 function-emission observability gap root-sized, or
+select a transaction-owned default-mode sequential emission edge with the
+workers=1 residual stated.
+
 2026-07-02 post-0k-CR note: the return-shape census now also measures
 assigned-tail yield passthrough (`result = yield; ...; result`). Strict current
 evidence keeps the broad 0k-CQ result for naive `contains_yield` scope, but
