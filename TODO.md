@@ -8,6 +8,38 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: implemented Slice 0k-CU, the assigned-tail
+  `BlockCallReturnContract` behavior slice admitted by the Current Execution
+  Board. The HIR wrapper materialization path now records a return contract only
+  for untyped block helpers proven to be assigned-tail yield-passthrough
+  (`result = yield; ...; result`) and only for non-nil/non-void block-return
+  callsites; ordinary untyped block helpers remain un-specialized by return
+  shape. New focused guard:
+  `regression_tests/block_call_return_contract_assigned_tail_no_prelude.sh`.
+  Fresh evidence: `crystal build src/adamas.cr -o /tmp/adamas_0kcu_stage1
+  --error-trace` succeeded; the focused guard passed;
+  `REQUIRE_CURRENT_CU_CONTRACT=1 scripts/hir_block_return_shape_census.sh`
+  reports `classification=current_0k_cu_block_call_return_contract_applied`,
+  `candidate_multi_shape_keys=207`,
+  `candidate_additional_return_shape_bodies=224`,
+  `assigned_tail_multi_shape_keys=0`,
+  `timed_cp_phase_keys=5`,
+  `timed_cp_phase_nil_value_coexist_keys=0`,
+  `timed_cp_phase_assigned_tail_passthrough_keys=1`, and
+  `timed_cp_phase_set_return_keys=1`. The generated-stage gate moved past the
+  old O1 `affected_block_ids` / `Set(UInt32)#includes?` frontier:
+  `STAGE1_COMPILER=/tmp/adamas_0kcu_stage1 REQUIRE_CURRENT_O1=1
+  scripts/mir_optimization_container_frontier_classifier.sh` exits at the
+  expected "not current O1" boundary with
+  `b4_classification=llvm_entry_failure_after_lower_main` and
+  `workers1_exit139=0`. A kept B4 classifier run shows both default and
+  workers=1 modes reach `pass3 after lower_main call` and then RSS-kill around
+  4.3-4.5GB; default still has the parallel `Invalid bound for rand: 0`
+  fallback. Full regression suites pass `152/152 + 36/36`. This is a frontier
+  move, not green `s2b`/`s3b`; the breakglass lane is consumed and the next
+  movement must return to the Current Execution Board rather than continue from
+  the new memory/resource symptom.
+
 - 2026-07-02 UPDATE: implemented the Slice 0k-DH materialization scope-entry
   contract. The instance materialization path now applies the target
   type-param map and namespace override as an explicit scope-entry block owned by
@@ -27,6 +59,19 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   methods. This completes the focused 0k-DH DoD but does not claim green
   `s2b`/`s3b`. The next movement must return to the Current Execution Board and
   remeasure the bootstrap pressure gate before selecting another owner edge.
+
+- 2026-07-02 UPDATE: post-0k-DI remeasurement re-admits the B4/O1
+  `bootstrap-emergency-with-ledger` lane as the next production slice, but only
+  through the existing 0k-CU `BlockCallReturnContract` receipt. Fresh
+  `REQUIRE_CURRENT_CP_BROAD=1 scripts/hir_block_return_shape_census.sh` still
+  reports the broad rejected space (`candidate_multi_shape_keys=208`,
+  `candidate_additional_return_shape_bodies=228`) and the root-sized
+  assigned-tail discriminator (`assigned_tail_multi_shape_keys=1`,
+  `assigned_tail_additional_return_shape_bodies=4`,
+  `timed_cp_phase_assigned_tail_passthrough_keys=1`). The admitted source edit
+  must make only assigned-tail yield-passthrough block wrappers return-shape
+  dependent, keep nil/non-returning timed phases and ordinary iterator/scope
+  helpers un-specialized, and run the O1/B4 gates before any bootstrap claim.
 
 - 2026-07-02 UPDATE: added Slice 0k-DH, a compact pre-code receipt in
   `docs/compiler_architecture_sdd.md` for the `after_tx -> inside_type_params`

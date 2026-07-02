@@ -595,7 +595,7 @@ evidence, not next-step selectors.
 
 | Lane | Current decision | Required next receipt | Rejected shortcut |
 | --- | --- | --- | --- |
-| `bootstrap-emergency-with-ledger` / B4-O1 | Paused breakglass. The 0k-CR assigned-tail passthrough plus return-shape wrapper-materialization slice remains documented, but after 0k-CV it is not the current selector and may not resume from an uncommitted WIP. | Re-admit only with a fresh receipt that names: old authority edge = shared untyped `&` wrapper keyed without return contract; owner fact = HIR `BlockCallReturnContract`; producers = block-return recording and assigned-tail classifier; consumers = wrapper materialization, yield return inference, call target emission; baseline = current O1/B4 classifiers plus `REQUIRE_CURRENT_CP_BROAD=1 scripts/hir_block_return_shape_census.sh`; negative controls = nil/non-returning timed phases and ordinary iterator/scope helpers; stage gate = B4 future-clean or current-frontier movement; residual boundary. | Continuing the local WIP by inertia; starting from the next crash stack; classifier-only patch; broad return-shape specialization; direct CopyPropagation guard; `timed_cp_phase` annotation/inlining/deletion; MIR/LLVM/backend block-return rescue. |
+| `bootstrap-emergency-with-ledger` / B4-O1 | Consumed by 0k-CU. The HIR `BlockCallReturnContract` implementation moves the generated-stage gate past the old O1 `affected_block_ids` / `Set(UInt32)#includes?` frontier: `REQUIRE_CURRENT_CU_CONTRACT=1 scripts/hir_block_return_shape_census.sh` reports `classification=current_0k_cu_block_call_return_contract_applied`, and `STAGE1_COMPILER=/tmp/adamas_0kcu_stage1 REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh` exits at the expected non-current boundary with `b4_classification=llvm_entry_failure_after_lower_main` and `workers1_exit139=0`. The new residual is post-`lower_main` RSS pressure in both worker modes, with the default worker-mode rand fallback still present. | Return to the board before any new production source slice. The next receipt must reselect an owner spine from fresh generated-stage evidence; if it targets the new residual, it must name the old authority edge behind post-`lower_main` memory/resource growth rather than treating higher memory limits, worker count, or the rand fallback as acceptance evidence. | Continuing the 0k-CU breakglass lane by inertia; starting from the new RSS-kill stack; raising memory as a fix; forcing `ADAMAS_LLVM_WORKERS=1`; worker/rand/output/resource patches without a new receipt; CopyPropagation, Set/Hash, backend block-return, `NamedTuple`/`Tuple`, ambient-map, or `BlockOwner` changes. |
 | `architecture-burn-down` / owner-spine plan | Consumed by 0k-CW. The active burn-down selection is `MaterializationTransaction` exact body availability, based on generated-stage residual evidence rather than the latest crash stack. | Do not add another planning/report row unless it retires/refutes this selection or the residual classifier proves the selected edge is not root-sized. | Treating a moved crash stack as architecture progress; adding another report that does not retire/refute an older surface; committing WIP helpers that do not consume an old authority edge; claiming source-shape green as bootstrap green. |
 | `MaterializationTransaction` / exact body availability | Consumed through 0k-DI for the active `after_tx -> inside_type_params` edge. G6 `BlockOwner` setter availability is guard-green. The explicit materialization scope-entry slice preserves `[MAT_EMIT]` reachability and changes the lower-method terminal classifier from the old mixed 14-row / 4-cause state with `no_exact_after_tx_no_call` (6 rows) to a root-sized abstract-method residual: `residual_rows=3`, `terminal_cause_kinds=1`, `selected_cause=lower_method_terminal_abstract_method`, and `classification=eligible_lower_method_terminal_edge`. Residual rows now traverse `after_tx -> inside_type_params -> inside_namespace -> before_arity -> after_arity` and join to `[MAT_METHOD_CALL]`. This is focused authority-edge movement, not green bootstrap. | Return to the board before selecting another production edge. The next movement should first remeasure the generated-stage pressure gate and choose whether the active constraint is still `MaterializationTransaction` exact body availability, B4/O1 `PhaseAuthority`, or a `SemanticIdentity` pre-s2-clean row. | Backend undefined-extern rescue, forwarder rescue, requested-name forcing, per-method Array/Slice/IO/Atomic/String::Builder/Int32 patches, broad `NamedTuple`/`Tuple` rendering, global ambient-map policy, `BlockOwner` rollback, treating abstract-method residuals as a local method patch, adding another result/consumer layer, adding another generic pre-call marker, or threading a trace object through production `lower_method`. |
 | `PhaseAuthority` / `GeneratedStageExecution` | B4/L6 remain pressure evidence, not an implementation selector. | Resume only with a slice that reduces B4/L6 phase, owner-spine ambiguity, or live proxy surface. | More behavior-neutral row owners, output/resource/tail/worker patches, memory-budget acceptance, `ADAMAS_LLVM_WORKERS=1` as a fix. |
@@ -809,6 +809,58 @@ SliceReceipt {
       new crash-stack classifier or local fix.
 }
 ```
+
+#### Slice 0k-CU implementation: assigned-tail block-return contract
+
+Slice 0k-CU implements the breakglass receipt above. The HIR block wrapper
+materialization path now records a `BlockCallReturnContract` when all of these
+hold:
+
+- the callee has an untyped block parameter;
+- the callee body is assigned-tail yield-passthrough
+  (`result = yield; ...; result`);
+- the callsite has a stable, non-nil, non-void block-return shape.
+
+The contract appends the block-return type only to the wrapper symbol key. It
+does not add a fake runtime parameter and does not specialize all untyped `&`
+helpers by return shape. Existing argument-shape specialization remains the
+owner for arity-collapsed untyped regular parameters.
+
+Focused DoD evidence:
+
+- `crystal build src/adamas.cr -o /tmp/adamas_0kcu_stage1 --error-trace` exits
+  0.
+- `regression_tests/block_call_return_contract_assigned_tail_no_prelude.sh /tmp/adamas_0kcu_stage1`
+  passes. The guard proves a shared nil-return wrapper can coexist with a
+  return-shaped wrapper, and the value-return callsite calls the return-shaped
+  wrapper with a non-void result.
+- `REQUIRE_CURRENT_CU_CONTRACT=1 scripts/hir_block_return_shape_census.sh`
+  reports `classification=current_0k_cu_block_call_return_contract_applied`,
+  `candidate_multi_shape_keys=207`,
+  `candidate_additional_return_shape_bodies=224`,
+  `assigned_tail_multi_shape_keys=0`,
+  `timed_cp_phase_keys=5`,
+  `timed_cp_phase_nil_value_coexist_keys=0`,
+  `timed_cp_phase_assigned_tail_passthrough_keys=1`, and
+  `timed_cp_phase_set_return_keys=1`.
+- `STAGE1_COMPILER=/tmp/adamas_0kcu_stage1 REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh`
+  exits at the expected non-current boundary: `b4_classification=llvm_entry_failure_after_lower_main`
+  and `workers1_exit139=0`. This proves the old O1
+  `affected_block_ids` / `Set(UInt32)#includes?` frontier no longer reproduces.
+- A kept `scripts/generated_stage_llvm_entry_classifier.sh` run classifies the
+  residual as `llvm_entry_failure_after_lower_main`: both default and workers=1
+  modes reach `pass3 after lower_main call`, then RSS-kill around 4.3-4.5GB;
+  default mode still reports the parallel `Invalid bound for rand: 0` fallback.
+- `regression_tests/run_all_suites.sh /tmp/adamas_0kcu_stage1 4` passes
+  `152/152` originals and `36/36` combined tests.
+
+Residual boundary: this consumes the 0k-CU breakglass lane and moves the
+generated-stage frontier, but it does not make `s2b`/`s3b` green. The next
+movement must return to the Current Execution Board. A new production slice must
+name a fresh owner edge for the post-`lower_main` RSS/resource residual before
+changing worker policy, memory budgets, output/resource rows, backend behavior,
+CopyPropagation, Set/Hash, `NamedTuple`/`Tuple`, ambient-map policy, or
+`BlockOwner`.
 
 - `SemanticIdentity`: semantic owners, rendered names, generic keys,
   type-visible values, and ambient state scope;

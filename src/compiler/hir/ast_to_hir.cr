@@ -905,8 +905,22 @@ module Adamas::HIR
       getter source_def : Adamas::Compiler::Frontend::DefNode
       getter arena : Adamas::Compiler::Frontend::ArenaLike
       getter arg_types : Array(TypeRef)
+      getter block_return_name : String?
 
-      def initialize(@canonical_yield_name, @source_def, @arena, @arg_types)
+      def initialize(@canonical_yield_name, @source_def, @arena, @arg_types, @block_return_name = nil)
+      end
+    end
+
+    # HIR-owned contract for helpers whose method result is the yielded value
+    # carried through an assigned tail local (`result = yield; ...; result`).
+    # This is deliberately narrower than all yield-containing helpers: ordinary
+    # iterators and scoped helpers can observe varied block returns without
+    # returning that value themselves.
+    private struct BlockCallReturnContract
+      getter block_return_name : String
+      getter block_return_type : TypeRef
+
+      def initialize(@block_return_name, @block_return_type)
       end
     end
 
@@ -6434,41 +6448,82 @@ module Adamas::HIR
       value != "0" && value != "false"
     end
 
-    # Re-key an arity-collapsed block-call target (e.g. `String#split$Char$arity3_block`,
-    # which `lookup_block_function_def_for_call` returns because that is the only
-    # registered block def for a partially-typed overload) to the concrete callsite arg
-    # shape (e.g. `String#split$Char_Nil_Bool_block`). This must be applied at EVERY site
-    # that overwrites the call target from a block-def lookup, otherwise a later site
-    # re-collapses the shape back to the shared arity target. The shared yield-def is used
-    # only as the source AST; `lower_def`'s `full_name_override` emits the body under this
-    # requested shape name, so distinct shapes (Int32 limit -> `i32`, Nil limit -> `ptr`)
-    # become distinct functions instead of one shared signature fixed by whichever caller
-    # lowers first. Fail-closed: returns the original arity target when shape
-    # specialization is disabled, the shape is unknown (VOID args), the def has no untyped
-    # regular param, or the re-keyed name does not share the same base.
+    # Re-key block-call targets when a concrete callsite needs a distinct wrapper
+    # body. There are two independent owner facts:
+    #
+    # - argument ABI shape for arity-collapsed untyped regular params;
+    # - block return shape for assigned-tail yield-passthrough helpers.
+    #
+    # Only the symbol key gains the return-shape dimension. The recorded
+    # `arg_types` stay as the real call ABI so the generated wrapper does not
+    # grow a fake parameter.
     private def shape_keyed_block_target(
       base_method_name : String,
       block_arg_types : Array(TypeRef),
       block_def : Adamas::Compiler::Frontend::DefNode,
       arity_target : String,
+      block_return_name : String? = nil,
     ) : String
       return arity_target unless block_shape_specialize_enabled?
-      return arity_target unless arity_target.includes?("$arity")
-      return arity_target if block_arg_types.empty?
       return arity_target if block_arg_types.any? { |t| t == TypeRef::VOID }
-      return arity_target unless def_has_untyped_regular_param?(block_def)
-      shape_keyed = mangle_function_name(base_method_name, block_arg_types, true)
+
+      source_arena = @function_def_arenas[arity_target]? ||
+                     @function_def_arenas[strip_type_suffix(arity_target)]? ||
+                     @function_def_arenas[base_method_name]? ||
+                     @function_def_arenas[strip_type_suffix(base_method_name)]? ||
+                     resolve_arena_for_def(block_def, @arena)
+
+      return_contract = block_call_return_contract_for(block_def, source_arena, block_return_name)
+      arg_shape_needed = arity_target.includes?("$arity") && def_has_untyped_regular_param?(block_def)
+      return arity_target unless return_contract || arg_shape_needed
+
+      shape_keyed = if contract = return_contract
+                      block_call_return_contract_target_name(base_method_name, block_arg_types, contract)
+                    else
+                      mangle_function_name(base_method_name, block_arg_types, true)
+                    end
       return arity_target if shape_keyed.empty? || shape_keyed == arity_target
       return arity_target unless strip_type_suffix(shape_keyed) == strip_type_suffix(arity_target)
       # Register the durable shape-specialization fact so lower_function_if_needed
       # emits a distinct function under `shape_keyed` using the shared yield def as
       # source AST. Fail-closed: without the source arena we cannot materialize, so
       # keep the legacy arity target.
-      source_arena = @function_def_arenas[arity_target]?
-      return arity_target unless source_arena
       @block_shape_specializations[shape_keyed] ||=
-        BlockShapeSpecialization.new(arity_target, block_def, source_arena, block_arg_types.dup)
+        BlockShapeSpecialization.new(arity_target, block_def, source_arena, block_arg_types.dup, return_contract.try(&.block_return_name))
       shape_keyed
+    end
+
+    private def block_call_return_contract_for(
+      block_def : Adamas::Compiler::Frontend::DefNode,
+      source_arena : Adamas::Compiler::Frontend::ArenaLike,
+      block_return_name : String?,
+    ) : BlockCallReturnContract?
+      stable_name = stable_block_return_type_name(block_return_name)
+      return nil unless stable_name
+      block_return_type = type_ref_for_name(stable_name)
+      return nil if block_return_type == TypeRef::VOID || block_return_type == TypeRef::NIL
+
+      params = block_def.params
+      return nil unless params
+      block_param = find_param(params) { |_p| _p.is_block }
+      return nil unless block_param
+      return nil unless block_param.type_annotation.nil?
+
+      body = block_def.body
+      return nil unless body
+      return nil unless with_arena(source_arena) { assigned_tail_yield_passthrough?(body) }
+
+      BlockCallReturnContract.new(stable_name, block_return_type)
+    end
+
+    private def block_call_return_contract_target_name(
+      base_method_name : String,
+      block_arg_types : Array(TypeRef),
+      contract : BlockCallReturnContract,
+    ) : String
+      contract_types = block_arg_types.dup
+      contract_types << contract.block_return_type
+      mangle_function_name(base_method_name, contract_types, true)
     end
 
     # True when `requested` is a concrete-shape `_block` specialization of an
@@ -42869,6 +42924,63 @@ module Adamas::HIR
       end
     end
 
+    private def assigned_tail_identifier_name(expr_id : ExprId) : String?
+      loop do
+        node = @arena[expr_id]
+        case node
+        when Adamas::Compiler::Frontend::GroupingNode
+          expr_id = node.expression
+        when Adamas::Compiler::Frontend::MacroExpressionNode
+          expr_id = node.expression
+        when Adamas::Compiler::Frontend::IdentifierNode
+          return safe_slice_to_string(node.name)
+        else
+          return nil
+        end
+      end
+    end
+
+    private def assigned_tail_return_identifier_name(expr_id : ExprId) : String?
+      loop do
+        node = @arena[expr_id]
+        case node
+        when Adamas::Compiler::Frontend::GroupingNode
+          expr_id = node.expression
+        when Adamas::Compiler::Frontend::MacroExpressionNode
+          expr_id = node.expression
+        when Adamas::Compiler::Frontend::BeginNode
+          if clauses = node.rescue_clauses
+            return nil unless clauses.empty?
+          end
+          return nil if node.else_body
+          return nil if node.body.empty?
+          expr_id = node.body.last
+        when Adamas::Compiler::Frontend::IdentifierNode
+          return safe_slice_to_string(node.name)
+        else
+          return nil
+        end
+      end
+    end
+
+    private def assigned_tail_yield_passthrough?(body : Array(ExprId)) : Bool
+      return false if body.empty?
+      tail_name = assigned_tail_return_identifier_name(body.last)
+      return false unless tail_name && !tail_name.empty?
+
+      assigned_from_yield = false
+      body.each do |expr_id|
+        node = @arena[expr_id]
+        case node
+        when Adamas::Compiler::Frontend::AssignNode
+          target_name = assigned_tail_identifier_name(node.target)
+          next unless target_name == tail_name
+          assigned_from_yield = yield_return_expr?(node.value)
+        end
+      end
+      assigned_from_yield
+    end
+
     private def scan_return_yield(expr_id : ExprId) : {Bool, Bool}
       expr_node = @arena[expr_id]
       case expr_node
@@ -70340,6 +70452,13 @@ module Adamas::HIR
           arena = shape_spec.arena
           target_name = name
           remember_callsite_arg_types(name, shape_spec.arg_types, has_block: true) if @pending_arg_types[name]?.nil?
+          if block_return_name = shape_spec.block_return_name
+            if existing = @function_type_param_maps[name]?
+              @function_type_param_maps[name] = existing.merge({"__block_return__" => block_return_name})
+            else
+              @function_type_param_maps[name] = {"__block_return__" => block_return_name}
+            end
+          end
         end
       end
       lookup_start_instant = Time.instant if env_has?("ADAMAS_PHASE_STATS")
@@ -78648,7 +78767,7 @@ module Adamas::HIR
             # Per-shape block specialization (see shape_keyed_block_target): re-key the
             # arity-collapsed block target to the concrete callsite arg shape so distinct
             # shapes do not share one block ABI signature.
-            block_call_target = shape_keyed_block_target(base_method_name, block_target_arg_types, block_entry[1], block_entry[0])
+            block_call_target = shape_keyed_block_target(base_method_name, block_target_arg_types, block_entry[1], block_entry[0], block_return_name)
             mangled_method_name = if receiver_id
                                     preserve_receiver_block_call_target(
                                       ctx.type_of(receiver_id),
@@ -78873,7 +78992,7 @@ module Adamas::HIR
             # Per-shape block specialization: keep the concrete callsite arg shape instead
             # of collapsing back to the registered arity block target (this pass would
             # otherwise undo the same re-key done at the earlier block-return-name site).
-            typed_canon_target = shape_keyed_block_target(base_method_name, arg_types, typed_canon[1], typed_canon[0])
+            typed_canon_target = shape_keyed_block_target(base_method_name, arg_types, typed_canon[1], typed_canon[0], block_return_name)
             mangled_method_name = if receiver_id
                                     preserve_receiver_block_call_target(
                                       ctx.type_of(receiver_id),
@@ -78889,7 +79008,7 @@ module Adamas::HIR
             primary_mangled_name = mangled_method_name
           elsif count_distinct_block_overloads_arity_only(base_method_name, call_args.size, receiver_base_for_canon) == 1
             if fallback_canon = lookup_block_function_def_for_call(base_method_name, call_args.size, nil, receiver_base_for_canon)
-              fallback_canon_target = shape_keyed_block_target(base_method_name, arg_types, fallback_canon[1], fallback_canon[0])
+              fallback_canon_target = shape_keyed_block_target(base_method_name, arg_types, fallback_canon[1], fallback_canon[0], block_return_name)
               mangled_method_name = if receiver_id
                                       preserve_receiver_block_call_target(
                                         ctx.type_of(receiver_id),
@@ -81424,7 +81543,7 @@ module Adamas::HIR
             ctx.type_of(receiver_id),
             base_method_name,
             method_name,
-            shape_keyed_block_target(base_method_name, lookup_arg_types, direct_block_entry[1], direct_block_entry[0]),
+            shape_keyed_block_target(base_method_name, lookup_arg_types, direct_block_entry[1], direct_block_entry[0], block_return_name),
             lookup_arg_types,
             true
           )
@@ -81433,7 +81552,7 @@ module Adamas::HIR
             ctx.type_of(receiver_id),
             base_method_name,
             method_name,
-            shape_keyed_block_target(base_method_name, lookup_arg_types, block_entry[1], block_entry[0]),
+            shape_keyed_block_target(base_method_name, lookup_arg_types, block_entry[1], block_entry[0], block_return_name),
             lookup_arg_types,
             true
           )
@@ -81443,7 +81562,7 @@ module Adamas::HIR
               ctx.type_of(receiver_id),
               base_method_name,
               method_name,
-              shape_keyed_block_target(base_method_name, lookup_arg_types, block_entry[1], block_entry[0]),
+              shape_keyed_block_target(base_method_name, lookup_arg_types, block_entry[1], block_entry[0], block_return_name),
               lookup_arg_types,
               true
             )
@@ -81451,7 +81570,13 @@ module Adamas::HIR
         end
         if resolved_emit == emit_method_name
           typed_block = mangle_function_name(base_method_name, lookup_arg_types, true)
-          if @function_defs.has_key?(typed_block) || @module.has_function?(typed_block) || @function_types.has_key?(typed_block)
+          contract_emit_already_selected =
+            block_return_name &&
+              emit_method_name != typed_block &&
+              emit_method_name.ends_with?("_block") &&
+              strip_type_suffix(emit_method_name) == strip_type_suffix(typed_block)
+          if !contract_emit_already_selected &&
+             (@function_defs.has_key?(typed_block) || @module.has_function?(typed_block) || @function_types.has_key?(typed_block))
             # On virtual calls base_method_name is the def-owner form (e.g.
             # Indexable(T)#fetch), so typed_block would downgrade a name already
             # re-qualified to the concrete receiver back to the module-shared

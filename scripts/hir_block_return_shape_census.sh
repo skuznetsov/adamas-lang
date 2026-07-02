@@ -7,7 +7,7 @@ usage() {
   cat <<'USAGE'
 usage: scripts/hir_block_return_shape_census.sh
 
-Read-only census for Slice 0k-CP.
+Read-only census for Slice 0k-CP / 0k-CU.
 
 It copies src/ to a temporary directory, injects default-off probes into the
 temporary copy of ast_to_hir.cr, builds a temporary probe compiler, and counts
@@ -22,12 +22,14 @@ Environment:
   KEEP_TMP=1                          Keep temporary artifacts and print their paths.
   REQUIRE_CURRENT_CP_ROOT_SIZED=1      Exit nonzero unless the current census is root-sized.
   REQUIRE_CURRENT_CP_BROAD=1           Exit nonzero unless the current census is broad.
+  REQUIRE_CURRENT_CU_CONTRACT=1        Exit nonzero unless the 0k-CU contract is applied.
   ROOT_SIZED_KEY_LIMIT=N               Max multi-return candidate keys for root-sized (default: 8).
   ROOT_SIZED_ADDITIONAL_BODY_LIMIT=N   Max extra return-shape bodies for root-sized (default: 32).
 
 Classifications:
   current_0k_cp_hir_block_return_shape_root_sized
   current_0k_cp_hir_block_return_shape_broad
+  current_0k_cu_block_call_return_contract_applied
   hir_block_return_shape_census_unmatched
 
 This script is a census only. It does not edit tracked compiler source and is
@@ -71,6 +73,7 @@ echo "root_sized_key_limit=$ROOT_SIZED_KEY_LIMIT"
 echo "root_sized_additional_body_limit=$ROOT_SIZED_ADDITIONAL_BODY_LIMIT"
 echo "require_current_cp_root_sized=${REQUIRE_CURRENT_CP_ROOT_SIZED:-0}"
 echo "require_current_cp_broad=${REQUIRE_CURRENT_CP_BROAD:-0}"
+echo "require_current_cu_contract=${REQUIRE_CURRENT_CU_CONTRACT:-0}"
 echo "note: temp-source-copy census; tracked compiler source is not edited"
 
 cp -R "$ROOT_DIR/src" "$TMP_SRC"
@@ -347,9 +350,20 @@ timed_nil_value = timed_entries.select do |e|
   e.shapes.keys.any? { |s| nilish.call(s) } && e.shapes.keys.any? { |s| !nilish.call(s) }
 end
 timed_assigned_tail = timed_entries.select { |e| e.assigned_tail_passthrough }
+timed_set_return = timed_entries.select do |e|
+  e.shapes.key?("Set(UInt32)") || e.name.include?("$String_Set(UInt32)_block")
+end
 
 classification =
-  if timed_nil_value.any? && candidate_multi.size <= key_limit && additional_bodies <= body_limit
+  if timed_assigned_tail.size == 1 &&
+     timed_set_return.any? &&
+     timed_multi.empty? &&
+     timed_nil_value.empty? &&
+     assigned_tail_multi.empty? &&
+     candidate_multi.size > key_limit &&
+     additional_bodies > body_limit
+    "current_0k_cu_block_call_return_contract_applied"
+  elsif timed_nil_value.any? && candidate_multi.size <= key_limit && additional_bodies <= body_limit
     "current_0k_cp_hir_block_return_shape_root_sized"
   elsif timed_nil_value.any?
     "current_0k_cp_hir_block_return_shape_broad"
@@ -376,6 +390,7 @@ puts "timed_cp_phase_keys=#{timed_entries.size}"
 puts "timed_cp_phase_multi_shape_keys=#{timed_multi.size}"
 puts "timed_cp_phase_nil_value_coexist_keys=#{timed_nil_value.size}"
 puts "timed_cp_phase_assigned_tail_passthrough_keys=#{timed_assigned_tail.size}"
+puts "timed_cp_phase_set_return_keys=#{timed_set_return.size}"
 puts "classification=#{classification}"
 
 puts "candidate_multi_shape_sample:"
@@ -428,6 +443,10 @@ fi
 if [[ "${REQUIRE_CURRENT_CP_BROAD:-0}" == "1" &&
       "$classification" != "current_0k_cp_hir_block_return_shape_broad" ]]; then
   exit 24
+fi
+if [[ "${REQUIRE_CURRENT_CU_CONTRACT:-0}" == "1" &&
+      "$classification" != "current_0k_cu_block_call_return_contract_applied" ]]; then
+  exit 25
 fi
 
 exit 0

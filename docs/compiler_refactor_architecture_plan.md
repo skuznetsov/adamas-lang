@@ -224,18 +224,20 @@ generated-stage gate, negative controls, rejected shortcuts, and residual
 boundary. If a proposed slice cannot fill those fields, the next movement is
 docs/probe work or architecture burn-down, not production code.
 
-2026-07-02 post-0k-CU note: the SDD now contains the pre-code receipt for the
-one admitted breakglass lane. Fresh current evidence keeps the broad
-return-shape scope rejected while preserving the root-sized assigned-tail
-passthrough discriminator (`assigned_tail_multi_shape_keys=1`) and the current
-O1 `affected_block_ids` frontier. The next production slice is therefore not a
-new design search and not a crash-stack classifier: if taken, it must implement
-the HIR `BlockCallReturnContract` receipt for assigned-tail yield-passthrough
-helpers and run the receipt's negative controls and generated-stage gate. If
-the implementation needs broader untyped-`&` return-shape specialization, a
-CopyPropagation guard, backend rescue, `timed_cp_phase` special-case,
-`NamedTuple`/`Tuple` rendering, ambient-map policy, or `BlockOwner` changes,
-the slice fails closed and returns to the Current Execution Board.
+2026-07-02 post-0k-CU implementation note: the admitted breakglass lane is now
+consumed by the HIR `BlockCallReturnContract` slice. Fresh evidence reports
+`classification=current_0k_cu_block_call_return_contract_applied`,
+`assigned_tail_multi_shape_keys=0`, `timed_cp_phase_keys=5`,
+`timed_cp_phase_nil_value_coexist_keys=0`, and
+`timed_cp_phase_set_return_keys=1`; the broad non-owner space remains rejected
+(`candidate_multi_shape_keys=207`, `candidate_additional_return_shape_bodies=224`).
+The generated-stage O1 gate moved past the old `affected_block_ids` /
+`Set(UInt32)#includes?` frontier and now reports
+`b4_classification=llvm_entry_failure_after_lower_main` with
+`workers1_exit139=0`. This is not green `s2b`/`s3b`; the next production
+movement must return to the Current Execution Board and reselect an owner edge
+for the post-`lower_main` RSS/resource residual instead of continuing the
+0k-CU lane by inertia.
 
 2026-07-02 post-0k-CR note: the return-shape census now also measures
 assigned-tail yield passthrough (`result = yield; ...; result`). Strict current

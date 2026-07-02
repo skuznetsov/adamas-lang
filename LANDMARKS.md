@@ -12,6 +12,52 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-CU-BLOCK-CALL-RETURN-CONTRACT-IMPLEMENTED|implemented 2026-07-02 {F:0.92 G:0.60 R:0.91}]:
+Slice 0k-CU implements the HIR `BlockCallReturnContract` for assigned-tail
+yield-passthrough helpers. The wrapper materialization key gains a block-return
+dimension only when the source helper is proven to return a local assigned from
+`yield` and the callsite has a non-nil/non-void block return; ordinary untyped
+block helpers remain governed by the existing argument-shape path. Evidence:
+`crystal build src/adamas.cr -o /tmp/adamas_0kcu_stage1 --error-trace` exits 0;
+`regression_tests/block_call_return_contract_assigned_tail_no_prelude.sh /tmp/adamas_0kcu_stage1`
+passes; `REQUIRE_CURRENT_CU_CONTRACT=1 scripts/hir_block_return_shape_census.sh`
+reports `classification=current_0k_cu_block_call_return_contract_applied`,
+`candidate_multi_shape_keys=207`, `candidate_additional_return_shape_bodies=224`,
+`assigned_tail_multi_shape_keys=0`, `timed_cp_phase_keys=5`,
+`timed_cp_phase_nil_value_coexist_keys=0`,
+`timed_cp_phase_assigned_tail_passthrough_keys=1`, and
+`timed_cp_phase_set_return_keys=1`. The generated-stage pressure gate moved
+past the old O1 `affected_block_ids` / `Set(UInt32)#includes?` frontier:
+`STAGE1_COMPILER=/tmp/adamas_0kcu_stage1 REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh`
+exits at the expected non-current boundary with
+`b4_classification=llvm_entry_failure_after_lower_main` and `workers1_exit139=0`.
+A kept B4 run classifies the residual as `llvm_entry_failure_after_lower_main`:
+both worker modes reach `pass3 after lower_main call` and then RSS-kill near
+4.3-4.5GB, with the default worker mode still showing the parallel rand
+fallback. Full regression suites pass `152/152 + 36/36`. Scope: this is a
+frontier move and consumes the current breakglass lane; it is not green
+`s2b`/`s3b`. Decay trigger: the post-fix CP contract gate stops reporting the
+timed phase split, or a fresh generated-stage gate reintroduces the
+`affected_block_ids` Set crash.
+
+[LM-ARCH-0K-DJ-BLOCK-CALL-RETURN-CONTRACT-READMITTED|design-sealed 2026-07-02 {F:0.90 G:0.66 R:0.90}]:
+After Slice 0k-DI, the active generated-stage pressure gate was remeasured and
+the B4/O1 `bootstrap-emergency-with-ledger` lane is re-admitted only through the
+existing 0k-CU `BlockCallReturnContract` receipt. Fresh
+`REQUIRE_CURRENT_CP_BROAD=1 scripts/hir_block_return_shape_census.sh` evidence
+still rejects broad untyped-`&` return-shape specialization:
+`candidate_multi_shape_keys=208` and `candidate_additional_return_shape_bodies=228`.
+The same run preserves the root-sized assigned-tail discriminator:
+`assigned_tail_multi_shape_keys=1`, `assigned_tail_additional_return_shape_bodies=4`,
+and `timed_cp_phase_assigned_tail_passthrough_keys=1`. Scope: this admits one
+CAUTION-tier production slice that makes assigned-tail yield-passthrough block
+wrappers return-shape dependent through a HIR-owned contract. It does not admit
+CopyPropagation guards, `timed_cp_phase` special-cases, backend block-return
+rescue, broad return-shape specialization, `BlockOwner` rollback, or a green
+`s2b`/`s3b` claim. Decay trigger: the CP census no longer shows a root-sized
+assigned-tail discriminator, or O1/B4 evidence stops pointing at the
+`affected_block_ids` block-return wrapper path.
+
 [LM-ARCH-0K-DI-MATERIALIZATION-SCOPE-ENTRY-IMPLEMENTED|implemented 2026-07-02 {F:0.91 G:0.62 R:0.90}]:
 The Slice 0k-DH materialization scope-entry contract is implemented for the
 instance materialization path. The path now applies `merged_params` and
