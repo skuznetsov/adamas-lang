@@ -8,6 +8,18 @@ boundaries
 Related: `PLAN_DEMAND_DRIVEN_REWRITE_RFC.md`, `docs/ast_to_hir_audit.md`,
 `docs/codegen_architecture.md`
 
+2026-07-02 post-0k-CP note: production compiler source remains paused after
+the 0k-CO producer-order classifier. The current B4 path is not a
+CopyPropagation, Set/Hash, backend, worker, output, or resource fix lane. The
+selected refactor direction is a HIR-owned block-call return materialization
+contract: untyped `&` helpers that can return `yield` must not share a wrapper
+whose yield ABI was frozen by an earlier nil/non-returning callsite. The next
+executable step is a read-only return-shape census that measures how many
+shared wrappers have multiple observed block-return shapes and whether
+specializing by `(callee shape, arg shape, block-return shape)` is root-sized.
+Do not implement a behavior slice until that census protects nil/non-returning
+negative controls and rules out broad wrapper explosion.
+
 2026-07-02 post-0k-CO note: the timed phase HIR source seam is now pinned to
 producer ordering. New classifier:
 `scripts/mir_timed_phase_hir_producer_order_classifier.sh`. Strict mode reports

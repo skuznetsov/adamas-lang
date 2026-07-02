@@ -12,6 +12,31 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-CP-HIR-BLOCK-CALL-RETURN-CONTRACT|design-sealed 2026-07-02 {F:0.82 G:0.64 R:0.86}]:
+Slice 0k-CP is a docs-only architecture design gate after the 0k-CO
+producer-order classifier. It selects the next owner direction without
+changing production compiler behavior: a HIR-owned
+`BlockCallReturnContract` / block-call materialization shape must carry the
+callsite block-return fact for untyped `&` helpers that can return `yield`.
+Evidence carried forward from strict 0k-CO:
+`classification=current_0k_co_hir_timed_phase_shared_wrapper_order_frontier`,
+`first_fallback_nil_line=108`, `first_set_record_line=117`,
+`first_set_yieldret_zero_line=118`, `early_void_before_set=1`, and
+`set_yield_return_not_classified=1`. Additional producer trace shows the same
+shared `CopyPropagationPass#timed_cp_phase$String_block` name is associated
+with several legitimate callsite block returns (`nil`, `Int32`, `Set(UInt32)`,
+`Nil | Adamas::MIR::CopyPropagationPass::DominanceInfo`, and
+`Hash(UInt32, Int32)`), so "delay one shared wrapper until facts exist" is not
+the first valid fix. A pure `yield_return_function_for_block_call?` patch is
+also insufficient unless the wrapper body itself materializes a non-void
+`yield`. The next admitted movement is a read-only return-shape census that
+tests whether specialization by `(callee shape, arg shape, block-return shape)`
+is root-sized and keeps nil/non-returning callsites out of value-returning
+wrappers. Scope: no green `s2b`/`s3b` claim and no production behavior change.
+Decay trigger: a future census shows the specialization space is broad, a HIR
+probe refutes the multi-return shared-wrapper shape, or B4 reaches
+`REQUIRE_CLEAN=1`.
+
 [LM-ARCH-0K-CO-HIR-TIMED-PHASE-PRODUCER-ORDER|implemented 2026-07-02 {F:0.89 G:0.55 R:0.88}]:
 Slice 0k-CO adds executable read-only producer-order classifier
 `scripts/mir_timed_phase_hir_producer_order_classifier.sh` after the 0k-CN HIR

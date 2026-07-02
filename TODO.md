@@ -8,6 +8,22 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: added Slice 0k-CP, a docs-only pre-code design gate after
+  0k-CO. Production compiler edits remain paused. The selected direction is a
+  HIR-owned `BlockCallReturnContract` / block-call materialization shape: for
+  untyped `&` helpers that can return `yield`, the callsite block-return fact
+  must become part of the wrapper identity instead of a late ambient fallback
+  on one shared wrapper name. This is not a behavior fix and not green
+  `s2b`/`s3b`. The immediate next admitted movement is a read-only
+  return-shape census that counts shared wrappers with multiple observed
+  block-return shapes, distinguishes nil/non-returning callsites from
+  value-returning callsites, and proves whether `(callee shape, arg shape,
+  block-return shape)` specialization is root-sized enough for a bounded
+  production slice. Still rejected: CopyPropagation null guards,
+  `timed_cp_phase` annotation/inlining/deletion, MIR/LLVM/backend block-return
+  rescue, Set/Hash rescue, output/resource/tail/worker fixes, broad
+  normalization, and `BlockOwner` rollback.
+
 - 2026-07-02 UPDATE: implemented Slice 0k-CO, the read-only HIR producer-order
   classifier selected by 0k-CN. New script:
   `scripts/mir_timed_phase_hir_producer_order_classifier.sh`. It copies `src/`
