@@ -12,6 +12,36 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-CQ-HIR-BLOCK-RETURN-SHAPE-CENSUS|implemented 2026-07-02 {F:0.88 G:0.72 R:0.88}]:
+Slice 0k-CQ adds executable read-only census
+`scripts/hir_block_return_shape_census.sh` after the 0k-CP design gate. The
+script does not edit tracked compiler source: it copies `src/` into `tmp`,
+injects default-off `[BRC_CENSUS]` probes into the temporary `ast_to_hir.cr`,
+builds a temporary probe compiler, runs it through `scripts/run_safe.sh`, and
+removes temp source/probe/HIR/log artifacts unless `KEEP_TMP=1`. Current
+evidence reports `probe_build_rc=0`, `probe_run_rc=0`,
+`total_census_rows=109692`, `wrapper_keys_total=18217`,
+`multi_shape_keys=229`, `candidate_multi_shape_keys=208`,
+`nil_value_coexist_keys=220`, `candidate_nil_value_coexist_keys=206`,
+`value_shape_multi_keys=17`,
+`candidate_value_shape_multi_keys=5`,
+`candidate_additional_return_shape_bodies=228`,
+`timed_cp_phase_multi_shape_keys=1`, and
+`classification=current_0k_cp_hir_block_return_shape_broad`. Interpretation:
+the current `CopyPropagationPass#timed_cp_phase$String_block` row remains real
+and observes nil plus `Int32`, `Set(UInt32)`,
+`Nil | Adamas::MIR::CopyPropagationPass::DominanceInfo`, and
+`Hash(UInt32, Int32)` shapes behind one untyped-yield wrapper key, but it is
+not unique enough to admit global block-return-shape specialization. Naive
+specialization of every untyped `&` helper that contains `yield` would be
+broad (208 candidate keys / 228 additional bodies). The next admitted movement
+is a read-only return-demand / yield-passthrough discriminator that separates
+helpers whose own return value depends on `yield` from ordinary iteration or
+scope helpers. Scope: executable census only; no compiler production behavior
+changed and no green `s2b`/`s3b` claim. Decay trigger: a future census reports
+a root-sized narrowed set, a source rewrite invalidates `ast_to_hir.cr`
+instrumentation anchors, or B4 reaches `REQUIRE_CLEAN=1`.
+
 [LM-ARCH-0K-CP-HIR-BLOCK-CALL-RETURN-CONTRACT|design-sealed 2026-07-02 {F:0.82 G:0.64 R:0.86}]:
 Slice 0k-CP is a docs-only architecture design gate after the 0k-CO
 producer-order classifier. It selects the next owner direction without

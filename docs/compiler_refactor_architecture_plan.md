@@ -8,6 +8,19 @@ boundaries
 Related: `PLAN_DEMAND_DRIVEN_REWRITE_RFC.md`, `docs/ast_to_hir_audit.md`,
 `docs/codegen_architecture.md`
 
+2026-07-02 post-0k-CQ note: the first 0k-CP return-shape census exists as
+`scripts/hir_block_return_shape_census.sh`, and it refutes naive
+block-return-shape specialization for all untyped `&` helpers. Current
+classification is `current_0k_cp_hir_block_return_shape_broad`, with
+`candidate_multi_shape_keys=208` and
+`candidate_additional_return_shape_bodies=228`. The `timed_cp_phase` row is
+still present, but the broad census shows that `contains_yield` plus untyped
+block parameter is not a valid owner boundary. The near-term refactor lane must
+now add a read-only return-demand / yield-passthrough discriminator before any
+behavior fix: classify helpers whose method return semantically depends on the
+yielded value, and exclude ordinary iterators/scope helpers that merely
+observe varied block returns.
+
 2026-07-02 post-0k-CP note: production compiler source remains paused after
 the 0k-CO producer-order classifier. The current B4 path is not a
 CopyPropagation, Set/Hash, backend, worker, output, or resource fix lane. The

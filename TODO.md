@@ -8,6 +8,26 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: implemented Slice 0k-CQ, the read-only return-shape census
+  required by 0k-CP. New script:
+  `scripts/hir_block_return_shape_census.sh`. It copies `src/` to `tmp`,
+  injects probes only into the temporary `ast_to_hir.cr`, builds a temporary
+  probe compiler, runs it under `scripts/run_safe.sh`, and removes all temp
+  artifacts unless `KEEP_TMP=1`. Current evidence:
+  `classification=current_0k_cp_hir_block_return_shape_broad`,
+  `candidate_multi_shape_keys=208`,
+  `candidate_nil_value_coexist_keys=206`, and
+  `candidate_additional_return_shape_bodies=228`. The current
+  `timed_cp_phase$String_block` row is still present and observes nil plus
+  `Int32` / `Set(UInt32)` / `Nil | DominanceInfo` /
+  `Hash(UInt32, Int32)` shapes, but it is not unique enough to admit naive
+  block-return-shape specialization for all untyped `&` helpers. This refutes
+  the broad 0k-CP fix shape and keeps production source movement paused. The
+  next admitted movement is another read-only discriminator: classify true
+  return-demanded yield-passthrough helpers (`result = yield; ...; result`,
+  tail yield, or equivalent) versus ordinary iteration/scope helpers that
+  merely observe varied block returns while ignoring them as method return.
+
 - 2026-07-02 UPDATE: added Slice 0k-CP, a docs-only pre-code design gate after
   0k-CO. Production compiler edits remain paused. The selected direction is a
   HIR-owned `BlockCallReturnContract` / block-call materialization shape: for
