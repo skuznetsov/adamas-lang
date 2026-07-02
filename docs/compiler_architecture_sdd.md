@@ -140,6 +140,19 @@ code must stop and return to the architecture board: select a durable owner
 spine, retire or refute a stale report surface, or promote one missing contract
 falsifier from the specs matrix. A fresh crash-stack classifier is not admitted
 as the automatic next step.
+Slice 0k-CT is the docs-only active-board compression checkpoint after hostile
+review of the post-0k-CS execution risk. It keeps production compiler source
+paused until a short execution receipt is written from the board below. The
+0k-CR paired slice remains an allowed emergency lane, but it is now explicitly
+`breakglass`, not the default next step. A behavior slice may start only after
+it cites the short board, names the old authority edge, owner fact, producers,
+consumers, measured-red baseline, generated-stage gate, negative controls, and
+residual boundary. If that receipt cannot be kept root-sized, the next movement
+is architecture burn-down: retire/refute a stale report surface, promote a
+missing falsifier, or select a durable owner spine. No new crash-stack
+classifier, local CopyPropagation guard, backend rescue, broad
+`NamedTuple`/`Tuple` rendering change, global ambient-map policy change, or
+`BlockOwner` rollback is admitted by this checkpoint.
 Slice 0k-BH adds a narrower pause gate after the 0k-BG parser falsifier:
 the command-call parser frontier may get one bounded closure attempt, but a
 second parser loop, adjacent parser regression, or broadened command-call
@@ -323,7 +336,7 @@ latest emitted symptom.
 
 ## Active Architecture Board
 
-Status: execution board after Slice 0k-CS. This board exists to
+Status: execution board after Slice 0k-CT. This board exists to
 prevent the next step from being selected by the latest generated-stage crash
 stack. A next slice is admitted only if it moves one board row by replacing or
 shadowing a named authority edge, producing `CodePathStatus` evidence for a
@@ -376,6 +389,47 @@ behavior slice is an emergency owner-contract slice, not a standing license to
 keep following the next produced-stage symptom. If that paired slice lands, the
 next production movement must pass through this board again before any new
 crash-stack classifier or local fix is selected.
+Slice 0k-CT adds the operator-facing short board below. If a future slice must
+read the historical ledger to discover what it is allowed to do, the slice has
+already failed the process gate.
+
+### Current Execution Board
+
+This section is the operator-facing entry point. Historical slices below are
+evidence, not next-step selectors.
+
+| Lane | Current decision | Required next receipt | Rejected shortcut |
+| --- | --- | --- | --- |
+| `bootstrap-emergency-with-ledger` / B4-O1 | Breakglass only. The 0k-CR assigned-tail passthrough plus return-shape wrapper-materialization slice remains allowed, but it is not the default plan. | A pre-code receipt must name: old authority edge = shared untyped `&` wrapper keyed without return contract; owner fact = HIR `BlockCallReturnContract`; producers = block-return recording and assigned-tail classifier; consumers = wrapper materialization, yield return inference, call target emission; baseline = current O1/B4 classifiers plus `REQUIRE_CURRENT_CP_BROAD=1 scripts/hir_block_return_shape_census.sh`; negative controls = nil/non-returning timed phases and ordinary iterator/scope helpers; stage gate = B4 future-clean or current-frontier movement; residual boundary. | Starting from the next crash stack; classifier-only patch; broad return-shape specialization; direct CopyPropagation guard; `timed_cp_phase` annotation/inlining/deletion; MIR/LLVM/backend block-return rescue. |
+| `MaterializationTransaction` | G6 `BlockOwner` setter availability is guard-green and not the active selector unless it regresses. | Resume only if the G6 guard fails or a fresh generated-stage selector returns to materialization with a root-sized producer-to-consumer edge. | Backend undefined-extern rescue, forwarder rescue, requested-name forcing, broad `NamedTuple`/`Tuple` rendering, `BlockOwner` rollback. |
+| `PhaseAuthority` / `GeneratedStageExecution` | B4/L6 remain pressure evidence, not an implementation selector. | Resume only with a slice that reduces B4/L6 phase, owner-spine ambiguity, or live proxy surface. | More behavior-neutral row owners, output/resource/tail/worker patches, memory-budget acceptance, `ADAMAS_LLVM_WORKERS=1` as a fix. |
+| `SemanticIdentity` | H7/H8 remain pre-s2-clean residuals. They are real, but not the active generated-stage blocker. | Resume with a row-specific SDD entry and measured-red baseline if the goal is semantic-service extraction. | TypeValue/stringification/parser shortcuts bundled with B4, generic materialization, ambient-map, or `BlockOwner` work. |
+| `CodePathStatus` | Cleanup is not the active bootstrap constraint. | Resume only with `delete_ready` evidence and a protecting falsifier, or by explicit user selection of bloat reduction. | Deleting suspected-dead code from grep/runtime absence alone; adding cleanup reports as a substitute for owner migration. |
+
+Before any non-doc production slice, write the slice receipt in this SDD or a
+linked plan:
+
+```text
+SliceReceipt {
+  board_lane
+  tranche
+  old_authority_edge
+  owner_fact_or_service
+  producers
+  consumers
+  measured_red_baseline
+  focused_DoD
+  architecture_DoD
+  generated_stage_gate
+  negative_controls
+  rejected_shortcuts
+  residual_boundary
+}
+```
+
+Hard stop: if the receipt cannot identify a producer-to-consumer authority edge
+or can only say "the latest crash moved", the work is a probe/SDD update, not a
+production architecture slice.
 
 - `SemanticIdentity`: semantic owners, rendered names, generic keys,
   type-visible values, and ambient state scope;

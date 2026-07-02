@@ -22,6 +22,17 @@ or refute a stale report surface, or promote one missing contract falsifier
 from `docs/specs/05-falsifier-matrix.md`. Do not keep appending near-term
 crash-stack decisions here as if this document were the authoritative backlog.
 
+2026-07-02 post-0k-CT note: the active SDD now has a short
+`Current Execution Board` and required `SliceReceipt` above the historical
+ledger. This plan is not allowed to reselect work by reading the freshest
+crash-stack section or by continuing the 0k-CR emergency lane by inertia.
+Before any non-doc compiler source slice, use the SDD receipt fields:
+board lane, tranche, old authority edge, owner fact/service, producers,
+consumers, measured-red baseline, focused DoD, architecture DoD,
+generated-stage gate, negative controls, rejected shortcuts, and residual
+boundary. If a proposed slice cannot fill those fields, the next movement is
+docs/probe work or architecture burn-down, not production code.
+
 2026-07-02 post-0k-CR note: the return-shape census now also measures
 assigned-tail yield passthrough (`result = yield; ...; result`). Strict current
 evidence keeps the broad 0k-CQ result for naive `contains_yield` scope, but

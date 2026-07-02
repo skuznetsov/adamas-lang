@@ -8,6 +8,20 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: added Slice 0k-CT, a docs-only active-board compression
+  checkpoint after hostile review of the post-0k-CS route. Production compiler
+  source remains paused. The SDD now has an operator-facing
+  `Current Execution Board` that must be cited before any non-doc source slice.
+  The 0k-CR assigned-tail passthrough + return-shape wrapper-materialization
+  slice remains allowed only as `breakglass bootstrap-emergency-with-ledger`,
+  and only after a pre-code `SliceReceipt` names the old authority edge, owner
+  fact, producers, consumers, measured-red baseline, generated-stage gate,
+  negative controls, rejected shortcuts, and residual boundary. If that receipt
+  cannot stay root-sized, the next movement is architecture burn-down: select a
+  durable owner spine, retire/refute a stale report surface, or promote a
+  missing contract falsifier. A new crash-stack classifier or local fix is not
+  a valid next step from 0k-CT alone.
+
 - 2026-07-02 UPDATE: added Slice 0k-CS, a docs-only architecture-board
   consolidation after hostile review of the post-0k-CR route. It does not
   retract 0k-CR, but it prevents the B4/O1 emergency lane from becoming the

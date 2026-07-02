@@ -12,6 +12,24 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-CT-CURRENT-EXECUTION-BOARD|design-sealed 2026-07-02 {F:0.84 G:0.74 R:0.86}]:
+Slice 0k-CT is a docs-only active-board compression checkpoint after hostile
+review of the post-0k-CS route. It adds an operator-facing
+`Current Execution Board` near the top of `docs/compiler_architecture_sdd.md`
+and makes that board the required entry point for future non-doc source slices.
+The 0k-CR assigned-tail passthrough plus return-shape wrapper-materialization
+slice remains allowed only as `breakglass bootstrap-emergency-with-ledger`, not
+as the default plan. Before any behavior code, a `SliceReceipt` must name the
+board lane, tranche, old authority edge, owner fact or service, producers,
+consumers, measured-red baseline, focused and architecture DoD,
+generated-stage gate, negative controls, rejected shortcuts, and residual
+boundary. If that receipt cannot identify a root-sized producer-to-consumer
+authority edge, the movement is a probe or SDD update, not production
+architecture work. Scope: control-plane/docs only; no compiler production
+behavior changed and no green `s2b`/`s3b` claim. Decay trigger: a future
+source slice lands with a valid receipt and fresh B4/O1 evidence, the board is
+superseded by a newer SDD slice, or B4 reaches `REQUIRE_CLEAN=1`.
+
 [LM-ARCH-0K-CS-POST-CR-BOARD-FREEZE|design-sealed 2026-07-02 {F:0.84 G:0.72 R:0.86}]:
 Slice 0k-CS is a docs-only architecture-board consolidation after hostile
 review of the post-0k-CR route. It preserves the 0k-CR admission but narrows
