@@ -174,6 +174,19 @@ contract. It rejects classification-only changes, broad return-shape
 specialization, and any patch that leaves the `apply_collect_affected_blocks`
 wrapper body with `yield : Void`. After the slice lands, fails, or widens, the
 next movement must return to the Current Execution Board.
+Slice 0k-CV is an architecture-pause checkpoint after reviewing an unfinished
+local 0k-CU source WIP. Production compiler source is paused again. The WIP is
+not completion evidence: it began to add a `BlockCallReturnContract` helper but
+did not thread the required callsite return fact through all materialization
+consumers, did not run the generated-stage gate, and did not prove the
+architecture DoD. The 0k-CU breakglass lane remains a documented emergency
+option, but it is no longer the automatic next movement. The next source slice
+must first pass architecture burn-down: either select one durable owner spine
+and one producer-to-consumer authority edge, retire/refute a stale report
+surface, or promote one missing contract falsifier from the matrix. A fresh
+crash-stack classifier, a continuation of the uncommitted WIP, or another local
+helper around the latest failing value is rejected unless a new receipt proves
+it moves the requested end state toward green `s2b`/`s3b`.
 Slice 0k-BH adds a narrower pause gate after the 0k-BG parser falsifier:
 the command-call parser frontier may get one bounded closure attempt, but a
 second parser loop, adjacent parser regression, or broadened command-call
@@ -357,7 +370,7 @@ latest emitted symptom.
 
 ## Active Architecture Board
 
-Status: execution board after Slice 0k-CT. This board exists to
+Status: execution board after Slice 0k-CV. This board exists to
 prevent the next step from being selected by the latest generated-stage crash
 stack. A next slice is admitted only if it moves one board row by replacing or
 shadowing a named authority edge, producing `CodePathStatus` evidence for a
@@ -415,6 +428,10 @@ read the historical ledger to discover what it is allowed to do, the slice has
 already failed the process gate.
 Slice 0k-CU fills the first receipt for the breakglass row. It is a pre-code
 admission, not the implementation.
+Slice 0k-CV pauses that breakglass implementation path after an unfinished
+local source WIP showed the tail-chasing risk directly. The next movement is
+architecture burn-down unless a fresh receipt re-admits one emergency behavior
+slice with the full generated-stage gate.
 
 ### Current Execution Board
 
@@ -423,7 +440,8 @@ evidence, not next-step selectors.
 
 | Lane | Current decision | Required next receipt | Rejected shortcut |
 | --- | --- | --- | --- |
-| `bootstrap-emergency-with-ledger` / B4-O1 | Breakglass only. The 0k-CR assigned-tail passthrough plus return-shape wrapper-materialization slice remains allowed, but it is not the default plan. | A pre-code receipt must name: old authority edge = shared untyped `&` wrapper keyed without return contract; owner fact = HIR `BlockCallReturnContract`; producers = block-return recording and assigned-tail classifier; consumers = wrapper materialization, yield return inference, call target emission; baseline = current O1/B4 classifiers plus `REQUIRE_CURRENT_CP_BROAD=1 scripts/hir_block_return_shape_census.sh`; negative controls = nil/non-returning timed phases and ordinary iterator/scope helpers; stage gate = B4 future-clean or current-frontier movement; residual boundary. | Starting from the next crash stack; classifier-only patch; broad return-shape specialization; direct CopyPropagation guard; `timed_cp_phase` annotation/inlining/deletion; MIR/LLVM/backend block-return rescue. |
+| `bootstrap-emergency-with-ledger` / B4-O1 | Paused breakglass. The 0k-CR assigned-tail passthrough plus return-shape wrapper-materialization slice remains documented, but after 0k-CV it is not the current selector and may not resume from an uncommitted WIP. | Re-admit only with a fresh receipt that names: old authority edge = shared untyped `&` wrapper keyed without return contract; owner fact = HIR `BlockCallReturnContract`; producers = block-return recording and assigned-tail classifier; consumers = wrapper materialization, yield return inference, call target emission; baseline = current O1/B4 classifiers plus `REQUIRE_CURRENT_CP_BROAD=1 scripts/hir_block_return_shape_census.sh`; negative controls = nil/non-returning timed phases and ordinary iterator/scope helpers; stage gate = B4 future-clean or current-frontier movement; residual boundary. | Continuing the local WIP by inertia; starting from the next crash stack; classifier-only patch; broad return-shape specialization; direct CopyPropagation guard; `timed_cp_phase` annotation/inlining/deletion; MIR/LLVM/backend block-return rescue. |
+| `architecture-burn-down` / owner-spine plan | Current active selector. The project is far enough into repeated bootstrap heisenbugs that the next movement must reduce architectural ambiguity before another behavior fix. | Choose exactly one: select a durable owner spine plus one producer-to-consumer authority edge; retire or refute a stale report surface; or promote a missing falsifier from `docs/specs/05-falsifier-matrix.md`. The receipt must name how the slice changes the path to green `s2b`/`s3b`, not just a local source-shape metric. | Treating a moved crash stack as architecture progress; adding another report that does not retire/refute an older surface; committing WIP helpers that do not consume an old authority edge; claiming source-shape green as bootstrap green. |
 | `MaterializationTransaction` | G6 `BlockOwner` setter availability is guard-green and not the active selector unless it regresses. | Resume only if the G6 guard fails or a fresh generated-stage selector returns to materialization with a root-sized producer-to-consumer edge. | Backend undefined-extern rescue, forwarder rescue, requested-name forcing, broad `NamedTuple`/`Tuple` rendering, `BlockOwner` rollback. |
 | `PhaseAuthority` / `GeneratedStageExecution` | B4/L6 remain pressure evidence, not an implementation selector. | Resume only with a slice that reduces B4/L6 phase, owner-spine ambiguity, or live proxy surface. | More behavior-neutral row owners, output/resource/tail/worker patches, memory-budget acceptance, `ADAMAS_LLVM_WORKERS=1` as a fix. |
 | `SemanticIdentity` | H7/H8 remain pre-s2-clean residuals. They are real, but not the active generated-stage blocker. | Resume with a row-specific SDD entry and measured-red baseline if the goal is semantic-service extraction. | TypeValue/stringification/parser shortcuts bundled with B4, generic materialization, ambient-map, or `BlockOwner` work. |

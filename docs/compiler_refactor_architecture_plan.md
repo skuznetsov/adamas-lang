@@ -8,6 +8,16 @@ boundaries
 Related: `PLAN_DEMAND_DRIVEN_REWRITE_RFC.md`, `docs/ast_to_hir_audit.md`,
 `docs/codegen_architecture.md`
 
+2026-07-02 post-0k-CV note: the active SDD has paused production source again
+after an unfinished local 0k-CU `BlockCallReturnContract` WIP was reviewed and
+removed. This plan must not treat the assigned-tail block-return slice as the
+automatic next implementation step. The next movement is architecture
+burn-down: select one durable owner spine plus one producer-to-consumer
+authority edge, retire/refute a stale report surface, or promote a missing
+contract falsifier. A source-shape helper, crash-stack movement, or partial
+local WIP is not progress toward green `s2b`/`s3b` unless it consumes an old
+authority edge and runs the generated-stage gate named by a fresh receipt.
+
 2026-07-02 post-0k-CS note: hostile review of the post-0k-CR route found that
 the active SDD is still being followed, but the emergency B4/O1 lane can become
 another symptom scheduler if every moved crash stack automatically selects the

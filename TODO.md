@@ -8,6 +8,23 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: added Slice 0k-CV, an architecture-pause checkpoint after
+  reviewing and removing the unfinished local 0k-CU `ast_to_hir.cr` WIP. The
+  WIP was not completion evidence: it started adding a HIR
+  `BlockCallReturnContract` helper but had not threaded the callsite
+  `block_return_name` fact through the materialization callsites, had not run
+  generated-stage evidence, and had not satisfied the 0k-CU architecture DoD.
+  Production source is paused again. The breakglass B4/O1 lane remains
+  documented but is no longer the automatic next movement and must not resume
+  from uncommitted helper code by inertia. The active next movement is
+  architecture burn-down: select one durable owner spine plus one
+  producer-to-consumer authority edge, retire or refute a stale report surface,
+  or promote a missing contract falsifier from
+  `docs/specs/05-falsifier-matrix.md`. A fresh crash-stack classifier,
+  classifier-only patch, local helper around the current failing value, or
+  source-shape-only green row is not a valid next step unless a new receipt
+  proves how it moves the actual path to green `s2b`/`s3b`.
+
 - 2026-07-02 UPDATE: added Slice 0k-CU, the pre-code `SliceReceipt` required
   by 0k-CT for the only currently admitted breakglass production lane. Fresh
   baseline evidence still matches the assumptions:

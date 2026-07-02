@@ -12,6 +12,30 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-CV-WIP-QUARANTINE-ARCHITECTURE-PAUSE|design-sealed 2026-07-02 {F:0.86 G:0.76 R:0.88}]:
+Slice 0k-CV is an architecture-pause checkpoint after reviewing and removing
+an unfinished local 0k-CU source WIP in `src/compiler/hir/ast_to_hir.cr`. The
+WIP began to add a HIR `BlockCallReturnContract` helper and assigned-tail
+passthrough classification, but it had not threaded the callsite
+`block_return_name` fact through the wrapper-materialization callsites, had not
+run generated-stage evidence, and had not satisfied the 0k-CU focused or
+architecture DoD. It is therefore not completion evidence and must not be
+resumed by inertia. Production compiler source is paused again. The 0k-CU
+breakglass lane remains documented, but the active selector is architecture
+burn-down: choose one durable owner spine plus one producer-to-consumer
+authority edge, retire/refute a stale report surface, or promote a missing
+contract falsifier from `docs/specs/05-falsifier-matrix.md`. Rejected next
+moves: fresh crash-stack classifier by default, classifier-only patch, local
+helper around the current failing value, source-shape-only progress claim,
+broad return-shape specialization, direct CopyPropagation guard,
+`timed_cp_phase` special-case, MIR/LLVM/backend rescue, broad
+`NamedTuple`/`Tuple` or ambient-map policy, and `BlockOwner` rollback. Scope:
+docs/control-plane pause plus source-WIP quarantine; no compiler production
+behavior changed and no green `s2b`/`s3b` claim. Decay trigger: a future
+source slice lands with a fresh receipt that explicitly re-admits a behavior
+lane and moves a generated-stage gate, or the architecture board is superseded
+by a newer SDD slice.
+
 [LM-ARCH-0K-CU-ASSIGNED-TAIL-BLOCK-RETURN-RECEIPT|design-sealed 2026-07-02 {F:0.88 G:0.68 R:0.88}]:
 Slice 0k-CU is the pre-code `SliceReceipt` required by 0k-CT for the only
 currently admitted `bootstrap-emergency-with-ledger` behavior lane. Fresh
