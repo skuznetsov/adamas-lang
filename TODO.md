@@ -8,6 +8,23 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: added Slice 0k-BU, a docs-only
+  `SideEffectMergeContract` implementation plan selected from the 0k-BT
+  vertical-contract checkpoint. Production compiler edits remain paused until the
+  plan's prepatch red guard exists. The selected old authority edge is
+  `parallel-side-effect-file-merge`: worker code writes raw `.se` rows directly
+  in `emit_functions_parallel`, the parent parses raw tags in the same method,
+  and tail emitters later consume mutable backend fields as if the merge were
+  semantically authoritative. The next code slice must move the writer/parent
+  merge consumer to a session-owned side-effect contract, not merely add tag
+  getters. Required guard shape:
+  `REQUIRE_SESSION=1 REQUIRE_WORKER_PLAN=1 REQUIRE_SIDE_EFFECT_CONTRACT=1
+  scripts/llvm_emission_session_source_shape_guard.sh` must be red before patch
+  and green only when `emit_functions_parallel` delegates side-effect writing and
+  merging through the contract. B4 must be run before and after; unchanged
+  `classification=current_0k_bn_frontier` is acceptable only for this
+  behavior-neutral migration.
+
 - 2026-07-01 UPDATE: added Slice 0k-BT, a docs-only architecture checkpoint after
   hostile review of the post-0k-BS path. Production compiler edits are paused
   again. A local side-effect-tag owner WIP was saved in git stash

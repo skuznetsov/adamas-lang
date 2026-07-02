@@ -12,6 +12,27 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-BU-SIDE-EFFECT-MERGE-CONTRACT-PLAN|design-sealed 2026-07-01 {F:0.84 G:0.55 R:0.87}]:
+Slice 0k-BU selects `SideEffectMergeContract` as the next
+`GeneratedStageExecution` / `LLVMEmissionSession` vertical contract plan. Source
+anchors: `src/compiler/mir/llvm_backend.cr` worker `.se` writer in
+`emit_functions_parallel` writes raw `STR/ZSG/EXT/CCF/EMF/ERT/MSG/DGF/SCN` rows;
+the parent merge switch in the same method parses those raw tags and mutates
+backend fields; tail declaration/stub emitters later read `@undefined_externs`,
+`@called_crystal_functions`, and `@emitted_functions`. Old authority edge:
+`parallel-side-effect-file-merge`. New owner surface: a session-owned
+side-effect merge contract that defines the row schema, producer set, duplicate
+policy, malformed-row policy, semantic-failure vs tail-input classification, and
+parent merge consumer. Required next code shape: extend
+`scripts/llvm_emission_session_source_shape_guard.sh` with
+`REQUIRE_SIDE_EFFECT_CONTRACT=1`, red on current source and green only when
+`emit_functions_parallel` delegates worker side-effect writing and parent merge
+through the contract rather than owning raw row tags/switches inline. Scope:
+docs/design only; no compiler behavior changed and no green `s2b`/`s3b` claim.
+Decay trigger: the side-effect contract implementation lands, B4 changes to a
+different first-bad boundary, or prepatch guard evidence shows this edge is not
+root-shaped.
+
 [LM-ARCH-0K-BT-LLVM-EMISSION-VERTICAL-CONTRACT-CHECKPOINT|design-sealed 2026-07-01 {F:0.82 G:0.60 R:0.86}]:
 Slice 0k-BT pauses production compiler edits after hostile review of the
 post-0k-BS `LLVMEmissionSession` path. A local WIP that moved only worker `.se`

@@ -89,6 +89,11 @@ such as `SideEffectMergeContract`, `TailDeclarationPlan`, `OutputOwnership`, or
 `ResourceEvidence`, and prove that at least one downstream consumer no longer
 treats mutable backend fields, ad-hoc worker files, or tail fallback sets as the
 sole authority.
+Slice 0k-BU selects `SideEffectMergeContract` as the next implementation plan.
+The next code slice must start with a red source-shape guard for the current
+inline worker `.se` writer and parent merge switch, then make
+`emit_functions_parallel` delegate side-effect writing and merge through a
+session-owned contract while preserving behavior and B4's measured-red frontier.
 
 Current frontier: the compiler can make progress through bounded bug slices,
 but many semantic decisions are still inferred repeatedly across HIR, MIR, and
@@ -101,7 +106,7 @@ latest emitted symptom.
 
 ## Active Architecture Board
 
-Status: execution board after Slice 0k-BT. This board exists to
+Status: execution board after Slice 0k-BU. This board exists to
 prevent the next step from being selected by the latest generated-stage crash
 stack. A next slice is admitted only if it moves one board row by replacing or
 shadowing a named authority edge, producing `CodePathStatus` evidence for a
@@ -111,7 +116,7 @@ named path, or refuting a row with fresher generated-stage evidence.
 | --- | --- | --- | --- |
 | `SemanticStateScope` | `prefer_callsite_specialization` is promoted in shadow/parity mode; emitted behavior still returns the legacy result. The `lower_function_if_needed.override` seam is also already promoted through the MaterializationDecision shadow helper and must not be reselected. Slice 0k-AU extends the existing admission report with a source-only no-repeat selector. It finds two unpromoted frontend direct consumers (`lower_function_if_needed.callsite_args` and `lower_function_if_needed.suffix_types`), rejects `lower_call.remangle` as backend-adjacent, and selects no single root-sized consumer. Slice 0k-AV defined the admitted shared state-model shape. Slice 0k-AW implements that shared `KeepRequestedNameDecision` state in behavior-neutral parity mode for both paired frontend consumers and replaces the stale `NamedTuple` owner-cache guard with a current `BlockOwner` guard. | The paired keep-requested-name inline edges are now consumed in parity mode. Next movement is not another crash-stack fix. Move to contract-first SDD hardening: close missing falsifiers for semantic identity, function-body presence, and generic instance/template keys, or select a fresh owner boundary only if it replaces a named authority edge with an owned fact and a falsifier. | Reselecting `prefer_callsite_specialization` or `lower_function_if_needed.override`; choosing either `callsite_args` or `suffix_types` by source order or convenience; treating `state_model_redesign_complete=1` as bootstrap progress; changing emitted behavior from a shadow row; globally clearing/ignoring `@type_param_map`; backend forwarders; requested-name forcing; `BlockOwner` rollback. |
 | `TypeValue` / `RuntimeTypeIdentity` + frontend command-call preservation | Slice 0k-BA made the original-vs-stage semantic oracle executable and measured-red: current stage preserves `CONST=7` but prints blank `TYPE=` / `UNION=` where original Crystal prints `Int32`. Slice 0k-BC added the original H6 guard, which is measured-red but includes a parser-confounded direct no-parens `puts (true ? 1 : nil).class` row. Slice 0k-BD seals the TypeValue production receipt. Slice 0k-BF records a reverted TypeValue owner preflight: B3/H4 went green, but strict H6 still failed only on the direct command-call row. Slice 0k-BG adds the focused parser-shape guard and proves that row is a frontend command-call preservation frontier. Slice 0k-BH pauses parser production after a reverted local WIP. Slice 0k-BI implements the split-H6 route with `regression_tests/type_value_core_runtime_identity_contract.sh`. Slice 0k-BJ/0k-BL gate the owner-fact implementation and quarantine WIP inertia. Slice 0k-BM implements the H6-core owner fact: H6-core, B3, and H4 are strict-green on a fresh stage1 compiler, while H7 command-call parsing remains measured-red and H8 dynamic multi-variant union `.class` is now an explicit pre-s2-clean residual guard. | The next TypeValue movement is no longer H6-core row-greening. It must choose one of two separate lanes: H7 parser `semantic-service-extraction` for no-parens command-call preservation, or H8 runtime type-name service for dynamic multi-variant union `.class`. H8 may use the HIR `RuntimeTypeIdentity.runtime_stringification_required` policy as the source-level owner fact, but must not implement backend stringification without a new SDD slice naming the HIR/MIR/runtime boundary. | A string-only `lower_typeof` fix; an interpolation-only fix; a direct `puts` special-case without a type-value owner; source-text direct-puts workaround for `puts (expr).class`; using a stashed WIP as evidence without fresh baseline; backend stubs/forwarders; treating green H6-core as full old H6 green while command-call/dynamic-union guards remain red; changing `BlockOwner`, requested-name policy, ambient-map policy, broad `NamedTuple`/`Tuple` rendering, or generic materialization in the same slice; starting H7 or H8 code without a new row-specific SDD entry and measured-red baseline. |
-| `GeneratedStageExecution` / `LLVMEmissionSession` | Slice 0k-BN records the first post-0k-BM integration check: stage1 can produce `s2b`, but produced `s2b` compiling a full-prelude tiny source fails after `pass3 after lower_main call`. Slice 0k-BO adds `scripts/generated_stage_llvm_entry_classifier.sh`; fresh `REQUIRE_CURRENT_FRONTIER=1` evidence reports `classification=current_0k_bn_frontier`, default LLVM workers hit `Invalid bound for rand: 0` plus RSS-kill, and `ADAMAS_LLVM_WORKERS=1` removes that worker symptom but still exits 139 at the same transition. This refutes treating parallel scheduling or memory budget alone as the root. Slice 0k-BP freezes production fixes from this symptom and reclassifies B4 as a pressure gate for a higher owner boundary: `PhaseAuthority` / `GeneratedStageExecution`. Slice 0k-BQ design-seals the first concrete owner: `LLVMEmissionSession`, with source anchors in CLI step 5 and `LLVMIRGenerator#generate` / `emit_functions_parallel`. Slice 0k-BR implements the first behavior-neutral owner slice: `scripts/llvm_emission_session_source_shape_guard.sh` proves `generate` consumes the function-list plan through `LLVMEmissionSession`; B4 remains `classification=current_0k_bn_frontier`. Slice 0k-BS consumes the second edge, `worker-policy-inline`: `generate` reads effective worker count from the session, while worker behavior and fallback remain unchanged. | Next movement may select the next `LLVMEmissionSession` authority edge only with the same discipline: old edge named, source-shape guard first, behavior-neutral migration first, and B4 measured-red/future-clean evidence. Candidate next edges are side-effect table merge contract, tail declaration/stub plan, output ownership, or resource evidence. | Patching `emit_functions_parallel` because of the rand symptom; raising `run_safe` memory as acceptance evidence; forcing `ADAMAS_LLVM_WORKERS=1` as a fix; adding another classifier that only narrows a crash offset without naming a phase owner fact; changing tail missing-body stubs, undefined-extern rescue, output files, side-effect merge, or resource gates before their session edge exists; introducing extra generated-stage owner classes when scalar session fields suffice; reusing Crystal `record` macros for generated-stage owner objects without B4 evidence; deleting or resuming `fused_parallel_requested` cleanup as bootstrap progress; selecting H7/H8 code as bootstrap-moving work without showing it changes this produced-stage LLVM-entry boundary. |
+| `GeneratedStageExecution` / `LLVMEmissionSession` | Slice 0k-BN records the first post-0k-BM integration check: stage1 can produce `s2b`, but produced `s2b` compiling a full-prelude tiny source fails after `pass3 after lower_main call`. Slice 0k-BO adds `scripts/generated_stage_llvm_entry_classifier.sh`; fresh `REQUIRE_CURRENT_FRONTIER=1` evidence reports `classification=current_0k_bn_frontier`, default LLVM workers hit `Invalid bound for rand: 0` plus RSS-kill, and `ADAMAS_LLVM_WORKERS=1` removes that worker symptom but still exits 139 at the same transition. This refutes treating parallel scheduling or memory budget alone as the root. Slice 0k-BP freezes production fixes from this symptom and reclassifies B4 as a pressure gate for a higher owner boundary: `PhaseAuthority` / `GeneratedStageExecution`. Slice 0k-BQ design-seals the first concrete owner: `LLVMEmissionSession`, with source anchors in CLI step 5 and `LLVMIRGenerator#generate` / `emit_functions_parallel`. Slice 0k-BR implements the first behavior-neutral owner slice: `scripts/llvm_emission_session_source_shape_guard.sh` proves `generate` consumes the function-list plan through `LLVMEmissionSession`; B4 remains `classification=current_0k_bn_frontier`. Slice 0k-BS consumes the second edge, `worker-policy-inline`: `generate` reads effective worker count from the session, while worker behavior and fallback remain unchanged. Slice 0k-BT rejects field/tag/getter/report-only session slices as standalone progress. Slice 0k-BU selects `SideEffectMergeContract` as the next vertical implementation plan. | Next movement is 0k-BV: implement the side-effect merge contract in behavior-neutral mode. The old authority edge is `parallel-side-effect-file-merge`; the downstream consumer is `emit_functions_parallel`'s worker `.se` writer and parent merge switch, with tail declaration/stub emitters as downstream readers of the merged sets. Required first step is a red `REQUIRE_SIDE_EFFECT_CONTRACT=1` source-shape guard, followed by a consumer migration and B4 before/after evidence. | Patching `emit_functions_parallel` because of the rand symptom; raising `run_safe` memory as acceptance evidence; forcing `ADAMAS_LLVM_WORKERS=1` as a fix; adding another classifier that only narrows a crash offset without naming a phase owner fact; committing the stashed side-effect-tag vocabulary WIP as standalone progress; changing side-effect merge semantics, tail missing-body stubs, undefined-extern rescue, output files, or resource gates before the contract source-shape guard is red; introducing extra generated-stage owner classes without B4 evidence; reusing Crystal `record` macros for generated-stage owner objects without B4 evidence; deleting or resuming `fused_parallel_requested` cleanup as bootstrap progress; selecting H7/H8 code as bootstrap-moving work without showing it changes this produced-stage LLVM-entry boundary. |
 | `MaterializationIdentity` / `MaterializationRegistry` | Slice 0k-Z promotes the selected `lower_function_if_needed.symbol_binding` seam in behavior-neutral shadow/parity mode. `scripts/materialization_symbol_binding_admission_report.sh` now reports `already_promoted_shadow` even with `REQUIRE_PROMOTED=1`; keepalive and materialization-ledger consumers read from `MaterializationSymbolBinding` fields instead of recomputing split locals. | Do not flip emitted symbols from this slice. Next movement must either run a generated-stage materialization/symbol-binding classification on the residual full-prelude s2 crash, or select the next root-sized owner consumer with a red/green gate. | Backend undefined-extern rescue; target keepalive as a standalone patch; requested-name forcing; `NamedTuple`/`Tuple` display normalization; global ambient-map predicate changes; `BlockOwner` rollback; treating the green source-shape gate as green `s2b`/`s3b`. |
 | `NameResolution` / `MethodNameCodec` | File identity was fixed; method/symbol identity is still partly rendered-string driven. Slice 0k-V promotes the selected `lower_function_if_needed.exact_lookup_keep_requested_name` seam through `method_name_codec_exact_lookup_keep_requested_name?` in shadow/parity mode; emitted behavior still returns the legacy result. Slice 0k-W pauses standalone promotion-report proliferation. | Either select the next root-sized codec seam with a red/green source-shape gate, or define a generated-stage classification slice that consumes the existing promotion ledger to answer one blocking yes/no decision before changing emitted naming behavior. | String-slice parsing patches at individual callsites; treating rendered names as canonical identity; broad normalization without a falsifier; selecting lower-level helpers before a materialization seam; flipping owner-result behavior from shadow rows; committing another report surface that does not reduce or select an authority edge. |
 | `CallMaterializationTransaction` spine | Slice 0k-AJ selects the reached transaction/emission edge `call_materialization.wrapper_or_call_remap.extern_missing_body`. Slice 0k-AK adds the docs stop rule for post-consumer selector decay. Slice 0k-AL makes that rule executable. Slice 0k-AM implements the behavior-neutral consumer: HIR stores transaction contract facts by tx id, HIR-to-MIR attaches them to transaction-bound `Call`/`ExternCall`, backend `[MAT_EMIT]` logs them mechanically, and optimizer replacement preserves them. Slice 0k-AO extends the same selector with a post-consumer exact-contract residual split. Fresh generated-stage evidence reports `post_consumer_state=selected_consumed_by_contract_consumer`, `contract_mismatch_rows=0`, `residual_exact_missing_body_rows=14`, `residual_exact_missing_body_groups=9`, and `residual_selection_status=rejected_exact_missing_body_ambiguous`. | The 0k-AJ selected edge is consumed, and the immediate exact-contract residual is ambiguous rather than root-selected. The next movement must either add a stronger discriminator that can select exactly one old authority edge from the 9 residual groups, or switch to `consolidation` / `cleanup/delete` under the 0k-AN covenant. | Treating consumed edge disappearance as failure; making old `REQUIRE_SELECTED=1` green by redefining rows; behavior-patching any residual sample (`Array#<<`, `Slice#[]`, `IO#read`, etc.) without a unique selector; backend forwarder or undefined-extern rescue; requested-name forcing; broad `NamedTuple`/`Tuple` rendering changes; global ambient-map policy changes; `BlockOwner` rollback; another standalone report that does not remove ambiguity or retire/refute an older surface. |
@@ -527,6 +532,125 @@ Next local track:
   `SideEffectMergeContract` only if it includes parent merge consumption and
   semantic-failure/tail-input classification; otherwise select `TailDeclarationPlan`
   or `OutputOwnership` with the same contract-consumer discipline.
+
+### Slice 0k-BU: `SideEffectMergeContract` implementation plan
+
+Status:
+
+- docs-only implementation-plan slice;
+- selects the next `GeneratedStageExecution` production movement after the 0k-BT
+  vertical-contract checkpoint;
+- no compiler behavior, emitted LLVM, side-effect merge behavior, tail
+  declarations/stubs, output-file behavior, resource acceptance, parser behavior,
+  materialization behavior, or `BlockOwner` carrier changed.
+
+Selected row and tranche:
+
+- Active Architecture Board row: `GeneratedStageExecution` /
+  `LLVMEmissionSession`;
+- tranche: `contract-owner-migration`;
+- risk tier for the future code slice: CAUTION, because it touches parallel LLVM
+  emission side-effect state, but the first implementation must be
+  behavior-neutral.
+
+Old authority edge:
+
+`parallel-side-effect-file-merge`.
+
+Current source shape:
+
+- backend side-effect facts are mutable fields such as `@emitted_functions`,
+  `@undefined_externs`, `@called_crystal_functions`, string constants,
+  zero-struct globals, module singleton globals, and debug file state;
+- worker code inside `emit_functions_parallel` writes raw `.se` rows with tags
+  `STR`, `ZSG`, `EXT`, `CCF`, `EMF`, `ERT`, `MSG`, `DGF`, and `SCN`;
+- parent code inside the same method parses `parts[0]` with raw tag branches and
+  mutates backend fields directly;
+- tail emitters such as `emit_undefined_extern_declarations` and
+  `emit_missing_crystal_function_stubs` later treat those merged fields as
+  authoritative.
+
+New owner contract:
+
+`SideEffectMergeContract` is the session-owned contract for worker side-effect
+transport in one LLVM emission run. The implementation carrier may be an
+explicit private class or explicit methods on `LLVMEmissionSession`; either form
+must avoid Crystal `record` macros and must be tested through B4 because earlier
+generated-stage owner carriers have been self-host fragile.
+
+The contract must define:
+
+1. row schema and tag vocabulary for each worker side-effect kind;
+2. producer set: which worker-local backend tables are serialized;
+3. parent merge consumer: the single code path that parses worker rows and
+   mutates the parent backend state;
+4. duplicate policy preserving current behavior:
+   - strings dedupe by value and create aliases for worker names;
+   - zero-struct declarations dedupe by struct key when possible;
+   - undefined externs use `record_undefined_extern`;
+   - called Crystal functions keep first-seen call info;
+   - emitted function names are unioned;
+   - emitted return types preserve the first recorded entry;
+   - module singleton globals preserve first entry per type;
+   - debug files are registered through the debug context;
+   - string counter uses the maximum worker high-water mark;
+5. malformed-row policy preserving current `next if parts.size < ...` behavior;
+6. classification boundary: merged undefined/called/emitted sets remain tail
+   inputs in this slice, not proof that missing bodies are semantically valid.
+
+Required source-shape guard for the next code slice:
+
+Extend `scripts/llvm_emission_session_source_shape_guard.sh` with
+`REQUIRE_SIDE_EFFECT_CONTRACT=1`.
+
+Prepatch expected state:
+
+- `side_effect_contract_shape=legacy_parallel_side_effect_merge`;
+- guard exits non-zero when `REQUIRE_SIDE_EFFECT_CONTRACT=1`;
+- raw worker `.se` writer tags and raw parent merge tag branches are still owned
+  by `emit_functions_parallel`.
+
+Postpatch expected state:
+
+- `side_effect_contract_shape=session_consumes_side_effect_merge_contract`;
+- `emit_functions_parallel` receives or reads the session contract;
+- worker side-effect writing is delegated through a named contract helper;
+- parent side-effect merging is delegated through a named contract helper;
+- `emit_functions_parallel` no longer owns raw side-effect tag vocabulary or the
+  raw parent merge switch inline;
+- side-effect merge semantics and `.se` file format are unchanged.
+
+DoD for 0k-BV implementation:
+
+1. Fresh B4 baseline before patch:
+   `REQUIRE_CURRENT_FRONTIER=1 scripts/generated_stage_llvm_entry_classifier.sh`.
+2. Prepatch red source-shape guard:
+   `REQUIRE_SESSION=1 REQUIRE_WORKER_PLAN=1 REQUIRE_SIDE_EFFECT_CONTRACT=1
+   scripts/llvm_emission_session_source_shape_guard.sh`.
+3. Production code migration in `src/compiler/mir/llvm_backend.cr` only, unless
+   the guard script requires updates.
+4. Postpatch source-shape guard passes with
+   `side_effect_contract_shape=session_consumes_side_effect_merge_contract`.
+5. `crystal build src/adamas.cr -o bin/adamas --error-trace`.
+6. Focused semantic/LLVM guards:
+   - `regression_tests/type_value_core_runtime_identity_contract.sh bin/adamas`;
+   - `regression_tests/original_vs_stage_semantic_oracle_contract.sh bin/adamas`;
+   - `regression_tests/p2_stage2_static_call_named_llvm_no_prelude.sh bin/adamas`.
+7. Fresh B4 after patch. For this behavior-neutral slice, acceptable evidence is
+   `classification=current_0k_bn_frontier` or a narrower named residual recorded
+   before commit. `REQUIRE_CLEAN=1` passing is not expected from this slice.
+
+Stop rules for 0k-BV:
+
+- if the first implementation requires changing merge semantics, undefined
+  extern declarations, dead-code stubs, fallback behavior, output ownership, or
+  resource acceptance, stop and write a new SDD slice;
+- if an extra helper class changes B4 before the contract consumer is migrated,
+  revert that carrier shape and keep the contract on the existing session
+  surface;
+- if the guard only proves new fields/getters/tags and not writer+merge consumer
+  delegation, reject it as the same vocabulary-only failure mode as the stashed
+  WIP.
 
 Slice 0k-AP consolidation result: the architecture report surface is now
 treated as a registry, not as a menu of competing next steps. Existing reports

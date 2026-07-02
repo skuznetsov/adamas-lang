@@ -114,6 +114,12 @@ must define a vertical contract and move a downstream consumer to that contract
 in behavior-neutral mode before changing merge behavior, tail stubs, output-file
 behavior, or resource acceptance.
 
+Slice 0k-BU selects `SideEffectMergeContract` as that next vertical contract.
+The first implementation must keep the current worker `.se` format and merge
+semantics, but `emit_functions_parallel` must stop being the inline owner of both
+raw worker side-effect row writing and parent raw-tag merge switching. The
+session contract owns the schema and the writer/merge consumer boundary.
+
 Generated-stage owner carriers SHOULD use explicit private classes/methods
 until their materialization surface is proven. A rejected 0k-BR preflight using
 Crystal `record` macros preserved local checks but changed B4 to a produced

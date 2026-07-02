@@ -365,6 +365,16 @@ that consumer no longer treats mutable backend fields/ad-hoc files/tail fallback
 as sole authority, and rerun B4. Do not commit vocabulary-only, scalar-only, or
 report-only `LLVMEmissionSession` changes as standalone progress.
 
+2026-07-01 post-0k-BU note: the selected vertical contract is
+`SideEffectMergeContract`. The next code slice is now constrained to
+`parallel-side-effect-file-merge`: worker `.se` row writing and parent merge
+inside `emit_functions_parallel` must move behind a session-owned contract while
+preserving the existing `.se` format and merge semantics. The source-shape guard
+must be red before patch under `REQUIRE_SIDE_EFFECT_CONTRACT=1` and green only
+when both writer and parent merge consumers delegate through the contract. This
+is not a tail-stub fix, output-ownership fix, resource fix, worker-count fix, or
+B4 green claim.
+
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another
 state-scope helper. `scripts/codepath_status_cleanup_selection_report.sh`
