@@ -703,6 +703,55 @@ module Adamas
         )
       end
 
+      private def generated_stage_memory_phases_enabled? : Bool
+        generated_stage_transaction_enabled? && env_enabled?("ADAMAS_GSETX_MEMORY_PHASES")
+      end
+
+      private def log_generated_stage_memory_phase(
+        phase : String,
+        owner : String,
+        extra_fields : String = ""
+      ) : Nil
+        return unless generated_stage_memory_phases_enabled?
+
+        stats = GC.stats
+        prof = GC.prof_stats
+        fields = String.build do |io|
+          io << "phase="
+          io << codepath_status_token(phase)
+          io << " owner="
+          io << codepath_status_token(owner)
+          io << " heap="
+          io << stats.heap_size
+          io << " free="
+          io << stats.free_bytes
+          io << " unmapped="
+          io << stats.unmapped_bytes
+          io << " since_gc="
+          io << stats.bytes_since_gc
+          io << " total="
+          io << stats.total_bytes
+          io << " prof_heap="
+          io << prof.heap_size
+          io << " prof_free="
+          io << prof.free_bytes
+          io << " prof_unmapped="
+          io << prof.unmapped_bytes
+          io << " non_gc="
+          io << prof.non_gc_bytes
+          io << " bytes_before_gc="
+          io << prof.bytes_before_gc
+          io << " obtained_os="
+          io << prof.obtained_from_os_bytes
+          unless extra_fields.empty?
+            io << ' '
+            io << extra_fields
+          end
+        end
+
+        log_generated_stage_transaction_row("memory.phase", fields)
+      end
+
       private def write_all_fd(fd : IO::FileDescriptor::Handle, bytes : Bytes) : Int64
         offset = 0
         while offset < bytes.size
@@ -2501,6 +2550,11 @@ module Adamas
             "hir_module_id=#{hir_module.object_id} hir_functions=#{hir_module.functions.size}"
           )
         end
+        log_generated_stage_memory_phase(
+          "cli.hir_final",
+          "cli.hir",
+          "hir_functions=#{hir_module.functions.size}"
+        )
         bootstrap_trace_puts "  Got HIR module with #{hir_module.functions.size} functions" if options.progress
         timings["dbg_count_hir_funcs_before_rta"] = hir_module.functions.size.to_f if debug_profile
         options.link_libraries = link_libs.dup
@@ -2551,6 +2605,11 @@ module Adamas
         end
         timings["hir_rta"] = (Time.instant - rta_start).total_milliseconds if options.stats
         timings["hir_reachable_funcs"] = hir_module.functions.size.to_f if options.stats
+        log_generated_stage_memory_phase(
+          "cli.hir_after_rta",
+          "cli.hir",
+          "hir_functions=#{hir_module.functions.size} reachable=#{reachable.size}"
+        )
         if debug_profile
           timings["dbg_count_hir_reachable_names"] = reachable.size.to_f
           timings["dbg_count_hir_funcs_after_rta"] = hir_module.functions.size.to_f
@@ -2730,6 +2789,11 @@ module Adamas
           emit_timings(options, out_io, timings, total_start)
           return 1
         end
+        log_generated_stage_memory_phase(
+          "cli.escape_done",
+          "cli.escape",
+          "hir_functions=#{hir_module.functions.size} analyzed=#{total_funcs - ea_skipped} skipped=#{ea_skipped}"
+        )
 
         # Step 4: Lower to MIR
         log(options, out_io, "\n[4/6] Lowering to MIR...")
@@ -2740,6 +2804,11 @@ module Adamas
         bootstrap_trace_puts "[STAGE2_TRACE] step4: before lowering.new"; STDERR.flush
         mir_lowering = MIR::HIRToMIRLowering.new(hir_module, slab_frame: options.slab_frame)
         bootstrap_trace_puts "[STAGE2_TRACE] step4: lowering initialized"; STDERR.flush
+        log_generated_stage_memory_phase(
+          "cli.mir_lowering_new",
+          "cli.mir",
+          "hir_functions=#{hir_module.functions.size}"
+        )
 
         # Register globals from class variables
         globals = [] of Tuple(String, HIR::TypeRef, Int64?, String?, HIR::SourceLocation?)
@@ -2812,6 +2881,11 @@ module Adamas
         bootstrap_trace_puts "[MIR_SETUP] register_tuple_types types=#{hir_module.types.size}" if mir_setup_trace
         mir_lowering.register_tuple_types(hir_module.types)
         bootstrap_trace_puts "[MIR_SETUP] register_tuple_types done" if mir_setup_trace
+        log_generated_stage_memory_phase(
+          "cli.mir_type_registration_done",
+          "cli.mir",
+          "hir_functions=#{hir_module.functions.size} hir_types=#{hir_module.types.size} globals=#{globals.size}"
+        )
 
         # Fused parallel mode: MIR lowering + optimization + LLVM emission in one parallel step.
         # Default off — fused mode has correctness issues with worker-side state (symbols,
@@ -2827,6 +2901,11 @@ module Adamas
           bootstrap_trace_puts "[MIR_SETUP] prepare stubs count=#{hir_module.functions.size}" if mir_setup_trace
           mir_module = mir_lowering.prepare(options.progress)
           bootstrap_trace_puts "[MIR_SETUP] prepare done stubs=#{mir_module.functions.size}" if mir_setup_trace
+          log_generated_stage_memory_phase(
+            "cli.mir_prepare_done",
+            "cli.mir",
+            "mir_functions=#{mir_module.functions.size} mode=fused_stubs"
+          )
           timings["dbg_count_mir_funcs"] = mir_module.functions.size.to_f if debug_profile
           log(options, out_io, "  Functions: #{mir_module.functions.size} (stubs, fused parallel)")
           timings["mir"] = (Time.instant - mir_start).total_milliseconds if options.stats
@@ -2849,6 +2928,11 @@ module Adamas
           bootstrap_trace_puts "[MIR_SETUP] lowering bodies count=#{hir_module.functions.size}" if mir_setup_trace
           mir_prepare_start = options.stats ? Time.instant : nil
           mir_module = mir_lowering.prepare(options.progress)
+          log_generated_stage_memory_phase(
+            "cli.mir_prepare_done",
+            "cli.mir",
+            "mir_functions=#{mir_module.functions.size} mode=serial"
+          )
           mir_prepare_ms = if start = mir_prepare_start
                              (Time.instant - start).total_milliseconds
                            else
@@ -2857,6 +2941,11 @@ module Adamas
           mir_lower_start = options.stats ? Time.instant : nil
           mir_lowering.lower_all_bodies(options.progress)
           mir_lowering.synthesize_abstract_method_dispatchers(options.progress)
+          log_generated_stage_memory_phase(
+            "cli.mir_bodies_lowered",
+            "cli.mir",
+            "mir_functions=#{mir_module.functions.size}"
+          )
           mir_lower_ms = if start = mir_lower_start
                            (Time.instant - start).total_milliseconds
                          else
@@ -2906,14 +2995,29 @@ module Adamas
             end
             timings["mir_opt"] = (Time.instant - mir_opt_start).total_milliseconds if options.stats
             timings["dbg_count_mir_opt_funcs"] = mir_module.functions.size.to_f if debug_profile
+            log_generated_stage_memory_phase(
+              "cli.mir_opt_done",
+              "cli.mir",
+              "mir_functions=#{mir_module.functions.size} opt=serial"
+            )
           elsif options.mir_opt
             log_codepath_status("cli.mir", "mir_opt_deferred_workers", "taken", "CLI")
             log(options, out_io, "  MIR optimization deferred to LLVM workers (parallel)")
             timings["mir_opt"] = 0.0 if options.stats  # included in LLVM timing
+            log_generated_stage_memory_phase(
+              "cli.mir_opt_deferred",
+              "cli.mir",
+              "mir_functions=#{mir_module.functions.size}"
+            )
           else
             log_codepath_status("cli.mir", "mir_opt_disabled", "taken", "CLI")
             log(options, out_io, "  Skipping MIR optimizations (--no-mir-opt)")
             timings["mir_opt"] = 0.0 if options.stats
+            log_generated_stage_memory_phase(
+              "cli.mir_opt_disabled",
+              "cli.mir",
+              "mir_functions=#{mir_module.functions.size}"
+            )
           end
 
           # A' BEHAVIOR: the inline-Array-storage facts must be populated on the FINAL
@@ -2984,6 +3088,11 @@ module Adamas
             "mir_module_id=#{mir_module.object_id} mir_functions=#{mir_module.functions.size}"
           )
         end
+        log_generated_stage_memory_phase(
+          "cli.mir_final",
+          "cli.mir",
+          "mir_functions=#{mir_module.functions.size}"
+        )
 
         # Step 5: Generate LLVM IR
         bootstrap_trace_puts "[STAGE2_TRACE] step5: LLVM IR generation start"; STDERR.flush
@@ -2993,6 +3102,11 @@ module Adamas
         bootstrap_trace_puts "[STAGE2_TRACE] step5: before generator.new"; STDERR.flush
         llvm_gen = MIR::LLVMIRGenerator.new(mir_module)
         bootstrap_trace_puts "[STAGE2_TRACE] step5: generator.new done"; STDERR.flush
+        log_generated_stage_memory_phase(
+          "cli.llvm_generator_new",
+          "cli.llvm",
+          "mir_functions=#{mir_module.functions.size}"
+        )
         llvm_gen.emit_type_metadata = options.emit_type_metadata
         bootstrap_trace_puts "[STAGE2_TRACE] step5: flags1"; STDERR.flush
         bootstrap_trace_puts "[STAGE2_TRACE] step5: flags2"; STDERR.flush
@@ -3059,7 +3173,17 @@ module Adamas
         if options.emit_llvm
           log_generated_stage_outcome_llvm_ir_start(output_outcome)
           bootstrap_trace_puts "[LLVM_SETUP] generate(string) start" if llvm_setup_trace
+          log_generated_stage_memory_phase(
+            "cli.llvm_generate_call_start",
+            "cli.llvm",
+            "emit_mode=stdout"
+          )
           llvm_ir = llvm_gen.generate
+          log_generated_stage_memory_phase(
+            "cli.llvm_generate_returned",
+            "cli.llvm",
+            "emit_mode=stdout llvm_ir_bytes=#{llvm_ir.size}"
+          )
           bootstrap_trace_puts "[LLVM_SETUP] generate(string) done bytes=#{llvm_ir.size}" if llvm_setup_trace
           llvm_ir_bytes = llvm_ir.size.to_i64
           log(options, out_io, "  LLVM IR size: #{llvm_ir_bytes} bytes")
@@ -3083,7 +3207,17 @@ module Adamas
           return 0
         else
           log_generated_stage_outcome_llvm_ir_start(output_outcome)
+          log_generated_stage_memory_phase(
+            "cli.llvm_generate_call_start",
+            "cli.llvm",
+            "emit_mode=file"
+          )
           llvm_ir = llvm_gen.generate
+          log_generated_stage_memory_phase(
+            "cli.llvm_generate_returned",
+            "cli.llvm",
+            "emit_mode=file llvm_ir_bytes=#{llvm_ir.size}"
+          )
           if BootstrapEnv.enabled?("ADAMAS_TRACE_STDERR")
             LibC.write(2, "[STAGE2_TRACE] step5: generate done\n".to_unsafe, 36_u64)
           end

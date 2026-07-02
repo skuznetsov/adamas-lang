@@ -2073,6 +2073,63 @@ module Adamas::MIR
       log_generated_stage_transaction_row("llvm.function_emission_phase", fields)
     end
 
+    private def generated_stage_memory_phases_enabled? : Bool
+      generated_stage_transaction_enabled? && bootstrap_env_enabled?("ADAMAS_GSETX_MEMORY_PHASES")
+    end
+
+    private def log_generated_stage_memory_phase(
+      phase : String,
+      owner : String,
+      extra_fields : String = ""
+    ) : Nil
+      return unless generated_stage_memory_phases_enabled?
+
+      stats = GC.stats
+      prof = GC.prof_stats
+      fields = String.build do |io|
+        io << "phase="
+        io << generated_stage_transaction_token(phase)
+        io << " owner="
+        io << generated_stage_transaction_token(owner)
+        io << " heap="
+        io << stats.heap_size
+        io << " free="
+        io << stats.free_bytes
+        io << " unmapped="
+        io << stats.unmapped_bytes
+        io << " since_gc="
+        io << stats.bytes_since_gc
+        io << " total="
+        io << stats.total_bytes
+        io << " prof_heap="
+        io << prof.heap_size
+        io << " prof_free="
+        io << prof.free_bytes
+        io << " prof_unmapped="
+        io << prof.unmapped_bytes
+        io << " non_gc="
+        io << prof.non_gc_bytes
+        io << " bytes_before_gc="
+        io << prof.bytes_before_gc
+        io << " obtained_os="
+        io << prof.obtained_from_os_bytes
+        io << " out_pos="
+        io << @output.pos
+        io << " emitted="
+        io << @emitted_functions.size
+        io << " called="
+        io << @called_crystal_functions.size
+        io << " undefined="
+        io << @undefined_extern_names.size
+        unless extra_fields.empty?
+          io << ' '
+          io << extra_fields
+        end
+      end
+
+      log_generated_stage_transaction_row("memory.phase", fields)
+    end
+
     private def llvm_entry_opt_guard_enabled? : Bool
       raw = (::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_LLVM_ENTRY_OPT_GUARD") || "").strip.downcase
       return true if raw.empty?
@@ -2792,6 +2849,11 @@ module Adamas::MIR
       bootstrap_trace_puts "[LLVM_INIT] func indexes about to build"
       build_function_lookup_indexes
       bootstrap_trace_puts "[LLVM_INIT] func indexes done"
+      log_generated_stage_memory_phase(
+        "llvm.initialize_done",
+        "llvm.init",
+        "module_functions=#{@module.functions.size}"
+      )
 
       # Type metadata
       @type_info_entries = [] of TypeInfoEntry
@@ -3275,6 +3337,11 @@ module Adamas::MIR
       generated_in_memory = output.nil?
       output_mode = generated_in_memory ? "memory" : "external_io"
       log_generated_stage_llvm_generate_phase("generate_start", output_mode)
+      log_generated_stage_memory_phase(
+        "llvm.generate_start",
+        "llvm.generate",
+        "output_mode=#{output_mode} module_functions=#{@module.functions.size}"
+      )
       @emit_regex_runtime = regex_runtime_needed?(@module.functions)
 
       bootstrap_trace_puts "  [LLVM] emit_header..." if @progress
@@ -3296,11 +3363,21 @@ module Adamas::MIR
         bootstrap_trace_puts "  [LLVM] collect_union_metadata..." if @progress
         collect_union_metadata
       end
+      log_generated_stage_memory_phase(
+        "llvm.prelude_emit_done",
+        "llvm.setup",
+        "output_mode=#{output_mode} module_functions=#{@module.functions.size}"
+      )
 
       emission_session = build_llvm_emission_session
       functions_to_emit = emission_session.functions_to_emit
       total_funcs = emission_session.total_funcs
       n_workers = emission_session.effective_worker_count
+      log_generated_stage_memory_phase(
+        "llvm.session_built",
+        "llvm.session",
+        "planned_functions=#{total_funcs} original_functions=#{emission_session.original_function_count} pruned_functions=#{emission_session.pruned_function_count} requested_workers=#{emission_session.requested_worker_count} effective_workers=#{n_workers}"
+      )
       if generated_stage_transaction_enabled?
         log_generated_stage_transaction_row(
           "llvm.session",
@@ -3313,6 +3390,11 @@ module Adamas::MIR
       log_generated_stage_llvm_generate_phase(
         "function_emission_start",
         output_mode,
+        "planned_functions=#{total_funcs} requested_workers=#{emission_session.requested_worker_count} effective_workers=#{n_workers}"
+      )
+      log_generated_stage_memory_phase(
+        "llvm.function_emission_start",
+        "llvm.function_emission",
         "planned_functions=#{total_funcs} requested_workers=#{emission_session.requested_worker_count} effective_workers=#{n_workers}"
       )
 
@@ -17394,6 +17476,11 @@ module Adamas::MIR
         "sequential",
         "total_functions=#{functions.size}"
       )
+      log_generated_stage_memory_phase(
+        "llvm.sequential_start",
+        "llvm.function_emission",
+        "total_functions=#{functions.size}"
+      )
       functions.each_with_index do |func, idx|
         if @progress && (idx % 100 == 0 || idx == functions.size - 1)
           STDERR.puts "    Emitting function #{idx + 1}/#{functions.size}: #{func.name}"
@@ -17418,6 +17505,11 @@ module Adamas::MIR
       log_generated_stage_function_emission_phase(
         "sequential_done",
         "sequential",
+        "total_functions=#{functions.size}"
+      )
+      log_generated_stage_memory_phase(
+        "llvm.sequential_done",
+        "llvm.function_emission",
         "total_functions=#{functions.size}"
       )
     end

@@ -12,6 +12,29 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-DQ-PRE-FUNCTION-MEMORY-OWNER-SELECTOR|implemented 2026-07-02 {F:0.88 G:0.56 R:0.84}]:
+Default-off `memory.phase` rows in `src/compiler/cli.cr` and
+`src/compiler/mir/llvm_backend.cr` plus
+`scripts/generated_stage_pre_function_memory_owner_classifier.sh` select the
+owner boundary for the 0k-DP pre-existing non-GC pressure. Fresh
+`REQUIRE_OWNER=1` evidence reports
+`classification=pre_function_pressure_hir_owned`,
+`default_first_phase=cli.hir_final`,
+`default_first_non_gc=4314198280`,
+`default_first_high_phase=cli.hir_final`,
+`default_first_high_owner=cli.hir`,
+`default_first_high_non_gc=4314198280`, and
+`default_last_phase=llvm.sequential_start` with the same non-GC level. Stage1
+workers=1 control on the same source reports `stage1_control_rc=0`,
+`stage1_control_run_rc=0`, stdout `42`, `stage1_memory_rows=19`, and
+`stage1_max_non_gc=0`. Scope: this is an owner selector, not a behavior fix. It
+refutes LLVM output/session/function-emission ownership as the first default
+edge for the current pressure; the next selector must move before HIR final and
+distinguish parse/source/prelude/HIR-lowering retention from produced-stage
+GC/non-GC accounting. Decay trigger: the owner classifier reports missing
+`memory.phase` rows, high stage1-control non-GC, first high later than HIR
+final, or a changed mode boundary.
+
 [LM-ARCH-0K-DP-FUNCTION-EMISSION-MEMORY-DISCRIMINATOR|implemented 2026-07-02 {F:0.88 G:0.55 R:0.86}]:
 `scripts/generated_stage_function_emission_memory_discriminator.sh` makes the
 default-mode function-emission memory-shape discriminator executable. Fresh

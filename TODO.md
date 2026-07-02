@@ -8,6 +8,23 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: Slice 0k-DQ adds default-off `memory.phase` rows and
+  executable owner selector
+  `scripts/generated_stage_pre_function_memory_owner_classifier.sh`. Fresh
+  `REQUIRE_OWNER=1` evidence with the current produced s2 reports
+  `classification=pre_function_pressure_hir_owned`: the first high produced-s2
+  non-GC row is already `default_first_high_phase=cli.hir_final`,
+  `default_first_high_owner=cli.hir`, `default_first_high_non_gc=4314198280`,
+  and `default_last_phase=llvm.sequential_start` remains at the same non-GC
+  level. Stage1 workers=1 control compiles/runs the same source with stdout
+  `42`, `stage1_memory_rows=19`, and `stage1_max_non_gc=0`. Therefore the
+  default-lane owner moved earlier than LLVM setup/session/function emission:
+  the next selector must split pre-HIR-final pressure (parse/source/prelude/HIR
+  lowering/state retention vs produced-stage GC/non-GC accounting), while
+  preserving workers=1 as a separate residual. Do not patch LLVM output,
+  function plan/session, metadata, workers, memory budget, materialization,
+  `NamedTuple`/`Tuple`, ambient maps, or `BlockOwner` from this evidence.
+
 - 2026-07-02 UPDATE: Slice 0k-DP adds executable discriminator
   `scripts/generated_stage_function_emission_memory_discriminator.sh` for the
   default-mode function-emission resource lane. Fresh

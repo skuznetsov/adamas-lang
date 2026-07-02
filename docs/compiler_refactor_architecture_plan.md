@@ -334,6 +334,21 @@ emission. Do not patch memory budgets, sink mode, worker policy, rand fallback,
 tail, metadata, backend semantics, materialization, `NamedTuple`/`Tuple`,
 ambient maps, or `BlockOwner` from this evidence.
 
+2026-07-02 post-0k-DQ note: the default-mode resource lane now has an owner
+selector before LLVM function emission. Default-off `memory.phase` rows are
+available from CLI/HIR/MIR boundaries and LLVM setup/session/function-emission
+boundaries, and
+`REQUIRE_OWNER=1 scripts/generated_stage_pre_function_memory_owner_classifier.sh`
+classifies the current run as `pre_function_pressure_hir_owned`. The produced-s2
+first high row is already `cli.hir_final` with `non_gc=4314198280`; the same
+run stays at that level through `llvm.sequential_start`. The stage1 workers=1
+control on the same source reports `stage1_max_non_gc=0` and stdout `42`.
+Therefore the next executable movement should not target `LLVMEmissionSession`
+or output/session/function-text structures. It should move one level earlier:
+split parse/source/prelude/HIR-lowering retention from produced-stage
+GC/non-GC accounting before HIR final, while preserving the workers=1
+`after_hir_final_before_mir_final` residual.
+
 2026-07-02 post-0k-CR note: the return-shape census now also measures
 assigned-tail yield passthrough (`result = yield; ...; result`). Strict current
 evidence keeps the broad 0k-CQ result for naive `contains_yield` scope, but
