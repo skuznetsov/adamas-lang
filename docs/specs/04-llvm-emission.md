@@ -107,6 +107,13 @@ count through `LLVMEmissionSession`, while rejecting inline
 `parallel_llvm_workers` and debug-info sequential override logic in `generate`.
 The slice does not change worker defaults or fallback behavior.
 
+Slice 0k-BT adds a stop rule before the next production slice. A session field,
+getter, string vocabulary, or report is not enough to satisfy the side-effect,
+tail, output, or resource contract. The next LLVM emission architecture change
+must define a vertical contract and move a downstream consumer to that contract
+in behavior-neutral mode before changing merge behavior, tail stubs, output-file
+behavior, or resource acceptance.
+
 Generated-stage owner carriers SHOULD use explicit private classes/methods
 until their materialization surface is proven. A rejected 0k-BR preflight using
 Crystal `record` macros preserved local checks but changed B4 to a produced

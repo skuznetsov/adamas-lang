@@ -350,8 +350,20 @@ gate; the committed shape stores requested/effective worker count and reason
 code directly on `LLVMEmissionSession`. This keeps B4 at
 `classification=current_0k_bn_frontier` and does not fix worker rand/RSS,
 workers=1 exit 139, fallback behavior, side-effect merging, tail stubs, output
-ownership, or resource gates. Next candidates are side-effect merge contract,
-tail declaration/stub plan, output ownership, or resource evidence.
+ownership, or resource gates. Before 0k-BT, next candidates were side-effect
+merge contract, tail declaration/stub plan, output ownership, or resource
+evidence; 0k-BT below tightens this to vertical contract work only.
+
+2026-07-01 post-0k-BT note: pause production code before the next
+`LLVMEmissionSession` micro-slice. A local side-effect-tag vocabulary WIP was
+stashed because tag/getter ownership alone is too thin to count as the next
+architecture movement. The next executable slice must be a vertical contract
+slice, not a field-count burn-down: it must define one of
+`SideEffectMergeContract`, `TailDeclarationPlan`, `OutputOwnership`, or
+`ResourceEvidence`, name the old authority edge and downstream consumer, prove
+that consumer no longer treats mutable backend fields/ad-hoc files/tail fallback
+as sole authority, and rerun B4. Do not commit vocabulary-only, scalar-only, or
+report-only `LLVMEmissionSession` changes as standalone progress.
 
 2026-07-01 post-0k-S note: the lane switched to runtime `CodePathStatus`
 cleanup selection for one debug/probe cluster instead of adding another

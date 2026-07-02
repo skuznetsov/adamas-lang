@@ -80,6 +80,15 @@ and missing-body stubs through mutable backend fields. The next production
 slice is admitted only as a behavior-neutral `LLVMEmissionSession` record and
 source-shape guard that captures this plan in one place before changing worker
 behavior, memory behavior, tail stubs, or output ownership.
+Slice 0k-BT is a docs-only vertical-contract checkpoint after hostile review of
+the post-0k-BS path. A local WIP that moved only worker side-effect tag
+vocabulary into `LLVMEmissionSession` was stashed and is not completion
+evidence. The next `LLVMEmissionSession` movement must not be field-only,
+tag-only, getter-only, or report-only. It must move a vertical contract boundary
+such as `SideEffectMergeContract`, `TailDeclarationPlan`, `OutputOwnership`, or
+`ResourceEvidence`, and prove that at least one downstream consumer no longer
+treats mutable backend fields, ad-hoc worker files, or tail fallback sets as the
+sole authority.
 
 Current frontier: the compiler can make progress through bounded bug slices,
 but many semantic decisions are still inferred repeatedly across HIR, MIR, and
@@ -92,7 +101,7 @@ latest emitted symptom.
 
 ## Active Architecture Board
 
-Status: execution board after Slice 0k-BS. This board exists to
+Status: execution board after Slice 0k-BT. This board exists to
 prevent the next step from being selected by the latest generated-stage crash
 stack. A next slice is admitted only if it moves one board row by replacing or
 shadowing a named authority edge, producing `CodePathStatus` evidence for a
@@ -446,9 +455,78 @@ Residual boundary:
 
 - B4 is still measured-red. This slice does not fix worker rand/RSS or
   workers=1 segfault; it only makes worker policy an owned session fact.
-- Next `LLVMEmissionSession` movement should choose one of the remaining
-  non-consumed edges: side-effect merge contract, tail declarations/stubs,
-  output ownership, or resource evidence.
+- Before 0k-BT, the remaining non-consumed edges were side-effect merge
+  contract, tail declarations/stubs, output ownership, and resource evidence.
+  Slice 0k-BT below tightens this: the next movement must be vertical contract
+  work, not another field/getter-only owner migration.
+
+### Slice 0k-BT: `LLVMEmissionSession` vertical-contract checkpoint
+
+Status:
+
+- docs-only architecture checkpoint;
+- production compiler behavior is paused again;
+- a local worker side-effect tag vocabulary WIP was saved in git stash
+  (`wip: llvm emission side-effect tag owner micro-slice before architecture
+  checkpoint`) and is not completion evidence;
+- no emitted LLVM semantics, worker behavior, side-effect merge behavior, tail
+  declarations/stubs, output-file behavior, resource acceptance, materialization
+  behavior, parser behavior, or `BlockOwner` carrier changed.
+
+Problem:
+
+- Slices 0k-BR and 0k-BS were valid behavior-neutral owner migrations, but the
+  same pattern can become architecture metric drift if the next slice only moves
+  another scalar/string/getter into `LLVMEmissionSession`;
+- the stashed side-effect-tag WIP moved vocabulary ownership only. It did not
+  define the worker side-effect table schema, merge authority, semantic-failure
+  policy, tail declaration inputs, output ownership, or resource evidence;
+- a vocabulary-only migration could make a source-shape counter green while the
+  real authority still lives in mutable backend fields, ad-hoc `.se` files,
+  parent merge switches, and tail fallback sets.
+
+Decision:
+
+- the next code movement in `GeneratedStageExecution` remains admitted, but only
+  as a vertical contract slice;
+- accepted vertical contract candidates are:
+  - `SideEffectMergeContract`: table schema, producer set, parent merge consumer,
+    duplicate/missing-entry handling, and semantic-failure vs tail-input policy;
+  - `TailDeclarationPlan`: legitimate extern declarations, late Crystal bodies,
+    dead-code stubs, unresolved missing bodies, and the consumer that emits them;
+  - `OutputOwnership`: backend IR text ownership vs CLI file-output ownership,
+    temp-file lifetime, and the generated-stage acceptance boundary;
+  - `ResourceEvidence`: memory/RSS/worker evidence as measurement first, with an
+    explicit future promotion gate if any resource threshold becomes acceptance.
+- a field-only, tag-only, getter-only, or report-only session change is rejected
+  unless the same slice proves a downstream consumer no longer treats the old
+  field/file/fallback source as sole authority.
+
+DoD for the next production slice:
+
+1. Pick exactly one vertical contract candidate above.
+2. Name the old authority edge and downstream consumer before editing.
+3. Run the current B4 measured-red baseline before patching.
+4. Add or extend a source-shape guard that proves the consumer reads the contract,
+   not only that `LLVMEmissionSession` has more fields/getters.
+5. Keep the first migration behavior-neutral unless a separate SDD slice admits a
+   behavior flip with a root-sized would-change census.
+6. Rerun B4 after the patch. If B4 remains red, it must stay the same or become a
+   narrower named residual; if it changes, record the new boundary before commit.
+
+Adversary verdict:
+
+- `VULNERABLE`: the current `LLVMEmissionSession` lane is aligned with the SDD
+  only while it reduces authority edges. Continuing with vocabulary-only or
+  scalar-only micro-slices would satisfy a proxy metric and preserve the
+  architecture smell.
+
+Next local track:
+
+- write a focused vertical-contract plan before resuming code. Prefer
+  `SideEffectMergeContract` only if it includes parent merge consumption and
+  semantic-failure/tail-input classification; otherwise select `TailDeclarationPlan`
+  or `OutputOwnership` with the same contract-consumer discipline.
 
 Slice 0k-AP consolidation result: the architecture report surface is now
 treated as a registry, not as a menu of competing next steps. Existing reports

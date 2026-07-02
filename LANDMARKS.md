@@ -12,6 +12,29 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-BT-LLVM-EMISSION-VERTICAL-CONTRACT-CHECKPOINT|design-sealed 2026-07-01 {F:0.82 G:0.60 R:0.86}]:
+Slice 0k-BT pauses production compiler edits after hostile review of the
+post-0k-BS `LLVMEmissionSession` path. A local WIP that moved only worker `.se`
+side-effect tag vocabulary into `LLVMEmissionSession` was saved in git stash as
+`wip: llvm emission side-effect tag owner micro-slice before architecture
+checkpoint`; it is not completion evidence and must not be committed as a
+standalone architecture slice without re-review. The reviewed failure mode is
+architecture metric drift: a tag/getter-only session migration can satisfy the
+letter of "consume one edge" while leaving the real authority in mutable backend
+fields, ad-hoc worker side-effect files, parent merge switches, tail extern/stub
+sets, and CLI output ownership. New stop rule: the next
+`GeneratedStageExecution` / `LLVMEmissionSession` production slice must move a
+vertical contract boundary such as `SideEffectMergeContract`,
+`TailDeclarationPlan`, `OutputOwnership`, or `ResourceEvidence`, and must prove a
+downstream consumer no longer treats the old field/file/fallback source as sole
+authority. Field-only, tag-only, getter-only, and report-only session changes are
+rejected unless paired with that consumer movement and fresh B4 evidence. Scope:
+docs/control-plane only; no compiler behavior changed, no `BlockOwner` rollback,
+and no green `s2b`/`s3b` claim. Decay trigger: a committed vertical
+`LLVMEmissionSession` contract slice lands, B4 reaches a different first-bad
+boundary, or fresh evidence refutes `LLVMEmissionSession` as the active owner
+boundary.
+
 [LM-ARCH-0K-BS-LLVM-EMISSION-SESSION-WORKER-PLAN|implemented 2026-07-01 {F:0.86 G:0.34 R:0.88}]:
 Slice 0k-BS implements the second behavior-neutral `LLVMEmissionSession`
 owner migration. It consumes exactly the `worker-policy-inline` authority edge:

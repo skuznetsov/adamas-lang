@@ -8,6 +8,21 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-01 UPDATE: added Slice 0k-BT, a docs-only architecture checkpoint after
+  hostile review of the post-0k-BS path. Production compiler edits are paused
+  again. A local side-effect-tag owner WIP was saved in git stash
+  (`wip: llvm emission side-effect tag owner micro-slice before architecture
+  checkpoint`) and is not completion evidence. The WIP moved only the worker
+  `.se` tag vocabulary (`STR`, `ZSG`, `EXT`, etc.) toward
+  `LLVMEmissionSession`; hostile review classifies that as too thin to count as
+  the next architecture slice by itself. The next code movement on
+  `GeneratedStageExecution` must be a vertical `SideEffectMergeContract` /
+  `TailDeclarationPlan` / `OutputOwnership` / `ResourceEvidence` contract slice,
+  or a docs-only redirect that refutes `LLVMEmissionSession` as the active owner
+  boundary. A field-only, tag-only, getter-only, or report-only session change is
+  rejected unless it moves a downstream consumer away from mutable backend
+  fields/ad-hoc worker files/tail fallback and preserves or narrows B4 evidence.
+
 - 2026-07-01 UPDATE: implemented Slice 0k-BS, the second behavior-neutral
   `LLVMEmissionSession` owner migration. The existing guard
   `scripts/llvm_emission_session_source_shape_guard.sh` now has
