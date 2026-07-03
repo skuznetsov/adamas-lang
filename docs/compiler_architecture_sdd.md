@@ -598,7 +598,7 @@ evidence, not next-step selectors.
 | `bootstrap-emergency-with-ledger` / B4-O1 | Consumed by 0k-CU. The HIR `BlockCallReturnContract` implementation moves the generated-stage gate past the old O1 `affected_block_ids` / `Set(UInt32)#includes?` frontier: `REQUIRE_CURRENT_CU_CONTRACT=1 scripts/hir_block_return_shape_census.sh` reports `classification=current_0k_cu_block_call_return_contract_applied`, and `STAGE1_COMPILER=/tmp/adamas_0kcu_stage1 REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh` exits at the expected non-current boundary with `b4_classification=llvm_entry_failure_after_lower_main` and `workers1_exit139=0`. The new residual is post-`lower_main` RSS pressure in both worker modes, with the default worker-mode rand fallback still present. | Return to the board before any new production source slice. The next receipt must reselect an owner spine from fresh generated-stage evidence; if it targets the new residual, it must name the old authority edge behind post-`lower_main` memory/resource growth rather than treating higher memory limits, worker count, or the rand fallback as acceptance evidence. | Continuing the 0k-CU breakglass lane by inertia; starting from the new RSS-kill stack; raising memory as a fix; forcing `ADAMAS_LLVM_WORKERS=1`; worker/rand/output/resource patches without a new receipt; CopyPropagation, Set/Hash, backend block-return, `NamedTuple`/`Tuple`, ambient-map, or `BlockOwner` changes. |
 | `architecture-burn-down` / owner-spine plan | Consumed by 0k-CW. The active burn-down selection is `MaterializationTransaction` exact body availability, based on generated-stage residual evidence rather than the latest crash stack. | Do not add another planning/report row unless it retires/refutes this selection or the residual classifier proves the selected edge is not root-sized. | Treating a moved crash stack as architecture progress; adding another report that does not retire/refute an older surface; committing WIP helpers that do not consume an old authority edge; claiming source-shape green as bootstrap green. |
 | `MaterializationTransaction` / exact body availability | Consumed through 0k-DI for the active `after_tx -> inside_type_params` edge. G6 `BlockOwner` setter availability is guard-green. The explicit materialization scope-entry slice preserves `[MAT_EMIT]` reachability and changes the lower-method terminal classifier from the old mixed 14-row / 4-cause state with `no_exact_after_tx_no_call` (6 rows) to a root-sized abstract-method residual: `residual_rows=3`, `terminal_cause_kinds=1`, `selected_cause=lower_method_terminal_abstract_method`, and `classification=eligible_lower_method_terminal_edge`. Residual rows now traverse `after_tx -> inside_type_params -> inside_namespace -> before_arity -> after_arity` and join to `[MAT_METHOD_CALL]`. This is focused authority-edge movement, not green bootstrap. | Return to the board before selecting another production edge. The next movement should first remeasure the generated-stage pressure gate and choose whether the active constraint is still `MaterializationTransaction` exact body availability, B4/O1 `PhaseAuthority`, or a `SemanticIdentity` pre-s2-clean row. | Backend undefined-extern rescue, forwarder rescue, requested-name forcing, per-method Array/Slice/IO/Atomic/String::Builder/Int32 patches, broad `NamedTuple`/`Tuple` rendering, global ambient-map policy, `BlockOwner` rollback, treating abstract-method residuals as a local method patch, adding another result/consumer layer, adding another generic pre-call marker, or threading a trace object through production `lower_method`. |
-| `PhaseAuthority` / `GeneratedStageExecution` | 0k-DR consumed the default-lane `memory.phase` surface; 0k-DS refuted startup/process-baseline ownership with OS RSS; 0k-DT selected workers=1 HIR-to-MIR as the mode-local lane; 0k-DU selected MIR optimization as the subphase; 0k-DV selected CopyPropagation as the pass; 0k-DW selected `apply_build_dominators` as the phase; 0k-DX selected `compute_dominance_info`; 0k-DY consumes that subowner. `CopyPropagationPass` now uses exact lazy dominance queries instead of building a full dominator tree/interval table for every non-local CP run. The old strict dominator classifier decays because the nested pass lane is clean (`subphase.classification=workers1_mir_subphase_clean`, `subphase.s2_mir_opt_peak_rss_mb=1177`, `subphase.s2_mir_opt_memory_kill=0`). A hostile revalidation added `scripts/generated_stage_self_build_boundary_classifier.sh` after one strict nested build failed before produced-s2 gates; the guard reports `classification=self_build_after_mir_boundary`, direct full self-build succeeds under the strict 4GB cap at 3396 MB peak RSS, and rerunning the mode selector with the resulting generated `s2` re-establishes `classification=select_default_late_llvm_resource_lane` with clean produced-s2 HIR/MIR stop gates in both modes and joined transaction residuals at `reached_function_emission`. Local-only and local-safe-subset CP preflights remain refuted. | The next production receipt may re-enter `GeneratedStageExecution` through the default late LLVM/function-emission resource residual. It must preserve the consumed workers=1 MIR/CopyPropagation controls, exact lazy dominance semantics, the generated-s2 self-build guard, and the joined transaction residual. It must not claim green `s2b`/`s3b` until the full generated-stage gate is clean in both modes. | Returning to CP dominance, disabling cross-block/dominance-dependent CopyPropagation, dropping the dominance-needed subset, patching `build_def_maps`, the skip predicate, affected-block collection, rewrite blocks, HIR/MIR lowering, earlier MIR optimizer passes, worker policy, memory budgets, backend rescue, `NamedTuple`/`Tuple`, ambient maps, or `BlockOwner`; adding another cascaded selector on the consumed CP lane; treating old `affected_block_ids` Set frontier as current; memory-budget acceptance; forced `ADAMAS_LLVM_WORKERS=1`; treating a one-shot generated-s2 build failure as a produced-s2 lane refutation without the self-build guard; or treating the late LLVM single residual as green bootstrap without consuming it. |
+| `PhaseAuthority` / `GeneratedStageExecution` | 0k-DR consumed the default-lane `memory.phase` surface; 0k-DS refuted startup/process-baseline ownership with OS RSS; 0k-DT selected workers=1 HIR-to-MIR as the mode-local lane; 0k-DU selected MIR optimization as the subphase; 0k-DV selected CopyPropagation as the pass; 0k-DW selected `apply_build_dominators` as the phase; 0k-DX selected `compute_dominance_info`; 0k-DY consumes that subowner. `CopyPropagationPass` now uses exact lazy dominance queries instead of building a full dominator tree/interval table for every non-local CP run. The old strict dominator classifier decays because the nested pass lane is clean (`subphase.classification=workers1_mir_subphase_clean`, `subphase.s2_mir_opt_peak_rss_mb=1177`, `subphase.s2_mir_opt_memory_kill=0`). A hostile revalidation added `scripts/generated_stage_self_build_boundary_classifier.sh` after one strict nested build failed before produced-s2 gates; the guard reports `classification=self_build_after_mir_boundary`, direct full self-build succeeds under the strict 4GB cap at 3396 MB peak RSS, and rerunning the mode selector with the resulting generated `s2` re-establishes `classification=select_default_late_llvm_resource_lane` with clean produced-s2 HIR/MIR stop gates in both modes and joined transaction residuals at `reached_function_emission`. 0k-EB introduced the default-off per-function outcome fact, and 0k-EC extends it with `started` rows so the residual now names the active in-flight function at resource kill: outcome `status=started`, `index=87`, function `__vdispatch__IO::FileDescriptor#system_write$Slice(UInt8)$T122`, with 173 outcome rows per mode. Local-only and local-safe-subset CP preflights remain refuted. | The next production receipt may re-enter `GeneratedStageExecution` through the active default late LLVM/function-emission attempt edge. It must preserve the consumed workers=1 MIR/CopyPropagation controls, exact lazy dominance semantics, the generated-s2 self-build guard, and the joined transaction residual. It must distinguish a function-specific emission owner from pre-existing output/resource/side-effect retention before changing backend writer behavior, and it must not claim green `s2b`/`s3b` until the full generated-stage gate is clean in both modes. | Returning to CP dominance, disabling cross-block/dominance-dependent CopyPropagation, dropping the dominance-needed subset, patching `build_def_maps`, the skip predicate, affected-block collection, rewrite blocks, HIR/MIR lowering, earlier MIR optimizer passes, worker policy, memory budgets, backend rescue, `NamedTuple`/`Tuple`, ambient maps, or `BlockOwner`; adding another cascaded selector on the consumed CP lane; treating old `affected_block_ids` Set frontier as current; memory-budget acceptance; forced `ADAMAS_LLVM_WORKERS=1`; treating a one-shot generated-s2 build failure as a produced-s2 lane refutation without the self-build guard; treating the late LLVM single residual as green bootstrap without consuming it; or patching `system_write` by name from the active-at-kill row alone. |
 | `SemanticIdentity` | H7/H8 remain pre-s2-clean residuals. They are real, but not the active generated-stage blocker. | Resume with a row-specific SDD entry and measured-red baseline if the goal is semantic-service extraction. | TypeValue/stringification/parser shortcuts bundled with B4, generic materialization, ambient-map, or `BlockOwner` work. |
 | `CodePathStatus` | Cleanup is not the active bootstrap constraint. | Resume only with `delete_ready` evidence and a protecting falsifier, or by explicit user selection of bloat reduction. | Deleting suspected-dead code from grep/runtime absence alone; adding cleanup reports as a substitute for owner migration. |
 
@@ -767,6 +767,83 @@ can now use the per-function outcome rows to decide whether a specific
 function, output-growth, side-effect-growth, or resource-retention owner edge is
 root-sized. A row naming the last completed function is not, by itself, a
 license for a per-method patch.
+
+#### Slice 0k-EC receipt: active function-emission attempt fact
+
+```text
+SliceReceipt {
+  board_lane: PhaseAuthority / GeneratedStageExecution
+  tranche: contract-owner-migration
+  old_authority_edge:
+    Slice 0k-EB owned completed per-function outcomes, but the L15 resource kill
+    can occur after the next function starts and before it completes. A
+    completed-only row therefore names the last successful function, not
+    necessarily the active resource edge.
+  owner_fact_or_service:
+    `LLVMFunctionEmissionOutcome` now records the attempted function before
+    `emit_function` runs with `status=started`. Existing `emitted` and
+    `index_error` rows remain the completion/error outcomes. The last outcome
+    row can therefore distinguish completed work from the in-flight function at
+    the resource boundary.
+  producers:
+    - sequential `emit_functions_sequential` per-function loop;
+    - `LLVMEmissionSession` function plan and existing generated-stage
+      transaction logging.
+  consumers:
+    - `scripts/generated_stage_execution_transaction_report.sh`;
+    - `scripts/generated_stage_mode_resource_lane_classifier.sh`;
+    - the next L15 discriminator, which must compare function-specific
+      emission against retained output/resource/side-effect state.
+  measured_red_baseline:
+    Post-0k-EB L15 still selected default late LLVM/function emission with both
+    modes reaching function emission and memory-killing after `lower_main`.
+  focused_DoD:
+    Mode selector preserves `classification=select_default_late_llvm_resource_lane`
+    and reports a final `llvm.function_emission_outcome` row with
+    `status=started`, identifying the active attempted function.
+  architecture_DoD:
+    No worker policy, memory budget, backend undefined-extern behavior, symbol
+    materialization, `NamedTuple`/`Tuple`, ambient map, `BlockOwner`,
+    CopyPropagation, or emitted LLVM semantics changes.
+  generated_stage_gate:
+    Preserve L16 generated-s2 self-build separation, clean HIR/MIR stop gates in
+    both modes, and joined transaction residuals at function emission.
+  negative_controls:
+    Full stage1 suites remain green. Static Phase 1/1b censuses remain guard
+    inputs only. The active function row is not a root proof by itself.
+  rejected_shortcuts:
+    Patching `system_write` by name; treating the started row as green
+    `s2b`/`s3b`; changing writer/sink behavior before discriminating
+    function-specific emission from retained output/resource/side-effect state.
+  residual_boundary:
+    The current active-at-kill edge is function #87,
+    `__vdispatch__IO::FileDescriptor#system_write$Slice(UInt8)$T122`, but the
+    next slice must prove whether that edge owns the resource growth or merely
+    exposes an earlier retention cliff.
+}
+```
+
+Status after implementation:
+
+- `emit_functions_sequential` logs a `status=started` outcome before
+  `emit_function(func)`;
+- existing `status=emitted` and `status=index_error` rows are preserved;
+- focused mode-selector evidence with `tmp/adamas_l15_attempt_stage1` reports
+  `transaction.default_function_emission_outcome_rows=173`,
+  `transaction.workers1_function_emission_outcome_rows=173`,
+  `transaction.last_function_emission_outcome_status=started`,
+  `transaction.last_function_emission_outcome_index=87`, and
+  `transaction.last_function_emission_outcome_function=__vdispatch__IO::FileDescriptor#system_write$Slice(UInt8)$T122`;
+- L15 preservation evidence: the same run reports
+  `classification=select_default_late_llvm_resource_lane` with clean HIR/MIR
+  stop gates in both modes and joined transaction residuals at
+  `reached_function_emission`;
+- regression evidence: full suites pass `152/152 + 36/36`; semantic and
+  codepath census guards pass.
+
+Residual boundary: this is still behavior-neutral evidence. The next L15 slice
+must discriminate the active function edge from retained state before any
+backend writer, sink, or per-method behavior change.
 
 #### Slice 0k-DO receipt: default-mode function-emission sink boundary
 

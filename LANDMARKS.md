@@ -12,6 +12,32 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-EC-ACTIVE-FUNCTION-EMISSION-ATTEMPT|implemented 2026-07-02 {F:0.89 G:0.55 R:0.85}]:
+The L15 default late LLVM/function-emission outcome fact now distinguishes the
+last completed function from the active in-flight emission attempt at the
+resource kill. `emit_functions_sequential` logs a default-off
+`llvm.function_emission_outcome` row with `status=started` before calling
+`emit_function`, while preserving the existing `emitted` and `index_error`
+rows. Evidence with `tmp/adamas_l15_attempt_stage1`:
+`STAGE1_COMPILER=tmp/adamas_l15_attempt_stage1 STAGE2_BUILD_TIMEOUT=600
+TAIL_LINES=20 REQUIRE_CLASSIFICATION=1 REQUIRE_LANE_SELECTION=1
+scripts/generated_stage_mode_resource_lane_classifier.sh` preserves
+`classification=select_default_late_llvm_resource_lane`, clean produced-s2
+HIR/MIR stop gates in both modes, joined transaction residuals at
+`reached_function_emission`, and reports
+`transaction.default_function_emission_outcome_rows=173`,
+`transaction.workers1_function_emission_outcome_rows=173`,
+`transaction.last_function_emission_outcome_status=started`,
+`transaction.last_function_emission_outcome_index=87`, and
+`transaction.last_function_emission_outcome_function=__vdispatch__IO::FileDescriptor#system_write$Slice(UInt8)$T122`.
+Full suites pass `152/152 + 36/36`; semantic and codepath census guards pass.
+Scope: behavior-neutral owner-fact movement only. It names the active
+function-emission edge, but it does not prove that `system_write` itself is the
+root resource owner and does not admit a per-method patch. Decay trigger:
+outcome rows stop joining, the last row no longer identifies an in-flight
+attempt under L15, or a later discriminator proves the active function edge is
+only a proxy for earlier retained output/resource state.
+
 [LM-ARCH-0K-EB-FUNCTION-EMISSION-OUTCOME-OWNER|implemented 2026-07-02 {F:0.88 G:0.56 R:0.84}]:
 The L15 default late LLVM/function-emission residual now has a code-owned
 per-function outcome fact. `LLVMFunctionEmissionOutcome` records function

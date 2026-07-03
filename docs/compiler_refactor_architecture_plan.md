@@ -41,6 +41,17 @@ completed outcomes per mode before the current resource kill, while preserving
 backend work should use those outcome rows to choose a root-sized output,
 side-effect, function, or retention edge before touching the LLVM writer plan.
 
+2026-07-02 post-0k-EC note: the L15 outcome fact now records in-flight
+function-emission starts, not only completed outcomes. Fresh mode-selector
+evidence with `tmp/adamas_l15_attempt_stage1` preserves
+`select_default_late_llvm_resource_lane` and reports 173 outcome rows per mode
+with the final row `status=started`, `index=87`, function
+`__vdispatch__IO::FileDescriptor#system_write$Slice(UInt8)$T122`. This narrows
+the active edge at the resource kill, but it is still behavior-neutral. The
+next backend work should discriminate function-specific emission from
+pre-existing output/resource/side-effect retention before any typed writer,
+external sink, or per-method change.
+
 2026-07-02 post-0k-DY note: the selected workers=1
 `CopyPropagationPass#compute_dominance_info` lane is consumed by a production
 resource fix. CopyPropagation now answers cross-block dominance with an exact

@@ -17580,12 +17580,31 @@ module Adamas::MIR
         emitted_before = @emitted_functions.size
         called_before = @called_crystal_functions.size
         undefined_before = @undefined_extern_names.size
+        mangled_func_name = mangle_function_name(func.name)
+        log_generated_stage_function_emission_outcome(
+          LLVMFunctionEmissionOutcome.new(
+            func.name,
+            mangled_func_name,
+            "sequential",
+            "started",
+            idx + 1,
+            functions.size,
+            out_before,
+            out_before,
+            emitted_before,
+            emitted_before,
+            called_before,
+            called_before,
+            undefined_before,
+            undefined_before
+          )
+        )
         begin
           emit_function(func)
           log_generated_stage_function_emission_outcome(
             LLVMFunctionEmissionOutcome.new(
               func.name,
-              mangle_function_name(func.name),
+              mangled_func_name,
               "sequential",
               "emitted",
               idx + 1,
@@ -17604,7 +17623,7 @@ module Adamas::MIR
           log_generated_stage_function_emission_outcome(
             LLVMFunctionEmissionOutcome.new(
               func.name,
-              mangle_function_name(func.name),
+              mangled_func_name,
               "sequential",
               "index_error",
               idx + 1,

@@ -8,6 +8,26 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: Slice 0k-EC extends the 0k-EB L15 owner fact with
+  in-flight function-emission attempts. `emit_functions_sequential` now logs a
+  default-off `llvm.function_emission_outcome` row with `status=started`
+  before each function emission attempt, while preserving the existing
+  `emitted` and `index_error` completion rows. This consumes the ambiguity in
+  0k-EB: the last completed function was not necessarily the active resource
+  edge at kill time. Evidence with `tmp/adamas_l15_attempt_stage1`:
+  `scripts/generated_stage_mode_resource_lane_classifier.sh` preserves
+  `classification=select_default_late_llvm_resource_lane`, keeps HIR/MIR stop
+  gates clean in both modes, reports
+  `transaction.default_function_emission_outcome_rows=173`,
+  `transaction.workers1_function_emission_outcome_rows=173`, and selects last
+  outcome `status=started`, `index=87`, function
+  `__vdispatch__IO::FileDescriptor#system_write$Slice(UInt8)$T122`. Full
+  suites pass `152/152 + 36/36`; static semantic/codepath guards remain green.
+  This is still not a memory fix and not green `s2b`/`s3b`. It narrows the next
+  L15 discriminator to the active emission of function #87 versus pre-existing
+  output/resource/side-effect retention, and it explicitly does not license a
+  per-method `system_write` patch by name.
+
 - 2026-07-02 UPDATE: Slice 0k-EB implements the first L15 late
   LLVM/function-emission owner fact instead of adding another RSS selector.
   `src/compiler/mir/llvm_backend.cr` now has `LLVMFunctionEmissionOutcome` and,
