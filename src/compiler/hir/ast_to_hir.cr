@@ -53889,6 +53889,7 @@ module Adamas::HIR
         end
         STDERR.puts "[FLUSH_ENTER] owner_types done" if env_has?("ADAMAS_TRACE_FLUSH_ENTER")
       end
+      stop_after_flush_phase("reachability_seed", "ADAMAS_STOP_AFTER_HIR_FLUSH_REACHABILITY_SEED")
 
       # Enable AST filter during process_pending phase (if set)
       @ast_filter_active = @ast_reachable_functions != nil
@@ -53899,6 +53900,7 @@ module Adamas::HIR
         initialize_lazy_rta
         @lazy_rta_active = true
       end
+      stop_after_flush_phase("lazy_rta_init", "ADAMAS_STOP_AFTER_HIR_FLUSH_LAZY_RTA_INIT")
       STDERR.puts "[FLUSH_ENTER] before_process" if env_has?("ADAMAS_TRACE_FLUSH_ENTER")
 
       if phase_stats
@@ -53907,6 +53909,7 @@ module Adamas::HIR
       end
 
       process_pending_lower_functions
+      stop_after_flush_phase("initial_pending", "ADAMAS_STOP_AFTER_HIR_FLUSH_INITIAL_PENDING")
 
       # Disable AST filter and lazy RTA for safety nets (emit_tracked_sigs, lower_missing)
       @ast_filter_active = false
@@ -53921,6 +53924,7 @@ module Adamas::HIR
       # Fix #2: Emit all tracked signatures to ensure functions called from
       # conditional branches or with specific type instantiations are lowered.
       emit_all_tracked_signatures
+      stop_after_flush_phase("tracked_signatures", "ADAMAS_STOP_AFTER_HIR_FLUSH_TRACKED_SIGNATURES")
 
       if phase_stats
         after2 = @module.function_count
@@ -53934,6 +53938,7 @@ module Adamas::HIR
         phase_step_time = Time.instant
       end
       lower_missing_call_targets
+      stop_after_flush_phase("missing_initial", "ADAMAS_STOP_AFTER_HIR_FLUSH_MISSING_INITIAL")
       if phase_stats
         phase_step_time = phase_stats_step("lower_missing.initial", phase_step_count.not_nil!, phase_step_time.not_nil!)
         phase_step_count = @module.function_count
@@ -53943,16 +53948,19 @@ module Adamas::HIR
       # return type. Repair those direct call instructions now that the work
       # queue and safety nets have finished.
       repair_stale_call_return_types
+      stop_after_flush_phase("stale_call_repair", "ADAMAS_STOP_AFTER_HIR_FLUSH_STALE_CALL_REPAIR")
       if phase_stats
         phase_step_time = phase_stats_step("repair_stale_calls", phase_step_count.not_nil!, phase_step_time.not_nil!)
         phase_step_count = @module.function_count
       end
       repair_receiver_bound_call_targets
+      stop_after_flush_phase("receiver_call_repair", "ADAMAS_STOP_AFTER_HIR_FLUSH_RECEIVER_CALL_REPAIR")
       if phase_stats
         phase_step_time = phase_stats_step("repair_receiver_calls", phase_step_count.not_nil!, phase_step_time.not_nil!)
         phase_step_count = @module.function_count
       end
       process_pending_lower_functions
+      stop_after_flush_phase("post_repair_pending", "ADAMAS_STOP_AFTER_HIR_FLUSH_POST_REPAIR_PENDING")
       if phase_stats
         phase_step_time = phase_stats_step("post_repair_pending", phase_step_count.not_nil!, phase_step_time.not_nil!)
         phase_step_count = @module.function_count
@@ -53967,6 +53975,7 @@ module Adamas::HIR
         process_pending_lower_functions
         deferred_allocator_passes += 1
       end
+      stop_after_flush_phase("deferred_allocators", "ADAMAS_STOP_AFTER_HIR_FLUSH_DEFERRED_ALLOCATORS")
       if phase_stats
         phase_step_time = phase_stats_step("deferred_allocators", phase_step_count.not_nil!, phase_step_time.not_nil!)
         phase_step_count = @module.function_count
@@ -53991,6 +54000,7 @@ module Adamas::HIR
                  @pending_function_queue.empty?) ||
                  final_missing_passes >= 4
       end
+      stop_after_flush_phase("final_missing", "ADAMAS_STOP_AFTER_HIR_FLUSH_FINAL_MISSING")
 
       if phase_stats
         after3 = @module.function_count
@@ -54086,6 +54096,22 @@ module Adamas::HIR
         STDERR.puts "[VTR_STATS] Top parents by target count:"
         top_parents.each { |name, targets| STDERR.puts "  #{name}: #{targets.size} targets" }
       end
+    end
+
+    private def stop_after_flush_phase(phase : String, env_key : String) : Nil
+      if env_has?(env_key)
+        log_flush_phase_status("stop_after_#{phase}", "taken")
+        STDERR.puts "[FLUSH_GATE] stop_after=#{phase} env=#{env_key} pending=#{@pending_function_queue.size} funcs=#{@module.function_count}"
+        LibC._exit(0)
+      else
+        log_flush_phase_status("stop_after_#{phase}", "not_taken")
+      end
+    end
+
+    private def log_flush_phase_status(path : String, status : String) : Nil
+      return unless env_has?("ADAMAS_CODEPATH_STATUS_LEDGER")
+
+      STDERR.puts "[CODEPATH_STATUS] category=hir.flush path=#{path} status=#{status} owner=AstToHir note=pending=#{@pending_function_queue.size},funcs=#{@module.function_count}"
     end
 
     private def phase_stats_step(label : String, before_count : Int32, before_time : Time::Instant) : Time::Instant

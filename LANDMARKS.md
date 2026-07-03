@@ -12,6 +12,36 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-B5-FLUSH-MISSING-INITIAL-FRONTIER|frontier 2026-07-03 {F:0.90 G:0.55 R:0.86}]:
+B5 is now narrowed inside `AstToHir#flush_pending_functions` on the top-level
+`fun main` path. The new flush subphase gates show reachability seeding, lazy
+RTA initialization, the initial pending drain, and tracked-signature emission
+are clean; the first bad transition is the initial `lower_missing_call_targets`
+safety-net sweep. Evidence: `crystal build src/adamas.cr -o
+tmp/adamas_b5_flush_phase_stage1 --error-trace` exits 0;
+`scripts/build_bootstrap_stages.sh --out tmp/bootstrap_b5_flush_phase --stages
+2 --timeout 900 --mem 12288` builds and smokes `cv2_s1` and `cv2_s2` clean
+(`cv2_s2` wall 253.37s, peak RSS about 2962 MB); and
+`STAGE1_COMPILER=tmp/bootstrap_b5_flush_phase/cv2_s2 REQUIRE_CLASSIFICATION=1
+STOP_TIMEOUT=900 STOP_MEM_MB=12288 HIGH_RSS_MB=12288
+scripts/generated_stage_self_build_hir_boundary_classifier.sh` exits 0 with
+`classification=self_build_hir_flush_missing_initial_boundary`.
+`ADAMAS_STOP_AFTER_HIR_FLUSH_MISSING_INITIAL` exits 139 at about 4803 MB
+without safe-wrapper memory kill. B4 remains clean:
+`GENERATED_S2=tmp/bootstrap_b5_flush_phase/cv2_s2 REQUIRE_CLEAN=1
+scripts/generated_stage_llvm_entry_classifier.sh` reports
+`classification=clean_both_modes`, combined regressions pass 36/36, and full
+regressions pass 152/152. Scope: B5 remains red; the next first-bad search is
+inside
+`lower_missing_call_targets`, not reachability seeding, lazy RTA init, initial
+pending lowering, tracked signatures, fun-main scan/lower, normal post-branch
+flush, RTA pruning, MIR, LLVM finalization/helper, stale `NamedTuple` /
+`Tuple`, ambient-map, or `BlockOwner` evidence. Decay trigger: a narrower
+classifier pins a different first-bad transition inside `lower_missing_call_targets`,
+the refined classifier no longer reports
+`self_build_hir_flush_missing_initial_boundary`, or a fresh 3-stage bootstrap
+succeeds.
+
 [LM-ARCH-B5-FUN-MAIN-FLUSH-PENDING-FRONTIER|frontier 2026-07-03 {F:0.90 G:0.54 R:0.86}]:
 B5 is now narrowed inside the post-`lower_main` pending-flush corridor. The
 refined classifier's new fun-main gates show `fun_main_entry` is taken, the

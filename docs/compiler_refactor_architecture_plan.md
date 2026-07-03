@@ -261,6 +261,15 @@ flush invoked from that branch:
 unit is therefore an `AstToHir#flush_pending_functions` localizer for the
 top-level `fun main` path.
 
+2026-07-03 B5 flush subphase split note: the `flush_pending_functions`
+localizer now names the first bad subphase. With
+`tmp/bootstrap_b5_flush_phase/cv2_s2`, reachability seeding, lazy RTA init,
+initial pending lowering, and tracked-signature emission are clean; the first
+bad gate is the initial `lower_missing_call_targets` sweep:
+`classification=self_build_hir_flush_missing_initial_boundary`. The next
+architecture unit is therefore a `lower_missing_call_targets` localizer/owner
+split for the top-level `fun main` flush path.
+
 2026-07-02 post-0k-DY note: the selected workers=1
 `CopyPropagationPass#compute_dominance_info` lane is consumed by a production
 resource fix. CopyPropagation now answers cross-block dominance with an exact

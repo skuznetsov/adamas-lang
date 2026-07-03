@@ -8,6 +8,32 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-03 UPDATE: B5 fun-main flush is now split by flush subphase. New
+  default-off gates inside `AstToHir#flush_pending_functions` show the current
+  first bad transition is the initial `lower_missing_call_targets` safety-net
+  sweep reached from top-level `fun main` flush. Fresh evidence:
+  `crystal build src/adamas.cr -o tmp/adamas_b5_flush_phase_stage1
+  --error-trace` exits 0; `scripts/build_bootstrap_stages.sh --out
+  tmp/bootstrap_b5_flush_phase --stages 2 --timeout 900 --mem 12288` builds and
+  smokes `cv2_s1` and `cv2_s2` clean (`cv2_s2` wall 253.37s, peak RSS about
+  2962 MB); and `STAGE1_COMPILER=tmp/bootstrap_b5_flush_phase/cv2_s2
+  REQUIRE_CLASSIFICATION=1 STOP_TIMEOUT=900 STOP_MEM_MB=12288
+  HIGH_RSS_MB=12288 scripts/generated_stage_self_build_hir_boundary_classifier.sh`
+  exits 0 with `classification=self_build_hir_flush_missing_initial_boundary`.
+  Clean gates before the crash: fun-main scan/lower, flush reachability seed,
+  lazy RTA init, initial pending drain, and tracked signatures. First bad gate:
+  `ADAMAS_STOP_AFTER_HIR_FLUSH_MISSING_INITIAL` exits 139 at about 4803 MB,
+  without safe-wrapper memory kill. B4 remains clean:
+  `GENERATED_S2=tmp/bootstrap_b5_flush_phase/cv2_s2 REQUIRE_CLEAN=1
+  scripts/generated_stage_llvm_entry_classifier.sh` reports
+  `classification=clean_both_modes`; combined regressions pass 36/36; full
+  regressions pass 152/152. This supersedes the coarser
+  `self_build_hir_fun_main_flush_boundary`: the next slice must localize the
+  first bad transition inside `lower_missing_call_targets` itself, not
+  reachability seeding, lazy RTA init, initial pending lowering, tracked
+  signature emission, fun-main scan/lower, RTA pruning, MIR, LLVM,
+  `NamedTuple` / `Tuple`, ambient maps, or `BlockOwner`.
+
 - 2026-07-03 UPDATE: B5 pending-flush corridor split now names the first bad
   sub-boundary. The refined classifier gained fun-main scan/lower/flush and
   before-normal-flush gates. Fresh evidence: `crystal build src/adamas.cr -o
