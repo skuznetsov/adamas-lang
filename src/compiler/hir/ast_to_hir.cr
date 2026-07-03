@@ -54339,6 +54339,7 @@ module Adamas::HIR
       debug_missing_top = env_get("DEBUG_MISSING_TOP").try(&.to_i?) || 20
       trace_flush_enter = env_has?("ADAMAS_TRACE_FLUSH_ENTER")
       STDERR.puts "[MISSING_LOWER] start" if debug_missing
+      stop_after_missing_phase("start", "ADAMAS_STOP_AFTER_HIR_MISSING_START", iteration, 0)
 
       while iteration < max_iterations
         STDERR.puts "[MISSING_TRACE] iter=#{iteration} funcs=#{@module.functions.size}" if trace_flush_enter
@@ -54476,8 +54477,15 @@ module Adamas::HIR
             end
           end
         end
+        stop_after_missing_phase("scan", "ADAMAS_STOP_AFTER_HIR_MISSING_SCAN", iteration, missing.size)
         missing.uniq!
-        break if missing.empty?
+        stop_after_missing_phase("uniq", "ADAMAS_STOP_AFTER_HIR_MISSING_UNIQ", iteration, missing.size)
+        if missing.empty?
+          stop_after_missing_phase("queue", "ADAMAS_STOP_AFTER_HIR_MISSING_QUEUE", iteration, 0)
+          stop_after_missing_phase("process", "ADAMAS_STOP_AFTER_HIR_MISSING_PROCESS", iteration, 0)
+          stop_after_missing_phase("force_modules", "ADAMAS_STOP_AFTER_HIR_MISSING_FORCE_MODULES", iteration, 0)
+          break
+        end
 
         if summary = missing_summary
           STDERR.puts "[MISSING_SUMMARY] iter=#{iteration} unique=#{missing.size} top=#{debug_missing_top}"
@@ -54518,7 +54526,9 @@ module Adamas::HIR
           @function_lowering_states[name] = FunctionLoweringState::Pending
           @pending_function_queue << name
         end
+        stop_after_missing_phase("queue", "ADAMAS_STOP_AFTER_HIR_MISSING_QUEUE", iteration, missing.size)
         process_pending_lower_functions
+        stop_after_missing_phase("process", "ADAMAS_STOP_AFTER_HIR_MISSING_PROCESS", iteration, missing.size)
         missing.each do |name|
           if debug_env_filter_match?("DEBUG_MISSING_TARGET", name)
             STDERR.puts "[MISSING_TARGET] after_process name=#{name} body=#{@module.has_function_with_body?(name)} state=#{function_state(name)} funcs=#{@module.functions.size}"
@@ -54531,9 +54541,26 @@ module Adamas::HIR
             force_lower_module_method_by_name(name)
           end
         end
+        stop_after_missing_phase("force_modules", "ADAMAS_STOP_AFTER_HIR_MISSING_FORCE_MODULES", iteration, missing.size)
         iteration += 1
         break if @module.functions.size == before
       end
+    end
+
+    private def stop_after_missing_phase(phase : String, env_key : String, iteration : Int32, missing_count : Int32) : Nil
+      if env_has?(env_key)
+        log_missing_phase_status("stop_after_#{phase}", "taken", iteration, missing_count)
+        STDERR.puts "[MISSING_GATE] stop_after=#{phase} env=#{env_key} iter=#{iteration} missing=#{missing_count} pending=#{@pending_function_queue.size} funcs=#{@module.function_count}"
+        LibC._exit(0)
+      else
+        log_missing_phase_status("stop_after_#{phase}", "not_taken", iteration, missing_count)
+      end
+    end
+
+    private def log_missing_phase_status(path : String, status : String, iteration : Int32, missing_count : Int32) : Nil
+      return unless env_has?("ADAMAS_CODEPATH_STATUS_LEDGER")
+
+      STDERR.puts "[CODEPATH_STATUS] category=hir.missing path=#{path} status=#{status} owner=AstToHir note=iter=#{iteration},missing=#{missing_count},pending=#{@pending_function_queue.size},funcs=#{@module.function_count}"
     end
 
     private def rewrite_hash_do_compaction_default_call(func : Function, block : Block, inst_idx : Int32, call : Call) : Bool

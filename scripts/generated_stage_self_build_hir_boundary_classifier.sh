@@ -34,6 +34,12 @@ Classifications:
   self_build_hir_flush_lazy_rta_init_boundary
   self_build_hir_flush_initial_pending_boundary
   self_build_hir_flush_tracked_signatures_boundary
+  self_build_hir_missing_start_boundary
+  self_build_hir_missing_scan_boundary
+  self_build_hir_missing_uniq_boundary
+  self_build_hir_missing_queue_boundary
+  self_build_hir_missing_process_boundary
+  self_build_hir_missing_force_modules_boundary
   self_build_hir_flush_missing_initial_boundary
   self_build_hir_flush_stale_call_repair_boundary
   self_build_hir_flush_receiver_call_repair_boundary
@@ -236,6 +242,16 @@ flush_phase_labels=(
   "hir_flush_lazy_rta_init"
   "hir_flush_initial_pending"
   "hir_flush_tracked_signatures"
+)
+missing_phase_labels=(
+  "hir_missing_start"
+  "hir_missing_scan"
+  "hir_missing_uniq"
+  "hir_missing_queue"
+  "hir_missing_process"
+  "hir_missing_force_modules"
+)
+flush_phase_tail_labels=(
   "hir_flush_missing_initial"
   "hir_flush_stale_call_repair"
   "hir_flush_receiver_call_repair"
@@ -259,6 +275,12 @@ if run_probe_until_bad "compile_entry" "ADAMAS_STOP_AFTER_COMPILE_ENTRY" &&
         run_probe_until_bad "hir_flush_lazy_rta_init" "ADAMAS_STOP_AFTER_HIR_FLUSH_LAZY_RTA_INIT" &&
         run_probe_until_bad "hir_flush_initial_pending" "ADAMAS_STOP_AFTER_HIR_FLUSH_INITIAL_PENDING" &&
         run_probe_until_bad "hir_flush_tracked_signatures" "ADAMAS_STOP_AFTER_HIR_FLUSH_TRACKED_SIGNATURES" &&
+        run_probe_until_bad "hir_missing_start" "ADAMAS_STOP_AFTER_HIR_MISSING_START" &&
+        run_probe_until_bad "hir_missing_scan" "ADAMAS_STOP_AFTER_HIR_MISSING_SCAN" &&
+        run_probe_until_bad "hir_missing_uniq" "ADAMAS_STOP_AFTER_HIR_MISSING_UNIQ" &&
+        run_probe_until_bad "hir_missing_queue" "ADAMAS_STOP_AFTER_HIR_MISSING_QUEUE" &&
+        run_probe_until_bad "hir_missing_process" "ADAMAS_STOP_AFTER_HIR_MISSING_PROCESS" &&
+        run_probe_until_bad "hir_missing_force_modules" "ADAMAS_STOP_AFTER_HIR_MISSING_FORCE_MODULES" &&
         run_probe_until_bad "hir_flush_missing_initial" "ADAMAS_STOP_AFTER_HIR_FLUSH_MISSING_INITIAL" &&
         run_probe_until_bad "hir_flush_stale_call_repair" "ADAMAS_STOP_AFTER_HIR_FLUSH_STALE_CALL_REPAIR" &&
         run_probe_until_bad "hir_flush_receiver_call_repair" "ADAMAS_STOP_AFTER_HIR_FLUSH_RECEIVER_CALL_REPAIR" &&
@@ -283,6 +305,12 @@ if run_probe_until_bad "compile_entry" "ADAMAS_STOP_AFTER_COMPILE_ENTRY" &&
     for label in "${flush_phase_labels[@]}"; do
       mark_gate_clean_skipped "$label"
     done
+    for label in "${missing_phase_labels[@]}"; do
+      mark_gate_clean_skipped "$label"
+    done
+    for label in "${flush_phase_tail_labels[@]}"; do
+      mark_gate_clean_skipped "$label"
+    done
     mark_gate_clean_skipped "hir_fun_main_flush"
   fi
 
@@ -291,6 +319,12 @@ if run_probe_until_bad "compile_entry" "ADAMAS_STOP_AFTER_COMPILE_ENTRY" &&
     ! gate_bad "hir_flush_lazy_rta_init" &&
     ! gate_bad "hir_flush_initial_pending" &&
     ! gate_bad "hir_flush_tracked_signatures" &&
+    ! gate_bad "hir_missing_start" &&
+    ! gate_bad "hir_missing_scan" &&
+    ! gate_bad "hir_missing_uniq" &&
+    ! gate_bad "hir_missing_queue" &&
+    ! gate_bad "hir_missing_process" &&
+    ! gate_bad "hir_missing_force_modules" &&
     ! gate_bad "hir_flush_missing_initial" &&
     ! gate_bad "hir_flush_stale_call_repair" &&
     ! gate_bad "hir_flush_receiver_call_repair" &&
@@ -326,6 +360,18 @@ elif gate_bad "hir_flush_initial_pending"; then
   classification="self_build_hir_flush_initial_pending_boundary"
 elif gate_bad "hir_flush_tracked_signatures"; then
   classification="self_build_hir_flush_tracked_signatures_boundary"
+elif gate_bad "hir_missing_start"; then
+  classification="self_build_hir_missing_start_boundary"
+elif gate_bad "hir_missing_scan"; then
+  classification="self_build_hir_missing_scan_boundary"
+elif gate_bad "hir_missing_uniq"; then
+  classification="self_build_hir_missing_uniq_boundary"
+elif gate_bad "hir_missing_queue"; then
+  classification="self_build_hir_missing_queue_boundary"
+elif gate_bad "hir_missing_process"; then
+  classification="self_build_hir_missing_process_boundary"
+elif gate_bad "hir_missing_force_modules"; then
+  classification="self_build_hir_missing_force_modules_boundary"
 elif gate_bad "hir_flush_missing_initial"; then
   classification="self_build_hir_flush_missing_initial_boundary"
 elif gate_bad "hir_flush_stale_call_repair"; then
@@ -356,7 +402,7 @@ echo "classification=$classification"
 
 if [[ "${REQUIRE_CLASSIFICATION:-0}" == "1" ]]; then
   case "$classification" in
-    self_build_compile_entry_resource|self_build_parse_resource|self_build_lower_main_boundary|self_build_hir_lower_main_bookkeeping_boundary|self_build_hir_fun_main_scan_boundary|self_build_hir_fun_main_lower_boundary|self_build_hir_flush_reachability_seed_boundary|self_build_hir_flush_lazy_rta_init_boundary|self_build_hir_flush_initial_pending_boundary|self_build_hir_flush_tracked_signatures_boundary|self_build_hir_flush_missing_initial_boundary|self_build_hir_flush_stale_call_repair_boundary|self_build_hir_flush_receiver_call_repair_boundary|self_build_hir_flush_post_repair_pending_boundary|self_build_hir_flush_deferred_allocators_boundary|self_build_hir_flush_final_missing_boundary|self_build_hir_fun_main_flush_boundary|self_build_hir_before_flush_pending_boundary|self_build_hir_flush_pending_boundary|self_build_hir_refresh_type_params_boundary|self_build_hir_rta_boundary|self_build_hir_tail_boundary|self_build_after_hir_boundary)
+    self_build_compile_entry_resource|self_build_parse_resource|self_build_lower_main_boundary|self_build_hir_lower_main_bookkeeping_boundary|self_build_hir_fun_main_scan_boundary|self_build_hir_fun_main_lower_boundary|self_build_hir_flush_reachability_seed_boundary|self_build_hir_flush_lazy_rta_init_boundary|self_build_hir_flush_initial_pending_boundary|self_build_hir_flush_tracked_signatures_boundary|self_build_hir_missing_start_boundary|self_build_hir_missing_scan_boundary|self_build_hir_missing_uniq_boundary|self_build_hir_missing_queue_boundary|self_build_hir_missing_process_boundary|self_build_hir_missing_force_modules_boundary|self_build_hir_flush_missing_initial_boundary|self_build_hir_flush_stale_call_repair_boundary|self_build_hir_flush_receiver_call_repair_boundary|self_build_hir_flush_post_repair_pending_boundary|self_build_hir_flush_deferred_allocators_boundary|self_build_hir_flush_final_missing_boundary|self_build_hir_fun_main_flush_boundary|self_build_hir_before_flush_pending_boundary|self_build_hir_flush_pending_boundary|self_build_hir_refresh_type_params_boundary|self_build_hir_rta_boundary|self_build_hir_tail_boundary|self_build_after_hir_boundary)
       ;;
     *)
       exit 9

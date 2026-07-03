@@ -8,6 +8,34 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-03 UPDATE: `lower_missing_call_targets` is now split by subphase.
+  New default-off gates show the current first bad transition is not missing
+  call scanning, uniquing, or queue insertion. The initial missing sweep finds
+  and queues 28 missing targets, then crashes during the
+  `process_pending_lower_functions` call owned by that sweep. Fresh evidence:
+  `crystal build src/adamas.cr -o tmp/adamas_b5_missing_phase_stage1
+  --error-trace` exits 0; `scripts/build_bootstrap_stages.sh --out
+  tmp/bootstrap_b5_missing_phase --stages 2 --timeout 900 --mem 12288` builds
+  and smokes `cv2_s1` and `cv2_s2` clean (`cv2_s2` wall 253.17s, peak RSS
+  about 3249 MB); and `STAGE1_COMPILER=tmp/bootstrap_b5_missing_phase/cv2_s2
+  REQUIRE_CLASSIFICATION=1 STOP_TIMEOUT=900 STOP_MEM_MB=12288
+  HIGH_RSS_MB=12288 scripts/generated_stage_self_build_hir_boundary_classifier.sh`
+  exits 0 with `classification=self_build_hir_missing_process_boundary`.
+  Clean lower-missing gates: start, scan (`missing=28`), uniq (`missing=28`),
+  and queue (`pending=28`). First bad gate:
+  `ADAMAS_STOP_AFTER_HIR_MISSING_PROCESS` exits 139 at about 4804 MB, without
+  safe-wrapper memory kill. B4 remains clean:
+  `GENERATED_S2=tmp/bootstrap_b5_missing_phase/cv2_s2 REQUIRE_CLEAN=1
+  scripts/generated_stage_llvm_entry_classifier.sh` reports
+  `classification=clean_both_modes`; combined regressions pass 36/36; full
+  regressions pass 152/152. This supersedes
+  `self_build_hir_flush_missing_initial_boundary`: the next slice must localize
+  the `process_pending_lower_functions` call made from the initial
+  missing-target sweep, probably by pending-queue item or pending-pass phase,
+  not missing scan/uniq/queue, lazy RTA init, tracked signatures, fun-main
+  scan/lower, RTA pruning, MIR, LLVM, `NamedTuple` / `Tuple`, ambient maps, or
+  `BlockOwner`.
+
 - 2026-07-03 UPDATE: B5 fun-main flush is now split by flush subphase. New
   default-off gates inside `AstToHir#flush_pending_functions` show the current
   first bad transition is the initial `lower_missing_call_targets` safety-net

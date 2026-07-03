@@ -12,6 +12,37 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-B5-MISSING-PROCESS-PENDING-FRONTIER|frontier 2026-07-03 {F:0.90 G:0.56 R:0.86}]:
+B5 is now narrowed inside the initial `lower_missing_call_targets` sweep reached
+from top-level `fun main` flush. Missing-call scanning, uniquing, and queue
+insertion are clean: the sweep finds 28 missing targets, queues them, and then
+crashes during the `process_pending_lower_functions` call owned by that sweep.
+Evidence: `crystal build src/adamas.cr -o tmp/adamas_b5_missing_phase_stage1
+--error-trace` exits 0; `scripts/build_bootstrap_stages.sh --out
+tmp/bootstrap_b5_missing_phase --stages 2 --timeout 900 --mem 12288` builds
+and smokes `cv2_s1` and `cv2_s2` clean (`cv2_s2` wall 253.17s, peak RSS about
+3249 MB); and `STAGE1_COMPILER=tmp/bootstrap_b5_missing_phase/cv2_s2
+REQUIRE_CLASSIFICATION=1 STOP_TIMEOUT=900 STOP_MEM_MB=12288 HIGH_RSS_MB=12288
+scripts/generated_stage_self_build_hir_boundary_classifier.sh` exits 0 with
+`classification=self_build_hir_missing_process_boundary`. Clean lower-missing
+gates: start, scan (`missing=28`), uniq (`missing=28`), and queue
+(`pending=28`). First bad gate: `ADAMAS_STOP_AFTER_HIR_MISSING_PROCESS` exits
+139 at about 4804 MB without safe-wrapper memory kill. B4 remains clean:
+`GENERATED_S2=tmp/bootstrap_b5_missing_phase/cv2_s2 REQUIRE_CLEAN=1
+scripts/generated_stage_llvm_entry_classifier.sh` reports
+`classification=clean_both_modes`, combined regressions pass 36/36, and full
+regressions pass 152/152. Scope: B5 remains red; the next first-bad search is
+inside
+`process_pending_lower_functions` when entered with the 28 targets queued by
+the initial missing-target sweep, not missing scan/uniq/queue, reachability
+seeding, lazy RTA init, initial pending lowering, tracked signatures, fun-main
+scan/lower, RTA pruning, MIR, LLVM finalization/helper, stale `NamedTuple` /
+`Tuple`, ambient-map, or `BlockOwner` evidence. Decay trigger: a narrower
+classifier pins a different first-bad transition inside that pending processor
+call, the refined classifier no longer reports
+`self_build_hir_missing_process_boundary`, or a fresh 3-stage bootstrap
+succeeds.
+
 [LM-ARCH-B5-FLUSH-MISSING-INITIAL-FRONTIER|frontier 2026-07-03 {F:0.90 G:0.55 R:0.86}]:
 B5 is now narrowed inside `AstToHir#flush_pending_functions` on the top-level
 `fun main` path. The new flush subphase gates show reachability seeding, lazy

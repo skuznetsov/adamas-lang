@@ -270,6 +270,14 @@ bad gate is the initial `lower_missing_call_targets` sweep:
 architecture unit is therefore a `lower_missing_call_targets` localizer/owner
 split for the top-level `fun main` flush path.
 
+2026-07-03 B5 lower-missing split note: the lower-missing localizer now names
+the first bad subphase. With `tmp/bootstrap_b5_missing_phase/cv2_s2`, the
+initial missing-target sweep starts, scans, uniques 28 missing targets, and
+queues them cleanly; the first bad gate is the owned pending-processor call:
+`classification=self_build_hir_missing_process_boundary`. The next architecture
+unit is therefore a `process_pending_lower_functions` localizer for the 28
+targets queued by the initial missing-target sweep.
+
 2026-07-02 post-0k-DY note: the selected workers=1
 `CopyPropagationPass#compute_dominance_info` lane is consumed by a production
 resource fix. CopyPropagation now answers cross-block dominance with an exact
