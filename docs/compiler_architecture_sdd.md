@@ -1102,6 +1102,48 @@ Status after implementation:
 Residual boundary: next source work must target `LLVMFinalOutputMaterialization`
 instead of broad output/tail fixes.
 
+#### Slice 0k-EG receipt: IO::Memory materialization negative control
+
+```text
+SliceReceipt {
+  board_lane: PhaseAuthority / GeneratedStageExecution
+  tranche: contract-owner-migration
+  old_authority_edge:
+    Slice 0k-EF selected final `IO::Memory#to_s`, but that marker could still
+    mean either a generic V2 `IO::Memory` / `String` / `Slice` runtime bug or a
+    final-output-shape bug specific to the produced compiler's LLVM buffer.
+  owner_fact_or_service:
+    Focused user-runtime guard:
+    `regression_tests/io_memory_final_materialization_repro.sh <compiler>`.
+  producers:
+    - `IO::Memory#to_s`, `IO::Memory#to_slice`, `String.new(slice)`, and
+      `String.new(buffer, bytesize)`;
+    - tiny and resize-heavy (~2MB) buffers compiled by the current stage1.
+  consumers:
+    - the next `LLVMFinalOutputMaterialization` source receipt;
+    - future final-buffer shape probes.
+  evidence:
+    `regression_tests/io_memory_final_materialization_repro.sh
+    tmp/adamas_l18_iomem_stage1` reports
+    `io_memory_final_materialization_repro_ok`.
+    A fresh
+    `STAGE1_COMPILER=tmp/adamas_l18_iomem_stage1 REQUIRE_CLASSIFICATION=1
+    scripts/generated_stage_finalize_to_s_classifier.sh` still reports
+    `classification=select_finalize_to_s_stringification_frontier`, with
+    normal produced-s2 exit 139 at `finalize_to_s_enter`, 150/150 functions
+    emitted, and stop-before-to-s clean.
+  conclusion:
+    Generic small/medium user-runtime `IO::Memory` materialization is refuted
+    as the root. L18 remains active, but the next split must target produced
+    compiler final-buffer shape/context: large output size, self-hosted
+    compiler object ownership, or finalization-specific path.
+  rejected_shortcuts:
+    `generate_to_fd` / fd-finalization bypass; external-sink resurrection;
+    generic `IO::Memory`, `String`, or `Slice` behavior changes without a red
+    reducer; tail/metadata/DWARF/type-name/worker/BlockOwner changes.
+}
+```
+
 #### Slice 0k-DO receipt: default-mode function-emission sink boundary
 
 ```text

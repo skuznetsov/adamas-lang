@@ -8,6 +8,22 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-03 UPDATE: L18 negative control after the refuted fd-output bypass.
+  The `generate_to_fd` / `finalize_to_fd` WIP was removed; changing normal
+  output ownership is not the active SDD route. New focused guard:
+  `regression_tests/io_memory_final_materialization_repro.sh <compiler>`.
+  Fresh evidence with `tmp/adamas_l18_iomem_stage1` reports
+  `io_memory_final_materialization_repro_ok` for both tiny and resize-heavy
+  (~2MB) `IO::Memory#to_s`, `IO::Memory#to_slice`, `String.new(slice)`, and
+  `String.new(buffer, bytesize)` paths. A fresh L18 classifier using the same
+  stage1 still reports `classification=select_finalize_to_s_stringification_frontier`
+  with normal produced-s2 exit 139 at `finalize_to_s_enter`, 150/150 functions
+  emitted, and stop-before-to-s clean. Therefore the next source movement is
+  still `LLVMFinalOutputMaterialization`, but it must split final output
+  buffer shape/context (produced compiler, large final buffer, ownership /
+  finalization path) rather than patch generic user-runtime `IO::Memory` or
+  resurrect fd/external-sink output.
+
 - 2026-07-03 UPDATE: Slice 0k-EF classifies the L17 finalization boundary with
   a default-off stop gate and a focused script:
   `scripts/generated_stage_finalize_to_s_classifier.sh`. The new env gate

@@ -12,6 +12,26 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-EG-IOMEM-GENERIC-MATERIALIZATION-REFUTED|refuted 2026-07-03 {F:0.86 G:0.48 R:0.82}]:
+The L18 `IO::Memory#to_s` generated-stage frontier is not explained by a
+generic small/medium user-runtime `IO::Memory` materialization failure. The
+refuted `generate_to_fd` / `finalize_to_fd` WIP was removed, restoring the
+committed L18 path. New focused guard:
+`regression_tests/io_memory_final_materialization_repro.sh <compiler>`.
+Fresh evidence with `tmp/adamas_l18_iomem_stage1` reports
+`io_memory_final_materialization_repro_ok`; the generated user binary
+successfully materializes both tiny and resize-heavy (~2MB) `IO::Memory`
+buffers through `to_s`, `to_slice`, `String.new(slice)`, and
+`String.new(buffer, bytesize)`. A fresh generated-stage L18 classifier with
+the same stage1 still reports
+`classification=select_finalize_to_s_stringification_frontier`: normal
+produced-s2 exits 139 at `finalize_to_s_enter`, stop-before-to-s exits 0, and
+both probes emit 150/150 functions and reach tail/metadata/type-name/DWARF.
+Scope: negative control only, not a fix and not green `s2b`/`s3b`. Decay
+trigger: the focused guard fails, the L18 classifier no longer selects
+finalize-to-s, or a final-output-shape reducer reproduces the crash outside
+the produced compiler.
+
 [LM-ARCH-0K-EF-FINALIZE-TO-S-STRINGIFICATION-FRONTIER|implemented 2026-07-03 {F:0.90 G:0.56 R:0.86}]:
 The post-function-emission L17 boundary is now classified as in-memory LLVM
 output stringification. `ADAMAS_STOP_BEFORE_LLVM_FINALIZE_TO_S=1` is a

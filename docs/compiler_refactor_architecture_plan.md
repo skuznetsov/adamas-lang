@@ -95,6 +95,19 @@ self-hosted `IO::Memory#to_s` path that crashes. Tail, metadata, DWARF,
 type-name, worker policy, and broad output rewrites remain rejected until a
 receipt names that producer-to-consumer edge and a focused DoD.
 
+2026-07-03 post-0k-EG note: a focused negative control now refutes the broad
+"generic user-runtime `IO::Memory` materialization" explanation for L18. The
+`generate_to_fd` / `finalize_to_fd` WIP was removed rather than promoted as an
+output-path bypass. `regression_tests/io_memory_final_materialization_repro.sh
+tmp/adamas_l18_iomem_stage1` passes for tiny and resize-heavy (~2MB)
+`IO::Memory#to_s`, `IO::Memory#to_slice`, `String.new(slice)`, and
+`String.new(buffer, bytesize)` paths. The same fresh stage1 still leaves the
+generated-stage classifier at
+`classification=select_finalize_to_s_stringification_frontier`. The next
+backend/source movement should therefore split the produced compiler final
+buffer shape/context, not patch generic `IO::Memory` or resurrect fd/external
+sink output.
+
 2026-07-02 post-0k-DY note: the selected workers=1
 `CopyPropagationPass#compute_dominance_info` lane is consumed by a production
 resource fix. CopyPropagation now answers cross-block dominance with an exact
