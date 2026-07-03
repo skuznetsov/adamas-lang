@@ -8,6 +8,23 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-03 UPDATE: Slice 0k-EH narrows L18 again with a default-off raw
+  final-buffer micro-split. `ADAMAS_DUMP_LLVM_FINAL_BUFFER_BEFORE_TO_S=<path>`
+  now drives `scripts/generated_stage_finalize_to_s_classifier.sh` through
+  cast/env/bytesize/buffer/write checkpoints and reports a raw-dump
+  classification. Fresh evidence with `tmp/adamas_l18_rawdump_stage1`:
+  `regression_tests/io_memory_final_materialization_repro.sh` remains green;
+  `REQUIRE_RAW_DUMP=1 REQUIRE_CLASSIFICATION=1
+  scripts/generated_stage_finalize_to_s_classifier.sh` preserves
+  `classification=select_finalize_to_s_stringification_frontier` and reports
+  `raw_dump_classification=select_finalize_raw_dump_bytesize_frontier`. The
+  raw run reaches `finalize_raw_dump_env_lookup_done`,
+  `finalize_raw_dump_cast_done`, and `finalize_raw_dump_enter`, then exits 139
+  before `finalize_raw_dump_bytesize_done`. Therefore the next root movement is
+  not fd output, raw buffer write, generic `String.new(buffer, bytesize)`, or
+  generic user-runtime `IO::Memory#to_s`; it must split the produced compiler's
+  final `IO::Memory` object field read / receiver validity at `bytesize`.
+
 - 2026-07-03 UPDATE: L18 negative control after the refuted fd-output bypass.
   The `generate_to_fd` / `finalize_to_fd` WIP was removed; changing normal
   output ownership is not the active SDD route. New focused guard:

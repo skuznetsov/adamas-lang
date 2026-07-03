@@ -108,6 +108,18 @@ backend/source movement should therefore split the produced compiler final
 buffer shape/context, not patch generic `IO::Memory` or resurrect fd/external
 sink output.
 
+2026-07-03 post-0k-EH note: that final-buffer split now selects the produced
+compiler's final `IO::Memory#bytesize` field-read edge. A raw-dump probe under
+`ADAMAS_DUMP_LLVM_FINAL_BUFFER_BEFORE_TO_S=<path>` reaches env lookup, casts
+`@output` to `IO::Memory`, and enters the raw-dump path, but exits 139 before
+`finalize_raw_dump_bytesize_done`. The classifier reports
+`raw_dump_classification=select_finalize_raw_dump_bytesize_frontier`, while the
+generic `IO::Memory` regression still passes and the main L18 classification
+remains `select_finalize_to_s_stringification_frontier`. The next backend work
+should split receiver validity versus direct ivar access for the final output
+object; raw buffer writing, fd output, generic `String.new`, and broad
+user-runtime `IO::Memory` changes are still rejected.
+
 2026-07-02 post-0k-DY note: the selected workers=1
 `CopyPropagationPass#compute_dominance_info` lane is consumed by a production
 resource fix. CopyPropagation now answers cross-block dominance with an exact

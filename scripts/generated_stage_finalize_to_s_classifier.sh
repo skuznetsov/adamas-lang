@@ -22,6 +22,7 @@ Environment:
   SMOKE_TIMEOUT=180
   SMOKE_MEM_MB=4096
   REQUIRE_CLASSIFICATION=1
+  REQUIRE_RAW_DUMP=1
 
 Classifications:
   select_finalize_to_s_stringification_frontier
@@ -88,6 +89,7 @@ echo "stage2_build_mem_mb=$STAGE2_BUILD_MEM_MB"
 echo "smoke_timeout=$SMOKE_TIMEOUT"
 echo "smoke_mem_mb=$SMOKE_MEM_MB"
 echo "require_classification=${REQUIRE_CLASSIFICATION:-0}"
+echo "require_raw_dump=${REQUIRE_RAW_DUMP:-0}"
 
 if [[ -z "${STAGE1_COMPILER:-}" ]]; then
   set +e
@@ -193,29 +195,31 @@ last_phase() {
 run_probe() {
   local label="$1"
   local extra_env="$2"
+  local dump_path="${3:-}"
   local out_bin="$TMP_DIR/${label}_out"
   local log="$TMP_DIR/${label}.log"
   local tx="gsetx_${label}"
+  local env_args=(
+    "ADAMAS_GSETX_FUNCTION_EMISSION_OUTCOMES=1"
+    "ADAMAS_GSETX_MEMORY_PHASES=1"
+    "ADAMAS_GSETX_ID=$tx"
+    "ADAMAS_GSETX_LEDGER=$LEDGER"
+    "ADAMAS_GSETX_RUN_MODE=$label"
+  )
+  if [[ -n "$extra_env" ]]; then
+    env_args+=("$extra_env=1")
+  fi
+  if [[ -n "$dump_path" ]]; then
+    env_args+=(
+      "ADAMAS_DUMP_LLVM_FINAL_BUFFER_BEFORE_TO_S=$dump_path"
+      "ADAMAS_STOP_AFTER_LLVM_FINAL_BUFFER_DUMP=1"
+    )
+  fi
 
   set +e
-  if [[ -n "$extra_env" ]]; then
-    env "$extra_env=1" \
-      ADAMAS_GSETX_FUNCTION_EMISSION_OUTCOMES=1 \
-      ADAMAS_GSETX_MEMORY_PHASES=1 \
-      ADAMAS_GSETX_ID="$tx" \
-      ADAMAS_GSETX_LEDGER="$LEDGER" \
-      ADAMAS_GSETX_RUN_MODE="$label" \
-      /usr/bin/time -l "$ROOT_DIR/scripts/run_safe.sh" "$S2" "$SMOKE_TIMEOUT" "$SMOKE_MEM_MB" \
-        "$SOURCE" -o "$out_bin" >"$log" 2>&1
-  else
-    env ADAMAS_GSETX_FUNCTION_EMISSION_OUTCOMES=1 \
-      ADAMAS_GSETX_MEMORY_PHASES=1 \
-      ADAMAS_GSETX_ID="$tx" \
-      ADAMAS_GSETX_LEDGER="$LEDGER" \
-      ADAMAS_GSETX_RUN_MODE="$label" \
-      /usr/bin/time -l "$ROOT_DIR/scripts/run_safe.sh" "$S2" "$SMOKE_TIMEOUT" "$SMOKE_MEM_MB" \
-        "$SOURCE" -o "$out_bin" >"$log" 2>&1
-  fi
+  env "${env_args[@]}" \
+    /usr/bin/time -l "$ROOT_DIR/scripts/run_safe.sh" "$S2" "$SMOKE_TIMEOUT" "$SMOKE_MEM_MB" \
+      "$SOURCE" -o "$out_bin" >"$log" 2>&1
   local rc=$?
   set -e
 
@@ -249,12 +253,27 @@ run_probe() {
   echo "${label}_finalize_to_s_enter_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_to_s_enter")"
   echo "${label}_finalize_to_s_stop_before_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_to_s_stop_before")"
   echo "${label}_finalize_to_s_done_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_to_s_done")"
+  echo "${label}_finalize_raw_dump_cast_enter_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_cast_enter")"
+  echo "${label}_finalize_raw_dump_cast_done_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_cast_done")"
+  echo "${label}_finalize_raw_dump_env_lookup_enter_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_env_lookup_enter")"
+  echo "${label}_finalize_raw_dump_env_lookup_done_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_env_lookup_done")"
+  echo "${label}_finalize_raw_dump_enter_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_enter")"
+  echo "${label}_finalize_raw_dump_bytesize_done_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_bytesize_done")"
+  echo "${label}_finalize_raw_dump_buffer_done_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_buffer_done")"
+  echo "${label}_finalize_raw_dump_write_enter_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_write_enter")"
+  echo "${label}_finalize_raw_dump_done_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_done")"
+  echo "${label}_finalize_raw_dump_failed_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_failed")"
+  echo "${label}_finalize_raw_dump_stop_after_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_stop_after")"
   echo "${label}_last_phase=$(last_phase "$tx" "$label")"
   echo "${label}_log=$log"
 }
 
 run_probe "normal" ""
 run_probe "stop_before_to_s" "ADAMAS_STOP_BEFORE_LLVM_FINALIZE_TO_S"
+RAW_DUMP_FILE="$TMP_DIR/final_buffer_before_to_s.ll"
+if [[ "${REQUIRE_RAW_DUMP:-0}" == "1" ]]; then
+  run_probe "raw_dump_before_to_s" "" "$RAW_DUMP_FILE"
+fi
 
 # Read classification metrics directly from the ledger and run_safe logs.
 normal_exit="$(run_safe_exit_code "$TMP_DIR/normal.log")"
@@ -267,6 +286,73 @@ normal_seq_done="$(ledger_count gsetx_normal normal llvm.function_emission_phase
 normal_func_done="$(ledger_count gsetx_normal normal llvm.generate_phase phase=function_emission_done)"
 stop_marker="$(ledger_count gsetx_stop_before_to_s stop_before_to_s llvm.generate_phase phase=finalize_to_s_stop_before)"
 stop_done="$(ledger_count gsetx_stop_before_to_s stop_before_to_s llvm.generate_phase phase=finalize_to_s_done)"
+raw_dump_exit=""
+raw_dump_cast_enter=0
+raw_dump_cast_done=0
+raw_dump_env_enter=0
+raw_dump_env_done=0
+raw_dump_enter=0
+raw_dump_bytesize_done=0
+raw_dump_buffer_done=0
+raw_dump_write_enter=0
+raw_dump_done=0
+raw_dump_failed=0
+raw_dump_stop=0
+raw_dump_size=0
+raw_dump_header=0
+if [[ "${REQUIRE_RAW_DUMP:-0}" == "1" ]]; then
+  raw_dump_exit="$(run_safe_exit_code "$TMP_DIR/raw_dump_before_to_s.log")"
+  raw_dump_cast_enter="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_cast_enter)"
+  raw_dump_cast_done="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_cast_done)"
+  raw_dump_env_enter="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_env_lookup_enter)"
+  raw_dump_env_done="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_env_lookup_done)"
+  raw_dump_enter="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_enter)"
+  raw_dump_bytesize_done="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_bytesize_done)"
+  raw_dump_buffer_done="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_buffer_done)"
+  raw_dump_write_enter="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_write_enter)"
+  raw_dump_done="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_done)"
+  raw_dump_failed="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_failed)"
+  raw_dump_stop="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_stop_after)"
+  if [[ -f "$RAW_DUMP_FILE" ]]; then
+    raw_dump_size="$(wc -c <"$RAW_DUMP_FILE" | tr -d ' ')"
+    if LC_ALL=C grep -a -q '^; ModuleID =' "$RAW_DUMP_FILE"; then
+      raw_dump_header=1
+    fi
+  fi
+fi
+
+raw_dump_classification="not_requested"
+if [[ "${REQUIRE_RAW_DUMP:-0}" == "1" ]]; then
+  raw_dump_classification="raw_dump_classifier_drift"
+  if [[ "${raw_dump_exit:-}" == "0" &&
+        "$raw_dump_done" -gt 0 &&
+        "$raw_dump_failed" -eq 0 &&
+        "$raw_dump_stop" -gt 0 &&
+        "$raw_dump_size" -gt 0 &&
+        "$raw_dump_header" -eq 1 ]]; then
+    raw_dump_classification="raw_dump_before_to_s_buffer_valid"
+  elif [[ "$raw_dump_cast_enter" -eq 0 ]]; then
+    raw_dump_classification="select_finalize_raw_dump_pre_cast_frontier"
+  elif [[ "$raw_dump_cast_done" -eq 0 ]]; then
+    raw_dump_classification="select_finalize_raw_dump_cast_frontier"
+  elif [[ "$raw_dump_env_enter" -eq 0 ]]; then
+    raw_dump_classification="select_finalize_raw_dump_pre_env_lookup_frontier"
+  elif [[ "$raw_dump_env_done" -eq 0 ]]; then
+    raw_dump_classification="select_finalize_raw_dump_env_lookup_frontier"
+  elif [[ "$raw_dump_enter" -eq 0 ]]; then
+    raw_dump_classification="select_finalize_raw_dump_env_empty_or_pre_enter_frontier"
+  elif [[ "$raw_dump_bytesize_done" -eq 0 ]]; then
+    raw_dump_classification="select_finalize_raw_dump_bytesize_frontier"
+  elif [[ "$raw_dump_buffer_done" -eq 0 ]]; then
+    raw_dump_classification="select_finalize_raw_dump_buffer_frontier"
+  elif [[ "$raw_dump_write_enter" -eq 0 ]]; then
+    raw_dump_classification="select_finalize_raw_dump_pre_write_frontier"
+  elif [[ "$raw_dump_done" -eq 0 && "$raw_dump_failed" -eq 0 ]]; then
+    raw_dump_classification="select_finalize_raw_dump_write_frontier"
+  elif [[ "$raw_dump_failed" -gt 0 ]]; then
+    raw_dump_classification="select_finalize_raw_dump_write_failed"
+  fi
+fi
 
 classification="finalization_classifier_drift"
 if [[ "${normal_exit:-}" == "139" &&
@@ -284,6 +370,24 @@ fi
 
 echo "normal_last_phase=${normal_last:-missing}"
 echo "stop_before_to_s_last_phase=${stop_last:-missing}"
+if [[ "${REQUIRE_RAW_DUMP:-0}" == "1" ]]; then
+  echo "raw_dump_before_to_s_exit=${raw_dump_exit:-missing}"
+  echo "raw_dump_before_to_s_cast_enter_rows=$raw_dump_cast_enter"
+  echo "raw_dump_before_to_s_cast_done_rows=$raw_dump_cast_done"
+  echo "raw_dump_before_to_s_env_lookup_enter_rows=$raw_dump_env_enter"
+  echo "raw_dump_before_to_s_env_lookup_done_rows=$raw_dump_env_done"
+  echo "raw_dump_before_to_s_enter_rows=$raw_dump_enter"
+  echo "raw_dump_before_to_s_bytesize_done_rows=$raw_dump_bytesize_done"
+  echo "raw_dump_before_to_s_buffer_done_rows=$raw_dump_buffer_done"
+  echo "raw_dump_before_to_s_write_enter_rows=$raw_dump_write_enter"
+  echo "raw_dump_before_to_s_done_rows=$raw_dump_done"
+  echo "raw_dump_before_to_s_failed_rows=$raw_dump_failed"
+  echo "raw_dump_before_to_s_stop_after_rows=$raw_dump_stop"
+  echo "raw_dump_before_to_s_size=$raw_dump_size"
+  echo "raw_dump_before_to_s_header=$raw_dump_header"
+  echo "raw_dump_before_to_s_file=$RAW_DUMP_FILE"
+  echo "raw_dump_classification=$raw_dump_classification"
+fi
 echo "classification=$classification"
 echo "ledger=$LEDGER"
 
@@ -293,4 +397,12 @@ if [[ "${REQUIRE_CLASSIFICATION:-0}" == "1" && "$classification" != "select_fina
   echo "stop_before_to_s_log_tail:"
   tail -80 "$TMP_DIR/stop_before_to_s.log" || true
   exit 9
+fi
+
+if [[ "${REQUIRE_RAW_DUMP:-0}" == "1" ]]; then
+  if [[ "$raw_dump_classification" == "raw_dump_classifier_drift" ]]; then
+    echo "raw_dump_before_to_s_log_tail:"
+    tail -80 "$TMP_DIR/raw_dump_before_to_s.log" || true
+    exit 9
+  fi
 fi

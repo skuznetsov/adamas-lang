@@ -616,6 +616,17 @@ materialization. It must not patch tail, metadata, DWARF, type-name tables,
 worker policy, `NamedTuple`/`Tuple`, ambient maps, or `BlockOwner` from this
 evidence.
 
+2026-07-03 board refinement after Slice 0k-EH: the L18 boundary is now
+`IO::Memory#bytesize` on the produced compiler's final LLVM output object, not
+the whole `to_s` path. The raw-dump split preserves the main
+`select_finalize_to_s_stringification_frontier` classification and reports
+`raw_dump_classification=select_finalize_raw_dump_bytesize_frontier`: env lookup
+and `@output.as(IO::Memory)` complete, `finalize_raw_dump_enter` is logged, and
+the run exits 139 before `finalize_raw_dump_bytesize_done`. The next production
+receipt must split receiver validity / direct final-output field access before
+any fd output, raw writer, generic `IO::Memory`, generic `String.new`, tail, or
+metadata fix.
+
 | Lane | Current decision | Required next receipt | Rejected shortcut |
 | --- | --- | --- | --- |
 | `bootstrap-emergency-with-ledger` / B4-O1 | Consumed by 0k-CU. The HIR `BlockCallReturnContract` implementation moves the generated-stage gate past the old O1 `affected_block_ids` / `Set(UInt32)#includes?` frontier: `REQUIRE_CURRENT_CU_CONTRACT=1 scripts/hir_block_return_shape_census.sh` reports `classification=current_0k_cu_block_call_return_contract_applied`, and `STAGE1_COMPILER=/tmp/adamas_0kcu_stage1 REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh` exits at the expected non-current boundary with `b4_classification=llvm_entry_failure_after_lower_main` and `workers1_exit139=0`. The new residual is post-`lower_main` RSS pressure in both worker modes, with the default worker-mode rand fallback still present. | Return to the board before any new production source slice. The next receipt must reselect an owner spine from fresh generated-stage evidence; if it targets the new residual, it must name the old authority edge behind post-`lower_main` memory/resource growth rather than treating higher memory limits, worker count, or the rand fallback as acceptance evidence. | Continuing the 0k-CU breakglass lane by inertia; starting from the new RSS-kill stack; raising memory as a fix; forcing `ADAMAS_LLVM_WORKERS=1`; worker/rand/output/resource patches without a new receipt; CopyPropagation, Set/Hash, backend block-return, `NamedTuple`/`Tuple`, ambient-map, or `BlockOwner` changes. |
@@ -1141,6 +1152,52 @@ SliceReceipt {
     `generate_to_fd` / fd-finalization bypass; external-sink resurrection;
     generic `IO::Memory`, `String`, or `Slice` behavior changes without a red
     reducer; tail/metadata/DWARF/type-name/worker/BlockOwner changes.
+}
+```
+
+#### Slice 0k-EH receipt: final IO::Memory bytesize split
+
+```text
+SliceReceipt {
+  board_lane: PhaseAuthority / GeneratedStageExecution
+  tranche: contract-owner-migration
+  old_authority_edge:
+    Slice 0k-EG left L18 at "produced compiler final-buffer shape/context".
+    The next ambiguity was whether the final `IO::Memory` buffer could be read
+    directly before `to_s`, or whether the failure was already at final-output
+    object field access.
+  owner_fact_or_service:
+    `LLVMFinalOutputMaterialization` raw-dump micro-split:
+    `ADAMAS_DUMP_LLVM_FINAL_BUFFER_BEFORE_TO_S=<path>` plus
+    `scripts/generated_stage_finalize_to_s_classifier.sh` with
+    `REQUIRE_RAW_DUMP=1`.
+  producers:
+    - `LLVMIRGenerator#generate` final in-memory `@output`;
+    - raw-dump checkpoints: env lookup, `@output.as(IO::Memory)`,
+      `IO::Memory#bytesize`, `IO::Memory#buffer`, and raw `LibC.write`.
+  consumers:
+    - the next final-output object receiver/field-access split;
+    - future `LLVMFinalOutputMaterialization` behavior receipt.
+  evidence:
+    `regression_tests/io_memory_final_materialization_repro.sh
+    tmp/adamas_l18_rawdump_stage1` reports
+    `io_memory_final_materialization_repro_ok`.
+    `STAGE1_COMPILER=tmp/adamas_l18_rawdump_stage1 REQUIRE_RAW_DUMP=1
+    REQUIRE_CLASSIFICATION=1
+    scripts/generated_stage_finalize_to_s_classifier.sh` preserves
+    `classification=select_finalize_to_s_stringification_frontier` and reports
+    `raw_dump_classification=select_finalize_raw_dump_bytesize_frontier`.
+    The raw-dump run reaches `finalize_raw_dump_env_lookup_done`,
+    `finalize_raw_dump_cast_done`, and `finalize_raw_dump_enter`, then exits
+    139 before `finalize_raw_dump_bytesize_done`.
+  conclusion:
+    L18 is not yet a proven `String.new(buffer, bytesize)` or raw-buffer-write
+    bug. The first selected micro-boundary is reading `IO::Memory#bytesize` from
+    the produced compiler's final output object after a successful cast.
+  rejected_shortcuts:
+    fd/external output; raw writer fixes; generic `String.new(buffer, bytesize)`;
+    generic user-runtime `IO::Memory` changes; tail/metadata/DWARF/type-name;
+    worker policy; `NamedTuple`/`Tuple`; ambient maps; `BlockOwner`.
 }
 ```
 

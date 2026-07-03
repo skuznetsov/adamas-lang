@@ -2439,6 +2439,29 @@ module Adamas::MIR
       write_output_bytes(text.to_slice)
     end
 
+    private def dump_final_output_buffer_before_to_s(buffer : Pointer(UInt8), bytesize : Int32, path : String) : Int64
+      fd = LibC.open(path.to_unsafe, LibC::O_WRONLY | LibC::O_CREAT | LibC::O_TRUNC, 0o644)
+      return -1_i64 if fd < 0
+
+      written_total = 0_i64
+      failed = false
+      begin
+        offset = 0
+        while offset < bytesize
+          written = LibC.write(fd, buffer + offset, bytesize - offset)
+          if written <= 0
+            failed = true
+            break
+          end
+          offset += written.to_i
+        end
+        written_total = failed ? -2_i64 : offset.to_i64
+      ensure
+        LibC.close(fd)
+      end
+      written_total
+    end
+
     @module : Module
     @type_mapper : LLVMTypeMapper
     @output : IO
@@ -3721,6 +3744,56 @@ module Adamas::MIR
             "output_mode=#{output_mode}"
           )
           LibC._exit(0)
+        end
+        if generated_stage_transaction_enabled?
+          log_generated_stage_llvm_generate_phase("finalize_raw_dump_env_lookup_enter", output_mode)
+          dump_path = ::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_DUMP_LLVM_FINAL_BUFFER_BEFORE_TO_S")
+          log_generated_stage_llvm_generate_phase("finalize_raw_dump_env_lookup_done", output_mode)
+          if dump_path
+            unless dump_path.empty?
+              log_generated_stage_llvm_generate_phase("finalize_raw_dump_cast_enter", output_mode)
+              mem_output = @output.as(IO::Memory)
+              log_generated_stage_llvm_generate_phase("finalize_raw_dump_cast_done", output_mode)
+              log_generated_stage_llvm_generate_phase("finalize_raw_dump_enter", output_mode)
+              bytesize = mem_output.bytesize
+              log_generated_stage_llvm_generate_phase(
+                "finalize_raw_dump_bytesize_done",
+                output_mode,
+                "bytes=#{bytesize}"
+              )
+              buffer = mem_output.buffer
+              log_generated_stage_llvm_generate_phase(
+                "finalize_raw_dump_buffer_done",
+                output_mode,
+                "bytes=#{bytesize} buffer_addr=#{buffer.address}"
+              )
+              log_generated_stage_llvm_generate_phase(
+                "finalize_raw_dump_write_enter",
+                output_mode,
+                "bytes=#{bytesize} buffer_addr=#{buffer.address}"
+              )
+              dumped = dump_final_output_buffer_before_to_s(buffer, bytesize, dump_path)
+              dump_phase = dumped == bytesize ? "finalize_raw_dump_done" : "finalize_raw_dump_failed"
+              log_generated_stage_llvm_generate_phase(
+                dump_phase,
+                output_mode,
+                "bytes=#{dumped} expected=#{bytesize} buffer_addr=#{buffer.address}"
+              )
+              log_generated_stage_memory_phase(
+                "llvm.#{dump_phase}",
+                "llvm.finalization",
+                "output_mode=#{output_mode} bytes=#{dumped} expected=#{bytesize}"
+              )
+              if bootstrap_env_enabled?("ADAMAS_STOP_AFTER_LLVM_FINAL_BUFFER_DUMP")
+                log_generated_stage_llvm_generate_phase(
+                  "finalize_raw_dump_stop_after",
+                  output_mode,
+                  "bytes=#{dumped} expected=#{bytesize}"
+                )
+                LibC._exit(dumped == bytesize ? 0 : 9)
+              end
+            end
+          end
         end
         generated = @output.as(IO::Memory).to_s
         log_generated_stage_llvm_generate_phase(

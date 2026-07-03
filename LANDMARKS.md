@@ -12,6 +12,29 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-EH-FINAL-IO-MEMORY-BYTESIZE-FRONTIER|implemented 2026-07-03 {F:0.88 G:0.50 R:0.84}]:
+The L18 finalization boundary is now narrower than `IO::Memory#to_s`. A
+default-off raw final-buffer split in `LLVMIRGenerator#generate` checks
+`ADAMAS_DUMP_LLVM_FINAL_BUFFER_BEFORE_TO_S=<path>` and records
+`finalize_raw_dump_*` phases before raw buffer dumping. The classifier
+`scripts/generated_stage_finalize_to_s_classifier.sh` now supports
+`REQUIRE_RAW_DUMP=1` and reports `raw_dump_classification`. Fresh evidence
+with `tmp/adamas_l18_rawdump_stage1`: the focused user-runtime guard
+`regression_tests/io_memory_final_materialization_repro.sh` still reports
+`io_memory_final_materialization_repro_ok`; the generated-stage classifier
+preserves `classification=select_finalize_to_s_stringification_frontier` and
+reports `raw_dump_classification=select_finalize_raw_dump_bytesize_frontier`.
+The raw-dump run reaches `finalize_raw_dump_env_lookup_done`,
+`finalize_raw_dump_cast_done`, and `finalize_raw_dump_enter`, then exits 139
+before `finalize_raw_dump_bytesize_done`; no raw dump file is produced. Scope:
+behavior-neutral discriminator only, not green `s2b`/`s3b`. Residual boundary:
+split the produced compiler's final `IO::Memory` object field read / receiver
+validity at `bytesize`; do not patch fd/external output, raw dump writing,
+generic `String.new(buffer, bytesize)`, generic user-runtime `IO::Memory`, or
+tail/metadata/DWARF/type-name from this evidence. Decay trigger: the raw split
+reaches `bytesize_done`, the user-runtime guard fails, or the L18 classifier no
+longer selects finalization stringification.
+
 [LM-ARCH-0K-EG-IOMEM-GENERIC-MATERIALIZATION-REFUTED|refuted 2026-07-03 {F:0.86 G:0.48 R:0.82}]:
 The L18 `IO::Memory#to_s` generated-stage frontier is not explained by a
 generic small/medium user-runtime `IO::Memory` materialization failure. The
