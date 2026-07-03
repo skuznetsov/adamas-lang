@@ -183,6 +183,18 @@ values. Fresh generated-stage evidence reports
 not constant globals, source fallback, or macro-number construction, but the
 producer of the remaining `%r18.fromslot.1` `i64`-vs-`ptr` LLVM type mismatch.
 
+2026-07-03 post-0k-EO note: that residual now has a focused executable
+selector. `scripts/generated_stage_return_contract_mismatch_report.sh` preserves
+the consumed scalar-global row, then selects the current generated-IR shape as
+`function_return_contract_mismatch_frontier`: `%r18.fromslot.1` is `i64` where
+`ptr` is expected in `IO#gets_slow`, with `IO#read_char_with_bytesize` in the
+local IR window. The next architecture unit should therefore be a
+`FunctionReturnAvailability` / `LoweredFunctionReturnContract` slice that makes
+function return facts final and authoritative before HIR call typing, MIR call
+lowering, and LLVM call emission consume them. Backend slot coercions and
+consumer fallbacks are rejected as symptom fixes unless fresh evidence moves
+the selector.
+
 2026-07-02 post-0k-DY note: the selected workers=1
 `CopyPropagationPass#compute_dominance_info` lane is consumed by a production
 resource fix. CopyPropagation now answers cross-block dominance with an exact

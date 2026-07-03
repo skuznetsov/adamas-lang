@@ -12,6 +12,39 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-EO-FUNCTION-RETURN-CONTRACT-MISMATCH-GATE|diagnostic 2026-07-03 {F:0.86 G:0.50 R:0.84}]:
+The post-0k-EN generated-stage residual now has an executable selector rather
+than only a prose next-step claim. New script:
+`scripts/generated_stage_return_contract_mismatch_report.sh`. It requires the
+upstream generated-stage classifier to preserve the consumed L19 row
+(`normal_string_header_size_global_shape=i32_12` and buffer-valid raw dump) and
+then selects only the current `%r18.fromslot.1` LLVM mismatch shape: `i64`
+defined, `ptr` expected, inside `IO#gets_slow`, with
+`IO#read_char_with_bytesize` in the local generated-IR window. Evidence:
+`bash -n scripts/generated_stage_return_contract_mismatch_report.sh` exits 0;
+a synthetic positive fixture reports
+`classification=function_return_contract_mismatch_frontier`, while a stale
+`ptr_null` negative exits 9 with
+`reason=string_header_size_scalar_global_not_preserved`; and
+`REQUIRE_SELECTED=1 scripts/generated_stage_return_contract_mismatch_report.sh`
+exits 0 on current HEAD with
+`upstream_classification=post_to_s_llc_type_mismatch_frontier`,
+`normal_string_header_size_global_shape=i32_12`,
+`raw_dump_classification=raw_dump_before_to_s_buffer_valid`,
+`normal_llc_error_line=6123`, `normal_llc_error_value=%r18.fromslot.1`,
+`normal_llc_error_defined_type=i64`,
+`normal_llc_error_expected_type=ptr`,
+`bad_function_symbol=IO$Hgets_slow$$Char_Int32_Bool_String$CCBuilder`, and
+`callee_candidate=IO#read_char_with_bytesize`. Scope: diagnostic selector only,
+not green `s2b`/`s3b` and not a root fix. Residual boundary:
+FunctionReturnAvailability / LoweredFunctionReturnContract must make finalized
+function return facts authoritative before HIR calls, MIR calls, and LLVM calls
+consume them; backend ptr-use patches or HIR-to-MIR consumer fallbacks are
+symptom fixes until this edge is consumed. Decay trigger: the selector no
+longer reports `function_return_contract_mismatch_frontier`, the consumed L19
+`i32_12` row regresses, or fresh evidence pins a different producer for the
+same i64-vs-ptr value.
+
 [LM-ARCH-0K-EN-CLASSVAR-SCALAR-GLOBAL-PRODUCER-CONSUMED|implemented 2026-07-03 {F:0.88 G:0.46 R:0.84}]:
 The L19 `String::HEADER_SIZE` scalar-global producer edge is consumed. A
 temporary trace before cleanup pinned two producer hazards: direct

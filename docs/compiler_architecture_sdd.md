@@ -689,6 +689,23 @@ constructors, output/finalization, tail, metadata, DWARF, type-name,
 `NamedTuple` / `Tuple`, ambient maps, or `BlockOwner` from pre-0k-EN evidence is
 invalid.
 
+2026-07-03 board refinement after Slice 0k-EO: the post-0k-EN i64-vs-ptr
+residual now has an executable selector:
+`scripts/generated_stage_return_contract_mismatch_report.sh`. The selector
+requires the consumed L19 row (`String::HEADER_SIZE = i32 12` plus
+buffer-valid raw dump) and then selects only the current generated LLVM shape:
+`%r18.fromslot.1` is defined as `i64` but consumed as `ptr` in
+`IO#gets_slow`, with `IO#read_char_with_bytesize` present in the local IR
+window. The current HEAD strict run reports
+`classification=function_return_contract_mismatch_frontier`,
+`bad_function_symbol=IO$Hgets_slow$$Char_Int32_Bool_String$CCBuilder`, and
+`callee_candidate=IO#read_char_with_bytesize`. The next production receipt is a
+`FunctionReturnAvailability` / `LoweredFunctionReturnContract` slice: the
+compiler must own finalized function return facts before HIR call typing, MIR
+call lowering, and LLVM call emission consume them. Backend slot coercions,
+HIR-to-MIR consumer fallbacks, constant-global changes, output/finalization
+changes, and `BlockOwner` work remain rejected shortcuts for this residual.
+
 | Lane | Current decision | Required next receipt | Rejected shortcut |
 | --- | --- | --- | --- |
 | `bootstrap-emergency-with-ledger` / B4-O1 | Consumed by 0k-CU. The HIR `BlockCallReturnContract` implementation moves the generated-stage gate past the old O1 `affected_block_ids` / `Set(UInt32)#includes?` frontier: `REQUIRE_CURRENT_CU_CONTRACT=1 scripts/hir_block_return_shape_census.sh` reports `classification=current_0k_cu_block_call_return_contract_applied`, and `STAGE1_COMPILER=/tmp/adamas_0kcu_stage1 REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh` exits at the expected non-current boundary with `b4_classification=llvm_entry_failure_after_lower_main` and `workers1_exit139=0`. The new residual is post-`lower_main` RSS pressure in both worker modes, with the default worker-mode rand fallback still present. | Return to the board before any new production source slice. The next receipt must reselect an owner spine from fresh generated-stage evidence; if it targets the new residual, it must name the old authority edge behind post-`lower_main` memory/resource growth rather than treating higher memory limits, worker count, or the rand fallback as acceptance evidence. | Continuing the 0k-CU breakglass lane by inertia; starting from the new RSS-kill stack; raising memory as a fix; forcing `ADAMAS_LLVM_WORKERS=1`; worker/rand/output/resource patches without a new receipt; CopyPropagation, Set/Hash, backend block-return, `NamedTuple`/`Tuple`, ambient-map, or `BlockOwner` changes. |
@@ -1619,6 +1636,75 @@ SliceReceipt {
     The new active residual is post-`to_s` LLVM type validity after scalar
     globals are correct: `%r18.fromslot.1` is defined as `i64` where `llc`
     expects `ptr`.
+}
+```
+
+#### Slice 0k-EO receipt: function return contract mismatch selector
+
+```text
+SliceReceipt {
+  board_lane: PhaseAuthority / GeneratedStageExecution
+  tranche: bootstrap-emergency-with-ledger
+  old_authority_edge:
+    Slice 0k-EN left the post-`to_s` LLVM validity residual selected only by a
+    generic `post_to_s_llc_type_mismatch_frontier` row. That left too many
+    symptom-level fixes open: backend ptr coercions, HIR-to-MIR fallback
+    widening, or a return to stale constant/output surfaces.
+  owner_fact_or_service:
+    `scripts/generated_stage_return_contract_mismatch_report.sh` is the focused
+    selector for the next owner edge. It consumes the upstream finalization
+    classifier output, preserves the `String::HEADER_SIZE = i32 12` row, and
+    selects the current `%r18.fromslot.1` `i64`-defined / `ptr`-expected shape
+    only when the local generated-IR window contains `IO#gets_slow` and
+    `IO#read_char_with_bytesize`.
+  producers:
+    - function body return inference/finalization in HIR;
+    - function type registration and overwrite rules;
+    - pending/lowered function availability before HIR-to-MIR;
+    - HIR call and MIR call result type consumption.
+  consumers:
+    - HIR-to-MIR call lowering;
+    - LLVM call emission and phi/slot users;
+    - `llc` validation of generated `normal_out.ll`;
+    - the generated-stage return-contract mismatch report.
+  measured_red_baseline:
+    `REQUIRE_SELECTED=1
+    scripts/generated_stage_return_contract_mismatch_report.sh` exits 0 on
+    current HEAD and reports
+    `upstream_classification=post_to_s_llc_type_mismatch_frontier`,
+    `normal_string_header_size_global_shape=i32_12`,
+    `raw_dump_classification=raw_dump_before_to_s_buffer_valid`,
+    `normal_llc_error_line=6123`,
+    `normal_llc_error_value=%r18.fromslot.1`,
+    `normal_llc_error_defined_type=i64`,
+    `normal_llc_error_expected_type=ptr`,
+    `bad_function_symbol=IO$Hgets_slow$$Char_Int32_Bool_String$CCBuilder`, and
+    `callee_candidate=IO#read_char_with_bytesize`.
+  focused_DoD:
+    `bash -n scripts/generated_stage_return_contract_mismatch_report.sh` exits
+    0. A synthetic positive fixture selects
+    `classification=function_return_contract_mismatch_frontier`; a stale
+    `ptr_null` negative exits 9 with
+    `reason=string_header_size_scalar_global_not_preserved`; and the full
+    generated-stage strict gate above selects the same frontier on current HEAD.
+  architecture_DoD:
+    This is diagnostic-only. It changes no compiler behavior and does not claim
+    green `s2b`/`s3b`.
+  generated_stage_gate:
+    The next production slice must keep this selector green-or-moved and must
+    preserve the consumed L19 `i32_12` row before interpreting any later
+    generated LLVM error.
+  rejected_shortcuts:
+    Backend ptr-use coercion, HIR-to-MIR fallback widening, direct `llc`
+    consumer patches, constant source fallback, `offsetof`,
+    `MacroNumberValue`, output/finalization, tail/metadata/DWARF/type-name,
+    worker policy, `NamedTuple` / `Tuple`, ambient maps, or `BlockOwner`
+    changes from this evidence.
+  residual_boundary:
+    Implement the minimal FunctionReturnAvailability /
+    LoweredFunctionReturnContract owner edge so finalized return facts are
+    produced once and consumed consistently by HIR calls, MIR calls, and LLVM
+    call emission.
 }
 ```
 

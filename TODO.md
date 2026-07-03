@@ -8,6 +8,32 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-03 UPDATE: Slice 0k-EO adds an executable selector for the
+  post-0k-EN residual instead of relying on prose. New script:
+  `scripts/generated_stage_return_contract_mismatch_report.sh`. It preserves
+  the consumed L19 scalar-global gate and selects the next architecture edge
+  only when the generated-stage classifier reports
+  `post_to_s_llc_type_mismatch_frontier`,
+  `normal_string_header_size_global_shape=i32_12`,
+  `raw_dump_classification=raw_dump_before_to_s_buffer_valid`, and the current
+  `llc` mismatch uses `%r18.fromslot.1` as `i64` where `ptr` is expected inside
+  `IO#gets_slow` with `IO#read_char_with_bytesize` in the local IR window.
+  Focused evidence: `bash -n
+  scripts/generated_stage_return_contract_mismatch_report.sh`; a synthetic
+  positive fixture reports
+  `classification=function_return_contract_mismatch_frontier`, while a stale
+  `ptr_null` negative exits 9 with
+  `reason=string_header_size_scalar_global_not_preserved`; and
+  `REQUIRE_SELECTED=1
+  scripts/generated_stage_return_contract_mismatch_report.sh` exits 0 on
+  current HEAD with `normal_llc_error_line=6123`,
+  `bad_function_symbol=IO$Hgets_slow$$Char_Int32_Bool_String$CCBuilder`, and
+  `callee_candidate=IO#read_char_with_bytesize`. This is still not green
+  `s2b`/`s3b` and is not a backend slot fix. The next production slice should
+  introduce or consume a function-return availability contract so body
+  finalization, function type registration, HIR calls, MIR calls, and LLVM call
+  emission agree before any consumer fallback hides the mismatch.
+
 - 2026-07-03 UPDATE: Slice 0k-EN consumes the L19
   `String::HEADER_SIZE` classvar scalar-global producer edge. The root was two
   producer-side hazards that compounded only in the generated stage:
