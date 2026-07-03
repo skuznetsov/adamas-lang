@@ -64,6 +64,22 @@ backend work should split inside the active function-emission attempt or name a
 reusable emission subowner behind it; `system_write` remains a boundary marker,
 not a special-case patch target.
 
+2026-07-03 post-0k-EE note: the active function-emission attempt edge is now
+consumed by a source-equivalent `emit_phi` source-shape rewrite. The bool and
+int mismatched-incoming loops no longer use an early `next` after
+`phi_incoming_ref`; they use explicit `if/else` branches while preserving the
+same incoming selection semantics. Focused generated-stage evidence with
+`tmp/adamas_0kee_stage1` and the produced `tmp/adamas_0kee_s2` shows
+full-prelude `puts 42` emits all
+planned sequential functions (149 in the fresh 0k-EE gate), reaches
+`llvm.generate_phase=finalize_to_s_enter`,
+and exits 139 without the previous late function-emission memory kill. This is
+not green `s2b`/`s3b`, and not proof that LLVM output finalization is correct.
+The active backend work moves from L15 function emission to a new
+post-function-emission finalization boundary: classify `finalize_to_s_enter`
+before tail, output-file, metadata, DWARF, type-name, string-buffer, or
+worker-policy fixes.
+
 2026-07-02 post-0k-DY note: the selected workers=1
 `CopyPropagationPass#compute_dominance_info` lane is consumed by a production
 resource fix. CopyPropagation now answers cross-block dominance with an exact

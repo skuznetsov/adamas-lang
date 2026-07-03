@@ -1,12 +1,34 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-02
+Updated: 2026-07-03
 Branch: `work/s3-range-slice-frontier`
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
+
+- 2026-07-03 UPDATE: Slice 0k-EE consumes the active function-emission
+  attempt edge with a source-equivalent LLVM phi emission control-flow rewrite.
+  In `emit_phi`, the bool and int mismatched-incoming loops no longer use an
+  early `next` after `phi_incoming_ref`; they use an explicit `if/else` so the
+  self-hosted compiler does not re-enter the same incoming loop shape. This is
+  not a per-method `system_write` patch: the same reusable `PhiEmission`
+  subowner covers the old #87 int phi and the next #92 bool phi. Focused
+  generated-stage evidence with `tmp/adamas_0kee_stage1` and
+  `tmp/adamas_0kee_s2`: `puts 42` no longer memory-kills in
+  late function emission. It emits all planned sequential functions (149 in the
+  fresh 0k-EE gate), reaches
+  `llvm.generate_phase=finalize_to_s_enter`, and exits 139 with peak RSS about
+  1.25 GB. The old #87 `system_write` and #92 `gets_slow` function-emission
+  cliffs are consumed; the new frontier is post-function-emission finalization,
+  not green `s2b`/`s3b`. Verification: clean stage1 build passes; combined
+  suite passes `36/36`; the original suite run timed out under a 900s wrapper
+  after 139 PASS results, the 13 remaining tests were run individually with
+  12 PASS and `test_rescue_nested` red, and an isolated HEAD baseline confirms
+  `test_rescue_nested` was already exit 139. Do not claim full-suite green from
+  this slice; next work must classify the `finalize_to_s_enter` exit 139
+  boundary before tail/output/string-buffer fixes.
 
 - 2026-07-03 UPDATE: Slice 0k-ED consumes the 0k-EC ambiguity with an
   executable stop-before-active-function discriminator. New debug-only gate:

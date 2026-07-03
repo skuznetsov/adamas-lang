@@ -593,6 +593,19 @@ Current Execution Board.
 This section is the operator-facing entry point. Historical slices below are
 evidence, not next-step selectors.
 
+2026-07-03 board override after Slice 0k-EE: the
+`PhaseAuthority` / `GeneratedStageExecution` row's 0k-ED instruction to split
+inside function #87 is now consumed. The current generated-stage blocker is no
+longer late function emission: a clean produced `s2` emits all planned
+sequential functions (149 in the fresh 0k-EE gate), reaches
+`llvm.generate_phase=finalize_to_s_enter`, and exits 139
+without the previous late function-emission memory kill. The active next receipt
+is therefore an `LLVMFinalization` / output-string finalization classifier that
+splits `finalize_to_s_enter` before any tail, output-file, metadata, DWARF,
+type-name, string-buffer, worker-policy, `NamedTuple`/`Tuple`, ambient-map, or
+`BlockOwner` fix. The stale #87 wording in the historical row below remains as
+0k-ED evidence only until the board table is compressed.
+
 | Lane | Current decision | Required next receipt | Rejected shortcut |
 | --- | --- | --- | --- |
 | `bootstrap-emergency-with-ledger` / B4-O1 | Consumed by 0k-CU. The HIR `BlockCallReturnContract` implementation moves the generated-stage gate past the old O1 `affected_block_ids` / `Set(UInt32)#includes?` frontier: `REQUIRE_CURRENT_CU_CONTRACT=1 scripts/hir_block_return_shape_census.sh` reports `classification=current_0k_cu_block_call_return_contract_applied`, and `STAGE1_COMPILER=/tmp/adamas_0kcu_stage1 REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh` exits at the expected non-current boundary with `b4_classification=llvm_entry_failure_after_lower_main` and `workers1_exit139=0`. The new residual is post-`lower_main` RSS pressure in both worker modes, with the default worker-mode rand fallback still present. | Return to the board before any new production source slice. The next receipt must reselect an owner spine from fresh generated-stage evidence; if it targets the new residual, it must name the old authority edge behind post-`lower_main` memory/resource growth rather than treating higher memory limits, worker count, or the rand fallback as acceptance evidence. | Continuing the 0k-CU breakglass lane by inertia; starting from the new RSS-kill stack; raising memory as a fix; forcing `ADAMAS_LLVM_WORKERS=1`; worker/rand/output/resource patches without a new receipt; CopyPropagation, Set/Hash, backend block-return, `NamedTuple`/`Tuple`, ambient-map, or `BlockOwner` changes. |
@@ -927,6 +940,85 @@ Status after implementation:
 Residual boundary: this remains behavior-neutral evidence. The next L15 slice
 must split the active function emission path itself, or refute that function as
 too local by naming a reusable backend subowner.
+
+#### Slice 0k-EE receipt: phi mismatch loop source-shape fix
+
+```text
+SliceReceipt {
+  board_lane: PhaseAuthority / GeneratedStageExecution
+  tranche: bootstrap-emergency-with-ledger
+  old_authority_edge:
+    Slice 0k-ED selected function #87 as the active late LLVM/function-emission
+    attempt. Inside that attempt, the reusable edge was not the method name but
+    the `emit_phi` mismatched-incoming loop shape: a predecessor-load hit used
+    early `next`, and produced `s2` repeatedly re-entered the same incoming
+    pair under self-hosted execution.
+  owner_fact_or_service:
+    `PhiEmission` source shape in `LLVMBackend#emit_phi`: bool and int
+    mismatched-incoming loops must express predecessor-load handling as
+    explicit `if/else`, not as an early loop `next`, while preserving the same
+    incoming selection semantics.
+  producers:
+    - `emit_phi` bool mismatched-incoming branch;
+    - `emit_phi` int mismatched-incoming branch;
+    - `phi_incoming_ref` predecessor-load lookup.
+  consumers:
+    - generated-stage sequential function emission;
+    - the L15/L17 generated-stage gate;
+    - future LLVM phi refactors that touch mismatched bool/int incoming values.
+  measured_red_baseline:
+    Before the source-shape rewrite, produced `s2` repeated the #87
+    `system_write` int phi incoming pair and then exposed the same pattern at
+    the #92 bool phi. The run memory-killed in late function emission.
+  focused_DoD:
+    A clean stage1 must build a generated `s2`; that produced compiler must
+    compile a full-prelude `puts 42` far enough to emit every sequential
+    function and reach `llvm.generate_phase=finalize_to_s_enter` without a late
+    function-emission memory kill.
+  architecture_DoD:
+    The edit must be method-agnostic, must not special-case `system_write` or
+    `gets_slow`, and must not change worker policy, memory budget, backend
+    undefined-extern behavior, materialization, `NamedTuple`/`Tuple`, ambient
+    map, `BlockOwner`, CopyPropagation, or HIR/MIR lowering.
+  generated_stage_gate:
+    Full-prelude `puts 42` through the produced `s2` reaches
+    `finalize_to_s_enter`, exits 139, and reports no late function-emission RSS
+    kill. Combined regressions pass. Original-suite evidence remains partial
+    and must not be upgraded to full-suite green.
+  negative_controls:
+    `test_rescue_nested` remains red on an isolated HEAD baseline, so its red
+    result is not assigned to this slice. The previous #87 and #92 markers are
+    not patch targets.
+  rejected_shortcuts:
+    Per-method LLVM emission patches, backend rescue, forcing workers=1,
+    memory-budget acceptance, tail/output/string-buffer fixes before the
+    finalization boundary is split, and claiming green `s2b`/`s3b`.
+  residual_boundary:
+    L15 function-emission resource pressure is consumed for the current gate.
+    The next frontier is post-function-emission finalization:
+    `llvm.generate_phase=finalize_to_s_enter` exits 139. The next slice must
+    classify that finalization boundary before changing output/tail behavior.
+}
+```
+
+Status after implementation:
+
+- bool and int mismatched-incoming phi loops use explicit `if/else` after
+  `phi_incoming_ref`;
+- focused generated-stage evidence with
+  `tmp/adamas_0kee_stage1` and produced `tmp/adamas_0kee_s2` emits all
+  planned sequential functions
+  (149 in the fresh 0k-EE gate), reaches
+  `llvm.generate_phase=finalize_to_s_enter`, and exits 139 at about
+  1.25 GB peak RSS;
+- combined regressions pass `36/36`;
+- original-suite verification is partial: a 900s wrapper produced 139 PASS
+  rows, the remaining 13 tests were run individually with 12 PASS, and
+  `test_rescue_nested` is baseline-red on HEAD.
+
+Residual boundary: this is not green `s2b`/`s3b`. The active next slice is an
+`LLVMFinalization` classifier for `finalize_to_s_enter`, not another #87/#92
+function-emission probe.
 
 #### Slice 0k-DO receipt: default-mode function-emission sink boundary
 

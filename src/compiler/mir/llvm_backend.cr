@@ -21475,35 +21475,35 @@ module Adamas::MIR
             pred_ref = phi_incoming_ref(block, val, "i1")
             if pred_ref
               incoming << "[#{pred_ref}, %#{block_name.call(block)}]"
-              next
-            end
-            val_type = @value_types[val]?
-            val_type_str = val_type ? @type_mapper.llvm_type(val_type) : nil
-            if val_type_str && val_type_str.includes?(".union")
-              # Union value - use 0 (false) as default
-              incoming << "[0, %#{block_name.call(block)}]"
-            elsif val_type_str == "ptr" || val_type_str == "void"
-              # Ptr/void value flowing into i1 phi - use 0 (type mismatch)
-              incoming << "[0, %#{block_name.call(block)}]"
-            elsif val_type_str && val_type_str.starts_with?('i') && val_type_str != "i1"
-              # Larger int (i8, i16, i32, i64) flowing into i1 phi - use 0 (type mismatch)
-              # Can't truncate in phi node, so use 0 as safe default
-              incoming << "[0, %#{block_name.call(block)}]"
-            elsif val_type_str == "float" || val_type_str == "double"
-              # Float/double value flowing into i1 phi - use 0 (type mismatch)
-              incoming << "[0, %#{block_name.call(block)}]"
             else
-              # Check if value was emitted before using value_ref
-              val_emitted = @value_names.has_key?(val)
-              val_is_const = @constant_values.has_key?(val)
-              if !val_emitted && !val_is_const
-                # Undefined value in bool phi - use 0
+              val_type = @value_types[val]?
+              val_type_str = val_type ? @type_mapper.llvm_type(val_type) : nil
+              if val_type_str && val_type_str.includes?(".union")
+                # Union value - use 0 (false) as default
+                incoming << "[0, %#{block_name.call(block)}]"
+              elsif val_type_str == "ptr" || val_type_str == "void"
+                # Ptr/void value flowing into i1 phi - use 0 (type mismatch)
+                incoming << "[0, %#{block_name.call(block)}]"
+              elsif val_type_str && val_type_str.starts_with?('i') && val_type_str != "i1"
+                # Larger int (i8, i16, i32, i64) flowing into i1 phi - use 0 (type mismatch)
+                # Can't truncate in phi node, so use 0 as safe default
+                incoming << "[0, %#{block_name.call(block)}]"
+              elsif val_type_str == "float" || val_type_str == "double"
+                # Float/double value flowing into i1 phi - use 0 (type mismatch)
                 incoming << "[0, %#{block_name.call(block)}]"
               else
-                ref = value_ref(val)
-                # Guard against null and float literals for non-ptr phi
-                ref = "0" if ref == "null" || ref.includes?('.')
-                incoming << "[#{ref}, %#{block_name.call(block)}]"
+                # Check if value was emitted before using value_ref
+                val_emitted = @value_names.has_key?(val)
+                val_is_const = @constant_values.has_key?(val)
+                if !val_emitted && !val_is_const
+                  # Undefined value in bool phi - use 0
+                  incoming << "[0, %#{block_name.call(block)}]"
+                else
+                  ref = value_ref(val)
+                  # Guard against null and float literals for non-ptr phi
+                  ref = "0" if ref == "null" || ref.includes?('.')
+                  incoming << "[#{ref}, %#{block_name.call(block)}]"
+                end
               end
             end
           end
@@ -21532,51 +21532,51 @@ module Adamas::MIR
             # Check for predecessor load first (cross-block SSA fix)
             if pred_ref = phi_incoming_ref(block, val, phi_type)
               incoming << "[#{pred_ref}, %#{block_name.call(block)}]"
-              next
-            end
-            val_type = @value_types[val]?
-            val_type_str = val_type ? @type_mapper.llvm_type(val_type) : nil
-            if val_type_str && val_type_str.includes?(".union")
-              # Union value flowing into int phi - use 0 as default
-              # This happens with e.g. String#index returning Int32|Nil
-              incoming << "[0, %#{block_name.call(block)}]"
-            elsif val_type_str && val_type_str.starts_with?('i') && !val_type_str.includes?(".union")
-              val_bits = val_type_str[1..-1].to_i? || 32
-              if val_bits != phi_bits
-                # Type size mismatch - check if prepass recorded a conversion for this value
-                # First check for predecessor conversion (for params and fixed-type values)
-                if pred_conv = @phi_predecessor_conversions[{block, val}]?
-                  conv_name, _, _ = pred_conv
-                  incoming << "[%#{conv_name}, %#{block_name.call(block)}]"
-                elsif @phi_zext_conversions.has_key?(val)
-                  # Construct the expected zext name (will be emitted by emit_extern_call)
-                  zext_name = "%r#{val}.zext"
-                  incoming << "[#{zext_name}, %#{block_name.call(block)}]"
-                else
-                  # No conversion planned - use 0 as fallback
-                  incoming << "[0, %#{block_name.call(block)}]"
-                end
-              else
-                ref = value_ref(val)
-                ref = "0" if ref == "null"
-                incoming << "[#{ref}, %#{block_name.call(block)}]"
-              end
-            elsif val_type_str == "float" || val_type_str == "double"
-              # Float/double value flowing into int phi - use 0 as fallback
-              incoming << "[0, %#{block_name.call(block)}]"
-            elsif val_type_str.nil? || val_type_str == "void" || val_type_str == "ptr"
-              # No type, void, or ptr value flowing into int phi - use 0
-              incoming << "[0, %#{block_name.call(block)}]"
             else
-              # Check if value was emitted
-              val_emitted = @value_names.has_key?(val)
-              val_is_const = @constant_values.has_key?(val)
-              if !val_emitted && !val_is_const
+              val_type = @value_types[val]?
+              val_type_str = val_type ? @type_mapper.llvm_type(val_type) : nil
+              if val_type_str && val_type_str.includes?(".union")
+                # Union value flowing into int phi - use 0 as default
+                # This happens with e.g. String#index returning Int32|Nil
+                incoming << "[0, %#{block_name.call(block)}]"
+              elsif val_type_str && val_type_str.starts_with?('i') && !val_type_str.includes?(".union")
+                val_bits = val_type_str[1..-1].to_i? || 32
+                if val_bits != phi_bits
+                  # Type size mismatch - check if prepass recorded a conversion for this value
+                  # First check for predecessor conversion (for params and fixed-type values)
+                  if pred_conv = @phi_predecessor_conversions[{block, val}]?
+                    conv_name, _, _ = pred_conv
+                    incoming << "[%#{conv_name}, %#{block_name.call(block)}]"
+                  elsif @phi_zext_conversions.has_key?(val)
+                    # Construct the expected zext name (will be emitted by emit_extern_call)
+                    zext_name = "%r#{val}.zext"
+                    incoming << "[#{zext_name}, %#{block_name.call(block)}]"
+                  else
+                    # No conversion planned - use 0 as fallback
+                    incoming << "[0, %#{block_name.call(block)}]"
+                  end
+                else
+                  ref = value_ref(val)
+                  ref = "0" if ref == "null"
+                  incoming << "[#{ref}, %#{block_name.call(block)}]"
+                end
+              elsif val_type_str == "float" || val_type_str == "double"
+                # Float/double value flowing into int phi - use 0 as fallback
+                incoming << "[0, %#{block_name.call(block)}]"
+              elsif val_type_str.nil? || val_type_str == "void" || val_type_str == "ptr"
+                # No type, void, or ptr value flowing into int phi - use 0
                 incoming << "[0, %#{block_name.call(block)}]"
               else
-                ref = value_ref(val)
-                ref = "0" if ref == "null"
-                incoming << "[#{ref}, %#{block_name.call(block)}]"
+                # Check if value was emitted
+                val_emitted = @value_names.has_key?(val)
+                val_is_const = @constant_values.has_key?(val)
+                if !val_emitted && !val_is_const
+                  incoming << "[0, %#{block_name.call(block)}]"
+                else
+                  ref = value_ref(val)
+                  ref = "0" if ref == "null"
+                  incoming << "[#{ref}, %#{block_name.call(block)}]"
+                end
               end
             end
           end

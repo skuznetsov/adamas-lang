@@ -1,6 +1,6 @@
 # LANDMARKS
 
-Updated: 2026-07-02
+Updated: 2026-07-03
 Context: compiler/bootstrap/stage2-stability
 
 This file is the active working set only. Historical landmarks before this
@@ -11,6 +11,30 @@ checkpoint remain recoverable from git history, especially:
   `d43826fdcc2277b6075026244764a84d0069d1a30b675642b603f3511b14a1e5`
 
 ## Active Bootstrap Gate
+
+[LM-ARCH-0K-EE-PHI-EMISSION-NEXT-SHAPE-CONSUMES-L15|implemented 2026-07-03 {F:0.84 G:0.58 R:0.78}]:
+The late LLVM/function-emission resource cliff selected by L15 is consumed by a
+source-equivalent `emit_phi` control-flow rewrite. The bool and int
+mismatched-incoming loops now use an explicit `if/else` around
+`phi_incoming_ref` instead of early `next`; this preserves the emitted incoming
+choice while avoiding a self-hosted loop shape that repeatedly re-entered the
+same incoming pair. Focused evidence before cleanup: the old #87
+`__vdispatch__IO::FileDescriptor#system_write$Slice(UInt8)` int phi advanced to
+`int_emit`, function #87 emitted, the next #92 bool phi was exposed, and after
+the bool-loop rewrite a clean generated `s2` emitted all planned sequential
+functions (149 in the fresh 0k-EE gate). With
+`tmp/adamas_0kee_stage1` / `tmp/adamas_0kee_s2`, a full-prelude `puts 42` run under
+`ADAMAS_GSETX_FUNCTION_EMISSION_OUTCOMES=1` exited 139 after reaching
+`llvm.generate_phase=finalize_to_s_enter`, with peak RSS about 1.25 GB and no
+late function-emission memory kill. Combined regressions pass `36/36`.
+Original-suite verification is partial: a 900s run produced 139 PASS rows, the
+13 missing tests were run individually with 12 PASS and `test_rescue_nested`
+exit 139; an isolated HEAD baseline shows `test_rescue_nested` was already
+exit 139. Scope: this is bootstrap movement, not green `s2b`/`s3b` and not a
+full-suite green claim. Decay trigger: a clean generated-stage run again dies
+inside function emission, the no-`next` loop shape changes emitted LLVM
+semantics, or the next frontier is shown to be caused by this rewrite rather
+than pre-existing finalize/tail behavior.
 
 [LM-ARCH-0K-ED-FUNCTION-ATTEMPT-EDGE-SELECTED|implemented 2026-07-03 {F:0.90 G:0.53 R:0.86}]:
 The active L15 function-emission edge is now selected over pre-attempt retained
