@@ -721,6 +721,20 @@ extend the return-slot patch, reopen scalar globals/output ownership, normalize
 `NamedTuple` / `Tuple`, change ambient maps, or touch `BlockOwner` from this
 evidence.
 
+2026-07-03 board refinement after Slice 0k-EQ: the zero-filled struct sentinel
+residual now has an executable selector. `REQUIRE_SELECTED=1
+scripts/generated_stage_zero_struct_sentinel_report.sh` preserves the consumed
+L19/L20 rows and reports
+`classification=zero_struct_sentinel_invalid_initializer_frontier` only when
+the `llc` error line matches
+`@__zero.Slice$LUInt8$R = internal global %Slice$LUInt8$R zeroinitializer`.
+The next production receipt must distinguish the producer side of this
+declaration/type-availability edge: invalid aggregate global syntax for V2's
+heap-struct-as-ptr convention, missing/late `%Slice$LUInt8$R` type definition,
+or zero-struct side-effect ordering/merge. It must not patch a later `llc`
+consumer, reopen return slots, or resume stale output/scalar/global
+`NamedTuple` / `Tuple` / ambient-map / `BlockOwner` paths.
+
 | Lane | Current decision | Required next receipt | Rejected shortcut |
 | --- | --- | --- | --- |
 | `bootstrap-emergency-with-ledger` / B4-O1 | Consumed by 0k-CU. The HIR `BlockCallReturnContract` implementation moves the generated-stage gate past the old O1 `affected_block_ids` / `Set(UInt32)#includes?` frontier: `REQUIRE_CURRENT_CU_CONTRACT=1 scripts/hir_block_return_shape_census.sh` reports `classification=current_0k_cu_block_call_return_contract_applied`, and `STAGE1_COMPILER=/tmp/adamas_0kcu_stage1 REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh` exits at the expected non-current boundary with `b4_classification=llvm_entry_failure_after_lower_main` and `workers1_exit139=0`. The new residual is post-`lower_main` RSS pressure in both worker modes, with the default worker-mode rand fallback still present. | Return to the board before any new production source slice. The next receipt must reselect an owner spine from fresh generated-stage evidence; if it targets the new residual, it must name the old authority edge behind post-`lower_main` memory/resource growth rather than treating higher memory limits, worker count, or the rand fallback as acceptance evidence. | Continuing the 0k-CU breakglass lane by inertia; starting from the new RSS-kill stack; raising memory as a fix; forcing `ADAMAS_LLVM_WORKERS=1`; worker/rand/output/resource patches without a new receipt; CopyPropagation, Set/Hash, backend block-return, `NamedTuple`/`Tuple`, ambient-map, or `BlockOwner` changes. |
@@ -1781,6 +1795,67 @@ SliceReceipt {
     The next production movement must first add a focused zero-struct sentinel
     selector and then name the declaration/type-availability authority edge.
     It must not extend this return-slot fix to chase the new LLVM error.
+}
+```
+
+#### Slice 0k-EQ receipt: zero-struct sentinel selector
+
+```text
+SliceReceipt {
+  board_lane: PhaseAuthority / GeneratedStageExecution
+  tranche: bootstrap-emergency-with-ledger
+  old_authority_edge:
+    Slice 0k-EP moved the generated-stage residual to generic
+    `post_to_s_frontier`: `llc` failed after `finalize_to_s_done`, but the
+    board did not yet have an executable selector separating the zero-filled
+    struct sentinel declaration from generic post-`to_s` LLVM validity.
+  owner_fact_or_service:
+    `scripts/generated_stage_zero_struct_sentinel_report.sh` is the focused
+    selector for the next owner edge. It consumes the upstream finalization
+    classifier, preserves the L19 `String::HEADER_SIZE = i32 12` row and the
+    L20 `normal_llc_type_mismatch=0` row, then selects only the exact
+    `@__zero.Slice$LUInt8$R` invalid-initializer declaration.
+  producers:
+    - `emit_hoisted_allocas` struct-pointer slot initialization;
+    - `@zero_struct_global_decls` declaration recording;
+    - zero-struct side-effect serialization and merge in parallel emission;
+    - LLVM type-definition availability for `%Slice$LUInt8$R`.
+  consumers:
+    - final zero-struct global declaration emission;
+    - `llc` validation of generated `normal_out.ll`;
+    - `scripts/generated_stage_zero_struct_sentinel_report.sh`.
+  measured_red_baseline:
+    `STAGE1_COMPILER=tmp/adamas_l21_selector_stage1 REQUIRE_SELECTED=1
+    scripts/generated_stage_zero_struct_sentinel_report.sh` exits 0 and reports
+    `upstream_classification=post_to_s_frontier`,
+    `normal_string_header_size_global_shape=i32_12`,
+    `raw_dump_classification=raw_dump_before_to_s_buffer_valid`,
+    `normal_llc_type_mismatch=0`, `invalid_null_error_line=9136`,
+    `zero_struct_decl_line_no=9136`, `zero_struct_error_matches_decl=1`, and
+    `classification=zero_struct_sentinel_invalid_initializer_frontier`.
+  focused_DoD:
+    `bash -n scripts/generated_stage_zero_struct_sentinel_report.sh` exits 0.
+    A synthetic positive fixture selects
+    `classification=zero_struct_sentinel_invalid_initializer_frontier`; a stale
+    `ptr_null` negative exits 9 with
+    `reason=string_header_size_scalar_global_not_preserved`; and the generated
+    stage strict gate above selects the same frontier on current HEAD.
+  architecture_DoD:
+    Diagnostic-only. It changes no compiler behavior and does not claim green
+    `s2b`/`s3b`.
+  generated_stage_gate:
+    The next production slice must keep this selector green-or-moved while
+    preserving the consumed L19 and L20 rows before interpreting any later
+    generated LLVM error.
+  rejected_shortcuts:
+    Returning to function-return slots, backend ptr-use coercion, scalar
+    globals, output ownership/finalization, source fallback, `MacroNumberValue`,
+    `NamedTuple` / `Tuple`, ambient maps, or `BlockOwner`.
+  residual_boundary:
+    Implement or refute the zero-filled struct sentinel declaration/type
+    availability authority edge. The first production move must distinguish
+    invalid LLVM aggregate declaration, missing/late `%Slice$LUInt8$R` type
+    definition, and side-effect merge/order issues before changing emission.
 }
 ```
 

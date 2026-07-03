@@ -209,6 +209,18 @@ unit is therefore not a broader return-ABI patch; it should first add a
 focused zero-sentinel selector and then name the declaration/type-availability
 producer edge.
 
+2026-07-03 post-0k-EQ note: that selector now exists as
+`scripts/generated_stage_zero_struct_sentinel_report.sh`. It preserves the
+consumed L19/L20 rows and selects the exact generated LLVM line
+`@__zero.Slice$LUInt8$R = internal global %Slice$LUInt8$R zeroinitializer`
+when `llc` reports `invalid type for null constant` on that same line. The next
+architecture unit can now target the zero-filled struct sentinel
+declaration/type availability edge directly: `emit_hoisted_allocas`
+declaration recording, zero-struct side-effect merge/order, or `%Slice(UInt8)`
+type-definition availability. It should not return to generic post-`to_s`,
+return-slot, scalar-global, output-ownership, `NamedTuple`/`Tuple`, ambient-map,
+or `BlockOwner` work from this evidence.
+
 2026-07-02 post-0k-DY note: the selected workers=1
 `CopyPropagationPass#compute_dominance_info` lane is consumed by a production
 resource fix. CopyPropagation now answers cross-block dominance with an exact

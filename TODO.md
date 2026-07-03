@@ -8,6 +8,30 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-03 UPDATE: Slice 0k-EQ adds the focused L21 selector for the
+  post-0k-EP zero-struct sentinel residual. New script:
+  `scripts/generated_stage_zero_struct_sentinel_report.sh`. It preserves the
+  consumed rows from L19 and L20 (`normal_string_header_size_global_shape=i32_12`,
+  `raw_dump_classification=raw_dump_before_to_s_buffer_valid`, and
+  `normal_llc_type_mismatch=0`) and selects only when `llc` reports
+  `invalid type for null constant` on the exact declaration
+  `@__zero.Slice$LUInt8$R = internal global %Slice$LUInt8$R zeroinitializer`.
+  Focused evidence: `bash -n
+  scripts/generated_stage_zero_struct_sentinel_report.sh`; a synthetic
+  positive fixture selects
+  `classification=zero_struct_sentinel_invalid_initializer_frontier`, while a
+  stale `ptr_null` negative exits 9 with
+  `reason=string_header_size_scalar_global_not_preserved`; and
+  `STAGE1_COMPILER=tmp/adamas_l21_selector_stage1 REQUIRE_SELECTED=1
+  scripts/generated_stage_zero_struct_sentinel_report.sh` exits 0 with
+  `upstream_classification=post_to_s_frontier`,
+  `normal_llc_type_mismatch=0`, `invalid_null_error_line=9136`,
+  `zero_struct_decl_line_no=9136`, `zero_struct_error_matches_decl=1`, and
+  `classification=zero_struct_sentinel_invalid_initializer_frontier`. This is
+  diagnostic-only and still not green `s2b`/`s3b`. The next production slice
+  must name the producer/consumer authority edge for zero-filled struct
+  sentinel declaration/type availability before editing backend emission.
+
 - 2026-07-03 UPDATE: Slice 0k-EP consumes the L20
   `FunctionReturnAvailability` / `LoweredFunctionReturnContract` edge. The
   first bad transition was not a missing emitted callee ABI row:

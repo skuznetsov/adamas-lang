@@ -12,6 +12,38 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-EQ-ZERO-STRUCT-SENTINEL-GATE|diagnostic 2026-07-03 {F:0.86 G:0.48 R:0.84}]:
+The post-0k-EP residual now has an executable selector rather than only a
+generic `post_to_s_frontier` row. New script:
+`scripts/generated_stage_zero_struct_sentinel_report.sh`. It requires the
+upstream generated-stage classifier to preserve consumed rows from L19 and L20:
+`normal_string_header_size_global_shape=i32_12`,
+`raw_dump_classification=raw_dump_before_to_s_buffer_valid`, and
+`normal_llc_type_mismatch=0`. It then selects only when `llc` reports
+`invalid type for null constant` on the exact zero-filled struct sentinel
+declaration
+`@__zero.Slice$LUInt8$R = internal global %Slice$LUInt8$R zeroinitializer`.
+Evidence: `bash -n scripts/generated_stage_zero_struct_sentinel_report.sh`
+exits 0; a synthetic positive fixture reports
+`classification=zero_struct_sentinel_invalid_initializer_frontier`, while a
+stale `ptr_null` negative exits 9 with
+`reason=string_header_size_scalar_global_not_preserved`; and
+`STAGE1_COMPILER=tmp/adamas_l21_selector_stage1 REQUIRE_SELECTED=1
+scripts/generated_stage_zero_struct_sentinel_report.sh` exits 0 with
+`upstream_classification=post_to_s_frontier`, `normal_llc_type_mismatch=0`,
+`invalid_null_error_line=9136`, `zero_struct_decl_line_no=9136`,
+`zero_struct_error_matches_decl=1`, and
+`classification=zero_struct_sentinel_invalid_initializer_frontier`. Scope:
+diagnostic selector only, not green `s2b`/`s3b` and not a root fix. Residual
+boundary: zero-filled struct sentinels are emitted by
+`LLVMIRGenerator#emit_hoisted_allocas` for struct-typed pointer slots and
+serialized through the zero-struct side-effect merge path; the next production
+slice must name the declaration/type-availability authority edge before
+editing backend emission. Decay trigger: the selector no longer reports
+`zero_struct_sentinel_invalid_initializer_frontier`, L19/L20 consumed rows
+regress, or fresh evidence shows the `@__zero.Slice(UInt8)` line is a
+downstream proxy.
+
 [LM-ARCH-0K-EP-FUNCTION-RETURN-CONTRACT-CONSUMED|implemented 2026-07-03 {F:0.88 G:0.46 R:0.86}]:
 The L20 function-return contract mismatch is consumed. A temporary probe before
 cleanup showed the defining MIR instruction for
