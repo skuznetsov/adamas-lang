@@ -252,6 +252,15 @@ post-`lower_main` pending-flush split, specifically fun-main scan/lowering
 versus `flush_pending_functions`, not `lower_main`, RTA, MIR, or the consumed
 post-`to_s` LLVM-validity ladder.
 
+2026-07-03 B5 fun-main flush split note: the same refined selector now splits
+that corridor further. With `tmp/bootstrap_b5_flush_split/cv2_s2`, the
+fun-main scan gate is clean and reports `fun_main_entry=taken`; the
+`lower_def(fun main)` gate is clean; and the first bad gate is the pending
+flush invoked from that branch:
+`classification=self_build_hir_fun_main_flush_boundary`. The next architecture
+unit is therefore an `AstToHir#flush_pending_functions` localizer for the
+top-level `fun main` path.
+
 2026-07-02 post-0k-DY note: the selected workers=1
 `CopyPropagationPass#compute_dominance_info` lane is consumed by a production
 resource fix. CopyPropagation now answers cross-block dominance with an exact

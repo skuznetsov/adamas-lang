@@ -2629,16 +2629,48 @@ module Adamas
           i += 1
         end
         log_codepath_branch("cli.hir", "fun_main_entry", fun_main_index >= 0, "CLI")
+        if BootstrapEnv.enabled?("ADAMAS_STOP_AFTER_HIR_FUN_MAIN_SCAN")
+          log_codepath_status("cli.gate", "stop_after_hir_fun_main_scan", "taken", "CLI")
+          log(options, out_io, "  Stop after HIR fun main scan (ADAMAS_STOP_AFTER_HIR_FUN_MAIN_SCAN)")
+          emit_timings(options, out_io, timings, total_start)
+          return 0
+        else
+          log_codepath_status("cli.gate", "stop_after_hir_fun_main_scan", "not_taken", "CLI")
+        end
         if fun_main_index >= 0
           fun_main = def_nodes.unsafe_fetch(fun_main_index)
           hir_converter.arena = fun_main[1]
           hir_converter.lower_def(fun_main[0])
+          if BootstrapEnv.enabled?("ADAMAS_STOP_AFTER_HIR_FUN_MAIN_LOWER")
+            log_codepath_status("cli.gate", "stop_after_hir_fun_main_lower", "taken", "CLI")
+            log(options, out_io, "  Stop after HIR fun main lower (ADAMAS_STOP_AFTER_HIR_FUN_MAIN_LOWER)")
+            emit_timings(options, out_io, timings, total_start)
+            return 0
+          else
+            log_codepath_status("cli.gate", "stop_after_hir_fun_main_lower", "not_taken", "CLI")
+          end
           # Process any pending functions from fun main lowering (e.g., Crystal.init_runtime)
           hir_converter.flush_pending_functions
           did_flush = true
+          if BootstrapEnv.enabled?("ADAMAS_STOP_AFTER_HIR_FUN_MAIN_FLUSH")
+            log_codepath_status("cli.gate", "stop_after_hir_fun_main_flush", "taken", "CLI")
+            log(options, out_io, "  Stop after HIR fun main flush (ADAMAS_STOP_AFTER_HIR_FUN_MAIN_FLUSH)")
+            emit_timings(options, out_io, timings, total_start)
+            return 0
+          else
+            log_codepath_status("cli.gate", "stop_after_hir_fun_main_flush", "not_taken", "CLI")
+          end
         end
         bootstrap_trace_puts "  Flushing pending functions..." if options.progress
         log_codepath_status("cli.hir", "flush_pending_functions", did_flush ? "skipped_after_fun_main" : "taken", "CLI")
+        if BootstrapEnv.enabled?("ADAMAS_STOP_BEFORE_HIR_FLUSH_PENDING")
+          log_codepath_status("cli.gate", "stop_before_hir_flush_pending", "taken", "CLI")
+          log(options, out_io, "  Stop before HIR pending flush (ADAMAS_STOP_BEFORE_HIR_FLUSH_PENDING)")
+          emit_timings(options, out_io, timings, total_start)
+          return 0
+        else
+          log_codepath_status("cli.gate", "stop_before_hir_flush_pending", "not_taken", "CLI")
+        end
         hir_converter.flush_pending_functions unless did_flush
         bootstrap_trace_puts "  Main function created" if options.progress
         log_generated_stage_memory_phase(

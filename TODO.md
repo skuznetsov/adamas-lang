@@ -8,6 +8,28 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-03 UPDATE: B5 pending-flush corridor split now names the first bad
+  sub-boundary. The refined classifier gained fun-main scan/lower/flush and
+  before-normal-flush gates. Fresh evidence: `crystal build src/adamas.cr -o
+  tmp/adamas_b5_flush_split_stage1 --error-trace` exits 0;
+  `scripts/build_bootstrap_stages.sh --out tmp/bootstrap_b5_flush_split
+  --stages 2 --timeout 900 --mem 12288` builds and smokes `cv2_s1` and `cv2_s2`
+  clean (`cv2_s2` wall 243.30s, peak RSS about 3346 MB); and
+  `STAGE1_COMPILER=tmp/bootstrap_b5_flush_split/cv2_s2
+  REQUIRE_CLASSIFICATION=1 STOP_TIMEOUT=900 STOP_MEM_MB=12288
+  HIGH_RSS_MB=12288 scripts/generated_stage_self_build_hir_boundary_classifier.sh`
+  exits 0 with `classification=self_build_hir_fun_main_flush_boundary`.
+  Clean gates: `compile_entry` 7 MB, `parse` 1263 MB, `lower_main` 4738 MB,
+  lower-main bookkeeping 4738 MB, `fun_main_scan` 4738 MB with
+  `hir_fun_main_entry_status=taken`, and `fun_main_lower` 4740 MB. First bad
+  gate: `ADAMAS_STOP_AFTER_HIR_FUN_MAIN_FLUSH` exits 139 at about 4802 MB,
+  without safe-wrapper memory kill. This supersedes the previous
+  `self_build_hir_flush_pending_boundary`: the next slice must localize
+  `AstToHir#flush_pending_functions` on the top-level `fun main` path, not
+  fun-main scanning, `lower_def(fun main)`, normal post-branch flush, RTA, MIR,
+  LLVM finalization/helper, `NamedTuple` / `Tuple`, ambient maps, or
+  `BlockOwner` from stale evidence.
+
 - 2026-07-03 UPDATE: B5 refined HIR localizer now narrows the active `cv2_s2`
   self-build boundary. Diagnostic-only gates were added around the post
   `lower_main` HIR corridor, plus

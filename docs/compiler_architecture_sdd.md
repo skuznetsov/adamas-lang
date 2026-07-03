@@ -821,6 +821,19 @@ and L17-L22 LLVM-finalization/helper evidence as the current first move. The
 next production receipt must localize the pending-flush corridor:
 fun-main scan/lowering versus `flush_pending_functions`.
 
+2026-07-03 B5 fun-main flush split: the refined localizer now distinguishes
+the pending-flush corridor. Fresh evidence builds
+`tmp/bootstrap_b5_flush_split/cv2_s2` clean through stage 2 and smokes it, then
+reports `classification=self_build_hir_fun_main_flush_boundary`.
+`fun_main_entry` is taken; `ADAMAS_STOP_AFTER_HIR_FUN_MAIN_SCAN` and
+`ADAMAS_STOP_AFTER_HIR_FUN_MAIN_LOWER` are clean; and
+`ADAMAS_STOP_AFTER_HIR_FUN_MAIN_FLUSH` exits 139 at about `4802` MB without
+safe-wrapper memory kill. The next production receipt must localize
+`AstToHir#flush_pending_functions` on the top-level `fun main` path. Fun-main
+scan, `lower_def(fun main)`, normal post-branch flush, RTA, MIR, LLVM
+finalization/helper, `NamedTuple` / `Tuple`, ambient-map, and `BlockOwner`
+paths remain rejected from stale evidence.
+
 | Lane | Current decision | Required next receipt | Rejected shortcut |
 | --- | --- | --- | --- |
 | `bootstrap-emergency-with-ledger` / B4-O1 | Consumed by 0k-CU. The HIR `BlockCallReturnContract` implementation moves the generated-stage gate past the old O1 `affected_block_ids` / `Set(UInt32)#includes?` frontier: `REQUIRE_CURRENT_CU_CONTRACT=1 scripts/hir_block_return_shape_census.sh` reports `classification=current_0k_cu_block_call_return_contract_applied`, and `STAGE1_COMPILER=/tmp/adamas_0kcu_stage1 REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh` exits at the expected non-current boundary with `b4_classification=llvm_entry_failure_after_lower_main` and `workers1_exit139=0`. The new residual is post-`lower_main` RSS pressure in both worker modes, with the default worker-mode rand fallback still present. | Return to the board before any new production source slice. The next receipt must reselect an owner spine from fresh generated-stage evidence; if it targets the new residual, it must name the old authority edge behind post-`lower_main` memory/resource growth rather than treating higher memory limits, worker count, or the rand fallback as acceptance evidence. | Continuing the 0k-CU breakglass lane by inertia; starting from the new RSS-kill stack; raising memory as a fix; forcing `ADAMAS_LLVM_WORKERS=1`; worker/rand/output/resource patches without a new receipt; CopyPropagation, Set/Hash, backend block-return, `NamedTuple`/`Tuple`, ambient-map, or `BlockOwner` changes. |

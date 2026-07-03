@@ -28,6 +28,10 @@ Classifications:
   self_build_parse_resource
   self_build_lower_main_boundary
   self_build_hir_lower_main_bookkeeping_boundary
+  self_build_hir_fun_main_scan_boundary
+  self_build_hir_fun_main_lower_boundary
+  self_build_hir_fun_main_flush_boundary
+  self_build_hir_before_flush_pending_boundary
   self_build_hir_flush_pending_boundary
   self_build_hir_refresh_type_params_boundary
   self_build_hir_rta_boundary
@@ -137,7 +141,7 @@ run_stop_probe() {
   local log="$TMP_DIR/${label}.log"
 
   set +e
-  env "$env_key=1" \
+  env "$env_key=1" ADAMAS_CODEPATH_STATUS_LEDGER=1 \
     /usr/bin/time -l "$ROOT_DIR/scripts/run_safe.sh" "$STAGE1_PATH" "$STOP_TIMEOUT" "$STOP_MEM_MB" \
       "$SOURCE" -o "$out_bin" >"$log" 2>&1
   local rc=$?
@@ -174,6 +178,12 @@ run_stop_probe() {
   fi
 }
 
+codepath_status_for() {
+  local log="$1"
+  local path="$2"
+  sed -nE "s/.*\\[CODEPATH_STATUS\\].* path=${path} status=([^ ]+).*/\\1/p" "$log" | tail -1
+}
+
 SUMMARY="$TMP_DIR/probe_summary.out"
 : >"$SUMMARY"
 
@@ -201,14 +211,41 @@ run_probe_until_bad() {
   ! gate_bad "$label"
 }
 
-run_probe_until_bad "compile_entry" "ADAMAS_STOP_AFTER_COMPILE_ENTRY" &&
+fun_main_status="unknown"
+
+if run_probe_until_bad "compile_entry" "ADAMAS_STOP_AFTER_COMPILE_ENTRY" &&
   run_probe_until_bad "parse" "ADAMAS_STOP_AFTER_PARSE" &&
   run_probe_until_bad "lower_main" "ADAMAS_STOP_AFTER_LOWER_MAIN" &&
   run_probe_until_bad "hir_lower_main_done" "ADAMAS_STOP_AFTER_HIR_LOWER_MAIN_DONE" &&
-  run_probe_until_bad "hir_flush_pending" "ADAMAS_STOP_AFTER_HIR_FLUSH_PENDING" &&
-  run_probe_until_bad "hir_refresh_type_params" "ADAMAS_STOP_AFTER_HIR_REFRESH_TYPE_PARAMS" &&
-  run_probe_until_bad "hir_rta" "ADAMAS_STOP_AFTER_HIR_RTA" &&
-  run_probe_until_bad "hir" "ADAMAS_STOP_AFTER_HIR" || true
+  run_probe_until_bad "hir_fun_main_scan" "ADAMAS_STOP_AFTER_HIR_FUN_MAIN_SCAN"; then
+  scan_log="$(read_metric "hir_fun_main_scan_log")"
+  fun_main_status="$(codepath_status_for "$scan_log" "fun_main_entry")"
+  echo "hir_fun_main_entry_status=${fun_main_status:-missing}" | tee -a "$SUMMARY"
+
+  if [[ "$fun_main_status" == "taken" ]]; then
+    run_probe_until_bad "hir_fun_main_lower" "ADAMAS_STOP_AFTER_HIR_FUN_MAIN_LOWER" &&
+      run_probe_until_bad "hir_fun_main_flush" "ADAMAS_STOP_AFTER_HIR_FUN_MAIN_FLUSH" || true
+  else
+    echo "hir_fun_main_lower_skipped=1" | tee -a "$SUMMARY"
+    echo "hir_fun_main_lower_rc=0" | tee -a "$SUMMARY"
+    echo "hir_fun_main_lower_peak_rss_mb=0" | tee -a "$SUMMARY"
+    echo "hir_fun_main_lower_memory_kill=0" | tee -a "$SUMMARY"
+    echo "hir_fun_main_lower_timeout_kill=0" | tee -a "$SUMMARY"
+    echo "hir_fun_main_flush_skipped=1" | tee -a "$SUMMARY"
+    echo "hir_fun_main_flush_rc=0" | tee -a "$SUMMARY"
+    echo "hir_fun_main_flush_peak_rss_mb=0" | tee -a "$SUMMARY"
+    echo "hir_fun_main_flush_memory_kill=0" | tee -a "$SUMMARY"
+    echo "hir_fun_main_flush_timeout_kill=0" | tee -a "$SUMMARY"
+  fi
+
+  if ! gate_bad "hir_fun_main_lower" && ! gate_bad "hir_fun_main_flush"; then
+    run_probe_until_bad "hir_before_flush_pending" "ADAMAS_STOP_BEFORE_HIR_FLUSH_PENDING" &&
+      run_probe_until_bad "hir_flush_pending" "ADAMAS_STOP_AFTER_HIR_FLUSH_PENDING" &&
+      run_probe_until_bad "hir_refresh_type_params" "ADAMAS_STOP_AFTER_HIR_REFRESH_TYPE_PARAMS" &&
+      run_probe_until_bad "hir_rta" "ADAMAS_STOP_AFTER_HIR_RTA" &&
+      run_probe_until_bad "hir" "ADAMAS_STOP_AFTER_HIR" || true
+  fi
+fi
 
 classification="self_build_after_hir_boundary"
 if gate_bad "compile_entry"; then
@@ -219,6 +256,14 @@ elif gate_bad "lower_main"; then
   classification="self_build_lower_main_boundary"
 elif gate_bad "hir_lower_main_done"; then
   classification="self_build_hir_lower_main_bookkeeping_boundary"
+elif gate_bad "hir_fun_main_scan"; then
+  classification="self_build_hir_fun_main_scan_boundary"
+elif gate_bad "hir_fun_main_lower"; then
+  classification="self_build_hir_fun_main_lower_boundary"
+elif gate_bad "hir_fun_main_flush"; then
+  classification="self_build_hir_fun_main_flush_boundary"
+elif gate_bad "hir_before_flush_pending"; then
+  classification="self_build_hir_before_flush_pending_boundary"
 elif gate_bad "hir_flush_pending"; then
   classification="self_build_hir_flush_pending_boundary"
 elif gate_bad "hir_refresh_type_params"; then
@@ -233,7 +278,7 @@ echo "classification=$classification"
 
 if [[ "${REQUIRE_CLASSIFICATION:-0}" == "1" ]]; then
   case "$classification" in
-    self_build_compile_entry_resource|self_build_parse_resource|self_build_lower_main_boundary|self_build_hir_lower_main_bookkeeping_boundary|self_build_hir_flush_pending_boundary|self_build_hir_refresh_type_params_boundary|self_build_hir_rta_boundary|self_build_hir_tail_boundary|self_build_after_hir_boundary)
+    self_build_compile_entry_resource|self_build_parse_resource|self_build_lower_main_boundary|self_build_hir_lower_main_bookkeeping_boundary|self_build_hir_fun_main_scan_boundary|self_build_hir_fun_main_lower_boundary|self_build_hir_fun_main_flush_boundary|self_build_hir_before_flush_pending_boundary|self_build_hir_flush_pending_boundary|self_build_hir_refresh_type_params_boundary|self_build_hir_rta_boundary|self_build_hir_tail_boundary|self_build_after_hir_boundary)
       ;;
     *)
       exit 9
