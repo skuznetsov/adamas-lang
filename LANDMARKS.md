@@ -12,6 +12,31 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-EI-FINAL-OUTPUT-RECEIVER-NULL-FRONTIER|implemented 2026-07-03 {F:0.89 G:0.50 R:0.84}]:
+The L18 final-output boundary is sharper than the 0k-EH
+`IO::Memory#bytesize` claim. The default-off raw final-buffer split now records
+the pre-cast `LLVMIRGenerator.@output.object_id`, raw header checkpoints, cast
+receiver identity, registry-backed `@bytesize` field-offset lookup, raw ivar
+load, and getter entry under `ADAMAS_DUMP_LLVM_FINAL_BUFFER_BEFORE_TO_S=<path>`.
+Fresh evidence with `tmp/adamas_l18_output_stage1`: the focused user-runtime
+guard `regression_tests/io_memory_final_materialization_repro.sh` still reports
+`io_memory_final_materialization_repro_ok`; the generated-stage classifier
+preserves `classification=select_finalize_to_s_stringification_frontier` and
+reports
+`raw_dump_classification=select_finalize_raw_dump_output_null_frontier`. The
+raw run logs `finalize_raw_dump_output_object_id_done` and
+`finalize_raw_dump_output_null`, while output raw-header, cast receiver,
+field-offset, raw-bytesize, and getter checkpoints are not reached. Scope:
+behavior-neutral discriminator only, not green `s2b`/`s3b`. Residual boundary:
+the produced compiler's `LLVMIRGenerator.@output` reference is already null at
+finalization; split the producer of that null output state before changing
+`IO::Memory#bytesize`, final-output field layout, `as(IO::Memory)`, generic
+`IO::Memory`/`String`, fd/raw output, tail, metadata, DWARF, type-name,
+`NamedTuple`/`Tuple`, ambient maps, or `BlockOwner`. Decay trigger: the raw
+split reports a nonzero output object and reaches output raw-header/receiver
+checks, the user-runtime guard fails, or L18 no longer selects finalization
+stringification.
+
 [LM-ARCH-0K-EH-FINAL-IO-MEMORY-BYTESIZE-FRONTIER|implemented 2026-07-03 {F:0.88 G:0.50 R:0.84}]:
 The L18 finalization boundary is now narrower than `IO::Memory#to_s`. A
 default-off raw final-buffer split in `LLVMIRGenerator#generate` checks

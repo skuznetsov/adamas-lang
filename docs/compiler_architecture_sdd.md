@@ -627,6 +627,19 @@ receipt must split receiver validity / direct final-output field access before
 any fd output, raw writer, generic `IO::Memory`, generic `String.new`, tail, or
 metadata fix.
 
+2026-07-03 board refinement after Slice 0k-EI: the 0k-EH `bytesize` boundary is
+refuted as the first bad transition. The raw-dump split now logs the pre-cast
+`@output.object_id` and reports
+`raw_dump_classification=select_finalize_raw_dump_output_null_frontier`: the
+produced compiler's `LLVMIRGenerator.@output` reference is already null at
+finalization, before output raw-header, cast receiver, field-offset,
+raw-bytesize, or getter checkpoints. The next production receipt must split the
+producer of this null output state: constructor/init ownership versus field
+overwrite versus generated-stage instance/ivar load. It must not patch
+`IO::Memory#bytesize`, final-output field layout, `as(IO::Memory)`, generic
+`IO::Memory` / `String`, fd/raw output, tail, metadata, DWARF, type-name,
+`NamedTuple` / `Tuple`, ambient maps, or `BlockOwner` from this evidence.
+
 | Lane | Current decision | Required next receipt | Rejected shortcut |
 | --- | --- | --- | --- |
 | `bootstrap-emergency-with-ledger` / B4-O1 | Consumed by 0k-CU. The HIR `BlockCallReturnContract` implementation moves the generated-stage gate past the old O1 `affected_block_ids` / `Set(UInt32)#includes?` frontier: `REQUIRE_CURRENT_CU_CONTRACT=1 scripts/hir_block_return_shape_census.sh` reports `classification=current_0k_cu_block_call_return_contract_applied`, and `STAGE1_COMPILER=/tmp/adamas_0kcu_stage1 REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh` exits at the expected non-current boundary with `b4_classification=llvm_entry_failure_after_lower_main` and `workers1_exit139=0`. The new residual is post-`lower_main` RSS pressure in both worker modes, with the default worker-mode rand fallback still present. | Return to the board before any new production source slice. The next receipt must reselect an owner spine from fresh generated-stage evidence; if it targets the new residual, it must name the old authority edge behind post-`lower_main` memory/resource growth rather than treating higher memory limits, worker count, or the rand fallback as acceptance evidence. | Continuing the 0k-CU breakglass lane by inertia; starting from the new RSS-kill stack; raising memory as a fix; forcing `ADAMAS_LLVM_WORKERS=1`; worker/rand/output/resource patches without a new receipt; CopyPropagation, Set/Hash, backend block-return, `NamedTuple`/`Tuple`, ambient-map, or `BlockOwner` changes. |
@@ -1198,6 +1211,57 @@ SliceReceipt {
     fd/external output; raw writer fixes; generic `String.new(buffer, bytesize)`;
     generic user-runtime `IO::Memory` changes; tail/metadata/DWARF/type-name;
     worker policy; `NamedTuple`/`Tuple`; ambient maps; `BlockOwner`.
+}
+```
+
+#### Slice 0k-EI receipt: final output receiver ownership split
+
+```text
+SliceReceipt {
+  board_lane: PhaseAuthority / GeneratedStageExecution
+  tranche: contract-owner-migration
+  old_authority_edge:
+    Slice 0k-EH selected `IO::Memory#bytesize` as the first micro-boundary, but
+    did not distinguish a bad final-output receiver from the getter or field
+    layout.
+  owner_fact_or_service:
+    `LLVMFinalOutputMaterialization` pre-cast receiver split:
+    `ADAMAS_DUMP_LLVM_FINAL_BUFFER_BEFORE_TO_S=<path>` plus
+    `scripts/generated_stage_finalize_to_s_classifier.sh` with
+    `REQUIRE_RAW_DUMP=1`.
+  producers:
+    - `LLVMIRGenerator#generate` final in-memory `@output`;
+    - pre-cast `@output.object_id` and raw header checkpoints;
+    - post-cast receiver identity, field offset lookup, raw `@bytesize` load,
+      and getter entry.
+  consumers:
+    - the next `LLVMFinalOutputMaterialization` source receipt;
+    - future output receiver lifetime / ivar-load producer split.
+  evidence:
+    `regression_tests/io_memory_final_materialization_repro.sh
+    tmp/adamas_l18_output_stage1` reports
+    `io_memory_final_materialization_repro_ok`.
+    `STAGE1_COMPILER=tmp/adamas_l18_output_stage1 REQUIRE_RAW_DUMP=1
+    REQUIRE_CLASSIFICATION=1
+    scripts/generated_stage_finalize_to_s_classifier.sh` preserves
+    `classification=select_finalize_to_s_stringification_frontier` and reports
+    `raw_dump_classification=select_finalize_raw_dump_output_null_frontier`.
+    The raw-dump run reaches `finalize_raw_dump_output_object_id_done` and
+    `finalize_raw_dump_output_null`, while output raw-header, receiver
+    raw-header, field-offset, raw-bytesize, and getter checkpoints are not
+    reached.
+  conclusion:
+    The first selected micro-boundary is not `IO::Memory#bytesize`, field
+    layout, cast, or getter code. The produced compiler's
+    `LLVMIRGenerator.@output` reference is already null at finalization. The
+    next split must find the producer of that null state: construction/init
+    ownership, later field overwrite, or generated-stage instance / ivar load.
+  rejected_shortcuts:
+    `IO::Memory#bytesize` patches; final-output field layout fixes;
+    `as(IO::Memory)` patches; fd/external output; raw writer fixes; generic
+    `String.new(buffer, bytesize)`; generic user-runtime `IO::Memory` changes;
+    tail/metadata/DWARF/type-name; worker policy; `NamedTuple`/`Tuple`;
+    ambient maps; `BlockOwner`.
 }
 ```
 

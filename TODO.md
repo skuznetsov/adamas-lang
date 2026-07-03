@@ -8,6 +8,29 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-03 UPDATE: Slice 0k-EI refines the 0k-EH `bytesize` claim with a
+  pre-cast receiver ownership split. The same default-off raw final-buffer gate
+  now logs `@output.object_id`, raw header checkpoints, cast receiver
+  `object_id`, registry-backed `@bytesize` offset lookup, raw ivar load, and
+  getter entry. Fresh evidence with `tmp/adamas_l18_output_stage1`:
+  `regression_tests/io_memory_final_materialization_repro.sh` remains green;
+  `REQUIRE_RAW_DUMP=1 REQUIRE_CLASSIFICATION=1
+  scripts/generated_stage_finalize_to_s_classifier.sh` preserves
+  `classification=select_finalize_to_s_stringification_frontier` but now
+  reports `raw_dump_classification=select_finalize_raw_dump_output_null_frontier`.
+  The raw run logs `finalize_raw_dump_output_object_id_done` and
+  `finalize_raw_dump_output_null` before any output raw-header, cast receiver,
+  field-offset, raw-bytesize, or getter checkpoint. Therefore the 0k-EH
+  `IO::Memory#bytesize` edge is refuted as the first boundary. The current
+  L18 residual is `LLVMFinalOutputMaterialization` output receiver lifetime:
+  why the produced compiler's `LLVMIRGenerator.@output` reference is already
+  null at finalization. Do not patch `IO::Memory#bytesize`, final-output field
+  offsets/layout, `as(IO::Memory)`, generic `IO::Memory`/`String`, fd/raw
+  output, tail, metadata, DWARF, type-name, `NamedTuple`/`Tuple`, ambient maps,
+  or `BlockOwner` from this evidence. The next source movement must split the
+  producer of the null `@output` state: constructor/init ownership vs field
+  overwrite vs generated-stage instance/ivar load.
+
 - 2026-07-03 UPDATE: Slice 0k-EH narrows L18 again with a default-off raw
   final-buffer micro-split. `ADAMAS_DUMP_LLVM_FINAL_BUFFER_BEFORE_TO_S=<path>`
   now drives `scripts/generated_stage_finalize_to_s_classifier.sh` through

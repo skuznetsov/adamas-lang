@@ -120,6 +120,17 @@ should split receiver validity versus direct ivar access for the final output
 object; raw buffer writing, fd output, generic `String.new`, and broad
 user-runtime `IO::Memory` changes are still rejected.
 
+2026-07-03 post-0k-EI note: the `bytesize` reading has now been refuted as the
+first bad transition. The raw-dump probe records `@output.object_id` before the
+cast and reports
+`raw_dump_classification=select_finalize_raw_dump_output_null_frontier`; the
+produced compiler's `LLVMIRGenerator.@output` reference is already null at
+finalization. The next backend/source work should split output receiver
+ownership and lifetime: constructor/init path, field overwrite, or generated
+stage instance/ivar load. Do not spend the next slice on `IO::Memory#bytesize`,
+field offsets/layout, `as(IO::Memory)`, generic `IO::Memory`/`String`, fd/raw
+writer, tail, metadata, DWARF, or type-name code from the 0k-EH evidence.
+
 2026-07-02 post-0k-DY note: the selected workers=1
 `CopyPropagationPass#compute_dominance_info` lane is consumed by a production
 resource fix. CopyPropagation now answers cross-block dominance with an exact

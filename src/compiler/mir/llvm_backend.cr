@@ -2462,6 +2462,23 @@ module Adamas::MIR
       written_total
     end
 
+    private def io_memory_field_offset(field_name : String) : Int32?
+      mir_type = @module.type_registry.get_by_name("IO::Memory")
+      return nil unless mir_type
+      fields = mir_type.fields
+      return nil unless fields
+
+      wanted = field_name.starts_with?("@") ? field_name : "@#{field_name}"
+      fields.each do |field|
+        return field.offset.to_i32 if field.name == field_name || field.name == wanted
+      end
+      nil
+    end
+
+    private def raw_i32_at_object_offset(object_addr : UInt64, offset : Int32) : Int32
+      Pointer(Int32).new(object_addr &+ offset.to_u64).value
+    end
+
     @module : Module
     @type_mapper : LLVMTypeMapper
     @output : IO
@@ -3751,10 +3768,71 @@ module Adamas::MIR
           log_generated_stage_llvm_generate_phase("finalize_raw_dump_env_lookup_done", output_mode)
           if dump_path
             unless dump_path.empty?
+              log_generated_stage_llvm_generate_phase("finalize_raw_dump_output_object_id_enter", output_mode)
+              output_addr = @output.object_id
+              log_generated_stage_llvm_generate_phase(
+                "finalize_raw_dump_output_object_id_done",
+                output_mode,
+                "output_addr=#{output_addr}"
+              )
+              if output_addr == 0_u64
+                log_generated_stage_llvm_generate_phase("finalize_raw_dump_output_null", output_mode)
+              else
+                log_generated_stage_llvm_generate_phase("finalize_raw_dump_output_raw_header_enter", output_mode)
+                output_type_id = raw_i32_at_object_offset(output_addr, 0)
+                expected_type_id = @module.type_registry.get_by_name("IO::Memory").try(&.id.to_i32) || -1
+                log_generated_stage_llvm_generate_phase(
+                  "finalize_raw_dump_output_raw_header_done",
+                  output_mode,
+                  "output_addr=#{output_addr} type_id=#{output_type_id} expected_type_id=#{expected_type_id}"
+                )
+              end
               log_generated_stage_llvm_generate_phase("finalize_raw_dump_cast_enter", output_mode)
               mem_output = @output.as(IO::Memory)
               log_generated_stage_llvm_generate_phase("finalize_raw_dump_cast_done", output_mode)
               log_generated_stage_llvm_generate_phase("finalize_raw_dump_enter", output_mode)
+              log_generated_stage_llvm_generate_phase("finalize_raw_dump_object_id_enter", output_mode)
+              receiver_addr = mem_output.object_id
+              log_generated_stage_llvm_generate_phase(
+                "finalize_raw_dump_object_id_done",
+                output_mode,
+                "receiver_addr=#{receiver_addr}"
+              )
+              if receiver_addr == 0_u64
+                log_generated_stage_llvm_generate_phase("finalize_raw_dump_receiver_null", output_mode)
+              else
+                log_generated_stage_llvm_generate_phase("finalize_raw_dump_raw_header_enter", output_mode)
+                receiver_type_id = raw_i32_at_object_offset(receiver_addr, 0)
+                expected_type_id = @module.type_registry.get_by_name("IO::Memory").try(&.id.to_i32) || -1
+                log_generated_stage_llvm_generate_phase(
+                  "finalize_raw_dump_raw_header_done",
+                  output_mode,
+                  "receiver_addr=#{receiver_addr} type_id=#{receiver_type_id} expected_type_id=#{expected_type_id}"
+                )
+                log_generated_stage_llvm_generate_phase("finalize_raw_dump_field_offset_lookup_enter", output_mode)
+                bytesize_offset = io_memory_field_offset("@bytesize")
+                if bytesize_offset
+                  log_generated_stage_llvm_generate_phase(
+                    "finalize_raw_dump_field_offset_lookup_done",
+                    output_mode,
+                    "field=@bytesize offset=#{bytesize_offset}"
+                  )
+                  log_generated_stage_llvm_generate_phase("finalize_raw_dump_raw_bytesize_enter", output_mode)
+                  raw_bytesize = raw_i32_at_object_offset(receiver_addr, bytesize_offset)
+                  log_generated_stage_llvm_generate_phase(
+                    "finalize_raw_dump_raw_bytesize_done",
+                    output_mode,
+                    "receiver_addr=#{receiver_addr} offset=#{bytesize_offset} bytes=#{raw_bytesize}"
+                  )
+                else
+                  log_generated_stage_llvm_generate_phase(
+                    "finalize_raw_dump_field_offset_missing",
+                    output_mode,
+                    "field=@bytesize"
+                  )
+                end
+              end
+              log_generated_stage_llvm_generate_phase("finalize_raw_dump_getter_bytesize_enter", output_mode)
               bytesize = mem_output.bytesize
               log_generated_stage_llvm_generate_phase(
                 "finalize_raw_dump_bytesize_done",

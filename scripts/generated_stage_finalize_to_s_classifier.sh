@@ -26,6 +26,17 @@ Environment:
 
 Classifications:
   select_finalize_to_s_stringification_frontier
+  select_finalize_raw_dump_output_null_frontier
+  select_finalize_raw_dump_output_object_id_frontier
+  select_finalize_raw_dump_output_raw_header_frontier
+  select_finalize_raw_dump_cast_frontier
+  select_finalize_raw_dump_object_id_frontier
+  select_finalize_raw_dump_receiver_null_frontier
+  select_finalize_raw_dump_raw_header_frontier
+  select_finalize_raw_dump_field_offset_missing_frontier
+  select_finalize_raw_dump_field_offset_lookup_frontier
+  select_finalize_raw_dump_raw_bytesize_frontier
+  select_finalize_raw_dump_getter_bytesize_frontier
   post_to_s_frontier
   finalization_classifier_drift
   finalization_classifier_build_failed
@@ -258,6 +269,22 @@ run_probe() {
   echo "${label}_finalize_raw_dump_env_lookup_enter_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_env_lookup_enter")"
   echo "${label}_finalize_raw_dump_env_lookup_done_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_env_lookup_done")"
   echo "${label}_finalize_raw_dump_enter_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_enter")"
+  echo "${label}_finalize_raw_dump_output_object_id_enter_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_output_object_id_enter")"
+  echo "${label}_finalize_raw_dump_output_object_id_done_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_output_object_id_done")"
+  echo "${label}_finalize_raw_dump_output_null_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_output_null")"
+  echo "${label}_finalize_raw_dump_output_raw_header_enter_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_output_raw_header_enter")"
+  echo "${label}_finalize_raw_dump_output_raw_header_done_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_output_raw_header_done")"
+  echo "${label}_finalize_raw_dump_object_id_enter_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_object_id_enter")"
+  echo "${label}_finalize_raw_dump_object_id_done_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_object_id_done")"
+  echo "${label}_finalize_raw_dump_receiver_null_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_receiver_null")"
+  echo "${label}_finalize_raw_dump_raw_header_enter_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_raw_header_enter")"
+  echo "${label}_finalize_raw_dump_raw_header_done_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_raw_header_done")"
+  echo "${label}_finalize_raw_dump_field_offset_lookup_enter_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_field_offset_lookup_enter")"
+  echo "${label}_finalize_raw_dump_field_offset_lookup_done_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_field_offset_lookup_done")"
+  echo "${label}_finalize_raw_dump_field_offset_missing_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_field_offset_missing")"
+  echo "${label}_finalize_raw_dump_raw_bytesize_enter_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_raw_bytesize_enter")"
+  echo "${label}_finalize_raw_dump_raw_bytesize_done_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_raw_bytesize_done")"
+  echo "${label}_finalize_raw_dump_getter_bytesize_enter_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_getter_bytesize_enter")"
   echo "${label}_finalize_raw_dump_bytesize_done_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_bytesize_done")"
   echo "${label}_finalize_raw_dump_buffer_done_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_buffer_done")"
   echo "${label}_finalize_raw_dump_write_enter_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_raw_dump_write_enter")"
@@ -292,6 +319,22 @@ raw_dump_cast_done=0
 raw_dump_env_enter=0
 raw_dump_env_done=0
 raw_dump_enter=0
+raw_dump_output_object_id_enter=0
+raw_dump_output_object_id_done=0
+raw_dump_output_null=0
+raw_dump_output_raw_header_enter=0
+raw_dump_output_raw_header_done=0
+raw_dump_object_id_enter=0
+raw_dump_object_id_done=0
+raw_dump_receiver_null=0
+raw_dump_raw_header_enter=0
+raw_dump_raw_header_done=0
+raw_dump_field_offset_enter=0
+raw_dump_field_offset_done=0
+raw_dump_field_offset_missing=0
+raw_dump_raw_bytesize_enter=0
+raw_dump_raw_bytesize_done=0
+raw_dump_getter_bytesize_enter=0
 raw_dump_bytesize_done=0
 raw_dump_buffer_done=0
 raw_dump_write_enter=0
@@ -307,6 +350,22 @@ if [[ "${REQUIRE_RAW_DUMP:-0}" == "1" ]]; then
   raw_dump_env_enter="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_env_lookup_enter)"
   raw_dump_env_done="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_env_lookup_done)"
   raw_dump_enter="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_enter)"
+  raw_dump_output_object_id_enter="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_output_object_id_enter)"
+  raw_dump_output_object_id_done="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_output_object_id_done)"
+  raw_dump_output_null="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_output_null)"
+  raw_dump_output_raw_header_enter="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_output_raw_header_enter)"
+  raw_dump_output_raw_header_done="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_output_raw_header_done)"
+  raw_dump_object_id_enter="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_object_id_enter)"
+  raw_dump_object_id_done="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_object_id_done)"
+  raw_dump_receiver_null="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_receiver_null)"
+  raw_dump_raw_header_enter="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_raw_header_enter)"
+  raw_dump_raw_header_done="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_raw_header_done)"
+  raw_dump_field_offset_enter="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_field_offset_lookup_enter)"
+  raw_dump_field_offset_done="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_field_offset_lookup_done)"
+  raw_dump_field_offset_missing="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_field_offset_missing)"
+  raw_dump_raw_bytesize_enter="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_raw_bytesize_enter)"
+  raw_dump_raw_bytesize_done="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_raw_bytesize_done)"
+  raw_dump_getter_bytesize_enter="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_getter_bytesize_enter)"
   raw_dump_bytesize_done="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_bytesize_done)"
   raw_dump_buffer_done="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_buffer_done)"
   raw_dump_write_enter="$(ledger_count gsetx_raw_dump_before_to_s raw_dump_before_to_s llvm.generate_phase phase=finalize_raw_dump_write_enter)"
@@ -331,18 +390,50 @@ if [[ "${REQUIRE_RAW_DUMP:-0}" == "1" ]]; then
         "$raw_dump_size" -gt 0 &&
         "$raw_dump_header" -eq 1 ]]; then
     raw_dump_classification="raw_dump_before_to_s_buffer_valid"
-  elif [[ "$raw_dump_cast_enter" -eq 0 ]]; then
-    raw_dump_classification="select_finalize_raw_dump_pre_cast_frontier"
-  elif [[ "$raw_dump_cast_done" -eq 0 ]]; then
-    raw_dump_classification="select_finalize_raw_dump_cast_frontier"
   elif [[ "$raw_dump_env_enter" -eq 0 ]]; then
     raw_dump_classification="select_finalize_raw_dump_pre_env_lookup_frontier"
   elif [[ "$raw_dump_env_done" -eq 0 ]]; then
     raw_dump_classification="select_finalize_raw_dump_env_lookup_frontier"
+  elif [[ "$raw_dump_output_object_id_enter" -eq 0 ]]; then
+    raw_dump_classification="select_finalize_raw_dump_pre_output_object_id_frontier"
+  elif [[ "$raw_dump_output_object_id_done" -eq 0 ]]; then
+    raw_dump_classification="select_finalize_raw_dump_output_object_id_frontier"
+  elif [[ "$raw_dump_output_null" -gt 0 ]]; then
+    raw_dump_classification="select_finalize_raw_dump_output_null_frontier"
+  elif [[ "$raw_dump_output_raw_header_enter" -eq 0 ]]; then
+    raw_dump_classification="select_finalize_raw_dump_pre_output_raw_header_frontier"
+  elif [[ "$raw_dump_output_raw_header_done" -eq 0 ]]; then
+    raw_dump_classification="select_finalize_raw_dump_output_raw_header_frontier"
+  elif [[ "$raw_dump_cast_enter" -eq 0 ]]; then
+    raw_dump_classification="select_finalize_raw_dump_pre_cast_frontier"
+  elif [[ "$raw_dump_cast_done" -eq 0 ]]; then
+    raw_dump_classification="select_finalize_raw_dump_cast_frontier"
   elif [[ "$raw_dump_enter" -eq 0 ]]; then
     raw_dump_classification="select_finalize_raw_dump_env_empty_or_pre_enter_frontier"
+  elif [[ "$raw_dump_object_id_enter" -eq 0 ]]; then
+    raw_dump_classification="select_finalize_raw_dump_pre_object_id_frontier"
+  elif [[ "$raw_dump_object_id_done" -eq 0 ]]; then
+    raw_dump_classification="select_finalize_raw_dump_object_id_frontier"
+  elif [[ "$raw_dump_receiver_null" -gt 0 ]]; then
+    raw_dump_classification="select_finalize_raw_dump_receiver_null_frontier"
+  elif [[ "$raw_dump_raw_header_enter" -eq 0 ]]; then
+    raw_dump_classification="select_finalize_raw_dump_pre_raw_header_frontier"
+  elif [[ "$raw_dump_raw_header_done" -eq 0 ]]; then
+    raw_dump_classification="select_finalize_raw_dump_raw_header_frontier"
+  elif [[ "$raw_dump_field_offset_enter" -eq 0 ]]; then
+    raw_dump_classification="select_finalize_raw_dump_pre_field_offset_lookup_frontier"
+  elif [[ "$raw_dump_field_offset_missing" -gt 0 ]]; then
+    raw_dump_classification="select_finalize_raw_dump_field_offset_missing_frontier"
+  elif [[ "$raw_dump_field_offset_done" -eq 0 ]]; then
+    raw_dump_classification="select_finalize_raw_dump_field_offset_lookup_frontier"
+  elif [[ "$raw_dump_raw_bytesize_enter" -eq 0 ]]; then
+    raw_dump_classification="select_finalize_raw_dump_pre_raw_bytesize_frontier"
+  elif [[ "$raw_dump_raw_bytesize_done" -eq 0 ]]; then
+    raw_dump_classification="select_finalize_raw_dump_raw_bytesize_frontier"
+  elif [[ "$raw_dump_getter_bytesize_enter" -eq 0 ]]; then
+    raw_dump_classification="select_finalize_raw_dump_pre_getter_bytesize_frontier"
   elif [[ "$raw_dump_bytesize_done" -eq 0 ]]; then
-    raw_dump_classification="select_finalize_raw_dump_bytesize_frontier"
+    raw_dump_classification="select_finalize_raw_dump_getter_bytesize_frontier"
   elif [[ "$raw_dump_buffer_done" -eq 0 ]]; then
     raw_dump_classification="select_finalize_raw_dump_buffer_frontier"
   elif [[ "$raw_dump_write_enter" -eq 0 ]]; then
@@ -377,6 +468,22 @@ if [[ "${REQUIRE_RAW_DUMP:-0}" == "1" ]]; then
   echo "raw_dump_before_to_s_env_lookup_enter_rows=$raw_dump_env_enter"
   echo "raw_dump_before_to_s_env_lookup_done_rows=$raw_dump_env_done"
   echo "raw_dump_before_to_s_enter_rows=$raw_dump_enter"
+  echo "raw_dump_before_to_s_output_object_id_enter_rows=$raw_dump_output_object_id_enter"
+  echo "raw_dump_before_to_s_output_object_id_done_rows=$raw_dump_output_object_id_done"
+  echo "raw_dump_before_to_s_output_null_rows=$raw_dump_output_null"
+  echo "raw_dump_before_to_s_output_raw_header_enter_rows=$raw_dump_output_raw_header_enter"
+  echo "raw_dump_before_to_s_output_raw_header_done_rows=$raw_dump_output_raw_header_done"
+  echo "raw_dump_before_to_s_object_id_enter_rows=$raw_dump_object_id_enter"
+  echo "raw_dump_before_to_s_object_id_done_rows=$raw_dump_object_id_done"
+  echo "raw_dump_before_to_s_receiver_null_rows=$raw_dump_receiver_null"
+  echo "raw_dump_before_to_s_raw_header_enter_rows=$raw_dump_raw_header_enter"
+  echo "raw_dump_before_to_s_raw_header_done_rows=$raw_dump_raw_header_done"
+  echo "raw_dump_before_to_s_field_offset_lookup_enter_rows=$raw_dump_field_offset_enter"
+  echo "raw_dump_before_to_s_field_offset_lookup_done_rows=$raw_dump_field_offset_done"
+  echo "raw_dump_before_to_s_field_offset_missing_rows=$raw_dump_field_offset_missing"
+  echo "raw_dump_before_to_s_raw_bytesize_enter_rows=$raw_dump_raw_bytesize_enter"
+  echo "raw_dump_before_to_s_raw_bytesize_done_rows=$raw_dump_raw_bytesize_done"
+  echo "raw_dump_before_to_s_getter_bytesize_enter_rows=$raw_dump_getter_bytesize_enter"
   echo "raw_dump_before_to_s_bytesize_done_rows=$raw_dump_bytesize_done"
   echo "raw_dump_before_to_s_buffer_done_rows=$raw_dump_buffer_done"
   echo "raw_dump_before_to_s_write_enter_rows=$raw_dump_write_enter"
