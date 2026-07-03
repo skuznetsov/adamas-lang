@@ -8,6 +8,27 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: Slice 0k-DX splits the selected workers=1
+  `CopyPropagationPass#apply_build_dominators` lane by inner substep. New
+  debug-only cutoff: `ADAMAS_CP_DOM_THROUGH_STEP=<step>`; new executable
+  classifier:
+  `scripts/generated_stage_workers1_copyprop_dominator_classifier.sh`. Fresh
+  `STAGE1_COMPILER=tmp/adamas_copyprop_dom_stage1 REQUIRE_CLASSIFICATION=1
+  REQUIRE_DOMINATOR=1 TAIL_LINES=30` evidence first re-confirms 0k-DW
+  (`phase.classification=select_workers1_copyprop_apply_build_dominators_resource_lane`,
+  full `apply_build_dominators` peak `4329` MB, memory-kill), then selects
+  `classification=select_workers1_copyprop_dom_compute_dominance_info_resource_lane`.
+  Inner controls are clean for `build_def_maps` (`1175` MB) and `skip_check`
+  (`1174` MB), while `compute_dominance_info` memory-kills at `4364` MB
+  (`memory_kill_kb=4467872`). Therefore the next production resource receipt
+  must consume or refute `compute_dominance_info` itself: dominance construction
+  frequency, scope, representation, or replacement-demand policy. Do not patch
+  `build_def_maps`, the skip predicate, affected-block collection, rewrite
+  blocks, earlier MIR passes, worker policy, memory budgets, `NamedTuple` /
+  `Tuple`, ambient maps, or `BlockOwner` from this evidence. Do not add another
+  cascaded selector unless this compute-dominance result decays or directly
+  names a production fix-form.
+
 - 2026-07-02 UPDATE: Slice 0k-DW splits the selected workers=1
   `CopyPropagationPass` lane by phase-level OS-RSS cutoff. New debug-only
   cutoff: `ADAMAS_CP_THROUGH_PHASE=<phase>`; new executable classifier:

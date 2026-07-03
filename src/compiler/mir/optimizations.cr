@@ -920,6 +920,7 @@ module Adamas::MIR
     @assume_dominates : Bool = false
     @@cp_phase_timing_enabled : Bool = ENV["ADAMAS_CP_PHASE_TIMING"]? == "1"
     @@stop_after_cp_phase : String? = ENV["ADAMAS_CP_THROUGH_PHASE"]?
+    @@stop_after_dominator_step : String? = ENV["ADAMAS_CP_DOM_THROUGH_STEP"]?
     @@cp_phase_time_totals : ::Hash(String, Float64) = ::Hash(String, Float64).new(0.0)
     @@cp_phase_call_counts : ::Hash(String, Int32) = ::Hash(String, Int32).new(0)
     @@cp_phase_timing_lock : Mutex = Mutex.new
@@ -1187,14 +1188,28 @@ module Adamas::MIR
       def_index = {} of ValueId => Int32
       dominance_info : DominanceInfo? = nil
       unless @assume_dominates
+        dominator_step_stop = false
         timed_cp_phase("apply_build_dominators") do
           def_blocks, def_index = build_def_maps
-          if can_skip_dominators_for_local_replacements?(replacements, replacement_keys, affected_block_ids, def_blocks, def_index)
+          if stop_after_dominator_step?("build_def_maps")
+            dominator_step_stop = true
+            next
+          end
+
+          skip_dominators = can_skip_dominators_for_local_replacements?(replacements, replacement_keys, affected_block_ids, def_blocks, def_index)
+          if stop_after_dominator_step?("skip_check")
+            dominator_step_stop = true
+            next
+          end
+
+          if skip_dominators
             dominance_info = nil
           else
             dominance_info = compute_dominance_info
           end
+          dominator_step_stop = true if stop_after_dominator_step?("compute_dominance_info")
         end
+        return @propagated if dominator_step_stop
         return @propagated if stop_after_cp_phase?("apply_build_dominators")
       end
       block_sizes = timed_cp_phase("apply_build_block_sizes") do
@@ -1245,6 +1260,10 @@ module Adamas::MIR
 
     private def stop_after_cp_phase?(phase_name : String) : Bool
       @@stop_after_cp_phase == phase_name
+    end
+
+    private def stop_after_dominator_step?(step_name : String) : Bool
+      @@stop_after_dominator_step == step_name
     end
 
     private def can_skip_dominators_for_local_replacements?(

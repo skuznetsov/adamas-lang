@@ -8,6 +8,22 @@ boundaries
 Related: `PLAN_DEMAND_DRIVEN_REWRITE_RFC.md`, `docs/ast_to_hir_audit.md`,
 `docs/codegen_architecture.md`
 
+2026-07-02 post-0k-DX note: the workers=1 `CopyPropagationPass` resource lane
+is now narrowed to `compute_dominance_info`, not to definition-map construction,
+the local skip predicate, affected-block collection, rewrite blocks, or earlier
+MIR optimization passes. The new classifier
+`scripts/generated_stage_workers1_copyprop_dominator_classifier.sh` re-confirms
+0k-DW and selects
+`select_workers1_copyprop_dom_compute_dominance_info_resource_lane`
+(`build_def_maps=1175` MB, `skip_check=1174` MB,
+`compute_dominance_info=4364` MB memory-kill). This is still not green
+`s2b`/`s3b`. The next production movement must consume or refute dominance
+construction ownership directly: reduce full-dominator construction frequency,
+scope, or representation, or prove the replacement-demand policy is wrong. Do
+not add another generic classifier or use worker count, memory budget,
+`NamedTuple`/`Tuple`, ambient-map, `BlockOwner`, HIR/MIR lowering, or backend
+changes as shortcuts from this evidence.
+
 2026-07-02 post-0k-CV note: the active SDD has paused production source again
 after an unfinished local 0k-CU `BlockCallReturnContract` WIP was reviewed and
 removed. This plan must not treat the assigned-tail block-return slice as the

@@ -12,6 +12,29 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-DX-WORKERS1-COPYPROP-COMPUTE-DOMINANCE-RESOURCE-LANE|implemented 2026-07-02 {F:0.91 G:0.55 R:0.86}]:
+`scripts/generated_stage_workers1_copyprop_dominator_classifier.sh` splits the
+0k-DW workers=1 `CopyPropagationPass#apply_build_dominators` corridor by
+inner substep. It uses new debug-only `ADAMAS_CP_DOM_THROUGH_STEP=<step>` with
+`ADAMAS_CP_THROUGH_PHASE=apply_build_dominators`,
+`ADAMAS_MIR_OPT_THROUGH_PASS=copy_propagation`,
+`ADAMAS_STOP_AFTER_MIR_OPT`, and `ADAMAS_LLVM_WORKERS=1`. Fresh
+`STAGE1_COMPILER=tmp/adamas_copyprop_dom_stage1 REQUIRE_CLASSIFICATION=1
+REQUIRE_DOMINATOR=1 TAIL_LINES=30` evidence first re-confirms 0k-DW:
+`phase.classification=select_workers1_copyprop_apply_build_dominators_resource_lane`,
+full `apply_build_dominators` peak `4329` MB, memory-kill. Substep cutoffs are
+clean for `build_def_maps=1175` MB and `skip_check=1174` MB. The selected
+first bad substep is `compute_dominance_info=4364` MB with memory-kill
+(`memory_kill_kb=4467872`), yielding
+`classification=select_workers1_copyprop_dom_compute_dominance_info_resource_lane`.
+Scope: this is a subowner selector, not a resource fix. It selects dominance
+construction frequency/scope/representation or replacement-demand policy as the
+next production target, while refuting `build_def_maps` and the skip predicate
+as first resource owners for the current lane. Decay trigger: the dominator
+classifier stops selecting `compute_dominance_info`, 0k-DW precondition stops
+selecting `apply_build_dominators`, or CopyPropagation dominance construction
+is redesigned.
+
 [LM-ARCH-0K-DW-WORKERS1-COPYPROP-DOMINATORS-RESOURCE-LANE|implemented 2026-07-02 {F:0.90 G:0.57 R:0.86}]:
 `scripts/generated_stage_workers1_copyprop_phase_classifier.sh` splits the
 0k-DV workers=1 `CopyPropagationPass` lane by phase-level OS RSS cutoff. It
