@@ -8,6 +8,32 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-03 UPDATE: Slice 0k-ES adds the focused L22 selector for the
+  post-0k-ER runtime-helper declaration residual. New script:
+  `scripts/generated_stage_gc_realloc_helper_report.sh`. It preserves the
+  consumed L19/L20/L21 rows (`normal_string_header_size_global_shape=i32_12`,
+  `raw_dump_classification=raw_dump_before_to_s_buffer_valid`,
+  `normal_llc_type_mismatch=0`, raw Slice stack storage, and raw Slice zero
+  sentinel storage) and selects only when generated `normal_out.ll` calls
+  `@__adamas_gc_aware_realloc` while providing neither a declaration nor a
+  definition for that helper. Fresh evidence with
+  `tmp/adamas_l22_selector_stage1`: `bash -n
+  scripts/generated_stage_gc_realloc_helper_report.sh` exits 0, and
+  `STAGE1_COMPILER=tmp/adamas_l22_selector_stage1 REQUIRE_SELECTED=1
+  scripts/generated_stage_gc_realloc_helper_report.sh` exits 0 with
+  `classification=runtime_helper_gc_realloc_missing_declaration_frontier`,
+  `selection_status=eligible_gc_realloc_helper_missing_declaration`,
+  `gc_realloc_helper_call_count=2`, `gc_realloc_helper_define_count=0`,
+  `gc_realloc_helper_declare_count=0`, `gc_realloc_decl_count=1`,
+  `gc_base_decl_count=1`, and `gc_realloc_helper_error_matches_call=1`.
+  This is diagnostic-only and still not green `s2b`/`s3b`. The next production
+  slice must name and consume the runtime-helper demand/definition authority
+  edge: the producer that emits calls to `__adamas_gc_aware_realloc` must agree
+  with the epilogue/helper-definition producer without over-linking GC-free
+  programs. Do not patch backend undefined externs, tail declarations,
+  output ownership, scalar globals, function-return slots, Slice storage,
+  `NamedTuple` / `Tuple`, ambient maps, or `BlockOwner` from this evidence.
+
 - 2026-07-03 UPDATE: Slice 0k-ER consumes the L21 zero-struct/value-storage
   LLVM validity edge. The root was not a missing late `%Slice$LUInt8$R`
   typedef ledger: V2 value storage is consumed through byte-level GEPs and

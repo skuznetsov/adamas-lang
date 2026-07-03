@@ -12,6 +12,34 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-ES-GC-REALLOC-HELPER-GATE|diagnostic 2026-07-03 {F:0.86 G:0.47 R:0.84}]:
+The post-0k-ER residual now has an executable selector instead of only the
+generic `post_to_s_frontier` row. New script:
+`scripts/generated_stage_gc_realloc_helper_report.sh`. It requires the
+generated-stage classifier to preserve the consumed L19/L20/L21 rows:
+`normal_string_header_size_global_shape=i32_12`,
+`raw_dump_classification=raw_dump_before_to_s_buffer_valid`,
+`normal_llc_type_mismatch=0`, raw Slice stack storage, and raw Slice zero
+sentinel storage. It then selects only when generated `normal_out.ll` calls
+`@__adamas_gc_aware_realloc`, the helper has no declaration or definition in
+that IR, and the `llc` error line matches one of those helper calls. Evidence
+with `tmp/adamas_l22_selector_stage1`: `bash -n
+scripts/generated_stage_gc_realloc_helper_report.sh` exits 0, and
+`STAGE1_COMPILER=tmp/adamas_l22_selector_stage1 REQUIRE_SELECTED=1
+scripts/generated_stage_gc_realloc_helper_report.sh` exits 0 with
+`classification=runtime_helper_gc_realloc_missing_declaration_frontier`,
+`selection_status=eligible_gc_realloc_helper_missing_declaration`,
+`gc_realloc_helper_call_count=2`, `gc_realloc_helper_define_count=0`,
+`gc_realloc_helper_declare_count=0`, `gc_realloc_decl_count=1`,
+`gc_base_decl_count=1`, and `gc_realloc_helper_error_matches_call=1`. Scope:
+diagnostic selector only, not green `s2b`/`s3b` and not a root fix. Residual
+boundary: runtime-helper call demand and runtime-helper definition emission are
+owned by separate ad hoc checks; the next production slice must make those
+producers agree without over-linking GC-free programs. Decay trigger: the
+selector no longer reports `runtime_helper_gc_realloc_missing_declaration_frontier`,
+L19/L20/L21 consumed rows regress, or fresh evidence shows the helper error is
+a downstream proxy.
+
 [LM-ARCH-0K-ER-RAW-VALUE-STORAGE-CONSUMED|implemented 2026-07-03 {F:0.88 G:0.51 R:0.86}]:
 The L21 zero-struct/value-storage LLVM validity edge is consumed. The root was
 not a missing late typedef ledger: V2 value storage is consumed through

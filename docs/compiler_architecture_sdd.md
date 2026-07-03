@@ -750,6 +750,25 @@ declaration availability before touching helper emission, tail declarations,
 backend undefined externs, output ownership, scalar globals, function-return
 slots, `NamedTuple` / `Tuple`, ambient maps, or `BlockOwner`.
 
+2026-07-03 board refinement after Slice 0k-ES: the L22 runtime-helper
+declaration residual now has an executable selector:
+`scripts/generated_stage_gc_realloc_helper_report.sh`. It preserves the
+consumed L19/L20/L21 rows and selects only when generated `normal_out.ll` calls
+`@__adamas_gc_aware_realloc` while the helper has no declaration or definition,
+with the `llc` error line matching one helper call. Fresh evidence with
+`tmp/adamas_l22_selector_stage1` reports
+`classification=runtime_helper_gc_realloc_missing_declaration_frontier`,
+`gc_realloc_helper_call_count=2`, `gc_realloc_helper_define_count=0`, and
+`gc_realloc_helper_declare_count=0`. The next production receipt must consume a
+runtime-helper demand/definition authority edge: helper-call producers such as
+`GC_realloc` redirects and bulk extern lowering must make the need for
+`__adamas_gc_aware_realloc` available to the helper-definition epilogue, while
+the existing GC-free negative guard still rejects over-linking
+`GC_base`/`GC_realloc`. Backend undefined-extern rescue, unconditional helper
+definition emission, tail declaration patches, output ownership, scalar
+globals, function-return slots, Slice storage, `NamedTuple` / `Tuple`, ambient
+maps, and `BlockOwner` remain rejected shortcuts.
+
 | Lane | Current decision | Required next receipt | Rejected shortcut |
 | --- | --- | --- | --- |
 | `bootstrap-emergency-with-ledger` / B4-O1 | Consumed by 0k-CU. The HIR `BlockCallReturnContract` implementation moves the generated-stage gate past the old O1 `affected_block_ids` / `Set(UInt32)#includes?` frontier: `REQUIRE_CURRENT_CU_CONTRACT=1 scripts/hir_block_return_shape_census.sh` reports `classification=current_0k_cu_block_call_return_contract_applied`, and `STAGE1_COMPILER=/tmp/adamas_0kcu_stage1 REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh` exits at the expected non-current boundary with `b4_classification=llvm_entry_failure_after_lower_main` and `workers1_exit139=0`. The new residual is post-`lower_main` RSS pressure in both worker modes, with the default worker-mode rand fallback still present. | Return to the board before any new production source slice. The next receipt must reselect an owner spine from fresh generated-stage evidence; if it targets the new residual, it must name the old authority edge behind post-`lower_main` memory/resource growth rather than treating higher memory limits, worker count, or the rand fallback as acceptance evidence. | Continuing the 0k-CU breakglass lane by inertia; starting from the new RSS-kill stack; raising memory as a fix; forcing `ADAMAS_LLVM_WORKERS=1`; worker/rand/output/resource patches without a new receipt; CopyPropagation, Set/Hash, backend block-return, `NamedTuple`/`Tuple`, ambient-map, or `BlockOwner` changes. |
