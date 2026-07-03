@@ -625,6 +625,30 @@ so further movement on this memory surface must be a board pivot, a startup
 baseline problem card, or deletion/retirement of stale report surfaces through a
 protecting falsifier.
 
+Architecture acceleration checkpoint after 0k-DZ:
+
+- process finding: the SDD is currently useful as a gate, but it becomes
+  bureaucracy when a docs/report slice does not immediately retire/refute an
+  older surface or prepare a production `SliceReceipt`;
+- next production direction: re-enter through the `PhaseAuthority` /
+  `GeneratedStageExecution` L15 residual and write a focused receipt for the
+  default late LLVM/function-emission resource edge;
+- required receipt shape: name the old implicit authority edge, the owner fact
+  or service that will own per-function emission/resource outcome, the producer
+  and consumer set, the self-build guard from L16, the consumed workers=1
+  CopyPropagation controls, and the residual generated-stage gate;
+- allowed architecture hardening in parallel: run Phase 1/1b censuses as
+  guards, or pick one `CodePathStatus` cleanup cluster only after runtime
+  evidence plus a protecting falsifier marks it eligible. Static grep output is
+  not delete evidence;
+- mini-Quadrum requirement for every next slice: state the claim, hardest
+  falsifier, owner edge, and DoD before edits. If any field is empty, the work
+  is a probe or SDD correction, not production architecture progress;
+- rejected acceleration theater: another report that only narrows a crash
+  offset/RSS row, broad physical file splitting before typed contracts, cleanup
+  by grep absence, or a single-mode memory movement presented as green
+  `s2b`/`s3b`.
+
 Before any non-doc production slice, write the slice receipt in this SDD or a
 linked plan:
 

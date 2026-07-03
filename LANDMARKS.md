@@ -12,6 +12,20 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-EA-ACCELERATION-CHECKPOINT|design-sealed 2026-07-02 {F:0.78 G:0.62 R:0.80}]:
+The current architecture bottleneck is not missing SDD text; it is report churn
+without an immediately consumable production receipt. The next code movement
+must either enter the `PhaseAuthority` / `GeneratedStageExecution` L15 default
+late LLVM/function-emission residual through a focused `SliceReceipt`, or
+retire/refute an older report surface with a protecting falsifier. Phase 1/1b
+static censuses remain guard/planning inputs only: they do not mark paths dead,
+delete-ready, or root-owned. The required pre-edit mini-Quadrum for every next
+slice is: claim, hardest falsifier, owner edge, and DoD. Scope: this is a
+process/architecture acceleration seal, not a compiler behavior fix and not
+green `s2b`/`s3b`. Decay trigger: a later current-board update selects a
+different active lane, or a production slice proves a narrower receipt can move
+the generated-stage gate without preserving L15/L16 controls.
+
 [LM-ARCH-0K-DZ-SELF-BUILD-GUARD-REESTABLISHES-L15|implemented 2026-07-02 {F:0.88 G:0.54 R:0.82}]:
 A hostile revalidation of post-0k-DY `L15` found a one-shot strict
 mode-selector generated-s2 build failure, but controls show it is not enough to

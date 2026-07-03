@@ -23,6 +23,15 @@ default late LLVM/function-emission; the added self-build guard exists to stop
 nested generated-s2 build variance from being misread as produced-s2 lane
 evidence.
 
+2026-07-02 architecture acceleration note: the near-term risk is not missing
+planning text; it is report churn without a production `SliceReceipt`. The next
+source movement should either consume the L15 default late LLVM/function-emission
+residual through a focused `PhaseAuthority` / `GeneratedStageExecution` owner
+receipt, or retire/refute an older report surface with a protecting falsifier.
+Phase 1/1b censuses remain guard inputs, not delete evidence. The backend writer
+and physical split plans below remain reference-only until the current board
+admits them through typed contracts.
+
 2026-07-02 post-0k-DY note: the selected workers=1
 `CopyPropagationPass#compute_dominance_info` lane is consumed by a production
 resource fix. CopyPropagation now answers cross-block dominance with an exact

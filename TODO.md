@@ -8,6 +8,20 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: architecture acceleration checkpoint after 0k-DZ. The
+  current docs/control risk is not lack of documentation; it is report churn
+  that does not produce the next production receipt. The next code movement
+  must either (a) write and consume a focused `PhaseAuthority` /
+  `GeneratedStageExecution` receipt for the L15 default late
+  LLVM/function-emission resource edge, preserving the L16 self-build guard and
+  consumed workers=1 CopyPropagation controls, or (b) explicitly retire/refute
+  an older report surface with a protecting falsifier. Phase 1/1b static
+  censuses remain guards and planning inputs, not delete evidence. Do not start
+  broad file splitting, `NamedTuple`/`Tuple`, ambient-map, `BlockOwner`,
+  backend-rescue, memory-budget, worker-policy, or cleanup-by-grep work from
+  this checkpoint. Each next slice must pass the mini-Quadrum preflight:
+  claim, hardest falsifier, owner edge, and DoD before edits.
+
 - 2026-07-02 UPDATE: fresh post-0k-DY hostile revalidation preserves `L15`
   but adds a self-build guard for generated-s2 build variance. A first strict
   mode-selector run with a freshly built `tmp/adamas_l15_stage1` failed before
