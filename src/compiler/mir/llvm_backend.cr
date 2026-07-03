@@ -3708,11 +3708,30 @@ module Adamas::MIR
       bootstrap_trace_puts "[LLVM_TAIL_GEN] phase=finalize_enter out=#{@output.pos}" if tail_stats
       if generated_in_memory
         log_generated_stage_llvm_generate_phase("finalize_to_s_enter", output_mode)
+        log_generated_stage_memory_phase(
+          "llvm.finalize_to_s_enter",
+          "llvm.finalization",
+          "output_mode=#{output_mode}"
+        )
+        if bootstrap_env_enabled?("ADAMAS_STOP_BEFORE_LLVM_FINALIZE_TO_S")
+          log_generated_stage_llvm_generate_phase("finalize_to_s_stop_before", output_mode)
+          log_generated_stage_memory_phase(
+            "llvm.finalize_to_s_stop_before",
+            "llvm.finalization",
+            "output_mode=#{output_mode}"
+          )
+          LibC._exit(0)
+        end
         generated = @output.as(IO::Memory).to_s
         log_generated_stage_llvm_generate_phase(
           "finalize_to_s_done",
           output_mode,
           "bytes=#{generated.bytesize}"
+        )
+        log_generated_stage_memory_phase(
+          "llvm.finalize_to_s_done",
+          "llvm.finalization",
+          "output_mode=#{output_mode} bytes=#{generated.bytesize}"
         )
         generated
       else

@@ -606,6 +606,16 @@ type-name, string-buffer, worker-policy, `NamedTuple`/`Tuple`, ambient-map, or
 `BlockOwner` fix. The stale #87 wording in the historical row below remains as
 0k-ED evidence only until the board table is compressed.
 
+2026-07-03 board refinement after Slice 0k-EF: the L17 classifier selects
+`IO::Memory#to_s` stringification as the current boundary. A normal produced-s2
+run reaches `finalize_to_s_enter` and exits 139 before
+`finalize_to_s_done`; the stop-before gate exits 0 at
+`finalize_to_s_stop_before`. The next production receipt must name the
+`LLVMFinalOutputMaterialization` owner edge for in-memory LLVM output
+materialization. It must not patch tail, metadata, DWARF, type-name tables,
+worker policy, `NamedTuple`/`Tuple`, ambient maps, or `BlockOwner` from this
+evidence.
+
 | Lane | Current decision | Required next receipt | Rejected shortcut |
 | --- | --- | --- | --- |
 | `bootstrap-emergency-with-ledger` / B4-O1 | Consumed by 0k-CU. The HIR `BlockCallReturnContract` implementation moves the generated-stage gate past the old O1 `affected_block_ids` / `Set(UInt32)#includes?` frontier: `REQUIRE_CURRENT_CU_CONTRACT=1 scripts/hir_block_return_shape_census.sh` reports `classification=current_0k_cu_block_call_return_contract_applied`, and `STAGE1_COMPILER=/tmp/adamas_0kcu_stage1 REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh` exits at the expected non-current boundary with `b4_classification=llvm_entry_failure_after_lower_main` and `workers1_exit139=0`. The new residual is post-`lower_main` RSS pressure in both worker modes, with the default worker-mode rand fallback still present. | Return to the board before any new production source slice. The next receipt must reselect an owner spine from fresh generated-stage evidence; if it targets the new residual, it must name the old authority edge behind post-`lower_main` memory/resource growth rather than treating higher memory limits, worker count, or the rand fallback as acceptance evidence. | Continuing the 0k-CU breakglass lane by inertia; starting from the new RSS-kill stack; raising memory as a fix; forcing `ADAMAS_LLVM_WORKERS=1`; worker/rand/output/resource patches without a new receipt; CopyPropagation, Set/Hash, backend block-return, `NamedTuple`/`Tuple`, ambient-map, or `BlockOwner` changes. |
@@ -1019,6 +1029,78 @@ Status after implementation:
 Residual boundary: this is not green `s2b`/`s3b`. The active next slice is an
 `LLVMFinalization` classifier for `finalize_to_s_enter`, not another #87/#92
 function-emission probe.
+
+#### Slice 0k-EF receipt: finalize-to-s classifier
+
+```text
+SliceReceipt {
+  board_lane: PhaseAuthority / GeneratedStageExecution
+  tranche: contract-owner-migration
+  old_authority_edge:
+    Slice 0k-EE moved the generated-stage gate past late function emission and
+    into `finalize_to_s_enter`, but that marker alone could still conflate
+    prior finalization state, metadata/DWARF/type-name tail work, and the
+    actual final in-memory string materialization.
+  owner_fact_or_service:
+    `LLVMFinalization` stop gate and classifier:
+    `ADAMAS_STOP_BEFORE_LLVM_FINALIZE_TO_S=1` logs
+    `finalize_to_s_stop_before` and exits before `IO::Memory#to_s`.
+  producers:
+    - `LLVMIRGenerator#generate` finalization path;
+    - `IO::Memory` output buffer owned by the backend when no external sink is
+      supplied;
+    - default-off `llvm.generate_phase` and `memory.phase` rows.
+  consumers:
+    - `scripts/generated_stage_finalize_to_s_classifier.sh`;
+    - the next `LLVMFinalOutputMaterialization` source receipt;
+    - future CLI/output writer changes that would bypass or replace
+      `IO::Memory#to_s`.
+  measured_red_baseline:
+    Normal produced `s2` full-prelude `puts 42` reaches `finalize_to_s_enter`
+    and exits 139, with `finalize_to_s_done_rows=0`.
+  focused_DoD:
+    The classifier must show normal exit 139 after `finalize_to_s_enter`, a
+    clean stop-before exit 0 at `finalize_to_s_stop_before`, and both probes
+    must reach function emission, tail, metadata, type-name, and DWARF done
+    markers.
+  architecture_DoD:
+    The stop gate must be default-off and must not change normal output
+    semantics, worker policy, memory budget, tail, metadata, DWARF, type-name,
+    materialization, `NamedTuple`/`Tuple`, ambient maps, `BlockOwner`,
+    CopyPropagation, or HIR/MIR lowering.
+  generated_stage_gate:
+    `REQUIRE_CLASSIFICATION=1 scripts/generated_stage_finalize_to_s_classifier.sh`
+    reports `classification=select_finalize_to_s_stringification_frontier`.
+  negative_controls:
+    If normal reaches `finalize_to_s_done`, this classifier decays to a
+    post-to_s frontier. If the stop-before probe crashes, the boundary is prior
+    finalization state, not `IO::Memory#to_s`.
+  rejected_shortcuts:
+    Tail/output-file/string-buffer rewrites without a materialization owner
+    receipt; external-sink resurrection from the old refuted preflight; memory
+    budget or worker policy changes; `NamedTuple`/`Tuple`, ambient-map, or
+    `BlockOwner` changes.
+  residual_boundary:
+    The active next source movement is a `LLVMFinalOutputMaterialization`
+    design/behavior slice for in-memory LLVM output stringification. This
+    classifier is not a fix and not green `s2b`/`s3b`.
+}
+```
+
+Status after implementation:
+
+- `ADAMAS_STOP_BEFORE_LLVM_FINALIZE_TO_S=1` logs
+  `finalize_to_s_stop_before` and exits before `IO::Memory#to_s`;
+- `scripts/generated_stage_finalize_to_s_classifier.sh` reports
+  `classification=select_finalize_to_s_stringification_frontier`;
+- normal produced-s2 run exits 139 after `finalize_to_s_enter` with
+  `finalize_to_s_done_rows=0`;
+- stop-before run exits 0 at `finalize_to_s_stop_before`;
+- both probes emit 150/150 sequential functions and reach `tail_done`,
+  `metadata_done`, `type_name_table_done`, and `dwarf_done`.
+
+Residual boundary: next source work must target `LLVMFinalOutputMaterialization`
+instead of broad output/tail fixes.
 
 #### Slice 0k-DO receipt: default-mode function-emission sink boundary
 

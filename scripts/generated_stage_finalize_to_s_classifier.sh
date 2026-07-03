@@ -1,0 +1,296 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+usage() {
+  cat <<'USAGE'
+usage: scripts/generated_stage_finalize_to_s_classifier.sh [source.cr]
+
+Build/use a generated s2 compiler and classify the current post-function-
+emission finalization frontier. The focused question is whether the produced
+compiler reaches LLVM finalization and crashes inside the in-memory
+IO::Memory#to_s step, or whether the boundary has moved before/after that step.
+
+Environment:
+  KEEP_TMP=1
+  STAGE1_COMPILER
+  GENERATED_S2
+  STAGE1_MODE=debug
+  STAGE2_BUILD_TIMEOUT=600
+  STAGE2_BUILD_MEM_MB=4096
+  SMOKE_TIMEOUT=180
+  SMOKE_MEM_MB=4096
+  REQUIRE_CLASSIFICATION=1
+
+Classifications:
+  select_finalize_to_s_stringification_frontier
+  post_to_s_frontier
+  finalization_classifier_drift
+  finalization_classifier_build_failed
+
+This is a discriminator only. A stop-before-to_s clean result is not a fix and
+does not license output/tail/string-buffer changes without the next owner-edge
+receipt.
+USAGE
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+if [[ ! -x /usr/bin/time ]]; then
+  echo "classification=finalization_classifier_missing_time_l"
+  echo "reason=/usr/bin/time_missing"
+  exit 9
+fi
+
+mkdir -p "$ROOT_DIR/tmp"
+TMP_DIR="$(mktemp -d "$ROOT_DIR/tmp/generated-stage-finalize-to-s.XXXXXX")"
+
+cleanup() {
+  if [[ "${KEEP_TMP:-0}" == "1" ]]; then
+    echo "kept_tmp=$TMP_DIR"
+  else
+    rm -rf "$TMP_DIR"
+  fi
+}
+trap cleanup EXIT
+
+SOURCE="${1:-$TMP_DIR/full_prelude_puts42.cr}"
+if [[ $# -eq 0 ]]; then
+  cat >"$SOURCE" <<'CR'
+puts 42
+CR
+fi
+
+STAGE1_MODE="${STAGE1_MODE:-debug}"
+STAGE2_BUILD_TIMEOUT="${STAGE2_BUILD_TIMEOUT:-600}"
+STAGE2_BUILD_MEM_MB="${STAGE2_BUILD_MEM_MB:-4096}"
+SMOKE_TIMEOUT="${SMOKE_TIMEOUT:-180}"
+SMOKE_MEM_MB="${SMOKE_MEM_MB:-4096}"
+
+STAGE1="${STAGE1_COMPILER:-$TMP_DIR/adamas_stage1}"
+S2="${GENERATED_S2:-$TMP_DIR/adamas_s2}"
+STAGE1_LOG="$TMP_DIR/stage1_build.log"
+S2_BUILD_LOG="$TMP_DIR/s2_build.log"
+LEDGER="$TMP_DIR/runtime_ledger.tsv"
+: >"$LEDGER"
+
+echo "# Generated Stage Finalize-to-S Classifier"
+echo "repo=$ROOT_DIR"
+echo "source=$SOURCE"
+echo "stage1=$STAGE1"
+echo "generated_s2=$S2"
+echo "stage2_build_timeout=$STAGE2_BUILD_TIMEOUT"
+echo "stage2_build_mem_mb=$STAGE2_BUILD_MEM_MB"
+echo "smoke_timeout=$SMOKE_TIMEOUT"
+echo "smoke_mem_mb=$SMOKE_MEM_MB"
+echo "require_classification=${REQUIRE_CLASSIFICATION:-0}"
+
+if [[ -z "${STAGE1_COMPILER:-}" ]]; then
+  set +e
+  "$ROOT_DIR/scripts/build_stage1_original_cached.sh" "$STAGE1_MODE" "$STAGE1" --error-trace >"$STAGE1_LOG" 2>&1
+  stage1_rc=$?
+  set -e
+  echo "stage1_build_rc=$stage1_rc"
+  if [[ $stage1_rc -ne 0 || ! -x "$STAGE1" ]]; then
+    echo "classification=finalization_classifier_build_failed"
+    echo "stage1_build_tail:"
+    tail -100 "$STAGE1_LOG" || true
+    exit 9
+  fi
+else
+  echo "stage1_build_rc=skipped"
+  if [[ ! -x "$STAGE1" ]]; then
+    echo "provided_stage1_not_executable=$STAGE1"
+    echo "classification=finalization_classifier_build_failed"
+    exit 9
+  fi
+fi
+
+if [[ -z "${GENERATED_S2:-}" ]]; then
+  set +e
+  "$ROOT_DIR/scripts/run_safe.sh" "$STAGE1" "$STAGE2_BUILD_TIMEOUT" "$STAGE2_BUILD_MEM_MB" \
+    "$ROOT_DIR/src/adamas.cr" -o "$S2" >"$S2_BUILD_LOG" 2>&1
+  s2_build_rc=$?
+  set -e
+  echo "s2_build_rc=$s2_build_rc"
+  if [[ $s2_build_rc -ne 0 || ! -x "$S2" ]]; then
+    echo "classification=finalization_classifier_build_failed"
+    echo "s2_build_tail:"
+    tail -120 "$S2_BUILD_LOG" || true
+    exit 9
+  fi
+else
+  echo "s2_build_rc=skipped"
+  if [[ ! -x "$S2" ]]; then
+    echo "provided_generated_s2_not_executable=$S2"
+    echo "classification=finalization_classifier_build_failed"
+    exit 9
+  fi
+fi
+
+parse_time_l_peak_rss_bytes() {
+  local log="$1"
+  awk '
+    /maximum resident set size/ {
+      print $1
+      found = 1
+    }
+    END {
+      if (!found) exit 1
+    }
+  ' "$log" 2>/dev/null | tail -1 || true
+}
+
+run_safe_exit_code() {
+  local log="$1"
+  awk '/^\[EXIT: / {
+    gsub("\\[EXIT: ", "", $2)
+    gsub("\\]", "", $2)
+    print $2
+  }' "$log" 2>/dev/null | tail -1 || true
+}
+
+ledger_count() {
+  local tx="$1"
+  local mode="$2"
+  local row="$3"
+  local pattern="${4:-}"
+  if [[ -n "$pattern" ]]; then
+    awk -F'\t' -v tx="$tx" -v mode="$mode" -v row="$row" -v pat="$pattern" '
+      $1 == "GSETX" && $2 == tx && $3 == mode && $4 == row && index($5, pat) > 0 { count++ }
+      END { print count + 0 }
+    ' "$LEDGER" 2>/dev/null || echo 0
+  else
+    awk -F'\t' -v tx="$tx" -v mode="$mode" -v row="$row" '
+      $1 == "GSETX" && $2 == tx && $3 == mode && $4 == row { count++ }
+      END { print count + 0 }
+    ' "$LEDGER" 2>/dev/null || echo 0
+  fi
+}
+
+last_phase() {
+  local tx="$1"
+  local mode="$2"
+  awk -F'\t' -v tx="$tx" -v mode="$mode" '
+    $1 == "GSETX" && $2 == tx && $3 == mode && $4 == "llvm.generate_phase" {
+      split($5, fields, " ")
+      phase = ""
+      for (i in fields) {
+        if (index(fields[i], "phase=") == 1) {
+          phase = substr(fields[i], 7)
+        }
+      }
+      if (phase != "") last = phase
+    }
+    END { print last }
+  ' "$LEDGER" 2>/dev/null || true
+}
+
+run_probe() {
+  local label="$1"
+  local extra_env="$2"
+  local out_bin="$TMP_DIR/${label}_out"
+  local log="$TMP_DIR/${label}.log"
+  local tx="gsetx_${label}"
+
+  set +e
+  if [[ -n "$extra_env" ]]; then
+    env "$extra_env=1" \
+      ADAMAS_GSETX_FUNCTION_EMISSION_OUTCOMES=1 \
+      ADAMAS_GSETX_MEMORY_PHASES=1 \
+      ADAMAS_GSETX_ID="$tx" \
+      ADAMAS_GSETX_LEDGER="$LEDGER" \
+      ADAMAS_GSETX_RUN_MODE="$label" \
+      /usr/bin/time -l "$ROOT_DIR/scripts/run_safe.sh" "$S2" "$SMOKE_TIMEOUT" "$SMOKE_MEM_MB" \
+        "$SOURCE" -o "$out_bin" >"$log" 2>&1
+  else
+    env ADAMAS_GSETX_FUNCTION_EMISSION_OUTCOMES=1 \
+      ADAMAS_GSETX_MEMORY_PHASES=1 \
+      ADAMAS_GSETX_ID="$tx" \
+      ADAMAS_GSETX_LEDGER="$LEDGER" \
+      ADAMAS_GSETX_RUN_MODE="$label" \
+      /usr/bin/time -l "$ROOT_DIR/scripts/run_safe.sh" "$S2" "$SMOKE_TIMEOUT" "$SMOKE_MEM_MB" \
+        "$SOURCE" -o "$out_bin" >"$log" 2>&1
+  fi
+  local rc=$?
+  set -e
+
+  local peak_bytes
+  peak_bytes="$(parse_time_l_peak_rss_bytes "$log")"
+  local peak_mb=0
+  if [[ -n "$peak_bytes" ]]; then
+    peak_mb=$(( (peak_bytes + 1048575) / 1048576 ))
+  fi
+
+  local exit_code
+  exit_code="$(run_safe_exit_code "$log")"
+  local emitted_count
+  emitted_count="$(ledger_count "$tx" "$label" "llvm.function_emission_outcome" "status=emitted")"
+  local started_count
+  started_count="$(ledger_count "$tx" "$label" "llvm.function_emission_outcome" "status=started")"
+
+  echo "${label}_rc=$rc"
+  echo "${label}_run_safe_exit=${exit_code:-missing}"
+  echo "${label}_peak_rss_bytes=${peak_bytes:-0}"
+  echo "${label}_peak_rss_mb=$peak_mb"
+  echo "${label}_started_outcomes=$started_count"
+  echo "${label}_emitted_outcomes=$emitted_count"
+  echo "${label}_sequential_done_rows=$(ledger_count "$tx" "$label" "llvm.function_emission_phase" "phase=sequential_done")"
+  echo "${label}_function_emission_done_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=function_emission_done")"
+  echo "${label}_tail_done_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=tail_done")"
+  echo "${label}_metadata_done_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=metadata_done")"
+  echo "${label}_type_name_table_done_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=type_name_table_done")"
+  echo "${label}_dwarf_done_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=dwarf_done")"
+  echo "${label}_finalize_enter_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_enter")"
+  echo "${label}_finalize_to_s_enter_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_to_s_enter")"
+  echo "${label}_finalize_to_s_stop_before_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_to_s_stop_before")"
+  echo "${label}_finalize_to_s_done_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=finalize_to_s_done")"
+  echo "${label}_last_phase=$(last_phase "$tx" "$label")"
+  echo "${label}_log=$log"
+}
+
+run_probe "normal" ""
+run_probe "stop_before_to_s" "ADAMAS_STOP_BEFORE_LLVM_FINALIZE_TO_S"
+
+# Read classification metrics directly from the ledger and run_safe logs.
+normal_exit="$(run_safe_exit_code "$TMP_DIR/normal.log")"
+stop_exit="$(run_safe_exit_code "$TMP_DIR/stop_before_to_s.log")"
+normal_last="$(last_phase gsetx_normal normal)"
+stop_last="$(last_phase gsetx_stop_before_to_s stop_before_to_s)"
+normal_enter="$(ledger_count gsetx_normal normal llvm.generate_phase phase=finalize_to_s_enter)"
+normal_done="$(ledger_count gsetx_normal normal llvm.generate_phase phase=finalize_to_s_done)"
+normal_seq_done="$(ledger_count gsetx_normal normal llvm.function_emission_phase phase=sequential_done)"
+normal_func_done="$(ledger_count gsetx_normal normal llvm.generate_phase phase=function_emission_done)"
+stop_marker="$(ledger_count gsetx_stop_before_to_s stop_before_to_s llvm.generate_phase phase=finalize_to_s_stop_before)"
+stop_done="$(ledger_count gsetx_stop_before_to_s stop_before_to_s llvm.generate_phase phase=finalize_to_s_done)"
+
+classification="finalization_classifier_drift"
+if [[ "${normal_exit:-}" == "139" &&
+      "$normal_seq_done" -gt 0 &&
+      "$normal_func_done" -gt 0 &&
+      "$normal_enter" -gt 0 &&
+      "$normal_done" -eq 0 &&
+      "${stop_exit:-}" == "0" &&
+      "$stop_marker" -gt 0 &&
+      "$stop_done" -eq 0 ]]; then
+  classification="select_finalize_to_s_stringification_frontier"
+elif [[ "$normal_done" -gt 0 ]]; then
+  classification="post_to_s_frontier"
+fi
+
+echo "normal_last_phase=${normal_last:-missing}"
+echo "stop_before_to_s_last_phase=${stop_last:-missing}"
+echo "classification=$classification"
+echo "ledger=$LEDGER"
+
+if [[ "${REQUIRE_CLASSIFICATION:-0}" == "1" && "$classification" != "select_finalize_to_s_stringification_frontier" ]]; then
+  echo "normal_log_tail:"
+  tail -80 "$TMP_DIR/normal.log" || true
+  echo "stop_before_to_s_log_tail:"
+  tail -80 "$TMP_DIR/stop_before_to_s.log" || true
+  exit 9
+fi

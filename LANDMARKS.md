@@ -12,6 +12,23 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-EF-FINALIZE-TO-S-STRINGIFICATION-FRONTIER|implemented 2026-07-03 {F:0.90 G:0.56 R:0.86}]:
+The post-function-emission L17 boundary is now classified as in-memory LLVM
+output stringification. `ADAMAS_STOP_BEFORE_LLVM_FINALIZE_TO_S=1` is a
+default-off generated-stage stop gate in `LLVMIRGenerator#generate`; it logs
+`llvm.generate_phase=finalize_to_s_stop_before`, logs an `llvm.finalization`
+memory phase, and exits before `IO::Memory#to_s`. The focused classifier
+`scripts/generated_stage_finalize_to_s_classifier.sh` builds/uses a generated
+`s2` and runs normal plus stop-before probes. Fresh evidence reports
+`classification=select_finalize_to_s_stringification_frontier`: normal exits
+139 after `finalize_to_s_enter`, with `finalize_to_s_done_rows=0`;
+stop-before exits 0 with `finalize_to_s_stop_before_rows=1`. Both runs emit
+150/150 sequential functions and reach `tail_done`, `metadata_done`,
+`type_name_table_done`, and `dwarf_done`. Scope: discriminator only, not green
+`s2b`/`s3b`. Decay trigger: normal reaches `finalize_to_s_done`, stop-before
+crashes, or the next evidence shows the crash is caused by a prior emitted IR
+corruption rather than the final `IO::Memory#to_s` materialization edge.
+
 [LM-ARCH-0K-EE-PHI-EMISSION-NEXT-SHAPE-CONSUMES-L15|implemented 2026-07-03 {F:0.84 G:0.58 R:0.78}]:
 The late LLVM/function-emission resource cliff selected by L15 is consumed by a
 source-equivalent `emit_phi` control-flow rewrite. The bool and int

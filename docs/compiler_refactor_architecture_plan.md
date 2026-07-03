@@ -80,6 +80,21 @@ post-function-emission finalization boundary: classify `finalize_to_s_enter`
 before tail, output-file, metadata, DWARF, type-name, string-buffer, or
 worker-policy fixes.
 
+2026-07-03 post-0k-EF note: the finalization boundary is now classified. The
+default-off `ADAMAS_STOP_BEFORE_LLVM_FINALIZE_TO_S=1` gate exits immediately
+before `IO::Memory#to_s`, and
+`scripts/generated_stage_finalize_to_s_classifier.sh` reports
+`classification=select_finalize_to_s_stringification_frontier`. The normal
+produced-s2 full-prelude `puts 42` run exits 139 after
+`finalize_to_s_enter`; the stop-before run exits 0 at
+`finalize_to_s_stop_before`. Both runs reach `tail_done`, `metadata_done`,
+`type_name_table_done`, `dwarf_done`, and emit 150/150 sequential functions.
+The next source movement should target the `LLVMFinalOutputMaterialization`
+owner edge: how in-memory LLVM output is materialized without relying on the
+self-hosted `IO::Memory#to_s` path that crashes. Tail, metadata, DWARF,
+type-name, worker policy, and broad output rewrites remain rejected until a
+receipt names that producer-to-consumer edge and a focused DoD.
+
 2026-07-02 post-0k-DY note: the selected workers=1
 `CopyPropagationPass#compute_dominance_info` lane is consumed by a production
 resource fix. CopyPropagation now answers cross-block dominance with an exact

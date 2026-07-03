@@ -8,6 +8,23 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-03 UPDATE: Slice 0k-EF classifies the L17 finalization boundary with
+  a default-off stop gate and a focused script:
+  `scripts/generated_stage_finalize_to_s_classifier.sh`. The new env gate
+  `ADAMAS_STOP_BEFORE_LLVM_FINALIZE_TO_S=1` logs
+  `llvm.generate_phase=finalize_to_s_stop_before` and exits before
+  `IO::Memory#to_s`. Fresh classifier evidence reports
+  `classification=select_finalize_to_s_stringification_frontier`: the normal
+  produced-s2 full-prelude `puts 42` run exits 139 after
+  `finalize_to_s_enter` with `finalize_to_s_done_rows=0`; the stop-before run
+  exits 0 with `finalize_to_s_stop_before_rows=1`. Both runs emit 150/150
+  sequential functions and reach `tail_done`, `metadata_done`,
+  `type_name_table_done`, and `dwarf_done`. This is still not green
+  `s2b`/`s3b`; the next production movement must target the
+  `LLVMFinalOutputMaterialization` / in-memory stringification owner edge, not
+  tail, metadata, DWARF, type-name, worker policy, `NamedTuple`/`Tuple`,
+  ambient maps, or `BlockOwner`.
+
 - 2026-07-03 UPDATE: Slice 0k-EE consumes the active function-emission
   attempt edge with a source-equivalent LLVM phi emission control-flow rewrite.
   In `emit_phi`, the bool and int mismatched-incoming loops no longer use an
