@@ -12,6 +12,37 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-ER-RAW-VALUE-STORAGE-CONSUMED|implemented 2026-07-03 {F:0.88 G:0.51 R:0.86}]:
+The L21 zero-struct/value-storage LLVM validity edge is consumed. The root was
+not a missing late typedef ledger: V2 value storage is consumed through
+byte-level GEPs and pointer carriers, but stack `Alloc` and zero-filled struct
+sentinels still emitted named aggregate LLVM storage (`%Slice$LUInt8$R`) that
+can be absent from the initial type-definition sweep. The production slice
+introduces raw stack storage for concrete value types and emits zero-filled
+struct sentinels as raw `[size x i8] zeroinitializer, align N` globals.
+Evidence with `tmp/adamas_l21_raw_storage_stage1`:
+`scripts/generated_stage_zero_struct_sentinel_report.sh` exits 0 with
+`selection_status=rejected`, `reason=invalid_null_constant_error_missing`,
+`upstream_classification=post_to_s_frontier`,
+`normal_string_header_size_global_shape=i32_12`,
+`raw_dump_classification=raw_dump_before_to_s_buffer_valid`, and
+`normal_llc_type_mismatch=0`. Kept-IR inspection from the same code shape
+shows `%r2 = alloca [16 x i8], align 8` for `Slice(UInt8).new` and
+`@__zero.Slice$LUInt8$R = internal global [16 x i8] zeroinitializer, align 8`.
+Adjacent guards pass: `REQUIRE_OUTPUT_OWNERSHIP=1
+scripts/llvm_output_ownership_source_shape_guard.sh`, the three L19 P2 guards,
+`regression_tests/run_combined.sh tmp/adamas_l21_raw_storage_stage1 4` (36/36),
+and `regression_tests/run_all.sh tmp/adamas_l21_raw_storage_stage1 4` (152/152).
+Scope: moved generated-stage frontier only, not green `s2b`/`s3b`. Residual
+boundary: generated LLVM now fails later on an undefined runtime helper
+reference, `@__adamas_gc_aware_realloc`. The next slice must select that
+runtime-helper declaration edge before changing helper emission, tail
+declarations, backend undefined externs, output ownership, scalar globals,
+function-return slots, `NamedTuple` / `Tuple`, ambient maps, or `BlockOwner`.
+Decay trigger: the old L21 selector selects again, L19/L20 rows regress, or a
+fresh focused selector proves the runtime-helper error is only a downstream
+proxy.
+
 [LM-ARCH-0K-EQ-ZERO-STRUCT-SENTINEL-GATE|diagnostic 2026-07-03 {F:0.86 G:0.48 R:0.84}]:
 The post-0k-EP residual now has an executable selector rather than only a
 generic `post_to_s_frontier` row. New script:

@@ -735,6 +735,21 @@ or zero-struct side-effect ordering/merge. It must not patch a later `llc`
 consumer, reopen return slots, or resume stale output/scalar/global
 `NamedTuple` / `Tuple` / ambient-map / `BlockOwner` paths.
 
+2026-07-03 board refinement after Slice 0k-ER: the L21 zero-struct/value-storage
+edge is consumed. The root was named LLVM aggregate storage leaking into V2
+value-storage producers: stack `Alloc` and zero-filled struct sentinels used
+`%Slice$LUInt8$R` even though V2 value storage is accessed through byte-level
+GEPs and the type may be absent from the initial typedef sweep. The production
+slice makes stack value allocas and zero-filled struct sentinels raw byte
+storage (`[size x i8]`) with MIR size/alignment. The focused selector now
+rejects the old L21 frontier with `invalid_null_constant_error_missing` while
+preserving L19/L20 rows. The current residual moved to
+`@__adamas_gc_aware_realloc` being referenced without a declaration. The next
+receipt must first add or reuse a focused selector for runtime-helper
+declaration availability before touching helper emission, tail declarations,
+backend undefined externs, output ownership, scalar globals, function-return
+slots, `NamedTuple` / `Tuple`, ambient maps, or `BlockOwner`.
+
 | Lane | Current decision | Required next receipt | Rejected shortcut |
 | --- | --- | --- | --- |
 | `bootstrap-emergency-with-ledger` / B4-O1 | Consumed by 0k-CU. The HIR `BlockCallReturnContract` implementation moves the generated-stage gate past the old O1 `affected_block_ids` / `Set(UInt32)#includes?` frontier: `REQUIRE_CURRENT_CU_CONTRACT=1 scripts/hir_block_return_shape_census.sh` reports `classification=current_0k_cu_block_call_return_contract_applied`, and `STAGE1_COMPILER=/tmp/adamas_0kcu_stage1 REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh` exits at the expected non-current boundary with `b4_classification=llvm_entry_failure_after_lower_main` and `workers1_exit139=0`. The new residual is post-`lower_main` RSS pressure in both worker modes, with the default worker-mode rand fallback still present. | Return to the board before any new production source slice. The next receipt must reselect an owner spine from fresh generated-stage evidence; if it targets the new residual, it must name the old authority edge behind post-`lower_main` memory/resource growth rather than treating higher memory limits, worker count, or the rand fallback as acceptance evidence. | Continuing the 0k-CU breakglass lane by inertia; starting from the new RSS-kill stack; raising memory as a fix; forcing `ADAMAS_LLVM_WORKERS=1`; worker/rand/output/resource patches without a new receipt; CopyPropagation, Set/Hash, backend block-return, `NamedTuple`/`Tuple`, ambient-map, or `BlockOwner` changes. |
@@ -1856,6 +1871,70 @@ SliceReceipt {
     availability authority edge. The first production move must distinguish
     invalid LLVM aggregate declaration, missing/late `%Slice$LUInt8$R` type
     definition, and side-effect merge/order issues before changing emission.
+}
+```
+
+#### Slice 0k-ER receipt: raw value storage for stack allocas and zero sentinels
+
+```text
+SliceReceipt {
+  board_lane: PhaseAuthority / GeneratedStageExecution
+  tranche: bootstrap-emergency-with-ledger
+  old_authority_edge:
+    Slice 0k-EQ selected L21 as a zero-filled struct sentinel declaration /
+    type-availability edge. The first producer check split the edge further:
+    the invalid sentinel and the `Slice(UInt8).new` stack alloca both depended
+    on `%Slice$LUInt8$R` even though V2 value storage is byte-addressed.
+  owner_fact_or_service:
+    LLVM value-storage emission now has one producer-owned storage rule for
+    concrete MIR value types: use raw `[size x i8]` stack/global storage when
+    the backend only needs addressable bytes, not named aggregate identity.
+  producers:
+    - `LLVMIRGenerator#stack_alloc_storage_type`;
+    - `emit_hoisted_allocas` stack `Alloc` emission;
+    - non-hoisted stack `emit_alloc`;
+    - addressable operand alloca creation;
+    - zero-filled struct sentinel declaration recording.
+  consumers:
+    - byte-level GEP field writes inside generated `Slice(UInt8).new`;
+    - cross-block pointer-slot default stores that reference zero sentinels;
+    - `llc` validation of generated `normal_out.ll`;
+    - `scripts/generated_stage_zero_struct_sentinel_report.sh`.
+  measured_red_baseline:
+    Pre-slice generated IR used `%r2 = alloca %Slice$LUInt8$R` without a
+    `%Slice$LUInt8$R` typedef after the zero sentinel declaration was made raw.
+    The original L21 selector also saw
+    `@__zero.Slice$LUInt8$R = internal global %Slice$LUInt8$R zeroinitializer`
+    and `llc` reported `invalid type for null constant`.
+  focused_DoD:
+    `STAGE1_COMPILER=tmp/adamas_l21_raw_storage_stage1
+    scripts/generated_stage_zero_struct_sentinel_report.sh` exits 0 with
+    `selection_status=rejected`, `reason=invalid_null_constant_error_missing`,
+    `upstream_classification=post_to_s_frontier`,
+    `normal_string_header_size_global_shape=i32_12`,
+    `raw_dump_classification=raw_dump_before_to_s_buffer_valid`, and
+    `normal_llc_type_mismatch=0`. Kept-IR inspection from the same code shape
+    shows `%r2 = alloca [16 x i8], align 8` and
+    `@__zero.Slice$LUInt8$R = internal global [16 x i8] zeroinitializer, align 8`.
+  architecture_DoD:
+    `REQUIRE_OUTPUT_OWNERSHIP=1 scripts/llvm_output_ownership_source_shape_guard.sh`
+    exits 0; the L19 P2 guards pass; `regression_tests/run_combined.sh
+    tmp/adamas_l21_raw_storage_stage1 4` reports 36/36; and
+    `regression_tests/run_all.sh tmp/adamas_l21_raw_storage_stage1 4` reports
+    152/152.
+  generated_stage_gate:
+    The old L21 selector must stay rejected because the invalid-null-constant
+    row is gone, not because L19/L20 regressed.
+  rejected_shortcuts:
+    Late typedef side ledgers, backend consumer coercions, function-return
+    slots, output ownership, scalar globals, source fallback, `MacroNumberValue`,
+    `NamedTuple` / `Tuple`, ambient maps, `BlockOwner`, or helper-specific
+    patches from the old `%Slice` evidence.
+  residual_boundary:
+    The generated-stage residual has moved to an undefined runtime helper
+    reference, `@__adamas_gc_aware_realloc`. The next production movement must
+    select that runtime-helper declaration edge before changing helper emission
+    or tail declarations.
 }
 ```
 

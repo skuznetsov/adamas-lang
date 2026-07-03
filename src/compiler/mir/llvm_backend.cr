@@ -14975,6 +14975,25 @@ module Adamas::MIR
       "0"
     end
 
+    private def stack_alloc_storage_type(type_ref : TypeRef, size_hint : UInt64 = 0_u64) : String
+      if mir_type = @module.type_registry.get(type_ref)
+        if (mir_type.kind.struct? || mir_type.name.starts_with?("StaticArray(")) &&
+           mir_type.size > 0
+          # V2 accesses value storage with byte-level GEPs. Use raw storage so a
+          # stack alloca does not depend on a named LLVM typedef being present in
+          # the initial type-definition sweep.
+          return "[#{mir_type.size} x i8]"
+        end
+      end
+
+      type = @type_mapper.llvm_alloca_type(type_ref)
+      type = "i8" if type == "void"
+      if type == "ptr" && size_hint > pointer_word_bytes_u64
+        return "[#{size_hint} x i8]"
+      end
+      type
+    end
+
     private def find_def_inst_in_function(func : Function, id : ValueId)
       func.blocks.each do |block|
         block.instructions.each do |inst|
@@ -14993,14 +15012,7 @@ module Adamas::MIR
           next unless inst.strategy == MemoryStrategy::Stack
           name = "%r#{inst.id}"
           @value_names[inst.id] = "r#{inst.id}"
-          type = @type_mapper.llvm_alloca_type(inst.alloc_type)
-          type = "i8" if type == "void"
-          # When LLVM type is just 'ptr' (8 bytes) but MIR needs more space
-          # (e.g. Tuples containing union elements), use a byte array alloca
-          # to ensure sufficient storage for discriminated union stores.
-          if type == "ptr" && inst.size > 8
-            type = "[#{inst.size} x i8]"
-          end
+          type = stack_alloc_storage_type(inst.alloc_type, inst.size)
           emit_raw "  #{name} = alloca #{type}, align #{inst.align}\n"
           if type == "ptr"
             emit_raw "  store ptr null, ptr #{name}\n"
@@ -15028,8 +15040,7 @@ module Adamas::MIR
           seen_addressof_operands << operand_id
 
           operand_type = @value_types[operand_id]? || TypeRef::POINTER
-          alloca_type = @type_mapper.llvm_alloca_type(operand_type)
-          alloca_type = "i8" if alloca_type == "void"
+          alloca_type = stack_alloc_storage_type(operand_type)
           alloca_name = "r#{operand_id}.addr"
           emit_raw "  %#{alloca_name} = alloca #{alloca_type}, align 8\n"
           if alloca_type == "ptr"
@@ -15149,8 +15160,12 @@ module Adamas::MIR
             mangled = @type_mapper.mangle_name(mir_type.name)
             global_name = "@__zero.#{mangled}"
             unless @zero_struct_globals.includes?(mangled)
+              storage_align = mir_type.alignment
+              storage_align = pointer_word_bytes_u64.to_u32 if storage_align == 0
               @zero_struct_globals << mangled
-              @zero_struct_global_decls << "#{global_name} = internal global %#{mangled} zeroinitializer\n"
+              @zero_struct_global_decls << "#{global_name} = internal global "
+              @zero_struct_global_decls << "[#{mir_type.size} x i8] zeroinitializer, "
+              @zero_struct_global_decls << "align #{storage_align}\n"
             end
             emit_raw "  store ptr #{global_name}, ptr #{slot_name}\n"
           else
@@ -18755,14 +18770,9 @@ module Adamas::MIR
           record_emitted_type(name, "ptr")
           return
         end
-        # Use llvm_alloca_type to get actual struct type (not ptr)
-        type = @type_mapper.llvm_alloca_type(inst.alloc_type)
-        # Guard against void type - use i8 for minimal allocation
-        type = "i8" if type == "void"
-        # When LLVM type is just 'ptr' but MIR needs more space, use byte array
-        if type == "ptr" && inst.size > 8
-          type = "[#{inst.size} x i8]"
-        end
+        # Use raw storage for value types so stack allocation follows the same
+        # byte-layout contract as field access and does not require named typedefs.
+        type = stack_alloc_storage_type(inst.alloc_type, inst.size)
         emit "#{name} = alloca #{type}, align #{inst.align}"
         if type == "ptr"
           emit "store ptr null, ptr #{name}"

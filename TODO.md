@@ -8,6 +8,34 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-03 UPDATE: Slice 0k-ER consumes the L21 zero-struct/value-storage
+  LLVM validity edge. The root was not a missing late `%Slice$LUInt8$R`
+  typedef ledger: V2 value storage is consumed through byte-level GEPs and
+  pointer carriers, but two producers still emitted named aggregate LLVM types
+  that may be absent from the initial type-definition sweep. Stack `Alloc`
+  now uses raw `[size x i8]` storage for concrete value types, and zero-filled
+  struct sentinels now emit raw `[size x i8] zeroinitializer, align N` globals.
+  Focused evidence with `tmp/adamas_l21_raw_storage_stage1`:
+  `scripts/generated_stage_zero_struct_sentinel_report.sh` exits 0 with
+  `selection_status=rejected`, `reason=invalid_null_constant_error_missing`,
+  preserved `upstream_classification=post_to_s_frontier`,
+  `normal_string_header_size_global_shape=i32_12`,
+  `raw_dump_classification=raw_dump_before_to_s_buffer_valid`, and
+  `normal_llc_type_mismatch=0`. The generated IR shape moved from
+  `%r2 = alloca %Slice$LUInt8$R` and
+  `@__zero.Slice$LUInt8$R = internal global %Slice$LUInt8$R zeroinitializer`
+  to `%r2 = alloca [16 x i8]` and
+  `@__zero.Slice$LUInt8$R = internal global [16 x i8] zeroinitializer, align 8`.
+  Adjacent guards pass: `REQUIRE_OUTPUT_OWNERSHIP=1
+  scripts/llvm_output_ownership_source_shape_guard.sh`, the three L19 P2
+  guards, `regression_tests/run_combined.sh tmp/adamas_l21_raw_storage_stage1
+  4` (36/36), and `regression_tests/run_all.sh
+  tmp/adamas_l21_raw_storage_stage1 4` (152/152). This is still not green
+  `s2b`/`s3b`: the generated-stage residual moved to an undefined runtime
+  helper declaration, `@__adamas_gc_aware_realloc`. The next slice should add a
+  focused selector for that runtime-helper declaration edge before changing
+  helper emission or tail declarations.
+
 - 2026-07-03 UPDATE: Slice 0k-EQ adds the focused L21 selector for the
   post-0k-EP zero-struct sentinel residual. New script:
   `scripts/generated_stage_zero_struct_sentinel_report.sh`. It preserves the
