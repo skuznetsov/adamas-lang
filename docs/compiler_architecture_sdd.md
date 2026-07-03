@@ -1333,6 +1333,67 @@ SliceReceipt {
 }
 ```
 
+#### Slice 0k-EK receipt: OutputOwnershipContract pre-code gate
+
+```text
+SliceReceipt {
+  board_lane: PhaseAuthority / GeneratedStageExecution
+  tranche: contract-owner-migration
+  old_authority_edge:
+    `LLVMIRGenerator.@output` is the mutable ambient authority for the primary
+    module output, temporary metadata/function buffers, parent parallel output,
+    worker shard output, and rescue fallback restore. Slice 0k-EJ shows this is
+    not just awkward structure: a rescue-local `saved_output` binding can become
+    empty while the current output is still populated, and direct restore erases
+    the final output.
+  owner_fact_or_service:
+    `LLVMOutputOwnershipContract` / `OutputOwnershipContract`: a small backend
+    owner surface for primary output identity, scoped temporary-output entry,
+    primary restore, append, and fallback restore. It is intentionally narrower
+    than the full typed LLVM writer plan.
+  producers:
+    - `LLVMIRGenerator#generate` primary output setup;
+    - metadata temporary output buffering;
+    - `emit_functions_parallel` parent output, worker shards, merge, and rescue
+      fallback.
+  consumers:
+    - `emit_functions_parallel` rescue restore;
+    - `LLVMFinalOutputMaterialization` finalization;
+    - `scripts/generated_stage_finalize_to_s_classifier.sh`;
+    - `scripts/llvm_output_ownership_source_shape_guard.sh`.
+  measured_red_baseline:
+    `scripts/llvm_output_ownership_source_shape_guard.sh` reports
+    `output_ownership_shape=legacy_ambient_output_restore` on current source.
+    The generated-stage classifier reports
+    `classification=select_parallel_rescue_saved_output_binding_frontier`.
+  focused_DoD:
+    `REQUIRE_OUTPUT_OWNERSHIP=1
+    scripts/llvm_output_ownership_source_shape_guard.sh` must report
+    `output_ownership_shape=output_ownership_contract_consumed_by_parallel_restore`.
+    The generated-stage classifier must no longer select the rescue
+    saved-output binding frontier; if it moves, the new classification becomes
+    the residual boundary rather than a broad green claim.
+  architecture_DoD:
+    The slice must keep behavior equivalent outside output ownership. It must
+    not force worker count, bypass to fd/raw output, patch finalization, patch
+    generic `IO::Memory`, change tail/metadata/DWARF/type-name semantics, or
+    touch `NamedTuple`/`Tuple`, ambient maps, or `BlockOwner`.
+  generated_stage_gate:
+    Re-run the 0k-EJ classifier with `REQUIRE_RAW_DUMP=1
+    REQUIRE_CLASSIFICATION=1`; preserve stage1 build and static checks.
+  negative_controls:
+    `ADAMAS_LLVM_WORKERS=1` is a control only, not a fix. The existing
+    `regression_tests/io_memory_final_materialization_repro.sh <compiler>`
+    remains the guard against blaming generic user-runtime `IO::Memory`.
+  residual_boundary:
+    This admits one source slice: introduce and consume output ownership around
+    the parallel rescue restore edge. If the source-shape guard is made green
+    but the generated-stage classifier remains on the same rescue
+    saved-output-binding classification, the slice is theater and must be
+    reverted or reworked before further architecture movement.
+}
+```
+
 #### Slice 0k-DO receipt: default-mode function-emission sink boundary
 
 ```text

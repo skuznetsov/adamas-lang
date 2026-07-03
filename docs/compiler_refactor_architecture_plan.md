@@ -143,6 +143,15 @@ its `OutputOwnership` slice is now the highest-leverage architecture unit:
 primary sink ownership, scoped temp-output restore, and fallback restore should
 be represented by a contract before any broad writer rewrite.
 
+2026-07-03 post-0k-EK note: that contract now has an executable pre-code gate.
+`scripts/llvm_output_ownership_source_shape_guard.sh` reports the current
+legacy shape (`output_ownership_shape=legacy_ambient_output_restore`) and
+strict mode fails under `REQUIRE_OUTPUT_OWNERSHIP=1`. This makes the next
+implementation unit concrete without starting the full typed writer rollout:
+introduce the smallest output-ownership owner surface that removes the parallel
+rescue direct restore from ambient `@output` / local `saved_output` state, then
+rerun the generated-stage rescue classifier.
+
 2026-07-02 post-0k-DY note: the selected workers=1
 `CopyPropagationPass#compute_dominance_info` lane is consumed by a production
 resource fix. CopyPropagation now answers cross-block dominance with an exact

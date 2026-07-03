@@ -8,6 +8,22 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-03 UPDATE: Slice 0k-EK adds the pre-code
+  `OutputOwnershipContract` gate required before touching the 0k-EJ rescue
+  restore edge. New executable source-shape guard:
+  `scripts/llvm_output_ownership_source_shape_guard.sh`. Current source reports
+  `output_ownership_shape=legacy_ambient_output_restore`, with
+  `parallel_saved_output_snapshot_count=1`,
+  `parallel_direct_saved_output_restore_count=3`, and
+  `parallel_output_ownership_reference_count=0`. Strict mode is intentionally
+  red:
+  `REQUIRE_OUTPUT_OWNERSHIP=1 scripts/llvm_output_ownership_source_shape_guard.sh`
+  exits 1. The next production code slice must make this strict guard green and
+  then rerun the 0k-EJ generated-stage classifier. If strict source shape turns
+  green but the classifier still selects
+  `select_parallel_rescue_saved_output_binding_frontier`, the slice is
+  architecture theater and must be reworked or reverted.
+
 - 2026-07-03 UPDATE: Slice 0k-EJ refutes 0k-EI finalization-null as the first
   bad transition and moves the active L18 edge earlier, into
   `emit_functions_parallel` rescue fallback output restore. The classifier now

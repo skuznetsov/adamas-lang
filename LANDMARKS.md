@@ -12,6 +12,22 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-EK-OUTPUT-OWNERSHIP-PRECODE-GATE|design-sealed 2026-07-03 {F:0.82 G:0.58 R:0.82}]:
+The next production slice for the 0k-EJ rescue restore edge now has an
+executable source-shape gate rather than only prose. New guard:
+`scripts/llvm_output_ownership_source_shape_guard.sh`. Current source reports
+`output_ownership_shape=legacy_ambient_output_restore`,
+`parallel_saved_output_snapshot_count=1`,
+`parallel_direct_saved_output_restore_count=3`, and
+`parallel_output_ownership_reference_count=0`; strict mode
+`REQUIRE_OUTPUT_OWNERSHIP=1 scripts/llvm_output_ownership_source_shape_guard.sh`
+exits 1. Scope: pre-code contract gate only, not a behavior fix. Residual
+boundary: a future `OutputOwnershipContract` production slice must make strict
+source shape green and then move or preserve the 0k-EJ generated-stage
+classifier. Decay trigger: source shape becomes green without moving the
+generated-stage rescue-saved-output classification, or the active L18 frontier
+no longer involves `emit_functions_parallel` output restore.
+
 [LM-ARCH-0K-EJ-PARALLEL-RESCUE-SAVED-OUTPUT-BINDING-FRONTIER|implemented 2026-07-03 {F:0.90 G:0.52 R:0.84}]:
 The L18 finalization-null boundary is a proxy for an earlier
 `emit_functions_parallel` rescue fallback output-restore edge. The classifier
