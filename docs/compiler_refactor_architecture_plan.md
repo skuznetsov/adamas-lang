@@ -8,6 +8,22 @@ boundaries
 Related: `PLAN_DEMAND_DRIVEN_REWRITE_RFC.md`, `docs/ast_to_hir_audit.md`,
 `docs/codegen_architecture.md`
 
+2026-07-02 post-0k-DY note: the selected workers=1
+`CopyPropagationPass#compute_dominance_info` lane is consumed by a production
+resource fix. CopyPropagation now answers cross-block dominance with an exact
+lazy reachability query instead of eagerly building a full dominator tree /
+interval table for every non-local run. Evidence with
+`tmp/adamas_lazy_dom_stage1`: the old dominator classifier decays because the
+nested workers=1 MIR optimization subphase is clean (`s2_mir_opt_peak_rss_mb=1177`,
+`s2_mir_opt_memory_kill=0`); the broader mode selector selects
+`select_default_late_llvm_resource_lane` with HIR/MIR stop gates clean in both
+modes and joined transaction residuals at `reached_function_emission`; full
+suites pass `152/152 + 36/36`. This is still not green `s2b`/`s3b`; the active
+resource frontier has moved to default late LLVM/function-emission. Future
+implementation should not return to CP dominance, replacement disabling,
+`NamedTuple`/`Tuple`, ambient maps, `BlockOwner`, backend rescue, worker forcing,
+or memory budgets unless fresh evidence refutes this new lane.
+
 2026-07-02 post-0k-DX refutation note: a broad local-only CopyPropagation
 policy is not an acceptable shortcut. A preflight that returned without
 applying dominance-dependent replacements moved away from the old

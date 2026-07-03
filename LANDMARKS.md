@@ -12,6 +12,34 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-DY-LAZY-DOMINANCE-CONSUMES-COPYPROP-RESOURCE-LANE|implemented 2026-07-02 {F:0.91 G:0.58 R:0.86}]:
+The selected 0k-DX `CopyPropagationPass#compute_dominance_info` resource lane
+is consumed by replacing eager full-dominator construction with exact lazy
+dominance queries for cross-block replacement checks. The query is exact: a
+definition block dominates a use block iff no path from the function entry to
+the use block can avoid the definition block; same-block checks still use
+instruction order. Evidence: `crystal build src/adamas.cr -o
+tmp/adamas_lazy_dom_stage1 --error-trace` passes. The old strict dominator
+classifier no longer reaches the old lane: with
+`STAGE1_COMPILER=tmp/adamas_lazy_dom_stage1 REQUIRE_CLASSIFICATION=1
+REQUIRE_DOMINATOR=1 TAIL_LINES=30
+scripts/generated_stage_workers1_copyprop_dominator_classifier.sh`, the nested
+pass classifier reports `classification=workers1_mir_opt_pass_lane_decayed`,
+`subphase.classification=workers1_mir_subphase_clean`,
+`subphase.s2_mir_opt_peak_rss_mb=1177`, and
+`subphase.s2_mir_opt_memory_kill=0`. The broader mode selector reports clean
+produced-s2 HIR/MIR stop gates in both modes
+(`s2_default_mir_peak_rss_mb=1173`, `s2_workers1_mir_peak_rss_mb=1177`) and
+selects `classification=select_default_late_llvm_resource_lane`, with joined
+transaction residuals at `reached_function_emission` and both modes still
+memory-killed after lower_main. Full suites pass with
+`regression_tests/run_all_suites.sh tmp/adamas_lazy_dom_stage1 4`: `152/152`
+original and `36/36` combined. Scope: this is a resource-lane movement, not
+green `s2b`/`s3b`; it moves the active frontier to default late
+LLVM/function-emission. Decay trigger: the old dominator classifier again
+selects `compute_dominance_info`, lazy dominance causes semantic regression, or
+the mode selector stops selecting the late LLVM/function-emission residual.
+
 [LM-ARCH-0K-DX-LOCAL-ONLY-CP-REFUTED|refuted 2026-07-02 {F:0.82 G:0.42 R:0.78}]:
 A candidate production fix that made `CopyPropagationPass#apply_replacements`
 return without applying dominance-dependent replacements is rejected. It did

@@ -8,6 +8,37 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: Slice 0k-DY CONSUMES the selected 0k-DX
+  `CopyPropagationPass#compute_dominance_info` resource lane. Production
+  change: `CopyPropagationPass` now uses exact lazy dominance queries for
+  cross-block replacement checks instead of building a full dominator tree /
+  interval table for each non-local CP run. `crystal build src/adamas.cr -o
+  tmp/adamas_lazy_dom_stage1 --error-trace` passes. The old strict dominator
+  classifier now decays in the intended direction:
+  `STAGE1_COMPILER=tmp/adamas_lazy_dom_stage1 REQUIRE_CLASSIFICATION=1
+  REQUIRE_DOMINATOR=1 TAIL_LINES=30
+  scripts/generated_stage_workers1_copyprop_dominator_classifier.sh` reports
+  `classification=workers1_copyprop_dominator_classifier_build_failed` only
+  because the nested pass lane decayed: `subphase.classification=workers1_mir_subphase_clean`,
+  `subphase.s2_mir_opt_peak_rss_mb=1177`, and
+  `subphase.s2_mir_opt_memory_kill=0`. The broader mode selector confirms the
+  new residual:
+  `STAGE1_COMPILER=tmp/adamas_lazy_dom_stage1 STAGE2_BUILD_TIMEOUT=600
+  REQUIRE_CLASSIFICATION=1 REQUIRE_LANE_SELECTION=1 TAIL_LINES=30
+  scripts/generated_stage_mode_resource_lane_classifier.sh` reports clean HIR
+  and MIR stop-gates in both modes (`s2_default_mir_peak_rss_mb=1173`,
+  `s2_workers1_mir_peak_rss_mb=1177`) and selects
+  `classification=select_default_late_llvm_resource_lane` with joined
+  transaction residual `default_mode_boundary=reached_function_emission`,
+  `workers1_mode_boundary=reached_function_emission`, and both modes still
+  memory-killed after lower_main. Full stage1 suites pass:
+  `regression_tests/run_all_suites.sh tmp/adamas_lazy_dom_stage1 4` -> `152/152`
+  original and `36/36` combined. This is not green `s2b`/`s3b`; it moves the
+  active resource frontier from workers=1 MIR CopyPropagation dominance to the
+  default late LLVM/function-emission lane. Next production work must re-enter
+  the board through that residual, not through CP, `NamedTuple`/`Tuple`,
+  ambient maps, `BlockOwner`, backend rescue, worker forcing, or memory budget.
+
 - 2026-07-02 UPDATE: post-0k-DX local-only CopyPropagation fail-closed
   preflight is REFUTED. A candidate production edit that returned without
   applying any dominance-dependent replacements avoided the old

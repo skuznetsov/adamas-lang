@@ -598,7 +598,7 @@ evidence, not next-step selectors.
 | `bootstrap-emergency-with-ledger` / B4-O1 | Consumed by 0k-CU. The HIR `BlockCallReturnContract` implementation moves the generated-stage gate past the old O1 `affected_block_ids` / `Set(UInt32)#includes?` frontier: `REQUIRE_CURRENT_CU_CONTRACT=1 scripts/hir_block_return_shape_census.sh` reports `classification=current_0k_cu_block_call_return_contract_applied`, and `STAGE1_COMPILER=/tmp/adamas_0kcu_stage1 REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh` exits at the expected non-current boundary with `b4_classification=llvm_entry_failure_after_lower_main` and `workers1_exit139=0`. The new residual is post-`lower_main` RSS pressure in both worker modes, with the default worker-mode rand fallback still present. | Return to the board before any new production source slice. The next receipt must reselect an owner spine from fresh generated-stage evidence; if it targets the new residual, it must name the old authority edge behind post-`lower_main` memory/resource growth rather than treating higher memory limits, worker count, or the rand fallback as acceptance evidence. | Continuing the 0k-CU breakglass lane by inertia; starting from the new RSS-kill stack; raising memory as a fix; forcing `ADAMAS_LLVM_WORKERS=1`; worker/rand/output/resource patches without a new receipt; CopyPropagation, Set/Hash, backend block-return, `NamedTuple`/`Tuple`, ambient-map, or `BlockOwner` changes. |
 | `architecture-burn-down` / owner-spine plan | Consumed by 0k-CW. The active burn-down selection is `MaterializationTransaction` exact body availability, based on generated-stage residual evidence rather than the latest crash stack. | Do not add another planning/report row unless it retires/refutes this selection or the residual classifier proves the selected edge is not root-sized. | Treating a moved crash stack as architecture progress; adding another report that does not retire/refute an older surface; committing WIP helpers that do not consume an old authority edge; claiming source-shape green as bootstrap green. |
 | `MaterializationTransaction` / exact body availability | Consumed through 0k-DI for the active `after_tx -> inside_type_params` edge. G6 `BlockOwner` setter availability is guard-green. The explicit materialization scope-entry slice preserves `[MAT_EMIT]` reachability and changes the lower-method terminal classifier from the old mixed 14-row / 4-cause state with `no_exact_after_tx_no_call` (6 rows) to a root-sized abstract-method residual: `residual_rows=3`, `terminal_cause_kinds=1`, `selected_cause=lower_method_terminal_abstract_method`, and `classification=eligible_lower_method_terminal_edge`. Residual rows now traverse `after_tx -> inside_type_params -> inside_namespace -> before_arity -> after_arity` and join to `[MAT_METHOD_CALL]`. This is focused authority-edge movement, not green bootstrap. | Return to the board before selecting another production edge. The next movement should first remeasure the generated-stage pressure gate and choose whether the active constraint is still `MaterializationTransaction` exact body availability, B4/O1 `PhaseAuthority`, or a `SemanticIdentity` pre-s2-clean row. | Backend undefined-extern rescue, forwarder rescue, requested-name forcing, per-method Array/Slice/IO/Atomic/String::Builder/Int32 patches, broad `NamedTuple`/`Tuple` rendering, global ambient-map policy, `BlockOwner` rollback, treating abstract-method residuals as a local method patch, adding another result/consumer layer, adding another generic pre-call marker, or threading a trace object through production `lower_method`. |
-| `PhaseAuthority` / `GeneratedStageExecution` | 0k-DR consumed the default-lane `memory.phase` surface; 0k-DS refuted startup/process-baseline ownership with OS RSS; 0k-DT selected workers=1 HIR-to-MIR as the mode-local lane; 0k-DU selected MIR optimization as the subphase; 0k-DV selected CopyPropagation as the pass; 0k-DW selected `apply_build_dominators` as the phase; 0k-DX now selects the subowner. `REQUIRE_CLASSIFICATION=1 REQUIRE_DOMINATOR=1 scripts/generated_stage_workers1_copyprop_dominator_classifier.sh` first re-confirms 0k-DW (`phase.classification=select_workers1_copyprop_apply_build_dominators_resource_lane`, full phase peak `4329` MB, memory-kill), keeps `build_def_maps` and `skip_check` clean (`1175`/`1174` MB), and selects `classification=select_workers1_copyprop_dom_compute_dominance_info_resource_lane` with `compute_dominance_info=4364` MB and memory-kill. Local-only and local-safe-subset CP preflights are both refuted: generated `s2` regressed to `pre_llvm_entry_failure` / exit 139 before MIR optimization. | The next production receipt may re-enter `GeneratedStageExecution` only by consuming or refuting `CopyPropagationPass#compute_dominance_info`: dominance construction frequency, scope, representation, or a specific dominance-dependent replacement class with generated-stage proof. It must preserve earlier CP phase/pass/subphase controls and default-mode late LLVM/function-emission residual evidence, and it must not claim both-mode bootstrap progress from a single-mode fix. | Adding another cascaded generic selector after 0k-DX; disabling all cross-block/dominance-dependent CopyPropagation; dropping the whole dominance-needed replacement subset; patching `build_def_maps`, the skip predicate, `run_collect_state`, `run_find_replacements`, affected-block collection, rewrite blocks, HIR/MIR lowering, constant folding, local CSE, RC elision, default LLVM function emission, worker policy, memory budgets, backend rescue, `NamedTuple`/`Tuple`, ambient maps, or `BlockOwner` from this evidence; treating the old `affected_block_ids` Set frontier as current; memory-budget acceptance; forced `ADAMAS_LLVM_WORKERS=1`; or treating either single-mode boundary as green bootstrap without the other mode's residual statement. |
+| `PhaseAuthority` / `GeneratedStageExecution` | 0k-DR consumed the default-lane `memory.phase` surface; 0k-DS refuted startup/process-baseline ownership with OS RSS; 0k-DT selected workers=1 HIR-to-MIR as the mode-local lane; 0k-DU selected MIR optimization as the subphase; 0k-DV selected CopyPropagation as the pass; 0k-DW selected `apply_build_dominators` as the phase; 0k-DX selected `compute_dominance_info`; 0k-DY consumes that subowner. `CopyPropagationPass` now uses exact lazy dominance queries instead of building a full dominator tree/interval table for every non-local CP run. The old strict dominator classifier decays because the nested pass lane is clean (`subphase.classification=workers1_mir_subphase_clean`, `subphase.s2_mir_opt_peak_rss_mb=1177`, `subphase.s2_mir_opt_memory_kill=0`). The broader mode selector reports clean produced-s2 HIR/MIR stop gates in both modes and selects `classification=select_default_late_llvm_resource_lane`, with joined transaction residuals at `reached_function_emission` and both modes still memory-killed after lower_main. Local-only and local-safe-subset CP preflights remain refuted. | The next production receipt may re-enter `GeneratedStageExecution` only through the newly selected default late LLVM/function-emission resource residual. It must preserve the consumed workers=1 MIR/CopyPropagation controls, the exact lazy dominance semantics, and the joined transaction residual. It must not claim green `s2b`/`s3b` until the full generated-stage gate is clean in both modes. | Returning to CP dominance, disabling cross-block/dominance-dependent CopyPropagation, dropping the dominance-needed subset, patching `build_def_maps`, the skip predicate, affected-block collection, rewrite blocks, HIR/MIR lowering, earlier MIR optimizer passes, worker policy, memory budgets, backend rescue, `NamedTuple`/`Tuple`, ambient maps, or `BlockOwner`; adding another cascaded selector on the consumed CP lane; treating old `affected_block_ids` Set frontier as current; memory-budget acceptance; forced `ADAMAS_LLVM_WORKERS=1`; or treating the late LLVM single residual as green bootstrap without consuming it. |
 | `SemanticIdentity` | H7/H8 remain pre-s2-clean residuals. They are real, but not the active generated-stage blocker. | Resume with a row-specific SDD entry and measured-red baseline if the goal is semantic-service extraction. | TypeValue/stringification/parser shortcuts bundled with B4, generic materialization, ambient-map, or `BlockOwner` work. |
 | `CodePathStatus` | Cleanup is not the active bootstrap constraint. | Resume only with `delete_ready` evidence and a protecting falsifier, or by explicit user selection of bloat reduction. | Deleting suspected-dead code from grep/runtime absence alone; adding cleanup reports as a substitute for owner migration. |
 
@@ -1174,6 +1174,57 @@ SliceReceipt {
     Workers=1 `CopyPropagationPass#apply_build_dominators` resource growth is
     the selected next target. Default-mode late LLVM/function-emission remains
     measured-red residual evidence and must be preserved by any single-mode fix.
+}
+```
+
+#### Slice 0k-DY receipt: lazy CopyPropagation dominance query
+
+```text
+SliceReceipt {
+  board_lane: PhaseAuthority / GeneratedStageExecution
+  tranche: bootstrap-emergency-with-ledger
+  old_authority_edge:
+    0k-DX selected `CopyPropagationPass#compute_dominance_info`: eager full
+    dominator-tree construction for every non-local CopyPropagation run.
+    Local-only and local-safe-subset replacement policies are refuted because
+    both regressed generated `s2` to pre-LLVM-entry exit 139.
+  owner_fact_or_service:
+    `CopyPropagationPass::DominanceInfo` is now an exact lazy dominance query:
+    a definition block dominates a use block iff no path from function entry to
+    the use block can avoid the definition block. Same-block checks still use
+    instruction order. The query caches block-pair results and does not call
+    `Function#compute_predecessors` or build full idom/interval arrays.
+  producers:
+    - `src/compiler/mir/optimizations.cr`;
+    - existing replacement/use sites in `rewrite_value_id`;
+    - existing generated-stage resource classifiers.
+  consumers:
+    - `CopyPropagationPass#dominates_use?`;
+    - `scripts/generated_stage_workers1_copyprop_dominator_classifier.sh`;
+    - `scripts/generated_stage_mode_resource_lane_classifier.sh`;
+    - TODO/LANDMARKS/falsifier matrix.
+  measured_green:
+    `crystal build src/adamas.cr -o tmp/adamas_lazy_dom_stage1 --error-trace`
+    passes. The old strict dominator classifier no longer reaches the old lane:
+    nested `subphase.classification=workers1_mir_subphase_clean`,
+    `subphase.s2_mir_opt_peak_rss_mb=1177`, and
+    `subphase.s2_mir_opt_memory_kill=0`.
+  generated_stage_gate:
+    `STAGE1_COMPILER=tmp/adamas_lazy_dom_stage1 STAGE2_BUILD_TIMEOUT=600
+    REQUIRE_CLASSIFICATION=1 REQUIRE_LANE_SELECTION=1 TAIL_LINES=30
+    scripts/generated_stage_mode_resource_lane_classifier.sh` reports clean
+    produced-s2 HIR/MIR stop gates in both modes and selects
+    `classification=select_default_late_llvm_resource_lane`.
+  regression_gate:
+    `regression_tests/run_all_suites.sh tmp/adamas_lazy_dom_stage1 4` passes
+    `152/152` original and `36/36` combined.
+  rejected_shortcuts:
+    This is not local-only CP and not a replacement-subset drop. Do not use it
+    to reopen `NamedTuple`/`Tuple`, ambient-map, backend rescue, worker forcing,
+    memory-budget, or `BlockOwner` lanes.
+  residual_boundary:
+    Full generated-stage LLVM entry is still red after lower_main. The selected
+    next resource lane is default late LLVM/function emission, not CP dominance.
 }
 ```
 

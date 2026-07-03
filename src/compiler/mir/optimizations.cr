@@ -1205,7 +1205,7 @@ module Adamas::MIR
           if skip_dominators
             dominance_info = nil
           else
-            dominance_info = compute_dominance_info
+            dominance_info = DominanceInfo.new(@function)
           end
           dominator_step_stop = true if stop_after_dominator_step?("compute_dominance_info")
         end
@@ -1676,25 +1676,94 @@ module Adamas::MIR
       current.to_u32
     end
 
-    private struct DominanceInfo
-      getter in_time : Array(Int32)
-      getter out_time : Array(Int32)
+    # Exact lazy dominance: def dominates use iff no entry->use path can avoid def.
+    # This avoids building a full dominator tree for every cross-block CP run.
+    private class DominanceInfo
+      @function : Function
+      @visited : ::Array(Int32)
+      @visit_mark : Int32
+      @stack : ::Array(BlockId)
+      @reachable_cache : ::Hash(BlockId, Bool)
+      @dominance_cache : ::Hash(UInt64, Bool)
 
-      def initialize(@in_time : Array(Int32), @out_time : Array(Int32))
+      def initialize(@function : Function)
+        max_block_id = @function.blocks.max_of(&.id).to_i
+        @visited = ::Array.new(max_block_id + 1, 0)
+        @visit_mark = 0
+        @stack = [] of BlockId
+        @reachable_cache = {} of BlockId => Bool
+        @dominance_cache = {} of UInt64 => Bool
       end
 
       def dominates?(def_block : BlockId, use_block : BlockId) : Bool
-        def_idx = def_block.to_i
-        use_idx = use_block.to_i
-        return false if def_idx >= @in_time.size || use_idx >= @in_time.size
+        return true if def_block == use_block
 
-        def_in = @in_time[def_idx]
-        use_in = @in_time[use_idx]
-        return false if def_in < 0 || use_in < 0
+        cache_key = dominance_cache_key(def_block, use_block)
+        if @dominance_cache.has_key?(cache_key)
+          return @dominance_cache[cache_key]
+        end
 
-        def_out = @out_time[def_idx]
-        use_out = @out_time[use_idx]
-        def_in <= use_in && def_out >= use_out
+        result = if reachable?(use_block)
+                   !reachable_avoiding?(use_block, def_block)
+                 else
+                   false
+                 end
+        @dominance_cache[cache_key] = result
+        result
+      end
+
+      private def dominance_cache_key(def_block : BlockId, use_block : BlockId) : UInt64
+        (def_block.to_u64 << 32) | use_block.to_u64
+      end
+
+      private def reachable?(target : BlockId) : Bool
+        if @reachable_cache.has_key?(target)
+          return @reachable_cache[target]
+        end
+
+        result = reachable_avoiding?(target, nil)
+        @reachable_cache[target] = result
+        result
+      end
+
+      private def reachable_avoiding?(target : BlockId, avoid : BlockId?) : Bool
+        entry = @function.entry_block
+        return false if avoid == entry
+
+        mark = next_visit_mark
+        @stack.clear
+        @stack << entry
+
+        while block_id = @stack.pop?
+          next if avoid == block_id
+          idx = block_id.to_i
+          next if idx >= @visited.size
+          next if @visited[idx] == mark
+          @visited[idx] = mark
+          return true if block_id == target
+
+          block = @function.get_block?(block_id)
+          next unless block
+
+          succs = block.terminator.successors
+          i = succs.size - 1
+          while i >= 0
+            succ_id = succs[i]
+            @stack << succ_id unless avoid == succ_id
+            i -= 1
+          end
+        end
+
+        false
+      end
+
+      private def next_visit_mark : Int32
+        if @visit_mark == Int32::MAX
+          @visited.fill(0)
+          @visit_mark = 0
+        end
+
+        @visit_mark += 1
       end
     end
 
@@ -1737,145 +1806,6 @@ module Adamas::MIR
       end
 
       {def_blocks, def_index}
-    end
-
-    private def compute_dominance_info : DominanceInfo
-      @function.compute_predecessors
-
-      entry = @function.entry_block
-      rpo = compute_reverse_postorder(entry)
-      max_block_id = @function.blocks.max_of(&.id).to_i
-      size = max_block_id + 1
-
-      rpo_index = ::Array.new(size, -1)
-      rpo.each_with_index do |block_id, idx|
-        rpo_index[block_id.to_i] = idx
-      end
-
-      entry_idx = entry.to_i
-      idom = ::Array(Int32?).new(size, nil)
-      idom[entry_idx] = entry_idx
-
-      changed = true
-      while changed
-        changed = false
-        rpo.each_with_index do |block_id, pos|
-          next if pos == 0
-          block = @function.get_block(block_id)
-
-          new_idom : Int32? = nil
-          block.predecessors.each do |pred_id|
-            pred_idx = pred_id.to_i
-            next if pred_idx >= size
-            next unless idom[pred_idx]
-
-            if existing = new_idom
-              new_idom = intersect_idoms(existing, pred_idx, idom, rpo_index)
-            else
-              new_idom = pred_idx
-            end
-          end
-
-          next unless new_idom
-          block_idx = block_id.to_i
-          if idom[block_idx] != new_idom
-            idom[block_idx] = new_idom
-            changed = true
-          end
-        end
-      end
-
-      children = ::Array.new(size) { [] of Int32 }
-      rpo.each do |block_id|
-        block_idx = block_id.to_i
-        next if block_idx == entry_idx
-        parent = idom[block_idx]
-        next unless parent
-        children[parent] << block_idx
-      end
-
-      in_time = ::Array.new(size, -1)
-      out_time = ::Array.new(size, -1)
-      time = 0
-      stack = [{entry_idx, false}] of Tuple(Int32, Bool)
-      while frame = stack.pop?
-        block_idx, exiting = frame
-        if exiting
-          out_time[block_idx] = time
-          time += 1
-          next
-        end
-
-        in_time[block_idx] = time
-        time += 1
-        stack << {block_idx, true}
-        kids = children[block_idx]
-        i = kids.size - 1
-        while i >= 0
-          stack << {kids[i], false}
-          i -= 1
-        end
-      end
-
-      DominanceInfo.new(in_time, out_time)
-    end
-
-    private def intersect_idoms(
-      a_idx : Int32,
-      b_idx : Int32,
-      idom : Array(Int32?),
-      rpo_index : Array(Int32)
-    ) : Int32
-      finger1 = a_idx
-      finger2 = b_idx
-
-      while finger1 != finger2
-        while rpo_index[finger1] > rpo_index[finger2]
-          parent = idom[finger1]
-          return finger1 unless parent
-          finger1 = parent
-        end
-
-        while rpo_index[finger2] > rpo_index[finger1]
-          parent = idom[finger2]
-          return finger2 unless parent
-          finger2 = parent
-        end
-      end
-
-      finger1
-    end
-
-    private def compute_reverse_postorder(entry : BlockId) : Array(BlockId)
-      visited = ::Set(BlockId).new
-      postorder = [] of BlockId
-      stack = [{entry, false}] of Tuple(BlockId, Bool)
-
-      while frame = stack.pop?
-        block_id, exiting = frame
-        if exiting
-          postorder << block_id
-          next
-        end
-
-        next if visited.includes?(block_id)
-        visited << block_id
-        stack << {block_id, true}
-
-        block = @function.get_block?(block_id)
-        next unless block
-
-        succs = block.terminator.successors
-        i = succs.size - 1
-        while i >= 0
-          succ_id = succs[i]
-          stack << {succ_id, false} unless visited.includes?(succ_id)
-          i -= 1
-        end
-      end
-
-      postorder.reverse!
-      postorder
     end
   end
 
