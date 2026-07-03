@@ -1978,6 +1978,12 @@ Recommended direction:
   architecture unit. Another broad optimizer selector, memory-budget increase,
   worker forcing, backend rescue, or return to `NamedTuple`/ambient/BlockOwner
   surfaces would be a retreat to symptom chasing unless 0k-DV decays.
+- Slice 0k-DW refines that unit: the selected resource corridor is
+  `CopyPropagationPass#apply_build_dominators`, not state collection,
+  replacement discovery, affected-block collection, or rewrite blocks. The next
+  implementation movement should name which dominance-build subowner is
+  responsible (`build_def_maps`, local-dominance skip classification, or
+  `compute_dominance_info`) and must preserve the clean earlier phase controls.
 
 This plan should be revisited after the architecture SDD seals the active
 semantic-owner frontiers enough that backend-local refactoring cannot hide a

@@ -919,6 +919,7 @@ module Adamas::MIR
     getter propagated : Int32 = 0
     @assume_dominates : Bool = false
     @@cp_phase_timing_enabled : Bool = ENV["ADAMAS_CP_PHASE_TIMING"]? == "1"
+    @@stop_after_cp_phase : String? = ENV["ADAMAS_CP_THROUGH_PHASE"]?
     @@cp_phase_time_totals : ::Hash(String, Float64) = ::Hash(String, Float64).new(0.0)
     @@cp_phase_call_counts : ::Hash(String, Int32) = ::Hash(String, Int32).new(0)
     @@cp_phase_timing_lock : Mutex = Mutex.new
@@ -993,6 +994,7 @@ module Adamas::MIR
           end
         end
       end
+      return 0 if stop_after_cp_phase?("run_collect_state")
 
       replacements = {} of ValueId => ValueId
 
@@ -1147,11 +1149,13 @@ module Adamas::MIR
         end
       end
       end
+      return 0 if stop_after_cp_phase?("run_find_replacements")
 
       applied = 0
       timed_cp_phase("run_apply_replacements") do
         applied = apply_replacements(replacements)
       end
+      return applied if stop_after_cp_phase?("run_apply_replacements")
       applied
     end
 
@@ -1174,6 +1178,7 @@ module Adamas::MIR
         end
         affected
       end
+      return @propagated if stop_after_cp_phase?("apply_collect_affected_blocks")
 
       # Nothing reads replaced values, so rewriting is a guaranteed no-op.
       return 0 if affected_block_ids.empty?
@@ -1190,6 +1195,7 @@ module Adamas::MIR
             dominance_info = compute_dominance_info
           end
         end
+        return @propagated if stop_after_cp_phase?("apply_build_dominators")
       end
       block_sizes = timed_cp_phase("apply_build_block_sizes") do
         sizes = {} of BlockId => Int32
@@ -1198,6 +1204,7 @@ module Adamas::MIR
         end
         sizes
       end
+      return @propagated if stop_after_cp_phase?("apply_build_block_sizes")
 
       timed_cp_phase("apply_rewrite_blocks") do
         @function.blocks.each do |block|
@@ -1223,6 +1230,7 @@ module Adamas::MIR
           end
         end
       end
+      return @propagated if stop_after_cp_phase?("apply_rewrite_blocks")
 
       @propagated
     end
@@ -1233,6 +1241,10 @@ module Adamas::MIR
       result = yield
       self.class.record_cp_phase_timing(phase_name, (Time.instant - started_at).total_milliseconds)
       result
+    end
+
+    private def stop_after_cp_phase?(phase_name : String) : Bool
+      @@stop_after_cp_phase == phase_name
     end
 
     private def can_skip_dominators_for_local_replacements?(

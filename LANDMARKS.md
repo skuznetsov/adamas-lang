@@ -12,6 +12,28 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-DW-WORKERS1-COPYPROP-DOMINATORS-RESOURCE-LANE|implemented 2026-07-02 {F:0.90 G:0.57 R:0.86}]:
+`scripts/generated_stage_workers1_copyprop_phase_classifier.sh` splits the
+0k-DV workers=1 `CopyPropagationPass` lane by phase-level OS RSS cutoff. It
+uses new debug-only `ADAMAS_CP_THROUGH_PHASE=<phase>` together with
+`ADAMAS_MIR_OPT_THROUGH_PASS=copy_propagation` and
+`ADAMAS_STOP_AFTER_MIR_OPT`. Fresh
+`REQUIRE_CLASSIFICATION=1 REQUIRE_PHASE=1` evidence first re-confirms 0k-DV:
+`pass.classification=select_workers1_mir_opt_copy_propagation_resource_lane`,
+copy-propagation memory-kill `4345` MB. Phase cutoffs are clean for
+`run_collect_state=1173` MB, `run_find_replacements=1174` MB, and
+`apply_collect_affected_blocks=1175` MB. The broad `run_apply_replacements`
+cutoff is high (`4264` MB), but the first inner high is
+`apply_build_dominators=4237` MB with memory-kill; later apply phases remain
+high (`apply_build_block_sizes=4196` MB, `apply_rewrite_blocks=4181` MB).
+Scope: this is a phase-level selector, not a resource fix. It selects the
+`apply_build_dominators` corridor (`build_def_maps`,
+`can_skip_dominators_for_local_replacements?`, and/or
+`compute_dominance_info`) as the next production target. Decay trigger: the
+phase classifier stops selecting `apply_build_dominators`, an earlier CP phase
+becomes high, the 0k-DV precondition decays, or CopyPropagation phase structure
+changes.
+
 [LM-ARCH-0K-DV-WORKERS1-MIR-OPT-COPY-PROP-RESOURCE-LANE|implemented 2026-07-02 {F:0.90 G:0.59 R:0.86}]:
 `scripts/generated_stage_workers1_mir_opt_pass_classifier.sh` splits the 0k-DU
 workers=1 MIR optimization resource lane by pass-level OS RSS cutoff. It uses

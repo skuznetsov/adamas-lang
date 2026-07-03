@@ -8,6 +8,26 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: Slice 0k-DW splits the selected workers=1
+  `CopyPropagationPass` lane by phase-level OS-RSS cutoff. New debug-only
+  cutoff: `ADAMAS_CP_THROUGH_PHASE=<phase>`; new executable classifier:
+  `scripts/generated_stage_workers1_copyprop_phase_classifier.sh`. Fresh
+  `REQUIRE_CLASSIFICATION=1 REQUIRE_PHASE=1` evidence first re-confirms 0k-DV
+  (`pass.classification=select_workers1_mir_opt_copy_propagation_resource_lane`,
+  copy-propagation memory-kill `4345` MB), then selects
+  `classification=select_workers1_copyprop_apply_build_dominators_resource_lane`.
+  Controls are clean for `run_collect_state` (`1173` MB),
+  `run_find_replacements` (`1174` MB), and
+  `apply_collect_affected_blocks` (`1175` MB); `run_apply_replacements` is
+  broad-high (`4264` MB), but the first inner high is
+  `apply_build_dominators` (`4237` MB), with later apply phases still high.
+  Therefore the next production resource receipt must target the
+  `apply_build_dominators` corridor (`build_def_maps`,
+  `can_skip_dominators_for_local_replacements?`, or `compute_dominance_info`)
+  before any rewrite, affected-block-set, or generic CopyPropagation patch.
+  Preserve the earlier clean controls and default-mode residual; do not add
+  another cascaded selector unless this phase result decays.
+
 - 2026-07-02 UPDATE: Slice 0k-DV splits the selected workers=1 MIR
   optimization lane by pass-level OS-RSS cutoff. New debug-only cutoff:
   `ADAMAS_MIR_OPT_THROUGH_PASS=<pass>`; new executable classifier:
