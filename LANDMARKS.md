@@ -12,6 +12,34 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-ED-FUNCTION-ATTEMPT-EDGE-SELECTED|implemented 2026-07-03 {F:0.90 G:0.53 R:0.86}]:
+The active L15 function-emission edge is now selected over pre-attempt retained
+state. A debug-only `ADAMAS_STOP_BEFORE_LLVM_FUNCTION_INDEX=<n>` gate logs
+`sequential_stop_before`, `llvm.sequential_stop_before`, and a
+`llvm.function_emission_outcome` row with `status=stop_before`, then exits
+cleanly before emitting the requested function. The new
+`scripts/generated_stage_function_emission_attempt_classifier.sh` uses that
+gate with OS RSS evidence. Evidence with `tmp/adamas_l15_stop_stage1`:
+`STAGE1_COMPILER=tmp/adamas_l15_stop_stage1 STAGE2_BUILD_TIMEOUT=600
+TAIL_LINES=20 REQUIRE_CLASSIFICATION=1
+scripts/generated_stage_function_emission_attempt_classifier.sh` reports
+`classification=select_active_function_attempt_edge`. Both modes stop before
+function #87 with no memory kill and low RSS
+(`default_workers_peak_rss_mb=1180`, `workers1_peak_rss_mb=1183`), and both
+last outcome rows are `status=stop_before`, `index=87`, function
+`__vdispatch__IO::FileDescriptor#system_write$Slice(UInt8)$T122`. The same
+stage1 preserves the gate-off L15 baseline:
+`scripts/generated_stage_mode_resource_lane_classifier.sh` reports
+`classification=select_default_late_llvm_resource_lane` and final outcome
+`status=started`, `index=87`. Full suites pass `152/152 + 36/36`; semantic and
+codepath census guards pass. Scope: behavior-neutral discriminator only. It
+refutes retained output/resource state before function #87 as the first owner
+for the current edge, but does not prove a method-specific fix and does not
+admit patching `system_write` by name. Decay trigger: stop-before #87 becomes
+high/memory-killed, the expected function/index changes under the L15 gate, or
+a later inside-function split proves the edge is a reusable emission subowner
+outside this function.
+
 [LM-ARCH-0K-EC-ACTIVE-FUNCTION-EMISSION-ATTEMPT|implemented 2026-07-02 {F:0.89 G:0.55 R:0.85}]:
 The L15 default late LLVM/function-emission outcome fact now distinguishes the
 last completed function from the active in-flight emission attempt at the

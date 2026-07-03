@@ -52,6 +52,18 @@ next backend work should discriminate function-specific emission from
 pre-existing output/resource/side-effect retention before any typed writer,
 external sink, or per-method change.
 
+2026-07-03 post-0k-ED note: the pre-existing retained-state branch is now
+refuted for the active edge. The new
+`scripts/generated_stage_function_emission_attempt_classifier.sh` stops both
+produced compiler modes immediately before function #87 using
+`ADAMAS_STOP_BEFORE_LLVM_FUNCTION_INDEX=87`; both modes exit cleanly below the
+high RSS threshold (`1180`/`1183` MB) with `status=stop_before` for
+`__vdispatch__IO::FileDescriptor#system_write$Slice(UInt8)$T122`. Gate-off L15
+still memory-kills with `status=started` for the same function. The next
+backend work should split inside the active function-emission attempt or name a
+reusable emission subowner behind it; `system_write` remains a boundary marker,
+not a special-case patch target.
+
 2026-07-02 post-0k-DY note: the selected workers=1
 `CopyPropagationPass#compute_dominance_info` lane is consumed by a production
 resource fix. CopyPropagation now answers cross-block dominance with an exact

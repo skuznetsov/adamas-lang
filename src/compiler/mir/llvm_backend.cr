@@ -17552,6 +17552,7 @@ module Adamas::MIR
     # Sequential function emission (original path)
     private def emit_functions_sequential(functions : ::Array(Function))
       snapshot_every = ::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_LLVM_MEM_SNAPSHOT_EVERY").try(&.to_i?)
+      stop_before_index = ::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_STOP_BEFORE_LLVM_FUNCTION_INDEX").try(&.to_i?)
       log_generated_stage_function_emission_phase(
         "sequential_start",
         "sequential",
@@ -17581,6 +17582,37 @@ module Adamas::MIR
         called_before = @called_crystal_functions.size
         undefined_before = @undefined_extern_names.size
         mangled_func_name = mangle_function_name(func.name)
+        if stop_before_index && stop_before_index > 0 && idx + 1 == stop_before_index
+          log_generated_stage_function_emission_phase(
+            "sequential_stop_before",
+            "sequential",
+            "index=#{idx + 1} total_functions=#{functions.size} function=#{generated_stage_transaction_token(func.name)}"
+          )
+          log_generated_stage_memory_phase(
+            "llvm.sequential_stop_before",
+            "llvm.function_emission",
+            "index=#{idx + 1} total_functions=#{functions.size} function=#{generated_stage_transaction_token(func.name)}"
+          )
+          log_generated_stage_function_emission_outcome(
+            LLVMFunctionEmissionOutcome.new(
+              func.name,
+              mangled_func_name,
+              "sequential",
+              "stop_before",
+              idx + 1,
+              functions.size,
+              out_before,
+              out_before,
+              emitted_before,
+              emitted_before,
+              called_before,
+              called_before,
+              undefined_before,
+              undefined_before
+            )
+          )
+          LibC._exit(0)
+        end
         log_generated_stage_function_emission_outcome(
           LLVMFunctionEmissionOutcome.new(
             func.name,

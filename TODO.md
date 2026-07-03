@@ -8,6 +8,27 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-03 UPDATE: Slice 0k-ED consumes the 0k-EC ambiguity with an
+  executable stop-before-active-function discriminator. New debug-only gate:
+  `ADAMAS_STOP_BEFORE_LLVM_FUNCTION_INDEX=<n>`; new classifier:
+  `scripts/generated_stage_function_emission_attempt_classifier.sh`. With
+  `tmp/adamas_l15_stop_stage1`, `STOP_INDEX=87`, and
+  `REQUIRE_CLASSIFICATION=1`, the classifier builds generated `s2`, stops both
+  default and workers=1 produced compilers immediately before function #87, and
+  reports `classification=select_active_function_attempt_edge`. Both stop
+  probes are clean (`default_workers_peak_rss_mb=1180`,
+  `workers1_peak_rss_mb=1183`, no memory kill, exit 0) and both last outcome
+  rows are `status=stop_before`, `index=87`, function
+  `__vdispatch__IO::FileDescriptor#system_write$Slice(UInt8)$T122`. The
+  gate-off mode selector still reports
+  `classification=select_default_late_llvm_resource_lane` with final outcome
+  `status=started`, `index=87`; full suites pass `152/152 + 36/36`; static
+  semantic/codepath guards remain green. This refutes pre-#87 retained
+  output/resource state as the first owner for the current L15 edge. It does
+  not fix memory and does not license patching `system_write` by name; the next
+  slice must split inside function #87 emission or prove a reusable emission
+  subowner behind that function.
+
 - 2026-07-02 UPDATE: Slice 0k-EC extends the 0k-EB L15 owner fact with
   in-flight function-emission attempts. `emit_functions_sequential` now logs a
   default-off `llvm.function_emission_outcome` row with `status=started`
