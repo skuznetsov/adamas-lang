@@ -708,6 +708,10 @@ module Adamas::MIR
       "MSG"
     end
 
+    def side_effect_gc_realloc_helper_demand_tag : String
+      "GRH"
+    end
+
     def side_effect_debug_file_tag : String
       "DGF"
     end
@@ -2569,6 +2573,7 @@ module Adamas::MIR
     @undefined_extern_names : Array(String) = [] of String
     @undefined_extern_return_types : Array(String) = [] of String
     @called_crystal_functions : Hash(String, {String, Int32, Array(String)}) = {} of String => {String, Int32, Array(String)}  # Track called Crystal functions (name => {return_type, arg_count, arg_types}) for missing declaration generation
+    @gc_aware_realloc_helper_needed : Bool = false
     @global_name_mapping : Hash(String, String) = {} of String => String  # Map original global names to renamed names
     @global_declared_types : Hash(String, String) = {} of String => String  # Global name -> declared LLVM type
     @func_by_name : Hash(String, Function)  # Fast lookup for exact/mangled function names
@@ -3512,6 +3517,7 @@ module Adamas::MIR
     def generate(output : IO? = nil) : String
       capture_primary_output(output || IO::Memory.new)
       @toplevel_output = nil
+      @gc_aware_realloc_helper_needed = false
       generated_in_memory = output.nil?
       output_mode = generated_in_memory ? "memory" : "external_io"
       log_generated_stage_llvm_generate_phase("generate_start", output_mode)
@@ -3602,11 +3608,11 @@ module Adamas::MIR
       emit_entrypoint_if_needed(functions_to_emit)
 
       # Two-heap GC hazard fix (D): emit the GC-base-aware realloc wrapper only
-      # when a reachable function calls GC_realloc. That is exactly when the
-      # emit_extern_call redirect targets @__adamas_gc_aware_realloc AND when
-      # libgc is linked (a GC method is reachable), so its @GC_base/@GC_realloc
-      # references resolve. Parallel-safe: scans the shared MIR, not worker state.
-      if gc_aware_realloc_needed?(functions_to_emit)
+      # when emitted IR actually demands it (producer-owned flag, merged from
+      # worker side effects) or the legacy shared-MIR scan sees a reachable
+      # GC_realloc call. The wrapper references @GC_base/@GC_realloc, so it must
+      # not be emitted for GC-free programs.
+      if @gc_aware_realloc_helper_needed || gc_aware_realloc_needed?(functions_to_emit)
         emit_gc_aware_realloc_wrapper
       end
 
@@ -18599,6 +18605,7 @@ module Adamas::MIR
       side_effect_emitted_function_tag = emission_session.side_effect_emitted_function_tag
       side_effect_emitted_return_type_tag = emission_session.side_effect_emitted_return_type_tag
       side_effect_module_singleton_global_tag = emission_session.side_effect_module_singleton_global_tag
+      side_effect_gc_realloc_helper_demand_tag = emission_session.side_effect_gc_realloc_helper_demand_tag
       side_effect_debug_file_tag = emission_session.side_effect_debug_file_tag
       side_effect_string_counter_tag = emission_session.side_effect_string_counter_tag
 
@@ -18650,6 +18657,10 @@ module Adamas::MIR
           f.puts "#{side_effect_module_singleton_global_tag}\t#{type_ref.id}\t#{global_name}"
         end
 
+        if @gc_aware_realloc_helper_needed
+          f.puts "#{side_effect_gc_realloc_helper_demand_tag}\t1"
+        end
+
         if @debug_emit_anchors
           @dwarf_debug.used_files.each do |filename|
             f.puts "#{side_effect_debug_file_tag}\t#{Base64.strict_encode(filename)}"
@@ -18668,6 +18679,7 @@ module Adamas::MIR
       side_effect_emitted_function_tag = emission_session.side_effect_emitted_function_tag
       side_effect_emitted_return_type_tag = emission_session.side_effect_emitted_return_type_tag
       side_effect_module_singleton_global_tag = emission_session.side_effect_module_singleton_global_tag
+      side_effect_gc_realloc_helper_demand_tag = emission_session.side_effect_gc_realloc_helper_demand_tag
       side_effect_debug_file_tag = emission_session.side_effect_debug_file_tag
       side_effect_string_counter_tag = emission_session.side_effect_string_counter_tag
 
@@ -18719,6 +18731,8 @@ module Adamas::MIR
             global_name = parts[2]
             type_ref = TypeRef.new(type_id)
             @module_singleton_globals[type_ref] ||= global_name
+          when side_effect_gc_realloc_helper_demand_tag
+            @gc_aware_realloc_helper_needed = true
           when side_effect_debug_file_tag
             next if parts.size < 2
             @dwarf_debug.register_external_file(Base64.decode_string(parts[1]))
@@ -23864,6 +23878,7 @@ module Adamas::MIR
         return false unless inst.args.size >= 1
         oldp = value_ref(inst.args[0])
         fn = (ename == "GC_realloc") ? "__adamas_gc_aware_realloc" : ename
+        @gc_aware_realloc_helper_needed = true if fn == "__adamas_gc_aware_realloc"
         emit "#{name} = call ptr @#{fn}(ptr #{oldp}, i64 #{bytes}) ; ivc_raw bulk-stride"
         @value_types[inst.id] = TypeRef::POINTER
         record_emitted_type(name, "ptr")
@@ -24106,6 +24121,7 @@ module Adamas::MIR
       when "GC_realloc"
         mangled_extern_name = "__adamas_gc_aware_realloc"
       end
+      @gc_aware_realloc_helper_needed = true if mangled_extern_name == "__adamas_gc_aware_realloc"
 
       # Handle Pointer.new / Pointer.new! - convert integer to pointer
       if pointer_constructor_name?(inst.extern_name) && inst.args.size == 1

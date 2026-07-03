@@ -221,6 +221,26 @@ type-definition availability. It should not return to generic post-`to_s`,
 return-slot, scalar-global, output-ownership, `NamedTuple`/`Tuple`, ambient-map,
 or `BlockOwner` work from this evidence.
 
+2026-07-03 post-0k-ET note: the zero-sentinel and runtime-helper declaration
+edges are now consumed. Slice 0k-ER moved V2 value storage to raw byte storage
+for stack allocas and zero sentinels, and Slice 0k-ET adds a producer-owned
+runtime-helper demand contract for `@__adamas_gc_aware_realloc` through the
+existing LLVM worker side-effect merge. Fresh generated-stage evidence builds a
+produced `adamas_s2`, compiles full-prelude `puts 42`, runs the produced binary
+successfully, and `generated_stage_llvm_entry_classifier.sh` reports
+`classification=clean_both_modes`. The next architecture unit should therefore
+stop chasing the post-`to_s` LLVM-validity ladder and remeasure the bootstrap
+ladder / s2->s3 comparison gate before selecting another production frontier.
+This is not yet a full green `s3b` or arbitrary-program bootstrap claim.
+
+2026-07-03 post-0k-ET ladder note: the three-stage bootstrap remeasurement is
+now the active planning surface. `build_bootstrap_stages --stages 3` builds and
+smokes `cv2_s1` and `cv2_s2`, then fails `cv2_s3` build with exit 139 after
+`pass3 after lower_main call`. The matching self-build boundary classifier on
+`cv2_s2` reports `self_build_hir_boundary` under a 12GB cap/threshold. The next
+architecture unit should be a B5 self-build boundary selector/localizer for
+`cv2_s2` HIR/lower-main execution, not another LLVM finalization/helper slice.
+
 2026-07-02 post-0k-DY note: the selected workers=1
 `CopyPropagationPass#compute_dominance_info` lane is consumed by a production
 resource fix. CopyPropagation now answers cross-block dominance with an exact

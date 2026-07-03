@@ -12,6 +12,56 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-B5-S3-SELF-BUILD-FRONTIER|frontier 2026-07-03 {F:0.88 G:0.58 R:0.86}]:
+After Slice 0k-ET, the current bootstrap distance is no longer the old B4 tiny
+produced-s2 LLVM-entry gate. `scripts/build_bootstrap_stages.sh --out
+tmp/bootstrap_l22_demand --stages 3 --timeout 900 --mem 12288` builds and
+smokes `cv2_s1` and `cv2_s2` clean, then fails `cv2_s3` build with exit 139
+after `[STAGE2_DEBUG] pass3 after lower_main call` at about 4801 MB peak RSS.
+Using the same `cv2_s2`,
+`STAGE1_COMPILER=tmp/bootstrap_l22_demand/cv2_s2 REQUIRE_CLASSIFICATION=1
+STOP_MEM_MB=12288 HIGH_RSS_MB=12288
+scripts/generated_stage_self_build_boundary_classifier.sh` exits 0 with
+`classification=self_build_hir_boundary`: compile-entry and parse are clean,
+while HIR/MIR stop-gate runs both exit 139 after lower_main. Scope: `s2b`
+builds and smokes; `s3b` remains red. Residual boundary: produced `cv2_s2`
+self-build fails during/after HIR lower-main execution, not from the consumed
+L17-L22 post-`to_s` LLVM-validity ladder. Decay trigger: a fresh 3-stage
+bootstrap succeeds, the boundary classifier no longer reports
+`self_build_hir_boundary`, or a narrower classifier pins a different first-bad
+transition.
+
+[LM-ARCH-0K-ET-GC-REALLOC-DEMAND-CONSUMED|implemented 2026-07-03 {F:0.90 G:0.55 R:0.88}]:
+The L22 runtime-helper declaration frontier is consumed. Root boundary:
+LLVM helper-call producers could emit calls to `@__adamas_gc_aware_realloc`
+from `GC_realloc` redirects / bulk extern lowering, but the helper-definition
+epilogue only knew about the shared reachable function list and could miss
+worker-produced helper demand. The production slice adds a producer-owned
+`@gc_aware_realloc_helper_needed` flag, serializes it through the existing
+worker side-effect channel, merges it before helper emission, and emits the
+GC-aware realloc wrapper when either that demand or the legacy shared-MIR scan
+requires it. Evidence with `tmp/adamas_l22_demand_stage1`: stage1 build exits
+0; `regression_tests/gc_aware_realloc_gating_repro.sh
+tmp/adamas_l22_demand_stage1` exits 0, proving the GC-free negative and the
+positive wrapper/redirect case; and
+`STAGE1_COMPILER=tmp/adamas_l22_demand_stage1
+scripts/generated_stage_gc_realloc_helper_report.sh` exits 0 with
+`selection_status=rejected`, `reason=undefined_gc_realloc_helper_error_missing`,
+`gc_realloc_helper_call_count=2`, and `gc_realloc_helper_define_count=1`.
+Generated-stage evidence moves beyond L22: the finalize classifier builds
+`adamas_s2`, full-prelude `normal_out` prints `42` under `scripts/run_safe.sh`,
+and `STAGE1_COMPILER=tmp/adamas_l22_demand_stage1
+GENERATED_S2=<kept>/adamas_s2 REQUIRE_CLEAN=1
+scripts/generated_stage_llvm_entry_classifier.sh` reports
+`classification=clean_both_modes`. Broader regression surface remains green:
+`regression_tests/run_combined.sh tmp/adamas_l22_demand_stage1 4` reports
+36/36 and `regression_tests/run_all.sh tmp/adamas_l22_demand_stage1 4` reports
+152/152. Scope: produced `s2b` tiny full-prelude LLVM-entry is green in both
+default and workers=1 modes; full `s3b`/arbitrary-program bootstrap remains
+open. Decay trigger: the helper selector selects again, the GC-free negative
+over-links `GC_base`/`GC_realloc`, `generated_stage_llvm_entry_classifier.sh
+REQUIRE_CLEAN=1` stops reporting `clean_both_modes`, or regression suites fail.
+
 [LM-ARCH-0K-ES-GC-REALLOC-HELPER-GATE|diagnostic 2026-07-03 {F:0.86 G:0.47 R:0.84}]:
 The post-0k-ER residual now has an executable selector instead of only the
 generic `post_to_s_frontier` row. New script:

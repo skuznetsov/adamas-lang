@@ -8,6 +8,64 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-03 UPDATE: post-0k-ET bootstrap-ladder remeasurement makes the
+  current distance to green explicit. `scripts/build_bootstrap_stages.sh --out
+  tmp/bootstrap_l22_demand --stages 3 --timeout 900 --mem 12288` builds and
+  smokes `cv2_s1` and `cv2_s2` clean (`cv2_s2` build wall about 255s, peak RSS
+  about 3186 MB), but `cv2_s3` fails during build with exit 139 after
+  `[STAGE2_DEBUG] pass3 after lower_main call` at about 4801 MB peak RSS.
+  With the same `cv2_s2`,
+  `STAGE1_COMPILER=tmp/bootstrap_l22_demand/cv2_s2 REQUIRE_CLASSIFICATION=1
+  STOP_MEM_MB=12288 HIGH_RSS_MB=12288
+  scripts/generated_stage_self_build_boundary_classifier.sh` exits 0 with
+  `classification=self_build_hir_boundary`: parse is clean, while HIR/MIR stop
+  gates both exit 139 after lower_main. This supersedes the generic "not green
+  s2b/s3b" wording for the active board: B4/tiny produced-s2 LLVM entry is
+  green, and B5/s3 self-build is the current frontier. The next slice must
+  localize the `cv2_s2` self-build HIR/lower_main boundary before any new
+  source behavior patch. Do not return to L17-L22 post-`to_s` LLVM-validity
+  symptoms, runtime-helper declaration, Slice storage, `NamedTuple` / `Tuple`,
+  ambient maps, or `BlockOwner` from stale evidence.
+
+- 2026-07-03 UPDATE: Slice 0k-ET consumes the L22 runtime-helper
+  demand/definition edge. The root was an authority split in LLVM emission:
+  helper-call producers could redirect `GC_realloc` / bulk extern lowering to
+  `@__adamas_gc_aware_realloc`, while the helper-definition epilogue only
+  scanned the shared reachable function list and missed helper calls produced
+  during worker emission. The production slice records a producer-owned
+  `@gc_aware_realloc_helper_needed` demand, serializes it through the existing
+  worker side-effect channel, merges it before the epilogue, and emits the
+  helper when either the demand flag or the legacy shared-MIR scan requires it.
+  It still preserves the GC-free negative: the helper is not emitted when no
+  `GC_realloc` redirect is produced. Focused evidence with
+  `tmp/adamas_l22_demand_stage1`: `crystal build src/adamas.cr -o
+  tmp/adamas_l22_demand_stage1 --error-trace` exits 0;
+  `regression_tests/gc_aware_realloc_gating_repro.sh
+  tmp/adamas_l22_demand_stage1` exits 0; and
+  `STAGE1_COMPILER=tmp/adamas_l22_demand_stage1
+  scripts/generated_stage_gc_realloc_helper_report.sh` exits 0 with
+  `selection_status=rejected`, `reason=undefined_gc_realloc_helper_error_missing`,
+  `gc_realloc_helper_call_count=2`, and `gc_realloc_helper_define_count=1`.
+  Broader bootstrap evidence: `KEEP_TMP=1
+  STAGE1_COMPILER=tmp/adamas_l22_demand_stage1 REQUIRE_RAW_DUMP=1
+  REQUIRE_CLASSIFICATION=1 scripts/generated_stage_finalize_to_s_classifier.sh`
+  builds `adamas_s2`, compiles full-prelude `puts 42`, and the produced
+  `normal_out` prints `42` under `scripts/run_safe.sh`; and
+  `STAGE1_COMPILER=tmp/adamas_l22_demand_stage1
+  GENERATED_S2=<kept>/adamas_s2 REQUIRE_CLEAN=1
+  scripts/generated_stage_llvm_entry_classifier.sh` reports
+  `classification=clean_both_modes`. Regression surface:
+  `regression_tests/run_combined.sh tmp/adamas_l22_demand_stage1 4` reports
+  36/36 and `regression_tests/run_all.sh tmp/adamas_l22_demand_stage1 4`
+  reports 152/152. This is the first current-board evidence that produced
+  `s2b` compiles a tiny full-prelude program in both default and workers=1
+  modes; it is still not a complete green `s3b` / arbitrary-program bootstrap
+  claim. The next movement must remeasure the bootstrap ladder or stage
+  comparison gate before selecting another production frontier. Do not return
+  to L17-L22 finalization/LLVM-validity symptoms, backend undefined-extern
+  rescue, unconditional helper emission, tail declarations, Slice storage,
+  `NamedTuple` / `Tuple`, ambient maps, or `BlockOwner` from stale evidence.
+
 - 2026-07-03 UPDATE: Slice 0k-ES adds the focused L22 selector for the
   post-0k-ER runtime-helper declaration residual. New script:
   `scripts/generated_stage_gc_realloc_helper_report.sh`. It preserves the

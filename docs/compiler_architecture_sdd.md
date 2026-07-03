@@ -769,6 +769,44 @@ definition emission, tail declaration patches, output ownership, scalar
 globals, function-return slots, Slice storage, `NamedTuple` / `Tuple`, ambient
 maps, and `BlockOwner` remain rejected shortcuts.
 
+2026-07-03 board refinement after Slice 0k-ET: the L22 runtime-helper
+demand/definition authority edge is consumed. Helper-call producers now record
+producer-owned demand for `@__adamas_gc_aware_realloc`, worker emission
+serializes that demand through the existing side-effect channel, the parent
+merges it before the epilogue, and the helper definition is emitted when the
+producer flag or the legacy shared-MIR scan requires it. The GC-free negative
+remains load-bearing: the wrapper is not emitted unless the program actually
+demands the GC-aware realloc path. Fresh evidence with
+`tmp/adamas_l22_demand_stage1` rejects the old L22 selector with
+`reason=undefined_gc_realloc_helper_error_missing` and
+`gc_realloc_helper_define_count=1`; `regression_tests/gc_aware_realloc_gating_repro.sh`
+is green; `generated_stage_finalize_to_s_classifier.sh` builds `adamas_s2`,
+compiles full-prelude `puts 42`, and the produced `normal_out` prints `42`;
+`REQUIRE_CLEAN=1 scripts/generated_stage_llvm_entry_classifier.sh` with that
+produced `s2` reports `classification=clean_both_modes`; and the regression
+suites remain green at 152/152 + 36/36. This retires the stale
+post-`to_s`/L19-L22 LLVM-validity path for the tiny produced-s2 LLVM-entry
+gate. It does not prove green `s3b` or arbitrary-program self-hosting. The next
+movement must remeasure the bootstrap ladder/stage-comparison gate before
+choosing another production frontier. Returning to backend undefined-extern
+rescue, unconditional helper emission, tail declarations, output ownership,
+Slice storage, `NamedTuple` / `Tuple`, ambient maps, or `BlockOwner` from the
+old L22 evidence is invalid.
+
+2026-07-03 board remeasurement after Slice 0k-ET: B4 is now a guarding row, not
+the active frontier. `scripts/build_bootstrap_stages.sh --out
+tmp/bootstrap_l22_demand --stages 3 --timeout 900 --mem 12288` builds and
+smokes `cv2_s1` and `cv2_s2`, but `cv2_s3` build fails with exit 139 after
+`[STAGE2_DEBUG] pass3 after lower_main call` at about 4801 MB peak RSS. A
+same-compiler boundary run with `STAGE1_COMPILER=tmp/bootstrap_l22_demand/cv2_s2
+REQUIRE_CLASSIFICATION=1 STOP_MEM_MB=12288 HIGH_RSS_MB=12288
+scripts/generated_stage_self_build_boundary_classifier.sh` reports
+`classification=self_build_hir_boundary`: parse is clean; HIR and MIR stop
+gates both exit 139 after lower_main. The active board now moves from L22
+runtime-helper declaration availability to a B5 `cv2_s2` self-build
+HIR/lower-main boundary. The next production receipt must localize that
+boundary before claiming green `s3b` or arbitrary-program bootstrap.
+
 | Lane | Current decision | Required next receipt | Rejected shortcut |
 | --- | --- | --- | --- |
 | `bootstrap-emergency-with-ledger` / B4-O1 | Consumed by 0k-CU. The HIR `BlockCallReturnContract` implementation moves the generated-stage gate past the old O1 `affected_block_ids` / `Set(UInt32)#includes?` frontier: `REQUIRE_CURRENT_CU_CONTRACT=1 scripts/hir_block_return_shape_census.sh` reports `classification=current_0k_cu_block_call_return_contract_applied`, and `STAGE1_COMPILER=/tmp/adamas_0kcu_stage1 REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh` exits at the expected non-current boundary with `b4_classification=llvm_entry_failure_after_lower_main` and `workers1_exit139=0`. The new residual is post-`lower_main` RSS pressure in both worker modes, with the default worker-mode rand fallback still present. | Return to the board before any new production source slice. The next receipt must reselect an owner spine from fresh generated-stage evidence; if it targets the new residual, it must name the old authority edge behind post-`lower_main` memory/resource growth rather than treating higher memory limits, worker count, or the rand fallback as acceptance evidence. | Continuing the 0k-CU breakglass lane by inertia; starting from the new RSS-kill stack; raising memory as a fix; forcing `ADAMAS_LLVM_WORKERS=1`; worker/rand/output/resource patches without a new receipt; CopyPropagation, Set/Hash, backend block-return, `NamedTuple`/`Tuple`, ambient-map, or `BlockOwner` changes. |
@@ -1954,6 +1992,84 @@ SliceReceipt {
     reference, `@__adamas_gc_aware_realloc`. The next production movement must
     select that runtime-helper declaration edge before changing helper emission
     or tail declarations.
+}
+```
+
+#### Slice 0k-ET receipt: GC-aware realloc helper demand contract
+
+```text
+SliceReceipt {
+  board_lane: PhaseAuthority / GeneratedStageExecution
+  tranche: bootstrap-emergency-with-ledger
+  old_authority_edge:
+    Slice 0k-ES selected L22 as a runtime-helper declaration availability edge:
+    generated `normal_out.ll` called `@__adamas_gc_aware_realloc`, but the
+    helper had neither declaration nor definition in the same generated IR.
+    The old helper-definition epilogue depended on a shared-MIR reachable
+    function scan, while helper-call producers could emit the helper call during
+    worker emission.
+  owner_fact_or_service:
+    Runtime helper demand is now a producer-owned fact in `LLVMIRGenerator`.
+    Any emission path that redirects to or directly emits
+    `__adamas_gc_aware_realloc` marks `@gc_aware_realloc_helper_needed`.
+    Worker emission serializes that fact through the existing side-effect
+    channel, the parent merges it before the epilogue, and the helper definition
+    is emitted when either the producer demand or the legacy shared-MIR scan
+    requires it.
+  producers:
+    - `emit_extern_call` when `GC_realloc` redirects to
+      `__adamas_gc_aware_realloc`;
+    - `emit_inline_array_bulk_extern` when bulk extern lowering emits the same
+      helper call;
+    - worker side-effect serialization / merge for helper demand;
+    - the legacy shared-MIR `gc_aware_realloc_needed?` scan as a compatibility
+      fallback.
+  consumers:
+    - the helper-definition epilogue (`emit_gc_aware_realloc_wrapper`);
+    - `llc` validation of generated `normal_out.ll`;
+    - `regression_tests/gc_aware_realloc_gating_repro.sh`;
+    - `scripts/generated_stage_gc_realloc_helper_report.sh`;
+    - `scripts/generated_stage_llvm_entry_classifier.sh`.
+  measured_red_baseline:
+    `STAGE1_COMPILER=tmp/adamas_l22_selector_stage1 REQUIRE_SELECTED=1
+    scripts/generated_stage_gc_realloc_helper_report.sh` selected
+    `runtime_helper_gc_realloc_missing_declaration_frontier` with
+    `gc_realloc_helper_call_count=2`, `gc_realloc_helper_define_count=0`,
+    `gc_realloc_helper_declare_count=0`, and an `llc` undefined-helper error
+    matching a helper call.
+  focused_DoD:
+    With `tmp/adamas_l22_demand_stage1`,
+    `regression_tests/gc_aware_realloc_gating_repro.sh` exits 0: GC-free
+    programs emit no wrapper and link clean, while GC-using programs emit the
+    wrapper, redirect the atomic family to libc, and run clean. The old L22
+    selector exits 0 with `selection_status=rejected`,
+    `reason=undefined_gc_realloc_helper_error_missing`,
+    `gc_realloc_helper_call_count=2`, and
+    `gc_realloc_helper_define_count=1`.
+  architecture_DoD:
+    `KEEP_TMP=1 STAGE1_COMPILER=tmp/adamas_l22_demand_stage1
+    REQUIRE_RAW_DUMP=1 REQUIRE_CLASSIFICATION=1
+    scripts/generated_stage_finalize_to_s_classifier.sh` builds `adamas_s2`,
+    compiles full-prelude `puts 42`, and the produced `normal_out` prints `42`
+    under `scripts/run_safe.sh`. With that produced `s2`,
+    `REQUIRE_CLEAN=1 scripts/generated_stage_llvm_entry_classifier.sh` reports
+    `classification=clean_both_modes`. Regression suites report 36/36 combined
+    and 152/152 original.
+  generated_stage_gate:
+    The L22 selector must stay rejected because the helper definition is
+    present, not because L19/L20/L21 consumed rows regressed. The produced `s2`
+    tiny full-prelude LLVM-entry gate must remain clean in both default and
+    workers=1 modes before selecting another behavior frontier.
+  rejected_shortcuts:
+    Backend undefined-extern rescue, unconditional helper definition emission
+    that over-links GC-free programs, tail declarations, output ownership,
+    scalar globals, function-return slots, Slice storage, `NamedTuple` /
+    `Tuple`, ambient maps, or `BlockOwner`.
+  residual_boundary:
+    This closes the current L22 generated-stage LLVM-validity edge and moves
+    the active question from post-`to_s` IR validity to bootstrap-ladder
+    stability. The next movement must remeasure s2->s3 / stage-comparison
+    evidence before selecting a new production frontier.
 }
 ```
 
