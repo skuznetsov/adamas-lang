@@ -25,6 +25,23 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   policy with a generated-stage guard that does not regress to pre-LLVM-entry
   exit 139.
 
+- 2026-07-02 UPDATE: post-0k-DX local-safe-subset CopyPropagation preflight is
+  also REFUTED. A narrower candidate kept only replacements whose source,
+  target, and uses were same-block/order-safe, while dropping the
+  dominance-needed subset. It still regressed generated `s2` before the current
+  MIR-optimization frontier:
+  `STAGE1_COMPILER=tmp/adamas_cp_filter_stage1 REQUIRE_CLASSIFICATION=1
+  TAIL_LINES=30 scripts/generated_stage_workers1_copyprop_phase_classifier.sh`
+  ended in `classification=workers1_copyprop_phase_classifier_build_failed`;
+  nested evidence reported `classification=workers1_hir_resource_boundary`,
+  `nested.classification=pre_llvm_entry_failure`, `s2_hir_rc=139`,
+  `s2_mir_opt_rc=139`, and low RSS (`306` MB, no memory kill). The edit was
+  reverted. Therefore the next production receipt should not drop the
+  dominance-needed subset as a bootstrap fix. It must make dominance
+  construction/query itself memory-safe, or produce a stronger proof that a
+  specific dominance-dependent replacement class can be omitted without
+  regressing generated-stage entry.
+
 - 2026-07-02 UPDATE: Slice 0k-DX splits the selected workers=1
   `CopyPropagationPass#apply_build_dominators` lane by inner substep. New
   debug-only cutoff: `ADAMAS_CP_DOM_THROUGH_STEP=<step>`; new executable

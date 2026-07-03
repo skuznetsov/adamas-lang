@@ -28,6 +28,21 @@ the next 0k-DX fix. Future work should target a memory-safe dominance
 construction/query or a narrower replacement-demand policy, not disabling all
 cross-block/dominance-dependent CopyPropagation.
 
+[LM-ARCH-0K-DX-LOCAL-SAFE-SUBSET-CP-REFUTED|refuted 2026-07-02 {F:0.83 G:0.44 R:0.78}]:
+A narrower candidate that preserved only same-block/order-safe CopyPropagation
+replacements and dropped the dominance-needed subset is also rejected. With
+`STAGE1_COMPILER=tmp/adamas_cp_filter_stage1 REQUIRE_CLASSIFICATION=1
+TAIL_LINES=30 scripts/generated_stage_workers1_copyprop_phase_classifier.sh`,
+the generated compiler again failed before the current 0k-DX resource frontier:
+`classification=workers1_copyprop_phase_classifier_build_failed`,
+`subphase.classification=workers1_hir_resource_boundary`,
+`nested.classification=pre_llvm_entry_failure`, `s2_hir_rc=139`,
+`s2_mir_opt_rc=139`, and RSS stayed low (`306` MB, no memory kill). The edit
+was reverted. Scope: this refutes dropping the dominance-needed replacement
+subset as a bootstrap fix; the next viable direction is memory-safe dominance
+construction/query or a much more specific dominance-dependent replacement
+class with its own generated-stage proof.
+
 [LM-ARCH-0K-DX-WORKERS1-COPYPROP-COMPUTE-DOMINANCE-RESOURCE-LANE|implemented 2026-07-02 {F:0.91 G:0.55 R:0.86}]:
 `scripts/generated_stage_workers1_copyprop_dominator_classifier.sh` splits the
 0k-DW workers=1 `CopyPropagationPass#apply_build_dominators` corridor by

@@ -18,6 +18,15 @@ must keep the generated compiler on the current frontier or later while
 reducing dominance-construction resource use; disabling all cross-block CP is
 now a refuted branch.
 
+2026-07-02 post-0k-DX second refutation note: preserving only same-block /
+order-safe local replacements is also insufficient. The narrower local-safe
+subset policy still regressed generated `s2` to `pre_llvm_entry_failure` /
+exit 139 at HIR/MIR stop gates with low RSS (`306` MB, no memory kill). The
+edit was reverted. The active fix direction is therefore no longer
+"drop dominance-dependent replacements"; it is a memory-safe dominance
+construction/query or a very specific dominance-dependent replacement class
+with a generated-stage proof.
+
 2026-07-02 post-0k-DX note: the workers=1 `CopyPropagationPass` resource lane
 is now narrowed to `compute_dominance_info`, not to definition-map construction,
 the local skip predicate, affected-block collection, rewrite blocks, or earlier
