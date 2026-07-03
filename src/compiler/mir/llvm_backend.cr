@@ -14975,6 +14975,15 @@ module Adamas::MIR
       "0"
     end
 
+    private def find_def_inst_in_function(func : Function, id : ValueId)
+      func.blocks.each do |block|
+        block.instructions.each do |inst|
+          return inst if inst.id == id
+        end
+      end
+      nil
+    end
+
     private def emit_hoisted_allocas(func : Function) : Array(String)
       emitted_names = [] of String
       func.blocks.each do |block|
@@ -15068,7 +15077,7 @@ module Adamas::MIR
         # Prefer the defining instruction type when it is a union.
         # @value_types can be polluted by later ABI/type adaptation, which may
         # collapse a union value to i32/ptr and break union_is/union_unwrap.
-        if def_inst = find_def_inst(val_id)
+        if def_inst = find_def_inst(val_id) || find_def_inst_in_function(func, val_id)
           def_type = def_inst.type
           def_llvm = @type_mapper.llvm_type(def_type)
           # Resolved callee return type wins when MIR still carries a primitive inst.type
@@ -15087,6 +15096,8 @@ module Adamas::MIR
             current_llvm = @type_mapper.llvm_type(val_type)
             if is_union_llvm_type?(def_llvm) && !is_union_llvm_type?(current_llvm)
               val_type = def_type
+            elsif current_llvm == "void" && def_llvm != "void"
+              val_type = def_type
             end
           else
             val_type = def_type
@@ -15102,7 +15113,7 @@ module Adamas::MIR
         # Final override: union Call results must use a union-sized slot. Prefer the Call
         # instruction's MIR type (matches LLVM emission); callee.return_type can still be
         # a conservative primitive in the MIR Function table for some methods.
-        if (di = find_def_inst(val_id)) && di.is_a?(Call)
+        if (di = find_def_inst(val_id) || find_def_inst_in_function(func, val_id)) && di.is_a?(Call)
           call_inst_llvm = @type_mapper.llvm_type(di.type)
           if is_union_llvm_type?(call_inst_llvm)
             val_type = di.type
@@ -17178,14 +17189,22 @@ module Adamas::MIR
       # Check if this instruction produces a value (has a result register)
       # Store, Free, RCIncrement, RCDecrement, GlobalStore, AtomicStore don't produce values
       # Also exclude void-returning calls - they emit `call void` without result
-      is_void_call = (inst.is_a?(Call) || inst.is_a?(ExternCall) || inst.is_a?(IndirectCall)) && begin
-        # Check both prepass type and MIR type — the emission functions use inst.type
-        # which may differ from @value_types (prepass can resolve void → ptr).
-        mir_llvm_type = @type_mapper.llvm_type(inst.type)
-        call_ret_type = @value_types[inst.id]?
-        call_llvm_type = call_ret_type ? @type_mapper.llvm_type(call_ret_type) : nil
-        call_llvm_type == "void" || mir_llvm_type == "void"
-      end
+      is_void_call = case inst
+                     when Call
+                       mir_llvm_type = @type_mapper.llvm_type(inst.type)
+                       call_ret_type = @value_types[inst.id]?
+                       call_llvm_type = call_ret_type ? @type_mapper.llvm_type(call_ret_type) : nil
+                       call_llvm_type == "void" && mir_llvm_type == "void"
+                     when ExternCall, IndirectCall
+                       # Check both prepass type and MIR type — the emission functions use inst.type
+                       # which may differ from @value_types (prepass can resolve void → ptr).
+                       mir_llvm_type = @type_mapper.llvm_type(inst.type)
+                       call_ret_type = @value_types[inst.id]?
+                       call_llvm_type = call_ret_type ? @type_mapper.llvm_type(call_ret_type) : nil
+                       call_llvm_type == "void" || mir_llvm_type == "void"
+                     else
+                       false
+                     end
       produces_value = !inst.is_a?(Store) && !inst.is_a?(MemCopy) && !inst.is_a?(Free) &&
                        !inst.is_a?(RCIncrement) && !inst.is_a?(RCDecrement) &&
                        !inst.is_a?(GlobalStore) && !inst.is_a?(AtomicStore) &&

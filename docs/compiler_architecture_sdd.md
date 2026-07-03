@@ -706,6 +706,21 @@ call lowering, and LLVM call emission consume them. Backend slot coercions,
 HIR-to-MIR consumer fallbacks, constant-global changes, output/finalization
 changes, and `BlockOwner` work remain rejected shortcuts for this residual.
 
+2026-07-03 board refinement after Slice 0k-EP: the L20
+`FunctionReturnAvailability` / `LoweredFunctionReturnContract` edge is
+consumed. The focused generated-stage report now has
+`normal_llc_type_mismatch=0`, preserves the consumed L19
+`String::HEADER_SIZE = i32 12` row and buffer-valid raw dump, and generated
+`IO#gets_slow` stores/loads `%r18` through a `ptr` slot. The current residual
+has moved to zero-filled struct sentinel emission:
+`@__zero.Slice$LUInt8$R = internal global %Slice$LUInt8$R zeroinitializer`,
+where `llc` reports `invalid type for null constant`. The next production
+receipt must first add a focused zero-sentinel selector that distinguishes type
+declaration availability from generic post-`to_s` LLVM validity. It must not
+extend the return-slot patch, reopen scalar globals/output ownership, normalize
+`NamedTuple` / `Tuple`, change ambient maps, or touch `BlockOwner` from this
+evidence.
+
 | Lane | Current decision | Required next receipt | Rejected shortcut |
 | --- | --- | --- | --- |
 | `bootstrap-emergency-with-ledger` / B4-O1 | Consumed by 0k-CU. The HIR `BlockCallReturnContract` implementation moves the generated-stage gate past the old O1 `affected_block_ids` / `Set(UInt32)#includes?` frontier: `REQUIRE_CURRENT_CU_CONTRACT=1 scripts/hir_block_return_shape_census.sh` reports `classification=current_0k_cu_block_call_return_contract_applied`, and `STAGE1_COMPILER=/tmp/adamas_0kcu_stage1 REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh` exits at the expected non-current boundary with `b4_classification=llvm_entry_failure_after_lower_main` and `workers1_exit139=0`. The new residual is post-`lower_main` RSS pressure in both worker modes, with the default worker-mode rand fallback still present. | Return to the board before any new production source slice. The next receipt must reselect an owner spine from fresh generated-stage evidence; if it targets the new residual, it must name the old authority edge behind post-`lower_main` memory/resource growth rather than treating higher memory limits, worker count, or the rand fallback as acceptance evidence. | Continuing the 0k-CU breakglass lane by inertia; starting from the new RSS-kill stack; raising memory as a fix; forcing `ADAMAS_LLVM_WORKERS=1`; worker/rand/output/resource patches without a new receipt; CopyPropagation, Set/Hash, backend block-return, `NamedTuple`/`Tuple`, ambient-map, or `BlockOwner` changes. |
@@ -1705,6 +1720,67 @@ SliceReceipt {
     LoweredFunctionReturnContract owner edge so finalized return facts are
     produced once and consumed consistently by HIR calls, MIR calls, and LLVM
     call emission.
+}
+```
+
+#### Slice 0k-EP receipt: function return contract consumed
+
+```text
+SliceReceipt {
+  board_lane: PhaseAuthority / GeneratedStageExecution
+  tranche: bootstrap-emergency-with-ledger
+  old_authority_edge:
+    Slice 0k-EO selected `%r18.fromslot.1` in generated `IO#gets_slow` as a
+    stale function-return availability edge: the callee emitted `ptr`, but the
+    cross-block slot was allocated as `i64` and no result store was emitted.
+  owner_fact_or_service:
+    The current function body is now the slot-preparation authority for a
+    value's defining instruction when the normal value-def map is incomplete
+    during hoisted alloca setup. For ordinary MIR `Call` instructions, stale
+    prepass `Void` no longer classifies a non-void MIR call as resultless.
+  producers:
+    - MIR `Call` instruction type for `IO#read_char_with_bytesize`;
+    - current-function defining instruction scan during hoisted slot setup;
+    - precomputed emitted call ABI as a guard, not the broad authority.
+  consumers:
+    - cross-block slot type selection;
+    - `emit_instruction` result-register and slot-store emission;
+    - `llc` validation of generated `normal_out.ll`;
+    - `scripts/generated_stage_return_contract_mismatch_report.sh`.
+  measured_red_baseline:
+    Before the slice, the L20 selector reported
+    `classification=function_return_contract_mismatch_frontier`,
+    `%r18.fromslot.1` defined as `i64`, expected as `ptr`, inside
+    `IO#gets_slow` with `IO#read_char_with_bytesize` in the local IR window.
+  focused_DoD:
+    With `tmp/adamas_l20_contract_stage1`,
+    `scripts/generated_stage_return_contract_mismatch_report.sh` exits 0 and
+    reports `normal_llc_type_mismatch=0`,
+    `upstream_classification=post_to_s_frontier`,
+    `normal_string_header_size_global_shape=i32_12`, and
+    `raw_dump_classification=raw_dump_before_to_s_buffer_valid`. Generated IR
+    has `%r18.slot = alloca ptr`, `store ptr %r18, ptr %r18.slot`, and
+    `%r18.fromslot.* = load ptr`.
+  architecture_DoD:
+    Adjacent consumed-frontier guards pass:
+    `REQUIRE_OUTPUT_OWNERSHIP=1 scripts/llvm_output_ownership_source_shape_guard.sh`,
+    the three L19 p2 guards, `regression_tests/run_combined.sh
+    tmp/adamas_l20_contract_stage1 4` (36/36), and
+    `regression_tests/run_all.sh tmp/adamas_l20_contract_stage1 4` (152/152).
+  generated_stage_gate:
+    The L20 selector must stay moved while preserving the L19 `i32_12` row and
+    buffer-valid raw dump. The new residual is
+    `@__zero.Slice$LUInt8$R = internal global %Slice$LUInt8$R zeroinitializer`
+    with `llc` reporting `invalid type for null constant`.
+  rejected_shortcuts:
+    Backend ptr-use coercion, HIR-to-MIR consumer fallbacks, output ownership,
+    scalar globals, source fallback, `MacroNumberValue`, tail/metadata/DWARF
+    / type-name, worker policy, `NamedTuple` / `Tuple`, ambient maps, and
+    `BlockOwner`.
+  residual_boundary:
+    The next production movement must first add a focused zero-struct sentinel
+    selector and then name the declaration/type-availability authority edge.
+    It must not extend this return-slot fix to chase the new LLVM error.
 }
 ```
 

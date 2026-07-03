@@ -8,6 +8,34 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-03 UPDATE: Slice 0k-EP consumes the L20
+  `FunctionReturnAvailability` / `LoweredFunctionReturnContract` edge. The
+  first bad transition was not a missing emitted callee ABI row:
+  `IO#gets_slow` already emitted `IO#read_char_with_bytesize` as `call ptr`,
+  but cross-block slot preparation still trusted a stale prepass
+  `@value_types` entry of `Void`, allocated `%r18.slot` as `i64`, and
+  suppressed the result store. The production slice makes the defining
+  instruction inside the current function available during hoisted slot
+  preparation and prevents stale prepass `Void` from classifying a non-void
+  MIR `Call` as resultless. Focused evidence with
+  `tmp/adamas_l20_contract_stage1`: `scripts/generated_stage_return_contract_mismatch_report.sh`
+  now exits 0 with `normal_llc_type_mismatch=0`,
+  `upstream_classification=post_to_s_frontier`,
+  `normal_string_header_size_global_shape=i32_12`, and
+  `raw_dump_classification=raw_dump_before_to_s_buffer_valid`; generated IR
+  now has `%r18.slot = alloca ptr`, `store ptr %r18, ptr %r18.slot`, and
+  `%r18.fromslot.* = load ptr`. Adjacent guards pass:
+  `REQUIRE_OUTPUT_OWNERSHIP=1 scripts/llvm_output_ownership_source_shape_guard.sh`,
+  the three L19 p2 guards, `regression_tests/run_combined.sh
+  tmp/adamas_l20_contract_stage1 4` (36/36), and
+  `regression_tests/run_all.sh tmp/adamas_l20_contract_stage1 4` (152/152).
+  This is still not green `s2b`/`s3b`: the residual moved to a new
+  post-`to_s` LLVM validity edge,
+  `@__zero.Slice$LUInt8$R = internal global %Slice$LUInt8$R zeroinitializer`,
+  where `llc` reports `invalid type for null constant`. Do not return to
+  function-return slots, output ownership, scalar globals, `NamedTuple` /
+  `Tuple`, ambient maps, or `BlockOwner` unless fresh evidence regresses L20.
+
 - 2026-07-03 UPDATE: Slice 0k-EO adds an executable selector for the
   post-0k-EN residual instead of relying on prose. New script:
   `scripts/generated_stage_return_contract_mismatch_report.sh`. It preserves

@@ -195,6 +195,20 @@ lowering, and LLVM call emission consume them. Backend slot coercions and
 consumer fallbacks are rejected as symptom fixes unless fresh evidence moves
 the selector.
 
+2026-07-03 post-0k-EP note: the function-return contract residual is consumed
+for the active `%r18.fromslot` edge. Hoisted cross-block slot setup now falls
+back to the current function body when the value-def map cannot find the
+defining instruction, and ordinary MIR `Call` values are treated as resultless
+only when both the prepass type and the MIR instruction type are `Void`.
+Generated-stage evidence reports no L20 type mismatch, preserves
+`String::HEADER_SIZE = i32 12`, and moves the residual to a zero-filled struct
+sentinel declaration:
+`@__zero.Slice$LUInt8$R = internal global %Slice$LUInt8$R zeroinitializer`
+with `llc` reporting `invalid type for null constant`. The next architecture
+unit is therefore not a broader return-ABI patch; it should first add a
+focused zero-sentinel selector and then name the declaration/type-availability
+producer edge.
+
 2026-07-02 post-0k-DY note: the selected workers=1
 `CopyPropagationPass#compute_dominance_info` lane is consumed by a production
 resource fix. CopyPropagation now answers cross-block dominance with an exact

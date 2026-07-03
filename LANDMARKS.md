@@ -12,6 +12,37 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-EP-FUNCTION-RETURN-CONTRACT-CONSUMED|implemented 2026-07-03 {F:0.88 G:0.46 R:0.86}]:
+The L20 function-return contract mismatch is consumed. A temporary probe before
+cleanup showed the defining MIR instruction for
+`IO#read_char_with_bytesize` inside `IO#gets_slow` already had a non-void tuple
+type and the emitted call ABI was `ptr`, but hoisted cross-block slot
+preparation saw stale prepass `Void` for the same value, allocated the slot as
+`i64`, and `emit_instruction` classified the `Call` as resultless. The
+production slice makes current-function defining instructions visible during
+slot preparation and makes ordinary MIR `Call` resultlessness require both the
+prepass type and the MIR instruction type to be void; `ExternCall` and
+`IndirectCall` keep the older conservative rule. Evidence with
+`tmp/adamas_l20_contract_stage1`: `scripts/generated_stage_return_contract_mismatch_report.sh`
+exits 0 with `normal_llc_type_mismatch=0`,
+`upstream_classification=post_to_s_frontier`,
+`normal_string_header_size_global_shape=i32_12`, and
+`raw_dump_classification=raw_dump_before_to_s_buffer_valid`; generated IR shows
+`%r18.slot = alloca ptr`, `store ptr %r18, ptr %r18.slot`, and
+`%r18.fromslot.* = load ptr`. Adjacent guards pass:
+`REQUIRE_OUTPUT_OWNERSHIP=1 scripts/llvm_output_ownership_source_shape_guard.sh`,
+`p2_constant_globals_no_prelude_ok`, `p2_prescan_complex_constants_frontier_ok`,
+`p2_macro_number_parsed_literals_no_prelude_ok`,
+`regression_tests/run_combined.sh tmp/adamas_l20_contract_stage1 4` (36/36),
+and `regression_tests/run_all.sh tmp/adamas_l20_contract_stage1 4` (152/152).
+Scope: moved generated-stage frontier only, not green `s2b`/`s3b`. Residual
+boundary: post-`to_s` LLVM validity now fails at
+`@__zero.Slice$LUInt8$R = internal global %Slice$LUInt8$R zeroinitializer` with
+`llc` reporting `invalid type for null constant`. Decay trigger: the L20 report
+again selects `function_return_contract_mismatch_frontier`, the `%r18` slot
+returns to `i64`, the L19 `i32_12` row regresses, or broader regression suites
+fail.
+
 [LM-ARCH-0K-EO-FUNCTION-RETURN-CONTRACT-MISMATCH-GATE|diagnostic 2026-07-03 {F:0.86 G:0.50 R:0.84}]:
 The post-0k-EN generated-stage residual now has an executable selector rather
 than only a prose next-step claim. New script:
