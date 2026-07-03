@@ -12,6 +12,30 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-EB-FUNCTION-EMISSION-OUTCOME-OWNER|implemented 2026-07-02 {F:0.88 G:0.56 R:0.84}]:
+The L15 default late LLVM/function-emission residual now has a code-owned
+per-function outcome fact. `LLVMFunctionEmissionOutcome` records function
+identity, index/total, mode, status, output-position delta, and
+emitted/called/undefined side-effect deltas. The row is default-off and emitted
+only for generated-stage transaction evidence via
+`ADAMAS_GSETX_FUNCTION_EMISSION_OUTCOMES=1`. The transaction report enables and
+consumes `llvm.function_emission_outcome`; the mode resource lane classifier
+passes through the row counts and last outcome. Evidence with
+`tmp/adamas_l15_outcome_stage1`: focused transaction report with
+`REQUIRE_JOINED=1 REQUIRE_FUNCTION_EMISSION_SPLIT=1
+REQUIRE_FUNCTION_EMISSION_OUTCOMES=1` reports
+`runtime.function_emission_outcome_rows=172`,
+`default/workers1_function_emission_outcome_rows=86/86`, and last completed
+function
+`__vdispatch__IO::FileDescriptor#unbuffered_write$Slice(UInt8)$T121`. The
+broader mode selector still selects
+`classification=select_default_late_llvm_resource_lane`, preserving L15/L16.
+Full suites pass `152/152 + 36/36`. Scope: behavior-neutral owner-fact
+movement, not a resource fix and not green `s2b`/`s3b`. Decay trigger: outcome
+rows disappear under the transaction report, L15 no longer selects default late
+LLVM/function emission with a valid generated `s2`, or the next slice proves
+the outcome fact is the wrong owner boundary.
+
 [LM-ARCH-0K-EA-ACCELERATION-CHECKPOINT|design-sealed 2026-07-02 {F:0.78 G:0.62 R:0.80}]:
 The current architecture bottleneck is not missing SDD text; it is report churn
 without an immediately consumable production receipt. The next code movement

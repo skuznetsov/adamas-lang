@@ -674,6 +674,100 @@ Hard stop: if the receipt cannot identify a producer-to-consumer authority edge
 or can only say "the latest crash moved", the work is a probe/SDD update, not a
 production architecture slice.
 
+#### Slice 0k-EB receipt: function-emission outcome owner fact
+
+```text
+SliceReceipt {
+  board_lane: PhaseAuthority / GeneratedStageExecution
+  tranche: contract-owner-migration
+  old_authority_edge:
+    The default late LLVM/function-emission residual is currently represented
+    by coarse `llvm.function_emission_phase` rows emitted directly from
+    sequential/parallel function emission. Those rows name only phase, mode,
+    output position, and occasional progress index. They do not own the
+    per-function outcome that connects planned function emission to emitted
+    output/side-effect growth.
+  owner_fact_or_service:
+    `LLVMFunctionEmissionOutcome` / `llvm.function_emission_outcome`: an
+    env-gated transaction row produced by the LLVM backend after each completed
+    function emission. It records function identity, index/total, mode,
+    output-position delta, emitted/called/undefined side-effect deltas, and
+    status. The generated-stage transaction report consumes the row counts and
+    last outcome fields.
+  producers:
+    - `LLVMEmissionSession` function plan;
+    - sequential `emit_functions_sequential` per-function loop;
+    - later parallel parent/worker emission only after this fact is proven safe
+      for the default residual.
+  consumers:
+    - `scripts/generated_stage_execution_transaction_report.sh`;
+    - `scripts/generated_stage_mode_resource_lane_classifier.sh`;
+    - the next L15 resource receipt, which must use outcome rows to decide
+      whether a specific function/output/side-effect owner edge is root-sized.
+  measured_red_baseline:
+    L15/L16 current evidence: fresh generated-s2 self-build guard is clean, and
+    a valid generated `s2` reselects
+    `classification=select_default_late_llvm_resource_lane` with both modes
+    reaching `reached_function_emission` and memory-killing after `lower_main`.
+  focused_DoD:
+    A stage1 build succeeds, the transaction report prints
+    `runtime.function_emission_outcome_rows` and the last outcome fields, and
+    enabling the outcome gate does not change compiler output semantics.
+  architecture_DoD:
+    The slice must not change worker policy, memory budget, backend undefined
+    extern behavior, symbol materialization, `NamedTuple`/`Tuple`, ambient maps,
+    `BlockOwner`, CopyPropagation, or emitted LLVM semantics.
+  generated_stage_gate:
+    The next generated-stage recheck must preserve L16 self-build separation and
+    the consumed workers=1 CopyPropagation controls before interpreting L15
+    movement.
+  negative_controls:
+    With the new outcome gate off, existing transaction reports retain the
+    coarse phase shape. With the gate on, outcome rows are additional evidence,
+    not acceptance. Static Phase 1/1b censuses remain guards only.
+  rejected_shortcuts:
+    Treating per-function outcome rows as green `s2b`/`s3b`; adding a memory
+    budget, worker override, backend rescue, external sink patch, or another RSS
+    selector from the row alone.
+  residual_boundary:
+    This slice narrows the default late LLVM/function-emission authority edge.
+    It does not fix the resource residual; the next behavior slice must consume
+    the owner fact or refute it with generated-stage evidence.
+}
+```
+
+Status after implementation:
+
+- `LLVMFunctionEmissionOutcome` now exists in `src/compiler/mir/llvm_backend.cr`
+  as a behavior-neutral, default-off transaction owner fact;
+- `emit_functions_sequential` logs one `llvm.function_emission_outcome` row for
+  each completed function when `ADAMAS_GSETX_FUNCTION_EMISSION_OUTCOMES=1`;
+- `scripts/generated_stage_execution_transaction_report.sh` enables and
+  consumes the rows, reporting per-mode counts and the last completed outcome;
+- `scripts/generated_stage_mode_resource_lane_classifier.sh` passes the outcome
+  evidence through next to the existing L15 lane classification;
+- focused evidence with `tmp/adamas_l15_outcome_stage1`:
+  `REQUIRE_JOINED=1 REQUIRE_FUNCTION_EMISSION_SPLIT=1
+  REQUIRE_FUNCTION_EMISSION_OUTCOMES=1
+  scripts/generated_stage_execution_transaction_report.sh` reports
+  `runtime.function_emission_outcome_rows=172`,
+  `runtime.default_function_emission_outcome_rows=86`,
+  `runtime.workers1_function_emission_outcome_rows=86`, and last outcome
+  `__vdispatch__IO::FileDescriptor#unbuffered_write$Slice(UInt8)$T121`;
+- L15 preservation evidence:
+  `REQUIRE_CLASSIFICATION=1 REQUIRE_LANE_SELECTION=1
+  scripts/generated_stage_mode_resource_lane_classifier.sh` still reports
+  `classification=select_default_late_llvm_resource_lane` with both modes
+  reaching function emission and both modes memory-killed after `lower_main`;
+- regression evidence: stage1 build passes, static Phase 1/1b censuses run, and
+  full suites pass `152/152 + 36/36`.
+
+Residual boundary: this owner fact is not a resource fix. The next L15 slice
+can now use the per-function outcome rows to decide whether a specific
+function, output-growth, side-effect-growth, or resource-retention owner edge is
+root-sized. A row naming the last completed function is not, by itself, a
+license for a per-method patch.
+
 #### Slice 0k-DO receipt: default-mode function-emission sink boundary
 
 ```text

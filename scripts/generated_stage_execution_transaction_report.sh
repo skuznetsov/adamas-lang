@@ -24,6 +24,8 @@ Environment:
   REQUIRE_FUNCTION_EMISSION_SPLIT=1
                               Require LLVM function-emission subphase evidence
                               for the current resource corridor.
+  REQUIRE_FUNCTION_EMISSION_OUTCOMES=1
+                              Require per-function emission outcome rows.
   REQUIRE_WORKER_MODE_BOUNDARY=1
                               Require mode-local boundary classification for
                               the default and workers=1 resource corridors.
@@ -125,6 +127,7 @@ transaction_id="gsetx_$(printf '%s' "$tx_seed" | sha1_text | cut -c1-16)"
 : >"$RUNTIME_LEDGER"
 
 set +e
+ADAMAS_GSETX_FUNCTION_EMISSION_OUTCOMES=1 \
 GSETX_TRANSACTION_ID="$transaction_id" GSETX_LEDGER="$RUNTIME_LEDGER" \
   KEEP_TMP=1 "$ROOT_DIR/scripts/generated_stage_llvm_entry_classifier.sh" "$@" >"$CLASSIFIER_OUT" 2>&1
 classifier_rc=$?
@@ -252,12 +255,27 @@ runtime_function_emission_mode="$(runtime_field "llvm.function_emission_phase" "
 runtime_function_emission_out_pos="$(runtime_field "llvm.function_emission_phase" "out_pos")"
 runtime_function_emission_index="$(runtime_field "llvm.function_emission_phase" "index")"
 runtime_function_emission_total="$(runtime_field "llvm.function_emission_phase" "total_functions")"
+runtime_function_outcome_status="$(runtime_field "llvm.function_emission_outcome" "status")"
+runtime_function_outcome_mode="$(runtime_field "llvm.function_emission_outcome" "mode")"
+runtime_function_outcome_index="$(runtime_field "llvm.function_emission_outcome" "index")"
+runtime_function_outcome_total="$(runtime_field "llvm.function_emission_outcome" "total_functions")"
+runtime_function_outcome_function="$(runtime_field "llvm.function_emission_outcome" "function")"
+runtime_function_outcome_out_delta="$(runtime_field "llvm.function_emission_outcome" "out_delta")"
+runtime_function_outcome_emitted_delta="$(runtime_field "llvm.function_emission_outcome" "emitted_delta")"
+runtime_function_outcome_called_delta="$(runtime_field "llvm.function_emission_outcome" "called_delta")"
+runtime_function_outcome_undefined_delta="$(runtime_field "llvm.function_emission_outcome" "undefined_delta")"
 runtime_default_function_emission_phase="$(runtime_field_for_mode "default_workers" "llvm.function_emission_phase" "phase")"
 runtime_default_function_emission_mode="$(runtime_field_for_mode "default_workers" "llvm.function_emission_phase" "mode")"
 runtime_default_function_emission_index="$(runtime_field_for_mode "default_workers" "llvm.function_emission_phase" "index")"
+runtime_default_function_outcome_status="$(runtime_field_for_mode "default_workers" "llvm.function_emission_outcome" "status")"
+runtime_default_function_outcome_index="$(runtime_field_for_mode "default_workers" "llvm.function_emission_outcome" "index")"
+runtime_default_function_outcome_function="$(runtime_field_for_mode "default_workers" "llvm.function_emission_outcome" "function")"
 runtime_workers1_function_emission_phase="$(runtime_field_for_mode "workers1" "llvm.function_emission_phase" "phase")"
 runtime_workers1_function_emission_mode="$(runtime_field_for_mode "workers1" "llvm.function_emission_phase" "mode")"
 runtime_workers1_function_emission_index="$(runtime_field_for_mode "workers1" "llvm.function_emission_phase" "index")"
+runtime_workers1_function_outcome_status="$(runtime_field_for_mode "workers1" "llvm.function_emission_outcome" "status")"
+runtime_workers1_function_outcome_index="$(runtime_field_for_mode "workers1" "llvm.function_emission_outcome" "index")"
+runtime_workers1_function_outcome_function="$(runtime_field_for_mode "workers1" "llvm.function_emission_outcome" "function")"
 runtime_tail_phase="$(runtime_field "tail.semantic_split" "phase")"
 runtime_output_rc="$(runtime_field "output.binary_compile_result" "rc")"
 runtime_output_bytes="$(runtime_field "output.llvm_ir_written" "bytes")"
@@ -389,6 +407,18 @@ elif [[ "$runtime_workers1_function_emission_rows" -gt 0 ]]; then
   runtime_function_emission_mode_join="workers1_only"
 else
   runtime_function_emission_mode_join="unjoined"
+fi
+runtime_function_outcome_rows="$(runtime_row_count "llvm.function_emission_outcome")"
+runtime_default_function_outcome_rows="$(runtime_row_count_for_mode "default_workers" "llvm.function_emission_outcome")"
+runtime_workers1_function_outcome_rows="$(runtime_row_count_for_mode "workers1" "llvm.function_emission_outcome")"
+if [[ "$runtime_default_function_outcome_rows" -gt 0 && "$runtime_workers1_function_outcome_rows" -gt 0 ]]; then
+  runtime_function_outcome_mode_join="both_modes"
+elif [[ "$runtime_default_function_outcome_rows" -gt 0 ]]; then
+  runtime_function_outcome_mode_join="default_only"
+elif [[ "$runtime_workers1_function_outcome_rows" -gt 0 ]]; then
+  runtime_function_outcome_mode_join="workers1_only"
+else
+  runtime_function_outcome_mode_join="unjoined"
 fi
 
 mode_boundary_from_rows() {
@@ -531,6 +561,7 @@ echo "require_joined=${REQUIRE_JOINED:-0}"
 echo "require_post_cu_resource=${REQUIRE_POST_CU_RESOURCE:-0}"
 echo "require_resource_phase_split=${REQUIRE_RESOURCE_PHASE_SPLIT:-0}"
 echo "require_function_emission_split=${REQUIRE_FUNCTION_EMISSION_SPLIT:-0}"
+echo "require_function_emission_outcomes=${REQUIRE_FUNCTION_EMISSION_OUTCOMES:-0}"
 echo "require_worker_mode_boundary=${REQUIRE_WORKER_MODE_BOUNDARY:-0}"
 echo "require_admit_behavior=${REQUIRE_ADMIT_BEHAVIOR:-0}"
 echo "invocation.source=$source_path"
@@ -580,12 +611,28 @@ echo "resource.function_emission_last_total=${runtime_function_emission_total:-u
 echo "resource.function_emission_last_out_pos=${runtime_function_emission_out_pos:-unjoined}"
 echo "resource.function_emission_split=$runtime_function_emission_split"
 echo "resource.function_emission_mode_join_status=$runtime_function_emission_mode_join"
+echo "resource.function_emission_outcome_mode_join_status=$runtime_function_outcome_mode_join"
+echo "resource.function_emission_last_outcome_status=${runtime_function_outcome_status:-unjoined}"
+echo "resource.function_emission_last_outcome_mode=${runtime_function_outcome_mode:-unjoined}"
+echo "resource.function_emission_last_outcome_index=${runtime_function_outcome_index:-unjoined}"
+echo "resource.function_emission_last_outcome_total=${runtime_function_outcome_total:-unjoined}"
+echo "resource.function_emission_last_outcome_function=${runtime_function_outcome_function:-unjoined}"
+echo "resource.function_emission_last_outcome_out_delta=${runtime_function_outcome_out_delta:-unjoined}"
+echo "resource.function_emission_last_outcome_emitted_delta=${runtime_function_outcome_emitted_delta:-unjoined}"
+echo "resource.function_emission_last_outcome_called_delta=${runtime_function_outcome_called_delta:-unjoined}"
+echo "resource.function_emission_last_outcome_undefined_delta=${runtime_function_outcome_undefined_delta:-unjoined}"
 echo "resource.default_function_emission_last_phase=${runtime_default_function_emission_phase:-unjoined}"
 echo "resource.default_function_emission_last_mode=${runtime_default_function_emission_mode:-unjoined}"
 echo "resource.default_function_emission_last_index=${runtime_default_function_emission_index:-unjoined}"
+echo "resource.default_function_emission_last_outcome_status=${runtime_default_function_outcome_status:-unjoined}"
+echo "resource.default_function_emission_last_outcome_index=${runtime_default_function_outcome_index:-unjoined}"
+echo "resource.default_function_emission_last_outcome_function=${runtime_default_function_outcome_function:-unjoined}"
 echo "resource.workers1_function_emission_last_phase=${runtime_workers1_function_emission_phase:-unjoined}"
 echo "resource.workers1_function_emission_last_mode=${runtime_workers1_function_emission_mode:-unjoined}"
 echo "resource.workers1_function_emission_last_index=${runtime_workers1_function_emission_index:-unjoined}"
+echo "resource.workers1_function_emission_last_outcome_status=${runtime_workers1_function_outcome_status:-unjoined}"
+echo "resource.workers1_function_emission_last_outcome_index=${runtime_workers1_function_outcome_index:-unjoined}"
+echo "resource.workers1_function_emission_last_outcome_function=${runtime_workers1_function_outcome_function:-unjoined}"
 echo "resource.default_mode_boundary=$runtime_default_mode_boundary"
 echo "resource.workers1_mode_boundary=$runtime_workers1_mode_boundary"
 echo "runtime.ledger_rows=$(awk -F'\t' -v tx="$transaction_id" '$1 == "GSETX" && $2 == tx { count++ } END { print count + 0 }' "$RUNTIME_LEDGER" 2>/dev/null || echo 0)"
@@ -595,6 +642,7 @@ echo "runtime.session_rows=$(runtime_row_count "llvm.session")"
 echo "runtime.side_effect_rows=$(runtime_row_count "side_effect.runtime_counts")"
 echo "runtime.llvm_generate_phase_rows=$(runtime_row_count "llvm.generate_phase")"
 echo "runtime.function_emission_phase_rows=$(runtime_row_count "llvm.function_emission_phase")"
+echo "runtime.function_emission_outcome_rows=$runtime_function_outcome_rows"
 echo "runtime.default_hir_final_rows=$runtime_default_hir_final_rows"
 echo "runtime.workers1_hir_final_rows=$runtime_workers1_hir_final_rows"
 echo "runtime.default_mir_final_rows=$runtime_default_mir_final_rows"
@@ -605,6 +653,8 @@ echo "runtime.default_llvm_generate_phase_rows=$runtime_default_llvm_generate_ro
 echo "runtime.workers1_llvm_generate_phase_rows=$runtime_workers1_llvm_generate_rows"
 echo "runtime.default_function_emission_phase_rows=$runtime_default_function_emission_rows"
 echo "runtime.workers1_function_emission_phase_rows=$runtime_workers1_function_emission_rows"
+echo "runtime.default_function_emission_outcome_rows=$runtime_default_function_outcome_rows"
+echo "runtime.workers1_function_emission_outcome_rows=$runtime_workers1_function_outcome_rows"
 echo "runtime.tail_rows=$(runtime_row_count "tail.semantic_split")"
 echo "runtime.output_rows=$(( $(runtime_row_count "output.llvm_ir_start") + $(runtime_row_count "output.llvm_ir_written") + $(runtime_row_count "output.binary_compile_result") ))"
 echo "b4.classification=$b4_classification"
@@ -633,6 +683,10 @@ if [[ "${REQUIRE_RESOURCE_PHASE_SPLIT:-0}" == "1" &&
 fi
 if [[ "${REQUIRE_FUNCTION_EMISSION_SPLIT:-0}" == "1" &&
       "$runtime_function_emission_split" == "function_emission_phase_unjoined" ]]; then
+  exit_code=9
+fi
+if [[ "${REQUIRE_FUNCTION_EMISSION_OUTCOMES:-0}" == "1" &&
+      "$runtime_function_outcome_rows" -eq 0 ]]; then
   exit_code=9
 fi
 if [[ "${REQUIRE_WORKER_MODE_BOUNDARY:-0}" == "1" &&

@@ -717,6 +717,38 @@ module Adamas::MIR
     end
   end
 
+  private record LLVMFunctionEmissionOutcome,
+    function_name : String,
+    mangled_name : String,
+    mode : String,
+    status : String,
+    index : Int32,
+    total_functions : Int32,
+    out_pos_before : Int64,
+    out_pos_after : Int64,
+    emitted_before : Int32,
+    emitted_after : Int32,
+    called_before : Int32,
+    called_after : Int32,
+    undefined_before : Int32,
+    undefined_after : Int32 do
+    def out_delta : Int64
+      @out_pos_after - @out_pos_before
+    end
+
+    def emitted_delta : Int32
+      @emitted_after - @emitted_before
+    end
+
+    def called_delta : Int32
+      @called_after - @called_before
+    end
+
+    def undefined_delta : Int32
+      @undefined_after - @undefined_before
+    end
+  end
+
   class DwarfDebugContext
     COMPILE_UNIT_ID       = 0
     MODULE_FLAG_DWARF_ID  = 1
@@ -2071,6 +2103,55 @@ module Adamas::MIR
       end
 
       log_generated_stage_transaction_row("llvm.function_emission_phase", fields)
+    end
+
+    private def generated_stage_function_emission_outcomes_enabled? : Bool
+      generated_stage_transaction_enabled? && bootstrap_env_enabled?("ADAMAS_GSETX_FUNCTION_EMISSION_OUTCOMES")
+    end
+
+    private def log_generated_stage_function_emission_outcome(outcome : LLVMFunctionEmissionOutcome) : Nil
+      return unless generated_stage_function_emission_outcomes_enabled?
+
+      fields = String.build do |io|
+        io << "status="
+        io << generated_stage_transaction_token(outcome.status)
+        io << " mode="
+        io << generated_stage_transaction_token(outcome.mode)
+        io << " index="
+        io << outcome.index
+        io << " total_functions="
+        io << outcome.total_functions
+        io << " function="
+        io << generated_stage_transaction_token(outcome.function_name)
+        io << " mangled="
+        io << generated_stage_transaction_token(outcome.mangled_name)
+        io << " out_pos_before="
+        io << outcome.out_pos_before
+        io << " out_pos_after="
+        io << outcome.out_pos_after
+        io << " out_delta="
+        io << outcome.out_delta
+        io << " emitted_before="
+        io << outcome.emitted_before
+        io << " emitted_after="
+        io << outcome.emitted_after
+        io << " emitted_delta="
+        io << outcome.emitted_delta
+        io << " called_before="
+        io << outcome.called_before
+        io << " called_after="
+        io << outcome.called_after
+        io << " called_delta="
+        io << outcome.called_delta
+        io << " undefined_before="
+        io << outcome.undefined_before
+        io << " undefined_after="
+        io << outcome.undefined_after
+        io << " undefined_delta="
+        io << outcome.undefined_delta
+      end
+
+      log_generated_stage_transaction_row("llvm.function_emission_outcome", fields)
     end
 
     private def generated_stage_memory_phases_enabled? : Bool
@@ -17495,9 +17576,49 @@ module Adamas::MIR
         if snapshot_every && snapshot_every > 0 && idx > 0 && (idx % snapshot_every) == 0
           emit_memory_snapshot(idx + 1, functions.size)
         end
+        out_before = @output.pos.to_i64
+        emitted_before = @emitted_functions.size
+        called_before = @called_crystal_functions.size
+        undefined_before = @undefined_extern_names.size
         begin
           emit_function(func)
+          log_generated_stage_function_emission_outcome(
+            LLVMFunctionEmissionOutcome.new(
+              func.name,
+              mangle_function_name(func.name),
+              "sequential",
+              "emitted",
+              idx + 1,
+              functions.size,
+              out_before,
+              @output.pos.to_i64,
+              emitted_before,
+              @emitted_functions.size,
+              called_before,
+              @called_crystal_functions.size,
+              undefined_before,
+              @undefined_extern_names.size
+            )
+          )
         rescue ex : IndexError
+          log_generated_stage_function_emission_outcome(
+            LLVMFunctionEmissionOutcome.new(
+              func.name,
+              mangle_function_name(func.name),
+              "sequential",
+              "index_error",
+              idx + 1,
+              functions.size,
+              out_before,
+              @output.pos.to_i64,
+              emitted_before,
+              @emitted_functions.size,
+              called_before,
+              @called_crystal_functions.size,
+              undefined_before,
+              @undefined_extern_names.size
+            )
+          )
           bt = ex.backtrace?.try(&.first(20).join("\n")) || "(no backtrace)"
           raise "Index error in emit_function for: #{func.name}\n#{ex.message}\n#{bt}"
         end

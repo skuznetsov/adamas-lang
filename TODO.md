@@ -8,6 +8,30 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: Slice 0k-EB implements the first L15 late
+  LLVM/function-emission owner fact instead of adding another RSS selector.
+  `src/compiler/mir/llvm_backend.cr` now has `LLVMFunctionEmissionOutcome` and,
+  under `ADAMAS_GSETX_FUNCTION_EMISSION_OUTCOMES=1`, sequential function
+  emission logs `llvm.function_emission_outcome` rows with function identity,
+  index/total, output delta, emitted/called/undefined deltas, and status.
+  `scripts/generated_stage_execution_transaction_report.sh` enables and
+  consumes those rows; `scripts/generated_stage_mode_resource_lane_classifier.sh`
+  passes them through. Focused evidence with `tmp/adamas_l15_outcome_stage1`:
+  `REQUIRE_JOINED=1 REQUIRE_FUNCTION_EMISSION_SPLIT=1
+  REQUIRE_FUNCTION_EMISSION_OUTCOMES=1
+  scripts/generated_stage_execution_transaction_report.sh` reports
+  `runtime.function_emission_outcome_rows=172`,
+  `default/workers1_function_emission_outcome_rows=86/86`, last completed
+  outcome index `86`, function
+  `__vdispatch__IO::FileDescriptor#unbuffered_write$Slice(UInt8)$T121`.
+  The broader mode selector still reports
+  `classification=select_default_late_llvm_resource_lane` and preserves
+  L15/L16. Full suites pass `152/152 + 36/36`. This is not a memory fix and not
+  green `s2b`/`s3b`; the next L15 slice should use outcome rows to decide
+  whether a function, output-growth, side-effect-growth, or retention edge is
+  root-sized. Do not patch that last function by name without a new owner-edge
+  falsifier.
+
 - 2026-07-02 UPDATE: architecture acceleration checkpoint after 0k-DZ. The
   current docs/control risk is not lack of documentation; it is report churn
   that does not produce the next production receipt. The next code movement

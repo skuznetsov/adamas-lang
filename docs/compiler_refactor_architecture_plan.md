@@ -32,6 +32,15 @@ Phase 1/1b censuses remain guard inputs, not delete evidence. The backend writer
 and physical split plans below remain reference-only until the current board
 admits them through typed contracts.
 
+2026-07-02 post-0k-EB note: the L15 receipt is now partly consumed by a
+behavior-neutral owner fact, not a broad writer refactor. `LLVMFunctionEmissionOutcome`
+logs per-function emission outcomes under the generated-stage transaction gate,
+and the transaction/mode reports consume those rows. Fresh evidence reports 86
+completed outcomes per mode before the current resource kill, while preserving
+`select_default_late_llvm_resource_lane` and full stage1 suites. The next
+backend work should use those outcome rows to choose a root-sized output,
+side-effect, function, or retention edge before touching the LLVM writer plan.
+
 2026-07-02 post-0k-DY note: the selected workers=1
 `CopyPropagationPass#compute_dominance_info` lane is consumed by a production
 resource fix. CopyPropagation now answers cross-block dominance with an exact
