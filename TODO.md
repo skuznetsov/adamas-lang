@@ -8,6 +8,23 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: post-0k-DX local-only CopyPropagation fail-closed
+  preflight is REFUTED. A candidate production edit that returned without
+  applying any dominance-dependent replacements avoided the old
+  `compute_dominance_info` path but made the generated `s2` crash before the
+  current MIR-optimization frontier: rerunning
+  `STAGE1_COMPILER=tmp/adamas_cp_local_stage1 REQUIRE_CLASSIFICATION=1
+  TAIL_LINES=30 scripts/generated_stage_workers1_copyprop_phase_classifier.sh`
+  ended in `classification=workers1_copyprop_phase_classifier_build_failed`;
+  the nested subphase classifier reported `classification=workers1_hir_resource_boundary`,
+  `nested.classification=pre_llvm_entry_failure`, `s2_hir_rc=139`,
+  `s2_mir_opt_rc=139`, and low RSS (`306` MB, no memory kill). The edit was
+  reverted. Therefore the next production receipt must not "fix" 0k-DX by
+  disabling all cross-block/dominance-dependent CP. It must provide a
+  memory-safe dominance construction/query strategy or a narrower replacement
+  policy with a generated-stage guard that does not regress to pre-LLVM-entry
+  exit 139.
+
 - 2026-07-02 UPDATE: Slice 0k-DX splits the selected workers=1
   `CopyPropagationPass#apply_build_dominators` lane by inner substep. New
   debug-only cutoff: `ADAMAS_CP_DOM_THROUGH_STEP=<step>`; new executable

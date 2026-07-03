@@ -8,6 +8,16 @@ boundaries
 Related: `PLAN_DEMAND_DRIVEN_REWRITE_RFC.md`, `docs/ast_to_hir_audit.md`,
 `docs/codegen_architecture.md`
 
+2026-07-02 post-0k-DX refutation note: a broad local-only CopyPropagation
+policy is not an acceptable shortcut. A preflight that returned without
+applying dominance-dependent replacements moved away from the old
+`compute_dominance_info` memory-kill but regressed generated `s2` to
+`pre_llvm_entry_failure` / exit 139 at the HIR/MIR stop gates with low RSS
+(`306` MB, no memory kill). The edit was reverted. The next production fix
+must keep the generated compiler on the current frontier or later while
+reducing dominance-construction resource use; disabling all cross-block CP is
+now a refuted branch.
+
 2026-07-02 post-0k-DX note: the workers=1 `CopyPropagationPass` resource lane
 is now narrowed to `compute_dominance_info`, not to definition-map construction,
 the local skip predicate, affected-block collection, rewrite blocks, or earlier
