@@ -640,6 +640,19 @@ overwrite versus generated-stage instance/ivar load. It must not patch
 `IO::Memory` / `String`, fd/raw output, tail, metadata, DWARF, type-name,
 `NamedTuple` / `Tuple`, ambient maps, or `BlockOwner` from this evidence.
 
+2026-07-03 board refinement after Slice 0k-EJ: the 0k-EI finalization-null
+boundary is now a proxy, not the first bad transition. The generated-stage
+classifier now selects
+`classification=select_parallel_rescue_saved_output_binding_frontier`:
+immediately before `emit_functions_parallel` rescue restore, current
+`@output.pos` is nonzero, but `saved_output` is present with `pos=0`, and
+restoring it leaves `@output.pos=0`. The next production receipt must be an
+`OutputOwnershipContract` / scoped output-restore owner edge for
+`LLVMIRGenerator.@output`, parallel parent/worker temp outputs, and fallback
+restore. It must not patch finalization, `IO::Memory#bytesize`, generic
+`IO::Memory` / `String`, fd/raw output, tail, metadata, DWARF, type-name, worker
+count, `NamedTuple` / `Tuple`, ambient maps, or `BlockOwner` from this evidence.
+
 | Lane | Current decision | Required next receipt | Rejected shortcut |
 | --- | --- | --- | --- |
 | `bootstrap-emergency-with-ledger` / B4-O1 | Consumed by 0k-CU. The HIR `BlockCallReturnContract` implementation moves the generated-stage gate past the old O1 `affected_block_ids` / `Set(UInt32)#includes?` frontier: `REQUIRE_CURRENT_CU_CONTRACT=1 scripts/hir_block_return_shape_census.sh` reports `classification=current_0k_cu_block_call_return_contract_applied`, and `STAGE1_COMPILER=/tmp/adamas_0kcu_stage1 REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh` exits at the expected non-current boundary with `b4_classification=llvm_entry_failure_after_lower_main` and `workers1_exit139=0`. The new residual is post-`lower_main` RSS pressure in both worker modes, with the default worker-mode rand fallback still present. | Return to the board before any new production source slice. The next receipt must reselect an owner spine from fresh generated-stage evidence; if it targets the new residual, it must name the old authority edge behind post-`lower_main` memory/resource growth rather than treating higher memory limits, worker count, or the rand fallback as acceptance evidence. | Continuing the 0k-CU breakglass lane by inertia; starting from the new RSS-kill stack; raising memory as a fix; forcing `ADAMAS_LLVM_WORKERS=1`; worker/rand/output/resource patches without a new receipt; CopyPropagation, Set/Hash, backend block-return, `NamedTuple`/`Tuple`, ambient-map, or `BlockOwner` changes. |
@@ -1262,6 +1275,61 @@ SliceReceipt {
     `String.new(buffer, bytesize)`; generic user-runtime `IO::Memory` changes;
     tail/metadata/DWARF/type-name; worker policy; `NamedTuple`/`Tuple`;
     ambient maps; `BlockOwner`.
+}
+```
+
+#### Slice 0k-EJ receipt: parallel rescue saved-output binding split
+
+```text
+SliceReceipt {
+  board_lane: PhaseAuthority / GeneratedStageExecution
+  tranche: contract-owner-migration
+  old_authority_edge:
+    Slice 0k-EI selected finalization-time `LLVMIRGenerator.@output` nullness,
+    but it did not distinguish true final-output lifetime from an earlier
+    fallback restore that zeroed the output before finalization.
+  owner_fact_or_service:
+    `OutputOwnershipContract` pre-receipt evidence: default-off transaction
+    rows around `emit_functions_parallel` rescue restore:
+    `parallel_rescue_before_output_restore` and
+    `parallel_rescue_after_output_restore`, consumed by
+    `scripts/generated_stage_finalize_to_s_classifier.sh`.
+  producers:
+    - `LLVMIRGenerator#generate` primary in-memory `@output`;
+    - `emit_functions_parallel` `saved_output` local;
+    - parent temp output and worker output shards;
+    - rescue fallback restore before `emit_functions_sequential`.
+  consumers:
+    - generated-stage finalize-to-s classifier;
+    - future `OutputOwnershipContract` behavior slice;
+    - `LLVMFinalOutputMaterialization` finalization checks, now known to be a
+      downstream proxy for this edge.
+  evidence:
+    `STAGE1_COMPILER=tmp/adamas_0kej_stage1 REQUIRE_RAW_DUMP=1
+    REQUIRE_CLASSIFICATION=1
+    scripts/generated_stage_finalize_to_s_classifier.sh` reports
+    `classification=select_parallel_rescue_saved_output_binding_frontier`,
+    `normal_parallel_rescue_current_pos_before_restore=147447`,
+    `normal_parallel_rescue_saved_output_present=1`,
+    `normal_parallel_rescue_saved_output_pos=0`, and
+    `normal_parallel_rescue_restored_output_pos=0`.
+  conclusion:
+    The produced compiler's current output is still populated immediately before
+    rescue restore, but the rescue-local `saved_output` binding is already an
+    empty output object. Restoring that binding zeros the output and makes the
+    later finalization-null / raw-dump-null rows a proxy.
+  rejected_shortcuts:
+    Finalization patches, `IO::Memory#bytesize` patches, generic
+    `IO::Memory` / `String` changes, fd/raw output bypasses, tail/metadata/DWARF
+    / type-name fixes, forced `ADAMAS_LLVM_WORKERS=1`, broad worker-policy
+    changes, `NamedTuple`/`Tuple` rendering, ambient-map policy, or `BlockOwner`
+    rollback.
+  residual_boundary:
+    The next production slice must own output restoration explicitly. It should
+    introduce or migrate to an `OutputOwnershipContract` that makes the primary
+    output sink, scoped temp buffers, restore points, and fallback restore
+    verifiable without relying on ambient `@output` rebinding and rescue-local
+    snapshots as the sole authority.
 }
 ```
 

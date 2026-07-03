@@ -25,6 +25,9 @@ Environment:
   REQUIRE_RAW_DUMP=1
 
 Classifications:
+  select_parallel_rescue_saved_output_missing_frontier
+  select_parallel_rescue_saved_output_binding_frontier
+  select_parallel_rescue_restore_assignment_frontier
   select_finalize_to_s_stringification_frontier
   select_finalize_raw_dump_output_null_frontier
   select_finalize_raw_dump_output_object_id_frontier
@@ -185,6 +188,28 @@ ledger_count() {
   fi
 }
 
+ledger_phase_field() {
+  local tx="$1"
+  local mode="$2"
+  local row="$3"
+  local phase="$4"
+  local key="$5"
+  awk -F'\t' -v tx="$tx" -v mode="$mode" -v row="$row" -v phase="$phase" -v key="$key" '
+    $1 == "GSETX" && $2 == tx && $3 == mode && $4 == row {
+      split($5, fields, " ")
+      found_phase = 0
+      value = ""
+      prefix = key "="
+      for (i in fields) {
+        if (fields[i] == "phase=" phase) found_phase = 1
+        if (index(fields[i], prefix) == 1) value = substr(fields[i], length(prefix) + 1)
+      }
+      if (found_phase && value != "") last = value
+    }
+    END { print last }
+  ' "$LEDGER" 2>/dev/null || true
+}
+
 last_phase() {
   local tx="$1"
   local mode="$2"
@@ -254,6 +279,9 @@ run_probe() {
   echo "${label}_peak_rss_mb=$peak_mb"
   echo "${label}_started_outcomes=$started_count"
   echo "${label}_emitted_outcomes=$emitted_count"
+  echo "${label}_parallel_rescue_before_restore_rows=$(ledger_count "$tx" "$label" "llvm.function_emission_phase" "phase=parallel_rescue_before_output_restore")"
+  echo "${label}_parallel_rescue_fallback_rows=$(ledger_count "$tx" "$label" "llvm.function_emission_phase" "phase=parallel_rescue_fallback_sequential")"
+  echo "${label}_parallel_rescue_after_restore_rows=$(ledger_count "$tx" "$label" "llvm.function_emission_phase" "phase=parallel_rescue_after_output_restore")"
   echo "${label}_sequential_done_rows=$(ledger_count "$tx" "$label" "llvm.function_emission_phase" "phase=sequential_done")"
   echo "${label}_function_emission_done_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=function_emission_done")"
   echo "${label}_tail_done_rows=$(ledger_count "$tx" "$label" "llvm.generate_phase" "phase=tail_done")"
@@ -311,6 +339,12 @@ normal_enter="$(ledger_count gsetx_normal normal llvm.generate_phase phase=final
 normal_done="$(ledger_count gsetx_normal normal llvm.generate_phase phase=finalize_to_s_done)"
 normal_seq_done="$(ledger_count gsetx_normal normal llvm.function_emission_phase phase=sequential_done)"
 normal_func_done="$(ledger_count gsetx_normal normal llvm.generate_phase phase=function_emission_done)"
+normal_rescue_before_rows="$(ledger_count gsetx_normal normal llvm.function_emission_phase phase=parallel_rescue_before_output_restore)"
+normal_rescue_after_rows="$(ledger_count gsetx_normal normal llvm.function_emission_phase phase=parallel_rescue_after_output_restore)"
+normal_rescue_before_current_pos="$(ledger_phase_field gsetx_normal normal llvm.function_emission_phase parallel_rescue_before_output_restore current_output_pos_before_restore)"
+normal_rescue_saved_present="$(ledger_phase_field gsetx_normal normal llvm.function_emission_phase parallel_rescue_before_output_restore saved_output_present)"
+normal_rescue_saved_pos="$(ledger_phase_field gsetx_normal normal llvm.function_emission_phase parallel_rescue_before_output_restore saved_output_pos)"
+normal_rescue_restored_pos="$(ledger_phase_field gsetx_normal normal llvm.function_emission_phase parallel_rescue_after_output_restore restored_output_pos)"
 stop_marker="$(ledger_count gsetx_stop_before_to_s stop_before_to_s llvm.generate_phase phase=finalize_to_s_stop_before)"
 stop_done="$(ledger_count gsetx_stop_before_to_s stop_before_to_s llvm.generate_phase phase=finalize_to_s_done)"
 raw_dump_exit=""
@@ -446,7 +480,18 @@ if [[ "${REQUIRE_RAW_DUMP:-0}" == "1" ]]; then
 fi
 
 classification="finalization_classifier_drift"
-if [[ "${normal_exit:-}" == "139" &&
+if [[ "$normal_rescue_before_rows" -gt 0 &&
+      "$normal_rescue_after_rows" -gt 0 &&
+      "${normal_rescue_before_current_pos:-0}" -gt 0 &&
+      "${normal_rescue_restored_pos:-0}" -eq 0 ]]; then
+  if [[ "${normal_rescue_saved_present:-0}" -eq 0 ]]; then
+    classification="select_parallel_rescue_saved_output_missing_frontier"
+  elif [[ "${normal_rescue_saved_pos:-0}" -eq 0 ]]; then
+    classification="select_parallel_rescue_saved_output_binding_frontier"
+  else
+    classification="select_parallel_rescue_restore_assignment_frontier"
+  fi
+elif [[ "${normal_exit:-}" == "139" &&
       "$normal_seq_done" -gt 0 &&
       "$normal_func_done" -gt 0 &&
       "$normal_enter" -gt 0 &&
@@ -460,6 +505,12 @@ elif [[ "$normal_done" -gt 0 ]]; then
 fi
 
 echo "normal_last_phase=${normal_last:-missing}"
+echo "normal_parallel_rescue_before_restore_rows=$normal_rescue_before_rows"
+echo "normal_parallel_rescue_after_restore_rows=$normal_rescue_after_rows"
+echo "normal_parallel_rescue_current_pos_before_restore=${normal_rescue_before_current_pos:-missing}"
+echo "normal_parallel_rescue_saved_output_present=${normal_rescue_saved_present:-missing}"
+echo "normal_parallel_rescue_saved_output_pos=${normal_rescue_saved_pos:-missing}"
+echo "normal_parallel_rescue_restored_output_pos=${normal_rescue_restored_pos:-missing}"
 echo "stop_before_to_s_last_phase=${stop_last:-missing}"
 if [[ "${REQUIRE_RAW_DUMP:-0}" == "1" ]]; then
   echo "raw_dump_before_to_s_exit=${raw_dump_exit:-missing}"
@@ -498,7 +549,11 @@ fi
 echo "classification=$classification"
 echo "ledger=$LEDGER"
 
-if [[ "${REQUIRE_CLASSIFICATION:-0}" == "1" && "$classification" != "select_finalize_to_s_stringification_frontier" ]]; then
+if [[ "${REQUIRE_CLASSIFICATION:-0}" == "1" &&
+      "$classification" != "select_finalize_to_s_stringification_frontier" &&
+      "$classification" != "select_parallel_rescue_saved_output_missing_frontier" &&
+      "$classification" != "select_parallel_rescue_saved_output_binding_frontier" &&
+      "$classification" != "select_parallel_rescue_restore_assignment_frontier" ]]; then
   echo "normal_log_tail:"
   tail -80 "$TMP_DIR/normal.log" || true
   echo "stop_before_to_s_log_tail:"

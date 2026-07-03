@@ -12,6 +12,32 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-EJ-PARALLEL-RESCUE-SAVED-OUTPUT-BINDING-FRONTIER|implemented 2026-07-03 {F:0.90 G:0.52 R:0.84}]:
+The L18 finalization-null boundary is a proxy for an earlier
+`emit_functions_parallel` rescue fallback output-restore edge. The classifier
+now records default-off `parallel_rescue_before_output_restore` and
+`parallel_rescue_after_output_restore` rows around the existing
+`parallel_rescue_fallback_sequential` row. Fresh evidence with
+`tmp/adamas_0kej_stage1`:
+`STAGE1_COMPILER=tmp/adamas_0kej_stage1 REQUIRE_RAW_DUMP=1
+REQUIRE_CLASSIFICATION=1 scripts/generated_stage_finalize_to_s_classifier.sh`
+reports `classification=select_parallel_rescue_saved_output_binding_frontier`.
+The normal run records
+`normal_parallel_rescue_current_pos_before_restore=147447`,
+`normal_parallel_rescue_saved_output_present=1`,
+`normal_parallel_rescue_saved_output_pos=0`, and
+`normal_parallel_rescue_restored_output_pos=0`. Scope: behavior-neutral
+discriminator only, not green `s2b`/`s3b`. Residual boundary: the produced
+compiler's current `@output` is still populated immediately before rescue
+restore, but the rescue-local `saved_output` binding is already an empty output
+object; restoring it erases the final output and causes the later
+finalization-null symptoms. Next local track: `OutputOwnershipContract` /
+scoped output-restore ownership for `LLVMIRGenerator.@output`, parallel
+parent/worker temp outputs, and fallback restore. Decay trigger: the classifier
+no longer selects a parallel rescue output-restore classification, a fresh run
+shows a nonempty `saved_output_pos`, or finalization remains null after output
+restore is proven not to zero the buffer.
+
 [LM-ARCH-0K-EI-FINAL-OUTPUT-RECEIVER-NULL-FRONTIER|implemented 2026-07-03 {F:0.89 G:0.50 R:0.84}]:
 The L18 final-output boundary is sharper than the 0k-EH
 `IO::Memory#bytesize` claim. The default-off raw final-buffer split now records

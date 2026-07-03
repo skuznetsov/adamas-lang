@@ -18480,6 +18480,18 @@ module Adamas::MIR
       )
     rescue ex
       # On failure, fall back to sequential emission
+      saved_output_present = 0
+      saved_output_pos = -1_i64
+      if saved_output
+        saved_output_present = 1
+        saved_output_pos = saved_output.pos.to_i64
+      end
+      current_output_pos_before_restore = @output.pos.to_i64
+      log_generated_stage_function_emission_phase(
+        "parallel_rescue_before_output_restore",
+        "parallel",
+        "current_output_pos_before_restore=#{current_output_pos_before_restore} saved_output_present=#{saved_output_present} saved_output_pos=#{saved_output_pos}"
+      )
       log_generated_stage_function_emission_phase(
         "parallel_rescue_fallback_sequential",
         "parallel",
@@ -18487,6 +18499,11 @@ module Adamas::MIR
       )
       STDERR.puts "  [LLVM] parallel emission failed: #{ex.message}, falling back to sequential"
       @output = saved_output if saved_output
+      log_generated_stage_function_emission_phase(
+        "parallel_rescue_after_output_restore",
+        "parallel",
+        "restored_output_pos=#{@output.pos.to_i64} saved_output_present=#{saved_output_present} saved_output_pos=#{saved_output_pos}"
+      )
       emit_functions_sequential(functions)
     end
 

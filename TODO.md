@@ -8,6 +8,31 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-03 UPDATE: Slice 0k-EJ refutes 0k-EI finalization-null as the first
+  bad transition and moves the active L18 edge earlier, into
+  `emit_functions_parallel` rescue fallback output restore. The classifier now
+  logs default-off `parallel_rescue_before_output_restore` and
+  `parallel_rescue_after_output_restore` rows. Fresh evidence with
+  `tmp/adamas_0kej_stage1`:
+  `STAGE1_COMPILER=tmp/adamas_0kej_stage1 REQUIRE_RAW_DUMP=1
+  REQUIRE_CLASSIFICATION=1 scripts/generated_stage_finalize_to_s_classifier.sh`
+  reports `classification=select_parallel_rescue_saved_output_binding_frontier`,
+  with `normal_parallel_rescue_current_pos_before_restore=147447`,
+  `normal_parallel_rescue_saved_output_present=1`,
+  `normal_parallel_rescue_saved_output_pos=0`, and
+  `normal_parallel_rescue_restored_output_pos=0`. Therefore the produced
+  compiler still has a populated current `@output` immediately before rescue
+  restore, but the rescue-local `saved_output` binding points at an empty output
+  object; restoring it zeroes the final output, making the later
+  `@output`/finalization-null rows a proxy. The next production movement must
+  target an `OutputOwnershipContract` / scoped output-restore owner edge around
+  `LLVMIRGenerator.@output`, parallel parent/worker temp outputs, and fallback
+  restore. Do not patch finalization, `IO::Memory#bytesize`, generic
+  `IO::Memory`/`String`, fd/raw output, tail, metadata, DWARF, type-name,
+  worker count, `NamedTuple`/`Tuple`, ambient maps, or `BlockOwner` from this
+  evidence; also do not force `ADAMAS_LLVM_WORKERS=1` as a fix without an
+  owner-edge receipt.
+
 - 2026-07-03 UPDATE: Slice 0k-EI refines the 0k-EH `bytesize` claim with a
   pre-cast receiver ownership split. The same default-off raw final-buffer gate
   now logs `@output.object_id`, raw header checkpoints, cast receiver

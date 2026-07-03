@@ -131,6 +131,18 @@ stage instance/ivar load. Do not spend the next slice on `IO::Memory#bytesize`,
 field offsets/layout, `as(IO::Memory)`, generic `IO::Memory`/`String`, fd/raw
 writer, tail, metadata, DWARF, or type-name code from the 0k-EH evidence.
 
+2026-07-03 post-0k-EJ note: the 0k-EI finalization-null boundary is now a
+downstream proxy. Default-off rescue-restore rows around
+`emit_functions_parallel` show current `@output.pos` is still nonzero
+immediately before fallback restore, while the rescue-local `saved_output`
+binding is present but empty (`saved_output_pos=0`), and restoring it leaves
+`@output.pos=0`. The next backend/source movement should not patch
+finalization or generic `IO::Memory`; it should make the output ownership edge
+explicit. The old typed streaming writer plan remains too broad as a whole, but
+its `OutputOwnership` slice is now the highest-leverage architecture unit:
+primary sink ownership, scoped temp-output restore, and fallback restore should
+be represented by a contract before any broad writer rewrite.
+
 2026-07-02 post-0k-DY note: the selected workers=1
 `CopyPropagationPass#compute_dominance_info` lane is consumed by a production
 resource fix. CopyPropagation now answers cross-block dominance with an exact
