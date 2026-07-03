@@ -12,6 +12,40 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-B5-PENDING-ITEM-LOOP-FRONTIER|frontier 2026-07-03 {F:0.90 G:0.57 R:0.86}]:
+B5 is now narrowed inside `process_pending_lower_functions` when owned by the
+initial `lower_missing_call_targets` sweep. The missing sweep queues 28 targets,
+then the pending processor cleanly reaches context enter, repeated lazy-RTA
+initialization, pass start, first item read, first RTA keep decision, first
+lower-ready, and first lower-done gates. The first bad gate is now
+`ADAMAS_STOP_AFTER_HIR_PENDING_PASS_ITEMS_DONE`, which exits 139 at about
+4803 MB without safe-wrapper memory kill. Evidence: `crystal build
+src/adamas.cr -o tmp/adamas_b5_pending_phase_stage1 --error-trace` exits 0;
+`scripts/build_bootstrap_stages.sh --out tmp/bootstrap_b5_pending_phase
+--stages 2 --timeout 900 --mem 12288` builds and smokes `cv2_s1` and `cv2_s2`
+clean (`cv2_s2` wall 240.92s, peak RSS about 3295 MB); and
+`STAGE1_COMPILER=tmp/bootstrap_b5_pending_phase/cv2_s2
+REQUIRE_CLASSIFICATION=1 STOP_TIMEOUT=900 STOP_MEM_MB=12288 HIGH_RSS_MB=12288
+scripts/generated_stage_self_build_hir_boundary_classifier.sh` exits 0 with
+`classification=self_build_hir_pending_pass_items_done_boundary`. The failing
+gate tail reaches `idx=19`, target `Adamas::Compiler::CLI#run$IO_IO`, and
+crashes after `first_lower_ready` but before the corresponding
+`first_lower_done`, so the next first-bad search is inside
+`lower_function_if_needed` / `lower_method` for that queued missing-sweep
+demand. B4 remains clean:
+`GENERATED_S2=tmp/bootstrap_b5_pending_phase/cv2_s2 REQUIRE_CLEAN=1
+scripts/generated_stage_llvm_entry_classifier.sh` reports
+`classification=clean_both_modes`, combined regressions pass 36/36, and full
+regressions pass 152/152. Scope: B5 remains red; this is behavior-neutral
+diagnostic narrowing, not green `s3b`. Do not reopen pending context enter,
+lazy-RTA init, pass start, first item/keep/lower-ready/lower-done, missing
+scan/uniq/queue, fun-main scan/lower, tracked signatures, MIR, LLVM
+finalization/helper, stale `NamedTuple` / `Tuple`, ambient-map, or `BlockOwner`
+evidence. Decay trigger: a narrower classifier pins a different first-bad
+transition inside the `CLI#run` pending-lower path, the refined classifier no
+longer reports `self_build_hir_pending_pass_items_done_boundary`, or a fresh
+3-stage bootstrap succeeds.
+
 [LM-ARCH-B5-MISSING-PROCESS-PENDING-FRONTIER|frontier 2026-07-03 {F:0.90 G:0.56 R:0.86}]:
 B5 is now narrowed inside the initial `lower_missing_call_targets` sweep reached
 from top-level `fun main` flush. Missing-call scanning, uniquing, and queue

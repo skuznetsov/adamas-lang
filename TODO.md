@@ -8,6 +8,36 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-03 UPDATE: `process_pending_lower_functions` is now split by
+  missing-sweep-owned pending subphase. New default-off context-filtered gates
+  show the repeated lazy-RTA init and the first pending item/keep/lower gates
+  are clean. Fresh evidence: `crystal build src/adamas.cr -o
+  tmp/adamas_b5_pending_phase_stage1 --error-trace` exits 0;
+  `scripts/build_bootstrap_stages.sh --out tmp/bootstrap_b5_pending_phase
+  --stages 2 --timeout 900 --mem 12288` builds and smokes `cv2_s1` and
+  `cv2_s2` clean (`cv2_s2` wall 240.92s, peak RSS about 3295 MB); and
+  `STAGE1_COMPILER=tmp/bootstrap_b5_pending_phase/cv2_s2
+  REQUIRE_CLASSIFICATION=1 STOP_TIMEOUT=900 STOP_MEM_MB=12288
+  HIGH_RSS_MB=12288 scripts/generated_stage_self_build_hir_boundary_classifier.sh`
+  exits 0 with `classification=self_build_hir_pending_pass_items_done_boundary`.
+  Clean pending gates inside `missing_initial`: enter, lazy_rta, pass_start,
+  first_item, first_keep_decision, first_lower_ready, and first_lower_done.
+  First bad gate: `ADAMAS_STOP_AFTER_HIR_PENDING_PASS_ITEMS_DONE` exits 139 at
+  about 4803 MB, without safe-wrapper memory kill. Its tail shows the item loop
+  reached `idx=19` / `Adamas::Compiler::CLI#run$IO_IO` and crashed after
+  `first_lower_ready`, before the corresponding `first_lower_done`. B4 remains
+  clean: `GENERATED_S2=tmp/bootstrap_b5_pending_phase/cv2_s2 REQUIRE_CLEAN=1
+  scripts/generated_stage_llvm_entry_classifier.sh` reports
+  `classification=clean_both_modes`; combined regressions pass 36/36; full
+  regressions pass 152/152. This supersedes
+  `self_build_hir_missing_process_boundary`: the next slice must localize the
+  `lower_function_if_needed` / `lower_method` path for the queued
+  `Adamas::Compiler::CLI#run$IO_IO` demand from the initial missing-target
+  sweep, not pending enter, lazy RTA, queue iteration, first RTA keep decision,
+  first lowerable item, missing scan/uniq/queue, fun-main scan/lower,
+  tracked signatures, MIR, LLVM, `NamedTuple` / `Tuple`, ambient maps, or
+  `BlockOwner`.
+
 - 2026-07-03 UPDATE: `lower_missing_call_targets` is now split by subphase.
   New default-off gates show the current first bad transition is not missing
   call scanning, uniquing, or queue insertion. The initial missing sweep finds

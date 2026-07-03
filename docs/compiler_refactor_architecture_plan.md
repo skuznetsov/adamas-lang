@@ -8,6 +8,19 @@ boundaries
 Related: `PLAN_DEMAND_DRIVEN_REWRITE_RFC.md`, `docs/ast_to_hir_audit.md`,
 `docs/codegen_architecture.md`
 
+2026-07-03 B5 pending-process split note: the active self-build localizer now
+narrows the missing-sweep-owned `process_pending_lower_functions` call to the
+pending item loop. With `tmp/bootstrap_b5_pending_phase/cv2_s2`, the clean
+gates are pending enter, lazy-RTA init, pass start, first item, first keep
+decision, first lower-ready, and first lower-done; the first bad gate is
+`ADAMAS_STOP_AFTER_HIR_PENDING_PASS_ITEMS_DONE` with
+`classification=self_build_hir_pending_pass_items_done_boundary`. The failing
+tail reaches `idx=19`, target `Adamas::Compiler::CLI#run$IO_IO`, then crashes
+after lower-ready and before lower-done. The next architecture unit is
+therefore a `lower_function_if_needed` / `lower_method` localizer for that
+queued missing-sweep demand, not another missing scan/queue, lazy-RTA, MIR,
+LLVM, ambient-map, `NamedTuple`/`Tuple`, or `BlockOwner` slice.
+
 2026-07-02 post-L15 hostile revalidation note: a one-shot strict
 mode-selector run failed while building generated `s2`, but controls show this
 must not be promoted to a stale-L15 conclusion. The new

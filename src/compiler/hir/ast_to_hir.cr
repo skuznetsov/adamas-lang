@@ -2276,6 +2276,10 @@ module Adamas::HIR
     @function_lowering_states : Hash(String, FunctionLoweringState) = Hash(String, FunctionLoweringState).new(initial_capacity: 32768)
     # Queue for pending lower requests to avoid O(n^2) scans of the state hash.
     @pending_function_queue : Array(String) = [] of String
+    # Debug-only ownership context for process_pending_lower_functions stop gates.
+    @pending_process_context : String? = nil
+    @pending_process_iteration : Int32 = -1
+    @pending_process_demand_count : Int32 = 0
     # Reused removal set for pending queue compaction (avoid per-iteration pending.to_set allocations).
     @pending_queue_remove_set : Set(String) = Set(String).new
     # Pending queue source counts (debug only): stripped base name → enqueue count.
@@ -54527,7 +54531,9 @@ module Adamas::HIR
           @pending_function_queue << name
         end
         stop_after_missing_phase("queue", "ADAMAS_STOP_AFTER_HIR_MISSING_QUEUE", iteration, missing.size)
-        process_pending_lower_functions
+        with_pending_process_context("missing_initial", iteration, missing.size) do
+          process_pending_lower_functions
+        end
         stop_after_missing_phase("process", "ADAMAS_STOP_AFTER_HIR_MISSING_PROCESS", iteration, missing.size)
         missing.each do |name|
           if debug_env_filter_match?("DEBUG_MISSING_TARGET", name)
@@ -54561,6 +54567,47 @@ module Adamas::HIR
       return unless env_has?("ADAMAS_CODEPATH_STATUS_LEDGER")
 
       STDERR.puts "[CODEPATH_STATUS] category=hir.missing path=#{path} status=#{status} owner=AstToHir note=iter=#{iteration},missing=#{missing_count},pending=#{@pending_function_queue.size},funcs=#{@module.function_count}"
+    end
+
+    private def with_pending_process_context(context : String, iteration : Int32, demand_count : Int32, &)
+      previous_context = @pending_process_context
+      previous_iteration = @pending_process_iteration
+      previous_demand_count = @pending_process_demand_count
+      @pending_process_context = context
+      @pending_process_iteration = iteration
+      @pending_process_demand_count = demand_count
+      begin
+        yield
+      ensure
+        @pending_process_context = previous_context
+        @pending_process_iteration = previous_iteration
+        @pending_process_demand_count = previous_demand_count
+      end
+    end
+
+    private def pending_process_context_matches? : Bool
+      filter = env_get("ADAMAS_PENDING_PROCESS_CONTEXT_FILTER")
+      return true unless filter && !filter.empty?
+      @pending_process_context == filter
+    end
+
+    private def stop_after_pending_phase(phase : String, env_key : String, pass : Int32, idx : Int32, name : String? = nil, note : String = "") : Nil
+      return unless pending_process_context_matches?
+
+      if env_has?(env_key)
+        log_pending_phase_status("stop_after_#{phase}", "taken", pass, idx, name, note)
+        STDERR.puts "[PENDING_GATE] stop_after=#{phase} env=#{env_key} ctx=#{@pending_process_context || "none"} iter=#{@pending_process_iteration} demand=#{@pending_process_demand_count} pass=#{pass} idx=#{idx} pending=#{@pending_function_queue.size} funcs=#{@module.function_count} name=#{name || ""} note=#{note}"
+        LibC._exit(0)
+      else
+        log_pending_phase_status("stop_after_#{phase}", "not_taken", pass, idx, name, note)
+      end
+    end
+
+    private def log_pending_phase_status(path : String, status : String, pass : Int32, idx : Int32, name : String? = nil, note : String = "") : Nil
+      return unless env_has?("ADAMAS_CODEPATH_STATUS_LEDGER")
+      return unless pending_process_context_matches?
+
+      STDERR.puts "[CODEPATH_STATUS] category=hir.pending_process path=#{path} status=#{status} owner=AstToHir note=ctx=#{@pending_process_context || "none"},iter=#{@pending_process_iteration},demand=#{@pending_process_demand_count},pass=#{pass},idx=#{idx},pending=#{@pending_function_queue.size},funcs=#{@module.function_count},name=#{name || ""},extra=#{note}"
     end
 
     private def rewrite_hash_do_compaction_default_call(func : Function, block : Block, inst_idx : Int32, call : Call) : Bool
@@ -54645,6 +54692,7 @@ module Adamas::HIR
       phase_stats = env_has?("ADAMAS_PHASE_STATS")
       progress_log = phase_stats || env_has?("ADAMAS_LOWER_PROGRESS")
       lazy_rta_log = env_has?("ADAMAS_LAZY_RTA_LOG")
+      stop_after_pending_phase("enter", "ADAMAS_STOP_AFTER_HIR_PENDING_ENTER", -1, -1)
 
       lazy_rta = @lazy_rta_active
       # Main lowering path (`lower_main`) calls process_pending_lower_functions directly,
@@ -54655,6 +54703,7 @@ module Adamas::HIR
         @lazy_rta_active = true
         lazy_rta = true
       end
+      stop_after_pending_phase("lazy_rta", "ADAMAS_STOP_AFTER_HIR_PENDING_LAZY_RTA", -1, -1, nil, lazy_rta ? "lazy_rta=1" : "lazy_rta=0")
       rta_deferred_total = 0
       rta_undeferred_total = 0
 
@@ -54695,6 +54744,7 @@ module Adamas::HIR
         mono_before = @monomorphized.size
         funcs_before = @module.function_count
         idx = 0
+        stop_after_pending_phase("pass_start", "ADAMAS_STOP_AFTER_HIR_PENDING_PASS_START", pass, idx, nil, "queue=#{@pending_function_queue.size}")
 
         while idx < @pending_function_queue.size
           # Phase 0 metric: track peak queue size
@@ -54703,6 +54753,7 @@ module Adamas::HIR
 
           name = @pending_function_queue[idx]
           idx += 1
+          stop_after_pending_phase("first_item", "ADAMAS_STOP_AFTER_HIR_PENDING_FIRST_ITEM", pass, idx, name)
 
           # Block shape specialization (variant 1, consumer #1): a recorded shape
           # `_block` name must materialize as a distinct function. It is live by
@@ -54718,6 +54769,7 @@ module Adamas::HIR
           next if attempt_count >= 3
 
           # Lazy RTA: check if this function should be deferred
+          pending_rta_decision = lazy_rta ? (is_block_shape ? "skip:block_shape" : "lazy") : "skip:no_lazy"
           if lazy_rta && !is_block_shape
             owner_base = extract_owner_base_for_rta(name)
             rta_reason = ""
@@ -54744,6 +54796,7 @@ module Adamas::HIR
                             rta_reason = "defer:owner_not_live"
                             false
                           end
+            pending_rta_decision = rta_reason
             if rta_reason_log
               rta_reason_counts[rta_reason_key(rta_reason, name)] += 1
               if rta_reason_every > 0 && idx >= rta_reason_next
@@ -54762,6 +54815,7 @@ module Adamas::HIR
               next
             end
           end
+          stop_after_pending_phase("first_keep_decision", "ADAMAS_STOP_AFTER_HIR_PENDING_FIRST_KEEP_DECISION", pass, idx, name, pending_rta_decision)
 
           # Skip already processed names unless layout invalidation requeued
           # the exact same function after removing its body.  In that case the
@@ -54778,10 +54832,12 @@ module Adamas::HIR
           # Clear pending state so it can be lowered
           @function_lowering_states.delete(name)
           attempt_counts[name] = attempt_count + 1
+          stop_after_pending_phase("first_lower_ready", "ADAMAS_STOP_AFTER_HIR_PENDING_FIRST_LOWER_READY", pass, idx, name, "attempt=#{attempt_count + 1}")
           if progress_log && (pass_lowered % 100 == 0 || pass_lowered < 10)
             STDERR.puts "[LOWER] p#{pass} ##{pass_lowered} idx=#{idx}/#{@pending_function_queue.size} name=#{name[0, 80]}"
           end
           lower_function_if_needed(name)
+          stop_after_pending_phase("first_lower_done", "ADAMAS_STOP_AFTER_HIR_PENDING_FIRST_LOWER_DONE", pass, idx, name, "lowered=#{pass_lowered + 1}")
           pass_lowered += 1
           total_lowered += 1
 
@@ -54806,6 +54862,7 @@ module Adamas::HIR
         end
 
         # Clear the queue — everything up to idx has been visited
+        stop_after_pending_phase("pass_items_done", "ADAMAS_STOP_AFTER_HIR_PENDING_PASS_ITEMS_DONE", pass, idx, nil, "lowered=#{pass_lowered},deferred=#{pass_deferred}")
         @pending_function_queue.clear
 
         # End-of-pass RTA scan
@@ -54826,6 +54883,7 @@ module Adamas::HIR
             STDERR.puts "[LAZY_RTA] pass=#{pass} live_types=#{@live_types.size} called_methods=#{@rta_called_methods.size} undeferred=#{undeferred} remaining_deferred=#{@rta_deferred_functions.size}"
           end
         end
+        stop_after_pending_phase("pass_end", "ADAMAS_STOP_AFTER_HIR_PENDING_PASS_END", pass, idx, nil, "lowered=#{pass_lowered},deferred=#{pass_deferred},undeferred=#{rta_undeferred_total}")
 
         total_deferred += pass_deferred
         if progress_log
@@ -54871,6 +54929,7 @@ module Adamas::HIR
       if @pending_function_queue.size > 0
         STDERR.puts "[WARNING] process_pending_lower_functions: #{@pending_function_queue.size} functions remaining after #{pass} passes"
       end
+      stop_after_pending_phase("done", "ADAMAS_STOP_AFTER_HIR_PENDING_DONE", pass, -1, nil, "total_lowered=#{total_lowered},total_deferred=#{total_deferred}")
     end
 
     private def hir_function_body_count : Int32
