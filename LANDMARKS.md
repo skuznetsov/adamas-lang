@@ -12,6 +12,36 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-B5-METHOD-BODY-SCOPE-OWNER|owner-migration 2026-07-03 {F:0.88 G:0.46 R:0.86}]:
+The selected B5 `AstToHir#lower_method` body-lowering lifetime edge now has a
+behavior-neutral owner helper. The old direct authority edge was the raw
+save/clear/restore block for `@inline_yield_block_stack`,
+`@inline_yield_block_arena_stack`, `@inline_yield_block_param_types_stack`,
+`@inline_yield_block_return_stack`, `@inline_yield_name_stack`,
+`@inline_arenas`, `@infer_body_context`, and `@current_def_return_type` inside
+`lower_method` body lowering. It is now owned by
+`MethodBodyLoweringScopeSnapshot` plus `enter_method_body_lowering_scope` /
+`restore_method_body_lowering_scope`. Evidence: `REQUIRE_METHOD_BODY_SCOPE=1
+scripts/method_body_lowering_scope_source_shape_guard.sh` reports
+`source_shape=method_body_scope_owner_consumed`, one enter call, one restore
+call, and zero selected-`lower_method` legacy saves; `crystal build
+src/adamas.cr -o tmp/adamas_method_body_scope_stage1 --error-trace` exits 0;
+`scripts/build_bootstrap_stages.sh --out tmp/bootstrap_method_body_scope
+--stages 2 --timeout 900 --mem 12288` builds and smokes through `cv2_s2` clean
+(`cv2_s2` wall 240.70s, peak RSS about 3114 MB); the B5 target-only classifier
+with `tmp/bootstrap_method_body_scope/cv2_s2` still reports
+`classification=self_build_hir_pending_target_lower_method_body_lowered_boundary`
+with clean gates through body-loop start and first bad
+`ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_BODY_LOWERED`; the B4 guard
+reports `classification=clean_both_modes`; and the regression surface reports
+`152/152` full regressions plus `36/36` combined. Scope: this is an
+architecture owner-consumption checkpoint, not a green B5/s3b claim. Remaining
+raw body-scope save/restore sites outside the selected `lower_method` path are
+residual debt, not silently migrated. Decay trigger: source-shape guard no
+longer reports `method_body_scope_owner_consumed`, a fresh B5 classifier moves
+to an earlier boundary, B4 regresses from `clean_both_modes`, or a later
+`MethodBodyLoweringContext` slice supersedes this helper.
+
 [LM-ARCH-B5-LOWER-METHOD-BODY-FRONTIER|frontier 2026-07-03 {F:0.90 G:0.50 R:0.86}]:
 B5 is now narrowed inside the selected `AstToHir#lower_method` invocation for
 the queued missing-sweep demand `Adamas::Compiler::CLI#run$IO_IO`. The fresh

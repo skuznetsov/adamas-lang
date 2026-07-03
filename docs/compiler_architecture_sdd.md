@@ -498,6 +498,26 @@ The only admitted post-0k-CH code actions are:
 
 Slice 0k-CJ has taken the first option. No new source movement is admitted from
 that fact alone.
+
+2026-07-03 MethodBodyLoweringScope checkpoint: the selected
+`AstToHir#lower_method` body-lowering authority edge now has a
+behavior-neutral owner helper. The raw inline-yield/infer-body/current-return
+save-clear-restore block inside `lower_method` is replaced by
+`MethodBodyLoweringScopeSnapshot` through
+`enter_method_body_lowering_scope` / `restore_method_body_lowering_scope`, and
+`REQUIRE_METHOD_BODY_SCOPE=1
+scripts/method_body_lowering_scope_source_shape_guard.sh` reports
+`source_shape=method_body_scope_owner_consumed`. Generated-stage evidence
+preserves the current B5 boundary:
+`classification=self_build_hir_pending_target_lower_method_body_lowered_boundary`;
+B4 remains `classification=clean_both_modes`; regressions pass
+`152/152 + 36/36`. This is admitted only as one consumed body-scope authority
+edge. It is not a green B5/s3b claim, does not migrate lower-def/proc body
+scopes, and does not admit another generic `lower_method`/`lower_expr`
+localizer. The next related implementation must either move the same owner
+model toward a vertical `MethodBodyLoweringContext` / `SemanticStateScope`
+slice, or return to this board and choose a different durable spine.
+
 Slice 0k-CK takes the third option: it records a fresh direct root-localization
 that decreases plausible owner-spine ambiguity. It does not admit production
 source movement yet; it admits only the next read-only classifier that can

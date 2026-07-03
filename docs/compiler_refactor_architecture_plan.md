@@ -8,6 +8,20 @@ boundaries
 Related: `PLAN_DEMAND_DRIVEN_REWRITE_RFC.md`, `docs/ast_to_hir_audit.md`,
 `docs/codegen_architecture.md`
 
+2026-07-03 MethodBodyLoweringScope note: the first selected B5
+body-lowering authority edge has been consumed in behavior-neutral form.
+`AstToHir#lower_method` now enters/restores a `MethodBodyLoweringScopeSnapshot`
+instead of directly saving and clearing inline-yield stacks, inline arenas,
+infer-body context, and current-def return type at the body-lowering seam.
+Fresh gates: source-shape `method_body_scope_owner_consumed`, stage1 build,
+stage2 bootstrap, B5 target classifier still at
+`self_build_hir_pending_target_lower_method_body_lowered_boundary`, B4
+`clean_both_modes`, and `152/152 + 36/36` regressions. This should be treated
+as one owner-edge burn-down checkpoint, not as a broad `SemanticStateScope`
+completion. The acceleration path from here is a vertical
+`MethodBodyLoweringContext` / `SemanticStateScope` extraction that owns the
+remaining method-body state, not another generic body localizer.
+
 2026-07-03 B5 lower-method body note: the active self-build localizer now
 splits the selected `AstToHir#lower_method` invocation for
 `Adamas::Compiler::CLI#run$IO_IO`. With

@@ -2970,6 +2970,50 @@ module Adamas::HIR
       end
     end
 
+    private record MethodBodyLoweringScopeSnapshot,
+      inline_yield_block_stack : Array(Adamas::Compiler::Frontend::BlockNode),
+      inline_yield_block_arena_stack : Array(Adamas::Compiler::Frontend::ArenaLike),
+      inline_yield_block_param_types_stack : Array(Array(TypeRef)?),
+      inline_yield_block_return_stack : Array(String?),
+      inline_yield_name_stack : Array(String),
+      inline_arenas : Array(Adamas::Compiler::Frontend::ArenaLike)?,
+      infer_body_context : Array(ExprId)?,
+      current_def_return_type : TypeRef
+
+    private def enter_method_body_lowering_scope(return_type : TypeRef) : MethodBodyLoweringScopeSnapshot
+      snapshot = MethodBodyLoweringScopeSnapshot.new(
+        @inline_yield_block_stack,
+        @inline_yield_block_arena_stack,
+        @inline_yield_block_param_types_stack,
+        @inline_yield_block_return_stack,
+        @inline_yield_name_stack,
+        @inline_arenas,
+        @infer_body_context,
+        @current_def_return_type
+      )
+
+      @inline_yield_block_stack = [] of Adamas::Compiler::Frontend::BlockNode
+      @inline_yield_block_arena_stack = [] of Adamas::Compiler::Frontend::ArenaLike
+      @inline_yield_block_param_types_stack = [] of Array(TypeRef)?
+      @inline_yield_block_return_stack = [] of String?
+      @inline_yield_name_stack = [] of String
+      @inline_arenas = nil
+      @current_def_return_type = return_type
+
+      snapshot
+    end
+
+    private def restore_method_body_lowering_scope(snapshot : MethodBodyLoweringScopeSnapshot) : Nil
+      @inline_yield_block_stack = snapshot.inline_yield_block_stack
+      @inline_yield_block_arena_stack = snapshot.inline_yield_block_arena_stack
+      @inline_yield_block_param_types_stack = snapshot.inline_yield_block_param_types_stack
+      @inline_yield_block_return_stack = snapshot.inline_yield_block_return_stack
+      @inline_yield_name_stack = snapshot.inline_yield_name_stack
+      @inline_arenas = snapshot.inline_arenas
+      @infer_body_context = snapshot.infer_body_context
+      @current_def_return_type = snapshot.current_def_return_type
+    end
+
     private def state_scope_consumer_target_map(
       requested_name : String,
       target_name : String,
@@ -34470,24 +34514,7 @@ module Adamas::HIR
       )
 
       # Lower body
-      # IMPORTANT: Save and clear inline yield stacks to prevent cross-context contamination.
-      # When lowering a standalone function, yield should emit a Yield instruction,
-      # NOT substitute an inline block from an unrelated call context.
-      saved_yield_block_stack = @inline_yield_block_stack
-      saved_yield_arena_stack = @inline_yield_block_arena_stack
-      saved_yield_param_stack = @inline_yield_block_param_types_stack
-      saved_yield_return_stack = @inline_yield_block_return_stack
-      saved_yield_name_stack = @inline_yield_name_stack
-      saved_inline_arenas = @inline_arenas
-      saved_infer_body_context = @infer_body_context
-      @inline_yield_block_stack = [] of Adamas::Compiler::Frontend::BlockNode
-      @inline_yield_block_arena_stack = [] of Adamas::Compiler::Frontend::ArenaLike
-      @inline_yield_block_param_types_stack = [] of Array(TypeRef)?
-      @inline_yield_block_return_stack = [] of String?
-      @inline_yield_name_stack = [] of String
-      @inline_arenas = nil
-      saved_def_return_type = @current_def_return_type
-      @current_def_return_type = return_type
+      body_scope_snapshot = enter_method_body_lowering_scope(return_type)
       last_value : ValueId? = nil
       stop_after_pending_target_lower_method_phase(
         "lower_method_body_setup",
@@ -34755,14 +34782,7 @@ module Adamas::HIR
           end
         end
       ensure
-        @inline_yield_block_stack = saved_yield_block_stack
-        @inline_yield_block_arena_stack = saved_yield_arena_stack
-        @inline_yield_block_param_types_stack = saved_yield_param_stack
-        @inline_yield_block_return_stack = saved_yield_return_stack
-        @inline_yield_name_stack = saved_yield_name_stack
-        @inline_arenas = saved_inline_arenas
-        @infer_body_context = saved_infer_body_context
-        @current_def_return_type = saved_def_return_type
+        restore_method_body_lowering_scope(body_scope_snapshot)
       end
 
       fixup_module_receiver_calls(ctx)

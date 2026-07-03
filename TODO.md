@@ -8,6 +8,38 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-03 UPDATE: the selected B5 body-lowering authority edge now has a
+  behavior-neutral owner helper. `AstToHir#lower_method` no longer owns its body
+  lowering lifetime through raw local saves/restores of the inline-yield stacks,
+  inline arenas, infer-body context, and current-def return type; it now enters
+  and restores a `MethodBodyLoweringScopeSnapshot` through the
+  `enter_method_body_lowering_scope` / `restore_method_body_lowering_scope`
+  helpers. Fresh evidence from the current tree: `REQUIRE_METHOD_BODY_SCOPE=1
+  scripts/method_body_lowering_scope_source_shape_guard.sh` reports
+  `source_shape=method_body_scope_owner_consumed`; `crystal build
+  src/adamas.cr -o tmp/adamas_method_body_scope_stage1 --error-trace` exits 0;
+  `scripts/build_bootstrap_stages.sh --out tmp/bootstrap_method_body_scope
+  --stages 2 --timeout 900 --mem 12288` builds and smokes `cv2_s1` and `cv2_s2`
+  clean (`cv2_s2` wall 240.70s, peak RSS about 3114 MB); `PENDING_TARGET_ONLY=1
+  STAGE1_COMPILER=tmp/bootstrap_method_body_scope/cv2_s2 REQUIRE_CLASSIFICATION=1
+  STOP_TIMEOUT=900 STOP_MEM_MB=12288 HIGH_RSS_MB=12288
+  scripts/generated_stage_self_build_hir_boundary_classifier.sh` still reports
+  `classification=self_build_hir_pending_target_lower_method_body_lowered_boundary`
+  with clean gates through body-loop start and first bad
+  `ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_BODY_LOWERED`;
+  `GENERATED_S2=tmp/bootstrap_method_body_scope/cv2_s2 REQUIRE_CLEAN=1
+  scripts/generated_stage_llvm_entry_classifier.sh` reports
+  `classification=clean_both_modes`; and
+  `regression_tests/run_all_suites.sh tmp/adamas_method_body_scope_stage1 4`
+  reports all suites passed (`152/152` full regressions and `36/36` combined).
+  Scope: this consumes one direct ambient-scope edge in the selected
+  `lower_method` body path. It is not a green B5/s3b claim, does not migrate the
+  remaining raw lower-def/proc body scopes, and does not admit another generic
+  body marker. The next architecture move should either migrate the next
+  root-sized method-body context edge under the same owner model or return to the
+  SDD board for a larger vertical `MethodBodyLoweringContext` /
+  `SemanticStateScope` slice.
+
 - 2026-07-03 UPDATE: the B5 pending-target localizer now splits the selected
   `AstToHir#lower_method` call for `Adamas::Compiler::CLI#run$IO_IO` itself.
   Fresh evidence: `PENDING_TARGET_ONLY=1
