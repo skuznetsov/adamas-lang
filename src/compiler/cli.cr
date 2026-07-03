@@ -2569,6 +2569,15 @@ module Adamas
           end
         end
 
+        if BootstrapEnv.enabled?("ADAMAS_STOP_AFTER_LOWER_MAIN")
+          log_codepath_status("cli.gate", "stop_after_lower_main", "taken", "CLI")
+          log(options, out_io, "  Stop after lower_main (ADAMAS_STOP_AFTER_LOWER_MAIN)")
+          emit_timings(options, out_io, timings, total_start)
+          return 0
+        else
+          log_codepath_status("cli.gate", "stop_after_lower_main", "not_taken", "CLI")
+        end
+
         after_lower_main = hir_mod.function_count
         bootstrap_trace_puts "  lower_main done, #{after_lower_main} functions" if options.progress
         bootstrap_trace_puts "[PHASE_STATS] After lower_main: #{after_lower_main} functions" if BootstrapEnv.enabled?("ADAMAS_PHASE_STATS")
@@ -2577,6 +2586,14 @@ module Adamas
           "cli.hir",
           "hir_functions=#{after_lower_main} main_exprs=#{main_exprs.size}"
         )
+        if BootstrapEnv.enabled?("ADAMAS_STOP_AFTER_HIR_LOWER_MAIN_DONE")
+          log_codepath_status("cli.gate", "stop_after_hir_lower_main_done", "taken", "CLI")
+          log(options, out_io, "  Stop after HIR lower_main bookkeeping (ADAMAS_STOP_AFTER_HIR_LOWER_MAIN_DONE)")
+          emit_timings(options, out_io, timings, total_start)
+          return 0
+        else
+          log_codepath_status("cli.gate", "stop_after_hir_lower_main_done", "not_taken", "CLI")
+        end
 
         # Pass 2.5: AST reachability pre-filter (experimental, opt-in)
         # AST reachability pre-filter: skip functions whose method name was never
@@ -2629,6 +2646,14 @@ module Adamas
           "cli.hir",
           "hir_functions=#{hir_mod.functions.size} did_flush=#{did_flush}"
         )
+        if BootstrapEnv.enabled?("ADAMAS_STOP_AFTER_HIR_FLUSH_PENDING")
+          log_codepath_status("cli.gate", "stop_after_hir_flush_pending", "taken", "CLI")
+          log(options, out_io, "  Stop after HIR pending flush (ADAMAS_STOP_AFTER_HIR_FLUSH_PENDING)")
+          emit_timings(options, out_io, timings, total_start)
+          return 0
+        else
+          log_codepath_status("cli.gate", "stop_after_hir_flush_pending", "not_taken", "CLI")
+        end
 
         if debug_profile
           timings["dbg_ms_hir_lower_bodies"] = (Time.instant - hir_phase_start.not_nil!).total_milliseconds
@@ -2637,6 +2662,14 @@ module Adamas
 
         # Refresh generic type params that were captured as VOID after lowering.
         hir_converter.refresh_void_type_params
+        if BootstrapEnv.enabled?("ADAMAS_STOP_AFTER_HIR_REFRESH_TYPE_PARAMS")
+          log_codepath_status("cli.gate", "stop_after_hir_refresh_type_params", "taken", "CLI")
+          log(options, out_io, "  Stop after HIR type-param refresh (ADAMAS_STOP_AFTER_HIR_REFRESH_TYPE_PARAMS)")
+          emit_timings(options, out_io, timings, total_start)
+          return 0
+        else
+          log_codepath_status("cli.gate", "stop_after_hir_refresh_type_params", "not_taken", "CLI")
+        end
 
         bootstrap_trace_puts "  Getting HIR module..." if options.progress
         hir_module = hir_mod
@@ -2706,6 +2739,14 @@ module Adamas
           "cli.hir",
           "hir_functions=#{hir_module.functions.size} reachable=#{reachable.size}"
         )
+        if BootstrapEnv.enabled?("ADAMAS_STOP_AFTER_HIR_RTA")
+          log_codepath_status("cli.gate", "stop_after_hir_rta", "taken", "CLI")
+          log(options, out_io, "  Stop after HIR RTA (ADAMAS_STOP_AFTER_HIR_RTA)")
+          emit_timings(options, out_io, timings, total_start)
+          return 0
+        else
+          log_codepath_status("cli.gate", "stop_after_hir_rta", "not_taken", "CLI")
+        end
         if debug_profile
           timings["dbg_count_hir_reachable_names"] = reachable.size.to_f
           timings["dbg_count_hir_funcs_after_rta"] = hir_module.functions.size.to_f

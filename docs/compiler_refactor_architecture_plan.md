@@ -241,6 +241,17 @@ smokes `cv2_s1` and `cv2_s2`, then fails `cv2_s3` build with exit 139 after
 architecture unit should be a B5 self-build boundary selector/localizer for
 `cv2_s2` HIR/lower-main execution, not another LLVM finalization/helper slice.
 
+2026-07-03 B5 refined HIR localizer note: the first refined selector now exists
+as `scripts/generated_stage_self_build_hir_boundary_classifier.sh`. Fresh
+evidence with `tmp/bootstrap_b5_hir_gates/cv2_s2` reports clean compile-entry,
+parse, lower-main, and lower-main bookkeeping gates, then selects
+`self_build_hir_flush_pending_boundary` when
+`ADAMAS_STOP_AFTER_HIR_FLUSH_PENDING` exits 139 at about 4801 MB without
+safe-wrapper memory kill. The next architecture unit is therefore a
+post-`lower_main` pending-flush split, specifically fun-main scan/lowering
+versus `flush_pending_functions`, not `lower_main`, RTA, MIR, or the consumed
+post-`to_s` LLVM-validity ladder.
+
 2026-07-02 post-0k-DY note: the selected workers=1
 `CopyPropagationPass#compute_dominance_info` lane is consumed by a production
 resource fix. CopyPropagation now answers cross-block dominance with an exact

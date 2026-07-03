@@ -12,6 +12,32 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-B5-HIR-FLUSH-PENDING-FRONTIER|frontier 2026-07-03 {F:0.89 G:0.55 R:0.86}]:
+The coarse B5 `self_build_hir_boundary` has been refined. New diagnostic-only
+post-`lower_main` gates and
+`scripts/generated_stage_self_build_hir_boundary_classifier.sh` show that
+produced `cv2_s2` can self-build `src/adamas.cr` through compile-entry, parse,
+`ADAMAS_STOP_AFTER_LOWER_MAIN`, and
+`ADAMAS_STOP_AFTER_HIR_LOWER_MAIN_DONE`, but not through
+`ADAMAS_STOP_AFTER_HIR_FLUSH_PENDING`. Evidence:
+`crystal build src/adamas.cr -o tmp/adamas_b5_hir_gates_stage1 --error-trace`
+exits 0; `scripts/build_bootstrap_stages.sh --out tmp/bootstrap_b5_hir_gates
+--stages 2 --timeout 900 --mem 12288` builds and smokes `cv2_s1` and `cv2_s2`
+clean (`cv2_s2` wall 252.39s, peak RSS about 3363 MB); and
+`STAGE1_COMPILER=tmp/bootstrap_b5_hir_gates/cv2_s2 REQUIRE_CLASSIFICATION=1
+STOP_TIMEOUT=900 STOP_MEM_MB=12288 HIGH_RSS_MB=12288
+scripts/generated_stage_self_build_hir_boundary_classifier.sh` exits 0 with
+`classification=self_build_hir_flush_pending_boundary`. The clean refined gates
+peak at `6`, `1263`, `4737`, and `4738` MB; the first bad gate exits 139 at
+about `4801` MB without safe-wrapper memory kill. Scope: B5 remains red, but
+the first bad interval is now the post-`lower_main` pending-flush corridor
+(fun-main scan/lowering versus `flush_pending_functions`), not `lower_main`
+itself, RTA, MIR, LLVM finalization/helper, stale `NamedTuple` / `Tuple`,
+ambient-map, or `BlockOwner` evidence. Decay trigger: a narrower classifier
+pins a different first-bad transition inside that corridor, the refined
+classifier no longer reports `self_build_hir_flush_pending_boundary`, or a
+fresh 3-stage bootstrap succeeds.
+
 [LM-ARCH-B5-S3-SELF-BUILD-FRONTIER|frontier 2026-07-03 {F:0.88 G:0.58 R:0.86}]:
 After Slice 0k-ET, the current bootstrap distance is no longer the old B4 tiny
 produced-s2 LLVM-entry gate. `scripts/build_bootstrap_stages.sh --out

@@ -445,7 +445,8 @@ latest emitted symptom.
 
 ## Active Architecture Board
 
-Status: execution board after Slice 0k-DI. This board exists to
+Status: execution board remeasured through Slice 0k-ET and the B5 refined HIR
+localizer. This board exists to
 prevent the next step from being selected by the latest generated-stage crash
 stack. A next slice is admitted only if it moves one board row by replacing or
 shadowing a named authority edge, producing `CodePathStatus` evidence for a
@@ -806,6 +807,19 @@ gates both exit 139 after lower_main. The active board now moves from L22
 runtime-helper declaration availability to a B5 `cv2_s2` self-build
 HIR/lower-main boundary. The next production receipt must localize that
 boundary before claiming green `s3b` or arbitrary-program bootstrap.
+
+2026-07-03 B5 refined HIR localizer: new diagnostic-only stop gates split the
+post-`lower_main` corridor, and
+`scripts/generated_stage_self_build_hir_boundary_classifier.sh` selects
+`classification=self_build_hir_flush_pending_boundary` on produced `cv2_s2`.
+Fresh evidence builds `tmp/bootstrap_b5_hir_gates/cv2_s2` clean through stage 2
+and smokes it, then shows clean `compile_entry`, `parse`, `lower_main`, and
+lower-main bookkeeping gates (`6`, `1263`, `4737`, and `4738` MB respectively)
+before `ADAMAS_STOP_AFTER_HIR_FLUSH_PENDING` exits 139 at about `4801` MB
+without safe-wrapper memory kill. This refutes `lower_main` itself, RTA, MIR,
+and L17-L22 LLVM-finalization/helper evidence as the current first move. The
+next production receipt must localize the pending-flush corridor:
+fun-main scan/lowering versus `flush_pending_functions`.
 
 | Lane | Current decision | Required next receipt | Rejected shortcut |
 | --- | --- | --- | --- |

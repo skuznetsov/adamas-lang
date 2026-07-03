@@ -8,6 +8,28 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-03 UPDATE: B5 refined HIR localizer now narrows the active `cv2_s2`
+  self-build boundary. Diagnostic-only gates were added around the post
+  `lower_main` HIR corridor, plus
+  `scripts/generated_stage_self_build_hir_boundary_classifier.sh`. Fresh
+  evidence: `crystal build src/adamas.cr -o tmp/adamas_b5_hir_gates_stage1
+  --error-trace` exits 0; `scripts/build_bootstrap_stages.sh --out
+  tmp/bootstrap_b5_hir_gates --stages 2 --timeout 900 --mem 12288` builds and
+  smokes `cv2_s1` and `cv2_s2` clean (`cv2_s2` wall 252.39s, peak RSS about
+  3363 MB); and `STAGE1_COMPILER=tmp/bootstrap_b5_hir_gates/cv2_s2
+  REQUIRE_CLASSIFICATION=1 STOP_TIMEOUT=900 STOP_MEM_MB=12288
+  HIGH_RSS_MB=12288 scripts/generated_stage_self_build_hir_boundary_classifier.sh`
+  exits 0 with `classification=self_build_hir_flush_pending_boundary`.
+  `compile_entry`, `parse`, `lower_main`, and lower-main bookkeeping stop gates
+  are clean (`6`, `1263`, `4737`, and `4738` MB respectively); the first bad
+  refined gate is `ADAMAS_STOP_AFTER_HIR_FLUSH_PENDING`, which exits 139 at
+  about `4801` MB without safe-wrapper memory kill. This supersedes the coarse
+  `self_build_hir_boundary` wording: the next slice must localize the
+  post-`lower_main` pending-flush corridor (fun-main scan/lowering versus
+  `flush_pending_functions`) before any behavior patch. Do not return to
+  `lower_main` itself, RTA, MIR, LLVM finalization/helper, `NamedTuple` /
+  `Tuple`, ambient maps, or `BlockOwner` from stale evidence.
+
 - 2026-07-03 UPDATE: post-0k-ET bootstrap-ladder remeasurement makes the
   current distance to green explicit. `scripts/build_bootstrap_stages.sh --out
   tmp/bootstrap_l22_demand --stages 3 --timeout 900 --mem 12288` builds and
