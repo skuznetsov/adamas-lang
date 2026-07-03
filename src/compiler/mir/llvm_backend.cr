@@ -717,6 +717,39 @@ module Adamas::MIR
     end
   end
 
+  private class LLVMOutputOwnershipContract
+    def initialize(@primary_output : IO)
+      @current_output = @primary_output
+    end
+
+    def primary_output : IO
+      @primary_output
+    end
+
+    def current_output : IO
+      @current_output
+    end
+
+    def capture_primary_output(output : IO) : IO
+      @primary_output = output
+      @current_output = output
+    end
+
+    def enter_temporary_output(output : IO) : IO
+      previous = @current_output
+      @current_output = output
+      previous
+    end
+
+    def restore_output(output : IO) : IO
+      @current_output = output
+    end
+
+    def restore_primary_output : IO
+      @current_output = @primary_output
+    end
+  end
+
   private record LLVMFunctionEmissionOutcome,
     function_name : String,
     mangled_name : String,
@@ -2439,6 +2472,28 @@ module Adamas::MIR
       write_output_bytes(text.to_slice)
     end
 
+    private def capture_primary_output(output : IO) : IO
+      @output = @output_ownership.capture_primary_output(output)
+    end
+
+    private def enter_temporary_output(output : IO) : IO
+      previous = @output_ownership.enter_temporary_output(output)
+      @output = @output_ownership.current_output
+      previous
+    end
+
+    private def restore_output(output : IO) : IO
+      @output = @output_ownership.restore_output(output)
+    end
+
+    private def restore_primary_output : IO
+      @output = @output_ownership.restore_primary_output
+    end
+
+    private def output_ownership : LLVMOutputOwnershipContract
+      @output_ownership
+    end
+
     private def dump_final_output_buffer_before_to_s(buffer : Pointer(UInt8), bytesize : Int32, path : String) : Int64
       fd = LibC.open(path.to_unsafe, LibC::O_WRONLY | LibC::O_CREAT | LibC::O_TRUNC, 0o644)
       return -1_i64 if fd < 0
@@ -2482,6 +2537,7 @@ module Adamas::MIR
     @module : Module
     @type_mapper : LLVMTypeMapper
     @output : IO
+    @output_ownership : LLVMOutputOwnershipContract
     @toplevel_output : IO? = nil  # Route top-level defs here during block buffering
     @indent : Int32
     @value_names : Hash(ValueId, String)
@@ -2946,6 +3002,7 @@ module Adamas::MIR
       @type_mapper.union_descriptors = @module.union_descriptors
       @type_mapper.union_descriptor_entries = @module.union_descriptor_entries
       @output = IO::Memory.new
+      @output_ownership = LLVMOutputOwnershipContract.new(@output)
       bootstrap_trace_puts "[LLVM_INIT] output done"
       @indent = 0
       @value_names = {} of ValueId => String
@@ -3453,7 +3510,7 @@ module Adamas::MIR
     end
 
     def generate(output : IO? = nil) : String
-      @output = output || IO::Memory.new
+      capture_primary_output(output || IO::Memory.new)
       @toplevel_output = nil
       generated_in_memory = output.nil?
       output_mode = generated_in_memory ? "memory" : "external_io"
@@ -3693,10 +3750,9 @@ module Adamas::MIR
           end
           bootstrap_trace_puts "  [LLVM_META] skipped_by_limit" if metadata_trace
         else
-          saved_output = @output
           metadata_output = IO::Memory.new
           metadata_ok = true
-          @output = metadata_output
+          saved_output = enter_temporary_output(metadata_output)
           bootstrap_trace_puts "  [LLVM_META] temp_buffer_enter saved_pos=#{saved_output.pos}" if metadata_trace
           begin
             bootstrap_trace_puts "  [LLVM] emit_type_metadata_globals..." if @progress
@@ -3712,7 +3768,7 @@ module Adamas::MIR
             end
             bootstrap_trace_puts "  [LLVM_META] eof=#{ex.message}" if metadata_trace
           ensure
-            @output = saved_output
+            restore_output(saved_output)
           end
           bootstrap_trace_puts "  [LLVM_META] after_ensure ok=#{metadata_ok} meta_pos=#{metadata_output.pos} out_pos=#{@output.pos}" if metadata_trace
           if metadata_ok
@@ -14780,14 +14836,13 @@ module Adamas::MIR
       # allocas and hoist them to the entry block. LLVM treats allocas in non-entry blocks
       # as dynamic stack allocations that grow the stack on every execution and are only
       # freed on function return. Inside loops this causes unbounded stack growth.
-      saved_output = @output
       block_output = if @reuse_function_block_buffer
                        @function_block_output.clear
                        @function_block_output
                      else
                        IO::Memory.new
                      end
-      @output = block_output
+      saved_output = enter_temporary_output(block_output)
       # Route top-level definitions (stubs, declarations) to the main output
       # during block emission. Without this, they'd end up nested inside the
       # current function which is invalid LLVM IR.
@@ -14802,7 +14857,7 @@ module Adamas::MIR
       end
 
       block_ir_output = block_output
-      @output = saved_output
+      restore_output(saved_output)
       @toplevel_output = nil
       block_copy_trace = ENV["ADAMAS_LLVM_BLOCK_COPY_TRACE"]? || ENV["ADAMAS_LLVM_BLOCK_COPY_TRACE"]?
       if block_copy_trace
@@ -18199,9 +18254,9 @@ module Adamas::MIR
       tmp_dir = File.tempname("adamas_llvm_par", "")
       Dir.mkdir_p(tmp_dir)
 
-      # Save the current output position — workers will write to temp files
-      saved_output = @output
-
+      # Workers and parent-side emission use temporary buffers; fallback restore
+      # must return to the primary sink owned by the output contract, not to a
+      # rescue-local snapshot that can diverge under self-hosting.
       workers = [] of {Int32, String, String}  # pid, ir_file, sideeffects_file
 
       # Pre-compute MIR function name → module index mapping for fused mode
@@ -18285,7 +18340,7 @@ module Adamas::MIR
           @string_counter = worker_string_base
           @cond_counter = worker_idx * 1_000_000
           worker_output = IO::Memory.new(1024 * 256)
-          @output = worker_output
+          enter_temporary_output(worker_output)
           w_t0 = Time.instant
 
           # Fused pipeline: MIR body lowering before LLVM emission
@@ -18377,8 +18432,7 @@ module Adamas::MIR
           "parallel",
           "parent_functions=#{parent_func_indices.size}"
         )
-        old_output = @output
-        @output = parent_output
+        old_output = enter_temporary_output(parent_output)
         parent_func_indices.each do |fi|
           func = functions[fi]
           # MIR opt: skip for very large functions (>10K instructions) where
@@ -18404,7 +18458,7 @@ module Adamas::MIR
             STDERR.puts "Parent: Index error in emit_function for: #{func.name}\n#{ex.message}"
           end
         end
-        @output = old_output
+        restore_output(old_output)
         log_generated_stage_function_emission_phase(
           "parallel_parent_emit_done",
           "parallel",
@@ -18437,7 +18491,7 @@ module Adamas::MIR
       )
 
       # Merge results in order
-      @output = saved_output
+      restore_primary_output
       max_string_counter = @string_counter
       # Track worker string names that need aliases (worker_name => canonical_name)
 
@@ -18480,12 +18534,8 @@ module Adamas::MIR
       )
     rescue ex
       # On failure, fall back to sequential emission
-      saved_output_present = 0
-      saved_output_pos = -1_i64
-      if saved_output
-        saved_output_present = 1
-        saved_output_pos = saved_output.pos.to_i64
-      end
+      saved_output_present = 1
+      saved_output_pos = output_ownership.primary_output.pos.to_i64
       current_output_pos_before_restore = @output.pos.to_i64
       log_generated_stage_function_emission_phase(
         "parallel_rescue_before_output_restore",
@@ -18498,7 +18548,7 @@ module Adamas::MIR
         "error=#{generated_stage_transaction_token(ex.message || ex.class.name)}"
       )
       STDERR.puts "  [LLVM] parallel emission failed: #{ex.message}, falling back to sequential"
-      @output = saved_output if saved_output
+      restore_primary_output
       log_generated_stage_function_emission_phase(
         "parallel_rescue_after_output_restore",
         "parallel",

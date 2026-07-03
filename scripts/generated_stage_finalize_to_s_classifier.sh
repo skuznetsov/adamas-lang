@@ -553,7 +553,8 @@ if [[ "${REQUIRE_CLASSIFICATION:-0}" == "1" &&
       "$classification" != "select_finalize_to_s_stringification_frontier" &&
       "$classification" != "select_parallel_rescue_saved_output_missing_frontier" &&
       "$classification" != "select_parallel_rescue_saved_output_binding_frontier" &&
-      "$classification" != "select_parallel_rescue_restore_assignment_frontier" ]]; then
+      "$classification" != "select_parallel_rescue_restore_assignment_frontier" &&
+      "$classification" != "post_to_s_frontier" ]]; then
   echo "normal_log_tail:"
   tail -80 "$TMP_DIR/normal.log" || true
   echo "stop_before_to_s_log_tail:"

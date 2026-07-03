@@ -8,6 +8,33 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-03 UPDATE: Slice 0k-EL consumes the 0k-EJ/0k-EK output-restore
+  edge with a minimal `LLVMOutputOwnershipContract` production slice. The
+  backend now owns primary/current output identity through the contract and
+  routes metadata, function-block, parent/worker, merge, and rescue restore
+  output transitions through explicit helpers instead of direct local
+  `saved_output = @output` / `@output = saved_output` restore authority. Strict
+  source-shape guard is green:
+  `REQUIRE_OUTPUT_OWNERSHIP=1 scripts/llvm_output_ownership_source_shape_guard.sh`
+  reports `output_ownership_shape=output_ownership_contract_consumed_by_parallel_restore`,
+  `parallel_saved_output_snapshot_count=0`,
+  `parallel_direct_saved_output_restore_count=0`, and
+  `parallel_output_ownership_reference_count=3`. Fresh generated-stage evidence
+  with `tmp/adamas_output_owner_stage1`:
+  `STAGE1_COMPILER=tmp/adamas_output_owner_stage1 REQUIRE_RAW_DUMP=1
+  REQUIRE_CLASSIFICATION=1 scripts/generated_stage_finalize_to_s_classifier.sh`
+  exits 0 with `classification=post_to_s_frontier`,
+  `normal_finalize_to_s_done_rows=1`,
+  `normal_parallel_rescue_current_pos_before_restore=147519`,
+  `normal_parallel_rescue_saved_output_pos=147519`,
+  `normal_parallel_rescue_restored_output_pos=147519`, and
+  `raw_dump_classification=raw_dump_before_to_s_buffer_valid`. This is not green
+  `s2b`/`s3b`: the residual has moved after final output stringification to
+  generated LLVM IR validity / post-`to_s` handling. The next production movement
+  must split that post-`to_s` residual; do not return to output ownership,
+  finalization, generic `IO::Memory`, tail, metadata, DWARF, type-name,
+  `NamedTuple`/`Tuple`, ambient maps, or `BlockOwner` from stale L18 evidence.
+
 - 2026-07-03 UPDATE: Slice 0k-EK adds the pre-code
   `OutputOwnershipContract` gate required before touching the 0k-EJ rescue
   restore edge. New executable source-shape guard:

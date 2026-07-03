@@ -12,6 +12,30 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-EL-OUTPUT-OWNERSHIP-CONSUMED-POST-TO-S-FRONTIER|implemented 2026-07-03 {F:0.91 G:0.54 R:0.86}]:
+The output-restore authority edge selected by 0k-EJ is consumed by a minimal
+`LLVMOutputOwnershipContract` production slice. Strict source-shape evidence:
+`REQUIRE_OUTPUT_OWNERSHIP=1 scripts/llvm_output_ownership_source_shape_guard.sh`
+reports
+`output_ownership_shape=output_ownership_contract_consumed_by_parallel_restore`,
+`parallel_saved_output_snapshot_count=0`,
+`parallel_direct_saved_output_restore_count=0`, and
+`parallel_output_ownership_reference_count=3`. Generated-stage evidence with
+`tmp/adamas_output_owner_stage1`:
+`STAGE1_COMPILER=tmp/adamas_output_owner_stage1 REQUIRE_RAW_DUMP=1
+REQUIRE_CLASSIFICATION=1 scripts/generated_stage_finalize_to_s_classifier.sh`
+exits 0 and reports `classification=post_to_s_frontier`,
+`normal_finalize_to_s_done_rows=1`,
+`normal_parallel_rescue_current_pos_before_restore=147519`,
+`normal_parallel_rescue_saved_output_pos=147519`,
+`normal_parallel_rescue_restored_output_pos=147519`, and
+`raw_dump_classification=raw_dump_before_to_s_buffer_valid`. Scope: moved
+frontier only, not green `s2b`/`s3b`. Residual boundary: generated LLVM IR is
+now materialized as a valid final buffer before the remaining failure, so the
+next local track is post-`to_s` IR validity / downstream LLVM handling. Decay
+trigger: a fresh classifier no longer reports `post_to_s_frontier`, the rescue
+restore positions diverge again, or raw dump ceases to be buffer-valid.
+
 [LM-ARCH-0K-EK-OUTPUT-OWNERSHIP-PRECODE-GATE|design-sealed 2026-07-03 {F:0.82 G:0.58 R:0.82}]:
 The next production slice for the 0k-EJ rescue restore edge now has an
 executable source-shape gate rather than only prose. New guard:

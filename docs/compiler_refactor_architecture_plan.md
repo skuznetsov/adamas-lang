@@ -152,6 +152,15 @@ introduce the smallest output-ownership owner surface that removes the parallel
 rescue direct restore from ambient `@output` / local `saved_output` state, then
 rerun the generated-stage rescue classifier.
 
+2026-07-03 post-0k-EL note: the output-ownership unit is now implemented and
+the old rescue restore frontier is consumed. The strict source-shape guard is
+green, and the generated-stage finalize classifier moves to
+`classification=post_to_s_frontier` after `finalize_to_s_done` with a
+buffer-valid raw dump. The typed streaming writer plan remains too broad for the
+next step; the immediate architecture unit is a post-`to_s` LLVM IR validity
+split that names the producer of invalid generated IR before touching tail,
+metadata, DWARF, type-name, output-file, or generic runtime behavior.
+
 2026-07-02 post-0k-DY note: the selected workers=1
 `CopyPropagationPass#compute_dominance_info` lane is consumed by a production
 resource fix. CopyPropagation now answers cross-block dominance with an exact
