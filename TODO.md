@@ -1,12 +1,36 @@
 # Crystal V2 Bootstrap TODO
 
 Updated: 2026-07-03
-Branch: `work/s3-range-slice-frontier`
+Branch: `work/b5-lower-method-owner-edge`
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
+
+- 2026-07-03 UPDATE: the B5 pending-target localizer now splits the selected
+  `AstToHir#lower_method` call for `Adamas::Compiler::CLI#run$IO_IO` itself.
+  Fresh evidence: `PENDING_TARGET_ONLY=1
+  STAGE1_COMPILER=tmp/bootstrap_b5_lower_method_localizer/cv2_s2
+  REQUIRE_CLASSIFICATION=1 STOP_TIMEOUT=900 STOP_MEM_MB=12288
+  HIGH_RSS_MB=12288 scripts/generated_stage_self_build_hir_boundary_classifier.sh`
+  exits 0 with
+  `classification=self_build_hir_pending_target_lower_method_body_lowered_boundary`.
+  Clean lower-method gates: enter, base ready, suffix done, early terminals
+  done, scope ready, params collected, name ready, function created, self
+  bound, params bound, auto-assign done, body setup, arena ready, and body loop
+  start (`body_size=44`, `entry_boxes=0`). First bad gate:
+  `ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_BODY_LOWERED` exits 139 at
+  about 4809 MB, without safe-wrapper memory or timeout kill. This supersedes
+  the coarser after-instance-lower-method boundary and refutes lookup,
+  call-arg recovery, materialization name, function creation, self/parameter
+  binding, auto-assign, method arena, and entry-box setup as first bad
+  transitions for this B5 target. Stop rule: do not add another generic
+  `lower_method` body/`lower_expr` marker just because this gate moved. The next
+  movement must either write a concrete owner-edge receipt for the body-lowering
+  authority being migrated/refuted, or return to the SDD Current Execution Board
+  and select an architecture slice. This remains red B5/s3b evidence, not a
+  green bootstrap claim.
 
 - 2026-07-03 UPDATE: the B5 pending target localizer now splits the queued
   `Adamas::Compiler::CLI#run$IO_IO` demand inside `lower_function_if_needed`.

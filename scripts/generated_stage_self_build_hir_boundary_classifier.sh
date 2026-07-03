@@ -55,6 +55,7 @@ Classifications:
   self_build_hir_pending_target_lower_func_call_args_ready_boundary
   self_build_hir_pending_target_lower_func_materialization_ready_boundary
   self_build_hir_pending_target_lower_func_before_instance_lower_method_boundary
+  self_build_hir_pending_target_lower_method_<phase>_boundary
   self_build_hir_pending_target_lower_func_after_instance_lower_method_boundary
   self_build_hir_pending_target_lower_func_materialization_done_boundary
   self_build_hir_pending_target_clean
@@ -304,6 +305,24 @@ pending_target_phase_labels=(
   "hir_pending_target_lower_func_call_args_ready"
   "hir_pending_target_lower_func_materialization_ready"
   "hir_pending_target_lower_func_before_instance_lower_method"
+  "hir_pending_target_lower_method_enter"
+  "hir_pending_target_lower_method_base_ready"
+  "hir_pending_target_lower_method_suffix_done"
+  "hir_pending_target_lower_method_early_terminals_done"
+  "hir_pending_target_lower_method_scope_ready"
+  "hir_pending_target_lower_method_params_collected"
+  "hir_pending_target_lower_method_name_ready"
+  "hir_pending_target_lower_method_function_created"
+  "hir_pending_target_lower_method_self_bound"
+  "hir_pending_target_lower_method_params_bound"
+  "hir_pending_target_lower_method_auto_assign_done"
+  "hir_pending_target_lower_method_body_setup"
+  "hir_pending_target_lower_method_arena_ready"
+  "hir_pending_target_lower_method_body_loop_start"
+  "hir_pending_target_lower_method_body_lowered"
+  "hir_pending_target_lower_method_fixups_done"
+  "hir_pending_target_lower_method_returns_done"
+  "hir_pending_target_lower_method_completed"
   "hir_pending_target_lower_func_after_instance_lower_method"
   "hir_pending_target_lower_func_materialization_done"
 )
@@ -314,6 +333,24 @@ pending_target_phase_envs=(
   "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_CALL_ARGS_READY"
   "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_MATERIALIZATION_READY"
   "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_BEFORE_INSTANCE_LOWER_METHOD"
+  "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_ENTER"
+  "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_BASE_READY"
+  "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_SUFFIX_DONE"
+  "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_EARLY_TERMINALS_DONE"
+  "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_SCOPE_READY"
+  "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_PARAMS_COLLECTED"
+  "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_NAME_READY"
+  "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_FUNCTION_CREATED"
+  "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_SELF_BOUND"
+  "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_PARAMS_BOUND"
+  "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_AUTO_ASSIGN_DONE"
+  "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_BODY_SETUP"
+  "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_ARENA_READY"
+  "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_BODY_LOOP_START"
+  "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_BODY_LOWERED"
+  "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_FIXUPS_DONE"
+  "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_RETURNS_DONE"
+  "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_COMPLETED"
   "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_AFTER_INSTANCE_LOWER_METHOD"
   "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_MATERIALIZATION_DONE"
 )
@@ -356,6 +393,9 @@ if [[ "${PENDING_TARGET_ONLY:-0}" == "1" ]]; then
     hir_pending_target_lower_func_before_instance_lower_method)
       classification="self_build_hir_pending_target_lower_func_before_instance_lower_method_boundary"
       ;;
+    hir_pending_target_lower_method_*)
+      classification="self_build_${target_bad_label}_boundary"
+      ;;
     hir_pending_target_lower_func_after_instance_lower_method)
       classification="self_build_hir_pending_target_lower_func_after_instance_lower_method_boundary"
       ;;
@@ -373,7 +413,7 @@ if [[ "${PENDING_TARGET_ONLY:-0}" == "1" ]]; then
   echo "classification=$classification"
   if [[ "${REQUIRE_CLASSIFICATION:-0}" == "1" ]]; then
     case "$classification" in
-      self_build_hir_pending_target_lower_func_enter_boundary|self_build_hir_pending_target_lower_func_lookup_done_boundary|self_build_hir_pending_target_lower_func_resolved_def_boundary|self_build_hir_pending_target_lower_func_call_args_ready_boundary|self_build_hir_pending_target_lower_func_materialization_ready_boundary|self_build_hir_pending_target_lower_func_before_instance_lower_method_boundary|self_build_hir_pending_target_lower_func_after_instance_lower_method_boundary|self_build_hir_pending_target_lower_func_materialization_done_boundary|self_build_hir_pending_target_clean)
+      self_build_hir_pending_target_lower_func_enter_boundary|self_build_hir_pending_target_lower_func_lookup_done_boundary|self_build_hir_pending_target_lower_func_resolved_def_boundary|self_build_hir_pending_target_lower_func_call_args_ready_boundary|self_build_hir_pending_target_lower_func_materialization_ready_boundary|self_build_hir_pending_target_lower_func_before_instance_lower_method_boundary|self_build_hir_pending_target_lower_method_*_boundary|self_build_hir_pending_target_lower_func_after_instance_lower_method_boundary|self_build_hir_pending_target_lower_func_materialization_done_boundary|self_build_hir_pending_target_clean)
         ;;
       *)
         exit 9

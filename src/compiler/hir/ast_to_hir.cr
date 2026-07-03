@@ -33383,6 +33383,16 @@ module Adamas::HIR
       method_name = forced_method_name.empty? ? (safe_slice_to_string(node.name) || "") : forced_method_name
       effective_full_name_override = forced_full_name.empty? ? (full_name_override || "") : forced_full_name
       is_initialize_method = method_name == "initialize"
+      stop_after_pending_target_lower_method_phase(
+        "lower_method_enter",
+        "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_ENTER",
+        class_name,
+        method_name,
+        "",
+        "",
+        effective_full_name_override,
+        "call_args=#{call_arg_types ? "present" : "nil"}"
+      )
       if env_get("DEBUG_MATH_MIN") && (method_name == "min" || method_name == "max") && class_name.includes?("Math")
         call_types = call_arg_types || [] of TypeRef
         call_type_names = call_types.map { |t| get_type_name_from_ref(t) }
@@ -33515,6 +33525,17 @@ module Adamas::HIR
       unless v2_string_readable?(base_name)
         base_name = method_name
       end
+      body_size_note = node.body ? node.body.not_nil!.size.to_s : "nil"
+      stop_after_pending_target_lower_method_phase(
+        "lower_method_base_ready",
+        "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_BASE_READY",
+        class_name,
+        method_name,
+        base_name,
+        "",
+        effective_full_name_override,
+        "abstract=#{node.is_abstract ? 1 : 0},body_size=#{body_size_note}"
+      )
       if env_get("DEBUG_HASH_PARAMS") && method_name == "hash"
         params_list = node.params.try(&.map { |param| param.name || "_" }.join(",")) || ""
         STDERR.puts "[HASH_PARAM_DEF] class=#{class_name} params=#{params_list}"
@@ -33522,7 +33543,25 @@ module Adamas::HIR
 
       # Skip abstract methods - they have no implementation
       if node.is_abstract
+        stop_after_pending_target_lower_method_phase(
+          "lower_method_abstract_before_clear",
+          "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_ABSTRACT_BEFORE_CLEAR",
+          class_name,
+          method_name,
+          base_name,
+          "",
+          effective_full_name_override
+        )
         clear_pending_effect_annotations
+        stop_after_pending_target_lower_method_phase(
+          "lower_method_abstract_after_clear",
+          "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_ABSTRACT_AFTER_CLEAR",
+          class_name,
+          method_name,
+          base_name,
+          "",
+          effective_full_name_override
+        )
         return
       end
 
@@ -33534,12 +33573,33 @@ module Adamas::HIR
           STDERR.puts "[PRIMITIVE] Registered #{base_name} as primitive :#{prim}"
         end
         clear_pending_effect_annotations
+        stop_after_pending_target_lower_method_phase(
+          "lower_method_primitive_terminal",
+          "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_PRIMITIVE_TERMINAL",
+          class_name,
+          method_name,
+          base_name,
+          "",
+          effective_full_name_override,
+          "primitive=#{prim}"
+        )
         return
       end
 
       # Skip pointer primitives with no body (handled via call-site intrinsics).
       if class_name.starts_with?("Pointer(") || class_name.starts_with?("Pointer_")
-        return if node.body.nil?
+        if node.body.nil?
+          stop_after_pending_target_lower_method_phase(
+            "lower_method_pointer_no_body_terminal",
+            "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_POINTER_NO_BODY_TERMINAL",
+            class_name,
+            method_name,
+            base_name,
+            "",
+            effective_full_name_override
+          )
+          return
+        end
       end
 
       if !effective_full_name_override.empty? && effective_full_name_override.includes?('$')
@@ -33573,6 +33633,16 @@ module Adamas::HIR
           end
         end
       end
+      stop_after_pending_target_lower_method_phase(
+        "lower_method_suffix_done",
+        "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_SUFFIX_DONE",
+        class_name,
+        method_name,
+        base_name,
+        "",
+        effective_full_name_override,
+        "call_args=#{call_arg_types ? "present" : "nil"}"
+      )
 
       # Defer lowering for untyped params until call-site types are available.
       if def_params_untyped?(node)
@@ -33701,14 +33771,41 @@ module Adamas::HIR
           # annotations are still valid and should influence analyses of callers. Register
           # them on the base name so calls like `Foo#bar$T` can still discover them.
           register_pending_method_effects(base_name, 0)
+          stop_after_pending_target_lower_method_phase(
+            "lower_method_defer_untyped_params",
+            "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_DEFER_UNTYPED_PARAMS",
+            class_name,
+            method_name,
+            base_name,
+            "",
+            effective_full_name_override
+          )
           return
         end
         if missing_required_runtime_param_types?(node, call_types)
           debug_hook("method.lower.defer", "class=#{class_name} method=#{method_name} reason=partial_untyped_params") if DebugHooks::ENABLED
           register_pending_method_effects(base_name, 0)
+          stop_after_pending_target_lower_method_phase(
+            "lower_method_defer_partial_untyped_params",
+            "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_DEFER_PARTIAL_UNTYPED_PARAMS",
+            class_name,
+            method_name,
+            base_name,
+            "",
+            effective_full_name_override
+          )
           return
         end
       end
+      stop_after_pending_target_lower_method_phase(
+        "lower_method_early_terminals_done",
+        "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_EARLY_TERMINALS_DONE",
+        class_name,
+        method_name,
+        base_name,
+        "",
+        effective_full_name_override
+      )
 
       # Enum value tracking is per-function; preserve outer context.
       old_enum_value_types = @enum_value_types
@@ -33725,6 +33822,16 @@ module Adamas::HIR
       @current_class = class_name
       @current_method = method_name
       @current_method_is_class = is_class_method
+      stop_after_pending_target_lower_method_phase(
+        "lower_method_scope_ready",
+        "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_SCOPE_READY",
+        class_name,
+        method_name,
+        base_name,
+        "",
+        effective_full_name_override,
+        "class_method=#{is_class_method ? 1 : 0}"
+      )
 
       # Collect parameter types first for name mangling
       param_info_names = [] of String
@@ -33951,6 +34058,16 @@ module Adamas::HIR
           end
         end
       end
+      stop_after_pending_target_lower_method_phase(
+        "lower_method_params_collected",
+        "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_PARAMS_COLLECTED",
+        class_name,
+        method_name,
+        base_name,
+        "",
+        effective_full_name_override,
+        "param_count=#{param_types.size},has_block=#{has_block ? 1 : 0}"
+      )
 
       if splat_param_name
         splat_type = TypeRef::VOID
@@ -34104,6 +34221,16 @@ module Adamas::HIR
         full_name = candidate_full_name unless candidate_full_name.empty?
       end
       full_name = effective_full_name_override unless effective_full_name_override.empty?
+      stop_after_pending_target_lower_method_phase(
+        "lower_method_name_ready",
+        "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_NAME_READY",
+        class_name,
+        method_name,
+        base_name,
+        full_name,
+        effective_full_name_override,
+        "candidate=#{candidate_full_name},param_count=#{param_types.size}"
+      )
 
       # Retrieve stored type param map for lazy lowering of generic class methods.
       # When a monomorphized class's method is lowered, we need the type parameter
@@ -34179,10 +34306,29 @@ module Adamas::HIR
         @current_class = old_class
         @current_method = old_method
         @current_method_is_class = old_method_is_class
+        stop_after_pending_target_lower_method_phase(
+          "lower_method_already_has_body",
+          "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_ALREADY_HAS_BODY",
+          class_name,
+          method_name,
+          base_name,
+          full_name,
+          effective_full_name_override
+        )
         return
       end
 
       func = @module.create_function(full_name, return_type)
+      stop_after_pending_target_lower_method_phase(
+        "lower_method_function_created",
+        "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_FUNCTION_CREATED",
+        class_name,
+        method_name,
+        base_name,
+        full_name,
+        effective_full_name_override,
+        "return_type=#{return_type.id}"
+      )
       if path = source_path_for(@arena)
         func.definition_location = SourceLocation.new(path.not_nil!, node.span.start_line, node.span.start_column)
       end
@@ -34220,6 +34366,16 @@ module Adamas::HIR
         # Track enum type for self parameter (enables predicate method inlining)
         track_enum_value(self_param.id, class_name)
       end
+      stop_after_pending_target_lower_method_phase(
+        "lower_method_self_bound",
+        "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_SELF_BOUND",
+        class_name,
+        method_name,
+        base_name,
+        full_name,
+        effective_full_name_override,
+        "params=#{func.params.size}"
+      )
 
       # Lower explicit parameters
       # Track @param style for auto-assignment
@@ -34269,6 +34425,16 @@ module Adamas::HIR
           auto_assign_params << {ivar_name, hir_param.id, ivar_offset}
         end
       end
+      stop_after_pending_target_lower_method_phase(
+        "lower_method_params_bound",
+        "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_PARAMS_BOUND",
+        class_name,
+        method_name,
+        base_name,
+        full_name,
+        effective_full_name_override,
+        "params=#{func.params.size},auto_assign=#{auto_assign_params.size}"
+      )
 
       # Emit auto-assignments for @param style parameters
       auto_assign_params.each do |(ivar_name, param_id, offset)|
@@ -34292,6 +34458,16 @@ module Adamas::HIR
         field_set = FieldSet.new(ctx.next_id, field_type, self_id, ivar_name, store_value, offset)
         ctx.emit(field_set)
       end
+      stop_after_pending_target_lower_method_phase(
+        "lower_method_auto_assign_done",
+        "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_AUTO_ASSIGN_DONE",
+        class_name,
+        method_name,
+        base_name,
+        full_name,
+        effective_full_name_override,
+        "auto_assign=#{auto_assign_params.size}"
+      )
 
       # Lower body
       # IMPORTANT: Save and clear inline yield stacks to prevent cross-context contamination.
@@ -34313,6 +34489,16 @@ module Adamas::HIR
       saved_def_return_type = @current_def_return_type
       @current_def_return_type = return_type
       last_value : ValueId? = nil
+      stop_after_pending_target_lower_method_phase(
+        "lower_method_body_setup",
+        "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_BODY_SETUP",
+        class_name,
+        method_name,
+        base_name,
+        full_name,
+        effective_full_name_override,
+        "body_size=#{body_size_note}"
+      )
       begin
         if body = node.body
           @infer_body_context = body
@@ -34441,6 +34627,16 @@ module Adamas::HIR
               method_path = source_path_for(method_arena) || "(unknown)"
               STDERR.puts "[METHOD_ARENA_USE] full=#{full_name} stored_full=#{!stored_full.nil?} stored_base=#{!stored_base.nil?} current=#{current_path} method=#{method_path}:#{method_arena.size}"
             end
+            stop_after_pending_target_lower_method_phase(
+              "lower_method_arena_ready",
+              "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_ARENA_READY",
+              class_name,
+              method_name,
+              base_name,
+              full_name,
+              effective_full_name_override,
+              "arena_size=#{method_arena.size},from_stored=#{arena_from_stored ? 1 : 0}"
+            )
             candidates = Set(String).new
             required_boxes = Set(String).new
             saved_entry_box_arena = @arena
@@ -34469,6 +34665,16 @@ module Adamas::HIR
                 hoist_box_for_local(ctx, name, local_type, local_id) unless local_type == TypeRef::VOID
               end
             end
+            stop_after_pending_target_lower_method_phase(
+              "lower_method_body_loop_start",
+              "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_BODY_LOOP_START",
+              class_name,
+              method_name,
+              base_name,
+              full_name,
+              effective_full_name_override,
+              "body_size=#{body.size},entry_boxes=#{ctx.entry_box_requirements.size}"
+            )
             body.each_with_index do |expr_id, idx|
               with_arena(method_arena) do
                 expr_snippet = nil
@@ -34536,6 +34742,16 @@ module Adamas::HIR
 
               break if should_stop_sequential_lowering?(ctx)
             end
+            stop_after_pending_target_lower_method_phase(
+              "lower_method_body_lowered",
+              "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_BODY_LOWERED",
+              class_name,
+              method_name,
+              base_name,
+              full_name,
+              effective_full_name_override,
+              "last_value=#{last_value || 0_u32}"
+            )
           end
         end
       ensure
@@ -34550,6 +34766,15 @@ module Adamas::HIR
       end
 
       fixup_module_receiver_calls(ctx)
+      stop_after_pending_target_lower_method_phase(
+        "lower_method_fixups_done",
+        "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_FIXUPS_DONE",
+        class_name,
+        method_name,
+        base_name,
+        full_name,
+        effective_full_name_override
+      )
 
       # Coerce return value to match declared return type if needed.
       # This handles cases like returning {nil, 0} (Tuple(Nil, Int32))
@@ -34633,6 +34858,16 @@ module Adamas::HIR
       end
 
       normalize_function_return_terminators(ctx, return_type)
+      stop_after_pending_target_lower_method_phase(
+        "lower_method_returns_done",
+        "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_RETURNS_DONE",
+        class_name,
+        method_name,
+        base_name,
+        full_name,
+        effective_full_name_override,
+        "return_type=#{return_type.id},last_value=#{last_value || 0_u32}"
+      )
 
       @current_typeof_locals = old_typeof_locals
       @current_typeof_local_names = old_typeof_local_names
@@ -34641,6 +34876,15 @@ module Adamas::HIR
       @closure_ref_cells = saved_closure_ref_cells_lm
       @closure_ref_prefer_cell = saved_closure_ref_prefer_lm
       @function_lowering_states[full_name] = FunctionLoweringState::Completed
+      stop_after_pending_target_lower_method_phase(
+        "lower_method_completed",
+        "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_COMPLETED",
+        class_name,
+        method_name,
+        base_name,
+        full_name,
+        effective_full_name_override
+      )
 
       # Restore previous method context
       @current_class = old_class
@@ -54659,6 +54903,46 @@ module Adamas::HIR
       return unless pending_target_matches?(requested_name, target_name, full_name)
 
       STDERR.puts "[CODEPATH_STATUS] category=hir.pending_target path=#{path} status=#{status} owner=AstToHir note=ctx=#{@pending_process_context || "none"},iter=#{@pending_process_iteration},demand=#{@pending_process_demand_count},pending=#{@pending_function_queue.size},funcs=#{@module.function_count},requested=#{requested_name || ""},target=#{target_name || ""},full=#{full_name || ""},extra=#{note}"
+    end
+
+    private def stop_after_pending_target_lower_method_phase(
+      phase : String,
+      env_key : String,
+      class_name : String,
+      method_name : String,
+      base_name : String = "",
+      full_name : String = "",
+      override_name : String = "",
+      note : String = "",
+    ) : Nil
+      method_label = "#{class_name}##{method_name}"
+      return unless pending_target_matches?(method_label, base_name, full_name, override_name)
+
+      path = "stop_after_#{phase}"
+      if env_has?(env_key)
+        log_pending_target_lower_method_status(path, "taken", class_name, method_name, base_name, full_name, override_name, note)
+        STDERR.puts "[PENDING_TARGET_LOWER_METHOD_GATE] stop_after=#{phase} env=#{env_key} ctx=#{@pending_process_context || "none"} iter=#{@pending_process_iteration} demand=#{@pending_process_demand_count} pending=#{@pending_function_queue.size} funcs=#{@module.function_count} class=#{class_name} method=#{method_name} base=#{base_name} full=#{full_name} override=#{override_name} note=#{note}"
+        LibC._exit(0)
+      else
+        log_pending_target_lower_method_status(path, "not_taken", class_name, method_name, base_name, full_name, override_name, note)
+      end
+    end
+
+    private def log_pending_target_lower_method_status(
+      path : String,
+      status : String,
+      class_name : String,
+      method_name : String,
+      base_name : String = "",
+      full_name : String = "",
+      override_name : String = "",
+      note : String = "",
+    ) : Nil
+      return unless env_has?("ADAMAS_CODEPATH_STATUS_LEDGER")
+      method_label = "#{class_name}##{method_name}"
+      return unless pending_target_matches?(method_label, base_name, full_name, override_name)
+
+      STDERR.puts "[CODEPATH_STATUS] category=hir.pending_target_lower_method path=#{path} status=#{status} owner=AstToHir note=ctx=#{@pending_process_context || "none"},iter=#{@pending_process_iteration},demand=#{@pending_process_demand_count},pending=#{@pending_function_queue.size},funcs=#{@module.function_count},class=#{class_name},method=#{method_name},base=#{base_name},full=#{full_name},override=#{override_name},extra=#{note}"
     end
 
     private def rewrite_hash_do_compaction_default_call(func : Function, block : Block, inst_idx : Int32, call : Call) : Bool

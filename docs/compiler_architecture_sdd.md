@@ -454,6 +454,15 @@ named path, or refuting a row with fresher generated-stage evidence. After
 0k-BV, "one more consumed edge" is not sufficient progress by itself: the slice
 must also state which generated-stage convergence vector row it is expected to
 preserve, narrow, or refute.
+2026-07-03 B5 lower-method body checkpoint: the target-only self-build HIR
+classifier now reports
+`classification=self_build_hir_pending_target_lower_method_body_lowered_boundary`
+for `Adamas::Compiler::CLI#run$IO_IO`, after clean lower-method gates through
+body-loop start. This supersedes the coarser after-instance-lower-method
+boundary but does not admit another generic `lower_method` / `lower_expr`
+marker. The next movement from this fact must name a body-lowering
+owner/authority edge in a receipt, or return to this board and select a durable
+architecture slice.
 After 0k-CB, a joined transaction selector is not enough by itself either: it
 must choose a durable owner spine and producer-to-consumer authority edge, or it
 remains guard-only evidence. The active spine names are:

@@ -8,6 +8,22 @@ boundaries
 Related: `PLAN_DEMAND_DRIVEN_REWRITE_RFC.md`, `docs/ast_to_hir_audit.md`,
 `docs/codegen_architecture.md`
 
+2026-07-03 B5 lower-method body note: the active self-build localizer now
+splits the selected `AstToHir#lower_method` invocation for
+`Adamas::Compiler::CLI#run$IO_IO`. With
+`tmp/bootstrap_b5_lower_method_localizer/cv2_s2`, `PENDING_TARGET_ONLY=1 ...
+scripts/generated_stage_self_build_hir_boundary_classifier.sh` reports
+`classification=self_build_hir_pending_target_lower_method_body_lowered_boundary`.
+Clean gates include lower-method enter/base/suffix/early terminals/scope,
+parameter collection and binding, function creation, self binding, auto-assign,
+body setup, method arena, and body-loop start (`body_size=44`,
+`entry_boxes=0`). The first bad gate is after body lowering: it exits 139 at
+about 4809 MB before `lower_method` returns. This is the last admitted generic
+B5 body-localizer checkpoint unless a new receipt names the owner/authority edge
+inside body lowering. The next architecture movement should not be another
+`lower_expr` marker by inertia; it must either write that owner-edge receipt or
+return to the SDD Current Execution Board.
+
 2026-07-03 B5 pending-target lower-method note: the active self-build localizer
 now splits the queued `Adamas::Compiler::CLI#run$IO_IO` demand inside
 `lower_function_if_needed`. With `tmp/bootstrap_b5_target_localizer/cv2_s2`,

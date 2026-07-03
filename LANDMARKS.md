@@ -12,6 +12,32 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-B5-LOWER-METHOD-BODY-FRONTIER|frontier 2026-07-03 {F:0.90 G:0.50 R:0.86}]:
+B5 is now narrowed inside the selected `AstToHir#lower_method` invocation for
+the queued missing-sweep demand `Adamas::Compiler::CLI#run$IO_IO`. The fresh
+target-only classifier using `tmp/bootstrap_b5_lower_method_localizer/cv2_s2`
+reports
+`classification=self_build_hir_pending_target_lower_method_body_lowered_boundary`.
+Clean lower-method gates: enter, base ready, suffix done, early terminals done,
+scope ready, params collected, name ready, function created, self bound, params
+bound, auto-assign done, body setup, arena ready, and body loop start. The first
+bad gate is
+`ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_BODY_LOWERED`, which exits
+139 at about 4809 MB without safe-wrapper memory or timeout kill. The body-loop
+start row records `body_size=44`, `entry_boxes=0`, `arena_size=27174`, and
+`from_stored=1`. Scope: this is a behavior-neutral diagnostic checkpoint and
+red B5/s3b evidence, not a green bootstrap claim. It refutes lookup,
+call-arg recovery, materialization naming, function creation, self/parameter
+binding, auto-assign, method arena setup, and entry-box setup as first-bad
+transitions for this target. Stop rule: do not continue with another generic
+`lower_method` body or `lower_expr` marker unless a new SDD receipt names the
+owner/authority edge that body-lowering is expected to migrate or refute.
+Otherwise return to the SDD Current Execution Board. Decay trigger: a fresh
+target-only classifier no longer reports
+`self_build_hir_pending_target_lower_method_body_lowered_boundary`, a concrete
+owner-edge receipt admits a body-lowering slice, or a fresh 3-stage bootstrap
+succeeds.
+
 [LM-ARCH-B5-PENDING-TARGET-LOWER-METHOD-FRONTIER|frontier 2026-07-03 {F:0.90 G:0.58 R:0.86}]:
 B5 is now narrowed from the pending item loop into the selected
 `lower_method` body for the queued missing-sweep demand
