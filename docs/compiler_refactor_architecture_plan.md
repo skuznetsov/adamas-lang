@@ -8,6 +8,22 @@ boundaries
 Related: `PLAN_DEMAND_DRIVEN_REWRITE_RFC.md`, `docs/ast_to_hir_audit.md`,
 `docs/codegen_architecture.md`
 
+2026-07-03 B5 pending-target lower-method note: the active self-build localizer
+now splits the queued `Adamas::Compiler::CLI#run$IO_IO` demand inside
+`lower_function_if_needed`. With `tmp/bootstrap_b5_target_localizer/cv2_s2`,
+`PENDING_TARGET_ONLY=1 ... scripts/generated_stage_self_build_hir_boundary_classifier.sh`
+reports
+`classification=self_build_hir_pending_target_lower_func_after_instance_lower_method_boundary`.
+Clean target gates include lower-function enter, direct lookup, resolved
+DefNode, call-arg recovery, materialization readiness, and the stop immediately
+before instance `lower_method` with owner `Adamas::Compiler::CLI` and producer
+`instance_class_info_lower_method`. The first bad gate is the stop after that
+`lower_method` call: it exits 139 before the call returns. The next architecture
+unit is therefore a `lower_method` body localizer for
+`Adamas::Compiler::CLI#run$IO_IO`, not another lookup, call-arg,
+materialization-name, pending queue, MIR, LLVM, ambient-map,
+`NamedTuple`/`Tuple`, or `BlockOwner` slice.
+
 2026-07-03 B5 pending-process split note: the active self-build localizer now
 narrows the missing-sweep-owned `process_pending_lower_functions` call to the
 pending item loop. With `tmp/bootstrap_b5_pending_phase/cv2_s2`, the clean

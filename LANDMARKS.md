@@ -12,6 +12,47 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-B5-PENDING-TARGET-LOWER-METHOD-FRONTIER|frontier 2026-07-03 {F:0.90 G:0.58 R:0.86}]:
+B5 is now narrowed from the pending item loop into the selected
+`lower_method` body for the queued missing-sweep demand
+`Adamas::Compiler::CLI#run$IO_IO`. New default-off target gates inside
+`lower_function_if_needed` show the target reaches lower-function enter, direct
+lookup completion (`found=1, branch=direct`), resolved DefNode
+(`abstract=1`), call-arg recovery, materialization decision (`wrapper=0,
+shape=0`, materialized name equal to the target), and the stop immediately
+before instance `lower_method` with `owner=Adamas::Compiler::CLI`,
+`producer=instance_class_info_lower_method`, and
+`reason=target_materialization`. The first bad target gate is
+`ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_AFTER_INSTANCE_LOWER_METHOD`,
+which exits 139 at about 4806 MB without safe-wrapper memory or timeout kill.
+Evidence: `crystal build src/adamas.cr -o
+tmp/adamas_b5_target_localizer_stage1 --error-trace` exits 0;
+`scripts/build_bootstrap_stages.sh --out tmp/bootstrap_b5_target_localizer
+--stages 2 --timeout 900 --mem 12288` builds and smokes `cv2_s1` and `cv2_s2`
+clean (`cv2_s2` wall 243.53s, peak RSS about 3362 MB);
+`PENDING_TARGET_ONLY=1
+STAGE1_COMPILER=tmp/bootstrap_b5_target_localizer/cv2_s2
+REQUIRE_CLASSIFICATION=1 STOP_TIMEOUT=900 STOP_MEM_MB=12288
+HIGH_RSS_MB=12288 scripts/generated_stage_self_build_hir_boundary_classifier.sh`
+exits 0 with
+`classification=self_build_hir_pending_target_lower_func_after_instance_lower_method_boundary`;
+and `GENERATED_S2=tmp/bootstrap_b5_target_localizer/cv2_s2 REQUIRE_CLEAN=1
+scripts/generated_stage_llvm_entry_classifier.sh` reports
+`classification=clean_both_modes`. Regression surface:
+`regression_tests/run_all_suites.sh tmp/adamas_b5_target_localizer_stage1 4`
+reports all suites passed (`152/152` full regressions and `36/36` combined).
+Scope: B5 remains red; this is a
+behavior-neutral diagnostic narrowing, not green `s3b`. The next first-bad
+search is inside `AstToHir#lower_method` for
+`Adamas::Compiler::CLI#run$IO_IO`, not lookup, call-arg recovery,
+materialization naming, pending queue mechanics, the old pending prefix gates,
+B4/L17-L22 LLVM, stale `NamedTuple` / `Tuple`, ambient-map, or `BlockOwner`
+evidence. Decay trigger: a narrower classifier pins a different first-bad
+transition inside that `lower_method` body, the target-only classifier no
+longer reports
+`self_build_hir_pending_target_lower_func_after_instance_lower_method_boundary`,
+or a fresh 3-stage bootstrap succeeds.
+
 [LM-ARCH-B5-PENDING-ITEM-LOOP-FRONTIER|frontier 2026-07-03 {F:0.90 G:0.57 R:0.86}]:
 B5 is now narrowed inside `process_pending_lower_functions` when owned by the
 initial `lower_missing_call_targets` sweep. The missing sweep queues 28 targets,

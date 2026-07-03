@@ -54591,6 +54591,11 @@ module Adamas::HIR
       @pending_process_context == filter
     end
 
+    private def pending_target_gate_enabled? : Bool
+      filter = env_get("ADAMAS_PENDING_TARGET_FILTER")
+      !filter.nil? && !filter.empty?
+    end
+
     private def stop_after_pending_phase(phase : String, env_key : String, pass : Int32, idx : Int32, name : String? = nil, note : String = "") : Nil
       return unless pending_process_context_matches?
 
@@ -54608,6 +54613,52 @@ module Adamas::HIR
       return unless pending_process_context_matches?
 
       STDERR.puts "[CODEPATH_STATUS] category=hir.pending_process path=#{path} status=#{status} owner=AstToHir note=ctx=#{@pending_process_context || "none"},iter=#{@pending_process_iteration},demand=#{@pending_process_demand_count},pass=#{pass},idx=#{idx},pending=#{@pending_function_queue.size},funcs=#{@module.function_count},name=#{name || ""},extra=#{note}"
+    end
+
+    private def pending_target_matches?(
+      text1 : String? = nil,
+      text2 : String? = nil,
+      text3 : String? = nil,
+      text4 : String? = nil,
+    ) : Bool
+      return false unless pending_process_context_matches?
+      filter = env_get("ADAMAS_PENDING_TARGET_FILTER")
+      return false unless filter && !filter.empty?
+      env_filter_match_texts?(filter, text1, text2, text3, text4)
+    end
+
+    private def stop_after_pending_target_phase(
+      phase : String,
+      env_key : String,
+      requested_name : String? = nil,
+      target_name : String? = nil,
+      full_name : String? = nil,
+      note : String = "",
+    ) : Nil
+      return unless pending_target_matches?(requested_name, target_name, full_name)
+
+      path = "stop_after_#{phase}"
+      if env_has?(env_key)
+        log_pending_target_status(path, "taken", requested_name, target_name, full_name, note)
+        STDERR.puts "[PENDING_TARGET_GATE] stop_after=#{phase} env=#{env_key} ctx=#{@pending_process_context || "none"} iter=#{@pending_process_iteration} demand=#{@pending_process_demand_count} pending=#{@pending_function_queue.size} funcs=#{@module.function_count} requested=#{requested_name || ""} target=#{target_name || ""} full=#{full_name || ""} note=#{note}"
+        LibC._exit(0)
+      else
+        log_pending_target_status(path, "not_taken", requested_name, target_name, full_name, note)
+      end
+    end
+
+    private def log_pending_target_status(
+      path : String,
+      status : String,
+      requested_name : String? = nil,
+      target_name : String? = nil,
+      full_name : String? = nil,
+      note : String = "",
+    ) : Nil
+      return unless env_has?("ADAMAS_CODEPATH_STATUS_LEDGER")
+      return unless pending_target_matches?(requested_name, target_name, full_name)
+
+      STDERR.puts "[CODEPATH_STATUS] category=hir.pending_target path=#{path} status=#{status} owner=AstToHir note=ctx=#{@pending_process_context || "none"},iter=#{@pending_process_iteration},demand=#{@pending_process_demand_count},pending=#{@pending_function_queue.size},funcs=#{@module.function_count},requested=#{requested_name || ""},target=#{target_name || ""},full=#{full_name || ""},extra=#{note}"
     end
 
     private def rewrite_hash_do_compaction_default_call(func : Function, block : Block, inst_idx : Int32, call : Call) : Bool
@@ -70337,6 +70388,16 @@ module Adamas::HIR
       return if name.empty?
       return if synthetic_numeric_conversion_lower_target?(name)
       return if backend_owned_runtime_intrinsic_call?(name)
+      if pending_target_gate_enabled?
+        stop_after_pending_target_phase(
+          "lower_func_enter",
+          "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_ENTER",
+          name,
+          nil,
+          nil,
+          "state=#{function_state(name)}"
+        )
+      end
       is_math_min_debug = env_get("DEBUG_MATH_MIN") && name.includes?("Math") && (name.includes?("min") || name.includes?("max"))
       if is_math_min_debug
         base = strip_type_suffix(name)
@@ -71895,6 +71956,16 @@ module Adamas::HIR
       if debug_env_filter_match?("DEBUG_DEFERRED", name, target_name)
         STDERR.puts "[DEFERRED_FUNC] func_def=#{!!func_def} name=#{name} target=#{target_name} lookup=#{lookup_branch || "none"}"
       end
+      if pending_target_gate_enabled?
+        stop_after_pending_target_phase(
+          "lower_func_lookup_done",
+          "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_LOOKUP_DONE",
+          name,
+          target_name,
+          base_name,
+          "found=#{func_def ? 1 : 0},branch=#{lookup_branch || "none"}"
+        )
+      end
       if func_def && debug_env_filter_match?("DEBUG_BYTEFORMAT_REGISTER", name, target_name)
         arena_for_log = arena || resolve_arena_for_def(func_def, @arena)
         loc = "#{func_def.span.start_line}:#{func_def.span.start_column}"
@@ -71913,6 +71984,16 @@ module Adamas::HIR
         end
       end
       resolved_func_def = func_def || return
+      if pending_target_gate_enabled?
+        stop_after_pending_target_phase(
+          "lower_func_resolved_def",
+          "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_RESOLVED_DEF",
+          name,
+          target_name,
+          base_name,
+          resolved_func_def.is_abstract ? "abstract=1" : "abstract=0"
+        )
+      end
       prime_param_caches_for_discovered_def(target_name, base_name, resolved_func_def)
       if env_has?("DEBUG_YIELD_SKIP") && target_name.includes?("byte_range")
         STDERR.puts "[BYTE_RANGE_FOUND] target=#{target_name} state=#{function_state(target_name)} is_abstract=#{resolved_func_def.is_abstract} branch=#{lookup_branch || "nil"} deferred=#{deferred_lookup_used}"
@@ -72201,6 +72282,16 @@ module Adamas::HIR
         call_types_dbg = call_arg_types ? call_arg_types.map { |t| get_type_name_from_ref(t) }.join(",") : "nil"
         STDERR.puts "[JOIN_LOWER_ARGS] stage=after_suffix_merge name=#{name} target=#{target_name} call_arg_types=#{call_types_dbg}"
       end
+      if pending_target_gate_enabled?
+        stop_after_pending_target_phase(
+          "lower_func_call_args_ready",
+          "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_CALL_ARGS_READY",
+          name,
+          target_name,
+          base_name,
+          call_arg_types ? "call_args=present" : "call_args=nil"
+        )
+      end
       # Skip lowering functions with bare generic types when no concrete type info is available
       # This prevents emitting functions like Indexable.range_to_index_and_count$Range_Int32 which call Range#begin on bare Range
       if call_arg_types
@@ -72482,6 +72573,16 @@ module Adamas::HIR
         materialize_requested_instance_wrapper,
         shape_keyed_block_specialization
       )
+      if pending_target_gate_enabled?
+        stop_after_pending_target_phase(
+          "lower_func_materialization_ready",
+          "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_MATERIALIZATION_READY",
+          name,
+          target_name,
+          materialized_name,
+          "wrapper=#{materialize_requested_instance_wrapper ? 1 : 0},shape=#{shape_keyed_block_specialization ? 1 : 0}"
+        )
+      end
 
       # A function entry can exist as a declaration-only placeholder after a
       # call target was referenced before the body was materialized. Treat only
@@ -72620,6 +72721,16 @@ module Adamas::HIR
               if materialization_transaction_ledger_enabled?
                 log_call_materialization_transaction_ledger(instance_transaction)
               end
+              if pending_target_gate_enabled?
+                stop_after_pending_target_phase(
+                  "lower_func_before_instance_lower_method",
+                  "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_BEFORE_INSTANCE_LOWER_METHOD",
+                  name,
+                  target_name,
+                  override,
+                  "owner=#{owner},producer=#{materialization_producer_path},reason=#{override_reason}"
+                )
+              end
               old_type_param_map = @type_param_map
               old_namespace_override = @current_namespace_override
               type_param_map_changed = old_type_param_map != merged_params
@@ -72663,6 +72774,16 @@ module Adamas::HIR
                   STDERR.puts "[ENTRY_MATCHES_LOWER] name=#{name} target=#{target_name} owner=#{owner} override=#{override} param_count=#{param_count} call_arg_types=#{call_arg_types.try(&.map(&.id).join(",")) || "nil"} type_params=#{type_param_map_debug_string}"
                 end
                 lower_method(owner, class_info, resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, override, force_class_method: force_class_method)
+                if pending_target_gate_enabled?
+                  stop_after_pending_target_phase(
+                    "lower_func_after_instance_lower_method",
+                    "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_AFTER_INSTANCE_LOWER_METHOD",
+                    name,
+                    target_name,
+                    override,
+                    "owner=#{owner},producer=#{materialization_producer_path}"
+                  )
+                end
               ensure
                 @current_namespace_override = old_namespace_override
                 if type_param_map_changed
@@ -72891,6 +73012,16 @@ module Adamas::HIR
           end
         end
       ensure
+        if pending_target_gate_enabled?
+          stop_after_pending_target_phase(
+            "lower_func_materialization_done",
+            "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_MATERIALIZATION_DONE",
+            name,
+            target_name,
+            materialized_name,
+            "producer=#{materialization_producer_path}"
+          )
+        end
         # WORK QUEUE: Restore previous inside_lowering state
         @lowering_depth -= 1
         if @module.has_function_with_body?(materialized_name)

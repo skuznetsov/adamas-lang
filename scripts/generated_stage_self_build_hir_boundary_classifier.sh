@@ -22,6 +22,10 @@ Environment:
   STOP_TIMEOUT               run_safe timeout for stop gates (default: 900).
   STOP_MEM_MB                run_safe RSS cap for stop gates (default: 12288).
   TAIL_LINES                 Log tail lines for failing gates (default: 30).
+  PENDING_TARGET_FILTER      Target filter for pending-target gates
+                             (default: Adamas::Compiler::CLI#run$IO_IO).
+  PENDING_TARGET_ONLY=1      Run only the pending-target gates. Use this after
+                             the prefix gates have already been proven clean.
 
 Classifications:
   self_build_compile_entry_resource
@@ -45,6 +49,15 @@ Classifications:
   self_build_hir_pending_first_keep_decision_boundary
   self_build_hir_pending_first_lower_ready_boundary
   self_build_hir_pending_first_lower_done_boundary
+  self_build_hir_pending_target_lower_func_enter_boundary
+  self_build_hir_pending_target_lower_func_lookup_done_boundary
+  self_build_hir_pending_target_lower_func_resolved_def_boundary
+  self_build_hir_pending_target_lower_func_call_args_ready_boundary
+  self_build_hir_pending_target_lower_func_materialization_ready_boundary
+  self_build_hir_pending_target_lower_func_before_instance_lower_method_boundary
+  self_build_hir_pending_target_lower_func_after_instance_lower_method_boundary
+  self_build_hir_pending_target_lower_func_materialization_done_boundary
+  self_build_hir_pending_target_clean
   self_build_hir_pending_pass_items_done_boundary
   self_build_hir_pending_pass_end_boundary
   self_build_hir_pending_done_boundary
@@ -97,6 +110,7 @@ STOP_MEM_MB="${STOP_MEM_MB:-12288}"
 TAIL_LINES="${TAIL_LINES:-30}"
 STAGE1_MODE="${STAGE1_MODE:-debug}"
 STAGE1_PATH="${STAGE1_COMPILER:-}"
+PENDING_TARGET_FILTER="${PENDING_TARGET_FILTER:-Adamas::Compiler::CLI#run\$IO_IO}"
 SOURCE="$ROOT_DIR/src/adamas.cr"
 
 echo "# Generated Stage Self-Build HIR Boundary Classifier"
@@ -106,6 +120,8 @@ echo "high_rss_mb=$HIGH_RSS_MB"
 echo "stop_timeout=$STOP_TIMEOUT"
 echo "stop_mem_mb=$STOP_MEM_MB"
 echo "stage1_mode=$STAGE1_MODE"
+echo "pending_target_filter=$PENDING_TARGET_FILTER"
+echo "pending_target_only=${PENDING_TARGET_ONLY:-0}"
 echo "require_classification=${REQUIRE_CLASSIFICATION:-0}"
 
 if [[ -z "$STAGE1_PATH" ]]; then
@@ -169,6 +185,7 @@ run_stop_probe() {
   set +e
   env "$env_key=1" ADAMAS_CODEPATH_STATUS_LEDGER=1 \
     ADAMAS_PENDING_PROCESS_CONTEXT_FILTER=missing_initial \
+    ADAMAS_PENDING_TARGET_FILTER="$PENDING_TARGET_FILTER" \
     /usr/bin/time -l "$ROOT_DIR/scripts/run_safe.sh" "$STAGE1_PATH" "$STOP_TIMEOUT" "$STOP_MEM_MB" \
       "$SOURCE" -o "$out_bin" >"$log" 2>&1
   local rc=$?
@@ -266,11 +283,39 @@ missing_phase_labels=(
   "hir_pending_first_keep_decision"
   "hir_pending_first_lower_ready"
   "hir_pending_first_lower_done"
+  "hir_pending_target_lower_func_enter"
+  "hir_pending_target_lower_func_lookup_done"
+  "hir_pending_target_lower_func_resolved_def"
+  "hir_pending_target_lower_func_call_args_ready"
+  "hir_pending_target_lower_func_materialization_ready"
+  "hir_pending_target_lower_func_before_instance_lower_method"
+  "hir_pending_target_lower_func_after_instance_lower_method"
+  "hir_pending_target_lower_func_materialization_done"
   "hir_pending_pass_items_done"
   "hir_pending_pass_end"
   "hir_pending_done"
   "hir_missing_process"
   "hir_missing_force_modules"
+)
+pending_target_phase_labels=(
+  "hir_pending_target_lower_func_enter"
+  "hir_pending_target_lower_func_lookup_done"
+  "hir_pending_target_lower_func_resolved_def"
+  "hir_pending_target_lower_func_call_args_ready"
+  "hir_pending_target_lower_func_materialization_ready"
+  "hir_pending_target_lower_func_before_instance_lower_method"
+  "hir_pending_target_lower_func_after_instance_lower_method"
+  "hir_pending_target_lower_func_materialization_done"
+)
+pending_target_phase_envs=(
+  "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_ENTER"
+  "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_LOOKUP_DONE"
+  "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_RESOLVED_DEF"
+  "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_CALL_ARGS_READY"
+  "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_MATERIALIZATION_READY"
+  "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_BEFORE_INSTANCE_LOWER_METHOD"
+  "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_AFTER_INSTANCE_LOWER_METHOD"
+  "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_MATERIALIZATION_DONE"
 )
 flush_phase_tail_labels=(
   "hir_flush_missing_initial"
@@ -280,6 +325,63 @@ flush_phase_tail_labels=(
   "hir_flush_deferred_allocators"
   "hir_flush_final_missing"
 )
+
+if [[ "${PENDING_TARGET_ONLY:-0}" == "1" ]]; then
+  target_bad_label=""
+  for i in "${!pending_target_phase_labels[@]}"; do
+    label="${pending_target_phase_labels[$i]}"
+    env_key="${pending_target_phase_envs[$i]}"
+    if ! run_probe_until_bad "$label" "$env_key"; then
+      target_bad_label="$label"
+      break
+    fi
+  done
+
+  case "$target_bad_label" in
+    hir_pending_target_lower_func_enter)
+      classification="self_build_hir_pending_target_lower_func_enter_boundary"
+      ;;
+    hir_pending_target_lower_func_lookup_done)
+      classification="self_build_hir_pending_target_lower_func_lookup_done_boundary"
+      ;;
+    hir_pending_target_lower_func_resolved_def)
+      classification="self_build_hir_pending_target_lower_func_resolved_def_boundary"
+      ;;
+    hir_pending_target_lower_func_call_args_ready)
+      classification="self_build_hir_pending_target_lower_func_call_args_ready_boundary"
+      ;;
+    hir_pending_target_lower_func_materialization_ready)
+      classification="self_build_hir_pending_target_lower_func_materialization_ready_boundary"
+      ;;
+    hir_pending_target_lower_func_before_instance_lower_method)
+      classification="self_build_hir_pending_target_lower_func_before_instance_lower_method_boundary"
+      ;;
+    hir_pending_target_lower_func_after_instance_lower_method)
+      classification="self_build_hir_pending_target_lower_func_after_instance_lower_method_boundary"
+      ;;
+    hir_pending_target_lower_func_materialization_done)
+      classification="self_build_hir_pending_target_lower_func_materialization_done_boundary"
+      ;;
+    "")
+      classification="self_build_hir_pending_target_clean"
+      ;;
+    *)
+      classification="self_build_hir_pending_target_unknown"
+      ;;
+  esac
+
+  echo "classification=$classification"
+  if [[ "${REQUIRE_CLASSIFICATION:-0}" == "1" ]]; then
+    case "$classification" in
+      self_build_hir_pending_target_lower_func_enter_boundary|self_build_hir_pending_target_lower_func_lookup_done_boundary|self_build_hir_pending_target_lower_func_resolved_def_boundary|self_build_hir_pending_target_lower_func_call_args_ready_boundary|self_build_hir_pending_target_lower_func_materialization_ready_boundary|self_build_hir_pending_target_lower_func_before_instance_lower_method_boundary|self_build_hir_pending_target_lower_func_after_instance_lower_method_boundary|self_build_hir_pending_target_lower_func_materialization_done_boundary|self_build_hir_pending_target_clean)
+        ;;
+      *)
+        exit 9
+        ;;
+    esac
+  fi
+  exit 0
+fi
 
 if run_probe_until_bad "compile_entry" "ADAMAS_STOP_AFTER_COMPILE_ENTRY" &&
   run_probe_until_bad "parse" "ADAMAS_STOP_AFTER_PARSE" &&
@@ -307,6 +409,14 @@ if run_probe_until_bad "compile_entry" "ADAMAS_STOP_AFTER_COMPILE_ENTRY" &&
         run_probe_until_bad "hir_pending_first_keep_decision" "ADAMAS_STOP_AFTER_HIR_PENDING_FIRST_KEEP_DECISION" &&
         run_probe_until_bad "hir_pending_first_lower_ready" "ADAMAS_STOP_AFTER_HIR_PENDING_FIRST_LOWER_READY" &&
         run_probe_until_bad "hir_pending_first_lower_done" "ADAMAS_STOP_AFTER_HIR_PENDING_FIRST_LOWER_DONE" &&
+        run_probe_until_bad "hir_pending_target_lower_func_enter" "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_ENTER" &&
+        run_probe_until_bad "hir_pending_target_lower_func_lookup_done" "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_LOOKUP_DONE" &&
+        run_probe_until_bad "hir_pending_target_lower_func_resolved_def" "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_RESOLVED_DEF" &&
+        run_probe_until_bad "hir_pending_target_lower_func_call_args_ready" "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_CALL_ARGS_READY" &&
+        run_probe_until_bad "hir_pending_target_lower_func_materialization_ready" "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_MATERIALIZATION_READY" &&
+        run_probe_until_bad "hir_pending_target_lower_func_before_instance_lower_method" "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_BEFORE_INSTANCE_LOWER_METHOD" &&
+        run_probe_until_bad "hir_pending_target_lower_func_after_instance_lower_method" "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_AFTER_INSTANCE_LOWER_METHOD" &&
+        run_probe_until_bad "hir_pending_target_lower_func_materialization_done" "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_MATERIALIZATION_DONE" &&
         run_probe_until_bad "hir_pending_pass_items_done" "ADAMAS_STOP_AFTER_HIR_PENDING_PASS_ITEMS_DONE" &&
         run_probe_until_bad "hir_pending_pass_end" "ADAMAS_STOP_AFTER_HIR_PENDING_PASS_END" &&
         run_probe_until_bad "hir_pending_done" "ADAMAS_STOP_AFTER_HIR_PENDING_DONE" &&
@@ -361,6 +471,14 @@ if run_probe_until_bad "compile_entry" "ADAMAS_STOP_AFTER_COMPILE_ENTRY" &&
     ! gate_bad "hir_pending_first_keep_decision" &&
     ! gate_bad "hir_pending_first_lower_ready" &&
     ! gate_bad "hir_pending_first_lower_done" &&
+    ! gate_bad "hir_pending_target_lower_func_enter" &&
+    ! gate_bad "hir_pending_target_lower_func_lookup_done" &&
+    ! gate_bad "hir_pending_target_lower_func_resolved_def" &&
+    ! gate_bad "hir_pending_target_lower_func_call_args_ready" &&
+    ! gate_bad "hir_pending_target_lower_func_materialization_ready" &&
+    ! gate_bad "hir_pending_target_lower_func_before_instance_lower_method" &&
+    ! gate_bad "hir_pending_target_lower_func_after_instance_lower_method" &&
+    ! gate_bad "hir_pending_target_lower_func_materialization_done" &&
     ! gate_bad "hir_pending_pass_items_done" &&
     ! gate_bad "hir_pending_pass_end" &&
     ! gate_bad "hir_pending_done" &&
@@ -423,6 +541,22 @@ elif gate_bad "hir_pending_first_lower_ready"; then
   classification="self_build_hir_pending_first_lower_ready_boundary"
 elif gate_bad "hir_pending_first_lower_done"; then
   classification="self_build_hir_pending_first_lower_done_boundary"
+elif gate_bad "hir_pending_target_lower_func_enter"; then
+  classification="self_build_hir_pending_target_lower_func_enter_boundary"
+elif gate_bad "hir_pending_target_lower_func_lookup_done"; then
+  classification="self_build_hir_pending_target_lower_func_lookup_done_boundary"
+elif gate_bad "hir_pending_target_lower_func_resolved_def"; then
+  classification="self_build_hir_pending_target_lower_func_resolved_def_boundary"
+elif gate_bad "hir_pending_target_lower_func_call_args_ready"; then
+  classification="self_build_hir_pending_target_lower_func_call_args_ready_boundary"
+elif gate_bad "hir_pending_target_lower_func_materialization_ready"; then
+  classification="self_build_hir_pending_target_lower_func_materialization_ready_boundary"
+elif gate_bad "hir_pending_target_lower_func_before_instance_lower_method"; then
+  classification="self_build_hir_pending_target_lower_func_before_instance_lower_method_boundary"
+elif gate_bad "hir_pending_target_lower_func_after_instance_lower_method"; then
+  classification="self_build_hir_pending_target_lower_func_after_instance_lower_method_boundary"
+elif gate_bad "hir_pending_target_lower_func_materialization_done"; then
+  classification="self_build_hir_pending_target_lower_func_materialization_done_boundary"
 elif gate_bad "hir_pending_pass_items_done"; then
   classification="self_build_hir_pending_pass_items_done_boundary"
 elif gate_bad "hir_pending_pass_end"; then
@@ -463,7 +597,7 @@ echo "classification=$classification"
 
 if [[ "${REQUIRE_CLASSIFICATION:-0}" == "1" ]]; then
   case "$classification" in
-    self_build_compile_entry_resource|self_build_parse_resource|self_build_lower_main_boundary|self_build_hir_lower_main_bookkeeping_boundary|self_build_hir_fun_main_scan_boundary|self_build_hir_fun_main_lower_boundary|self_build_hir_flush_reachability_seed_boundary|self_build_hir_flush_lazy_rta_init_boundary|self_build_hir_flush_initial_pending_boundary|self_build_hir_flush_tracked_signatures_boundary|self_build_hir_missing_start_boundary|self_build_hir_missing_scan_boundary|self_build_hir_missing_uniq_boundary|self_build_hir_missing_queue_boundary|self_build_hir_pending_enter_boundary|self_build_hir_pending_lazy_rta_boundary|self_build_hir_pending_pass_start_boundary|self_build_hir_pending_first_item_boundary|self_build_hir_pending_first_keep_decision_boundary|self_build_hir_pending_first_lower_ready_boundary|self_build_hir_pending_first_lower_done_boundary|self_build_hir_pending_pass_items_done_boundary|self_build_hir_pending_pass_end_boundary|self_build_hir_pending_done_boundary|self_build_hir_missing_process_boundary|self_build_hir_missing_force_modules_boundary|self_build_hir_flush_missing_initial_boundary|self_build_hir_flush_stale_call_repair_boundary|self_build_hir_flush_receiver_call_repair_boundary|self_build_hir_flush_post_repair_pending_boundary|self_build_hir_flush_deferred_allocators_boundary|self_build_hir_flush_final_missing_boundary|self_build_hir_fun_main_flush_boundary|self_build_hir_before_flush_pending_boundary|self_build_hir_flush_pending_boundary|self_build_hir_refresh_type_params_boundary|self_build_hir_rta_boundary|self_build_hir_tail_boundary|self_build_after_hir_boundary)
+    self_build_compile_entry_resource|self_build_parse_resource|self_build_lower_main_boundary|self_build_hir_lower_main_bookkeeping_boundary|self_build_hir_fun_main_scan_boundary|self_build_hir_fun_main_lower_boundary|self_build_hir_flush_reachability_seed_boundary|self_build_hir_flush_lazy_rta_init_boundary|self_build_hir_flush_initial_pending_boundary|self_build_hir_flush_tracked_signatures_boundary|self_build_hir_missing_start_boundary|self_build_hir_missing_scan_boundary|self_build_hir_missing_uniq_boundary|self_build_hir_missing_queue_boundary|self_build_hir_pending_enter_boundary|self_build_hir_pending_lazy_rta_boundary|self_build_hir_pending_pass_start_boundary|self_build_hir_pending_first_item_boundary|self_build_hir_pending_first_keep_decision_boundary|self_build_hir_pending_first_lower_ready_boundary|self_build_hir_pending_first_lower_done_boundary|self_build_hir_pending_target_lower_func_enter_boundary|self_build_hir_pending_target_lower_func_lookup_done_boundary|self_build_hir_pending_target_lower_func_resolved_def_boundary|self_build_hir_pending_target_lower_func_call_args_ready_boundary|self_build_hir_pending_target_lower_func_materialization_ready_boundary|self_build_hir_pending_target_lower_func_before_instance_lower_method_boundary|self_build_hir_pending_target_lower_func_after_instance_lower_method_boundary|self_build_hir_pending_target_lower_func_materialization_done_boundary|self_build_hir_pending_pass_items_done_boundary|self_build_hir_pending_pass_end_boundary|self_build_hir_pending_done_boundary|self_build_hir_missing_process_boundary|self_build_hir_missing_force_modules_boundary|self_build_hir_flush_missing_initial_boundary|self_build_hir_flush_stale_call_repair_boundary|self_build_hir_flush_receiver_call_repair_boundary|self_build_hir_flush_post_repair_pending_boundary|self_build_hir_flush_deferred_allocators_boundary|self_build_hir_flush_final_missing_boundary|self_build_hir_fun_main_flush_boundary|self_build_hir_before_flush_pending_boundary|self_build_hir_flush_pending_boundary|self_build_hir_refresh_type_params_boundary|self_build_hir_rta_boundary|self_build_hir_tail_boundary|self_build_after_hir_boundary)
       ;;
     *)
       exit 9

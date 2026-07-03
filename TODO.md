@@ -8,6 +8,41 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-03 UPDATE: the B5 pending target localizer now splits the queued
+  `Adamas::Compiler::CLI#run$IO_IO` demand inside `lower_function_if_needed`.
+  The diagnostic gates are default-off and target-filtered by
+  `ADAMAS_PENDING_TARGET_FILTER`, with a short `PENDING_TARGET_ONLY=1` mode for
+  the already-proven prefix. Fresh evidence: `crystal build src/adamas.cr -o
+  tmp/adamas_b5_target_localizer_stage1 --error-trace` exits 0;
+  `scripts/build_bootstrap_stages.sh --out tmp/bootstrap_b5_target_localizer
+  --stages 2 --timeout 900 --mem 12288` builds and smokes `cv2_s1` and
+  `cv2_s2` clean (`cv2_s2` wall 243.53s, peak RSS about 3362 MB);
+  `PENDING_TARGET_ONLY=1 STAGE1_COMPILER=tmp/bootstrap_b5_target_localizer/cv2_s2
+  REQUIRE_CLASSIFICATION=1 STOP_TIMEOUT=900 STOP_MEM_MB=12288
+  HIGH_RSS_MB=12288 scripts/generated_stage_self_build_hir_boundary_classifier.sh`
+  exits 0 with
+  `classification=self_build_hir_pending_target_lower_func_after_instance_lower_method_boundary`;
+  and `GENERATED_S2=tmp/bootstrap_b5_target_localizer/cv2_s2 REQUIRE_CLEAN=1
+  scripts/generated_stage_llvm_entry_classifier.sh` reports
+  `classification=clean_both_modes`. Clean target gates: lower-function enter,
+  direct lookup done (`found=1, branch=direct`), resolved DefNode
+  (`abstract=1`), call args ready, materialization ready
+  (`wrapper=0, shape=0`), and the stop before the instance `lower_method`
+  call (`owner=Adamas::Compiler::CLI`,
+  `producer=instance_class_info_lower_method`,
+  `reason=target_materialization`). First bad gate:
+  `ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_AFTER_INSTANCE_LOWER_METHOD`
+  exits 139 at about 4806 MB, without safe-wrapper memory or timeout kill.
+  Regression surface for the diagnostic slice remains green:
+  `regression_tests/run_all_suites.sh tmp/adamas_b5_target_localizer_stage1 4`
+  reports all suites passed (`152/152` full regressions and `36/36` combined).
+  Therefore the next slice must localize inside
+  `AstToHir#lower_method` for `Adamas::Compiler::CLI#run$IO_IO`, after
+  `lower_function_if_needed` has selected the owner/materialized name and before
+  it returns. Do not reopen lookup, call-arg recovery, materialization name,
+  pending queue mechanics, old pending prefix gates, B4/L17-L22 LLVM,
+  `NamedTuple` / `Tuple`, ambient maps, or `BlockOwner` from stale evidence.
+
 - 2026-07-03 UPDATE: `process_pending_lower_functions` is now split by
   missing-sweep-owned pending subphase. New default-off context-filtered gates
   show the repeated lazy-RTA init and the first pending item/keep/lower gates

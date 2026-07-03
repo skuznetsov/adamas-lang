@@ -866,6 +866,30 @@ tracked signatures, fun-main scan/lower, RTA pruning, MIR, LLVM
 finalization/helper, `NamedTuple` / `Tuple`, ambient-map, and `BlockOwner`
 paths remain rejected from stale evidence.
 
+2026-07-03 B5 pending-target lower-method split: target-filtered default-off
+gates inside `lower_function_if_needed` now split the queued
+`Adamas::Compiler::CLI#run$IO_IO` demand from the missing-sweep-owned pending
+processor. Fresh evidence builds `tmp/bootstrap_b5_target_localizer/cv2_s2`
+clean through stage 2 and smokes it, then `PENDING_TARGET_ONLY=1
+STAGE1_COMPILER=tmp/bootstrap_b5_target_localizer/cv2_s2
+REQUIRE_CLASSIFICATION=1 STOP_TIMEOUT=900 STOP_MEM_MB=12288 HIGH_RSS_MB=12288
+scripts/generated_stage_self_build_hir_boundary_classifier.sh` reports
+`classification=self_build_hir_pending_target_lower_func_after_instance_lower_method_boundary`.
+Clean target gates are lower-function enter, direct lookup completion
+(`found=1, branch=direct`), resolved DefNode (`abstract=1`), call-arg recovery,
+materialization readiness (`wrapper=0, shape=0`), and the stop immediately
+before instance `lower_method` with `owner=Adamas::Compiler::CLI`,
+`producer=instance_class_info_lower_method`, and
+`reason=target_materialization`. The first bad target gate is
+`ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_FUNC_AFTER_INSTANCE_LOWER_METHOD`,
+which exits 139 at about 4806 MB without safe-wrapper memory or timeout kill.
+The next production receipt must localize inside `AstToHir#lower_method` for
+`Adamas::Compiler::CLI#run$IO_IO`, before it returns to
+`lower_function_if_needed`. Lookup, call-arg recovery, materialization naming,
+pending queue mechanics, old pending prefix gates, B4/L17-L22 LLVM,
+`NamedTuple` / `Tuple`, ambient-map, and `BlockOwner` paths remain rejected
+from stale evidence.
+
 2026-07-03 B5 pending-process split: context-filtered default-off gates inside
 `process_pending_lower_functions` now split that missing-sweep-owned pending
 processor call. Fresh evidence builds `tmp/bootstrap_b5_pending_phase/cv2_s2`
