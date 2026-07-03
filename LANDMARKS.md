@@ -12,6 +12,37 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-EN-CLASSVAR-SCALAR-GLOBAL-PRODUCER-CONSUMED|implemented 2026-07-03 {F:0.88 G:0.46 R:0.84}]:
+The L19 `String::HEADER_SIZE` scalar-global producer edge is consumed. A
+temporary trace before cleanup pinned two producer hazards: direct
+`OffsetofNode` constants could be sealed by source fallback before class layout
+was complete, and the generated compiler mis-stored
+`MacroNumberValue.new(Int64)` through the broad numeric-union constructor
+(`size_i64=12` but `literal=0`). The production slice queues direct `offsetof`
+constants for pending re-evaluation before source fallback, shares one
+`macro_value_for_offsetof` evaluator between macro literal evaluation and
+runtime `lower_offsetof`, and adds exact scalar `MacroNumberValue`
+constructors while preserving the existing union fallback. Evidence:
+`crystal build src/adamas.cr -o tmp/adamas_l19_macro_number_stage1
+--error-trace` exits 0; `KEEP_TMP=1
+STAGE1_COMPILER=tmp/adamas_l19_macro_number_stage1 REQUIRE_RAW_DUMP=1
+REQUIRE_CLASSIFICATION=1 scripts/generated_stage_finalize_to_s_classifier.sh`
+exits 0 and reports `normal_string_header_size_global_shape=i32_12`,
+`normal_string_header_size_global_line=@String__classvar__HEADER_SIZE = global
+i32 12`, `raw_dump_classification=raw_dump_before_to_s_buffer_valid`, and
+`classification=post_to_s_llc_type_mismatch_frontier`. Adjacent guards pass:
+`p2_constant_globals_no_prelude_ok`, `p2_prescan_complex_constants_frontier_ok`,
+and `p2_macro_number_parsed_literals_no_prelude_ok` with the same stage1;
+`regression_tests/run_combined.sh tmp/adamas_l19_macro_number_stage1 4` reports
+36/36, and `regression_tests/run_all.sh tmp/adamas_l19_macro_number_stage1 4`
+reports 152/152. Scope: moved generated-stage frontier only, not green
+`s2b`/`s3b`. Residual boundary: post-`to_s` LLVM validity now fails after the
+scalar-global producer is correct; current `llc` mismatch is `%r18.fromslot.1`
+defined as `i64` but expected as `ptr`. Decay trigger: a fresh classifier no
+longer emits `String::HEADER_SIZE` as `i32 12`, adjacent macro/constant guards
+regress, or the next residual is shown to be caused by this constructor/offsetof
+change.
+
 [LM-ARCH-0K-EM-POST-TO-S-CLASSVAR-SCALAR-GLOBAL-FRONTIER|diagnostic 2026-07-03 {F:0.88 G:0.48 R:0.84}]:
 The post-0k-EL residual is narrower than generic post-`to_s` LLVM validity.
 `scripts/generated_stage_finalize_to_s_classifier.sh` now inspects the normal

@@ -46117,23 +46117,15 @@ module Adamas::HIR
 
       if runtime_deferred
         @constant_literal_values.delete(full_name)
-      elsif @constant_literal_values.has_key?(full_name)
-      else
+      elsif !@constant_literal_values.has_key?(full_name)
         if literal = constant_literal_value_from_expr(value_id, arena, owner_name)
           trace_constant_literal_write("record_insert", full_name, owner_name, literal)
           @constant_literal_values[full_name] = literal
+        elsif constant_value_is_offsetof?(value_id, arena)
+          @pending_offsetof_constants << {full_name, value_id, arena, owner_name}
         elsif source_node && (literal = constant_literal_value_from_source(source_node, arena, owner_name))
           trace_constant_literal_write("record_source_insert", full_name, owner_name, literal)
           @constant_literal_values[full_name] = literal
-        else
-          # Check if expression is an offsetof — save for re-evaluation after class info is ready
-          old_a = @arena
-          @arena = arena
-          expr_node = @arena[value_id]
-          if expr_node.is_a?(Adamas::Compiler::Frontend::OffsetofNode)
-            @pending_offsetof_constants << {full_name, value_id, arena, owner_name}
-          end
-          @arena = old_a
         end
       end
 
@@ -46293,6 +46285,19 @@ module Adamas::HIR
     ) : Nil
       return unless env_has?("DEBUG_CONST_LIT_WRITE")
       STDERR.puts "[CONST_LIT] tag=#{tag} full=#{full_name} owner=#{owner_name || ""} lit=#{literal.class.name} size_before=#{@constant_literal_values.size}"
+    end
+
+    private def constant_value_is_offsetof?(
+      value_id : ExprId,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Bool
+      old_arena = @arena
+      @arena = arena
+      begin
+        @arena[value_id].is_a?(Adamas::Compiler::Frontend::OffsetofNode)
+      ensure
+        @arena = old_arena
+      end
     end
 
     private def constant_literal_value_from_expr(
@@ -57545,51 +57550,59 @@ module Adamas::HIR
         end
         Adamas::Compiler::Semantic::MacroIdValue.new(path)
       when Adamas::Compiler::Frontend::OffsetofNode
-        if expr_node.args.size >= 2
-          type_node = @arena[expr_node.args[0]]
-          type_name = case type_node
-                      when Adamas::Compiler::Frontend::IdentifierNode
-                        (safe_slice_to_string(type_node.name) || "")
-                      when Adamas::Compiler::Frontend::ConstantNode
-                        (safe_slice_to_string(type_node.name) || "")
-                      else
-                        nil
-                      end
-          field_node = @arena[expr_node.args[1]]
-          field_name = case field_node
-                       when Adamas::Compiler::Frontend::InstanceVarNode
-                         (safe_slice_to_string(field_node.name) || "")
-                       when Adamas::Compiler::Frontend::IdentifierNode
-                         "@#{(safe_slice_to_string(field_node.name) || "")}"
-                       else
-                         nil
-                       end
-          if type_name && field_name
-            ci = @class_info[type_name]?
-            unless ci
-              if current = @current_class
-                ci = @class_info["#{current}::#{type_name}"]?
-                ci ||= @class_info["#{current.split("::").first}::#{type_name}"]? if current.includes?("::")
-              end
-            end
-            if ci
-              ci.ivars.each do |ivar|
-                if ivar.name == field_name
-                  return Adamas::Compiler::Semantic::MacroNumberValue.new(ivar.offset.to_i64)
-                end
-              end
-              # Field not explicitly registered — it's at the end of the struct
-              # (e.g. String's @c : UInt8 is the first byte after the header fields)
-              if !ci.ivars.empty?
-                return Adamas::Compiler::Semantic::MacroNumberValue.new(ci.size.to_i64)
-              end
-            end
-          end
-        end
-        nil
+        macro_value_for_offsetof(expr_node)
       else
         nil
       end
+    end
+
+    private def macro_value_for_offsetof(
+      node : Adamas::Compiler::Frontend::OffsetofNode,
+    ) : Adamas::Compiler::Semantic::MacroNumberValue?
+      return nil unless node.args.size >= 2
+
+      type_node = @arena[node.args[0]]
+      type_name = case type_node
+                  when Adamas::Compiler::Frontend::IdentifierNode
+                    (safe_slice_to_string(type_node.name) || "")
+                  when Adamas::Compiler::Frontend::ConstantNode
+                    (safe_slice_to_string(type_node.name) || "")
+                  else
+                    nil
+                  end
+      return nil unless type_name
+
+      field_node = @arena[node.args[1]]
+      field_name = case field_node
+                   when Adamas::Compiler::Frontend::InstanceVarNode
+                     (safe_slice_to_string(field_node.name) || "")
+                   when Adamas::Compiler::Frontend::IdentifierNode
+                     "@#{(safe_slice_to_string(field_node.name) || "")}"
+                   else
+                     nil
+                   end
+      return nil unless field_name
+
+      ci = @class_info[type_name]?
+      unless ci
+        if current = @current_class
+          ci = @class_info["#{current}::#{type_name}"]?
+          ci ||= @class_info["#{current.split("::").first}::#{type_name}"]? if current.includes?("::")
+        end
+      end
+      return nil unless ci
+
+      ci.ivars.each do |ivar|
+        if ivar.name == field_name
+          return Adamas::Compiler::Semantic::MacroNumberValue.new(ivar.offset.to_i64)
+        end
+      end
+
+      # Crystal's pseudo offsetof permits the flexible array marker @c in
+      # String. It is not registered as a normal ivar; its offset is the final
+      # object header size after the registered fields.
+      return nil unless ci.ivars.size > 0
+      Adamas::Compiler::Semantic::MacroNumberValue.new(ci.size.to_i64)
     end
 
     private def macro_type_name_has_unresolved_splat?(type_name : String) : Bool
@@ -59721,53 +59734,8 @@ module Adamas::HIR
       # offsetof(T, @field) returns the byte offset of a field
       offset = 0_i64 # Default
 
-      if node.args.size >= 2
-        # Extract type name from first arg
-        type_node = @arena[node.args[0]]
-        type_name = case type_node
-                    when Adamas::Compiler::Frontend::IdentifierNode
-                      (safe_slice_to_string(type_node.name) || "")
-                    when Adamas::Compiler::Frontend::ConstantNode
-                      (safe_slice_to_string(type_node.name) || "")
-                    else
-                      nil
-                    end
-
-        # Extract field name from second arg
-        field_node = @arena[node.args[1]]
-        field_name = case field_node
-                     when Adamas::Compiler::Frontend::InstanceVarNode
-                       (safe_slice_to_string(field_node.name) || "") # includes @ prefix
-                     when Adamas::Compiler::Frontend::IdentifierNode
-                       "@#{(safe_slice_to_string(field_node.name) || "")}"
-                     else
-                       nil
-                     end
-
-        if type_name && field_name
-          # Look up class info - try exact name, then with current namespace
-          ci = @class_info[type_name]?
-          unless ci
-            if current = @current_class
-              ci = @class_info["#{current}::#{type_name}"]?
-              ci ||= @class_info["#{current.split("::").first}::#{type_name}"]? if current.includes?("::")
-            end
-          end
-          if ci
-            found = false
-            ci.ivars.each do |ivar|
-              if ivar.name == field_name
-                offset = ivar.offset.to_i64
-                found = true
-                break
-              end
-            end
-            # Field not explicitly registered — it's at the end of the struct
-            if !found && !ci.ivars.empty?
-              offset = ci.size.to_i64
-            end
-          end
-        end
+      if literal = macro_value_for_offsetof(node)
+        offset = literal.value.to_i64
       end
 
       lit = Literal.new(ctx.next_id, TypeRef::INT32, offset)

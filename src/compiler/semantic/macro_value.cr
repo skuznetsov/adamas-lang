@@ -175,6 +175,22 @@ module Adamas
           suffix.ends_with?("u8") || suffix.ends_with?("u16") || suffix.ends_with?("u32") || suffix.ends_with?("u64")
         end
 
+        def initialize(value : Int32, @source_literal : String? = nil)
+          @value = value.to_i64
+        end
+
+        def initialize(value : Int64, @source_literal : String? = nil)
+          @value = value
+        end
+
+        def initialize(value : Float32, @source_literal : String? = nil)
+          @value = value.to_f64
+        end
+
+        def initialize(value : Float64, @source_literal : String? = nil)
+          @value = value
+        end
+
         def initialize(value : Int32 | Int64 | Float32 | Float64, @source_literal : String? = nil)
           @value = value.is_a?(Float32 | Float64) ? value.to_f64 : value.to_i64
         end

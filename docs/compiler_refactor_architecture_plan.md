@@ -172,6 +172,17 @@ value availability, MIR global registration, and backend undefined-global
 fallback before any arithmetic, output-file, tail, metadata, DWARF, type-name,
 or generic runtime patch.
 
+2026-07-03 post-0k-EN note: the `ClassvarScalarGlobalContract` slice is now
+consumed for the active `String::HEADER_SIZE` edge. Direct `OffsetofNode`
+constants are kept pending until class layout is available, `offsetof` macro
+and runtime lowering share one evaluator, and `MacroNumberValue` has exact
+scalar constructors to avoid self-hosted union-param loss for ordinary `Int64`
+values. Fresh generated-stage evidence reports
+`@String__classvar__HEADER_SIZE = global i32 12` and moves classification to
+`post_to_s_llc_type_mismatch_frontier`; the next architecture unit is therefore
+not constant globals, source fallback, or macro-number construction, but the
+producer of the remaining `%r18.fromslot.1` `i64`-vs-`ptr` LLVM type mismatch.
+
 2026-07-02 post-0k-DY note: the selected workers=1
 `CopyPropagationPass#compute_dominance_info` lane is consumed by a production
 resource fix. CopyPropagation now answers cross-block dominance with an exact

@@ -8,6 +8,41 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-03 UPDATE: Slice 0k-EN consumes the L19
+  `String::HEADER_SIZE` classvar scalar-global producer edge. The root was two
+  producer-side hazards that compounded only in the generated stage:
+  unresolved `offsetof(String, @c)` constants could be sealed by source
+  fallback before class layout was complete, and `MacroNumberValue.new(Int64)`
+  used the broad numeric-union constructor, which self-hosted stage2 stored as
+  `0` even when the caller-side value was `12`. The production slice queues
+  direct `OffsetofNode` constants for pending re-evaluation before source
+  fallback, shares one `macro_value_for_offsetof` evaluator between macro
+  constants and runtime `lower_offsetof`, and adds exact scalar
+  `MacroNumberValue` constructors while preserving the union fallback. Focused
+  evidence:
+  `crystal build src/adamas.cr -o tmp/adamas_l19_macro_number_stage1
+  --error-trace` exits 0; `KEEP_TMP=1
+  STAGE1_COMPILER=tmp/adamas_l19_macro_number_stage1 REQUIRE_RAW_DUMP=1
+  REQUIRE_CLASSIFICATION=1 scripts/generated_stage_finalize_to_s_classifier.sh`
+  exits 0 and reports `normal_string_header_size_global_shape=i32_12`,
+  `normal_string_header_size_global_line=@String__classvar__HEADER_SIZE =
+  global i32 12`, `raw_dump_classification=raw_dump_before_to_s_buffer_valid`,
+  and `classification=post_to_s_llc_type_mismatch_frontier`. Adjacent guards
+  pass: `regression_tests/p2_constant_globals_no_prelude.sh
+  tmp/adamas_l19_macro_number_stage1`,
+  `regression_tests/p2_prescan_complex_constants_frontier.sh
+  tmp/adamas_l19_macro_number_stage1`, and
+  `regression_tests/p2_macro_number_parsed_literals_no_prelude.sh
+  tmp/adamas_l19_macro_number_stage1`; `regression_tests/run_combined.sh
+  tmp/adamas_l19_macro_number_stage1 4` reports 36/36; and
+  `regression_tests/run_all.sh tmp/adamas_l19_macro_number_stage1 4` reports
+  152/152. This is a moved frontier, not green `s2b`/`s3b`: the next residual is
+  still post-`to_s` LLVM validity, now with `String::HEADER_SIZE` proven
+  scalar-correct and `llc` failing at `%r18.fromslot.1` (`i64` defined, `ptr`
+  expected). Do not return to constant global, source fallback, or
+  `MacroNumberValue` constructors for this frontier unless fresh evidence
+  decays the `i32_12` row.
+
 - 2026-07-03 UPDATE: Slice 0k-EM is a diagnostic-only split of the
   post-0k-EL residual. `scripts/generated_stage_finalize_to_s_classifier.sh`
   now inspects the generated normal `.ll` and separates

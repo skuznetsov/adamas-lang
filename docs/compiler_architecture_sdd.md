@@ -677,6 +677,18 @@ MIR/CLI global registration, or backend undefined-global fallback. A direct
 fix to arithmetic emission, the `llc` mismatch consumer, output/finalization,
 or broad classvar fallback is rejected until that producer boundary is named.
 
+2026-07-03 board refinement after Slice 0k-EN: the classvar scalar-global
+producer edge is consumed. `String::HEADER_SIZE` now emits as
+`@String__classvar__HEADER_SIZE = global i32 12` in the produced normal `.ll`
+with output/finalization still buffer-valid. The moved classifier is
+`classification=post_to_s_llc_type_mismatch_frontier`, with `llc` now failing on
+`%r18.fromslot.1` (`i64` defined, `ptr` expected). The next production receipt
+must pin that i64-vs-ptr producer while preserving the `i32_12` scalar-global
+row. Returning to constant source fallback, `offsetof`, `MacroNumberValue`
+constructors, output/finalization, tail, metadata, DWARF, type-name,
+`NamedTuple` / `Tuple`, ambient maps, or `BlockOwner` from pre-0k-EN evidence is
+invalid.
+
 | Lane | Current decision | Required next receipt | Rejected shortcut |
 | --- | --- | --- | --- |
 | `bootstrap-emergency-with-ledger` / B4-O1 | Consumed by 0k-CU. The HIR `BlockCallReturnContract` implementation moves the generated-stage gate past the old O1 `affected_block_ids` / `Set(UInt32)#includes?` frontier: `REQUIRE_CURRENT_CU_CONTRACT=1 scripts/hir_block_return_shape_census.sh` reports `classification=current_0k_cu_block_call_return_contract_applied`, and `STAGE1_COMPILER=/tmp/adamas_0kcu_stage1 REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh` exits at the expected non-current boundary with `b4_classification=llvm_entry_failure_after_lower_main` and `workers1_exit139=0`. The new residual is post-`lower_main` RSS pressure in both worker modes, with the default worker-mode rand fallback still present. | Return to the board before any new production source slice. The next receipt must reselect an owner spine from fresh generated-stage evidence; if it targets the new residual, it must name the old authority edge behind post-`lower_main` memory/resource growth rather than treating higher memory limits, worker count, or the rand fallback as acceptance evidence. | Continuing the 0k-CU breakglass lane by inertia; starting from the new RSS-kill stack; raising memory as a fix; forcing `ADAMAS_LLVM_WORKERS=1`; worker/rand/output/resource patches without a new receipt; CopyPropagation, Set/Hash, backend block-return, `NamedTuple`/`Tuple`, ambient-map, or `BlockOwner` changes. |
@@ -1533,6 +1545,80 @@ SliceReceipt {
   residual_boundary:
     Producer pin still open: constant recording, `offsetof`, MIR global
     registration, or backend fallback must be split before a production fix.
+}
+```
+
+#### Slice 0k-EN receipt: classvar scalar global producer fix
+
+```text
+SliceReceipt {
+  board_lane: PhaseAuthority / GeneratedStageExecution
+  tranche: bootstrap-emergency-with-ledger
+  old_authority_edge:
+    Slice 0k-EM proved that the post-`to_s` generated LLVM residual depended on
+    the `String::HEADER_SIZE` scalar-global producer contract, but the producer
+    boundary was still split across HIR constant recording, `offsetof` macro
+    evaluation, CLI constant-global export, and backend fallback.
+  owner_fact_or_service:
+    HIR constant recording now keeps direct `OffsetofNode` constants pending
+    until class layout is available instead of allowing source fallback to seal
+    an unresolved `offsetof` as a numeric literal. `macro_value_for_offsetof`
+    is the shared evaluator for macro constants and runtime `lower_offsetof`.
+    `MacroNumberValue` has exact scalar constructors so generated stages do not
+    route ordinary `Int64` values through the broad numeric-union constructor.
+  producers:
+    - `record_constant_definition` and `@pending_offsetof_constants`;
+    - `macro_value_for_offsetof`;
+    - `MacroNumberValue` scalar constructors;
+    - CLI constant-global export, unchanged except for consuming the corrected
+      literal.
+  consumers:
+    - `String::Builder#initialize` and `String::Builder#real_bytesize`
+      classvar loads;
+    - `scripts/generated_stage_finalize_to_s_classifier.sh`;
+    - adjacent macro/constant regression guards.
+  measured_red_baseline:
+    Pre-fix generated-stage evidence reported
+    `normal_string_header_size_global_shape=ptr_null`. A cleanup-time producer
+    trace then showed the first partial fix moved this to `global i32 0` because
+    the produced compiler observed caller-side `size_i64=12` but constructed a
+    `MacroNumberValue` with `literal=0`.
+  focused_DoD:
+    `crystal build src/adamas.cr -o tmp/adamas_l19_macro_number_stage1
+    --error-trace` exits 0. `KEEP_TMP=1
+    STAGE1_COMPILER=tmp/adamas_l19_macro_number_stage1 REQUIRE_RAW_DUMP=1
+    REQUIRE_CLASSIFICATION=1 scripts/generated_stage_finalize_to_s_classifier.sh`
+    exits 0 and reports `normal_string_header_size_global_shape=i32_12`,
+    `normal_string_header_size_global_line=@String__classvar__HEADER_SIZE =
+    global i32 12`, `raw_dump_classification=raw_dump_before_to_s_buffer_valid`,
+    and `classification=post_to_s_llc_type_mismatch_frontier`.
+  architecture_DoD:
+    The slice does not change output ownership, finalization, tail, metadata,
+    DWARF, type-name, generic `IO::Memory`, worker policy, `NamedTuple` /
+    `Tuple`, ambient maps, or `BlockOwner`.
+  generated_stage_gate:
+    The next generated-stage movement must preserve the `i32_12` row before
+    interpreting later `llc` errors.
+  negative_controls:
+    `regression_tests/p2_constant_globals_no_prelude.sh
+    tmp/adamas_l19_macro_number_stage1`,
+    `regression_tests/p2_prescan_complex_constants_frontier.sh
+    tmp/adamas_l19_macro_number_stage1`, and
+    `regression_tests/p2_macro_number_parsed_literals_no_prelude.sh
+    tmp/adamas_l19_macro_number_stage1` pass.
+    `regression_tests/run_combined.sh tmp/adamas_l19_macro_number_stage1 4`
+    reports 36/36, and `regression_tests/run_all.sh
+    tmp/adamas_l19_macro_number_stage1 4` reports 152/152.
+  rejected_shortcuts:
+    Patching `String::Builder` arithmetic, backend undefined-global defaults,
+    broad classvar fallback, source-level stdlib changes, output/finalization,
+    tail/output-file handling, metadata, DWARF, type-name, `NamedTuple` /
+    `Tuple`, ambient maps, or `BlockOwner` from the old `ptr null` / `i32 0`
+    evidence.
+  residual_boundary:
+    The new active residual is post-`to_s` LLVM type validity after scalar
+    globals are correct: `%r18.fromslot.1` is defined as `i64` where `llc`
+    expects `ptr`.
 }
 ```
 
