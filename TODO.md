@@ -8,6 +8,26 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-02 UPDATE: fresh post-0k-DY hostile revalidation preserves `L15`
+  but adds a self-build guard for generated-s2 build variance. A first strict
+  mode-selector run with a freshly built `tmp/adamas_l15_stage1` failed before
+  produced-s2 stop gates (`classification=mode_resource_classifier_build_failed`,
+  `nested.classification=s2_build_fails`) after `pass3 after lower_main call`
+  and deferred allocator flush. That failure is NOT promoted to a new frontier:
+  a direct full self-build with a fresh `tmp/adamas_l16_stage1` succeeds under
+  the same 4GB cap (`scripts/run_safe.sh tmp/adamas_l16_stage1 600 4096
+  src/adamas.cr -o tmp/l16_full_s2` -> exit 0, peak RSS 3396 MB), and the new
+  `scripts/generated_stage_self_build_boundary_classifier.sh` reports
+  `classification=self_build_after_mir_boundary` with stop gates clean
+  (`compile_entry=4` MB, `parse=330` MB, `HIR=1722` MB, `MIR=2328` MB).
+  Rerunning the mode selector with `GENERATED_S2=tmp/l16_full_s2` re-establishes
+  `classification=select_default_late_llvm_resource_lane` with clean produced-s2
+  HIR/MIR stop gates in both modes, joined transaction rows, and
+  `default_mode_boundary=workers1_mode_boundary=reached_function_emission`.
+  Therefore the active production frontier remains the default late
+  LLVM/function-emission lane, but future L15 rechecks must distinguish
+  generated-s2 self-build variance from produced-s2 lane evidence.
+
 - 2026-07-02 UPDATE: Slice 0k-DY CONSUMES the selected 0k-DX
   `CopyPropagationPass#compute_dominance_info` resource lane. Production
   change: `CopyPropagationPass` now uses exact lazy dominance queries for

@@ -12,6 +12,30 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-DZ-SELF-BUILD-GUARD-REESTABLISHES-L15|implemented 2026-07-02 {F:0.88 G:0.54 R:0.82}]:
+A hostile revalidation of post-0k-DY `L15` found a one-shot strict
+mode-selector generated-s2 build failure, but controls show it is not enough to
+retire the default late LLVM/function-emission lane. A direct full self-build
+with a fresh `tmp/adamas_l16_stage1` succeeds under the strict 4GB cap:
+`/usr/bin/time -l scripts/run_safe.sh tmp/adamas_l16_stage1 600 4096
+src/adamas.cr -o tmp/l16_full_s2` exits 0 with peak RSS 3396 MB. The new
+`scripts/generated_stage_self_build_boundary_classifier.sh` reports
+`classification=self_build_after_mir_boundary`: compile-entry, parse, HIR, and
+MIR stop gates are clean (`4`, `330`, `1722`, and `2328` MB respectively).
+Using the resulting `tmp/l16_full_s2` as `GENERATED_S2`, the mode resource
+classifier re-establishes `classification=select_default_late_llvm_resource_lane`
+with clean produced-s2 HIR/MIR stop gates in both modes, joined transaction
+rows, `default_mode_boundary=reached_function_emission`,
+`workers1_mode_boundary=reached_function_emission`, and both modes
+memory-killed after lower_main. Scope: this preserves 0k-DY/L15 as the active
+production frontier while adding an executable guard for generated-s2
+self-build variance. It does not admit worker, memory-budget, backend rescue,
+`NamedTuple`/`Tuple`, ambient-map, `BlockOwner`, or consumed CopyPropagation
+dominance changes. Decay trigger: the self-build classifier selects an earlier
+boundary, direct full self-build fails reproducibly under the strict cap, or a
+fresh mode selector with a valid generated `s2` no longer selects the late
+LLVM/function-emission lane.
+
 [LM-ARCH-0K-DY-LAZY-DOMINANCE-CONSUMES-COPYPROP-RESOURCE-LANE|implemented 2026-07-02 {F:0.91 G:0.58 R:0.86}]:
 The selected 0k-DX `CopyPropagationPass#compute_dominance_info` resource lane
 is consumed by replacing eager full-dominator construction with exact lazy

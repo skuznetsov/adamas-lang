@@ -8,6 +8,21 @@ boundaries
 Related: `PLAN_DEMAND_DRIVEN_REWRITE_RFC.md`, `docs/ast_to_hir_audit.md`,
 `docs/codegen_architecture.md`
 
+2026-07-02 post-L15 hostile revalidation note: a one-shot strict
+mode-selector run failed while building generated `s2`, but controls show this
+must not be promoted to a stale-L15 conclusion. The new
+`scripts/generated_stage_self_build_boundary_classifier.sh` classifies direct
+stage1 self-build stop gates and reports `self_build_after_mir_boundary` with
+compile-entry/parse/HIR/MIR clean. A direct full self-build under the same 4GB
+cap succeeds (`tmp/l16_full_s2`, peak RSS 3396 MB), and rerunning
+`scripts/generated_stage_mode_resource_lane_classifier.sh` with
+`GENERATED_S2=tmp/l16_full_s2` re-establishes
+`select_default_late_llvm_resource_lane` with joined transaction residuals at
+`reached_function_emission`. The active production frontier therefore remains
+default late LLVM/function-emission; the added self-build guard exists to stop
+nested generated-s2 build variance from being misread as produced-s2 lane
+evidence.
+
 2026-07-02 post-0k-DY note: the selected workers=1
 `CopyPropagationPass#compute_dominance_info` lane is consumed by a production
 resource fix. CopyPropagation now answers cross-block dominance with an exact
