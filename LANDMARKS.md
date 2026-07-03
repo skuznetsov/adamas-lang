@@ -12,6 +12,32 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-0K-EM-POST-TO-S-CLASSVAR-SCALAR-GLOBAL-FRONTIER|diagnostic 2026-07-03 {F:0.88 G:0.48 R:0.84}]:
+The post-0k-EL residual is narrower than generic post-`to_s` LLVM validity.
+`scripts/generated_stage_finalize_to_s_classifier.sh` now inspects the normal
+generated `.ll` for `@String__classvar__HEADER_SIZE` and the last `llc`
+defined-vs-expected type mismatch. Focused evidence before cleanup used this
+generated compiler:
+`GENERATED_S2=tmp/generated-stage-finalize-to-s.bVJp2w/adamas_s2
+REQUIRE_RAW_DUMP=1 REQUIRE_CLASSIFICATION=1
+scripts/generated_stage_finalize_to_s_classifier.sh` exits 0 and reports
+`classification=post_to_s_classvar_scalar_global_frontier`,
+`normal_finalize_to_s_done_rows=1`,
+`raw_dump_classification=raw_dump_before_to_s_buffer_valid`,
+`normal_string_header_size_global_shape=ptr_null`,
+the global line `@String__classvar__HEADER_SIZE = global ptr null`, and
+`normal_llc_type_mismatch=1` at `normal_out.ll:5799:17` where
+`%binop7.left_ext` is defined as `i64` but expected as `i32`. Scope:
+behavior-neutral diagnostic split only, not green `s2b`/`s3b`. Residual
+boundary: pin the producer of the `String::HEADER_SIZE` classvar scalar global
+type/value contract before changing binary arithmetic emission, `llc` mismatch
+consumers, output ownership, finalization, generic `IO::Memory`, tail,
+metadata, DWARF, type-name, `NamedTuple`/`Tuple`, ambient maps, or
+`BlockOwner`. Decay trigger: a fresh classifier no longer reports
+`post_to_s_classvar_scalar_global_frontier`, `String::HEADER_SIZE` is emitted
+as a concrete scalar value, or `llc` fails first for an unrelated producer
+after the classvar global contract is proven correct.
+
 [LM-ARCH-0K-EL-OUTPUT-OWNERSHIP-CONSUMED-POST-TO-S-FRONTIER|implemented 2026-07-03 {F:0.91 G:0.54 R:0.86}]:
 The output-restore authority edge selected by 0k-EJ is consumed by a minimal
 `LLVMOutputOwnershipContract` production slice. Strict source-shape evidence:

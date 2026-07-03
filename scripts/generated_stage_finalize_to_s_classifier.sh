@@ -41,6 +41,8 @@ Classifications:
   select_finalize_raw_dump_raw_bytesize_frontier
   select_finalize_raw_dump_getter_bytesize_frontier
   post_to_s_frontier
+  post_to_s_classvar_scalar_global_frontier
+  post_to_s_llc_type_mismatch_frontier
   finalization_classifier_drift
   finalization_classifier_build_failed
 
@@ -333,6 +335,36 @@ fi
 # Read classification metrics directly from the ledger and run_safe logs.
 normal_exit="$(run_safe_exit_code "$TMP_DIR/normal.log")"
 stop_exit="$(run_safe_exit_code "$TMP_DIR/stop_before_to_s.log")"
+normal_ll_file="$TMP_DIR/normal_out.ll"
+normal_string_header_size_global_line=""
+normal_string_header_size_global_shape="missing"
+if [[ -f "$normal_ll_file" ]]; then
+  normal_string_header_size_global_line="$(LC_ALL=C grep -a '^@String__classvar__HEADER_SIZE = global ' "$normal_ll_file" 2>/dev/null | head -1 || true)"
+  if [[ "$normal_string_header_size_global_line" == '@String__classvar__HEADER_SIZE = global i32 12' ]]; then
+    normal_string_header_size_global_shape="i32_12"
+  elif [[ "$normal_string_header_size_global_line" == '@String__classvar__HEADER_SIZE = global ptr null' ]]; then
+    normal_string_header_size_global_shape="ptr_null"
+  elif [[ -n "$normal_string_header_size_global_line" ]]; then
+    normal_string_header_size_global_shape="other"
+  fi
+fi
+normal_llc_type_mismatch_line="$(LC_ALL=C grep -a "defined with type" "$TMP_DIR/normal.log" 2>/dev/null | tail -1 || true)"
+normal_llc_type_mismatch=0
+normal_llc_error_file=""
+normal_llc_error_line=""
+normal_llc_error_col=""
+normal_llc_error_value=""
+normal_llc_error_defined_type=""
+normal_llc_error_expected_type=""
+if [[ -n "$normal_llc_type_mismatch_line" ]]; then
+  normal_llc_type_mismatch=1
+  normal_llc_error_file="$(printf '%s\n' "$normal_llc_type_mismatch_line" | sed -E "s/^.*llc: ([^:]+):([0-9]+):([0-9]+): error:.*$/\\1/")"
+  normal_llc_error_line="$(printf '%s\n' "$normal_llc_type_mismatch_line" | sed -E "s/^.*llc: ([^:]+):([0-9]+):([0-9]+): error:.*$/\\2/")"
+  normal_llc_error_col="$(printf '%s\n' "$normal_llc_type_mismatch_line" | sed -E "s/^.*llc: ([^:]+):([0-9]+):([0-9]+): error:.*$/\\3/")"
+  normal_llc_error_value="$(printf '%s\n' "$normal_llc_type_mismatch_line" | sed -E "s/^.*error: '([^']+)' defined with type '([^']+)' but expected '([^']+)'.*$/\\1/")"
+  normal_llc_error_defined_type="$(printf '%s\n' "$normal_llc_type_mismatch_line" | sed -E "s/^.*error: '([^']+)' defined with type '([^']+)' but expected '([^']+)'.*$/\\2/")"
+  normal_llc_error_expected_type="$(printf '%s\n' "$normal_llc_type_mismatch_line" | sed -E "s/^.*error: '([^']+)' defined with type '([^']+)' but expected '([^']+)'.*$/\\3/")"
+fi
 normal_last="$(last_phase gsetx_normal normal)"
 stop_last="$(last_phase gsetx_stop_before_to_s stop_before_to_s)"
 normal_enter="$(ledger_count gsetx_normal normal llvm.generate_phase phase=finalize_to_s_enter)"
@@ -501,10 +533,29 @@ elif [[ "${normal_exit:-}" == "139" &&
       "$stop_done" -eq 0 ]]; then
   classification="select_finalize_to_s_stringification_frontier"
 elif [[ "$normal_done" -gt 0 ]]; then
-  classification="post_to_s_frontier"
+  if [[ "$normal_string_header_size_global_shape" == "ptr_null" ]]; then
+    classification="post_to_s_classvar_scalar_global_frontier"
+  elif [[ "$normal_llc_type_mismatch" -eq 1 ]]; then
+    classification="post_to_s_llc_type_mismatch_frontier"
+  else
+    classification="post_to_s_frontier"
+  fi
 fi
 
 echo "normal_last_phase=${normal_last:-missing}"
+echo "normal_string_header_size_global_shape=$normal_string_header_size_global_shape"
+if [[ -n "$normal_string_header_size_global_line" ]]; then
+  echo "normal_string_header_size_global_line=$normal_string_header_size_global_line"
+fi
+echo "normal_llc_type_mismatch=$normal_llc_type_mismatch"
+if [[ "$normal_llc_type_mismatch" -eq 1 ]]; then
+  echo "normal_llc_error_file=$normal_llc_error_file"
+  echo "normal_llc_error_line=$normal_llc_error_line"
+  echo "normal_llc_error_col=$normal_llc_error_col"
+  echo "normal_llc_error_value=$normal_llc_error_value"
+  echo "normal_llc_error_defined_type=$normal_llc_error_defined_type"
+  echo "normal_llc_error_expected_type=$normal_llc_error_expected_type"
+fi
 echo "normal_parallel_rescue_before_restore_rows=$normal_rescue_before_rows"
 echo "normal_parallel_rescue_after_restore_rows=$normal_rescue_after_rows"
 echo "normal_parallel_rescue_current_pos_before_restore=${normal_rescue_before_current_pos:-missing}"
@@ -554,6 +605,8 @@ if [[ "${REQUIRE_CLASSIFICATION:-0}" == "1" &&
       "$classification" != "select_parallel_rescue_saved_output_missing_frontier" &&
       "$classification" != "select_parallel_rescue_saved_output_binding_frontier" &&
       "$classification" != "select_parallel_rescue_restore_assignment_frontier" &&
+      "$classification" != "post_to_s_classvar_scalar_global_frontier" &&
+      "$classification" != "post_to_s_llc_type_mismatch_frontier" &&
       "$classification" != "post_to_s_frontier" ]]; then
   echo "normal_log_tail:"
   tail -80 "$TMP_DIR/normal.log" || true

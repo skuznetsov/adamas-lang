@@ -665,6 +665,18 @@ residual. Returning to finalization, generic `IO::Memory`, output ownership,
 tail, metadata, DWARF, type-name, `NamedTuple` / `Tuple`, ambient maps, or
 `BlockOwner` from the stale L18 evidence is invalid.
 
+2026-07-03 board refinement after Slice 0k-EM: that split is now executable and
+selects a producer-facing classvar scalar global edge. The generated-stage
+classifier reports `classification=post_to_s_classvar_scalar_global_frontier`
+after `finalize_to_s_done` and a buffer-valid raw dump; the normal `.ll`
+contains `@String__classvar__HEADER_SIZE = global ptr null`, followed by an
+`llc` type mismatch in `String::Builder` arithmetic. The next production
+receipt must pin the producer of the `String::HEADER_SIZE` global type/value
+contract: HIR constant recording, `offsetof(String, @c)` macro evaluation,
+MIR/CLI global registration, or backend undefined-global fallback. A direct
+fix to arithmetic emission, the `llc` mismatch consumer, output/finalization,
+or broad classvar fallback is rejected until that producer boundary is named.
+
 | Lane | Current decision | Required next receipt | Rejected shortcut |
 | --- | --- | --- | --- |
 | `bootstrap-emergency-with-ledger` / B4-O1 | Consumed by 0k-CU. The HIR `BlockCallReturnContract` implementation moves the generated-stage gate past the old O1 `affected_block_ids` / `Set(UInt32)#includes?` frontier: `REQUIRE_CURRENT_CU_CONTRACT=1 scripts/hir_block_return_shape_census.sh` reports `classification=current_0k_cu_block_call_return_contract_applied`, and `STAGE1_COMPILER=/tmp/adamas_0kcu_stage1 REQUIRE_CURRENT_O1=1 scripts/mir_optimization_container_frontier_classifier.sh` exits at the expected non-current boundary with `b4_classification=llvm_entry_failure_after_lower_main` and `workers1_exit139=0`. The new residual is post-`lower_main` RSS pressure in both worker modes, with the default worker-mode rand fallback still present. | Return to the board before any new production source slice. The next receipt must reselect an owner spine from fresh generated-stage evidence; if it targets the new residual, it must name the old authority edge behind post-`lower_main` memory/resource growth rather than treating higher memory limits, worker count, or the rand fallback as acceptance evidence. | Continuing the 0k-CU breakglass lane by inertia; starting from the new RSS-kill stack; raising memory as a fix; forcing `ADAMAS_LLVM_WORKERS=1`; worker/rand/output/resource patches without a new receipt; CopyPropagation, Set/Hash, backend block-return, `NamedTuple`/`Tuple`, ambient-map, or `BlockOwner` changes. |
@@ -1463,6 +1475,64 @@ SliceReceipt {
     validity / downstream LLVM handling after `finalize_to_s_done`. The next
     production slice must split that residual before any tail, metadata, DWARF,
     type-name, output-file, or generic runtime change.
+}
+```
+
+#### Slice 0k-EM receipt: post-to_s classvar scalar global discriminator
+
+```text
+SliceReceipt {
+  board_lane: PhaseAuthority / GeneratedStageExecution
+  tranche: bootstrap-emergency-with-ledger
+  old_authority_edge:
+    Slice 0k-EL left all post-`to_s` LLVM failures collapsed into
+    `post_to_s_frontier`, so the board could not distinguish invalid generated
+    IR producers from downstream LLVM consumers.
+  owner_fact_or_service:
+    `generated_stage_finalize_to_s_classifier` now records the generated
+    `@String__classvar__HEADER_SIZE` global shape and the last `llc`
+    defined-vs-expected type mismatch.
+  producers:
+    - HIR constant recording and `@constant_literal_values`;
+    - `offsetof(String, @c)` macro evaluation / pending re-evaluation;
+    - CLI MIR global registration for numeric macro constants;
+    - backend undefined-global fallback for referenced classvar globals.
+  consumers:
+    - `String::Builder#initialize` arithmetic using `String::HEADER_SIZE`;
+    - `llc` validation of generated `normal_out.ll`;
+    - `scripts/generated_stage_finalize_to_s_classifier.sh`.
+  measured_red_baseline:
+    Post-0k-EL evidence reached `finalize_to_s_done` with a buffer-valid raw
+    dump but failed after `to_s` during generated LLVM validation.
+  focused_DoD:
+    `STAGE1_COMPILER=<stage1>` or `GENERATED_S2=<verified-generated-s2>` with
+    `REQUIRE_RAW_DUMP=1 REQUIRE_CLASSIFICATION=1
+    scripts/generated_stage_finalize_to_s_classifier.sh` reports
+    `classification=post_to_s_classvar_scalar_global_frontier`,
+    `normal_string_header_size_global_shape=ptr_null`,
+    the global line `@String__classvar__HEADER_SIZE = global ptr null`, and
+    the `llc` mismatch at `normal_out.ll:5799:17`.
+  architecture_DoD:
+    The slice changes only diagnostics and SDD ledgers. It does not change
+    compiler behavior, output ownership, finalization, generic runtime
+    materialization, tail/metadata/DWARF/type-name behavior, `NamedTuple` /
+    `Tuple`, ambient maps, or `BlockOwner`.
+  generated_stage_gate:
+    The next production slice must keep the classifier as the focused gate and
+    prove whether the classvar scalar global is present with the correct scalar
+    type/value before interpreting later `llc` errors.
+  negative_controls:
+    `raw_dump_classification=raw_dump_before_to_s_buffer_valid` keeps output
+    ownership/finalization consumed. The `llc` type mismatch remains a
+    consumer symptom until the global producer is pinned.
+  rejected_shortcuts:
+    Patching `String::Builder` arithmetic, broad classvar fallback,
+    undefined-global default values, tail/output-file handling, metadata,
+    DWARF, type-name, generic `IO::Memory`, `NamedTuple`/`Tuple`, ambient maps,
+    or `BlockOwner` before naming the scalar-global producer boundary.
+  residual_boundary:
+    Producer pin still open: constant recording, `offsetof`, MIR global
+    registration, or backend fallback must be split before a production fix.
 }
 ```
 

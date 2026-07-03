@@ -8,6 +8,30 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-03 UPDATE: Slice 0k-EM is a diagnostic-only split of the
+  post-0k-EL residual. `scripts/generated_stage_finalize_to_s_classifier.sh`
+  now inspects the generated normal `.ll` and separates
+  `post_to_s_classvar_scalar_global_frontier` from the broader
+  `post_to_s_llc_type_mismatch_frontier`. Focused evidence before cleanup used
+  this generated compiler:
+  `GENERATED_S2=tmp/generated-stage-finalize-to-s.bVJp2w/adamas_s2
+  REQUIRE_RAW_DUMP=1 REQUIRE_CLASSIFICATION=1
+  scripts/generated_stage_finalize_to_s_classifier.sh` exits 0 and reports
+  `classification=post_to_s_classvar_scalar_global_frontier`,
+  `normal_finalize_to_s_done_rows=1`,
+  `raw_dump_classification=raw_dump_before_to_s_buffer_valid`,
+  `normal_string_header_size_global_shape=ptr_null`,
+  the global line `@String__classvar__HEADER_SIZE = global ptr null`, and an
+  LLVM type mismatch at `normal_out.ll:5799:17`
+  (`%binop7.left_ext` defined as `i64`, expected `i32`). This refines L19:
+  the next production movement must pin the producer of the
+  `String::HEADER_SIZE` classvar scalar global type/value contract
+  (constant recording, `offsetof` macro value, MIR global registration, or
+  undefined-global fallback) before touching arithmetic emission, `llc`
+  mismatch consumers, output ownership, finalization, generic `IO::Memory`,
+  tail, metadata, DWARF, type-name, `NamedTuple`/`Tuple`, ambient maps, or
+  `BlockOwner`.
+
 - 2026-07-03 UPDATE: Slice 0k-EL consumes the 0k-EJ/0k-EK output-restore
   edge with a minimal `LLVMOutputOwnershipContract` production slice. The
   backend now owns primary/current output identity through the contract and

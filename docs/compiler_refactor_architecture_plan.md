@@ -161,6 +161,17 @@ next step; the immediate architecture unit is a post-`to_s` LLVM IR validity
 split that names the producer of invalid generated IR before touching tail,
 metadata, DWARF, type-name, output-file, or generic runtime behavior.
 
+2026-07-03 post-0k-EM note: that split now selects a concrete producer-facing
+edge. The generated normal `.ll` contains
+`@String__classvar__HEADER_SIZE = global ptr null`, and `llc` then fails in
+`String::Builder` arithmetic with an `i64`-defined / `i32`-expected mismatch.
+This is not a writer/finalization issue. The next architecture unit should be a
+`ClassvarScalarGlobalContract` / constant-global producer pin for
+`String::HEADER_SIZE`: distinguish HIR constant recording, `offsetof` macro
+value availability, MIR global registration, and backend undefined-global
+fallback before any arithmetic, output-file, tail, metadata, DWARF, type-name,
+or generic runtime patch.
+
 2026-07-02 post-0k-DY note: the selected workers=1
 `CopyPropagationPass#compute_dominance_info` lane is consumed by a production
 resource fix. CopyPropagation now answers cross-block dominance with an exact
