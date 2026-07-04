@@ -41,10 +41,17 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   3. Param-restriction flavor of (1): single-def `route(x : Int)` collapses
      ALL callsites to route$Int32 + coerces args (no per-type mono); the
      real rand only escaped because multiple typed overloads exist.
-- s2 follow-up (next session start here): rebuild stage2 (s2_v10) and
-  verify File.tempname no longer aborts -> parallel LLVM emission survives
-  -> re-measure the RSS balloon (sequential fallback and balloon were
-  coupled on v9).
+- s2_v10 VERIFIED (stage1 92c42aed, 171s build): "Invalid bound for rand"
+  is DEAD (0 occurrences on puts42). NEW frontier one step further down the
+  SAME File.tempname path: abort ~5s with
+  `STUB CALLED: Printer$Dshortest$$Float64_IO` right after lower_main —
+  tempname interpolates `#{Random.rand(0x100000000)}`, the call is
+  statically typed Float64 by open sibling (2) (base-name return cache
+  serves zero-arg `rand : Float64`), so interpolation demands Float64#to_s
+  -> Ryu/Dragonbox Printer.shortest which stage1 left as STUB. Fixing (2)
+  (per-overload return type instead of base-name cache) should route to
+  Int#to_s and unblock parallel emission; sibling (1) sign-garble is
+  harmless for tempnames. START HERE next session.
 
 ## 2026-07-04 (evening) — flaky s2 HIR segfault ROOT-CAUSED + FIXED (ee576c86): union-wrap struct payload aliasing
 
