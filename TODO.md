@@ -6,6 +6,35 @@ Branch: `work/b5-lower-method-owner-edge`
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
+## 2026-07-03 — START HERE: document surgery + process reset (owner-accepted)
+
+The SDD process was reviewed and reset; read `docs/sdd_process_review_2026_07_03.md`
+first. Changes every agent must know:
+
+- `docs/compiler_architecture_sdd.md` is now a ~1,540-line durable spec.
+  Section 0 = current frontier + authority-edge state table (replace in
+  place, never append); section 6.9 = the 11 owner records actually built.
+  The old 12,847-line ledger: `git show 95539f64:docs/compiler_architecture_sdd.md`.
+- Retired, do not resurrect: `SliceReceipt`, `BootstrapPotential`, dated board
+  refinements, new source-shape guard scripts, push-based behavior-neutral
+  owner migrations. Owner extraction is pull-based (only when a behavior fix
+  needs the boundary); neutral slices are batched and do not each pay a full
+  bootstrap verification.
+- Working loop: reducer -> root cause -> fix -> narrow guard -> suites.
+  Progress metrics: B5 classification movement + regression coverage growth.
+- `docs/specs/05-falsifier-matrix.md` pruned 70 -> 44 rows (behavior oracles
+  kept; stale pins L5-L17/O1/G7/G8/C3 and process rows P6-P14 deleted).
+- The uncommitted `[B5_CALL_PRED]` probe WIP in `ast_to_hir.cr` was reverted
+  (bracket-per-predicate does not scale); the active B5 attack is an lldb
+  native-backtrace descent on the cv2_s2 self-build SIGSEGV
+  (`AstToHir#lower_method` body loop for `Adamas::Compiler::CLI#run$IO_IO`,
+  ~4.8 GB, exit 139). Probe hygiene: `ADAMAS_STOP_AFTER*` gates for passed
+  frontiers are removed once B5 is green.
+- Open dodge ledger (self-host workarounds that must become root-cause fixes
+  with reducers): stage2 miscompiles block-`find` (`04322d4f` replaced
+  `members.keys.find {...}` with a manual `while`); collect the rest from
+  June commit bodies as they resurface.
+
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
 - 2026-07-03 UPDATE: `AstToHir#inline_callee_local_names` now has its own
