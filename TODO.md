@@ -6,6 +6,20 @@ Branch: `work/b5-lower-method-owner-edge`
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
+## 2026-07-03 — B5 root hunt: active state (see LM-B5-EWI-INLINE-YIELD-DEF-ARENA-MISMATCH)
+
+- Reducer: `regression_tests/b5_selfhost_each_with_index_inline_yield_repro.sh
+  <cv2_s2>` crashes in ~2s (rc=139); measured-red via
+  `ADAMAS_EXPECT_B5_EWI_CRASH=1`. Fresh cv2_s2: `tmp/bootstrap_b5_lldb/cv2_s2`.
+- Root state: s2 inlines `Crystal::DWARF::Info#each$block` with an
+  inconsistent def/arena pair -> garbage node -> `lower_super` null deref.
+  Call-ABI arg-skew at the `inline_yield_function` boundary REFUTED (crash-frame
+  param spills valid). Suspects: the three Hash(String,X) lookups
+  (`find_yield_method_fallback`, `@function_defs[key]`,
+  `function_def_arena_or_current(key)`).
+- Next: probe key->def->arena consistency at the crash (stage1 vs s2 print of
+  the triple for the same yield_key), then bisect which lookup diverges.
+
 ## 2026-07-03 — START HERE: document surgery + process reset (owner-accepted)
 
 The SDD process was reviewed and reset; read `docs/sdd_process_review_2026_07_03.md`
