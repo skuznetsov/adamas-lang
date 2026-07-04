@@ -5670,13 +5670,25 @@ module Adamas::HIR
       # @inline_yield_return_stack.size at push time: scopes with marker >= N
       # live inside inline context stack[N-1]'s body.
       getter inline_marker : Int32
+      # Locals visible where the begin/ensure was opened. An early exit can
+      # fire from a locals environment that cannot resolve the ensure body's
+      # identifiers (e.g. a non-local return inside a caller block crossing an
+      # inlined with_-helper whose ensure restores an ivar from a helper-local:
+      # the block is lowered under CALLER locals, the helper-local is absent,
+      # and the re-lowered identifier binds to garbage). Emission overlays this
+      # snapshot on the return site's locals (snapshot wins for names it
+      # knows; names first assigned inside the begin body come through from
+      # the site). Known limit: locals reassigned between the scope's `begin`
+      # and the early exit are seen at their push-time values.
+      getter locals : Hash(String, ValueId)
       # Re-entrancy guard while this scope's body is being emitted.
       property emitting : Bool
 
       def initialize(@ensure_body : Array(Adamas::Compiler::Frontend::ExprId),
                      @arena : Adamas::Compiler::Frontend::ArenaLike,
                      @function_id : FunctionId,
-                     @inline_marker : Int32)
+                     @inline_marker : Int32,
+                     @locals : Hash(String, ValueId))
         @emitting = false
       end
     end
@@ -68133,6 +68145,15 @@ module Adamas::HIR
         next unless ectx.function_id == ctx.function.id
         next unless ectx.inline_marker >= min_inline_marker
         ectx.emitting = true
+        saved_locals = ctx.save_locals
+        # Overlay: keep the return site's locals (covers locals first assigned
+        # inside the begin body) but let the scope's push-time snapshot win for
+        # every name it knows (covers callee-private locals and shadowing when
+        # the exit fires from a foreign locals environment, e.g. a caller
+        # block inlined inside a with_-helper).
+        merged_locals = ctx.all_locals.dup
+        ectx.locals.each { |name, value| merged_locals[name] = value }
+        ctx.restore_locals(merged_locals)
         begin
           with_arena(ectx.arena) do
             ectx.ensure_body.each do |expr_id|
@@ -68140,6 +68161,7 @@ module Adamas::HIR
             end
           end
         ensure
+          ctx.restore_locals(saved_locals)
           ectx.emitting = false
         end
       end
@@ -68664,7 +68686,7 @@ module Adamas::HIR
       if has_ensure
         ensure_lowering_ctx = EnsureLoweringContext.new(
           node.ensure_body.not_nil!, @arena, ctx.function.id,
-          @inline_yield_return_stack.size)
+          @inline_yield_return_stack.size, ctx.save_locals.locals)
         @active_ensure_lowering_contexts << ensure_lowering_ctx
       end
 

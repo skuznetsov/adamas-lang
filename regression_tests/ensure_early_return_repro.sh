@@ -18,6 +18,13 @@ set -euo pipefail
 #   B  - normal fall-through still runs ensure exactly once
 #   C1,C2 - nested begin/ensure: return runs both, innermost first
 #   D  - non-local `return` from a block runs the inlined callee's ensure
+#   F5 - a local first assigned INSIDE the begin body stays resolvable
+#        in the ensure at an early return (locals overlay, not replacement)
+#   E  - the emitted ensure body resolves CALLEE-locals, not the return
+#        site's locals: `with_mark { return }` where the helper's ensure is
+#        `@mark = old` (old = helper-local). Without the locals snapshot the
+#        identifier bound to garbage under caller locals and poisoned the
+#        ivar with a stack address (successor-B5 s2 enum-register crash).
 #
 # Known pre-existing gap tolerated here: code after `yield` may still run
 # on the non-local-return path ("D-unreachable" entry). The check asserts
@@ -87,6 +94,38 @@ class Probe
     with_yield { return 4 }
     5
   end
+
+  @mark : String = "init"
+
+  def mark : String
+    @mark
+  end
+
+  def with_mark(v : String, &) : Nil
+    old = @mark
+    @mark = v
+    begin
+      yield
+    ensure
+      @mark = old
+    end
+  end
+
+  def hunt : Int32
+    with_mark("inner") do
+      return 6
+    end
+    9
+  end
+
+  def begin_local : Int32
+    begin
+      y = 5
+      return 8
+    ensure
+      add("F#{y}")
+    end
+  end
 end
 
 p = Probe.new
@@ -94,7 +133,10 @@ r1 = p.ret_in_ensure
 r2 = p.normal
 r3 = p.nested
 r4 = p.nlr
-STDERR.puts "RESULT r=#{r1}#{r2}#{r3}#{r4} log=#{p.log.join(",")}"
+r5 = p.hunt
+r6 = p.begin_local
+mark = p.mark
+STDERR.puts "RESULT r=#{r1}#{r2}#{r3}#{r4}#{r5}#{r6} mark=#{mark} log=#{p.log.join(",")}"
 STDERR.flush
 CR
 
@@ -107,8 +149,13 @@ CR
 out="$("$ROOT_DIR/scripts/run_safe.sh" "$TMP_DIR/probe_bin" 5 512 2>&1 | grep "RESULT" || true)"
 echo "$out"
 
-if [[ "$out" != *"r=1234"* ]]; then
-  echo "FAIL: wrong return values (expect r=1234)"
+if [[ "$out" != *"r=123468"* ]]; then
+  echo "FAIL: wrong return values (expect r=123468)"
+  exit 1
+fi
+
+if [[ "$out" != *"mark=init"* ]]; then
+  echo "FAIL: callee-local ensure resolved wrong locals (expect mark=init)"
   exit 1
 fi
 
@@ -116,6 +163,11 @@ log="${out##*log=}"
 # A,B,C1,C2,D must appear in order (subsequence; extra entries tolerated).
 if [[ "$log" != *"A"* || "$log" != *"B"* || "$log" != *"C1"* || "$log" != *"C2"* || "$log" != *"D"* ]]; then
   echo "FAIL: missing ensure entries in log=$log (expect subsequence A,B,C1,C2,D)"
+  exit 1
+fi
+
+if [[ "$log" != *"F5"* ]]; then
+  echo "FAIL: begin-body local lost in ensure at early return (expect F5 in log=$log)"
   exit 1
 fi
 pos_a="${log%%A*}"; pos_b="${log%%B*}"; pos_c1="${log%%C1*}"; pos_c2="${log%%C2*}"; pos_d="${log%%D*}"
