@@ -71889,7 +71889,26 @@ module Adamas::HIR
               if expected_param_count == 0
                 if callsite = @pending_arg_types[name]? || @pending_arg_types[target_name]?
                   expected_param_count = callsite.types.size
+                  # A pure `$block` name means the call had zero positional args
+                  # (mangle_function_name appends positional types before the
+                  # block flag). The callsite record may still carry the
+                  # materialized block proc as a trailing arg type; the def's
+                  # `&` param is not positional, so counting the proc makes the
+                  # arity check reject `def foo(&)` and the demanded
+                  # `Owner#method$block` never materializes — the repair pass
+                  # then rewrites the call to the no-block sibling (observed as
+                  # Set(String)#first calling itself until stack overflow).
+                  # Mirrors the class-method branch below, which zeroes the
+                  # param count for block-flagged suffixes.
+                  if expects_block && callsite.has_block && expected_param_count > 0
+                    expected_param_count -= 1
+                  end
                 end
+              end
+              if debug_env_filter_match?("DEBUG_DEFERRED_MISS", name)
+                cs = @pending_arg_types[name]? || @pending_arg_types[target_name]?
+                cs_desc = cs ? "types=#{cs.types.size} has_block=#{cs.has_block}" : "nil"
+                STDERR.puts "[DEFERRED_TRY] name=#{name} suffix=#{suffix} expects_block=#{expects_block} expected_params=#{expected_param_count} callsite=#{cs_desc} included=#{all_included.join(",")}"
               end
               deferred_call_arg_types = nil
               if NILABLE_QUERY_METHODS.includes?(method_base)
