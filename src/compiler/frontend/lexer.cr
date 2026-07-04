@@ -1006,6 +1006,10 @@ module Adamas
               val = abs_str.to_i64?(strict: false)
               if val && (val > Int32::MAX || (is_negative && val > (Int32::MAX.to_i64 + 1)))
                 number_kind = NumberKind::I64
+              elsif val.nil? && !is_negative && abs_str.to_u64?(strict: false)
+                # Decimal literals above Int64::MAX (e.g. 18446744073709551615)
+                # are UInt64 on the host, not a truncated Int32.
+                number_kind = NumberKind::U64
               else
                 number_kind = NumberKind::I32
               end
@@ -1074,7 +1078,7 @@ module Adamas
               else
                 nil
               end
-            end || NumberKind::I32
+            end || based_integer_kind_for_magnitude(from)
           end
 
           Token.new(
@@ -1139,7 +1143,7 @@ module Adamas
               else
                 nil
               end
-            end || NumberKind::I32
+            end || based_integer_kind_for_magnitude(from)
           end
 
           Token.new(
@@ -1204,7 +1208,7 @@ module Adamas
               else
                 nil
               end
-            end || NumberKind::I32
+            end || based_integer_kind_for_magnitude(from)
           end
 
           Token.new(
@@ -1213,6 +1217,29 @@ module Adamas
             build_span(start_offset, start_line, start_column),
             number_kind: number_kind
           )
+        end
+
+        # Suffix-less based literals (hex/binary/octal) must promote by
+        # magnitude like the decimal path does: on the host 0xFFFFFFFF and
+        # 0x100000000 are Int64 (not a truncated Int32), and values above
+        # Int64::MAX are UInt64. Base is recovered from the prefix byte so
+        # hex/binary/octal share one helper.
+        private def based_integer_kind_for_magnitude(from : Int32) : NumberKind
+          base = case @rope.bytes[from + 1]
+                 when 'x'.ord.to_u8, 'X'.ord.to_u8 then 16
+                 when 'b'.ord.to_u8, 'B'.ord.to_u8 then 2
+                 else                                   8
+                 end
+          digits = String.new(bytes_range(from + 2, @offset)).delete('_')
+          val = digits.to_u64?(base)
+          return NumberKind::I32 unless val
+          if val <= Int32::MAX.to_u64
+            NumberKind::I32
+          elsif val <= Int64::MAX.to_u64
+            NumberKind::I64
+          else
+            NumberKind::U64
+          end
         end
 
         # Phase 53: Extract number suffix parsing to helper (byte-wise, no String allocations)
