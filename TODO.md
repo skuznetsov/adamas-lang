@@ -6,6 +6,26 @@ Branch: `work/b5-lower-method-owner-edge`
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
+## 2026-07-04 (later) — block-call named-only overload selection FIXED (b380a5cb)
+
+- `[1,2,3].find { }` inlined `Indexable#find(if_none = nil, *, offset : Int,
+  &)` — required named-only `offset` unbound -> uninitialized VOID local ->
+  garbage loop bounds. Two holes fixed: `yield_function_name_for` module-chain
+  BFS (new `skip_required_named` continues past uncallable candidates to
+  Enumerable) + `lookup_block_function_def_for_call` (positional-only lookup
+  now unconditionally skips `named_required > 0` defs in both loops).
+  Oracle: `regression_tests/block_call_named_only_overload_repro.sh`.
+  Debug lever: `DEBUG_INLINE_PICK=<substr>`. Suites fully green.
+- Dodge-ledger follow-up: `04322d4f` replaced `members.keys.find {...}` with a
+  manual `while` — same family; try reverting the dodge once s2 is green.
+- Open tails (pre-existing, adversary battery): `index { }` wrong value —
+  `& : T ->` block annotation forces materialized proc to RETURN NIL (LM-657
+  ABI fix) but Indexable#index body USES `if yield elem`; resolve by condition
+  (nil ABI only when callee's yield result is unused) or make the callsite
+  inline (skip_inline reason=block_types_known routed it to proc+virtual).
+  Range#find -> 5 (host 4) / Range#index -> 0 (host 2), separate family.
+  Parser precedence: `puts (1..5).find { }` parses as `puts(1..5).find{}`.
+
 ## 2026-07-04 — B5 root cause FIXED; successor frontier active
 ## (see LM-B5-ENSURE-SKIPPED-ON-EARLY-RETURN, LM-B5-SUCCESSOR-S2-ENUM-REGISTER-NIL-ARENA)
 
