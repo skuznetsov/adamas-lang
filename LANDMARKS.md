@@ -12,35 +12,57 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
-[LM-B5-EWI-INLINE-YIELD-DEF-ARENA-MISMATCH|root-hunt 2026-07-03 {F:0.80 G:0.50 R:0.85}]:
-B5 self-build SIGSEGV root-localized to a yield-inline triple inconsistency
-inside the produced cv2_s2. Evidence chain (one evening, lldb + reducer):
-(1) full self-build native bt: `NodeSlot#node` null-self <- vdispatch
-`AstArena#[]` <- `lower_call`, at `CLI#run` body expr
-`@args.each_with_index do |arg, i|` (found via `DEBUG_CALL_TRACE='CLI#run'`);
-(2) 2-second standalone reducer
-`regression_tests/b5_selfhost_each_with_index_inline_yield_repro.sh`
-(measured-red via `ADAMAS_EXPECT_B5_EWI_CRASH=1`) replaces the ~20-min
-classifier pipeline as the B5 iteration oracle;
-(3) reducer native bt: `lower_super` null+4 deref inside
-`inline_yield_function(ctx, DefNode, String, Nil|UInt32, Array(UInt32),
-BlockNode, Nil|Array(TypeRef), ArenaLike)` -> proc -> `lower_body`;
-(4) crash-frame param spills all VALID (caller/callee agree on
-w4/w5/w6 + x7 + 3 stack slots; union `{tag=10, payload=14}` sane) —
-**REFUTES a call-ABI arg-skew at the inline_yield_function boundary**;
-(5) `inline_key` at crash = `"Crystal::DWARF::Info#each$block"` — a method
-foreign to the 17-line reducer, and its stdlib body contains NO `super`
-=> the SuperNode kind is a garbage node read => the def/arena pair is
-inconsistent during the inline (arenas are the #1 bug pattern).
-Suspects — the three s2 Hash(String, X) lookups of the triple:
-`find_yield_method_fallback` pick, `@function_defs[yield_key]`,
-`function_def_arena_or_current(yield_key)`. Related family:
-[[m4h Hash value over-deref]], `6a1662c4` key corruption.
-Next falsifier: at the crash, compare `callee_arena` identity against the
-arena registered for the DWARF def, and against stage1's resolution for the
-same yield_key (e.g. STDERR print of key->arena id in both stages).
-Artifacts: `tmp/b5_s2_ir.ll` (stage1-emitted s2 IR, 286MB, for ABI checks),
-`tmp/b5_*_run*.log`, `/tmp/b5_ewi_reducer.cr`.
+[LM-B5-ENSURE-SKIPPED-ON-EARLY-RETURN|root-cause FIXED `76f3f279` 2026-07-04 {F:0.92 G:0.85 R:0.90}]:
+B5 root cause: HIR lowering emitted `ensure` bodies only on the CFG
+fall-through path; `return` inside begin/ensure (plain returns AND
+inline-return jumps out of inlined yield callees) skipped every active
+ensure. Every stage1-emitted binary therefore RAN with ensure-on-early-return
+cleanups dropped — a family generator for s2/s2b/s3b state-leak weirdness.
+B5 concrete instance (lldb on unmodified cv2_s2, zero rebuilds): the
+key→def→arena triple at the crash was CORRECT (def = stdlib info.cr:53
+`Crystal::DWARF::Info#each`, arena = info.cr AstArena; the 2026-07-03
+three-Hash-lookup suspects are EXONERATED; wrong-owner framing REFUTED —
+the inline is legitimate, prelude CallStack code). HW watchpoint on the
+`@arena` ivar (self+0x10): switch to callee arena fired (90158), then
+`inline_block_return_type_name` switched to the block arena (49760) and its
+`ensure` restore (49803) never executed — early `return` inside `begin`.
+Def body ExprIds (101,108,162) then resolved in exception.cr's arena →
+garbage node → SuperNode dispatch → lower_super null+4.
+10-line falsifier: `begin; return 1; ensure; @tag = "x"; end` — pre-fix
+stage1 skips the ensure; host crystal runs it. Fix `76f3f279`:
+EnsureLoweringContext stack + emit_pending_ensure_bodies at both
+lower_return exits (LIFO, function_id-filtered, inline-marker-scoped,
+with_arena around bodies). Oracle: `regression_tests/ensure_early_return_repro.sh`
+(green fixed / red pre-fix; plain, nested-LIFO, non-local block return,
+return-in-rescue, fall-through-once). run_all_suites fully green.
+Known gaps documented at EnsureLoweringContext: break/next crossing ensure,
+exception unwind through ensure-only begin, pre-existing post-yield code on
+NLR path. Debug knob: ADAMAS_ENSURE_RET_SKIP (substring list / `*`)
+suppresses the new emission per compiled function for bisection.
+
+[LM-B5-SUCCESSOR-S2-ENUM-REGISTER-NIL-ARENA|frontier OPEN 2026-07-04 {F:0.75 G:0.45 R:0.85}]:
+s2 rebuilt with the ensure fix regresses EARLIER: crashes compiling even
+`puts 42` at `enum register idx=1/4 name=Errno`, in
+`parameter_span_text_from_extra_sources` — the ArenaLike arg arrives as a
+stack union box {tag=Nil, payload=null}; `extras.empty?` derefs [null+4].
+Facts: (a) the entire crash-chain emission is byte-identical to the working
+binaries — corruption is upstream data; (b) A/B VERDICT: s2 built from
+ivar+class-only source (no ensure logic; same type-id/ivar-offset renumber)
+COMPILES puts42 → renumber exonerated, the breakage is triggered by the
+ensure emission itself (either a wrong-HIR shape from the new emission or a
+latent MIR/LLVM bug tripped by it); (c) normalized per-function IR
+fingerprint diff (ab vs fixed; .str/.stub_name/proc/dtor/cell renumber
+masked) isolates ~695 real deltas: ~573 Hash exec_recursive monomorphs +
+procs, 122 named fns incl. Parser#parse_if/parse_block/parse_lib,
+Mutex#lock_slow/unlock, Reference/Object buffer machinery
+(pop?/empty?/increase_capacity/root_buffer), TypeInferenceEngine#infer_*,
+AstToHir#inline_block_return_type_name and siblings.
+Bisection harness ready: scratchpad b5_bisect_round.sh — one s2 rebuild per
+round with ADAMAS_ENSURE_RET_SKIP; R0 (skip `*` → expect green) and
+R1 (skip 122 named → classifies named-vs-proc culprit) running.
+Artifacts: tmp/b5_fix_bootstrap/ (fixed s2 + .ll), tmp/ab_ivar_only/
+(worktree + cv2_s2_ab + .ll), tmp/b5_s2_ir.ll (pre-fix baseline .ll),
+scratchpad funcs_ensure_delta3.txt.
 
 [LM-ARCH-B5-INLINE-CALLEE-LOCAL-SCAN-SCOPE-OWNER|owner-migration 2026-07-03 {F:0.88 G:0.40 R:0.86}]:
 `AstToHir#inline_callee_local_names` now has a behavior-neutral owner helper for

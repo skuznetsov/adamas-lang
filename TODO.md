@@ -1,24 +1,35 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-03
+Updated: 2026-07-04
 Branch: `work/b5-lower-method-owner-edge`
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
-## 2026-07-03 — B5 root hunt: active state (see LM-B5-EWI-INLINE-YIELD-DEF-ARENA-MISMATCH)
+## 2026-07-04 — B5 root cause FIXED; successor frontier active
+## (see LM-B5-ENSURE-SKIPPED-ON-EARLY-RETURN, LM-B5-SUCCESSOR-S2-ENUM-REGISTER-NIL-ARENA)
 
-- Reducer: `regression_tests/b5_selfhost_each_with_index_inline_yield_repro.sh
-  <cv2_s2>` crashes in ~2s (rc=139); measured-red via
-  `ADAMAS_EXPECT_B5_EWI_CRASH=1`. Fresh cv2_s2: `tmp/bootstrap_b5_lldb/cv2_s2`.
-- Root state: s2 inlines `Crystal::DWARF::Info#each$block` with an
-  inconsistent def/arena pair -> garbage node -> `lower_super` null deref.
-  Call-ABI arg-skew at the `inline_yield_function` boundary REFUTED (crash-frame
-  param spills valid). Suspects: the three Hash(String,X) lookups
-  (`find_yield_method_fallback`, `@function_defs[key]`,
-  `function_def_arena_or_current(key)`).
-- Next: probe key->def->arena consistency at the crash (stage1 vs s2 print of
-  the triple for the same yield_key), then bisect which lookup diverges.
+- B5 root cause fixed in `76f3f279`: HIR lowering skipped `ensure` bodies on
+  early `return` (plain + inline-return). The 2026-07-03 def/arena-mismatch
+  framing resolved: triple was correct; `inline_block_return_type_name`'s
+  ensure `@arena` restore never ran. Oracle:
+  `regression_tests/ensure_early_return_repro.sh` (red on pre-fix stage1).
+  Stage1 gates: run_all_suites fully green; 5 ensure shapes = host crystal.
+- SUCCESSOR frontier: s2 rebuilt with the fix crashes EARLIER (B4 red:
+  `puts 42` dies at `enum register name=Errno`,
+  `parameter_span_text_from_extra_sources` gets {tag=Nil,payload=null} union
+  box as ArenaLike). A/B verdict: ivar+class-only s2 (same renumber, no
+  ensure logic) is GREEN -> renumber exonerated; trigger is the ensure
+  emission itself (wrong-HIR shape or latent MIR/LLVM bug it tips over).
+- Active tool: ADAMAS_ENSURE_RET_SKIP env knob in stage1 (substring list /
+  `*`) suppresses the emission per compiled function. Bisection over the
+  ~695 real emission deltas (normalized ab-vs-fixed .ll fingerprint diff;
+  list in session scratchpad funcs_ensure_delta3.txt): R0 skip-all (expect
+  green), R1 skip-122-named (classifies named vs proc/exec_recursive
+  culprit), then halve.
+- Old binaries kept for diffing: `tmp/bootstrap_b5_lldb/` (pre-fix s1/s2),
+  `tmp/b5_s2_ir.ll` (pre-fix s2 IR), `tmp/ab_ivar_only/` (A/B worktree),
+  `tmp/b5_fix_bootstrap/` (fixed s2 + IR).
 
 ## 2026-07-03 — START HERE: document surgery + process reset (owner-accepted)
 
