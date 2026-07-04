@@ -344,6 +344,18 @@ module Adamas::HIR
       get_block(@current_block).terminator = term
     end
 
+    # Close the current block only if it still has its Unreachable placeholder.
+    # Loop-shaped intrinsics must use this for the body-close jump: the body may
+    # have ended with a real terminator (`return`/`break`/`raise`), and blindly
+    # overwriting it silently drops the early exit (B5 successor-2 root:
+    # `each { |e| return e }` compiled to a loop that never returns).
+    def terminate_if_open(term : Terminator) : Bool
+      block = get_block(@current_block)
+      return false unless block.terminator.is_a?(Unreachable)
+      block.terminator = term
+      true
+    end
+
     # Next value ID
     def next_id : ValueId
       @function.next_value_id
@@ -85882,7 +85894,7 @@ module Adamas::HIR
       ctx.pop_scope
 
       # Jump to increment block
-      ctx.terminate(Jump.new(incr_block))
+      ctx.terminate_if_open(Jump.new(incr_block))
 
       # Increment block: i + 1
       ctx.current_block = incr_block
@@ -86045,7 +86057,7 @@ module Adamas::HIR
       body_exit_outer_vals = snapshot_block_scope_phi_values(ctx, assigned_vars, phi_nodes)
       body_exit_block = ctx.current_block
       ctx.pop_scope
-      ctx.terminate(Jump.new(incr_block))
+      ctx.terminate_if_open(Jump.new(incr_block))
 
       ctx.current_block = incr_block
       incr_phi_nodes.each_value do |phi|
@@ -86223,7 +86235,7 @@ module Adamas::HIR
       body_exit_outer_vals = snapshot_block_scope_phi_values(ctx, assigned_vars, phi_nodes)
       body_exit_block = ctx.current_block
       ctx.pop_scope
-      ctx.terminate(Jump.new(incr_block))
+      ctx.terminate_if_open(Jump.new(incr_block))
 
       # Increment block
       ctx.current_block = incr_block
@@ -86423,7 +86435,7 @@ module Adamas::HIR
       body_exit_outer_vals = snapshot_block_scope_phi_values(ctx, assigned_vars, phi_nodes)
       body_exit_block = ctx.current_block
       ctx.pop_scope
-      ctx.terminate(Jump.new(incr_block))
+      ctx.terminate_if_open(Jump.new(incr_block))
 
       # Increment block
       ctx.current_block = incr_block
@@ -86626,7 +86638,7 @@ module Adamas::HIR
       body_exit_outer_vals = snapshot_block_scope_phi_values(ctx, assigned_vars, phi_nodes)
       body_exit_block = ctx.current_block
       ctx.pop_scope
-      ctx.terminate(Jump.new(incr_block))
+      ctx.terminate_if_open(Jump.new(incr_block))
 
       # Increment block
       ctx.current_block = incr_block
@@ -87064,11 +87076,11 @@ module Adamas::HIR
       post_exec_values = snapshot_loop_updated_values(ctx, assigned_vars, inline_vars)
       post_exec_block = ctx.current_block
       ctx.pop_scope
-      ctx.terminate(Jump.new(incr_block))
+      ctx.terminate_if_open(Jump.new(incr_block))
 
       # Skip block (deleted entries) - go directly to incr
       ctx.current_block = skip_block
-      ctx.terminate(Jump.new(incr_block))
+      ctx.terminate_if_open(Jump.new(incr_block))
 
       # Increment block - merge skip, exec, and `next` paths via the incr-phi
       ctx.current_block = incr_block
@@ -87227,11 +87239,11 @@ module Adamas::HIR
       new_arr_idx = BinaryOperation.new(ctx.next_id, TypeRef::INT32, BinaryOp::Add, arr_idx_phi.id, one_exec.id)
       ctx.emit(new_arr_idx)
 
-      ctx.terminate(Jump.new(incr_block))
+      ctx.terminate_if_open(Jump.new(incr_block))
 
       # Skip block (deleted entry)
       ctx.current_block = skip_block
-      ctx.terminate(Jump.new(incr_block))
+      ctx.terminate_if_open(Jump.new(incr_block))
 
       # Incr block — increment index, merge arr_idx from exec/skip paths
       ctx.current_block = incr_block
@@ -87440,7 +87452,7 @@ module Adamas::HIR
       body_exit_outer_vals = snapshot_block_scope_phi_values(ctx, assigned_vars, phi_nodes)
       body_exit_block = ctx.current_block
       ctx.pop_scope
-      ctx.terminate(Jump.new(incr_block))
+      ctx.terminate_if_open(Jump.new(incr_block))
 
       # Increment block
       ctx.current_block = incr_block
@@ -87635,7 +87647,7 @@ module Adamas::HIR
         ctx.emit(index_set)
       end
 
-      ctx.terminate(Jump.new(incr_block))
+      ctx.terminate_if_open(Jump.new(incr_block))
 
       ctx.current_block = incr_block
       one = Literal.new(ctx.next_id, TypeRef::INT32, 1_i64)
@@ -87740,7 +87752,7 @@ module Adamas::HIR
         ctx.emit(index_set)
       end
 
-      ctx.terminate(Jump.new(incr_block))
+      ctx.terminate_if_open(Jump.new(incr_block))
 
       ctx.current_block = incr_block
       one = Literal.new(ctx.next_id, TypeRef::INT32, 1_i64)
@@ -87824,7 +87836,7 @@ module Adamas::HIR
       index_set = IndexSet.new(ctx.next_id, tuple_type, new_array.id, index_phi.id, tuple_alloc.id)
       ctx.emit(index_set)
 
-      ctx.terminate(Jump.new(incr_block))
+      ctx.terminate_if_open(Jump.new(incr_block))
 
       ctx.current_block = incr_block
       one = Literal.new(ctx.next_id, TypeRef::INT32, 1_i64)
@@ -88088,7 +88100,7 @@ module Adamas::HIR
       if predicate_result
         ctx.terminate(Branch.new(predicate_result, copy_block, incr_block))
       else
-        ctx.terminate(Jump.new(incr_block))
+        ctx.terminate_if_open(Jump.new(incr_block))
       end
 
       # Copy block: store element to NEW array at result_count position
@@ -88100,7 +88112,7 @@ module Adamas::HIR
       ctx.emit(one_copy)
       new_count = BinaryOperation.new(ctx.next_id, TypeRef::INT32, BinaryOp::Add, result_count_phi.id, one_copy.id)
       ctx.emit(new_count)
-      ctx.terminate(Jump.new(incr_block))
+      ctx.terminate_if_open(Jump.new(incr_block))
 
       # Incr block: increment index, update phis
       ctx.current_block = incr_block
@@ -88225,7 +88237,7 @@ module Adamas::HIR
         # INVERTED: copy when predicate is false (reject matching elements)
         ctx.terminate(Branch.new(predicate_result, incr_block, copy_block))
       else
-        ctx.terminate(Jump.new(incr_block))
+        ctx.terminate_if_open(Jump.new(incr_block))
       end
 
       # Copy block: store element to new array
@@ -88237,7 +88249,7 @@ module Adamas::HIR
       ctx.emit(one_copy)
       new_count = BinaryOperation.new(ctx.next_id, TypeRef::INT32, BinaryOp::Add, result_count_phi.id, one_copy.id)
       ctx.emit(new_count)
-      ctx.terminate(Jump.new(incr_block))
+      ctx.terminate_if_open(Jump.new(incr_block))
 
       # Incr block
       ctx.current_block = incr_block
@@ -88372,13 +88384,13 @@ module Adamas::HIR
         new_count = BinaryOperation.new(ctx.next_id, TypeRef::INT32, BinaryOp::Add, result_count_phi.id, one_copy.id)
         ctx.emit(new_count)
         pushed_count = new_count.id
-        ctx.terminate(Jump.new(incr_block))
+        ctx.terminate_if_open(Jump.new(incr_block))
       else
         # Degenerate: block produced no value. body_end falls through to incr;
         # copy_block stays a valid (unreachable) block.
-        ctx.terminate(Jump.new(incr_block))
+        ctx.terminate_if_open(Jump.new(incr_block))
         ctx.current_block = copy_block
-        ctx.terminate(Jump.new(incr_block))
+        ctx.terminate_if_open(Jump.new(incr_block))
       end
 
       ctx.pop_scope
@@ -88740,7 +88752,7 @@ module Adamas::HIR
       if predicate_result
         ctx.terminate(Branch.new(predicate_result, found_block, incr_block))
       else
-        ctx.terminate(Jump.new(incr_block))
+        ctx.terminate_if_open(Jump.new(incr_block))
       end
 
       # Incr block: i++
@@ -88890,7 +88902,7 @@ module Adamas::HIR
         # If predicate FALSE → fail; if TRUE → continue
         ctx.terminate(Branch.new(predicate_result, incr_block, fail_block))
       else
-        ctx.terminate(Jump.new(incr_block))
+        ctx.terminate_if_open(Jump.new(incr_block))
       end
 
       # Incr block: i++
@@ -89218,7 +89230,7 @@ module Adamas::HIR
       unless body_already_terminated
         # Loop-carried locals merge only at cond_block via entry + incr (like index_phi).
         # Do not add_incoming from body_exit_block: body flows to incr, not to cond.
-        ctx.terminate(Jump.new(incr_block))
+        ctx.terminate_if_open(Jump.new(incr_block))
       end
 
       # Incr block: i++
@@ -89309,7 +89321,7 @@ module Adamas::HIR
       if predicate_result
         ctx.terminate(Branch.new(predicate_result, count_incr_block, incr_block))
       else
-        ctx.terminate(Jump.new(incr_block))
+        ctx.terminate_if_open(Jump.new(incr_block))
       end
 
       # Count incr block: count++, then fall through to incr
@@ -89319,7 +89331,7 @@ module Adamas::HIR
       new_count = BinaryOperation.new(ctx.next_id, TypeRef::INT32, BinaryOp::Add, count_phi.id, one_c.id)
       ctx.emit(new_count)
       count_phi.add_incoming(count_incr_block, new_count.id)
-      ctx.terminate(Jump.new(incr_block))
+      ctx.terminate_if_open(Jump.new(incr_block))
 
       # Incr block: i++
       ctx.current_block = incr_block
@@ -89431,7 +89443,7 @@ module Adamas::HIR
       # Update block: new min = curr_elem
       ctx.current_block = update_block
       min_phi.add_incoming(update_block, curr_elem.id)
-      ctx.terminate(Jump.new(incr_block))
+      ctx.terminate_if_open(Jump.new(incr_block))
 
       # Incr block: i++
       ctx.current_block = incr_block
@@ -89511,7 +89523,7 @@ module Adamas::HIR
       # Update block: new max = curr_elem
       ctx.current_block = update_block
       max_phi.add_incoming(update_block, curr_elem.id)
-      ctx.terminate(Jump.new(incr_block))
+      ctx.terminate_if_open(Jump.new(incr_block))
 
       # Incr block: i++
       ctx.current_block = incr_block
