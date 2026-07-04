@@ -12,6 +12,34 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-B5-LOWER-DEF-BODY-SCOPE-OWNER|owner-migration 2026-07-03 {F:0.88 G:0.44 R:0.86}]:
+The `MethodBodyLoweringScopeSnapshot` owner helper now also owns the
+`AstToHir#lower_def` body-lowering seam. The pre-slice source-shape baseline for
+`lower_def` reported no owner-helper enter/restore calls and 14 legacy
+body-scope saves. The current guard with `REQUIRE_METHOD_BODY_SCOPE=1
+REQUIRE_LOWER_DEF_BODY_SCOPE=1
+scripts/method_body_lowering_scope_source_shape_guard.sh` reports
+`lower_method_source_shape=method_body_scope_owner_consumed` and
+`lower_def_source_shape=method_body_scope_owner_consumed`, each with one enter
+call, one restore call, and zero selected legacy saves. Evidence:
+`crystal build src/adamas.cr -o tmp/adamas_lower_def_body_scope_stage1
+--error-trace` exits 0; `scripts/build_bootstrap_stages.sh --out
+tmp/bootstrap_lower_def_body_scope --stages 2 --timeout 900 --mem 12288` builds
+and smokes through `cv2_s2` clean (`cv2_s2` wall 253.42s, peak RSS about
+3207 MB); the B4 guard with `tmp/bootstrap_lower_def_body_scope/cv2_s2` remains
+`classification=clean_both_modes`; the B5 target-only classifier with that
+`cv2_s2` still reports
+`classification=self_build_hir_pending_target_lower_method_body_lowered_boundary`
+with first bad `ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_BODY_LOWERED`;
+and the regression surface reports `152/152` full regressions plus `36/36`
+combined. Scope: this is a second body-scope owner-consumption checkpoint, not a
+green B5/s3b claim. It does not migrate `lower_module_method`,
+`inline_callee_local_names`, or proc-body scopes. Decay trigger: the source
+guard no longer reports both `lower_method` and `lower_def` consumed, B4
+regresses from `clean_both_modes`, the B5 target classifier moves to an earlier
+boundary, or a later `MethodBodyLoweringContext` / `SemanticStateScope` slice
+supersedes this helper.
+
 [LM-ARCH-B5-METHOD-BODY-SCOPE-OWNER|owner-migration 2026-07-03 {F:0.88 G:0.46 R:0.86}]:
 The selected B5 `AstToHir#lower_method` body-lowering lifetime edge now has a
 behavior-neutral owner helper. The old direct authority edge was the raw
@@ -35,9 +63,10 @@ with clean gates through body-loop start and first bad
 `ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_BODY_LOWERED`; the B4 guard
 reports `classification=clean_both_modes`; and the regression surface reports
 `152/152` full regressions plus `36/36` combined. Scope: this is an
-architecture owner-consumption checkpoint, not a green B5/s3b claim. Remaining
-raw body-scope save/restore sites outside the selected `lower_method` path are
-residual debt, not silently migrated. Decay trigger: source-shape guard no
+architecture owner-consumption checkpoint, not a green B5/s3b claim. At that
+checkpoint, raw body-scope save/restore sites outside the selected
+`lower_method` path were residual debt, not silently migrated. Decay trigger:
+source-shape guard no
 longer reports `method_body_scope_owner_consumed`, a fresh B5 classifier moves
 to an earlier boundary, B4 regresses from `clean_both_modes`, or a later
 `MethodBodyLoweringContext` slice supersedes this helper.

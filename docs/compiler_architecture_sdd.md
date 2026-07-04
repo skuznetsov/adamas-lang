@@ -512,11 +512,28 @@ preserves the current B5 boundary:
 `classification=self_build_hir_pending_target_lower_method_body_lowered_boundary`;
 B4 remains `classification=clean_both_modes`; regressions pass
 `152/152 + 36/36`. This is admitted only as one consumed body-scope authority
-edge. It is not a green B5/s3b claim, does not migrate lower-def/proc body
-scopes, and does not admit another generic `lower_method`/`lower_expr`
-localizer. The next related implementation must either move the same owner
-model toward a vertical `MethodBodyLoweringContext` / `SemanticStateScope`
-slice, or return to this board and choose a different durable spine.
+edge. At that checkpoint it was not a green B5/s3b claim, did not yet migrate
+`lower_def` or proc body scopes, and did not admit another generic
+`lower_method`/`lower_expr` localizer. The next related implementation must
+either move the same owner model toward a vertical `MethodBodyLoweringContext`
+/ `SemanticStateScope` slice, or return to this board and choose a different
+durable spine.
+
+2026-07-03 lower_def MethodBodyLoweringScope extension: the same
+`MethodBodyLoweringScopeSnapshot` helper now owns the `AstToHir#lower_def`
+body-lowering seam. The pre-slice source-shape baseline for `lower_def` was
+`lower_def_enter=0`, `lower_def_restore=0`, and `lower_def_legacy=14`. The
+current guard with `REQUIRE_METHOD_BODY_SCOPE=1 REQUIRE_LOWER_DEF_BODY_SCOPE=1
+scripts/method_body_lowering_scope_source_shape_guard.sh` reports both
+`lower_method_source_shape=method_body_scope_owner_consumed` and
+`lower_def_source_shape=method_body_scope_owner_consumed`. Fresh evidence:
+stage1 build succeeds; stage2 bootstrap builds and smokes `cv2_s1` and
+`cv2_s2`; B4 remains `classification=clean_both_modes`; B5 remains at
+`classification=self_build_hir_pending_target_lower_method_body_lowered_boundary`;
+and regressions pass `152/152 + 36/36`. This consumes the second selected
+method-body scope edge but is still not a green B5/s3b claim. Residual raw
+scope surfaces remain `lower_module_method`, `inline_callee_local_names`, and
+proc body lowering.
 
 Slice 0k-CK takes the third option: it records a fresh direct root-localization
 that decreases plausible owner-spine ambiguity. It does not admit production

@@ -8,6 +8,17 @@ boundaries
 Related: `PLAN_DEMAND_DRIVEN_REWRITE_RFC.md`, `docs/ast_to_hir_audit.md`,
 `docs/codegen_architecture.md`
 
+2026-07-03 lower_def MethodBodyLoweringScope note: the same owner helper now
+covers `AstToHir#lower_def` body lowering. The source-shape guard accepts this
+only when both `lower_method` and `lower_def` report
+`method_body_scope_owner_consumed` under `REQUIRE_METHOD_BODY_SCOPE=1
+REQUIRE_LOWER_DEF_BODY_SCOPE=1`. Verified evidence for this extension:
+stage1 build, stage2 bootstrap through `cv2_s2`, B4 `clean_both_modes`, B5
+still red at `self_build_hir_pending_target_lower_method_body_lowered_boundary`,
+and `152/152 + 36/36` regressions. This narrows the remaining body-scope
+burn-down to `lower_module_method`, scanner/provenance helpers, and proc body
+lowering; it does not complete `SemanticStateScope` or green `s3b`.
+
 2026-07-03 MethodBodyLoweringScope note: the first selected B5
 body-lowering authority edge has been consumed in behavior-neutral form.
 `AstToHir#lower_method` now enters/restores a `MethodBodyLoweringScopeSnapshot`
@@ -18,8 +29,8 @@ stage2 bootstrap, B5 target classifier still at
 `self_build_hir_pending_target_lower_method_body_lowered_boundary`, B4
 `clean_both_modes`, and `152/152 + 36/36` regressions. This should be treated
 as one owner-edge burn-down checkpoint, not as a broad `SemanticStateScope`
-completion. The acceleration path from here is a vertical
-`MethodBodyLoweringContext` / `SemanticStateScope` extraction that owns the
+completion. At that checkpoint, the acceleration path from there was a vertical
+`MethodBodyLoweringContext` / `SemanticStateScope` extraction that owned the
 remaining method-body state, not another generic body localizer.
 
 2026-07-03 B5 lower-method body note: the active self-build localizer now

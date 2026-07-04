@@ -53403,23 +53403,7 @@ module Adamas::HIR
       end
 
       # Lower body
-      # IMPORTANT: Save and clear inline yield stacks to prevent cross-context contamination.
-      # When lowering a standalone function, yield should emit a Yield instruction,
-      # NOT substitute an inline block from an unrelated call context.
-      saved_yield_block_stack = @inline_yield_block_stack
-      saved_yield_arena_stack = @inline_yield_block_arena_stack
-      saved_yield_param_stack = @inline_yield_block_param_types_stack
-      saved_yield_return_stack = @inline_yield_block_return_stack
-      saved_yield_name_stack = @inline_yield_name_stack
-      saved_inline_arenas = @inline_arenas
-      @inline_yield_block_stack = [] of Adamas::Compiler::Frontend::BlockNode
-      @inline_yield_block_arena_stack = [] of Adamas::Compiler::Frontend::ArenaLike
-      @inline_yield_block_param_types_stack = [] of Array(TypeRef)?
-      @inline_yield_block_return_stack = [] of String?
-      @inline_yield_name_stack = [] of String
-      @inline_arenas = nil
-      saved_def_return_type = @current_def_return_type
-      @current_def_return_type = return_type
+      body_scope_snapshot = enter_method_body_lowering_scope(return_type)
       last_value : ValueId? = nil
       begin
         if body = node.body
@@ -53476,13 +53460,7 @@ module Adamas::HIR
           end
         end
       ensure
-        @inline_yield_block_stack = saved_yield_block_stack
-        @inline_yield_block_arena_stack = saved_yield_arena_stack
-        @inline_yield_block_param_types_stack = saved_yield_param_stack
-        @inline_yield_block_return_stack = saved_yield_return_stack
-        @inline_yield_name_stack = saved_yield_name_stack
-        @inline_arenas = saved_inline_arenas
-        @current_def_return_type = saved_def_return_type
+        restore_method_body_lowering_scope(body_scope_snapshot)
       end
 
       # Coerce return value to match declared return type if needed.

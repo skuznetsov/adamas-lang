@@ -8,6 +8,33 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-03 UPDATE: the `MethodBodyLoweringScopeSnapshot` owner model now also
+  owns the `AstToHir#lower_def` body-lowering seam. The pre-slice source-shape
+  baseline for `lower_def` reported no helper enter/restore calls and 14 legacy
+  body-scope saves; the current guard with `REQUIRE_METHOD_BODY_SCOPE=1
+  REQUIRE_LOWER_DEF_BODY_SCOPE=1
+  scripts/method_body_lowering_scope_source_shape_guard.sh` reports both
+  `lower_method_source_shape=method_body_scope_owner_consumed` and
+  `lower_def_source_shape=method_body_scope_owner_consumed`, with one
+  enter/restore pair and zero selected legacy saves for each. Fresh evidence:
+  `crystal build src/adamas.cr -o tmp/adamas_lower_def_body_scope_stage1
+  --error-trace` exits 0; `scripts/build_bootstrap_stages.sh --out
+  tmp/bootstrap_lower_def_body_scope --stages 2 --timeout 900 --mem 12288`
+  builds and smokes `cv2_s1` and `cv2_s2` clean (`cv2_s2` wall 253.42s, peak
+  RSS about 3207 MB); the B4 guard with
+  `GENERATED_S2=tmp/bootstrap_lower_def_body_scope/cv2_s2 REQUIRE_CLEAN=1
+  scripts/generated_stage_llvm_entry_classifier.sh` remains
+  `classification=clean_both_modes`; the B5 target-only classifier with that
+  `cv2_s2` still reports
+  `classification=self_build_hir_pending_target_lower_method_body_lowered_boundary`
+  and first bad `ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_BODY_LOWERED`;
+  and `regression_tests/run_all_suites.sh
+  tmp/adamas_lower_def_body_scope_stage1 4` reports all suites passed
+  (`152/152` full regressions and `36/36` combined). Scope: this consumes the
+  `lower_def` raw inline-yield/current-return body-scope edge under the already
+  selected owner helper. It is not a green B5/s3b claim and does not migrate
+  `lower_module_method`, `inline_callee_local_names`, or proc body scopes.
+
 - 2026-07-03 UPDATE: the selected B5 body-lowering authority edge now has a
   behavior-neutral owner helper. `AstToHir#lower_method` no longer owns its body
   lowering lifetime through raw local saves/restores of the inline-yield stacks,
@@ -33,9 +60,9 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   `regression_tests/run_all_suites.sh tmp/adamas_method_body_scope_stage1 4`
   reports all suites passed (`152/152` full regressions and `36/36` combined).
   Scope: this consumes one direct ambient-scope edge in the selected
-  `lower_method` body path. It is not a green B5/s3b claim, does not migrate the
-  remaining raw lower-def/proc body scopes, and does not admit another generic
-  body marker. The next architecture move should either migrate the next
+  `lower_method` body path. At this checkpoint it was not a green B5/s3b claim,
+  did not yet migrate `lower_def` or proc body scopes, and did not admit another
+  generic body marker. The next architecture move should either migrate the next
   root-sized method-body context edge under the same owner model or return to the
   SDD board for a larger vertical `MethodBodyLoweringContext` /
   `SemanticStateScope` slice.
