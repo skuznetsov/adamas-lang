@@ -6,7 +6,84 @@ Branch: `work/b5-lower-method-owner-edge`
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
-## 2026-07-04 (latest) — index/proc-nil ABI FIXED (ad4ad0a7) + based-literal truncation FIXED (27fe6cd7)
+## 2026-07-04 (evening) — flaky s2 HIR segfault ROOT-CAUSED + FIXED (ee576c86): union-wrap struct payload aliasing
+
+- ROOT: `Hash(String, GenericClassTemplate)#[]?` returned a `Nil | GCT` union
+  whose payload was an INTERIOR POINTER into the hash entries buffer (V2
+  wraps struct payloads as pointers with NO copy). In
+  `register_class_with_name_in_current_arena`, `<< existing` pushed that
+  alias into `@generic_reopenings["Channel"]`; the next
+  `@generic_templates[k] = new_template` rewrote the entry IN PLACE (lldb:
+  pushes #2/#3 carried the SAME record ptr with different node values), and
+  a later entries realloc left the reopenings array dangling into freed,
+  reused, zeroed memory -> NULL ClassNode#body in register_concrete_class.
+  ASLR decided what landed in the freed slot -> the flake (v6 0/9, v7 4/9,
+  v8 ~7/8). The proc-nil delta only changed allocation timing (latent bug).
+- FIX `ee576c86`: `emit_union_wrap` clones struct-kind variant payloads into
+  a fresh heap cell ($Dnew shape: 8B immortal RC header + fields) before
+  storing the payload ptr. Variant matched by type_id in the union
+  DESCRIPTOR (variant_type_id is NOT a positional index into Type#variants —
+  first attempt indexed positionally and cloned NoReturn/IO variants ->
+  segfault). Filter: kind.struct? && size>0 && fields>0 && !Tuple(.
+  Oracle: `regression_tests/hash_struct_union_wrap_alias_repro.sh` (red
+  pre-fix: 222/chan2 instead of host 111/chan; POD control stays 1).
+  Suites 152/152 + 36/36 green.
+- s2_v9 VERIFIED (stage1 `ee576c86` on src/adamas.cr, /tmp/s2_v9): flake
+  DEAD — 9/9 puts42 runs complete HIR with zero segfaults (v7 was 4/9,
+  v8 ~7/8), and the double `DEBUG_MONO start Channel(Int32)` is gone
+  (0 occurrences) — confirms the Set-false-negative re-entry was the same
+  root. NEW deterministic frontier (all 9 runs identical): parallel LLVM
+  emission fails on the PRE-EXISTING rand(Int64) tail ("Invalid bound for
+  rand: 0" — File.tempname -> Random.rand dispatches to
+  PCG32#rand_int$$Int8 garbage) -> sequential fallback -> RSS balloons
+  >8GB by ~16s -> run_safe kill. Next moves: (a) fix rand(Int64) overload
+  dispatch (unblocks parallel emission), (b) the sequential-emission RSS
+  balloon (pre-existing, also seen on v7 around func ~500/631).
+- SAME-ROOT suspects (verify on s2_v9): the double `DEBUG_MONO start
+  Channel(Int32)` (`Hash#find_entry` returns `Entry?` — struct-in-nilable-
+  union too, so @monomorphized Set lookups could read dangling Entry
+  payloads -> false negatives -> re-entry), and the s2_v3 resolver
+  "Empty enumerable" Set(String)#first size==1-but-empty frontier.
+- DIRECTION (owner-confirmed): full original-Crystal struct compat —
+  PLAN_INLINE_STRUCTS.md Path B; Phase 6 (union payload inline, copy value
+  not pointer) SUBSUMES the interim clone (marked INTERIM in
+  emit_union_wrap). Sequencing per docs/root_struct_union_call_abi_sdd.md:
+  PtrProvenance slice A first, then the synchronized wrap+unwrap+size flip.
+  The alias repro script is repr-agnostic and stays as the Phase 6 gate.
+  NEW design candidate for Phase 6 (owner liked direction, not yet written
+  into the plan): niche/discriminant elision for `Nil | struct-with-
+  non-nilable-ref-field` — inline payload, NO tag, null-in-niche-field ==
+  Nil; sizeof(Nil|T) == sizeof(T); zeroed memory naturally reads as Nil.
+  Tag fallback for POD-without-niche and multi-variant unions. Niche
+  predicate must live in LayoutContract (single oracle) consumed by
+  wrap/unwrap/is_a?/size/copies. Second design input (owner concern: a
+  nilable slot may stay nil forever — unknowable statically): size-tiered
+  nilable repr — small T inline+niche, large T stays nullable-pointer
+  (with the ee576c86 copy-at-wrap contract); threshold from an
+  ACCESS_CENSUS-style read-only census over the self-host build (sizeof
+  distribution of Nil|struct slots + store-vs-nil frequency), decision is
+  a pure function of the type in LayoutContract.
+  PREREQUISITE gate for any inline flip: a recursive-struct checker
+  equivalent to the original's
+  `../crystal/src/compiler/crystal/semantic/recursive_struct_checker.cr`
+  (whole-program pass; walks INLINE-embedding edges only — ivars of struct
+  containers, union variants, tuple/named-tuple elements, virtual struct
+  subtypes, module includes; references/pointers break the cycle; runs per
+  generic INSTANTIATION; recursive aliases count as structs; diagnostic
+  suggests classes). V2 today cannot hit infinite size (all structs behind
+  pointers) — the checker must land BEFORE or WITH the first inline slice,
+  else recursion shows up as a layout-computation hang instead of a
+  TypeException.
+- lldb TECHNIQUE lessons (cost half the session): (1) address breakpoints
+  (`br s -a`) and watchpoints set BEFORE `run` never arm on this macOS —
+  set symbol breakpoints (`-n`) pre-launch, address/watchpoints only at a
+  live stop on MAPPED memory (wp on unmapped fires one bogus set-time hit,
+  then goes permanently dead — looks like "memory is never written").
+  (2) heap addresses are NOT stable across runs even under lldb (mmap base
+  varies; only the allocation SEQUENCE/low offsets repeat) — never carry
+  absolute heap addresses between runs; re-derive in-run via a breakpoint.
+
+## 2026-07-04 — index/proc-nil ABI FIXED (ad4ad0a7) + based-literal truncation FIXED (27fe6cd7)
 
 - `ad4ad0a7`: `& : T ->` had TWO ABI oracles — a `yield`-callee derives the
   yield ABI from the callsite-recorded `__block_return__` (does NOT trust the
