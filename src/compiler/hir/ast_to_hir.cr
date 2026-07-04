@@ -43516,12 +43516,23 @@ module Adamas::HIR
       end
     end
 
-    private def yield_function_name_for(method_name : String) : String?
-      @yield_name_cache.fetch(method_name) do
-        result = yield_function_name_for_uncached(method_name)
-        @yield_name_cache[method_name] = result
+    private def yield_function_name_for(method_name : String, skip_required_named : Bool = false) : String?
+      cache_key = skip_required_named ? "\u0001#{method_name}" : method_name
+      @yield_name_cache.fetch(cache_key) do
+        result = yield_function_name_for_uncached(method_name, skip_required_named)
+        @yield_name_cache[cache_key] = result
         result
       end
+    end
+
+    # True when the def registered under `name` has REQUIRED named-only params
+    # (e.g. Indexable#find(if_none = nil, *, offset : Int, &)) — such a def is
+    # not callable by a call that passes no named args.
+    private def yield_candidate_requires_named_only?(name : String) : Bool
+      if def_node = @function_defs[name]?
+        return function_param_stats(name, def_node).named_required > 0
+      end
+      false
     end
 
     private def add_yield_function(name : String) : Nil
@@ -43556,31 +43567,38 @@ module Adamas::HIR
       @yield_functions_stripped_map[stripped] = name unless @yield_functions_stripped_map.has_key?(stripped)
     end
 
-    private def yield_function_name_for_uncached(method_name : String) : String?
-      return method_name if @yield_functions.includes?(method_name)
+    private def yield_function_name_for_uncached(method_name : String, skip_required_named : Bool = false) : String?
+      # When skip_required_named is set, candidates whose def has REQUIRED
+      # named-only params are skipped (not callable without named args) and the
+      # search continues to less-specific candidates (e.g. Indexable#find(*,
+      # offset : Int, &) is skipped in favor of Enumerable#find(if_none, &)).
+      usable = ->(name : String) : Bool {
+        !(skip_required_named && yield_candidate_requires_named_only?(name))
+      }
+      return method_name if @yield_functions.includes?(method_name) && usable.call(method_name)
 
       parts = parse_method_name_compact(method_name)
       base_name = parts.base
-      return base_name if @yield_functions.includes?(base_name)
+      return base_name if @yield_functions.includes?(base_name) && usable.call(base_name)
 
       # Check base_name$block — block-accepting overloads are registered with $block suffix
       # while call-site mangling uses $Type_block (e.g. $UInt64_block).
       block_name = base_name + "$block"
-      return block_name if @yield_functions.includes?(block_name)
+      return block_name if @yield_functions.includes?(block_name) && usable.call(block_name)
 
       stripped = strip_generic_receiver_from_base_name(base_name)
-      return stripped if @yield_functions.includes?(stripped)
+      return stripped if @yield_functions.includes?(stripped) && usable.call(stripped)
 
       # Also check stripped$block
       stripped_block = stripped + "$block"
-      return stripped_block if @yield_functions.includes?(stripped_block)
+      return stripped_block if @yield_functions.includes?(stripped_block) && usable.call(stripped_block)
 
       # Use pre-built stripped name map instead of O(N) loop
       if @yield_functions.size != @yield_functions_stripped_map_size
         rebuild_yield_functions_stripped_map
       end
       if found = @yield_functions_stripped_map[stripped]?
-        return found
+        return found if usable.call(found)
       end
 
       # Walk the receiver's module include chain (BFS, most-specific first).
@@ -43606,17 +43624,17 @@ module Adamas::HIR
           visited_mods << mod
           mod_base = strip_generic_args(mod)
           mod_method = "#{mod_base}##{method_short}"
-          return mod_method if @yield_functions.includes?(mod_method)
+          return mod_method if @yield_functions.includes?(mod_method) && usable.call(mod_method)
           mod_block = "#{mod_base}##{method_short}$block"
-          return mod_block if @yield_functions.includes?(mod_block)
+          return mod_block if @yield_functions.includes?(mod_block) && usable.call(mod_block)
           # Also check _splat variants: methods with splat params get
           # $block_splat or $splat_block suffixes during registration.
           mod_block_splat = "#{mod_base}##{method_short}$block_splat"
-          return mod_block_splat if @yield_functions.includes?(mod_block_splat)
+          return mod_block_splat if @yield_functions.includes?(mod_block_splat) && usable.call(mod_block_splat)
           mod_splat_block = "#{mod_base}##{method_short}$splat_block"
-          return mod_splat_block if @yield_functions.includes?(mod_splat_block)
+          return mod_splat_block if @yield_functions.includes?(mod_splat_block) && usable.call(mod_splat_block)
           mod_splat = "#{mod_base}##{method_short}$splat"
-          return mod_splat if @yield_functions.includes?(mod_splat)
+          return mod_splat if @yield_functions.includes?(mod_splat) && usable.call(mod_splat)
           # Check the stripped-name map: methods with typed splat params get
           # registered as e.g. "Enumerable#zip$Indexable | Iterable | Iterator_block_splat"
           # which none of the above exact checks will match.
@@ -43624,7 +43642,7 @@ module Adamas::HIR
             rebuild_yield_functions_stripped_map
           end
           if found = @yield_functions_stripped_map[mod_method]?
-            return found
+            return found if usable.call(found)
           end
           # Enqueue sub-modules
           if submods = @class_included_modules[mod]?
@@ -43653,7 +43671,7 @@ module Adamas::HIR
             includers.each do |inc|
               inc_base = strip_generic_args(inc)
               inc_method = "#{inc_base}##{method_short}"
-              if @function_defs.has_key?(inc_method)
+              if @function_defs.has_key?(inc_method) && usable.call(inc_method)
                 if @yield_functions.includes?(inc_method)
                   return inc_method
                 end
@@ -43666,7 +43684,7 @@ module Adamas::HIR
                 end
               end
               inc_block = "#{inc_base}##{method_short}$block"
-              if @function_defs.has_key?(inc_block)
+              if @function_defs.has_key?(inc_block) && usable.call(inc_block)
                 if @yield_functions.includes?(inc_block)
                   return inc_block
                 end
@@ -79076,13 +79094,21 @@ module Adamas::HIR
               # Walk the receiver's module chain to find a more specific yield function.
               short_method = method_short_from_name(effective_yield_key)
               if short_method
-                better = yield_function_name_for("#{recv_type_name}##{short_method}")
+                better = yield_function_name_for("#{recv_type_name}##{short_method}", skip_required_named: !call_has_named_args)
                 if better && better != effective_yield_key
                   better_owner = method_owner(strip_type_suffix(better))
                   better_owner_base = better_owner ? strip_generic_args(better_owner) : nil
                   # Accept the better match only if it's from a different (more specific) module
                   if better_owner_base && better_owner_base != eff_owner_base
-                    effective_yield_key = better
+                    # Never upgrade to an overload with REQUIRED named-only params when the
+                    # call passes no named args — it is not callable at this callsite.
+                    better_callable = true
+                    if !call_has_named_args
+                      if better_def = @function_defs[better]?
+                        better_callable = function_param_stats(better, better_def).named_required == 0
+                      end
+                    end
+                    effective_yield_key = better if better_callable
                   end
                 end
               end
@@ -79135,6 +79161,9 @@ module Adamas::HIR
                             mangled_method_name
                           end
                 debug_hook("call.inline.yield", "callee=#{use_key} current=#{@current_class || ""}")
+                if debug_env_filter_match?("DEBUG_INLINE_PICK", use_key)
+                  STDERR.puts "[INLINE_PICK] site=effective_key use_key=#{use_key} eff=#{effective_yield_key} mangled=#{mangled_method_name}"
+                end
                 callee_arena = function_def_arena_or_current(use_key)
                 return inline_yield_function(ctx, func_def, use_key.as(String), inline_receiver_id, call_arg_values, block_cast, block_param_types_inline, callee_arena)
               end
@@ -79146,7 +79175,7 @@ module Adamas::HIR
             STDERR.puts "[YIELD_INLINE]   base_in_function_defs=#{@function_defs.has_key?(base_method_name)}"
           end
           if !skip_inline
-            if yield_name = yield_function_name_for(base_method_name)
+            if yield_name = yield_function_name_for(base_method_name, skip_required_named: !call_has_named_args)
               if func_def = @function_defs[yield_name]?
                 # Verify the yield function's arity matches the call arity.
                 # yield_function_name_for doesn't consider arity, so it may return
@@ -79160,8 +79189,20 @@ module Adamas::HIR
                     yield_arity_ok = false
                   end
                 end
+                # A def with REQUIRED named-only params (e.g. Indexable#find(if_none = nil,
+                # *, offset : Int, &)) is not callable by a call that passes no named args.
+                # yield_function_name_for is name/include-chain based and can surface such
+                # an overload (Indexable walks before Enumerable); reject it here and let
+                # the arity-aware lookup_block_function_def_for_call pick a callable one.
+                if yield_arity_ok && !call_has_named_args
+                  yield_stats = function_param_stats(yield_name, func_def)
+                  yield_arity_ok = false if yield_stats.named_required > 0
+                end
                 if yield_arity_ok
                   debug_hook("call.inline.yield", "callee=#{yield_name} current=#{@current_class || ""}")
+                  if debug_env_filter_match?("DEBUG_INLINE_PICK", yield_name)
+                    STDERR.puts "[INLINE_PICK] site=yield_name_for yield_name=#{yield_name} base=#{base_method_name}"
+                  end
                   callee_arena = function_def_arena_or_current(yield_name)
                   return inline_yield_function(ctx, func_def, yield_name.as(String), inline_receiver_id, call_arg_values, block_cast, block_param_types_inline, callee_arena)
                 end
@@ -79193,6 +79234,9 @@ module Adamas::HIR
               if callee_has_yield || callee_has_block_call
                 add_yield_function(yield_name) if callee_has_yield
                 debug_hook("call.inline.yield", "callee=#{yield_name} current=#{@current_class || ""}")
+                if debug_env_filter_match?("DEBUG_INLINE_PICK", yield_name)
+                  STDERR.puts "[INLINE_PICK] site=lookup_block_early yield_name=#{yield_name} base=#{base_method_name}"
+                end
                 return inline_yield_function(ctx, yield_def, yield_name.as(String), inline_receiver_id, call_arg_values, block_cast, block_param_types_inline, callee_arena)
               end
             end
@@ -79205,6 +79249,9 @@ module Adamas::HIR
             if yield_key = find_yield_method_fallback(method_name, call_args.size, receiver_base)
               if func_def = @function_defs[yield_key]?
                 debug_hook("call.inline.yield", "callee=#{yield_key} current=#{@current_class || ""}")
+                if debug_env_filter_match?("DEBUG_INLINE_PICK", yield_key)
+                  STDERR.puts "[INLINE_PICK] site=find_fallback yield_key=#{yield_key} base=#{base_method_name}"
+                end
                 callee_arena = function_def_arena_or_current(yield_key)
                 return inline_yield_function(ctx, func_def, yield_key.as(String), inline_receiver_id, call_arg_values, block_cast, block_param_types_inline, callee_arena)
               end
@@ -79304,6 +79351,9 @@ module Adamas::HIR
             end
             if !skip_late_inline && (force_inline_non_local || callee_has_yield || callee_has_block_call)
               add_yield_function(yield_name) if callee_has_yield
+              if debug_env_filter_match?("DEBUG_INLINE_PICK", yield_name)
+                STDERR.puts "[INLINE_PICK] site=late_inline yield_name=#{yield_name} base=#{base_method_name}"
+              end
               return inline_yield_function(
                 ctx,
                 yield_def,
@@ -84864,6 +84914,9 @@ module Adamas::HIR
           STDERR.puts "[LOOKUP_BLOCK]   has_block=#{stats.has_block} param_count=#{stats.param_count} required=#{stats.required} arg_count=#{arg_count}"
         end
         next unless stats.has_block
+        # This lookup is positional-only (named args never flow through arg_count),
+        # so a def with REQUIRED named-only params can never be satisfied here.
+        next if stats.named_required > 0
 
         param_count = stats.param_count
         has_splat = stats.has_splat
@@ -84940,6 +84993,8 @@ module Adamas::HIR
 
           stats = function_param_stats(name, def_node)
           next unless stats.has_block
+          # Positional-only lookup: REQUIRED named-only params can never be satisfied.
+          next if stats.named_required > 0
 
           param_count = stats.param_count
           has_splat = stats.has_splat
@@ -90134,6 +90189,10 @@ module Adamas::HIR
       block_param_types : Array(TypeRef)?,
       callee_arena : Adamas::Compiler::Frontend::ArenaLike,
     ) : ValueId
+      if debug_env_filter_match?("DEBUG_INLINE_PICK", inline_key)
+        stats = function_param_stats(inline_key, func_def)
+        STDERR.puts "[INLINE_PICK] key=#{inline_key} named_required=#{stats.named_required} has_named_only=#{stats.has_named_only} params=#{stats.param_count} required=#{stats.required} caller=#{ctx.function.name}"
+      end
       block_arena = @block_node_arenas[block.object_id]? ||
                     resolve_arena_for_block(block, @arena) ||
                     @arena
