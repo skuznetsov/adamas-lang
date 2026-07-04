@@ -6,6 +6,38 @@ Branch: `work/b5-lower-method-owner-edge`
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
+## 2026-07-04 (latest) — index/proc-nil ABI FIXED (ad4ad0a7) + based-literal truncation FIXED (27fe6cd7)
+
+- `ad4ad0a7`: `& : T ->` had TWO ABI oracles — a `yield`-callee derives the
+  yield ABI from the callsite-recorded `__block_return__` (does NOT trust the
+  Nil annotation, infer_yield_return_type ~68460), while the caller (LM-657)
+  forced the materialized proc to `return nil` from that same annotation.
+  Desync dropped the block's value: `[1,2,3].index { |v| v == 2 }` -> 0.
+  Fix: force NIL only for no-yield (pure `block.call`) callees in
+  `expected_nil_block_return_type_for_def`. Oracle:
+  `regression_tests/yield_block_proc_nil_annotation_value_repro.sh`.
+  LM-657 guard (p2_nil_return_block_proc) still green; suites fully green.
+- `27fe6cd7`: lexer typed ALL suffix-less hex/binary/octal literals I32 —
+  `0x100000000` -> 0, `0xFFFFFFFF` -> -1 (decimal path already promoted by
+  magnitude). Found because s2-compiled File.tempname raised "Invalid bound
+  for rand: 0" from `Random.rand(0x100000000)` and knocked parallel LLVM
+  emission into the sequential fallback. Fix: shared
+  `based_integer_kind_for_magnitude` (base from prefix byte) + decimal U64
+  tail. Oracle: `regression_tests/based_literal_magnitude_promotion_repro.sh`.
+- Layer-3 demand-collapse metric moved: s2_v6 448 -> s2_v7 631 defines on
+  puts42 (s1 baseline 3361). s2_v7 (built pre-lexer-fix) balloons >16GB
+  during LLVM emission around function ~500/631 (killed by run_safe).
+  NEXT: s2_v8 built with both fixes — re-measure defines / memory / rand.
+- NEW open tail (pre-existing, June stage1 crashes too): `Random.rand` with
+  an Int64 bound dispatches to garbage — `rand(10_i64)` prints -120.0,
+  `rand(0x100000000)` aborts in `Random::PCG32#rand_int$$Int8`. Blocks
+  s2 File.tempname (parallel emission) even with correct literals.
+- Other pre-existing tails (adversary battery, June binary reproduces):
+  `[10,20,30,40].rindex { }` aborts on STUB `Indexable#size`; top-level
+  `def f(& : T ->)` + `return x if yield i` returns raw Int32 without
+  union_wrap into the Nil|Int32 return (prints empty), and a trailing `-1`
+  after `while..end` lowers as `Sub(nil, 1)` (parser-precedence family).
+
 ## 2026-07-04 (later) — block-call named-only overload selection FIXED (b380a5cb)
 
 - `[1,2,3].find { }` inlined `Indexable#find(if_none = nil, *, offset : Int,
