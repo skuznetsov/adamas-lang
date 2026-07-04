@@ -25,9 +25,23 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   `based_integer_kind_for_magnitude` (base from prefix byte) + decimal U64
   tail. Oracle: `regression_tests/based_literal_magnitude_promotion_repro.sh`.
 - Layer-3 demand-collapse metric moved: s2_v6 448 -> s2_v7 631 defines on
-  puts42 (s1 baseline 3361). s2_v7 (built pre-lexer-fix) balloons >16GB
-  during LLVM emission around function ~500/631 (killed by run_safe).
-  NEXT: s2_v8 built with both fixes — re-measure defines / memory / rand.
+  puts42 (s1 baseline 3361). s2_v7 balloons >16GB during LLVM emission
+  around function ~500/631 (killed by run_safe).
+- ACTIVE FRONTIER (start here): flaky ~2s HIR segfault in s2_v7/s2_v8 on
+  puts42 — NULL ClassNode#body (addr 0x40) in register_concrete_class <-
+  monomorphize_generic_class(Channel(Int32)). Crash rates: v6 0/9
+  (deterministic llc exit 1), v7 4/9, v8 ~7/8 — appeared with the proc-nil
+  delta (ad4ad0a7). ASLR-layout-sensitive: under lldb it crashes 4/4 at the
+  SAME address (hasher seed still random there -> seed exonerated).
+  CRYSTAL_LOAD_DEBUG_INFO=0 does NOT rescue (mach-o revival theory refuted
+  as root; note the lexer fix DID revive the previously-dead Mach-O/DWARF
+  self-parse — magics used to be negative I32). Repro:
+  `lldb --batch -o 'run /tmp/puts42.cr -o /tmp/x' /tmp/s2_v7` (rebuild
+  s2_v7 = ad4ad0a7 stage1 on src/adamas.cr). DEBUG_MONO=1 prints
+  "start Channel(Int32)" TWICE before the crash (re-entry suspect).
+  Suspect families: shared $block wrapper multi-callsite return-ABI desync /
+  uninit sret read (proc-nil fix enlarged non-nil proc returns), or latent
+  two-heap GC layout bug the new binary layout exposes.
 - NEW open tail (pre-existing, June stage1 crashes too): `Random.rand` with
   an Int64 bound dispatches to garbage — `rand(10_i64)` prints -120.0,
   `rand(0x100000000)` aborts in `Random::PCG32#rand_int$$Int8`. Blocks
