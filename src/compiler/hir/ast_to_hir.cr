@@ -5657,6 +5657,32 @@ module Adamas::HIR
     # Aligned with @inline_yield_return_stack.
     @inline_yield_return_caller_locals_stack : Array(Array({BlockId, Hash(String, ValueId)})) = [] of Array({BlockId, Hash(String, ValueId)})
 
+    # Active `begin ... ensure` scope during lowering. The fall-through path
+    # emits the ensure body via CFG (lower_begin's ensure_block); early exits
+    # (`return` and inline-return jumps) must emit the ensure body themselves
+    # before leaving the scope, or cleanup like `@arena = old_arena` is lost.
+    # Known gaps (see lower_begin): `break`/`next` crossing an ensure scope and
+    # exception unwind through an ensure-only begin (no rescue) still skip it.
+    class EnsureLoweringContext
+      getter ensure_body : Array(Adamas::Compiler::Frontend::ExprId)
+      getter arena : Adamas::Compiler::Frontend::ArenaLike
+      getter function_id : FunctionId
+      # @inline_yield_return_stack.size at push time: scopes with marker >= N
+      # live inside inline context stack[N-1]'s body.
+      getter inline_marker : Int32
+      # Re-entrancy guard while this scope's body is being emitted.
+      property emitting : Bool
+
+      def initialize(@ensure_body : Array(Adamas::Compiler::Frontend::ExprId),
+                     @arena : Adamas::Compiler::Frontend::ArenaLike,
+                     @function_id : FunctionId,
+                     @inline_marker : Int32)
+        @emitting = false
+      end
+    end
+
+    @active_ensure_lowering_contexts : Array(EnsureLoweringContext) = [] of EnsureLoweringContext
+
     # Block-local `next` handling context (e.g. iterator/predicate blocks).
     # `next value` should return from the block invocation, not from the enclosing function.
     class InlineNextContext
@@ -68080,6 +68106,31 @@ module Adamas::HIR
     # FUNCTION-RELATED
     # ═══════════════════════════════════════════════════════════════════════
 
+    # Emit the bodies of the `ensure` scopes an early exit is about to leave,
+    # innermost first. Plain function returns pass 0 (leave every scope of the
+    # current function); inline-return jumps pass the stack position just above
+    # the target inline context so only scopes inside the inlined body run.
+    private def emit_pending_ensure_bodies(ctx : LoweringContext, min_inline_marker : Int32) : Nil
+      i = @active_ensure_lowering_contexts.size - 1
+      while i >= 0
+        ectx = @active_ensure_lowering_contexts[i]
+        i -= 1
+        next if ectx.emitting
+        next unless ectx.function_id == ctx.function.id
+        next unless ectx.inline_marker >= min_inline_marker
+        ectx.emitting = true
+        begin
+          with_arena(ectx.arena) do
+            ectx.ensure_body.each do |expr_id|
+              lower_expr(ctx, expr_id)
+            end
+          end
+        ensure
+          ectx.emitting = false
+        end
+      end
+    end
+
     private def lower_return(ctx : LoweringContext, node : Adamas::Compiler::Frontend::ReturnNode) : ValueId
       value_id = if val = node.value
                    lower_expr(ctx, val)
@@ -68124,6 +68175,18 @@ module Adamas::HIR
               ctx.emit(nil_lit)
               value_id = nil_lit.id
             end
+            # Run ensure scopes opened inside this inlined body before the
+            # early jump to the inline exit skips their fall-through blocks.
+            min_marker = @inline_yield_return_stack.size
+            marker_idx = @inline_yield_return_stack.size - 1
+            while marker_idx >= 0
+              if @inline_yield_return_stack[marker_idx].same?(inline_return)
+                min_marker = marker_idx + 1
+                break
+              end
+              marker_idx -= 1
+            end
+            emit_pending_ensure_bodies(ctx, min_marker)
             exit_block = inline_return.exit_block
             current_block = ctx.current_block
             ctx.terminate(Jump.new(exit_block))
@@ -68153,6 +68216,9 @@ module Adamas::HIR
           value_id = coerce_value_to_type(ctx, vid, ret_type)
         end
       end
+
+      # Run every ensure scope of this function the return is about to leave.
+      emit_pending_ensure_bodies(ctx, 0)
 
       ctx.terminate(Return.new(value_id))
 
@@ -68578,6 +68644,16 @@ module Adamas::HIR
         ctx.terminate(Jump.new(body_block))
       end
 
+      # Register this ensure scope so early exits lowered inside the body,
+      # rescue clauses, or else body emit the ensure code they skip past.
+      ensure_lowering_ctx = nil
+      if has_ensure
+        ensure_lowering_ctx = EnsureLoweringContext.new(
+          node.ensure_body.not_nil!, @arena, ctx.function.id,
+          @inline_yield_return_stack.size)
+        @active_ensure_lowering_contexts << ensure_lowering_ctx
+      end
+
       ctx.switch_to_block(body_block)
 
       # Lower body
@@ -68761,6 +68837,10 @@ module Adamas::HIR
           ctx.terminate(Jump.new(after_else_target))
         end
       end
+
+      # Deactivate the early-exit scope before emitting the fall-through
+      # ensure body: from here on the CFG path owns the emission.
+      @active_ensure_lowering_contexts.pop? if ensure_lowering_ctx
 
       # Lower ensure block if any
       if has_ensure
