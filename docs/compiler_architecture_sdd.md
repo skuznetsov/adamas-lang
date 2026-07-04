@@ -531,9 +531,27 @@ stage1 build succeeds; stage2 bootstrap builds and smokes `cv2_s1` and
 `cv2_s2`; B4 remains `classification=clean_both_modes`; B5 remains at
 `classification=self_build_hir_pending_target_lower_method_body_lowered_boundary`;
 and regressions pass `152/152 + 36/36`. This consumes the second selected
-method-body scope edge but is still not a green B5/s3b claim. Residual raw
-scope surfaces remain `lower_module_method`, `inline_callee_local_names`, and
-proc body lowering.
+method-body scope edge but is still not a green B5/s3b claim. At that
+checkpoint, residual raw scope surfaces remained `lower_module_method`,
+`inline_callee_local_names`, and proc body lowering.
+
+2026-07-03 lower_module_method MethodBodyLoweringScope extension: the same
+`MethodBodyLoweringScopeSnapshot` helper now owns the
+`AstToHir#lower_module_method` body-lowering seam. The pre-slice source-shape
+baseline for `lower_module_method` was `lower_module_method_enter=0`,
+`lower_module_method_restore=0`, and `lower_module_method_legacy=15`. The
+current guard with `REQUIRE_METHOD_BODY_SCOPE=1 REQUIRE_LOWER_DEF_BODY_SCOPE=1
+REQUIRE_LOWER_MODULE_METHOD_BODY_SCOPE=1
+scripts/method_body_lowering_scope_source_shape_guard.sh` reports
+`method_body_scope_owner_consumed` for `lower_method`, `lower_def`, and
+`lower_module_method`. Fresh evidence: stage1 build succeeds; stage2 bootstrap
+builds and smokes `cv2_s1` and `cv2_s2`; B4 remains
+`classification=clean_both_modes`; B5 remains at
+`classification=self_build_hir_pending_target_lower_method_body_lowered_boundary`;
+and regressions pass `152/152 + 36/36`. This consumes the third method-like
+body-scope edge but is still not a green B5/s3b claim. Residual raw scope
+surfaces remain scanner/provenance helpers (`inline_callee_local_names`),
+method-pointer thunks, proc literals, and block-to-proc body lowering.
 
 Slice 0k-CK takes the third option: it records a fresh direct root-localization
 that decreases plausible owner-spine ambiguity. It does not admit production

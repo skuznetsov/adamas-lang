@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE_FILE="$ROOT_DIR/src/compiler/hir/ast_to_hir.cr"
 REQUIRE_METHOD_BODY_SCOPE="${REQUIRE_METHOD_BODY_SCOPE:-0}"
 REQUIRE_LOWER_DEF_BODY_SCOPE="${REQUIRE_LOWER_DEF_BODY_SCOPE:-0}"
+REQUIRE_LOWER_MODULE_METHOD_BODY_SCOPE="${REQUIRE_LOWER_MODULE_METHOD_BODY_SCOPE:-0}"
 
 usage() {
   cat >&2 <<'USAGE'
@@ -12,11 +13,12 @@ usage: scripts/method_body_lowering_scope_source_shape_guard.sh
 env:
   REQUIRE_METHOD_BODY_SCOPE=0|1
   REQUIRE_LOWER_DEF_BODY_SCOPE=0|1
+  REQUIRE_LOWER_MODULE_METHOD_BODY_SCOPE=0|1
 
 Behavior-neutral source-shape guard for the MethodBodyLoweringScope owner edge.
-The first slice was scoped to AstToHir#lower_method. The lower_def extension is
-reported separately so proc/module-method manual scopes remain explicit
-residual debt, not silently migrated.
+The first slice was scoped to AstToHir#lower_method. The lower_def and
+lower_module_method extensions are reported separately so proc/scanner manual
+scopes remain explicit residual debt, not silently migrated.
 USAGE
 }
 
@@ -66,6 +68,11 @@ report="$(
       next
     }
 
+    /private def lower_module_method\(/ {
+      current = "lower_module_method"
+      next
+    }
+
     /def lower_def\(/ {
       current = "lower_def"
       next
@@ -81,6 +88,7 @@ report="$(
 
     END {
       lower_method_shape = shape_for("lower_method")
+      lower_module_method_shape = shape_for("lower_module_method")
       lower_def_shape = shape_for("lower_def")
 
       print "source_shape=" lower_method_shape
@@ -88,6 +96,10 @@ report="$(
       print "lower_method_enter_scope_calls=" (enter["lower_method"] + 0)
       print "lower_method_restore_scope_calls=" (restore["lower_method"] + 0)
       print "lower_method_legacy_scope_saves=" (legacy["lower_method"] + 0)
+      print "lower_module_method_source_shape=" lower_module_method_shape
+      print "lower_module_method_enter_scope_calls=" (enter["lower_module_method"] + 0)
+      print "lower_module_method_restore_scope_calls=" (restore["lower_module_method"] + 0)
+      print "lower_module_method_legacy_scope_saves=" (legacy["lower_module_method"] + 0)
       print "lower_def_source_shape=" lower_def_shape
       print "lower_def_enter_scope_calls=" (enter["lower_def"] + 0)
       print "lower_def_restore_scope_calls=" (restore["lower_def"] + 0)
@@ -108,6 +120,12 @@ lower_def_source_shape="$(printf '%s\n' "$report" | awk -F= '$1 == "lower_def_so
 if [[ "$REQUIRE_LOWER_DEF_BODY_SCOPE" == "1" && "$lower_def_source_shape" != "method_body_scope_owner_consumed" ]]; then
   echo "FAIL: expected lower_def method_body_scope_owner_consumed, got $lower_def_source_shape" >&2
   exit 10
+fi
+
+lower_module_method_source_shape="$(printf '%s\n' "$report" | awk -F= '$1 == "lower_module_method_source_shape" { print $2; exit }')"
+if [[ "$REQUIRE_LOWER_MODULE_METHOD_BODY_SCOPE" == "1" && "$lower_module_method_source_shape" != "method_body_scope_owner_consumed" ]]; then
+  echo "FAIL: expected lower_module_method method_body_scope_owner_consumed, got $lower_module_method_source_shape" >&2
+  exit 11
 fi
 
 echo "PASS: MethodBodyLoweringScope source-shape status=$source_shape"

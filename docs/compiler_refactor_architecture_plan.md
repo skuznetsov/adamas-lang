@@ -8,6 +8,19 @@ boundaries
 Related: `PLAN_DEMAND_DRIVEN_REWRITE_RFC.md`, `docs/ast_to_hir_audit.md`,
 `docs/codegen_architecture.md`
 
+2026-07-03 lower_module_method MethodBodyLoweringScope note: the same owner
+helper now covers `AstToHir#lower_module_method` body lowering. The
+source-shape guard accepts this only when `lower_method`, `lower_def`, and
+`lower_module_method` all report `method_body_scope_owner_consumed` under
+`REQUIRE_METHOD_BODY_SCOPE=1 REQUIRE_LOWER_DEF_BODY_SCOPE=1
+REQUIRE_LOWER_MODULE_METHOD_BODY_SCOPE=1`. Verified evidence for this
+extension: stage1 build, stage2 bootstrap through `cv2_s2`, B4
+`clean_both_modes`, B5 still red at
+`self_build_hir_pending_target_lower_method_body_lowered_boundary`, and
+`152/152 + 36/36` regressions. This narrows remaining body-scope burn-down to
+scanner/provenance helpers, method-pointer thunks, and proc body lowering; it
+does not complete `SemanticStateScope` or green `s3b`.
+
 2026-07-03 lower_def MethodBodyLoweringScope note: the same owner helper now
 covers `AstToHir#lower_def` body lowering. The source-shape guard accepts this
 only when both `lower_method` and `lower_def` report
@@ -15,9 +28,10 @@ only when both `lower_method` and `lower_def` report
 REQUIRE_LOWER_DEF_BODY_SCOPE=1`. Verified evidence for this extension:
 stage1 build, stage2 bootstrap through `cv2_s2`, B4 `clean_both_modes`, B5
 still red at `self_build_hir_pending_target_lower_method_body_lowered_boundary`,
-and `152/152 + 36/36` regressions. This narrows the remaining body-scope
-burn-down to `lower_module_method`, scanner/provenance helpers, and proc body
-lowering; it does not complete `SemanticStateScope` or green `s3b`.
+and `152/152 + 36/36` regressions. At that checkpoint, this narrowed the
+remaining body-scope burn-down to `lower_module_method`, scanner/provenance
+helpers, and proc body lowering; it did not complete `SemanticStateScope` or
+green `s3b`.
 
 2026-07-03 MethodBodyLoweringScope note: the first selected B5
 body-lowering authority edge has been consumed in behavior-neutral form.
