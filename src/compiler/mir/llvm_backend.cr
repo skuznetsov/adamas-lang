@@ -25218,8 +25218,13 @@ module Adamas::MIR
         end
 
         # For tuple types (stack-allocated value types stored via ptr), copy data instead of storing pointer.
-        # Only tuples need this — other structs are heap-allocated so their pointer IS the value.
         variant_is_value_type = false
+        # For non-tuple struct variants the payload stays a pointer, but the
+        # pointee must be a fresh clone: a struct read out of container storage
+        # (e.g. a Hash entry slot) is an interior pointer, and the slot can be
+        # rewritten in place or reallocated after the wrap. Crystal value
+        # semantics require the wrapped struct to be an independent copy.
+        variant_is_heap_struct = false
         variant_size = 0_u64
         if val_type_str == "ptr" && val != "null"
           union_mir_type = @module.type_registry.get(inst.union_type)
@@ -25232,6 +25237,28 @@ module Adamas::MIR
               end
             end
           end
+          unless variant_is_value_type
+            # Match the variant by its type_id in the union descriptor (the
+            # variant_type_id is NOT a positional index into Type#variants).
+            if union_desc = @module.get_union_descriptor(inst.union_type)
+              dvariants = union_desc.variants
+              dvariant_idx = 0
+              while dvariant_idx < dvariants.size
+                dvariant = dvariants.unsafe_fetch(dvariant_idx)
+                if dvariant.type_id == inst.variant_type_id
+                  if vt = @module.type_registry.get(dvariant.type_ref)
+                    if vt.kind.struct? && vt.size > 0 && !vt.name.starts_with?("Tuple(") &&
+                       (vt.fields.try(&.size) || 0) > 0
+                      variant_is_heap_struct = true
+                      variant_size = vt.size
+                    end
+                  end
+                  break
+                end
+                dvariant_idx += 1
+              end
+            end
+          end
         end
         if val == "null"
           # Nil: skip payload store — zeroinitializer already zeroed everything.
@@ -25239,6 +25266,24 @@ module Adamas::MIR
           # would overflow the stack buffer.
         elsif variant_is_value_type
           emit "call void @llvm.memcpy.p0.p0.i64(ptr %#{base_name}.payload_ptr, ptr #{val}, i64 #{variant_size}, i1 false)"
+        elsif variant_is_heap_struct
+          # INTERIM (PLAN_INLINE_STRUCTS.md Phase 6): the target repr stores
+          # the struct INLINE in the payload (copy value, not pointer), like
+          # the original compiler's store_in_union. Until wrap+unwrap+size
+          # flip together, the payload stays a pointer — but it must point at
+          # an independent COPY, never at source storage (a Hash entry slot
+          # can be rewritten in place or reallocated after the wrap).
+          # Clone shape matches $Dnew: 8-byte immortal RC header + fields.
+          # Runtime-null guarded via selects so a stray null payload degrades
+          # to storing null instead of faulting.
+          emit "%#{base_name}.sv_raw = call ptr @__adamas_malloc64(i64 #{variant_size + 8})"
+          emit "store i64 9223372036854775807, ptr %#{base_name}.sv_raw, align 8"
+          emit "%#{base_name}.sv_new = getelementptr i8, ptr %#{base_name}.sv_raw, i64 8"
+          emit "%#{base_name}.sv_is_null = icmp eq ptr #{val}, null"
+          emit "%#{base_name}.sv_src = select i1 %#{base_name}.sv_is_null, ptr %#{base_name}.sv_new, ptr #{val}"
+          emit "call void @llvm.memmove.p0.p0.i64(ptr %#{base_name}.sv_new, ptr %#{base_name}.sv_src, i64 #{variant_size}, i1 false)"
+          emit "%#{base_name}.sv_val = select i1 %#{base_name}.sv_is_null, ptr null, ptr %#{base_name}.sv_new"
+          emit "store ptr %#{base_name}.sv_val, ptr %#{base_name}.payload_ptr, align 4"
         else
           emit "store #{val_type_str} #{val}, ptr %#{base_name}.payload_ptr, align 4"
         end
