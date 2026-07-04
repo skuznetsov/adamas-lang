@@ -8,6 +8,22 @@ boundaries
 Related: `PLAN_DEMAND_DRIVEN_REWRITE_RFC.md`, `docs/ast_to_hir_audit.md`,
 `docs/codegen_architecture.md`
 
+2026-07-03 InlineCalleeLocalScanScope note: the scanner/provenance seam in
+`AstToHir#inline_callee_local_names` now has a named owner helper. The helper
+owns the temporary callee arena switch and inline-yield block-stack clearing
+while collecting callee local names, and the source-shape guard accepts this
+only when
+`REQUIRE_INLINE_CALLEE_LOCAL_SCAN_SCOPE=1
+scripts/inline_callee_local_scan_scope_source_shape_guard.sh` reports
+`inline_callee_local_scan_scope_consumed`, one enter/restore pair, and zero
+legacy scanner saves. Verified evidence for this extension: stage1 build,
+stage2 bootstrap through `cv2_s2`, B4 `clean_both_modes`, B5 still red at
+`self_build_hir_pending_target_lower_method_body_lowered_boundary`, and
+`152/152 + 36/36` regressions. This consumes the scanner/provenance residual
+after the method-like body-scope helpers; it does not complete
+`SemanticStateScope`, method-pointer thunk state, proc literal state,
+block-to-proc body scopes, or green `s3b`.
+
 2026-07-03 lower_module_method MethodBodyLoweringScope note: the same owner
 helper now covers `AstToHir#lower_module_method` body lowering. The
 source-shape guard accepts this only when `lower_method`, `lower_def`, and

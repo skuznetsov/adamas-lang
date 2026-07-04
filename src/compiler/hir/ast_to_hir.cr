@@ -3014,6 +3014,37 @@ module Adamas::HIR
       @current_def_return_type = snapshot.current_def_return_type
     end
 
+    private record InlineCalleeLocalScanScopeSnapshot,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+      inline_yield_block_stack : Array(Adamas::Compiler::Frontend::BlockNode),
+      inline_yield_block_arena_stack : Array(Adamas::Compiler::Frontend::ArenaLike),
+      inline_yield_block_param_types_stack : Array(Array(TypeRef)?)
+
+    private def enter_inline_callee_local_scan_scope(
+      callee_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : InlineCalleeLocalScanScopeSnapshot
+      snapshot = InlineCalleeLocalScanScopeSnapshot.new(
+        @arena,
+        @inline_yield_block_stack,
+        @inline_yield_block_arena_stack,
+        @inline_yield_block_param_types_stack
+      )
+
+      @arena = callee_arena
+      @inline_yield_block_stack = [] of Adamas::Compiler::Frontend::BlockNode
+      @inline_yield_block_arena_stack = [] of Adamas::Compiler::Frontend::ArenaLike
+      @inline_yield_block_param_types_stack = [] of Array(TypeRef)?
+
+      snapshot
+    end
+
+    private def restore_inline_callee_local_scan_scope(snapshot : InlineCalleeLocalScanScopeSnapshot) : Nil
+      @inline_yield_block_stack = snapshot.inline_yield_block_stack
+      @inline_yield_block_arena_stack = snapshot.inline_yield_block_arena_stack
+      @inline_yield_block_param_types_stack = snapshot.inline_yield_block_param_types_stack
+      @arena = snapshot.arena
+    end
+
     private def state_scope_consumer_target_map(
       requested_name : String,
       target_name : String,
@@ -66467,22 +66498,12 @@ module Adamas::HIR
       end
 
       if body = func_def.body
-        old_arena = @arena
-        saved_inline_yield_block_stack = @inline_yield_block_stack
-        saved_inline_yield_block_arena_stack = @inline_yield_block_arena_stack
-        saved_inline_yield_block_param_types_stack = @inline_yield_block_param_types_stack
+        scan_scope_snapshot = enter_inline_callee_local_scan_scope(callee_arena)
         begin
-          @arena = callee_arena
-          @inline_yield_block_stack = [] of Adamas::Compiler::Frontend::BlockNode
-          @inline_yield_block_arena_stack = [] of Adamas::Compiler::Frontend::ArenaLike
-          @inline_yield_block_param_types_stack = [] of Array(TypeRef)?
           collect_assigned_vars(body).each { |name| names.add(name) }
           collect_block_param_names(body, names)
         ensure
-          @inline_yield_block_stack = saved_inline_yield_block_stack
-          @inline_yield_block_arena_stack = saved_inline_yield_block_arena_stack
-          @inline_yield_block_param_types_stack = saved_inline_yield_block_param_types_stack
-          @arena = old_arena
+          restore_inline_callee_local_scan_scope(scan_scope_snapshot)
         end
       end
 

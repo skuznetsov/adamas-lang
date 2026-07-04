@@ -553,6 +553,25 @@ body-scope edge but is still not a green B5/s3b claim. Residual raw scope
 surfaces remain scanner/provenance helpers (`inline_callee_local_names`),
 method-pointer thunks, proc literals, and block-to-proc body lowering.
 
+2026-07-03 InlineCalleeLocalScanScope checkpoint: the scanner/provenance seam in
+`AstToHir#inline_callee_local_names` now has its own behavior-neutral owner
+helper. The old direct authority edge was the raw temporary switch from the
+caller arena to the callee arena plus clearing/restoring the inline-yield block
+stacks while collecting assigned and block-local names. The pre-slice
+source-shape baseline was `inline_scan_enter=0`, `inline_scan_restore=0`, and
+`inline_scan_legacy=8`. The current guard with
+`REQUIRE_INLINE_CALLEE_LOCAL_SCAN_SCOPE=1
+scripts/inline_callee_local_scan_scope_source_shape_guard.sh` reports
+`source_shape=inline_callee_local_scan_scope_consumed`, one enter/restore pair,
+and zero legacy scanner saves. Fresh evidence: stage1 build succeeds; stage2
+bootstrap builds and smokes `cv2_s1` and `cv2_s2`; B4 remains
+`classification=clean_both_modes`; B5 remains at
+`classification=self_build_hir_pending_target_lower_method_body_lowered_boundary`;
+and regressions pass `152/152 + 36/36`. This consumes the
+`inline_callee_local_names` scanner/provenance residual but is still not a
+green B5/s3b claim. Residual raw scope surfaces remain method-pointer thunks,
+proc literals, and block-to-proc body lowering.
+
 Slice 0k-CK takes the third option: it records a fresh direct root-localization
 that decreases plausible owner-spine ambiguity. It does not admit production
 source movement yet; it admits only the next read-only classifier that can

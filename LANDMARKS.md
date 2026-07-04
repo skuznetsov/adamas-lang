@@ -12,6 +12,39 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-ARCH-B5-INLINE-CALLEE-LOCAL-SCAN-SCOPE-OWNER|owner-migration 2026-07-03 {F:0.88 G:0.40 R:0.86}]:
+`AstToHir#inline_callee_local_names` now has a behavior-neutral owner helper for
+its scanner/provenance scope. The old direct authority edge was the raw
+save/switch/clear/restore block for `@arena`,
+`@inline_yield_block_stack`, `@inline_yield_block_arena_stack`, and
+`@inline_yield_block_param_types_stack` while scanning a callee body for local
+names. It is now owned by `InlineCalleeLocalScanScopeSnapshot` plus
+`enter_inline_callee_local_scan_scope` /
+`restore_inline_callee_local_scan_scope`. The pre-slice source-shape baseline
+was `inline_scan_enter=0`, `inline_scan_restore=0`, and
+`inline_scan_legacy=8`; the current guard with
+`REQUIRE_INLINE_CALLEE_LOCAL_SCAN_SCOPE=1
+scripts/inline_callee_local_scan_scope_source_shape_guard.sh` reports
+`source_shape=inline_callee_local_scan_scope_consumed`, one enter call, one
+restore call, and zero legacy scanner saves. Evidence: `crystal build
+src/adamas.cr -o tmp/adamas_inline_callee_scan_scope_stage1 --error-trace`
+exits 0; `scripts/build_bootstrap_stages.sh --out
+tmp/bootstrap_inline_callee_scan_scope --stages 2 --timeout 900 --mem 12288`
+builds and smokes through `cv2_s2` clean (`cv2_s2` wall 231.37s, peak RSS about
+3362 MB); the B4 guard with that `cv2_s2` remains
+`classification=clean_both_modes`; the B5 target-only classifier with that
+`cv2_s2` still reports
+`classification=self_build_hir_pending_target_lower_method_body_lowered_boundary`
+with first bad `ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_BODY_LOWERED`;
+and the regression surface reports `152/152` full regressions plus `36/36`
+combined. Scope: this consumes the scanner/provenance residual for
+`inline_callee_local_names`, not a green B5/s3b claim. It does not migrate
+method-pointer thunks, proc literals, or block-to-proc body scopes. Decay
+trigger: the inline-callee scan source guard no longer reports the consumed
+shape, B4 regresses from `clean_both_modes`, the B5 target classifier moves to
+an earlier boundary, or a later `SemanticStateScope` slice supersedes this
+helper.
+
 [LM-ARCH-B5-LOWER-MODULE-METHOD-BODY-SCOPE-OWNER|owner-migration 2026-07-03 {F:0.88 G:0.43 R:0.86}]:
 The `MethodBodyLoweringScopeSnapshot` owner helper now also owns the
 `AstToHir#lower_module_method` body-lowering seam. The pre-slice source-shape

@@ -8,6 +8,34 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
 ## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
+- 2026-07-03 UPDATE: `AstToHir#inline_callee_local_names` now has its own
+  scanner/provenance owner helper instead of raw arena and inline-yield block
+  stack save/restore code in the scanner body. The pre-slice source-shape
+  baseline reported `inline_scan_enter=0`, `inline_scan_restore=0`, and
+  `inline_scan_legacy=8`; the current guard with
+  `REQUIRE_INLINE_CALLEE_LOCAL_SCAN_SCOPE=1
+  scripts/inline_callee_local_scan_scope_source_shape_guard.sh` reports
+  `source_shape=inline_callee_local_scan_scope_consumed`, one enter call, one
+  restore call, and zero legacy scanner saves. Fresh evidence:
+  `crystal build src/adamas.cr -o
+  tmp/adamas_inline_callee_scan_scope_stage1 --error-trace` exits 0;
+  `scripts/build_bootstrap_stages.sh --out
+  tmp/bootstrap_inline_callee_scan_scope --stages 2 --timeout 900 --mem 12288`
+  builds and smokes `cv2_s1` and `cv2_s2` clean (`cv2_s2` wall 231.37s, peak
+  RSS about 3362 MB); the B4 guard with
+  `GENERATED_S2=tmp/bootstrap_inline_callee_scan_scope/cv2_s2 REQUIRE_CLEAN=1
+  scripts/generated_stage_llvm_entry_classifier.sh` remains
+  `classification=clean_both_modes`; the B5 target-only classifier with that
+  `cv2_s2` still reports
+  `classification=self_build_hir_pending_target_lower_method_body_lowered_boundary`
+  and first bad `ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_BODY_LOWERED`;
+  and `regression_tests/run_all_suites.sh
+  tmp/adamas_inline_callee_scan_scope_stage1 4` reports all suites passed
+  (`152/152` full regressions and `36/36` combined). Scope: this consumes the
+  scanner/provenance residual for `inline_callee_local_names`; it is not a green
+  B5/s3b claim and does not migrate method-pointer thunks, proc literals, or
+  block-to-proc body scopes.
+
 - 2026-07-03 UPDATE: the `MethodBodyLoweringScopeSnapshot` owner model now also
   owns the `AstToHir#lower_module_method` body-lowering seam. The pre-slice
   source-shape baseline for `lower_module_method` reported no helper
