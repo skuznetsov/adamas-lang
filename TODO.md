@@ -15,21 +15,22 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   ensure `@arena` restore never ran. Oracle:
   `regression_tests/ensure_early_return_repro.sh` (red on pre-fix stage1).
   Stage1 gates: run_all_suites fully green; 5 ensure shapes = host crystal.
-- SUCCESSOR frontier: s2 rebuilt with the fix crashes EARLIER (B4 red:
-  `puts 42` dies at `enum register name=Errno`,
-  `parameter_span_text_from_extra_sources` gets {tag=Nil,payload=null} union
-  box as ArenaLike). A/B verdict: ivar+class-only s2 (same renumber, no
-  ensure logic) is GREEN -> renumber exonerated; trigger is the ensure
-  emission itself (wrong-HIR shape or latent MIR/LLVM bug it tips over).
-- Active tool: ADAMAS_ENSURE_RET_SKIP env knob in stage1 (substring list /
-  `*`) suppresses the emission per compiled function. Bisection over the
-  ~695 real emission deltas (normalized ab-vs-fixed .ll fingerprint diff;
-  list in session scratchpad funcs_ensure_delta3.txt): R0 skip-all (expect
-  green), R1 skip-122-named (classifies named vs proc/exec_recursive
-  culprit), then halve.
-- Old binaries kept for diffing: `tmp/bootstrap_b5_lldb/` (pre-fix s1/s2),
+- Successor layer 1 FIXED in `6ec62e0d`: the emitted ensure body at a
+  non-local-return site ran under caller-block locals; inlined with_arena
+  restore bound `old_arena` to garbage -> stack address stored into @arena
+  -> s2 enum-register crash. Fix: defining-scope locals snapshot OVERLAYED
+  on site locals. Oracle cases E+F in ensure_early_return_repro.sh.
+- ACTIVE frontier (see LM-B5-SUCCESSOR2-S2-RESOLVER-SET-INCONSISTENT):
+  s2 (cv2_s2_v3) fails `puts 42` with "error: Empty enumerable" —
+  Set(String)#first in resolve_class_name_in_signature_context with
+  size==1 but empty iteration (Set/Hash state inconsistent in s2, or a
+  legit-new resolver path exposing a latent miscompile). Iteration oracle:
+  s2_v3 on puts42, ~3s. NOTE: ADAMAS_ENSURE_RET_SKIP matches
+  ctx.function.name (HIR names) — validate the name format before using it
+  for bisection (LLVM-mangled substrings likely never matched).
+- Binaries kept for diffing: `tmp/bootstrap_b5_lldb/` (pre-fix s1/s2),
   `tmp/b5_s2_ir.ll` (pre-fix s2 IR), `tmp/ab_ivar_only/` (A/B worktree),
-  `tmp/b5_fix_bootstrap/` (fixed s2 + IR).
+  `tmp/b5_fix_bootstrap/cv2_s2_v3` (current frontier binary).
 
 ## 2026-07-03 — START HERE: document surgery + process reset (owner-accepted)
 

@@ -40,29 +40,44 @@ exception unwind through ensure-only begin, pre-existing post-yield code on
 NLR path. Debug knob: ADAMAS_ENSURE_RET_SKIP (substring list / `*`)
 suppresses the new emission per compiled function for bisection.
 
-[LM-B5-SUCCESSOR-S2-ENUM-REGISTER-NIL-ARENA|frontier OPEN 2026-07-04 {F:0.75 G:0.45 R:0.85}]:
-s2 rebuilt with the ensure fix regresses EARLIER: crashes compiling even
-`puts 42` at `enum register idx=1/4 name=Errno`, in
-`parameter_span_text_from_extra_sources` — the ArenaLike arg arrives as a
-stack union box {tag=Nil, payload=null}; `extras.empty?` derefs [null+4].
-Facts: (a) the entire crash-chain emission is byte-identical to the working
-binaries — corruption is upstream data; (b) A/B VERDICT: s2 built from
-ivar+class-only source (no ensure logic; same type-id/ivar-offset renumber)
-COMPILES puts42 → renumber exonerated, the breakage is triggered by the
-ensure emission itself (either a wrong-HIR shape from the new emission or a
-latent MIR/LLVM bug tripped by it); (c) normalized per-function IR
-fingerprint diff (ab vs fixed; .str/.stub_name/proc/dtor/cell renumber
-masked) isolates ~695 real deltas: ~573 Hash exec_recursive monomorphs +
-procs, 122 named fns incl. Parser#parse_if/parse_block/parse_lib,
-Mutex#lock_slow/unlock, Reference/Object buffer machinery
-(pop?/empty?/increase_capacity/root_buffer), TypeInferenceEngine#infer_*,
-AstToHir#inline_block_return_type_name and siblings.
-Bisection harness ready: scratchpad b5_bisect_round.sh — one s2 rebuild per
-round with ADAMAS_ENSURE_RET_SKIP; R0 (skip `*` → expect green) and
-R1 (skip 122 named → classifies named-vs-proc culprit) running.
-Artifacts: tmp/b5_fix_bootstrap/ (fixed s2 + .ll), tmp/ab_ivar_only/
-(worktree + cv2_s2_ab + .ll), tmp/b5_s2_ir.ll (pre-fix baseline .ll),
-scratchpad funcs_ensure_delta3.txt.
+[LM-B5-SUCCESSOR-ENSURE-EMISSION-FOREIGN-LOCALS|root-cause FIXED `6ec62e0d` 2026-07-04 {F:0.90 G:0.70 R:0.90}]:
+First successor layer closed. s2 built with `76f3f279` crashed at enum
+register: the re-lowered ensure body at a non-local-return site ran under
+the CALLER block's locals, so the inlined with_arena restore
+`@arena = old_arena` (shape: `return` inside `with_arena(...) { ... }`,
+ast_to_hir.cr:20107 in infer_concrete_return_type_from_body) bound
+`old_arena` to garbage and stored a STACK ADDRESS into @arena (writer
+caught by HW watchpoint value-range condition; NB on this platform the
+main-thread stack ~0x16f_dxxxxxxx is BELOW the GC heap ~0xb_xxxxxxxxx).
+15-line falsifier: `with_mark("inner") { return 42 }` where the helper's
+ensure does `@mark = old` → ivar garbage pre-fix, "init" post-fix.
+Fix: EnsureLoweringContext snapshots scope-open locals; emission overlays
+snapshot on site locals (snapshot wins for known names; begin-body-declared
+names flow from the site — pure snapshot-replacement broke those, oracle
+case F). Known limit: locals reassigned between begin and the exit are
+seen at push-time values. Oracle cases E+F in
+regression_tests/ensure_early_return_repro.sh; run_all_suites green.
+Methodology: A/B ivar+class-only s2 build exonerated type-id/ivar-offset
+renumbering; normalized per-function IR fingerprint diff of 287MB .ll pairs
+found the true emission deltas (most "changed" fns were dispatch-switch /
+.str/.stub_name renumber noise). ADAMAS_ENSURE_RET_SKIP knob exists but its
+substring match against ctx.function.name (HIR names) was never validated —
+bisection rounds R1/R2 with LLVM-mangled names were likely no-ops; verify
+name format before trusting it.
+
+[LM-B5-SUCCESSOR2-S2-RESOLVER-SET-INCONSISTENT|frontier OPEN 2026-07-04 {F:0.6 G:0.4 R:0.8}]:
+Next layer: s2 (cv2_s2_v3, both ensure fixes) fails compiling `puts 42`
+with `error: Empty enumerable` (mostly deterministic; one run in four
+segfaulted in ClassNode#body null-self on the v2 binary). Raise bt:
+Set(String)#first inside resolve_class_name_in_signature_context
+(`return candidates.first if candidates.size == 1` at ~ast_to_hir.cr:48100)
+— size==1 yet iteration yields nothing => Set/Hash internal state
+inconsistent in s2, OR the resolver reaches a state old-s2 never reached
+(correct ensure restores of @current_class/@current_namespace_override now
+run on early returns — legit behavior change exposing a latent miscompile
+on a fresh path). Not yet classified. Iteration oracle: s2 self-build of
+`puts 42` (~3s). Artifacts: tmp/b5_fix_bootstrap/cv2_s2_v3 (current),
+tmp/ab_ivar_only/ (A/B worktree + .ll), tmp/b5_s2_ir.ll (pre-fix baseline).
 
 [LM-ARCH-B5-INLINE-CALLEE-LOCAL-SCAN-SCOPE-OWNER|owner-migration 2026-07-03 {F:0.88 G:0.40 R:0.86}]:
 `AstToHir#inline_callee_local_names` now has a behavior-neutral owner helper for
