@@ -68110,7 +68110,21 @@ module Adamas::HIR
     # innermost first. Plain function returns pass 0 (leave every scope of the
     # current function); inline-return jumps pass the stack position just above
     # the target inline context so only scopes inside the inlined body run.
+    # Debug bisection knob: ADAMAS_ENSURE_RET_SKIP is a comma-separated list
+    # of substrings; ensure-on-early-return emission is suppressed (old buggy
+    # behavior) inside functions whose name matches any of them. "*" skips all.
+    @ensure_ret_skip_patterns : Array(String)? = nil
+
+    private def ensure_ret_emission_skipped?(ctx : LoweringContext) : Bool
+      pats = @ensure_ret_skip_patterns ||= (ENV["ADAMAS_ENSURE_RET_SKIP"]? || "").split(',').reject(&.empty?)
+      return false if pats.empty?
+      return true if pats.size == 1 && pats.unsafe_fetch(0) == "*"
+      fname = ctx.function.name
+      pats.any? { |p| fname.includes?(p) }
+    end
+
     private def emit_pending_ensure_bodies(ctx : LoweringContext, min_inline_marker : Int32) : Nil
+      return if ensure_ret_emission_skipped?(ctx)
       i = @active_ensure_lowering_contexts.size - 1
       while i >= 0
         ectx = @active_ensure_lowering_contexts[i]
