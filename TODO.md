@@ -6,6 +6,46 @@ Branch: `work/b5-lower-method-owner-edge`
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
+## 2026-07-04 (night) — rand(Int64) dispatch ROOT-CAUSED + FIXED: macro fresh-var ate spaced modulo
+
+- ROOT (frontend/parser.cr `macro_variable_start?`): the fresh-macro-var
+  predicate used `peek_next_non_trivia`, so a SPACED binary modulo inside a
+  macro body (`result % max`) was scanned as fresh var `%max` and rewritten
+  to `__macro_max_N`. The corrupted def derailed the recovery parser for the
+  rest of the SAME macro-for expansion, so every def after the first lost
+  its module owner: of the 10 `Random#rand_int` overloads only `$Int8`
+  registered under Random/PCG32 (the others registered ownerless top-level).
+  `rand(max : Int)` then resolved `rand_int(max)` via the arity-only
+  untyped fallback -> first family key -> `rand_int$Int8`, truncating any
+  bound to i8: `rand(0x100000000)` -> "Invalid bound for rand: 0" abort
+  (the s2 File.tempname parallel-emission killer), `rand(10_i64)` garbage.
+- FIX: require byte adjacency `%name` (original Crystal rule) — span
+  end_offset == start_offset; `a % b` is modulo again. 1 predicate, +6 lines.
+  Blast radius checked: only random.cr has spaced `%` inside macro-for
+  bodies in stdlib (number.cr's are outside).
+- Oracle: `regression_tests/macro_percent_modulo_fresh_var_repro.sh`
+  (red pre-fix: rand_int$$Int64 missing from IR + bound abort; green now).
+  Debug lever used: `-Ddebug_hooks` build + ADAMAS_DEBUG_HOOKS=1 showed
+  `method.register full=rand_int$Int64 class=` (ownerless) — registration-
+  level truth beats resolve-level tracing for missing-overload families.
+- NEW open roots exposed (separate, NOT this fix; both pre-existing):
+  1. `def rand(max : Int) : Int` — abstract `Int` RETURN annotation
+     resolves to Int32 ("abstract Int defaults to Int32",
+     builtin_type_ref_for) -> rand$$Int64 does `trunc i64->i32` on its
+     result: rand(0x100000000) returns sign-garbled i32 values. RED oracle
+     ready: `regression_tests/rand_int64_abstract_int_return_repro.sh`.
+  2. Caller-side static type of `r.rand(n)` is Float64 — return type taken
+     from the base-name cache where zero-arg `def rand : Float64` registers
+     first (@function_base_return_types). `typeof(r.rand(10))` == Float64,
+     interpolation prints garbage while comparisons on the raw value pass.
+  3. Param-restriction flavor of (1): single-def `route(x : Int)` collapses
+     ALL callsites to route$Int32 + coerces args (no per-type mono); the
+     real rand only escaped because multiple typed overloads exist.
+- s2 follow-up (next session start here): rebuild stage2 (s2_v10) and
+  verify File.tempname no longer aborts -> parallel LLVM emission survives
+  -> re-measure the RSS balloon (sequential fallback and balloon were
+  coupled on v9).
+
 ## 2026-07-04 (evening) — flaky s2 HIR segfault ROOT-CAUSED + FIXED (ee576c86): union-wrap struct payload aliasing
 
 - ROOT: `Hash(String, GenericClassTemplate)#[]?` returned a `Nil | GCT` union

@@ -14579,8 +14579,15 @@ current_token.kind == Token::Kind::Identifier &&
         private def macro_variable_start? : Bool
           return false unless macro_context?
           return false unless current_token.kind == Token::Kind::Percent
+          # Fresh macro vars require `%name` with NO space between `%` and the
+          # identifier (original Crystal adjacency rule). `a % b` inside a macro
+          # body is the modulo operator; accepting a gap here rewrote
+          # `result % max` into a fresh var and corrupted every def after it in
+          # the same macro-for expansion (Random#rand_int Int8-only family).
+          # Trivia may be absent from the token stream, so check byte adjacency.
           next_token = peek_next_non_trivia
-          next_token.kind == Token::Kind::Identifier
+          return false unless next_token.kind == Token::Kind::Identifier
+          current_token.span.end_offset == next_token.span.start_offset
         end
 
         private def parse_macro_variable_piece : {MacroPiece, Bool}
