@@ -49100,7 +49100,19 @@ module Adamas::HIR
       function_param_infos(function_name, def_node).each do |param|
         next unless param.is_block
         if type_text = param.type_annotation
-          return TypeRef::NIL if nil_returning_proc_annotation?(type_text)
+          if nil_returning_proc_annotation?(type_text)
+            # A nil-annotated block (`& : T ->`) pins the proc ABI to Nil only
+            # on the `block.call` route, where the callee types the call from
+            # the annotation-derived Proc param. A callee that `yield`s does
+            # NOT trust the Nil annotation: infer_yield_return_type falls back
+            # to the callsite-recorded `__block_return__` (the block body's
+            # type). Forcing the materialized proc to return nil there desyncs
+            # the two sides and drops the block's value at the yield site
+            # (e.g. Indexable#index's predicate read garbage).
+            def_arena = @function_def_arenas[function_name]? || @arena
+            return nil if def_contains_yield?(def_node, def_arena)
+            return TypeRef::NIL
+          end
         end
       end
       nil
