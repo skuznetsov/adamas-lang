@@ -4158,6 +4158,20 @@ module Adamas::HIR
       @rta_virtual_receivers[mpart] = receivers
     end
 
+    # Method-level RTA demand for union-receiver virtual calls. The call name is
+    # about to be collapsed to ONE concrete variant (resolve_union_method_call
+    # picks the first concrete variant), but the runtime dispatch is virtual and
+    # can land on ANY variant. Record every variant as a virtual receiver so lazy
+    # RTA lowers each variant's method body; otherwise the generated
+    # __vdispatch__ switch under-enumerates and the missing variants hit the
+    # `unreachable` default (arbitrary/garbage dispatch on all-reference unions —
+    # see regression_tests/union_vdispatch_variant_enum_repro.sh).
+    private def rta_record_union_receiver_targets(union_owner : String, method_part : String) : Nil
+      return if method_part.empty? || union_owner.empty?
+      @rta_called_method_parts << method_part unless @rta_called_method_parts.includes?(method_part)
+      rta_record_virtual_receivers(method_part, union_owner)
+    end
+
     # Build reverse lookup: type → modules it includes (cached, rebuilt when includers change)
     @rta_type_to_modules_version : Int32 = -1
 
@@ -4196,6 +4210,18 @@ module Adamas::HIR
 
       owner_base = strip_generics_simple(owner_name)
       receivers = @rta_virtual_receivers[mpart]?
+      # Union-variant bare-part fallback: union-receiver demand records variants
+      # under the BARE method part (no arg suffix), but an arg-typed pending name
+      # (e.g. `Owner#[]$ExprId`) carries a suffixed mpart the scan filled with
+      # only the collapsed first variant. Consult the bare-part receivers so
+      # sibling variants are kept alive (the 4207-4209 has-method guard above
+      # already bounds this to owners that actually define the method).
+      # See rta_record_union_receiver_targets / union_vdispatch_variant_enum_repro.sh.
+      if (bare_part = rta_method_name_from_part(mpart)) && bare_part != mpart
+        if (bare_receivers = @rta_virtual_receivers[bare_part]?) && bare_receivers.includes?(owner_base)
+          return true
+        end
+      end
       return true unless receivers # No receiver info → conservative, keep
       return true if receivers.includes?(owner_base)
       if broad_root_universal_helper_receiver?(mpart, receivers)
@@ -81515,6 +81541,10 @@ module Adamas::HIR
               key = {union_name, method_name, ah, vf}
               unless @virtual_targets_lowered.includes?(key)
                 @virtual_targets_lowered.add(key)
+                # Keep every union variant's method alive through lazy RTA so the
+                # MIR vdispatch table enumerates all variants (see the MemberAccess
+                # branch above and union_vdispatch_variant_enum_repro.sh).
+                rta_record_union_receiver_targets(union_name, method_name)
                 split_union_type_name(union_name).each do |variant|
                   next if variant == "Nil"
                   resolved_variant = resolve_type_alias_chain(variant)
@@ -92444,6 +92474,10 @@ module Adamas::HIR
       return unless recv_desc && recv_desc.kind == TypeKind::Union
 
       union_name = normalize_union_type_name(recv_desc.name)
+      # Keep every union variant's index method alive through lazy RTA so the MIR
+      # vdispatch table enumerates all variants (see the instance-call and
+      # MemberAccess branches and union_vdispatch_variant_enum_repro.sh).
+      rta_record_union_receiver_targets(union_name, method_name)
       split_union_type_name(union_name).each do |variant|
         next if variant == "Nil"
         resolved_variant = resolve_type_alias_chain(variant)
@@ -94564,6 +94598,13 @@ module Adamas::HIR
             key = {union_name, member_name, ah, vf}
             unless @virtual_targets_lowered.includes?(key)
               @virtual_targets_lowered.add(key)
+              # Keep every union variant's method alive through lazy RTA. The
+              # per-variant lower_function_if_needed calls below otherwise defer
+              # sibling variants (the pending-queue owner gate only keeps method
+              # parts recorded as virtual receivers), so the MIR vdispatch table
+              # under-enumerates and missing variants hit `unreachable`.
+              # See regression_tests/union_vdispatch_variant_enum_repro.sh.
+              rta_record_union_receiver_targets(union_name, member_name)
               split_union_type_name(union_name).each do |variant|
                 next if variant == "Nil"
                 resolved_variant = resolve_type_alias_chain(variant)

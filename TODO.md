@@ -6,6 +6,47 @@ Branch: `work/b5-lower-method-owner-edge`
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
+## 2026-07-05 (later) — vdispatch variant under-enumeration CLOSED (all-ref union RTA under-demand); s2_v13 arena crash is a SEPARATE @arena-object corruption
+
+- Closed the pre-existing vdispatch under-enumeration family (RED oracle
+  `9ae8eae1`). Root: a virtual method call on an all-reference union receiver
+  (`ArenaLike = AstArena | PageArena | VirtualArena`) collapses the call name to
+  the FIRST concrete variant (`resolve_union_method_call`). Method-level RTA
+  keys off that collapsed name, so only the first variant's method was demanded;
+  the siblings were never lowered. The generated `__vdispatch__` switch then
+  enumerated only the first variant's case (missing variants hit `unreachable`
+  → LLVM folds to an arbitrary branch: t0=1 t1=1 t2=1 instead of 1/2/3).
+  The three union-variant-lowering sites (instance call ~81530, MemberAccess
+  ~94588, indexed `[]` `ensure_index_union_virtual_targets_lowered`) already
+  call `lower_function_if_needed` per variant, but lazy RTA deferred the
+  siblings: the pending-queue owner gate only keeps method parts recorded as
+  virtual receivers, and only the collapsed first variant was recorded.
+  Fix: new `rta_record_union_receiver_targets` records ALL variants as virtual
+  receivers (bare method part) at all three sites; `rta_method_part_matches_owner?`
+  gains a bare-part fallback so arg-typed pending names (`Owner#[]$ExprId`) match
+  too (bounded by the existing has-method guard + `rta_live_owner?`). Purely
+  additive to RTA demand — can only lower MORE correct functions.
+  Oracles: `union_vdispatch_variant_enum_repro.sh` (0-arg, RED→GREEN), new
+  `union_vdispatch_indexed_variant_repro.sh` (arg-typed `[]`, RED→GREEN).
+  Suites 152/152 + 36/36; combined-suite wall time unchanged (262s vs 262s).
+- IMPORTANT — this is NOT the s2_v13 registration crash root. Static check of
+  the pre-fix s2_v13.ll shows the arena vdispatch is ALREADY complete:
+  `__vdispatch__…AstArena…#[]$…ExprId` and `…#size` both enumerate all three
+  global tids (AstArena=735 / PageArena=742 / VirtualArena=739). So
+  `arena[expr_id]` in `infer_ivars_from_expr` dispatches correctly; the value it
+  returns is garbage (`node = 0x20726f20746e6174` = ASCII "tant or "), so
+  either `@arena` is a corrupt/wrong object or a valid arena with corrupt
+  storage. The class-dispatch vdispatch has a null guard, and the bad pointer is
+  non-null string data (not nil), so this is a memory-corruption / wrong-object
+  bug, NOT tid-0/nil dispatch. Traced to d7dc440c (v12 passes registration
+  deterministically, v13 corrupts it; sole code delta) but NOT via
+  under-enumeration. START HERE for s2_v13: under lldb at the crash, read the
+  `@arena` union header + payload BEFORE `arena[expr_id]` (is @arena a real
+  arena? does its storage pointer point at live memory?); then bisect which
+  stage1-emitted store writes the corrupt value — prime suspects are the
+  d7dc440c u2u coerce (`emit_union_wrap` variant_type_id=-2) and the declared-
+  ivar widening gate, since @arena is exactly the ivar they changed.
+
 ## 2026-07-05 (late night) — s2_v12 reparse STUB CLOSED (declared-ivar Nil-widening); s2_v13 frontier = register-phase type-confusion / Array.call STUB
 
 - `d7dc440c` CLOSED the s2_v12 frontier. Root cause (caught with the new
