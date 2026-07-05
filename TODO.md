@@ -40,7 +40,18 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   non-null string data (not nil), so this is a memory-corruption / wrong-object
   bug, NOT tid-0/nil dispatch. Traced to d7dc440c (v12 passes registration
   deterministically, v13 corrupts it; sole code delta) but NOT via
-  under-enumeration. START HERE for s2_v13: under lldb at the crash, read the
+  under-enumeration.
+  EMPIRICAL CONFIRMATION: s2_v14 (stage1 530a5c1a = the vdispatch fix,
+  /tmp/s2_v14 32.3MB) crashes IDENTICALLY to s2_v13 — run1 exit 139 segfault at
+  Crystal::Once::Operation expr=15; runs 2-4 exit 134
+  `STUB CALLED: Array$Dcall$$Tuple$LInt32$C$_Int32$R`
+  (= `Array.call(Tuple(Int32, Int32))`) during infer_ivars for
+  `Array(Array(Tuple(UInt64, UInt64, String)))`. So the vdispatch fix is
+  orthogonal to s2_v13 and does NOT regress the self-host build (same STUB, not
+  a new one). New concrete lead: Array has no `.call` — stage1 miscompiled some
+  compiler method to dispatch to the `Array.call` stub instead of the real
+  target (proc/tuple↔Array type-confusion, same family as the @arena
+  corruption). START HERE for s2_v13: under lldb at the crash, read the
   `@arena` union header + payload BEFORE `arena[expr_id]` (is @arena a real
   arena? does its storage pointer point at live memory?); then bisect which
   stage1-emitted store writes the corrupt value — prime suspects are the
