@@ -25120,14 +25120,23 @@ module Adamas::MIR
           emit "%#{base_name}.u2u_src_tid_ptr = getelementptr #{u2u_src_type}, ptr %#{base_name}.u2u_src, i32 0, i32 0"
           emit "%#{base_name}.u2u_src_tid = load i32, ptr %#{base_name}.u2u_src_tid_ptr"
           mapped_tid = emit_union_type_id_remap(u2u_src_type, union_type, "%#{base_name}.u2u_src_tid", "#{base_name}.u2u", src_union_ref, inst.union_type)
-          emit "%#{base_name}.u2u_src_pay_ptr = getelementptr #{u2u_src_type}, ptr %#{base_name}.u2u_src, i32 0, i32 1"
-          emit "%#{base_name}.u2u_pay = load ptr, ptr %#{base_name}.u2u_src_pay_ptr, align 4"
           emit "%#{base_name}.u2u_dst = alloca #{union_type}, align 8"
           emit "store #{union_type} zeroinitializer, ptr %#{base_name}.u2u_dst"
           emit "%#{base_name}.u2u_dst_tid_ptr = getelementptr #{union_type}, ptr %#{base_name}.u2u_dst, i32 0, i32 0"
           emit "store i32 #{mapped_tid}, ptr %#{base_name}.u2u_dst_tid_ptr"
+          # Copy the FULL payload region, not just the first 8 bytes. Union
+          # payloads are [N x i32] sized to the widest variant; value-type
+          # variants (Tuples, inline aggregates) are stored INLINE and can be
+          # wider than a pointer. The former `load ptr`/`store ptr` truncated
+          # them to 8 bytes, corrupting the value (read later as a bad pointer
+          # -> ASLR-dependent segfault). memcpy min(src,dst) payload bytes.
+          u2u_pay_bytes = union_payload_copy_bytes(src_union_ref, inst.union_type)
+          if bootstrap_env_enabled?("ADAMAS_U2U_TRACE", "ADAMAS_U2U_TRACE")
+            STDERR.puts "[U2U] src=#{u2u_src_type} dst=#{union_type} pay_bytes=#{u2u_pay_bytes}"
+          end
+          emit "%#{base_name}.u2u_src_pay_ptr = getelementptr #{u2u_src_type}, ptr %#{base_name}.u2u_src, i32 0, i32 1"
           emit "%#{base_name}.u2u_dst_pay_ptr = getelementptr #{union_type}, ptr %#{base_name}.u2u_dst, i32 0, i32 1"
-          emit "store ptr %#{base_name}.u2u_pay, ptr %#{base_name}.u2u_dst_pay_ptr, align 4"
+          emit "call void @llvm.memcpy.p0.p0.i64(ptr %#{base_name}.u2u_dst_pay_ptr, ptr %#{base_name}.u2u_src_pay_ptr, i64 #{u2u_pay_bytes}, i1 false)"
           emit "#{name} = load #{union_type}, ptr %#{base_name}.u2u_dst"
           record_emitted_type(name, union_type)
           @value_types[inst.id] = inst.union_type
@@ -28445,6 +28454,33 @@ module Adamas::MIR
     private def null_like_union_variant_token?(token : String) : Bool
       base = token.split("$L").first.split("$CC").last
       base == "Nil" || base == "Void"
+    end
+
+    # Byte width of a union's payload region ([N x i32] after the i32 tid).
+    # Mirrors emit_union_type's payload sizing so a raw payload copy matches the
+    # emitted `{ i32, [N x i32] }` layout exactly (widest variant, ptr-min 8,
+    # rounded up to a 4-byte i32 array).
+    private def union_payload_byte_width(type_ref : TypeRef) : Int32
+      t = @module.type_registry.get(type_ref)
+      variants = t.try(&.variants)
+      return 8 unless variants && !variants.empty?
+      payload_bytes = variants.map(&.size).max
+      variants.each do |v|
+        next if v.kind.primitive? || v.name == "Nil" || v.name == "Void"
+        payload_bytes = 8_u64 if @type_mapper.llvm_type(v) == "ptr" && payload_bytes < 8_u64
+      end
+      payload_bytes = {payload_bytes, 8_u64}.max
+      (((payload_bytes + 3) // 4) * 4).to_i32
+    end
+
+    # Bytes to copy when transferring a union payload from one union layout to
+    # another (union -> union coerce). The min of the two payload widths: they
+    # are equal for the legitimate Nil|A|B|C -> A|B|C case; min is defensive so
+    # neither the source read nor the destination write overflows its alloca.
+    private def union_payload_copy_bytes(src_ref : TypeRef?, dst_ref : TypeRef) : Int32
+      dst_bytes = union_payload_byte_width(dst_ref)
+      src_bytes = src_ref ? union_payload_byte_width(src_ref) : dst_bytes
+      {src_bytes, dst_bytes}.min
     end
 
     private def union_type_id_remap_needed?(src_union_ref : TypeRef, dst_union_ref : TypeRef) : Bool
