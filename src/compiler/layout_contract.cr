@@ -27,6 +27,11 @@ module Adamas
     # the contract and the registry never disagree on the carrier-pointer size.
     POINTER_WORD_BYTES = MIR::TARGET_POINTER_BYTES_U64
 
+    # Pointer-word ALIGN for the target — single-sourced with POINTER_WORD_BYTES so
+    # the tuple slot-layout contract and the registry never disagree on the
+    # carrier-pointer alignment (kills the llvm hardcoded-8 align divergence).
+    POINTER_WORD_ALIGN = MIR::TARGET_POINTER_ALIGN_U32
+
     # Representation taxonomy (matches LayoutProbe storage column / SDD §2).
     enum Repr
       InlineBytes      # value bytes live at the slot itself (slot == value_size)
@@ -79,6 +84,54 @@ module Adamas
         # Primitives, enums, symbols, bools, chars, ints, floats: inline bytes.
         true
       end
+    end
+
+    # ── Tuple slot layout (docs/inline_value_tuple_abi_sdd.md P2) ──────────────
+    # THE single source for a tuple's byte geometry under the current
+    # pointer-carrier element ABI, shared by every producer/consumer of tuple slot
+    # layout so they cannot drift:
+    #   - HIR→MIR register_tuple_types  (total size + align)
+    #   - HIR→MIR lower_allocate        (constructor-arg byte offsets)
+    #   - LLVM   tuple index_get const  (single element offset)
+    #   - LLVM   tuple index_get runtime(offsets array feeding the stride switch)
+    # Collapsing them here removes the latent divergence where HIR used the
+    # platform pointer word while LLVM hardcoded 8 — both now route through
+    # POINTER_WORD_BYTES / POINTER_WORD_ALIGN.
+    #
+    # BEHAVIOR-NEUTRAL (this commit): reproduces the CURRENT per-element rule
+    # verbatim — inline (primitive/enum) → own size/align; a union strictly wider
+    # than a pointer word → own size; EVERYTHING ELSE (including a NESTED TUPLE) →
+    # an 8-byte pointer carrier. That last clause is the known nested-tuple alias
+    # (SDD P2); a later step flips it in THIS one place (nested pod-tuple → inline)
+    # once the tuple-POD predicate is unified. Callers pass an explicit element
+    # Array because register_tuple_types runs before Type#element_types is
+    # populated (chicken-and-egg), and a nil element ref is resolved to the POINTER
+    # type by the caller, which this rule maps to the same pointer-carrier slot.
+    record TupleSlotLayout, size : UInt64, align : UInt32, offsets : Array(UInt32)
+
+    def self.tuple_slot_layout(elements : Array(MIR::Type)) : TupleSlotLayout
+      size = 0_u64
+      align = 1_u32
+      offsets = Array(UInt32).new(elements.size)
+      elements.each do |elem|
+        inline = elem.kind.primitive? || elem.kind.enum?
+        elem_size = if inline && elem.size > 0
+                      elem.size
+                    elsif elem.kind.union? && elem.size > POINTER_WORD_BYTES
+                      elem.size
+                    else
+                      POINTER_WORD_BYTES
+                    end
+        elem_align = (inline && elem.alignment > 0) ? elem.alignment : POINTER_WORD_ALIGN
+        # Round the running offset up to this element's alignment (align_u64 for a
+        # power-of-two align == this mask), record the element start, then advance.
+        size = (size + elem_align - 1) & ~(elem_align.to_u64 - 1)
+        offsets << size.to_u32
+        size += elem_size
+        align = elem_align if elem_align > align
+      end
+      size = (size + align - 1) & ~(align.to_u64 - 1)
+      TupleSlotLayout.new(size, align, offsets)
     end
 
     # 3-way repr label for the LayoutProbe storage column and the step-3 verifier

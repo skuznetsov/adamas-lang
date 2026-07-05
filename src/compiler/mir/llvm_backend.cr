@@ -26402,28 +26402,9 @@ module Adamas::MIR
                 # stores compute offsets (hir_to_mir.cr:722-731). Struct-level GEP uses
                 # LLVM type sizes which differ (e.g., String is ptr=8 in LLVM but size=12 in MIR).
                 elements = tuple_type.element_types.not_nil!
-                byte_offset = 0_u64
-                elements.each_with_index do |elem, i|
-                  # Reference types (classes, structs) are heap-allocated and stored
-                  # as pointers in tuples — use pointer size, not full struct size.
-                  # Union types may need more than pointer size for their discriminated repr.
-                  is_inline = elem.kind.primitive? || elem.kind.enum?
-                  elem_size = if is_inline && elem.size > 0
-                                elem.size
-                              elsif elem.kind.union? && elem.size > 8
-                                elem.size.to_u64
-                              else
-                                8_u64
-                              end
-                  elem_align = if is_inline && elem.alignment > 0
-                                 elem.alignment
-                               else
-                                 8_u32
-                               end
-                  byte_offset = (byte_offset + elem_align - 1) & ~(elem_align.to_u64 - 1)
-                  break if i == idx_const
-                  byte_offset += elem_size
-                end
+                # Single tuple-layout contract — the aligned slot start of element
+                # idx_const, identical to the store-side (lower_allocate) offsets.
+                byte_offset = Adamas::LayoutContract.tuple_slot_layout(elements).offsets[idx_const]
                 emit "%#{base_name}.elem_ptr = getelementptr i8, ptr #{array_ptr}, i32 #{byte_offset}"
                 # Override element_type from the tuple's actual element type.
                 # The MIR instruction's element_type may be wrong when the source
@@ -26464,27 +26445,10 @@ module Adamas::MIR
               elements = tuple_type.element_types
               element_count = elements.try(&.size) || 0
               if element_count > 0 && elements
-                # Compute byte offsets for each element
-                offsets = [] of UInt64
-                byte_offset = 0_u64
-                elements.each_with_index do |elem, i|
-                  is_inline = elem.kind.primitive? || elem.kind.enum?
-                  elem_size = if is_inline && elem.size > 0
-                                elem.size
-                              elsif elem.kind.union? && elem.size > 8
-                                elem.size.to_u64
-                              else
-                                8_u64
-                              end
-                  elem_align = if is_inline && elem.alignment > 0
-                                 elem.alignment
-                               else
-                                 8_u32
-                               end
-                  byte_offset = (byte_offset + elem_align - 1) & ~(elem_align.to_u64 - 1)
-                  offsets << byte_offset
-                  byte_offset += elem_size
-                end
+                # Single tuple-layout contract — same aligned element offsets the
+                # const-index and store paths use (widened to UInt64 for the stride
+                # switch arithmetic below).
+                offsets = Adamas::LayoutContract.tuple_slot_layout(elements).offsets.map(&.to_u64)
 
                 # Check if all offsets are uniformly spaced (homogeneous elements).
                 # If so, use a simple multiply instead of a switch.

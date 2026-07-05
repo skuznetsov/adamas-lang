@@ -3625,29 +3625,18 @@ module Adamas
 
             element_refs = desc.type_params.map { |t| convert_type(t) }
 
-            size = 0_u64
-            align = 1_u32
-            element_refs.each do |elem_ref|
-              elem_type = @mir_module.type_registry.get(elem_ref)
-              elem_kind = elem_type.try(&.kind)
-              is_inline = elem_kind && (elem_kind.primitive? || elem_kind.enum?)
-              elem_size = if is_inline && elem_type && elem_type.size > 0
-                            elem_type.size
-                          elsif elem_kind && elem_kind.union? && elem_type && elem_type.size > 8
-                            elem_type.size
-                          else
-                            pointer_word_bytes_u64
-                          end
-              elem_align = if is_inline && elem_type && elem_type.alignment > 0
-                             elem_type.alignment
-                           else
-                             pointer_word_align_u32
-                           end
-              size = align_u64(size, elem_align)
-              size += elem_size
-              align = elem_align if elem_align > align
+            # Single tuple-layout contract (LayoutContract.tuple_slot_layout): resolve
+            # each element ref to its MIR Type — a nil resolution becomes the POINTER
+            # type, exactly as the element_types build below does, so an unresolved
+            # element occupies the same pointer-carrier slot the old inline rule gave
+            # it — then read size/align from the shared layout.
+            pointer_type = @mir_module.type_registry.get(TypeRef::POINTER).not_nil!
+            layout_elems = element_refs.map do |elem_ref|
+              @mir_module.type_registry.get(elem_ref) || pointer_type
             end
-            size = align_u64(size, align)
+            tuple_layout = Adamas::LayoutContract.tuple_slot_layout(layout_elems)
+            size = tuple_layout.size
+            align = tuple_layout.align
 
             if existing_mir_type
               if size > existing_mir_type.size
@@ -5203,29 +5192,10 @@ module Adamas
           tuple_byte_offsets : ::Array(UInt32)? = nil
           if mir_type = @mir_module.type_registry.get(mir_type_ref)
             if mir_type.kind.tuple? && (elements = mir_type.element_types)
-              offsets = [] of UInt32
-              current_offset = 0_u64
-              elements.each do |elem|
-                # For reference types (classes, structs) our compiler heap-allocates them,
-                # so in a Tuple they occupy pointer size (8), not their full struct size.
-                is_inline = elem.kind.primitive? || elem.kind.enum?
-                elem_size = if is_inline && elem.size > 0
-                              elem.size
-                            elsif elem.kind.union? && elem.size > 8
-                              elem.size # Union discriminated repr needs more than a pointer
-                            else
-                              pointer_word_bytes_u64
-                            end
-                elem_align = if is_inline && elem.alignment > 0
-                               elem.alignment
-                             else
-                               pointer_word_align_u32
-                             end
-                current_offset = align_u64(current_offset, elem_align)
-                offsets << current_offset.to_u32
-                current_offset += elem_size
-              end
-              tuple_byte_offsets = offsets
+              # Single tuple-layout contract — same byte offsets the tuple index_get
+              # GEP paths use, so a tuple constructor store and a later element read
+              # can never disagree on where an element lives.
+              tuple_byte_offsets = Adamas::LayoutContract.tuple_slot_layout(elements).offsets
             elsif fields = mir_type.fields
               # For struct types with fields, use field byte offsets
               offsets = fields.map(&.offset)
