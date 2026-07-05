@@ -5721,6 +5721,11 @@ module Adamas::HIR
     end
 
     @inline_next_stack : Array(InlineNextContext) = [] of InlineNextContext
+    # Yield-continuation next edges: keyed by the continuation block that
+    # inline_block_body pushes onto @loop_cond_stack. lower_next records the
+    # source block and a locals snapshot for each `next` that jumps there so
+    # the continuation can phi-merge locals across next/fall-through paths.
+    @yield_cont_next_locals : Hash(BlockId, Array({BlockId, Hash(String, ValueId)})) = {} of BlockId => Array({BlockId, Hash(String, ValueId)})
     # Loop context stack: tracks exit_block (for break) and cond_block (for next)
     @loop_exit_stack : Array(BlockId) = [] of BlockId
     @loop_cond_stack : Array(BlockId) = [] of BlockId
@@ -68586,6 +68591,16 @@ module Adamas::HIR
     end
 
     private def lower_next(ctx : LoweringContext, node : Adamas::Compiler::Frontend::NextNode) : ValueId
+      if env_get("ADAMAS_DEBUG_NEXT")
+        path = if @inline_next_stack.last?
+                 "inline_next exit=#{@inline_next_stack.last.exit_block}"
+               elsif cb = @loop_cond_stack.last?
+                 "loop_cond cond=#{cb} depth=#{@loop_cond_stack.size}"
+               else
+                 "fallback_return"
+               end
+        STDERR.puts "[DEBUG_NEXT] fn=#{ctx.function.name} cur_block=#{ctx.current_block} path=#{path} yield_depth=#{@inline_yield_block_body_depth}"
+      end
       if next_ctx = @inline_next_stack.last?
         next_value = if val_expr = node.value
                        lower_expr(ctx, val_expr)
@@ -68652,6 +68667,9 @@ module Adamas::HIR
               phi.add_incoming(current_block, incoming_val)
             end
           end
+        end
+        if yield_cont_edges = @yield_cont_next_locals[cond_block]?
+          yield_cont_edges << {ctx.current_block, ctx.save_locals.locals.dup}
         end
         ctx.terminate(Jump.new(cond_block))
       else
@@ -90824,6 +90842,82 @@ module Adamas::HIR
     end
 
     # Inline block body in place of yield
+    # Merge local-variable SSA values at a yield-continuation block reachable
+    # both from `next` edges inside an inlined block body and from the body's
+    # normal fall-through. Vars visible on every incoming edge whose values
+    # differ get a phi in the continuation block; the phi becomes the local's
+    # value for post-yield callee code and the enclosing loop's backedge.
+    private def merge_yield_cont_locals(
+      ctx : LoweringContext,
+      next_edges : Array({BlockId, Hash(String, ValueId)}),
+      fallthrough_block : BlockId?,
+      fallthrough_locals : Hash(String, ValueId),
+    ) : Nil
+      incoming = [] of {BlockId, Hash(String, ValueId)}
+      next_edges.each { |edge| incoming << edge }
+      if fb = fallthrough_block
+        incoming << {fb, fallthrough_locals}
+      end
+      return if incoming.size < 2
+
+      incoming.first[1].each_key do |name|
+        vals = [] of {BlockId, ValueId}
+        missing = false
+        incoming.each do |(blk, locals)|
+          if v = locals[name]?
+            vals << {blk, v}
+          else
+            missing = true
+            break
+          end
+        end
+        next if missing
+        next if vals.map { |(_, v)| v }.uniq.size == 1
+
+        merged_type = ctx.type_of(vals.first[1])
+        vals.each do |(_, v)|
+          merged_type = union_type_for_values(merged_type, ctx.type_of(v))
+        end
+        next if merged_type == TypeRef::VOID
+
+        phi = Phi.new(ctx.next_id, merged_type)
+        compatible = true
+        vals.each do |(blk, v)|
+          val = v
+          val_type = ctx.type_of(v)
+          if val_type != merged_type
+            if is_union_type?(merged_type)
+              if variant_id = get_union_variant_id(merged_type, val_type)
+                wrap = UnionWrap.new(ctx.next_id, merged_type, v, variant_id)
+                ctx.emit_to_block(blk, wrap)
+                val = wrap.id
+              else
+                compatible = false
+                break
+              end
+            elsif numeric_primitive?(val_type) && numeric_primitive?(merged_type)
+              cast = Cast.new(ctx.next_id, merged_type, v, merged_type, safe: false)
+              ctx.emit_to_block(blk, cast)
+              val = cast.id
+            else
+              compatible = false
+              break
+            end
+          end
+          phi.add_incoming(blk, val)
+        end
+        next unless compatible
+        ctx.emit(phi)
+        ctx.register_local(name, phi.id)
+        @inline_caller_locals_stack.reverse_each do |locals|
+          if locals.has_key?(name)
+            locals[name] = phi.id
+            break
+          end
+        end
+      end
+    end
+
     private def inline_block_body(
       ctx : LoweringContext,
       yield_node : Adamas::Compiler::Frontend::YieldNode,
@@ -91144,6 +91238,7 @@ module Adamas::HIR
                              yield_cont_block = ctx.create_block
                              @loop_cond_stack << yield_cont_block
                              @loop_phi_stack << {} of String => HIR::Phi
+                             @yield_cont_next_locals[yield_cont_block] = [] of {BlockId, Hash(String, ValueId)}
                              pushed_yield_loop = true
                            end
                            block_body_lr = begin
@@ -91156,9 +91251,22 @@ module Adamas::HIR
                              @arena = old_arena
                            end
                            if ycb = yield_cont_block
-                             unless ctx.get_block(ctx.current_block).terminator
-                               ctx.terminate(Jump.new(ycb))
+                             next_edges = @yield_cont_next_locals.delete(ycb)
+                             if next_edges && !next_edges.empty?
+                               # At least one `next` in the block body jumped to this
+                               # continuation block: route normal completion there too
+                               # and keep lowering post-yield callee code in it. The
+                               # old guard (`unless ...terminator`) was always false —
+                               # terminator defaults to an Unreachable placeholder —
+                               # so the continuation stayed an orphan Unreachable and
+                               # every `next` landed on a trap (Path#each_parent brk).
+                               fallthrough_block : BlockId? = nil
+                               if ctx.terminate_if_open(Jump.new(ycb))
+                                 fallthrough_block = ctx.current_block
+                               end
+                               fallthrough_locals = ctx.save_locals.locals
                                ctx.switch_to_block(ycb)
+                               merge_yield_cont_locals(ctx, next_edges, fallthrough_block, fallthrough_locals)
                              end
                            end
                            block_body_lr
