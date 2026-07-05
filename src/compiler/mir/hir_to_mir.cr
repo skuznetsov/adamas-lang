@@ -990,6 +990,15 @@ module Adamas
           # NEW: leaf-storage-POD struct (<=16) -> inline value-copy element ABI.
           return ContainerElemRepr::InlineValueCopy if leaf_storage_pod_struct?(type)
         end
+        # Inline-tuple ABI P0 (gated ADAMAS_INLINE_VALUE_TUPLE): a recursive-POD tuple
+        # is an InlineValueCopy candidate so the census/verifier can enumerate its
+        # producer/consumer sites. DIAGNOSTIC ONLY here — the behavior slice that
+        # actually stores tuples inline is separately gated (ADAMAS_INLINE_VALUE_ARRAY_STORAGE),
+        # so this classification does NOT change emitted code on its own. Gate OFF →
+        # byte-identical (tuple falls through to ExistingLowering as before).
+        if Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_INLINE_VALUE_TUPLE") && pod_tuple?(type)
+          return ContainerElemRepr::InlineValueCopy
+        end
         # Everything else (plain carrier struct, nested-carrier struct, ref-owning
         # struct, union, class, primitive, tuple) -> existing per-element lowering.
         ContainerElemRepr::ExistingLowering
@@ -1035,13 +1044,39 @@ module Adamas
           lib_set.any? { |ls| ls.ends_with?("::#{name}") || name.ends_with?("::#{ls.split("::").last}") }
       end
 
+      # Inline-tuple ABI (docs/inline_value_tuple_abi_sdd.md) size bound. Tuned in P4.
+      INLINE_TUPLE_MAX_BYTES = 16_u64
+
+      # RECURSIVE leaf-POD tuple gate — the InlineValueCopy eligibility for Tuple
+      # elements (the Tuple arm of abi_struct_value_sdd.md §5, which today lists Tuple
+      # as guard-only). Stricter cousin of leaf_storage_pod_struct?: a tuple is pod iff
+      # EVERY element is a primitive, an enum, or (recursively) a pod tuple — no ref,
+      # raw pointer, proc, non-POD struct, or union element. Recursion into TUPLE
+      # elements is the one new idea vs. the struct predicate (it is what makes
+      # Tuple(Tuple(Int32,Int32),Int32) inline-eligible); recursion into STRUCT fields
+      # is still deliberately excluded (a struct field is a pointer carrier under the
+      # current field ABI, so an inline memcpy would copy pointers). Bounded size;
+      # fail-closed on any non-POD element. Value tuples cannot self-reference, so the
+      # recursion always terminates.
+      private def pod_tuple?(type : Type) : Bool
+        return false unless type.kind.tuple?
+        return false if type.size == 0_u64 || type.size > INLINE_TUPLE_MAX_BYTES
+        elems = type.element_types
+        return false unless elems
+        return false if elems.empty?
+        elems.all? do |et|
+          k = et.kind
+          k.primitive? || k.enum? || pod_tuple?(et)
+        end
+      end
+
       # PLUMBING diagnostic (gated ADAMAS_INLINE_POD_CONTAINERS): log the STORED
       # ContainerElemRepr label (set by populate_container_elem_repr) for every
       # container-element-candidate type so the regression reducer can assert that
       # the classification is persisted on the Type — WITHOUT any IR change.
       private def run_container_elem_repr_census
         @mir_module.type_registry.types.each do |type|
-          next unless type.kind.struct? || type.kind.union? ||
+          next unless type.kind.struct? || type.kind.union? || type.kind.tuple? ||
                       Adamas::LayoutContract.inline_container_family?(type.name)
           repr = type.container_elem_repr || ContainerElemRepr::ExistingLowering
           STDERR.puts "[ELEM_REPR] #{type.name} kind=#{type.kind} => #{repr}"
