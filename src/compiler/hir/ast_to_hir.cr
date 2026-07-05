@@ -12741,7 +12741,25 @@ module Adamas::HIR
       return false unless base[0]?.try(&.uppercase?) || base.includes?("::") || base == "typeof"
       # typeof's arguments are expressions, not types — always type-like
       return true if base == "typeof"
-      node.args.all? { |arg_id| type_like_expr_id?(arg_id) }
+      node.args.all? { |arg_id| type_like_call_arg?(arg_id) }
+    end
+
+    # A generic type-argument for an uppercase/`::`-scoped base (i.e. a generic
+    # instantiation like `::Array({Int32, Int32})`) may itself be a bare tuple
+    # literal `{Int32, Int32}` denoting a `Tuple(...)` type. The parser emits
+    # the `::`-scoped form as a CallNode with a TupleLiteral *value* arg (unlike
+    # the bare `Array({...})` GenericNode form), so a tuple whose elements are
+    # themselves type-like must count as a type argument here — otherwise the
+    # call falls through to the generic `.call` fallback and demands a phantom
+    # `Array.call(Tuple(...))` stub.
+    private def type_like_call_arg?(expr_id : ExprId) : Bool
+      return true if type_like_expr_id?(expr_id)
+      node = @arena[expr_id]
+      if node.is_a?(Adamas::Compiler::Frontend::TupleLiteralNode)
+        elements = node.elements
+        return !elements.empty? && elements.all? { |elem| type_like_expr_id?(elem) }
+      end
+      false
     end
 
     private def normalize_typeof_type_name(type_name : String) : String
