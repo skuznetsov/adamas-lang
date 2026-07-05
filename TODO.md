@@ -1,10 +1,71 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-04 (late night)
+Updated: 2026-07-05 (night)
 Branch: `work/b5-lower-method-owner-edge`
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
+
+## 2026-07-05 (night) — Path#each_parent brk CLOSED as THREE stacked stage1 miscompiles; s2_v12 frontier = STUB reparse_expr_for_macro (Nil-widened arena arg)
+
+- The s2_v11 frontier (`brk` in Path#next_part_separator_index <-
+  Path#each_parent <- Dir.mkdir_p <- emit_functions_parallel) was three
+  independent stage1 bugs stacked on one code path; all fixed, one commit
+  each, suites 152/152 + 36/36 after each:
+  1. `f9ad76a1` inline-yield + next trap: blocks with BOTH `next` and a
+     non-local return are force-inlined; inline_block_body pushed a
+     yield-continuation block for `next` but the wiring guard
+     `unless ctx.get_block(...).terminator` was ALWAYS false (HIR
+     Block#terminator is non-nilable, defaults to Unreachable — hir.cr:1688),
+     so the continuation stayed an orphan Unreachable and every executed
+     `next` trapped. Fix: @yield_cont_next_locals registry (lower_next
+     records {block, locals} per next edge) + terminate_if_open wiring +
+     merge_yield_cont_locals phi-merge of locals across next/fall-through.
+     Oracle: yield_block_next_nonlocal_return_repro.sh. Known limitation:
+     `next value` still discards the value (matters only if callee reads the
+     yield result).
+  2. `aabcae3d` zero-iteration loop-exit: lower_while normal exit registered
+     the saved RAW latch value for inline vars (legacy each_with_index
+     rescue) — does not dominate the exit when the loop runs 0 times (read
+     garbage start_pos=0). Fix: vars_backedge_complete — use the header phi
+     when its backedge was patched; raw-value rescue kept only for
+     unpatched-phi legacy paths. Oracle:
+     inline_loop_zero_iter_exit_value_repro.sh.
+  3. `0494ab7c` explicit setter bypass: `obj.field = v` lowered to raw ivar
+     FieldSet whenever @field exists (both MemberAccess branches of
+     lower_assign), and ensure_accessor_method synthesized a bare ivar-store
+     accessor shadowing the not-yet-lowered real def. Char::Reader#pos=
+     re-decodes current_char; the stale reader made each_parent print
+     "/a/", "/a/b", "/a/b/c". Fix: gate both on
+     function_def_overload_keys("Class#field=") — property accessors
+     register no DefNode and keep the FieldSet fast path (verified).
+     Oracle: explicit_setter_dispatch_repro.sh.
+     `path_each_parent_block_tuple_return_repro.sh` is now GREEN.
+- Method note: the no-prelude reducer of the SHAPE (struct-each + next +
+  non-local tuple return) reproduced harder than full-prelude and made each
+  layer visible via --emit hir in minutes. New debug lever:
+  ADAMAS_DEBUG_NEXT=1 traces lower_next path/target/depth.
+- s2_v12 VERIFIED (stage1 0494ab7c, /tmp/s2_v12, 27.6MB): mkdir_p brk DEAD;
+  compiling `puts 42` now aborts ~1s after lower_main with
+  `STUB CALLED: Adamas::HIR::AstToHir#reparse_expr_for_macro$$ExprId_
+  Nil|AstArena|PageArena|VirtualArena_AstArena|PageArena|VirtualArena`
+  (lazy HIR lowering during emission demands it). Analysis: the demanded
+  specialization's FIRST arena param is Nil-WIDENED, but the def's
+  restriction is `ArenaLike = AstArena | VirtualArena | PageArena` (no Nil,
+  ast.cr:4832) -> no matching body -> STUB. Callsites pass `@arena`
+  (ast_to_hir.cr:11675) — stage1's ivar-type inference for the self-hosted
+  AstToHir apparently widens `@arena` to nilable. Same family as the open
+  "union-arg vs restriction" tails.
+  START HERE: reduce to no-prelude oracle — class with ivar declared as
+  2-3-variant union alias, some path assigning it via `[]?`-style nilable
+  lookup, method with the alias restriction called on the ivar; check the
+  demanded mangled name for Nil-widening. Then find where stage1 widens the
+  ivar type (ivar inference vs assignment-site union) and whether the
+  restriction match should strip Nil via flow narrowing at the callsite.
+  Artifacts kept: /tmp/s2_v11, /tmp/s2_v12, bin/adamas.pre_yield_next_backup
+  (pre-f9ad76a1), bin/adamas.pre_rand_rt_backup.
+- Side finding (separate family, NOT in scope): `Path["/a"].anchor.inspect`
+  segfaults under stage1 (found while probing; parent/dirname fine).
 
 ## 2026-07-04 (late night) — base-name return-cache sibling FIXED (8cab1d05): argful callsites no longer typed from the zero-arg overload
 
