@@ -45196,18 +45196,41 @@ module Adamas::HIR
       @function_types.has_key?(base_name) || has_function_base?(base_name)
     end
 
-    private def lookup_return_def_from_overloads(base_name : String) : Adamas::Compiler::Frontend::DefNode?
+    # Whether `def_node` can accept `argc` positional args. Return-type lookup
+    # guard: a bare base-name hit must not serve a different-arity overload
+    # (e.g. zero-arg `def rand : Float64` shadowing `def rand(max : Int) : Int`
+    # at a one-arg callsite).
+    private def return_def_accepts_positional?(
+      def_node : Adamas::Compiler::Frontend::DefNode,
+      argc : Int32,
+    ) : Bool
+      stats = build_param_stats(def_node)
+      return true if stats.positional_has_splat || stats.has_double_splat
+      argc >= stats.positional_required && argc <= stats.positional_count
+    end
+
+    private def return_def_candidate_for(
+      key : String,
+      call_arg_count : Int32?,
+    ) : Adamas::Compiler::Frontend::DefNode?
+      if d = @function_defs[key]?
+        return d if call_arg_count.nil? || return_def_accepts_positional?(d, call_arg_count)
+      end
+      nil
+    end
+
+    private def lookup_return_def_from_overloads(base_name : String, call_arg_count : Int32? = nil) : Adamas::Compiler::Frontend::DefNode?
       overloads = function_def_overloads(base_name)
       return nil if overloads.empty?
 
       if overloads.size == 1
-        return @function_defs[overloads.first]?
+        return return_def_candidate_for(overloads.first, call_arg_count)
       end
 
       selected_name = nil.as(String?)
       selected_return = nil.as(String?)
       overloads.each do |candidate|
-        def_node = @function_defs[candidate]?
+        def_node = return_def_candidate_for(candidate, call_arg_count)
         next unless def_node
         return_slice = def_node.return_type
         next unless return_slice
@@ -45230,64 +45253,65 @@ module Adamas::HIR
     private def lookup_function_def_for_return(
       name : String,
       base_name : String,
+      call_arg_count : Int32? = nil,
     ) : Adamas::Compiler::Frontend::DefNode?
-      direct = @function_defs[name]? || @function_defs[base_name]?
+      direct = return_def_candidate_for(name, call_arg_count) || return_def_candidate_for(base_name, call_arg_count)
       return direct if direct
 
       normalized_name = normalize_compiler_collection_method_name(name)
       normalized_base = normalize_compiler_collection_method_name(base_name)
       if normalized_name != name || normalized_base != base_name
-        direct = @function_defs[normalized_name]? || @function_defs[normalized_base]?
+        direct = return_def_candidate_for(normalized_name, call_arg_count) || return_def_candidate_for(normalized_base, call_arg_count)
         return direct if direct
       end
 
       stripped_name = strip_generic_receiver_from_base_name(name)
       stripped_base = strip_generic_receiver_from_base_name(base_name)
-      direct = @function_defs[stripped_name]? || @function_defs[stripped_base]?
+      direct = return_def_candidate_for(stripped_name, call_arg_count) || return_def_candidate_for(stripped_base, call_arg_count)
       return direct if direct
 
       normalized_stripped_name = strip_generic_receiver_from_base_name(normalized_name)
       normalized_stripped_base = strip_generic_receiver_from_base_name(normalized_base)
       if normalized_stripped_name != stripped_name || normalized_stripped_base != stripped_base
-        direct = @function_defs[normalized_stripped_name]? || @function_defs[normalized_stripped_base]?
+        direct = return_def_candidate_for(normalized_stripped_name, call_arg_count) || return_def_candidate_for(normalized_stripped_base, call_arg_count)
         return direct if direct
       end
 
-      if overload = lookup_return_def_from_overloads(base_name)
+      if overload = lookup_return_def_from_overloads(base_name, call_arg_count)
         return overload
       end
       if normalized_base != base_name
-        if overload = lookup_return_def_from_overloads(normalized_base)
+        if overload = lookup_return_def_from_overloads(normalized_base, call_arg_count)
           return overload
         end
       end
       if stripped_base != base_name
-        if overload = lookup_return_def_from_overloads(stripped_base)
+        if overload = lookup_return_def_from_overloads(stripped_base, call_arg_count)
           return overload
         end
       end
       if normalized_stripped_base != stripped_base && normalized_stripped_base != normalized_base
-        if overload = lookup_return_def_from_overloads(normalized_stripped_base)
+        if overload = lookup_return_def_from_overloads(normalized_stripped_base, call_arg_count)
           return overload
         end
       end
 
       if inherited = lookup_inherited_function_def_for_return(base_name)
-        return inherited
+        return inherited if call_arg_count.nil? || return_def_accepts_positional?(inherited, call_arg_count)
       end
       if normalized_base != base_name
         if inherited = lookup_inherited_function_def_for_return(normalized_base)
-          return inherited
+          return inherited if call_arg_count.nil? || return_def_accepts_positional?(inherited, call_arg_count)
         end
       end
       if stripped_base != base_name
         if inherited = lookup_inherited_function_def_for_return(stripped_base)
-          return inherited
+          return inherited if call_arg_count.nil? || return_def_accepts_positional?(inherited, call_arg_count)
         end
       end
       if normalized_stripped_base != stripped_base && normalized_stripped_base != normalized_base
         if inherited = lookup_inherited_function_def_for_return(normalized_stripped_base)
-          return inherited
+          return inherited if call_arg_count.nil? || return_def_accepts_positional?(inherited, call_arg_count)
         end
       end
 
@@ -45375,7 +45399,7 @@ module Adamas::HIR
       name.includes?("Crystal::Hasher") || name.includes?("Crystal$CCHasher")
     end
 
-    private def get_function_return_type(name : String) : TypeRef
+    private def get_function_return_type(name : String, call_arg_count : Int32? = nil) : TypeRef
       return TypeRef::VOID unless v2_string_readable?(name)
       base_name = strip_type_suffix(name)
       # M4d (return-type fix): a typed hash(hasher) overload returns Crystal::Hasher,
@@ -45414,9 +45438,9 @@ module Adamas::HIR
             existing_type = func_rt
           end
         end
-        if def_node = lookup_function_def_for_return(name, base_name)
+        if def_node = lookup_function_def_for_return(name, base_name, call_arg_count)
           if def_node.return_type
-            if resolved = resolve_return_type_from_def(name, base_name, nil)
+            if resolved = resolve_return_type_from_def(name, base_name, nil, call_arg_count)
               if resolved != TypeRef::VOID && resolved != existing_type
                 set_function_type_entry(name, resolved)
                 @function_base_return_types[base_name] = resolved if name == base_name
@@ -45455,7 +45479,7 @@ module Adamas::HIR
         end
         # Try AST-walk inference first (non-recursive, no stack depth risk).
         if existing_type == TypeRef::VOID
-          if def_node = lookup_function_def_for_return(name, base_name)
+          if def_node = lookup_function_def_for_return(name, base_name, call_arg_count)
             unless defer_specialized_body_inference
               owner_name = function_context_from_name(base_name)
               if inferred = infer_return_type_from_body_without_callsite(def_node, owner_name)
@@ -45472,7 +45496,7 @@ module Adamas::HIR
         # Fall back to force_lower only when AST-walk couldn't determine the type.
         if existing_type == TypeRef::VOID
           if @infer_body_context.nil? && !function_state(name).in_progress? && !@module.has_function?(name)
-            if lookup_function_def_for_return(name, base_name)
+            if lookup_function_def_for_return(name, base_name, call_arg_count)
               unless force_lower_function_for_return_type(name)
                 lower_function_if_needed(name)
               end
@@ -45528,9 +45552,9 @@ module Adamas::HIR
           return wk_rt
         end
         # Try AST-walk inference and explicit return type annotations first (non-recursive).
-        if def_node = lookup_function_def_for_return(name, base_name)
+        if def_node = lookup_function_def_for_return(name, base_name, call_arg_count)
           if def_node.return_type
-            if resolved = resolve_return_type_from_def(name, base_name, nil)
+            if resolved = resolve_return_type_from_def(name, base_name, nil, call_arg_count)
               return resolved unless resolved == TypeRef::VOID
             end
           end
@@ -45548,7 +45572,7 @@ module Adamas::HIR
 
         # Fall back to force_lower only when AST-walk couldn't determine the type.
         if @infer_body_context.nil? && !function_state(name).in_progress?
-          if lookup_function_def_for_return(name, base_name)
+          if lookup_function_def_for_return(name, base_name, call_arg_count)
             unless force_lower_function_for_return_type(name)
               lower_function_if_needed(name)
             end
@@ -45577,7 +45601,7 @@ module Adamas::HIR
             unionish = base_type_name.includes?('|')
           end
           if unionish
-            def_node = lookup_function_def_for_return(name, base_name)
+            def_node = lookup_function_def_for_return(name, base_name, call_arg_count)
             if def_node
               if rt = def_node.return_type
                 # Respect explicit return annotations; do not override them with body inference.
@@ -45634,7 +45658,7 @@ module Adamas::HIR
           unionish = type_name.includes?('|')
         end
         if unionish
-          def_node = lookup_function_def_for_return(name, base_name)
+          def_node = lookup_function_def_for_return(name, base_name, call_arg_count)
           if def_node
             if rt = def_node.return_type
               # Respect explicit return annotations; do not override them with body inference.
@@ -45668,7 +45692,7 @@ module Adamas::HIR
           end
         end
         if unresolved_generic_return_type?(type)
-          def_node = lookup_function_def_for_return(name, base_name)
+          def_node = lookup_function_def_for_return(name, base_name, call_arg_count)
           if def_node
             if rt = def_node.return_type
               # Respect explicit return annotations; do not override them with body inference.
@@ -45719,7 +45743,7 @@ module Adamas::HIR
           if func = @module.function_by_name(name)
             return func.return_type unless func.return_type == TypeRef::VOID
           end
-          if def_node = lookup_function_def_for_return(name, base_name)
+          if def_node = lookup_function_def_for_return(name, base_name, call_arg_count)
             owner_name = nil.as(String?)
             if idx = name.rindex('#')
               owner_name = name[0, idx]
@@ -45781,8 +45805,13 @@ module Adamas::HIR
         end
       end
       # If this is a base name (no $ suffix), use cached return type if available.
-      if cached = @function_base_return_types[base_name]?
-        return cached
+      # The base cache stores ONE representative per name, so serving it for a
+      # typed specialization (name$T...) at an arity-aware callsite is a lossy
+      # fallback (zero-arg `rand : Float64` shadowing `rand(Int) : Int`).
+      if call_arg_count.nil? || name == base_name
+        if cached = @function_base_return_types[base_name]?
+          return cached
+        end
       end
       if name.ends_with?('?')
         receiver_name = nil.as(String?)
@@ -50346,10 +50375,11 @@ module Adamas::HIR
       mangled_method_name : String,
       base_method_name : String,
       receiver_type : TypeRef?,
+      call_arg_count : Int32? = nil,
     ) : TypeRef?
       normalized_mangled = normalize_compiler_collection_method_name(mangled_method_name)
       normalized_base = normalize_compiler_collection_method_name(base_method_name)
-      func_def = lookup_function_def_for_return(normalized_mangled, normalized_base)
+      func_def = lookup_function_def_for_return(normalized_mangled, normalized_base, call_arg_count)
       return nil if !func_def
 
       return_type_slice = func_def.return_type
@@ -79517,11 +79547,17 @@ module Adamas::HIR
         end
       end
 
+      # Positional arity of this callsite for return-def lookup. Only trusted
+      # for plain positional calls: blocks may materialize a trailing proc arg,
+      # named args bind by name, and a callsite splat expands to an unknown
+      # count — all fall back to legacy (nil) lookup.
+      return_def_arg_count = (has_block_call || block_id || has_named_args || has_splat) ? nil : args.size
+
       # Try to infer return type using mangled name first, fallback to base name
       # For non-overloaded functions, prefer base name since that's how they're registered in HIR module
-      return_type = get_function_return_type(mangled_method_name)
+      return_type = get_function_return_type(mangled_method_name, return_def_arg_count)
       begin
-        if def_node = lookup_function_def_for_return(mangled_method_name, base_method_name)
+        if def_node = lookup_function_def_for_return(mangled_method_name, base_method_name, return_def_arg_count)
           if debug_env_filter_match?("DEBUG_RETURN_DEF", mangled_method_name, base_method_name)
             rt_name = (drt = def_node.return_type) ? (safe_slice_to_string(drt) || "(nil)") : "(nil)"
             STDERR.puts "[CALL_RETURN_DEF] name=#{mangled_method_name} base=#{base_method_name} rt=#{rt_name}"
@@ -79573,7 +79609,7 @@ module Adamas::HIR
             end
           end
           if def_node.return_type
-            if resolved = resolve_return_type_from_def(mangled_method_name, base_method_name, receiver_id ? ctx.type_of(receiver_id) : nil)
+            if resolved = resolve_return_type_from_def(mangled_method_name, base_method_name, receiver_id ? ctx.type_of(receiver_id) : nil, return_def_arg_count)
               if debug_env_filter_match?("DEBUG_RETURN_DEF", mangled_method_name, base_method_name)
                 STDERR.puts "[CALL_RETURN_DEF] resolved=#{get_type_name_from_ref(resolved)}"
               end
@@ -79592,7 +79628,7 @@ module Adamas::HIR
           end
         end
         if return_type == TypeRef::VOID || return_type == TypeRef::NIL || unionish
-          if def_node = lookup_function_def_for_return(mangled_method_name, base_method_name)
+          if def_node = lookup_function_def_for_return(mangled_method_name, base_method_name, return_def_arg_count)
             defer_specialized_body_inference = has_typed_args &&
                                                mangled_method_name != base_method_name &&
                                                !@function_types.has_key?(mangled_method_name)
@@ -79621,7 +79657,7 @@ module Adamas::HIR
       # If no concrete signature was registered for the mangled name, prefer
       # resolving the return type from the def in the owner's namespace.
       if !@function_types.has_key?(mangled_method_name)
-        if inferred = resolve_return_type_from_def(mangled_method_name, base_method_name, receiver_id ? ctx.type_of(receiver_id) : nil)
+        if inferred = resolve_return_type_from_def(mangled_method_name, base_method_name, receiver_id ? ctx.type_of(receiver_id) : nil, return_def_arg_count)
           return_type = inferred unless inferred == TypeRef::VOID || inferred == TypeRef::NIL
         end
       end
@@ -79729,7 +79765,7 @@ module Adamas::HIR
       base_signature_exists = @function_types.has_key?(base_method_name)
       if base_signature_exists && !@function_types.has_key?(mangled_method_name) && mangled_method_name != base_method_name
         unless block_return_name || has_typed_args
-          return_type = get_function_return_type(base_method_name)
+          return_type = get_function_return_type(base_method_name, return_def_arg_count)
           mangled_method_name = base_method_name unless has_typed_args
         end
       end
@@ -79743,12 +79779,12 @@ module Adamas::HIR
 
       if base_func_exists && !base_method_name.includes?('#') && !base_method_name.includes?('.') && !has_typed_args
         # Function exists with base name - use that (no mangling needed for simple functions)
-        return_type = get_function_return_type(base_method_name) if return_type == TypeRef::VOID
+        return_type = get_function_return_type(base_method_name, return_def_arg_count) if return_type == TypeRef::VOID
         mangled_method_name = base_method_name
       elsif return_type == TypeRef::VOID && mangled_method_name != base_method_name &&
             !base_method_name.includes?('#') && !base_method_name.includes?('.') && !has_typed_args
         # Try unmangled name as fallback for unqualified functions.
-        return_type = get_function_return_type(base_method_name)
+        return_type = get_function_return_type(base_method_name, return_def_arg_count)
         if return_type != TypeRef::VOID
           mangled_method_name = base_method_name
         end
@@ -79865,7 +79901,7 @@ module Adamas::HIR
       end
 
       if return_type == TypeRef::VOID || return_type == TypeRef::NIL
-        if inferred = resolve_return_type_from_def(mangled_method_name, base_method_name, receiver_id ? ctx.type_of(receiver_id) : nil)
+        if inferred = resolve_return_type_from_def(mangled_method_name, base_method_name, receiver_id ? ctx.type_of(receiver_id) : nil, return_def_arg_count)
           return_type = inferred unless inferred == TypeRef::VOID || inferred == TypeRef::NIL
           if debug_get_cache
             rt_name = get_type_name_from_ref(return_type)
