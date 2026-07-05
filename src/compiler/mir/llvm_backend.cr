@@ -3286,16 +3286,10 @@ module Adamas::MIR
       pointer_word_bytes_u64
     end
 
+      # Thin delegator to the single unbounded tuple-POD source. Kept as a private
+      # method because several LLVM-lowering call sites read it by this name.
       private def inline_primitive_tuple_type?(elem_type : Type?) : Bool
-        return false unless elem_type
-        return false unless elem_type.kind.tuple? && elem_type.size > 0
-        elements = elem_type.element_types
-        return false unless elements && !elements.empty?
-
-        elements.all? do |element|
-          ((element.kind.primitive? || element.kind.enum?) && element.size > 0) ||
-            inline_primitive_tuple_type?(element)
-        end
+        Adamas::LayoutContract.primitive_tuple?(elem_type)
       end
 
     private def inline_container_struct_type?(elem_type : Type?) : Bool

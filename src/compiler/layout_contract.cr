@@ -134,6 +134,37 @@ module Adamas
       TupleSlotLayout.new(size, align, offsets)
     end
 
+    # Recursive "every leaf is a primitive/enum" tuple predicate — the UNBOUNDED
+    # tuple-POD test the container-element storage ABI already uses. Formerly
+    # duplicated byte-for-byte as inline_primitive_tuple_type? in both hir_to_mir
+    # and llvm_backend; both now delegate here so the two copies cannot drift. A
+    # tuple whose every element is a primitive/enum (recursively, through nested
+    # tuples) is stored inline as its own value bytes.
+    def self.primitive_tuple?(type : MIR::Type?) : Bool
+      return false unless type
+      return false unless type.kind.tuple? && type.size > 0
+      elements = type.element_types
+      return false unless elements && !elements.empty?
+      elements.all? do |element|
+        ((element.kind.primitive? || element.kind.enum?) && element.size > 0) ||
+          primitive_tuple?(element)
+      end
+    end
+
+    # Inline-value tuple ABI size bound (docs/inline_value_tuple_abi_sdd.md, tuned
+    # in P4): a value tuple larger than this stays on the existing lowering so an
+    # inline memcpy never blows up for a huge aggregate.
+    INLINE_TUPLE_MAX_BYTES = 16_u64
+
+    # BOUNDED tuple-POD gate = primitive_tuple? within the inline size bound. THE
+    # single predicate the inline-value-tuple flip (a later step) and the gated
+    # ContainerElemRepr census consult; the one specialization of primitive_tuple?
+    # that adds the byte cap. Callers reach it only under ADAMAS_INLINE_VALUE_TUPLE,
+    # so it does not affect the default (gate-off) codegen.
+    def self.pod_tuple?(type : MIR::Type) : Bool
+      primitive_tuple?(type) && type.size <= INLINE_TUPLE_MAX_BYTES
+    end
+
     # 3-way repr label for the LayoutProbe storage column and the step-3 verifier
     # (step 1b routes the probe label through here so a slot is named identically
     # in every phase).

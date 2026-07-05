@@ -1044,30 +1044,14 @@ module Adamas
           lib_set.any? { |ls| ls.ends_with?("::#{name}") || name.ends_with?("::#{ls.split("::").last}") }
       end
 
-      # Inline-tuple ABI (docs/inline_value_tuple_abi_sdd.md) size bound. Tuned in P4.
-      INLINE_TUPLE_MAX_BYTES = 16_u64
-
-      # RECURSIVE leaf-POD tuple gate — the InlineValueCopy eligibility for Tuple
-      # elements (the Tuple arm of abi_struct_value_sdd.md §5, which today lists Tuple
-      # as guard-only). Stricter cousin of leaf_storage_pod_struct?: a tuple is pod iff
-      # EVERY element is a primitive, an enum, or (recursively) a pod tuple — no ref,
-      # raw pointer, proc, non-POD struct, or union element. Recursion into TUPLE
-      # elements is the one new idea vs. the struct predicate (it is what makes
-      # Tuple(Tuple(Int32,Int32),Int32) inline-eligible); recursion into STRUCT fields
-      # is still deliberately excluded (a struct field is a pointer carrier under the
-      # current field ABI, so an inline memcpy would copy pointers). Bounded size;
-      # fail-closed on any non-POD element. Value tuples cannot self-reference, so the
-      # recursion always terminates.
+      # Bounded recursive tuple-POD gate — the single source now lives in
+      # LayoutContract.pod_tuple? (docs/inline_value_tuple_abi_sdd.md), which is
+      # primitive_tuple? within INLINE_TUPLE_MAX_BYTES. This thin delegator keeps
+      # the gated ContainerElemRepr census call site short; see
+      # LayoutContract.primitive_tuple? for the unbounded cousin the
+      # container-element storage ABI uses.
       private def pod_tuple?(type : Type) : Bool
-        return false unless type.kind.tuple?
-        return false if type.size == 0_u64 || type.size > INLINE_TUPLE_MAX_BYTES
-        elems = type.element_types
-        return false unless elems
-        return false if elems.empty?
-        elems.all? do |et|
-          k = et.kind
-          k.primitive? || k.enum? || pod_tuple?(et)
-        end
+        Adamas::LayoutContract.pod_tuple?(type)
       end
 
       # PLUMBING diagnostic (gated ADAMAS_INLINE_POD_CONTAINERS): log the STORED
@@ -4061,16 +4045,10 @@ module Adamas
         pointer_word_bytes_u64
       end
 
+      # Thin delegator to the single unbounded tuple-POD source. Kept as a private
+      # method because several MIR-lowering call sites read it by this name.
       private def inline_primitive_tuple_type?(elem_type : Type?) : Bool
-        return false unless elem_type
-        return false unless elem_type.kind.tuple? && elem_type.size > 0
-        elements = elem_type.element_types
-        return false unless elements && !elements.empty?
-
-        elements.all? do |element|
-          ((element.kind.primitive? || element.kind.enum?) && element.size > 0) ||
-            inline_primitive_tuple_type?(element)
-        end
+        Adamas::LayoutContract.primitive_tuple?(elem_type)
       end
 
       private def inline_container_struct_type?(elem_type : Type?) : Bool
