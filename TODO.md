@@ -1,10 +1,44 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-05 (deep night)
+Updated: 2026-07-05 (inline-tuple ABI step 2 shipped)
 Branch: `work/b5-lower-method-owner-edge`
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
+
+## 2026-07-05 — inline-tuple ABI step 2 SHIPPED: tuple slot-layout + POD predicate single-sourced (byte-neutral), gate green
+
+Prereq consolidation for the tuple-slot-layout flip (the nested-tuple `@buffer`
+alias behind the `sort_by!` blocker below). Two behavior-neutral commits collapse
+the drift-prone tuple layout logic onto `LayoutContract` so the flip can later land
+in ONE place:
+
+- **`c3d87e12`** — 5 mutually-equivalent Class-T tuple slot-layout sites →
+  `LayoutContract.tuple_slot_layout(elements) : {size, align, offsets}`
+  (register_tuple_types size/align, lower_allocate offsets, llvm const-index,
+  llvm runtime-index). Removes the latent hir-`pointer_word` vs llvm-hardcoded-`8`
+  divergence (all route `POINTER_WORD_BYTES`/`POINTER_WORD_ALIGN`). Function takes an
+  explicit `Array(MIR::Type)` (register_tuple_types runs before `element_types` is
+  populated); site-5 stride block left intact, reading `.offsets`.
+- **`93a27be8`** — byte-for-byte-dup `inline_primitive_tuple_type?` (hir == llvm) →
+  `LayoutContract.primitive_tuple?` (both files now thin delegators); `pod_tuple?` +
+  `INLINE_TUPLE_MAX_BYTES` moved to `LayoutContract`; `pod_tuple? = primitive_tuple? && ≤16`.
+  Corrects the census's backwards reconcile direction: the UNBOUNDED, ungated, ACTIVE
+  predicate is the shared source; `pod_tuple?` is its bounded, gate-only specialization
+  (routing active→bounded would have flipped >16B container storage = not byte-neutral).
+
+DoD: MIR **and** LLVM-IR byte-identical to the clean `2e202c2e` baseline on no-prelude
+tuple oracles (homogeneous / mixed-align / nested / union>8 / Float64 / Int16; const +
+runtime index paths); full regression gate 152/152 + 36/36.
+
+- **STEP 4 NEXT (the flip)** — add the nested-pod-tuple → inline branch in the ONE
+  place now, `tuple_slot_layout`'s `else` clause, gated, consulting
+  `LayoutContract.pod_tuple?`. This dissolves the `sort_by!`
+  `Tuple(Tuple(Int32,Int32),Int32)` 8B-carrier alias. Precede with step 3
+  (SLOT-CONFLICT verifier scoped to pod-tuple; heed the 15-17 false-positive caveat
+  in `LANDMARKS`/memory). For the exact blocker shape the inner tuple is 8B == ptr-word
+  so the flip is representational; the size under-alloc bites at `Tuple(Int32,Int32,Int32)`
+  (12B inline vs 8B ptr). This is a sibling track to P1 below (Array-buffer inline slice).
 
 ## 2026-07-05 — sort_by! blocker ROOT-CAUSED = value-tuple PointerCarrier alias; inline-tuple ABI SDD + P0 landed
 
