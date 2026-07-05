@@ -65892,7 +65892,10 @@ module Adamas::HIR
       updated_loop_values = snapshot_loop_updated_values(ctx, assigned_vars, inline_vars)
       ctx.pop_scope
 
-      # After body execution, get updated values and patch phi nodes
+      # After body execution, get updated values and patch phi nodes.
+      # Track vars whose header phi is complete (got a backedge incoming or
+      # the value never changed): for those the phi IS the correct exit value.
+      vars_backedge_complete = Set(String).new
       assigned_vars.each do |var_name|
         if phi = phi_nodes[var_name]?
           updated_val = updated_loop_values[var_name]?
@@ -65931,6 +65934,7 @@ module Adamas::HIR
             if incoming_val != phi.id
               phi.add_incoming(body_exit_block, incoming_val)
             end
+            vars_backedge_complete.add(var_name)
             # Reset local to point back to phi for next iteration
             ctx.register_local(var_name, phi.id)
             # Also restore the stack entry to the PHI for inline vars
@@ -65956,13 +65960,15 @@ module Adamas::HIR
       if break_info.empty?
         # No breaks — locals point to cond_block phi nodes (normal exit only)
         phi_nodes.each do |var_name, phi|
-          # For inline vars modified in yield bodies: the cond_block PHI
-          # represents the start-of-iteration value. After the last body
-          # execution, the variable was updated but the PHI wasn't refreshed
-          # (the backedge was never taken). Use the saved backedge value which
-          # captures the last body modification. Also update the caller locals
-          # stack so the value survives inline_yield_function's restoration.
-          if inline_vars.includes?(var_name)
+          # For inline vars modified in yield bodies whose header PHI never
+          # received a backedge incoming (legacy inline paths), fall back to
+          # the saved raw body value so the last modification isn't lost.
+          # When the backedge WAS patched the phi already carries the last
+          # body value AND dominates the exit — the raw body value does not
+          # (a zero-iteration loop would read garbage: Path#each_parent
+          # start_pos sibling). Also update the caller locals stack so the
+          # value survives inline_yield_function's restoration.
+          if inline_vars.includes?(var_name) && !vars_backedge_complete.includes?(var_name)
             if saved = @inline_loop_var_backedge_values[var_name]?
               ctx.register_local(var_name, saved)
               @inline_caller_locals_stack.reverse_each do |locals|
@@ -65975,6 +65981,14 @@ module Adamas::HIR
             end
           end
           ctx.register_local(var_name, phi.id)
+          if inline_vars.includes?(var_name)
+            @inline_caller_locals_stack.reverse_each do |locals|
+              if locals.has_key?(var_name)
+                locals[var_name] = phi.id
+                break
+              end
+            end
+          end
         end
       else
         # Breaks occurred — create exit phi nodes that merge normal-exit + break paths
