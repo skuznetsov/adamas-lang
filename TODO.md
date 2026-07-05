@@ -31,14 +31,16 @@ DoD: MIR **and** LLVM-IR byte-identical to the clean `2e202c2e` baseline on no-p
 tuple oracles (homogeneous / mixed-align / nested / union>8 / Float64 / Int16; const +
 runtime index paths); full regression gate 152/152 + 36/36.
 
-- **STEP 4 NEXT (the flip)** — add the nested-pod-tuple → inline branch in the ONE
-  place now, `tuple_slot_layout`'s `else` clause, gated, consulting
-  `LayoutContract.pod_tuple?`. This dissolves the `sort_by!`
-  `Tuple(Tuple(Int32,Int32),Int32)` 8B-carrier alias. Precede with step 3
-  (SLOT-CONFLICT verifier scoped to pod-tuple; heed the 15-17 false-positive caveat
-  in `LANDMARKS`/memory). For the exact blocker shape the inner tuple is 8B == ptr-word
-  so the flip is representational; the size under-alloc bites at `Tuple(Int32,Int32,Int32)`
-  (12B inline vs 8B ptr). This is a sibling track to P1 below (Array-buffer inline slice).
+- **STEP 4 (the geometry flip) — DEPRIORITIZED, OFF-TARGET (VERIFIED 2026-07-05).**
+  Empirical grounding showed the documented flip of `tuple_slot_layout`'s `else`
+  clause does NOT dissolve the `sort_by!` alias: `tuple_slot_layout` returns ONLY
+  geometry (`size/align/offsets`); the tuple constructor store (hir_to_mir.cr:5193)
+  does `builder.store(field_ptr, arg_val)` UNCONDITIONALLY (stores the borrow
+  pointer). For the 8B blocker shape the geometry is byte-identical either way, so
+  the flip is a no-op for the alias — and flipping the inner align 8→4 would ripple
+  the OUTER tuple 16→12B (NOT byte-neutral OFF). The alias fix lives in load/store
+  copy semantics, which is exactly the P1 behavior slice below — NOT geometry. Step 3
+  (SLOT-CONFLICT verifier) is likewise deprioritized.
 
 ## 2026-07-05 — sort_by! blocker ROOT-CAUSED = value-tuple PointerCarrier alias; inline-tuple ABI SDD + P0 landed
 
@@ -65,11 +67,19 @@ refuted-branch-aware — do NOT route tuples through the generic magic-base path
   nondeterminism). Census on the blocker: `Tuple(Tuple(Int32,Int32),Int32)` correctly
   classified; 37 pod tuples admitted / 165 excluded; read-provenance **erased tail
   0.7%** → inline slice can be a mostly-local codegen patch (A' falsifier PASSES).
-- **P1 NEXT** — flat pod-tuple inline in Array buffers: reuse the
-  `@inline_value_array_storage` behavior slice (stride/literal-size/value-slot) for
-  pod-tuple elements. First BEHAVIOR slice → full DoD (RED oracle + ADV1/ADV3 reducers
-  + suites 152/152+36/36 + s2 + perf delta). Add reducers
-  `adv1_local_tuple_borrow_repro`, `adv3_construct_tuple_borrow_repro`.
+- **P1 — the behavior slice is ALREADY WIRED; both gates together fix the alias
+  (VERIFIED 2026-07-05).** No new codegen was needed: `ADAMAS_INLINE_VALUE_TUPLE`
+  classifies `pod_tuple?` as an `InlineValueCopy` element candidate (so it enters the
+  safe-set + `inline_array_storage_eligible`), and `ADAMAS_INLINE_VALUE_ARRAY_STORAGE`
+  is the A' inline-store + copy-on-load slice that breaks the borrow. Bisection: each
+  gate alone RED, BOTH ON GREEN.
+  - DoD progress: **RED oracle + ADV1 (local-bind) + ADV3 (construct) DONE** —
+    `regression_tests/inline_value_tuple_array_alias_fix.sh` (3 facets: legacy
+    miscompiles, both-gates fixes). **Full suites 152/152 + 36/36 with both gates ON
+    = GREEN (no regression).** REMAINING: s2 bootstrap with gates ON + perf delta.
+  - SHIPPING (owner-gated): flipping the two gates default-ON is the ship. Blast
+    radius = all pod-tuple + inline-array codegen; suite-clean but pending s2 + perf.
+    Decide narrow-default-on vs stay-gated after s2/perf evidence.
 - Stopgap (kill-condition fallback, not the goal): copy pod-tuple ctor-arg in
   `lower_allocate` (keeps PointerCarrier, fixes alias, perf-neutral).
 
