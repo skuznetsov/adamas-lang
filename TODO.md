@@ -1,10 +1,66 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-05 (late night)
+Updated: 2026-07-05 (deep night)
 Branch: `work/b5-lower-method-owner-edge`
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
+
+## 2026-07-05 (deep night) — s2 STUB CLOSED (::Array(Tuple) call-stub); + u2u payload-width fix; new frontier = sort_by! merge_sort on Array(Tuple)
+
+- `7c2f06b9` CLOSED the s2_v13/v14 STUB manifestation (`Array$Dcall$$Tuple`).
+  Root: `::Array({Int32, Int32}).new(n)` — global-scoped generic instantiation
+  whose type argument is a bare tuple literal — was misparsed. The parser emits
+  bare `Array({...})` as a GenericNode (→ type literal) but the `::`-scoped form
+  as a CallNode whose callee is a PathNode and whose `{T,U}` is a TupleLiteral
+  *value* node. In `lower_call`, `type_like_call_expr?` gates the
+  generic-instantiation path and required every arg to satisfy
+  `type_like_expr_id?`, which does NOT classify a TupleLiteralNode as type-like.
+  So `::Array({Int32,Int32})` fell through to the "complex callee" fallback
+  (ast_to_hir ~76417: `method_name = "call"`), producing a phantom
+  `Array.call({0,0})` then `.new()` on the bogus result (HIR:
+  `%N = call Array.call$Tuple(Int32, Int32)(%tuple) ; %M = call %N.new()`).
+  Fix: new `type_like_call_arg?` — `type_like_call_expr?` now accepts a
+  tuple-literal arg whose elements are themselves type-like. Only widens the
+  classifier for uppercase/::-scoped bases (always a generic instantiation in
+  Crystal); direct value-tuple receivers `{1,2}.size` unaffected (different
+  caller ~75571). Pre-existing (reproduces on pre-d7dc440c stage1), was masked
+  by the earlier reparse stub. Oracle: `cc_array_tuple_new_call_stub_repro.sh`
+  (STUB pre-fix, PASS now). Debug lever used then removed: `DEBUG_CCNEW`.
+- `0b008b47` — INDEPENDENT latent corruption caught while investigating:
+  the d7dc440c u2u coerce (variant_type_id=-2) copied the union payload with a
+  single `load ptr`/`store ptr` = 8 bytes, TRUNCATING wide inline payloads
+  (Tuples). Confirmed live in self-host via new `ADAMAS_U2U_TRACE` lever
+  (pay_bytes 12/16/24). Fix: memcpy min(src,dst) payload bytes
+  (`union_payload_byte_width`/`union_payload_copy_bytes`). NOT the STUB root
+  (STUB persisted after this fix).
+- Both fixes: suites 152/152 + 36/36. s2_v16 rebuilt (/tmp/s2_v16, both fixes):
+  **STUB gone 0/10** (was 2/8). s2 now reaches EMISSION.
+- **NEW s2 frontier — TWO remaining crash tails (both on the critical path):**
+  1. EMISSION crash (unmasked by the STUB fix): `sort_by!` /
+     `Array(Tuple(...))#sort!` → `Slice#merge_sort!` on an array of tuples
+     corrupts memory. lldb bt (s2_v16): `__crystal_block_proc_303` (addr 0x60)
+     <- `Slice(UInt8)#cmp(Tuple(...))` <- `Slice#merge_sort!` <-
+     `Array(Tuple(Tuple(Int32,Int32),Int32))#sort!$block` <-
+     `emit_functions_parallel` (which does
+     `func_costs.sort_by! { |_, cost| -cost }`). RED oracle
+     `array_tuple_sort_by_merge_sort_repro.sh` + reducers /tmp/s_lit_sort.cr,
+     /tmp/s_noc_sort.cr. Reproduces WITHOUT `::` and with a plain array literal
+     → root is tuple-in-Slice/merge_sort, not the `::` form. Nondeterministic
+     (memory corruption): sometimes segfaults, sometimes wrong sort output.
+     NOTE existing `sort_by_tuple_key_runtime_repro.sh` PASSES (sorts a
+     REFERENCE array by a tuple KEY) — different family; the new bug is an
+     array whose ELEMENTS are tuples + destructuring block `|_, cost|`.
+     **START HERE** — reduce whether trigger is destructure params vs
+     tuple-element Slice ABI in merge_sort; --emit hir/mir on the reducer.
+  2. REGISTER-phase arena corruption at `module register idx=3/141`
+     (infer_ivars) — the separate @arena object/storage corruption traced to
+     d7dc440c, still open (ASLR-nondeterministic; runs that pass registration
+     now reach emission and hit tail #1). See
+     [[declared_ivar_nil_widen_fix]] / [[vdispatch_variant_underenum_rta_demand_fix]].
+- Artifacts: /tmp/s2_v16 (both fixes), /tmp/s2_v15 (u2u only),
+  bin/adamas.pre_u2u_memcpy_backup (d7dc440c stage1),
+  bin/adamas.pre_declared_ivar_backup (pre-d7dc440c).
 
 ## 2026-07-05 (later) — vdispatch variant under-enumeration CLOSED (all-ref union RTA under-demand); s2_v13 arena crash is a SEPARATE @arena-object corruption
 
