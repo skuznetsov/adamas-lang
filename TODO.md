@@ -1,10 +1,60 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-05 (night)
+Updated: 2026-07-05 (late night)
 Branch: `work/b5-lower-method-owner-edge`
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
+
+## 2026-07-05 (late night) — s2_v12 reparse STUB CLOSED (declared-ivar Nil-widening); s2_v13 frontier = register-phase type-confusion / Array.call STUB
+
+- `d7dc440c` CLOSED the s2_v12 frontier. Root cause (caught with the new
+  `ivar.union.widen` debug hook, -Ddebug_hooks + ADAMAS_DEBUG_HOOKS): both
+  InstanceVar branches of lower_assign silently REPLACED a declared ivar
+  type with union_type_for_values(existing, value) when the RHS static type
+  mismatched and sizes were equal. ONE un-narrowed nilable assignment inside
+  a block proc (fn=__crystal_block_proc_227, with_arena family — stage1
+  flow narrowing does not survive block-proc capture) permanently poisoned
+  AstToHir @arena to Nil|ArenaLike; all later @arena reads demanded
+  Nil-widened specs with no matching body (reparse_expr_for_macro + the
+  whole stub cluster next to it: reparse_named_arg_for_macro,
+  callsite_snippet_for, register_function_def...). Also seen: second widen
+  event added String to the same union (Nil|ArenaLike|String Array
+  classvars in nm).
+  Fix: (1) @declared_typed_ivars registry marked at every explicit
+  annotation registration path; widening branches keep declared types
+  (hook: ivar.union.declared). (2) coerce_value_to_type union->union via
+  UnionWrap variant_type_id=-2 sentinel; emit_union_wrap preserves payload
+  + remaps positional tid (mirrors phi/call-return u2u paths).
+  Oracle: declared_ivar_nil_widen_repro.sh (RED pre-fix / GREEN; nm check
+  for Nil-widened demand). Suites 152/152 + 36/36. Reducer lesson: 6
+  shapes of guarded nilable assignment all narrowed correctly — only the
+  UNGUARDED assign reproduces; the real-world poison needs block-proc
+  capture, don't chase it in a no-prelude reducer.
+- NEW pre-existing family found while verifying (RED oracle
+  `union_vdispatch_variant_enum_repro.sh`, `9ae8eae1`): __vdispatch__ for
+  all-reference unions enumerates only a SUBSET of variants (t0=1 t1=1
+  t2=1 instead of 1/2/3); missing variants fall into unreachable default →
+  arbitrary dispatch. Same family as the select-0/1 tid sibling
+  (llvm_backend ~22004). This also makes .tag-style probes unreliable in
+  oracles — use is_a? chains instead.
+- **s2_v13 frontier** (stage1 d7dc440c, /tmp/s2_v13, 32.3MB): reparse STUB
+  DEAD; `puts 42` now dies with `STUB CALLED: Array$Dcall$$Tuple(Int32,
+  Int32)` right after lower_main (plain run), and under lldb an
+  EXC_BAD_ACCESS in AstToHir#infer_ivars_from_expr <- infer_ivars_from_body
+  <- register_concrete_class <- register_nested_module, reading ASCII
+  garbage as pointer (0x20726f20746e6174 = "tant or ") — s2's own execution
+  type-confuses a string as a node/pointer during class registration.
+  START HERE: two manifestations, likely one miscompile; run /tmp/s2_v13
+  twice more to see which is stable; then bisect which stage1-compiled
+  function feeds garbage into infer_ivars_from_expr (ADAMAS_TRACE_IVAR_INFER
+  filter exists in that function).
+  Artifacts: /tmp/s2_v13, bin/adamas.pre_declared_ivar_backup (pre-fix
+  stage1), scratchpad nilwiden/ reducers v1-v8.
+- Open tails carried over: next-value discard;
+  maybe_generate_accessor_for_name ungated; Path#anchor.inspect segfault;
+  block-proc capture loses flow narrowing (the poison source — root of a
+  future family).
 
 ## 2026-07-05 (night) — Path#each_parent brk CLOSED as THREE stacked stage1 miscompiles; s2_v12 frontier = STUB reparse_expr_for_macro (Nil-widened arena arg)
 
