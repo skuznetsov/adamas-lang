@@ -45,13 +45,26 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   `Path#next_part_separator_index$$Char::Reader_Bool_Tuple(Char)_|_Tuple(Char,Char)`
   <- `Path#each_parent$block` <- `Dir.mkdir_p(String, Int32)` <-
   `LLVMIRGenerator#emit_functions_parallel` (mkdir for the parallel-emission
-  workdir). Suspicious mangled signature: return union
-  Tuple(Char) | Tuple(Char, Char) with a Char::Reader arg — smells like
-  block/tuple-return ABI or overload-signature garbling in stage1 output.
-  START HERE next session: reduce Path#each_parent / next_part_separator_index
-  no-prelude-ish (Path needs prelude; try direct
-  `Path["/a/b/c"].each_parent { }` reducer compiled by s2_v11 vs host), then
-  disasm the brk site.
+  workdir).
+  LOCALIZED same night: PRE-EXISTING (identical trap+wrong-output on June-21
+  `bin/adamas_fix` AND the pre-8cab1d05 binary — NOT a regression),
+  reproducible at STAGE1 with a one-liner:
+  `Path["/a/b/c/d"].each_parent { |p| puts p }` compiled by bin/adamas
+  prints a single wrong `/a/` (host: `/`, `/a`, `/a/b`, `/a/b/c`) then brk.
+  `parent`/`dirname` probes are correct, so the bug is in the
+  each_part_separator_index loop chain. The mangled crash-site signature
+  decodes to next_part_separator_index(reader : Char::Reader,
+  last_was_separator : Bool, separators : Tuple(Char) | Tuple(Char, Char))
+  : Nil | Tuple(Char::Reader, Bool, Int32) — the body does a NON-LOCAL
+  `return reader, true, start_pos` (bare 3-tuple) from inside the inlined
+  `Char::Reader#each` yield block, with `next` in the same block; suspected
+  = the open "$block raw-return without union_wrap" + "inline-yield + next"
+  families (nilable-tuple return never union-wrapped / loop-next exit path).
+  RED oracle ready:
+  regression_tests/path_each_parent_block_tuple_return_repro.sh.
+  START HERE next session: --emit hir on the one-liner, inspect
+  next_part_separator_index return lowering (union_wrap of the tuple at the
+  non-local return), then disasm the brk site in the stage1 binary.
 
 ## 2026-07-04 (night) — rand(Int64) dispatch ROOT-CAUSED + FIXED: macro fresh-var ate spaced modulo
 
