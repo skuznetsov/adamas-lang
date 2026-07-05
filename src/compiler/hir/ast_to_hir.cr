@@ -73779,6 +73779,11 @@ module Adamas::HIR
         accessor_name = method_name[0, method_name.size - 1]
         ivar_name = "@#{accessor_name}"
         if ivar_info = find_ivar_info(class_info.ivars, ivar_name)
+          # An explicit `def field=` must not be shadowed by a synthesized
+          # ivar-store accessor (Char::Reader#pos= re-decodes current_char;
+          # the synth body dropped that logic). Let normal call resolution
+          # lower the real def instead.
+          return nil unless function_def_overload_keys("#{class_name}##{accessor_name}=").empty?
           func_name = mangle_function_name("#{class_name}##{accessor_name}=", [ivar_info.type])
           generate_setter_method_for_ivar(class_name, class_info, ivar_info) unless @module.has_function_with_body?(func_name)
           return {ivar_info.type, func_name}
@@ -95189,9 +95194,16 @@ module Adamas::HIR
           end
         end
 
-        # Try direct field access if we know the class layout
+        # Try direct field access if we know the class layout.
+        # Crystal semantics: `obj.field = v` is always a call to `field=`.
+        # An explicit `def field=` (a registered DefNode) must win over the
+        # raw ivar FieldSet fast path — Char::Reader#pos= re-decodes
+        # current_char, and bypassing it left the reader stale
+        # (Path#each_parent wrong-parents family). Synthesized property
+        # accessors register no DefNode and keep the fast path.
         class_name = type_desc ? type_desc.name : nil
-        if class_name && @class_info.has_key?(class_name)
+        explicit_setter = class_name && !function_def_overload_keys("#{class_name}##{field_name}=").empty?
+        if class_name && !explicit_setter && @class_info.has_key?(class_name)
           class_info = @class_info[class_name]
 
           # Check if this is a known field (ivar)
@@ -96046,7 +96058,14 @@ module Adamas::HIR
         end
 
         class_name = type_desc ? type_desc.name : nil
-        if class_name && @class_info.has_key?(class_name)
+        # Crystal semantics: `obj.field = v` is always a call to `field=`.
+        # An explicit `def field=` (a registered DefNode) must win over the
+        # raw ivar FieldSet fast path — Char::Reader#pos= re-decodes
+        # current_char, and bypassing it left the reader stale
+        # (Path#each_parent wrong-parents family). Synthesized property
+        # accessors register no DefNode and keep the fast path.
+        explicit_setter = class_name && !function_def_overload_keys("#{class_name}##{field_name}=").empty?
+        if class_name && !explicit_setter && @class_info.has_key?(class_name)
           class_info = @class_info[class_name]
           ivar_name = "@#{field_name}"
           if ivar_info = find_ivar_info(class_info.ivars, ivar_name)
