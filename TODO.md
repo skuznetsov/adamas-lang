@@ -1,10 +1,57 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-04
+Updated: 2026-07-04 (late night)
 Branch: `work/b5-lower-method-owner-edge`
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
+
+## 2026-07-04 (late night) — base-name return-cache sibling FIXED (8cab1d05): argful callsites no longer typed from the zero-arg overload
+
+- ROOT (open sibling 2 from the rand family): TWO lossy fallbacks served the
+  FIRST def of an overload family regardless of callsite arity —
+  `lookup_function_def_for_return` fell back to `@function_defs[base_name]`
+  (zero-arg `def rand : Float64`), and `get_function_return_type`'s tail
+  returned `@function_base_return_types[base_name]` for TYPED specializations
+  (its own comment said "no $ suffix", the code never checked). Every
+  `r.rand(n)` was statically Float64 -> interpolation demanded Float64#to_s
+  -> Ryu `Printer.shortest` STUB abort in the s2-built compiler (the
+  File.tempname parallel-emission blocker).
+- KEY LESSON (half the session): typeof/interpolation take types from the
+  LOWERED call (`lower_typeof` -> `ctx.type_of`), NOT from
+  `infer_type_from_expr` / `resolve_typeof_call_chain`. Two speculative
+  patches to the static helpers were reverted after probes showed those
+  paths never fire for these expressions. The authoritative owner is
+  lower_call's return_type pipeline (~79550) + get_function_return_type
+  (~45400). Levers: DEBUG_CALL_TRACE (stage-by-stage, return=<id> at
+  before_lower_function), DEBUG_RETURN_DEF (which def served the
+  annotation), DEBUG_GET_RETURN (cache state on entry). TypeRef ids:
+  4=Int32, 5=Int64, 13=Float64.
+- FIX `8cab1d05`: optional `call_arg_count` threaded from lower_call
+  (`nil` when block/named-args/splat) through get_function_return_type ->
+  lookup_function_def_for_return -> lookup_return_def_from_overloads ->
+  resolve_return_type_from_def; predicate `return_def_accepts_positional?`
+  (positional_required <= argc <= positional_count; def-side splat/double-
+  splat accepted); base cache gated `call_arg_count.nil? || name ==
+  base_name`. Default nil = legacy behavior for un-threaded callers.
+- Oracle: `regression_tests/rand_overload_return_type_base_cache_repro.sh`
+  (red pre-fix Float64/Float64, green Int32/Int32). Suites 152/152 + 36/36.
+  Sibling (1) `: Int` return -> Int32 trunc still open (its oracle stays
+  RED); sibling (3) param-restriction collapse still open.
+- s2_v11 VERIFIED (stage1 8cab1d05, /tmp/s2_v11): `STUB CALLED:
+  Printer$Dshortest` DEAD, "Invalid bound" DEAD; **parallel LLVM emission now
+  actually runs** and the frontier moved into it. NEW deterministic crash
+  (~5s, 2/2 + lldb): `brk #0x1` in
+  `Path#next_part_separator_index$$Char::Reader_Bool_Tuple(Char)_|_Tuple(Char,Char)`
+  <- `Path#each_parent$block` <- `Dir.mkdir_p(String, Int32)` <-
+  `LLVMIRGenerator#emit_functions_parallel` (mkdir for the parallel-emission
+  workdir). Suspicious mangled signature: return union
+  Tuple(Char) | Tuple(Char, Char) with a Char::Reader arg — smells like
+  block/tuple-return ABI or overload-signature garbling in stage1 output.
+  START HERE next session: reduce Path#each_parent / next_part_separator_index
+  no-prelude-ish (Path needs prelude; try direct
+  `Path["/a/b/c"].each_parent { }` reducer compiled by s2_v11 vs host), then
+  disasm the brk site.
 
 ## 2026-07-04 (night) — rand(Int64) dispatch ROOT-CAUSED + FIXED: macro fresh-var ate spaced modulo
 
