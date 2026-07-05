@@ -6,6 +6,39 @@ Branch: `work/b5-lower-method-owner-edge`
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
+## 2026-07-05 — sort_by! blocker ROOT-CAUSED = value-tuple PointerCarrier alias; inline-tuple ABI SDD + P0 landed
+
+Frontier from the previous section (`sort_by!`/merge_sort on `Array(Tuple)`)
+ROOT-CAUSED and VERIFIED. Root: a value-aggregate tuple element read from a
+container is a `PointerCarrier` whose pointer is `array_get`'s **borrow into the
+source buffer**, not a copy. `sort_by!` builds `Tuple(Tuple(Int32,Int32),Int32)`
+via `map { |e| {e, yield(e)} }`; the nested tuple's inner element aliases `@buffer`;
+the writeback then overwrites `@buffer` while `sorted[i][0]` still borrows it →
+`[{1,100},{3,75},{3,75}]`. Triple-verified: `.ll` (`load ptr` + `memcpy 8` from a
+carrier), runtime probe (`mapped[j].box == &costs[j]`), exact output match. Two
+facets, both via HIR `copy`: **A** construction (`{arr[i],k}`, the s2 blocker) and
+**B** local binding (`a = arr[i]`, ADV1).
+
+Chosen fix (owner: performant + original-Crystal-like): move value-tuple elements
+`PointerCarrier → InlineBytes` (eliminate the heap box), NOT copy-the-box.
+Spec: `docs/inline_value_tuple_abi_sdd.md` (Tuple arm of `abi_struct_value_sdd.md`;
+refuted-branch-aware — do NOT route tuples through the generic magic-base path,
+`abi_rework_quadr_plan.md` §4).
+
+- **P0 DONE** (`680a55d3` spec, `e5687dd4` code): recursive `pod_tuple?` predicate +
+  gated (`ADAMAS_INLINE_VALUE_TUPLE`) `InlineValueCopy` classification. Byte-identical
+  OFF (MIR identical old-vs-new; .ll differs only in pre-existing `stub_name` hash
+  nondeterminism). Census on the blocker: `Tuple(Tuple(Int32,Int32),Int32)` correctly
+  classified; 37 pod tuples admitted / 165 excluded; read-provenance **erased tail
+  0.7%** → inline slice can be a mostly-local codegen patch (A' falsifier PASSES).
+- **P1 NEXT** — flat pod-tuple inline in Array buffers: reuse the
+  `@inline_value_array_storage` behavior slice (stride/literal-size/value-slot) for
+  pod-tuple elements. First BEHAVIOR slice → full DoD (RED oracle + ADV1/ADV3 reducers
+  + suites 152/152+36/36 + s2 + perf delta). Add reducers
+  `adv1_local_tuple_borrow_repro`, `adv3_construct_tuple_borrow_repro`.
+- Stopgap (kill-condition fallback, not the goal): copy pod-tuple ctor-arg in
+  `lower_allocate` (keeps PointerCarrier, fixes alias, perf-neutral).
+
 ## 2026-07-05 (deep night) — s2 STUB CLOSED (::Array(Tuple) call-stub); + u2u payload-width fix; new frontier = sort_by! merge_sort on Array(Tuple)
 
 - `7c2f06b9` CLOSED the s2_v13/v14 STUB manifestation (`Array$Dcall$$Tuple`).
