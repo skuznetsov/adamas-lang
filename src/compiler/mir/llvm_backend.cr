@@ -25100,6 +25100,42 @@ module Adamas::MIR
         @value_types[inst.id] = inst.union_type
         return
       end
+
+      # Union -> union conversion (variant_type_id == -2 sentinel from HIR
+      # coerce_value_to_type): the value is a differently-shaped union, e.g.
+      # a Nil|A|B|C value stored into a declared A|B|C slot. Preserve the
+      # payload and remap the positional type_id; storing the raw source
+      # aggregate would carry the source union's variant index into the
+      # target union and misdispatch later reads.
+      if inst.variant_type_id == -2
+        u2u_val = value_ref(inst.value)
+        u2u_src_type = val_type_str
+        if emitted_u2u_type = @emitted_value_types[u2u_val]?
+          u2u_src_type = emitted_u2u_type unless emitted_u2u_type == "void"
+        end
+        if u2u_src_type.includes?(".union")
+          src_union_ref = @value_types[inst.value]?
+          emit "%#{base_name}.u2u_src = alloca #{u2u_src_type}, align 8"
+          emit "store #{u2u_src_type} #{normalize_union_value(u2u_val, u2u_src_type)}, ptr %#{base_name}.u2u_src"
+          emit "%#{base_name}.u2u_src_tid_ptr = getelementptr #{u2u_src_type}, ptr %#{base_name}.u2u_src, i32 0, i32 0"
+          emit "%#{base_name}.u2u_src_tid = load i32, ptr %#{base_name}.u2u_src_tid_ptr"
+          mapped_tid = emit_union_type_id_remap(u2u_src_type, union_type, "%#{base_name}.u2u_src_tid", "#{base_name}.u2u", src_union_ref, inst.union_type)
+          emit "%#{base_name}.u2u_src_pay_ptr = getelementptr #{u2u_src_type}, ptr %#{base_name}.u2u_src, i32 0, i32 1"
+          emit "%#{base_name}.u2u_pay = load ptr, ptr %#{base_name}.u2u_src_pay_ptr, align 4"
+          emit "%#{base_name}.u2u_dst = alloca #{union_type}, align 8"
+          emit "store #{union_type} zeroinitializer, ptr %#{base_name}.u2u_dst"
+          emit "%#{base_name}.u2u_dst_tid_ptr = getelementptr #{union_type}, ptr %#{base_name}.u2u_dst, i32 0, i32 0"
+          emit "store i32 #{mapped_tid}, ptr %#{base_name}.u2u_dst_tid_ptr"
+          emit "%#{base_name}.u2u_dst_pay_ptr = getelementptr #{union_type}, ptr %#{base_name}.u2u_dst, i32 0, i32 1"
+          emit "store ptr %#{base_name}.u2u_pay, ptr %#{base_name}.u2u_dst_pay_ptr, align 4"
+          emit "#{name} = load #{union_type}, ptr %#{base_name}.u2u_dst"
+          record_emitted_type(name, union_type)
+          @value_types[inst.id] = inst.union_type
+          return
+        end
+        # Source repr is not a union here (already extracted upstream);
+        # fall through to the standard wrap path.
+      end
       emit "%#{base_name}.ptr = alloca #{union_type}, align 8"
       # Zero-init the alloca to prevent overflow when storing Nil (ptr null = 8 bytes)
       # into small union payloads (e.g. [1 x i32] = 4 bytes).

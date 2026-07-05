@@ -1915,6 +1915,13 @@ module Adamas::HIR
     # Class type information
     getter class_info : Hash(String, ClassInfo)
     @class_info_by_type_id : Hash(TypeId, ClassInfo)
+    # Ivars with an explicit source type annotation (property x : T, @x : T,
+    # def initialize(@x : T)). Assignment-driven union widening must not
+    # mutate these: the declaration is authoritative, and a nilable RHS there
+    # is a stage1 flow-narrowing imprecision, not a real Nil variant
+    # (original Crystal rejects out-of-type ivar assignments outright).
+    # Keyed class name -> ivar names; survives IVarInfo copies/realign.
+    @declared_typed_ivars : Hash(String, Set(String)) = {} of String => Set(String)
     @class_info_version : Int32
     @classes_with_subclasses : Set(String)
     @children_by_parent : Hash(String, Set(String))
@@ -5900,6 +5907,7 @@ module Adamas::HIR
       @function_return_type_literals = Set(String).new
       @class_info = Hash(String, ClassInfo).new(initial_capacity: 2048)
       @class_info_by_type_id = {} of TypeId => ClassInfo
+      @declared_typed_ivars = {} of String => Set(String)
       @class_info_version = 0
       @classes_with_subclasses = Set(String).new
       @children_by_parent = {} of String => Set(String)
@@ -10022,6 +10030,7 @@ module Adamas::HIR
         if ivars && offset_ref
           ivar_name = (safe_slice_to_string(member.name) || "")
           ivar_type = annotation_type_ref((safe_slice_to_string(member.type) || ""), class_name)
+          mark_declared_ivar_type(class_name, ivar_name) if ivar_type != TypeRef::VOID
 
           decl_default_expr_id : Adamas::Compiler::Frontend::ExprId? = nil
           decl_default_arena : Adamas::Compiler::Frontend::ArenaLike? = nil
@@ -10055,6 +10064,7 @@ module Adamas::HIR
           ivar_name = raw_name.starts_with?('@') ? raw_name : "@#{raw_name}"
           declared_type_text = (safe_slice_to_string(member.declared_type) || "")
           ivar_type = annotation_type_ref(declared_type_text, class_name)
+          mark_declared_ivar_type(class_name, ivar_name) if ivar_type != TypeRef::VOID
           if debug_env_filter_match?(
                "DEBUG_EXPANSION_DECL",
                class_name,
@@ -17916,6 +17926,7 @@ module Adamas::HIR
       )
       ivar_type = if ta_text = accessor_type_annotation_text(spec)
                     resolved_ref = annotation_type_ref(ta_text, class_name)
+                    mark_declared_ivar_type(class_name, ivar_name)
                     if debug_accessor_annot
                       STDERR.puts "[ACCESSOR_ANNOT_MODULE] class=#{class_name} storage=#{storage_name} branch=annotation raw=#{ta_text.inspect} resolved=#{get_type_name_from_ref(resolved_ref).inspect} current=#{@current_class || "(nil)"} default=#{spec.default_value ? 1 : 0}"
                     end
@@ -18012,6 +18023,9 @@ module Adamas::HIR
 
         if is_ivar_param
           ivar_name = "@#{param_name}"
+          if (source_ivar_entry && source_ivar_entry[1]) || parameter_type_annotation_string(param, arena, false)
+            mark_declared_ivar_type(owner_name || @current_class, ivar_name)
+          end
           if param_type == TypeRef::VOID
             if default_value = param.default_value
               inferred = infer_type_from_expr(default_value, owner_name)
@@ -18237,6 +18251,26 @@ module Adamas::HIR
         ivars << ivar
       end
       offset
+    end
+
+    private def mark_declared_ivar_type(class_name : String?, ivar_name : String) : Nil
+      return unless class_name
+      return if class_name.empty? || ivar_name.empty?
+      (@declared_typed_ivars[class_name] ||= Set(String).new) << ivar_name
+    end
+
+    private def declared_ivar_type?(class_name : String, ivar_name : String) : Bool
+      if names = @declared_typed_ivars[class_name]?
+        return true if names.includes?(ivar_name)
+      end
+      # Generic specializations register under the specialized name but reuse
+      # the template's declarations (Hash(String, Int32) -> Hash).
+      if split = split_generic_base_and_args(class_name)
+        if names = @declared_typed_ivars[split.base]?
+          return names.includes?(ivar_name)
+        end
+      end
+      false
     end
 
     private def canonical_ivar_storage_type_ref(
@@ -26745,6 +26779,7 @@ module Adamas::HIR
             getter_name = accessor_method_name(spec)
             ivar_name = "@#{storage_name}"
             ivar_type = if ta = accessor_type_annotation_text(spec)
+                          mark_declared_ivar_type(class_name, ivar_name)
                           annotation_type_ref(ta, class_name)
                         elsif spec.predicate
                           TypeRef::BOOL
@@ -26769,6 +26804,7 @@ module Adamas::HIR
             storage_name = accessor_storage_name(spec)
             ivar_name = "@#{storage_name}"
             ivar_type = if ta = accessor_type_annotation_text(spec)
+                          mark_declared_ivar_type(class_name, ivar_name)
                           annotation_type_ref(ta, class_name)
                         elsif spec.predicate
                           TypeRef::BOOL
@@ -26795,6 +26831,7 @@ module Adamas::HIR
             ivar_name = "@#{storage_name}"
             ivar_type = if ta_text = accessor_type_annotation_text(spec)
                           resolved_ref = annotation_type_ref(ta_text, class_name)
+                          mark_declared_ivar_type(class_name, ivar_name)
                           if debug_env_filter_match?(
                                "DEBUG_ACCESSOR_ANNOT",
                                class_name,
@@ -83908,6 +83945,18 @@ module Adamas::HIR
         end
       end
 
+      # Union -> union conversion: the value carries a different union shape
+      # than the target (e.g. a Nil|A|B|C value stored into a declared A|B|C
+      # ivar). Variant type_ids are positional per union, so the raw
+      # aggregate cannot be stored as-is. variant_type_id -2 tells the
+      # backend to preserve the payload and remap the type_id.
+      if is_union_type?(value_type) && is_union_type?(target_type)
+        wrap = UnionWrap.new(ctx.next_id, target_type, value_id, -2)
+        ctx.emit(wrap)
+        ctx.register_type(wrap.id, target_type)
+        return wrap.id
+      end
+
       if numeric_primitive?(target_type)
         if numeric_primitive?(value_type) || value_type == TypeRef::POINTER
           cast = Cast.new(ctx.next_id, target_type, value_id, target_type)
@@ -94857,6 +94906,13 @@ module Adamas::HIR
                   ivar_type = updated.type
                   ivar_offset = updated.offset
                   update_getter_return_types_for_ivar(class_name, name, merged_type)
+                elsif declared_ivar_type?(class_name, name)
+                  # Explicitly declared ivar: the annotation is authoritative.
+                  # A mismatched RHS here is stage1 flow-typing imprecision
+                  # (e.g. un-narrowed nilable) — widening would poison every
+                  # later read and demand unmatchable specializations.
+                  ivar_type = existing.type
+                  debug_hook("ivar.union.declared", "class=#{class_name} ivar=#{name} method=#{@current_method || "?"} fn=#{ctx.function.name} keep=#{get_type_name_from_ref(existing.type)} value=#{get_type_name_from_ref(value_type)}")
                 elsif type_size(merged_type) == type_size(existing.type)
                   ivars[idx] = IVarInfo.new(
                     name,
@@ -94866,6 +94922,7 @@ module Adamas::HIR
                     default_arena: existing.default_arena
                   )
                   ivar_type = merged_type
+                  debug_hook("ivar.union.widen", "class=#{class_name} ivar=#{name} method=#{@current_method || "?"} fn=#{ctx.function.name} from=#{get_type_name_from_ref(existing.type)} to=#{get_type_name_from_ref(merged_type)}")
                 else
                   ivar_type = existing.type
                   debug_hook("ivar.union.skip", "class=#{class_name} ivar=#{name} from=#{get_type_name_from_ref(existing.type)} to=#{get_type_name_from_ref(merged_type)}")
@@ -95838,6 +95895,13 @@ module Adamas::HIR
                   ivar_type = updated.type
                   ivar_offset = updated.offset
                   update_getter_return_types_for_ivar(class_name, name, merged_type)
+                elsif declared_ivar_type?(class_name, name)
+                  # Explicitly declared ivar: the annotation is authoritative.
+                  # A mismatched RHS here is stage1 flow-typing imprecision
+                  # (e.g. un-narrowed nilable) — widening would poison every
+                  # later read and demand unmatchable specializations.
+                  ivar_type = existing.type
+                  debug_hook("ivar.union.declared", "class=#{class_name} ivar=#{name} method=#{@current_method || "?"} fn=#{ctx.function.name} keep=#{get_type_name_from_ref(existing.type)} value=#{get_type_name_from_ref(value_type)}")
                 elsif type_size(merged_type) == type_size(existing.type)
                   ivars[idx] = IVarInfo.new(
                     name,
@@ -95847,6 +95911,7 @@ module Adamas::HIR
                     default_arena: existing.default_arena
                   )
                   ivar_type = merged_type
+                  debug_hook("ivar.union.widen", "class=#{class_name} ivar=#{name} method=#{@current_method || "?"} fn=#{ctx.function.name} from=#{get_type_name_from_ref(existing.type)} to=#{get_type_name_from_ref(merged_type)}")
                 else
                   ivar_type = existing.type
                   debug_hook("ivar.union.skip", "class=#{class_name} ivar=#{name} from=#{get_type_name_from_ref(existing.type)} to=#{get_type_name_from_ref(merged_type)}")
