@@ -1,10 +1,33 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-05 (inline-tuple ABI step 2 shipped)
+Updated: 2026-07-05 (s2 self-host floor layer 1 fixed — union-arg dispatch UnionIs `82150e13`)
 Branch: `work/b5-lower-method-owner-edge`
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
+
+## 2026-07-05 — s2 self-host floor LAYER 1 FIXED (union-arg dispatch), committed `82150e13`
+
+The s2 self-host floor (SIGSEGV compiling any prelude program) was TWO stacked bugs.
+**Layer 1 (the majority crash) root-caused + fixed:** `try_emit_union_arg_dispatch`
+(ast_to_hir.cr) built `UnionIs.new(ctx.next_id, ua, fv)` WITHOUT the union type ref,
+so `emit_union_is` fell back to a `variant-0 == nil` null-check. For an all-reference
+union with no Nil variant (`ArenaLike = AstArena|VirtualArena|PageArena`) variant 0 is
+the FIRST class → every non-null AstArena tested false → dispatched into the sibling
+`node_for_expr$$..._PageArena` arg-monomorph → PageArena#[] read the AstArena through
+its own layout → garbage node → the `infer_ivars_from_expr` / `infer_type_name_from_node`
+wild-pointer crash. Fix = pass `ut` to UnionIs (all-ref header-tid comparison).
+Validated: rebuilt stage1+s2, misdispatch gone (ADAMAS_NODE_VALIDITY detector 0/6);
+`run_all_suites` 152/152 + 36/36 green.
+
+**Layer 2 STILL OPEN (now the sole, deterministic s2 crash):** `LayoutContract.tuple_slot_layout`+768
+NULL-deref ← `register_tuple_types` — an `Array(MIR::Type)` buffer whose size/contents
+are unstable between a guard read and `.each` (a SEPARATE root; the layer-1 UnionIs fix
+does not touch it). Self-host floor NOT yet cleared. NEXT: instrument tuple_slot_layout
+to log the null index + `elements.size` vs the register-site size (detect the flip), then
+trace what corrupts the MIR::Type array. Possible sibling: the untouched SECONDARY 2-way→N-way
+arity limitation in `try_emit_union_arg_dispatch` (a >2-variant union-arg call misrouting its
+3rd+ variant). See knowledge memory `s2_selfhost_floor_array_corruption`.
 
 ## 2026-07-05 — inline-tuple ABI step 2 SHIPPED: tuple slot-layout + POD predicate single-sourced (byte-neutral), gate green
 
