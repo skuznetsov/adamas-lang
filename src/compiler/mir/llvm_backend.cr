@@ -26732,7 +26732,30 @@ module Adamas::MIR
           emit "%#{base_name}.idx_i64 = sext i32 #{normalized_index} to i64"
           emit "%#{base_name}.byte_off = mul i64 %#{base_name}.idx_i64, #{stride}"
           emit "%#{base_name}.elem_ptr = getelementptr i8, ptr %#{base_name}.buf, i64 %#{base_name}.byte_off"
-        elsif (stride_type = elem_mir_for_stride) && (inline_container_struct_type?(stride_type) || inline_primitive_tuple_type?(stride_type))
+        elsif (stride_type = elem_mir_for_stride) && inline_primitive_tuple_type?(stride_type)
+          # Inline primitive tuple: COPY on load, never a borrow. Same rule as
+          # the dynamic-GEP path (emit_gep_dynamic @inline_tuple_gep_aliases:
+          # "emit_load makes a heap copy — prevents aliasing bugs in sort/swap")
+          # and the gated A' arrayget carrier above. Returning the raw slot
+          # address here let the value observe later container mutation:
+          # `x, v[0] = v[0], v[1]` in Slice.insert_head! read the OVERWRITTEN
+          # slot through x (element lost, zeros shifted in — merge-sort floor).
+          # Tuples are immutable, so a copy is always semantically safe.
+          stride = stride_type.size
+          emit "%#{base_name}.idx_i64 = sext i32 #{normalized_index} to i64"
+          emit "%#{base_name}.byte_off = mul i64 %#{base_name}.idx_i64, #{stride}"
+          emit "%#{base_name}.elem_ptr = getelementptr i8, ptr %#{base_name}.buf, i64 %#{base_name}.byte_off"
+          raw = "%#{base_name}.ipt_raw"
+          emit "#{raw} = call ptr @__adamas_malloc64(i64 #{stride + 8}) ; inline-tuple arrayget copy"
+          emit "store i64 9223372036854775807, ptr #{raw}, align 8"
+          emit "#{name} = getelementptr i8, ptr #{raw}, i64 8"
+          emit "call void @llvm.memcpy.p0.p0.i64(ptr #{name}, ptr %#{base_name}.elem_ptr, i64 #{stride}, i1 false)"
+          @value_types[inst.id] = effective_element_type_ref
+          record_emitted_type(name, "ptr")
+          return
+        elsif (stride_type = elem_mir_for_stride) && inline_container_struct_type?(stride_type)
+          # Inline container structs are MUTABLE — code writes through the
+          # returned element address (Hash::Entry etc.); keep the borrow.
           stride = stride_type.size
           emit "%#{base_name}.idx_i64 = sext i32 #{normalized_index} to i64"
           emit "%#{base_name}.byte_off = mul i64 %#{base_name}.idx_i64, #{stride}"
