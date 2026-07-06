@@ -42079,6 +42079,17 @@ module Adamas::HIR
         when HIR::TypeKind::Union
           return hir_union_ivar_storage_size(desc.name)
         when HIR::TypeKind::Tuple, HIR::TypeKind::NamedTuple
+          # Lock-step with the LLVM container-element oracle
+          # (container_elem_storage_size_u64_impl): a primitive-only tuple is
+          # stored INLINE in container buffers at its slot-layout size
+          # (Tuple(Tuple(Int32,Int32),Int32) = 16), not as an 8-byte pointer.
+          # This size feeds __adamas_ptr_copy/__adamas_ptr_move element
+          # strides (Pointer#copy_from in Slice.merge!) and pointer-diff
+          # element counts — an 8-byte stride under-copied merge-sort's
+          # scratch buffer (one element lost, zeros merged in).
+          if desc.kind == HIR::TypeKind::Tuple && hir_primitive_tuple_type?(type)
+            return hir_tuple_storage_size(desc.type_params)
+          end
           return pointer_word_bytes_i32
         end
         type_name = desc.name if type_name == "Unknown"
@@ -42108,6 +42119,33 @@ module Adamas::HIR
 
       size = container_element_storage_size(type)
       size > 0 ? size : 1
+    end
+
+    # Recursive "every leaf is a primitive/enum" tuple test over HIR type
+    # descriptors — the pre-MIR mirror of LayoutContract.primitive_tuple?
+    # (enums are registered as Primitive descriptors; bare primitives have no
+    # descriptor and match by well-known TypeRef id).
+    private def hir_primitive_tuple_type?(type : TypeRef) : Bool
+      desc = @module.get_type_descriptor(type)
+      return false unless desc && desc.kind == TypeKind::Tuple
+      params = desc.type_params
+      return false if params.empty?
+      params.all? do |et|
+        case et
+        when TypeRef::BOOL, TypeRef::INT8, TypeRef::UINT8, TypeRef::INT16,
+             TypeRef::UINT16, TypeRef::INT32, TypeRef::UINT32, TypeRef::FLOAT32,
+             TypeRef::CHAR, TypeRef::INT64, TypeRef::UINT64, TypeRef::FLOAT64,
+             TypeRef::INT128, TypeRef::UINT128
+          true
+        else
+          if ed = @module.get_type_descriptor(et)
+            # Enums register as Primitive descriptors; nested tuples recurse.
+            ed.kind == TypeKind::Primitive || hir_primitive_tuple_type?(et)
+          else
+            false
+          end
+        end
+      end
     end
 
     private def container_struct_storage_size(info : ClassInfo) : Int32
