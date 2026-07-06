@@ -26221,20 +26221,21 @@ module Adamas::MIR
       element_type = @type_mapper.llvm_type(inst.element_type_ref)
       element_type = "ptr" if element_type == "void"
       array_type_id = array_runtime_type_id_for_element(inst.element_type_ref)
-      elem_size = case element_type
-                  when "i1", "i8"   then 1
-                  when "i16"        then 2
-                  when "i32", "float" then 4
-                  when "i64", "double", "ptr" then 8
-                  when "i128"       then 16
-                  else                   8 # default for complex types
-                  end
+      # Keep Array(T).new buffer allocation in lock-step with Array#get/set,
+      # PointerStore, and realloc (same rule as emit_array_literal :25922).
+      # Elements the container ABI stores inline (primitive tuples, inline
+      # container structs, >word unions) must be allocated at their inline
+      # stride; an ad-hoc LLVM-type switch here sized them at 8 (ptr word),
+      # under-allocating the buffer while get/set wrote at type.size stride
+      # (heap overflow: Array(Tuple(Tuple(Int32,Int32),Int32)) via Array#map).
+      elem_mir_for_storage = @module.type_registry.get(inst.element_type_ref)
+      elem_size = container_elem_storage_size_u64(elem_mir_for_storage).to_i32
       # A' BEHAVIOR: an inline_array_storage_eligible element buffer is sized at the
       # inline payload stride (C.size), matching the gep/store/realloc sites. Without
       # this the Array(C) buffer is under-allocated (cap*8) and grow/realloc drops the
       # tail of each element. ArrayNew is an Array alloc by construction → reading the
       # eligibility fact here is not a provenance oracle.
-      if (ive = @module.type_registry.get(inst.element_type_ref)) && inline_value_array_elem?(ive)
+      if (ive = elem_mir_for_storage) && inline_value_array_elem?(ive)
         elem_size = ive.size.to_i32
       end
 
