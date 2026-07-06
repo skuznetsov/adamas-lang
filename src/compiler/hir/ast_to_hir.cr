@@ -82770,7 +82770,16 @@ module Adamas::HIR
       ua = args[ui]
       fm, fr, fv = vo[0]; sm, sr, sv = vo[1]
       f_drop = vo_drop[0]; s_drop = vo_drop[1]
-      uis = UnionIs.new(ctx.next_id, ua, fv)
+      # Pass the union type ref (ut) so emit_union_is can take the all-reference
+      # header-type-id comparison path. Without it the MIR UnionIs carries a VOID
+      # union type; emit_union_is then degrades to a variant-0 == nil null-check
+      # (llvm_backend emit_union_is fallback), which for an all-ref union (no Nil
+      # variant) treats the FIRST class variant (variant_id 0) as "nil" and emits
+      # `icmp eq ptr null`. Every non-null object of variant 0 then tests false and
+      # is misrouted to the else branch (a sibling variant's specialized monomorph)
+      # — e.g. an AstArena dispatched into node_for_expr$$..._PageArena, which then
+      # reads the AstArena through PageArena's layout and returns a garbage node.
+      uis = UnionIs.new(ctx.next_id, ua, fv, ut)
       ctx.emit(uis); ctx.register_type(uis.id, TypeRef::BOOL)
       pb = ctx.save_locals
       tb = ctx.create_block; eb = ctx.create_block; mb = ctx.create_block
