@@ -76,6 +76,15 @@ module Adamas
       # Mapping from HIR BlockId to MIR BlockId
       @block_map : ::Array(BlockId?)
 
+      # Mapping from HIR BlockId to the FINAL MIR block of its lowering.
+      # Instruction lowering can split a HIR block into a subgraph (e.g. the
+      # Proc#call closure/bare diamond); the block that actually holds the
+      # lowered terminator (and thus the CFG edge into a phi's block) is the
+      # LAST block, not the first. Phi incoming resolution must use this map,
+      # otherwise the incoming keys a stale predecessor and the LLVM layer
+      # silently defaults the value (loop counters reset to their init value).
+      @block_end_map : ::Array(BlockId?)
+
       # Pending phi nodes that need incoming resolution after all blocks are lowered
       @pending_mir_phis : ::Array(Phi)
       @pending_hir_phis : ::Array(HIR::Phi)
@@ -205,6 +214,7 @@ module Adamas
         @hir_constant_values = ::Set(HIR::ValueId).new
         STDERR.puts "[MIR_INIT] hir_value_types" if trace
         @block_map = [] of BlockId?
+        @block_end_map = [] of BlockId?
         STDERR.puts "[MIR_INIT] block_map" if trace
         @pending_mir_phis = [] of Phi
         @pending_hir_phis = [] of HIR::Phi
@@ -4349,6 +4359,7 @@ module Adamas
         end
         @hir_constant_values = ::Set(HIR::ValueId).new
         @block_map = [] of BlockId?
+        @block_end_map = [] of BlockId?
         @pending_mir_phis = [] of Phi
         @pending_hir_phis = [] of HIR::Phi
         @stack_slot_values = ::Set(ValueId).new
@@ -4638,7 +4649,7 @@ module Adamas
               end
               next
             end
-            mir_block = mir_block_for(hir_block)
+            mir_block = mir_block_end_for(hir_block)
             mir_value = get_value(hir_value)
 
             if is_phi_union && union_descriptor
@@ -4857,6 +4868,12 @@ module Adamas
 
         # Lower terminator
         lower_terminator(hir_block.terminator)
+
+        # Record the FINAL MIR block of this HIR block's lowering: instruction
+        # lowering may have split the block (Proc#call diamond etc.), so the
+        # terminator — and every CFG edge out of this HIR block — lives in the
+        # current builder block, not necessarily in mir_block_id.
+        set_block_end_map(hir_block.id, builder.current_block)
 
         @stats.blocks_lowered += 1
       end
@@ -10890,6 +10907,29 @@ module Adamas
           @block_map << nil
         end
         @block_map[idx] = mir_block_id
+      end
+
+      @[AlwaysInline]
+      private def set_block_end_map(hir_block_id : HIR::BlockId, mir_block_id : BlockId) : Nil
+        idx = hir_block_id.to_i
+        while idx >= @block_end_map.size
+          @block_end_map << nil
+        end
+        @block_end_map[idx] = mir_block_id
+      end
+
+      # The MIR block holding the lowered TERMINATOR of the given HIR block
+      # (differs from mir_block_for when instruction lowering split the block).
+      # Falls back to the start block for blocks never lowered via lower_block.
+      @[AlwaysInline]
+      private def mir_block_end_for(hir_block_id : HIR::BlockId) : BlockId
+        idx = hir_block_id.to_i
+        if idx >= 0 && idx < @block_end_map.size
+          if mapped = @block_end_map.unsafe_fetch(idx)
+            return mapped
+          end
+        end
+        mir_block_for(hir_block_id)
       end
 
       @[AlwaysInline]
