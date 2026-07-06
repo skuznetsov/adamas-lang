@@ -5168,12 +5168,14 @@ module Adamas
 
           # Pre-compute byte offsets for tuple element types (instead of using field index)
           tuple_byte_offsets : ::Array(UInt32)? = nil
+          tuple_elem_types : ::Array(Type)? = nil
           if mir_type = @mir_module.type_registry.get(mir_type_ref)
             if mir_type.kind.tuple? && (elements = mir_type.element_types)
               # Single tuple-layout contract — same byte offsets the tuple index_get
               # GEP paths use, so a tuple constructor store and a later element read
               # can never disagree on where an element lives.
               tuple_byte_offsets = Adamas::LayoutContract.tuple_slot_layout(elements).offsets
+              tuple_elem_types = elements
             elsif fields = mir_type.fields
               # For struct types with fields, use field byte offsets
               offsets = fields.map(&.offset)
@@ -5190,6 +5192,20 @@ module Adamas
                             (idx * pointer_word_bytes_i32).to_u32
                           end
             field_ptr = builder.gep(ptr, [byte_offset], TypeRef::POINTER)
+            # Value semantics at the borrow-escape point: a nested primitive-tuple
+            # element occupies an 8-byte carrier slot (tuple_slot_layout else
+            # branch), and the incoming arg may be a BORROW into a container
+            # buffer (Array#[] of an inline-stored tuple yields the slot
+            # address). Storing the borrow lets it outlive buffer mutation —
+            # Array#sort_by!'s writeback overwrites @buffer while the sorted
+            # pairs still point into it (elements duplicated/lost). Copy the
+            # tuple value into a fresh cell before it escapes into the object.
+            if (elem_types = tuple_elem_types) && (elem_mir = elem_types[idx]?) &&
+               elem_mir.size > 0 && Adamas::LayoutContract.primitive_tuple?(elem_mir)
+              copy_ptr = builder.alloc(strategy, TypeRef.new(elem_mir.id), elem_mir.size)
+              builder.memcopy(copy_ptr, arg_val, elem_mir.size)
+              arg_val = copy_ptr
+            end
             store_id = builder.store(field_ptr, arg_val)
 
             # rc_inc for reference-typed constructor args: the new object holds a reference.
