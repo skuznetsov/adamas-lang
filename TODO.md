@@ -57,7 +57,25 @@ phi incoming resolution. Oracle: `regression_tests/while_next_proc_call_backedge
 Masking hazard noted: emit_phi's missing-pred default-0 turns MIR phi-key bugs into
 silent runtime spins (int phis have no trace; only ptr has ADAMAS_NULL_PHI_TRACE).
 
-**Layer 5 = NEW s2 floor: llc rejects s2 output (`sext i64 to i64`).** Fixed-s2
+**Layer 6 = NEW s2 floor (session-7, after L5 fully fixed): `T#ascii_number?`
+STUB abort at s2 startup.** With (a)+(b) fixed, `/tmp/s2_d5` compiling `x = 1`
+no longer hits llc `sext i64 to i64` — it aborts at ~2s with
+`STUB CALLED: T$Hascii_number$Q`. Backtrace (lldb):
+`AstToHir#numeric_conversion_method_name?(String)` →
+`suffix.each_char.all?(&.ascii_number?)` →
+`__vdispatch__Enumerable$LT$R$Hall$Q$$block$$T2237` (bare Enumerable(T)
+TEMPLATE monomorph, T unsubstituted) → block calls `T#ascii_number?` → stub.
+**Instant stage1 reducer (~20s, no s2 build):**
+`"123".each_char.all?(&.ascii_number?)` → same stub (/tmp/l6_allq.cr).
+Bounds: `chars.all?(&.ascii_number?)` (Array) GREEN; explicit block
+`{ |c| c.ascii_number? }` RED too; `{ |c| c == '1' }` GREEN (operator ==
+lowers via primitive path; regular method needs receiver type = T→unbound).
+Family: module-owned generic monomorph with unbound T (cf. L3 defect 3
+first-instantiation-wins base map; class_arg_overload module-owned trap).
+START HERE: IR of the reducer — which all? monomorph is demanded and where
+the Iterator(Char)→Enumerable(T) substitution map is lost.
+
+**Layer 5 (CLOSED session-7) was: llc rejects s2 output (`sext i64 to i64`).** Fixed-s2
 (`/tmp/s2_l4fix`) compiling `x = 1`: emission completes (peak 2.1GB, no runaway),
 llc fails on `%inttoptr.4.ext = sext i64 %r24 to i64` — the arg-coercion guard
 `src_bits < 64` (llvm_backend ~23075) evaluates WRONG inside s2 for "i64".
