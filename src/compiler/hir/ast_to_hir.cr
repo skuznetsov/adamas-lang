@@ -46859,6 +46859,12 @@ module Adamas::HIR
         needs_deferred = true if val_node.is_a?(Adamas::Compiler::Frontend::UnaryNode)
         # Begin blocks (multi-expression initializers)
         needs_deferred = true if val_node.is_a?(Adamas::Compiler::Frontend::BeginNode)
+        # Bare `new` (receiverless constructor: `INSTANCE = new` inside the
+        # class body) parses as an IdentifierNode but needs a runtime
+        # constructor call; without it the global stays null.
+        if val_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
+          needs_deferred = true if (safe_slice_to_string(val_node.name) || "") == "new"
+        end
         if env_has?("DEBUG_DEFERRED_CONST")
           STDERR.puts "[DEFERRED_CONST] #{needs_deferred ? "Added" : "Skipped"} #{full_name} val_node=#{val_node.class.name}"
         end
@@ -61186,6 +61192,23 @@ module Adamas::HIR
         end
 
         # Check if method exists in current class (with inheritance)
+        # Bare `new` = zero-arg constructor of the current class (`INSTANCE = new`
+        # in a class body, `def self.create; new; end`). The generic fallbacks
+        # below need a registered function entry, which auto-synthesized
+        # allocators lack — the identifier used to degrade to a null literal.
+        if name == "new"
+          if info = @class_info[current_class]?
+            # May defer actual generation to the allocator flush — emit the
+            # call by name regardless; the flush materializes the function.
+            generate_allocator(current_class, info)
+            ctor_name = allocator_new_name_for(current_class)
+            ctor_ret = type_ref_for_name(current_class)
+            ctor_call = Call.without_receiver(ctx.next_id, ctor_ret, ctor_name, [] of ValueId)
+            ctx.emit(ctor_call)
+            ctx.register_type(ctor_call.id, ctor_ret)
+            return ctor_call.id
+          end
+        end
         class_method_base = resolve_method_with_inheritance(current_class, name)
         if class_method_base
           # This is a method call on self with no arguments
