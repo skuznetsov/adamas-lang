@@ -63,10 +63,13 @@ llc fails on `%inttoptr.4.ext = sext i64 %r24 to i64` — the arg-coercion guard
 `src_bits < 64` (llvm_backend ~23075) evaluates WRONG inside s2 for "i64".
 Two instant stage1-level reducers (both pre-existing, RED on bin/adamas AND
 bin/adamas.pre_l4fix, ~20s each, no s2 build needed):
-- (a) `"i64"[1..]` returns EMPTY string; `Array#[1..]` SEGFAULTS. Explicit forms
-  (`[1..-1]`, `[1..2]`, `[1,2]`) all correct → endless-range (nil-end) slicing only;
-  likely a consequence of (b) inside `range_to_index_and_count` (nil-end if-let).
-- (b) **2026-07-06 session-6: peeled into a FOUR-defect stack; 3 FIXED, 1 open.**
+- (a) **OPEN — next START HERE**: `"i64"[1..]` returns EMPTY string; `Array#[1..]`
+  SEGFAULTS. Explicit forms (`[1..-1]`, `[1..2]`, `[1,2]`) all correct →
+  endless-range (nil-end) slicing only. NOT a consequence of (b) — still RED
+  after all four (b) fixes (verified session-7 on /tmp/l5_probe2.cr: sub=""
+  size=0 while to_i? correctly nil). Own root inside
+  `range_to_index_and_count`/String#[](Range) nil-end handling.
+- (b) **2026-07-06 sessions 6-7: peeled into a FOUR-defect stack; ALL 4 FIXED.**
   The "wrong id-space tag" hypothesis was WRONG — tags were fine; the chain was:
   1. **FIXED** (ast_to_hir ~77050 + ~82337): the String#to_i/to_i32/to_i64/to_u*
      strtol intercepts fired on BLOCK forms — stdlib `to_i32? = to_i32(...) { nil }`
@@ -92,28 +95,24 @@ bin/adamas.pre_l4fix, ~20s each, no s2 build needed):
      (-1 sdiv 10 = 0) → to_unsigned_info mul_overflow=0 → every multi-digit parse
      bailed after digit 1 ("64".to_i? == 6). Now prefers callee return / inst.type
      when LLVM widths match. Oracle: `call_result_unsigned_div_repro.sh`.
-  4. **OPEN — next START HERE: ToUnsignedInfo(UInt32) record-initialize param
-     SLICE POISONING.** `record ToUnsignedInfo` auto-generated Dnew/initialize
-     got GARBAGE param names/types ("th_ind", "es_gette", types
-     "String::t/init/_F"); params became ptr; callsite converts Bool args via
-     `__adamas_bool_to_string`, Dnew does `ptrtoint ptr→i1` (low bit of a
-     16-aligned malloc ptr = 0) → **invalid flag always false** →
-     `"".to_i?`/`"abc".to_i?` still enter if-let with payload 0.
-     LOCALIZED (session-6 debug probe in capture_initialize_params):
-     - the params reach capture via the generic-template monomorph path
-       (@arena = template.arena) — `arena_is_current=true`;
-     - `source_path_for(template.arena)` = **src/stdlib/macros.cr** (the file
-       DEFINING the `record` macro), yet macros.cr contains NO "th_ind" → the
-       Parameter.name Slices point into a THIRD buffer (reused/freed
-       macro-expansion text?) — the June slice-lifetime/repr-flip family, not a
-       simple wrong-arena-object bug.
-     NEXT: instrument parameter_name_string for this template to dump the raw
-     slice pointer vs the arena source buffer bounds; find where the record
-     expansion for a GENERIC struct registers its template (why arena source =
-     macros.cr) and where the expansion text buffer is retained. User-level
-     record mimics (top-level, in-class, named args, untyped params) do NOT
-     repro — the macro-expansion demand context is required. IR evidence:
-     `String$CC ToUnsignedInfo…$Dnew` in /tmp/l5_min2_ir.ll.
+  4. **FIXED `a482a1e1` (session-7 2026-07-06): record-initialize param SPAN
+     POISONING** — NOT slice-lifetime: the probe showed the raw Parameter.name
+     slices were INTACT ("value"/"negative"/"invalid"); the garbage came from
+     `parameter_span_text_from_extra_sources`, which scans the LAST-16 window
+     of the arena's retained expansion texts and returns the first
+     plausible-identifier slice from a FOREIGN buffer ("th_ind" ⊂
+     "each_with_index"; macros.cr arena had 179 extras, the record expansion
+     long out of the window). Spans are bare offsets — they cannot identify
+     WHICH retained buffer they index; with fallback_to_slice=false the exact
+     raw slice was never even computed. FIX: parameter_name_string /
+     parameter_type_annotation_string compute the raw token slice
+     unconditionally and, in arenas holding retained macro-expansion sources,
+     prefer it over any non-matching span guess (raw slice IS the generated
+     source). `""`/`"abc"`.to_i? now skip the if-let; `"64".to_i?` == 64
+     end-to-end. Oracle:
+     `regression_tests/record_initialize_param_span_poisoning_repro.sh`.
+     Suites 152/152 + 36/36. bin/adamas replaced (backup
+     `bin/adamas.pre_d4fix`).
   Also observed (separate, minor): `v1.nil?` on `Int32?` from to_i? is STATICALLY
   folded to false (emitted `puts Bool i1 0`) — static nil?-narrowing defect;
   and `.inspect` on plain Int32 locals segfaults via `Object#inspect` vdispatch
