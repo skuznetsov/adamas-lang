@@ -25,8 +25,12 @@ TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ivtaf.XXXXXX")"
 trap 'rm -rf "$TMP_DIR"' EXIT
 fail=0
 
+# mode=coupled : legacy MIScompiles (asserts legacy != gated) — documents a facet
+#                only the gates fix (copy-on-load local bind).
+# mode=fixed   : the default path is FIXED (ArrayNew stride + ctor copy-at-escape,
+#                2026-07-06) — asserts legacy == gated == expected.
 check() {
-  local name="$1" expect="$2" src="$3"
+  local mode="$1" name="$2" expect="$3" src="$4"
   local f="$TMP_DIR/$name.cr"
   printf '%s\n' "$src" > "$f"
   "$COMPILER" "$f" -o "$TMP_DIR/$name.legacy" >/dev/null 2>/dev/null \
@@ -36,31 +40,39 @@ check() {
   local L G
   L="$("$RUNNER" "$TMP_DIR/$name.legacy" 5 256 2>&1 | grep RESULT || true)"
   G="$("$RUNNER" "$TMP_DIR/$name.gated"  5 256 2>&1 | grep RESULT || true)"
-  echo "  [$name] legacy='$L'  gated='$G'"
+  echo "  [$name/$mode] legacy='$L'  gated='$G'"
   if [[ "$G" != "$expect" ]]; then echo "FAIL[$name]: gated '$G' != expected '$expect'"; fail=1; fi
-  if [[ "$L" == "$G" ]]; then echo "FAIL[$name]: legacy==gated — reducer no longer exercises the fix"; fail=1; fi
+  if [[ "$mode" == "fixed" ]]; then
+    if [[ "$L" != "$expect" ]]; then echo "FAIL[$name]: legacy '$L' != expected '$expect' (default-path regression)"; fail=1; fi
+  else
+    if [[ "$L" == "$G" ]]; then echo "FAIL[$name]: legacy==gated — reducer no longer exercises the fix"; fail=1; fi
+  fi
 }
 
 echo "compiler: $COMPILER"
 
-# (RED) sort_by! on Array(Tuple): writeback overwrites @buffer while sorted slots
-# still borrow it -> the last element duplicates.
-check sort "RESULT: 2,50 3,75 1,100" 'items = [{1, 100}, {2, 50}, {3, 75}]
+# sort_by! on Array(Tuple): writeback overwrites @buffer while sorted slots
+# still borrow it -> the last element duplicates. FIXED on the default path by
+# the tuple-ctor copy-at-escape (hir_to_mir lower_allocate).
+check fixed sort "RESULT: 2,50 3,75 1,100" 'items = [{1, 100}, {2, 50}, {3, 75}]
 items.sort_by! { |e| e[1] }
 parts = items.map { |t| "#{t[0]},#{t[1]}" }
 STDERR.puts "RESULT: #{parts.join(" ")}"
 STDERR.flush'
 
 # (ADV1) local binding a = arr[i]: overwriting the source slot must not change a.
-check adv1 "RESULT: 1,100" 'arr = [{1, 100}, {2, 50}, {3, 75}]
+# STILL legacy-broken: fixing it needs ungated copy-on-load (= the owner-gated
+# default flip); the gates fix it via the A' copy-on-load slice.
+check coupled adv1 "RESULT: 1,100" 'arr = [{1, 100}, {2, 50}, {3, 75}]
 a = arr[0]
 arr[0] = {9, 9}
 STDERR.puts "RESULT: #{a[0]},#{a[1]}"
 STDERR.flush'
 
 # (ADV3) construction {arr[i], k}: the inner element must be copied into the outer
-# tuple, not stored as a borrow into @buffer.
-check adv3 "RESULT: 1,100 2,50 3,75" 'arr = [{1, 100}, {2, 50}, {3, 75}]
+# tuple, not stored as a borrow into @buffer. FIXED on the default path by the
+# tuple-ctor copy-at-escape.
+check fixed adv3 "RESULT: 1,100 2,50 3,75" 'arr = [{1, 100}, {2, 50}, {3, 75}]
 mapped = arr.map { |e| {e, 0} }
 arr[0] = {9, 9}
 arr[1] = {9, 9}
