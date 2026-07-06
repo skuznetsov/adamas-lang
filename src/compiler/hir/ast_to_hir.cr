@@ -84949,6 +84949,19 @@ module Adamas::HIR
       if !func_name.includes?("$$block") && !overload_keys.empty?
         overload_keys = overload_keys.reject { |name| name.includes?("$$block") }
       end
+      # A class-method request (Owner.m) must not lose to a same-name instance
+      # method (Owner#m): Iterator.stop resolved to Iterator(T)#stop and the
+      # instance body got lowered under the class-method symbol (self-recursion).
+      # Keep cross-separator candidates only when no same-separator candidate
+      # exists (extend-self style laxity).
+      if overload_keys.size > 1
+        if requested_sep = parse_method_name(func_name).separator
+          same_sep_keys = overload_keys.select { |name| parse_method_name(name).separator == requested_sep }
+          if !same_sep_keys.empty? && same_sep_keys.size != overload_keys.size
+            overload_keys = same_sep_keys
+          end
+        end
+      end
       if debug_call_lookup
         STDERR.puts "[CALL_LOOKUP_OVERLOADS] func=#{func_name} overloads=#{overload_keys.join(",")}"
       end
