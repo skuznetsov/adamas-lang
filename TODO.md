@@ -1,6 +1,6 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-06 (s2 floor L4 FIXED `66795ee5` — while+Proc#call back-edge counter drop, hir_to_mir block_end_map; L5 = llc invalid sext + endless-range String#[] + nil if-let, open)
+Updated: 2026-07-06 (s2 floor L6 CLOSED session-8 — 4 commits `b74939d8..d2a25168`; L7 = NEW floor: `MacroValue#as?$$MacroTupleValue` stub abort ~3s, lower_macro_for → macro_int_literal_for_expr_with_context)
 Branch: `work/b5-lower-method-owner-edge`
 
 This is the active working backlog only. Historical detail is in git history,
@@ -57,23 +57,56 @@ phi incoming resolution. Oracle: `regression_tests/while_next_proc_call_backedge
 Masking hazard noted: emit_phi's missing-pred default-0 turns MIR phi-key bugs into
 silent runtime spins (int phis have no trace; only ptr has ADAMAS_NULL_PHI_TRACE).
 
-**Layer 6 = NEW s2 floor (session-7, after L5 fully fixed): `T#ascii_number?`
-STUB abort at s2 startup.** With (a)+(b) fixed, `/tmp/s2_d5` compiling `x = 1`
-no longer hits llc `sext i64 to i64` — it aborts at ~2s with
-`STUB CALLED: T$Hascii_number$Q`. Backtrace (lldb):
-`AstToHir#numeric_conversion_method_name?(String)` →
-`suffix.each_char.all?(&.ascii_number?)` →
-`__vdispatch__Enumerable$LT$R$Hall$Q$$block$$T2237` (bare Enumerable(T)
-TEMPLATE monomorph, T unsubstituted) → block calls `T#ascii_number?` → stub.
-**Instant stage1 reducer (~20s, no s2 build):**
-`"123".each_char.all?(&.ascii_number?)` → same stub (/tmp/l6_allq.cr).
-Bounds: `chars.all?(&.ascii_number?)` (Array) GREEN; explicit block
-`{ |c| c.ascii_number? }` RED too; `{ |c| c == '1' }` GREEN (operator ==
-lowers via primitive path; regular method needs receiver type = T→unbound).
-Family: module-owned generic monomorph with unbound T (cf. L3 defect 3
-first-instantiation-wins base map; class_arg_overload module-owned trap).
-START HERE: IR of the reducer — which all? monomorph is demanded and where
-the Iterator(Char)→Enumerable(T) substitution map is lost.
+**Layer 6 CLOSED (session-8 2026-07-06): the `T#ascii_number?` stub peeled
+into FOUR stacked compiler defects, commits `b74939d8..d2a25168`.** The
+reducer `"123".each_char.all?(&.ascii_number?)` (/tmp/l6_allq.cr) exposed,
+in order (each fix uncovered the next at runtime):
+1. `b74939d8` — **include-chain block-param typing**: include-site
+   instantiations were dropped at registration (`@class_included_modules`
+   holds declared names only, "Iterator(T)"), so block_param_types_for_call
+   could not bind T=Char for String::CharIterator → block proc typed `T`
+   (opaque ptr, void return) → `T#ascii_number?` stub. Fix: persist
+   `@class_include_instantiations` (full-class-name key ONLY — base keys =
+   first-instantiation-wins poison) + consume in block_param_types_for_call.
+   Oracle `iterator_module_block_param_type_repro.sh`.
+2. `160e2b21` — **separator-blind overload selection**: request
+   `Iterator.stop` resolved to INSTANCE `Iterator(T)#stop`; instance body
+   (`Iterator.stop`) lowered under the class-method symbol → infinite
+   self-recursion (Bus error). Fix: prefer same-separator candidates in
+   resolve_call_tuple (cross-separator kept only when no same-sep exists —
+   extend-self laxity preserved).
+3. `a8040086` — **type-literal member inference built Owner#m**: inference
+   of `Iterator.stop` died (routed through Iterator(T)#stop) → Stop dropped
+   from CharIterator#next's Char|Stop union → return collapsed to bare Char
+   → caller's `is_a?(Stop)` loop exit folded away, stop path coerced Stop by
+   DEREFERENCE (null crash). Fix: dot-form name first for type-literal
+   receivers + generic-key fallback ("Iterator" → "Iterator(T).stop", typed
+   at registration).
+4. `d2a25168` — **`INSTANCE = new` never initialized**: bare receiverless
+   `new` (IdentifierNode) was (a) not in the deferred-const whitelist and
+   (b) lowered to a null literal (auto-synthesized allocators have no
+   function entry for the identifier fallbacks). Iterator::Stop::INSTANCE
+   stayed null forever. Fix: defer IdentifierNode=="new" + lower bare `new`
+   as the current class's zero-arg allocator call.
+VALIDATED: reducer true/false/true; suites 152/152 + 36/36 ALL PASSED;
+bin/adamas replaced (backup `bin/adamas.pre_l6fix`); s2 rebuilt
+(/tmp/s2_l6fix) — T#ascii_number? floor GONE.
+
+**Layer 7 = NEW s2 floor (session-8): `MacroValue#as?` monomorph stub.**
+`/tmp/s2_l6fix` compiling `x = 1` aborts ~3s in:
+`STUB CALLED: Adamas..MacroValue$Has$Q$$..MacroTupleValue` — lldb bt:
+`lower_macro_for` → `macro_for_iterable_values_with_context` →
+`macro_int_literal_for_expr_with_context` → `.as?(MacroTupleValue)` on a
+MacroValue-typed value → per-class as? monomorph emitted as abort stub
+(as?-dispatch synthesis missing for this receiver shape). Plain
+abstract-base reducer is GREEN (`v.as?(A)` with `v : Base` from a method —
+/tmp/l7_asq.cr) → the failing shape is more specific (value likely from
+Hash(String, MacroValue)#[] / union Nil|ClassSymbol context inside
+macro-for lowering). START HERE: find the callsite in stage1 source
+(ast_to_hir macro_int_literal_for_expr_with_context, `.as?(MacroTupleValue)`),
+determine the receiver's static type in s2's IR of that function, and craft
+a reducer matching that shape (as? on abstract base received from a
+generic container / after union narrowing).
 
 **Layer 5 (CLOSED session-7) was: llc rejects s2 output (`sext i64 to i64`).** Fixed-s2
 (`/tmp/s2_l4fix`) compiling `x = 1`: emission completes (peak 2.1GB, no runaway),
