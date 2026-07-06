@@ -25116,13 +25116,16 @@ module Adamas::HIR
       arena : Adamas::Compiler::Frontend::ArenaLike? = @arena,
       fallback_to_slice : Bool = true,
     ) : String?
+      # The raw token slice is computed unconditionally: even when
+      # fallback_to_slice is false it is the only exact witness for params
+      # reparsed from retained macro-expansion text (spans are bare offsets
+      # that cannot say WHICH retained buffer they index, so a span-only
+      # lookup can land in a foreign expansion and return plausible garbage).
       raw_text = nil.as(String?)
-      if fallback_to_slice
-        if type_slice = param.type_annotation
-          if text = safe_slice_to_string(type_slice)
-            stripped = text.strip
-            raw_text = stripped unless stripped.empty?
-          end
+      if type_slice = param.type_annotation
+        if text = safe_slice_to_string(type_slice)
+          stripped = text.strip
+          raw_text = stripped unless stripped.empty?
         end
       end
 
@@ -25138,17 +25141,18 @@ module Adamas::HIR
           )
         end
         return extra_text if extra_text && raw_text.nil?
+        if raw_text && source_arena && extra_sources_for_arena(source_arena)
+          # Macro expansions are reparsed into the macro definition arena.
+          # Their spans point into retained generated output, while
+          # source_for_arena still points at the macro source file. The raw
+          # token slice IS the generated source; never let a non-matching
+          # span guess override it.
+          return extra_text if extra_text == raw_text
+          return raw_text
+        end
         if source = source_text_for_arena_or_file(source_arena)
           if text = slice_source_for_span(span, source)
             stripped = strip_single_line_comments(text).strip
-            if raw_text && source_arena && extra_sources_for_arena(source_arena)
-              # Macro expansions are reparsed into the macro definition arena.
-              # Their spans point into retained generated output, while
-              # source_for_arena still points at the macro source file. If the
-              # two disagree, the raw token slice is the generated source.
-              return extra_text if extra_text == raw_text
-              return raw_text if !stripped.empty? && stripped != raw_text
-            end
             return stripped unless stripped.empty?
           end
         end
@@ -25164,13 +25168,13 @@ module Adamas::HIR
       arena : Adamas::Compiler::Frontend::ArenaLike? = @arena,
       fallback_to_slice : Bool = true,
     ) : String?
+      # See parameter_type_annotation_string for why the raw slice is
+      # computed even when fallback_to_slice is false.
       raw_text = nil.as(String?)
-      if fallback_to_slice
-        if name_slice = param.name
-          if text = safe_slice_to_string(name_slice)
-            stripped = text.strip
-            raw_text = stripped unless stripped.empty?
-          end
+      if name_slice = param.name
+        if text = safe_slice_to_string(name_slice)
+          stripped = text.strip
+          raw_text = stripped unless stripped.empty?
         end
       end
 
@@ -25186,15 +25190,16 @@ module Adamas::HIR
           )
         end
         return extra_text if extra_text && raw_text.nil?
+        if raw_text && source_arena && extra_sources_for_arena(source_arena)
+          # See parameter_type_annotation_string: macro-expanded params have
+          # spans into retained generated output, not into macro source; the
+          # raw token slice is the generated source.
+          return extra_text if extra_text == raw_text
+          return raw_text
+        end
         if source = source_text_for_arena_or_file(source_arena)
           if text = slice_source_for_span(span, source)
             stripped = strip_single_line_comments(text).strip
-            if raw_text && source_arena && extra_sources_for_arena(source_arena)
-              # See parameter_type_annotation_string: macro-expanded params may
-              # have spans into retained generated output, not into macro source.
-              return extra_text if extra_text == raw_text
-              return raw_text if !stripped.empty? && stripped != raw_text
-            end
             return stripped unless stripped.empty?
           end
         end
