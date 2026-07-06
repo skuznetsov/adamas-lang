@@ -1,6 +1,6 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-06 (s2 floor layer 3 FIXED — 5-commit sort_by!/merge-sort chain `f8408226..b0bbde54`; layer 4 = LLVM-emission memory runaway, open)
+Updated: 2026-07-06 (s2 floor L4 FIXED `66795ee5` — while+Proc#call back-edge counter drop, hir_to_mir block_end_map; L5 = llc invalid sext + endless-range String#[] + nil if-let, open)
 Branch: `work/b5-lower-method-owner-edge`
 
 This is the active working backlog only. Historical detail is in git history,
@@ -42,14 +42,31 @@ gated incl. 40-element sort_by!/sort!/manual-Schwartzian (`/tmp/np10_sort_by_big
 adv3 construct) now default-fixed — the whole alias reducer family is green ungated.
 bin/adamas replaced (backup `bin/adamas.pre_sortfix`).
 
-**Layer 4 = NEW s2 floor: LLVM-emission memory runaway.** s2 (`/tmp/s2_new`, rebuild via
-`scripts/build_stage2_debug.sh bin/adamas /tmp/s2_new`) compiling `x = 1` no longer
-crashes at sort_by! — it runs deep into `emit_functions_parallel`, then: forked LLVM
-workers die with VARYING exit codes (4/68/132/196) → sequential fallback → parent
-killed at >16GB. With `ADAMAS_LLVM_WORKERS=1` (serial from the start) memory passes
-16GB in ~23s (~700MB/s allocation) → runaway allocation in the s2 binary's own LLVM
-emission, not legit work. START HERE next: profile what allocates (candidate: a
-miscompiled loop/grow at s2 scale; cf. the deep-nesting Array blowup note).
+**Layer 4 FIXED (`66795ee5` 2026-07-06): while+Proc#call loop back-edge counter drop.**
+The "memory runaway" was ONE emit_phi call spinning: hir_to_mir's resolve_pending_phis
+keyed phi incomings with the FIRST MIR block of a HIR block (@block_map), but the
+Proc#call closure/bare diamond leaves the lowered terminator in the MERGE block →
+the LLVM layer found no value for the real CFG predecessor and silently defaulted 0
+(append_missing) → any `while` whose body tail crosses a Proc#call reset its counter
+each pass (NOT `next`-specific). In self-host: emit_phi's union branch calls the
+`block_name` proc → infinite loop allocating interpolated strings at ~700MB/s.
+Fix: @block_end_map (HIR block → MIR block holding the lowered terminator) used for
+phi incoming resolution. Oracle: `regression_tests/while_next_proc_call_backedge_repro.sh`
+(RED pre-fix, GREEN post-fix). Suites 152/152 + 36/36. bin/adamas replaced
+(backup `bin/adamas.pre_l4fix`). 4th root of the loop-next family (3 of 4 now fixed).
+Masking hazard noted: emit_phi's missing-pred default-0 turns MIR phi-key bugs into
+silent runtime spins (int phis have no trace; only ptr has ADAMAS_NULL_PHI_TRACE).
+
+**Layer 5 = NEW s2 floor: llc rejects s2 output (`sext i64 to i64`).** Fixed-s2
+(`/tmp/s2_l4fix`) compiling `x = 1`: emission completes (peak 2.1GB, no runaway),
+llc fails on `%inttoptr.4.ext = sext i64 %r24 to i64` — the arg-coercion guard
+`src_bits < 64` (llvm_backend ~23075) evaluates WRONG inside s2 for "i64".
+Two instant stage1-level reducers (both pre-existing, RED on bin/adamas AND
+bin/adamas.pre_l4fix, ~20s each, no s2 build needed):
+- (a) `"i64"[1..]` returns EMPTY string (endless-range String#[](Range)).
+- (b) `v = nil : Int32?; if bits = v` ENTERS the branch with bits=0 (nil if-let).
+  (/tmp/l5_probe2.cr: `sub= size=0; to_i?=nil; bits=0 lt64=true`)
+START HERE next: fix (a) and (b) at stage1 level, then rebuild s2 and re-floor.
 
 **Known open siblings surfaced by this dig (pre-existing, reducers in session log):**
 - `Slice(Int32).new(ptr, size)`-style calls in main bind receiver to the FIRST Slice
