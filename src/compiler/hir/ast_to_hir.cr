@@ -5517,6 +5517,13 @@ module Adamas::HIR
     @class_included_modules : Hash(String, Array(String))
     # Fast membership index for class/module inclusion lists (avoids Array#includes? scans).
     @class_included_module_seen : Hash(String, Set(String))
+    # Include-site instantiations (class -> ["Iterator(Char)", "Enumerable(Char)"]).
+    # @class_included_modules only holds declared module names ("Iterator(T)"),
+    # losing the include-site type args; callsite-time block-param resolution
+    # needs them to bind a generic module's T for receivers whose own name
+    # carries no generic args. Keyed ONLY by the full class name — base-name
+    # records would be first-instantiation-wins poison.
+    @class_include_instantiations : Hash(String, Array(String))
     @union_type_cache : Hash(UInt32, Bool)
     @debug_cache_histo : Bool
     @debug_cache_stats : Hash(String, Tuple(Int32, Int32))
@@ -6041,6 +6048,7 @@ module Adamas::HIR
       @module_includers_version = 0
       @class_included_modules = {} of String => Array(String)
       @class_included_module_seen = {} of String => Set(String)
+      @class_include_instantiations = {} of String => Array(String)
       @union_type_cache = {} of UInt32 => Bool
       @debug_cache_histo = !env_get("DEBUG_CACHE_HISTO").nil?
       @debug_cache_stats = {} of String => Tuple(Int32, Int32)
@@ -18702,6 +18710,22 @@ module Adamas::HIR
                         include_param_map_cache[param_sig] = computed
                         computed
                       end
+          unless extra_map.empty?
+            # A bare reopening ("module Enumerable") can win the name lookup;
+            # record against the generic key so the params are in the name.
+            record_name = module_full_name
+            unless record_name.includes?('(')
+              ensure_module_defs_stripped_lookup
+              if generic_key = module_defs_stripped_lookup(record_name)
+                record_name = generic_key
+              end
+            end
+            instantiated = substitute_type_params(record_name, extra_map)
+            if instantiated != record_name
+              inst_list = @class_include_instantiations[class_name] ||= [] of String
+              inst_list << instantiated unless inst_list.includes?(instantiated)
+            end
+          end
           with_type_param_map(extra_map) do
             STDERR.puts "[REG_INCLUDE_PHASE] class=#{class_name} phase=type_map module=#{module_full_name} idx=#{i} size=#{extra_map.size}" if trace_include_phase
             if macro_lookup = included_macro_lookup
@@ -49695,6 +49719,43 @@ module Adamas::HIR
       type_param_map_for_generic_type_name(receiver)
     end
 
+    # Recover a generic module's type-param bindings for a receiver whose own
+    # name carries no generic args (String::CharIterator includes Iterator(Char),
+    # and Iterator(T) includes Enumerable(T) => T=Char for Enumerable-owned
+    # methods). Reads include-site instantiations persisted during module-method
+    # registration.
+    private def included_module_type_param_map(receiver_name : String, owner_base : String) : Hash(String, String)?
+      return nil if receiver_name.empty? || owner_base.empty?
+      list = @class_include_instantiations[receiver_name]?
+      return nil unless list
+      list.each do |mod_name|
+        info = split_generic_base_and_args(mod_name)
+        next unless info
+        next unless info.base == owner_base
+        map = type_param_map_for_generic_type_name(mod_name)
+        return map unless map.empty?
+        # @module_defs is keyed by declared generic names ("Enumerable(T)");
+        # type_param_map_for_generic_type_name can miss those via the bare base.
+        args = split_generic_type_args(info.args).map do |arg|
+          normalize_tuple_literal_type_name(arg.strip)
+        end
+        next if args.empty?
+        ensure_module_defs_stripped_lookup
+        if generic_key = module_defs_stripped_lookup(info.base)
+          if defs = @module_defs[generic_key]?
+            defs.each do |mod_node, _|
+              names = module_type_param_names(mod_node)
+              next unless names.size == args.size
+              built = {} of String => String
+              names.each_with_index { |param_name, idx| built[param_name] = args[idx] }
+              return built
+            end
+          end
+        end
+      end
+      nil
+    end
+
     private def receiver_type_param_map_cache_get(type_id : Int32) : Hash(String, String)?
       i = 0
       while i < @receiver_type_param_map_cache_ids.size
@@ -50966,6 +51027,17 @@ module Adamas::HIR
                          end
         if needs_fallback
           if type_desc = @module.get_type_descriptor(receiver_type_value)
+            # Include-chain bindings first: exact (recorded at the include
+            # site), unlike the element-type guess below.
+            if owner_name = receiver_name_from_method_name(resolved_base)
+              owner_base = strip_generic_args(owner_name)
+              if inc_map = included_module_type_param_map(type_desc.name, owner_base)
+                merged = param_map ? param_map.not_nil!.dup : {} of String => String
+                inc_map.each { |key, value| merged[key] ||= value }
+                param_map = merged
+                receiver_type_map = receiver_type_map.empty? ? inc_map : inc_map.merge(receiver_type_map)
+              end
+            end
             if element_name = element_type_for_type_name(type_desc.name)
               param_map = param_map ? param_map.not_nil!.dup : {} of String => String
               input_names.each do |name|
