@@ -66,17 +66,49 @@ bin/adamas.pre_l4fix, ~20s each, no s2 build needed):
 - (a) `"i64"[1..]` returns EMPTY string; `Array#[1..]` SEGFAULTS. Explicit forms
   (`[1..-1]`, `[1..2]`, `[1,2]`) all correct → endless-range (nil-end) slicing only;
   likely a consequence of (b) inside `range_to_index_and_count` (nil-end if-let).
-- (b) **root candidate: `String#to_i?`/`to_i32?` union-RETURN tag in the wrong
-  id-space** (positional-vs-global class, same family as L1 `82150e13` but on the
-  return path): `"".to_i?` → `.nil?`=false + if-let enters with payload 0;
-  `"64".to_i?` → holds 64 but `.inspect` prints nil (inspect's global-id dispatch
-  misses → falls to Nil). Hand-built `5.as(Int32?)` / `nil.as(Int32?)` CORRECT
-  (inspect+nil? both right); plain/block/generic-block methods returning Int32? nil
-  CORRECT; explicit `to_i?(10)` equally broken → defect is in the
-  to_i32?→to_int_generic chain's return coercion, not in if-let or default-args.
-  Reducers: /tmp/l5_toi.cr, /tmp/l5_disc.cr (~20s each, stage1-level, no s2 build).
-START HERE next: dump IR of the `"".to_i32?` return path (which UnionWrap writes
-the tag, in what id-space), fix, then rebuild s2 and re-floor.
+- (b) **2026-07-06 session-6: peeled into a FOUR-defect stack; 3 FIXED, 1 open.**
+  The "wrong id-space tag" hypothesis was WRONG — tags were fine; the chain was:
+  1. **FIXED** (ast_to_hir ~77050 + ~82337): the String#to_i/to_i32/to_i64/to_u*
+     strtol intercepts fired on BLOCK forms — stdlib `to_i32? = to_i32(...) { nil }`
+     got replaced by `__adamas_string_to_i_base` (cannot signal nil) → `"".to_i?`
+     returned wrapped Int32(0). Now gated on `!has_block_call`. Companion: the
+     numeric-conversion Cast fallback (to_* → Cast) required arg-less/block-less
+     calls on primitive receivers (it used to bitcast the STRING POINTER into the
+     union payload once the intercept was gated).
+     Oracle: `string_to_i_nilable_block_intercept_repro.sh`.
+  2. **FIXED** (parser.cr parse_prefix Yield case): `return yield if cond` bound the
+     suffix-if to the YIELD (parse_postfix_if_modifier ignored
+     @consume_postfix_modifiers) → `return (cond ? yield : nil)` → EVERY statement
+     after it dead (gen_to_ lost `Int32.new(info.value)` etc.).
+     Surgical fix: only the Yield case honors the flag. NOTE: Super/Break/Next
+     prefix cases + assignment sites (1204/1208) have the same latent hole — a
+     CENTRAL flag check in parse_postfix_if_modifier broke prelude compile
+     (io.cr gets_peek "private method 'bytesize' for Pointer(String)") — needs
+     its own investigation before generalizing.
+     Oracle: `return_yield_postfix_if_tail_repro.sh`.
+  3. **FIXED** (llvm_backend emit_call final value_types update →
+     `call_result_type_ref_for_emitted`): emitted-LLVM-string → TypeRef mapping
+     erased unsignedness ("i32" → INT32) → `~UInt32.new(0) // base` emitted sdiv
+     (-1 sdiv 10 = 0) → to_unsigned_info mul_overflow=0 → every multi-digit parse
+     bailed after digit 1 ("64".to_i? == 6). Now prefers callee return / inst.type
+     when LLVM widths match. Oracle: `call_result_unsigned_div_repro.sh`.
+  4. **OPEN — next START HERE: ToUnsignedInfo(UInt32) named-args Dnew arena
+     poisoning.** `record ToUnsignedInfo` auto-generated Dnew/initialize got
+     GARBAGE param names/types sliced from the WRONG ARENA ("th_ind" ⊂
+     each_wi*th_ind*ex, types "String::t/init/_F"); params became ptr; callsite
+     converts Bool args via `__adamas_bool_to_string`, Dnew does `ptrtoint ptr→i1`
+     (low bit of a 16-aligned malloc ptr = 0) → **invalid flag always false** →
+     `"".to_i?`/`"abc".to_i?` still enter if-let with payload 0. Demand for the
+     instantiation comes from the `gen_to_` macro-expansion context — classic
+     arena-misattribution (#1 bug pattern). User-level record mimics (top-level,
+     in-class, named args, untyped params) do NOT repro — the macro-expansion
+     demand context is required. IR evidence: `String$CC ToUnsignedInfo…$Dnew`
+     in /tmp/l5_min2_ir.ll (session-6).
+  Also observed (separate, minor): `v1.nil?` on `Int32?` from to_i? is STATICALLY
+  folded to false (emitted `puts Bool i1 0`) — static nil?-narrowing defect;
+  and `.inspect` on plain Int32 locals segfaults via `Object#inspect` vdispatch
+  (pre-existing on old bin/adamas too, repro /tmp/l5_insp2.cr).
+  Reducers: /tmp/l5_toi.cr, /tmp/l5_disc.cr, /tmp/l5_rec*.cr.
 
 **Known open siblings surfaced by this dig (pre-existing, reducers in session log):**
 - `Slice(Int32).new(ptr, size)`-style calls in main bind receiver to the FIRST Slice
