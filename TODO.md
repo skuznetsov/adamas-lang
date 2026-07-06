@@ -1,10 +1,65 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-05 (s2 self-host floor layer 2 FIXED — forward const-alias fold `546f2c07`; layer 3 = sort_by! nested-tuple ABI, open)
+Updated: 2026-07-06 (s2 floor layer 3 FIXED — 5-commit sort_by!/merge-sort chain `f8408226..b0bbde54`; layer 4 = LLVM-emission memory runaway, open)
 Branch: `work/b5-lower-method-owner-edge`
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
+
+## 2026-07-06 — s2 floor LAYER 3 FIXED (sort_by!/stable-sort family), 5 commits `f8408226..b0bbde54`
+
+The sort_by! nested-tuple blocker was FIVE stacked compiler defects, peeled by
+reducer bisection (each fix exposed the next):
+
+1. `f8408226` — **ArrayNew alloc stride**: `emit_array_new` sized buffers by an ad-hoc
+   LLVM-type switch (8 for tuples) while get/set/PointerStore/realloc/array-literal
+   stride by `container_elem_storage_size_u64` (16 for the nested pair) → heap
+   overflow in `Array#map` (Guard Malloc pinned the OOB store; Bus error at next malloc).
+2. `20b6ada4` — **ctor copy-at-escape**: tuple constructors stored a BORROW of an
+   inline buffer slot; sort_by!'s writeback overwrote `@buffer` while sorted pairs
+   still pointed into it (elements duplicated/lost).
+3. `258e8f4a` — **bare generic-base class-method owner**: `Slice.merge_sort!(self, comp)`
+   inside `Slice(T)#sort!` bound to a bare `Slice.merge_sort!$…` monomorph with no
+   per-instantiation type-param map → base-key map is first-instantiation-wins
+   (T=UInt8 from Bytes) → `Pointer(T).malloc(size//2)` allocated the merge scratch
+   buffer at 1 byte/elem for EVERY non-UInt8 element type. Now binds to
+   `Slice(X).merge_sort!` when the instantiation defines the method.
+4. `4ea2fc66` — **array_get copy-on-load**: the ungated inline-primitive-tuple branch
+   of `emit_array_get` returned the raw slot GEP (borrow) — `x, v[0] = v[0], v[1]`
+   in `insert_head!` read the overwritten slot through x. Primitive tuples now
+   return a heap-carrier copy (tuples are immutable ⇒ always safe); mutable inline
+   container structs keep the borrow.
+5. `b0bbde54` — **HIR container-element oracle**: `container_element_storage_size`
+   returned 8 for every tuple; it feeds `__adamas_ptr_copy/ptr_move` strides
+   (`Pointer#copy_from` in `Slice.merge!`) → scratch-buffer under-copy lost one
+   element per merge (SBAPI trace: intact at merge! entry, zeros after). Primitive
+   tuples now return `hir_tuple_storage_size` (new `hir_primitive_tuple_type?`).
+
+VALIDATED: full suite 152/152 + 36/36 (default); reducer ladder green on default AND
+gated incl. 40-element sort_by!/sort!/manual-Schwartzian (`/tmp/np10_sort_by_big.cr`,
+`/tmp/sort_repro.cr`); `array_tuple_sort_by_merge_sort_repro.sh` PASS (was RED at HEAD);
+`inline_value_tuple_array_alias_fix.sh` updated `89b39ccd` (sort/adv3 facets now
+default-fixed; adv1 local-bind still gate-coupled). bin/adamas replaced
+(backup `bin/adamas.pre_sortfix`).
+
+**Layer 4 = NEW s2 floor: LLVM-emission memory runaway.** s2 (`/tmp/s2_new`, rebuild via
+`scripts/build_stage2_debug.sh bin/adamas /tmp/s2_new`) compiling `x = 1` no longer
+crashes at sort_by! — it runs deep into `emit_functions_parallel`, then: forked LLVM
+workers die with VARYING exit codes (4/68/132/196) → sequential fallback → parent
+killed at >16GB. With `ADAMAS_LLVM_WORKERS=1` (serial from the start) memory passes
+16GB in ~23s (~700MB/s allocation) → runaway allocation in the s2 binary's own LLVM
+emission, not legit work. START HERE next: profile what allocates (candidate: a
+miscompiled loop/grow at s2 scale; cf. the deep-nesting Array blowup note).
+
+**Known open siblings surfaced by this dig (pre-existing, reducers in session log):**
+- `Slice(Int32).new(ptr, size)`-style calls in main bind receiver to the FIRST Slice
+  instantiation (Slice(UInt8)) — values <256 masked it (np12).
+- User-level `Proc#call` with nested-tuple args returns garbage/empty (np24).
+- `&block : {T,T} -> Int32` block params typed `Int32?` → `Int32?#[]` stub (np26)
+  = the documented nested-tuple block-param `|_, cost|` family.
+- `::Array({ {A,B}, C }).new` nested TupleLiteral parse STUB (`7c2f06b9` not nested-aware).
+- `Array(Int32)#sort!(&block)` lowers to the `__adamas_sort_i32_array` intrinsic which
+  IGNORES the comparator block (reverse sorts silently wrong?) — verify + fix.
 
 ## 2026-07-05 — s2 self-host floor LAYER 2 FIXED (forward const-alias fold), committed `546f2c07`
 
