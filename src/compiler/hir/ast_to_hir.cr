@@ -77044,7 +77044,10 @@ module Adamas::HIR
       # args[0] (the explicit value or the default 10). Honor it via strtol's
       # runtime base so non-decimal conversions like "ff".to_i(16) are correct;
       # previously the base was dropped and everything parsed as decimal.
-      if (method_name == "to_i" || method_name == "to_i32") && receiver_id
+      # Block forms must NOT be intercepted: stdlib to_i32? lowers to
+      # `to_i32(...) { nil }`, and the strtol helper cannot signal nil —
+      # intercepting it made "".to_i? return a wrapped Int32(0) instead of nil.
+      if (method_name == "to_i" || method_name == "to_i32") && receiver_id && !has_block_call
         recv_type = ctx.type_of(receiver_id)
         if recv_type == TypeRef::STRING || recv_type == TypeRef::POINTER
           if base_arg = args[0]?
@@ -77065,8 +77068,8 @@ module Adamas::HIR
         end
       end
 
-      # String#to_i64 intercept
-      if method_name == "to_i64" && receiver_id
+      # String#to_i64 intercept (block form = stdlib to_i64? nil path, see to_i above)
+      if method_name == "to_i64" && receiver_id && !has_block_call
         recv_type = ctx.type_of(receiver_id)
         if recv_type == TypeRef::STRING || recv_type == TypeRef::POINTER
           ext_call = ExternCall.new(ctx.next_id, TypeRef::INT64, "__adamas_string_to_i64", [receiver_id])
@@ -77076,8 +77079,8 @@ module Adamas::HIR
         end
       end
 
-      # String#to_u* intercept
-      if receiver_id && (unsigned_target = string_unsigned_conversion_target(method_name))
+      # String#to_u* intercept (block form = stdlib to_u*? nil path, see to_i above)
+      if receiver_id && !has_block_call && (unsigned_target = string_unsigned_conversion_target(method_name))
         recv_type = ctx.type_of(receiver_id)
         if recv_type == TypeRef::STRING || recv_type == TypeRef::POINTER
           return lower_string_to_unsigned_conversion(ctx, receiver_id, unsigned_target)
@@ -82331,12 +82334,19 @@ module Adamas::HIR
       if env_get("DEBUG_TO_U32") && (method_name.includes?("to_u32") || method_name.includes?("to_u!"))
         STDERR.puts "[TO_U32_CALL_FB] method=#{method_name} receiver_id=#{receiver_id} is_conv=#{numeric_conversion_method_name?(method_name)} func=#{ctx.function.name}"
       end
-      if receiver_id && numeric_conversion_method_name?(method_name)
-        if target = type_ref_for_conversion_method(method_name)
-          cast = Cast.new(ctx.next_id, target, receiver_id, target)
-          ctx.emit(cast)
-          ctx.register_type(cast.id, target)
-          return cast.id
+      # A Cast can only represent an arg-less, block-less conversion on a value
+      # the target width can be derived from. Firing it for String#to_i32(args){nil}
+      # (stdlib to_i32? internals) bitcast the STRING POINTER into the Int32 slot.
+      if receiver_id && args.empty? && !has_block_call && numeric_conversion_method_name?(method_name)
+        recv_cast_type = ctx.type_of(receiver_id)
+        if numeric_primitive?(recv_cast_type) || recv_cast_type == TypeRef::CHAR ||
+           recv_cast_type == TypeRef::BOOL || recv_cast_type == TypeRef::VOID
+          if target = type_ref_for_conversion_method(method_name)
+            cast = Cast.new(ctx.next_id, target, receiver_id, target)
+            ctx.emit(cast)
+            ctx.register_type(cast.id, target)
+            return cast.id
+          end
         end
       end
 
