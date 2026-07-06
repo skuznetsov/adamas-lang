@@ -75722,6 +75722,25 @@ module Adamas::HIR
             end
           end
 
+          # An explicit BARE generic-base receiver written inside an instantiation
+          # of that same base (`Slice.merge_sort!(self, comp)` inside
+          # Slice(T)#sort!) refers to the enclosing generic class. Bind it to the
+          # CURRENT instantiation when that owner defines the method: the bare
+          # `Slice.merge_sort!$…` monomorph carries no per-instantiation type-param
+          # map, so its body falls back to the shared `Slice.merge_sort!` base-key
+          # map — first-instantiation-wins (T=UInt8 from Bytes) — and
+          # `Pointer(T).malloc` under-allocates the merge-sort scratch buffer for
+          # every other T (Array#sort_by! nested-tuple Bus error, s2 floor).
+          if (cn = class_name_str) && !cn.includes?('(') &&
+             (current_inst = @current_class) && current_inst.includes?('(') &&
+             strip_generic_args(current_inst) == cn &&
+             (class_method_overload_exists?("#{current_inst}.#{method_name}") ||
+              @function_defs.has_key?("#{current_inst}.#{method_name}") ||
+              resolve_class_method_with_inheritance(current_inst, method_name))
+            class_name_str = current_inst
+            path_receiver_class_name = current_inst if path_receiver_class_name_found
+          end
+
           if receiver_id.nil? && type_param_receiver_name
             receiver_id = lower_type_literal_from_name(ctx, type_param_receiver_name)
             receiver_type = ctx.type_of(receiver_id)
