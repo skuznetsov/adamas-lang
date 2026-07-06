@@ -21052,6 +21052,39 @@ module Adamas::HIR
             return obj_type if obj_type != TypeRef::VOID
           end
         end
+        # Type-literal receiver (module/class): the member is a CLASS method
+        # (Owner.m). The generic path below builds Owner#m, which routes
+        # Iterator.stop through the same-name INSTANCE method Iterator(T)#stop
+        # (whose body calls Iterator.stop again) — inference dies and the Stop
+        # return silently drops out of Char|Stop unions (L6 iterator floor).
+        if object_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode) ||
+           object_node.is_a?(Adamas::Compiler::Frontend::PathNode) ||
+           object_node.is_a?(Adamas::Compiler::Frontend::ConstantNode)
+          if type_str = stringify_type_expr(expr_node.object)
+            if type_str[0]?.try(&.uppercase?) || type_str.includes?("::")
+              resolved_const = resolve_constant_name_in_context(type_str)
+              is_value_constant = resolved_const &&
+                                  @constant_types[resolved_const]?.try { |t| t != TypeRef::VOID }
+              unless is_value_constant
+                owner_q = resolve_class_name_in_context(type_str)
+                if type_name_exists?(owner_q)
+                  rt = get_function_return_type("#{owner_q}.#{member_name}")
+                  return rt if rt != TypeRef::VOID
+                  # Generic modules register class methods under the declared
+                  # key ("Iterator(T).stop") — consult it for bare-owner requests.
+                  owner_base = strip_generic_args(owner_q)
+                  if owner_base == owner_q
+                    ensure_module_defs_stripped_lookup
+                    if generic_key = module_defs_stripped_lookup(owner_base)
+                      rt = get_function_return_type("#{generic_key}.#{member_name}")
+                      return rt if rt != TypeRef::VOID
+                    end
+                  end
+                end
+              end
+            end
+          end
+        end
         # Numeric conversion methods have well-defined return types based on method name
         # These are stdlib primitives, not arbitrary user methods
         if conv_type = conversion_method_return_type(member_name)
