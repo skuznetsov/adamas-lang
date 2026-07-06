@@ -63,12 +63,18 @@ llc fails on `%inttoptr.4.ext = sext i64 %r24 to i64` — the arg-coercion guard
 `src_bits < 64` (llvm_backend ~23075) evaluates WRONG inside s2 for "i64".
 Two instant stage1-level reducers (both pre-existing, RED on bin/adamas AND
 bin/adamas.pre_l4fix, ~20s each, no s2 build needed):
-- (a) **OPEN — next START HERE**: `"i64"[1..]` returns EMPTY string; `Array#[1..]`
-  SEGFAULTS. Explicit forms (`[1..-1]`, `[1..2]`, `[1,2]`) all correct →
-  endless-range (nil-end) slicing only. NOT a consequence of (b) — still RED
-  after all four (b) fixes (verified session-7 on /tmp/l5_probe2.cr: sub=""
-  size=0 while to_i? correctly nil). Own root inside
-  `range_to_index_and_count`/String#[](Range) nil-end handling.
+- (a) **FIXED `7b92e8d8` (session-7)**: NOT range_to_index_and_count — the
+  String#[](Range) compiler INTERCEPT (ast_to_hir ~92030) lowered the slice
+  inline as `len = end - begin (+1)`; the parser stores a NilNode end for
+  `s[1..]`, nil lowered to 0 → len = 1 - begin → ""/1-char slices (defect-1
+  intercept family). Fix: NilNode end → `len = bytesize - begin` (helper
+  clamps). `Array#[1..]` goes through the real Array#[](Range) and was
+  already green post-D4 (its old SEGFAULT not reproducible). typeof(1..) at
+  statement level = Void (parser only makes NilNode end before `)]},;end
+  else elsif do {` — newline NOT included, bare `r = 1..` eats the next
+  line) — pre-existing, separate. Oracle:
+  `regression_tests/string_endless_range_slice_repro.sh`. Suites 152+36.
+  bin/adamas replaced (backup `bin/adamas.pre_d5fix`).
 - (b) **2026-07-06 sessions 6-7: peeled into a FOUR-defect stack; ALL 4 FIXED.**
   The "wrong id-space tag" hypothesis was WRONG — tags were fine; the chain was:
   1. **FIXED** (ast_to_hir ~77050 + ~82337): the String#to_i/to_i32/to_i64/to_u*
