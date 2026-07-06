@@ -63,10 +63,20 @@ llc fails on `%inttoptr.4.ext = sext i64 %r24 to i64` — the arg-coercion guard
 `src_bits < 64` (llvm_backend ~23075) evaluates WRONG inside s2 for "i64".
 Two instant stage1-level reducers (both pre-existing, RED on bin/adamas AND
 bin/adamas.pre_l4fix, ~20s each, no s2 build needed):
-- (a) `"i64"[1..]` returns EMPTY string (endless-range String#[](Range)).
-- (b) `v = nil : Int32?; if bits = v` ENTERS the branch with bits=0 (nil if-let).
-  (/tmp/l5_probe2.cr: `sub= size=0; to_i?=nil; bits=0 lt64=true`)
-START HERE next: fix (a) and (b) at stage1 level, then rebuild s2 and re-floor.
+- (a) `"i64"[1..]` returns EMPTY string; `Array#[1..]` SEGFAULTS. Explicit forms
+  (`[1..-1]`, `[1..2]`, `[1,2]`) all correct → endless-range (nil-end) slicing only;
+  likely a consequence of (b) inside `range_to_index_and_count` (nil-end if-let).
+- (b) **root candidate: `String#to_i?`/`to_i32?` union-RETURN tag in the wrong
+  id-space** (positional-vs-global class, same family as L1 `82150e13` but on the
+  return path): `"".to_i?` → `.nil?`=false + if-let enters with payload 0;
+  `"64".to_i?` → holds 64 but `.inspect` prints nil (inspect's global-id dispatch
+  misses → falls to Nil). Hand-built `5.as(Int32?)` / `nil.as(Int32?)` CORRECT
+  (inspect+nil? both right); plain/block/generic-block methods returning Int32? nil
+  CORRECT; explicit `to_i?(10)` equally broken → defect is in the
+  to_i32?→to_int_generic chain's return coercion, not in if-let or default-args.
+  Reducers: /tmp/l5_toi.cr, /tmp/l5_disc.cr (~20s each, stage1-level, no s2 build).
+START HERE next: dump IR of the `"".to_i32?` return path (which UnionWrap writes
+the tag, in what id-space), fix, then rebuild s2 and re-floor.
 
 **Known open siblings surfaced by this dig (pre-existing, reducers in session log):**
 - `Slice(Int32).new(ptr, size)`-style calls in main bind receiver to the FIRST Slice
