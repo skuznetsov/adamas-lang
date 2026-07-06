@@ -1,10 +1,39 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-05 (s2 self-host floor layer 1 fixed — union-arg dispatch UnionIs `82150e13`)
+Updated: 2026-07-05 (s2 self-host floor layer 2 FIXED — forward const-alias fold `546f2c07`; layer 3 = sort_by! nested-tuple ABI, open)
 Branch: `work/b5-lower-method-owner-edge`
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
+
+## 2026-07-05 — s2 self-host floor LAYER 2 FIXED (forward const-alias fold), committed `546f2c07`
+
+Layer 2 (the `tuple_slot_layout` crash) was **NOT** the "Array-buffer corruption" the
+prior session's notes described — that was a **misdiagnosis from a misattributed crash
+offset**. The exact crash instruction (`ldr x8,[cv]; ldr x8,[x8]`) is a **null double-load
+of the boxed `POINTER_WORD_BYTES` classvar** in the `else` branch of `tuple_slot_layout`'s
+element-size rule (layout_contract.cr:156/158), not `elem.kind` (:117); `elem` was fine.
+
+ROOT: `POINTER_WORD_BYTES = MIR::TARGET_POINTER_BYTES_U64` is a **forward, cross-file
+constant alias** — `mir.cr:16 require "../layout_contract"` runs before `Adamas::MIR::
+TARGET_POINTER_BYTES_U64` is defined (mir.cr:29). Our single-pass const folder can't
+resolve the target at record time, so the alias degrades to an uninitialized boxed
+`global ptr null` and crashes on first read. FIX = `reevaluate_alias_constants`
+(ast_to_hir.cr): a second-pass fixpoint fold (mirrors `reevaluate_offsetof_constants`)
+that retries after all constants are registered, promoting integer/bool aliases to static
+`global i64 N`. Validated on a multi-file `require`-ordering reducer (`global ptr null` →
+`global i64 8`); the crash moved past `register_tuple_types`. Gate **152/152 + 36/36**,
+zero regressions. bin/adamas replaced (pre-fix backup `bin/adamas.pre_alias_fix`).
+
+**Layer 3 = NEW s2 floor (owner-gated P1 inline-tuple ABI):** s2 now crashes (139) in
+`func_costs.sort_by! { |_, cost| -cost }` (`emit_functions_parallel`, llvm_backend.cr:18326).
+`Array#sort_by!` = `map { |e| {e, yield e} }.sort! { |x,y| x[1] <=> y[1] }` builds the
+**nested-tuple pair array `Array(Tuple(Tuple(Int32,Int32),Int32))`** and reads `x[1]` at
+offset 8 → Bus error on the default ABI, and **silent corruption with both inline-value
+gates ON** (falsifies the earlier "both-ON = GREEN whole sort family" note; only the plain
+`sort!` variant is green). Fast reducers: `/tmp/sort_repro.cr` (sort_by! Bus error/corruption),
+`/tmp/nested_tuple_repro.cr` (explicit `::Array({nested}).new` hits a SEPARATE parse STUB —
+`7c2f06b9` did not cover NESTED tuples). See `s2_selfhost_floor_array_corruption` memory.
 
 ## 2026-07-05 — s2 self-host floor LAYER 1 FIXED (union-arg dispatch), committed `82150e13`
 
@@ -20,7 +49,10 @@ wild-pointer crash. Fix = pass `ut` to UnionIs (all-ref header-tid comparison).
 Validated: rebuilt stage1+s2, misdispatch gone (ADAMAS_NODE_VALIDITY detector 0/6);
 `run_all_suites` 152/152 + 36/36 green.
 
-**Layer 2 STILL OPEN (now the sole, deterministic s2 crash):** `LayoutContract.tuple_slot_layout`+768
+**Layer 2 — RESOLVED `546f2c07` (see the section above; this description was a
+misdiagnosis — the crash was a boxed-const null double-load, not Array-buffer
+corruption).** Original (incorrect) session-2 note kept for provenance:
+**Layer 2 (was believed OPEN):** `LayoutContract.tuple_slot_layout`+768
 NULL-deref ← `register_tuple_types` — an `Array(MIR::Type)` buffer whose size/contents
 are unstable between a guard read and `.each` (a SEPARATE root; the layer-1 UnionIs fix
 does not touch it). Self-host floor NOT yet cleared. NEXT: instrument tuple_slot_layout
