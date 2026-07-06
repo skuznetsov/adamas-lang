@@ -6217,6 +6217,12 @@ module Adamas::HIR
       @deferred_classvar_inits = [] of DeferredClassvarInit
       @deferred_constant_inits = [] of DeferredConstantInit
       @pending_offsetof_constants = [] of Tuple(String, Adamas::Compiler::Frontend::ExprId, Adamas::Compiler::Frontend::ArenaLike, String?)
+      # Constants whose literal value could not be folded at record time because
+      # the RHS references another constant not yet registered (forward/cross-file
+      # alias, e.g. LayoutContract::POINTER_WORD_BYTES = MIR::TARGET_POINTER_BYTES_U64
+      # where mir.cr requires layout_contract.cr before defining the target). Retried
+      # by reevaluate_alias_constants once all constants are registered.
+      @pending_alias_constants = [] of Tuple(String, Adamas::Compiler::Frontend::ExprId, Adamas::Compiler::Frontend::ArenaLike, String?)
       @pending_enum_constant_resolutions = [] of Tuple(String, String, String) # (enum_name, member_name, constant_key)
       # Lazy enum discovery state is declared near the enum helpers but must be
       # explicitly initialized here: generated stage2 can miss inline ivar
@@ -6461,6 +6467,7 @@ module Adamas::HIR
       @deferred_classvar_inits = [] of DeferredClassvarInit
       @deferred_constant_inits = [] of DeferredConstantInit
       @pending_offsetof_constants = [] of Tuple(String, Adamas::Compiler::Frontend::ExprId, Adamas::Compiler::Frontend::ArenaLike, String?)
+      @pending_alias_constants = [] of Tuple(String, Adamas::Compiler::Frontend::ExprId, Adamas::Compiler::Frontend::ArenaLike, String?)
       @pending_enum_constant_resolutions = [] of Tuple(String, String, String)
       @lazy_enum_searched = [] of String
       @lazy_enum_indexed_dirs = [] of String
@@ -30431,6 +30438,9 @@ module Adamas::HIR
       align_all_class_ivars
       # Re-evaluate offsetof constants now that class info is finalized
       reevaluate_offsetof_constants
+      # Re-fold forward/cross-file constant aliases now that every constant is
+      # registered (e.g. LayoutContract::POINTER_WORD_BYTES = MIR::TARGET_POINTER_BYTES_U64).
+      reevaluate_alias_constants
       # Generate any allocators that were deferred because class had empty ivars
       flush_deferred_allocators
     end
@@ -30461,6 +30471,63 @@ module Adamas::HIR
         end
       end
       @pending_offsetof_constants.clear
+    end
+
+    # Retry folding constants whose value referenced another constant that was not
+    # yet registered when the definition was first recorded — forward/cross-file
+    # aliases such as `LayoutContract::POINTER_WORD_BYTES = MIR::TARGET_POINTER_BYTES_U64`
+    # (mir.cr requires layout_contract.cr before defining the target). Runs after all
+    # constants are registered, so the target's macro value and type resolve now. A
+    # fixpoint loop handles alias chains (A = B; B = C). Only numeric/bool folds are
+    # promoted: they become static global initializers exactly like a directly-written
+    # literal — without this the alias degrades to an uninitialized boxed
+    # `global ptr null` and crashes on the first read (a null double-load).
+    def reevaluate_alias_constants : Nil
+      return if @pending_alias_constants.empty?
+      loop do
+        progress = false
+        @pending_alias_constants.each do |(full_name, value_id, arena, owner_name)|
+          next if @constant_literal_values.has_key?(full_name)
+          old_arena = @arena
+          old_class = @current_class
+          old_method = @current_method
+          old_method_is_class = @current_method_is_class
+          @arena = arena
+          @current_class = owner_name
+          @current_method = nil
+          @current_method_is_class = false
+          begin
+            literal = constant_literal_value_from_expr(value_id, arena, owner_name)
+            # Only integer/bool folds become static global initializers (cli emits
+            # `global i64/i1 <value>`). Floats are skipped downstream (cli.cr) and
+            # references stay boxed, so promoting them here would not help — restrict
+            # to the forms that actually become static globals.
+            if (literal.is_a?(Adamas::Compiler::Semantic::MacroNumberValue) && !literal.value.is_a?(Float64)) ||
+               literal.is_a?(Adamas::Compiler::Semantic::MacroBoolValue)
+              trace_constant_literal_write("alias_insert", full_name, owner_name, literal)
+              @constant_literal_values[full_name] = literal
+              # The type inference also failed at record time (target unknown); it
+              # resolves now, so overwrite the stale boxed type with the real one.
+              inferred = infer_type_from_expr(value_id, owner_name) || TypeRef::VOID
+              @constant_types[full_name] = inferred if inferred != TypeRef::VOID
+              # A folded numeric/bool becomes a static global initializer, so drop any
+              # deferred runtime init recorded for it to avoid a duplicate write.
+              if bare = @constant_literal_names[full_name]?
+                deferred_owner = owner_name || "$"
+                @deferred_constant_inits.reject! { |di| di.owner == deferred_owner && di.name == bare }
+              end
+              progress = true
+            end
+          ensure
+            @current_method = old_method
+            @current_method_is_class = old_method_is_class || false
+            @current_class = old_class
+            @arena = old_arena
+          end
+        end
+        break unless progress
+      end
+      @pending_alias_constants.clear
     end
 
     # Resolve enum members that referenced constants not yet available during
@@ -46585,6 +46652,17 @@ module Adamas::HIR
         elsif source_node && (literal = constant_literal_value_from_source(source_node, arena, owner_name))
           trace_constant_literal_write("record_source_insert", full_name, owner_name, literal)
           @constant_literal_values[full_name] = literal
+        else
+          # The value could not be folded now. When it references another constant
+          # that is not yet registered (a forward/cross-file alias such as
+          # `POINTER_WORD_BYTES = MIR::TARGET_POINTER_BYTES_U64`, where mir.cr
+          # requires layout_contract.cr before defining the target), the fold and
+          # the type both fail here and the constant otherwise degrades to an
+          # uninitialized boxed `global ptr null` — a null double-load at first
+          # read. Defer it to reevaluate_alias_constants, which retries once every
+          # constant is registered. Non-alias unfoldables (calls, collections)
+          # simply stay unfolded there too, so this is safe to record broadly.
+          @pending_alias_constants << {full_name, value_id, arena, owner_name}
         end
       end
 
