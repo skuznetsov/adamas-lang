@@ -92032,13 +92032,29 @@ module Adamas::HIR
           obj_type = ctx.type_of(object_id)
           if obj_type == TypeRef::STRING || obj_type == TypeRef::POINTER
             begin_id = lower_expr(ctx, idx_node.begin_expr)
-            end_id = lower_expr(ctx, idx_node.end_expr)
             exclusive = idx_node.exclusive
+
+            # Endless range (s[1..] — parser stores a NilNode end): there is no
+            # end index; length = bytesize - begin (the helper clamps).
+            end_node = @arena[idx_node.end_expr]
+            if end_node.is_a?(Adamas::Compiler::Frontend::NilNode)
+              bytesize_call = ExternCall.new(ctx.next_id, TypeRef::INT32, "__adamas_string_bytesize", [object_id])
+              ctx.emit(bytesize_call)
+              ctx.register_type(bytesize_call.id, TypeRef::INT32)
+              len_sub = BinaryOperation.new(ctx.next_id, TypeRef::INT32, BinaryOp::Sub, bytesize_call.id, begin_id)
+              ctx.emit(len_sub)
+              ctx.register_type(len_sub.id, TypeRef::INT32)
+              ext_call = ExternCall.new(ctx.next_id, TypeRef::STRING, "__adamas_string_byte_slice", [object_id, begin_id, len_sub.id])
+              ctx.emit(ext_call)
+              ctx.register_type(ext_call.id, TypeRef::STRING)
+              return ext_call.id
+            end
+
+            end_id = lower_expr(ctx, idx_node.end_expr)
 
             # Handle negative indices: adjust by adding string bytesize.
             # e.g., s[6..-1] → end = bytesize + (-1) = bytesize - 1
             range_end_may_be_negative = begin
-              end_node = @arena[idx_node.end_expr]
               if end_node.is_a?(Adamas::Compiler::Frontend::UnaryNode) &&
                  (safe_slice_to_string(end_node.operator) || "") == "-"
                 true
