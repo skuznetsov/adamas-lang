@@ -92,18 +92,28 @@ bin/adamas.pre_l4fix, ~20s each, no s2 build needed):
      (-1 sdiv 10 = 0) → to_unsigned_info mul_overflow=0 → every multi-digit parse
      bailed after digit 1 ("64".to_i? == 6). Now prefers callee return / inst.type
      when LLVM widths match. Oracle: `call_result_unsigned_div_repro.sh`.
-  4. **OPEN — next START HERE: ToUnsignedInfo(UInt32) named-args Dnew arena
-     poisoning.** `record ToUnsignedInfo` auto-generated Dnew/initialize got
-     GARBAGE param names/types sliced from the WRONG ARENA ("th_ind" ⊂
-     each_wi*th_ind*ex, types "String::t/init/_F"); params became ptr; callsite
-     converts Bool args via `__adamas_bool_to_string`, Dnew does `ptrtoint ptr→i1`
-     (low bit of a 16-aligned malloc ptr = 0) → **invalid flag always false** →
-     `"".to_i?`/`"abc".to_i?` still enter if-let with payload 0. Demand for the
-     instantiation comes from the `gen_to_` macro-expansion context — classic
-     arena-misattribution (#1 bug pattern). User-level record mimics (top-level,
-     in-class, named args, untyped params) do NOT repro — the macro-expansion
-     demand context is required. IR evidence: `String$CC ToUnsignedInfo…$Dnew`
-     in /tmp/l5_min2_ir.ll (session-6).
+  4. **OPEN — next START HERE: ToUnsignedInfo(UInt32) record-initialize param
+     SLICE POISONING.** `record ToUnsignedInfo` auto-generated Dnew/initialize
+     got GARBAGE param names/types ("th_ind", "es_gette", types
+     "String::t/init/_F"); params became ptr; callsite converts Bool args via
+     `__adamas_bool_to_string`, Dnew does `ptrtoint ptr→i1` (low bit of a
+     16-aligned malloc ptr = 0) → **invalid flag always false** →
+     `"".to_i?`/`"abc".to_i?` still enter if-let with payload 0.
+     LOCALIZED (session-6 debug probe in capture_initialize_params):
+     - the params reach capture via the generic-template monomorph path
+       (@arena = template.arena) — `arena_is_current=true`;
+     - `source_path_for(template.arena)` = **src/stdlib/macros.cr** (the file
+       DEFINING the `record` macro), yet macros.cr contains NO "th_ind" → the
+       Parameter.name Slices point into a THIRD buffer (reused/freed
+       macro-expansion text?) — the June slice-lifetime/repr-flip family, not a
+       simple wrong-arena-object bug.
+     NEXT: instrument parameter_name_string for this template to dump the raw
+     slice pointer vs the arena source buffer bounds; find where the record
+     expansion for a GENERIC struct registers its template (why arena source =
+     macros.cr) and where the expansion text buffer is retained. User-level
+     record mimics (top-level, in-class, named args, untyped params) do NOT
+     repro — the macro-expansion demand context is required. IR evidence:
+     `String$CC ToUnsignedInfo…$Dnew` in /tmp/l5_min2_ir.ll.
   Also observed (separate, minor): `v1.nil?` on `Int32?` from to_i? is STATICALLY
   folded to false (emitted `puts Bool i1 0`) — static nil?-narrowing defect;
   and `.inspect` on plain Int32 locals segfaults via `Object#inspect` vdispatch
