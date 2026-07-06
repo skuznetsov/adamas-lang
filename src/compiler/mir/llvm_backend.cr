@@ -22184,6 +22184,33 @@ module Adamas::MIR
       false
     end
 
+    # TypeRef for a call result emitted as `return_type`. LLVM int strings are
+    # sign-agnostic ("i32" covers Int32 AND UInt32); mapping them straight to the
+    # signed TypeRef erased unsignedness and made downstream div/shr/ext pick
+    # signed ops (UInt32.new → INT32 → sdiv → String#to_i? stopped at digit 2).
+    # Prefer the typed source (callee return / MIR inst type) when its LLVM
+    # representation matches what was actually emitted.
+    private def call_result_type_ref_for_emitted(inst : Call, callee_func : Function?, return_type : String) : TypeRef
+      if callee_func && @type_mapper.llvm_type(callee_func.return_type) == return_type
+        return callee_func.return_type
+      end
+      if @type_mapper.llvm_type(inst.type) == return_type
+        return inst.type
+      end
+      case return_type
+      when "i1"     then TypeRef::BOOL
+      when "i8"     then TypeRef::INT8
+      when "i16"    then TypeRef::INT16
+      when "i32"    then TypeRef::INT32
+      when "i64"    then TypeRef::INT64
+      when "i128"   then TypeRef::INT128
+      when "float"  then TypeRef::FLOAT32
+      when "double" then TypeRef::FLOAT64
+      when "ptr"    then TypeRef::POINTER
+      else               TypeRef::POINTER # Default fallback
+      end
+    end
+
     private def emit_call(inst : Call, name : String, func : Function)
       # Look up callee function for name and param types
       callee_func = function_by_id(inst.callee)
@@ -23611,34 +23638,10 @@ module Adamas::MIR
                (logical_type.kind.union? && @type_mapper.is_all_ref_union?(inst.type))
               @value_types[inst.id] = inst.type
             else
-              actual_type_ref = case return_type
-                                when "i1" then TypeRef::BOOL
-                                when "i8" then TypeRef::INT8
-                                when "i16" then TypeRef::INT16
-                                when "i32" then TypeRef::INT32
-                                when "i64" then TypeRef::INT64
-                                when "i128" then TypeRef::INT128
-                                when "float" then TypeRef::FLOAT32
-                                when "double" then TypeRef::FLOAT64
-                                when "ptr" then TypeRef::POINTER
-                                else TypeRef::POINTER  # Default fallback
-                                end
-              @value_types[inst.id] = actual_type_ref
+              @value_types[inst.id] = call_result_type_ref_for_emitted(inst, callee_func, return_type)
             end
           else
-            actual_type_ref = case return_type
-                              when "i1" then TypeRef::BOOL
-                              when "i8" then TypeRef::INT8
-                              when "i16" then TypeRef::INT16
-                              when "i32" then TypeRef::INT32
-                              when "i64" then TypeRef::INT64
-                              when "i128" then TypeRef::INT128
-                              when "float" then TypeRef::FLOAT32
-                              when "double" then TypeRef::FLOAT64
-                              when "ptr" then TypeRef::POINTER
-                              else TypeRef::POINTER  # Default fallback
-                              end
-            @value_types[inst.id] = actual_type_ref
+            @value_types[inst.id] = call_result_type_ref_for_emitted(inst, callee_func, return_type)
           end
         end
       end
