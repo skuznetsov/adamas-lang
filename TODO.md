@@ -38,9 +38,9 @@ reducer bisection (each fix exposed the next):
 VALIDATED: full suite 152/152 + 36/36 (default); reducer ladder green on default AND
 gated incl. 40-element sort_by!/sort!/manual-Schwartzian (`/tmp/np10_sort_by_big.cr`,
 `/tmp/sort_repro.cr`); `array_tuple_sort_by_merge_sort_repro.sh` PASS (was RED at HEAD);
-`inline_value_tuple_array_alias_fix.sh` updated `89b39ccd` (sort/adv3 facets now
-default-fixed; adv1 local-bind still gate-coupled). bin/adamas replaced
-(backup `bin/adamas.pre_sortfix`).
+`inline_value_tuple_array_alias_fix.sh`: ALL THREE facets (sort / adv1 local-bind /
+adv3 construct) now default-fixed — the whole alias reducer family is green ungated.
+bin/adamas replaced (backup `bin/adamas.pre_sortfix`).
 
 **Layer 4 = NEW s2 floor: LLVM-emission memory runaway.** s2 (`/tmp/s2_new`, rebuild via
 `scripts/build_stage2_debug.sh bin/adamas /tmp/s2_new`) compiling `x = 1` no longer

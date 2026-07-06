@@ -61,9 +61,9 @@ STDERR.puts "RESULT: #{parts.join(" ")}"
 STDERR.flush'
 
 # (ADV1) local binding a = arr[i]: overwriting the source slot must not change a.
-# STILL legacy-broken: fixing it needs ungated copy-on-load (= the owner-gated
-# default flip); the gates fix it via the A' copy-on-load slice.
-check coupled adv1 "RESULT: 1,100" 'arr = [{1, 100}, {2, 50}, {3, 75}]
+# FIXED on the default path by the ungated inline-primitive-tuple array_get
+# copy-on-load (4ea2fc66).
+check fixed adv1 "RESULT: 1,100" 'arr = [{1, 100}, {2, 50}, {3, 75}]
 a = arr[0]
 arr[0] = {9, 9}
 STDERR.puts "RESULT: #{a[0]},#{a[1]}"
@@ -82,5 +82,5 @@ STDERR.puts "RESULT: #{res.join(" ")}"
 STDERR.flush'
 
 [[ $fail -ne 0 ]] && { echo "tmp_dir: $TMP_DIR"; exit 1; }
-echo "ok: both gates fix the Array(Tuple) @buffer alias across sort/local-bind/construct facets"
+echo "ok: Array(Tuple) @buffer alias fixed on default AND gated across sort/local-bind/construct facets"
 exit 0
