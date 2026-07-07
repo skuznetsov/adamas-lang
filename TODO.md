@@ -37,26 +37,56 @@ ADAMAS_PHI_SHARE_VETO=1. New guards: regression_tests/loop_phi_backedge_selfinco
 (runtime) + scripts/loop_phi_backedge_null_incoming_guard.sh (structural, FAILs on
 pre-fix compiler with count=2).
 
-**L11 (NEW frontier, veto default still gated):** s2 (veto build, both β fixes) now
-passes registration + lower_super and segfaults deeper: lower_call →
-`specialize_type_with_receiver_map(null, …)` (EXC_BAD_ACCESS x1=0, first TypeRef arg)
-at the `if receiver_id; return_type = specialize_type_with_receiver_map(return_type,
-ctx.type_of(receiver_id))` site (ast_to_hir ~80477) while lowering
-`Slice(UInt64)#each$block` (DEBUG_CALL_RETURN=a probe: last line
-`name=Slice(UInt64)#each$block … type=Unknown`; null enters return_type between
-~80206 and ~80477). s1 on the same input is clean → stage1 miscompiles s2's
-lower_call somewhere in that span; suspects: the 482 residual fabricated nulls
-(census by function: lower_method 43×3 variants, lower_module_method 37, lower_def 34,
-emit_hoisted_allocas 17; HIR lower_call itself has 3, two in DEBUG branches) or a
-Nil|TypeRef union desync (L9 family). Artifacts: /tmp/s2_beta2_veto(+.ll),
-/tmp/adamas_beta2 (stage1 with both fixes), /tmp/s2b2_callret.log.
+**L11 ROOT-CAUSED (same session, probes committed): shared $block return union
+missing Nil + raw u2u reinterpret.** s2 (veto build, both β fixes) passes
+registration + lower_super, then segfaults: lower_call →
+`specialize_type_with_receiver_map(null, …)` (x1=0) at ast_to_hir ~80477 while
+lowering `Slice(UInt64)#each$block`. Probe bisection (DEBUG_L11_RT sites A..G):
+return_type = Void at site A (after get_function_return_type), Unknown (= null
+TypeRef, `get_type_name_from_ref` maps null_ptr? → "Unknown") from site A0b on —
+the null is the value RETURNED by `infer_return_type_from_body_without_callsite`
+(assigned at the `return_type = inferred` in the unionish-inference block,
+~80175). Mechanism, read directly from the s2 .ll of that helper: its then-branch
+value is `with_type_param_map(map) do infer_concrete_return_type_from_body(...)
+end`; the ONE shared `with_type_param_map$$Hash(String,String)_block` function's
+return type accreted `TypeRef | Array(TypeRef)` (NO Nil variant) across its 41
+callsites, while this callsite's block returns `Nil | TypeRef`. The callsite
+coerces via raw u2u reinterpret (`store TypeRef|Array… ; load Nil|TypeRef` from
+the same alloca — no tag remap): the block's nil result has no representation →
+non-nil tag with null payload → null TypeRef flows into return_type → crash.
+Family: block-call mega-union return leak (5c274a28) + u2u payload conversions
+(0b008b47). s1 is clean because host Crystal compiles the same source correctly —
+this is a stage1 lowering defect around shared-$block return typing.
 
-**START HERE (L11):** (1) census the 482 → classify shapes (if-merge missing
-incomings? break-path? exit-phi?) — extend reducer set; (2) bisect return_type
-null-entry between 80206–80477 in s2 .ll (site A = bb7846 call, chain %r29726 ←
-%r29558 ← …) or dynamically via more DEBUG_CALL_RETURN-style probes; (3) then flip
-`ADAMAS_PHI_SHARE_VETO` default ON, rebuild s2, verify L10 llc reject gone
-(healthy `Sub#gets_peek` lookups), suites ×2, replace bin/adamas.
+Side finds (this census, all real): (a) hash-each deleted-entry skip path
+fabricates a 0 for the loop counter phi (seen in rrtfd's debug path — same
+missing-incoming family, lower-priority); (b) DEBUG_PHI_MISSING census: 2439 true
+fabrications in an s2 build — top: __vdispatch__Object#to_s 696+75,
+lower_method 55×3 + 21×3, lower_def 49+14+12, lower_module_method 44,
+register_module_instance_methods_for 26+12, emit_hoisted_allocas 24 — these are
+if-merge/exit-phi shapes NOT covered by the β loop fixes (begin/ensure-as-branch-
+value drops its value: proven instance = resolve_return_type_from_def's
+`resolved = if …; @current_class swap; begin type_ref_for_name(…) ensure restore
+end; else …` merge phi gets fabricated null for the ensure path; small reducer of
+that exact shape did NOT reproduce — trigger conditions unknown yet).
+
+**START HERE (L11 fix):** (1) reducer: yield method called from ≥2 callsites
+whose blocks return DIFFERENT types, one of them nilable (Nil|T), the callee
+proc-materialized (block captures locals) — expect callee return union to accrete
+without Nil and the nilable callsite to mis-reinterpret; (2) fix candidates, in
+preference order: include Nil in the accreted `__block_return__`/return union
+when any callsite's block can return nil; make the u2u coercion at block-call
+returns tag-aware (remap via union descriptors, nil-checking payload) instead of
+raw reinterpret; or per-callsite $block return specialization (heavier, 5c274a28
+precedent); (3) then the begin/ensure-as-branch-value family (2439 census) —
+reduce with with_type_param_map-style ivar-swap ensure inside a valued if;
+(4) THEN flip `ADAMAS_PHI_SHARE_VETO` default ON, rebuild s2, verify L10 llc
+reject gone (healthy `Sub#gets_peek` lookups), suites ×2, replace bin/adamas.
+Artifacts: /tmp/adamas_beta3 (stage1, fixes+probes+detector), /tmp/s2_beta3v3
+(+.ll, s2 with probes), /tmp/s2_beta3_veto.build.log (PHI_MISSING census),
+scratchpad extracts irwc.ll / rrtfd.ll / lower_call_s2.ll. Levers:
+DEBUG_L11_RT=<name-filter>, DEBUG_PHI_MISSING=1, DEBUG_RETURN_DEF, DEBUG_GET_RETURN,
+DEBUG_CALL_RETURN.
 
 ## 2026-07-07 — session-11: L10 ROOT-CAUSED (phi-carrier slot-sharing clobber); veto gated
 
