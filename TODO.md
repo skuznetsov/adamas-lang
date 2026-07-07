@@ -1,10 +1,82 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-06 (s2 floor L7+L8 CLOSED session-9 — `b43650ea` block-shorthand pseudo-methods parsed as cast/check nodes; `a7d7db53` array intrinsics expand tuple-destructured block params; L9 = NEW floor: s2 emits invalid IR for `$~` classvar store in String#starts_with?(Regex) — union stored as ptr + call args dropped)
+Updated: 2026-07-07 (session-10: L9 ROOT-CAUSED and fixed in-tree — D2 = emit_global_store
+replaced scalar→union-global stores with zeroinitializer (closure-cell writes silently nil'd,
+poisoning every demand-lowered return type in s2); D1 = materialized annotated blocks
+(`& : -> T?` after inline-yield bailout) carry Nil|Proc union param, yield lowered to
+const_nil; @[Flags] implicit values fixed (1, prev*2 per original). Validation in progress;
+L10 = next s2 floor: IO#gets_peek GEP on un-unwrapped Nil|Slice(UInt8) param)
 Branch: `work/b5-lower-method-owner-edge`
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
+
+## 2026-07-07 — session-10: L9 dig (see memory `l9_nilable_scalar_union_desync.md` for full trail)
+
+L9 chain: `Path.separators` → Nil in s2 → `Nil#any?` miss → block param Pointer →
+`starts_with?` mangled_prefix over-demand → Regex cluster mislowered → llc reject.
+10-line s2 reducer `/tmp/l9_cs9.cr` (same llc error as x=1). Two roots, both found by
+reading the s2-BUILD artifact IR (`/tmp/s2_l9probe2.ll` — the build keeps its own .ll!):
+
+1. **D2 (FIXED in-tree, llvm_backend emit_global_store):** scalar stored into a
+   union-typed global emitted `store <union> zeroinitializer` — the value was thrown
+   away (confessional comment included). Every write to a block-captured local through
+   a closure cell was silently nil'd; in s2 this killed `lower_method`'s `last_value`
+   → all demand-lowered functions got return_type=Nil. Fix mirrors the cross-block
+   slot_wrap pattern / original Crystal `store_in_union`: alloca union, store variant
+   tag (union-descriptor lookup), store payload, load, store. VERIFIED at s2 level:
+   `Foo.sepx$Bool = Tuple(Char, Char)` (was Nil), probes SET:4 (was NIL), original
+   `$~` llc reject GONE. No small-scale RED oracle exists (needs materialized-block
+   context); coverage = s2 pipeline + suites (82150e13 precedent).
+2. **D1 (FIXED in-tree, hir_to_mir):** annotated-block helpers
+   (`with_inferred_condition_locals`, `& : -> TypeRef?`) whose inline-yield path bails
+   (depth/repeat guards at scale) materialize the block; the `_block` monomorph's param
+   arrives typed `Nil | Proc(...)` — infer_block_param_id rejected it →
+   `lower_yield` silently returned const_nil (masking hazard, now traced via
+   ADAMAS_YIELD_NO_BLOCK_TRACE) → every then/elsif branch type inferred through the
+   helper dropped at registration. Fix: accept union-Proc block params + unwrap the
+   proc payload before call_indirect. (Caller-side wrap writes tag=0 — tolerated, the
+   unwrap doesn't trust the tag.)
+3. **@[Flags] FIXED in-tree** (register_enum_with_name_in_current_arena + source-window
+   annotation detector): implicit values were 0,1,2 → now 1, prev*2, explicit-reset
+   honored (original semantic/top_level_visitor.cr). Oracle
+   `regression_tests/flags_enum_implicit_values_repro.sh` RED→GREEN.
+   NOTE: `starts_with?(/re/)` anchoring STILL broken after this — next layer is
+   `Regex::MatchOptions.each` (enum macro-iteration) yielding nothing in
+   pcre2_match_options → flag=0 ([[macro_type_reflection_iterable_hir_gap]] family).
+
+**L10 = NEW s2 floor, CONFIRMED persisting after all three fixes (D1+D2+Flags,
+commits `b5d5fa7a`+`9226cea5`+`a90f340d`):** llc rejects `IO#gets_peek`:
+`getelementptr i8, ptr %r31.fromslot.4` where the value is a `Nil|Slice(UInt8)` UNION
+(field access `.size` on the un-unwrapped union carrier after the nil-check branch).
+stage1 monomorphizes gets_peek per-owner with `peek : Slice(UInt8)`; s2 lowers base
+`IO#gets_peek` with the union param — typing/demand divergence NOT cured by D1.
+D1 verification marker (s2 v2): `Foo.sepx$arity1 = Tuple(Char) | Tuple(Char, Char)` —
+then-branches now contribute at registration. NOTE: any prelude compile through s2 now
+hits L10, so cs9 is no longer a distinguishing reducer.
+START HERE (L10): diff stage1-vs-s2 DEBUG_SET_FTYPE/DEBUG_CALL_LOOKUP on `gets_peek`
+(who demands the base `IO#gets_peek`, and what types `peek` at its callsites —
+`gets(delimiter, limit, chomp)` calls `gets_peek(..., peek)` with `peek = self.peek`
+typed Bytes?); then either fix the demand (per-owner monomorph like stage1) or make
+FieldGet/receiver lowering unwrap union receivers before member access
+(condition-narrowing leak family). bin/adamas replaced with the 3-fix stage1
+(backup `bin/adamas.pre_l9fix`); s2 artifact `/tmp/s2_l9fix2` (+its .ll).
+
+**Open siblings found this session (each with reducer/trail in memory):**
+- m2 puts-intercept: `puts x` on narrowed union local → Object#to_s vdispatch on raw
+  payload → SEGFAULT (`/tmp/l9_m2.cr`); also the to_s STRING is never printed (MIR).
+  Fix design: prefer ctx.type_of(lowered arg) over AST inference.
+- classvar lazy-init clobber: `@@v = n` before first read is overwritten by the
+  deferred initializer on first get (`/tmp/l9_cvar.cr` shape).
+- splat+named-block captured write: `taker(1,2) { c = 42 }` → c reads 0 (box-path
+  payload loss? `/tmp/l9_cell.cr`).
+- bare-nil-init local + block write at top level still lost (`/tmp/l9_ewi2.cr`,
+  no cells involved — different root than D2).
+- s2 `#{idx}` (2nd block param of each_with_index) interpolates EMPTY; `.class` of
+  arena nodes prints base class in s2.
+- single-module `--emit llvm-ir` vs chunked build pipeline can DIFFER in
+  materialization decisions (probe copies 3 vs 4) — emission-fidelity hazard for
+  IR-based debugging: trust `<out>.ll` kept by build_stage2, not a fresh --emit.
 
 ## 2026-07-06 — s2 floor LAYER 3 FIXED (sort_by!/stable-sort family), 5 commits `f8408226..b0bbde54`
 
