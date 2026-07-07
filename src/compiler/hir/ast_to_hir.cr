@@ -51299,6 +51299,15 @@ module Adamas::HIR
               type_name = substitute_type_params(type_name, param_map)
             end
             param_type = type_ref_for_name(type_name)
+            # A bare-generic/module annotation (e.g. `other : Indexable`) erases
+            # the element type; the callsite arg type is strictly more concrete,
+            # so yield-arg exprs like `other.unsafe_fetch(i)` must infer through
+            # it (otherwise the element degrades to a raw Pointer).
+            if !is_block_param && call_arg_types && (arg_type = call_arg_types[call_arg_index]?)
+              if should_use_exact_call_type_for_local_inference?(param_type, arg_type)
+                param_type = arg_type
+              end
+            end
           elsif !is_block_param && call_arg_types && (arg_type = call_arg_types[call_arg_index]?)
             param_type = arg_type
           elsif !is_block_param && param_map && (mapped = param_map[name]?)
