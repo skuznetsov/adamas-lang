@@ -1,16 +1,68 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-07 (session-13: L11 CLOSED `0bf0a652` — per-shape `_block`
-specialization on the inline-yield fallback path; suites 154/154+36/36 ×2; s2 (veto)
-builds and passes the old crash site. New frontier L12 root-caused to a tiny
-reducer: `Array(CustomStruct)#==` is ALWAYS false — block yield-arg type for struct
-elements degrades to raw Pointer through bare-generic `other : Indexable` in
-Indexable#equals?, and the synthesized `TRef#==(Pointer)` guard reads a type_id
-header STRUCTS DON'T HAVE. Veto default still OFF, gated on L12.)
+Updated: 2026-07-07 (session-14: L12 CLOSED `8bbba4e0`+`a6e73d17`; suites
+155/155+36/36 ×2. New floor L13 ROOT-CAUSED: s2-hello null TypeRef element —
+the shared `Array(Pointer(Void))#map` fallback mono calls the block proc as
+`call void %_()` and stores LITERAL NULL elements; consumer =
+lower_block_to_block_id cache-key fingerprint. L11 contract machinery is NOT on
+this callsite's route (zero DEBUG_L13 hits during a full s2 build). Veto default
+still OFF, now gated on L13.)
 Branch: `work/b5-lower-method-owner-edge`
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
+
+## 2026-07-07 — session-14: L12 CLOSED; L13 = map fallback stores null elements
+
+**L12 fix (two commits):**
+- **D1 `8bbba4e0` (root):** `infer_yield_param_types_from_body`'s annotation
+  branch never consulted callsite arg types, so `other : Indexable` typed the
+  yield-arg `other.unsafe_fetch(i)` through the BARE generic → block param =
+  raw Pointer → dispatch synthesized `TRef#==(Pointer)` → Array(struct)#==
+  always false → Module#intern_type bucket-hit never recognized. Fix: prefer
+  the concrete callsite type via should_use_exact_call_type_for_local_inference?.
+- **D2 `a6e73d17` (unsound guard):** lower_is_a's runtime fallthrough read a
+  type_id header for STRUCT check targets — structs have no header (offset 0 =
+  first ivar). Struct-target checks reaching the fallthrough now resolve to
+  constant false instead of reading a field as a tag.
+- Regression: regression_tests/array_struct_eq_yield_arg_type.cr (A/B: pre-fix
+  eq_ok=false + intern bucket-hit missed; post-fix l12_ok). Suites 155/155 +
+  36/36 default AND veto. Both /tmp/test_l12_areq.cr and /tmp/test_l12_intern.cr
+  oracles green.
+
+**L13 ROOT-CAUSED (open, fix = next session):** s2 (veto) compiling hello
+segfaults in `lower_block_to_block_id`+296 — the inlined cache-key fingerprint
+hash loop reads a NULL element of a valid `Array(TypeRef)`. Pre-existing (old
+s2 dies at the same consumer via block_param_types_fingerprint). Proven chain
+(deterministic under `env -i`; runtime-installed lldb bps — pre-launch `-a`
+bps NEVER arm, and StepOutOfFrame-in-callback reads STALE x0, which is what
+produced session-13's phantom "intern_type→0x0" hops):
+`lower_block_to_block_id(x3=[null])` ← `block_param_types_for_call` returns it
+← exit site +9816 = return of `infer_yield_param_types_from_body` ← inferred
+def = `Crystal::System.printf$block$arity2_splat` (yields Slice(UInt8)) ←
+compute_yield_merged_types `mt.zip(inferred).map{...}` compiled as
+**`Array(Pointer(Void))#map(..., @__crystal_block_proc_889)` whose body does
+`call void %_()` + `store ptr null`** into every element (same family as L11's
+`call void %_()`, but the map path). proc_889 itself returns TypeRef|Pointer
+union (zip block params degraded to Pointer — D1-family sibling). All
+type_ref_for_name/inner/union_type_for_values returns proven non-null in-vivo.
+
+**Fix locus (next session START HERE):** find the ACTUAL demand/lowering route
+of the degraded `Array(Pointer(Void))#map` symbol — inline_yield_fallback_call
+is NEVER entered with a map key (DEBUG_L13 trace, zero hits over a full s2
+build), so the L11 shape/contract machinery never sees this callsite. Levers:
+ADAMAS_TRACE_CALL_EMIT=map, DEBUG_CALL_LOOKUP, grep who lowers the shared
+`_`-proc method body (`lower_method` + `__block_return__` absent → void proc
+call). Groundwork already in tree (suite-verified): (1) yield_value_consumed?
+widens block_call_return_contract_for beyond passthrough (map-like bodies);
+(2) generic_proc_annotation? relaxes the annotated-block gate (`& : T -> U`
+doesn't pin the return shape; NB `annotation` is a reserved word); (3)
+DEBUG_L13 trace at the fallback re-key. These are correct-direction but
+UNHOOKED for this route. Parked sibling reducers: /tmp/test_l13_zipmap.cr
+(`STUB CALLED: Pointer$Hid` — zip destructure degradation),
+/tmp/test_l13_mapfb2/3.cr (triple-nested yield inlines but block gets GARBAGE
+yield-arg b.v=1086 — nested inline-yield arg corruption). Memory:
+l13_map_fallback_void_contract_null_elements.md (probe methodology inside).
 
 ## 2026-07-07 — session-13: L11 CLOSED; L12 = Array(struct)#== always false
 
