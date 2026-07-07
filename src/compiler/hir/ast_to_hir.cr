@@ -66370,10 +66370,12 @@ module Adamas::HIR
             if env_get("DEBUG_LOOP_PHI")
               STDERR.puts "[LOOP_PHI_BACKEDGE] var=#{var_name} phi=#{phi.id} updated_val=#{updated_val} incoming_val=#{incoming_val} body_exit=#{body_exit_block} phi_type=#{phi_type.id} val_type=#{ctx.type_of(updated_val).id} same_as_phi=#{updated_val == phi.id}"
             end
-            # Don't add self-referential PHI incoming (would make PHI a no-op)
-            if incoming_val != phi.id
-              phi.add_incoming(body_exit_block, incoming_val)
-            end
+            # Always add the backedge incoming, even the self-referential one
+            # (incoming_val == phi.id, loop-invariant value): a phi missing an
+            # incoming for a real predecessor is invalid SSA — the backend
+            # fabricates null/zero for that edge (stale post-loop binding
+            # family, L10-β).
+            phi.add_incoming(body_exit_block, incoming_val)
             vars_backedge_complete.add(var_name)
             # Reset local to point back to phi for next iteration
             ctx.register_local(var_name, phi.id)
@@ -66386,6 +66388,10 @@ module Adamas::HIR
                 end
               end
             end
+          else
+            # No updated value found: the variable is unchanged on the backedge
+            # path — the phi still needs a self-incoming for that predecessor.
+            phi.add_incoming(body_exit_block, phi.id)
           end
         end
       end
@@ -66669,9 +66675,10 @@ module Adamas::HIR
                 incoming_val = cast.id
               end
             end
-            if incoming_val != phi.id
-              phi.add_incoming(body_exit_block, incoming_val)
-            end
+            # Always add the backedge incoming, even the self-referential one:
+            # a phi missing an incoming for a real predecessor is invalid SSA —
+            # the backend fabricates null/zero for that edge (L10-β family).
+            phi.add_incoming(body_exit_block, incoming_val)
             ctx.register_local(var_name, phi.id)
             if inline_vars.includes?(var_name)
               @inline_caller_locals_stack.reverse_each do |locals|
@@ -66681,6 +66688,8 @@ module Adamas::HIR
                 end
               end
             end
+          else
+            phi.add_incoming(body_exit_block, phi.id)
           end
         end
       end
@@ -67358,6 +67367,10 @@ module Adamas::HIR
             end
             phi.add_incoming(body_exit_block, incoming_val)
             ctx.register_local(var_name, phi.id)
+          else
+            # Unchanged on the backedge path — still needs the self-incoming
+            # so the phi covers every real predecessor (L10-β family).
+            phi.add_incoming(body_exit_block, phi.id)
           end
         end
       end
@@ -86608,6 +86621,11 @@ module Adamas::HIR
           incoming = control_flow_dead_block?(ctx, body_exit_block) ? phi.id : updated_val
           incr_phi.add_incoming(body_exit_block, incoming)
           phi.add_incoming(incr_block, incr_phi.id)
+        else
+          # Unchanged on the backedge: still wire the full chain so neither
+          # phi is left missing a predecessor incoming (L10-β family).
+          incr_phi.add_incoming(body_exit_block, phi.id)
+          phi.add_incoming(incr_block, incr_phi.id)
         end
       end
 
@@ -86760,6 +86778,9 @@ module Adamas::HIR
           # fall-through edge use the header phi, not the undef body value.
           incoming = control_flow_dead_block?(ctx, body_exit_block) ? phi.id : updated_val
           incr_phi.add_incoming(body_exit_block, incoming)
+        else
+          # Unchanged on the backedge: still cover the predecessor (L10-β family).
+          incr_phi.add_incoming(body_exit_block, phi.id)
         end
       end
 
@@ -86947,6 +86968,11 @@ module Adamas::HIR
           # the live next-path incoming for the reachable path(s) into incr_block.)
           incoming = control_flow_dead_block?(ctx, body_exit_block) ? phi.id : updated_val
           incr_phi.add_incoming(body_exit_block, incoming)
+          phi.add_incoming(incr_block, incr_phi.id)
+        else
+          # Unchanged on the backedge: still wire the full chain so neither
+          # phi is left missing a predecessor incoming (L10-β family).
+          incr_phi.add_incoming(body_exit_block, phi.id)
           phi.add_incoming(incr_block, incr_phi.id)
         end
       end
@@ -87147,6 +87173,11 @@ module Adamas::HIR
           # the live next-path incoming for the reachable path(s) into incr_block.)
           incoming = control_flow_dead_block?(ctx, body_exit_block) ? phi.id : updated_val
           incr_phi.add_incoming(body_exit_block, incoming)
+          phi.add_incoming(incr_block, incr_phi.id)
+        else
+          # Unchanged on the backedge: still wire the full chain so neither
+          # phi is left missing a predecessor incoming (L10-β family).
+          incr_phi.add_incoming(body_exit_block, phi.id)
           phi.add_incoming(incr_block, incr_phi.id)
         end
       end
@@ -87350,6 +87381,11 @@ module Adamas::HIR
           # the live next-path incoming for the reachable path(s) into incr_block.)
           incoming = control_flow_dead_block?(ctx, body_exit_block) ? phi.id : updated_val
           incr_phi.add_incoming(body_exit_block, incoming)
+          phi.add_incoming(incr_block, incr_phi.id)
+        else
+          # Unchanged on the backedge: still wire the full chain so neither
+          # phi is left missing a predecessor incoming (L10-β family).
+          incr_phi.add_incoming(body_exit_block, phi.id)
           phi.add_incoming(incr_block, incr_phi.id)
         end
       end
@@ -88167,6 +88203,11 @@ module Adamas::HIR
           # the live next-path incoming for the reachable path(s) into incr_block.)
           incoming = control_flow_dead_block?(ctx, body_exit_block) ? phi.id : updated_val
           incr_phi.add_incoming(body_exit_block, incoming)
+          phi.add_incoming(incr_block, incr_phi.id)
+        else
+          # Unchanged on the backedge: still wire the full chain so neither
+          # phi is left missing a predecessor incoming (L10-β family).
+          incr_phi.add_incoming(body_exit_block, phi.id)
           phi.add_incoming(incr_block, incr_phi.id)
         end
       end
@@ -90009,8 +90050,12 @@ module Adamas::HIR
       # snapshot (which still resolves to the header phi for the nested case).
       phi_nodes.each do |var_name, phi|
         updated_val = resolve_loop_backedge_value(ctx, var_name, phi, body_exit_outer_vals, inline_vars)
+        # Self-incoming when unchanged: every real predecessor needs an
+        # incoming or the backend fabricates null/zero (L10-β family).
         if updated_val && updated_val != phi.id
           phi.add_incoming(incr_block, updated_val)
+        else
+          phi.add_incoming(incr_block, phi.id)
         end
       end
       ctx.terminate(Jump.new(cond_block))
@@ -96971,6 +97016,32 @@ module Adamas::HIR
       @current_typeof_locals = old_typeof_locals ? old_typeof_locals.dup : old_typeof_locals
       @current_typeof_local_names = old_typeof_local_names ? old_typeof_local_names.dup : old_typeof_local_names
 
+      # The body is lowered into a DETACHED block (proc/closure representation):
+      # the caller's loop and inline-yield machinery must not see it. Without
+      # this isolation, `next`/`break` inside the block body wire edges into the
+      # ENCLOSING loop's cond/exit blocks — dead blocks that become real CFG
+      # predecessors whose loop phis then get fabricated null incomings
+      # (L10-β stale post-loop binding family). With empty stacks, `next`
+      # lowers as Return (proc semantics) and `break` as Unreachable.
+      saved_loop_exit_stack = @loop_exit_stack
+      saved_loop_cond_stack = @loop_cond_stack
+      saved_loop_phi_stack = @loop_phi_stack
+      saved_loop_break_info_stack = @loop_break_info_stack
+      saved_loop_break_value_stack = @loop_break_value_stack
+      saved_loop_break_inline_locals_stack = @loop_break_inline_locals_stack
+      saved_inline_next_stack = @inline_next_stack
+      saved_inline_yield_return_stack = @inline_yield_return_stack
+      saved_inline_yield_return_override_stack = @inline_yield_return_override_stack
+      @loop_exit_stack = [] of BlockId
+      @loop_cond_stack = [] of BlockId
+      @loop_phi_stack = [] of Hash(String, Phi)
+      @loop_break_info_stack = [] of Array({BlockId, Hash(String, ValueId)})
+      @loop_break_value_stack = [] of Array({BlockId, ValueId})
+      @loop_break_inline_locals_stack = [] of Array({BlockId, Array(Hash(String, ValueId))})
+      @inline_next_stack = [] of InlineNextContext
+      @inline_yield_return_stack = [] of InlineReturnContext
+      @inline_yield_return_override_stack = [] of InlineReturnOverride
+
       ctx.push_scope(ScopeKind::Closure)
       closure_scope = ctx.current_scope
       body_block = ctx.create_block
@@ -97022,6 +97093,17 @@ module Adamas::HIR
       if ctx.get_block(ctx.current_block).terminator.is_a?(Unreachable)
         ctx.terminate(Return.new(last_value))
       end
+
+      # Restore the caller's loop / inline-yield machinery.
+      @loop_exit_stack = saved_loop_exit_stack
+      @loop_cond_stack = saved_loop_cond_stack
+      @loop_phi_stack = saved_loop_phi_stack
+      @loop_break_info_stack = saved_loop_break_info_stack
+      @loop_break_value_stack = saved_loop_break_value_stack
+      @loop_break_inline_locals_stack = saved_loop_break_inline_locals_stack
+      @inline_next_stack = saved_inline_next_stack
+      @inline_yield_return_stack = saved_inline_yield_return_stack
+      @inline_yield_return_override_stack = saved_inline_yield_return_override_stack
 
       ctx.current_block = saved_block
       # Restore locals - block-local vars shouldn't pollute outer scope
