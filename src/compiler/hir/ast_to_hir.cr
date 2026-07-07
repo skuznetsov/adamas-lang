@@ -9318,6 +9318,42 @@ module Adamas::HIR
       end
     end
 
+    # The parser emits `@[Flags]` as a standalone AnnotationNode sibling, not as
+    # part of the EnumNode, and enum registration is reached through several
+    # walkers. Detect the annotation from the source text immediately before
+    # the enum keyword (same source-snippet idiom as enum member values).
+    private def enum_flags_annotation_before?(
+      node : Adamas::Compiler::Frontend::EnumNode,
+      enum_source : String?,
+    ) : Bool
+      source = enum_source
+      if source.nil?
+        if path = source_path_for(@arena)
+          source = File.read(path) if File.file?(path)
+        end
+      end
+      return false unless source
+      start = node.span.start_offset
+      return false if start <= 0 || start > source.bytesize
+      window_start = start > 256 ? start - 256 : 0
+      window = source.byte_slice(window_start, start - window_start)
+      # Look only at the last few non-blank lines before the enum keyword so a
+      # Flags annotation on an unrelated earlier declaration cannot leak in.
+      lines = window.split('\n')
+      seen = 0
+      idx = lines.size - 1
+      while idx >= 0 && seen < 3
+        text = strip_single_line_comments(lines[idx]).strip
+        idx -= 1
+        next if text.empty? || text.starts_with?("enum ")
+        seen += 1
+        return true if text.starts_with?("@[Flags]")
+        # Any other non-annotation line terminates the annotation block.
+        break unless text.starts_with?("@[")
+      end
+      false
+    end
+
     private def register_enum_with_name_in_current_arena(
       node : Adamas::Compiler::Frontend::EnumNode,
       full_enum_name : String,
@@ -9342,9 +9378,16 @@ module Adamas::HIR
       current_value = 0_i64
       enum_source = source_for_arena(@arena)
       enum_file_source = nil
+      # @[Flags] changes implicit member numbering: 1, prev*2, ... (original
+      # Crystal semantic/top_level_visitor.cr visit_enum_member). The parser
+      # emits the annotation as a separate sibling node, so detect it from the
+      # source window right before the enum keyword.
+      flags_enum = enum_flags_annotation_before?(node, enum_source)
+      have_prev_member = false
 
       node.members.each do |member|
         member_name = enum_member_name_from_node(member, enum_source) || ""
+        resolved : Int64? = nil
         if val_id = member.value
           source_text = enum_source ? enum_member_value_source_snippet_from_text(node, member, enum_source.not_nil!) : nil
           if source_text.nil? && enum_source.nil?
@@ -9361,12 +9404,22 @@ module Adamas::HIR
             STDERR.puts "[ENUM_MEMBER] enum=#{full_enum_name} member=#{member_name} span=#{member.value_span ? 1 : 0} source=#{resolved.nil? ? 0 : 1} text=#{preview.inspect}"
           end
           resolved ||= resolve_enum_member_value(val_id)
-          if resolved
-            current_value = resolved
-          end
+        end
+        if resolved
+          current_value = resolved
+        elsif flags_enum
+          # First implicit flags member = 1; later ones double the previous
+          # (an explicit 0 restarts at 1, matching original Crystal).
+          current_value = if !have_prev_member || current_value == 0
+                            1_i64
+                          else
+                            current_value &* 2
+                          end
+        elsif have_prev_member
+          current_value &+= 1
         end
         members[member_name] = current_value
-        current_value += 1
+        have_prev_member = true
       end
       STDERR.puts "[ENUM_MEMBER] enum=#{full_enum_name} members_done=1 count=#{members.size}" if debug_enum
 
