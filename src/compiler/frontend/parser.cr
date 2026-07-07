@@ -16528,6 +16528,26 @@ current_token.kind == Token::Kind::Identifier &&
         # Phase 101: Parse block shorthand (&.method)
         # Transforms: try &.each_value
         # Into: try { |__arg0| __arg0.each_value }
+        # &.as(T) / &.as?(T) / &.is_a?(T) / &.responds_to?(:m) must parse as
+        # cast/check nodes on the shorthand temp var, mirroring
+        # parse_member_access — a plain MemberAccess would lower them as real
+        # method calls (runtime abort stubs on abstract receivers).
+        # Returns nil when the current token is not a pseudo-method keyword.
+        private def parse_block_shorthand_pseudo_method(temp_var : ExprId, amp_token : Token) : ExprId?
+          case current_token.kind
+          when Token::Kind::As
+            parse_as_like(temp_var, current_token, false)
+          when Token::Kind::AsQuestion
+            parse_as_like(temp_var, current_token, true)
+          when Token::Kind::IsA
+            parse_is_a(temp_var, amp_token, current_token)
+          when Token::Kind::RespondsTo
+            parse_responds_to(temp_var, amp_token, current_token)
+          else
+            nil
+          end
+        end
+
         private def parse_block_shorthand(amp_token : Token) : ExprId
           location_start = amp_token.span
 
@@ -16629,6 +16649,9 @@ current_token.kind == Token::Kind::Identifier &&
                   nil
                 ))
               end
+            elsif pseudo = parse_block_shorthand_pseudo_method(temp_var, amp_token)
+              return PREFIX_ERROR if pseudo.invalid?
+              call_expr = pseudo
             else
               # Everything else: identifier, keyword, or operator as method name
               method_name = current_token.slice
@@ -16735,6 +16758,9 @@ current_token.kind == Token::Kind::Identifier &&
                   nil
                 ))
               end
+            elsif pseudo = parse_block_shorthand_pseudo_method(temp_var, amp_token)
+              return PREFIX_ERROR if pseudo.invalid?
+              call_expr = pseudo
             else
               # Everything else: identifier, keyword, or operator as method name
               # In Crystal, keywords and operators can be method names after dot
