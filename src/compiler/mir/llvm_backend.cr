@@ -21731,6 +21731,14 @@ module Adamas::MIR
 
       append_missing = ->(entries : Array(String), llvm_type : String) do
         missing_preds.each do |pred|
+          # A phi missing an incoming for a real predecessor is invalid MIR —
+          # we paper over it with null/zero, which reads as nil/0 on that edge.
+          # DEBUG_PHI_MISSING=1 prints every fabrication (census of the true
+          # invalid-SSA defects vs legitimate nil-literal null incomings, which
+          # do NOT go through this path). L10-β/L11 family detector.
+          if !::Adamas::Compiler::BootstrapEnv.get?("DEBUG_PHI_MISSING").nil?
+            STDERR.puts "[PHI_MISSING] func=#{@current_func_name} phi=#{inst.id} pred=#{pred} type=#{llvm_type}"
+          end
           entries << "[#{default_phi_value.call(llvm_type)}, %#{block_name.call(pred)}]"
         end
       end

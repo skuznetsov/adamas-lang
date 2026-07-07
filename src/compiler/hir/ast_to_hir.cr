@@ -80086,6 +80086,10 @@ module Adamas::HIR
       # Try to infer return type using mangled name first, fallback to base name
       # For non-overloaded functions, prefer base name since that's how they're registered in HIR module
       return_type = get_function_return_type(mangled_method_name, return_def_arg_count)
+      if debug_env_filter_match?("DEBUG_L11_RT", method_name, mangled_method_name, base_method_name)
+        STDERR.puts "[L11_RT] site=A name=#{mangled_method_name}"
+        STDERR.puts "[L11_RT] site=A rt=#{get_type_name_from_ref(return_type)}"
+      end
       begin
         if def_node = lookup_function_def_for_return(mangled_method_name, base_method_name, return_def_arg_count)
           if debug_env_filter_match?("DEBUG_RETURN_DEF", mangled_method_name, base_method_name)
@@ -80165,6 +80169,10 @@ module Adamas::HIR
             if def_node.return_type.nil? && !defer_specialized_body_inference
               owner_name = function_context_from_name(base_method_name)
               if inferred = infer_return_type_from_body_without_callsite(def_node, owner_name)
+                if debug_env_filter_match?("DEBUG_L11_RT", method_name, mangled_method_name, base_method_name)
+                  STDERR.puts "[L11_RT] site=A0b name=#{mangled_method_name} owner=#{owner_name}"
+                  STDERR.puts "[L11_RT] site=A0b inferred=#{get_type_name_from_ref(inferred)}"
+                end
                 if inferred != TypeRef::VOID && inferred != TypeRef::NIL
                   inferred_desc = @module.get_type_descriptor(inferred)
                   if return_type == TypeRef::VOID || return_type == TypeRef::NIL
@@ -80184,12 +80192,20 @@ module Adamas::HIR
         end
       end
 
+      if debug_env_filter_match?("DEBUG_L11_RT", method_name, mangled_method_name, base_method_name)
+        STDERR.puts "[L11_RT] site=A1 name=#{mangled_method_name}"
+        STDERR.puts "[L11_RT] site=A1 rt=#{get_type_name_from_ref(return_type)}"
+      end
       # If no concrete signature was registered for the mangled name, prefer
       # resolving the return type from the def in the owner's namespace.
       if !@function_types.has_key?(mangled_method_name)
         if inferred = resolve_return_type_from_def(mangled_method_name, base_method_name, receiver_id ? ctx.type_of(receiver_id) : nil, return_def_arg_count)
           return_type = inferred unless inferred == TypeRef::VOID || inferred == TypeRef::NIL
         end
+      end
+      if debug_env_filter_match?("DEBUG_L11_RT", method_name, mangled_method_name, base_method_name)
+        STDERR.puts "[L11_RT] site=A2 name=#{mangled_method_name}"
+        STDERR.puts "[L11_RT] site=A2 rt=#{get_type_name_from_ref(return_type)}"
       end
 
       # For Proc#call, extract return type from Proc type_params (last element is return type)
@@ -80320,6 +80336,10 @@ module Adamas::HIR
         end
       end
 
+      if debug_env_filter_match?("DEBUG_L11_RT", method_name, mangled_method_name, base_method_name)
+        STDERR.puts "[L11_RT] site=B name=#{mangled_method_name}"
+        STDERR.puts "[L11_RT] site=B rt=#{get_type_name_from_ref(return_type)}"
+      end
       if block_return_name
         if inferred = resolve_block_dependent_return_type(mangled_method_name, base_method_name, block_return_name)
           return_type = inferred
@@ -80329,6 +80349,10 @@ module Adamas::HIR
             return_type = tuple_return
           end
         end
+      end
+      if debug_env_filter_match?("DEBUG_L11_RT", method_name, mangled_method_name, base_method_name)
+        STDERR.puts "[L11_RT] site=C name=#{mangled_method_name}"
+        STDERR.puts "[L11_RT] site=C rt=#{get_type_name_from_ref(return_type)}"
       end
       if env_get("DEBUG_BLOCK_RETURN") && (mangled_method_name.includes?("sort_by") || base_method_name.includes?("sort_by"))
         STDERR.puts "[BLOCK_RETURN] method=#{mangled_method_name} base=#{base_method_name} return=#{block_return_name || "nil"}"
@@ -80363,6 +80387,10 @@ module Adamas::HIR
         if tuple_return = tuple_return_type_for_method(ctx.type_of(receiver_id), method_name)
           return_type = tuple_return
         end
+      end
+      if debug_env_filter_match?("DEBUG_L11_RT", method_name, mangled_method_name, base_method_name)
+        STDERR.puts "[L11_RT] site=D name=#{mangled_method_name}"
+        STDERR.puts "[L11_RT] site=D rt=#{get_type_name_from_ref(return_type)}"
       end
 
       if receiver_id && v2_string_readable?(method_name) && method_name.ends_with?('?')
@@ -80430,6 +80458,10 @@ module Adamas::HIR
         STDERR.puts "[CALL_RETURN] before name=#{mangled_method_name} base=#{base_method_name} return=#{get_type_name_from_ref(return_type)}"
       end
 
+      if debug_env_filter_match?("DEBUG_L11_RT", method_name, mangled_method_name, base_method_name)
+        STDERR.puts "[L11_RT] site=E name=#{mangled_method_name}"
+        STDERR.puts "[L11_RT] site=E rt=#{get_type_name_from_ref(return_type)}"
+      end
       if return_type == TypeRef::VOID || return_type == TypeRef::NIL
         if inferred = resolve_return_type_from_def(mangled_method_name, base_method_name, receiver_id ? ctx.type_of(receiver_id) : nil, return_def_arg_count)
           return_type = inferred unless inferred == TypeRef::VOID || inferred == TypeRef::NIL
@@ -80438,6 +80470,10 @@ module Adamas::HIR
             STDERR.puts "[GET_CACHE_RT] 2. after resolve_return_type_from_def return_type=#{rt_name}"
           end
         end
+      end
+      if debug_env_filter_match?("DEBUG_L11_RT", method_name, mangled_method_name, base_method_name)
+        STDERR.puts "[L11_RT] site=F name=#{mangled_method_name}"
+        STDERR.puts "[L11_RT] site=F rt=#{get_type_name_from_ref(return_type)}"
       end
 
       if def_node = @function_defs[mangled_method_name]? || @function_defs[base_method_name]?
@@ -80473,6 +80509,10 @@ module Adamas::HIR
         end
       end
 
+      if debug_env_filter_match?("DEBUG_L11_RT", method_name, mangled_method_name, base_method_name)
+        STDERR.puts "[L11_RT] site=G name=#{mangled_method_name} recv=#{receiver_id ? 1 : 0}"
+        STDERR.puts "[L11_RT] site=G rt=#{get_type_name_from_ref(return_type)}"
+      end
       if receiver_id
         return_type = specialize_type_with_receiver_map(return_type, ctx.type_of(receiver_id))
       end
