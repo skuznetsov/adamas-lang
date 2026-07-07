@@ -35,3 +35,26 @@ doesn't have to re-derive context.
   with an RTA tracking gap for local-bound `Array`.
 - **Regression tests (combined suite)** likely exercising this path fail
   with the same STUB signature — see `regression_tests/combined/` output.
+
+## Phantom generic type from constructor call in a fallback block
+- **Status**: known-red, found 2026-07-07 (session-13) while closing L11.
+  Pre-existing: reproduces on pre-L11-fix compilers too.
+- **Reducer (committed)**: `regression_tests/phantom_generic_ctor_block_repro.sh`
+  - Stable command: `regression_tests/phantom_generic_ctor_block_repro.sh bin/adamas`
+  - Exits 0 while the bug reproduces (crash), 1 once fixed.
+- **Symptom**: segfault/bus error at an address of shape `0x{v}0000{type_id}`
+  (the object's leading `{i32 type_id, i32 field}` bytes dereferenced as a
+  pointer), e.g. `0x50000043c` with `type_id=1084`, `v=5`.
+- **Mechanism**: `Box` is NOT generic, but lowering `Box.new(6)` as the tail
+  of a block that reaches the inline-yield fallback (proc-materialized) path
+  synthesizes a phantom type `Box(Int32)` (symbols `Box$LInt32$R$...`) with
+  no ivar metadata. Its getter lowers `@v` as a pointer field at offset 0
+  (`load ptr [self+0]; load i32 [that]`) while `initialize`/`$Dnew` use the
+  real layout — the getter derefs the object header bytes as a pointer.
+  Trigger needs ≥2 same-shape callsites whose blocks tail-call a constructor
+  with args (triple-nested `with_map` exceeds `INLINE_YIELD_MAX_REPEAT=2`).
+- **Likely area**: block-return-type naming for constructor tails
+  (`block_return_type_name` / lowered-block inference) producing
+  `Name(ArgTypes)` for a non-generic class and `type_ref_for_name`
+  registering it as a fresh type without ivars. Family:
+  Hash dual-TypeRef phantom (`9641755d`).
