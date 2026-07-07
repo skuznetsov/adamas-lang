@@ -1,13 +1,81 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-07 (session-12: β FIXED — two roots: loop-phi self-incoming skip +
-detached block-body CFG pollution. s2 now passes registration AND lower_super; new
-frontier L11 = null TypeRef into specialize_type_with_receiver_map while lowering
-`Slice(UInt64)#each$block`. Veto default still OFF, gated on L11.)
+Updated: 2026-07-07 (session-13: L11 CLOSED `0bf0a652` — per-shape `_block`
+specialization on the inline-yield fallback path; suites 154/154+36/36 ×2; s2 (veto)
+builds and passes the old crash site. New frontier L12 root-caused to a tiny
+reducer: `Array(CustomStruct)#==` is ALWAYS false — block yield-arg type for struct
+elements degrades to raw Pointer through bare-generic `other : Indexable` in
+Indexable#equals?, and the synthesized `TRef#==(Pointer)` guard reads a type_id
+header STRUCTS DON'T HAVE. Veto default still OFF, gated on L12.)
 Branch: `work/b5-lower-method-owner-edge`
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
+
+## 2026-07-07 — session-13: L11 CLOSED; L12 = Array(struct)#== always false
+
+**L11 fix (`0bf0a652`, refined root):** deeper than session-12's note — in the s2
+body of the ONE shared `with_type_param_map$$Hash(String,String)_block` the block
+proc was called as **`call void %_()`** (value discarded) and every `ret` returned
+**`zeroinitializer`** of the accreted union → tag0+null payload at EVERY
+value-consuming callsite. Root: the inline-yield depth/repeat-guard fallback shared
+ONE `_block` symbol keyed only by ARG types; the body's yield/return ABI was stamped
+by whichever callsite's `__block_return__` won. Fix rides the existing
+shape-specialization machinery (fea7db18, default ON): (1)
+`block_call_return_contract_for` accepts ALL yield-passthrough bodies (`return
+yield`, tail `yield` incl. begin/ensure ivar-swap); (2) `inline_yield_fallback_call`
+re-keys its target through `shape_keyed_block_target` and records `__block_return__`
+under the shape name. Regression: regression_tests/block_shape_return_contract.cr
+(pre-fix segfault / post-fix ok; needs `struct Box` — class masks the bug, all-ptr
+reprs). Suites 154/154 + 36/36 on default AND veto.
+
+**Parked known-red (pre-existing, `ea8f8313`):** phantom generic `Box(Int32)` from a
+constructor tail in a fallback block (non-generic Box; phantom lacks ivar metadata;
+getter pointer-loads offset 0 → derefs `{type_id,v}` as pointer → crash
+`0x{v}0000{tid}`). KNOWN_BUGS.md + regression_tests/phantom_generic_ctor_block_repro.sh.
+
+**L12 ROOT-CAUSED to reducer (fix = next session):** s2 (veto, L11 fix) compiling
+hello segfaults at `block_param_types_fingerprint$$Nil|Array(TypeRef)`: array VALID,
+ELEMENT = null TypeRef. Chain (each hop proven with lldb python probes, scripts in
+scratchpad): `String.new { |buffer| … }` lowering → `block_param_types_for_call` →
+`return [type_ref_for_name("Pointer(UInt8)")]` → wrapper returns NULL → inner runs
+clean through `after_type_params ids=7` (DEBUG_TYPE_REF_NAME trace) → the null is
+returned by **`Module#intern_type`** (probe: `intern_type(desc) -> 0x0`) → intern's
+bucket-hit compare `entry[1] == desc.type_params` is ALWAYS false because
+**`Array(CustomStruct)#== is ALWAYS false, even `a == a`** (minimal reducer
+/tmp/test_l12_areq.cr: `struct_eq=true arr_eq=false self_eq=false`; Int32/String/
+UInt8 element types are fine; PRE-EXISTING — reproduces on pre-L11 compilers).
+Mechanism, two layers (in-vivo shape = Indexable#equals?):
+- **D1 (root):** in `Indexable#equals?(other : Indexable, &)` the yield-arg
+  `other.unsafe_fetch(i)` infers through the BARE generic param annotation →
+  block param `y` typed raw POINTER (TypeRef 18) instead of the element struct
+  (callsite mono knows Array(TRef) — substitution is lost).
+- **D2 (unsound guard):** dispatch then synthesizes `TRef#==(Pointer)` whose
+  narrowing check reads `load i32 [other+0]` and compares to the struct's type_id
+  (932) — but STRUCTS HAVE NO type_id HEADER (offset 0 = first ivar) → reads the
+  field value → check always false → `==` returns false.
+Open tail: why in-vivo intern_type returned NULL (vs minting a fresh ghost ref) —
+one unexplained hop; the reducer chain above is proven regardless.
+
+**START HERE (L12 fix):** (1) D1: make yield-arg type inference substitute the
+CALLSITE receiver/arg types for bare-generic def params (the mono suffix
+`equals?$$Array(TRef)` has the concrete type; `other : Indexable` must resolve
+unsafe_fetch's T through it) — look at block_param_types_for_call → yield-site arg
+inference (collect_yield_arg_lists ~44256, infer paths ~22890); (2) D2: the
+synthesized `==(Pointer)`/is_a? guard for STRUCT targets must not read a type_id
+header from a struct-repr pointer (llvm is_a? emission or the dispatch synth) —
+D1 alone removes the trigger, D2 alone is unsound; (3) rerun /tmp/test_l12_areq.cr
+(`arr_eq=true self_eq=true`), intern reducer /tmp/test_l12_intern.cr (`b=1118`),
+then s2-veto hello; (4) THEN veto default flip → suites ×2 → Sub#gets_peek health →
+replace bin/adamas. Census note: true-census = DEBUG_PHI_MISSING=1 (2439/s2; also
+fires compiling TINY programs — Deque#resize_to_capacity, Hash#do_compaction,
+IO#gets_slow, Char#in_set?$splat, Kqueue#system_run$block); grep `[null, %bb`
+over-counts (legit nil-literal incomings) AND many census hits are harmless
+(fabricated null == correct nil semantics; e.g. dead backedge after unconditional
+`break` in split_generic_type_args — false alarm, verified). Artifacts:
+/tmp/adamas_l11fix (stage1+fix), /tmp/s2_l11fix(+.ll), /tmp/s2_l11fix_census.build.log,
+/tmp/test_l12_areq{,2,3}.cr, /tmp/test_l12_intern{,2}.cr, scratchpad fp_scan.py /
+trfn_probe{,2}.py (lldb python probes: scan array elems / trap null returns).
 
 ## 2026-07-07 — session-12: β CLOSED (two roots); L11 = specialize null TypeRef
 
