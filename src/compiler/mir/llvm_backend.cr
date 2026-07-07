@@ -16473,18 +16473,136 @@ module Adamas::MIR
     # switch), each gets its own alloca of the full return union type, creating
     # massive stack frames (398KB+). Since only one switch case executes, all
     # incoming values can safely share a single alloca.
+    #
+    # Sharing is only safe for an incoming value that DIES at its phi: a
+    # redirected value's def-site store and every read go through the one
+    # shared alloca, and each arm stores its own incoming into it. An incoming
+    # that is still read after the merge — or that feeds a second phi — would
+    # observe the taken arm's value instead of its own. (L10: lower_call's
+    # `method_name` read `base_method_name`'s merged value after
+    # `base = if full ... else ... method_name end`, corrupting every
+    # per-owner virtual-target name into `Owner#IO#gets_peek`.)
     private def prepass_detect_phi_shared_slots(func : Function)
+      # The liveness veto below is semantically REQUIRED (sharing an incoming
+      # that outlives its phi lets the taken arm's store clobber it — the L10
+      # `method_name` corruption), but enabling it everywhere exposes a second,
+      # pre-existing defect family: MIR emitted with STALE local bindings
+      # (reads referencing an in-loop/in-branch value id on paths where its def
+      # never ran — e.g. lower_super's post-loop `super_method_name` read) that
+      # accidentally worked only through the shared carrier acting as a
+      # variable cell. Until that stale-binding family is fixed at the
+      # HIR→MIR level, the veto stays OFF by default:
+      # ADAMAS_PHI_SHARE_VETO=1 enables it everywhere;
+      # ADAMAS_PHI_SHARE_VETO_FILTER=tok1,tok2 enables it only in functions
+      # whose name contains a token (legacy sharing elsewhere);
+      # ADAMAS_PHI_SHARE_LEGACY_FILTER=tok1,tok2 keeps legacy sharing only in
+      # matching functions (veto everywhere else).
+      apply_veto = false
+      if !::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_PHI_SHARE_VETO").nil?
+        apply_veto = true
+      elsif filter = ::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_PHI_SHARE_VETO_FILTER")
+        unless filter.empty?
+          apply_veto = filter.split(',').any? { |tok| !tok.empty? && func.name.includes?(tok) }
+        end
+      elsif legacy_filter = ::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_PHI_SHARE_LEGACY_FILTER")
+        unless legacy_filter.empty?
+          apply_veto = !legacy_filter.split(',').any? { |tok| !tok.empty? && func.name.includes?(tok) }
+        end
+      end
+      # Count phi uses and non-phi uses per value, mirroring the operand
+      # enumeration in prepass_detect_cross_block_values.
+      phi_use_counts = {} of ValueId => Int32
+      nonphi_used = ::Set(ValueId).new
+      veto_blocks = apply_veto ? func.blocks : Array(BasicBlock).new
+      veto_blocks.each do |block|
+        block.instructions.each do |inst|
+          if inst.is_a?(Phi)
+            incoming_idx = 0
+            while incoming_idx < inst.incoming.size
+              _from_block, val_id = inst.incoming.unsafe_fetch(incoming_idx)
+              incoming_idx += 1
+              phi_use_counts[val_id] = (phi_use_counts[val_id]? || 0) + 1
+            end
+            next
+          end
+          operand_ids = case inst
+                        when BinaryOp     then [inst.left, inst.right]
+                        when UnaryOp      then [inst.operand]
+                        when Cast         then [inst.value]
+                        when Call         then inst.args.to_a
+                        when ExternCall   then inst.args.to_a
+                        when IndirectCall then inst.args.to_a + [inst.callee_ptr]
+                        when Store        then [inst.value, inst.ptr]
+                        when MemCopy      then [inst.dst, inst.src]
+                        when GlobalStore  then [inst.value]
+                        when AtomicStore  then [inst.value, inst.ptr]
+                        when Load         then [inst.ptr]
+                        when GetElementPtr        then [inst.base]
+                        when GetElementPtrDynamic then [inst.base, inst.index]
+                        when UnionWrap    then [inst.value]
+                        when UnionIs      then [inst.union_value]
+                        when UnionUnwrap  then [inst.union_value]
+                        when UnionTypeIdGet then [inst.union_value]
+                        when Select       then [inst.condition, inst.then_value, inst.else_value]
+                        when ArrayGet     then [inst.array_value, inst.index_value]
+                        when ArraySet     then [inst.array_value, inst.index_value, inst.value_id]
+                        when ArraySize    then [inst.array_value]
+                        when ArraySetSize then [inst.array_value, inst.size_value]
+                        when ArrayNew     then [inst.capacity_value]
+                        when ArrayLiteral then inst.elements.to_a
+                        when AddressOf    then [inst.operand]
+                        when StringInterpolation then inst.parts.to_a
+                        # Beyond the cross-block enumeration: any other operand-bearing
+                        # instruction must also veto sharing (a shared slot read through
+                        # rc_dec/free/atomics after the merge is the same corruption).
+                        when Free         then [inst.ptr]
+                        when RCIncrement  then [inst.ptr]
+                        when RCDecrement  then [inst.ptr]
+                        when AtomicLoad   then [inst.ptr]
+                        when AtomicCAS    then [inst.ptr, inst.expected, inst.desired]
+                        when AtomicRMW    then [inst.ptr, inst.value]
+                        when MutexLock    then [inst.mutex_ptr]
+                        when MutexUnlock  then [inst.mutex_ptr]
+                        when MutexTryLock then [inst.mutex_ptr]
+                        when ChannelSend  then [inst.channel_ptr, inst.value]
+                        when ChannelReceive then [inst.channel_ptr]
+                        when ChannelClose then [inst.channel_ptr]
+                        else              [] of ValueId
+                        end
+          op_idx = 0
+          while op_idx < operand_ids.size
+            nonphi_used << operand_ids.unsafe_fetch(op_idx)
+            op_idx += 1
+          end
+        end
+        case term = block.terminator
+        when Branch
+          nonphi_used << term.condition
+        when Switch
+          nonphi_used << term.value
+        when Return
+          if ret_val = term.value
+            nonphi_used << ret_val
+          end
+        end
+      end
+
       func.blocks.each do |block|
         block.instructions.each do |inst|
           next unless inst.is_a?(Phi)
-          # Count how many incoming values are cross-block
+          # Count how many incoming values are cross-block AND die at this phi.
           cross_block_incoming = [] of ValueId
           inst.incoming.each do |(_, val_id)|
-            cross_block_incoming << val_id if @cross_block_values.includes?(val_id)
+            next unless @cross_block_values.includes?(val_id)
+            if apply_veto
+              next if (phi_use_counts[val_id]? || 0) > 1
+              next if nonphi_used.includes?(val_id)
+            end
+            cross_block_incoming << val_id
           end
           # Only share when there are enough to matter (threshold: 4+)
           next if cross_block_incoming.size < 4
-          # Redirect all cross-block incoming values to use the phi's ID as canonical slot
+          # Redirect the dying cross-block incoming values to the phi's canonical slot
           cross_block_incoming.each do |val_id|
             @phi_slot_redirect[val_id] = inst.id
           end
