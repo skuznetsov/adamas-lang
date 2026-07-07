@@ -24883,8 +24883,44 @@ module Adamas::MIR
           emit "%gs_conv.#{c}.result = load #{llvm_type}, ptr %gs_conv.#{c}.ptr"
           val = "%gs_conv.#{c}.result"
         elsif actual_val_type.nil? || !actual_val_type.includes?(".union")
-          # Value is not a union (or type unknown) - use zeroinitializer for the union
-          val = "zeroinitializer"
+          # Scalar value stored into a union-typed global (closure cells, magic-var
+          # classvars): wrap it as {tag, payload} like the cross-block slot_wrap path.
+          # Replacing it with zeroinitializer silently nils out captured-local writes
+          # (L9-D2: `last_value = lower_expr(...)` in a materialized block body).
+          scalar_val_type = actual_val_type || val_type_str
+          if scalar_val_type && !scalar_val_type.includes?(".union") && scalar_val_type != "void" &&
+             val != "null" && val != "zeroinitializer" && val_type != TypeRef::NIL
+            wrap_tid = "0"
+            if vt = val_type
+              if wrap_desc = @module.union_descriptors[inst.type]?
+                if matching = wrap_desc.variants.find { |v| v.type_ref == vt }
+                  wrap_tid = matching.type_ref.id.to_i32.to_s
+                elsif scalar_val_type == "ptr" && runtime_header_tid_readable?(vt)
+                  wrap_tid = emit_runtime_header_tid("gs_wrap#{@cond_counter}", val)
+                else
+                  by_llvm = wrap_desc.variants.find { |v| v.full_name != "Nil" && @type_mapper.llvm_type(v.type_ref) == scalar_val_type }
+                  if by_llvm
+                    wrap_tid = by_llvm.type_ref.id.to_i32.to_s
+                  elsif non_nil = wrap_desc.variants.find { |v| v.full_name != "Nil" }
+                    wrap_tid = non_nil.type_ref.id.to_i32.to_s
+                  end
+                end
+              end
+            end
+            c = @cond_counter
+            @cond_counter += 1
+            emit "%gs_wrap.#{c}.ptr = alloca #{llvm_type}, align 8"
+            emit "store #{llvm_type} zeroinitializer, ptr %gs_wrap.#{c}.ptr"
+            emit "%gs_wrap.#{c}.tid = getelementptr #{llvm_type}, ptr %gs_wrap.#{c}.ptr, i32 0, i32 0"
+            emit "store i32 #{wrap_tid}, ptr %gs_wrap.#{c}.tid"
+            emit "%gs_wrap.#{c}.pay = getelementptr #{llvm_type}, ptr %gs_wrap.#{c}.ptr, i32 0, i32 1"
+            emit "store #{scalar_val_type} #{val}, ptr %gs_wrap.#{c}.pay, align 4"
+            emit "%gs_wrap.#{c}.val = load #{llvm_type}, ptr %gs_wrap.#{c}.ptr"
+            val = "%gs_wrap.#{c}.val"
+          else
+            # Genuine nil/unknown value: a nil-tagged zero union is the correct store.
+            val = "zeroinitializer"
+          end
         end
         # Union stores cannot use scalar null/0 literals directly.
         val = normalize_union_value(val, llvm_type)
