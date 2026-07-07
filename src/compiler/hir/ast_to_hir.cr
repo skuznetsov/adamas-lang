@@ -78195,10 +78195,16 @@ module Adamas::HIR
           end
         end
       end
+      if debug_env_filter_match?("DEBUG_L10_MNAME", method_name, full_method_name || "")
+        STDERR.puts "[L10_MN] site=A method=#{method_name} full=#{full_method_name || "nil"}"
+      end
       # Guard method_name before any string ops: in generated stage2, String fields
       # can be null pointers under V2's heap-allocated struct ABI.
       unless v2_string_readable?(method_name)
         method_name = ""
+      end
+      if debug_env_filter_match?("DEBUG_L10_MNAME", method_name, full_method_name || "")
+        STDERR.puts "[L10_MN] site=B method=#{method_name} full=#{full_method_name || "nil"}"
       end
       # M3b sidecar (docs/method_resolution_architecture_map.md): assemble the
       # COMPLETE CallShape now that arg_types and the receiver are resolved (M3a's
@@ -78389,6 +78395,9 @@ module Adamas::HIR
                                 end
         method_name = recovered_method_name unless recovered_method_name.empty?
       end
+      if debug_env_filter_match?("DEBUG_L10_MNAME", method_name, full_method_name || "")
+        STDERR.puts "[L10_MN] site=C method=#{method_name} full=#{full_method_name || "nil"} lexical=#{lexical_method_name}"
+      end
       if callee_kind == Adamas::Compiler::Frontend::NodeKind::Identifier &&
          static_class_name.nil? &&
          @current_class.nil?
@@ -78423,6 +78432,9 @@ module Adamas::HIR
       # Third null guard: method_name may have been reassigned by source_method_name
       # or recovered_method_name paths above; re-sanitize before all downstream string ops.
       method_name = "" unless v2_string_readable?(method_name)
+      if debug_env_filter_match?("DEBUG_L10_MNAME", method_name, full_method_name || "")
+        STDERR.puts "[L10_MN] site=D method=#{method_name} full=#{full_method_name || "nil"}"
+      end
       if top_level_target = top_level_bare_call_target
         if !has_block_call && block_expr.nil? && block_pass_expr.nil?
           if env_has?("ADAMAS_TRACE_TOPLEVEL_CALL_SHAPE") &&
@@ -78540,6 +78552,9 @@ module Adamas::HIR
       unless v2_string_readable?(base_method_name)
         base_method_name = v2_string_readable?(method_name) ? method_name : ""
       end
+      if debug_env_filter_match?("DEBUG_L10_MNAME", method_name, full_method_name || "", base_method_name)
+        STDERR.puts "[L10_MN] site=E method=#{method_name} base=#{base_method_name} full=#{full_method_name || "nil"}"
+      end
       # Late fallback: if this is an unresolved class-method call on a type literal,
       # use meta-instance methods (e.g., Int32.to_s -> Class#to_s).
       if receiver_id.nil? && v2_string_readable?(base_method_name) && base_method_name.includes?('.') &&
@@ -78630,6 +78645,9 @@ module Adamas::HIR
                             else
                               mangle_function_name(base_method_name, arg_types, has_block_call)
                             end
+      if debug_env_filter_match?("DEBUG_L10_MNAME", method_name, full_method_name || "", base_method_name)
+        STDERR.puts "[L10_MN] site=F method=#{method_name} base=#{base_method_name} mangled=#{mangled_method_name} full=#{full_method_name || "nil"}"
+      end
 
       if receiver_id && v2_string_readable?(base_method_name) && base_method_name.includes?('|') && base_method_name.includes?('#')
         union_name = method_owner(base_method_name)
