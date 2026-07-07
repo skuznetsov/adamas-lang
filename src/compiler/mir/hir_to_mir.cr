@@ -9969,6 +9969,11 @@ module Adamas
           STDERR.puts "[EXPLICIT_YIELD_TARGET] mir func=#{@current_lowering_func_name} target=#{block_param_id.inspect} explicit=#{yld.target.inspect} fallback=#{@current_block_param_id.inspect}"
         end
         unless block_param_id
+          # Silent nil here masks materialized-block yield bugs (L9-D1 family);
+          # keep the fallback but make it observable.
+          if ENV.has_key?("ADAMAS_YIELD_NO_BLOCK_TRACE")
+            STDERR.puts "[YIELD_NO_BLOCK] func=#{@current_lowering_func_name} lowered yield to const_nil (no block param target)"
+          end
           return builder.const_nil
         end
         yield_carrier = @hir_value_carriers[block_param_id]? || ProcCarrier::Unknown
@@ -9995,6 +10000,23 @@ module Adamas
         block_type = HIR::TypeRef::POINTER if block_type == HIR::TypeRef::VOID
         block_desc = @hir_module.get_type_descriptor(block_type)
         is_ptr = block_type == HIR::TypeRef::POINTER || (block_desc && block_desc.kind == HIR::TypeKind::Proc)
+        if !is_ptr && block_desc && block_desc.kind == HIR::TypeKind::Union && block_desc.name.includes?("Proc(")
+          # Nil|Proc union carrier (materialized annotated block): the raw-fnptr
+          # yield ABI dispatches on the payload word, so unwrap it. The wrap tag
+          # is not trusted here — blocks reaching a yield body are present by
+          # construction, and callers currently wrap with an unreliable tag.
+          mir_union = convert_type(block_type)
+          variant_tid = 0
+          if ud = @mir_module.get_union_descriptor(mir_union)
+            if pv = ud.variants.find { |v| v.full_name != "Nil" }
+              variant_tid = pv.type_id
+            end
+          end
+          unwrap = UnionUnwrap.new(builder.next_id, TypeRef::POINTER, block_val, variant_tid, false)
+          builder.emit(unwrap)
+          block_val = unwrap.id
+          is_ptr = true
+        end
         unless is_ptr
           block_val = builder.cast(CastKind::IntToPtr, block_val, TypeRef::POINTER)
         end
@@ -10061,6 +10083,15 @@ module Adamas
         hir_func.params.reverse_each do |param|
           if desc = @hir_module.get_type_descriptor(param.type)
             return param.id if desc.kind == HIR::TypeKind::Proc
+          end
+        end
+        # Materialized annotated blocks can arrive typed as a Nil|Proc union when
+        # the inline-yield path bailed out (`& : -> T?` helpers under depth/repeat
+        # guards). Accept them here; lower_yield extracts the proc payload before
+        # dispatching. Without this the yield silently lowers to const_nil (L9-D1).
+        hir_func.params.reverse_each do |param|
+          if desc = @hir_module.get_type_descriptor(param.type)
+            return param.id if desc.kind == HIR::TypeKind::Union && desc.name.includes?("Proc(")
           end
         end
         # Fallback: use the last parameter only if it could be a block (Pointer or VOID type).
