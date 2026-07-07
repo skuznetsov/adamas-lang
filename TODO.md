@@ -1,12 +1,62 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-07 (session-11: L10 ROOT-CAUSED — backend phi-carrier slot sharing
-clobbers live-after-merge incomings; liveness veto in tree but GATED OFF because enabling
-it exposes the pre-existing stale-post-loop-binding family (β). See section below.)
+Updated: 2026-07-07 (session-12: β FIXED — two roots: loop-phi self-incoming skip +
+detached block-body CFG pollution. s2 now passes registration AND lower_super; new
+frontier L11 = null TypeRef into specialize_type_with_receiver_map while lowering
+`Slice(UInt64)#each$block`. Veto default still OFF, gated on L11.)
 Branch: `work/b5-lower-method-owner-edge`
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
+
+## 2026-07-07 — session-12: β CLOSED (two roots); L11 = specialize null TypeRef
+
+**β root 1 — loop-phi self-incoming skip (FIXED):** lower_while/lower_loop guarded
+`phi.add_incoming` with `if incoming_val != phi.id` ("self-referential PHI would be a
+no-op") and skipped entirely when `updated_val` was nil. A variable unchanged on the
+backedge path left the loop-header phi with NO incoming for a real predecessor; the
+backend then fabricated null/zero (`default_phi_value` llvm_backend ~21720:
+`[null, %bbN]`). Fixed at 10 sites (lower_while, lower_loop, until-form, each_char
+intrinsic, 6× incr_phi sites): always add the backedge incoming, self when unchanged.
+
+**β root 2 — detached block-body CFG pollution (FIXED):** `lower_block_to_block_id`
+lowers the block body into a DETACHED block of the caller function (proc/closure
+representation + return-type inference) while the caller's loop stacks were live.
+`next`/`break` inside the block wired edges from that dead body into the ENCLOSING
+while's cond/exit blocks (in-vivo: lower_super's `each_param do |param| next if …;
+break …` = the bb287/bb296 fabricated-null preds), plus a stray `ret` mid-function.
+Fixed by suspending loop + inline-next/return stacks around the body lowering
+(pattern copied from the method-ptr thunk at ~64965). With empty stacks `next`
+lowers as Return (proc semantics), `break` as Unreachable.
+
+**Verification:** reducers v1–v4 (/tmp/test_beta_postloop*.cr recipes in memory);
+v4 (yield fn + next/break in block) reproduced 2 fabricated nulls → 0 after fix;
+s2-build lower_super had 4 null incomings → 0; whole s2 .ll 500 → 482 (residual =
+other shapes, see L11). Suites 152/152 + 36/36 on stage1 default AND under
+ADAMAS_PHI_SHARE_VETO=1. New guards: regression_tests/loop_phi_backedge_selfincoming.cr
+(runtime) + scripts/loop_phi_backedge_null_incoming_guard.sh (structural, FAILs on
+pre-fix compiler with count=2).
+
+**L11 (NEW frontier, veto default still gated):** s2 (veto build, both β fixes) now
+passes registration + lower_super and segfaults deeper: lower_call →
+`specialize_type_with_receiver_map(null, …)` (EXC_BAD_ACCESS x1=0, first TypeRef arg)
+at the `if receiver_id; return_type = specialize_type_with_receiver_map(return_type,
+ctx.type_of(receiver_id))` site (ast_to_hir ~80477) while lowering
+`Slice(UInt64)#each$block` (DEBUG_CALL_RETURN=a probe: last line
+`name=Slice(UInt64)#each$block … type=Unknown`; null enters return_type between
+~80206 and ~80477). s1 on the same input is clean → stage1 miscompiles s2's
+lower_call somewhere in that span; suspects: the 482 residual fabricated nulls
+(census by function: lower_method 43×3 variants, lower_module_method 37, lower_def 34,
+emit_hoisted_allocas 17; HIR lower_call itself has 3, two in DEBUG branches) or a
+Nil|TypeRef union desync (L9 family). Artifacts: /tmp/s2_beta2_veto(+.ll),
+/tmp/adamas_beta2 (stage1 with both fixes), /tmp/s2b2_callret.log.
+
+**START HERE (L11):** (1) census the 482 → classify shapes (if-merge missing
+incomings? break-path? exit-phi?) — extend reducer set; (2) bisect return_type
+null-entry between 80206–80477 in s2 .ll (site A = bb7846 call, chain %r29726 ←
+%r29558 ← …) or dynamically via more DEBUG_CALL_RETURN-style probes; (3) then flip
+`ADAMAS_PHI_SHARE_VETO` default ON, rebuild s2, verify L10 llc reject gone
+(healthy `Sub#gets_peek` lookups), suites ×2, replace bin/adamas.
 
 ## 2026-07-07 — session-11: L10 ROOT-CAUSED (phi-carrier slot-sharing clobber); veto gated
 
