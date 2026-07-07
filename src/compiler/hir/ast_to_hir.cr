@@ -40477,6 +40477,56 @@ module Adamas::HIR
       literals
     end
 
+    # Recover a lowered block callback's return type name at repair time.
+    # `block_id` is the block-body region inside `func` (Call#block); its
+    # Return terminator carries the block's value. Fail-closed (nil) when the
+    # block has no Return/value or the type is unusable for a shape key.
+    private def repair_block_return_type_name(
+      func : Function,
+      block_id : BlockId,
+      value_types : Hash(ValueId, TypeRef),
+      debug : Bool = false,
+    ) : String?
+      blk = func.get_block(block_id)
+      term = blk.terminator
+      unless term.is_a?(Return)
+        STDERR.puts "[L13_REPAIR] block_diag block=#{block_id} term=#{term.class.name}" if debug
+        return nil
+      end
+      value_id = term.value
+      unless value_id
+        STDERR.puts "[L13_REPAIR] block_diag block=#{block_id} term=Return value=nil" if debug
+        return nil
+      end
+      type_ref = value_types[value_id]? || TypeRef::VOID
+      type_name = type_ref == TypeRef::VOID ? "" : get_type_name_from_ref(type_ref)
+      if type_name.empty? || type_name == "Void" || type_name == "Unknown"
+        STDERR.puts "[L13_REPAIR] block_diag block=#{block_id} term=Return value=#{value_id} type=#{type_name.inspect}" if debug
+        return nil
+      end
+      type_name
+    end
+
+    # Fallback recovery of a block call's return type when the block region's
+    # terminator is unusable: the trailing materialized block-callback arg
+    # carries a Proc TypeDescriptor whose last type param is the return type.
+    private def repair_block_proc_return_type_name(
+      inst : Call,
+      value_types : Hash(ValueId, TypeRef),
+    ) : String?
+      last_arg = inst.args.last?
+      return nil unless last_arg
+      proc_type = value_types[last_arg]? || TypeRef::VOID
+      return nil if proc_type == TypeRef::VOID
+      desc = @module.get_type_descriptor(proc_type)
+      return nil unless desc && desc.kind == TypeKind::Proc && desc.type_params.size >= 1
+      ret = desc.type_params.last
+      return nil if ret == TypeRef::VOID || ret == TypeRef::NIL
+      type_name = get_type_name_from_ref(ret)
+      return nil if type_name.empty? || type_name == "Void" || type_name == "Unknown"
+      type_name
+    end
+
     private def repair_receiver_bound_call_targets : Nil
       repaired = 0
       targets_to_lower = Set(String).new
@@ -40563,6 +40613,9 @@ module Adamas::HIR
               if @module.has_function_with_body?(method_name_text) || @module.has_function_with_body?(base_name)
                 next
               end
+              if env_get("DEBUG_L13") && method_name_text.includes?("map")
+                STDERR.puts "[L13_REPAIR] demand_owner_match name=#{method_name_text} base=#{base_name} recv=#{receiver_name} block=#{inst.block ? 1 : 0} func=#{func.name}"
+              end
               targets_to_lower << method_name_text
               targets_to_lower << base_name unless method_name_text == base_name
               # If the call already carries a `$type` / `$block` suffix, keep the old
@@ -40647,6 +40700,9 @@ module Adamas::HIR
                                     !@module.has_function_with_body?(corrected_base)
             if corrected_name == method_name_text
               if needs_materialization
+                if env_get("DEBUG_L13") && corrected_name.includes?("map")
+                  STDERR.puts "[L13_REPAIR] demand_same name=#{corrected_name} resolved_base=#{resolved_base} recv=#{receiver_name} block=#{inst.block ? 1 : 0} func=#{func.name}"
+                end
                 targets_to_lower << corrected_name
                 targets_to_lower << resolved_base unless corrected_name == resolved_base
               end
@@ -40684,6 +40740,59 @@ module Adamas::HIR
               next
             end
 
+            # L13: rewriting a BLOCK call demands the callee body OUTSIDE any
+            # callsite lowering (no `__block_return__` / generic-U binding), so
+            # an annotated-generic yield def (Array#map's `& : T -> U`) lowers
+            # its yield as `call void %_()` and stores null into every element.
+            # Re-key the corrected target through the per-shape block
+            # specialization with the block return type recovered from the
+            # caller's block table, so the demanded body materializes with this
+            # callsite's block-return ABI. Fail-closed on every miss.
+            if has_block_call && (repair_block_id = inst.block)
+              l13_debug = !env_get("DEBUG_L13").nil? && corrected_name.includes?("map")
+              br_name = repair_block_return_type_name(func, repair_block_id, value_types, l13_debug)
+              br_name ||= repair_block_proc_return_type_name(inst, value_types)
+              shape_entry = nil.as(Tuple(String, Adamas::Compiler::Frontend::DefNode)?)
+              # The materialized block callback rides as the TRAILING proc arg;
+              # def lookup and the shape key use only real positional args.
+              # (materialized_trailing_block_proc_arg? skips size==1, so calls
+              # with zero positional args — Array#map — trim here instead.)
+              probe_args = arg_types
+              if trailing = probe_args.last?
+                if d = @module.get_type_descriptor(trailing)
+                  if d.kind == TypeKind::Proc || d.name == "Proc" || d.name.starts_with?("Proc(")
+                    probe_args = probe_args[0, probe_args.size - 1]
+                  end
+                end
+              end
+              if br_name
+                shape_entry = lookup_block_function_def_for_call(resolved_base, probe_args.size, probe_args, recv_for_block)
+                # Generic-instance owners (Array(Pointer(Void))#map) register their
+                # defs under the TEMPLATE owner (Array(T)#map); retry there.
+                if shape_entry.nil? && (owner_sep = resolved_base.rindex('#'))
+                  owner_part = resolved_base[0, owner_sep]
+                  if split = split_generic_base_and_args(owner_part)
+                    if template = @generic_templates[split.base]?
+                      unless template.type_params.empty?
+                        template_base = "#{split.base}(#{template.type_params.join(", ")})#{resolved_base[owner_sep..]}"
+                        shape_entry = lookup_block_function_def_for_call(template_base, probe_args.size, probe_args, recv_for_block)
+                      end
+                    end
+                  end
+                end
+              end
+              if l13_debug
+                STDERR.puts "[L13_REPAIR] shape_probe base=#{resolved_base} corrected=#{corrected_name} br=#{br_name.inspect} entry=#{shape_entry ? shape_entry[0] : "nil"} args=#{probe_args.map { |t| get_type_name_from_ref(t) }.join(";")}"
+              end
+              if br_name && shape_entry
+                shaped = shape_keyed_block_target(resolved_base, probe_args, shape_entry[1], corrected_name, br_name)
+                if l13_debug
+                  STDERR.puts "[L13_REPAIR] shape_rekey base=#{resolved_base} corrected=#{corrected_name} br=#{br_name} shaped=#{shaped}"
+                end
+                corrected_name = shaped unless shaped.empty?
+              end
+            end
+
             return_type = get_function_return_type(corrected_name)
             if return_type == TypeRef::VOID
               if inferred = resolve_return_type_from_def(corrected_name, resolved_base, receiver_type)
@@ -40692,6 +40801,9 @@ module Adamas::HIR
             end
             return_type = inst.type if return_type == TypeRef::VOID
 
+            if env_get("DEBUG_L13") && corrected_name.includes?("map")
+              STDERR.puts "[L13_REPAIR] rewrite old=#{method_name_text} new=#{corrected_name} recv=#{receiver_name} block=#{inst.block ? 1 : 0} func=#{func.name}"
+            end
             block.instructions[idx] = if block_id = inst.block
                                         Call.with_receiver_block(inst.id, return_type, recv, corrected_name, inst.args, block_id, inst.virtual)
                                       else
@@ -40711,6 +40823,9 @@ module Adamas::HIR
           @function_lowering_states.delete(name)
           base_name = strip_type_suffix(name)
           @function_lowering_states.delete(base_name) unless base_name == name
+        end
+        if env_get("DEBUG_L13") && name.includes?("map")
+          STDERR.puts "[L13_REPAIR] lower_target name=#{name} has_body=#{@module.has_function_with_body?(name) ? 1 : 0}"
         end
         lower_function_if_needed(name)
       end
@@ -69180,6 +69295,9 @@ module Adamas::HIR
              end
 
       return_type = infer_yield_return_type(ctx) || TypeRef::VOID
+      if env_get("DEBUG_L13") && ctx.function.name.includes?("map")
+        STDERR.puts "[L13_YIELD] func=#{ctx.function.name} ret=#{get_type_name_from_ref(return_type)} args=#{args.size}"
+      end
       yield_target = @explicit_yield_target_stack.last?
       if yield_target && env_get("DEBUG_EXPLICIT_YIELD_TARGET")
         STDERR.puts "[EXPLICIT_YIELD_TARGET] emit_yield func=#{ctx.function.name} target=%#{yield_target} args=#{args.size} return=#{get_type_name_from_ref(return_type)}"
@@ -71742,10 +71860,27 @@ module Adamas::HIR
           target_name = name
           remember_callsite_arg_types(name, shape_spec.arg_types, has_block: true) if @pending_arg_types[name]?.nil?
           if block_return_name = shape_spec.block_return_name
+            shape_map = {"__block_return__" => block_return_name}
+            # Bind the def's generic block-return type param (`U` in `& : T -> U`)
+            # too: infer_yield_return_type resolves an ANNOTATED block's return
+            # through the type-param map only (the `__block_return__` fallback is
+            # bypassed when the annotation names a bare type param), and the
+            # body's result type (e.g. Array(U)) needs the same binding.
+            if shape_params = shape_spec.source_def.params
+              if shape_block_param = find_param(shape_params) { |_p| _p.is_block }
+                if shape_block_ann = shape_block_param.type_annotation
+                  if tp_name = extract_proc_return_type_name(safe_slice_to_string(shape_block_ann) || "")
+                    if tp_name != "_" && type_param_like?(tp_name)
+                      shape_map[tp_name] = block_return_name
+                    end
+                  end
+                end
+              end
+            end
             if existing = @function_type_param_maps[name]?
-              @function_type_param_maps[name] = existing.merge({"__block_return__" => block_return_name})
+              @function_type_param_maps[name] = existing.merge(shape_map)
             else
-              @function_type_param_maps[name] = {"__block_return__" => block_return_name}
+              @function_type_param_maps[name] = shape_map
             end
           end
         end
