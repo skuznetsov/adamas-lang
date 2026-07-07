@@ -22137,12 +22137,31 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::IfNode
         types = [] of TypeRef
         branch_sensitive_failure = false
+        if env_has?("DEBUG_L9_INFER_IF")
+          l9_ctx = (@current_class || "?") + "#" + (@current_method || "?")
+          direct_then = infer_type_from_branch(expr_node.then_body, self_type_name)
+          d_state = direct_then.nil? ? "NIL" : ("SET:" + get_type_name_from_ref(direct_then.not_nil!))
+          STDERR.puts "[L9_INFER_IF] ctx=" + l9_ctx + " direct_then=" + d_state
+        end
         if inferred = with_inferred_condition_locals(expr_node.condition, self_type_name, truthy: true) do
              infer_type_from_branch(expr_node.then_body, self_type_name)
            end
           types << inferred
+          if env_has?("DEBUG_L9_INFER_IF")
+            l9_ctx2 = (@current_class || "?") + "#" + (@current_method || "?")
+            STDERR.puts "[L9_INFER_IF] ctx=" + l9_ctx2 + " then_contributed=" + get_type_name_from_ref(inferred)
+          end
         elsif condition_has_assignment_local?(expr_node.condition)
           branch_sensitive_failure = true
+          if env_has?("DEBUG_L9_INFER_IF")
+            l9_ctx2 = (@current_class || "?") + "#" + (@current_method || "?")
+            STDERR.puts "[L9_INFER_IF] ctx=" + l9_ctx2 + " then_dropped=assign_local"
+          end
+        else
+          if env_has?("DEBUG_L9_INFER_IF")
+            l9_ctx2 = (@current_class || "?") + "#" + (@current_method || "?")
+            STDERR.puts "[L9_INFER_IF] ctx=" + l9_ctx2 + " then_dropped=nil_infer"
+          end
         end
         if elsifs = expr_node.elsifs
           elsifs.each do |branch|
@@ -22309,7 +22328,16 @@ module Adamas::HIR
       @current_typeof_local_names = name_map
       begin
         seed_inferred_condition_locals(condition_id, self_type_name, truthy: truthy)
-        yield
+        wicl_result = yield
+        if env_has?("DEBUG_L9_WICL")
+          read1 = wicl_result.nil? ? "NIL" : ("SET:" + get_type_name_from_ref(wicl_result.not_nil!))
+          # Second read through a fresh copy: expose tag/payload repr divergence
+          # (V2 nilable-struct dual-repr) if the two reads disagree.
+          wicl_copy = wicl_result
+          read2 = wicl_copy.nil? ? "NIL" : ("SET:" + get_type_name_from_ref(wicl_copy.not_nil!))
+          STDERR.puts "[L9_WICL] read1=" + read1 + " read2=" + read2
+        end
+        wicl_result
       ensure
         @current_typeof_locals = old_locals
         @current_typeof_local_names = old_names
@@ -35084,7 +35112,16 @@ module Adamas::HIR
                     STDERR.puts "[LOWER_METHOD] inspect_failed expr=#{expr_id.index} (null/invalid/OOB)"
                   end
                 end
-                last_value = lower_expr(ctx, expr_id)
+                l9_raw = lower_expr(ctx, expr_id)
+                last_value = l9_raw
+                if debug_env_filter_match?("DEBUG_L9_BODYLOOP", method_name, base_name, full_name)
+                  # Avoid interpolation of numeric locals here: interpolation itself
+                  # is suspect under stage2; report via string concat + explicit to_s.
+                  # l9_raw is non-nilable UInt32: print its value directly; then read
+                  # back the nilable captured local to split producer vs store/read.
+                  lv_state = last_value.nil? ? "NIL" : ("SET:" + last_value.not_nil!.to_s)
+                  STDERR.puts "[L9_BODYLOOP] method=" + base_name + " raw=" + l9_raw.to_s + " after_assign=" + lv_state
+                end
                 if slow_ms && expr_start
                   elapsed = (Time.instant - expr_start).total_milliseconds
                   if elapsed >= slow_ms
@@ -35112,6 +35149,10 @@ module Adamas::HIR
         restore_method_body_lowering_scope(body_scope_snapshot)
       end
 
+      if debug_env_filter_match?("DEBUG_L9_BODYLOOP", method_name, base_name, full_name)
+        lv_state = last_value.nil? ? "NIL" : ("SET:" + last_value.not_nil!.to_s)
+        STDERR.puts "[L9_BODYLOOP] method=" + base_name + " after_loop=" + lv_state
+      end
       fixup_module_receiver_calls(ctx)
       stop_after_pending_target_lower_method_phase(
         "lower_method_fixups_done",
