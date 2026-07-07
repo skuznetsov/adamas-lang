@@ -1,15 +1,54 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-07 (session-10: L9 ROOT-CAUSED and fixed in-tree — D2 = emit_global_store
-replaced scalar→union-global stores with zeroinitializer (closure-cell writes silently nil'd,
-poisoning every demand-lowered return type in s2); D1 = materialized annotated blocks
-(`& : -> T?` after inline-yield bailout) carry Nil|Proc union param, yield lowered to
-const_nil; @[Flags] implicit values fixed (1, prev*2 per original). Validation in progress;
-L10 = next s2 floor: IO#gets_peek GEP on un-unwrapped Nil|Slice(UInt8) param)
+Updated: 2026-07-07 (session-11: L10 ROOT-CAUSED — backend phi-carrier slot sharing
+clobbers live-after-merge incomings; liveness veto in tree but GATED OFF because enabling
+it exposes the pre-existing stale-post-loop-binding family (β). See section below.)
 Branch: `work/b5-lower-method-owner-edge`
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
+
+## 2026-07-07 — session-11: L10 ROOT-CAUSED (phi-carrier slot-sharing clobber); veto gated
+
+**α root (PROVEN):** `prepass_detect_phi_shared_slots` (llvm_backend.cr): a phi with ≥4
+cross-block incomings redirects ALL incomings to one shared alloca (`%r<phi>.phi_slot`),
+assuming they die at the phi. An incoming that outlives the merge reads the carrier after
+the taken arm's def-site store overwrote it. In s2's `lower_call`, the merge of
+`base_method_name = if full_method_name … else … method_name … end` had `method_name`'s
+value as one of exactly 4 incomings → every later `method_name` read returned
+"IO#gets_peek" → per-owner virtual-target lookups became `IO::FileDescriptor#IO#gets_peek`
+(MISS) → demand fell back to base `IO#gets_peek` with the un-narrowed `Nil|Slice(UInt8)`
+peek param → GEP on the union carrier → the L10 llc reject.
+Trace method: DEBUG_CALL_LOOKUP s1-vs-s2 diff → DEBUG_VIRTUAL_TARGETS → DEBUG_CALL_TRACE
+bracketing → DEBUG_L10_MNAME probes A–F (committed) → probe-string markers to navigate the
+s2-build .ll → carrier mechanics read directly.
+
+**Fix in tree, GATED OFF:** liveness veto — share only incomings with exactly 1 phi use
+and 0 non-phi uses (operand enumeration mirrors prepass_detect_cross_block_values +
+terminators + RC/Free/Atomic/Mutex/Channel). Vdispatch stack-frame optimization retained.
+Levers: `ADAMAS_PHI_SHARE_VETO=1` (everywhere), `ADAMAS_PHI_SHARE_VETO_FILTER=tok,tok`,
+`ADAMAS_PHI_SHARE_LEGACY_FILTER=tok,tok`. Default = legacy (zero behavior change).
+
+**Why gated (β family):** enabling the veto exposes PRE-EXISTING stale-binding MIR:
+reads referencing an in-loop/in-branch value id on paths where its def never ran; the
+shared carrier accidentally provided variable-cell semantics. Proven instance:
+`lower_super` post-loop read of `super_method_name` (ast_to_hir ~62128,
+`@function_types[resolved_super_name]?`) loads the slot of the IN-LOOP assignment
+(~62108) instead of the post-`unless` merge → null on the fallback path → segfault
+(identical under veto AND legacy for lower_super — the read is wrong regardless; old s2
+never exercised the path because L10 itself cut those demands). Family =
+loop-exit-phi-drop / L8 binding-reverts; repair point resolve_loop_backedge_value.
+
+**START HERE (L10 continuation):**
+1. β reducer: `x : String? = nil; while c; x = v if p; break if x; …; end;
+   unless x; x = fb; end; use(x)` — check post-loop read binds the in-loop id.
+   If small shape GREEN, chase in-vivo on lower_super (probe markers + s2-build .ll).
+2. Fix post-loop/post-unless local rebinding (loop-exit merge must rebind to merge phi).
+3. Flip `ADAMAS_PHI_SHARE_VETO` default ON, rebuild s2, re-verify: registration crash
+   (full-veto β site #1) and L10 llc reject both gone; per-owner lookups `Sub#gets_peek`.
+4. Suites ×2, replace bin/adamas.
+Session artifacts (all /tmp, wiped on reboot — recipes in memory
+`l10_phi_slot_sharing_clobber.md`): s2_l9fix2 (baseline), s2_l10probe1, s2_l10fix1/2/3.
 
 ## 2026-07-07 — session-10: L9 dig (see memory `l9_nilable_scalar_union_desync.md` for full trail)
 
