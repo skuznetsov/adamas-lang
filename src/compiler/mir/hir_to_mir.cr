@@ -9870,6 +9870,16 @@ module Adamas
           end
         end
 
+        # Struct-repr pointers carry NO type_id header (offset 0 = first ivar),
+        # so a runtime header check against a struct target reads a field value
+        # instead of a tag. Only header-backed values (class instances) reach
+        # this fallthrough, and a class instance can never be a struct → false.
+        if check_desc = @mir_module.type_registry.get(mir_check_type)
+          if check_desc.kind == MIR::TypeKind::Struct
+            return builder.const_int(0_i64, TypeRef::BOOL)
+          end
+        end
+
         # Load type_id from object header (offset 0, i32)
         type_id_ptr = builder.gep(obj, [0_u32], TypeRef::POINTER)
         loaded_type_id = builder.load(type_id_ptr, TypeRef::INT32)
