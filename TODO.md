@@ -1,6 +1,6 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-06 (s2 floor L6 CLOSED session-8 — 4 commits `b74939d8..d2a25168`; L7 = NEW floor: `MacroValue#as?$$MacroTupleValue` stub abort ~3s, lower_macro_for → macro_int_literal_for_expr_with_context)
+Updated: 2026-07-06 (s2 floor L7+L8 CLOSED session-9 — `b43650ea` block-shorthand pseudo-methods parsed as cast/check nodes; `a7d7db53` array intrinsics expand tuple-destructured block params; L9 = NEW floor: s2 emits invalid IR for `$~` classvar store in String#starts_with?(Regex) — union stored as ptr + call args dropped)
 Branch: `work/b5-lower-method-owner-edge`
 
 This is the active working backlog only. Historical detail is in git history,
@@ -92,21 +92,67 @@ VALIDATED: reducer true/false/true; suites 152/152 + 36/36 ALL PASSED;
 bin/adamas replaced (backup `bin/adamas.pre_l6fix`); s2 rebuilt
 (/tmp/s2_l6fix) — T#ascii_number? floor GONE.
 
-**Layer 7 = NEW s2 floor (session-8): `MacroValue#as?` monomorph stub.**
-`/tmp/s2_l6fix` compiling `x = 1` aborts ~3s in:
-`STUB CALLED: Adamas..MacroValue$Has$Q$$..MacroTupleValue` — lldb bt:
-`lower_macro_for` → `macro_for_iterable_values_with_context` →
-`macro_int_literal_for_expr_with_context` → `.as?(MacroTupleValue)` on a
-MacroValue-typed value → per-class as? monomorph emitted as abort stub
-(as?-dispatch synthesis missing for this receiver shape). Plain
-abstract-base reducer is GREEN (`v.as?(A)` with `v : Base` from a method —
-/tmp/l7_asq.cr) → the failing shape is more specific (value likely from
-Hash(String, MacroValue)#[] / union Nil|ClassSymbol context inside
-macro-for lowering). START HERE: find the callsite in stage1 source
-(ast_to_hir macro_int_literal_for_expr_with_context, `.as?(MacroTupleValue)`),
-determine the receiver's static type in s2's IR of that function, and craft
-a reducer matching that shape (as? on abstract base received from a
-generic container / after union narrowing).
+**Layer 7 CLOSED (session-9 2026-07-06, commit `b43650ea`): block-shorthand
+pseudo-methods parsed as plain method calls.** The `MacroValue#as?` stub was
+NOT an as?-dispatch synthesis gap — the callsites are
+`vars["T"]?.try(&.as?(MacroTupleValue))` and parse_block_shorthand took any
+token after `&.` as a plain method name, so `&.as?(A)` became an ordinary
+CallNode `tmp.as?(A)` (real method call → abort stub on abstract receivers)
+instead of the AsQuestionNode parse_member_access builds for explicit
+`.as?`. Bisection: explicit block `{ |x| x.as?(A) }` GREEN, ANY `&.as?`
+form RED; `&.as` and `&.responds_to?` equally broken; `&.is_a?` worked by
+accident via a name-based lowering intercept. Fix:
+`parse_block_shorthand_pseudo_method` routes As/AsQuestion/IsA/RespondsTo
+token kinds to the same parsers parse_member_access uses (both Amp and
+AmpDot branches). Oracle `block_shorthand_pseudo_method_repro.sh`
+(RED→GREEN). Two pre-existing siblings documented there as parity asserts:
+(a) yield-method return type drops the nil variant of `as?` (explicit form
+equally affected); (b) `responds_to?` folds on the static type, no virtual
+expansion. Suites 152/152+36/36; bin/adamas replaced (backup
+`bin/adamas.pre_l7fix`); s2 rebuilt → floor MOVED.
+
+**Layer 8 CLOSED (session-9 2026-07-06, commit `a7d7db53`): array
+intrinsics dropped tuple-destructured block params.** The spurious
+`private method 'empty?' called for Path | String` chain: parser flattens
+`|(a, b)|` to flat params [a, b]; each/any/all re-expanded them but
+map/map_with_index/select/reject/compact_map/sum/count bound only the
+FIRST name to the whole tuple element (rest unbound). In s2 that
+miscompiled `merge_if_branch_locals` (`branch_info.map { |(blk, locals)|`)
+→ branch-locals lookups nil → is_a?-branch reassignment merge for `part`
+in Path#join reverted to the union param → visibility check resolved
+private Path#empty?. Trail: DEBUG_ASSIGN_VAR (existing hook) showed both
+branch assigns String; new DEBUG_MERGE_VAR silent (wrong merge fn);
+IF_FLOW showed flowing=2 + has_key?=Y while the map-destructure read gave
+nil → stage1-level reducer RED in one shot (`Tuple#+` stub on `blk + 1`).
+Fix: shared refined_array_block_element_type +
+bind_array_block_element_params helpers wired into 9 intrinsics. Oracle
+`array_intrinsic_block_destructure_repro.sh` RED→GREEN. Kept env hooks:
+DEBUG_VIS_RAISE / DEBUG_MERGE_VAR / DEBUG_MERGE_VAR2. Suites 152/152 +
+36/36; bin/adamas replaced (backup `bin/adamas.pre_l8fix`); s2 rebuilt →
+floor MOVED. Siblings (open): reduce/zip intrinsics also lack destructure
+(2-param-by-design, ambiguous flatten — audit later);
+select_intrinsic_with_ast (literal-array select) unaudited; Hash
+interpolation `#{hash}` prints empty at stage1 level;
+ADAMAS_STAGE2_DEBUG backtrace printer segfaults in s2.
+
+**Layer 9 = NEW s2 floor (session-9): s2 emits invalid LLVM IR for the
+`$~` magic-var classvar store.** `/tmp/s2_l8fix` compiling `x = 1`:
+parallel LLVM worker dies (exit 4) → sequential llc fails at
+`/tmp/x_s2_out.ll:10383`: in `String#starts_with?$$Regex_MatchOptions`,
+`%r7 = call %"Nil|Regex::MatchData.union" @Regex#match_at_byte_index$$String_Int32_Int32(ptr %re)`
+then `store ptr %r7, ptr @$$__classvar__$$$NOT` — TWO defects visible:
+(a) the call passes ONLY the receiver (String/Int32/Int32 args dropped);
+(b) the `$~` classvar (`$$__classvar__$$$NOT`) store writes a by-value
+union with `ptr` store type (decl/store type mismatch). Note stage1
+compiling x=1 does NOT lower this function at all (s2 over-demands it —
+possibly a third symptom). START HERE: read s2's full IR of that function
+(/tmp/x_s2_out.ll:10370+, artifact survives until reboot); find the
+stage1 lowering path for `$~ = re.match_at_byte_index(...)` in stdlib
+string.cr starts_with? (magic-var assignment through classvar) and for
+match_at_byte_index arg materialization; craft a stage1-level reducer
+(compile-a-file-that-uses `str =~ /re/`-family with the CURRENT
+bin/adamas, inspect ITS .ll) before any s2 instrumentation — L8 proved
+the stage1-reducer-first route pays off.
 
 **Layer 5 (CLOSED session-7) was: llc rejects s2 output (`sext i64 to i64`).** Fixed-s2
 (`/tmp/s2_l4fix`) compiling `x = 1`: emission completes (peak 2.1GB, no runaway),
