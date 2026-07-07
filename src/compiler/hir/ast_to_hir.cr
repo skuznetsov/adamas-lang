@@ -6690,7 +6690,13 @@ module Adamas::HIR
       return nil unless params
       block_param = find_param(params) { |_p| _p.is_block }
       return nil unless block_param
-      return nil unless block_param.type_annotation.nil?
+      # A CONCRETE block annotation pins the proc ABI — no shape key needed.
+      # A GENERIC one (`& : T -> U`, e.g. Array#map) pins nothing: the return
+      # shape still varies per callsite and needs the same specialization.
+      if ta = block_param.type_annotation
+        ann = safe_slice_to_string(ta) || ""
+        return nil unless generic_proc_annotation?(ann)
+      end
 
       body = block_def.body
       return nil unless body
@@ -6702,12 +6708,17 @@ module Adamas::HIR
       # return/proc ABI is stamped by a single callsite, and every other-typed
       # callsite raw-reinterprets the result (L11: nil -> non-nil tag with null
       # payload).
-      passthrough = with_arena(source_arena) do
+      # Value-consuming bodies (yield fed into a call/assign/nested-block tail,
+      # e.g. Array#map) are block-return-dependent the same way (L13): without
+      # the shape key the shared symbol may be stamped `call void %_()` and
+      # store null into every value-consuming callsite's result.
+      block_return_dependent = with_arena(source_arena) do
         assigned_tail_yield_passthrough?(body) ||
           yield_return_only?(body) ||
-          yield_passthrough_only?(body)
+          yield_passthrough_only?(body) ||
+          yield_value_consumed?(body)
       end
-      return nil unless passthrough
+      return nil unless block_return_dependent
 
       BlockCallReturnContract.new(stable_name, block_return_type)
     end
@@ -44372,6 +44383,143 @@ module Adamas::HIR
       end
     end
 
+    # True when some `yield` result is CONSUMED as a value (call argument,
+    # assignment RHS, operand, or a nested block's tail — e.g. Array#map =
+    # `Array(U).new(size) { |i| yield unsafe_fetch(i) }`) rather than only
+    # appearing as a bare statement. Such bodies are block-return-dependent
+    # exactly like the passthrough shapes: a shared fallback symbol stamped by
+    # a void-block callsite calls the proc as `call void %_()` and stores null
+    # into every value-consuming callsite's result (L13 null array elements).
+    private def yield_value_consumed?(body : Array(ExprId)) : Bool
+      body.any? { |expr_id| yield_in_value_position?(expr_id, false, 0) }
+    end
+
+    private def yield_in_value_position?(body : Array(ExprId), value_pos : Bool, depth : Int32) : Bool
+      return false if depth > 32
+      idx = 0
+      last = body.size - 1
+      while idx <= last
+        # A nested statement list's tail is a value only when the list itself
+        # is in value position (block bodies pass value_pos = true).
+        return true if yield_in_value_position?(body[idx], value_pos && idx == last, depth + 1)
+        idx += 1
+      end
+      false
+    end
+
+    private def yield_in_value_position?(expr_id : ExprId, value_pos : Bool, depth : Int32) : Bool
+      return false if depth > 32 || expr_id.invalid?
+      node = node_for_expr(expr_id)
+      return false unless node
+
+      case node
+      when Adamas::Compiler::Frontend::YieldNode
+        value_pos
+      when Adamas::Compiler::Frontend::AssignNode
+        yield_in_value_position?(node.value, true, depth + 1)
+      when Adamas::Compiler::Frontend::MultipleAssignNode
+        yield_in_value_position?(node.value, true, depth + 1)
+      when Adamas::Compiler::Frontend::ReturnNode
+        node.value ? yield_in_value_position?(node.value.not_nil!, true, depth + 1) : false
+      when Adamas::Compiler::Frontend::CallNode
+        if callee_id = node.callee
+          callee_node = node_for_expr(callee_id)
+          if callee_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode) &&
+             (safe_slice_to_string(callee_node.name) || "") == "yield"
+            return value_pos
+          end
+          return true if yield_in_value_position?(callee_id, true, depth + 1)
+        end
+        return true if node.args.any? { |arg| yield_in_value_position?(arg, true, depth + 1) }
+        if named = node.named_args
+          return true if named.any? { |na| yield_in_value_position?(na.value, true, depth + 1) }
+        end
+        if block_id = node.block
+          block_node = node_for_expr(block_id)
+          if block_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
+            # The nested block's tail is that block's return value.
+            return true if yield_in_value_position?(block_node.body, true, depth + 1)
+          end
+        end
+        false
+      when Adamas::Compiler::Frontend::BinaryNode
+        yield_in_value_position?(node.left, true, depth + 1) ||
+          yield_in_value_position?(node.right, true, depth + 1)
+      when Adamas::Compiler::Frontend::UnaryNode
+        yield_in_value_position?(node.operand, true, depth + 1)
+      when Adamas::Compiler::Frontend::TernaryNode
+        yield_in_value_position?(node.condition, true, depth + 1) ||
+          yield_in_value_position?(node.true_branch, value_pos, depth + 1) ||
+          yield_in_value_position?(node.false_branch, value_pos, depth + 1)
+      when Adamas::Compiler::Frontend::GroupingNode
+        yield_in_value_position?(node.expression, value_pos, depth + 1)
+      when Adamas::Compiler::Frontend::MacroExpressionNode
+        yield_in_value_position?(node.expression, value_pos, depth + 1)
+      when Adamas::Compiler::Frontend::MemberAccessNode
+        yield_in_value_position?(node.object, true, depth + 1)
+      when Adamas::Compiler::Frontend::IndexNode
+        return true if yield_in_value_position?(node.object, true, depth + 1)
+        node.indexes.any? { |idx| yield_in_value_position?(idx, true, depth + 1) }
+      when Adamas::Compiler::Frontend::RangeNode
+        yield_in_value_position?(node.begin_expr, true, depth + 1) ||
+          yield_in_value_position?(node.end_expr, true, depth + 1)
+      when Adamas::Compiler::Frontend::ArrayLiteralNode
+        node.elements.any? { |el| yield_in_value_position?(el, true, depth + 1) }
+      when Adamas::Compiler::Frontend::TupleLiteralNode
+        node.elements.any? { |el| yield_in_value_position?(el, true, depth + 1) }
+      when Adamas::Compiler::Frontend::HashLiteralNode
+        node.entries.any? do |entry|
+          yield_in_value_position?(entry.key, true, depth + 1) ||
+            yield_in_value_position?(entry.value, true, depth + 1)
+        end
+      when Adamas::Compiler::Frontend::StringInterpolationNode
+        node.pieces.any? do |piece|
+          piece.kind == Adamas::Compiler::Frontend::StringPiece::Kind::Expression &&
+            piece.expr && yield_in_value_position?(piece.expr.not_nil!, true, depth + 1)
+        end
+      when Adamas::Compiler::Frontend::IfNode
+        return true if yield_in_value_position?(node.condition, true, depth + 1)
+        return true if yield_in_value_position?(node.then_body, value_pos, depth + 1)
+        if elsifs = node.elsifs
+          elsifs.each do |branch|
+            return true if yield_in_value_position?(branch.condition, true, depth + 1)
+            return true if yield_in_value_position?(branch.body, value_pos, depth + 1)
+          end
+        end
+        node.else_body ? yield_in_value_position?(node.else_body.not_nil!, value_pos, depth + 1) : false
+      when Adamas::Compiler::Frontend::UnlessNode
+        return true if yield_in_value_position?(node.condition, true, depth + 1)
+        return true if yield_in_value_position?(node.then_branch, value_pos, depth + 1)
+        node.else_branch ? yield_in_value_position?(node.else_branch.not_nil!, value_pos, depth + 1) : false
+      when Adamas::Compiler::Frontend::WhileNode
+        yield_in_value_position?(node.condition, true, depth + 1) ||
+          yield_in_value_position?(node.body, false, depth + 1)
+      when Adamas::Compiler::Frontend::UntilNode
+        yield_in_value_position?(node.condition, true, depth + 1) ||
+          yield_in_value_position?(node.body, false, depth + 1)
+      when Adamas::Compiler::Frontend::LoopNode
+        yield_in_value_position?(node.body, false, depth + 1)
+      when Adamas::Compiler::Frontend::BlockNode
+        yield_in_value_position?(node.body, false, depth + 1)
+      when Adamas::Compiler::Frontend::CaseNode
+        node.when_branches.each do |w|
+          return true if yield_in_value_position?(w.body, value_pos, depth + 1)
+        end
+        node.else_branch ? yield_in_value_position?(node.else_branch.not_nil!, value_pos, depth + 1) : false
+      when Adamas::Compiler::Frontend::BeginNode
+        return true if yield_in_value_position?(node.body, value_pos, depth + 1)
+        if clauses = node.rescue_clauses
+          clauses.each do |cl|
+            return true if yield_in_value_position?(cl.body, value_pos, depth + 1)
+          end
+        end
+        return true if node.else_body && yield_in_value_position?(node.else_body.not_nil!, value_pos, depth + 1)
+        node.ensure_body ? yield_in_value_position?(node.ensure_body.not_nil!, false, depth + 1) : false
+      else
+        false
+      end
+    end
+
     private def contains_yield_in_expr?(
       expr_id : ExprId,
       preferred_arena : Adamas::Compiler::Frontend::ArenaLike? = nil,
@@ -49477,6 +49625,31 @@ module Adamas::HIR
       end
 
       nil
+    end
+
+    # `& : T -> U`-style annotations (Array#map) leave the block RETURN shape
+    # generic — the fallback symbol still needs per-callsite return-shape
+    # specialization. Concrete outputs (`& : Int32 -> Bool`) pin the proc ABI,
+    # and Nil/empty outputs are void contracts; neither needs a shape key.
+    private def generic_proc_annotation?(ann_text : String) : Bool
+      stripped = ann_text.strip
+      return false if stripped.empty?
+      output : String? = nil
+      if arrow_index = find_top_level_arrow(stripped)
+        output = stripped[(arrow_index + 2)..].strip
+      elsif stripped.starts_with?("Proc(") && stripped.ends_with?(')')
+        args = split_generic_type_args(stripped[5, stripped.size - 6])
+        output = args.last?.try(&.strip)
+      else
+        return false
+      end
+      return false unless out_name = output
+      return false if out_name.empty? || out_name == "Nil" || out_name == "nil"
+      return true if type_param_like?(out_name)
+      if info = split_generic_base_and_args(out_name)
+        return split_generic_type_args(info.args).any? { |arg| type_param_like?(arg.strip) }
+      end
+      false
     end
 
     private def nil_returning_proc_annotation?(type_name : String) : Bool
@@ -90848,6 +91021,9 @@ module Adamas::HIR
         # by the callsite's block return shape so each return ABI materializes
         # as a distinct function. Fail-closed inside shape_keyed_block_target.
         fallback_target = inline_key
+        if env_get("DEBUG_L13") && inline_key.includes?("map")
+          STDERR.puts "[L13] fallback key=#{inline_key} base=#{base_inline_name} block_return=#{block_return_name.inspect}"
+        end
         if block_return_name
           shape_def = @function_defs[inline_key]? || @function_defs[base_inline_name]?
           if shape_def.nil?
@@ -90855,8 +91031,14 @@ module Adamas::HIR
               shape_def = shape_entry[1]
             end
           end
+          if env_get("DEBUG_L13") && inline_key.includes?("map")
+            STDERR.puts "[L13] shape_def=#{!shape_def.nil?} key=#{inline_key}"
+          end
           if shape_def
             shape_target = shape_keyed_block_target(base_inline_name, callsite_arg_types, shape_def, inline_key, block_return_name)
+            if env_get("DEBUG_L13") && inline_key.includes?("map")
+              STDERR.puts "[L13] shape_target=#{shape_target} key=#{inline_key}"
+            end
             if shape_target != inline_key
               if existing = @function_type_param_maps[shape_target]?
                 @function_type_param_maps[shape_target] = existing.merge({"__block_return__" => block_return_name})
