@@ -6694,7 +6694,20 @@ module Adamas::HIR
 
       body = block_def.body
       return nil unless body
-      return nil unless with_arena(source_arena) { assigned_tail_yield_passthrough?(body) }
+      # The wrapper's return IS the block's return for all yield-passthrough
+      # shapes, not only `result = yield; ...; result`: `return yield ...` and a
+      # tail `yield` (optionally wrapped in begin/ensure, e.g. ivar-swap helpers
+      # like with_type_param_map) equally forward the block value. Without the
+      # return-shape key all such callsites share ONE `_block` symbol whose
+      # return/proc ABI is stamped by a single callsite, and every other-typed
+      # callsite raw-reinterprets the result (L11: nil -> non-nil tag with null
+      # payload).
+      passthrough = with_arena(source_arena) do
+        assigned_tail_yield_passthrough?(body) ||
+          yield_return_only?(body) ||
+          yield_passthrough_only?(body)
+      end
+      return nil unless passthrough
 
       BlockCallReturnContract.new(stable_name, block_return_type)
     end
@@ -90817,12 +90830,47 @@ module Adamas::HIR
           end
         end
 
-        lower_function_if_needed(inline_key)
+        # Per-shape block specialization (inline-fallback site, see
+        # shape_keyed_block_target): the depth/repeat-guard fallback otherwise
+        # shares ONE `_block` symbol across callsites whose blocks return
+        # DIFFERENT types; the shared body's yield/return ABI gets stamped by a
+        # single callsite and every other-typed callsite raw-reinterprets the
+        # result (L11: nil -> non-nil tag with null payload). Re-key the target
+        # by the callsite's block return shape so each return ABI materializes
+        # as a distinct function. Fail-closed inside shape_keyed_block_target.
+        fallback_target = inline_key
+        if block_return_name
+          shape_def = @function_defs[inline_key]? || @function_defs[base_inline_name]?
+          if shape_def.nil?
+            if shape_entry = lookup_block_function_def_for_call(base_inline_name, call_args.size, callsite_arg_types)
+              shape_def = shape_entry[1]
+            end
+          end
+          if shape_def
+            shape_target = shape_keyed_block_target(base_inline_name, callsite_arg_types, shape_def, inline_key, block_return_name)
+            if shape_target != inline_key
+              if existing = @function_type_param_maps[shape_target]?
+                @function_type_param_maps[shape_target] = existing.merge({"__block_return__" => block_return_name})
+              else
+                @function_type_param_maps[shape_target] = {"__block_return__" => block_return_name}
+              end
+              fallback_target = shape_target
+            end
+          end
+        end
+
+        lower_function_if_needed(fallback_target)
+        if fallback_target != inline_key
+          lower_function_if_needed(inline_key)
+        end
         if inline_key != base_inline_name
           lower_function_if_needed(base_inline_name)
         end
 
-        return_type = get_function_return_type(inline_key)
+        return_type = get_function_return_type(fallback_target)
+        if return_type == TypeRef::VOID && fallback_target != inline_key
+          return_type = get_function_return_type(inline_key)
+        end
         if return_type == TypeRef::VOID && inline_key != base_inline_name
           return_type = get_function_return_type(base_inline_name)
         end
@@ -90872,7 +90920,7 @@ module Adamas::HIR
         # depth/repeat guard. In both cases, resolve through the block overload table before
         # freezing the fallback call target. Otherwise wrappers like `Dir.glob(*patterns, &block)`
         # can recursively call themselves and repeatedly re-pack the splat tuple.
-        call_target = inline_key
+        call_target = fallback_target
         if receiver_id && (!call_target.includes?('$') || call_target.ends_with?("_splat") || call_target == ctx.function.name)
           splat_fallback_target = call_target.ends_with?("_splat") || call_target == ctx.function.name
           first_call_arg_type = callsite_arg_types.first?
