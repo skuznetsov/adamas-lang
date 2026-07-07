@@ -8012,6 +8012,7 @@ module Adamas::HIR
       case visibility
       when Adamas::Compiler::Frontend::Visibility::Private
         receiver_type = get_type_name_from_ref(ctx.type_of(receiver_id.not_nil!))
+        STDERR.puts "[VIS_RAISE] target=#{target_name} recv=#{receiver_type} func=#{ctx.function.name} cur_class=#{@current_class || ""} cur_method=#{@current_method || ""} span=#{node.span.start_offset}:#{node.span.end_offset}" if env_get("DEBUG_VIS_RAISE")
         raise LoweringError.new("private method '#{method_name}' called for #{receiver_type}", node)
       when Adamas::Compiler::Frontend::Visibility::Protected
         if current = @current_class
@@ -65522,6 +65523,15 @@ module Adamas::HIR
         else_val = else_locals[var_name]?
         pre_val = pre_locals[var_name]?
 
+        if debug_merge = env_get("DEBUG_MERGE_VAR")
+          if debug_merge == var_name
+            tt = then_val ? get_type_name_from_ref(ctx.type_of(then_val)) : "-"
+            et = else_val ? get_type_name_from_ref(ctx.type_of(else_val)) : "-"
+            pt = pre_val ? get_type_name_from_ref(ctx.type_of(pre_val)) : "-"
+            STDERR.puts "[MERGE_VAR] scope=#{@current_class || ""}##{@current_method || ""} name=#{var_name} then=#{then_val || "-"}:#{tt} else=#{else_val || "-"}:#{et} pre=#{pre_val || "-"}:#{pt}"
+          end
+        end
+
         # Use pre-branch value if branch didn't define the variable
         then_val ||= pre_val
         else_val ||= pre_val
@@ -65622,6 +65632,12 @@ module Adamas::HIR
               any_modified = true
               break
             end
+          end
+        end
+        if debug_merge2 = env_get("DEBUG_MERGE_VAR2")
+          if debug_merge2 == var_name
+            vals = branch_info.map { |(blk, locals)| "b#{blk}=#{locals[var_name]? || "-"}" }.join(" ")
+            STDERR.puts "[MERGE_IF_VAR] scope=#{@current_class || ""}##{@current_method || ""} name=#{var_name} pre=#{pre_val || "-"} #{vals} any_modified=#{any_modified}"
           end
         end
         next unless any_modified
@@ -88074,6 +88090,63 @@ module Adamas::HIR
 
     # Array map intrinsic - creates new array with transformed elements (compile-time size)
     # Uses inline expansion for small arrays, creating ArrayLiteral with transformed values
+    # Parser flattens tuple-destructured block params: `|(a, b)|` arrives as
+    # flat params [a, b]. Array intrinsics bind ONE element per iteration, so
+    # multi-param blocks must rebind each flat param to a tuple element
+    # extract — binding only the first name leaves it holding the whole tuple
+    # and the rest unbound (each/any/all already did this; map/select/reject/
+    # compact_map/sum/count did not).
+    private def refined_array_block_element_type(
+      ctx : LoweringContext,
+      array_id : ValueId,
+      element_type : TypeRef,
+      block : Adamas::Compiler::Frontend::BlockNode,
+    ) : TypeRef
+      if params = block.params
+        if params.size > 1
+          if element_type == TypeRef::VOID || element_type == TypeRef::INT32 || element_type == TypeRef::POINTER
+            arr_type = ctx.type_of(array_id)
+            if arr_desc = @module.get_type_descriptor(arr_type)
+              if arr_desc.kind == TypeKind::Array && !arr_desc.type_params.empty?
+                candidate = arr_desc.type_params.first
+                return candidate if candidate != TypeRef::VOID
+              end
+            end
+          end
+        end
+      end
+      element_type
+    end
+
+    private def bind_array_block_element_params(
+      ctx : LoweringContext,
+      block : Adamas::Compiler::Frontend::BlockNode,
+      element_id : ValueId,
+      element_type : TypeRef,
+      fallback_name : String,
+      param_limit : Int32? = nil,
+    ) : Nil
+      if params = block.params
+        params = params[0, param_limit] if param_limit && params.size > param_limit
+        if params.size > 1
+          each_param_with_index(params) do |param, idx|
+            if pname = param.name
+              name = (safe_slice_to_string(pname) || "")
+              idx_lit = Literal.new(ctx.next_id, TypeRef::INT32, idx.to_i64)
+              ctx.emit(idx_lit)
+              elem_type = tuple_element_type(element_type, idx) || TypeRef::VOID
+              elem_extract = IndexGet.new(ctx.next_id, elem_type, element_id, idx_lit.id)
+              ctx.emit(elem_extract)
+              ctx.register_type(elem_extract.id, elem_type)
+              ctx.register_local(name, elem_extract.id)
+            end
+          end
+          return
+        end
+      end
+      ctx.register_local(fallback_name, element_id)
+    end
+
     private def lower_array_map_intrinsic(
       ctx : LoweringContext,
       array_id : ValueId,
@@ -88085,6 +88158,7 @@ module Adamas::HIR
 
       # Get element type from source array
       source_element_type = array_element_type_for_value(ctx, array_id, TypeRef::INT32)
+      source_element_type = refined_array_block_element_type(ctx, array_id, source_element_type, block)
 
       # Collect transformed values
       transformed_values = [] of ValueId
@@ -88102,7 +88176,7 @@ module Adamas::HIR
 
         # Bind block parameter
         ctx.push_scope(ScopeKind::Block)
-        ctx.register_local(param_name, index_get.id)
+        bind_array_block_element_params(ctx, block, index_get.id, source_element_type, param_name)
         ctx.register_type(index_get.id, source_element_type)
 
         # Lower block body to get transformed value
@@ -88176,10 +88250,11 @@ module Adamas::HIR
       ctx.push_scope(ScopeKind::Block)
 
       # Read from SOURCE array
+      element_type = refined_array_block_element_type(ctx, array_id, element_type, block)
       index_get = IndexGet.new(ctx.next_id, element_type, array_id, index_phi.id)
       ctx.emit(index_get)
       ctx.register_type(index_get.id, element_type)
-      ctx.register_local(param_name, index_get.id)
+      bind_array_block_element_params(ctx, block, index_get.id, element_type, param_name)
 
       result_value = lower_body(ctx, block.body)
       ctx.pop_scope
@@ -88237,15 +88312,27 @@ module Adamas::HIR
     ) : ValueId
       elem_param_name = "__mwi_elem"
       index_param_name = "__mwi_idx"
+      elem_destruct_count = nil
       if params = block.params
-        if first_param = params[0]?
-          if pname = first_param.name
-            elem_param_name = (safe_slice_to_string(pname) || "")
+        if params.size > 2
+          # Tuple destructuring: |(a, b), idx| arrives as flat [a, b, idx] —
+          # the last param is the index, the rest are tuple element names.
+          elem_destruct_count = params.size - 1
+          if last_param = params.last?
+            if pname = last_param.name
+              index_param_name = (safe_slice_to_string(pname) || "")
+            end
           end
-        end
-        if second_param = params[1]?
-          if pname = second_param.name
-            index_param_name = (safe_slice_to_string(pname) || "")
+        else
+          if first_param = params[0]?
+            if pname = first_param.name
+              elem_param_name = (safe_slice_to_string(pname) || "")
+            end
+          end
+          if second_param = params[1]?
+            if pname = second_param.name
+              index_param_name = (safe_slice_to_string(pname) || "")
+            end
           end
         end
       end
@@ -88286,7 +88373,11 @@ module Adamas::HIR
       index_get = IndexGet.new(ctx.next_id, element_type, array_id, index_phi.id)
       ctx.emit(index_get)
       ctx.register_type(index_get.id, element_type)
-      ctx.register_local(elem_param_name, index_get.id)
+      if destruct_count = elem_destruct_count
+        bind_array_block_element_params(ctx, block, index_get.id, element_type, elem_param_name, destruct_count)
+      else
+        ctx.register_local(elem_param_name, index_get.id)
+      end
 
       ctx.register_local(index_param_name, index_phi.id)
       ctx.register_type(index_phi.id, TypeRef::INT32)
@@ -88610,10 +88701,11 @@ module Adamas::HIR
       ctx.current_block = body_block
       ctx.push_scope(ScopeKind::Block)
 
+      element_type = refined_array_block_element_type(ctx, array_id, element_type, block)
       index_get = IndexGet.new(ctx.next_id, element_type, array_id, index_phi.id)
       ctx.emit(index_get)
       ctx.register_type(index_get.id, element_type)
-      ctx.register_local(param_name, index_get.id)
+      bind_array_block_element_params(ctx, block, index_get.id, element_type, param_name)
 
       predicate_exit_block = ctx.create_block
       predicate_incoming = [] of Tuple(BlockId, ValueId)
@@ -88746,10 +88838,11 @@ module Adamas::HIR
       ctx.current_block = body_block
       ctx.push_scope(ScopeKind::Block)
 
+      element_type = refined_array_block_element_type(ctx, array_id, element_type, block)
       index_get = IndexGet.new(ctx.next_id, element_type, array_id, index_phi.id)
       ctx.emit(index_get)
       ctx.register_type(index_get.id, element_type)
-      ctx.register_local(param_name, index_get.id)
+      bind_array_block_element_params(ctx, block, index_get.id, element_type, param_name)
 
       predicate_exit_block = ctx.create_block
       predicate_incoming = [] of Tuple(BlockId, ValueId)
@@ -88896,10 +88989,11 @@ module Adamas::HIR
       ctx.current_block = body_block
       ctx.push_scope(ScopeKind::Block)
 
+      element_type = refined_array_block_element_type(ctx, array_id, element_type, block)
       index_get = IndexGet.new(ctx.next_id, element_type, array_id, index_phi.id)
       ctx.emit(index_get)
       ctx.register_type(index_get.id, element_type)
-      ctx.register_local(param_name, index_get.id)
+      bind_array_block_element_params(ctx, block, index_get.id, element_type, param_name)
 
       result_value = lower_body(ctx, block.body)
       # current_block may have advanced past body_block (e.g. ternary merge).
@@ -89540,10 +89634,11 @@ module Adamas::HIR
       ctx.push_scope(ScopeKind::Block)
 
       element_type = array_element_type_for_value(ctx, array_id, TypeRef::POINTER)
+      element_type = refined_array_block_element_type(ctx, array_id, element_type, block)
       index_get = IndexGet.new(ctx.next_id, element_type, array_id, index_phi.id)
       ctx.emit(index_get)
       ctx.register_type(index_get.id, element_type)
-      ctx.register_local(param_name, index_get.id)
+      bind_array_block_element_params(ctx, block, index_get.id, element_type, param_name)
 
       yielded = lower_body(ctx, block.body)
       body_exit_block = ctx.current_block
@@ -89866,10 +89961,11 @@ module Adamas::HIR
       ctx.push_scope(ScopeKind::Block)
 
       element_type = array_element_type_for_value(ctx, array_id, TypeRef::INT32)
+      element_type = refined_array_block_element_type(ctx, array_id, element_type, block)
       index_get = IndexGet.new(ctx.next_id, element_type, array_id, index_phi.id)
       ctx.emit(index_get)
       ctx.register_type(index_get.id, element_type)
-      ctx.register_local(param_name, index_get.id)
+      bind_array_block_element_params(ctx, block, index_get.id, element_type, param_name)
 
       predicate_result = lower_body(ctx, block.body)
       ctx.pop_scope
