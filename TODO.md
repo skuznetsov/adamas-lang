@@ -1,27 +1,40 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-08 (session-19: adjacent string-literal concat floor CLOSED
-`c179e899`. Parser's parse_prefix String/StringInterpolation branches built ONE
-node and stopped; every multi-line generated string truncated to its first
-piece. Fix: concat_adjacent_string_literals loops over same-line and
-backslash-continued adjacent String/StringInterpolation tokens, merging
-already-parsed nodes (all-text→StringNode; any interp piece→StringInterpolation).
-Percent literals excluded; gated off in macro bodies (trailing `\` there =
-output-newline suppression, not lexer continuation). VERIFIED: stage2 now emits
-the COMPLETE `define i1 @Object$H$EQ$$Int32(...) { ret i1 0 }` (self-host
-Object#== floor CLOSED); suites 157/157 + 36/36 (156 baseline + new regression
-`regression_tests/adjacent_string_literal_concat.cr`).
-NEW floor (START HERE, separate root) = stage2 emits invalid `load atomic i1`
-in `Atomic(Bool)#get` (3×) → llc "atomic memory access size must be byte-sized".
-Root: emit_atomic_load (src/compiler/mir/llvm_backend.cr:27610) does
-`type = @type_mapper.llvm_type(inst.type)` → `i1` for Bool, no byte-rounding.
-Stage1 hello.ll has ZERO i1 atomics (only valid `load atomic i32`); stage2
-instantiates Atomic(Bool)#get where stage1 does not. Fix = byte-round atomic
-load/store type to ≥ i8 (Bool→i8 + trunc/zext), matching original Crystal;
-also audit emit_atomic_store/cas/rmw for the same sub-byte width bug.
-Build note: `crystal build src/adamas.cr` deadlocked in the parallel Fiber
-scheduler (main thread on __psynch_mutexwait, GC-markers idle) — rebuild with
-CRYSTAL_WORKERS=1. Branch `work/b5-lower-method-owner-edge`.)
+Updated: 2026-07-08 (session-20: atomic self-host floor CLOSED via TWO fixes;
+stage2 now BUILDS end-to-end (EXIT=0, no llc/atomic error). Both fixes blocked
+stage2's Atomic(Bool) codegen with invalid llc IR:
+(1) byte-round sub-byte atomics `80dd3b7b` (src/compiler/mir/llvm_backend.cr):
+emit_atomic_load/store/cas/rmw took @type_mapper.llvm_type(inst.type) directly →
+`load atomic i1` for Bool ("atomic access must be byte-sized"). Bool stores as i8
+(zext-i1→i8 convention), so round the atomic access to i8 with trunc/zext at the
+value boundary (load→i8+trunc; store→zext+i8; cas→zext operands+cmpxchg i8+extract
+i8+trunc; rmw→zext+i8+trunc). Non-Bool (i32/i64/ptr) unchanged (storage_type==type).
+(2) decode Symbol-typed ordering/op args `d7c4ffc0` (hir_to_mir.cr + mir.cr): the
+HIR symbol→enum autocast for Atomic::Ops ordering args is applied INCONSISTENTLY
+(depends on Ops.* param-type resolution, arena/pass-sensitive), leaving :acquire as
+an interned Symbol constant; find_constant_int then read the Symbol *id* (6) as the
+ordering → `load atomic ... acq_rel` (invalid on a LOAD — the SECOND, masked error).
+Others landed on SeqCst by luck (set emitted seq_cst for :relaxed/:release). Fix:
+decode Symbol ordering/op constants BY NAME at the MIR atomic interception (new
+MIR::Builder#find_constant to inspect constant TYPE); int path kept for already-
+converted enums; covers load/store/cmpxchg/atomicrmw/fence orderings + atomicrmw op.
+VERIFIED: reducer + `--emit llvm-ir` (get→monotonic/acquire/seq_cst, set→monotonic/
+release/seq_cst, cas→cmpxchg i8+extract{i8,i1}, no `atomic i1` remains anywhere);
+regression `regression_tests/atomic_bool_ordering_repro.cr` (ATOMIC_BOOL_OK); suites
+157/157 + 36/36; stage2 debug build EXIT=0 (`/tmp/stage2_atomic_check`, 32MB).
+NEW floor A (START HERE, separate root) = `Atomic(Bool)#swap` compiles to a NO-OP
+STUB: MIR body `%3 = const nil : Nil; ret` (body never lowered) → .ll `define void
+@…swap… { ret void }` (returns void, performs no exchange; swap_old prints empty).
+get/set/compare_and_set are correct; swap is UNIQUE in using the private `atomicrmw`
+wrapper macro (`case ordering … Ops.atomicrmw(…)`) inside `cast_from` → body
+materialization / return-type inference drops it to a Nil stub. Does NOT block stage2
+compile (valid IR), only Atomic(Bool)#swap runtime semantics.
+NEW floor B (stage2 runtime, separate) = stage2-compiled hello SIGBUS/stack-overflow
+in `IO#<<(String)` ← `Reference#to_s(IO)` (EXC_BAD_ACCESS at a stack addr; recursive
+dispatch, NOT atomic-related). Revealed now that stage2 builds.
+Build note: rebuild bin/adamas with CRYSTAL_WORKERS=1 (Crystal parallel Fiber
+scheduler build deadlock; main on __psynch_mutexwait, GC-markers idle).
+Branch `work/b5-lower-method-owner-edge`.)
 
 Prev (session-18: TWO floors closed in default stage2 hello.
 (1) L10 gets_peek CLOSED `937a3350`: emit_gep(_dynamic) now unwraps a union base
