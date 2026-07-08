@@ -1,15 +1,68 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-08 (session-17: L15 CLOSED — two independent roots, both were
-faces of the same env-sensitive floor. (1) `af06b47a`: case/when `.predicate(arg)`
-dropped its args → stub/degraded includes? → null-base String#== in
-Time::Location.load? (the .ips crash signature). (2) `2e164899`: emit_array_get's
-`offsets.each_with_index.all?{|(off,i)|...}` miscompiled under veto →
-WithIndexIterator(Float64) non-terminating all? → OOM (fix = plain while loop).
-veto-s2 now compiles hello to full IR; NEW floor = L10 gets_peek GEP-on-
-`Nil | Slice(UInt8)` llc reject — and it is NOT veto-gated: BOTH default and
-veto stage2 hit it. Suites 155/155 default AND veto. START HERE = gets_peek.)
+Updated: 2026-07-08 (session-18: TWO floors closed in default stage2 hello.
+(1) L10 gets_peek CLOSED `937a3350`: emit_gep(_dynamic) now unwraps a union base
+when @value_types[base] is missing/ptr but the emitted operand is a union (value
+lives in a SHARED cross-block union slot → value_ref hands back a raw union LOAD;
+GEP on the union carrier → llc reject). (2) StaticArray/LibC::Stat type-def floor
+CLOSED `1b042a24`: unqualified sibling enum members inside enum methods were not
+resolving — `case self when Void, Bool, Int32, …` in self-hosted TypeKind#primitive?
+fell to is_a? (Void/Bool/… are BOTH members AND types) and matched EVERYTHING, so
+primitive?(Struct)=true, so emit_type_definitions skipped Struct-kind defs and
+`alloca %StaticArray/%LibC::Stat` were undefined. NEW floor = undefined
+`@Object#==$Int32` — ROOT-CAUSED: adjacent string-literal concatenation is NOT
+implemented in the parser (`"a" "b"` / `"a" \<nl> "b"` keep only the FIRST literal),
+so multi-line synthesizers like the Object#==(T) cross-type stub emit only their
+first `"; comment\n"` line, dropping the `define … { ret 0 }`. Suites 156/156 +
+36/36 default. START HERE = adjacent string concatenation in parser.cr:10424.)
 Branch: `work/b5-lower-method-owner-edge`
+
+## 2026-07-08 — session-18: L10 gets_peek + StaticArray floors CLOSED; NEW floor = adjacent string concat
+
+**L10 gets_peek CLOSED (`937a3350`) — emit_gep union base unwrap.**
+`IO#gets_peek`'s `peek.size` (Slice @size @ offset 0, for `Math.min`) is a FieldGet
+→ emit_gep. `peek` is the `Nil | Slice(UInt8)` loop var living in a SHARED
+cross-block union slot (`%r182.phi_slot`, L10 phi-slot sharing). value_ref(80) loads
+the raw UNION from the slot, but `@value_types[80]` is nil so emit_gep defaults
+base_type_str to "ptr" and skips the existing union-unwrap → `getelementptr i8, ptr
+%rN.fromslot (union), 0` → llc "union … but expected ptr". Fix: when base_type_str
+defaults to ptr but `@emitted_value_types[base]` is a union, trust the emitted type
+and unwrap the payload. Applied to emit_gep AND emit_gep_dynamic (llvm_backend.cr).
+
+**StaticArray/LibC::Stat floor CLOSED (`1b042a24`) — unqualified sibling enum members.**
+Root: inside an enum instance method a bare member name did not resolve to the
+member. (a) plain expr (`self == A`, `A.value`): lower_identifier/lower_path fell to
+the constant path → null/zero literal. (b) case/when (`case self when Void, Bool`):
+emit_case_comparison's `case_condition_type_name` turns any `when <registered type>`
+into `self.is_a?(Type)`; Void/Bool/Int32/Char/Symbol are BOTH TypeKind members AND
+types, so `when Bool` → `is_a?(Bool)` matched every value → TypeKind#primitive?
+returned true for EVERY kind → emit_type_definitions (`!primitive?` gate) skipped
+Struct/Reference struct defs → undefined `%StaticArray(UInt8,N)` / `%LibC::Stat`
+allocas → llc reject. Fix: emit_enum_sibling_member? (bare member vs @current_class
+enum, in lower_identifier + lower_path) + emit_case_enum_member_equality? (bare
+`when` member vs SUBJECT's enum, BEFORE case_condition_type_name). Regression:
+`regression_tests/enum_bare_sibling_member_in_method.cr` (old bin/adamas FAILs).
+
+**NEW FLOOR — adjacent string-literal concatenation not implemented (START HERE).**
+Reducer (compiled by fixed stage1, run): `"aaa\n" "bbb\n" "ccc\n"` → bytesize=4
+(only "aaa\n"); `"xx" "yy"` → "xx". parser.cr:10424 (`when Token::Kind::String`)
+builds ONE StringNode and advances — no merge of subsequent adjacent String tokens.
+`StringNode` holds a materialized `@value : Slice(UInt8)` (already-decoded), so the
+fix is: after the first literal, while the next significant token is a plain String
+(NOT percent/interpolation), concatenate value slices into a fresh persistent
+buffer and extend the span. CAUTION — must respect statement boundaries: `"a"\n"b"`
+(bare newline) = SEPARATE; `"a" "b"` (same line) and `"a" \<nl> "b"` (backslash-
+continued, newline suppressed) = MERGE. Verify the parser's token stream around
+current_token after advance (Whitespace filtered? Newline present? backslash
+suppresses Newline?) BEFORE looping, or the compiler's own source (full of `"…" \
+"…"` synthesizers) will mis-merge. This is why s2 emits `; Object$H$EQ$$Int32 —
+cross-type comparison (always false)` WITHOUT the following `define … { ret 0 }`
+(llvm_backend.cr:5774-5779 returns a 4-part adjacent-string literal; s2 keeps line
+1 only) → undefined `@Object#==$Int32` (called by synthesized `Object#==$Errno`).
+Pre-existing: present in s2_gp AND s2_ewi outputs too, just behind earlier floors.
+Artifacts: /tmp/adamas_clean (fixed stage1, both session-18 fixes), /tmp/s2_v3
+(stage2), /tmp/hello_s2v3.bin.ll (StaticArray defs present, llc stops at line
+10417 Object#==$Int32), /tmp/strcat.cr (adjacent-string reducer).
 
 ## 2026-07-08 — session-17: L15 CLOSED; NEW floor = L10 gets_peek (NOT veto-gated)
 
