@@ -6632,7 +6632,15 @@ module Adamas
               ord_val = atomic_ordering_arg_value(builder, args[3])
               mir_op = llvm_rmw_to_mir_op(op_val)
               mir_ord = llvm_ordering_to_mir(ord_val)
-              return builder.atomic_rmw(mir_op, ptr, value, convert_type(ret_hir_type), mir_ord)
+              # atomicrmw's result type MUST equal its value operand type (both are `T`);
+              # LLVM rejects `atomicrmw ... iN <iM value>` when N != M. call.type (the
+              # `: T` return) can be contaminated to a sibling `T` by generic forall-T
+              # inference when several Atomic(T) coexist in one unit — e.g. Atomic(Bool)
+              # drags the Int32 call site's return to Bool (i1), yielding a byte-round
+              # `zext i1 <i32 value>` and an llc type mismatch. The value operand type is
+              # materialized faithfully, so use it as the source of truth for the result
+              # type (matching the cmpxchg/store branches below, which key off the operand).
+              return builder.atomic_rmw(mir_op, ptr, value, convert_type(val_hir_type), mir_ord)
             end
           when "cmpxchg"
             # Ops.cmpxchg(ptr : Pointer(T), cmp : T, new : T,
