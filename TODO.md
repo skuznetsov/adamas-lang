@@ -1,6 +1,31 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-08 (session-21: Atomic#swap + Box no-op floor CLOSED via TWO
+Updated: 2026-07-08 (session-22: mixed Atomic(Int32)+Atomic(Bool) atomicrmw
+mis-type floor CLOSED via ONE fix `7a17260a` (src/compiler/mir/hir_to_mir.cr).
+Atomic(Int32) atomicrmw ops (add/sub/and/or/xor/swap/…) were typed i1/Bool
+whenever Atomic(Bool) coexisted in the same unit -> invalid LLVM IR
+("'%value' defined with type 'i32' but expected 'i1'"). Root: the atomicrmw MIR
+interception took the result type from `call.type` (the Ops.atomicrmw(...) : T
+return), which generic forall-T inference resolves to a SIBLING T when several
+Atomic(T) coexist (Atomic(Bool) drags the Int32 call site's return to Bool/i1).
+The value operand stayed correctly i32, so emit_atomic_rmw took the byte-round
+(bool-widen) path and emitted `zext i1 <i32 value> to i8` -> llc reject; it also
+silently stored i1 into the Nil|Int32 union payload on paths that didn't reach llc.
+FIX = derive the atomicrmw result type from the value operand type
+(@hir_value_types[call.args[2]]) instead of call.type — atomicrmw's result MUST
+equal its value operand type by LLVM semantics, and the operand type is
+materialized faithfully; matches the cmpxchg/store branches, which already key off
+the operand type. Non-Bool + genuine-Bool call sites byte-identical.
+VERIFIED: reducer (Bool.set/get + Int32.add in one unit) compiles clean, runs
+true/5/10; regression_tests/atomic_mixed_int_bool_rmw.cr (ALL_OK: add/sub/and/or/
+xor/swap/cas over Bool/Int32/Int64 coexisting); session-20/21 atomic regressions
+still green; suites 161/161 + 36/36 (run_all_suites.sh); stage2 self-compile
+EXIT=0, 0 llc/atomic errors, 32.7MB. A/B PRE-EXISTING: the session-21 binary fails
+identically on the repro; off the stage2 hot path. ALL atomic self-host floors now
+CLOSED. Next open bootstrap floor = Floor B below (stage2-hello SIGBUS, NOT atomic).
+Branch `work/b5-lower-method-owner-edge`.)
+
+Prev (session-21: Atomic#swap + Box no-op floor CLOSED via TWO
 fixes; stage2 self-compile STILL BUILDS clean (EXIT=0, 0 llc/atomic errors,
 ~240s). Session-20 floor A (Atomic(Bool)#swap no-op stub) was a GENERAL macro-
 evaluator gap, also silently no-op'ing Box.box/Box.unbox.
