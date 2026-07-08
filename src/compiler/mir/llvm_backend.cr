@@ -26625,7 +26625,22 @@ module Adamas::MIR
                              8_u64
                            end
                          end
-                uniform = offsets.each_with_index.all? { |(off, i)| off == i.to_u64 * stride }
+                # Plain index loop instead of `each_with_index.all? { |(off, i)| ... }`:
+                # the iterator+block form builds Iterator::WithIndexIterator around a
+                # captured block proc, which the phi-share veto miscompiles here — the
+                # element type is confused (UInt64 -> Float64) and the wrapped iterator
+                # never terminates, so `all?` spins forever and OOMs the self-hosted
+                # compiler mid-emission (L15). A while loop carries no closure and is
+                # also cheaper in this hot codegen path.
+                uniform = true
+                ui = 0
+                while ui < offsets.size
+                  if offsets[ui] != ui.to_u64 * stride
+                    uniform = false
+                    break
+                  end
+                  ui += 1
+                end
 
                 # Ensure index is i32
                 var_index = index
