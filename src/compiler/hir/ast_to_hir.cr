@@ -8694,6 +8694,43 @@ module Adamas::HIR
       @enum_base_types.try(&.[enum_name]?) || TypeRef::INT32
     end
 
+    # Resolve an UNQUALIFIED capitalized name (`A`, `Void`) to a sibling member of
+    # the ENCLOSING enum, mirroring the qualified `TK::A` path in lower_path. Inside
+    # an enum instance method, `case self when A` / `self == A` reference members by
+    # bare name; without this they fall through to the constant path and degrade to
+    # a null/zero literal (self never matches → wrong branch). This is what made
+    # self-hosted TypeKind#primitive? (a `case self when Void, Bool, …`) misclassify
+    # Struct as primitive, dropping its LLVM type definition. Returns nil (no
+    # interference) unless @current_class is a registered enum owning `name`.
+    private def emit_enum_sibling_member?(ctx : LoweringContext, name : String) : ValueId?
+      return nil unless name[0]?.try(&.uppercase?)
+      cc = @current_class
+      return nil unless cc
+      enum_info = @enum_info
+      return nil unless enum_info
+      # @enum_info may be keyed by the raw enclosing name or a resolved form. Probe
+      # the cheap raw key first; only pay the namespace resolutions on a miss so the
+      # common (non-enum owner) hot path stays a single failed hash lookup.
+      cand = cc
+      members = enum_info[cand]?
+      unless members
+        cand = resolve_type_name_in_context(cc)
+        members = enum_info[cand]?
+      end
+      unless members
+        cand = resolve_path_string_in_context(cc)
+        members = enum_info[cand]?
+      end
+      return nil unless members
+      value = members[name]?
+      return nil unless value
+      enum_type = enum_base_type(cand)
+      lit = Literal.new(ctx.next_id, enum_type, value)
+      ctx.emit(lit)
+      (@enum_value_types ||= {} of ValueId => String)[lit.id] = cand
+      return lit.id
+    end
+
     private def enum_tracked_type(ctx : LoweringContext, value_id : ValueId) : TypeRef
       if enum_name = enum_value_name_for(ctx, value_id)
         enum_ref = type_ref_for_name(enum_name)
@@ -61569,6 +61606,12 @@ module Adamas::HIR
       end
 
       if name[0].uppercase?
+        # An unqualified sibling enum member (bare `A` inside enum's own method)
+        # resolves to the member value, matching Crystal scope rules. Must precede
+        # type/constant resolution, which would otherwise degrade it to null/zero.
+        if enum_member = emit_enum_sibling_member?(ctx, name)
+          return enum_member
+        end
         resolved = resolve_type_name_in_context(name)
         resolved = resolve_type_alias_chain(resolved)
         resolved = "Slice(UInt8)" if resolved == "Bytes"
@@ -62778,6 +62821,15 @@ module Adamas::HIR
               end
             end
           end
+        end
+      end
+
+      # Unqualified sibling enum member (bare `A` inside the enum's own method,
+      # parsed as a single-segment path). Resolve before the constant/type
+      # fallbacks, which would degrade it to null/zero.
+      if right_name && !raw_path.includes?("::")
+        if enum_member = emit_enum_sibling_member?(ctx, right_name)
+          return enum_member
         end
       end
 
@@ -67930,6 +67982,37 @@ module Adamas::HIR
       end
     end
 
+    # A bare capitalized `when` name that is a member of the SUBJECT's enum is an
+    # enum-value comparison, not a type check — even when the member name also names
+    # a real type (Void/Bool/Int32/Char/Symbol are simultaneously TypeKind members
+    # AND types). Without this, `case self when Void` reaches `is_type_name?`, lowers
+    # to `self.is_a?(Void)`, and matches every value — which made self-hosted
+    # TypeKind#primitive? classify EVERY kind (Struct, Reference, …) as primitive, so
+    # emit_type_definitions skipped their struct defs and their `alloca %StaticArray…`
+    # / `%LibC::Stat` uses were left undefined -> llc reject. Only fires when the
+    # subject is a known enum owning `ident_name`; returns nil (falls through to the
+    # type-check path) otherwise.
+    private def emit_case_enum_member_equality?(ctx : LoweringContext, subject_id : ValueId, ident_name : String) : ValueId?
+      return nil unless ident_name[0]?.try(&.uppercase?)
+      enum_info = @enum_info
+      return nil unless enum_info
+      enum_name = enum_value_name_for(ctx, subject_id) ||
+                  enum_name_for_type_ref(ctx.type_of(subject_id))
+      return nil unless enum_name
+      members = enum_info[enum_name]?
+      return nil unless members
+      value = members[ident_name]?
+      return nil unless value
+      enum_type = enum_base_type(enum_name)
+      lit = Literal.new(ctx.next_id, enum_type, value)
+      ctx.emit(lit)
+      (@enum_value_types ||= {} of ValueId => String)[lit.id] = enum_name
+      eq = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Eq, subject_id, lit.id)
+      ctx.emit(eq)
+      ctx.register_type(eq.id, TypeRef::BOOL)
+      eq.id
+    end
+
     private def emit_case_equality_fallback(ctx : LoweringContext, subject_id : ValueId, cond_expr : ExprId) : ValueId
       cond_val = lower_expr(ctx, cond_expr)
       subject_type = ctx.type_of(subject_id)
@@ -67971,6 +68054,23 @@ module Adamas::HIR
                  end
         if member == "kill?" || member == "hup?" || member == "quit?"
           STDERR.puts "[CASE_CMP] node_type=#{node_type} member=#{member} func=#{ctx.function.name}"
+        end
+      end
+
+      # A `when` name that is a sibling member of the subject's enum is an
+      # enum-VALUE match, not a type check — even when the member name also names a
+      # real type (Void/Bool/Int32/Char/Symbol are TypeKind members AND types).
+      # This MUST precede case_condition_type_name below, which would otherwise
+      # turn `when Bool` into `self.is_a?(Bool)` (matching every kind — the bug that
+      # made self-hosted TypeKind#primitive? classify Struct as primitive and drop
+      # StaticArray/LibC::Stat type definitions). `Void` slipped through only
+      # because it is not a registered type name; `Bool`/`Int32`/`Char` did not.
+      case cond_node
+      when Adamas::Compiler::Frontend::ConstantNode,
+           Adamas::Compiler::Frontend::IdentifierNode
+        member_name = (safe_slice_to_string(cond_node.name) || "")
+        if member_eq = emit_case_enum_member_equality?(ctx, subject_id, member_name)
+          return member_eq
         end
       end
 
