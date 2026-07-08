@@ -27617,6 +27617,18 @@ module Adamas::MIR
       llvm_type == "i1" ? {"i8", true} : {llvm_type, false}
     end
 
+    # LLVM type of an atomic operand as it was actually emitted, or nil if unknown.
+    # The primitive's declared element type (inst.type) can disagree with the
+    # operand that reaches it: `Atomic(Bool)#swap`/`#compare_and_set` pass
+    # `cast_to(value) : Int8` (already i8) while the primitive binds T=Bool (i1),
+    # because type inference drops the `.as(Int8*)` reinterpret. The byte-round
+    # below must not zext an operand that is already the storage type.
+    private def atomic_operand_llvm_type(value_id : ValueId) : String?
+      if tref = @value_types[value_id]?
+        @type_mapper.llvm_type(tref)
+      end
+    end
+
     private def emit_atomic_load(inst : AtomicLoad, name : String)
       ptr = value_ref(inst.ptr)
       type = @type_mapper.llvm_type(inst.type)
@@ -27687,9 +27699,19 @@ module Adamas::MIR
       # LLVM cmpxchg returns { T, i1 } - the old value and success flag.
       # For Bool (i1) operate on the i8 storage type and trunc the result back.
       if bool_widen
-        emit "%#{base_name}.exp8 = zext #{type} #{expected} to #{storage_type}"
-        emit "%#{base_name}.des8 = zext #{type} #{desired} to #{storage_type}"
-        emit "%#{base_name}.result = cmpxchg ptr #{ptr}, #{storage_type} %#{base_name}.exp8, #{storage_type} %#{base_name}.des8 #{success_ord} #{failure_ord}"
+        exp8 = if atomic_operand_llvm_type(inst.expected) == storage_type
+                 expected
+               else
+                 emit "%#{base_name}.exp8 = zext #{type} #{expected} to #{storage_type}"
+                 "%#{base_name}.exp8"
+               end
+        des8 = if atomic_operand_llvm_type(inst.desired) == storage_type
+                 desired
+               else
+                 emit "%#{base_name}.des8 = zext #{type} #{desired} to #{storage_type}"
+                 "%#{base_name}.des8"
+               end
+        emit "%#{base_name}.result = cmpxchg ptr #{ptr}, #{storage_type} #{exp8}, #{storage_type} #{des8} #{success_ord} #{failure_ord}"
         emit "%#{base_name}.old8 = extractvalue { #{storage_type}, i1 } %#{base_name}.result, 0"
         emit "#{name} = trunc #{storage_type} %#{base_name}.old8 to #{type}"
       else
@@ -27729,8 +27751,14 @@ module Adamas::MIR
       end
 
       if bool_widen
-        emit "#{name}.val8 = zext #{type} #{val} to #{storage_type}"
-        emit "#{name}.old8 = atomicrmw #{op} ptr #{ptr}, #{storage_type} #{name}.val8 #{ordering}"
+        if atomic_operand_llvm_type(inst.value) == storage_type
+          # Operand is already the storage width (e.g. cast_to(value) : Int8);
+          # atomicrmw directly, only the result needs truncation back to i1.
+          emit "#{name}.old8 = atomicrmw #{op} ptr #{ptr}, #{storage_type} #{val} #{ordering}"
+        else
+          emit "#{name}.val8 = zext #{type} #{val} to #{storage_type}"
+          emit "#{name}.old8 = atomicrmw #{op} ptr #{ptr}, #{storage_type} #{name}.val8 #{ordering}"
+        end
         emit "#{name} = trunc #{storage_type} #{name}.old8 to #{type}"
       else
         emit "#{name} = atomicrmw #{op} ptr #{ptr}, #{storage_type} #{val} #{ordering}"
