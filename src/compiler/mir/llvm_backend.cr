@@ -27607,9 +27607,20 @@ module Adamas::MIR
       end
     end
 
+    # LLVM atomic memory operations (load/store/cmpxchg/atomicrmw) require a
+    # byte-sized, power-of-two integer/pointer type; a sub-byte type such as i1
+    # is rejected by llc ("atomic access must be byte-sized"). Bool maps to i1 in
+    # Adamas but is stored as i8 in memory (see the zext-i1->i8 storage convention),
+    # so atomics on Bool must operate on i8 with a trunc/zext at the value boundary.
+    # Returns {storage_type, bool_widen}; bool_widen signals the i1<->i8 conversion.
+    private def atomic_storage_type(llvm_type : String) : Tuple(String, Bool)
+      llvm_type == "i1" ? {"i8", true} : {llvm_type, false}
+    end
+
     private def emit_atomic_load(inst : AtomicLoad, name : String)
       ptr = value_ref(inst.ptr)
       type = @type_mapper.llvm_type(inst.type)
+      storage_type, bool_widen = atomic_storage_type(type)
       ordering = llvm_ordering(inst.ordering)
 
       if @emit_tsan
@@ -27617,7 +27628,12 @@ module Adamas::MIR
         emit "call void @__tsan_read#{tsan_size}(ptr #{ptr})"
       end
 
-      emit "#{name} = load atomic #{type}, ptr #{ptr} #{ordering}, align 8"
+      if bool_widen
+        emit "#{name}.storage = load atomic #{storage_type}, ptr #{ptr} #{ordering}, align 8"
+        emit "#{name} = trunc #{storage_type} #{name}.storage to #{type}"
+      else
+        emit "#{name} = load atomic #{storage_type}, ptr #{ptr} #{ordering}, align 8"
+      end
 
       if @emit_tsan && (inst.ordering.acquire? || inst.ordering.acq_rel? || inst.ordering.seq_cst?)
         emit "call void @__tsan_acquire(ptr #{ptr})"
@@ -27629,6 +27645,7 @@ module Adamas::MIR
       val = value_ref(inst.value)
       val_type_ref = @value_types[inst.value]?
       type = val_type_ref ? @type_mapper.llvm_type(val_type_ref) : "i64"
+      storage_type, bool_widen = atomic_storage_type(type)
       ordering = llvm_ordering(inst.ordering)
 
       if @emit_tsan && (inst.ordering.release? || inst.ordering.acq_rel? || inst.ordering.seq_cst?)
@@ -27636,7 +27653,7 @@ module Adamas::MIR
       end
 
       if @emit_tsan
-        tsan_size = case type
+        tsan_size = case storage_type
                     when "i8" then 1
                     when "i16" then 2
                     when "i32" then 4
@@ -27645,7 +27662,12 @@ module Adamas::MIR
         emit "call void @__tsan_write#{tsan_size}(ptr #{ptr})"
       end
 
-      emit "store atomic #{type} #{val}, ptr #{ptr} #{ordering}, align 8"
+      if bool_widen
+        emit "#{name}.val8 = zext #{type} #{val} to #{storage_type}"
+        emit "store atomic #{storage_type} #{name}.val8, ptr #{ptr} #{ordering}, align 8"
+      else
+        emit "store atomic #{storage_type} #{val}, ptr #{ptr} #{ordering}, align 8"
+      end
     end
 
     private def emit_atomic_cas(inst : AtomicCAS, name : String)
@@ -27654,6 +27676,7 @@ module Adamas::MIR
       expected = value_ref(inst.expected)
       desired = value_ref(inst.desired)
       type = @type_mapper.llvm_type(inst.type)
+      storage_type, bool_widen = atomic_storage_type(type)
       success_ord = llvm_ordering(inst.success_ordering)
       failure_ord = llvm_ordering(inst.failure_ordering)
 
@@ -27661,10 +27684,19 @@ module Adamas::MIR
         emit "call void @__tsan_release(ptr #{ptr})"
       end
 
-      # LLVM cmpxchg returns { T, i1 } - the old value and success flag
-      emit "%#{base_name}.result = cmpxchg ptr #{ptr}, #{type} #{expected}, #{type} #{desired} #{success_ord} #{failure_ord}"
-      # Extract old value
-      emit "#{name} = extractvalue { #{type}, i1 } %#{base_name}.result, 0"
+      # LLVM cmpxchg returns { T, i1 } - the old value and success flag.
+      # For Bool (i1) operate on the i8 storage type and trunc the result back.
+      if bool_widen
+        emit "%#{base_name}.exp8 = zext #{type} #{expected} to #{storage_type}"
+        emit "%#{base_name}.des8 = zext #{type} #{desired} to #{storage_type}"
+        emit "%#{base_name}.result = cmpxchg ptr #{ptr}, #{storage_type} %#{base_name}.exp8, #{storage_type} %#{base_name}.des8 #{success_ord} #{failure_ord}"
+        emit "%#{base_name}.old8 = extractvalue { #{storage_type}, i1 } %#{base_name}.result, 0"
+        emit "#{name} = trunc #{storage_type} %#{base_name}.old8 to #{type}"
+      else
+        emit "%#{base_name}.result = cmpxchg ptr #{ptr}, #{storage_type} #{expected}, #{storage_type} #{desired} #{success_ord} #{failure_ord}"
+        # Extract old value
+        emit "#{name} = extractvalue { #{storage_type}, i1 } %#{base_name}.result, 0"
+      end
 
       if @emit_tsan
         emit "call void @__tsan_acquire(ptr #{ptr})"
@@ -27675,6 +27707,7 @@ module Adamas::MIR
       ptr = value_ref(inst.ptr)
       val = value_ref(inst.value)
       type = @type_mapper.llvm_type(inst.type)
+      storage_type, bool_widen = atomic_storage_type(type)
       ordering = llvm_ordering(inst.ordering)
 
       op = case inst.op
@@ -27695,7 +27728,13 @@ module Adamas::MIR
         emit "call void @__tsan_release(ptr #{ptr})"
       end
 
-      emit "#{name} = atomicrmw #{op} ptr #{ptr}, #{type} #{val} #{ordering}"
+      if bool_widen
+        emit "#{name}.val8 = zext #{type} #{val} to #{storage_type}"
+        emit "#{name}.old8 = atomicrmw #{op} ptr #{ptr}, #{storage_type} #{name}.val8 #{ordering}"
+        emit "#{name} = trunc #{storage_type} #{name}.old8 to #{type}"
+      else
+        emit "#{name} = atomicrmw #{op} ptr #{ptr}, #{storage_type} #{val} #{ordering}"
+      end
 
       if @emit_tsan && (inst.ordering.acquire? || inst.ordering.acq_rel? || inst.ordering.seq_cst?)
         emit "call void @__tsan_acquire(ptr #{ptr})"
