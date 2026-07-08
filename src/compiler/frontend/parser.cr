@@ -10427,7 +10427,9 @@ module Adamas
             else
               id = @arena.add_typed(StringNode.new(token.span, token.slice))
               advance
-              id
+              # Crystal concatenates adjacent string literals ("a" "b" and the
+              # backslash-continued "a" \<nl> "b") into one literal.
+              concat_adjacent_string_literals(id)
             end
           when Token::Kind::Char
             # Phase 56: Character literals
@@ -10453,7 +10455,7 @@ module Adamas
             id
           when Token::Kind::StringInterpolation
             # Phase 8: String interpolation
-            parse_string_interpolation(token)
+            concat_adjacent_string_literals(parse_string_interpolation(token))
           when Token::Kind::Symbol
             # Phase 16: Symbol literal
             id = @arena.add_typed(SymbolNode.new(token.span, token.slice))
@@ -12236,6 +12238,115 @@ module Adamas
             ))
           else
             @arena.add_typed(StringNode.new(token.span, token.slice))
+          end
+        end
+
+        # Crystal concatenates adjacent string literals into a single literal:
+        #   "a" "b"            (same line, whitespace-separated)
+        #   "a" \<newline> "b" (backslash line-continuation)
+        # A bare newline between them ("a"<newline>"b") is a statement boundary and
+        # must stay separate. The compiler's own synthesizers rely on this (hundreds
+        # of `"...\n" \` continuations in the codegen backend), so a missing merge
+        # truncates every multi-line generated string to its first piece.
+        #
+        # Works on already-parsed literal nodes (StringNode / StringInterpolationNode)
+        # so it composes with interpolation: `"a#{x}" "b"` merges into one node.
+        # Gated off inside macro bodies, where a trailing `\` means output-newline
+        # suppression rather than a lexer line-continuation.
+        private def concat_adjacent_string_literals(first_id : ExprId) : ExprId
+          return first_id if macro_context?
+          result = first_id
+          loop do
+            Watchdog.check!
+            checkpoint = @index
+            # Same-line trivia only; a real Newline ends the (non-continued) literal.
+            skip_inline_string_trivia
+            if backslash_line_continuation?(current_token)
+              advance # consume '\'
+              skip_inline_string_trivia
+              if current_token.kind == Token::Kind::Newline
+                advance # consume the continued newline
+                skip_inline_string_trivia
+              else
+                # Lone backslash (not a continuation) — leave it for the caller.
+                @index = checkpoint
+                break
+              end
+            end
+            next_id = parse_adjacent_string_literal_token(current_token)
+            if next_id
+              result = merge_string_literal_nodes(result, next_id)
+            else
+              @index = checkpoint
+              break
+            end
+          end
+          result
+        end
+
+        # Skip whitespace/comments without crossing a newline (used between the
+        # pieces of an adjacent string-literal concatenation).
+        private def skip_inline_string_trivia : Nil
+          loop do
+            case current_token.kind
+            when Token::Kind::Whitespace, Token::Kind::Comment
+              advance
+            else
+              break
+            end
+          end
+        end
+
+        private def backslash_line_continuation?(token : Token) : Bool
+          token.kind == Token::Kind::Operator &&
+            token.slice.size == 1 &&
+            token.slice[0] == '\\'.ord.to_u8
+        end
+
+        # Parse the next literal in an adjacency run. Returns nil when the current
+        # token is not a plain string / interpolation literal (percent literals do
+        # not participate in adjacent concatenation).
+        private def parse_adjacent_string_literal_token(token : Token) : ExprId?
+          case token.kind
+          when Token::Kind::String
+            return nil if percent_literal_token?(token)
+            id = @arena.add_typed(StringNode.new(token.span, token.slice))
+            advance
+            id
+          when Token::Kind::StringInterpolation
+            parse_string_interpolation(token)
+          else
+            nil
+          end
+        end
+
+        # Merge two already-parsed string literals into one node, preserving the
+        # first literal's span. All-text runs collapse to a StringNode; any
+        # interpolated piece promotes the result to a StringInterpolationNode.
+        private def merge_string_literal_nodes(left : ExprId, right : ExprId) : ExprId
+          pieces = Array(StringPiece).new
+          append_string_literal_pieces(pieces, @arena[left])
+          append_string_literal_pieces(pieces, @arena[right])
+          span = @arena[left].span
+          if pieces.all? { |p| p.kind.text? }
+            combined = String.build do |io|
+              pieces.each { |p| io << p.text }
+            end
+            @arena.retain_source(combined)
+            @arena.add_typed(StringNode.new(span, combined.to_slice))
+          else
+            @arena.add_typed(StringInterpolationNode.new(span, pieces))
+          end
+        end
+
+        private def append_string_literal_pieces(pieces : Array(StringPiece), node) : Nil
+          case node
+          when StringNode
+            pieces << StringPiece.text(String.new(node.value))
+          when StringInterpolationNode
+            node.pieces.each { |piece| pieces << piece }
+          else
+            # Defensive: an unexpected node kind contributes nothing.
           end
         end
 
