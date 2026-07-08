@@ -19431,6 +19431,16 @@ module Adamas::MIR
       # GEP requires a pointer base. If MIR gives us a union/int/float, extract/convert to ptr.
       base_type = @value_types[inst.base]?
       base_type_str = base_type ? @type_mapper.llvm_type(base_type) : "ptr"
+      # The MIR value type can be missing (nil) or stale (ptr) when the base is
+      # stored in a SHARED cross-block union slot whose own @value_types entry was
+      # never recorded — value_ref then returns a raw union LOAD (see the phi_slot
+      # sharing path). Trust the ACTUAL emitted type of the base operand: if it is
+      # a union, unwrap the payload below instead of GEPing on the union carrier
+      # (which llc rejects: "union defined but expected ptr"). Only upgrades the
+      # ptr default; never downgrades a type MIR already knows.
+      if base_type_str == "ptr" && (emitted = @emitted_value_types[base]?) && emitted.includes?(".union")
+        base_type_str = emitted
+      end
       # LLVM pointer constants use `null`, not `0` (only for ptr-typed bases).
       base = "null" if base == "0" && base_type_str == "ptr"
       if base_type_str != "ptr"
@@ -19555,6 +19565,14 @@ module Adamas::MIR
       # Check base type - GEP requires pointer base
       base_type = @value_types[inst.base]?
       base_type_str = base_type ? @type_mapper.llvm_type(base_type) : "ptr"
+      # A missing/stale @value_types entry (e.g. a value living in a SHARED
+      # cross-block union slot) makes value_ref hand back a raw union LOAD while
+      # base_type_str defaults to "ptr". Trust the ACTUAL emitted operand type so
+      # the union payload is unwrapped below instead of GEPing on the union
+      # carrier. Same guard as emit_gep; only upgrades the ptr default.
+      if base_type_str == "ptr" && (emitted = @emitted_value_types[base]?) && emitted.includes?(".union")
+        base_type_str = emitted
+      end
       # LLVM pointer constants use `null`, not `0` (only for ptr-typed bases).
       base = "null" if base == "0" && base_type_str == "ptr"
 
