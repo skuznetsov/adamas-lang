@@ -97791,6 +97791,9 @@ module Adamas::HIR
 
         return true if proc_expr_has_implicit_receiver_call?(node.callee, proc_param_names, parent_locals)
         node.args.each { |arg| return true if proc_expr_has_implicit_receiver_call?(arg, proc_param_names, parent_locals) }
+        if named_args = node.named_args
+          named_args.each { |na| return true if proc_expr_has_implicit_receiver_call?(na.value, proc_param_names, parent_locals) }
+        end
         if block = node.block
           return true if proc_expr_has_implicit_receiver_call?(block, proc_param_names, parent_locals)
         end
@@ -98244,6 +98247,9 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::CallNode
         collect_proc_body_ident_walk(node.callee, names)
         node.args.each { |a| collect_proc_body_ident_walk(a, names) }
+        if named_args = node.named_args
+          named_args.each { |na| collect_proc_body_ident_walk(na.value, names) }
+        end
         if blk = node.block
           collect_proc_body_ident_walk(blk, names)
         end
@@ -98425,6 +98431,9 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::CallNode
         detect_written_captures_walk(node.callee, capture_names, written)
         node.args.each { |a| detect_written_captures_walk(a, capture_names, written) }
+        if named_args = node.named_args
+          named_args.each { |na| detect_written_captures_walk(na.value, capture_names, written) }
+        end
         if blk = node.block
           detect_written_captures_walk(blk, capture_names, written)
         end
