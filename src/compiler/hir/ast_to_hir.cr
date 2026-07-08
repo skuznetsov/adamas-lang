@@ -68414,6 +68414,27 @@ module Adamas::HIR
           # MemberAccessNode, AssignNode (case pos = expr when .nil?), or CallNode (case obj.method when .nil?).
           # All of these represent the same expression as the case subject → use subject_id.
           if member_name.ends_with?('?')
+            # A predicate call that carries arguments (e.g. `when .includes?("..")`,
+            # `when .starts_with?('/')`) is never a zero-argument enum predicate. Both
+            # the enum-predicate resolution below and the fall-through call at the end
+            # of this block assume no args and emit `subject.method()` with an empty
+            # arg list — silently dropping `".."` / `'/'`. That made the method resolve
+            # to a no-arg stub (`String#includes?`) or a degraded union-param overload
+            # (`includes?(Char | String)` reached with an unwrapped String), which
+            # surfaced downstream as a null-base `String#==` — a bytesize read at
+            # address 4 — inside `Time::Location.load?` (veto-build L15 crash).
+            #
+            # Lower the whole call expression through the normal path so receiver/arg
+            # lowering, overload resolution and the String builtin intercepts
+            # (`includes?`/`split`/...) all apply. parse_case substitutes the case
+            # subject expression as this call's receiver, so for the common
+            # `case var when .pred(arg)` form this just re-reads the subject local.
+            # Gate on is_implicit_shortcut so an explicit-object `when y.foo?(z)`
+            # (whose `===` semantics differ) keeps its existing lowering.
+            if is_implicit_shortcut && !cond_node.args.empty?
+              return lower_expr(ctx, cond_expr)
+            end
+
             # Implicit receiver call OR explicit subject call: .data1?(), c.red?(), format.format.data1?()
             # The parser expands "when .data1?" to "subject.data1?()" so the callee's object
             # represents the SAME expression as the case subject. Use subject_id directly.
