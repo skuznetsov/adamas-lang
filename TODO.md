@@ -1,6 +1,56 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-08 (session-20: atomic self-host floor CLOSED via TWO fixes;
+Updated: 2026-07-08 (session-21: Atomic#swap + Box no-op floor CLOSED via TWO
+fixes; stage2 self-compile STILL BUILDS clean (EXIT=0, 0 llc/atomic errors,
+~240s). Session-20 floor A (Atomic(Bool)#swap no-op stub) was a GENERAL macro-
+evaluator gap, also silently no-op'ing Box.box/Box.unbox.
+(1) macro-if union predicate `6394f582` (src/compiler/hir/ast_to_hir.cr):
+try_evaluate_macro_condition (the HIR macro-condition evaluator, ~58015) is
+hand-rolled (flag?/has_constant?/type==,</int-compare) and CANNOT walk
+Array#all?/any? with a block, so `{% if T.union_types.all? { |t| t == Nil || t <
+Reference } %}` was reported unevaluable -> lower_macro_if (~59274) emits a NIL
+LITERAL for an unevaluable condition -> whole method body collapses to a nil stub.
+Hit Atomic#swap (else branch dropped -> ret void) AND Box.box/Box.unbox
+(`T < Pointer || union_types.all?{...}` -> ret null for any reference T; latent
+no-op in every callback/closure boxing a ref through Void*). The full MacroExpander
+is no fallback: no union_types, no all?/any? block support either. Fix = new
+try_evaluate_macro_union_predicate + macro_union_member_type_names: resolve
+`<type>.union_types` (macro_condition_type_name + split_union_type_name), bind the
+block param to each member via with_type_param_map, reuse try_evaluate_macro_condition
+per member (all?=AND, any?=OR). Returns nil (caller falls back) on any unresolved
+shape -> strictly additive, zero regression to already-handled conditions.
+(2) atomic byte-round operand-width `b1d38645` (src/compiler/mir/llvm_backend.cr):
+materializing swap's body exposed a desync -- swap/compare_and_set pass
+cast_to(value):Int8 (already i8) while type inference binds the primitive element
+type to T=Bool (i1, dropping the .as(Int8*) reinterpret). emit_atomic_rmw/cas keyed
+the byte-round off inst.type (i1) -> `zext i1 <op> to i8` on an i8 operand -> llc
+"defined with type i8 but expected i1". Fix = new atomic_operand_llvm_type; in the
+bool_widen rmw/cas paths, skip the input zext when the operand is already the storage
+width; result trunc back to i1 unchanged. Non-bool + genuine-i1 operands byte-identical.
+VERIFIED: swap Bool/Int32 (SWAP_OK, INT old=5 now=10), Box(String) round-trip
+(BOX back=hello); atomic regression ATOMIC_BOOL_OK (get/set/cas no regress); suites
+157/157 + 36/36; A/B (stash+rebuild OLD): swap->SWAP_FAIL, box->BOX_FAIL null on OLD,
+both OK on NEW; stage2 self-compile EXIT=0 clean. Regressions:
+regression_tests/box_ref_union_macro_predicate.cr, atomic_swap_byte_round.cr.
+METHOD: `DEBUG_INFER_BODY_NAME=swap` showed swap tail=MacroIfNode inferred=nil; a
+decomposition reducer (split the predicate into .size/==Nil/<Reference/all?) isolated
+`.all?`-with-block as the single failing macro op.
+NEW floor A (START HERE, PRE-EXISTING, separate root) = Atomic(Int32) atomicrmw
+(add/sub/swap/…) mis-typed to i1/Bool when Atomic(Bool) COEXISTS in the same unit ->
+llc "'%value' defined with type 'i32' but expected 'i1'". Repro: Atomic(Bool).get/set
++ Atomic(Int32).add in one file (NO swap needed); Atomic(Int32) ALONE is fine. A/B-
+proven PRE-EXISTING (OLD compiler fails identically) — NOT this session's regression.
+Localization: hir_to_mir.cr:6626 `ret_hir_type = call.type` uses the HIR type of the
+Ops.atomicrmw call, which HIR inference resolves to Bool for the Int32 call site when
+Bool coexists (generic forall-T return-type contamination across Atomic instantiations).
+Off the stage2 hot path (stage2 builds), but silently mis-types the Int32 union payload
+store even when it doesn't hit llc.
+NEW floor B (session-20, still open) = stage2-compiled hello SIGBUS/stack-overflow in
+IO#<<(String) <- Reference#to_s (recursive dispatch, NOT atomic).
+Build note: rebuild bin/adamas with CRYSTAL_WORKERS=1 (Crystal parallel scheduler
+build deadlock). Branch `work/b5-lower-method-owner-edge`.)
+
+Prev (session-20: atomic self-host floor CLOSED via TWO fixes;
 stage2 now BUILDS end-to-end (EXIT=0, no llc/atomic error). Both fixes blocked
 stage2's Atomic(Bool) codegen with invalid llc IR:
 (1) byte-round sub-byte atomics `80dd3b7b` (src/compiler/mir/llvm_backend.cr):
