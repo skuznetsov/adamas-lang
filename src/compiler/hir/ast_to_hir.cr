@@ -58087,6 +58087,14 @@ module Adamas::HIR
                 end
               end
             end
+          elsif (member_name == "all?" || member_name == "any?") && cond_node.block
+            # `<type>.union_types.all? { |t| ... }` / `.any? { |t| ... }`.
+            # The hand-rolled condition evaluator cannot walk arbitrary macro
+            # method calls; evaluate this shape directly. Returns nil (falls
+            # through to "can't evaluate") when the receiver/predicate can't be
+            # resolved, so it never regresses conditions we already handle.
+            pred = try_evaluate_macro_union_predicate(cond_node, callee, member_name)
+            return pred unless pred.nil?
           end
         end
       when Adamas::Compiler::Frontend::UnaryNode
@@ -58152,6 +58160,84 @@ module Adamas::HIR
         end
       end
       nil # Can't evaluate
+    end
+
+    # Compile-time evaluation of `<type>.union_types.all? { |t| <pred> }` and the
+    # `.any?` variant, used by `try_evaluate_macro_condition`. The union member
+    # type names are bound to the block parameter one at a time (via
+    # `@type_param_map`) so the predicate reuses the ordinary type-condition
+    # evaluator for `t == Nil`, `t < Reference`, etc. Returns nil when the shape
+    # or a member's predicate can't be resolved, letting the caller fall back to
+    # the existing "can't evaluate" path rather than guessing a branch.
+    #
+    # Without this, methods whose body is a `{% if %}` gated on such a predicate
+    # (e.g. `Atomic#swap`, `Box.box`/`Box.unbox`) silently lower to a nil stub
+    # (`lower_macro_if` emits a nil literal when the condition is unevaluable).
+    private def try_evaluate_macro_union_predicate(
+      call_node : Adamas::Compiler::Frontend::CallNode,
+      callee : Adamas::Compiler::Frontend::MemberAccessNode,
+      member_name : String,
+    ) : Bool?
+      member_names = macro_union_member_type_names(callee.object)
+      return nil unless member_names
+
+      block_id = call_node.block
+      return nil unless block_id
+      block_node = @arena[block_id]
+      return nil unless block_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
+      params = block_node.params
+      return nil unless params && params.size >= 1
+      param_name_slice = params.unsafe_fetch(0).name
+      return nil if param_name_slice.nil?
+      param_name = safe_slice_to_string(param_name_slice)
+      return nil if param_name.nil? || param_name.empty?
+      body = block_node.body
+      return nil if body.empty?
+      pred_expr = body.unsafe_fetch(body.size - 1)
+
+      is_all = member_name == "all?"
+      # all? over an empty array is true; any? over an empty array is false.
+      result = is_all
+      member_names.each do |member_type_name|
+        per = with_type_param_map({param_name => member_type_name}) do
+          try_evaluate_macro_condition(pred_expr)
+        end
+        return nil if per.nil? # unresolved predicate -> caller falls back
+        if is_all
+          unless per
+            result = false
+            break
+          end
+        elsif per
+          result = true
+          break
+        end
+      end
+      result
+    end
+
+    # Resolve `<type>.union_types` to its union member type names, applying type
+    # parameter substitution to the receiver. Returns nil unless the receiver is
+    # exactly a `union_types` access we can resolve to a concrete type name.
+    private def macro_union_member_type_names(recv_id : ExprId) : Array(String)?
+      node = @arena[recv_id]
+      member_access = case node
+                      when Adamas::Compiler::Frontend::MemberAccessNode
+                        node
+                      when Adamas::Compiler::Frontend::CallNode
+                        callee = @arena[node.callee]
+                        callee.is_a?(Adamas::Compiler::Frontend::MemberAccessNode) ? callee : nil
+                      else
+                        nil
+                      end
+      return nil unless member_access
+      return nil unless (safe_slice_to_string(member_access.member) || "") == "union_types"
+      type_name = macro_condition_type_name(member_access.object)
+      return nil unless type_name
+      resolved = resolve_type_alias_chain(type_name)
+      members = split_union_type_name(resolved)
+      return nil if members.empty?
+      members
     end
 
     # Extract type name from macro condition expression, with type param substitution.
