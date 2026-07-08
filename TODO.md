@@ -1,6 +1,29 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-08 (session-18: TWO floors closed in default stage2 hello.
+Updated: 2026-07-08 (session-19: adjacent string-literal concat floor CLOSED
+`c179e899`. Parser's parse_prefix String/StringInterpolation branches built ONE
+node and stopped; every multi-line generated string truncated to its first
+piece. Fix: concat_adjacent_string_literals loops over same-line and
+backslash-continued adjacent String/StringInterpolation tokens, merging
+already-parsed nodes (all-text→StringNode; any interp piece→StringInterpolation).
+Percent literals excluded; gated off in macro bodies (trailing `\` there =
+output-newline suppression, not lexer continuation). VERIFIED: stage2 now emits
+the COMPLETE `define i1 @Object$H$EQ$$Int32(...) { ret i1 0 }` (self-host
+Object#== floor CLOSED); suites 157/157 + 36/36 (156 baseline + new regression
+`regression_tests/adjacent_string_literal_concat.cr`).
+NEW floor (START HERE, separate root) = stage2 emits invalid `load atomic i1`
+in `Atomic(Bool)#get` (3×) → llc "atomic memory access size must be byte-sized".
+Root: emit_atomic_load (src/compiler/mir/llvm_backend.cr:27610) does
+`type = @type_mapper.llvm_type(inst.type)` → `i1` for Bool, no byte-rounding.
+Stage1 hello.ll has ZERO i1 atomics (only valid `load atomic i32`); stage2
+instantiates Atomic(Bool)#get where stage1 does not. Fix = byte-round atomic
+load/store type to ≥ i8 (Bool→i8 + trunc/zext), matching original Crystal;
+also audit emit_atomic_store/cas/rmw for the same sub-byte width bug.
+Build note: `crystal build src/adamas.cr` deadlocked in the parallel Fiber
+scheduler (main thread on __psynch_mutexwait, GC-markers idle) — rebuild with
+CRYSTAL_WORKERS=1. Branch `work/b5-lower-method-owner-edge`.)
+
+Prev (session-18: TWO floors closed in default stage2 hello.
 (1) L10 gets_peek CLOSED `937a3350`: emit_gep(_dynamic) now unwraps a union base
 when @value_types[base] is missing/ptr but the emitted operand is a union (value
 lives in a SHARED cross-block union slot → value_ref hands back a raw union LOAD;
