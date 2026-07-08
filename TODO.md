@@ -1,16 +1,79 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-07 (session-14: L12 CLOSED `8bbba4e0`+`a6e73d17`; suites
-155/155+36/36 ×2. New floor L13 ROOT-CAUSED: s2-hello null TypeRef element —
-the shared `Array(Pointer(Void))#map` fallback mono calls the block proc as
-`call void %_()` and stores LITERAL NULL elements; consumer =
-lower_block_to_block_id cache-key fingerprint. L11 contract machinery is NOT on
-this callsite's route (zero DEBUG_L13 hits during a full s2 build). Veto default
-still OFF, now gated on L13.)
+Updated: 2026-07-07 (session-15: L13 CLOSED `3e6ac277`+`9a748896`; suites
+155/155+36/36 ×2. s2-hello no longer crashes in the fingerprint consumer on
+EITHER build flavor. New floors: default-s2 → the KNOWN L10 llc reject
+(IO#gets_peek GEP-on-union, veto-gated, 2 sites); veto-s2 → L14 = corrupt
+String reaching Hash(String,Function)#key_hash via
+invalidate_lowered_layout_functions during lower_assign. Veto default still
+OFF, now gated on L14.)
 Branch: `work/b5-lower-method-owner-edge`
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
+
+## 2026-07-07 — session-15: L13 CLOSED (repair-route shape threading + repr agreement)
+
+**L13 route (proven with ADAMAS_TRACE_CALL_EMIT + DEBUG_L13 repair traces;
+zero CALL_EMIT hits for the map symbol at lower_call/yield_fallback was the
+key negative):**
+1. `lower_call` types `mt.zip(inferred)` as raw POINTER (zip blockless-return
+   degradation, see below) and binds the BLOCK call to a **getter**
+   `Adamas::HIR::AstToHir::GenericOwnerInfo#map` (base=Pointer#map,
+   ret=Hash(String,String)). ~14 getter-bound `.map{}` callsites across an s2
+   build — "block call binds to blockless def on degraded receiver" is an
+   UNGUARDED latent-miscompile family (candidate hardening: resolution must
+   require a block-accepting def when the callsite has a block).
+2. `repair_receiver_bound_call_targets` (end of lowering) rewrites the target
+   to bare `Array(Pointer(Void))#map` and force-lowers the body OUTSIDE any
+   callsite (return-type probe) → no `__block_return__`, no U binding →
+   `infer_yield_return_type`'s ANNOTATED branch returns nil (bypasses the
+   __block_return__ fallback for `& : T -> U`) → yield `call void %_()` +
+   `store ptr null` elements.
+
+**Fix (two commits, suites 155/155+36/36 ×2 green):**
+- `3e6ac277`: repair pass re-keys rewritten block-call targets through
+  shape_keyed_block_target (block return from caller's block terminator,
+  FALLBACK to trailing proc arg's Proc descriptor — block regions end in
+  Branch; trailing proc trimmed for lookup; template-owner retry); shape
+  materialization binds generic U alongside __block_return__; DEBUG_L13
+  traces at repair sites + lower_yield.
+- `9a748896`: raw `Pointer` arm in a block-return union = D1 degradation
+  sentinel → sanitize_degraded_block_return_union collapses {X, Pointer} → X
+  for U/__block_return__ (map shape returns Array(TypeRef), elements are
+  readable 8-byte ptrs); the proc's REAL compiled return ABI recorded as
+  `__yield_call_abi__`; lower_yield emits the Yield with the ABI type and
+  coerces (union unwrap) to the declared yield type. Intermediate lesson: the
+  unsanitized union stored TAGGED {i32,[2xi32]} elements → consumer 8B-stride
+  misread → garbage `0xf414…0496` in Array(TypeRef)#fetch (crash
+  shape-shifted, same family).
+
+**New floors after L13:**
+- **default-s2 compiling hello:** full IR emitted; llc rejects
+  `GEP on Nil|Slice(UInt8)` in `IO#gets_peek` (2 sites, 1 function) — this is
+  the KNOWN L10 veto-OFF signature (session-11), expected until veto flips.
+- **veto-s2 compiling hello (L14, next START HERE):** SIGSEGV after
+  lower_main: `Hash(String, HIR::Function)#key_hash$String` reads a string at
+  0x16fe00000 (stack-guard-like) ← function_by_name ←
+  has_function_with_body? ← `invalidate_lowered_layout_functions` iterating
+  `@module.functions.dup` during `lower_assign` — a Function NAME string in
+  s2's own module table is corrupt (or the value slot misread — key_hash /
+  union-arg ABI family, cf. s2b_lower_missing_call_targets_key_hash_frontier,
+  m4h_union_descriptor_hash_value_confusion). Repro: build s2 with
+  `ADAMAS_PHI_SHARE_VETO=1`, compile hello, lldb bt. Artifacts:
+  /tmp/adamas_l13f3 (stage1 with L13 fix), /tmp/s2_l13f3 (+_veto),
+  /tmp/l13_fix3.log, /tmp/hello_s2.ll (default-build llc reject IR).
+
+**Sibling opened (memory zip_blockless_return_typeof_degradation, reducers
+/tmp/t_zip_probe.cr /tmp/t_zip_block.cr):** `a.zip(b)` WITHOUT block returns
+`Array(Pointer(Void))` UNIVERSALLY (string-typeof resolver has no case for
+`zip(*others) { |e| break e }`; splat local `others` is annotation-typed;
+Enumerable.zip is a macro body). zip WITH block also red (`x+y` → Tuple#+
+stub). DEBUG_L13Z lever prints typeof context. This is the upstream root of
+the L13 receiver degradation — fixing it collapses the whole cascade class.
+
+**Then:** L14 root-cause → veto default flip → suites ×2 → s2-veto hello →
+replace bin/adamas (unchanged plan, now gated on L14).
 
 ## 2026-07-07 — session-14: L12 CLOSED; L13 = map fallback stores null elements
 
