@@ -1,16 +1,69 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-07 (session-15: L13 CLOSED `3e6ac277`+`9a748896`; suites
-155/155+36/36 ×2. s2-hello no longer crashes in the fingerprint consumer on
-EITHER build flavor. New floors: default-s2 → the KNOWN L10 llc reject
-(IO#gets_peek GEP-on-union, veto-gated, 2 sites); veto-s2 → L14 = corrupt
-String reaching Hash(String,Function)#key_hash via
-invalidate_lowered_layout_functions during lower_assign. Veto default still
-OFF, now gated on L14.)
+Updated: 2026-07-07 (session-16: L14 CLOSED — block-proc capture detection
+skipped CallNode.named_args; fix in 3 walkers + regression script. veto-s2
+now gets past all of HIR into MIR/LLVM emission. New veto-s2 floor: L15 =
+SIGSEGV (NULL+4) in s2's own runtime during emission, unstable site
+(Time::Location.load?$block under run_safe env / emit_array_get malloc
+blowup under lldb env) — upstream memory corruption, env-sensitive. Veto
+default still OFF, now gated on L15.)
 Branch: `work/b5-lower-method-owner-edge`
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
+
+## 2026-07-07 — session-16: L14 CLOSED (named-arg values invisible to block-proc capture)
+
+**L14 route (proven: l14_scan/l14_create/l14_slots lldb probes, scripts in
+session scratchpad 68873b59; NB the bug does NOT reproduce under `env -i` —
+the stack garbage then reads as a short string and lookups miss silently;
+probe with FULL env):**
+1. `collect_proc_body_ident_walk`'s CallNode case walked callee/args/block
+   but NOT `node.named_args` → a local referenced ONLY as a named-arg value
+   inside a materialized block proc never entered referenced_names → no
+   closure cell → lowering the call inside the proc materialized a fresh
+   UNINITIALIZED slot and passed its ADDRESS as the argument value.
+2. In s2: the `with_isolated_type_param_map` block at ast_to_hir ~74275
+   (`lower_method(..., force_class_method:, forced_full_name:
+   target_for_lower, forced_method_name:)`) — proc_1758 passed
+   `add sp,#0x80/0x88` (never-written slots) as the two String named args
+   and read the Bool as `ldrb [self]` (type_id byte). lower_method then
+   registered a Function whose name String pointed into a dead stack frame
+   → veto-s2 SIGSEGV in Hash(String,Function)#key_hash during
+   invalidate_lowered_layout_functions (the session-15 L14 signature).
+   IDENTICAL wrong code in DEFAULT s2 (silently creating garbage-named
+   Functions) — NOT veto-specific, veto only changed the stack garbage.
+
+**Fix:** walk `named_args.each { |na| walk(na.value) }` in
+collect_proc_body_ident_walk, detect_written_captures_walk,
+proc_expr_has_implicit_receiver_call?.
+**Regression:** `regression_tests/block_proc_named_arg_capture_repro.sh`
+(2 cases: string-only-named capture + same-name/Bool shorthand; old
+bin/adamas FAILs both — negative control PASSED).
+
+**New veto-s2 floor (L15, next START HERE):** compiling hello with the
+clean-rebuilt fixed veto-s2 (/tmp/s2_l14fix_veto2) segfaults ~3s in, after
+ALLOC_FLUSH (deferred allocators done), i.e. during MIR/LLVM emission — in
+s2's OWN runtime: crash report shows `Time::Location.load?$String_block`
+reading NULL+4, single-frame unwind (fp chain gone); under lldb full-shell
+env the same binary instead ballooned to ~190GB inside
+`emit_array_get` / `Iterator::WithIndexIterator(Float64, UInt64,
+Int32)#all?` (phantom-looking instantiation). Unstable site + env
+sensitivity ⇒ upstream corruption, likely another latent miscompile family.
+Artifacts: /tmp/adamas_l14fix (fixed stage1), /tmp/s2_l14fix_veto2 (+.build.log),
+/tmp/hello_l14v2.compile.log, crash report
+~/Library/Logs/DiagnosticReports/s2_l14fix_veto2-2026-07-07-212946.ips.
+SAFETY: repro ONLY via run_safe (lldb bypasses its guards — two 190GB
+processes on 2026-07-07; owner reminder).
+
+**Epidemic parked (same omission family, audit separately):** other
+ast_to_hir walkers whose CallNode cases skip named_args — candidates:
+collect_local_assignment_types (~22820), collect_yield_arg_lists (~44433),
+collect_constant_dependencies (~46920), collect_assigned_vars_in_expr
+(~67155), collect_block_param_names_in_expr (~67477), contains_yield_deep?.
+
+**Then:** L15 root-cause → veto default flip → suites ×2 → s2-veto hello →
+replace bin/adamas (unchanged plan, now gated on L15).
 
 ## 2026-07-07 — session-15: L13 CLOSED (repair-route shape threading + repr agreement)
 
