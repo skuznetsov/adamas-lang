@@ -2597,6 +2597,21 @@ module Adamas::MIR
       nil
     end
 
+    # Like find_constant_int but returns the Constant instruction so callers can
+    # inspect its type (e.g. distinguish an Int enum value from an interned
+    # Symbol id, which share the same int_value slot).
+    def find_constant(id : ValueId) : Constant?
+      @function.blocks.each do |blk|
+        blk.instructions.each do |inst|
+          if inst.id == id
+            return inst.as(Constant) if inst.is_a?(Constant)
+            return nil
+          end
+        end
+      end
+      nil
+    end
+
     def mutex_lock(mutex_ptr : ValueId) : ValueId
       emit(MutexLock.new(@function.next_value_id, mutex_ptr))
     end

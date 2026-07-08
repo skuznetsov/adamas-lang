@@ -6626,10 +6626,10 @@ module Adamas
             ret_hir_type = call.type
             val_hir_type = @hir_value_types[call.args[2]]?
             if ret_hir_type != HIR::TypeRef::VOID && val_hir_type && val_hir_type != HIR::TypeRef::VOID
-              op_val = builder.find_constant_int(args[0]) || 0_i64
+              op_val = atomic_rmw_op_arg_value(builder, args[0])
               ptr = args[1]
               value = args[2]
-              ord_val = builder.find_constant_int(args[3]) || 7_i64
+              ord_val = atomic_ordering_arg_value(builder, args[3])
               mir_op = llvm_rmw_to_mir_op(op_val)
               mir_ord = llvm_ordering_to_mir(ord_val)
               return builder.atomic_rmw(mir_op, ptr, value, convert_type(ret_hir_type), mir_ord)
@@ -6646,8 +6646,8 @@ module Adamas
               ptr = args[0]
               cmp = args[1]
               new_val = args[2]
-              succ_val = builder.find_constant_int(args[3]) || 7_i64
-              fail_val = builder.find_constant_int(args[4]) || 7_i64
+              succ_val = atomic_ordering_arg_value(builder, args[3])
+              fail_val = atomic_ordering_arg_value(builder, args[4])
               succ_ord = llvm_ordering_to_mir(succ_val)
               fail_ord = llvm_ordering_to_mir(fail_val)
               cmp_type = convert_type(cmp_hir_type)
@@ -6659,7 +6659,7 @@ module Adamas
             ptr_hir_type = @hir_value_types[call.args[0]]?
             if ret_hir_type != HIR::TypeRef::VOID && ptr_hir_type && ptr_hir_type != HIR::TypeRef::VOID
               ptr = args[0]
-              ord_val = builder.find_constant_int(args[1]) || 7_i64
+              ord_val = atomic_ordering_arg_value(builder, args[1])
               mir_ord = llvm_ordering_to_mir(ord_val)
               return builder.atomic_load(ptr, convert_type(ret_hir_type), mir_ord)
             end
@@ -6670,14 +6670,14 @@ module Adamas
             if val_hir_type && val_hir_type != HIR::TypeRef::VOID && ptr_hir_type && ptr_hir_type != HIR::TypeRef::VOID
               ptr = args[0]
               value = args[1]
-              ord_val = builder.find_constant_int(args[2]) || 7_i64
+              ord_val = atomic_ordering_arg_value(builder, args[2])
               mir_ord = llvm_ordering_to_mir(ord_val)
               builder.atomic_store(ptr, value, mir_ord)
               return value
             end
           when "fence"
             # Ops.fence(ordering : LLVM::AtomicOrdering, singlethread : Bool) : Nil
-            ord_val = builder.find_constant_int(args[0]) || 7_i64
+            ord_val = atomic_ordering_arg_value(builder, args[0])
             mir_ord = llvm_ordering_to_mir(ord_val)
             return builder.fence(mir_ord)
           end
@@ -11054,6 +11054,84 @@ module Adamas
         when 6       then MemoryOrdering::AcqRel
         when 7       then MemoryOrdering::SeqCst
         else              MemoryOrdering::SeqCst
+        end
+      end
+
+      # Resolve the LLVM::AtomicOrdering integer value of an Atomic::Ops ordering
+      # argument. The HIR symbol→enum autocast for these arguments is applied
+      # inconsistently (it depends on Ops.* parameter-type resolution, which can
+      # miss in some lowering contexts), leaving the argument as an interned
+      # Symbol constant instead of the converted Int32 enum value. A raw
+      # find_constant_int would then read the Symbol id as the ordering value
+      # (e.g. :acquire interned as id 6 → AcqRel, which is invalid for a load and
+      # is rejected by llc). Decode Symbol constants by name so the ordering is
+      # correct regardless of whether the autocast fired; keep the int path for
+      # already-converted enum values. Defaults to SeqCst (the conservative,
+      # always-valid ordering) when the argument is not a resolvable constant.
+      private def atomic_ordering_arg_value(builder, arg_id : ValueId) : Int64
+        if c = builder.find_constant(arg_id)
+          if c.type == TypeRef::SYMBOL
+            return llvm_ordering_name_to_value(mir_symbol_name(c.int_value)) || 7_i64
+          end
+          return c.int_value
+        end
+        7_i64
+      end
+
+      # Resolve the LLVM::AtomicRMWBinOp integer value of an Atomic::Ops.atomicrmw
+      # op argument, decoding an unconverted interned Symbol by name (same
+      # autocast gap as ordering args). Defaults to Xchg (index 0).
+      private def atomic_rmw_op_arg_value(builder, arg_id : ValueId) : Int64
+        if c = builder.find_constant(arg_id)
+          if c.type == TypeRef::SYMBOL
+            return llvm_rmw_op_name_to_value(mir_symbol_name(c.int_value)) || 0_i64
+          end
+          return c.int_value
+        end
+        0_i64
+      end
+
+      private def mir_symbol_name(id : Int64) : String?
+        names = @mir_module.symbol_names
+        idx = id.to_i
+        (idx >= 0 && idx < names.size) ? names[idx] : nil
+      end
+
+      # LLVM::AtomicOrdering member name → its enum value (see stdlib
+      # llvm/enums/atomic.cr). Accepts the bare symbol name; also tolerates the
+      # Relaxed/AcqRel/SeqCst spellings used elsewhere.
+      private def llvm_ordering_name_to_value(name : String?) : Int64?
+        return nil unless name
+        case name.lstrip(':').downcase
+        when "not_atomic"                       then 0_i64
+        when "unordered"                        then 1_i64
+        when "monotonic", "relaxed"             then 2_i64
+        when "acquire"                          then 4_i64
+        when "release"                          then 5_i64
+        when "acquire_release", "acq_rel"       then 6_i64
+        when "sequentially_consistent", "seq_cst" then 7_i64
+        else                                         nil
+        end
+      end
+
+      # LLVM::AtomicRMWBinOp member name → its enum ordinal (auto-numbered from 0).
+      private def llvm_rmw_op_name_to_value(name : String?) : Int64?
+        return nil unless name
+        case name.lstrip(':').downcase
+        when "xchg" then 0_i64
+        when "add"  then 1_i64
+        when "sub"  then 2_i64
+        when "and"  then 3_i64
+        when "nand" then 4_i64
+        when "or"   then 5_i64
+        when "xor"  then 6_i64
+        when "max"  then 7_i64
+        when "min"  then 8_i64
+        when "umax" then 9_i64
+        when "umin" then 10_i64
+        when "fadd" then 11_i64
+        when "fsub" then 12_i64
+        else             nil
         end
       end
 
