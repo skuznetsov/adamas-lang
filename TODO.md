@@ -1,13 +1,60 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-07 (session-16: L14 CLOSED — block-proc capture detection
-skipped CallNode.named_args; fix in 3 walkers + regression script. veto-s2
-now gets past all of HIR into MIR/LLVM emission. New veto-s2 floor: L15 =
-SIGSEGV (NULL+4) in s2's own runtime during emission, unstable site
-(Time::Location.load?$block under run_safe env / emit_array_get malloc
-blowup under lldb env) — upstream memory corruption, env-sensitive. Veto
-default still OFF, now gated on L15.)
+Updated: 2026-07-08 (session-17: L15 CLOSED — two independent roots, both were
+faces of the same env-sensitive floor. (1) `af06b47a`: case/when `.predicate(arg)`
+dropped its args → stub/degraded includes? → null-base String#== in
+Time::Location.load? (the .ips crash signature). (2) `2e164899`: emit_array_get's
+`offsets.each_with_index.all?{|(off,i)|...}` miscompiled under veto →
+WithIndexIterator(Float64) non-terminating all? → OOM (fix = plain while loop).
+veto-s2 now compiles hello to full IR; NEW floor = L10 gets_peek GEP-on-
+`Nil | Slice(UInt8)` llc reject — and it is NOT veto-gated: BOTH default and
+veto stage2 hit it. Suites 155/155 default AND veto. START HERE = gets_peek.)
 Branch: `work/b5-lower-method-owner-edge`
+
+## 2026-07-08 — session-17: L15 CLOSED; NEW floor = L10 gets_peek (NOT veto-gated)
+
+**L15 root 1 (`af06b47a`) — case/when `.predicate(arg)` drops arguments.**
+emit_case_comparison (ast_to_hir ~68416) treated every `?`-suffixed predicate
+call in a `when` as a zero-arg enum predicate; enum path + fall-through
+`Call.with_receiver(..., [] of ValueId)` both dropped args. `when .includes?("..")`
+/ `.starts_with?('/')` lost their arg → `STUB CALLED: String#includes?` (default)
+/ degraded `includes?(Char|String)` with unwrapped String (veto) → null-base
+`String#==` (bytesize read @ addr 4) in Time::Location.load? = the crash-report
+signature. Fix: implicit-subject predicate WITH args → `lower_expr(ctx, cond_expr)`
+(normal path, intercepts+coercion), gated on is_implicit_shortcut. DEFAULT-affecting.
+Regression: `regression_tests/case_when_predicate_with_args_repro.sh`.
+
+**L15 root 2 (`2e164899`) — emit_array_get each_with_index.all? OOM (the blowup).**
+llvm_backend tuple-variable-index path:
+`uniform = offsets.each_with_index.all? { |(off, i)| off == i.to_u64 * stride }`
+(offsets = Array(UInt64)). Under veto the iterator+block form miscompiles:
+WithIndexIterator element UInt64→Float64 + wrapped iterator never terminates →
+`all?` spins forever, malloc each turn → OOM compiling even `puts "hello"`.
+Fix = plain `while` index loop (no closure, no WithIndexIterator; also cheaper).
+The .ips Time::Location NULL+4 and the 190GB `WithIndexIterator(Float64)` blowup
+were the SAME L15, env-dependent faces.
+
+**METHOD (safe repro under machine-shared constraint):** `sample <pid>` of the
+s2 child WHILE `scripts/run_safe.sh` does the RSS-kill guarding (run_safe in bg;
+`pgrep -x <s2_binary>`; `sample PID 1 -mayDie -file`). NEVER lldb+`ulimit -v` on
+the blowup — RLIMIT_AS is NOT enforced on macOS/arm64; it ran uncontrolled and
+overloaded the machine (owner flagged it; fixed the approach mid-session). Two
+throwaway diagnostic guards (regex-new bytesize cap; value_literal_name? bound)
+peeled outer layers to reveal the iterator loop, then REVERTED (whack-a-mole).
+
+**NEW FLOOR — L10 gets_peek (START HERE):** default AND veto stage2 now emit
+full IR for hello; `llc` rejects `getelementptr i8, ptr %rN.fromslot.K` where
+%rN is a `Nil | Slice(UInt8).union` loaded from a phi_slot in `IO#gets_peek`
+(hello .ll ~line 16287; union not unwrapped before the GEP that reads slice
+`size` for `Math.min`). NOT veto-gated (both configs). Artifacts: /tmp/adamas_ewi
+(stage1, both L15 fixes), /tmp/s2_ewi_veto, /tmp/hello_ewi.ll. Fixing it unblocks
+hello for both → then veto flip → suites ×2 → replace bin/adamas.
+
+**Parked (latent):** the underlying veto stale-binding that miscompiles
+iterator+closure forms is NOT itself fixed — other each_with_index/.map{}/... in
+hot codegen remain latent OOM risks. Also: standalone
+`arr.each_with_index.all? { |(x,i)| ... }` SIGBUS-crashes in BOTH modes (block
+tuple-destructure of the WithIndexIterator element) — separate bug.
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
