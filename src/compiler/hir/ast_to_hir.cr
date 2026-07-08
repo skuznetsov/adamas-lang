@@ -12981,6 +12981,10 @@ module Adamas::HIR
     # This handles the case where parser stores typeof(...) as an identifier name
     private def resolve_typeof_string_expr(expr : String) : String
       expr = expr.strip
+      if env_get("DEBUG_L13Z") && expr.includes?("break")
+        loc = @current_typeof_locals.try(&.map { |k, v| "#{k}:#{get_type_name_from_ref(v)}" }.join(",")) || ""
+        STDERR.puts "[L13Z] typeof_expr=#{expr.inspect} class=#{@current_class.inspect} method=#{@current_method.inspect} locals=#{loc}"
+      end
 
       # typeof(expr1, expr2, ...) in type positions should resolve each top-level
       # argument separately and then combine them, not reinterpret the whole
@@ -40525,6 +40529,19 @@ module Adamas::HIR
       type_name = get_type_name_from_ref(ret)
       return nil if type_name.empty? || type_name == "Void" || type_name == "Unknown"
       type_name
+    end
+
+    # Collapse a block-return union whose only non-concrete arm is the RAW
+    # `Pointer` degradation sentinel to its single concrete variant.
+    # Fail-closed: nil unless exactly one concrete variant remains.
+    private def sanitize_degraded_block_return_union(name : String) : String?
+      return nil unless name.includes?('|')
+      parts = split_union_type_name(name).map(&.strip).reject(&.empty?)
+      return nil if parts.size < 2
+      concrete = parts.reject { |part| part == "Pointer" }
+      return nil if concrete.size != 1
+      return nil if concrete.first == name
+      concrete.first
     end
 
     private def repair_receiver_bound_call_targets : Nil
@@ -69302,6 +69319,22 @@ module Adamas::HIR
       if yield_target && env_get("DEBUG_EXPLICIT_YIELD_TARGET")
         STDERR.puts "[EXPLICIT_YIELD_TARGET] emit_yield func=#{ctx.function.name} target=%#{yield_target} args=#{args.size} return=#{get_type_name_from_ref(return_type)}"
       end
+      # Repr agreement with the compiled block proc: when the callsite recorded
+      # a wider yield-call ABI (`__yield_call_abi__`, e.g. the proc was compiled
+      # returning `TypeRef | Pointer` while the sanitized block return is
+      # `TypeRef`), the call must use the proc's real return repr and the value
+      # is coerced (union unwrap) to the declared yield type afterwards.
+      if return_type != TypeRef::VOID
+        if abi_name = function_type_param_map_value?(ctx.function.name, "__yield_call_abi__")
+          abi_ref = type_ref_for_name(abi_name)
+          if abi_ref != TypeRef::VOID && abi_ref != return_type
+            y = Yield.new(ctx.next_id, abi_ref, args, yield_target)
+            ctx.emit(y)
+            ctx.register_type(y.id, abi_ref)
+            return coerce_value_to_type(ctx, y.id, return_type)
+          end
+        end
+      end
       y = Yield.new(ctx.next_id, return_type, args, yield_target)
       ctx.emit(y)
       y.id
@@ -71860,7 +71893,21 @@ module Adamas::HIR
           target_name = name
           remember_callsite_arg_types(name, shape_spec.arg_types, has_block: true) if @pending_arg_types[name]?.nil?
           if block_return_name = shape_spec.block_return_name
+            # A raw `Pointer` variant inside a block-return union is the D1
+            # inference-degradation sentinel (a real object pointer whose static
+            # type was lost), not a user type: at runtime every arm carries the
+            # same payload word. Collapse to the single concrete variant so the
+            # result container gets the readable element repr, but keep the
+            # PROC's real return ABI for the yield call itself (the block proc
+            # was compiled returning the tagged union) — lower_yield coerces.
+            yield_abi_name = block_return_name
+            if sanitized = sanitize_degraded_block_return_union(block_return_name)
+              block_return_name = sanitized
+            end
             shape_map = {"__block_return__" => block_return_name}
+            if yield_abi_name != block_return_name
+              shape_map["__yield_call_abi__"] = yield_abi_name
+            end
             # Bind the def's generic block-return type param (`U` in `& : T -> U`)
             # too: infer_yield_return_type resolves an ANNOTATED block's return
             # through the type-param map only (the `__block_return__` fallback is
