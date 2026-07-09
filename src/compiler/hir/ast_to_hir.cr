@@ -53926,6 +53926,24 @@ module Adamas::HIR
       end
     end
 
+    private def lower_def_body_sequence(
+      ctx : LoweringContext,
+      body : Array(Adamas::Compiler::Frontend::ExprId),
+      def_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : ValueId?
+      last_value : ValueId? = nil
+      i = 0
+      while i < body.size
+        expr_id = body[i]
+        last_value = with_arena(def_arena) do
+          lower_expr(ctx, expr_id)
+        end
+        break if should_stop_sequential_lowering?(ctx)
+        i += 1
+      end
+      last_value
+    end
+
     # Lower a function definition
     def lower_def(
       node : Adamas::Compiler::Frontend::DefNode,
@@ -54433,27 +54451,11 @@ module Adamas::HIR
           end
           if extra_type_params.empty?
             def_arena = @arena
-            i = 0
-            while i < body.size
-              expr_id = body[i]
-              with_arena(def_arena) do
-                last_value = lower_expr(ctx, expr_id)
-              end
-              break if should_stop_sequential_lowering?(ctx)
-              i += 1
-            end
+            last_value = lower_def_body_sequence(ctx, body, def_arena)
           else
-            with_type_param_map(extra_type_params) do
+            last_value = with_type_param_map(extra_type_params) do
               def_arena = @arena
-              i = 0
-              while i < body.size
-                expr_id = body[i]
-                with_arena(def_arena) do
-                  last_value = lower_expr(ctx, expr_id)
-                end
-                break if should_stop_sequential_lowering?(ctx)
-                i += 1
-              end
+              lower_def_body_sequence(ctx, body, def_arena)
             end
           end
         end

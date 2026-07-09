@@ -12599,6 +12599,53 @@ Adversary notes:
 
 Trust: {F/G/R: 0.88/0.40/0.90} [verified for fixed-name rewrite frontier; bootstrap remains in progress]
 
+### LM-669 - Generated lower_def returns its body value without block-capture transport
+
+The stage2-produced StaticArray/tuple repro did not fail because its
+`StaticArray(UInt8, 4)` value had the wrong representation. The generated
+compiler never delivered the value to the caller. In `lower_def`, the final
+`ValueId?` was assigned to captured `last_value` from inside `with_arena` and,
+on the generic path, `with_type_param_map`. Generated stage2 called
+`lower_expr`, discarded its returned `i32`, left the captured slot Nil, and
+therefore emitted `define/call void @make_bytes`; tuple destructuring then read
+literal null.
+
+`lower_def_body_sequence` now owns the sequential loop and returns its final
+`ValueId?` explicitly. Both callers assign that return outside the arena block;
+the generic path also returns it through `with_type_param_map`. This removes
+closure-capture transport from the return-value contract without changing
+sequential stop behavior.
+
+Evidence:
+
+- The current-source host compiler and a fresh generated stage2 both build.
+- Generated-stage2 compiler LLVM stores and returns the value from
+  `lower_def_body_sequence`; the old discarded `lower_expr` result is absent
+  from this corridor.
+- The stage2-produced target emits both `define ptr @make_bytes()` and
+  `call ptr @make_bytes()` and returns the tuple carrier to its caller.
+- `regression_tests/p2_lower_def_last_value_return_contract.sh` passes on the
+  fresh stage2, including safe runtime execution of the StaticArray byte check.
+- `regression_tests/run_all_suites.sh <current-source-host> 8` passes 163/163
+  original and 36/36 combined tests.
+
+Residual:
+
+- The output-bearing predecessor repro now advances through StaticArray return
+  and aborts while formatting `UInt8`, at the generated
+  `UInt8#UInt8#unsafe_mod(Int32)` sentinel. That later failure is outside this
+  return-value fix.
+- The broader generated compiler still has block-capture defects in other
+  corridors; this change only removes capture as the carrier of a def body's
+  final value.
+
+Adversary verdict: ROBUST for the lower_def return corridor. The focused
+runtime test deliberately avoids `puts(UInt8)`, while the predecessor repro is
+retained as a red frontier so a formatting/call-binding failure cannot be
+misreported as a StaticArray regression.
+
+Trust: {F/G/R: 0.94/0.42/0.94} [verified for lower_def final-value transport; bootstrap remains in progress]
+
 ### LM-665 - Generated s2 preserves nested static method owner during body registration
 
 Generated s2 now registers a nested static method body under the same owner

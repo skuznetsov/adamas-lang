@@ -1,6 +1,25 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-09 (session-27a: fresh stage2 rebuild exposed two earlier
+Updated: 2026-07-09 (session-27b: the generated-stage2 StaticArray/tuple return
+floor is CLOSED at its root. `lower_def` mutated captured `last_value` from
+inside `with_arena` / `with_type_param_map`; generated stage2 discarded the
+block result, left the capture Nil, and emitted `define/call void @make_bytes`.
+`lower_def_body_sequence` now returns the final `ValueId?` explicitly, and both
+the non-generic and generic paths assign that result outside the nested block.
+VERIFIED: generated compiler IR carries the returned union value; its target IR
+emits `define/call ptr @make_bytes`; the focused stage2 runtime contract passes;
+host suite 163/163 + 36/36. StaticArray representation mismatch is refuted for
+this floor. NEXT: the old output-bearing repro now reaches and aborts in
+`UInt8#UInt8#unsafe_mod(Int32)`. This is not a local missing-body problem: HIR
+contains `UInt8#remainder(Int32)` with its explicit argument, while generated
+LLVM calls the correctly two-parameter definition with only `self`. A custom
+top-level and instance two-argument reducer reproduces the same second-argument
+loss. In parallel, 8 of 24 target abort stubs use a repeated-owner identity.
+Treat stubs as a heterogeneous fail-loud sink; the next root slice is the
+call-binding/materialization transaction from selected def and argument vector
+through HIR -> MIR -> emitted call ABI, not an `unsafe_mod` override. Prev below.)
+
+Prev (session-27a: fresh stage2 rebuild exposed two earlier
 generated-compiler crashes in bootstrap-critical fixed-name rewrites. A
 block-backed `String#sub(Regex, replacement)` lost the captured replacement in
 self-hosted eager return inference: first `raw_path.sub(/^::/, "")` passed a
@@ -14,15 +33,9 @@ module-registration guard; fresh stage2 self-build; generated stage2 IR no
 longer routes these methods through regex substitution; full host regression
 suite 162/162 + 36/36. The fresh stage2 now compiles the tuple/StaticArray repro
 again and its produced binary retains the separate runtime failure below.
-NEXT (root localized independently by Luna 5.6 and confirmed in uninstrumented
-IR): `lower_def` computes `last_value = lower_expr(...)` inside an inline
-`with_arena` block, but generated stage2 discards the returned `i32` in the
-`extra_type_params.empty?` path. The captured `last_value` stays Nil, so
-`make_bytes` becomes `define/call void`; the caller then destructures literal
-null. First falsifier: move the assignment outside `with_arena` and require both
-compiler IR to store the result and target IR to emit `define/call ptr`, followed
-by safe runtime output `65,3`. StaticArray representation mismatch is refuted as
-the primary cause; stack escape promotion remains the likely secondary check.
+NEXT (localized independently by Luna 5.6 and then confirmed in uninstrumented
+IR): `lower_def` loses its final expression through nested block capture. See
+session-27b above for the closed result and the new call-binding frontier.
 Prev below.)
 
 Prev (session-26: stage2 `puts "hello"` llc union floor
