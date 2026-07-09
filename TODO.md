@@ -1,6 +1,45 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-09 (session-24: Floor B [undefined 3-arg String.new sink] CLOSED
+Updated: 2026-07-09 (session-25: stage2-hello SEGFAULT floor [String#bytesize
+double-load / "String size 8 vs 12"] CLOSED via `20b9a2a7`
+(src/compiler/hir/ast_to_hir.cr). ROOT: String's `@bytesize`/`@length` ivars
+are declared ONLY through the param shorthand in
+`def initialize_header(@bytesize : Int32, @length : Int32 = 0)`. The self-host
+stage2 binary reads that def's `@params_storage` back EMPTY (host stage1
+materializes the two params; the reparsed-from-retained-source stdlib def loses
+them in self-host), so the class-body ivar-capture loop's `each_param` yielded
+nothing -> String registered with ZERO ivars -> @bytesize/@length/@c lowered at
+offset 0 with a boxed double-load (String size stuck at 8, not 12) -> any
+stage2-compiled program touching a String segfaults (`puts "hello"`:
+IO#<< -> String#to_s -> to_slice -> bytesize(self≈null) -> EXC_BAD_ACCESS).
+FIX: the capture loop already computes `source_ivar_param_entries` as the
+authoritative source-text witness; complete that fallback — after `each_param`,
+register any TYPED source ivar-entry the parsed pass missed (explicit-type gate
+avoids fabricating an ivar from a `@` in a non-ivar param's default).
+METHOD (the crack): stage1-vs-stage2 `.ll` diff of `@String$Hbytesize`
+(`gep+4;load i32` vs `gep+0;load ptr;load i32`) + `ADAMAS_DUMP_LAYOUTS=String`
+(stage1 size=12 @bytesize@4 @length@8; stage2 absent) + `DEBUG_CLASS_INFO_FILTER`
+(both env_get-based so they work in self-host; `ENV[...]?` is BLIND in stage2)
++ a one-off `DBG_SIVAR` instrumentation build that pinpointed `each_param`
+yielding 0 for String#initialize_header while `source_ivar_params=2`.
+VERIFIED: host stage1 byte-identical full layout dump (net-zero); stage2 String
+now size=12 @bytesize@4 @length@8, only String gains ivars (118->119, no
+over-reach); run_all_suites 161/161 + 36/36 with bin/adamas_sfix.
+NEXT bootstrap floor (START HERE — separate, EXPOSED by this fix now that String
+lowers real logic): stage2 can now COMPILE past the segfault but `puts "hello"`
+llc-FAILS on `String#ends_with?(Char)` — self-host mis-infers the tuple
+destructuring `bytes, count = String.char_bytes_and_bytesize(char)` (returns
+`Tuple(StaticArray(UInt8,4), Int32)`) so `bytes` becomes the UNION of BOTH
+elements `Int32 | Array(UInt8)`, then emits `store ptr <union-value>` into a
+union payload slot (type mismatch, llc reject). stage1 lowers it correctly
+(0 unions, 0 bad stores). Reducer: /tmp/tuple_destr_repro.cr (in stage2 the
+tuple-returning method even lowers to `define void @make_bytes()`); it is a
+MultipleAssign/tuple element-type inference divergence in HIR, NOT String.
+Also still-latent (from session-24): strip -> remove_excess -> calc_excess_right
+(Char::Reader UTF-8) negative-count self-host bug. Branch
+`work/b5-lower-method-owner-edge`. Prev below.
+
+Prev (session-24: Floor B [undefined 3-arg String.new sink] CLOSED
 via `0844df31` (src/compiler/mir/llvm_backend.cr). The 3-arg allocator F
 (`String$Dnew$$Pointer$LUInt8$R_Int32_Int32`) was a demand-coupled builtin
 override emitted per forked LLVM worker only when RTA demanded it, but ~8
