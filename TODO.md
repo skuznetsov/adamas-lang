@@ -1,6 +1,45 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-08 (session-22: mixed Atomic(Int32)+Atomic(Bool) atomicrmw
+Updated: 2026-07-08 (session-23: Floor B ROOT CAUSE CLOSED via ONE fix `91205450`
+(src/compiler/hir/ast_to_hir.cr). Floor B was "stage2-compiled hello SIGBUS" —
+stack-overflow recursion IO#<<(String) <- Reference#to_s. ROOT (4 layers deep):
+the nilable-union comparison handler (~63698) picked BinaryOp vs method dispatch
+via `use_primitive = numeric_primitive?(non_nil_type)`. Enums aren't numeric, so
+`Nil | Enum` `==`/`!=` took the method-call path, which lowers the unwrapped enum
+payload as a REFERENCE -> emits `Object#==/#!=` on `inttoptr(value)` (pointer
+identity) instead of `icmp ne i32`. Silently inverts every nilable-enum compare.
+Manifested self-hosted only: the lexer's `@last_token_kind : Token::Kind?`
+`!= Token::Kind::Def` always read true, so `%(` after `def` scanned as a
+percent-literal (percent_literal_allowed? was correct; it never mattered) ->
+`def %(other)` (string.cr:5392) swallowed the rest of String's body: to_s/
+to_slice/hash/size/... (31 defs) never registered -> `obj.to_s(io)` resolved to
+ancestor Reference#to_s whose `io << class.name` recursed -> SIGBUS. stage1
+(built by upstream Crystal) lowered the same compare right; the bug was in OUR
+emission. FIX = extend `use_primitive` to enums for eq/ne (new `enum_type_ref?`,
+detects via the enum table because HIR registers enums as Struct not
+TypeKind::Enum) so the unwrapped payload compares with `icmp ne i32`; restricted
+to eq/ne to avoid inventing `<`/`>` for non-Comparable enums.
+METHOD (the long pole): stage1-vs-stage2 IR diff of the culprit function
+(IO#<<$String called Reference#to_s not String#to_s); DEBUG_METHOD_RESOLVE +
+DEBUG_SET_FDEF/SET_FTYPE localized the 31 dropped defs to a contiguous
+string.cr region starting at `def %`; minimal `class Foo; def %(o);…` reducer
+proved `%(` (no space) is the trigger; reading the CLEAN pre-probe stage2 .ll of
+percent_literal_allowed? exposed `inttoptr`+`Object$H$NE$$Int32`. Probe rebuilds
+were blinded by `ENV["X"]?`/BootstrapEnv self-host quirks + `@byte_size` ivar
+misread — the .ll diff was the oracle, not runtime probes.
+VERIFIED: nn_enum3 non-nil branch now `icmp ne i32` (was Object#NE+inttoptr);
+stage2 registers 330 String methods incl. String#to_s (was 0 past line 5392);
+`def %(x)` no longer swallows; run_all_suites 161/161 + 36/36; stage2 self-compile
+clean (0 llc/atomic). Branch `work/b5-lower-method-owner-edge`.
+NEXT bootstrap floor (START HERE, SEPARATE, previously masked by def-%): stage2
+emits a call to `String.new(Pointer(UInt8),Int32,Int32)`
+(`String$Dnew$$Pointer$LUInt8$R_Int32_Int32`, the 3-explicit-arg overload) from
+the 2-arg `String.new(ptr,bytesize)` default-size delegator, but never
+INSTANTIATES the 3-arg body -> llc "use of undefined value" compiling hello.
+stage1 defines both. Default-arg overload instantiation gap, reachable now that
+String#to_slice is demanded. Repro: `/tmp/stage2_enumfix /tmp/floorB_hello.cr`.)
+
+Prev (session-22: mixed Atomic(Int32)+Atomic(Bool) atomicrmw
 mis-type floor CLOSED via ONE fix `7a17260a` (src/compiler/mir/hir_to_mir.cr).
 Atomic(Int32) atomicrmw ops (add/sub/and/or/xor/swap/…) were typed i1/Bool
 whenever Atomic(Bool) coexisted in the same unit -> invalid LLVM IR
