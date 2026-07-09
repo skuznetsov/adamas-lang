@@ -1,6 +1,41 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-08 (session-23: Floor B ROOT CAUSE CLOSED via ONE fix `91205450`
+Updated: 2026-07-09 (session-24: Floor B [undefined 3-arg String.new sink] CLOSED
+via `0844df31` (src/compiler/mir/llvm_backend.cr). The 3-arg allocator F
+(`String$Dnew$$Pointer$LUInt8$R_Int32_Int32`) was a demand-coupled builtin
+override emitted per forked LLVM worker only when RTA demanded it, but ~8
+delegators (String.new 1-arg/UInt64/Nil-union, String#byte_slice[?],
+IO::FileDescriptor/File#gets, Regex::MatchData#[]) call it via raw-LLVM `call`
+edges RTA can't see -> delegator demanded + sink un-demanded = llc "use of
+undefined value". FIX = reclassify F as a runtime helper (like
+__adamas_char_to_string): emit unconditionally in emit_runtime_declarations
+(parent, pre-fork) + register in @emitted_functions so plan-dedup drops any
+demanded copy -> exactly one definition, no per-worker dup. Body byte-identical.
+VERIFIED: stage2 self-compile EXIT=0, stage2 compiles hello with F once + 0
+undefined/redefinition, suites 161/161 + 36/36.
+INVESTIGATION (this session, owner-directed deep-root): full-C (delete the whole
+String-alloc scaffold, use normal lowering) was PROVEN blocked by 3 deep self-host
+codegen bugs, NOT the sentinel. (a) i64 GC sentinel PROVEN REDUNDANT -- no-sentinel
+falsifier (F alloc without sentinel) -> stage2 self-compile clean + suites
+161/161+36/36 (malloc_size-guarded rc on Darwin / no-op rc elsewhere makes ptr-8
+sentinel unnecessary). (b) String.new normal lowering -> `Negative capacity`, but
+LOCALIZED (manual stack-walk on a --debug self-compiled stage2) to a
+strip->remove_excess->calc_excess_right(Char::Reader UTF-8 path) self-host bug that
+passes a negative count; F's `bytesize<=0 -> ""` guard was MASKING it. (c) gets
+normal lowering -> stub `Pointer$Hgets`; (d) regex MatchData#[] normal -> segfault.
+So C-core (keep F as helper, kill demand-coupling) was the correct scoped fix.
+NEXT bootstrap floor (START HERE, separate, revealed now that Floor B llc-error is
+gone): stage2-compiled hello SEGFAULTs -- stage2 emits `String#bytesize` as
+`gep self+0; load ptr; load i32` (double indirection) instead of `gep self+4;
+load i32`. This is the "String primitive size 8 vs 12" divergence (MIR pre-registers
+String size=8=one pointer, not updated to 12 in self-host) -> field access does a
+pointer-double-load. stage1 emits bytesize correctly; NOT caused by the F change.
+Chain: puts->IO#<<(String)->String#to_s(IO)->to_slice->bytesize(self=null-ish)->
+EXC_BAD_ACCESS. Repro: `/tmp/stage2_ccore /tmp/floorB_hello.cr -o /tmp/h && lldb .. bt`.
+Also queued: the strip/Char::Reader negative-count self-host bug (b) above.
+Branch `work/b5-lower-method-owner-edge`. Prev below.
+
+Prev (session-23: Floor B ROOT CAUSE CLOSED via ONE fix `91205450`
 (src/compiler/hir/ast_to_hir.cr). Floor B was "stage2-compiled hello SIGBUS" —
 stack-overflow recursion IO#<<(String) <- Reference#to_s. ROOT (4 layers deep):
 the nilable-union comparison handler (~63698) picked BinaryOp vs method dispatch
