@@ -36610,6 +36610,14 @@ module Adamas::HIR
       end
     end
 
+    # An enum is an i32-backed value type. Comparisons (`==`/`!=`) must lower to an
+    # integer BinaryOp, not a method dispatch that treats the value as a reference.
+    # HIR registers enums as Struct (no TypeKind::Enum), so detect via the enum table.
+    private def enum_type_ref?(type : TypeRef) : Bool
+      return false if type == TypeRef::VOID || type == TypeRef::NIL
+      !enum_name_for_type_ref(type).nil?
+    end
+
     private def signed_integer_primitive?(type : TypeRef) : Bool
       case type
       when TypeRef::INT8, TypeRef::INT16, TypeRef::INT32, TypeRef::INT64, TypeRef::INT128
@@ -63683,8 +63691,15 @@ module Adamas::HIR
               is_eq = (op_str == "==" || op_str == "===")
               is_ne = (op_str == "!=")
 
-              # For numeric primitives, use BinaryOp; for others (String etc), use method call
-              use_primitive = numeric_primitive?(non_nil_type)
+              # For numeric primitives, use BinaryOp; for others (String etc), use method call.
+              # Enums are i32-backed value types: compare them with BinaryOp too. Otherwise
+              # the method-call path lowers the unwrapped enum payload as a REFERENCE — it
+              # emits `Object#==/#!=` on `inttoptr(value)` (pointer identity) instead of an
+              # integer compare, which silently inverts the result. That mis-lexed `def %(x)`:
+              # the lexer's `@last_token_kind != Token::Kind::Def` (Token::Kind?) always read
+              # true, so `%(` after `def` scanned as a percent-literal and swallowed the rest
+              # of the class body (String#to_s etc. never registered → recursive to_s SIGBUS).
+              use_primitive = numeric_primitive?(non_nil_type) || (enum_type_ref?(non_nil_type) && is_eq_or_ne)
               bin_op = case op_str
                        when "==", "===" then BinaryOp::Eq
                        when "!="        then BinaryOp::Ne
