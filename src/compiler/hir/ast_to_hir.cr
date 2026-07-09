@@ -30218,6 +30218,34 @@ module Adamas::HIR
                   end
                 end
               end
+
+              # Self-host robustness: a stdlib def reopened/reparsed from retained
+              # source text can carry an EMPTY @params_storage even when its header
+              # declares typed ivar params, so `each_param` above yields nothing and
+              # the ivars are silently lost. The canonical case is String's
+              # `def initialize_header(@bytesize : Int32, @length : Int32 = 0)`:
+              # the host-built stage1 materializes the two params, but the
+              # self-host stage2 binary reads them back empty, leaving String with
+              # zero ivars (bytesize/to_slice then lower to offset-0 double-loads
+              # and segfault). `source_ivar_param_entries` is the authoritative
+              # source-text witness — for any typed ivar entry the parsed-param
+              # pass did not already register, register it from source. Requiring
+              # an explicit type both yields a concrete layout and avoids
+              # fabricating an ivar from a `@` that only appears inside a non-ivar
+              # param's default value (e.g. `x = @y` has no type after the `@`).
+              if src_entries = source_ivar_params
+                src_entries.each do |entry|
+                  next unless entry_type = entry[1]
+                  raw_name = entry[0]
+                  ivar_name = raw_name.starts_with?('@') ? raw_name : "@#{raw_name}"
+                  next if ivars.any? { |iv| iv.name == ivar_name }
+                  ivar_type = annotation_type_ref(entry_type, class_name)
+                  next if ivar_type == TypeRef::VOID
+                  offset = align_offset(offset, type_alignment(ivar_type, is_c_struct))
+                  ivars << IVarInfo.new(ivar_name, ivar_type, offset)
+                  offset += field_storage_size(ivar_type, is_c_struct)
+                end
+              end
             end
             next unless (body = member.body)
             discovered = discover_implicit_ivars_in_body(body, @arena, class_name)
