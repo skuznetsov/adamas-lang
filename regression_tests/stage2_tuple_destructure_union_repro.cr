@@ -19,6 +19,20 @@
 #
 # Verify: compile with the host stage1 (bin/adamas) -> OK; compile with a
 # self-compiled stage2 -> llc "store ptr <union>" failure.
+#
+# FIXED (session-26): the union mis-inference is gone. Root cause was NOT in the
+# tuple element-type extraction itself but in `if index` truthiness: in the
+# `tuple_element_type$$..._Int32` monomorphization the `Int32?` param `index`
+# collapses to a bare Int32, yet its condition value transiently read as POINTER
+# during body lowering, so `if index` lowered to `index != nullptr` -- which is
+# FALSE for index 0. That sent element 0 down the `merged = union(all elements)`
+# fallback branch. Fix = `sanitize_scalar_pointer_nil_checks`, a finalized-HIR
+# pass that folds `scalar != nil` -> true / `scalar == nil` -> false (a bare
+# scalar is never null; no valid program compares one to a null pointer).
+# stage2 now compiles this file and `puts "hello"` with no llc union error.
+# Residual (separate NEXT floor): a stage2-compiled binary of THIS file still
+# segfaults at run time on the `uninitialized UInt8[4]` StaticArray value path
+# (host stage1 runs it correctly, printing 65 then 3).
 
 def make_bytes
   bytes = uninitialized UInt8[4]

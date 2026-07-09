@@ -40447,6 +40447,65 @@ module Adamas::HIR
       end
     end
 
+    # A bare non-nilable numeric/char scalar (Int8..Int128, UInt8..UInt128,
+    # Float32/64, Char). These value types can never be null, so a nil check
+    # against them is statically decidable.
+    @[AlwaysInline]
+    private def scalar_always_truthy_type?(type : TypeRef) : Bool
+      type.id >= TypeRef::INT8.id && type.id <= TypeRef::CHAR.id
+    end
+
+    # Fold `scalar != nullptr` / `scalar == nullptr` comparisons over the
+    # finalized HIR. A nilable-scalar parameter (e.g. `Int32?`) that collapses to
+    # a bare scalar in one monomorphization can have its `if x` truthiness lowered
+    # as `x != nullptr` when the condition value transiently reads as POINTER
+    # during body lowering; that inverts the check for integer 0. Once lowering
+    # has settled, the operand type is authoritative and a bare scalar is never
+    # null, so `x != nil` is always true and `x == nil` always false. No valid
+    # program compares a bare scalar against a null pointer, so this pattern is
+    # unambiguously a mis-lowered nil check and is safe to fold.
+    private def sanitize_scalar_pointer_nil_checks : Nil
+      @module.functions.each do |func|
+        value_types = {} of ValueId => TypeRef
+        pointer_literals = Set(ValueId).new
+        func.params.each { |p| value_types[p.id] = p.type }
+        func.blocks.each do |block|
+          block.instructions.each do |inst|
+            value_types[inst.id] = inst.type
+            if inst.is_a?(Literal) && inst.type == TypeRef::POINTER && inst.int_value == 0
+              pointer_literals << inst.id
+            end
+          end
+        end
+
+        func.blocks.each do |block|
+          idx = 0
+          while idx < block.instructions.size
+            inst = block.instructions.unsafe_fetch(idx)
+            if inst.is_a?(BinaryOperation) && (inst.op == BinaryOp::Ne || inst.op == BinaryOp::Eq)
+              left_nil = pointer_literals.includes?(inst.left)
+              right_nil = pointer_literals.includes?(inst.right)
+              scalar_id = if right_nil && !left_nil
+                            inst.left
+                          elsif left_nil && !right_nil
+                            inst.right
+                          else
+                            nil
+                          end
+              if scalar_id && scalar_always_truthy_type?(value_types[scalar_id]? || TypeRef::VOID)
+                # `x != nil` -> true, `x == nil` -> false
+                folded_value = inst.op == BinaryOp::Ne
+                folded = Literal.new(inst.id, TypeRef::BOOL, folded_value)
+                block.instructions[idx] = folded
+                value_types[inst.id] = TypeRef::BOOL
+              end
+            end
+            idx += 1
+          end
+        end
+      end
+    end
+
     private def repair_stale_call_return_types : Nil
       repaired = 0
       propagated = 0
@@ -55178,6 +55237,15 @@ module Adamas::HIR
                  final_missing_passes >= 4
       end
       stop_after_flush_phase("final_missing", "ADAMAS_STOP_AFTER_HIR_FLUSH_FINAL_MISSING")
+
+      # Repair truthiness checks that compare a bare non-nilable scalar against a
+      # null pointer. These arise when a nilable-scalar parameter (e.g. `Int32?`)
+      # collapses to a bare scalar in one monomorphization but its condition
+      # value transiently reads as POINTER during body lowering, so `if x` is
+      # lowered as `x != nullptr`. That inverts the check for the zero value
+      # (integer 0 is a valid non-nil scalar). The value type is authoritative
+      # once lowering settles, so fix it here over the finalized HIR.
+      sanitize_scalar_pointer_nil_checks
 
       if phase_stats
         after3 = @module.function_count
