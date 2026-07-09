@@ -1,43 +1,59 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-09 (session-25: stage2-hello SEGFAULT floor [String#bytesize
+Updated: 2026-07-09 (session-26: stage2 `puts "hello"` llc union floor
+[tuple-destructure `Int32 | Array(UInt8)` mis-inference] CLOSED via `7d96a08f`
+(src/compiler/hir/ast_to_hir.cr). ROOT (NOT tuple element-type extraction — that
+was a red herring): in the `tuple_element_type$$..._Int32` monomorphization the
+`Int32?` param `index` collapses to a bare Int32, but its `if index` truthiness
+was lowered as `binop Ne(index, POINTER-literal-0)` (a pointer nil-check) instead
+of always-true. `index != nullptr` is FALSE for index 0, so element 0
+(`bytes`) took the `else` branch `merged = union(all tuple elements)` =
+`Int32 | Array(UInt8)`, which then `store ptr <union>` into a payload slot ->
+llc reject compiling String#ends_with?(Char). The condition value's type
+transiently read POINTER during body lowering even though the param signature is
+Int32 (final HIR shows `%59 = copy %2 : Int32` yet `Ne(%59, ptr0)`).
+IMPORTANT: this is a HEISENBUG — every STDERR/DBG probe I added PERTURBED type
+inference and MASKED the bug (traced builds showed index=Int32 -> always-true;
+untraced `--emit hir` dump was the only oracle). Also lower_method's own
+`if index` folds correctly (index:Int32); the emitted buggy `_Int32` body comes
+from a second, degraded lowering path (empty ctx.function.name, no params in
+scope) so param-signature/instruction-type guards in lower_truthy_check did NOT
+fire (two fix attempts failed for exactly this reason).
+FIX (the one that worked): `sanitize_scalar_pointer_nil_checks`, a finalized-HIR
+pass (called right after the final lower_missing/repair fixpoint) that folds
+`Ne(scalar, POINTER-0-literal)` -> true and `Eq(scalar, POINTER-0-literal)` ->
+false. By finalization the operand type is authoritative; a bare Int/UInt/Float/
+Char is never null and no valid program compares one to a null pointer, so the
+pattern is an unambiguous mis-lowered nil check. Low blast radius (pattern does
+not occur in valid code). METHOD: stage1-vs-stage2 `.ll` diff of the `_Int32`
+variant (`sext i32 %index; ptrtoint ptr null; icmp ne` vs union variant's
+type_id tag check) + `bin/adamas src/adamas.cr --emit hir --no-link` dump
+(showed block.14 `%59=copy %2:Int32; %60=literal 0:Pointer; Ne(%59,%60)`).
+VERIFIED: run_all_suites 162/162 + 36/36 (net-zero, 0 regressions); stage1 repro
+prints 65,3; stage2 self-compile exit 0 + `puts "hello"` compiles/runs exit 0
+(empty STDOUT = known program-exit-stdio-flush truncation, unrelated).
+NEXT bootstrap floor (START HERE — separate, exposed now that the repro COMPILES):
+a stage2-compiled binary of regression_tests/stage2_tuple_destructure_union_repro.cr
+segfaults at RUN time on the `uninitialized UInt8[4]` StaticArray value path
+(`bytes[0]` / returning a StaticArray from a tuple). host stage1 runs it fine
+(65,3). StaticArray value-ABI in self-host. NOT the union floor (union is gone).
+Also still-latent (from session-24): strip -> remove_excess -> calc_excess_right
+(Char::Reader UTF-8) negative-count self-host bug. Branch
+`work/b5-lower-method-owner-edge`. Prev below.
+
+Prev (session-25: stage2-hello SEGFAULT floor [String#bytesize
 double-load / "String size 8 vs 12"] CLOSED via `20b9a2a7`
 (src/compiler/hir/ast_to_hir.cr). ROOT: String's `@bytesize`/`@length` ivars
 are declared ONLY through the param shorthand in
 `def initialize_header(@bytesize : Int32, @length : Int32 = 0)`. The self-host
-stage2 binary reads that def's `@params_storage` back EMPTY (host stage1
-materializes the two params; the reparsed-from-retained-source stdlib def loses
-them in self-host), so the class-body ivar-capture loop's `each_param` yielded
-nothing -> String registered with ZERO ivars -> @bytesize/@length/@c lowered at
-offset 0 with a boxed double-load (String size stuck at 8, not 12) -> any
-stage2-compiled program touching a String segfaults (`puts "hello"`:
-IO#<< -> String#to_s -> to_slice -> bytesize(self≈null) -> EXC_BAD_ACCESS).
-FIX: the capture loop already computes `source_ivar_param_entries` as the
-authoritative source-text witness; complete that fallback — after `each_param`,
-register any TYPED source ivar-entry the parsed pass missed (explicit-type gate
-avoids fabricating an ivar from a `@` in a non-ivar param's default).
-METHOD (the crack): stage1-vs-stage2 `.ll` diff of `@String$Hbytesize`
-(`gep+4;load i32` vs `gep+0;load ptr;load i32`) + `ADAMAS_DUMP_LAYOUTS=String`
-(stage1 size=12 @bytesize@4 @length@8; stage2 absent) + `DEBUG_CLASS_INFO_FILTER`
-(both env_get-based so they work in self-host; `ENV[...]?` is BLIND in stage2)
-+ a one-off `DBG_SIVAR` instrumentation build that pinpointed `each_param`
-yielding 0 for String#initialize_header while `source_ivar_params=2`.
-VERIFIED: host stage1 byte-identical full layout dump (net-zero); stage2 String
-now size=12 @bytesize@4 @length@8, only String gains ivars (118->119, no
-over-reach); run_all_suites 161/161 + 36/36 with bin/adamas_sfix.
-NEXT bootstrap floor (START HERE — separate, EXPOSED by this fix now that String
-lowers real logic): stage2 can now COMPILE past the segfault but `puts "hello"`
-llc-FAILS on `String#ends_with?(Char)` — self-host mis-infers the tuple
-destructuring `bytes, count = String.char_bytes_and_bytesize(char)` (returns
-`Tuple(StaticArray(UInt8,4), Int32)`) so `bytes` becomes the UNION of BOTH
-elements `Int32 | Array(UInt8)`, then emits `store ptr <union-value>` into a
-union payload slot (type mismatch, llc reject). stage1 lowers it correctly
-(0 unions, 0 bad stores). Reducer: /tmp/tuple_destr_repro.cr (in stage2 the
-tuple-returning method even lowers to `define void @make_bytes()`); it is a
-MultipleAssign/tuple element-type inference divergence in HIR, NOT String.
-Also still-latent (from session-24): strip -> remove_excess -> calc_excess_right
-(Char::Reader UTF-8) negative-count self-host bug. Branch
-`work/b5-lower-method-owner-edge`. Prev below.
+stage2 binary reads that def's `@params_storage` back EMPTY, so the class-body
+ivar-capture loop's `each_param` yielded nothing -> String registered with ZERO
+ivars -> @bytesize/@length lowered at offset 0 with a boxed double-load (String
+size stuck at 8, not 12) -> any stage2-compiled program touching a String
+segfaults. FIX: complete the `source_ivar_param_entries` fallback — after
+`each_param`, register any TYPED source ivar-entry the parsed pass missed.
+VERIFIED: host stage1 byte-identical layout dump; stage2 String size=12
+@bytesize@4 @length@8; run_all_suites 161/161 + 36/36. Prev below.
 
 Prev (session-24: Floor B [undefined 3-arg String.new sink] CLOSED
 via `0844df31` (src/compiler/mir/llvm_backend.cr). The 3-arg allocator F
