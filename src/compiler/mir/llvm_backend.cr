@@ -8324,6 +8324,54 @@ module Adamas::MIR
       emit_raw "  ret ptr %result\n"
       emit_raw "}\n\n"
 
+      # String.new(chars : UInt8*, bytesize : Int32, size : Int32) — ARC-immortal
+      # string allocator (with i64 INT64_MAX GC sentinel at ptr-8). This is the sink
+      # allocator every hardcoded String delegator (String.new 1-arg/UInt64/union,
+      # String#byte_slice[?], IO/File#gets, Regex::MatchData#[]) targets via a raw
+      # LLVM `call` — edges the MIR demand/stub passes cannot see. Emitting it here,
+      # unconditionally in the parent BEFORE the worker fork + planning, guarantees
+      # the symbol always exists so those raw calls never dangle (Floor B root fix:
+      # a demanded delegator + an un-demanded sink → llc "use of undefined value").
+      # Registering it in @emitted_functions here makes the emission-plan dedup drop
+      # any RTA-demanded copy, so no forked worker re-emits it. Byte-identical to the
+      # former demand-coupled `emit_builtin_override` branch; @string_type_id is 16
+      # (default = TypeRef::STRING.id) this early, same as the neighbouring helpers.
+      # Its `bytesize<=0 → @.str.empty` guard also preserves the historical masking
+      # of a latent strip/Char::Reader self-host bug that can pass a negative count.
+      emit_raw "; String.new(UInt8*, Int32, Int32) — runtime helper (with GC sentinel)\n"
+      emit_raw "define ptr @String$Dnew$$Pointer$LUInt8$R_Int32_Int32(ptr %chars, i32 %bytesize, i32 %size) {\n"
+      emit_raw "entry:\n"
+      emit_raw "  %is_positive = icmp sgt i32 %bytesize, 0\n"
+      emit_raw "  br i1 %is_positive, label %check_max, label %ret_empty\n"
+      emit_raw "check_max:\n"
+      emit_raw "  %fits_alloc = icmp sle i32 %bytesize, 2147483626\n" # Int32::MAX - 21
+      emit_raw "  br i1 %fits_alloc, label %check_null, label %ret_empty\n"
+      emit_raw "check_null:\n"
+      emit_raw "  %chars_null = icmp eq ptr %chars, null\n"
+      emit_raw "  br i1 %chars_null, label %ret_empty, label %do_alloc\n"
+      emit_raw "ret_empty:\n"
+      emit_raw "  ret ptr @.str.empty\n"
+      emit_raw "do_alloc:\n"
+      emit_raw "  %alloc_i32 = add i32 %bytesize, 21\n"  # 8 (sentinel) + 4+4+4 (header) + bytesize + 1 (null)
+      emit_raw "  %alloc = zext i32 %alloc_i32 to i64\n"
+      emit_raw "  %raw = call ptr @__adamas_malloc64(i64 %alloc)\n"
+      emit_raw "  store i64 9223372036854775807, ptr %raw, align 8\n"  # INT64_MAX sentinel at raw
+      emit_raw "  %str = getelementptr i8, ptr %raw, i64 8\n"  # object starts at raw+8
+      emit_raw "  store i32 #{@string_type_id}, ptr %str\n"
+      emit_raw "  %bs_ptr = getelementptr i8, ptr %str, i32 4\n"
+      emit_raw "  store i32 %bytesize, ptr %bs_ptr\n"
+      emit_raw "  %sz_ptr = getelementptr i8, ptr %str, i32 8\n"
+      emit_raw "  store i32 %size, ptr %sz_ptr\n"
+      emit_raw "  %data_ptr = getelementptr i8, ptr %str, i32 12\n"
+      emit_raw "  %len64 = zext i32 %bytesize to i64\n"
+      emit_raw "  call void @llvm.memcpy.p0.p0.i64(ptr %data_ptr, ptr %chars, i64 %len64, i1 false)\n"
+      emit_raw "  %null_pos = getelementptr i8, ptr %data_ptr, i32 %bytesize\n"
+      emit_raw "  store i8 0, ptr %null_pos\n"
+      emit_raw "  ret ptr %str\n"
+      emit_raw "}\n\n"
+      @emitted_functions << "String$Dnew$$Pointer$LUInt8$R_Int32_Int32"
+      @emitted_function_return_types["String$Dnew$$Pointer$LUInt8$R_Int32_Int32"] = "ptr"
+
       # String#== — compare two Crystal Strings by content
       # 1. Pointer equality (same object → true)
       # 2. Bytesize comparison (different lengths → false)
@@ -11336,43 +11384,11 @@ module Adamas::MIR
           emit_raw "}\n\n"
         end
         return true
-      when "String$Dnew$$Pointer$LUInt8$R_Int32_Int32"
-        # String.new(chars : UInt8*, bytesize : Int32, size : Int32)
-        # Allocates a Crystal String, copies data from chars pointer.
-        # Must include 8-byte GC sentinel header (INT64_MAX) at ptr-8 so
-        # rc_inc/rc_dec safely skip dynamically-created strings.
-        emit_raw "; String.new(UInt8*, Int32, Int32) — runtime override (with GC sentinel)\n"
-        emit_raw "define ptr @#{mangled}(ptr %chars, i32 %bytesize, i32 %size) {\n"
-        emit_raw "entry:\n"
-        emit_raw "  %is_positive = icmp sgt i32 %bytesize, 0\n"
-        emit_raw "  br i1 %is_positive, label %check_max, label %ret_empty\n"
-        emit_raw "check_max:\n"
-        emit_raw "  %fits_alloc = icmp sle i32 %bytesize, 2147483626\n" # Int32::MAX - 21
-        emit_raw "  br i1 %fits_alloc, label %check_null, label %ret_empty\n"
-        emit_raw "check_null:\n"
-        emit_raw "  %chars_null = icmp eq ptr %chars, null\n"
-        emit_raw "  br i1 %chars_null, label %ret_empty, label %do_alloc\n"
-        emit_raw "ret_empty:\n"
-        emit_raw "  ret ptr @.str.empty\n"
-        emit_raw "do_alloc:\n"
-        emit_raw "  %alloc_i32 = add i32 %bytesize, 21\n"  # 8 (sentinel) + 4+4+4 (header) + bytesize + 1 (null)
-        emit_raw "  %alloc = zext i32 %alloc_i32 to i64\n"
-        emit_raw "  %raw = call ptr @__adamas_malloc64(i64 %alloc)\n"
-        emit_raw "  store i64 9223372036854775807, ptr %raw, align 8\n"  # INT64_MAX sentinel at raw
-        emit_raw "  %str = getelementptr i8, ptr %raw, i64 8\n"  # object starts at raw+8
-        emit_raw "  store i32 #{@string_type_id}, ptr %str\n"
-        emit_raw "  %bs_ptr = getelementptr i8, ptr %str, i32 4\n"
-        emit_raw "  store i32 %bytesize, ptr %bs_ptr\n"
-        emit_raw "  %sz_ptr = getelementptr i8, ptr %str, i32 8\n"
-        emit_raw "  store i32 %size, ptr %sz_ptr\n"
-        emit_raw "  %data_ptr = getelementptr i8, ptr %str, i32 12\n"
-        emit_raw "  %len64 = zext i32 %bytesize to i64\n"
-        emit_raw "  call void @llvm.memcpy.p0.p0.i64(ptr %data_ptr, ptr %chars, i64 %len64, i1 false)\n"
-        emit_raw "  %null_pos = getelementptr i8, ptr %data_ptr, i32 %bytesize\n"
-        emit_raw "  store i8 0, ptr %null_pos\n"
-        emit_raw "  ret ptr %str\n"
-        emit_raw "}\n\n"
-        return true
+      # NOTE: `String$Dnew$$Pointer$LUInt8$R_Int32_Int32` (the sink allocator) is no
+      # longer a demand-coupled builtin override here. It is emitted unconditionally
+      # as a runtime helper in `emit_runtime_declarations` (parent, pre-fork), so the
+      # raw-LLVM `call` edges to it from the delegators below never dangle even when
+      # RTA does not independently demand it (the Floor B undefined-value root cause).
       when "String$Dnew$$Pointer$LUInt8$R_UInt64"
         # String.new(chars : UInt8*, bytesize : UInt64, size : Int32)
         # The HIR-lowered body uses GC.malloc_atomic and doesn't set the String header.
