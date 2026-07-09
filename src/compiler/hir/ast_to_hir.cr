@@ -21023,7 +21023,7 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::PathNode
         raw_path = collect_path_string(expr_node)
         absolute = raw_path.starts_with?("::")
-        full_name = absolute ? raw_path[2..] : resolve_path_string_in_context(raw_path)
+        full_name = absolute ? absolute_path_body(raw_path) : resolve_path_string_in_context(raw_path)
         if type_param_like?(full_name) && @type_param_map.has_key?(full_name)
           return nil
         end
@@ -21140,7 +21140,15 @@ module Adamas::HIR
                      end
                    when Adamas::Compiler::Frontend::PathNode
                      raw_path = collect_path_string(object_node)
-                     full_path = path_is_absolute?(object_node) ? raw_path.sub(/^::/, "") : resolve_path_string_in_context(raw_path)
+                     # This is a fixed prefix operation, not a regex replacement.
+                     # Keeping it byte-based avoids the block-backed String#sub
+                     # corridor in generated stage2, where the captured replacement
+                     # can degrade to a null String during eager return inference.
+                     full_path = if path_is_absolute?(object_node)
+                                   absolute_path_body(raw_path)
+                                 else
+                                   resolve_path_string_in_context(raw_path)
+                                 end
                      @module.is_lib?(full_path) ? full_path : nil
                    else
                      nil
@@ -62945,6 +62953,12 @@ module Adamas::HIR
       absolute ? "::#{path}" : path
     end
 
+    @[AlwaysInline]
+    private def absolute_path_body(path : String) : String
+      bytesize = path.bytesize
+      bytesize > 2 ? path.byte_slice(2, bytesize - 2) : ""
+    end
+
     # Lower path expression (e.g., Color::Green for enums, or Module::Constant)
     private def lower_path(ctx : LoweringContext, node : Adamas::Compiler::Frontend::PathNode) : ValueId
       # Extract left and right parts
@@ -86792,7 +86806,15 @@ module Adamas::HIR
         end
         unless has_match
           # Try initialize overloads
-          init_name = func_name.sub(/[.#]new$/, "#initialize")
+          init_name = if func_name.ends_with?(".new") || func_name.ends_with?("#new")
+                        if owner = method_owner(func_name)
+                          allocator_init_name_for(owner)
+                        else
+                          func_name
+                        end
+                      else
+                        func_name
+                      end
           init_entry = lookup_function_def_for_call(init_name, positional_args.size + named_args.size, has_block_call, nil, false, !named_args.empty?, named_arg_names)
           if init_entry
             init_def = init_entry[1]
@@ -96526,7 +96548,7 @@ module Adamas::HIR
                      end
                    when Adamas::Compiler::Frontend::PathNode
                      raw_path = collect_path_string(obj_node)
-                     full_path = path_is_absolute?(obj_node) ? raw_path.sub(/^::/, "") : resolve_path_string_in_context(raw_path)
+                     full_path = path_is_absolute?(obj_node) ? absolute_path_body(raw_path) : resolve_path_string_in_context(raw_path)
                      @module.is_lib?(full_path) ? full_path : nil
                    else
                      nil
@@ -96552,7 +96574,7 @@ module Adamas::HIR
                          end
                        when Adamas::Compiler::Frontend::PathNode
                          raw_path = collect_path_string(obj_node)
-                         full_path = path_is_absolute?(obj_node) ? raw_path.sub(/^::/, "") : resolve_path_string_in_context(raw_path)
+                         full_path = path_is_absolute?(obj_node) ? absolute_path_body(raw_path) : resolve_path_string_in_context(raw_path)
                          resolve_type_alias_chain(full_path)
                        else
                          nil
@@ -97495,7 +97517,7 @@ module Adamas::HIR
                      end
                    when Adamas::Compiler::Frontend::PathNode
                      raw_path = collect_path_string(obj_node)
-                     full_path = path_is_absolute?(obj_node) ? raw_path.sub(/^::/, "") : resolve_path_string_in_context(raw_path)
+                     full_path = path_is_absolute?(obj_node) ? absolute_path_body(raw_path) : resolve_path_string_in_context(raw_path)
                      @module.is_lib?(full_path) ? full_path : nil
                    else
                      nil

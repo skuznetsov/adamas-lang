@@ -1252,3 +1252,32 @@ emission.
 subscription gate returns 403; prefer Spark/other subagents for sidecar grunt
 work.
 **Cost saved:** none.
+
+### Session 50 — 2026-07-09 — StaticArray tuple-return ABI audit
+**Task:** read-only audit of the fresh stage2 failure around
+`stage2_tuple_destructure_union_repro.cr`, ranked across return-contract,
+tuple-slot, StaticArray indexing, and type-registration hypotheses. The prompt
+required exact source anchors and uninstrumented IR discriminators, with no
+edits or broad rewrite proposals.
+**Brief size:** 35-line bounded task file in repo-local `tmp/`, sent through
+`grok_acp_delegate.py` with a 300-second prompt timeout.
+**Latency:** about 20 seconds, exit 0.
+**Output quality:** mixed. Grok found the relevant MIR/LLVM layout helpers and
+suggested the correct host-vs-stage2 `make_bytes` IR comparison, but ranked a
+StaticArray inline-vs-pointer tuple-slot mismatch first and the caller/callee
+return-contract mismatch only third.
+**Adversary check:** local untraced IR directly refuted Grok's ranking. The host
+compiler emits `define ptr @make_bytes()` and the caller consumes the returned
+tuple pointer. The failing produced-stage2 IR emits `define void @make_bytes()`
+and `call void @make_bytes()`, then indexes through a null Array-shaped value.
+The original Crystal compiler confirms StaticArray is a value type there, but
+the current Adamas host path has a distinct internally consistent pointer-
+carrier tuple ABI, so changing container representation would not address the
+measured stage2 failure. A fresh stage2 then exposed an even earlier full-
+prelude crash: a block-backed `String#sub(Regex, replacement)` inside eager
+return inference passed a null captured replacement to `IO#<< String`.
+**Verdict:** useful for anchor collection and discriminator pressure, but its
+top diagnosis was wrong. Local safe-wrapper, LLDB, generated LLVM, and original
+Crystal source remain authoritative.
+**Cost saved:** small source-search time; no implementation decision was
+delegated.

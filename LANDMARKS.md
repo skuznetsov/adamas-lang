@@ -12538,6 +12538,67 @@ Adversary notes:
 
 Trust: {F/G/R: 0.87/0.44/0.90} [verified for Array#reduce primitive element typing and this frontier move]
 
+### LM-668 - Bootstrap fixed-name rewrites bypass lossy regex block capture
+
+A fresh stage2 rebuilt after the scalar/pointer nil-check fix did not initially
+reach the documented StaticArray runtime floor. It crashed while registering
+modules in `infer_type_from_expr_inner`: the fixed prefix rewrite
+`raw_path.sub(/^::/, "")` entered block-backed `String#sub` machinery, and the
+generated compiler passed a null captured replacement String to `IO#<<`. After
+that callsite was removed, the same mechanism appeared in `reorder_named_args`
+at `func_name.sub(/[.#]new$/, "#initialize")`.
+
+Both operations have a narrower contract than regex substitution. Absolute
+paths now remove their known ASCII `::` prefix through `absolute_path_body`,
+which uses `byte_slice`. Constructor fallback now extracts the method owner and
+uses the existing `allocator_init_name_for` builder. The fix covers the adjacent
+absolute-path owner/lib lookup sites that performed the identical prefix
+rewrite; it does not change general regex replacement behavior.
+
+Evidence:
+
+- A current-source host compiler rebuilt successfully with upstream Crystal.
+- `regression_tests/p2_self_nested_module_registration_frontier.sh` passes on
+  both the current-source host compiler and the fresh generated stage2.
+- `scripts/run_safe.sh bin/adamas 900 12288 src/adamas.cr -o <fresh-s2>`
+  completed with exit 0.
+- Generated LLVM for the fresh stage2 routes `infer_type_from_expr_inner`
+  through `absolute_path_body` and `reorder_named_args` through
+  `allocator_init_name_for`; neither function calls the regex `String#sub`
+  overload used by the crashes.
+- `regression_tests/run_all_suites.sh <current-source-host> 8` passed 162/162
+  original and 36/36 combined tests.
+- The fresh stage2 compiles
+  `regression_tests/stage2_tuple_destructure_union_repro.cr`; only the produced
+  target fails at runtime, restoring the intended next bootstrap frontier.
+
+Residual:
+
+- This closes only fixed-name transformations that did not require regex
+  semantics. The underlying generated block-capture defect remains live for
+  genuine block-backed operations.
+- Luna 5.6 independently localized the next floor in `lower_def`: in the
+  `extra_type_params.empty?` path, generated stage2 discards the `i32` returned
+  by `lower_expr` inside `with_arena`, leaving captured `last_value` Nil and
+  emitting `define/call void @make_bytes`. The StaticArray carrier is therefore
+  not consumed at all; changing its representation would address the wrong
+  layer.
+- After return recovery, nested StaticArray escape promotion must still be
+  verified before the runtime slice can be called closed.
+
+Adversary notes:
+
+- The replacement preserves the exact accepted shapes: only a leading `::` is
+  sliced, and only names ending in `.new` or `#new` are mapped to
+  `#initialize`.
+- Passing the registration frontier alone is insufficient evidence. The fresh
+  stage2 also self-built and reached the independently measured target-runtime
+  floor.
+- The full suite is a regression guard, not a bootstrap-green proxy; the active
+  stage2-produced target still exits 139.
+
+Trust: {F/G/R: 0.88/0.40/0.90} [verified for fixed-name rewrite frontier; bootstrap remains in progress]
+
 ### LM-665 - Generated s2 preserves nested static method owner during body registration
 
 Generated s2 now registers a nested static method body under the same owner

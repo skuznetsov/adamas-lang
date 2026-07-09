@@ -1,6 +1,31 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-09 (session-26: stage2 `puts "hello"` llc union floor
+Updated: 2026-07-09 (session-27a: fresh stage2 rebuild exposed two earlier
+generated-compiler crashes in bootstrap-critical fixed-name rewrites. A
+block-backed `String#sub(Regex, replacement)` lost the captured replacement in
+self-hosted eager return inference: first `raw_path.sub(/^::/, "")` passed a
+null String while registering modules, then
+`func_name.sub(/[.#]new$/, "#initialize")` failed after `lower_main`. CLOSED by
+expressing those fixed transformations directly: absolute paths now remove the
+ASCII `::` prefix with `byte_slice`, and constructor lookup derives
+`#initialize` through the existing method-owner/name builder. No general regex
+semantics changed. VERIFIED: current-source host rebuild; focused produced-stage2
+module-registration guard; fresh stage2 self-build; generated stage2 IR no
+longer routes these methods through regex substitution; full host regression
+suite 162/162 + 36/36. The fresh stage2 now compiles the tuple/StaticArray repro
+again and its produced binary retains the separate runtime failure below.
+NEXT (root localized independently by Luna 5.6 and confirmed in uninstrumented
+IR): `lower_def` computes `last_value = lower_expr(...)` inside an inline
+`with_arena` block, but generated stage2 discards the returned `i32` in the
+`extra_type_params.empty?` path. The captured `last_value` stays Nil, so
+`make_bytes` becomes `define/call void`; the caller then destructures literal
+null. First falsifier: move the assignment outside `with_arena` and require both
+compiler IR to store the result and target IR to emit `define/call ptr`, followed
+by safe runtime output `65,3`. StaticArray representation mismatch is refuted as
+the primary cause; stack escape promotion remains the likely secondary check.
+Prev below.)
+
+Prev (session-26: stage2 `puts "hello"` llc union floor
 [tuple-destructure `Int32 | Array(UInt8)` mis-inference] CLOSED via `7d96a08f`
 (src/compiler/hir/ast_to_hir.cr). ROOT (NOT tuple element-type extraction — that
 was a red herring): in the `tuple_element_type$$..._Int32` monomorphization the
