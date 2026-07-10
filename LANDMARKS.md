@@ -12721,7 +12721,7 @@ Current evidence separates at least three upstream classes:
 1. **Control-flow transport:** LM-670 truncated a backend helper before it had
    formatted all arguments. The callee body existed and MIR was correct; the
    eventual runtime failure looked like a missing/invalid call.
-2. **Semantic identity:** the fresh target retains 8 repeated-owner stubs such
+2. **Semantic identity:** the default target retains 8 repeated-owner stubs such
    as `UInt8#UInt8#unsafe_mod(Int32)`, `Object#Object#to_s`, and
    `Crystal::EventLoop#Crystal::EventLoop#read`. No correct definition should
    exist under those twice-qualified identities.
@@ -12729,11 +12729,38 @@ Current evidence separates at least three upstream classes:
    created raw LLVM edges invisible to HIR/RTA. The backend sentinel only made
    the missing supply observable.
 
-Fresh target census after LM-670 is 22 ABORT stubs; 8 are repeated-owner forms.
+Default target census after LM-670 is 22 ABORT stubs; 8 are repeated-owner forms.
 `UInt8#remainder(Int32)` now has and receives `(self, other)`, proving the
 argument-tail root is closed there, but its body still emits a call to
 `UInt8#UInt8#unsafe_mod(Int32)`. Thus argument binding and identity
-requalification are independent in the active floor.
+requalification are independent symptoms in the active floor.
+
+The repeated-owner producer is now root-caused. It is not an identity parser or
+resolver defect: it is the L10 unsafe phi-shared-slot optimization recurring at
+the same `lower_call` valued-if. Before the merge, probe D observes the valid
+pair `method_name=unsafe_mod` and `full_method_name=UInt8#unsafe_mod`. Legacy
+sharing redirects the still-live bare-name incoming to the result phi carrier;
+the selected full-name arm overwrites that carrier. Probe E consequently reads
+`method_name=UInt8#unsafe_mod` without any source assignment. A later, valid
+receiver resolution adds the owner and emits `UInt8#UInt8#unsafe_mod`.
+
+Discriminating evidence:
+
+- A current host built stage2 successfully with
+  `ADAMAS_PHI_SHARE_VETO_FILTER=lower_call`.
+- In that stage2, D and E both retain bare `unsafe_mod`; F emits the single-owner
+  `UInt8#unsafe_mod$Int32` identity.
+- The untraced target LLVM census changes from 8 repeated-owner stubs to 0.
+  Parser/source qualification, `specialize_method_owner_name`, and backend name
+  emission are therefore refuted producers.
+- The filtered candidate is not production-ready. The target advances past
+  `unsafe_mod` but fails link on undefined `__crystal_block_proc_51`; its total
+  stub count rises from 22 to 34, demonstrating why stub count is only a proxy.
+  The previously green stage2 call-tail and lower_def contracts also fail before
+  runtime (SIGSEGV and undefined `String#byte_slice`, respectively).
+- The scoped-default code candidate and its auto-suite reducer were reverted;
+  the repository remains on legacy sharing until the exposed supply failures
+  are closed without regressing earlier contracts.
 
 Quadrumvirate synthesis:
 
@@ -12743,18 +12770,20 @@ Quadrumvirate synthesis:
   `call shape -> selected def -> argument vector -> materialization key -> body
   symbol -> emitted ABI`, not the backend stub body first.
 - **Maieutic:** a mangled suffix does not prove the actual argument vector, and
-  exact demand cannot repair an already-invalid semantic identity.
+  an identity-looking corruption can originate in value lifetime rather than
+  name construction.
 - **Adversary:** unsafe_mod overrides, owner-string dedupe, speculative
   forwarders, zero returns, forced RTA keepalive, and stdlib edits are BROKEN
   fixes without an ABI/identity proof.
 
-Next measurable signal: in untraced HIR for a bare primitive call, identify the
-first point where bare `unsafe_mod` becomes already-qualified
-`UInt8#unsafe_mod` and is then qualified again. The long-term invariant remains
+Next measurable signal: under the filtered lower_call-veto oracle, find the
+earliest point where demand for `__crystal_block_proc_51` or
+`String#byte_slice(Int32, Int32)` loses its body. The long-term invariant remains
 one structured resolution/binding object carried unchanged from selection
-through materialization and emission.
+through materialization and emission, plus lifetime-safe transport for every
+field of that object.
 
-Trust: {F/G/R: 0.91/0.58/0.91} [verified taxonomy and current census; repeated-owner production fix not yet implemented]
+Trust: {F/G/R: 0.96/0.62/0.94} [repeated-owner mechanism proven by filtered liveness veto; production enablement blocked by exposed supply regressions]
 
 ### LM-665 - Generated s2 preserves nested static method owner during body registration
 

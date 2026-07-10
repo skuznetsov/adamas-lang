@@ -20,12 +20,25 @@ fresh stage2 self-build succeeds and preserves both arguments in top-level and
 instance reducers; full suite 165/165 + 36/36. IMPORTANT BOUNDARY: this is not a
 universal block-control fix. `compact_map`, block-`sum`, `reduce`, and
 block-`count` still lack an explicit lexical result context.
-NEXT BOOTSTRAP FLOOR remains separate stringly identity requalification:
-`UInt8#remainder(Int32)` now receives both arguments but still calls
-`UInt8#UInt8#unsafe_mod(Int32)`. Fresh target census is 22 ABORT stubs, including
-8 repeated-owner identities; the old output repro aborts there. Do not fix this
-with backend name dedupe/forwarders or an unsafe_mod override. Trace why the
-selected bare method becomes owner-qualified twice before HIR call emission.
+REPEATED-OWNER ROOT is now PROVEN, but the production fix is BLOCKED. It is not
+stringly requalification: it is the already-known L10 phi-shared-slot lifetime
+violation recurring in `lower_call`. Probe D sees
+`method=unsafe_mod, full=UInt8#unsafe_mod`; the multi-arm valued-if that computes
+`base_method_name` feeds the still-live `method_name` into a shared phi carrier;
+legacy sharing lets the selected full name overwrite that incoming; probe E
+therefore reads `method=UInt8#unsafe_mod` without a source assignment, and the
+resolver lawfully adds `UInt8#` again. The discriminating build
+`ADAMAS_PHI_SHARE_VETO_FILTER=lower_call` keeps D/E bare and removes all 8
+repeated-owner stubs (8 -> 0), proving mechanism and excluding parser,
+`specialize_method_owner_name`, and backend name emission. DO NOT SHIP that
+filter yet: although stage2 self-build succeeds, the output repro advances to
+undefined `__crystal_block_proc_51` (34 total stubs; total count is not the
+value), while the prior stage2 call-tail and lower_def contracts regress before
+runtime (SIGSEGV / undefined `String#byte_slice`). Candidate was reverted.
+NEXT: under the filtered-veto oracle, trace the earliest supply/demand loss for
+`__crystal_block_proc_51` and `String#byte_slice`; only then can lower_call's
+liveness veto become default without sacrificing closed gates. No owner dedupe,
+forwarder, unsafe_mod override, forced keepalive, or stdlib edit.
 Prev below.)
 
 Prev (session-27b: the generated-stage2 StaticArray/tuple return
