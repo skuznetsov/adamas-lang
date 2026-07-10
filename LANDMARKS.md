@@ -1,6 +1,6 @@
 # LANDMARKS
 
-Updated: 2026-07-03
+Updated: 2026-07-09
 Context: compiler/bootstrap/stage2-stability
 
 This file is the active working set only. Historical landmarks before this
@@ -12645,6 +12645,116 @@ retained as a red frontier so a formatting/call-binding failure cannot be
 misreported as a StaticArray regression.
 
 Trust: {F/G/R: 0.94/0.42/0.94} [verified for lower_def final-value transport; bootstrap remains in progress]
+
+### LM-670 - Array map owns block-local next iteration results
+
+Specialized literal/dynamic `Array#map` and dynamic `map_with_index` lowered
+their user block bodies directly, without the lexical block-control contract
+used by ordinary yield/proc lowering. With no `InlineNextContext`, `lower_next`
+fell through to `Return`, so `next value` returned from the enclosing function
+instead of completing the current map iteration.
+
+The bootstrap manifestation was in backend `fixup_call_arg_types`. Its
+`parts.map { |part| next part unless ... }` received a two-element argument
+string, but generated stage2 returned the first literal part from the entire
+method. Untraced target HIR and post-opt MIR both retained the full argument
+vector; only LLVM output lost the tail. A top-level and an instance reducer each
+called a two-parameter definition with one actual argument.
+
+The three map paths now use `lower_array_map_block_body`. When a block contains
+lexically local `next`, the helper installs an iteration-result exit, records
+normal and `next value` predecessors, unifies/coerces their types (including
+tuple-shape coercion), and emits one value or a phi. An empty predecessor set is
+marked dead, so a syntactically present but unreachable `next` cannot revive an
+all-noreturn body. Blocks without local `next` keep the previous lowering path.
+
+Loop and inline-next contexts were previously independent ambient stacks. A
+parallel loop-depth stack now records the inline-next depth at every loop push,
+so the lexically inner construct owns `next` in both outer-map/inner-loop and
+outer-loop/inner-map shapes. All 12 loop push/pop sites are paired, and all four
+function/proc isolation corridors save, reset, and restore the depth stack with
+the corresponding loop condition stack.
+
+Evidence:
+
+- The previous host compiler aborts the dynamic/literal/map_with_index family
+  regression at its first map assertion; the current host runs all three.
+- A current-source host compiler and a fresh generated stage2 both build.
+- The current host and fresh stage2 compile and run the extended map-next
+  regression: direct paths, both nested ownership orders, `case/in`,
+  reachable-next plus raise, syntactic-next with all real paths noreturn, and
+  tuple-phi coercion.
+- `regression_tests/p2_call_argument_tail_contract.sh` passes on both current
+  host and fresh stage2. Target LLVM contains both actual arguments for the
+  top-level and instance reducers.
+- Fresh stage2 compiler LLVM routes the old early returns in
+  `fixup_call_arg_types` into the per-iteration merge and joins the complete
+  result array.
+- `regression_tests/run_all_suites.sh /tmp/adamas_mapnext_s1_v6 8` reports
+  165/165 original and 36/36 combined tests passed.
+
+Residual and adversary result:
+
+- Activation uses a lexical-local detector which does not descend into nested
+  loops, call blocks, or proc literals. The explicit loop-depth arbitration
+  guards mixed bodies where the outer map also contains its own `next`.
+- Static census finds the same direct-body omission in `compact_map`, block
+  `sum`, `reduce`, and block `count`. Loop-style intrinsics also discard the
+  expression of `next value` even when their control target is correct.
+- Therefore the scoped map/call-tail/nested-ownership claim is ROBUST, but a
+  universal block-control claim is VULNERABLE. The architectural follow-up is
+  one lexical block-control transaction with explicit Discard, Value,
+  Predicate, and Accumulator policies rather than further independent ambient
+  control stacks.
+
+Trust: {F/G/R: 0.95/0.48/0.95} [verified for map/map_with_index next, nested ownership, noreturn and tuple merges, and generated call-tail preservation; other intrinsic policies remain open]
+
+### LM-671 - Abort stubs are a heterogeneous fail-loud funnel
+
+The backend's `ABORT stub for unlowered method` is not a root-cause category.
+It is the common sink for a called Crystal symbol that has no emitted body after
+late materialization. That makes unrelated semantic failures look identical at
+runtime.
+
+Current evidence separates at least three upstream classes:
+
+1. **Control-flow transport:** LM-670 truncated a backend helper before it had
+   formatted all arguments. The callee body existed and MIR was correct; the
+   eventual runtime failure looked like a missing/invalid call.
+2. **Semantic identity:** the fresh target retains 8 repeated-owner stubs such
+   as `UInt8#UInt8#unsafe_mod(Int32)`, `Object#Object#to_s`, and
+   `Crystal::EventLoop#Crystal::EventLoop#read`. No correct definition should
+   exist under those twice-qualified identities.
+3. **Supply/demand visibility:** prior floors lost definitions upstream or
+   created raw LLVM edges invisible to HIR/RTA. The backend sentinel only made
+   the missing supply observable.
+
+Fresh target census after LM-670 is 22 ABORT stubs; 8 are repeated-owner forms.
+`UInt8#remainder(Int32)` now has and receives `(self, other)`, proving the
+argument-tail root is closed there, but its body still emits a call to
+`UInt8#UInt8#unsafe_mod(Int32)`. Thus argument binding and identity
+requalification are independent in the active floor.
+
+Quadrumvirate synthesis:
+
+- **Cassandra:** another runtime stub is more likely to be an earlier
+  call/body/identity transaction divergence than a genuinely absent primitive.
+- **Daedalus:** inspect the earliest mismatch in
+  `call shape -> selected def -> argument vector -> materialization key -> body
+  symbol -> emitted ABI`, not the backend stub body first.
+- **Maieutic:** a mangled suffix does not prove the actual argument vector, and
+  exact demand cannot repair an already-invalid semantic identity.
+- **Adversary:** unsafe_mod overrides, owner-string dedupe, speculative
+  forwarders, zero returns, forced RTA keepalive, and stdlib edits are BROKEN
+  fixes without an ABI/identity proof.
+
+Next measurable signal: in untraced HIR for a bare primitive call, identify the
+first point where bare `unsafe_mod` becomes already-qualified
+`UInt8#unsafe_mod` and is then qualified again. The long-term invariant remains
+one structured resolution/binding object carried unchanged from selection
+through materialization and emission.
+
+Trust: {F/G/R: 0.91/0.58/0.91} [verified taxonomy and current census; repeated-owner production fix not yet implemented]
 
 ### LM-665 - Generated s2 preserves nested static method owner during body registration
 

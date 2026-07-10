@@ -1,6 +1,34 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-07-09 (session-27b: the generated-stage2 StaticArray/tuple return
+Updated: 2026-07-09 (session-27c: deep stub census split the recurring symptom
+into a fail-loud backend funnel plus multiple upstream roots. One root is now
+CLOSED: specialized literal/dynamic `Array#map` and `map_with_index` lowered a
+user block without an `InlineNextContext`, so block-local `next value` became a
+`Return` from the enclosing compiler method. In `fixup_call_arg_types`, the
+first literal argument executed `next part` and returned only that first string;
+HIR and post-opt MIR still contained every call argument, but generated LLVM
+called two-parameter functions with one argument. The map lowerers now merge
+normal and `next value` iteration results through an explicit typed exit/phi,
+including structural tuple coercion. Empty-incoming merges remain dead instead
+of reviving an all-noreturn block. A paired loop-depth stack arbitrates lexical
+ownership when an outer map with local `next` contains an inner loop, and all
+function/proc isolation corridors save/reset/restore it with the loop stack.
+VERIFIED: old host compiler fails the dynamic/literal/map_with_index family;
+current host and fresh stage2 pass that family plus both nested ownership
+orders, `case/in`, all-noreturn, raise-fallthrough, and tuple-phi adversaries;
+fresh stage2 self-build succeeds and preserves both arguments in top-level and
+instance reducers; full suite 165/165 + 36/36. IMPORTANT BOUNDARY: this is not a
+universal block-control fix. `compact_map`, block-`sum`, `reduce`, and
+block-`count` still lack an explicit lexical result context.
+NEXT BOOTSTRAP FLOOR remains separate stringly identity requalification:
+`UInt8#remainder(Int32)` now receives both arguments but still calls
+`UInt8#UInt8#unsafe_mod(Int32)`. Fresh target census is 22 ABORT stubs, including
+8 repeated-owner identities; the old output repro aborts there. Do not fix this
+with backend name dedupe/forwarders or an unsafe_mod override. Trace why the
+selected bare method becomes owner-qualified twice before HIR call emission.
+Prev below.)
+
+Prev (session-27b: the generated-stage2 StaticArray/tuple return
 floor is CLOSED at its root. `lower_def` mutated captured `last_value` from
 inside `with_arena` / `with_type_param_map`; generated stage2 discarded the
 block result, left the capture Nil, and emitted `define/call void @make_bytes`.

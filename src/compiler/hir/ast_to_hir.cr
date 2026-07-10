@@ -5769,6 +5769,11 @@ module Adamas::HIR
     # Loop context stack: tracks exit_block (for break) and cond_block (for next)
     @loop_exit_stack : Array(BlockId) = [] of BlockId
     @loop_cond_stack : Array(BlockId) = [] of BlockId
+    # Inline-next depth observed when each loop context was pushed. This gives
+    # lower_next a lexical ordering across the otherwise independent loop and
+    # inline-block stacks: a loop pushed inside an inline block owns `next`,
+    # while an inline block pushed inside a loop owns it instead.
+    @loop_inline_next_depth_stack : Array(Int32) = [] of Int32
     @loop_phi_stack : Array(Hash(String, Phi)) = [] of Hash(String, Phi)
     # Track break blocks and their variable values for exit phi construction
     @loop_break_info_stack : Array(Array({BlockId, Hash(String, ValueId)})) = [] of Array({BlockId, Hash(String, ValueId)})
@@ -45782,6 +45787,110 @@ module Adamas::HIR
       body.any? { |expr_id| contains_next_in_expr?(expr_id) }
     end
 
+    # Whether `next` belongs to the block represented by `body`. Nested loops,
+    # call blocks, and proc literals own their own `next` and must not activate
+    # an outer inline-next context.
+    private def contains_block_local_next?(body : Array(ExprId)) : Bool
+      body.any? { |expr_id| contains_block_local_next_in_expr?(expr_id) }
+    end
+
+    private def contains_block_local_next_in_expr?(expr_id : ExprId) : Bool
+      return false if expr_id.invalid?
+      node = @arena[expr_id]
+      case node
+      when Adamas::Compiler::Frontend::NextNode
+        true
+      when Adamas::Compiler::Frontend::AssignNode
+        contains_block_local_next_in_expr?(node.target) || contains_block_local_next_in_expr?(node.value)
+      when Adamas::Compiler::Frontend::MemberAccessNode
+        contains_block_local_next_in_expr?(node.object)
+      when Adamas::Compiler::Frontend::CallNode
+        if callee_id = node.callee
+          return true if contains_block_local_next_in_expr?(callee_id)
+        end
+        if args = node.args
+          args.each do |arg|
+            return true if contains_block_local_next_in_expr?(arg)
+          end
+        end
+        if named = node.named_args
+          named.each do |named_arg|
+            return true if contains_block_local_next_in_expr?(named_arg.value)
+          end
+        end
+        false
+      when Adamas::Compiler::Frontend::UnaryNode
+        contains_block_local_next_in_expr?(node.operand)
+      when Adamas::Compiler::Frontend::BinaryNode
+        contains_block_local_next_in_expr?(node.left) || contains_block_local_next_in_expr?(node.right)
+      when Adamas::Compiler::Frontend::GroupingNode
+        contains_block_local_next_in_expr?(node.expression)
+      when Adamas::Compiler::Frontend::MacroExpressionNode
+        contains_block_local_next_in_expr?(node.expression)
+      when Adamas::Compiler::Frontend::IfNode
+        contains_block_local_next_in_expr?(node.condition) ||
+          contains_block_local_next?(node.then_body) ||
+          (node.elsifs && node.elsifs.not_nil!.any? do |branch|
+            contains_block_local_next_in_expr?(branch.condition) || contains_block_local_next?(branch.body)
+          end) ||
+          (node.else_body ? contains_block_local_next?(node.else_body.not_nil!) : false)
+      when Adamas::Compiler::Frontend::UnlessNode
+        contains_block_local_next_in_expr?(node.condition) ||
+          contains_block_local_next?(node.then_branch) ||
+          (node.else_branch ? contains_block_local_next?(node.else_branch.not_nil!) : false)
+      when Adamas::Compiler::Frontend::CaseNode
+        return true if node.value && contains_block_local_next_in_expr?(node.value.not_nil!)
+        node.when_branches.each do |branch|
+          return true if branch.conditions.any? { |condition| contains_block_local_next_in_expr?(condition) }
+          return true if contains_block_local_next?(branch.body)
+        end
+        if in_branches = node.in_branches
+          in_branches.each do |branch|
+            return true if branch.conditions.any? { |condition| contains_block_local_next_in_expr?(condition) }
+            return true if contains_block_local_next?(branch.body)
+          end
+        end
+        node.else_branch ? contains_block_local_next?(node.else_branch.not_nil!) : false
+      when Adamas::Compiler::Frontend::ArrayLiteralNode
+        return true if node.elements.any? { |element| contains_block_local_next_in_expr?(element) }
+        node.of_type ? contains_block_local_next_in_expr?(node.of_type.not_nil!) : false
+      when Adamas::Compiler::Frontend::TupleLiteralNode
+        node.elements.any? { |element| contains_block_local_next_in_expr?(element) }
+      when Adamas::Compiler::Frontend::HashLiteralNode
+        node.entries.any? do |entry|
+          contains_block_local_next_in_expr?(entry.key) || contains_block_local_next_in_expr?(entry.value)
+        end
+      when Adamas::Compiler::Frontend::NamedTupleLiteralNode
+        node.entries.any? { |entry| contains_block_local_next_in_expr?(entry.value) }
+      when Adamas::Compiler::Frontend::StringInterpolationNode
+        node.pieces.any? do |piece|
+          piece.kind == Adamas::Compiler::Frontend::StringPiece::Kind::Expression &&
+            piece.expr && contains_block_local_next_in_expr?(piece.expr.not_nil!)
+        end
+      when Adamas::Compiler::Frontend::IndexNode
+        return true if contains_block_local_next_in_expr?(node.object)
+        node.indexes.any? { |index| contains_block_local_next_in_expr?(index) }
+      when Adamas::Compiler::Frontend::RangeNode
+        contains_block_local_next_in_expr?(node.begin_expr) || contains_block_local_next_in_expr?(node.end_expr)
+      when Adamas::Compiler::Frontend::BeginNode
+        return true if contains_block_local_next?(node.body)
+        if clauses = node.rescue_clauses
+          return true if clauses.any? { |clause| contains_block_local_next?(clause.body) }
+        end
+        return true if node.else_body && contains_block_local_next?(node.else_body.not_nil!)
+        return true if node.ensure_body && contains_block_local_next?(node.ensure_body.not_nil!)
+        false
+      when Adamas::Compiler::Frontend::WhileNode,
+           Adamas::Compiler::Frontend::UntilNode,
+           Adamas::Compiler::Frontend::LoopNode,
+           Adamas::Compiler::Frontend::BlockNode,
+           Adamas::Compiler::Frontend::ProcLiteralNode
+        false
+      else
+        false
+      end
+    end
+
     private def contains_next_in_expr?(expr_id : ExprId) : Bool
       return false if expr_id.invalid?
       node = @arena[expr_id]
@@ -65564,11 +65673,13 @@ module Adamas::HIR
 
       saved_loop_exit_stack = @loop_exit_stack
       saved_loop_cond_stack = @loop_cond_stack
+      saved_loop_inline_next_depth_stack = @loop_inline_next_depth_stack
       saved_loop_phi_stack = @loop_phi_stack
       saved_loop_break_info_stack = @loop_break_info_stack
       saved_loop_break_value_stack = @loop_break_value_stack
       @loop_exit_stack = [] of BlockId
       @loop_cond_stack = [] of BlockId
+      @loop_inline_next_depth_stack = [] of Int32
       @loop_phi_stack = [] of Hash(String, Phi)
       @loop_break_info_stack = [] of Array({BlockId, Hash(String, ValueId)})
       @loop_break_value_stack = [] of Array({BlockId, ValueId})
@@ -65587,6 +65698,7 @@ module Adamas::HIR
       @inline_yield_block_body_depth = saved_block_body_depth
       @loop_exit_stack = saved_loop_exit_stack
       @loop_cond_stack = saved_loop_cond_stack
+      @loop_inline_next_depth_stack = saved_loop_inline_next_depth_stack
       @loop_phi_stack = saved_loop_phi_stack
       @loop_break_info_stack = saved_loop_break_info_stack
       @loop_break_value_stack = saved_loop_break_value_stack
@@ -66895,6 +67007,7 @@ module Adamas::HIR
       ctx.push_scope(ScopeKind::Loop)
       @loop_exit_stack << exit_block
       @loop_cond_stack << cond_block
+      @loop_inline_next_depth_stack << @inline_next_stack.size
       @loop_phi_stack << phi_nodes
       @loop_break_info_stack << [] of {BlockId, Hash(String, ValueId)}
       @loop_break_inline_locals_stack << [] of {BlockId, Array(Hash(String, ValueId))}
@@ -66915,6 +67028,7 @@ module Adamas::HIR
         @inline_loop_vars_stack.pop? if pushed_inline
         @loop_exit_stack.pop?
         @loop_cond_stack.pop?
+        @loop_inline_next_depth_stack.pop?
         @loop_phi_stack.pop?
       end
       break_info = @loop_break_info_stack.pop
@@ -67219,6 +67333,7 @@ module Adamas::HIR
       ctx.push_scope(ScopeKind::Loop)
       @loop_exit_stack << exit_block
       @loop_cond_stack << body_block # for infinite loop, `next` jumps back to body start
+      @loop_inline_next_depth_stack << @inline_next_stack.size
       @loop_phi_stack << phi_nodes
       @loop_break_info_stack << [] of {BlockId, Hash(String, ValueId)}
       pushed_inline = false
@@ -67233,6 +67348,7 @@ module Adamas::HIR
         @inline_loop_vars_stack.pop? if pushed_inline
         @loop_exit_stack.pop?
         @loop_cond_stack.pop?
+        @loop_inline_next_depth_stack.pop?
         @loop_phi_stack.pop?
       end
       break_info_loop = @loop_break_info_stack.pop
@@ -67913,6 +68029,7 @@ module Adamas::HIR
       ctx.push_scope(ScopeKind::Loop)
       @loop_exit_stack << exit_block
       @loop_cond_stack << cond_block
+      @loop_inline_next_depth_stack << @inline_next_stack.size
       @loop_phi_stack << phi_nodes
       @loop_break_info_stack << [] of {BlockId, Hash(String, ValueId)}
       @loop_break_value_stack << [] of {BlockId, ValueId}
@@ -67928,6 +68045,7 @@ module Adamas::HIR
         @inline_loop_vars_stack.pop? if pushed_inline
         @loop_exit_stack.pop?
         @loop_cond_stack.pop?
+        @loop_inline_next_depth_stack.pop?
         @loop_phi_stack.pop?
       end
       break_info = @loop_break_info_stack.pop
@@ -69748,7 +69866,12 @@ module Adamas::HIR
                end
         STDERR.puts "[DEBUG_NEXT] fn=#{ctx.function.name} cur_block=#{ctx.current_block} path=#{path} yield_depth=#{@inline_yield_block_body_depth}"
       end
-      if next_ctx = @inline_next_stack.last?
+      next_ctx = @inline_next_stack.last?
+      cond_block = @loop_cond_stack.last?
+      loop_inline_depth = @loop_inline_next_depth_stack.last? || -1
+      loop_is_lexically_inner = !!cond_block && loop_inline_depth >= @inline_next_stack.size
+
+      if next_ctx && !loop_is_lexically_inner
         next_value = if val_expr = node.value
                        lower_expr(ctx, val_expr)
                      else
@@ -69782,7 +69905,7 @@ module Adamas::HIR
         nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
         ctx.emit(nil_lit)
         return nil_lit.id
-      elsif cond_block = @loop_cond_stack.last?
+      elsif cond_block
         # Patch phi nodes with current variable values so the loop header
         # sees updated variables when we jump back from this block
         if phi_nodes = @loop_phi_stack.last?
@@ -87334,6 +87457,7 @@ module Adamas::HIR
       end
       @loop_exit_stack << exit_block
       @loop_cond_stack << incr_block
+      @loop_inline_next_depth_stack << @inline_next_stack.size
       @loop_phi_stack << incr_phi_nodes
       @loop_break_info_stack << [] of {BlockId, Hash(String, ValueId)}
       begin
@@ -87342,6 +87466,7 @@ module Adamas::HIR
         @inline_loop_vars_stack.pop? if pushed_inline
         @loop_exit_stack.pop?
         @loop_cond_stack.pop?
+        @loop_inline_next_depth_stack.pop?
         @loop_phi_stack.pop?
       end
       break_info = @loop_break_info_stack.pop
@@ -87504,6 +87629,7 @@ module Adamas::HIR
       end
       @loop_exit_stack << exit_block
       @loop_cond_stack << incr_block
+      @loop_inline_next_depth_stack << @inline_next_stack.size
       @loop_phi_stack << incr_phi_nodes
       @loop_break_info_stack << [] of {BlockId, Hash(String, ValueId)}
       begin
@@ -87512,6 +87638,7 @@ module Adamas::HIR
         @inline_loop_vars_stack.pop? if pushed_inline
         @loop_exit_stack.pop?
         @loop_cond_stack.pop?
+        @loop_inline_next_depth_stack.pop?
         @loop_phi_stack.pop?
       end
       break_info = @loop_break_info_stack.pop
@@ -87685,6 +87812,7 @@ module Adamas::HIR
       end
       @loop_exit_stack << exit_block
       @loop_cond_stack << incr_block
+      @loop_inline_next_depth_stack << @inline_next_stack.size
       @loop_phi_stack << incr_phi_nodes
       @loop_break_info_stack << [] of {BlockId, Hash(String, ValueId)}
       begin
@@ -87693,6 +87821,7 @@ module Adamas::HIR
         @inline_loop_vars_stack.pop? if pushed_inline
         @loop_exit_stack.pop?
         @loop_cond_stack.pop?
+        @loop_inline_next_depth_stack.pop?
         @loop_phi_stack.pop?
       end
       break_info = @loop_break_info_stack.pop
@@ -87890,6 +88019,7 @@ module Adamas::HIR
       end
       @loop_exit_stack << exit_block
       @loop_cond_stack << incr_block
+      @loop_inline_next_depth_stack << @inline_next_stack.size
       @loop_phi_stack << incr_phi_nodes
       @loop_break_info_stack << [] of {BlockId, Hash(String, ValueId)}
       begin
@@ -87898,6 +88028,7 @@ module Adamas::HIR
         @inline_loop_vars_stack.pop? if pushed_inline
         @loop_exit_stack.pop?
         @loop_cond_stack.pop?
+        @loop_inline_next_depth_stack.pop?
         @loop_phi_stack.pop?
       end
       break_info = @loop_break_info_stack.pop
@@ -88098,6 +88229,7 @@ module Adamas::HIR
       # and `break` jumps to exit_block. Without this, `next` emits `unreachable`.
       @loop_exit_stack << exit_block
       @loop_cond_stack << incr_block # next → increment → cond (NOT directly to cond)
+      @loop_inline_next_depth_stack << @inline_next_stack.size
       @loop_phi_stack << incr_phi_nodes
       @loop_break_info_stack << [] of {BlockId, Hash(String, ValueId)}
       begin
@@ -88106,6 +88238,7 @@ module Adamas::HIR
         @inline_loop_vars_stack.pop? if pushed_inline
         @loop_exit_stack.pop?
         @loop_cond_stack.pop?
+        @loop_inline_next_depth_stack.pop?
         @loop_phi_stack.pop?
       end
       break_info = @loop_break_info_stack.pop
@@ -88540,6 +88673,7 @@ module Adamas::HIR
       end
       @loop_exit_stack << exit_block
       @loop_cond_stack << incr_block
+      @loop_inline_next_depth_stack << @inline_next_stack.size
       @loop_phi_stack << incr_phi_nodes
       @loop_break_info_stack << [] of {BlockId, Hash(String, ValueId)}
       begin
@@ -88548,6 +88682,7 @@ module Adamas::HIR
         @inline_loop_vars_stack.pop? if pushed_inline
         @loop_exit_stack.pop?
         @loop_cond_stack.pop?
+        @loop_inline_next_depth_stack.pop?
         @loop_phi_stack.pop?
       end
       break_info = @loop_break_info_stack.pop
@@ -88911,6 +89046,7 @@ module Adamas::HIR
       end
       @loop_exit_stack << exit_block
       @loop_cond_stack << incr_block
+      @loop_inline_next_depth_stack << @inline_next_stack.size
       @loop_phi_stack << incr_phi_nodes
       @loop_break_info_stack << [] of {BlockId, Hash(String, ValueId)}
       begin
@@ -88919,6 +89055,7 @@ module Adamas::HIR
         @inline_loop_vars_stack.pop? if pushed_inline
         @loop_exit_stack.pop?
         @loop_cond_stack.pop?
+        @loop_inline_next_depth_stack.pop?
         @loop_phi_stack.pop?
       end
       break_info = @loop_break_info_stack.pop
@@ -89059,6 +89196,113 @@ module Adamas::HIR
       ctx.register_local(fallback_name, element_id)
     end
 
+    # Specialized Array#map lowerers inline a block body without going through
+    # the ordinary yield/proc corridor. Give block-local `next value` an
+    # iteration-result target; otherwise lower_next treats it as a return from
+    # the enclosing function and truncates every later map element.
+    private def lower_array_map_block_body(
+      ctx : LoweringContext,
+      block : Adamas::Compiler::Frontend::BlockNode,
+    ) : ValueId
+      return lower_body(ctx, block.body) unless contains_block_local_next?(block.body)
+
+      result_exit_block = ctx.create_block
+      incoming = [] of Tuple(BlockId, ValueId)
+      next_ctx = InlineNextContext.new(result_exit_block, incoming, TypeRef::VOID)
+
+      begin
+        @inline_next_stack << next_ctx
+        normal_result = lower_body(ctx, block.body)
+      ensure
+        @inline_next_stack.pop?
+      end
+
+      current_block = ctx.current_block
+      current_block_data = ctx.get_block(current_block)
+      normal_flows_to_result = current_block_data.terminator.is_a?(Unreachable) &&
+                               !block_has_raise_instruction?(current_block_data) &&
+                               !control_flow_dead_block?(ctx, current_block) &&
+                               !next_ctx.dead_blocks.includes?(current_block)
+      if normal_flows_to_result
+        incoming << {ctx.current_block, normal_result}
+        ctx.terminate(Jump.new(result_exit_block))
+      end
+
+      ctx.switch_to_block(result_exit_block)
+      if incoming.empty?
+        # The block has no path that produces an iteration value. Keep the
+        # synthetic merge block disconnected and classified as dead so the
+        # surrounding map lowerer cannot manufacture a continuation after a
+        # noreturn body merely because a `next` existed syntactically.
+        @control_flow_dead_blocks.add({ctx.function.id, result_exit_block})
+        nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+        ctx.emit(nil_lit)
+        return nil_lit.id
+      end
+      return incoming.first[1] if incoming.size == 1
+
+      phi_type = ctx.type_of(incoming.first[1])
+      i = 1
+      while i < incoming.size
+        value_type = ctx.type_of(incoming[i][1])
+        if phi_type == TypeRef::VOID
+          phi_type = value_type
+        elsif value_type != TypeRef::VOID && value_type != phi_type
+          phi_type = union_type_for_values(phi_type, value_type)
+        end
+        i += 1
+      end
+
+      if phi_type == TypeRef::VOID || phi_type == TypeRef::NIL
+        nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+        ctx.emit(nil_lit)
+        return nil_lit.id
+      end
+
+      coerced = [] of Tuple(BlockId, ValueId)
+      i = 0
+      while i < incoming.size
+        incoming_block = incoming[i][0]
+        incoming_value = incoming[i][1]
+        value_type = ctx.type_of(incoming_value)
+        if value_type != phi_type
+          if is_union_type?(phi_type)
+            variant_id = get_union_variant_id(phi_type, value_type)
+            if variant_id >= 0
+              wrap = UnionWrap.new(ctx.next_id, phi_type, incoming_value, variant_id)
+              ctx.emit_to_block(incoming_block, wrap)
+              incoming_value = wrap.id
+            end
+          elsif numeric_primitive?(value_type) && numeric_primitive?(phi_type)
+            cast = Cast.new(ctx.next_id, phi_type, incoming_value, phi_type, safe: false)
+            ctx.emit_to_block(incoming_block, cast)
+            incoming_value = cast.id
+          else
+            # Match ordinary branch-merge semantics for canonicalized tuple
+            # types such as Tuple(Int32) + Tuple(Int64) -> Tuple(Int32 | Int64).
+            incoming_value = coerce_tuple_into_block(
+              ctx,
+              incoming_block,
+              incoming_value,
+              value_type,
+              phi_type
+            ) || incoming_value
+          end
+        end
+        coerced << {incoming_block, incoming_value}
+        i += 1
+      end
+
+      phi = Phi.new(ctx.next_id, phi_type)
+      i = 0
+      while i < coerced.size
+        phi.add_incoming(coerced[i][0], coerced[i][1])
+        i += 1
+      end
+      ctx.emit(phi)
+      phi.id
+    end
+
     private def lower_array_map_intrinsic(
       ctx : LoweringContext,
       array_id : ValueId,
@@ -89092,8 +89336,13 @@ module Adamas::HIR
         ctx.register_type(index_get.id, source_element_type)
 
         # Lower block body to get transformed value
-        result_value = lower_body(ctx, block.body)
+        result_value = lower_array_map_block_body(ctx, block)
         ctx.pop_scope
+
+        # A fixed-size map whose current element cannot produce a value is
+        # itself noreturn. Do not lower later elements from the disconnected
+        # synthetic block and accidentally reclassify the expression as live.
+        break if control_flow_dead_block?(ctx, ctx.current_block)
 
         if result_value
           transformed_values << result_value
@@ -89168,11 +89417,12 @@ module Adamas::HIR
       ctx.register_type(index_get.id, element_type)
       bind_array_block_element_params(ctx, block, index_get.id, element_type, param_name)
 
-      result_value = lower_body(ctx, block.body)
+      result_value = lower_array_map_block_body(ctx, block)
       ctx.pop_scope
+      body_flows_to_increment = !control_flow_dead_block?(ctx, ctx.current_block)
 
       # Write to NEW array — use block's return type, not source element type
-      if result_value
+      if body_flows_to_increment && result_value
         result_element_type = ctx.type_of(result_value)
         # Use block result type for IndexSet (e.g. String, not Base)
         set_type = result_element_type
@@ -89190,15 +89440,19 @@ module Adamas::HIR
         ctx.emit(index_set)
       end
 
-      ctx.terminate_if_open(Jump.new(incr_block))
+      ctx.terminate_if_open(Jump.new(incr_block)) if body_flows_to_increment
 
       ctx.current_block = incr_block
-      one = Literal.new(ctx.next_id, TypeRef::INT32, 1_i64)
-      ctx.emit(one)
-      new_i = BinaryOperation.new(ctx.next_id, TypeRef::INT32, BinaryOp::Add, index_phi.id, one.id)
-      ctx.emit(new_i)
-      index_phi.add_incoming(incr_block, new_i.id)
-      ctx.terminate(Jump.new(cond_block))
+      if body_flows_to_increment
+        one = Literal.new(ctx.next_id, TypeRef::INT32, 1_i64)
+        ctx.emit(one)
+        new_i = BinaryOperation.new(ctx.next_id, TypeRef::INT32, BinaryOp::Add, index_phi.id, one.id)
+        ctx.emit(new_i)
+        index_phi.add_incoming(incr_block, new_i.id)
+        ctx.terminate(Jump.new(cond_block))
+      else
+        @control_flow_dead_blocks.add({ctx.function.id, incr_block})
+      end
 
       # Exit block: set size on new array and return it
       ctx.current_block = exit_block
@@ -89294,10 +89548,11 @@ module Adamas::HIR
       ctx.register_local(index_param_name, index_phi.id)
       ctx.register_type(index_phi.id, TypeRef::INT32)
 
-      result_value = lower_body(ctx, block.body)
+      result_value = lower_array_map_block_body(ctx, block)
       ctx.pop_scope
+      body_flows_to_increment = !control_flow_dead_block?(ctx, ctx.current_block)
 
-      if result_value
+      if body_flows_to_increment && result_value
         result_element_type = ctx.type_of(result_value)
         set_type = result_element_type
         if set_type.id == 0 || set_type == TypeRef::VOID || set_type == TypeRef::NIL
@@ -89311,15 +89566,19 @@ module Adamas::HIR
         ctx.emit(index_set)
       end
 
-      ctx.terminate_if_open(Jump.new(incr_block))
+      ctx.terminate_if_open(Jump.new(incr_block)) if body_flows_to_increment
 
       ctx.current_block = incr_block
-      one = Literal.new(ctx.next_id, TypeRef::INT32, 1_i64)
-      ctx.emit(one)
-      new_i = BinaryOperation.new(ctx.next_id, TypeRef::INT32, BinaryOp::Add, index_phi.id, one.id)
-      ctx.emit(new_i)
-      index_phi.add_incoming(incr_block, new_i.id)
-      ctx.terminate(Jump.new(cond_block))
+      if body_flows_to_increment
+        one = Literal.new(ctx.next_id, TypeRef::INT32, 1_i64)
+        ctx.emit(one)
+        new_i = BinaryOperation.new(ctx.next_id, TypeRef::INT32, BinaryOp::Add, index_phi.id, one.id)
+        ctx.emit(new_i)
+        index_phi.add_incoming(incr_block, new_i.id)
+        ctx.terminate(Jump.new(cond_block))
+      else
+        @control_flow_dead_blocks.add({ctx.function.id, incr_block})
+      end
 
       ctx.current_block = exit_block
       set_size = ArraySetSize.new(ctx.next_id, TypeRef::VOID, new_array.id, size_val.id)
@@ -90767,6 +91026,7 @@ module Adamas::HIR
       end
       @loop_exit_stack << exit_block
       @loop_cond_stack << incr_block
+      @loop_inline_next_depth_stack << @inline_next_stack.size
       @loop_phi_stack << phi_nodes
       @loop_break_info_stack << [] of {BlockId, Hash(String, ValueId)}
       begin
@@ -90775,6 +91035,7 @@ module Adamas::HIR
         @inline_loop_vars_stack.pop? if pushed_inline
         @loop_exit_stack.pop?
         @loop_cond_stack.pop?
+        @loop_inline_next_depth_stack.pop?
         @loop_phi_stack.pop?
       end
       break_info = @loop_break_info_stack.pop
@@ -92709,6 +92970,7 @@ module Adamas::HIR
                            if @loop_cond_stack.size > 0
                              yield_cont_block = ctx.create_block
                              @loop_cond_stack << yield_cont_block
+                             @loop_inline_next_depth_stack << @inline_next_stack.size
                              @loop_phi_stack << {} of String => HIR::Phi
                              @yield_cont_next_locals[yield_cont_block] = [] of {BlockId, Hash(String, ValueId)}
                              pushed_yield_loop = true
@@ -92718,6 +92980,7 @@ module Adamas::HIR
                            ensure
                              if pushed_yield_loop
                                @loop_cond_stack.pop?
+                               @loop_inline_next_depth_stack.pop?
                                @loop_phi_stack.pop?
                              end
                              @arena = old_arena
@@ -97828,6 +98091,7 @@ module Adamas::HIR
       # lowers as Return (proc semantics) and `break` as Unreachable.
       saved_loop_exit_stack = @loop_exit_stack
       saved_loop_cond_stack = @loop_cond_stack
+      saved_loop_inline_next_depth_stack = @loop_inline_next_depth_stack
       saved_loop_phi_stack = @loop_phi_stack
       saved_loop_break_info_stack = @loop_break_info_stack
       saved_loop_break_value_stack = @loop_break_value_stack
@@ -97837,6 +98101,7 @@ module Adamas::HIR
       saved_inline_yield_return_override_stack = @inline_yield_return_override_stack
       @loop_exit_stack = [] of BlockId
       @loop_cond_stack = [] of BlockId
+      @loop_inline_next_depth_stack = [] of Int32
       @loop_phi_stack = [] of Hash(String, Phi)
       @loop_break_info_stack = [] of Array({BlockId, Hash(String, ValueId)})
       @loop_break_value_stack = [] of Array({BlockId, ValueId})
@@ -97900,6 +98165,7 @@ module Adamas::HIR
       # Restore the caller's loop / inline-yield machinery.
       @loop_exit_stack = saved_loop_exit_stack
       @loop_cond_stack = saved_loop_cond_stack
+      @loop_inline_next_depth_stack = saved_loop_inline_next_depth_stack
       @loop_phi_stack = saved_loop_phi_stack
       @loop_break_info_stack = saved_loop_break_info_stack
       @loop_break_value_stack = saved_loop_break_value_stack
@@ -99317,11 +99583,13 @@ module Adamas::HIR
       # Save and isolate loop stacks
       saved_loop_exit_stack_pl = @loop_exit_stack
       saved_loop_cond_stack_pl = @loop_cond_stack
+      saved_loop_inline_next_depth_stack_pl = @loop_inline_next_depth_stack
       saved_loop_phi_stack_pl = @loop_phi_stack
       saved_loop_break_info_stack_pl = @loop_break_info_stack
       saved_loop_break_value_stack_pl = @loop_break_value_stack
       @loop_exit_stack = [] of BlockId
       @loop_cond_stack = [] of BlockId
+      @loop_inline_next_depth_stack = [] of Int32
       @loop_phi_stack = [] of Hash(String, Phi)
       @loop_break_info_stack = [] of Array({BlockId, Hash(String, ValueId)})
       @loop_break_value_stack = [] of Array({BlockId, ValueId})
@@ -99346,6 +99614,7 @@ module Adamas::HIR
         @inline_yield_block_body_depth = saved_block_body_depth_pl
         @loop_exit_stack = saved_loop_exit_stack_pl
         @loop_cond_stack = saved_loop_cond_stack_pl
+        @loop_inline_next_depth_stack = saved_loop_inline_next_depth_stack_pl
         @loop_phi_stack = saved_loop_phi_stack_pl
         @loop_break_info_stack = saved_loop_break_info_stack_pl
         @loop_break_value_stack = saved_loop_break_value_stack_pl
@@ -99820,11 +100089,13 @@ module Adamas::HIR
       # Save and isolate loop stacks — proc body cannot break/next to parent loops
       saved_loop_exit_stack = @loop_exit_stack
       saved_loop_cond_stack = @loop_cond_stack
+      saved_loop_inline_next_depth_stack = @loop_inline_next_depth_stack
       saved_loop_phi_stack = @loop_phi_stack
       saved_loop_break_info_stack = @loop_break_info_stack
       saved_loop_break_value_stack = @loop_break_value_stack
       @loop_exit_stack = [] of BlockId
       @loop_cond_stack = [] of BlockId
+      @loop_inline_next_depth_stack = [] of Int32
       @loop_phi_stack = [] of Hash(String, Phi)
       @loop_break_info_stack = [] of Array({BlockId, Hash(String, ValueId)})
       @loop_break_value_stack = [] of Array({BlockId, ValueId})
@@ -99877,6 +100148,7 @@ module Adamas::HIR
         @inline_yield_block_body_depth = saved_block_body_depth
         @loop_exit_stack = saved_loop_exit_stack
         @loop_cond_stack = saved_loop_cond_stack
+        @loop_inline_next_depth_stack = saved_loop_inline_next_depth_stack
         @loop_phi_stack = saved_loop_phi_stack
         @loop_break_info_stack = saved_loop_break_info_stack
         @loop_break_value_stack = saved_loop_break_value_stack
