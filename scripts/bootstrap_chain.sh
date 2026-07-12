@@ -119,10 +119,12 @@ cat > "$SMOKE_SRC" <<'EOF'
 puts 42
 EOF
 
-parse_time_l_real() {
+parse_time_real() {
   local logfile="$1"
-  # time -l prints "  N.NN real  N.NN user  N.NN sys" after child output
-  awk '$2 == "real" && $4 == "user" && $6 == "sys" { v = $1 } END { if (v != "") print v }' "$logfile"
+  # Portable time -p prints "real N.NN" and preserves the child exit status.
+  # macOS time -l performs a kern.clockrate sysctl after the child exits; in a
+  # sandbox that probe fails and changes an otherwise successful build to RC 1.
+  awk '$1 == "real" && NF >= 2 { v = $2 } END { if (v != "") print v }' "$logfile"
 }
 
 parse_time_l_max_rss_bytes() {
@@ -145,7 +147,7 @@ run_stage1_host() {
   local logfile="$2"
   (
     cd "$REPO_ROOT"
-    /usr/bin/time -l "$HOST_CRYSTAL" build "$SOURCE_REL" -o "$out_bin" --error-trace
+    /usr/bin/time -p "$HOST_CRYSTAL" build "$SOURCE_REL" -o "$out_bin" --error-trace
   ) >"$logfile" 2>&1
 }
 
@@ -155,28 +157,55 @@ run_stageN_selfhost() {
   local logfile="$3"
   (
     cd "$REPO_ROOT"
-    /usr/bin/time -l "$SCRIPT_DIR/run_safe.sh" "$compiler" "$TIMEOUT_SEC" "$MEM_MB" \
+    /usr/bin/time -p "$SCRIPT_DIR/run_safe.sh" "$compiler" "$TIMEOUT_SEC" "$MEM_MB" \
       "$SOURCE_REL" -o "$out_bin"
   ) >"$logfile" 2>&1
+}
+
+run_compiled_smoke() {
+  local binary="$1"
+  local marker="$2"
+  local runtime_log="$3"
+  local marker_count
+
+  if ! "$SCRIPT_DIR/run_safe.sh" "$binary" 10 512 >"$runtime_log" 2>&1; then
+    cat "$runtime_log"
+    return 1
+  fi
+  cat "$runtime_log"
+  marker_count="$(awk -v wanted="$marker" '
+    $0 == "=== STDOUT ===" { in_stdout = 1; next }
+    $0 == "=== STDERR ===" { in_stdout = 0 }
+    in_stdout && $0 == wanted { count += 1 }
+    END { print count + 0 }
+  ' "$runtime_log")"
+  if [[ "$marker_count" != "1" ]]; then
+    echo "error: smoke runtime marker mismatch: binary=$binary marker=$marker count=$marker_count" >&2
+    return 1
+  fi
 }
 
 run_smoke_plain() {
   local compiler="$1"
   local logfile="$2"
+  local binary="$OUT_DIR/_smoke_puts42.bin"
   (
     cd "$REPO_ROOT"
-    /usr/bin/time -l "$SCRIPT_DIR/run_safe.sh" "$compiler" 60 "$SMOKE_PLAIN_MEM_MB" \
-      "$SMOKE_SRC" -o "$OUT_DIR/_smoke_puts42.bin"
+    /usr/bin/time -p "$SCRIPT_DIR/run_safe.sh" "$compiler" 60 "$SMOKE_PLAIN_MEM_MB" \
+      "$SMOKE_SRC" -o "$binary" || exit $?
+    run_compiled_smoke "$binary" "42" "$OUT_DIR/_smoke_puts42.runtime.log"
   ) >"$logfile" 2>&1
 }
 
 run_smoke_noprelude() {
   local compiler="$1"
   local logfile="$2"
+  local binary="$OUT_DIR/_smoke_noprel.bin"
   (
     cd "$REPO_ROOT"
-    /usr/bin/time -l "$SCRIPT_DIR/run_safe.sh" "$compiler" 120 1024 \
-      "$NO_PRELUDE_ORACLE" --no-prelude -o "$OUT_DIR/_smoke_noprel.bin"
+    /usr/bin/time -p "$SCRIPT_DIR/run_safe.sh" "$compiler" 120 1024 \
+      "$NO_PRELUDE_ORACLE" --no-prelude -o "$binary" || exit $?
+    run_compiled_smoke "$binary" "noprelude_interp_ok" "$OUT_DIR/_smoke_noprel.runtime.log"
   ) >"$logfile" 2>&1
 }
 
@@ -222,7 +251,7 @@ for ((s = 1; s <= STAGES; s++)); do
     PREV="$OUT_BIN"
   fi
 
-  WALL_REAL="$(parse_time_l_real "$LOG_B" || true)"
+  WALL_REAL="$(parse_time_real "$LOG_B" || true)"
   RSS_B="$(parse_time_l_max_rss_bytes "$LOG_B" || true)"
   PEAK_MB="$(bytes_to_mb "$RSS_B")"
 
