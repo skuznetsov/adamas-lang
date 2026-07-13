@@ -11006,35 +11006,43 @@ module Adamas
           info = percent_literal_info(literal_text)
           advance
 
-          case info[:kind]
+          case info[0]
           when :word_array
-            words = percent_literal_words(info[:content])
+            words = percent_literal_words(info[1])
             build_percent_array_literal(words, token.span, as_symbols: false)
           when :symbol_array
-            words = percent_literal_words(info[:content])
+            words = percent_literal_words(info[1])
             build_percent_array_literal(words, token.span, as_symbols: true)
           else
-            value = percent_literal_unescape(info[:content])
+            value = percent_literal_unescape(info[1])
             slice = @string_pool.intern(value.to_slice)
             @arena.add_typed(StringNode.new(token.span, slice))
           end
         end
 
-        private def percent_literal_info(literal : String) : NamedTuple(kind: Symbol, content: String)
+        # Keep this return value as a positional tuple. Returning a NamedTuple
+        # from a self-hosted parser method can degrade the aggregate descriptor
+        # across the stage1 -> stage2 ABI boundary, causing a field lookup such
+        # as `info[:content]` to be typed as the first field (`kind`).
+        private def percent_literal_info(literal : String) : {Symbol, String}
           bytesize = literal.bytesize
-          return {kind: :string, content: literal} if bytesize < 3 || literal[0] != '%'
+          return {:string, literal} if bytesize < 3 || literal.byte_at(0) != '%'.ord.to_u8
 
           idx = 1
-          type_char = nil
+          type_byte = 0_u8
           if idx < bytesize
-            char = literal.byte_at(idx).chr
-            if char.ascii_letter?
-              type_char = char
+            candidate = literal.byte_at(idx)
+            if (candidate >= 'a'.ord.to_u8 && candidate <= 'z'.ord.to_u8) ||
+               (candidate >= 'A'.ord.to_u8 && candidate <= 'Z'.ord.to_u8)
+              type_byte = candidate
+              if type_byte >= 'A'.ord.to_u8 && type_byte <= 'Z'.ord.to_u8
+                type_byte = (type_byte + 32_u8).to_u8
+              end
               idx += 1
             end
           end
 
-          return {kind: :string, content: ""} if idx >= bytesize
+          return {:string, ""} if idx >= bytesize
 
           open_char = literal.byte_at(idx).chr
           closing_char = percent_closing_delimiter(open_char)
@@ -11044,19 +11052,18 @@ module Adamas
           content_length = 0 if content_length < 0
           content = content_length > 0 ? literal.byte_slice(idx, content_length) : ""
 
-          normalized_type = type_char ? type_char.downcase : nil
-          kind = case normalized_type
-                 when 'w'
+          kind = case type_byte
+                 when 'w'.ord.to_u8
                    :word_array
-                 when 'i'
+                 when 'i'.ord.to_u8
                    :symbol_array
                  else
                    :string
                  end
 
-          {kind: kind, content: content}
+          {kind, content}
         rescue
-          {kind: :string, content: literal}
+          {:string, literal}
         end
 
         private def percent_closing_delimiter(open_char : Char) : Char

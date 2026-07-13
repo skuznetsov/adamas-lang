@@ -25,7 +25,7 @@ private def infer_enum_class_method_types(source : String)
 
   analyzer = Semantic::Analyzer.new(program)
   analyzer.collect_symbols
-  name_result = analyzer.resolve_names
+  name_result = analyzer.resolve_names(defer_method_body_receiverless_candidates: true)
   engine = analyzer.infer_types(name_result.identifier_symbols)
 
   {program, analyzer, engine}

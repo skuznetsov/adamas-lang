@@ -17,6 +17,8 @@ fi
 STDOUT_TMP=$(mktemp /tmp/run_safe_stdout.XXXXXX)
 STDERR_TMP=$(mktemp /tmp/run_safe_stderr.XXXXXX)
 WATCHDOG_PID=""
+PID=""
+TARGET_PGID=""
 PASSTHROUGH_STDIO="${RUN_SAFE_PASSTHROUGH_STDIO:-0}"
 
 log_line() {
@@ -45,11 +47,17 @@ cleanup() {
   if [ -n "$WATCHDOG_PID" ]; then
     kill "$WATCHDOG_PID" 2>/dev/null || true
     wait "$WATCHDOG_PID" 2>/dev/null || true
+    WATCHDOG_PID=""
+  fi
+  if [ -n "$PID" ]; then
+    kill_child_briefly "$PID"
   fi
   rm -f "$STDOUT_TMP" "$STDERR_TMP"
 }
 trap cleanup EXIT
-trap 'exit 1' TERM
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 fd_count_for_pid() {
   local target_pid="$1"
@@ -80,12 +88,37 @@ fd_count_for_pid() {
 
 kill_child_briefly() {
   local target_pid="$1"
-  kill -9 "$target_pid" 2>/dev/null || true
+  local kill_target="$target_pid"
+  if [ -n "$TARGET_PGID" ] && [ "$TARGET_PGID" = "$target_pid" ]; then
+    kill_target="-$TARGET_PGID"
+  fi
+
+  # Give a nested run_safe wrapper a brief TERM window so its own EXIT trap can
+  # clean the separately-grouped target it supervises. Sandboxed macOS runners
+  # can deny pgrep, so the outer wrapper cannot rely on walking that inner tree.
+  if kill -0 "$target_pid" 2>/dev/null; then
+    kill -TERM "$target_pid" 2>/dev/null || true
+    local term_ticks=0
+    local term_limit=5
+    case "$BINARY" in
+      */run_safe.sh|run_safe.sh) term_limit=30 ;;
+    esac
+    while [ $term_ticks -lt $term_limit ]; do
+      break unless kill -0 "$target_pid" 2>/dev/null
+      sleep 0.1
+      term_ticks=$((term_ticks + 1))
+    done
+  fi
+  # Walk any survivors only after the graceful window. Killing an inner
+  # supervisor's target first would make its own cleanup lose ancestry.
+  kill_descendants "$target_pid"
+  kill -9 -- "$kill_target" 2>/dev/null || true
 
   local ticks=0
   while [ $ticks -lt 20 ]; do
-    if ! kill -0 "$target_pid" 2>/dev/null; then
+    if ! kill -0 -- "$kill_target" 2>/dev/null; then
       wait "$target_pid" 2>/dev/null || true
+      PID=""
       return 0
     fi
     sleep 0.1
@@ -98,18 +131,39 @@ kill_child_briefly() {
   return 0
 }
 
+kill_descendants() {
+  local parent_pid="$1"
+  local child_pid
+  for child_pid in $(pgrep -P "$parent_pid" 2>/dev/null || true); do
+    kill_descendants "$child_pid"
+    kill -9 "$child_pid" 2>/dev/null || true
+  done
+}
+
+# Give every supervised target its own group. Parent supervisors recurse over
+# descendants before killing, so nested target groups remain reachable without
+# sharing a kill group with their wrapper.
+set -m
 if [ "$PASSTHROUGH_STDIO" = "1" ]; then
   "$BINARY" "$@" <&0 >&1 2> "$STDERR_TMP" &
 else
   "$BINARY" "$@" > "$STDOUT_TMP" 2> "$STDERR_TMP" &
 fi
 PID=$!
+set +m
+# `set -m` creates the background target as the leader of a new process group.
+# Do not probe that fact through `ps`: sandboxed spec runners can deny `ps`,
+# silently disabling group cleanup exactly where nested supervisors need it.
+TARGET_PGID="$PID"
 RUN_SAFE_PID=$$
 
 (
   # Fire slightly after the normal monitor timeout. This watchdog is only a
   # backstop for blocked probes/waits, not the primary timeout path.
-  sleep $((TIMEOUT + 2))
+  # The sleep must not inherit the caller's capture pipes. Otherwise killing
+  # the watchdog shell leaves an orphan that keeps Process.run waiting until
+  # the full timeout.
+  sleep $((TIMEOUT + 2)) </dev/null >/dev/null 2>&1
   if kill -0 "$PID" 2>/dev/null; then
     FD_COUNT=$(fd_count_for_pid "$PID")
     RSS=$(ps -o rss= -p "$PID" 2>/dev/null | tr -d ' ')
@@ -128,6 +182,10 @@ while [ $HALF_SECS -lt $MAX_HALF_SECS ]; do
   if ! kill -0 $PID 2>/dev/null; then
     wait $PID
     EXIT=$?
+    # A successful parent may leave compiler workers or background children in
+    # its supervised process group. Reap the remainder before reporting the
+    # parent's status; otherwise they become invisible PPID=1 orphans.
+    kill_child_briefly "$PID"
     dump_captured_output
     if [ $EXIT -eq 139 ]; then log_line "[CRASH] Segfault (exit 139)"; fi
     if [ $EXIT -eq 134 ]; then log_line "[CRASH] Abort (exit 134)"; fi

@@ -1,0 +1,2 @@
+STDOUT.write("ADAMAS_PRODUCED_STAGE_OK\n".to_slice)
+STDOUT.flush

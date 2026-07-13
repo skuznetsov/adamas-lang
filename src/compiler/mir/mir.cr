@@ -1471,6 +1471,123 @@ module Adamas::MIR
     type_ref : TypeRef,
     descriptor : UnionDescriptor
 
+  # Single authoritative union carrier classification shared by HIR->MIR
+  # layout and LLVM lowering. Storage, header dispatch, and ownership are
+  # deliberately distinct: a nullable raw Pointer is pointer-sized storage,
+  # but it has neither an object type-id header nor managed ownership.
+  enum UnionStorageKind
+    Tagged
+    RawHeaderPointer
+    RawNullablePointer
+
+    def raw_storage? : Bool
+      self == RawHeaderPointer || self == RawNullablePointer
+    end
+
+    def runtime_header? : Bool
+      self == RawHeaderPointer
+    end
+
+    def managed? : Bool
+      self == RawHeaderPointer
+    end
+  end
+
+  record UnionStorageEntry,
+    type_ref : TypeRef,
+    kind : UnionStorageKind
+
+  def self.union_storage_from_entries(entries : ::Array(UnionStorageEntry)?, type_ref : TypeRef) : UnionStorageKind?
+    return nil unless entries
+    idx = 0
+    while idx < entries.size
+      entry = entries.unsafe_fetch(idx)
+      return entry.kind if entry.type_ref == type_ref
+      idx += 1
+    end
+    nil
+  end
+
+  def self.runtime_header_backed_type?(type : Type?) : Bool
+    return false unless type
+    kind = type.kind
+    kind == TypeKind::Reference || kind == TypeKind::Array
+  end
+
+  def self.raw_pointer_union_variant?(type : Type?, name : String) : Bool
+    name == "Pointer" || name.starts_with?("Pointer(") ||
+      (!!type && type.kind == TypeKind::Pointer)
+  end
+
+  private def self.union_variant_name_runtime_header_backed?(type_registry : TypeRegistry, name : String) : Bool
+    i = name.bytesize - 1
+    while i > 0
+      if name.byte_at(i) == ':'.ord && name.byte_at(i - 1) != ':'.ord
+        base_name = name[(i + 1)..]
+        return runtime_header_backed_type?(type_registry.get_by_name(base_name))
+      end
+      i -= 1
+    end
+
+    if paren_idx = name.index('(')
+      generic_base = name[0...paren_idx]
+      return runtime_header_backed_type?(type_registry.get_by_name(generic_base))
+    end
+    false
+  end
+
+  def self.union_storage_kind(type_registry : TypeRegistry, descriptor : UnionDescriptor) : UnionStorageKind
+    saw_header = false
+    saw_nil = false
+    raw_pointer_count = 0
+    variants = descriptor.variants
+    idx = 0
+    while idx < variants.size
+      variant = variants.unsafe_fetch(idx)
+      idx += 1
+
+      if variant.type_ref == TypeRef::NIL
+        saw_nil = true
+        next
+      end
+      next if variant.type_ref == TypeRef::VOID
+
+      type = type_registry.get(variant.type_ref)
+      if raw_pointer_union_variant?(type, variant.full_name)
+        # Descriptors are canonicalized before MIR registration. Count actual
+        # variants: duplicate or distinct pointer arms are both ambiguous and
+        # therefore remain tagged.
+        raw_pointer_count += 1
+      elsif runtime_header_backed_type?(type) ||
+            (!type && union_variant_name_runtime_header_backed?(type_registry, variant.full_name))
+        saw_header = true
+      else
+        return UnionStorageKind::Tagged
+      end
+
+      return UnionStorageKind::Tagged if saw_header && raw_pointer_count > 0
+    end
+
+    return UnionStorageKind::RawHeaderPointer if saw_header
+    return UnionStorageKind::RawNullablePointer if saw_nil && raw_pointer_count == 1
+    UnionStorageKind::Tagged
+  end
+
+  # Bootstrap-safe descriptor oracle. Generated stage2 has proven that reading
+  # UnionDescriptor values from Hash(TypeRef, UnionDescriptor) can corrupt the
+  # record even when key lookup succeeds; the append-only entry sidecar is the
+  # authoritative read path.
+  def self.union_descriptor_from_entries(entries : ::Array(UnionDescriptorEntry)?, type_ref : TypeRef) : UnionDescriptor?
+    return nil unless entries
+    idx = 0
+    while idx < entries.size
+      entry = entries.unsafe_fetch(idx)
+      return entry.descriptor if entry.type_ref == type_ref
+      idx += 1
+    end
+    nil
+  end
+
   # Wrap value into union (sets discriminator + stores payload)
   class UnionWrap < Value
     getter value : ValueId          # Value to wrap
@@ -2351,6 +2468,7 @@ module Adamas::MIR
     getter extern_globals : ::Hash(String, TypeRef)
     getter union_descriptors : ::Hash(TypeRef, UnionDescriptor)
     getter union_descriptor_entries : ::Array(UnionDescriptorEntry)
+    getter union_storage_entries : ::Array(UnionStorageEntry)
     getter module_type_refs : ::Set(TypeRef)
     property source_file : String?
     # Set during HIR->MIR lowering when any allocation is assigned MemoryStrategy::GC.
@@ -2372,6 +2490,7 @@ module Adamas::MIR
       @extern_globals = {} of String => TypeRef
       @union_descriptors = {} of TypeRef => UnionDescriptor
       @union_descriptor_entries = [] of UnionDescriptorEntry
+      @union_storage_entries = [] of UnionStorageEntry
       @module_type_refs = ::Set(TypeRef).new
       @symbol_names = [] of String
       @symbol_name_to_id = {} of String => Int32
@@ -2397,16 +2516,56 @@ module Adamas::MIR
         entry = @union_descriptor_entries.unsafe_fetch(idx)
         if entry.type_ref == type_ref
           @union_descriptor_entries[idx] = UnionDescriptorEntry.new(type_ref, descriptor)
+          set_union_storage_kind(type_ref, Adamas::MIR.union_storage_kind(@type_registry, descriptor))
           return
         end
         idx += 1
       end
       @union_descriptor_entries << UnionDescriptorEntry.new(type_ref, descriptor)
+      set_union_storage_kind(type_ref, Adamas::MIR.union_storage_kind(@type_registry, descriptor))
     end
 
     # Get union descriptor by type ref
     def get_union_descriptor(type_ref : TypeRef) : UnionDescriptor?
-      @union_descriptors[type_ref]?
+      Adamas::MIR.union_descriptor_from_entries(@union_descriptor_entries, type_ref)
+    end
+
+    def get_union_storage_kind(type_ref : TypeRef) : UnionStorageKind
+      Adamas::MIR.union_storage_from_entries(@union_storage_entries, type_ref) || UnionStorageKind::Tagged
+    end
+
+    # Refresh only after all variant types for the phase are registered. LLVM
+    # consumes this stable snapshot instead of reclassifying against a registry
+    # that can still grow during HIR lowering.
+    def refresh_union_storage_kinds : Nil
+      idx = 0
+      while idx < @union_descriptor_entries.size
+        entry = @union_descriptor_entries.unsafe_fetch(idx)
+        kind = Adamas::MIR.union_storage_kind(@type_registry, entry.descriptor)
+        set_union_storage_kind(entry.type_ref, kind)
+        if kind.raw_storage?
+          if union_type = @type_registry.get(entry.type_ref)
+            if union_type.kind.union?
+              union_type.size = TARGET_POINTER_BYTES_U64
+              union_type.alignment = TARGET_POINTER_ALIGN_U32
+            end
+          end
+        end
+        idx += 1
+      end
+    end
+
+    private def set_union_storage_kind(type_ref : TypeRef, kind : UnionStorageKind) : Nil
+      idx = 0
+      while idx < @union_storage_entries.size
+        entry = @union_storage_entries.unsafe_fetch(idx)
+        if entry.type_ref == type_ref
+          @union_storage_entries[idx] = UnionStorageEntry.new(type_ref, kind)
+          return
+        end
+        idx += 1
+      end
+      @union_storage_entries << UnionStorageEntry.new(type_ref, kind)
     end
 
     # Register a TypeRef as a module runtime value type.

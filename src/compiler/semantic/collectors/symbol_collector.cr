@@ -2368,8 +2368,13 @@ module Adamas
           table = current_table
           while table
             if symbol = table.lookup_local(type_name)
-              # If it's a ClassSymbol, it's not a generic parameter
-              return false if symbol.is_a?(ClassSymbol)
+              # Already-declared nominal types are not implicit generic
+              # parameters. Preserve aliases in the legacy generic-detection
+              # path because alias identity is part of existing inference
+              # contracts (for example HIR::TypeId).
+              return false if symbol.is_a?(ClassSymbol) ||
+                              symbol.is_a?(EnumSymbol) ||
+                              symbol.is_a?(ModuleSymbol)
             end
             table = table.parent
           end
@@ -2502,6 +2507,13 @@ module Adamas
             base = type_expr_name_from_expr(node.base_type)
             args = node.type_args.map { |arg_id| type_expr_name_from_expr(arg_id) }
             "#{base}(#{args.join(", ")})"
+          when Frontend::BinaryNode
+            left = type_expr_name_from_expr(node.left)
+            right = type_expr_name_from_expr(node.right)
+            operator = String.new(node.operator)
+            "#{left} #{operator} #{right}"
+          when Frontend::GroupingNode
+            "(#{type_expr_name_from_expr(node.expression)})"
           when Frontend::TypeofNode
             args = node.args.map { |arg_id| type_expr_name_from_expr(arg_id) }
             "typeof(#{args.join(", ")})"

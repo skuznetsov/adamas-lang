@@ -1501,7 +1501,7 @@ module Adamas::HIR
     getter variant_type_id : Int32
     getter union_type : TypeRef
 
-    def initialize(id : ValueId, @union_value : ValueId, @variant_type_id : Int32, @union_type : TypeRef = TypeRef::VOID)
+    def initialize(id : ValueId, @union_value : ValueId, @variant_type_id : Int32, @union_type : TypeRef)
       super(id, TypeRef::BOOL)
       @lifetime = LifetimeTag::StackLocal
     end
@@ -2360,8 +2360,16 @@ module Adamas::HIR
     end
 
     def remove_function(name : String) : Bool
-      func = @functions_by_name.delete(name)
+      # Snapshot the reference before mutating the Hash. Generated-stage V2
+      # represents Hash::Entry as a pointer into inline entry storage; Hash#delete
+      # clears that storage before its value-typed return is consumed, so using
+      # the delete result can observe a cleared (nil) value after the key was
+      # already removed. That split @functions from @functions_by_name and let
+      # later materialization append duplicate function rows.
+      func = @functions_by_name[name]?
       return false unless func
+
+      @functions_by_name.delete(name)
 
       @functions.delete(func)
 
@@ -2873,7 +2881,7 @@ module Adamas::HIR
     # entry in place, keeping one stable id.
     private def intern_kind_upgrade?(existing_key : UInt8, incoming_key : UInt8) : Bool
       return false if existing_key == incoming_key
-      if existing_key == 11_u8 # Generic placeholder
+      if existing_key == 11_u8                              # Generic placeholder
         return incoming_key == 1_u8 || incoming_key == 2_u8 # declared Class/Struct
       end
       existing_key == 1_u8 && incoming_key == 2_u8 # Class guess -> declared Struct

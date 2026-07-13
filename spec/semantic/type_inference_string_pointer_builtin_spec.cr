@@ -25,12 +25,12 @@ private def infer_types_for_string_pointer_builtin(source : String)
 
   analyzer = Semantic::Analyzer.new(program)
   analyzer.collect_symbols
-  name_result = analyzer.resolve_names
+  name_result = analyzer.resolve_names(defer_method_body_receiverless_candidates: true)
 
   engine = Semantic::TypeInferenceEngine.new(program, name_result.identifier_symbols, analyzer.global_context.symbol_table)
   engine.infer_types
 
-  {analyzer, engine}
+  {program, analyzer, engine}
 end
 
 describe Adamas::Compiler::Semantic::TypeInferenceEngine do
@@ -46,7 +46,7 @@ describe Adamas::Compiler::Semantic::TypeInferenceEngine do
       "abc".semantic_compare("abd")
     CRYSTAL
 
-    analyzer, engine = infer_types_for_string_pointer_builtin(source)
+    _, analyzer, engine = infer_types_for_string_pointer_builtin(source)
 
     analyzer.semantic_diagnostics.should be_empty
     analyzer.name_resolver_diagnostics.should be_empty
@@ -65,7 +65,7 @@ describe Adamas::Compiler::Semantic::TypeInferenceEngine do
       "abc".semantic_probe('b')
     CRYSTAL
 
-    analyzer, engine = infer_types_for_string_pointer_builtin(source)
+    _, analyzer, engine = infer_types_for_string_pointer_builtin(source)
 
     analyzer.semantic_diagnostics.should be_empty
     analyzer.name_resolver_diagnostics.should be_empty
@@ -83,7 +83,7 @@ describe Adamas::Compiler::Semantic::TypeInferenceEngine do
       "abc".matches?(Regex.new)
     CRYSTAL
 
-    analyzer, engine = infer_types_for_string_pointer_builtin(source)
+    _, analyzer, engine = infer_types_for_string_pointer_builtin(source)
 
     analyzer.semantic_diagnostics.should be_empty
     analyzer.name_resolver_diagnostics.should be_empty
@@ -92,33 +92,39 @@ describe Adamas::Compiler::Semantic::TypeInferenceEngine do
 
   it "binds String#each_char block params as Char" do
     source = <<-CRYSTAL
-      value = 0
       "ab".each_char do |char|
-        value = char.ord
+        char
       end
-      value
     CRYSTAL
 
-    analyzer, engine = infer_types_for_string_pointer_builtin(source)
+    program, analyzer, engine = infer_types_for_string_pointer_builtin(source)
 
     analyzer.semantic_diagnostics.should be_empty
     analyzer.name_resolver_diagnostics.should be_empty
     engine.diagnostics.should be_empty
+
+    call = program.arena[program.roots.last].as(Frontend::CallNode)
+    block = program.arena[call.block.not_nil!].as(Frontend::BlockNode)
+    engine.context.get_type(block.body.last).to_s.should eq("Char")
   end
 
   it "binds String#each_char_with_index block params as Char and Int32" do
     source = <<-CRYSTAL
-      total = 0
       "ab".each_char_with_index do |char, index|
-        total = total + char.ord + index
+        char
+        index
       end
-      total
     CRYSTAL
 
-    analyzer, engine = infer_types_for_string_pointer_builtin(source)
+    program, analyzer, engine = infer_types_for_string_pointer_builtin(source)
 
     analyzer.semantic_diagnostics.should be_empty
     analyzer.name_resolver_diagnostics.should be_empty
     engine.diagnostics.should be_empty
+
+    call = program.arena[program.roots.last].as(Frontend::CallNode)
+    block = program.arena[call.block.not_nil!].as(Frontend::BlockNode)
+    engine.context.get_type(block.body[0]).to_s.should eq("Char")
+    engine.context.get_type(block.body[1]).to_s.should eq("Int32")
   end
 end

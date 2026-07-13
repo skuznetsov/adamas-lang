@@ -4,12 +4,16 @@ require "../../src/compiler/frontend/parser"
 require "../../src/compiler/frontend/lexer"
 
 class Adamas::HIR::AstToHir
-  def __test_record_phase0_body_infer_walk(
+  def __test_infer_concrete_return_type_from_body(
     node : Adamas::Compiler::Frontend::DefNode,
     resolved_arena : Adamas::Compiler::Frontend::ArenaLike,
     node_expr_id : Adamas::Compiler::Frontend::ExprId? = nil,
-  ) : Adamas::Compiler::Semantic::DefIdentity?
-    record_phase0_body_infer_walk(node, resolved_arena, node_expr_id)
+  ) : Adamas::HIR::TypeRef?
+    infer_concrete_return_type_from_body(
+      node,
+      preferred_arena: resolved_arena,
+      node_expr_id: node_expr_id,
+    )
   end
 
   def __test_phase0_body_infer_counts : Hash(Adamas::Compiler::Semantic::DefIdentity, Int32)
@@ -68,16 +72,24 @@ describe Adamas::HIR::AstToHir do
         main_arenas: [arena_a, arena_b],
       )
 
-      id_a = converter.__test_record_phase0_body_infer_walk(def_a, arena_a, expr_id_a)
-      id_b = converter.__test_record_phase0_body_infer_walk(def_b, arena_b, expr_id_b)
+      previous = ENV["ADAMAS_PHASE0_METRICS"]?
+      ENV["ADAMAS_PHASE0_METRICS"] = "1"
+      begin
+        converter.__test_infer_concrete_return_type_from_body(def_a, arena_a, expr_id_a)
+        converter.__test_infer_concrete_return_type_from_body(def_b, arena_b, expr_id_b)
 
-      id_a.should_not be_nil
-      id_b.should eq(id_a)
-      id_a.not_nil!.arena_id.should eq(arena_a.object_id.to_u64)
-
-      counts = converter.__test_phase0_body_infer_counts
-      counts.size.should eq(1)
-      counts[id_a.not_nil!].should eq(2)
+        counts = converter.__test_phase0_body_infer_counts
+        counts.size.should eq(1)
+        identity = counts.keys.first
+        identity.arena_id.should eq(arena_a.object_id.to_u64)
+        counts[identity].should eq(2)
+      ensure
+        if previous
+          ENV["ADAMAS_PHASE0_METRICS"] = previous
+        else
+          ENV.delete("ADAMAS_PHASE0_METRICS")
+        end
+      end
     end
 
     it "normalizes caller arenas away from the canonical def identity" do
@@ -112,16 +124,24 @@ describe Adamas::HIR::AstToHir do
         main_arenas: [arena_a, arena_b, arena_c],
       )
 
-      canonical_id = converter.__test_record_phase0_body_infer_walk(def_a, arena_a, expr_id_a)
-      wrong_caller_id = converter.__test_record_phase0_body_infer_walk(def_b, arena_c, expr_id_b)
+      previous = ENV["ADAMAS_PHASE0_METRICS"]?
+      ENV["ADAMAS_PHASE0_METRICS"] = "1"
+      begin
+        converter.__test_infer_concrete_return_type_from_body(def_a, arena_a, expr_id_a)
+        converter.__test_infer_concrete_return_type_from_body(def_b, arena_c, expr_id_b)
 
-      canonical_id.should_not be_nil
-      wrong_caller_id.should eq(canonical_id)
-      wrong_caller_id.not_nil!.arena_id.should eq(arena_a.object_id.to_u64)
-
-      counts = converter.__test_phase0_body_infer_counts
-      counts.size.should eq(1)
-      counts[canonical_id.not_nil!].should eq(2)
+        counts = converter.__test_phase0_body_infer_counts
+        counts.size.should eq(1)
+        identity = counts.keys.first
+        identity.arena_id.should eq(arena_a.object_id.to_u64)
+        counts[identity].should eq(2)
+      ensure
+        if previous
+          ENV["ADAMAS_PHASE0_METRICS"] = previous
+        else
+          ENV.delete("ADAMAS_PHASE0_METRICS")
+        end
+      end
     end
   end
 end

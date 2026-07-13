@@ -128,7 +128,7 @@ module Adamas::HIR
     # Cached analysis results
     @escape_summary : EscapeSummary?
     @taint_analyzer : TaintAnalyzer?
-    @effect_provider : MethodEffectProvider?
+    @effect_provider : Module?
 
     # Type size estimates (in bytes) - would come from type system in real impl
     TYPE_SIZE_ESTIMATES = {
@@ -191,7 +191,7 @@ module Adamas::HIR
       @function : Function,
       @config : MemoryConfig = MemoryConfig.balanced,
       type_info : TypeInfoProvider? = nil,
-      @effect_provider : MethodEffectProvider? = nil
+      @effect_provider : Module? = nil
     )
       @result = MemoryStrategyResult.new
       @type_info = type_info
@@ -373,7 +373,7 @@ module Adamas::HIR
     def assign_memory_strategies(
       config : MemoryConfig = MemoryConfig.balanced,
       type_info : TypeInfoProvider? = nil,
-      effect_provider : MethodEffectProvider? = nil
+      effect_provider : Module? = nil
     ) : MemoryStrategyResult
       assigner = MemoryStrategyAssigner.new(self, config, type_info, effect_provider)
       assigner.assign

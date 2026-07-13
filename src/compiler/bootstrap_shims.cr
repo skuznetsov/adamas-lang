@@ -32,4 +32,17 @@ module Adamas::Compiler::BootstrapEnv
   def self.enabled?(key : String) : Bool
     !get?(key).nil?
   end
+
+  # Keep the CLI's MIR policy and LLVM's emission policy on one bounded value.
+  # Parallel worker emission is an explicit opt-in; an absent, malformed, or
+  # non-positive override must therefore select the serial path.
+  def self.llvm_worker_count : Int32
+    raw = get?("ADAMAS_LLVM_WORKERS")
+    return 1 unless raw
+
+    requested = raw.to_i?
+    return 1 unless requested && requested > 0
+    return 8 if requested > 8
+    requested.to_i32
+  end
 end

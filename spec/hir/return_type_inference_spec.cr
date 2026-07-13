@@ -15,8 +15,9 @@ private def create_converter(source : String)
   program = parser.parse_program
   arena = parser.arena
 
-  sources_by_arena = {arena => source} of Adamas::Compiler::Frontend::ArenaLike => String
-  paths_by_arena = {arena => "(test)"} of Adamas::Compiler::Frontend::ArenaLike => String
+  arena_id = arena.object_id.to_u64
+  sources_by_arena = {arena_id => source}
+  paths_by_arena = {arena_id => "(test)"}
 
   converter = Adamas::HIR::AstToHir.new(arena, "(test)", sources_by_arena, paths_by_arena)
   {converter, program, arena}
@@ -35,7 +36,6 @@ class Adamas::HIR::AstToHir
 end
 
 describe Adamas::HIR::AstToHir do
-
   describe "Return Type Inference - Explicit Annotations" do
     it "infers return type from explicit annotation" do
       source = <<-CRYSTAL
@@ -235,21 +235,35 @@ describe Adamas::HIR::AstToHir do
         module IntContainer
           extend Container(Int32)
         end
+
+        IntContainer.value
       CRYSTAL
 
       converter, program, arena = create_converter(source)
+      main_exprs = [] of UInt64
       program.roots.each do |root_id|
         node = arena[root_id]
         if node.is_a?(Adamas::Compiler::Frontend::ModuleNode)
           converter.register_module(node)
+        else
+          main_exprs << root_id.index.to_u64
         end
       end
 
-      # After monomorphization, IntContainer.value should return Int32
-      ret_type = converter.test_function_return_type("IntContainer.value")
-      type_name = converter.test_type_name(ret_type)
-      # Should be Int32 or at least not VOID
-      type_name.should_not eq("Void")
+      program.roots.each do |root_id|
+        node = arena[root_id]
+        converter.lower_module(node) if node.is_a?(Adamas::Compiler::Frontend::ModuleNode)
+      end
+      converter.lower_main(main_exprs)
+
+      main = converter.module.function_by_name("__adamas_main")
+      main.should_not be_nil
+      value_call = main.not_nil!.blocks.flat_map(&.instructions).find do |instruction|
+        call = instruction.as?(Adamas::HIR::Call)
+        call && call.method_name.includes?("value")
+      end
+      value_call.should_not be_nil
+      converter.test_type_name(value_call.not_nil!.type).should eq("Int32")
     end
   end
 

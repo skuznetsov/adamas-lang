@@ -47,20 +47,27 @@ module Adamas::HIR
     # Track value definitions
     @definitions : Hash(ValueId, Value)
 
-    @effect_provider : MethodEffectProvider?
+    @effect_provider : Module?
     @param_by_id : Hash(ValueId, Value)
+    @param_index_by_id : Hash(ValueId, Int32)
+    @param_lifetimes : Array(LifetimeTag)
 
     def initialize(
       @function : Function,
       @type_info : TypeInfoProvider? = nil,
-      @effect_provider : MethodEffectProvider? = nil
+      @effect_provider : Module? = nil,
     )
       @summary = EscapeSummary.new(@function.params.size)
       @worklist = Deque(ValueId).new
       @users = Hash(ValueId, Array(ValueId)).new
       @definitions = Hash(ValueId, Value).new
       @param_by_id = Hash(ValueId, Value).new
-      @function.params.each { |p| @param_by_id[p.id] = p }
+      @param_index_by_id = Hash(ValueId, Int32).new
+      @param_lifetimes = Array.new(@function.params.size, LifetimeTag::Unknown)
+      @function.params.each_with_index do |param, index|
+        @param_by_id[param.id] = param
+        @param_index_by_id[param.id] = index
+      end
     end
 
     # Run escape analysis on the function
@@ -156,10 +163,10 @@ module Adamas::HIR
         value.lifetime = LifetimeTag::StackLocal
       end
 
-      # Parameters start as Unknown (could be anything)
-      @function.params.each do |param|
-        param.lifetime = LifetimeTag::Unknown
-      end
+      # Function#params reconstructs immutable parameter descriptors on demand,
+      # so mutable analysis state must be keyed by stable ValueId/index instead
+      # of being stored on a transient Parameter object.
+      @param_lifetimes.fill(LifetimeTag::Unknown)
     end
 
     private def seed_escape_points
@@ -217,18 +224,15 @@ module Adamas::HIR
               end
             end
           end
-
         when FieldSet
           # If object escapes, value escapes too
           obj_lifetime = get_lifetime(value.object)
           if obj_lifetime.escapes_more_than?(LifetimeTag::StackLocal)
             mark_escape(value.value, obj_lifetime)
           end
-
         when IndexSet
           # Value escapes into container
           mark_escape(value.value, LifetimeTag::ArgEscape)
-
         when PointerStore
           # Raw pointer store: stored value escapes through the pointer.
           # Conservative HeapEscape because pointers typically reference
@@ -275,11 +279,9 @@ module Adamas::HIR
       when Copy
         # Copy propagates escape
         mark_escape(user.id, lifetime)
-
       when Phi
         # Phi merges escapes
         mark_escape(user.id, lifetime)
-
       when FieldSet
         # If we're setting a field on an escaping object, the object escapes more
         if source.id == user.value
@@ -289,20 +291,16 @@ module Adamas::HIR
             mark_escape(user.object, lifetime)
           end
         end
-
       when Call
         # If this value is returned from a call, it inherits caller's escape
         # (handled in summary-based inter-proc analysis)
         nil
-
       when UnionWrap
         # If the source value escapes, the union wrapping it escapes too
         mark_escape(user.id, lifetime)
-
       when UnionUnwrap
         # If the source union escapes, the unwrapped value escapes too
         mark_escape(user.id, lifetime)
-
       when MakeClosure
         # Already handled in seeding
         nil
@@ -314,12 +312,10 @@ module Adamas::HIR
       case value
       when Copy
         mark_escape(value.source, lifetime)
-
       when Phi
         value.incoming.each do |(_, val)|
           mark_escape(val, lifetime)
         end
-
       when Allocate
         # If allocation escapes, its initializer args should be analyzed
         # (they become part of the escaping object)
@@ -328,11 +324,9 @@ module Adamas::HIR
             mark_escape(arg, LifetimeTag::ArgEscape)
           end
         end
-
       when UnionWrap
         # If a union-wrapped value escapes, the original value must too
         mark_escape(value.value, lifetime)
-
       when UnionUnwrap
         # If unwrapped value escapes, the source union must too
         mark_escape(value.union_value, lifetime)
@@ -341,10 +335,9 @@ module Adamas::HIR
 
     private def mark_escape(value_id : ValueId, tag : LifetimeTag)
       # Check if it's a parameter (O(1) hash lookup)
-      param = @param_by_id[value_id]?
-      if param
-        if tag.escapes_more_than?(param.lifetime)
-          param.lifetime = tag
+      if param_index = @param_index_by_id[value_id]?
+        if tag.escapes_more_than?(@param_lifetimes[param_index])
+          @param_lifetimes[param_index] = tag
           @worklist << value_id
         end
         return
@@ -366,16 +359,15 @@ module Adamas::HIR
     private def mark_escape_boundary(
       value_id : ValueId,
       tag : LifetimeTag,
-      visited : Set(ValueId)? = nil
+      visited : Set(ValueId)? = nil,
     ) : Nil
       visited ||= Set(ValueId).new
       return if visited.includes?(value_id)
       visited.add(value_id)
 
-      param = @param_by_id[value_id]?
-      if param
-        if tag.escapes_more_than?(param.lifetime)
-          param.lifetime = tag
+      if param_index = @param_index_by_id[value_id]?
+        if tag.escapes_more_than?(@param_lifetimes[param_index])
+          @param_lifetimes[param_index] = tag
         end
         return
       end
@@ -403,8 +395,9 @@ module Adamas::HIR
 
     private def get_lifetime(value_id : ValueId) : LifetimeTag
       # Check parameters first (O(1) hash lookup)
-      param = @param_by_id[value_id]?
-      return param.lifetime if param
+      if param_index = @param_index_by_id[value_id]?
+        return @param_lifetimes[param_index]
+      end
 
       # Then definitions
       @definitions[value_id]?.try(&.lifetime) || LifetimeTag::Unknown
@@ -454,8 +447,8 @@ module Adamas::HIR
 
     private def build_summary
       # Record parameter escapes
-      @function.params.each_with_index do |param, idx|
-        @summary.param_escapes[idx] = param.lifetime
+      @param_lifetimes.each_with_index do |lifetime, idx|
+        @summary.param_escapes[idx] = lifetime
       end
 
       # Check if return value aliases any parameters
@@ -521,9 +514,9 @@ module Adamas::HIR
           result << id
         end
       end
-      @function.params.each do |param|
-        if param.lifetime.escapes_more_than?(LifetimeTag::StackLocal)
-          result << param.id
+      @param_index_by_id.each do |param_id, index|
+        if @param_lifetimes[index].escapes_more_than?(LifetimeTag::StackLocal)
+          result << param_id
         end
       end
       result
@@ -534,7 +527,7 @@ module Adamas::HIR
   class Function
     def analyze_escapes(
       type_info : TypeInfoProvider? = nil,
-      effect_provider : MethodEffectProvider? = nil
+      effect_provider : Module? = nil,
     ) : EscapeSummary
       analyzer = EscapeAnalyzer.new(self, type_info, effect_provider)
       analyzer.analyze

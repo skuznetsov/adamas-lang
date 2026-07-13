@@ -297,7 +297,19 @@ module Adamas
         end
       end
 
+      # Reusable zero-growth target for codegen-stabilizing trace calls when
+      # explicit trace output is disabled.
+      private class Stage2DebugSink < IO
+        def read(slice : Bytes) : Int32
+          0
+        end
+
+        def write(slice : Bytes) : Nil
+        end
+      end
+
       def initialize(@args : Array(String))
+        @stage2_debug_sink = Stage2DebugSink.new
       end
 
       private def semantic_shadow_enabled? : Bool
@@ -318,13 +330,19 @@ module Adamas
       end
 
       private def stage2_debug(msg : String, io : IO = STDERR) : Nil
-        # V2 stage2 stabilizer: this unconditional io.puts is required for stage2
-        # to reach HIR compilation. Empty body or conditional variants cause EOF/SIGBUS.
-        # NOT a runtime effect — verified by GC.disable (no change) and runtime flag
-        # (flag=true still fails). The stabilization is at V2's CODE GENERATION level:
-        # having io.puts msg in the body changes what V2 emits at inlined call sites.
-        # Likely RTA method discovery or inlining layout effect.
-        io.puts msg
+        # Keep the unconditional IO#puts call shape used by the stage2 codegen
+        # stabilizer, but do not contaminate the injected user-facing streams.
+        # Existing stage2 trace flags and the general stderr trace flag route
+        # the same line to the requested stream.
+        trace_io = stage2_debug_output_enabled? ? io : @stage2_debug_sink
+        trace_io.puts msg
+      end
+
+      private def stage2_debug_output_enabled? : Bool
+        env_enabled?("STAGE2_DEBUG") ||
+          env_enabled?("STAGE2_BOOTSTRAP_TRACE") ||
+          env_enabled?("ADAMAS_STAGE2_DEBUG") ||
+          env_enabled?("ADAMAS_TRACE_STDERR")
       end
 
       private def debug_cli_block_snapshot(
@@ -1205,7 +1223,8 @@ module Adamas
       {% end %}
 
       def run(*, out_io : IO = STDOUT, err_io : IO = STDERR) : Int32
-        # stage2_debug is unconditional (required for stage2 stability — see method comment)
+        # stage2_debug keeps an unconditional IO#puts shape but is externally
+        # visible only under an explicit stage2 trace flag (see method comment).
         bootstrap_trace_puts "[S2_RUN] start args=#{@args.size}"; STDERR.flush
         log_codepath_status("cli", "run", "taken", "CLI", "args=#{@args.size}")
         @args.each_with_index do |arg, i|
@@ -3162,7 +3181,7 @@ module Adamas
           timings["mir_funcs"] = mir_module.functions.size.to_f if options.stats
 
           # Optimize MIR — deferred to LLVM workers when parallel (saves ~700ms)
-          workers_available = (BootstrapEnv.get?("ADAMAS_LLVM_WORKERS").try(&.to_i?) || System.cpu_count).clamp(1, 8) > 1
+          workers_available = BootstrapEnv.llvm_worker_count > 1
           if options.mir_opt && !workers_available
             log_codepath_status("cli.mir", "mir_opt_serial", "taken", "CLI")
             # Serial fallback: optimize here when no parallel workers
@@ -5042,10 +5061,11 @@ module Adamas
           enum_nodes << {node, arena}
           pending_annotations.clear
         when Frontend::ConstantNode
-          unless flattened_nested_root_line?(node.span, source)
+          nested_root = collect_main_exprs && flattened_nested_root_line?(node.span, source)
+          unless nested_root
             constant_exprs << {expr_id, arena}
           end
-          if collect_main_exprs && !flattened_nested_root_line?(node.span, source)
+          if collect_main_exprs && !nested_root
             packed_main_expr = (arena_index.to_u64 << 32) | expr_id.index.to_u64
             main_exprs << packed_main_expr
           end
@@ -5254,8 +5274,10 @@ module Adamas
           expand_top_level_macro_for(node, arena, arena_index, source, macro_origin_path, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, depth, paths_by_arena)
         when Frontend::AssignNode
           target = arena[node.target]
-          nested_root = flattened_nested_root_line?(node.span, source)
-          if target.is_a?(Frontend::ConstantNode) && !nested_root
+          nested_root = collect_main_exprs && flattened_nested_root_line?(node.span, source)
+          constant_target = target.is_a?(Frontend::ConstantNode) ||
+                            (target.is_a?(Frontend::IdentifierNode) && constant_identifier_name?(target.name))
+          if constant_target && !nested_root
             constant_exprs << {expr_id, arena}
           end
           if collect_main_exprs && !nested_root
@@ -7917,8 +7939,13 @@ module Adamas
             inventory.record(Semantic::CompileShadowDeclarationKind::Constants, String.new(node.name), origin)
           when Frontend::AssignNode
             target = arena[node.target]
-            if target.is_a?(Frontend::ConstantNode)
+            case target
+            when Frontend::ConstantNode
               inventory.record(Semantic::CompileShadowDeclarationKind::Constants, String.new(target.name), origin)
+            when Frontend::IdentifierNode
+              if constant_identifier_name?(target.name)
+                inventory.record(Semantic::CompileShadowDeclarationKind::Constants, String.new(target.name), origin)
+              end
             end
           end
           i += 1
@@ -7927,6 +7954,13 @@ module Adamas
         inventory
       ensure
         @macro_text_vars = saved_macro_text_vars.not_nil!
+      end
+
+      private def constant_identifier_name?(name : Slice(UInt8)) : Bool
+        return false if name.empty?
+
+        first = name[0]
+        first >= 'A'.ord.to_u8 && first <= 'Z'.ord.to_u8
       end
 
       private def shadow_collector_declaration_origin(

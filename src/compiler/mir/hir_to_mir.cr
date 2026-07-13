@@ -3342,7 +3342,7 @@ module Adamas
           # arithmetic scale by 16 instead of pointer size.
           alignment = pointer_word_align_u32
           total_size = pointer_word_bytes_u64
-          unless all_ref_union_descriptor?(descriptor)
+          unless @mir_module.get_union_storage_kind(mir_type_ref).raw_storage?
             max_variant_size = 0
             descriptor.variants.each do |variant|
               size = variant.size
@@ -3489,6 +3489,7 @@ module Adamas
             mir_type.add_field(ivar.name, field_type, ivar.offset.to_u32)
           end
         end
+        @mir_module.refresh_union_storage_kinds
       end
 
       # Register enum types so the LLVM backend maps them to i32 instead of ptr.
@@ -3962,63 +3963,11 @@ module Adamas
         {elem_size, elem_align}
       end
 
-      private def all_ref_union_descriptor?(descriptor : UnionDescriptor) : Bool
-        descriptor.variants.all? do |variant|
-          next true if variant.type_ref == TypeRef::NIL || variant.type_ref == TypeRef::VOID
-          type = @mir_module.type_registry.get(variant.type_ref)
-          if type
-            runtime_header_backed_union_variant?(type)
-          else
-            # Variant type not in registry — possibly an ivar-qualified type name
-            # like "Adamas::HIR::AstToHir::class_name:String". Extract the base
-            # type after the last single colon (not part of ::) and check whether
-            # it carries a runtime type header.
-            variant_name_is_runtime_header_backed?(variant.full_name)
-          end
-        end
-      end
-
-      # Raw-pointer union ABI is only valid when each non-nil variant carries its
-      # own runtime type_id in an object header. Pointer-sized payload alone is not
-      # sufficient: heap-allocated structs/tuples are pointer-backed but their body
-      # starts with user fields, not a dispatch header.
-      private def runtime_header_backed_union_variant?(type : Type?) : Bool
-        return false unless type
-        # References and arrays have runtime type_id headers.
-        # Pointers are also stored as raw pointers in V2's ABI and can participate
-        # in all-ref unions (dispatched by null check or type_id if wrapped).
-        type.kind.reference? || type.kind.array? || type.kind.pointer?
-      end
-
-      # Check if a variant type name represents a runtime-header-backed heap object by extracting
-      # the base type from an ivar-qualified name like "ClassName::ivar_name:TypeName".
-      private def variant_name_is_runtime_header_backed?(name : String) : Bool
-        # 1. Check for ivar-qualified names like "ClassName::ivar:TypeName"
-        i = name.bytesize - 1
-        while i > 0
-          if name.byte_at(i) == ':'.ord && name.byte_at(i - 1) != ':'.ord
-            base_name = name[(i + 1)..]
-            base_type = @mir_module.type_registry.get_by_name(base_name)
-            return runtime_header_backed_union_variant?(base_type) if base_type
-            return false
-          end
-          i -= 1
-        end
-        # 2. For generic instantiations (Array(String), Set(UInt32), Hash(K,V), etc.),
-        #    look up the base class name. Generic classes are reference types with
-        #    runtime headers — their instantiations inherit this property.
-        paren_idx = name.index('(')
-        if paren_idx
-          generic_base = name[0...paren_idx]
-          base_type = @mir_module.type_registry.get_by_name(generic_base)
-          return runtime_header_backed_union_variant?(base_type) if base_type
-        end
-        false
-      end
-
       private def finalize_pointer_backed_union_layouts : Nil
-        @mir_module.union_descriptors.each do |type_ref, descriptor|
-          next unless all_ref_union_descriptor?(descriptor)
+        @mir_module.refresh_union_storage_kinds
+        @mir_module.union_descriptor_entries.each do |entry|
+          type_ref = entry.type_ref
+          next unless @mir_module.get_union_storage_kind(type_ref).raw_storage?
           next unless mir_type = @mir_module.type_registry.get(type_ref)
           next unless mir_type.kind.union?
 
@@ -5744,7 +5693,7 @@ module Adamas
           # Loading them as tagged union struct {i32, [2 x i32]} reads garbage.
           if field_mir_type != TypeRef::POINTER
             if fd_check = @mir_module.get_union_descriptor(field_mir_type)
-              if all_ref_union_descriptor?(fd_check)
+              if Adamas::MIR.union_storage_kind(@mir_module.type_registry, fd_check).raw_storage?
                 field_mir_type = TypeRef::POINTER
               end
             elsif field_mir_type_info = @mir_module.type_registry.get(field_mir_type)
@@ -5784,12 +5733,12 @@ module Adamas
                         # Only adjust if the actual field is NOT an all-ref union (those
                         # are already stored as ptr and don't need offset adjustment).
                         actual_descriptor = @mir_module.get_union_descriptor(found_field.type_ref)
-                        if actual_descriptor && !all_ref_union_descriptor?(actual_descriptor)
+                        if actual_descriptor && !Adamas::MIR.union_storage_kind(@mir_module.type_registry, actual_descriptor).raw_storage?
                           # Only adjust when the FieldGet type is ptr-backed (all-ref union
                           # or plain reference). If the FieldGet type is ALSO a non-all-ref
                           # union, the +4 adjustment would cause a double-unwrap.
                           field_descriptor = @mir_module.get_union_descriptor(field_mir_type)
-                          field_is_allref = field_descriptor ? all_ref_union_descriptor?(field_descriptor) : true
+                          field_is_allref = field_descriptor ? Adamas::MIR.union_storage_kind(@mir_module.type_registry, field_descriptor).raw_storage? : true
                           if field_is_allref
                             if Adamas::LayoutProbe.enabled?
                               probe_field_event("lower_field_get.payload4", "field-get", "consumer",
@@ -7527,20 +7476,15 @@ module Adamas
                 # Pointer(T) variants are excluded: they have no header.
                 branch_header_backed =
                   if branch_desc = @mir_module.get_union_descriptor(branch_ret)
-                    branch_desc.variants.all? do |bv|
-                      next true if bv.type_ref == TypeRef::NIL || bv.type_ref == TypeRef::VOID
-                      bt = @mir_module.type_registry.get(bv.type_ref)
-                      !!(bt && (bt.kind.reference? || bt.kind.array?))
-                    end
+                    Adamas::MIR.union_storage_kind(@mir_module.type_registry, branch_desc).runtime_header?
                   else
-                    bt = @mir_module.type_registry.get(branch_ret)
-                    !!(bt && (bt.kind.reference? || bt.kind.array?))
+                    Adamas::MIR.runtime_header_backed_type?(@mir_module.type_registry.get(branch_ret))
                   end
                 if branch_header_backed
                   target_desc.variants.each do |v|
                     next if v.type_ref == TypeRef::NIL || v.type_ref == TypeRef::VOID
                     vt = @mir_module.type_registry.get(v.type_ref)
-                    if vt && (vt.kind.reference? || vt.kind.array?)
+                    if Adamas::MIR.runtime_header_backed_type?(vt)
                       wrap_variant_id = v.type_id
                       break
                     end
@@ -7611,7 +7555,9 @@ module Adamas
         generic_union_ref = nil.as(TypeRef?)
         if old_candidates.empty? && recv_desc.kind == HIR::TypeKind::Generic && recv_desc.name.starts_with?("Union(")
           inner_name = recv_desc.name[6..-2] # Strip "Union(" and ")"
-          @mir_module.union_descriptors.each do |ref, desc|
+          @mir_module.union_descriptor_entries.each do |entry|
+            ref = entry.type_ref
+            desc = entry.descriptor
             if desc.name == inner_name
               # Found matching union descriptor — build candidates from it
               desc.variants.each do |variant|
@@ -7770,7 +7716,7 @@ module Adamas
         recv_mir = convert_type(recv_type)
         is_allref = if is_union_type
                       if desc = @mir_module.get_union_descriptor(recv_mir)
-                        all_ref_union_descriptor?(desc)
+                        Adamas::MIR.union_storage_kind(@mir_module.type_registry, desc).runtime_header?
                       else
                         false
                       end
@@ -8366,6 +8312,21 @@ module Adamas
           # reached through a narrower IO::FileDescriptor call without reviving
           # ambiguous overloads like <<$Char vs <<$String.
           if arg_count
+            # Canonical arity aliases are emitted for every typed overload.
+            # Prefer the exact alias before fuzzy family matching: a call such
+            # as `write$Slice(UInt8)` must resolve to `write$arity1` even when
+            # sibling typed overloads make the family scan ambiguous.
+            arity_alias = String.build(current.bytesize + 1 + base_method.bytesize + 7) do |io|
+              io << current
+              io << '#'
+              io << base_method
+              io << "$arity"
+              io << arg_count
+            end
+            if arity_func = @mir_module.get_function(arity_alias)
+              return arity_func if arity_func.params.size == arg_count + 1
+            end
+
             # Use class index + pre-computed prefix (avoids O(N) full scan + GC from interpolation)
             instance_prefix = String.build(current.bytesize + 1 + base_method.bytesize) do |io|
               io << current; io << '#'; io << base_method
@@ -9391,7 +9352,7 @@ module Adamas
       private def get_union_variant_id(concrete_type : TypeRef, union_type : TypeRef? = nil) : Int32
         # Look up from union descriptor if available (authoritative source)
         if union_type
-          if descriptor = @mir_module.union_descriptors[union_type]?
+          if descriptor = @mir_module.get_union_descriptor(union_type)
             descriptor.variants.each do |variant|
               if variant.type_ref == concrete_type
                 return variant.type_id
@@ -9421,11 +9382,12 @@ module Adamas
             end
           end
         end
-        # Fallback: Nil is variant 1, other concrete types are variant 0
+        # Descriptor-free fallback follows the runtime discriminator convention:
+        # Nil is zero and non-nil variants use their global MIR type id.
         if concrete_type == TypeRef::NIL
-          1
-        else
           0
+        else
+          concrete_type.id.to_i32
         end
       end
 
@@ -9683,11 +9645,17 @@ module Adamas
         # reference types (String, Array), and nil. All map to LLVM "ptr".
         src_ptr_backed = src_type == TypeRef::POINTER ||
                          (src_hir_type.id >= HIR::TypeRef::FIRST_USER_TYPE &&
-                          @mir_module.type_registry.get(src_type).try { |t| t.kind.pointer? || t.kind.reference? || t.kind.array? } == true) ||
+                          @mir_module.type_registry.get(src_type).try { |t|
+                            kind = t.kind
+                            kind == TypeKind::Pointer || kind == TypeKind::Reference || kind == TypeKind::Array
+                          } == true) ||
                          src_hir_type == HIR::TypeRef::NIL || src_hir_type == HIR::TypeRef::STRING
         dst_ptr_backed = dst_type == TypeRef::POINTER ||
                          (dst_hir_type.id >= HIR::TypeRef::FIRST_USER_TYPE &&
-                          @mir_module.type_registry.get(dst_type).try { |t| t.kind.pointer? || t.kind.reference? || t.kind.array? } == true) ||
+                          @mir_module.type_registry.get(dst_type).try { |t|
+                            kind = t.kind
+                            kind == TypeKind::Pointer || kind == TypeKind::Reference || kind == TypeKind::Array
+                          } == true) ||
                          dst_hir_type == HIR::TypeRef::NIL || dst_hir_type == HIR::TypeRef::STRING
 
         kind = if src_ptr_backed && int_like.call(dst_hir_type)
@@ -9838,13 +9806,13 @@ module Adamas
           end
         end
 
-        # All-ref unions (for example `Base | Nil`) are lowered as nullable raw
-        # pointers, so their runtime type_id must be recovered through
-        # UnionTypeIdGet instead of treating the union value itself as a plain
-        # object pointer load.
+        # Every raw-storage union uses UnionTypeIdGet. RawHeaderPointer reads an
+        # object header; RawNullablePointer maps null/non-null without a header.
+        # Tagged unions continue through the explicit discriminator path below.
         if mir_val_type && is_union_type?(mir_val_type)
           if union_desc = @mir_module.get_union_descriptor(mir_val_type)
-            if all_ref_union_descriptor?(union_desc)
+            storage_kind = Adamas::MIR.union_storage_kind(@mir_module.type_registry, union_desc)
+            if storage_kind.raw_storage?
               union_type_id = builder.emit(MIR::UnionTypeIdGet.new(builder.next_id, obj))
               return type_id_matches.call(union_type_id)
             end
@@ -9858,7 +9826,7 @@ module Adamas
             has_ref_payload = union_desc.variants.any? do |variant|
               next false if variant.type_ref == TypeRef::NIL || variant.type_ref == TypeRef::VOID
               variant_desc = @mir_module.type_registry.get(variant.type_ref)
-              variant_desc && runtime_header_backed_union_variant?(variant_desc)
+              variant_desc && Adamas::MIR.runtime_header_backed_type?(variant_desc)
             end
 
             if has_nil_variant && has_ref_payload
@@ -10296,7 +10264,7 @@ module Adamas
         result_type = convert_type(unwrap.type)
         if union_hir_type = @hir_value_types[unwrap.union_value]?
           union_mir_type = convert_type(union_hir_type)
-          if descriptor = @mir_module.union_descriptors[union_mir_type]?
+          if descriptor = @mir_module.get_union_descriptor(union_mir_type)
             variant : UnionVariantDescriptor? = nil
             variant_idx = 0
             variants = descriptor.variants
@@ -10310,7 +10278,7 @@ module Adamas
             end
             if variant
               result_type = variant.type_ref
-              if nested = @mir_module.union_descriptors[result_type]?
+              if nested = @mir_module.get_union_descriptor(result_type)
                 nested_variant : UnionVariantDescriptor? = nil
                 nested_idx = 0
                 nested_variants = nested.variants
@@ -10337,7 +10305,7 @@ module Adamas
           STDERR.puts "[UNION_UNWRAP] missing hir type for union_value=#{unwrap.union_value} unwrap_type=#{unwrap.type} result_type=#{result_type.id}"
         end
         if ENV.has_key?("DEBUG_UNION_UNWRAP")
-          if descriptor = @mir_module.union_descriptors[result_type]?
+          if descriptor = @mir_module.get_union_descriptor(result_type)
             STDERR.print "[UNION_UNWRAP] union_value="
             STDERR.print unwrap.union_value
             STDERR.print " unwrap_type="
@@ -10669,7 +10637,16 @@ module Adamas
         # Element stride must come from pointer type (Pointer(T)), not value type.
         # Value type can be alias/wrapper (e.g. Hash::Entry vs Entry) and produce
         # wrong GEP scaling.
-        elem_type = pointer_element_mir_type(@hir_value_types[store.pointer]?) || get_arg_type(store.value)
+        pointer_elem_type = pointer_element_mir_type(@hir_value_types[store.pointer]?)
+        # Pointer(Void) deliberately has no storage element type.  Once HIR has
+        # selected that arm as the explicit raw-byte store fallback, stride and
+        # field ABI must come from the value being written (e.g. ptr[0] = i32),
+        # not MIR::Void (which would produce a zero-byte GEP).
+        elem_type = if pointer_elem_type && pointer_elem_type != TypeRef::VOID
+                      pointer_elem_type
+                    else
+                      get_arg_type(store.value)
+                    end
         lib_struct_indexed_memcpy = false
 
         if idx = store.index
@@ -11027,7 +11004,7 @@ module Adamas
           return true if mir_type_info.kind.reference? || mir_type_info.kind.array?
           if mir_type_info.kind.union?
             if desc = @mir_module.get_union_descriptor(mir_type_ref)
-              return all_ref_union_descriptor?(desc)
+              return Adamas::MIR.union_storage_kind(@mir_module.type_registry, desc).managed?
             end
           end
         end

@@ -6,14 +6,19 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STAGE_DIR="${1:-/tmp/adamas_bootstrap_stages}"
 CORPUS="${2:-$ROOT_DIR/regression_tests/bootstrap_semantic_corpus.cr}"
 OUT_DIR="${3:-/tmp/adamas_bootstrap_ir}"
+STAGE_COUNT="${BOOTSTRAP_COMPARE_STAGE_COUNT:-5}"
 
-stages=(s1_bootstrap s2b s3b s4b s5b)
+all_stages=(s1_bootstrap s2b s3b s4b s5b)
+stages=()
 kinds=(hir mir ll)
 
 usage() {
   cat <<'USAGE'
 Usage:
   scripts/compare_bootstrap_stages.sh [stage-dir] [corpus.cr] [out-dir]
+
+Environment:
+  BOOTSTRAP_COMPARE_STAGE_COUNT  compare the first N stages, 2..5 (default: 5)
 
 Expected stage artifacts in stage-dir:
   s1_bootstrap, s2b, s3b, s4b, s5b
@@ -27,6 +32,14 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   usage
   exit 0
 fi
+
+if [[ ! "$STAGE_COUNT" =~ ^[2-5]$ ]]; then
+  echo "error: BOOTSTRAP_COMPARE_STAGE_COUNT must be an integer from 2 through 5" >&2
+  exit 2
+fi
+for ((idx = 0; idx < STAGE_COUNT; idx++)); do
+  stages+=("${all_stages[$idx]}")
+done
 
 if [[ ! -d "$STAGE_DIR" ]]; then
   echo "error: stage dir not found: $STAGE_DIR" >&2
@@ -74,4 +87,4 @@ for stage in "${stages[@]:1}"; do
   done
 done
 
-echo "SEMANTIC_EQ: S1..S5 ok corpus=$CORPUS out=$OUT_DIR"
+echo "SEMANTIC_EQ: ${stages[*]} ok corpus=$CORPUS out=$OUT_DIR"

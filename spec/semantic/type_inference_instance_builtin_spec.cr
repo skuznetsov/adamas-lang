@@ -25,7 +25,7 @@ private def infer_types_for_instance_builtin(source : String)
 
   analyzer = Semantic::Analyzer.new(program)
   analyzer.collect_symbols
-  name_result = analyzer.resolve_names
+  name_result = analyzer.resolve_names(defer_method_body_receiverless_candidates: true)
 
   engine = Semantic::TypeInferenceEngine.new(program, name_result.identifier_symbols, analyzer.global_context.symbol_table)
   engine.infer_types

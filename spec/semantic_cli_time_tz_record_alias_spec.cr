@@ -1,5 +1,8 @@
 require "spec"
 require "../src/compiler/cli"
+require "./semantic_cli_helpers"
+
+include SemanticCliSpecHelpers
 
 private def with_temp_semantic_compile_project(files : Hash(String, String), &)
   dir = File.join(Dir.tempdir, "semantic_compile_cli_#{Random::Secure.hex(6)}")
@@ -33,9 +36,9 @@ end
 describe Adamas::Compiler::CLI do
   it "keeps semantic compile prepass green for stdlib record union aliases inside class-owned module reopens" do
     with_temp_semantic_compile_project({
-      "main.cr" => <<-'CRYSTAL',
-        require "/Users/sergey/Projects/Crystal/adamas_repo/src/stdlib/object/properties"
-        require "/Users/sergey/Projects/Crystal/adamas_repo/src/stdlib/macros"
+      "main.cr" => <<-CRYSTAL,
+        require #{File.expand_path("../src/stdlib/object/properties", __DIR__).inspect}
+        require #{File.expand_path("../src/stdlib/macros", __DIR__).inspect}
 
         struct Object
         end

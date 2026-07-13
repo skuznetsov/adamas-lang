@@ -57,12 +57,12 @@ module Adamas::HIR
 
     # Optional: type info provider for cycle detection
     @type_info : TypeInfoProvider?
-    @effect_provider : MethodEffectProvider?
+    @effect_provider : Module?
 
     def initialize(
       @function : Function,
       @type_info : TypeInfoProvider? = nil,
-      @effect_provider : MethodEffectProvider? = nil
+      @effect_provider : Module? = nil
     )
       @cyclic_types = Set(String).new
       @worklist = Deque(ValueId).new
@@ -86,7 +86,7 @@ module Adamas::HIR
     def initialize(
       @function : Function,
       @cyclic_types : Set(String),
-      @effect_provider : MethodEffectProvider? = nil
+      @effect_provider : Module? = nil
     )
       @type_info = nil
       @worklist = Deque(ValueId).new

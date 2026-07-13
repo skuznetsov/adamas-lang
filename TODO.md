@@ -1,6 +1,132 @@
-# Crystal V2 Bootstrap TODO
+# Adamas Bootstrap TODO
 
-Updated: 2026-07-09 (session-27c: deep stub census split the recurring symptom
+Updated: 2026-07-13 (constructor call identity closed; Arena union index floor open).
+
+The latest generated-stage constructor-routing defect is CLOSED at its
+call-shape transport root. Named arguments reached allocator materialization as
+only a boolean flag, so overloads with the same positional types could not be
+distinguished by parameter name. In `Set(T)`, that allowed the protected
+`using_hash` initializer to replace the public `initial_capacity` initializer.
+Allocator generation now carries the exact named-argument names through eager,
+pending, and lazy materialization and includes them in `.new` compatibility.
+An order-adversarial HIR spec places the protected overload first and proves
+that `Set(T).new(initial_capacity: 7)` selects the public body.
+
+CURRENT EVIDENCE: `spec/hir/ast_to_hir_spec.cr` passes 235 examples with zero
+failures/errors and two existing pending examples. A fresh host s1 and its
+generated s2 both build successfully. The generated LLVM contains no exact
+bare `$ExprId` type and routes `Set(String/UInt32).new(Int32)` to the matching
+public `initialize(Int32)` bodies. This closes constructor call identity only;
+s2b is still NOT accepted.
+
+CURRENT FLOOR: the fresh s2 compiler aborts while compiling the minimal
+`stage2_io_puts_bare_oracle.cr` consumer because the generated compiler lacks
+the specialized optional index operation for the
+`AstArena | PageArena | VirtualArena` family. The explicit fail-loud symbol is
+the union's `#[]?` operation. Treat this as a separate union method
+materialization/routing problem; do not weaken the fail-loud backend or add an
+untyped fallback.
+
+NEXT: add a phase-local spec that reproduces the exact Arena-union optional
+index demand, determine where its owner/type arguments are lost, and repair the
+earliest transport boundary. Rebuild s2 from the same source fingerprint and
+rerun the minimal consumer before widening to the produced-stage matrix. Do not
+start s3b until s2b passes the existing structural and runtime gates.
+
+Previous update: 2026-07-12 (current bootstrap audit and produced-stage boundary).
+
+The previous `Array#find` abort/stub floor advanced, and the successor
+`br i1 null` floor is CLOSED at its authority-transport root. Generated HIR for
+`Hash(Void, Void)#any?$block` and `Range(Int32, Int32)#bsearch$block` contained
+valid `Yield` instructions, but `lower_method` discarded each source
+parameter's `is_block` bit when it created the HIR `Parameter`. `lower_yield`
+therefore emitted no explicit target, and HIR-to-MIR tried to rediscover the
+callback through self-host-sensitive Proc descriptors and String suffix logic.
+The finalized target lowered to `const_nil`, then LLVM emitted `br i1 null`.
+
+The fix keeps a parallel `param_info_is_blocks` lane in `lower_method`, passes
+the bit to `Function#add_param`, and records the marked function parameter on
+each HIR `Yield`. Fresh produced HIR now has `%1 [block]` and
+`yield via %1`; the old invalid LLVM branch is no longer reached. Host HIR is
+green at 194 examples, 0 failures, 2 pending. A fresh host s1 and s1-produced s2
+both build successfully. IMPORTANT: s2b is still NOT accepted. Both the
+reference Array-find/next fixture and the TypeRef Set threshold fixture now
+advance to a shared `Trace/BPT trap` (exit 133) before target LLVM emission.
+The old `lower_main`-tail attribution is now refuted. A fresh retained s2 reaches
+the caller-side `pass3 after lower_main call` marker and exits 0 at
+`ADAMAS_STOP_AFTER_LOWER_MAIN`; all stop gates through HIR flush, type refresh,
+RTA, final HIR, MIR registration, MIR prepare/body lowering, and final MIR also
+exit 0. The uninterrupted default-worker and workers=1 paths still trap with
+exit 133 before the first observable LLVM-entry marker. These early-return
+gates are potentially perturbing in a self-hosted compiler, so the current
+frontier is the post-MIR-to-LLVM-entry corridor, not yet a specific statement or
+return ABI. `ADAMAS_NO_EXIT_FLUSH=1` does not move the floor, refuting the
+synthetic STDOUT/STDERR fall-through flush as the trigger.
+LLDB localization is currently unavailable because this machine cannot find
+`debugserver`.
+
+REJECTED CURRENT-LEVEL ROUTES: preserving an included-module body silently
+selected unresolved generic `Enumerable(T)` semantics and was reverted;
+parameter-only `@value_map` recovery did not move the floor and was reverted;
+MIR-side `$block` recovery through both `String#ends_with?` and direct ASCII
+suffix checks still produced `target=nil` and was reverted. These falsifiers
+establish that late rediscovery is the wrong ownership boundary; HIR must carry
+the callback identity explicitly.
+
+TEST/ORACLE HARDENING: `compare_bootstrap_stages.sh` can compare only the first
+two stages before s3 exists. Its normalizer no longer collapses all SSA ids,
+generated callback/cell ids, typed ids, or numeric constants into one token;
+those substitutions could declare different def-use graphs equivalent. The
+normalizer now removes path noise only, with focused specs. `run_safe.sh` no
+longer leaves its watchdog holding captured pipes, but its nested-supervisor
+process-tree spec remains genuinely RED: a descendant heartbeat continues after
+the outer wrapper exits. Process-group and single-process `setsid` experiments
+were falsified and reverted; do not claim the full suite green until a real
+session supervisor/descendant cleanup mechanism closes this gate.
+
+NEXT: add one non-perturbing owner-edge/falsifier around the post-MIR-to-LLVM
+entry corridor; do not continue lower-main marker churn or infer a root from a
+stop flag that changes control flow. Then run the entire produced-stage
+capability matrix and strict
+s1_bootstrap-to-s2b HIR/MIR/LLVM comparison. Do not start s3b until s2b passes
+those gates.
+
+Updated: 2026-07-10 (session-28: typed-pointer preservation is VERIFIED, while
+the next produced-stage crash is still OPEN. `Pointer(T).null` was lowered as a
+cast to bare `Pointer`, so a Kqueue-shaped `pointerof(ts)` / null branch could
+manufacture a pointer union and lose the concrete pointee type. Static member
+lowering now resolves and interns the full `Pointer(T)` descriptor. Host HIR
+guards cover `pointerof`, nested `Pointer(T).null`, their phi merge, and the
+Kqueue shape; a generic `Hash(K, V)` pointer-ivar guard requires specialized
+`Pointer(Hash::Entry(String, Nil))` plus `PointerLoad`, and rejects a synthesized
+`Pointer#[]` call. The central MIR union-storage classifier and its ABI/backend
+specs remain the representation contract.
+
+REJECTED ROUTES: globally collapsing pointer unions by erased runtime
+representation changed valid typed-pointer/header semantics and made
+`Hash(String, Nil)#get_entry` degrade to bare `Pointer`; it was reverted.
+DefNode/arena sidecars (including atomic paired registration and append-only
+variants) perturbed self-compilation into recursive `resolve_type_name` stack
+overflow and were reverted. Name-cache early return and exact lookup-key cache
+transport variants survived host specs and fresh self-builds but did not change
+the untraced produced-stage failure; all of those production changes and their
+unit helpers were reverted.
+
+CURRENT FLOOR: a fresh stage2 self-build exits 0, then compiling even the
+no-prelude generic pointer-ivar fixture exits 139 in
+`DefNode#params -> build_param_infos -> function_param_infos ->
+seed_function_param_caches -> prime_param_caches_for_discovered_def`, reached
+from `process_pending_lower_functions / lower_missing_call_targets`. An LLDB
+conditional breakpoint decoded the failing requested/target name as bare
+`[]$Int32`; its DefNode is null-like at the parameter read. Built-in lookup
+diagnostics report branch `unknown`, and the mangled-prefix scan is not entered.
+NEXT: trace where the owner is lost while producing/enqueuing this bare operator
+demand. Treat the null-like DefNode as a downstream registry symptom; do not add
+another stub, DefNode sidecar, base-name cache heuristic, or stdlib workaround.
+The produced-stage bootstrap spec is intentionally red at this floor and is the
+durable regression gate. Prev below.)
+
+Previous update: 2026-07-09 (session-27c: deep stub census split the recurring symptom
 into a fail-loud backend funnel plus multiple upstream roots. One root is now
 CLOSED: specialized literal/dynamic `Array#map` and `map_with_index` lowered a
 user block without an `InlineNextContext`, so block-local `next value` became a
@@ -9850,6 +9976,42 @@ StaticArray-by-value FIELD store fix (2026-06-16, SHIPPED — a clean #4-adjacen
    names as demanded, or whether they should remain virtual/demand-local until a
    real callsite asks for that concrete owner.
 
+### Session 27: repeated "missing stub" roots (LM-672/673, 2026-07-09)
+
+The `__crystal_block_proc_51` link failure exposed two upstream state-supply
+bugs. Neither root was a missing-stub policy gap:
+
+1. `HIR::Module#remove_function` trusted the value returned by `Hash#delete`.
+   Generated V2 borrows inline `Hash::Entry` storage; `delete_impl` clears that
+   storage before consuming the value-typed return, so the key disappeared but
+   the returned `Function?` became nil. The stale row remained in `@functions`
+   while `@functions_by_name` lost it. Re-materialization then produced duplicate
+   callers, RTA followed the last row, and HIR-to-MIR kept the first row with
+   pruned block-proc targets. The bounded fix snapshots the Function through a
+   non-mutating lookup before deleting the key.
+2. Entry boxes survived branch-local snapshots by name. A terminating branch
+   boxed `matching_type_ids : Set(UInt32)`; the fallthrough later assigned
+   `Array(UInt32)` to the same source name. The stale name-only box swallowed
+   the assignment, skipped the new local binding, and forced
+   `Array(String)#<<$String` in host HIR. A mismatched box whose owner local is no
+   longer visible is now discarded before creating the fallthrough binding.
+
+Verified bounded signals: exact HIR registry insert/lookup/remove/re-add
+contract passes; early-return captured-local HIR and runtime contract passes;
+filtered stage2 has one `Array(String)#to_s` body, zero dangling block-proc
+FuncPointers, and compiles/links both the Array-to-s reducer and the tuple
+destructure reducer. Residual: the tuple binary exits 0 with no output instead
+of `65`/`3`, and the Array-to-s binary reaches the explicit
+`Crystal.trace(Symbol, String, UInt64, Int32, &block)` abort stub. Treat these as
+new runtime/value-supply floors. Do not restore a stub or materialization
+allowlist until the first missing semantic value is localized.
+
+Systemic follow-up: audit the small set of compiler `Hash#delete` calls that
+consume the returned value (`file_loader`, LSP maps, block captures, type-cache
+buckets). Pointer-backed structs need a real copy-on-read/borrow contract; the
+registry ordering fix is intentionally bounded and does not claim the global
+Hash::Entry value ABI is solved.
+
 ## Stop Conditions
 
 - Do not run `s3b+` until generated `s2b` passes plain/no-prelude smokes and
@@ -9870,6 +10032,57 @@ Architecture target:
 
 Current short-term track: bootstrap containment plus fast no-prelude oracle
 coverage, not a full compile-path switch.
+
+### Session 28: `Array#uniq` large-branch resolver/materialization split (LM-675, 2026-07-12)
+
+The previous `Array(T)#uniq` floor is now split into two independently measured
+transactions.
+
+Closed structural slice:
+
+1. Bare included-module identifiers now use recursive module AST fallback after
+   registry fast paths, matching explicit-receiver calls.
+2. Deferred module lookup no longer returns its `DefNode`/arena through
+   captured assignments inside `Set#each`; it uses ordered Array collection and
+   an indexed loop.
+3. Fresh generated s2 HIR has real `Array(T)#to_set` and `Set(T)#to_a` bodies and
+   no `Local<Void>` or abort stub for `to_set`.
+
+Active successor:
+
+- generated `Hash(K, Nil)#upsert` loses every expression after its first
+  non-void nested materialization;
+- 16-element `Array#uniq` branches are correct;
+- 17-element UInt32 returns an empty result and 17-element pointer-backed
+  TypeRef segfaults because insertion/size supply is absent;
+- Array, scalar, and raw-pointer sequence-ledger substitutions were all fresh-
+  rebuilt and refuted. Do not try a seventh carrier wrapper.
+
+Next legal work:
+
+1. Distinguish a true overwrite from re-entrant same-symbol lowering at the
+   `lower_method` pre-scan/body-loop boundary. Prefer a write/provenance probe
+   or phase stop gate; avoid debug output that changes inference behavior.
+2. Add a produced-stage structural fixture for `leading if -> non-void helper ->
+   mandatory tail`; keep the host HIR spec as the fast unit layer.
+3. After the tail is present, require `Hash#upsert` HIR to contain `key_hash`
+   and `add_entry_and_increment_size`, then run the 16/17 UInt32/TypeRef runtime
+   matrix.
+4. Only after those gates are green, run the full
+   `spec/bootstrap/produced_stage_bootstrap_spec.cr` and normalized s1b-vs-s2b
+   HIR/MIR/LLVM comparison.
+5. Do not attempt s3b until produced s2 passes plain/no-prelude smokes, the full
+   produced-stage spec, and the normalized semantic corpus.
+
+Test policy from this floor:
+
+- `spec/*` phase-local tests are the primary fast regression layer;
+- produced-stage structural/runtime fixtures prove self-host behavior that host
+  specs cannot exercise;
+- standalone regression scripts are reducer/probe tools, not the only durable
+  regression oracle;
+- every stage artifact manifest must record source hash, compiler hash, flags,
+  and build time so mixed-generation evidence cannot masquerade as convergence.
 
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 

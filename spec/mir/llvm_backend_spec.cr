@@ -115,6 +115,172 @@ describe Adamas::MIR::LLVMIRGenerator do
       output.should contain("define void @__adamas_slab_frame_pop()")
     end
 
+    it "keeps the raw Thread::Mutex initializer target-local" do
+      mod = Adamas::MIR::Module.new("thread_mutex_override")
+      func = mod.create_function("Thread::Mutex#initialize", Adamas::MIR::TypeRef::VOID)
+      func.add_param("self", Adamas::MIR::TypeRef::POINTER)
+
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
+      gen.emit_type_metadata = false
+      gen.target_triple = "arm64-apple-macosx"
+      output = gen.generate
+
+      body = output[/define void @Thread\$CCMutex\$Hinitialize\(ptr %self\) \{.*?\n\}/m]
+      body.should_not be_nil
+      body = body.not_nil!
+      body.should contain("call i32 @pthread_mutexattr_settype(ptr %attr, i32 1)")
+      body.should_not contain("@LibC__classvar__PTHREAD_MUTEX_ERRORCHECK")
+    end
+
+    it "uses byte-stride copy-before-clear only for inline composite Array#pop" do
+      mod = Adamas::MIR::Module.new("array_pop_abi")
+      registry = mod.type_registry
+
+      tuple_type = registry.create_type(
+        Adamas::MIR::TypeKind::Tuple,
+        "Tuple(Bool, Bool, Bool)",
+        3_u64,
+        1_u32
+      )
+      bool_type = registry.get(Adamas::MIR::TypeRef::BOOL).not_nil!
+      3.times { tuple_type.add_element_type(bool_type) }
+      tuple_array = registry.create_type(
+        Adamas::MIR::TypeKind::Array,
+        "Array(Tuple(Bool, Bool, Bool))",
+        24_u64,
+        8_u32
+      )
+      tuple_array.set_element_type(tuple_type)
+
+      uint_array = registry.create_type(
+        Adamas::MIR::TypeKind::Array,
+        "Array(UInt32)",
+        24_u64,
+        8_u32
+      )
+      uint_array.set_element_type(registry.get(Adamas::MIR::TypeRef::UINT32).not_nil!)
+
+      pointer_type = registry.create_type(
+        Adamas::MIR::TypeKind::Pointer,
+        "Pointer(UInt8)",
+        8_u64,
+        8_u32
+      )
+      pointer_type.set_element_type(registry.get(Adamas::MIR::TypeRef::UINT8).not_nil!)
+      pointer_array = registry.create_type(
+        Adamas::MIR::TypeKind::Array,
+        "Array(Pointer(UInt8))",
+        24_u64,
+        8_u32
+      )
+      pointer_array.set_element_type(pointer_type)
+
+      tuple_pop = mod.create_function("Array(Tuple(Bool, Bool, Bool))#pop", Adamas::MIR::TypeRef::POINTER)
+      tuple_pop.add_param("self", Adamas::MIR::TypeRef::POINTER)
+      Adamas::MIR::Builder.new(tuple_pop).ret
+
+      uint_pop = mod.create_function("Array(UInt32)#pop", Adamas::MIR::TypeRef::UINT32)
+      uint_pop.add_param("self", Adamas::MIR::TypeRef::POINTER)
+      uint_builder = Adamas::MIR::Builder.new(uint_pop)
+      uint_builder.ret(uint_builder.const_uint(0_u64, Adamas::MIR::TypeRef::UINT32))
+
+      pointer_pop = mod.create_function("Array(Pointer(UInt8))#pop", Adamas::MIR::TypeRef::POINTER)
+      pointer_pop.add_param("self", Adamas::MIR::TypeRef::POINTER)
+      Adamas::MIR::Builder.new(pointer_pop).ret
+
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
+      gen.emit_type_metadata = false
+      output = gen.generate
+
+      tuple_name = "Array$LTuple$LBool$C$_Bool$C$_Bool$R$R$Hpop"
+      tuple_body = output[/define ptr @#{Regex.escape(tuple_name)}\([^)]*\) \{.*?\n\}/m]
+      tuple_body.should_not be_nil
+      tuple_ir = tuple_body.not_nil!
+      tuple_ir.should contain("mul i64 %physical64, 3")
+      tuple_ir.should contain("llvm.memcpy.p0.p0.i64")
+      tuple_ir.should contain("llvm.memset.p0.i64")
+      tuple_ir.should contain("raise_empty")
+      tuple_ir.should contain("unreachable")
+      tuple_ir.should contain("%root_byte_offset")
+      tuple_ir.index("llvm.memcpy.p0.p0.i64").not_nil!.should be < tuple_ir.index("llvm.memset.p0.i64").not_nil!
+
+      uint_name = "Array$LUInt32$R$Hpop"
+      uint_body = output[/define i32 @#{Regex.escape(uint_name)}\([^)]*\) \{.*?\n\}/m]
+      uint_body.should_not be_nil
+      uint_body.not_nil!.should_not contain("inline composite pop")
+      uint_body.not_nil!.should_not contain("mul i64 %physical64")
+
+      pointer_name = "Array$LPointer$LUInt8$R$R$Hpop"
+      pointer_body = output[/define ptr @#{Regex.escape(pointer_name)}\([^)]*\) \{.*?\n\}/m]
+      pointer_body.should_not be_nil
+      pointer_body.not_nil!.should_not contain("inline composite pop")
+    end
+
+    it "manages raw-header union fields but never raw nullable Pointer fields" do
+      mod = Adamas::MIR::Module.new("union_dtor_contract")
+      registry = mod.type_registry
+      header_type = registry.create_type(Adamas::MIR::TypeKind::Reference, "DtorHeader", 8, 8)
+      header_ref = Adamas::MIR::TypeRef.new(header_type.id)
+
+      nullable_type = registry.create_type(Adamas::MIR::TypeKind::Union, "Pointer | Nil", 16, 8)
+      nullable_ref = Adamas::MIR::TypeRef.new(nullable_type.id)
+      mod.register_union(
+        nullable_ref,
+        Adamas::MIR::UnionDescriptor.new(
+          "Pointer | Nil",
+          [
+            Adamas::MIR::UnionVariantDescriptor.new(
+              Adamas::MIR::TypeRef::POINTER.id.to_i32,
+              Adamas::MIR::TypeRef::POINTER,
+              "Pointer",
+              8,
+              8,
+              nil
+            ),
+            Adamas::MIR::UnionVariantDescriptor.new(0, Adamas::MIR::TypeRef::NIL, "Nil", 0, 1, nil),
+          ],
+          16,
+          8
+        )
+      )
+
+      header_union_type = registry.create_type(Adamas::MIR::TypeKind::Union, "DtorHeader | Nil", 16, 8)
+      header_union_ref = Adamas::MIR::TypeRef.new(header_union_type.id)
+      mod.register_union(
+        header_union_ref,
+        Adamas::MIR::UnionDescriptor.new(
+          "DtorHeader | Nil",
+          [
+            Adamas::MIR::UnionVariantDescriptor.new(
+              header_ref.id.to_i32,
+              header_ref,
+              "DtorHeader",
+              8,
+              8,
+              nil
+            ),
+            Adamas::MIR::UnionVariantDescriptor.new(0, Adamas::MIR::TypeRef::NIL, "Nil", 0, 1, nil),
+          ],
+          16,
+          8
+        )
+      )
+
+      owner = registry.create_type(Adamas::MIR::TypeKind::Reference, "DtorOwner", 24, 8)
+      owner.add_field("@raw", nullable_ref, 8_u32)
+      owner.add_field("@managed", header_union_ref, 16_u32)
+      mod.refresh_union_storage_kinds
+
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
+      gen.emit_type_metadata = false
+      output = gen.generate
+      dtor = output[/define void @__adamas_dtor_#{owner.id}\(ptr %obj\) \{.*?\n\}/m].not_nil!
+
+      dtor.should_not contain("i64 8")
+      dtor.should contain("i64 16")
+      dtor.scan("call void @__adamas_rc_dec").size.should eq(1)
+    end
+
     it "emits entrypoint when __adamas_main is present" do
       mod = Adamas::MIR::Module.new("test")
       func = mod.create_function("__adamas_main", Adamas::MIR::TypeRef::VOID)
@@ -182,6 +348,43 @@ describe Adamas::MIR::LLVMIRGenerator do
       output.should contain("ret")
     end
 
+    it "keeps a declared Int32 binary result Int32 across a block boundary" do
+      mod = Adamas::MIR::Module.new("cross_block_binary_width")
+
+      callee = mod.create_function("takes_int32", Adamas::MIR::TypeRef::INT32)
+      callee.add_param("value", Adamas::MIR::TypeRef::INT32)
+      Adamas::MIR::Builder.new(callee).ret(0_u32)
+
+      caller = mod.create_function("cross_block_binary_width", Adamas::MIR::TypeRef::INT32)
+      caller.add_param("limit", Adamas::MIR::TypeRef::INT32)
+      producer = caller.create_block
+      continuation = caller.create_block
+      builder = Adamas::MIR::Builder.new(caller)
+      builder.jump(producer)
+
+      builder.current_block = producer
+      missing_rhs = builder.const_int(0, Adamas::MIR::TypeRef::INT64)
+      remaining = builder.sub(0_u32, missing_rhs, Adamas::MIR::TypeRef::INT32)
+      builder.jump(continuation)
+
+      builder.current_block = continuation
+      result = builder.call(callee.id, [remaining], Adamas::MIR::TypeRef::INT32)
+      builder.ret(result)
+
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
+      gen.emit_type_metadata = false
+      output = gen.generate
+
+      body = output[/define i32 @cross_block_binary_width\(i32 %limit\)\s*\{.*?\n\}/m]
+      body.should_not be_nil
+      body = body.not_nil!
+      body.should contain("%r2.slot = alloca i32")
+      body.should contain("store i32 %r2, ptr %r2.slot")
+      body.should match(/%r2\.fromslot\.\d+ = load i32, ptr %r2\.slot/)
+      body.should match(/call i32 @takes_int32\(i32 %r2\.fromslot\.\d+\)/)
+      body.should_not contain("%r2.slot = alloca i64")
+    end
+
     it "generates stack allocation" do
       mod = Adamas::MIR::Module.new("test")
       func = mod.create_function("alloc_test", Adamas::MIR::TypeRef::VOID)
@@ -209,9 +412,9 @@ describe Adamas::MIR::LLVMIRGenerator do
       gen.emit_type_metadata = false
       output = gen.generate
 
-      output.should contain("call ptr @__adamas_malloc64(i64 40)")  # 32 + 8 for RC
-      output.should contain("store i64 1")  # Initialize RC to 1
-      output.should contain("getelementptr i8")  # Skip RC to get object pointer
+      output.should contain("call ptr @__adamas_malloc64(i64 40)") # 32 + 8 for RC
+      output.should contain("store i64 1")                         # Initialize RC to 1
+      output.should contain("getelementptr i8")                    # Skip RC to get object pointer
     end
 
     it "generates slab allocation" do
@@ -226,7 +429,7 @@ describe Adamas::MIR::LLVMIRGenerator do
       gen.emit_type_metadata = false
       output = gen.generate
 
-      output.should contain("call ptr @__adamas_slab_alloc(i32 0)")  # Size class 0 for <=16 bytes
+      output.should contain("call ptr @__adamas_slab_alloc(i32 0)") # Size class 0 for <=16 bytes
     end
 
     it "generates slab free" do
@@ -255,7 +458,7 @@ describe Adamas::MIR::LLVMIRGenerator do
           "IntOrNil",
           [
             Adamas::MIR::UnionVariantDescriptor.new(
-              type_id: 0,
+              type_id: Adamas::MIR::TypeRef::INT32.id.to_i32,
               type_ref: Adamas::MIR::TypeRef::INT32,
               full_name: "Int32",
               size: 4,
@@ -263,7 +466,7 @@ describe Adamas::MIR::LLVMIRGenerator do
               field_offsets: nil
             ),
             Adamas::MIR::UnionVariantDescriptor.new(
-              type_id: 1,
+              type_id: 0,
               type_ref: Adamas::MIR::TypeRef::NIL,
               full_name: "Nil",
               size: 0,
@@ -303,7 +506,7 @@ describe Adamas::MIR::LLVMIRGenerator do
           "IntOrNil",
           [
             Adamas::MIR::UnionVariantDescriptor.new(
-              type_id: 0,
+              type_id: Adamas::MIR::TypeRef::INT32.id.to_i32,
               type_ref: Adamas::MIR::TypeRef::INT32,
               full_name: "Int32",
               size: 4,
@@ -311,7 +514,7 @@ describe Adamas::MIR::LLVMIRGenerator do
               field_offsets: nil
             ),
             Adamas::MIR::UnionVariantDescriptor.new(
-              type_id: 1,
+              type_id: 0,
               type_ref: Adamas::MIR::TypeRef::NIL,
               full_name: "Nil",
               size: 0,
@@ -433,7 +636,7 @@ describe Adamas::MIR::LLVMIRGenerator do
       func.add_param("x", Adamas::MIR::TypeRef::UINT32)
       builder = Adamas::MIR::Builder.new(func)
 
-      casted = builder.cast(Adamas::MIR::CastKind::Bitcast, 0_u32, Adamas::MIR::TypeRef::FLOAT64)
+      casted = builder.cast(Adamas::MIR::CastKind::UIToFP, 0_u32, Adamas::MIR::TypeRef::FLOAT64)
       builder.ret(casted)
 
       gen = Adamas::MIR::LLVMIRGenerator.new(mod)
@@ -539,7 +742,7 @@ describe Adamas::MIR::LLVMIRGenerator do
       body.should_not contain("fptosi double %x to i32")
     end
 
-    it "uses ptrtoint + uitofp for pointer argument when calling float64 callee" do
+    it "decodes a pointer-carried float64 argument by preserving its bit pattern" do
       mod = Adamas::MIR::Module.new("test")
 
       callee = mod.create_function("takes_f64_ptr_arg", Adamas::MIR::TypeRef::FLOAT64)
@@ -562,7 +765,8 @@ describe Adamas::MIR::LLVMIRGenerator do
       body = func_ir.not_nil!
 
       body.should contain("ptrtoint ptr %p to i64")
-      body.should match(/uitofp i64 %ptrtofp\.\d+\.int to double/)
+      body.should match(/bitcast i64 %ptr_to_fp\.\d+\.bits64 to double/)
+      body.should_not contain("uitofp")
       body.should_not contain("load double, ptr %p")
     end
 
@@ -726,7 +930,7 @@ describe Adamas::MIR::LLVMIRGenerator do
       body.should_not contain("inttoptr i32 %self")
     end
 
-    it "lowers abstract Int#to_s(IO, ...) on scalar receivers via concrete to_s plus IO << String" do
+    it "lowers abstract Int#to_s(IO, ...) on scalar receivers via concrete to_s plus String#to_s(IO)" do
       mod = Adamas::MIR::Module.new("test")
 
       concrete = mod.create_function("Int32#to_s", Adamas::MIR::TypeRef::POINTER)
@@ -771,7 +975,7 @@ describe Adamas::MIR::LLVMIRGenerator do
       body = func_ir.not_nil!
 
       body.should contain("call ptr @Int32$Hto_s(i32 %self, i32 %base, i32 %precision, i1 %upcase)")
-      body.should contain("call ptr @IO$H$SHL$$String(ptr %io, ptr %int_to_s_io.")
+      body.should contain("call ptr @String$Hto_s$$IO(ptr %int_to_s_io.")
       body.should_not contain("call void @Int$Hto_s$$IO_Int32_Int32_Bool")
       body.should_not contain("inttoptr i64 %self")
       body.should_not contain("inttoptr i32 %self")
@@ -814,7 +1018,7 @@ describe Adamas::MIR::LLVMIRGenerator do
           "FloatOrNilArg",
           [
             Adamas::MIR::UnionVariantDescriptor.new(
-              type_id: 0,
+              type_id: Adamas::MIR::TypeRef::FLOAT64.id.to_i32,
               type_ref: Adamas::MIR::TypeRef::FLOAT64,
               full_name: "Float64",
               size: 8,
@@ -822,7 +1026,7 @@ describe Adamas::MIR::LLVMIRGenerator do
               field_offsets: nil
             ),
             Adamas::MIR::UnionVariantDescriptor.new(
-              type_id: 1,
+              type_id: 0,
               type_ref: Adamas::MIR::TypeRef::NIL,
               full_name: "Nil",
               size: 0,
@@ -857,7 +1061,7 @@ describe Adamas::MIR::LLVMIRGenerator do
       body.should match(/%union_to_fp\.\d+\.val = load double, ptr %union_to_fp\.\d+\.payload_ptr, align 4/)
     end
 
-    it "emits ptr phi when a union phi has ptr incoming" do
+    it "uses a raw nullable pointer for Pointer | Nil with literal null and non-null phi inputs" do
       mod = Adamas::MIR::Module.new("phi_union_ptr")
 
       union_type = mod.type_registry.create_type(Adamas::MIR::TypeKind::Union, "PtrOrNil", 16, 8)
@@ -868,7 +1072,7 @@ describe Adamas::MIR::LLVMIRGenerator do
           "PtrOrNil",
           [
             Adamas::MIR::UnionVariantDescriptor.new(
-              type_id: 0,
+              type_id: Adamas::MIR::TypeRef::POINTER.id.to_i32,
               type_ref: Adamas::MIR::TypeRef::POINTER,
               full_name: "Pointer",
               size: 8,
@@ -876,7 +1080,7 @@ describe Adamas::MIR::LLVMIRGenerator do
               field_offsets: nil
             ),
             Adamas::MIR::UnionVariantDescriptor.new(
-              type_id: 1,
+              type_id: 0,
               type_ref: Adamas::MIR::TypeRef::NIL,
               full_name: "Nil",
               size: 0,
@@ -889,7 +1093,7 @@ describe Adamas::MIR::LLVMIRGenerator do
         )
       )
 
-      func = mod.create_function("phi_union_ptr", Adamas::MIR::TypeRef::VOID)
+      func = mod.create_function("phi_union_ptr", Adamas::MIR::TypeRef::INT32)
       builder = Adamas::MIR::Builder.new(func)
 
       entry = func.entry_block
@@ -902,49 +1106,80 @@ describe Adamas::MIR::LLVMIRGenerator do
 
       builder.current_block = then_block
       ptr_val = builder.alloc(Adamas::MIR::MemoryStrategy::Stack, Adamas::MIR::TypeRef::INT32, 4_u64, 4_u32)
-      wrapped_ptr = builder.union_wrap(ptr_val, 0, union_ref)
       builder.jump(merge_block)
 
       builder.current_block = else_block
       nil_val = builder.const_nil
-      wrapped_nil = builder.union_wrap(nil_val, 1, union_ref)
       builder.jump(merge_block)
 
       builder.current_block = merge_block
       phi = builder.phi(union_ref)
-      phi.add_incoming(from: then_block, value: wrapped_ptr)
-      phi.add_incoming(from: else_block, value: wrapped_nil)
-      builder.ret
+      phi.add_incoming(from: then_block, value: ptr_val)
+      phi.add_incoming(from: else_block, value: nil_val)
+      type_id = builder.emit(Adamas::MIR::UnionTypeIdGet.new(func.next_value_id, phi.id))
+      builder.emit(Adamas::MIR::UnionIs.new(func.next_value_id, phi.id, 0, union_ref))
+      builder.emit(
+        Adamas::MIR::UnionIs.new(
+          func.next_value_id,
+          phi.id,
+          Adamas::MIR::TypeRef::POINTER.id.to_i32,
+          union_ref
+        )
+      )
+      builder.ret(type_id)
 
       gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
-      phi_line = output.lines.find { |line| line.includes?("phi %PtrOrNil.union") }
+      func_ir = output[/define i32 @phi_union_ptr\(\)\s*\{.*?\n\}/m]
+      func_ir.should_not be_nil
+      phi_line = func_ir.not_nil!.lines.find { |line| line.includes?(" = phi ptr ") }
       phi_line.should_not be_nil
-      phi_line.not_nil!.should_not contain("zeroinitializer")
+      phi_line.not_nil!.should contain("null")
+      phi_line.not_nil!.should match(/\[%r\d+/)
+      func_ir.not_nil!.should_not contain("%PtrOrNil.union")
+      func_ir.not_nil!.should match(/\.is_null = icmp eq ptr %r\d+, null/)
+      func_ir.not_nil!.should match(/select i1 %r\d+\.is_null, i32 0, i32 #{Adamas::MIR::TypeRef::POINTER.id}/)
+      func_ir.not_nil!.should_not contain("safe_tid_ptr")
+      func_ir.not_nil!.should_not contain("obj_tid_raw")
+      func_ir.not_nil!.scan(/ = icmp eq ptr .* null/).size.should be >= 2
+      func_ir.not_nil!.should match(/ = icmp ne ptr %r\d+, null/)
+      func_ir.not_nil!.should match(/ret i32 %r\d+/)
     end
 
-    it "emits align 4 for union payload store/load" do
-      mod = Adamas::MIR::Module.new("union_align")
+    it "uses object headers to dispatch A | B | Nil raw-pointer unions" do
+      mod = Adamas::MIR::Module.new("header_union")
+      a_type = mod.type_registry.create_type(Adamas::MIR::TypeKind::Reference, "HeaderA", 8, 8)
+      b_type = mod.type_registry.create_type(Adamas::MIR::TypeKind::Reference, "HeaderB", 8, 8)
+      a_ref = Adamas::MIR::TypeRef.new(a_type.id)
+      b_ref = Adamas::MIR::TypeRef.new(b_type.id)
 
-      union_type = mod.type_registry.create_type(Adamas::MIR::TypeKind::Union, "PtrOrNilAlign", 16, 8)
+      union_type = mod.type_registry.create_type(Adamas::MIR::TypeKind::Union, "HeaderA | HeaderB | Nil", 16, 8)
       union_ref = Adamas::MIR::TypeRef.new(union_type.id)
       mod.register_union(
         union_ref,
         Adamas::MIR::UnionDescriptor.new(
-          "PtrOrNilAlign",
+          "HeaderA | HeaderB | Nil",
           [
             Adamas::MIR::UnionVariantDescriptor.new(
-              type_id: 0,
-              type_ref: Adamas::MIR::TypeRef::POINTER,
-              full_name: "Pointer",
+              type_id: a_ref.id.to_i32,
+              type_ref: a_ref,
+              full_name: "HeaderA",
               size: 8,
               alignment: 8,
               field_offsets: nil
             ),
             Adamas::MIR::UnionVariantDescriptor.new(
-              type_id: 1,
+              type_id: b_ref.id.to_i32,
+              type_ref: b_ref,
+              full_name: "HeaderB",
+              size: 8,
+              alignment: 8,
+              field_offsets: nil
+            ),
+            Adamas::MIR::UnionVariantDescriptor.new(
+              type_id: 0,
               type_ref: Adamas::MIR::TypeRef::NIL,
               full_name: "Nil",
               size: 0,
@@ -957,22 +1192,366 @@ describe Adamas::MIR::LLVMIRGenerator do
         )
       )
 
-      func = mod.create_function("union_align_payload", Adamas::MIR::TypeRef::POINTER)
+      func = mod.create_function("header_union_type_id", Adamas::MIR::TypeRef::INT32)
+      func.add_param("value", union_ref)
       builder = Adamas::MIR::Builder.new(func)
-      ptr_val = builder.alloc(Adamas::MIR::MemoryStrategy::Stack, Adamas::MIR::TypeRef::INT32, 4_u64, 4_u32)
-      wrapped = builder.union_wrap(ptr_val, 0, union_ref)
-      unwrapped = builder.emit(Adamas::MIR::UnionUnwrap.new(func.next_value_id, Adamas::MIR::TypeRef::POINTER, wrapped, 0))
-      builder.ret(unwrapped)
+      type_id = builder.emit(Adamas::MIR::UnionTypeIdGet.new(func.next_value_id, 0_u32))
+      builder.emit(Adamas::MIR::UnionIs.new(func.next_value_id, 0_u32, 0, union_ref))
+      builder.emit(Adamas::MIR::UnionIs.new(func.next_value_id, 0_u32, a_ref.id.to_i32, union_ref))
+      builder.ret(type_id)
 
       gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
-      func_ir = output[/define ptr @union_align_payload\(\)\s*\{.*?\n\}/m]
+      func_ir = output[/define i32 @header_union_type_id\(ptr %value\)\s*\{.*?\n\}/m]
       func_ir.should_not be_nil
       body = func_ir.not_nil!
-      body.should match(/store ptr .*payload_ptr, align 4/)
-      body.should match(/load ptr, ptr %.*payload_ptr, align 4/)
+      body.should contain("icmp eq ptr %value, null")
+      body.should contain("safe_tid_ptr = select")
+      body.should contain("obj_tid_raw = load i32")
+      body.should match(/select i1 %r\d+\.is_null, i32 0, i32 %r\d+\.obj_tid_raw/)
+      body.should match(/\.tid_match = icmp eq i32 %r\d+\.obj_tid, #{a_ref.id}/)
+      body.scan(/ = icmp eq ptr %value, null/).size.should be >= 2
+      body.should_not contain(".union")
+      body.should match(/ret i32 %r\d+/)
+    end
+
+    it "keeps Pointer | A | Nil tagged because Pointer has no runtime type-id header" do
+      mod = Adamas::MIR::Module.new("mixed_pointer_union")
+      a_type = mod.type_registry.create_type(Adamas::MIR::TypeKind::Reference, "MixedA", 8, 8)
+      a_ref = Adamas::MIR::TypeRef.new(a_type.id)
+      union_type = mod.type_registry.create_type(Adamas::MIR::TypeKind::Union, "Pointer | MixedA | Nil", 16, 8)
+      union_ref = Adamas::MIR::TypeRef.new(union_type.id)
+      mod.register_union(
+        union_ref,
+        Adamas::MIR::UnionDescriptor.new(
+          "Pointer | MixedA | Nil",
+          [
+            Adamas::MIR::UnionVariantDescriptor.new(
+              type_id: Adamas::MIR::TypeRef::POINTER.id.to_i32,
+              type_ref: Adamas::MIR::TypeRef::POINTER,
+              full_name: "Pointer",
+              size: 8,
+              alignment: 8,
+              field_offsets: nil
+            ),
+            Adamas::MIR::UnionVariantDescriptor.new(
+              type_id: a_ref.id.to_i32,
+              type_ref: a_ref,
+              full_name: "MixedA",
+              size: 8,
+              alignment: 8,
+              field_offsets: nil
+            ),
+            Adamas::MIR::UnionVariantDescriptor.new(
+              type_id: 0,
+              type_ref: Adamas::MIR::TypeRef::NIL,
+              full_name: "Nil",
+              size: 0,
+              alignment: 1,
+              field_offsets: nil
+            ),
+          ],
+          16,
+          8
+        )
+      )
+
+      consumer = mod.create_function("mixed_pointer_union_consume", Adamas::MIR::TypeRef::INT32)
+      consumer.add_param("value", union_ref)
+      consumer_builder = Adamas::MIR::Builder.new(consumer)
+      type_id = consumer_builder.emit(Adamas::MIR::UnionTypeIdGet.new(consumer.next_value_id, 0_u32))
+      consumer_builder.ret(type_id)
+
+      raw_caller = mod.create_function("mixed_pointer_union_from_raw", Adamas::MIR::TypeRef::INT32)
+      raw_caller.add_param("value", Adamas::MIR::TypeRef::POINTER)
+      raw_builder = Adamas::MIR::Builder.new(raw_caller)
+      raw_result = raw_builder.call(consumer.id, [0_u32], Adamas::MIR::TypeRef::INT32)
+      raw_builder.ret(raw_result)
+
+      object_caller = mod.create_function("mixed_pointer_union_from_object", Adamas::MIR::TypeRef::INT32)
+      object_caller.add_param("value", a_ref)
+      object_builder = Adamas::MIR::Builder.new(object_caller)
+      object_result = object_builder.call(consumer.id, [0_u32], Adamas::MIR::TypeRef::INT32)
+      object_builder.ret(object_result)
+
+      nil_caller = mod.create_function("mixed_pointer_union_from_nil", Adamas::MIR::TypeRef::INT32)
+      nil_builder = Adamas::MIR::Builder.new(nil_caller)
+      nil_value = nil_builder.const_nil
+      nil_result = nil_builder.call(consumer.id, [nil_value], Adamas::MIR::TypeRef::INT32)
+      nil_builder.ret(nil_result)
+
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
+      gen.emit_type_metadata = false
+      output = gen.generate
+
+      body = output[/define i32 @mixed_pointer_union_consume\([^)]*\)\s*\{.*?\n\}/m].not_nil!
+      body.should contain(".union_ptr = alloca %Pointer$_$OR$_MixedA$_$OR$_Nil.union")
+      body.should contain(".type_id_ptr = getelementptr %Pointer$_$OR$_MixedA$_$OR$_Nil.union")
+      body.should match(/ret i32 %r\d+/)
+      body.should_not contain("safe_tid_ptr")
+      body.should_not contain("obj_tid_raw")
+      output.should contain("define i32 @mixed_pointer_union_from_raw")
+      output.should contain("define i32 @mixed_pointer_union_from_object")
+      output.should contain("define i32 @mixed_pointer_union_from_nil")
+      output.scan("call i32 @mixed_pointer_union_consume(%Pointer$_$OR$_MixedA$_$OR$_Nil.union").size.should eq(3)
+      raw_body = output[/define i32 @mixed_pointer_union_from_raw\([^)]*\)\s*\{.*?\n\}/m].not_nil!
+      object_body = output[/define i32 @mixed_pointer_union_from_object\([^)]*\)\s*\{.*?\n\}/m].not_nil!
+      nil_body = output[/define i32 @mixed_pointer_union_from_nil\([^)]*\)\s*\{.*?\n\}/m].not_nil!
+      raw_body.should contain("store i32 #{Adamas::MIR::TypeRef::POINTER.id}")
+      object_body.should contain("store i32 #{a_ref.id}")
+      nil_body.should contain("store i32 0")
+    end
+
+    it "classifies distinct raw pointer variants from the sidecar and keeps them tagged" do
+      mod = Adamas::MIR::Module.new("multi_pointer_union")
+      int32_pointer_type = mod.type_registry.create_type(
+        Adamas::MIR::TypeKind::Pointer,
+        "Pointer(Int32)",
+        8,
+        8
+      )
+      int32_pointer_type.set_element_type(mod.type_registry.get(Adamas::MIR::TypeRef::INT32).not_nil!)
+      int32_pointer_ref = Adamas::MIR::TypeRef.new(int32_pointer_type.id)
+      uint8_pointer_type = mod.type_registry.create_type(
+        Adamas::MIR::TypeKind::Pointer,
+        "Pointer(UInt8)",
+        8,
+        8
+      )
+      uint8_pointer_type.set_element_type(mod.type_registry.get(Adamas::MIR::TypeRef::UINT8).not_nil!)
+      uint8_pointer_ref = Adamas::MIR::TypeRef.new(uint8_pointer_type.id)
+      int32_pointer_ref.should_not eq(uint8_pointer_ref)
+      int32_pointer_type.element_type.not_nil!.id.should eq(Adamas::MIR::TypeRef::INT32.id)
+      uint8_pointer_type.element_type.not_nil!.id.should eq(Adamas::MIR::TypeRef::UINT8.id)
+      union_type = mod.type_registry.create_type(Adamas::MIR::TypeKind::Union, "Pointer(Int32) | Pointer(UInt8)", 16, 8)
+      union_ref = Adamas::MIR::TypeRef.new(union_type.id)
+      descriptor = Adamas::MIR::UnionDescriptor.new(
+        "Pointer(Int32) | Pointer(UInt8)",
+        [
+          Adamas::MIR::UnionVariantDescriptor.new(
+            type_id: int32_pointer_ref.id.to_i32,
+            type_ref: int32_pointer_ref,
+            full_name: "Pointer(Int32)",
+            size: 8,
+            alignment: 8,
+            field_offsets: nil
+          ),
+          Adamas::MIR::UnionVariantDescriptor.new(
+            type_id: uint8_pointer_ref.id.to_i32,
+            type_ref: uint8_pointer_ref,
+            full_name: "Pointer(UInt8)",
+            size: 8,
+            alignment: 8,
+            field_offsets: nil
+          ),
+        ],
+        16,
+        8
+      )
+      mod.register_union(union_ref, descriptor)
+
+      # Deliberately poison only the legacy Hash value. Both Module lookup and
+      # LLVM classification must continue to observe the sidecar descriptor.
+      mod.union_descriptors[union_ref] = Adamas::MIR::UnionDescriptor.new(
+        "Pointer | Nil",
+        [
+          Adamas::MIR::UnionVariantDescriptor.new(
+            type_id: Adamas::MIR::TypeRef::POINTER.id.to_i32,
+            type_ref: Adamas::MIR::TypeRef::POINTER,
+            full_name: "Pointer",
+            size: 8,
+            alignment: 8,
+            field_offsets: nil
+          ),
+          Adamas::MIR::UnionVariantDescriptor.new(
+            type_id: 0,
+            type_ref: Adamas::MIR::TypeRef::NIL,
+            full_name: "Nil",
+            size: 0,
+            alignment: 1,
+            field_offsets: nil
+          ),
+        ],
+        16,
+        8
+      )
+      mod.union_descriptors[union_ref].name.should eq("Pointer | Nil")
+      mod.get_union_descriptor(union_ref).not_nil!.name.should eq("Pointer(Int32) | Pointer(UInt8)")
+
+      consumer = mod.create_function("multi_pointer_union_consume", Adamas::MIR::TypeRef::INT32)
+      consumer.add_param("value", union_ref)
+      consumer_builder = Adamas::MIR::Builder.new(consumer)
+      type_id = consumer_builder.emit(Adamas::MIR::UnionTypeIdGet.new(consumer.next_value_id, 0_u32))
+      consumer_builder.ret(type_id)
+
+      left_caller = mod.create_function("multi_pointer_union_from_i32", Adamas::MIR::TypeRef::INT32)
+      left_caller.add_param("value", int32_pointer_ref)
+      left_builder = Adamas::MIR::Builder.new(left_caller)
+      left_result = left_builder.call(consumer.id, [0_u32], Adamas::MIR::TypeRef::INT32)
+      left_builder.ret(left_result)
+
+      right_caller = mod.create_function("multi_pointer_union_from_u8", Adamas::MIR::TypeRef::INT32)
+      right_caller.add_param("value", uint8_pointer_ref)
+      right_builder = Adamas::MIR::Builder.new(right_caller)
+      right_result = right_builder.call(consumer.id, [0_u32], Adamas::MIR::TypeRef::INT32)
+      right_builder.ret(right_result)
+
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
+      gen.emit_type_metadata = false
+      output = gen.generate
+
+      body = output[/define i32 @multi_pointer_union_consume\([^)]*\)\s*\{.*?\n\}/m].not_nil!
+      body.should contain(".union_ptr = alloca %Pointer$LInt32$R$_$OR$_Pointer$LUInt8$R.union")
+      body.should contain(".type_id_ptr = getelementptr %Pointer$LInt32$R$_$OR$_Pointer$LUInt8$R.union")
+      body.should_not contain("safe_tid_ptr")
+      body.should_not contain("obj_tid_raw")
+      body.should match(/ret i32 %r\d+/)
+      output.scan("call i32 @multi_pointer_union_consume(%Pointer$LInt32$R$_$OR$_Pointer$LUInt8$R.union").size.should eq(2)
+      left_body = output[/define i32 @multi_pointer_union_from_i32\([^)]*\)\s*\{.*?\n\}/m].not_nil!
+      right_body = output[/define i32 @multi_pointer_union_from_u8\([^)]*\)\s*\{.*?\n\}/m].not_nil!
+      left_body.should contain("store i32 #{int32_pointer_ref.id}")
+      right_body.should contain("store i32 #{uint8_pointer_ref.id}")
+    end
+
+    it "selects cast-wrap variant ids from the sidecar when the legacy Hash is poisoned" do
+      mod = Adamas::MIR::Module.new("poisoned_tagged_union")
+      union_type = mod.type_registry.create_type(Adamas::MIR::TypeKind::Union, "Int32 | Float64 | Nil", 16, 8)
+      union_ref = Adamas::MIR::TypeRef.new(union_type.id)
+      int32_variant_id = Adamas::MIR::TypeRef::INT32.id.to_i32
+      mod.register_union(
+        union_ref,
+        Adamas::MIR::UnionDescriptor.new(
+          "Int32 | Float64 | Nil",
+          [
+            Adamas::MIR::UnionVariantDescriptor.new(
+              type_id: int32_variant_id,
+              type_ref: Adamas::MIR::TypeRef::INT32,
+              full_name: "Int32",
+              size: 4,
+              alignment: 4,
+              field_offsets: nil
+            ),
+            Adamas::MIR::UnionVariantDescriptor.new(
+              type_id: Adamas::MIR::TypeRef::FLOAT64.id.to_i32,
+              type_ref: Adamas::MIR::TypeRef::FLOAT64,
+              full_name: "Float64",
+              size: 8,
+              alignment: 8,
+              field_offsets: nil
+            ),
+            Adamas::MIR::UnionVariantDescriptor.new(
+              type_id: 0,
+              type_ref: Adamas::MIR::TypeRef::NIL,
+              full_name: "Nil",
+              size: 0,
+              alignment: 1,
+              field_offsets: nil
+            ),
+          ],
+          16,
+          8
+        )
+      )
+
+      # If backend code reads this legacy Hash value, the cast-wrap path stamps
+      # Float64 instead of Int32. The sidecar retains the registered descriptor.
+      mod.union_descriptors[union_ref] = Adamas::MIR::UnionDescriptor.new(
+        "PoisonedFloat64OrNil",
+        [
+          Adamas::MIR::UnionVariantDescriptor.new(
+            type_id: Adamas::MIR::TypeRef::FLOAT64.id.to_i32,
+            type_ref: Adamas::MIR::TypeRef::FLOAT64,
+            full_name: "Float64",
+            size: 8,
+            alignment: 8,
+            field_offsets: nil
+          ),
+          Adamas::MIR::UnionVariantDescriptor.new(
+            type_id: 0,
+            type_ref: Adamas::MIR::TypeRef::NIL,
+            full_name: "Nil",
+            size: 0,
+            alignment: 1,
+            field_offsets: nil
+          ),
+        ],
+        16,
+        8
+      )
+      mod.union_descriptors[union_ref].variants.any? { |variant| variant.type_ref == Adamas::MIR::TypeRef::INT32 }.should be_false
+      mod.get_union_descriptor(union_ref).not_nil!.variants.any? { |variant| variant.type_ref == Adamas::MIR::TypeRef::INT32 }.should be_true
+
+      func = mod.create_function("poisoned_tagged_wrap", Adamas::MIR::TypeRef::INT32)
+      func.add_param("value", Adamas::MIR::TypeRef::INT32)
+      builder = Adamas::MIR::Builder.new(func)
+      builder.cast(Adamas::MIR::CastKind::Bitcast, 0_u32, union_ref)
+      builder.ret(0_u32)
+
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
+      gen.emit_type_metadata = false
+      output = gen.generate
+      body = output[/define i32 @poisoned_tagged_wrap\(i32 %value\)\s*\{.*?\n\}/m].not_nil!
+
+      body.scan("store i32 #{int32_variant_id}").size.should eq(1)
+      body.should_not contain("store i32 #{Adamas::MIR::TypeRef::FLOAT64.id}")
+      body.should match(/ret i32 %value/)
+    end
+
+    it "unwraps an Int32 payload from a tagged union parameter" do
+      mod = Adamas::MIR::Module.new("tagged_union_unwrap")
+      union_type = mod.type_registry.create_type(Adamas::MIR::TypeKind::Union, "Int32 | Float64", 16, 8)
+      union_ref = Adamas::MIR::TypeRef.new(union_type.id)
+      int32_variant_id = Adamas::MIR::TypeRef::INT32.id.to_i32
+      mod.register_union(
+        union_ref,
+        Adamas::MIR::UnionDescriptor.new(
+          "Int32 | Float64",
+          [
+            Adamas::MIR::UnionVariantDescriptor.new(
+              type_id: int32_variant_id,
+              type_ref: Adamas::MIR::TypeRef::INT32,
+              full_name: "Int32",
+              size: 4,
+              alignment: 4,
+              field_offsets: nil
+            ),
+            Adamas::MIR::UnionVariantDescriptor.new(
+              type_id: Adamas::MIR::TypeRef::FLOAT64.id.to_i32,
+              type_ref: Adamas::MIR::TypeRef::FLOAT64,
+              full_name: "Float64",
+              size: 8,
+              alignment: 8,
+              field_offsets: nil
+            ),
+          ],
+          16,
+          8
+        )
+      )
+
+      func = mod.create_function("tagged_union_unwrap", Adamas::MIR::TypeRef::INT32)
+      func.add_param("value", union_ref)
+      builder = Adamas::MIR::Builder.new(func)
+      unwrapped = builder.emit(
+        Adamas::MIR::UnionUnwrap.new(
+          func.next_value_id,
+          Adamas::MIR::TypeRef::INT32,
+          0_u32,
+          int32_variant_id
+        )
+      )
+      builder.ret(unwrapped)
+
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
+      gen.emit_type_metadata = false
+      output = gen.generate
+      body = output[/define i32 @tagged_union_unwrap\([^)]*\)\s*\{.*?\n\}/m].not_nil!
+
+      body.should contain(".payload_ptr = getelementptr %Int32$_$OR$_Float64.union")
+      body.scan(/load i32, ptr %r\d+\.payload_ptr, align 4/).size.should eq(1)
+      body.should match(/ret i32 %r\d+/)
     end
 
     it "emits align 4 for UInt64 union payload store/load" do
@@ -986,7 +1565,7 @@ describe Adamas::MIR::LLVMIRGenerator do
           "U64OrNilAlign",
           [
             Adamas::MIR::UnionVariantDescriptor.new(
-              type_id: 0,
+              type_id: Adamas::MIR::TypeRef::UINT64.id.to_i32,
               type_ref: Adamas::MIR::TypeRef::UINT64,
               full_name: "UInt64",
               size: 8,
@@ -994,7 +1573,7 @@ describe Adamas::MIR::LLVMIRGenerator do
               field_offsets: nil
             ),
             Adamas::MIR::UnionVariantDescriptor.new(
-              type_id: 1,
+              type_id: 0,
               type_ref: Adamas::MIR::TypeRef::NIL,
               full_name: "Nil",
               size: 0,
@@ -1010,8 +1589,9 @@ describe Adamas::MIR::LLVMIRGenerator do
       func = mod.create_function("union_align_payload_u64", Adamas::MIR::TypeRef::UINT64)
       func.add_param("x", Adamas::MIR::TypeRef::UINT64)
       builder = Adamas::MIR::Builder.new(func)
-      wrapped = builder.union_wrap(0_u32, 0, union_ref)
-      unwrapped = builder.emit(Adamas::MIR::UnionUnwrap.new(func.next_value_id, Adamas::MIR::TypeRef::UINT64, wrapped, 0))
+      uint64_variant_id = Adamas::MIR::TypeRef::UINT64.id.to_i32
+      wrapped = builder.union_wrap(0_u32, uint64_variant_id, union_ref)
+      unwrapped = builder.emit(Adamas::MIR::UnionUnwrap.new(func.next_value_id, Adamas::MIR::TypeRef::UINT64, wrapped, uint64_variant_id))
       builder.ret(unwrapped)
 
       gen = Adamas::MIR::LLVMIRGenerator.new(mod)
@@ -1044,7 +1624,7 @@ describe Adamas::MIR::LLVMIRGenerator do
       output.should contain("call void @__adamas_rc_dec(ptr %ptr, ptr null)")
     end
 
-    it "generates atomic RC increment with atomicrmw" do
+    it "routes atomic RC increment through the guarded atomic helper" do
       mod = Adamas::MIR::Module.new("test")
       func = mod.create_function("atomic_rc_inc", Adamas::MIR::TypeRef::VOID)
       func.add_param("ptr", Adamas::MIR::TypeRef::POINTER)
@@ -1057,15 +1637,28 @@ describe Adamas::MIR::LLVMIRGenerator do
       gen.emit_type_metadata = false
       output = gen.generate
 
-      # Should use inline atomicrmw instead of function call
-      output.should contain("getelementptr i8, ptr %ptr, i64 -8")
-      output.should contain("atomicrmw add")
-      output.should contain("seq_cst")
-      # Should NOT call external function
-      output.should_not contain("call void @__adamas_rc_inc_atomic")
+      func_ir = output[/define void @atomic_rc_inc\(ptr %ptr\)\s*\{.*?\n\}/m]
+      func_ir.should_not be_nil
+      func_ir.not_nil!.should contain("call void @__adamas_rc_inc_atomic(ptr %ptr)")
+
+      helper_ir = output[/define void @__adamas_rc_inc_atomic\(ptr %ptr\)\s*\{.*?\n\}/m]
+      helper_ir.should_not be_nil
+      helper = helper_ir.not_nil!
+      {% if flag?(:darwin) %}
+        helper.should contain("%is_null = icmp eq ptr %ptr, null")
+        helper.should contain("%raw = getelementptr i8, ptr %ptr, i64 -8")
+        helper.should contain("%raw_size = call i64 @malloc_size(ptr %raw)")
+        helper.should contain("%has_header = icmp ne i64 %raw_size, 0")
+        helper.should contain("%is_static = icmp uge i64 %old, 4611686018427387904")
+        helper.should contain("atomicrmw add ptr %raw, i64 1 seq_cst")
+      {% else %}
+        helper.should contain("ret void")
+        helper.should_not contain("malloc_size")
+        helper.should_not contain("atomicrmw")
+      {% end %}
     end
 
-    it "generates atomic RC decrement with conditional free" do
+    it "routes atomic RC decrement through the guarded conditional-free helper" do
       mod = Adamas::MIR::Module.new("test")
       func = mod.create_function("atomic_rc_dec", Adamas::MIR::TypeRef::VOID)
       func.add_param("ptr", Adamas::MIR::TypeRef::POINTER)
@@ -1078,15 +1671,30 @@ describe Adamas::MIR::LLVMIRGenerator do
       gen.emit_type_metadata = false
       output = gen.generate
 
-      # Should use inline atomicrmw sub
-      output.should contain("atomicrmw sub")
-      output.should contain("acq_rel")
-      # Should check if RC reached zero
-      output.should contain("icmp eq i64")
-      # Should have conditional branch to free block
-      output.should contain("do_free")
-      output.should contain("skip_free")
-      output.should contain("call void @free")
+      func_ir = output[/define void @atomic_rc_dec\(ptr %ptr\)\s*\{.*?\n\}/m]
+      func_ir.should_not be_nil
+      func_ir.not_nil!.should contain("call void @__adamas_rc_dec_atomic(ptr %ptr, ptr null)")
+
+      helper_ir = output[/define void @__adamas_rc_dec_atomic\(ptr %ptr, ptr %destructor\)\s*\{.*?\n\}/m]
+      helper_ir.should_not be_nil
+      helper = helper_ir.not_nil!
+      {% if flag?(:darwin) %}
+        helper.should contain("%is_null = icmp eq ptr %ptr, null")
+        helper.should contain("%raw = getelementptr i8, ptr %ptr, i64 -8")
+        helper.should contain("%raw_size = call i64 @malloc_size(ptr %raw)")
+        helper.should contain("%has_header = icmp ne i64 %raw_size, 0")
+        helper.should contain("%is_static = icmp uge i64 %peek, 4611686018427387904")
+        helper.should contain("atomicrmw sub ptr %raw, i64 1 acq_rel")
+        helper.should contain("icmp eq i64 %old, 1")
+        helper.should contain("label %do_free")
+        helper.should contain("%has_dtor = icmp ne ptr %destructor, null")
+        helper.should contain("call void %destructor(ptr %ptr)")
+        helper.should contain("call void @free(ptr %raw)")
+      {% else %}
+        helper.should contain("ret void")
+        helper.should_not contain("malloc_size")
+        helper.should_not contain("atomicrmw")
+      {% end %}
     end
 
     it "generates TSan instrumentation for load/store when enabled" do
@@ -1140,7 +1748,7 @@ describe Adamas::MIR::LLVMIRGenerator do
       output.should_not contain("@__tsan_func_entry")
     end
 
-    it "generates TSan acquire/release for atomic RC" do
+    it "adds TSan synchronization only when atomic RC instrumentation is enabled" do
       mod = Adamas::MIR::Module.new("test")
       func = mod.create_function("tsan_atomic_rc", Adamas::MIR::TypeRef::VOID)
       func.add_param("ptr", Adamas::MIR::TypeRef::POINTER)
@@ -1150,14 +1758,25 @@ describe Adamas::MIR::LLVMIRGenerator do
       builder.rc_dec(0_u32, atomic: true)
       builder.ret
 
-      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
-      gen.emit_type_metadata = false
-      gen.emit_tsan = true
-      output = gen.generate
+      tsan_gen = Adamas::MIR::LLVMIRGenerator.new(mod)
+      tsan_gen.emit_type_metadata = false
+      tsan_gen.emit_tsan = true
+      tsan_output = tsan_gen.generate
 
-      # Should have acquire/release annotations for TSan
-      output.should contain("call void @__tsan_release(ptr %ptr)")
-      output.should contain("call void @__tsan_acquire(ptr %ptr)")
+      plain_gen = Adamas::MIR::LLVMIRGenerator.new(mod)
+      plain_gen.emit_type_metadata = false
+      plain_gen.emit_tsan = false
+      plain_output = plain_gen.generate
+
+      tsan_func = tsan_output[/define void @tsan_atomic_rc\(ptr %ptr\)\s*\{.*?\n\}/m].not_nil!
+      plain_func = plain_output[/define void @tsan_atomic_rc\(ptr %ptr\)\s*\{.*?\n\}/m].not_nil!
+
+      tsan_func.scan("call void @__tsan_release(ptr %ptr)").size.should eq(2)
+      tsan_func.scan("call void @__tsan_acquire(ptr %ptr)").size.should eq(2)
+      tsan_func.should contain("call void @__adamas_rc_inc_atomic(ptr %ptr)")
+      tsan_func.should contain("call void @__adamas_rc_dec_atomic(ptr %ptr, ptr null)")
+      plain_func.should_not contain("@__tsan_release")
+      plain_func.should_not contain("@__tsan_acquire")
     end
 
     it "generates binary operations" do
@@ -1629,7 +2248,7 @@ describe Adamas::MIR::TypeRegistry do
     registry = Adamas::MIR::TypeRegistry.new
 
     point = registry.create_type(Adamas::MIR::TypeKind::Struct, "Point", 8_u64, 4_u32)
-    point.id.should be >= 100  # Custom types start at ID 100
+    point.id.should be >= 100 # Custom types start at ID 100
     point.name.should eq("Point")
     point.kind.should eq(Adamas::MIR::TypeKind::Struct)
   end

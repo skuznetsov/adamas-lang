@@ -1,5 +1,7 @@
+require "../bootstrap_shims"
 require "./rope"
 require "./lexer/token"
+require "./parser/diagnostic"
 require "./string_pool"
 require "./watchdog"
 
@@ -2428,8 +2430,12 @@ module Adamas
 
           next_byte = current_byte
           literal_type = Token::Kind::String # default for %()
-          array_type : Symbol? = nil         # :word_array for %w(), :symbol_array for %i()
-          type_char : Char? = nil
+          # Keep the percent-literal classifier scalar in the self-hosted
+          # stage2 path. Nullable enum/character locals can cross a malformed
+          # union ABI when this method is lowered, even though only the
+          # predicates below are needed after classification.
+          array_literal = false
+          interpolation_disabled = false
 
           # Determine literal type
           case next_byte.chr
@@ -2439,7 +2445,9 @@ module Adamas
             close_delim = closing_delimiter(open_delim)
             advance # consume opening delimiter
           when 'q', 'Q'
-            type_char = next_byte.chr
+            # Lowercase %q is non-interpolating; uppercase %Q keeps the
+            # interpolating string form used by the previous classifier.
+            interpolation_disabled = next_byte == 'q'.ord.to_u8
             advance # consume 'q' or 'Q'
             return nil if @offset >= @rope.size
             open_delim = current_byte
@@ -2506,24 +2514,22 @@ module Adamas
             return Token.new(Token::Kind::Regex, processed, build_span(start_offset, start_line, start_column))
           when 'w'
             # %w(...) - word array
-            type_char = 'w'
             advance # consume 'w'
             return nil if @offset >= @rope.size
             open_delim = current_byte
             return nil unless open_delim.chr.in?('(', '[', '{', '<', '|')
             close_delim = closing_delimiter(open_delim)
-            array_type = :word_array
+            array_literal = true
             literal_type = Token::Kind::LBracket # Will generate array tokens
             advance                              # consume opening delimiter
           when 'i'
             # %i(...) - symbol array
-            type_char = 'i'
             advance # consume 'i'
             return nil if @offset >= @rope.size
             open_delim = current_byte
             return nil unless open_delim.chr.in?('(', '[', '{', '<', '|')
             close_delim = closing_delimiter(open_delim)
-            array_type = :symbol_array
+            array_literal = true
             literal_type = Token::Kind::LBracket # Will generate array tokens
             advance                              # consume opening delimiter
           else
@@ -2539,7 +2545,7 @@ module Adamas
           interpolation_depth = 0
           has_interpolation = false
           heredoc_inside_interpolation = false
-          interpolation_allowed = array_type.nil? && literal_type == Token::Kind::String && type_char != 'q'
+          interpolation_allowed = !array_literal && literal_type == Token::Kind::String && !interpolation_disabled
 
           while @offset < @rope.size
             byte = current_byte

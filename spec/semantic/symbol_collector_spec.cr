@@ -84,6 +84,31 @@ describe Semantic::SymbolCollector do
     method_symbol.return_annotation.should eq("Int32")
   end
 
+  it "does not treat declared enum return types as generic method parameters" do
+    source = <<-CR
+      enum CharsFormat
+        JsonFmt
+      end
+
+      struct ParseOptions
+        def format : CharsFormat
+          CharsFormat::JsonFmt
+        end
+      end
+    CR
+
+    program = Frontend::Parser.new(Frontend::Lexer.new(source)).parse_program
+    context = Semantic::Context.new(Semantic::SymbolTable.new)
+    collector = Semantic::SymbolCollector.new(program, context)
+    collector.collect
+
+    collector.diagnostics.should be_empty
+    options = context.symbol_table.lookup("ParseOptions").should be_a(Semantic::ClassSymbol)
+    format = options.as(Semantic::ClassSymbol).scope.lookup("format").should be_a(Semantic::MethodSymbol)
+    format.as(Semantic::MethodSymbol).return_annotation.should eq("CharsFormat")
+    format.as(Semantic::MethodSymbol).type_parameters.should be_nil
+  end
+
   it "does not recurse on nested union annotations while detecting type parameters" do
     source = <<-CR
       def materialize(
@@ -662,8 +687,8 @@ describe Semantic::SymbolCollector do
 
     collector.diagnostics.should be_empty
 
-    crystal = context.symbol_table.lookup("Crystal").should be_a(Semantic::ModuleSymbol)
-    hir = crystal.as(Semantic::ModuleSymbol).scope.lookup("HIR").should be_a(Semantic::ModuleSymbol)
+    adamas = context.symbol_table.lookup("Adamas").should be_a(Semantic::ModuleSymbol)
+    hir = adamas.as(Semantic::ModuleSymbol).scope.lookup("HIR").should be_a(Semantic::ModuleSymbol)
     taint = hir.as(Semantic::ModuleSymbol).scope.lookup("TaintAnalyzer").should be_a(Semantic::ClassSymbol)
     taint.as(Semantic::ClassSymbol).scope.lookup("FFI_METHODS").should be_a(Semantic::ConstantSymbol)
   end
@@ -687,8 +712,8 @@ describe Semantic::SymbolCollector do
 
     collector.diagnostics.should be_empty
 
-    crystal = context.symbol_table.lookup("Crystal").should be_a(Semantic::ModuleSymbol)
-    mir = crystal.as(Semantic::ModuleSymbol).scope.lookup("MIR").should be_a(Semantic::ModuleSymbol)
+    adamas = context.symbol_table.lookup("Adamas").should be_a(Semantic::ModuleSymbol)
+    mir = adamas.as(Semantic::ModuleSymbol).scope.lookup("MIR").should be_a(Semantic::ModuleSymbol)
     mir.as(Semantic::ModuleSymbol).scope.lookup("TARGET_POINTER_BYTES_U64").should be_a(Semantic::ConstantSymbol)
   end
 

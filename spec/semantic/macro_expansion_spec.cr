@@ -32,7 +32,7 @@ describe "Phase 87B-2: General Macro Expansion" do
     collector.collect
 
     # Verify macro was registered
-    greet_macro = context.symbol_table.lookup("greet")
+    greet_macro = context.symbol_table.lookup_macro("greet")
     greet_macro.should_not be_nil
     greet_macro.should be_a(Semantic::MacroSymbol)
 
@@ -85,7 +85,7 @@ describe "Phase 87B-2: General Macro Expansion" do
 
     # Both should be registered
     context.symbol_table.lookup("my_method").should be_a(Semantic::MethodSymbol)
-    context.symbol_table.lookup("my_macro").should be_a(Semantic::MacroSymbol)
+    context.symbol_table.lookup_macro("my_macro").should be_a(Semantic::MacroSymbol)
 
     # No expansion errors
     collector.diagnostics.select(&.level.error?).should be_empty

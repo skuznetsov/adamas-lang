@@ -198,16 +198,20 @@ describe Semantic::TypeInferenceEngine do
   describe "Phase 3: Control Flow" do
     it "infers union type for if with both branches" do
       source = <<-CRYSTAL
-        if true
-          42
-        else
-          "hello"
+        def choose(flag : Bool)
+          if flag
+            42
+          else
+            "hello"
+          end
         end
+
+        choose(true)
       CRYSTAL
 
       program, analyzer, engine = infer_types(source)
 
-      root_id = program.roots[0]
+      root_id = program.roots.last
       type = engine.context.get_type(root_id)
 
       type.should be_a(UnionType)
@@ -221,14 +225,18 @@ describe Semantic::TypeInferenceEngine do
 
     it "infers union with Nil for if without else" do
       source = <<-CRYSTAL
-        if true
-          42
+        def choose(flag : Bool)
+          if flag
+            42
+          end
         end
+
+        choose(true)
       CRYSTAL
 
       program, analyzer, engine = infer_types(source)
 
-      root_id = program.roots[0]
+      root_id = program.roots.last
       type = engine.context.get_type(root_id)
 
       type.should be_a(UnionType)
@@ -286,16 +294,20 @@ describe Semantic::TypeInferenceEngine do
 
     it "infers union type for if with single elsif" do
       source = <<-CRYSTAL
-        if true
-          42
-        elsif false
-          "hello"
+        def choose(flag : Bool, other : Bool)
+          if flag
+            42
+          elsif other
+            "hello"
+          end
         end
+
+        choose(true, false)
       CRYSTAL
 
       program, analyzer, engine = infer_types(source)
 
-      root_id = program.roots[0]
+      root_id = program.roots.last
       type = engine.context.get_type(root_id)
 
       type.should be_a(UnionType)
@@ -309,20 +321,24 @@ describe Semantic::TypeInferenceEngine do
 
     it "infers union type for if with multiple elsif branches" do
       source = <<-CRYSTAL
-        if true
-          1
-        elsif false
-          "two"
-        elsif true
-          3
-        else
-          "four"
+        def choose(first : Bool, second : Bool, third : Bool)
+          if first
+            1
+          elsif second
+            "two"
+          elsif third
+            3
+          else
+            "four"
+          end
         end
+
+        choose(true, false, true)
       CRYSTAL
 
       program, analyzer, engine = infer_types(source)
 
-      root_id = program.roots[0]
+      root_id = program.roots.last
       type = engine.context.get_type(root_id)
 
       type.should be_a(UnionType)
@@ -349,6 +365,67 @@ describe Semantic::TypeInferenceEngine do
 
       # No errors - truthy checks are valid in elsif
       engine.diagnostics.select(&.level.error?).should be_empty
+    end
+  end
+
+  describe "generic method return substitutions" do
+    it "keeps Nil as a legitimate direct generic return argument" do
+      source = <<-CRYSTAL
+        def identity(value : T) : T forall T
+          value
+        end
+
+        identity(nil)
+      CRYSTAL
+
+      program, analyzer, engine = infer_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Nil")
+    end
+
+    it "keeps Nil as a legitimate generic receiver return argument" do
+      source = <<-CRYSTAL
+        class Box(T)
+          def value : T
+            uninitialized T
+          end
+        end
+
+        Box(Nil).new.value
+      CRYSTAL
+
+      program, analyzer, engine = infer_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Nil")
+    end
+
+    it "keeps Nil as a legitimate included-module return argument" do
+      source = <<-CRYSTAL
+        module Value(T)
+          def value : T
+            uninitialized T
+          end
+        end
+
+        class NilBox
+          include Value(Nil)
+        end
+
+        NilBox.new.value
+      CRYSTAL
+
+      program, analyzer, engine = infer_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Nil")
     end
   end
 
@@ -762,8 +839,8 @@ describe Semantic::TypeInferenceEngine do
 
       call_id = program.roots.last
       type = engine.context.get_type(call_id)
-      type.should be_a(PrimitiveType)
-      type.as(PrimitiveType).name.should eq("String")
+      type.should be_a(InstanceType)
+      type.as(InstanceType).class_symbol.name.should eq("String")
     end
 
     it "supports alias-based Slice.empty through generic metaclass builtins" do
@@ -1108,7 +1185,7 @@ describe Semantic::TypeInferenceEngine do
     it "resolves cross-file reopened path-style module constants" do
       units = [
         {
-          path: "/tmp/semantic-ff-cross-file-a.cr",
+          path:   "/tmp/semantic-ff-cross-file-a.cr",
           source: <<-CRYSTAL
             class Float
             end
@@ -1120,7 +1197,7 @@ describe Semantic::TypeInferenceEngine do
           CRYSTAL
         },
         {
-          path: "/tmp/semantic-ff-cross-file-b.cr",
+          path:   "/tmp/semantic-ff-cross-file-b.cr",
           source: <<-CRYSTAL
             module Float::FastFloat
               module Powers
@@ -1146,7 +1223,7 @@ describe Semantic::TypeInferenceEngine do
     it "resolves constants across three reopened path-style module files" do
       units = [
         {
-          path: "/tmp/semantic-ff-three-file-a.cr",
+          path:   "/tmp/semantic-ff-three-file-a.cr",
           source: <<-CRYSTAL
             class Float
             end
@@ -1159,7 +1236,7 @@ describe Semantic::TypeInferenceEngine do
           CRYSTAL
         },
         {
-          path: "/tmp/semantic-ff-three-file-b.cr",
+          path:   "/tmp/semantic-ff-three-file-b.cr",
           source: <<-CRYSTAL
             module Float::FastFloat
               module Powers
@@ -1169,7 +1246,7 @@ describe Semantic::TypeInferenceEngine do
           CRYSTAL
         },
         {
-          path: "/tmp/semantic-ff-three-file-c.cr",
+          path:   "/tmp/semantic-ff-three-file-c.cr",
           source: <<-CRYSTAL
             module Float::FastFloat
               def self.probe
@@ -1191,7 +1268,7 @@ describe Semantic::TypeInferenceEngine do
     it "resolves Slice.literal constants across three reopened path-style module files" do
       units = [
         {
-          path: "/tmp/semantic-ff-slice-literal-a.cr",
+          path:   "/tmp/semantic-ff-slice-literal-a.cr",
           source: <<-CRYSTAL
             struct Slice(T)
               def self.literal(*elts : T)
@@ -1210,7 +1287,7 @@ describe Semantic::TypeInferenceEngine do
           CRYSTAL
         },
         {
-          path: "/tmp/semantic-ff-slice-literal-b.cr",
+          path:   "/tmp/semantic-ff-slice-literal-b.cr",
           source: <<-CRYSTAL
             module Float::FastFloat
               module Powers
@@ -1220,7 +1297,7 @@ describe Semantic::TypeInferenceEngine do
           CRYSTAL
         },
         {
-          path: "/tmp/semantic-ff-slice-literal-c.cr",
+          path:   "/tmp/semantic-ff-slice-literal-c.cr",
           source: <<-CRYSTAL
             module Float::FastFloat
               def self.probe
@@ -2600,12 +2677,16 @@ describe Semantic::TypeInferenceEngine do
           end
         end
 
-        x = if true
-          A.new
-        else
-          B.new
+        def probe(flag : Bool)
+          x = if flag
+            A.new
+          else
+            B.new
+          end
+          x.foo
         end
-        result = x.foo
+
+        probe(true)
       CRYSTAL
 
       program, analyzer, engine = infer_types(source)
@@ -2613,7 +2694,7 @@ describe Semantic::TypeInferenceEngine do
       # x : A | B (InstanceType(A) | InstanceType(B))
       # A.foo : Int32, B.foo : String
       # result : Int32 | String
-      result_id = program.roots[3]
+      result_id = program.roots.last
       type = engine.context.get_type(result_id)
       type.should be_a(UnionType)
 
@@ -3025,10 +3106,12 @@ describe Semantic::TypeInferenceEngine do
 
     it "handles early return in conditional (postfix if)" do
       source = <<-CRYSTAL
-        def test(x : Int32) : String
+        def test(x : Int32)
           return "negative" if x < 0
           "positive"
         end
+
+        test(0)
       CRYSTAL
 
       program, analyzer, engine = infer_types(source)
@@ -3047,10 +3130,9 @@ describe Semantic::TypeInferenceEngine do
       return_node = program.arena[return_expr_id]
       Adamas::Compiler::Frontend.node_kind(return_node).should eq(Adamas::Compiler::Frontend::NodeKind::Return)
 
-      # Return statement should have String type
-      return_type = engine.context.get_type(return_expr_id)
-      return_type.should be_a(PrimitiveType)
-      return_type.as(PrimitiveType).name.should eq("String")
+      return_value = return_node.as(Adamas::Compiler::Frontend::ReturnNode).value.should_not be_nil
+      engine.context.get_type(return_value).to_s.should eq("String")
+      engine.context.get_type(program.roots.last).to_s.should eq("String")
     end
 
     it "handles return in while loop (postfix if)" do
@@ -3071,7 +3153,7 @@ describe Semantic::TypeInferenceEngine do
       def_node = program.arena[program.roots[0]]
       body = Adamas::Compiler::Frontend.node_def_body(def_node)
       body.should_not be_nil
-      while_expr_id = body.not_nil![1]  # Second statement (after x = 0)
+      while_expr_id = body.not_nil![1] # Second statement (after x = 0)
       while_node = program.arena[while_expr_id].as(Adamas::Compiler::Frontend::WhileNode)
 
       # Check that while body contains an if with return
@@ -3079,7 +3161,7 @@ describe Semantic::TypeInferenceEngine do
       while_body.should_not be_nil
 
       # Find the if statement in the while body
-      if_expr_id = while_body.not_nil![1]  # Second statement in while (after x = x + 1)
+      if_expr_id = while_body.not_nil![1] # Second statement in while (after x = x + 1)
       if_node = program.arena[if_expr_id].as(Adamas::Compiler::Frontend::IfNode)
 
       # Check return in if then branch
@@ -3097,11 +3179,13 @@ describe Semantic::TypeInferenceEngine do
 
     it "handles multiple return statements (postfix if)" do
       source = <<-CRYSTAL
-        def test(x : Int32) : String
+        def test(x : Int32)
           return "zero" if x == 0
           return "one" if x == 1
           "other"
         end
+
+        test(0)
       CRYSTAL
 
       program, analyzer, engine = infer_types(source)
@@ -3114,16 +3198,18 @@ describe Semantic::TypeInferenceEngine do
       # First if with return
       if1_node = program.arena[body.not_nil![0]].as(Adamas::Compiler::Frontend::IfNode)
       return1_id = if1_node.then_body.not_nil![0]
-      return1_type = engine.context.get_type(return1_id)
-      return1_type.should be_a(PrimitiveType)
-      return1_type.as(PrimitiveType).name.should eq("String")
+      return1 = program.arena[return1_id].as(Adamas::Compiler::Frontend::ReturnNode)
+      return1_value = return1.value.should_not be_nil
+      engine.context.get_type(return1_value).to_s.should eq("String")
 
       # Second if with return
       if2_node = program.arena[body.not_nil![1]].as(Adamas::Compiler::Frontend::IfNode)
       return2_id = if2_node.then_body.not_nil![0]
-      return2_type = engine.context.get_type(return2_id)
-      return2_type.should be_a(PrimitiveType)
-      return2_type.as(PrimitiveType).name.should eq("String")
+      return2 = program.arena[return2_id].as(Adamas::Compiler::Frontend::ReturnNode)
+      return2_value = return2.value.should_not be_nil
+      engine.context.get_type(return2_value).to_s.should eq("String")
+
+      engine.context.get_type(program.roots.last).to_s.should eq("String")
     end
 
     it "uses explicit returns when inferring unannotated method bodies" do

@@ -167,23 +167,36 @@ module Adamas::MIR
     @llvm_type_miss_calls : Int64 = 0_i64
     @llvm_type_miss_output_bytes : Int64 = 0_i64
     # Union descriptors for detecting all-reference-type unions (stored as ptr, not struct)
-    property union_descriptors : Hash(TypeRef, UnionDescriptor)?
     property union_descriptor_entries : ::Array(UnionDescriptorEntry)?
+    property union_storage_entries : ::Array(UnionStorageEntry)?
 
     def initialize(@type_registry : TypeRegistry)
       @type_ref_cache = ::Hash(TypeRef, String).new
       @mangle_cache = {} of String => String
     end
 
-    # Check if a union type contains ONLY reference types (classes) and/or Nil.
-    # Such unions are stored as raw pointers (like original Crystal) because
-    # the type_id is already in each object's header — no union discriminator needed.
-    def is_all_ref_union?(type_ref : TypeRef) : Bool
-      descs = @union_descriptors
-      return false unless descs
-      desc = descs[type_ref]?
-      return false unless desc
-      all_ref_union_descriptor?(desc)
+    def union_storage_kind(type_ref : TypeRef) : UnionStorageKind
+      if stored = Adamas::MIR.union_storage_from_entries(@union_storage_entries, type_ref)
+        return stored
+      end
+      desc = Adamas::MIR.union_descriptor_from_entries(@union_descriptor_entries, type_ref)
+      return UnionStorageKind::Tagged unless desc
+      Adamas::MIR.union_storage_kind(@type_registry, desc)
+    end
+
+    def is_raw_storage_union?(type_ref : TypeRef) : Bool
+      union_storage_kind(type_ref).raw_storage?
+    end
+
+    def is_raw_header_union?(type_ref : TypeRef) : Bool
+      union_storage_kind(type_ref).runtime_header?
+    end
+
+    # Pointer | Nil is a raw nullable pointer, but unlike class-only unions its
+    # non-nil value has no runtime type-id header. Keep that distinction explicit
+    # so union type-id/is checks never read arbitrary pointer payload as a header.
+    def is_raw_nullable_pointer_union?(type_ref : TypeRef) : Bool
+      union_storage_kind(type_ref) == UnionStorageKind::RawNullablePointer
     end
 
     def llvm_type(type_ref : TypeRef) : String
@@ -285,6 +298,12 @@ module Adamas::MIR
         when "Char"        then return "i32"
         when "Symbol"      then return "i32"
         end
+        if type.kind.union?
+          if desc = Adamas::MIR.union_descriptor_from_entries(@union_descriptor_entries, type_ref)
+            return "ptr" if union_storage_kind(type_ref).raw_storage?
+            return "%#{mangle_name(type.name)}.union"
+          end
+        end
         compute_llvm_type_for_type(type)
       else
         "ptr"  # Unknown → opaque pointer
@@ -312,7 +331,7 @@ module Adamas::MIR
         # The type_id for dispatch lives in each object's header, so no union
         # discriminator struct is needed.  This matches original Crystal's ABI and
         # keeps Array element strides consistent (Pointer(T)#[]= stores ptr).
-        if is_all_ref_union_by_name?(type.name)
+        if is_raw_storage_union_by_name?(type.name)
           "ptr"
         else
           "%#{mangle_name(type.name)}.union"
@@ -332,79 +351,23 @@ module Adamas::MIR
     # Check if a union type (by name) has only reference/Nil variants.
     # Uses the union_descriptors if available, otherwise falls back to checking
     # each pipe-separated variant name in the type registry.
-    private def is_all_ref_union_by_name?(name : String) : Bool
+    private def is_raw_storage_union_by_name?(name : String) : Bool
       # Fast path: check union descriptors if available. Use the sidecar entry
       # array instead of Hash#each_value; generated stage2 compilers have hit
       # block/Hash iteration mislowering here when most descriptor names do not match.
       if entries = @union_descriptor_entries
         idx = 0
         while idx < entries.size
-          desc = entries.unsafe_fetch(idx).descriptor
-          return all_ref_union_descriptor?(desc) if desc.name == name
+          entry = entries.unsafe_fetch(idx)
+          desc = entry.descriptor
+          if desc.name == name
+            return union_storage_kind(entry.type_ref).raw_storage?
+          end
           idx += 1
         end
       end
-      # Fallback: parse the union name "A | B | Nil" and check each in registry
-      name.split(" | ").all? do |part|
-        stripped = part.strip
-        next true if stripped == "Nil" || stripped == "Void"
-        if found = @type_registry.get_by_name(stripped)
-          runtime_header_backed_union_variant?(found)
-        else
-          # Check for ivar-qualified names like "ClassName::ivar:TypeName"
-          variant_name_is_runtime_header_backed?(stripped)
-        end
-      end
-    end
-
-    private def all_ref_union_descriptor?(desc : UnionDescriptor) : Bool
-      variants = desc.variants
-      idx = 0
-      while idx < variants.size
-        variant = variants.unsafe_fetch(idx)
-        unless variant.type_ref == TypeRef::NIL || variant.type_ref == TypeRef::VOID
-          type = @type_registry.get(variant.type_ref)
-          if type
-            return false unless runtime_header_backed_union_variant?(type)
-          else
-            # Variant type not in registry — check ivar-qualified name
-            return false unless variant_name_is_runtime_header_backed?(variant.full_name)
-          end
-        end
-        idx += 1
-      end
-      true
-    end
-
-    # Raw-pointer union ABI is only valid when each non-nil variant carries its
-    # runtime type_id in an object header. Structs and tuples may be heap-backed,
-    # but their body begins with user fields, so loading `type_id` from offset 0
-    # misclassifies them.
-    private def runtime_header_backed_union_variant?(type : Type?) : Bool
-      return false unless type
-      type.kind.reference? || type.kind.array? || type.kind.pointer?
-    end
-
-    # Check if a variant type name represents a runtime-header-backed heap object by extracting
-    # the base type from an ivar-qualified name like "ClassName::ivar_name:TypeName".
-    private def variant_name_is_runtime_header_backed?(name : String) : Bool
-      i = name.bytesize - 1
-      while i > 0
-        if name.byte_at(i) == ':'.ord && name.byte_at(i - 1) != ':'.ord
-          base_name = name[(i + 1)..]
-          base_type = @type_registry.get_by_name(base_name)
-          return runtime_header_backed_union_variant?(base_type) if base_type
-          return false
-        end
-        i -= 1
-      end
-      # For generic instantiations, check the base class name
-      paren_idx = name.index('(')
-      if paren_idx
-        generic_base = name[0...paren_idx]
-        base_type = @type_registry.get_by_name(generic_base)
-        return runtime_header_backed_union_variant?(base_type) if base_type
-      end
+      # No descriptor means no stable cross-phase evidence. Fail closed to a
+      # tagged carrier instead of re-deriving ABI from a display name.
       false
     end
 
@@ -718,6 +681,17 @@ module Adamas::MIR
 
     def side_effect_string_counter_tag : String
       "SCN"
+    end
+  end
+
+  # A parallel worker can mutate only a fork-local backend, but the parent-side
+  # large-function optimization/emission path mutates the live generator before
+  # workers are known to have succeeded.  Never replay sequential emission on
+  # that poisoned instance; this marker asks `generate` to discard it and retry
+  # the complete module with a fresh backend.
+  private class LLVMParallelEmissionRetry < Exception
+    def initialize(reason : String)
+      super(reason)
     end
   end
 
@@ -2760,11 +2734,42 @@ module Adamas::MIR
       end
 
       if fuzzy_match_allowed && (suffix = extern_suffix)
-        return @module.functions.find do |f|
-          extern_fuzzy_matches_candidate?(extern_name, extern_method_core, suffix, f.name)
+        functions = @module.functions
+        idx = 0
+        while idx < functions.size
+          function = functions.unsafe_fetch(idx)
+          return function if extern_fuzzy_matches_candidate?(extern_name, extern_method_core, suffix, function.name)
+          idx += 1
         end
       end
 
+      nil
+    end
+
+    # Bootstrap-safe replacement for Array(Function)#find. Full self-host can
+    # leave that generic iterator body as a bare stub even though the function
+    # list itself is intact. Do not consult the String => Function index here:
+    # produced stage2 has also shown corrupt Hash value reads for compiler IR
+    # objects. The function list is the authoritative bootstrap-safe path.
+    private def module_function_by_mangled_name(name : String) : Function?
+      functions = @module.functions
+      idx = 0
+      while idx < functions.size
+        function = functions.unsafe_fetch(idx)
+        return function if mangle_function_name(function.name) == name
+        idx += 1
+      end
+      nil
+    end
+
+    private def module_function_with_mangled_prefix(prefix : String) : Function?
+      functions = @module.functions
+      idx = 0
+      while idx < functions.size
+        function = functions.unsafe_fetch(idx)
+        return function if mangle_function_name(function.name).starts_with?(prefix)
+        idx += 1
+      end
       nil
     end
 
@@ -2965,6 +2970,11 @@ module Adamas::MIR
     @string_offsets : Hash(String, UInt32)
     @reuse_function_block_buffer : Bool
     @function_block_output : IO::Memory
+    # Internal controls used by the full-generation retry path.  The override
+    # is per generator instance so a failed parallel run never mutates process
+    # environment for unrelated compiler work.
+    @parallel_workers_override : Int32? = nil
+    @external_output_generation : Bool = false
 
     def emit_debug_info : Bool
       @debug_emit_anchors
@@ -2972,6 +2982,10 @@ module Adamas::MIR
 
     def emit_debug_info=(enabled : Bool) : Bool
       @debug_emit_anchors = enabled
+    end
+
+    protected def force_sequential_workers! : Nil
+      @parallel_workers_override = 1
     end
 
     property emit_type_metadata : Bool = true
@@ -2990,6 +3004,9 @@ module Adamas::MIR
     # This parallelizes MIR opt across workers, saving serial MIR opt time.
     property worker_mir_opt : Bool = false
     property worker_ltp_opt : Bool = false
+    # Bound the parent wait for hung workers.  Tests may lower this per generator;
+    # production can override it with ADAMAS_LLVM_WORKER_TIMEOUT_MS.
+    property parallel_worker_timeout_ms : Int32 = 30_000
     property target_triple : String = {% if flag?(:darwin) %}
                                         {% if flag?(:aarch64) %}
                                           "arm64-apple-macosx"
@@ -3004,8 +3021,8 @@ module Adamas::MIR
       bootstrap_trace_puts "[LLVM_INIT] start"
       @type_mapper = LLVMTypeMapper.new(@module.type_registry)
       bootstrap_trace_puts "[LLVM_INIT] type_mapper done"
-      @type_mapper.union_descriptors = @module.union_descriptors
       @type_mapper.union_descriptor_entries = @module.union_descriptor_entries
+      @type_mapper.union_storage_entries = @module.union_storage_entries
       @output = IO::Memory.new
       @output_ownership = LLVMOutputOwnershipContract.new(@output)
       bootstrap_trace_puts "[LLVM_INIT] output done"
@@ -3508,7 +3525,43 @@ module Adamas::MIR
       {requested_workers, effective_workers, sequential_reason_code}
     end
 
+    # Recreate the entire backend after a failed parallel emission.  A shallow
+    # reset of emitted-function/return-type maps is not sufficient: emission can
+    # also demand externs/globals, synthesize helpers, allocate string names, and
+    # update debug state before the worker outcome is known.  The caller consumes
+    # only the returned IR; the failed generator instance is intentionally stale.
+    private def generate_after_parallel_failure(reason : String) : String
+      STDERR.puts "  [LLVM] retrying complete generation sequentially after parallel failure: #{reason}" if @progress
+
+      retry_generator = self.class.new(@module)
+      retry_generator.emit_type_metadata = @emit_type_metadata
+      retry_generator.emit_tsan = @emit_tsan
+      retry_generator.progress = @progress
+      retry_generator.reachability = @reachability
+      retry_generator.no_prelude = @no_prelude
+      retry_generator.no_gc = @no_gc
+      retry_generator.constant_initial_values = @constant_initial_values.dup
+      retry_generator.emit_debug_info = @debug_emit_anchors
+      retry_generator.fused_mir_lowering = @fused_mir_lowering
+      retry_generator.hir_extern_functions = @hir_extern_functions
+      retry_generator.hir_extern_by_name = @hir_extern_by_name
+      # The old parallel parent may already have optimized its heaviest MIR
+      # function before a worker failed.  Do not run a second optimizer pass on
+      # that shared module; retry from the same MIR with worker optimization
+      # disabled (mixed optimized/unoptimized MIR remains semantically valid).
+      retry_generator.worker_mir_opt = false
+      retry_generator.worker_ltp_opt = false
+      retry_generator.parallel_worker_timeout_ms = @parallel_worker_timeout_ms
+      retry_generator.target_triple = @target_triple
+      retry_generator.force_sequential_workers!
+      retry_generator.generate
+    end
+
     def generate(output : IO? = nil) : String
+      # External sinks cannot be rolled back if a later parallel worker fails.
+      # Keep those calls on the proven sequential path; in-memory generation is
+      # the only mode where a fresh backend can replace the complete result.
+      @external_output_generation = !output.nil?
       capture_primary_output(output || IO::Memory.new)
       @toplevel_output = nil
       @gc_aware_realloc_helper_needed = false
@@ -3582,7 +3635,14 @@ module Adamas::MIR
           "parallel",
           "planned_functions=#{total_funcs} requested_workers=#{emission_session.requested_worker_count} effective_workers=#{n_workers}"
         )
-        emit_functions_parallel(emission_session, functions_to_emit, n_workers)
+        begin
+          emit_functions_parallel(emission_session, functions_to_emit, n_workers)
+        rescue ex : LLVMParallelEmissionRetry
+          # The parallel method has already reaped children and removed all
+          # worker artifacts.  Do not run the old tail on its partially-mutated
+          # backend; regenerate the complete module and return that IR now.
+          return generate_after_parallel_failure(ex.message || ex.class.name)
+        end
       else
         log_generated_stage_function_emission_phase(
           "dispatch_sequential",
@@ -4962,6 +5022,13 @@ module Adamas::MIR
         return emit_extern_forwarding_stub(name, extern, return_type, arg_count, arg_types)
       end
 
+      # Generic Array(T)#pop bodies can be absent from the reachable MIR set.
+      # Keep the same inline-composite ABI override available to the missing
+      # function synthesis path, not only ordinary Function emission.
+      if inline_pop_ir = emit_inline_array_pop_stub(name, return_type, arg_types)
+        return inline_pop_ir
+      end
+
       # Root-qualified top-level methods can still reach the missing-body path as
       # `$CCFoo...` even though call emission canonicalizes them to `Foo...`.
       # Delegate the alias instead of emitting an abort stub for a body that
@@ -5057,7 +5124,7 @@ module Adamas::MIR
              "  store i32 #{file_tid}, ptr %file\n" \
              "#{block_call}" \
              "  ; flush write buffer (safe — no event loop) then C close\n" \
-             "  call ptr @File$Hflush(ptr %file)\n" \
+             "  call ptr @IO$CCFileDescriptor$Hflush(ptr %file)\n" \
              "  %fd2 = call i32 @IO$CCFileDescriptor$Hfd(ptr %file)\n" \
              "  call i32 @close(i32 %fd2)\n" \
              "#{return_line}" \
@@ -5302,7 +5369,7 @@ module Adamas::MIR
       if name.starts_with?("Crystal$CCMIR$CCArray$L")
         target = name.sub("Crystal$CCMIR$CCArray$L", "Array$L")
         if target != name
-          target_func = @module.functions.find { |f| mangle_function_name(f.name) == target }
+          target_func = module_function_by_mangled_name(target)
           target_return_type = if target_func
                                  actual = @type_mapper.llvm_type(target_func.return_type)
                                  actual == "void" ? (@emitted_function_return_types[target]? || return_type) : (@emitted_function_return_types[target]? || actual)
@@ -10093,7 +10160,7 @@ module Adamas::MIR
         has_ref_field = fields.any? do |field|
           if ft = @module.type_registry.get(field.type_ref)
             ft.kind.reference? || ft.kind.array? ||
-              (ft.kind.union? && @type_mapper.is_all_ref_union?(field.type_ref))
+              (ft.kind.union? && @type_mapper.union_storage_kind(field.type_ref).managed?)
           else
             false
           end
@@ -10117,7 +10184,7 @@ module Adamas::MIR
           ft = @module.type_registry.get(field.type_ref)
           next unless ft
           is_ref = ft.kind.reference? || ft.kind.array?
-          is_all_ref_union = ft.kind.union? && @type_mapper.is_all_ref_union?(field.type_ref)
+          is_all_ref_union = ft.kind.union? && @type_mapper.union_storage_kind(field.type_ref).managed?
           next unless is_ref || is_all_ref_union
 
           # Load the reference field at the given byte offset.
@@ -10624,7 +10691,7 @@ module Adamas::MIR
       target = mangled.sub("Crystal$CCMIR$CCSet$L", "Set$L")
       return false if target == mangled
 
-      target_func = @module.functions.find { |f| mangle_function_name(f.name) == target }
+      target_func = module_function_by_mangled_name(target)
       return false unless target_func
 
       # Nilary `.new` lowers to a single `ptr` arg (nil capacity) on ::Set — not the `$$Int32` overload.
@@ -10724,6 +10791,107 @@ module Adamas::MIR
       emit_raw "}\n\n"
     end
 
+    # Resolve the element type for an Array#pop symbol even when the generic
+    # method body was never materialized as a MIR Function. Missing-body
+    # synthesis still knows the mangled call name; the registry is the
+    # authoritative source for the receiver's storage element.
+    private def inline_array_element_type_for_method(name : String, method_suffix : String) : Type?
+      return nil unless name.starts_with?("Array$L")
+      @module.type_registry.types.each do |type|
+        next unless type.kind.array?
+        return type.element_type if @type_mapper.mangle_name("#{type.name}#{method_suffix}") == name
+      end
+      nil
+    end
+
+    private def inline_array_pop_element_type(name : String) : Type?
+      return nil unless name.ends_with?("$Hpop")
+      inline_array_element_type_for_method(name, "#pop")
+    end
+
+    # Emit the single inline-composite Array#pop ABI used by both ordinary
+    # function emission and missing-body synthesis. The generic stdlib body
+    # returns an alias and uses a typed GEP; inline tuples/structs need the
+    # authoritative byte stride, a value copy before clear, and the existing
+    # offset-reset behavior.
+    private def emit_inline_array_pop_stub(
+      name : String,
+      return_type : String,
+      arg_types : Array(String),
+    ) : String?
+      return nil unless name.ends_with?("$Hpop")
+      elem_mir = inline_array_pop_element_type(name)
+      return nil unless elem_mir
+      inline_composite = inline_primitive_tuple_type?(elem_mir) || inline_container_struct_type?(elem_mir)
+      return nil unless inline_composite
+      return nil unless return_type == "ptr"
+
+      stride = container_elem_storage_size_u64(elem_mir)
+      return nil if stride == 0
+
+      param_list = if arg_types.empty?
+                     "ptr %self"
+                   else
+                     arg_types.map_with_index { |type, idx| "#{type} %arg#{idx}" }.join(", ")
+                   end
+      self_arg = arg_types.empty? ? "%self" : "%arg0"
+      String.build do |io|
+        io << "; " << name << " — inline composite pop: stride/copy before clear\n"
+        io << "define " << return_type << " @" << name << "(" << param_list << ") {\n"
+        io << "entry:\n"
+        io << "  %size_ptr = getelementptr i8, ptr " << self_arg << ", i32 4\n"
+        io << "  %size = load i32, ptr %size_ptr\n"
+        io << "  %empty = icmp eq i32 %size, 0\n"
+        io << "  br i1 %empty, label %raise_empty, label %pop_value\n"
+        io << "raise_empty:\n"
+        # A no-prelude build may not materialize the IndexError constructor;
+        # keep the required pop's empty path link-safe while preserving its
+        # fail-fast contract. Full-prelude builds retain the real exception
+        # constructor when it is available.
+        if @func_by_name.has_key?("IndexError$Dnew") || @emitted_functions.includes?("IndexError$Dnew")
+          io << "  %error = call ptr @IndexError$Dnew(ptr @.str.empty)\n"
+          io << "  call void @__adamas_raise(ptr %error)\n"
+          io << "  call void @__adamas_rc_dec(ptr %error, ptr @__adamas_dtor_dispatch)\n"
+        else
+          io << "  call void @abort()\n"
+        end
+        io << "  unreachable\n"
+        io << "pop_value:\n"
+        io << "  %new_size = sub i32 %size, 1\n"
+        io << "  store i32 %new_size, ptr %size_ptr\n"
+        io << "  %offset_ptr = getelementptr i8, ptr " << self_arg << ", i32 12\n"
+        io << "  %offset = load i32, ptr %offset_ptr\n"
+        io << "  %physical = add i32 %offset, %new_size\n"
+        io << "  %physical64 = sext i32 %physical to i64\n"
+        io << "  %byte_offset = mul i64 %physical64, " << stride << "\n"
+        io << "  %buffer_ptr = getelementptr i8, ptr " << self_arg << ", i32 16\n"
+        io << "  %buffer = load ptr, ptr %buffer_ptr\n"
+        io << "  %slot = getelementptr i8, ptr %buffer, i64 %byte_offset\n"
+        io << "  %copy = call ptr @__adamas_malloc64(i64 " << stride << ")\n"
+        io << "  call void @llvm.memcpy.p0.p0.i64(ptr %copy, ptr %slot, i64 " << stride << ", i1 false)\n"
+        io << "  call void @llvm.memset.p0.i64(ptr %slot, i8 0, i64 " << stride << ", i1 false)\n"
+        io << "  %now_empty = icmp eq i32 %new_size, 0\n"
+        io << "  %has_offset = icmp ne i32 %offset, 0\n"
+        io << "  %reset = and i1 %now_empty, %has_offset\n"
+        io << "  br i1 %reset, label %reset_buffer, label %return_copy\n"
+        io << "reset_buffer:\n"
+        # Inline Array#root_buffer here. The generic reset method may itself
+        # be absent, and its typed pointer subtraction would use a one-byte
+        # stride for inline tuples. @buffer is already offset by `offset`
+        # logical elements, so subtract offset * storage-size in bytes.
+        io << "  %offset_reset64 = sext i32 %offset to i64\n"
+        io << "  %offset_reset_bytes = mul i64 %offset_reset64, " << stride << "\n"
+        io << "  %root_byte_offset = sub i64 0, %offset_reset_bytes\n"
+        io << "  %root_buffer = getelementptr i8, ptr %buffer, i64 %root_byte_offset\n"
+        io << "  store ptr %root_buffer, ptr %buffer_ptr\n"
+        io << "  store i32 0, ptr %offset_ptr\n"
+        io << "  br label %return_copy\n"
+        io << "return_copy:\n"
+        io << "  ret ptr %copy\n"
+        io << "}\n\n"
+      end
+    end
+
     # Intercept known-broken stdlib constructors whose bodies don't compile correctly.
     # Returns true if the function was handled (emitted as a runtime helper), false otherwise.
     private def emit_builtin_override(func : Function) : Bool
@@ -10819,6 +10987,15 @@ module Adamas::MIR
           end
         end
       end
+
+      if inline_pop_ir = emit_inline_array_pop_stub(
+           mangled,
+           @type_mapper.llvm_type(func.return_type),
+           func.params.map { |param| emitted_param_llvm_type(param) }
+         )
+        emit_raw inline_pop_ir
+        return true
+      end
       # Thread::Mutex in V2 allocates only 12 bytes (8-byte prefix + 4-byte type_id), but
       # pthread_mutex_t needs 64 bytes. Also Hinitialize inits a STACK-local mutex instead of
       # %self, so the heap object is never properly initialized. Fix both: allocate 72 bytes
@@ -10842,8 +11019,16 @@ module Adamas::MIR
         emit_raw "entry:\n"
         emit_raw "  %attr = alloca [16 x i8], align 8\n"
         emit_raw "  call i32 @pthread_mutexattr_init(ptr %attr)\n"
-        emit_raw "  %errchk = load i32, ptr @LibC__classvar__PTHREAD_MUTEX_ERRORCHECK\n"
-        emit_raw "  call i32 @pthread_mutexattr_settype(ptr %attr, i32 %errchk)\n"
+        # Keep this raw override self-contained. The LibC classvar is optional
+        # in a target module (and may not be emitted when this override is the
+        # only demand), while the pthread mutex error-checking constant is a
+        # target ABI value: Darwin/BSD use 1 and Linux/Android use 2.
+        mutex_errorcheck = if @target_triple.includes?("linux") || @target_triple.includes?("android")
+                            2
+                          else
+                            1
+                          end
+        emit_raw "  call i32 @pthread_mutexattr_settype(ptr %attr, i32 #{mutex_errorcheck})\n"
         emit_raw "  call i32 @pthread_mutex_init(ptr %self, ptr %attr)\n"
         emit_raw "  call i32 @pthread_mutexattr_destroy(ptr %attr)\n"
         emit_raw "  ret void\n"
@@ -11820,7 +12005,7 @@ module Adamas::MIR
           emit_raw "  %block_result = call #{return_type} %p2(ptr %file)\n"
         end
         # Flush write buffer (safe — no event loop), then close via C syscall
-        emit_raw "  call ptr @File$Hflush(ptr %file)\n"
+        emit_raw "  call ptr @IO$CCFileDescriptor$Hflush(ptr %file)\n"
         emit_raw "  %fd2 = call i32 @IO$CCFileDescriptor$Hfd(ptr %file)\n"
         emit_raw "  call i32 @close(i32 %fd2)\n"
         if return_type == "void"
@@ -12719,12 +12904,9 @@ module Adamas::MIR
         # relying on []? suffix parsing which can include unrelated type markers).
         find_entry_prefix = "#{hash_prefix}$Hfind_entry$$"
         find_entry_name = "#{find_entry_prefix}#{key_type_suffix}"
-        find_entry_func = @module.functions.find { |f| mangle_function_name(f.name) == find_entry_name }
+        find_entry_func = module_function_by_mangled_name(find_entry_name)
         if find_entry_func.nil?
-          find_entry_func = @module.functions.find do |f|
-            mname = mangle_function_name(f.name)
-            mname.starts_with?(find_entry_prefix)
-          end
+          find_entry_func = module_function_with_mangled_prefix(find_entry_prefix)
           find_entry_name = mangle_function_name(find_entry_func.name) if find_entry_func
         end
 
@@ -13092,8 +13274,10 @@ module Adamas::MIR
         emit_raw "  %start = trunc i64 %start64 to i32\n"
         emit_raw "  %end = trunc i64 %end64 to i32\n"
         emit_raw "  %len = sub i32 %end, %start\n"
-        # Create substring using byte_slice
-        emit_raw "  %result = call ptr @String$Hbyte_slice$$Int32_Int32(ptr %str, i32 %start, i32 %len)\n"
+        # This override is emitted through a raw LLVM edge, outside HIR/RTA
+        # demand discovery. Route it to the unconditional runtime helper so the
+        # target cannot disappear when String#byte_slice itself is not live.
+        emit_raw "  %result = call ptr @__adamas_string_byte_slice(ptr %str, i32 %start, i32 %len)\n"
         emit_raw "  ret ptr %result\n"
         emit_raw "}\n\n"
         return true
@@ -13388,7 +13572,7 @@ module Adamas::MIR
         target = mangled
           .sub("Hash$L#{alias_token}$C$_", "Hash$LUInt32$C$_")
           .sub("$Hupsert$$#{alias_token}_", "$Hupsert$$UInt32_")
-        target_func = @module.functions.find { |f| mangle_function_name(f.name) == target }
+        target_func = module_function_by_mangled_name(target)
         return false unless target_func || @emitted_functions.includes?(target)
 
         canonical_ret = target_func ? @type_mapper.llvm_type(target_func.return_type) : ret_llvm_type.sub("Hash$CCEntry$L#{alias_token}$C$_", "Hash$CCEntry$LUInt32$C$_")
@@ -13437,7 +13621,7 @@ module Adamas::MIR
 
       fq = mangled.gsub("MIR$CC", "Adamas$CCMIR$CC").gsub("HIR$CC", "Adamas$CCHIR$CC")
       return false if fq == mangled
-      target_func = @module.functions.find { |f| mangle_function_name(f.name) == fq }
+      target_func = module_function_by_mangled_name(fq)
       return false unless target_func
       return false unless target_func.params.size >= 3
 
@@ -13490,7 +13674,7 @@ module Adamas::MIR
 
       fq = mangled.gsub("MIR$CC", "Adamas$CCMIR$CC").gsub("HIR$CC", "Adamas$CCHIR$CC")
       return false if fq == mangled
-      target_func = @module.functions.find { |f| mangle_function_name(f.name) == fq }
+      target_func = module_function_by_mangled_name(fq)
       return false unless target_func
       return false unless target_func.params.size == 2
 
@@ -13818,7 +14002,7 @@ module Adamas::MIR
       target = mangled.sub("Crystal$CCMIR$CCArray$L", "Array$L")
       return nil if target == mangled
 
-      if target_func = @module.functions.find { |f| mangle_function_name(f.name) == target }
+      if target_func = module_function_by_mangled_name(target)
         {target, target_func}
       else
         nil
@@ -13837,40 +14021,6 @@ module Adamas::MIR
       else
         nil
       end
-    end
-
-    private def typeref_set_delegate_target(mangled : String) : {String, Function}?
-      prefixes = {
-        "$CCSet$LTypeRef$R",
-        "Set$LTypeRef$R",
-        "$CCSet$LCrystal$CCMIR$CCTypeRef$R",
-        "Set$LCrystal$CCMIR$CCTypeRef$R",
-        "$CCSet$LCrystal$CCHIR$CCTypeRef$R",
-        "Set$LCrystal$CCHIR$CCTypeRef$R",
-        "$CCSet$LAdamas$CCMIR$CCTypeRef$R",
-        "Set$LAdamas$CCMIR$CCTypeRef$R",
-        "$CCSet$LAdamas$CCHIR$CCTypeRef$R",
-        "Set$LAdamas$CCHIR$CCTypeRef$R",
-      }
-
-      idx = 0
-      while idx < prefixes.size
-        prefix = prefixes.unsafe_fetch(idx)
-        if mangled.starts_with?(prefix)
-          target = mangled.sub(prefix, "Set$LUInt32$R")
-          target = target.sub("$$Crystal$CCMIR$CCTypeRef", "$$UInt32")
-          target = target.sub("$$Crystal$CCHIR$CCTypeRef", "$$UInt32")
-          target = target.sub("$$Adamas$CCMIR$CCTypeRef", "$$UInt32")
-          target = target.sub("$$Adamas$CCHIR$CCTypeRef", "$$UInt32")
-          target = target.sub("$$TypeRef", "$$UInt32")
-          if target_func = @func_by_name[target]?
-            return {target, target_func}
-          end
-        end
-        idx += 1
-      end
-
-      nil
     end
 
     private def emit_root_set_new_delegate_override(func : Function, mangled : String) : Bool
@@ -13908,23 +14058,18 @@ module Adamas::MIR
         "$CCSet$LValueId$R",
         "$CCSet$LBlockId$R",
         "$CCSet$LFunctionId$R",
-        "$CCSet$LTypeRef$R",
         "$CCSet$LCrystal$CCHIR$CCValueId$R",
         "$CCSet$LCrystal$CCHIR$CCBlockId$R",
         "$CCSet$LCrystal$CCHIR$CCFunctionId$R",
-        "$CCSet$LCrystal$CCHIR$CCTypeRef$R",
         "$CCSet$LCrystal$CCMIR$CCValueId$R",
         "$CCSet$LCrystal$CCMIR$CCBlockId$R",
         "$CCSet$LCrystal$CCMIR$CCFunctionId$R",
-        "$CCSet$LCrystal$CCMIR$CCTypeRef$R",
         "$CCSet$LAdamas$CCHIR$CCValueId$R",
         "$CCSet$LAdamas$CCHIR$CCBlockId$R",
         "$CCSet$LAdamas$CCHIR$CCFunctionId$R",
-        "$CCSet$LAdamas$CCHIR$CCTypeRef$R",
         "$CCSet$LAdamas$CCMIR$CCValueId$R",
         "$CCSet$LAdamas$CCMIR$CCBlockId$R",
         "$CCSet$LAdamas$CCMIR$CCFunctionId$R",
-        "$CCSet$LAdamas$CCMIR$CCTypeRef$R",
       }
 
       idx = 0
@@ -14027,7 +14172,7 @@ module Adamas::MIR
       if base_name != key_type.name
         base_mangled = base_name.gsub("::", "$CC")
         base_target = "#{base_mangled}$Hhash$$Crystal$CCHasher"
-        if func = @module.functions.find { |f| mangle_function_name(f.name) == base_target }
+        if func = module_function_by_mangled_name(base_target)
           return mangle_function_name(func.name)
         end
       end
@@ -14036,17 +14181,20 @@ module Adamas::MIR
     end
 
     private def find_hash_with_hasher_target(exact_mangled : String, generic_prefix : String) : String?
-      if func = @module.functions.find { |f| mangle_function_name(f.name) == exact_mangled }
+      if func = module_function_by_mangled_name(exact_mangled)
         return mangle_function_name(func.name)
       end
 
-      if func = @module.functions.find { |f|
-           mangled = mangle_function_name(f.name)
-           next false unless mangled == generic_prefix || mangled.starts_with?("#{generic_prefix}$$")
-           next false unless f.params.size >= 2
-           emitted_param_llvm_type(f.params[1]) == "ptr"
-         }
-        return mangle_function_name(func.name)
+      functions = @module.functions
+      idx = 0
+      while idx < functions.size
+        function = functions.unsafe_fetch(idx)
+        mangled = mangle_function_name(function.name)
+        if (mangled == generic_prefix || mangled.starts_with?("#{generic_prefix}$$")) &&
+           function.params.size >= 2 && emitted_param_llvm_type(function.params[1]) == "ptr"
+          return mangled
+        end
+        idx += 1
       end
 
       nil
@@ -15255,15 +15403,11 @@ module Adamas::MIR
             # Don't add duplicate entries
             next if @phi_predecessor_conversions.has_key?({pred_block_id, val_id})
 
-            # Check if this value needs conversion via phi_zext_conversions
-            if conversion = @phi_zext_conversions[val_id]?
-              from_bits, to_bits = conversion
-              conv_name = "r#{val_id}.phi_conv.#{pred_block_id}"
-              @phi_predecessor_conversions[{pred_block_id, val_id}] = {conv_name, from_bits, to_bits}
-              next
-            end
-
-            # Also check for general int width mismatches (e.g. i32 value in i8 phi)
+            # Derive the conversion from this phi edge, not from the legacy
+            # value-only summary. A fixed value can feed phis with different
+            # widths; the summary is last-write-wins and can therefore carry an
+            # unrelated target width into this predecessor (for example an i8
+            # target reused by a later i32 phi).
             val_type = @value_types[val_id]?
             next unless val_type
             val_llvm = @type_mapper.llvm_type(val_type)
@@ -16499,21 +16643,15 @@ module Adamas::MIR
     # `base = if full ... else ... method_name end`, corrupting every
     # per-owner virtual-target name into `Owner#IO#gets_peek`.)
     private def prepass_detect_phi_shared_slots(func : Function)
-      # The liveness veto below is semantically REQUIRED (sharing an incoming
-      # that outlives its phi lets the taken arm's store clobber it — the L10
-      # `method_name` corruption), but enabling it everywhere exposes a second,
-      # pre-existing defect family: MIR emitted with STALE local bindings
-      # (reads referencing an in-loop/in-branch value id on paths where its def
-      # never ran — e.g. lower_super's post-loop `super_method_name` read) that
-      # accidentally worked only through the shared carrier acting as a
-      # variable cell. Until that stale-binding family is fixed at the
-      # HIR→MIR level, the veto stays OFF by default:
-      # ADAMAS_PHI_SHARE_VETO=1 enables it everywhere;
-      # ADAMAS_PHI_SHARE_VETO_FILTER=tok1,tok2 enables it only in functions
-      # whose name contains a token (legacy sharing elsewhere);
-      # ADAMAS_PHI_SHARE_LEGACY_FILTER=tok1,tok2 keeps legacy sharing only in
-      # matching functions (veto everywhere else).
-      apply_veto = false
+      # The liveness veto is semantically REQUIRED (sharing an incoming that
+      # outlives its phi lets the taken arm's store clobber it — the L10
+      # `method_name` corruption). The HIR loop-exit binding invariant is now
+      # covered by a reducer, so keep the safe behavior enabled by default.
+      # ADAMAS_PHI_SHARE_VETO=1 explicitly enables it (for diagnostics);
+      # ADAMAS_PHI_SHARE_VETO_FILTER=tok1,tok2 narrows it to matching
+      # functions; ADAMAS_PHI_SHARE_LEGACY_FILTER=tok1,tok2 is a test-only
+      # escape hatch that keeps legacy sharing in matching functions.
+      apply_veto = true
       if !::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_PHI_SHARE_VETO").nil?
         apply_veto = true
       elsif filter = ::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_PHI_SHARE_VETO_FILTER")
@@ -16672,6 +16810,18 @@ module Adamas::MIR
               if inst.op.eq? || inst.op.ne? || inst.op.lt? || inst.op.le? || inst.op.gt? || inst.op.ge?
                 if @value_types[inst.id]? != TypeRef::BOOL
                   @value_types[inst.id] = TypeRef::BOOL
+                  changed = true
+                end
+                next
+              end
+              # emit_binary_op normalizes operands to the declared result width
+              # and records that final width. Keep the same authority here so a
+              # wider operand cannot make a cross-block slot wider than the SSA
+              # value that is actually emitted. Only a placeholder Void result
+              # needs the fallback inference below.
+              if @type_mapper.llvm_type(inst.type) != "void"
+                if @value_types[inst.id]? != inst.type
+                  @value_types[inst.id] = inst.type
                   changed = true
                 end
                 next
@@ -17621,15 +17771,10 @@ module Adamas::MIR
     # a single class, or a union whose non-nil variants are all classes/arrays.
     # Pointer(T) payloads have no header, so unions containing them don't qualify.
     private def runtime_header_tid_readable?(type_ref : TypeRef) : Bool
-      if desc = @module.union_descriptors[type_ref]?
-        return desc.variants.all? do |v|
-          next true if v.type_ref == TypeRef::NIL || v.type_ref == TypeRef::VOID
-          t = @module.type_registry.get(v.type_ref)
-          !!(t && (t.kind.reference? || t.kind.array?))
-        end
+      if desc = @module.get_union_descriptor(type_ref)
+        return Adamas::MIR.union_storage_kind(@module.type_registry, desc).runtime_header?
       end
-      info = @module.type_registry.get(type_ref)
-      !!(info && (info.kind.reference? || info.kind.array?))
+      Adamas::MIR.runtime_header_backed_type?(@module.type_registry.get(type_ref))
     end
 
     # Wrapping a bare-ptr value into a union when the value's static type is
@@ -17692,7 +17837,7 @@ module Adamas::MIR
           slot_wrap_tid = "0"
           slot_type_ref_for_wrap = @cross_block_slot_type_refs[inst_id]?
           if slot_type_ref_for_wrap && val_type
-            if wrap_desc = @module.union_descriptors[slot_type_ref_for_wrap]?
+            if wrap_desc = @module.get_union_descriptor(slot_type_ref_for_wrap)
               if matching = wrap_desc.variants.find { |v| v.type_ref == val_type }
                 slot_wrap_tid = matching.type_ref.id.to_i32.to_s  # Use global type_ref.id
               elsif llvm_type == "ptr" && runtime_header_tid_readable?(val_type)
@@ -17930,16 +18075,28 @@ module Adamas::MIR
 
     # Number of parallel LLVM IR worker processes (0 or 1 = sequential)
     private def parallel_llvm_workers : Int32
+      return 1 if @external_output_generation
+      if override = @parallel_workers_override
+        return override
+      end
       # V2 BOOTSTRAP: ENV access crashes V2-compiled binaries.
       # Use BootstrapEnv for safe access.
-      if val = ::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_LLVM_WORKERS")
-        return val.to_i? || 1
+      ::Adamas::Compiler::BootstrapEnv.llvm_worker_count
+    end
+
+    # Keep worker polling out of Crystal's scheduler/event loop.  This path runs
+    # in the compiler parent while forked workers may have inherited runtime
+    # descriptors, so a direct nanosleep is the safer bounded pause.
+    private def pause_parallel_worker_poll : Nil
+      req = uninitialized LibC::Timespec
+      req.tv_sec = typeof(req.tv_sec).new(0)
+      req.tv_nsec = typeof(req.tv_nsec).new(1_000_000)
+      rem = uninitialized LibC::Timespec
+      ret = LibC.nanosleep(pointerof(req), pointerof(rem))
+      while ret == -1 && Errno.value == Errno::EINTR
+        req = rem
+        ret = LibC.nanosleep(pointerof(req), pointerof(rem))
       end
-      # Default: use available cores (capped at 8)
-      n = System.cpu_count
-      n = 8 if n > 8
-      n = 1 if n < 1
-      n.to_i32
     end
 
     # Sequential function emission (original path)
@@ -18305,7 +18462,8 @@ module Adamas::MIR
         @module.globals.adamas_debug_structural_bytes +
         @module.symbol_names.adamas_debug_structural_bytes +
         @module.extern_globals.adamas_debug_structural_bytes +
-        @module.union_descriptors.adamas_debug_structural_bytes +
+        @module.union_descriptor_entries.adamas_debug_structural_bytes +
+        @module.union_storage_entries.adamas_debug_structural_bytes +
         @module.module_type_refs.adamas_debug_structural_bytes
 
       type_struct = @module.type_registry.types.adamas_debug_structural_bytes
@@ -18426,6 +18584,88 @@ module Adamas::MIR
       # must return to the primary sink owned by the output contract, not to a
       # rescue-local snapshot that can diverge under self-hosting.
       workers = [] of {Int32, String, String}  # pid, ir_file, sideeffects_file
+      workers_reaped = false
+      worker_failure : String? = nil
+
+      # Once a failure is observed, stop siblings before waiting for them.  A
+      # broken worker can otherwise hang forever while the parent waits, leaving
+      # the retry path unable to restore a complete output.  ESRCH is harmless
+      # for a child that already exited; SIGKILL is the bounded fallback after
+      # the cooperative TERM request.
+      terminate_workers = -> do
+        workers.each do |pid, _, _|
+          LibC.kill(pid, 15)
+          LibC.kill(pid, 9)
+        end
+      end
+
+      # Reap every child without blocking on one PID ahead of another.  Polling
+      # WNOHANG lets a later worker failure terminate an earlier hung worker, and
+      # the deadline bounds the all-hung case even when no child reports failure.
+      reap_workers = -> do
+        remaining = workers.map { |entry| entry[0] }
+        failure_observed = false
+        wait_started = Time.instant
+        timeout_ms = ::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_LLVM_WORKER_TIMEOUT_MS").try(&.to_i?) || @parallel_worker_timeout_ms
+        timeout_ms = 1 if timeout_ms < 1
+
+        until remaining.empty?
+          progress = false
+          remaining.dup.each do |pid|
+            status = 0
+            ret = LibC.waitpid(pid, pointerof(status), LibC::WNOHANG)
+            while ret == -1 && Errno.value == Errno::EINTR
+              ret = LibC.waitpid(pid, pointerof(status), LibC::WNOHANG)
+            end
+            next if ret == 0
+
+            progress = true
+            remaining.delete(pid)
+            if ret == -1
+              worker_failure ||= "waitpid failed for LLVM worker pid #{pid}"
+              unless failure_observed
+                failure_observed = true
+                terminate_workers.call
+              end
+              next
+            end
+
+            termination_signal = status & 0x7F
+            if termination_signal != 0
+              worker_failure ||= "LLVM worker pid #{pid} terminated by signal #{termination_signal}"
+              unless failure_observed
+                failure_observed = true
+                terminate_workers.call
+              end
+            else
+              exit_code = (status >> 8) & 0xFF
+              if exit_code != 0
+                worker_failure ||= "LLVM worker pid #{pid} failed with exit code #{exit_code}"
+                unless failure_observed
+                  failure_observed = true
+                  terminate_workers.call
+                end
+              end
+            end
+          end
+
+          break if remaining.empty?
+          unless failure_observed
+            elapsed_ms = (Time.instant - wait_started).total_milliseconds
+            if elapsed_ms >= timeout_ms
+              worker_failure ||= "LLVM workers timed out after #{timeout_ms}ms (remaining=#{remaining.size})"
+              failure_observed = true
+              terminate_workers.call
+              progress = true
+            end
+          end
+          pause_parallel_worker_poll unless progress
+        end
+
+        workers_reaped = remaining.empty?
+      end
+
+      begin
 
       # Pre-compute MIR function name → module index mapping for fused mode
       fused_func_to_mir_idx = if @fused_mir_lowering
@@ -18532,6 +18772,7 @@ module Adamas::MIR
                 mir_lowering.lower_bodies_range(hir_idx, hir_idx + 1)
               rescue ex
                 STDERR.puts "Worker #{worker_idx}: MIR lowering error: #{ex.message}"
+                LibC._exit(1)
               end
             end
           end
@@ -18550,6 +18791,7 @@ module Adamas::MIR
                 end
               rescue ex
                 STDERR.puts "Worker #{worker_idx}: MIR opt error for #{func.name}: #{ex.message}"
+                LibC._exit(1)
               end
             end
           end
@@ -18559,8 +18801,9 @@ module Adamas::MIR
             func = functions[fi]
             begin
               emit_function(func)
-            rescue ex : IndexError
-              STDERR.puts "Worker #{worker_idx}: Index error in emit_function for: #{func.name}\n#{ex.message}"
+            rescue ex
+              STDERR.puts "Worker #{worker_idx}: emit_function error for: #{func.name}\n#{ex.message}"
+              LibC._exit(1)
             end
           end
           w_t5 = Time.instant
@@ -18594,6 +18837,7 @@ module Adamas::MIR
       parent_output = IO::Memory.new(1024 * 256)
       parent_t0 = Time.instant
       parent_opt_ms = 0.0
+      parent_emission_complete = false
       unless parent_func_indices.empty?
         log_generated_stage_function_emission_phase(
           "parallel_parent_emit_start",
@@ -18616,14 +18860,15 @@ module Adamas::MIR
               else
                 func.optimize
               end
-            rescue
+            rescue ex
+              raise "parallel parent MIR opt failed for #{func.name}: #{ex.message}"
             end
             parent_opt_ms += (Time.instant - opt_t0).total_milliseconds
           end
           begin
             emit_function(func)
-          rescue ex : IndexError
-            STDERR.puts "Parent: Index error in emit_function for: #{func.name}\n#{ex.message}"
+          rescue ex
+            raise "parallel parent emit_function failed for #{func.name}: #{ex.message}"
           end
         end
         restore_output(old_output)
@@ -18633,6 +18878,7 @@ module Adamas::MIR
           "parent_functions=#{parent_func_indices.size} parent_bytes=#{parent_output.pos}"
         )
       end
+      parent_emission_complete = true
       parent_elapsed = (Time.instant - parent_t0).total_milliseconds
       STDERR.puts "  [LLVM] parent emitted #{parent_func_indices.size} funcs in #{parent_elapsed.round(1)}ms (opt=#{parent_opt_ms.round(1)}ms, #{parent_output.pos}B)" if @progress && !parent_func_indices.empty?
 
@@ -18642,21 +18888,31 @@ module Adamas::MIR
         "parallel",
         "worker_processes=#{workers.size}"
       )
-      workers.each do |pid, _, _|
-        ret = LibC.waitpid(pid, out status, 0)
-        if ret == -1
-          raise "waitpid failed for LLVM worker pid #{pid}"
-        end
-        exit_code = (status >> 8) & 0xFF
-        if exit_code != 0
-          raise "LLVM worker pid #{pid} failed with exit code #{exit_code}"
-        end
+      reap_workers.call
+      if failure = worker_failure
+        raise failure
       end
       log_generated_stage_function_emission_phase(
         "parallel_wait_done",
         "parallel",
         "worker_processes=#{workers.size}"
       )
+
+      # A zero exit status is not enough: a worker can die after opening or
+      # truncating one artifact.  Refuse a partial merge so the fresh-backend
+      # retry owns the complete output contract.
+      workers.each do |pid, ir_file, se_file|
+        unless File.exists?(ir_file)
+          raise "LLVM worker pid #{pid} missing IR artifact #{ir_file}"
+        end
+        if File.size(ir_file) <= 0
+          raise "LLVM worker pid #{pid} wrote empty IR artifact #{ir_file}"
+        end
+        unless File.exists?(se_file)
+          raise "LLVM worker pid #{pid} missing side-effect artifact #{se_file}"
+        end
+        validate_worker_side_effect_artifact(emission_session, se_file, pid)
+      end
 
       # Merge results in order
       restore_primary_output
@@ -18689,19 +18945,11 @@ module Adamas::MIR
         "worker_processes=#{workers.size}"
       )
 
-      # Clean up temp files
-      workers.each do |_, ir_file, se_file|
-        File.delete?(ir_file)
-        File.delete?(se_file)
-      end
-      Dir.delete?(tmp_dir)
-      log_generated_stage_function_emission_phase(
-        "parallel_cleanup_done",
-        "parallel",
-        "worker_processes=#{workers.size}"
-      )
     rescue ex
-      # On failure, fall back to sequential emission
+      # Do not replay on this generator: parent-side emission may already have
+      # marked functions/return types or demanded globals/helpers in state whose
+      # output is about to be discarded.  `generate` catches this marker and
+      # starts a clean full-module generation instead.
       saved_output_present = 1
       saved_output_pos = output_ownership.primary_output.pos.to_i64
       current_output_pos_before_restore = @output.pos.to_i64
@@ -18715,14 +18963,78 @@ module Adamas::MIR
         "parallel",
         "error=#{generated_stage_transaction_token(ex.message || ex.class.name)}"
       )
-      STDERR.puts "  [LLVM] parallel emission failed: #{ex.message}, falling back to sequential"
+      STDERR.puts "  [LLVM] parallel emission failed: #{ex.message}, requesting fresh sequential retry"
+      # If the failure happened before the normal wait pass (for example fork()
+      # or parent emission), reap all already-started children before propagating
+      # the retry marker.  The normal worker-failure path has already reaped all
+      # children and simply skips this call.
+      unless workers_reaped
+        terminate_workers.call
+        reap_workers.call
+      end
       restore_primary_output
       log_generated_stage_function_emission_phase(
         "parallel_rescue_after_output_restore",
         "parallel",
         "restored_output_pos=#{@output.pos.to_i64} saved_output_present=#{saved_output_present} saved_output_pos=#{saved_output_pos}"
       )
-      emit_functions_sequential(functions)
+      if parent_emission_complete && @fused_mir_lowering.nil?
+        raise LLVMParallelEmissionRetry.new(ex.message || ex.class.name)
+      else
+        # A parent optimization/emission failure may have partially mutated the
+        # shared MIR itself.  Fused lowering also requires worker-side body
+        # materialization that the sequential retry path does not perform.  Do
+        # not pretend a fresh backend can make either state trustworthy; preserve
+        # the original exception for the caller.
+        raise ex
+      end
+    ensure
+      # Ensure cleanup on success, worker failure, artifact validation failure,
+      # and fork failure.  Keep the exact filenames scoped to this invocation.
+      unless workers_reaped
+        terminate_workers.call
+        reap_workers.call
+      end
+      workers.each do |_, ir_file, se_file|
+        File.delete?(ir_file)
+        File.delete?(se_file)
+      end
+      Dir.delete?(tmp_dir)
+      log_generated_stage_function_emission_phase(
+        "parallel_cleanup_done",
+        "parallel",
+        "worker_processes=#{workers.size}"
+      )
+    end
+    end
+
+    private def validate_worker_side_effect_artifact(emission_session : LLVMEmissionSession, se_file : String, pid : Int32) : Nil
+      File.each_line(se_file) do |line|
+        next if line.strip.empty?
+
+        parts = line.chomp.split('\t')
+        tag = parts[0]?
+        minimum_fields = case tag
+                         when emission_session.side_effect_string_constant_tag,
+                              emission_session.side_effect_undefined_extern_tag,
+                              emission_session.side_effect_emitted_return_type_tag
+                           3
+                         when emission_session.side_effect_zero_struct_global_tag,
+                              emission_session.side_effect_emitted_function_tag,
+                              emission_session.side_effect_module_singleton_global_tag,
+                              emission_session.side_effect_debug_file_tag,
+                              emission_session.side_effect_string_counter_tag,
+                              emission_session.side_effect_gc_realloc_helper_demand_tag
+                           2
+                         when emission_session.side_effect_called_crystal_function_tag
+                           5
+                         else
+                           raise "LLVM worker pid #{pid} wrote unknown side-effect tag #{tag.inspect}"
+                         end
+        if parts.size < minimum_fields
+          raise "LLVM worker pid #{pid} wrote malformed side-effect artifact #{se_file}: #{line.chomp}"
+        end
+      end
     end
 
     private def write_worker_side_effects_with_contract(emission_session : LLVMEmissionSession, se_file : String) : Nil
@@ -18974,7 +19286,9 @@ module Adamas::MIR
       end
       ptr = value_ref(inst.ptr)
       if inst.atomic
+        emit "call void @__tsan_release(ptr #{ptr})" if @emit_tsan
         emit "call void @__adamas_rc_inc_atomic(ptr #{ptr})"
+        emit "call void @__tsan_acquire(ptr #{ptr})" if @emit_tsan
       else
         emit "call void @__adamas_rc_inc(ptr #{ptr})"
       end
@@ -18994,7 +19308,9 @@ module Adamas::MIR
       # all reference-typed fields for cascading cleanup).
       destructor = @dtor_type_ids.empty? ? "null" : "@__adamas_dtor_dispatch"
       if inst.atomic
+        emit "call void @__tsan_release(ptr #{ptr})" if @emit_tsan
         emit "call void @__adamas_rc_dec_atomic(ptr #{ptr}, ptr #{destructor})"
+        emit "call void @__tsan_acquire(ptr #{ptr})" if @emit_tsan
       else
         emit "call void @__adamas_rc_dec(ptr #{ptr}, ptr #{destructor})"
       end
@@ -20860,7 +21176,7 @@ module Adamas::MIR
         # Check if source is null/nil - create nil union
         is_nil_cast = value == "null" || src_type == "void" || src_type_ref == TypeRef::VOID
         variant_type_id = "0"
-        if desc = @module.union_descriptors[inst.type]?
+        if desc = @module.get_union_descriptor(inst.type)
           if is_nil_cast
             variant_type_id = "0"  # Nil always uses discriminator 0
           else
@@ -21322,6 +21638,16 @@ module Adamas::MIR
       end
       # Check for int-to-ptr conversion (int values flowing into ptr phis)
       if phi_type == "ptr"
+        # Preserve the canonical nullable-pointer ABI at the phi itself. A Nil
+        # value may also have a cross-block spill slot, but routing it through a
+        # predecessor load obscures the null arm and invites accidental header
+        # reads by later union dispatch logic.
+        val_type = @value_types[val]?
+        return "null" if val_type == TypeRef::NIL || val_type == TypeRef::VOID
+        if constant_ref = @constant_values[val]?
+          return "null" if nil_like_pointer_value?(val, constant_ref, val_type)
+        end
+
         if i2p_name = @phi_int_to_ptr[{block, val}]?
           return "%#{i2p_name}"
         end
@@ -22401,11 +22727,6 @@ module Adamas::MIR
         callee_func = delegate[1]
         raw_callee_name = callee_func.name
       end
-      if delegate = typeref_set_delegate_target(callee_name)
-        callee_name = delegate[0]
-        callee_func = delegate[1]
-        raw_callee_name = callee_func.name
-      end
       if rooted_delegate = rooted_top_level_delegate_target(callee_name)
         callee_name = rooted_delegate[0]
         if target_func = rooted_delegate[1]
@@ -23481,7 +23802,7 @@ module Adamas::MIR
                    c = @cond_counter
                    @cond_counter += 1
                    # Look up correct variant type_id from union descriptor
-                   scalar_variant_type_id = if desc = @module.union_descriptors[param_type]?
+                   scalar_variant_type_id = if desc = @module.get_union_descriptor(param_type)
                      matching_variant = desc.variants.find { |v| v.type_ref == actual_type }
                      if matching_variant
                        matching_variant.type_ref.id.to_i32  # Use global type_ref.id
@@ -23510,7 +23831,7 @@ module Adamas::MIR
                    variant_type_id = if val == "null"
                      "0"  # Nil always uses discriminator 0
                    else
-                     if desc = @module.union_descriptors[param_type]?
+                     if desc = @module.get_union_descriptor(param_type)
                        matching_variant = desc.variants.find { |v| v.type_ref == actual_type }
                        if matching_variant
                          matching_variant.type_ref.id.to_i32.to_s  # Use global type_ref.id
@@ -23795,7 +24116,7 @@ module Adamas::MIR
           # If the MIR type is a tuple or StaticArray, preserve it even if ABI uses ptr.
           if logical_type = @module.type_registry.get(inst.type)
             if logical_type.kind.tuple? || logical_type.name.starts_with?("StaticArray(") ||
-               (logical_type.kind.union? && @type_mapper.is_all_ref_union?(inst.type))
+               (logical_type.kind.union? && @type_mapper.is_raw_storage_union?(inst.type))
               @value_types[inst.id] = inst.type
             else
               @value_types[inst.id] = call_result_type_ref_for_emitted(inst, callee_func, return_type)
@@ -24601,10 +24922,6 @@ module Adamas::MIR
       if matching_func
         mangled_extern_name = @type_mapper.mangle_name(matching_func.name)
       end
-      if delegate = typeref_set_delegate_target(mangled_extern_name)
-        mangled_extern_name = delegate[0]
-        matching_func = delegate[1]
-      end
       if rooted_delegate = rooted_top_level_delegate_target(mangled_extern_name)
         mangled_extern_name = rooted_delegate[0]
         matching_func ||= rooted_delegate[1]
@@ -25052,7 +25369,7 @@ module Adamas::MIR
              val != "null" && val != "zeroinitializer" && val_type != TypeRef::NIL
             wrap_tid = "0"
             if vt = val_type
-              if wrap_desc = @module.union_descriptors[inst.type]?
+              if wrap_desc = @module.get_union_descriptor(inst.type)
                 if matching = wrap_desc.variants.find { |v| v.type_ref == vt }
                   wrap_tid = matching.type_ref.id.to_i32.to_s
                 elsif scalar_val_type == "ptr" && runtime_header_tid_readable?(vt)
@@ -25760,21 +26077,28 @@ module Adamas::MIR
       # ALWAYS use ptr dispatch (read type_id from object header) regardless of
       # emitted/slot types. Cross-block slots or value coercions may have typed
       # the value as a union struct, but the underlying storage is a raw pointer.
-      canonical_is_allref = @type_mapper.is_all_ref_union?(union_type_ref) ||
+      canonical_is_allref = @type_mapper.is_raw_storage_union?(union_type_ref) ||
                             static_union_type == "ptr"
       # Also check alternative type refs
       unless canonical_is_allref
         if dtr = def_union_type_ref
-          canonical_is_allref = @type_mapper.is_all_ref_union?(dtr)
+          canonical_is_allref = @type_mapper.is_raw_storage_union?(dtr)
         end
       end
       unless canonical_is_allref
         if vtr = @value_types[inst.union_value]?
-          canonical_is_allref = @type_mapper.is_all_ref_union?(vtr) ||
+          canonical_is_allref = @type_mapper.is_raw_storage_union?(vtr) ||
                                 @type_mapper.llvm_type(vtr) == "ptr"
         end
       end
-
+      raw_nullable_union_ref = if @type_mapper.is_raw_nullable_pointer_union?(union_type_ref)
+                                 union_type_ref
+                               elsif def_union_type_ref && @type_mapper.is_raw_nullable_pointer_union?(def_union_type_ref)
+                                 def_union_type_ref
+                               elsif (value_type_ref = @value_types[inst.union_value]?) &&
+                                     @type_mapper.is_raw_nullable_pointer_union?(value_type_ref)
+                                 value_type_ref
+                               end
       slot_union_type = @cross_block_slot_types[inst.union_value]?
       emitted_union_type = @emitted_value_types[union_val]?
       emitted_union_is_union = !!(emitted_union_type && emitted_union_type.ends_with?(".union"))
@@ -25825,11 +26149,15 @@ module Adamas::MIR
         emit "#{name} = load i32, ptr %#{base_name}.type_id_ptr"
       else
         # Not a union struct - determine type_id from ptr null check
-        # type_id 0 = nil, type_id 1+ = non-nil
+        # type_id 0 = nil. Descriptor-backed raw nullable unions use the
+        # non-nil variant's global TypeRef id below; unknown legacy ptr values
+        # retain their historical local discriminator in the final fallback.
         # Handle case where union_val is an integer literal
         if def_inst = find_def_inst(inst.union_value)
           if def_inst.type == TypeRef::BOOL || @type_mapper.llvm_type(def_inst.type) == "i1"
             emit "#{name} = add i32 0, 0"
+            record_emitted_type(name, "i32")
+            @value_types[inst.id] = TypeRef::INT32
             return
           end
         end
@@ -25842,13 +26170,15 @@ module Adamas::MIR
            union_type_ref == TypeRef::FLOAT32 || union_type_ref == TypeRef::FLOAT64 ||
            union_type_ref == TypeRef::CHAR || union_type_ref == TypeRef::SYMBOL
           emit "#{name} = add i32 0, 0"
+          record_emitted_type(name, "i32")
+          @value_types[inst.id] = TypeRef::INT32
           return
         end
         ptr_val = normalize_ptr_for_null_check(union_val, base_name)
         # For all-ref unions (multiple class variants stored as raw ptr),
         # read the type_id from the object header — not just a null check.
         # This matches how emit_union_is handles all-ref unions.
-        if @type_mapper.is_all_ref_union?(union_type_ref)
+        if @type_mapper.is_raw_header_union?(union_type_ref)
           emit "%#{base_name}.is_null = icmp eq ptr #{ptr_val}, null"
           # Read type_id from object header at offset 0. The load itself must
           # be null-safe because `select` does not short-circuit in LLVM IR.
@@ -25858,11 +26188,17 @@ module Adamas::MIR
           emit "%#{base_name}.obj_tid_raw = load i32, ptr %#{base_name}.safe_tid_ptr"
           # Return 0 for null (Nil), otherwise the actual type_id from header
           emit "#{name} = select i1 %#{base_name}.is_null, i32 0, i32 %#{base_name}.obj_tid_raw"
+        elsif raw_nullable_union_ref
+          non_nil_variant_id = nullable_non_nil_variant_id(raw_nullable_union_ref) || TypeRef::POINTER.id.to_i32
+          emit "%#{base_name}.is_null = icmp eq ptr #{ptr_val}, null"
+          emit "#{name} = select i1 %#{base_name}.is_null, i32 0, i32 #{non_nil_variant_id}"
         else
           emit "%#{base_name}.is_null = icmp eq ptr #{ptr_val}, null"
           emit "#{name} = select i1 %#{base_name}.is_null, i32 0, i32 1"
         end
       end
+      record_emitted_type(name, "i32")
+      @value_types[inst.id] = TypeRef::INT32
     end
 
     private def emit_union_is(inst : UnionIs, name : String)
@@ -25971,7 +26307,14 @@ module Adamas::MIR
                               else
                                 TypeRef::POINTER
                               end
-        if @type_mapper.is_all_ref_union?(effective_union_ref)
+        if @type_mapper.is_raw_nullable_pointer_union?(effective_union_ref)
+          if inst.variant_type_id == 0
+            emit "#{name} = icmp eq ptr #{ptr_val}, null"
+          else
+            emit "#{name} = icmp ne ptr #{ptr_val}, null"
+          end
+          all_ref_handled = true
+        elsif @type_mapper.is_raw_header_union?(effective_union_ref)
           if union_desc = @module.get_union_descriptor(effective_union_ref)
             variant = union_desc.variants.find { |v| v.type_id == inst.variant_type_id }
             if variant

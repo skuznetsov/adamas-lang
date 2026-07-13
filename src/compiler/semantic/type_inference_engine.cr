@@ -1626,6 +1626,8 @@ module Adamas
           arg_types : Array(Type),
           call_node : Frontend::CallNode? = nil
         ) : Type
+          receiver_type = concrete_collection_receiver_type(method, receiver_type)
+
           lexical_block_context = if call_node && call_has_block?(call_node)
                                     YieldLexicalContext.new(
                                       @receiver_type_context,
@@ -1638,7 +1640,7 @@ module Adamas
                                     nil
                                   end
 
-          if type_params = method.type_parameters
+          if (type_params = method.type_parameters) && !type_params.empty?
             type_args = infer_method_type_arguments(method, receiver_type, arg_types, call_node)
             if ret_ann = method.return_annotation
               return substitute_type_parameters(ret_ann, type_args, type_params)
@@ -1651,7 +1653,92 @@ module Adamas
             return resolve_method_annotation_type(ann, receiver_type, method.scope, class_method_context: method.is_class_method?)
           end
 
+          if virtual_result = infer_known_module_implementor_return(method, receiver_type, arg_types, call_node)
+            return virtual_result
+          end
+
           infer_method_body_type(method, receiver_type, arg_types, call_node, lexical_block_context: lexical_block_context)
+        end
+
+        private def concrete_collection_receiver_type(method : MethodSymbol, receiver_type : Type) : Type
+          array_type = receiver_type.as?(ArrayType)
+          return receiver_type unless array_type
+
+          owner = class_symbol_for_scope(method.scope.parent) || collection_method_owner(method)
+          return receiver_type unless owner
+          return receiver_type unless {"Array", "Slice", "StaticArray"}.includes?(owner.name)
+
+          instance_type_for(owner, [array_type.element_type] of Type)
+        end
+
+        private def centralized_method_dispatch_required?(method : MethodSymbol, receiver_type : Type) : Bool
+          if receiver_type.is_a?(ArrayType)
+            return !collection_method_owner(method).nil?
+          end
+
+          module_type = receiver_type.as?(ModuleType)
+          return false unless module_type
+          return false unless method.scope.owner_module == module_type.symbol
+
+          def_node = @arena[method.node_id].as?(Frontend::DefNode)
+          def_node.nil? || def_node.body.try(&.empty?) != false
+        end
+
+        private def collection_method_owner(method : MethodSymbol) : ClassSymbol?
+          ["Array", "Slice", "StaticArray"].each do |container_name|
+            next unless container = lookup_runtime_class_symbol(container_name)
+            symbol = container.scope.lookup_local(method.name)
+            case symbol
+            when MethodSymbol
+              return container if symbol == method
+            when OverloadSetSymbol
+              return container if symbol.overloads.includes?(method)
+            end
+          end
+          nil
+        end
+
+        private def infer_known_module_implementor_return(
+          method : MethodSymbol,
+          receiver_type : Type,
+          arg_types : Array(Type),
+          call_node : Frontend::CallNode?
+        ) : Type?
+          module_type = receiver_type.as?(ModuleType)
+          return nil unless module_type
+          return nil unless method.scope.owner_module == module_type.symbol
+
+          def_node = @arena[method.node_id].as?(Frontend::DefNode)
+          return nil if def_node.try { |node| body = node.body; body && !body.empty? }
+
+          results = [] of Type
+          module_type.symbol.instance_includers.each do |includer|
+            class_symbol = includer.as?(ClassSymbol)
+            next unless class_symbol
+            next unless includer_matches_module_instantiation?(class_symbol, module_type)
+
+            concrete_receiver = instance_type_for(class_symbol)
+            concrete_method = lookup_method(concrete_receiver, method.name, arg_types, !!call_node.try(&.block))
+            next unless concrete_method
+            next if concrete_method == method
+
+            result = infer_method_call_result(concrete_method, concrete_receiver, arg_types, call_node)
+            results << result unless unknownish_type?(result)
+          end
+
+          return nil if results.empty?
+          union_of(results)
+        end
+
+        private def includer_matches_module_instantiation?(class_symbol : ClassSymbol, module_type : ModuleType) : Bool
+          expected_args = module_type.type_args
+          return true unless expected_args && !expected_args.empty?
+
+          actual_args = find_included_module_type_args(class_symbol.scope, module_type.symbol, nil)
+          return false unless actual_args
+          return false unless actual_args.size == expected_args.size
+
+          actual_args.zip(expected_args).all? { |actual, expected| actual.to_s == expected.to_s }
         end
 
         private def ensure_annotated_method_block_inferred(
@@ -5691,10 +5778,6 @@ module Adamas
             return enum_type
           end
 
-          if builtin_type = infer_builtin_path_type(node)
-            return builtin_type
-          end
-
           if symbol = resolve_path_symbol(node)
             debug("  resolved symbol: #{symbol.class.name}")
             if symbol.is_a?(ConstantSymbol)
@@ -5703,6 +5786,13 @@ module Adamas
               owner_module ||= symbol.owner_module
               return infer_constant_value_expression(symbol.value, owner_class: owner_class, owner_module: owner_module)
             end
+          end
+
+          if builtin_type = infer_builtin_path_type(node)
+            return builtin_type
+          end
+
+          if symbol = resolve_path_symbol(node)
             if type = type_from_symbol(symbol)
               debug("  resolved type: #{type.class.name}")
               return type
@@ -6648,17 +6738,13 @@ module Adamas
           debug("  lookup_method returned: #{method ? "MethodSymbol(#{method.name})" : "nil"}")
 
           result_type = if method
-                            if ann = method.return_annotation
-                              debug("  Method has return annotation: #{ann}")
-                              resolve_method_annotation_type(ann, receiver_type, method.scope, class_method_context: method.is_class_method?)
-                            else
-                              debug("  No return annotation - inferring from method body")
-                              # Week 1: No return annotation - infer from method body
-                              # For generic methods, set receiver context for type parameter substitution
-                              body_type = infer_method_body_type(method, receiver_type)
-                              debug("  infer_method_body_type returned: #{body_type.class.name}: #{body_type}")
-                              body_type
-                            end
+                          if centralized_method_dispatch_required?(method, receiver_type)
+                            infer_method_call_result(method, receiver_type, arg_types)
+                          elsif ann = method.return_annotation
+                            resolve_method_annotation_type(ann, receiver_type, method.scope, class_method_context: method.is_class_method?)
+                          else
+                            infer_method_body_type(method, receiver_type)
+                          end
                         elsif lib_global_type = infer_module_global_member_type(receiver_type, method_name)
                           lib_global_type
                         else
@@ -7239,10 +7325,11 @@ module Adamas
 
           if method = lookup_method(receiver_type, method_name, arg_types, has_block, arg_ids.map { |arg_id| arg_id.as(ExprId?) })
             infer_explicit_receiver_block_if_present(method, receiver_type, node) if has_block
-            if ann = method.return_annotation
+            if centralized_method_dispatch_required?(method, receiver_type)
+              infer_method_call_result(method, receiver_type, arg_types, node)
+            elsif ann = method.return_annotation
               resolve_method_annotation_type(ann, receiver_type, method.scope, class_method_context: method.is_class_method?)
             else
-              debug("  No return annotation - inferring from method body")
               infer_method_body_type(method, receiver_type, arg_types, node)
             end
           elsif return_type = infer_union_argument_overload_call_result(receiver_type, method_name, arg_types, has_block, node)
@@ -8478,6 +8565,12 @@ module Adamas
           when ArrayType
             # Phase 9: Built-in methods for arrays
             get_array_builtin_methods(receiver_type, method_name).each { |entry| methods << entry }
+            ["Array", "Slice", "StaticArray"].each do |container_name|
+              next unless container = lookup_runtime_class_symbol(container_name)
+              if symbol = lookup_method_symbol_in_scope(container.scope, method_name)
+                append_method_candidates(methods, symbol, class_methods: false)
+              end
+            end
           when TupleType
             if tuple_class = lookup_runtime_class_symbol("Tuple")
               if symbol = lookup_method_symbol_in_scope(tuple_class.scope, method_name)
@@ -11540,6 +11633,17 @@ module Adamas
         private def resolve_annotation_type_in_scope(type_name : String, scope : SymbolTable?) : Type
           if absolute_resolved = resolve_absolute_annotation_type(type_name, scope)
             return absolute_resolved
+          end
+
+          # A lexical alias such as LibC::Int = Int32 must shadow the abstract
+          # builtin Int surface inside LibC method/fun annotations.
+          if scope && builtin_abstract_integer_annotation_type(type_name)
+            if scoped_alias = scope.lookup_local(type_name).as?(AliasSymbol)
+              return resolve_annotation_type_in_scope(scoped_alias.target, scope)
+            end
+            if scoped_alias = scope.parent.try(&.lookup_local(type_name)).as?(AliasSymbol)
+              return resolve_annotation_type_in_scope(scoped_alias.target, scope.parent)
+            end
           end
 
           if builtin_abstract_integer = builtin_abstract_integer_annotation_type(type_name)

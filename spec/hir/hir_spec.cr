@@ -53,6 +53,66 @@ describe Adamas::HIR do
       func.scopes.size.should eq(1)  # Function scope
     end
 
+    it "removes and re-adds one canonical function across every registry" do
+      mod = Adamas::HIR::Module.new
+      removed = mod.create_function("Owner#work$Int32", Adamas::HIR::TypeRef::INT32)
+      retained = mod.create_function("Owner#work$String", Adamas::HIR::TypeRef::STRING)
+
+      dynamic_name = String.build { |io| io << "Owner#work$Int32" }
+      mod.remove_function(dynamic_name).should be_true
+
+      mod.function_count.should eq(1)
+      mod.function_by_name("Owner#work$Int32").should be_nil
+      mod.functions.should eq([retained])
+      mod.functions_by_base_name("Owner#work").should eq([retained])
+      mod.remove_function("Owner#work$Int32").should be_false
+
+      replacement = mod.create_function(dynamic_name, Adamas::HIR::TypeRef::INT32)
+      replacement.same?(removed).should be_false
+      mod.create_function("Owner#work$Int32", Adamas::HIR::TypeRef::INT32)
+        .same?(replacement).should be_true
+      mod.function_count.should eq(2)
+      mod.functions_by_base_name("Owner#work").not_nil!.size.should eq(2)
+    end
+
+    it "keeps canonical identity across a high-cardinality remove and re-add" do
+      mod = Adamas::HIR::Module.new
+      names = Array(String).new(768) do |index|
+        String.build { |io| io << "Owner#work$Fn" << index }
+      end
+      original = names.map { |name| mod.create_function(name, Adamas::HIR::TypeRef::VOID) }
+
+      mod.function_count.should eq(768)
+      names.each_with_index do |name, index|
+        next if index.odd?
+        mod.remove_function(name).should be_true
+      end
+      mod.function_count.should eq(384)
+
+      names.each_with_index do |name, index|
+        if index.odd?
+          mod.function_by_name(name).not_nil!.same?(original[index]).should be_true
+        else
+          mod.function_by_name(name).should be_nil
+        end
+      end
+
+      canonical = original.dup
+      names.each_with_index do |name, index|
+        next if index.odd?
+        replacement = mod.create_function(name, Adamas::HIR::TypeRef::VOID)
+        replacement.same?(original[index]).should be_false
+        canonical[index] = replacement
+      end
+      mod.function_count.should eq(768)
+
+      names.each_with_index do |name, index|
+        mod.function_by_name(name).not_nil!.same?(canonical[index]).should be_true
+        mod.create_function(name, Adamas::HIR::TypeRef::VOID).same?(canonical[index]).should be_true
+      end
+      mod.function_count.should eq(768)
+    end
+
     it "includes virtual call targets by base name" do
       mod = Adamas::HIR::Module.new
       main = mod.create_function("__adamas_main", Adamas::HIR::TypeRef::VOID)

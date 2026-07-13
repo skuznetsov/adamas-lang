@@ -1,6 +1,6 @@
 # LANDMARKS
 
-Updated: 2026-07-09
+Updated: 2026-07-13
 Context: compiler/bootstrap/stage2-stability
 
 This file is the active working set only. Historical landmarks before this
@@ -11,6 +11,70 @@ checkpoint remain recoverable from git history, especially:
   `d43826fdcc2277b6075026244764a84d0069d1a30b675642b603f3511b14a1e5`
 
 ## Active Bootstrap Gate
+
+[LM-S2-CONSTRUCTOR-NAMED-CALL-IDENTITY|root-cause CLOSED, successor OPEN 2026-07-13 {F:0.94 G:0.70 R:0.91}]:
+Allocator materialization previously received only `has_named_args`, not the
+actual names. Same-typed constructor overloads therefore collapsed to one call
+shape, and source order could make a protected `using_hash : Int32` initializer
+replace the public `initial_capacity : Int32` initializer for `Set(T).new`.
+The accepted boundary carries exact named-argument names through direct,
+pending, and lazy allocator generation and checks them during `.new` overload
+compatibility. The adversarial host spec intentionally declares the protected
+overload first; the named public call still selects its distinct body. Host HIR
+passes 235 examples, 0 failures/errors, 2 existing pending. A fresh s1-produced
+s2 builds successfully; static generated LLVM routes String and UInt32 Set
+constructors through their public Int32 initializers and contains zero exact
+bare `$ExprId` type occurrences. Scope: constructor call identity is closed,
+not s2b. The minimal produced consumer now reaches a distinct fail-loud
+`AstArena | PageArena | VirtualArena` optional-index operation. Decay trigger:
+the order-adversarial spec fails, a generated Set constructor selects
+`using_hash`, an exact bare `$ExprId` returns, or a source-fingerprint-matched
+s2 rebuild changes the routing.
+
+[LM-S2-YIELD-TARGET-AUTHORITY-TRANSPORT|root-cause CLOSED, successor OPEN 2026-07-12 {F:0.90 G:0.62 R:0.86}]:
+The produced-stage `br i1 null` in `Hash(Void, Void)#any?$block` and
+`Range(Int32, Int32)#bsearch$block` was not an LLVM Bool bug and not an
+`Array#find` helper-result bug. Untraced HIR contained a valid Yield/Branch, but
+`lower_method` copied parameter names/types while dropping `Parameter#is_block`;
+`lower_yield` consequently left `Yield#target` nil. MIR late inference depended
+on metadata and String operations that the generated compiler could not
+reliably use, returned nil, and lowered the Yield to `const_nil`. The accepted
+ownership change preserves the block bit while constructing HIR parameters and
+stores the marked parameter id directly on HIR Yield. Fresh generated HIR now
+shows `%1 [block]` and `yield via %1` in both independent target families; fresh
+s1 and s2 compiler builds are green. Host HIR: 194 examples, 0 failures,
+2 pending. Scope: the old null-branch floor is closed, not s2b. Both target
+families now reach a shared exit-133 Trace/BPT successor before LLVM; HIR-only
+and MIR stops are green. Fresh stop gates prove `lower_main` returns to its
+caller and cover HIR flush, refresh, RTA, final HIR, MIR registration, prepare,
+body lowering, and final MIR with exit 0. The uninterrupted default-worker and
+workers=1 paths still trap before the first observable LLVM-entry marker. Since
+each stop flag changes control flow and can perturb self-hosted inference, the
+current successor is only the post-MIR-to-LLVM-entry corridor; a specific
+statement/root still needs a non-perturbing owner-edge falsifier. Disabling
+synthesized exit flush does not move it. LLDB is blocked by missing `debugserver`. Decay
+trigger: a fresh produced HIR loses `[block]`/`yield via`, the old `br i1 null`
+returns, or the focused authority-transport spec fails.
+
+[LM-BOOTSTRAP-COMPARATOR-IDENTITY-GATE|test hardening 2026-07-12 {F:0.94 G:0.78 R:0.92}]:
+The old normalizer erased every SSA id, generated callback/cell id, typed id,
+and hexadecimal constant to one placeholder. It could therefore report
+semantic equality for different producers or callbacks. Bootstrap comparison
+now normalizes path noise only and preserves identity/def-use structure; focused
+specs prove `%1` versus `%2`, distinct block procs, and numeric constants remain
+different. Early two-stage comparison is supported through
+`BOOTSTRAP_COMPARE_STAGE_COUNT=2`. Exact equality may expose harmless ordering
+noise; if that happens, use a bijective alpha-renamer that preserves equality
+partitions, never a many-to-one token replacement.
+
+[LM-RUN-SAFE-NESTED-DESCENDANT-LEAK|test infrastructure OPEN 2026-07-12 {F:0.92 G:0.45 R:0.90}]:
+The captured-pipe/watchdog false-green is fixed, but nested supervisor cleanup
+is not. A five-run heartbeat falsifier remained active after outer `run_safe`
+return in every run, refuting the zombie-only explanation. Group-first TERM,
+longer grace, a `set +m` wrapper, and PID-preserving Perl `setsid` were falsified
+and reverted; the latter cannot call `setsid` because the background launcher is
+already a process-group leader. Full-suite claims remain blocked until a real
+session supervisor or equivalent descendant authority is verified.
 
 [LM-B5-ENSURE-SKIPPED-ON-EARLY-RETURN|root-cause FIXED `76f3f279` 2026-07-04 {F:0.92 G:0.85 R:0.90}]:
 B5 root cause: HIR lowering emitted `ensure` bodies only on the CFG
@@ -16215,3 +16279,168 @@ Adversary notes:
   result. It does not remove the first full-token request cost.
 
 Trust: {F/G/R: 0.88/0.50/0.89} [verified]
+
+### LM-672 - Function registry removal snapshots before Hash mutation
+
+Generated-stage `Hash#delete` cannot currently be trusted as a value-returning
+transaction for pointer-backed struct entries. `Hash#delete_impl` borrows the
+inline `Hash::Entry`, clears the source slot, and only then constructs its
+value-typed return. For `Hash(String, HIR::Function)`, this removes the key but
+returns nil. `HIR::Module#remove_function` therefore used to leave the Function
+in `@functions` after its `@functions_by_name` entry was gone.
+
+That split registry produced four equal `Array(String)#to_s` rows. RTA traversed
+the last indexed row and retained its block procs, while HIR-to-MIR deduplicated
+by name and lowered the first row, whose block procs had been pruned. The final
+link failure at `__crystal_block_proc_51` was downstream of this transaction,
+not missing block-proc generation.
+
+The bounded fix snapshots the Function via non-mutating lookup, then deletes the
+key and array row independently. Evidence:
+
+- the exact 768-name HIR registry insert/lookup/remove/re-add runtime contract
+  passes with counts 768 -> 384 -> 768;
+- the minimal Array(String)#to_s HIR contains one caller row and zero dangling
+  `__crystal_block_proc_N` FuncPointers under filtered stage2;
+- filtered stage2 compiles and links the reducer that previously failed with an
+  undefined block proc.
+
+Residual risk: this does not implement global copy-by-value semantics for
+pointer-backed `Hash::Entry`. Other compiler sites that consume `Hash#delete`'s
+return remain an explicit audit surface.
+
+Trust: {F/G/R: 0.94/0.62/0.91} [verified]
+
+### LM-673 - Mismatched stale entry boxes no longer swallow fallthrough locals
+
+Branch snapshots restore visible locals but intentionally preserve entry boxes.
+Before this landmark, the fallback for a missing current local accepted any
+same-named box. A box created for `Set(UInt32)` in a terminating branch could
+therefore absorb a later fallthrough assignment of `Array(UInt32)`. The early
+return from assignment lowering skipped registration of the new local; the next
+read became `Local<Void>` and call fallback selected `Array(String)#<<$String`.
+In the generated compiler this corrupted `HIRToMIRLowering#lower_is_a` and
+crashed in `Array(String)#push`.
+
+The name-only fallback now reuses a box only when its payload type matches the
+new assignment. A mismatched box with no visible owner local is discarded, so
+the fallthrough binding receives its own local and capture box. Evidence:
+
+- the focused captured-local reducer emits `Array(UInt32)#<<$UInt32`, contains no
+  `Array(String)#<<$String` in the target function, and runs both branches;
+- a rebuilt filtered stage2 compiles past the previous `lower_is_a` crash;
+- the Array-to-s and tuple reducers both reach successful link.
+
+Residual frontier: the tuple reducer now exits 0 without its expected output,
+and the Array-to-s reducer reaches a `Crystal.trace(..., &block)` abort stub.
+Those are downstream runtime/value-supply failures, not evidence that this box
+lifecycle fix is incomplete.
+
+Trust: {F/G/R: 0.92/0.68/0.90} [verified]
+
+### LM-674 - Typed pointer nulls are preserved; bare operator demand is the next floor
+
+Static member lowering used to hard-code `Pointer(T).null` as a cast to bare
+`Pointer`. In a Kqueue-shaped branch, that disagreed with the concrete
+`Pointer(LibC::Timespec)` produced by `pointerof(ts)` and allowed a synthetic
+pointer union to cross later ABI decisions. The bounded fix resolves and interns
+the full static `Pointer(T)` name before emitting the null cast.
+
+Verified host evidence:
+
+- `pointerof(ts)` and nested `Pointer(T).null` both retain the same concrete
+  pointer descriptor;
+- their conditional merge is a typed pointer phi with no pointer `UnionWrap`;
+- the Kqueue-shaped branch preserves the concrete timeout pointer;
+- generic `Hash(K, V)` pointer ivars specialize to
+  `Pointer(Hash::Entry(String, Nil))`, lower indexing as `PointerLoad`, and do
+  not synthesize `Pointer#[]` dispatch;
+- the focused HIR suite passes, and the central MIR union-storage ABI/backend
+  specs retain the tagged-vs-raw representation boundary.
+
+Rejected routes are part of the result. A global erased-representation collapse
+for pointer unions degraded valid generic Hash access to bare `Pointer` and was
+reverted. DefNode/arena sidecars changed self-host behavior and caused recursive
+`resolve_type_name` stack overflow. A name-cache early return plus exact
+lookup-key cache transport (nullable and non-nullable carriers, including
+mangled-prefix sources) built fresh stage2 binaries but did not move the
+untraced crash. All DefNode/cache-transport production changes and their helper
+specs were reverted.
+
+The active floor is upstream of the generic pointer-ivar contract. Fresh stage2
+self-compilation succeeds, but the produced compiler exits 139 while compiling
+the no-prelude fixture. LLDB records
+`DefNode#params -> build_param_infos -> function_param_infos ->
+seed_function_param_caches -> prime_param_caches_for_discovered_def`, through
+`process_pending_lower_functions / lower_missing_call_targets`. A conditional
+breakpoint decoded the failing requested/target name as bare `[]$Int32`; the
+DefNode is null-like when parameters are read. Existing lookup diagnostics call
+the branch `unknown`, and the mangled-prefix scan is not entered. The next legal
+probe is therefore at the producer/enqueue boundary where the operator owner is
+lost, not another downstream stub, sidecar, or cache heuristic. The
+produced-stage bootstrap spec remains intentionally red as the durable gate.
+
+Trust: {F/G/R: 0.91/0.61/0.88} [verified root slice, open successor]
+
+### LM-675 - Included-module materialization is restored; nested lowering can still collapse caller body state
+
+The `Array(T)#uniq` large branch exposed two distinct self-host faults that
+previously converged on the same backend abort stub.
+
+First, a bare included-module call (`to_set`) and the equivalent explicit call
+(`self.to_set`) followed different lookup paths. The bare identifier path could
+miss a lazily registered generic module method and lower `to_set` as
+`Local<Void>`, while the explicit call found the module AST. The inheritance
+resolver now falls back to the authoritative recursive module AST lookup after
+its registry fast paths. A second produced-stage defect then found the correct
+`DefNode` inside `included.each` but lost the assignments to `func_def`, arena,
+target name, and lookup branch when the iterator block returned. Deferred
+module lookup now preserves inclusion order in an `Array(String)` and scans it
+with an indexed `while`, so result transport does not depend on captured-local
+writeback.
+
+Fresh produced-stage evidence:
+
+- host s1 and generated s2 both build successfully under the safe wrapper;
+- produced HIR contains calls and real bodies for
+  `Array(UInt32/TypeRef)#to_set` and `Set(UInt32/TypeRef)#to_a`;
+- no `local "to_set"` remains, and the prior
+  `STUB CALLED: Array(UInt32)#to_set` abort is gone;
+- host `spec/hir/ast_to_hir_spec.cr` passes 189 examples with 0 failures and
+  2 existing pending examples, including bare-vs-explicit included-module
+  identity and non-void-helper sequence guards.
+
+The successor is not a Set/Hash implementation gap. Produced HIR truncates
+`Hash(UInt32/TypeRef, Nil)#upsert` immediately after its first
+`if @entries.null?`, omitting `key_hash`, linear scan, insertion, and size
+increment. Consequently the 17-element UInt32 reducer returns an empty result
+(`0,0,0`) and the 17-element pointer-backed TypeRef reducer segfaults; both
+16-element small-array branches remain correct. A minimal direct method with a
+normal non-void helper in the first branch reproduces the truncation, while an
+intrinsic, a void helper, or wrapping the same sequence in `begin ... end` does
+not.
+
+Debug evidence initially reports a three-expression caller body and later a
+one-expression sequence boundary after nested materialization. Attempts to
+carry that boundary through an owning `Array(ExprId)`, scalar-index
+`Array(Int32)`, a plain scalar count, and a raw `Pointer(Int32)` ledger did not
+move the produced HIR; all candidates were rebuilt from fresh source snapshots
+and reverted. This means simple carrier substitution is refuted. The remaining
+frontier is a broader ownership/re-entrancy overwrite in the `lower_method`
+pre-scan/materialization transaction, or a re-entrant lowering instance being
+mistaken for the original caller. The next probe must observe writer/provenance
+at that boundary rather than add another container workaround.
+
+Quadrumvirate synthesis:
+
+- Cassandra: a new abort stub is most likely a downstream observation of lost
+  identity, body supply, or value lifetime, not an absent stdlib method.
+- Daedalus: compare the earliest `AST -> HIR body -> MIR -> LLVM` divergence and
+  threshold branches before investigating the runtime sentinel.
+- Maieutic: host-unit green is necessary but cannot prove self-hosted carrier
+  semantics; every bootstrap-hot contract needs a produced structural gate.
+- Adversary: stub counts, traced builds, mixed-generation binaries, and one-off
+  allowlists are invalid completion proxies. Source/compiler fingerprints and
+  untraced dumps are required evidence.
+
+Trust: {F/G/R: 0.94/0.66/0.91} [included-module resolution/materialization verified; caller-body successor open]

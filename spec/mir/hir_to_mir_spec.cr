@@ -1,12 +1,98 @@
 require "../spec_helper"
 require "../../src/compiler/hir/hir"
+require "../../src/compiler/hir/ast_to_hir"
 require "../../src/compiler/hir/escape_analysis"
 require "../../src/compiler/hir/taint_analysis"
 require "../../src/compiler/hir/memory_strategy"
 require "../../src/compiler/mir/mir"
 require "../../src/compiler/mir/hir_to_mir"
 
+class Adamas::MIR::HIRToMIRLowering
+  def __test_resolve_virtual_method_for_class(
+    class_name : String,
+    method_suffix : String,
+    arg_count : Int32,
+    allow_module_method : Bool = false,
+  ) : Adamas::MIR::Function?
+    resolve_virtual_method_for_class(class_name, method_suffix, arg_count, allow_module_method)
+  end
+
+  def __test_virtual_dispatch_candidate_type_ids(
+    recv_desc : Adamas::HIR::TypeDescriptor,
+    recv_type : Adamas::HIR::TypeRef,
+    method_suffix : String,
+    arg_count : Int32,
+  ) : Array(Int32)
+    virtual_dispatch_candidates(recv_desc, recv_type, method_suffix, arg_count).map(&.type_id)
+  end
+end
+
 describe Adamas::MIR::HIRToMIRLowering do
+  describe "virtual method family resolution" do
+    it "resolves a typed call through a unique arity alias" do
+      hir_mod = Adamas::HIR::Module.new("virtual_method_family")
+      func = hir_mod.create_function("IO::FileDescriptor#write$arity1", Adamas::HIR::TypeRef::VOID)
+      func.add_param("self", Adamas::HIR::TypeRef::POINTER)
+      func.add_param("slice", Adamas::HIR::TypeRef::POINTER)
+      competing_string = hir_mod.create_function("IO::FileDescriptor#write$String", Adamas::HIR::TypeRef::VOID)
+      competing_string.add_param("self", Adamas::HIR::TypeRef::POINTER)
+      competing_string.add_param("string", Adamas::HIR::TypeRef::POINTER)
+
+      lowering = Adamas::MIR::HIRToMIRLowering.new(hir_mod)
+      lowering.prepare
+
+      resolved = lowering.__test_resolve_virtual_method_for_class(
+        "IO::FileDescriptor",
+        "write$Slice(UInt8)",
+        1,
+        true
+      )
+      resolved.should_not be_nil
+      resolved.not_nil!.name.should eq("IO::FileDescriptor#write$arity1")
+    end
+
+    it "keeps a module includer's arity alias in vdispatch candidates" do
+      hir_mod = Adamas::HIR::Module.new("virtual_dispatch_candidates")
+      io_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(Adamas::HIR::TypeKind::Module, "IO"))
+      hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(Adamas::HIR::TypeKind::Class, "IO::FileDescriptor"))
+      hir_mod.register_module_includer("IO", "IO::FileDescriptor")
+
+      func = hir_mod.create_function("IO::FileDescriptor#write$arity1", Adamas::HIR::TypeRef::VOID)
+      func.add_param("self", Adamas::HIR::TypeRef::POINTER)
+      func.add_param("slice", Adamas::HIR::TypeRef::POINTER)
+      competing = hir_mod.create_function("IO::FileDescriptor#write$String", Adamas::HIR::TypeRef::VOID)
+      competing.add_param("self", Adamas::HIR::TypeRef::POINTER)
+      competing.add_param("string", Adamas::HIR::TypeRef::POINTER)
+
+      lowering = Adamas::MIR::HIRToMIRLowering.new(hir_mod)
+      lowering.prepare
+      lowering.mir_module.type_registry.create_type(
+        Adamas::MIR::TypeKind::Reference,
+        "IO::FileDescriptor",
+        8_u64,
+        8_u32
+      )
+
+      direct = lowering.__test_resolve_virtual_method_for_class(
+        "IO::FileDescriptor",
+        "write$Slice(UInt8)",
+        1,
+        true
+      )
+      direct.should_not be_nil
+      io_desc = hir_mod.get_type_descriptor(io_ref).not_nil!
+      ids = lowering.__test_virtual_dispatch_candidate_type_ids(
+        io_desc,
+        io_ref,
+        "write$Slice(UInt8)",
+        1
+      )
+      fd_type = lowering.mir_module.type_registry.get_by_name("IO::FileDescriptor")
+      fd_type.should_not be_nil, ids.inspect
+      ids.should contain(fd_type.not_nil!.id.to_i32)
+    end
+  end
+
   # ═══════════════════════════════════════════════════════════════════════════
   # BASIC LOWERING
   # ═══════════════════════════════════════════════════════════════════════════
@@ -304,7 +390,7 @@ describe Adamas::MIR::HIRToMIRLowering do
       lowering.stats.gc_allocations.should be >= 1
     end
 
-    it "inserts RC operations for ARC allocations" do
+    it "does not increment a fresh ARC allocation whose refcount starts at one" do
       hir_mod = Adamas::HIR::Module.new("test")
       hir_func = hir_mod.create_function("arc_alloc", Adamas::HIR::TypeRef.new(100_u32))
       block = hir_func.get_block(hir_func.entry_block)
@@ -317,8 +403,11 @@ describe Adamas::MIR::HIRToMIRLowering do
       mir_mod = hir_mod.lower_to_mir
 
       mir_block = mir_mod.functions[0].get_block(mir_mod.functions[0].entry_block)
+      allocation = mir_block.instructions.find { |i| i.is_a?(Adamas::MIR::Alloc) }
+      allocation.should_not be_nil
+      allocation.not_nil!.as(Adamas::MIR::Alloc).strategy.should eq(Adamas::MIR::MemoryStrategy::ARC)
       rc_inc = mir_block.instructions.find { |i| i.is_a?(Adamas::MIR::RCIncrement) }
-      rc_inc.should_not be_nil
+      rc_inc.should be_nil
     end
   end
 
@@ -552,7 +641,7 @@ describe Adamas::MIR::HIRToMIRLowering do
         "PtrOrNil",
         [
           Adamas::MIR::UnionVariantDescriptor.new(
-            type_id: 0,
+            type_id: Adamas::MIR::TypeRef::POINTER.id.to_i32,
             type_ref: Adamas::MIR::TypeRef::POINTER,
             full_name: "Pointer",
             size: 8,
@@ -560,7 +649,7 @@ describe Adamas::MIR::HIRToMIRLowering do
             field_offsets: nil
           ),
           Adamas::MIR::UnionVariantDescriptor.new(
-            type_id: 1,
+            type_id: 0,
             type_ref: Adamas::MIR::TypeRef::NIL,
             full_name: "Nil",
             size: 0,
@@ -573,7 +662,9 @@ describe Adamas::MIR::HIRToMIRLowering do
       )
 
       lowering = Adamas::MIR::HIRToMIRLowering.new(hir_mod)
-      lowering.register_union_types({mir_union_ref => mir_union_desc})
+      lowering.register_union_types([
+        Adamas::HIR::UnionDescriptorRegistration.new(mir_union_ref, mir_union_desc),
+      ])
       mir_mod = lowering.lower
 
       mir_func = mir_mod.functions.find { |f| f.name == "phi_union_ptr" }
@@ -585,12 +676,16 @@ describe Adamas::MIR::HIRToMIRLowering do
       phi_inst = phi_inst.not_nil!.as(Adamas::MIR::Phi)
       phi_inst.type.should eq(mir_union_ref)
 
+      variant_ids = [] of Int32
       phi_inst.incoming.each do |(block_id, value_id)|
         block = mir_func.get_block(block_id)
         wrap = block.instructions.find { |i| i.is_a?(Adamas::MIR::UnionWrap) && i.id == value_id }
         wrap.should_not be_nil
-        wrap.not_nil!.as(Adamas::MIR::UnionWrap).type.should eq(mir_union_ref)
+        mir_wrap = wrap.not_nil!.as(Adamas::MIR::UnionWrap)
+        mir_wrap.type.should eq(mir_union_ref)
+        variant_ids << mir_wrap.variant_type_id
       end
+      variant_ids.sort.should eq([0, Adamas::MIR::TypeRef::POINTER.id.to_i32])
     end
   end
 
@@ -606,10 +701,11 @@ describe Adamas::MIR::HIRToMIRLowering do
       ptr_val = Adamas::HIR::Literal.new(hir_func.next_value_id, Adamas::HIR::TypeRef::POINTER, nil)
       block.add(ptr_val)
 
-      wrap = Adamas::HIR::UnionWrap.new(hir_func.next_value_id, hir_union_ref, ptr_val.id, 0)
+      pointer_variant_id = Adamas::MIR::TypeRef::POINTER.id.to_i32
+      wrap = Adamas::HIR::UnionWrap.new(hir_func.next_value_id, hir_union_ref, ptr_val.id, pointer_variant_id)
       block.add(wrap)
 
-      unwrap = Adamas::HIR::UnionUnwrap.new(hir_func.next_value_id, hir_union_ref, wrap.id, 0)
+      unwrap = Adamas::HIR::UnionUnwrap.new(hir_func.next_value_id, hir_union_ref, wrap.id, pointer_variant_id)
       block.add(unwrap)
       block.terminator = Adamas::HIR::Return.new(unwrap.id)
 
@@ -618,7 +714,7 @@ describe Adamas::MIR::HIRToMIRLowering do
         "PtrOrNil",
         [
           Adamas::MIR::UnionVariantDescriptor.new(
-            type_id: 0,
+            type_id: pointer_variant_id,
             type_ref: Adamas::MIR::TypeRef::POINTER,
             full_name: "Pointer",
             size: 8,
@@ -626,7 +722,7 @@ describe Adamas::MIR::HIRToMIRLowering do
             field_offsets: nil
           ),
           Adamas::MIR::UnionVariantDescriptor.new(
-            type_id: 1,
+            type_id: 0,
             type_ref: Adamas::MIR::TypeRef::NIL,
             full_name: "Nil",
             size: 0,
@@ -639,7 +735,36 @@ describe Adamas::MIR::HIRToMIRLowering do
       )
 
       lowering = Adamas::MIR::HIRToMIRLowering.new(hir_mod)
-      lowering.register_union_types({mir_union_ref => mir_union_desc})
+      lowering.register_union_types([
+        Adamas::HIR::UnionDescriptorRegistration.new(mir_union_ref, mir_union_desc),
+      ])
+
+      # The append-only sidecar is authoritative. Poison the legacy Hash with a
+      # descriptor that maps the same discriminator to the wrong payload type;
+      # lowering must still unwrap the Pointer variant registered above.
+      lowering.mir_module.union_descriptors[mir_union_ref] = Adamas::MIR::UnionDescriptor.new(
+        "PoisonedPtrOrNil",
+        [
+          Adamas::MIR::UnionVariantDescriptor.new(
+            type_id: pointer_variant_id,
+            type_ref: Adamas::MIR::TypeRef::UINT8,
+            full_name: "UInt8",
+            size: 1,
+            alignment: 1,
+            field_offsets: nil
+          ),
+          Adamas::MIR::UnionVariantDescriptor.new(
+            type_id: 0,
+            type_ref: Adamas::MIR::TypeRef::NIL,
+            full_name: "Nil",
+            size: 0,
+            alignment: 1,
+            field_offsets: nil
+          ),
+        ],
+        16,
+        8
+      )
       mir_mod = lowering.lower
 
       mir_func = mir_mod.functions.find { |f| f.name == "union_unwrap_ptr" }
@@ -650,6 +775,79 @@ describe Adamas::MIR::HIRToMIRLowering do
       unwrap_inst.should_not be_nil
       unwrap_inst = unwrap_inst.not_nil!.as(Adamas::MIR::UnionUnwrap)
       unwrap_inst.type.should eq(Adamas::MIR::TypeRef::POINTER)
+    end
+
+    it "selects return union variant ids from the sidecar when the legacy Hash is poisoned" do
+      hir_mod = Adamas::HIR::Module.new("test")
+      hir_union_ref = hir_mod.intern_type(
+        Adamas::HIR::TypeDescriptor.new(Adamas::HIR::TypeKind::Union, "Int32OrNil")
+      )
+      hir_func = hir_mod.create_function("poisoned_union_return", hir_union_ref)
+      block = hir_func.get_block(hir_func.entry_block)
+      value = Adamas::HIR::Literal.new(hir_func.next_value_id, Adamas::HIR::TypeRef::INT32, 42_i64)
+      block.add(value)
+      block.terminator = Adamas::HIR::Return.new(value.id)
+
+      mir_union_ref = Adamas::MIR::TypeRef.from_hir(hir_union_ref)
+      int32_variant_id = Adamas::MIR::TypeRef::INT32.id.to_i32
+      descriptor = Adamas::MIR::UnionDescriptor.new(
+        "Int32OrNil",
+        [
+          Adamas::MIR::UnionVariantDescriptor.new(
+            type_id: int32_variant_id,
+            type_ref: Adamas::MIR::TypeRef::INT32,
+            full_name: "Int32",
+            size: 4,
+            alignment: 4,
+            field_offsets: nil
+          ),
+          Adamas::MIR::UnionVariantDescriptor.new(
+            type_id: 0,
+            type_ref: Adamas::MIR::TypeRef::NIL,
+            full_name: "Nil",
+            size: 0,
+            alignment: 1,
+            field_offsets: nil
+          ),
+        ],
+        16,
+        8
+      )
+
+      lowering = Adamas::MIR::HIRToMIRLowering.new(hir_mod)
+      lowering.register_union_types([
+        Adamas::HIR::UnionDescriptorRegistration.new(mir_union_ref, descriptor),
+      ])
+      lowering.mir_module.union_descriptors[mir_union_ref] = Adamas::MIR::UnionDescriptor.new(
+        "PoisonedInt32OrNil",
+        [
+          Adamas::MIR::UnionVariantDescriptor.new(
+            type_id: 77,
+            type_ref: Adamas::MIR::TypeRef::INT32,
+            full_name: "Int32",
+            size: 4,
+            alignment: 4,
+            field_offsets: nil
+          ),
+          Adamas::MIR::UnionVariantDescriptor.new(
+            type_id: 0,
+            type_ref: Adamas::MIR::TypeRef::NIL,
+            full_name: "Nil",
+            size: 0,
+            alignment: 1,
+            field_offsets: nil
+          ),
+        ],
+        16,
+        8
+      )
+
+      mir_mod = lowering.lower
+      mir_func = mir_mod.functions.find { |func| func.name == "poisoned_union_return" }.not_nil!
+      mir_wrap = mir_func.blocks.flat_map(&.instructions).find(&.is_a?(Adamas::MIR::UnionWrap)).not_nil!
+        .as(Adamas::MIR::UnionWrap)
+      mir_wrap.type.should eq(mir_union_ref)
+      mir_wrap.variant_type_id.should eq(int32_variant_id)
     end
   end
 

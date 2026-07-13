@@ -2115,6 +2115,10 @@ module Adamas
         end
 
         private def reparse(output : String, location : ExprId) : ExprId
+          # A whitespace-only macro expansion is a valid "no AST" result.
+          # Do not send an empty token stream through generated parser recovery.
+          return ExprId.new(-1) if ascii_whitespace_gap?(output)
+
           @source_sink.try(&.call(output))
           # Create lexer from generated string
           lexer = Frontend::Lexer.new(output)
@@ -2195,6 +2199,7 @@ module Adamas
           # Complex nodes that benefit from MacroValue evaluation
           if node.is_a?(Frontend::StringInterpolationNode) ||
              node.is_a?(Frontend::BinaryNode) ||
+             node.is_a?(Frontend::UnaryNode) ||
              node.is_a?(Frontend::TernaryNode) ||
              node.is_a?(Frontend::CallNode) ||
              node.is_a?(Frontend::YieldNode)
@@ -3971,11 +3976,21 @@ module Adamas
         end
 
         private def emit_error(message : String, location : ExprId? = nil)
-          span = if location
-                   @arena[location].span
-                 else
-                   Frontend::Span.new(0, 0, 1, 1, 1, 1)
-                 end
+          default_span = Frontend::Span.new(0, 0, 1, 1, 1, 1)
+          span = default_span
+          if location
+            # Keep this guard scalar-only.  In generated self-host builds both
+            # the direct arena index and the nullable `[]?` result can cross a
+            # poisoned object ABI before Node#span is reached.  Check the
+            # ExprId representation and arena bounds first, then dereference
+            # only a proven-valid node.
+            if !location.null_ptr? && !location.invalid?
+              index = location.index
+              if index >= 0 && index < @arena.size
+                span = @arena[location].span
+              end
+            end
+          end
 
           @diagnostics << Diagnostic.new(
             DiagnosticLevel::Error,
