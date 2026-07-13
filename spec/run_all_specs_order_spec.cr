@@ -62,7 +62,7 @@ describe "scripts/run_all_specs.sh manifest ordering" do
 
       status.success?.should be_true
       output.should contain("PASS=6")
-      File.read(order_file).lines.map(&.strip).should eq([
+      File.read(order_file).lines.map(&.chomp).should eq([
         "a_ordinary_spec.cr",
         "ordinary spaced_spec.cr",
         "other_integration_spec.cr",
