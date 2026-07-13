@@ -38,6 +38,14 @@ segfault. Localize the earliest lost owner/type/arena boundary before changing
 production code. Do not start s3b until s2b passes the existing structural and
 runtime gates.
 
+TEST FEEDBACK HARDENING: `run_all_specs.sh` now keeps ordinary specs ahead of
+the two known expensive generated-stage files while preserving deterministic,
+NUL-safe sorting within both classes. This prevents
+`produced_stage_bootstrap_spec.cr` from hiding early unit-spec failures in the
+default single-worker run. It is intentionally scheduling order only: with
+multiple workers, expensive and ordinary files may still overlap, and compiler
+provisioning can still happen before spec execution.
+
 The latest generated-stage constructor-routing defect is CLOSED at its
 call-shape transport root. Named arguments reached allocator materialization as
 only a boolean flag, so overloads with the same positional types could not be

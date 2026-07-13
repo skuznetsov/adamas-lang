@@ -12,6 +12,21 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-SPEC-RUNNER-EXPENSIVE-TAIL|test feedback hardening 2026-07-13 {F:0.91 G:0.64 R:0.89}]:
+The deterministic spec manifest now stable-partitions exactly
+`produced_stage_bootstrap_spec.cr` and
+`generated_runtime_integration_spec.cr` after ordinary specs. Both classes
+retain their prior NUL-safe sorted order; unrelated integration specs remain
+ordinary. A fake-Crystal behavior spec was RED against lexical interleaving and
+is GREEN with a spaced filename adversary. The focused defaults/lock/order
+surface passes six examples with zero failures/errors. Scope: this improves
+default `JOBS=1` unit-feedback latency. Under `JOBS>1`, round-robin workers can
+overlap the two classes, so this is not a global phase barrier; fresh compiler
+provisioning may also still precede all spec invocations. Decay trigger: either
+named expensive spec runs before an ordinary spec under `JOBS=1`, NUL-safe path
+handling regresses, or a new known expensive generated-stage spec is added
+without classification.
+
 [LM-S2-EXPLICIT-INDEXER-ARGUMENT-TRANSPORT|root-cause CLOSED, successor OPEN 2026-07-13 {F:0.94 G:0.73 R:0.91}]:
 The fail-loud `AstArena | PageArena | VirtualArena#[]?` symptom was not a union
 method materialization failure. `parse_member_access` routed the dotted empty

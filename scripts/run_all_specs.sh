@@ -144,6 +144,25 @@ for path in "$@"; do
   fi
 done
 find "$@" -type f -name '*_spec.cr' -print0 | sort -z >"$MANIFEST"
+# Keep the manifest NUL-safe while moving only the two known expensive specs to
+# the tail. The source is already sorted, so appending each class as we scan
+# preserves sorted order within ordinary and deferred classes. With JOBS>1 this
+# remains scheduling order (workers can overlap classes), not a global barrier.
+ORDINARY_MANIFEST="$OUTDIR/ordinary-specs.list0"
+EXPENSIVE_MANIFEST="$OUTDIR/expensive-specs.list0"
+: >"$ORDINARY_MANIFEST"
+: >"$EXPENSIVE_MANIFEST"
+while IFS= read -r -d '' file; do
+  case "${file##*/}" in
+    produced_stage_bootstrap_spec.cr|generated_runtime_integration_spec.cr)
+      printf '%s\0' "$file" >>"$EXPENSIVE_MANIFEST"
+      ;;
+    *)
+      printf '%s\0' "$file" >>"$ORDINARY_MANIFEST"
+      ;;
+  esac
+done <"$MANIFEST"
+cat "$ORDINARY_MANIFEST" "$EXPENSIVE_MANIFEST" >"$MANIFEST"
 TOTAL="$(tr -cd '\0' <"$MANIFEST" | wc -c | tr -d ' ')"
 
 echo "Spec files: $TOTAL  (jobs=$JOBS timeout=${TIMEOUT}s max_mem=${MAX_MEM_MB}MB)"
