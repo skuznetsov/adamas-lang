@@ -1,6 +1,42 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-07-13 (constructor call identity closed; Arena union index floor open).
+Updated: 2026-07-13 (explicit dotted indexer parsing closed; successor crash open).
+
+The Arena-union optional-index floor is CLOSED at its parser root. The source
+form `arena.[]?(root_id)` entered `parse_member_access`, but the empty dotted
+brackets were sent through the ordinary indexing path. That produced a
+zero-argument `arena.[]?()` followed by a call on its nullable result, losing
+`root_id` before HIR method materialization. The parser now recognizes the four
+parenthesized dotted operator forms `[]`, `[]?`, `[]=`, and `[]?=` as explicit
+member calls. Suffix punctuation must be lexically adjacent, so
+`obj.[] ? (a) : b` remains a ternary and `obj.[] = (index, value)` remains an
+ordinary index assignment.
+
+CURRENT EVIDENCE: all 83 parser spec files pass (2,193 examples, zero
+failures/errors/timeouts). A phase-local HIR spec proves the Arena-like union
+emits exactly one virtual `#[]?` call with one `ExprId` argument and no
+result-side `#call`. A fresh source-fingerprint-matched host s1 emits that same
+shape for the no-prelude probe, and the resulting s1-produced s2 compiler
+builds successfully (SHA-256
+`8f7e2fe9698534523737087df7cdf4062d4c16af0c1d7d42a369443f20f0cbd3`).
+The full HIR sweep remains independently non-green on two
+pre-existing files (`as_question_try_spec.cr` output formatting and
+`generated_runtime_integration_spec.cr`); neither failure involves this parser
+shape. This closes explicit indexer argument transport only; s2b is still NOT
+accepted.
+
+CURRENT FLOOR: the fresh s2 compiler now segfaults with exit 139 in about one
+second while compiling `stage2_io_puts_bare_oracle.cr`. No consumer binary is
+produced. This is the first fail-loud successor after the parser correction;
+its owner edge is not yet localized. Do not infer that it is another union
+materialization defect, add a stub, or use debug STDERR probes that can perturb
+self-hosted inference.
+
+NEXT: preserve the parser/HIR specs as the fast regression layer, then obtain a
+non-perturbing source-matched HIR/static ownership signal for the new immediate
+segfault. Localize the earliest lost owner/type/arena boundary before changing
+production code. Do not start s3b until s2b passes the existing structural and
+runtime gates.
 
 The latest generated-stage constructor-routing defect is CLOSED at its
 call-shape transport root. Named arguments reached allocator materialization as
@@ -19,19 +55,10 @@ bare `$ExprId` type and routes `Set(String/UInt32).new(Int32)` to the matching
 public `initialize(Int32)` bodies. This closes constructor call identity only;
 s2b is still NOT accepted.
 
-CURRENT FLOOR: the fresh s2 compiler aborts while compiling the minimal
-`stage2_io_puts_bare_oracle.cr` consumer because the generated compiler lacks
-the specialized optional index operation for the
-`AstArena | PageArena | VirtualArena` family. The explicit fail-loud symbol is
-the union's `#[]?` operation. Treat this as a separate union method
-materialization/routing problem; do not weaken the fail-loud backend or add an
-untyped fallback.
-
-NEXT: add a phase-local spec that reproduces the exact Arena-union optional
-index demand, determine where its owner/type arguments are lost, and repair the
-earliest transport boundary. Rebuild s2 from the same source fingerprint and
-rerun the minimal consumer before widening to the produced-stage matrix. Do not
-start s3b until s2b passes the existing structural and runtime gates.
+SUCCESSOR NOTE: the optional-index symptom described at this checkpoint was
+later localized to the parser split documented above, not to union method
+materialization. Keep the constructor-routing evidence, but use the newer
+parser landmark as the active floor.
 
 Previous update: 2026-07-12 (current bootstrap audit and produced-stage boundary).
 

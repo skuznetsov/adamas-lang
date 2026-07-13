@@ -13077,7 +13077,8 @@ current_token.kind == Token::Kind::Identifier &&
 
           # If named args present, or '[]?' variant, lower to CallNode target.[](args..., named:)
           question_follows = false
-          if current_token.kind == Token::Kind::Question
+          if current_token.kind == Token::Kind::Question &&
+             previous_token.try(&.span.end_offset) == current_token.span.start_offset
             question_follows = index_question_postfix_chain_follows? || !index_question_is_ternary_start?
           end
 
@@ -13117,10 +13118,11 @@ current_token.kind == Token::Kind::Identifier &&
         private def handle_index_question_postfix(left : ExprId) : ExprId
           return left if left.invalid?
           return left unless current_token.kind == Token::Kind::Question
-          return left if !index_question_postfix_chain_follows? && index_question_is_ternary_start?
           node = @arena[left]
           return left unless node.is_a?(IndexNode)
           question = current_token
+          return left unless node.span.end_offset == question.span.start_offset
+          return left if !index_question_postfix_chain_follows? && index_question_is_ternary_start?
           advance
           callee = @arena.add_typed(
             MemberAccessNode.new(
@@ -13197,6 +13199,9 @@ current_token.kind == Token::Kind::Identifier &&
 
           # Support explicit indexer call via dotted bracket syntax: obj.[]?(args)
           if member_token.kind == Token::Kind::LBracket
+            if explicit_indexer_operator_call_follows?
+              return parse_explicit_indexer_operator_call(receiver)
+            end
             # Don't consume member_token here; let parse_index handle it
             return parse_index(receiver)
           end
@@ -13550,6 +13555,87 @@ current_token.kind == Token::Kind::Identifier &&
             emit_unexpected(member_token)
             receiver
           end
+        end
+
+        # Parse the operator-name form `obj.[](args)`, `obj.[]?(args)`,
+        # `obj.[]=(args...)`, or `obj.[]?=(args...)`. Empty brackets are
+        # otherwise treated as an IndexNode by parse_index; in this dotted
+        # form the following parentheses belong to the operator call itself.
+        private def parse_explicit_indexer_operator_call(receiver : ExprId) : ExprId
+          lbracket = current_token
+          advance # consume '['
+          skip_trivia
+          expect_operator(Token::Kind::RBracket)
+
+          has_question = false
+          if current_token.kind == Token::Kind::Question
+            has_question = true
+            advance
+            skip_trivia
+          end
+
+          has_equals = false
+          if current_token.kind == Token::Kind::Eq
+            has_equals = true
+            advance
+            skip_trivia
+          end
+
+          method_name = if has_question
+                          has_equals ? "[]?=" : "[]?"
+                        else
+                          has_equals ? "[]=" : "[]"
+                        end
+          member_span = node_span(receiver).cover(previous_token.try(&.span) || lbracket.span)
+          @arena.add_typed(MemberAccessNode.new(
+            member_span,
+            receiver,
+            @string_pool.intern(method_name.to_slice)
+          ))
+        end
+
+        # Look ahead without consuming tokens. The ordinary indexing path must
+        # remain unchanged; this only recognizes an empty dotted bracket
+        # operator followed by a parenthesized argument list.
+        private def explicit_indexer_operator_call_follows? : Bool
+          offset = 1
+          token = peek_token(offset)
+          while token.kind.in?(Token::Kind::Whitespace, Token::Kind::Comment)
+            offset += 1
+            token = peek_token(offset)
+          end
+          return false unless token.kind == Token::Kind::RBracket
+          suffix_end_offset = token.span.end_offset
+
+          offset += 1
+          token = peek_token(offset)
+          while token.kind.in?(Token::Kind::Whitespace, Token::Kind::Comment)
+            offset += 1
+            token = peek_token(offset)
+          end
+
+          if token.kind == Token::Kind::Question
+            return false unless token.span.start_offset == suffix_end_offset
+            suffix_end_offset = token.span.end_offset
+            offset += 1
+            token = peek_token(offset)
+            while token.kind.in?(Token::Kind::Whitespace, Token::Kind::Comment)
+              offset += 1
+              token = peek_token(offset)
+            end
+          end
+
+          if token.kind == Token::Kind::Eq
+            return false unless token.span.start_offset == suffix_end_offset
+            offset += 1
+            token = peek_token(offset)
+            while token.kind.in?(Token::Kind::Whitespace, Token::Kind::Comment)
+              offset += 1
+              token = peek_token(offset)
+            end
+          end
+
+          token.kind == Token::Kind::LParen
         end
 
         private def call_without_parens_disallowed?(token : Token) : Bool

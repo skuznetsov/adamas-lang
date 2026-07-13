@@ -12,6 +12,29 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-S2-EXPLICIT-INDEXER-ARGUMENT-TRANSPORT|root-cause CLOSED, successor OPEN 2026-07-13 {F:0.94 G:0.73 R:0.91}]:
+The fail-loud `AstArena | PageArena | VirtualArena#[]?` symptom was not a union
+method materialization failure. `parse_member_access` routed the dotted empty
+brackets in `arena.[]?(root_id)` through ordinary indexing, yielding a
+zero-argument `arena.[]?()` plus a call on the nullable result. The `ExprId`
+argument was therefore lost before HIR ownership or specialization. The parser
+now recognizes parenthesized dotted `[]`, `[]?`, `[]=`, and `[]?=` operator
+calls, with span-adjacency guards that preserve separated ternary `?` and
+assignment `=` syntax. All 83 parser spec files pass (2,193 examples, zero
+failures/errors/timeouts); the phase-local HIR spec proves one virtual `#[]?`
+call with one `ExprId` argument and no result-side `#call`. A fresh
+source-fingerprint-matched s1 emits the same no-prelude HIR shape, and its
+produced s2 compiler builds successfully (SHA-256
+`8f7e2fe9698534523737087df7cdf4062d4c16af0c1d7d42a369443f20f0cbd3`).
+Scope: explicit dotted indexer
+argument transport is closed, not s2b. The fresh s2 now exits 139 in about one
+second while compiling `stage2_io_puts_bare_oracle.cr`, before a consumer binary
+exists; that successor is not yet localized. The full HIR sweep also retains
+two unrelated pre-existing red files. Decay trigger: any exact dotted indexer
+form loses its arguments, a separated suffix is reclassified as an operator,
+the Arena-like HIR regains a zero-argument `#[]?` or result-side `#call`, or a
+source-matched s2 rebuild no longer succeeds.
+
 [LM-S2-CONSTRUCTOR-NAMED-CALL-IDENTITY|root-cause CLOSED, successor OPEN 2026-07-13 {F:0.94 G:0.70 R:0.91}]:
 Allocator materialization previously received only `has_named_args`, not the
 actual names. Same-typed constructor overloads therefore collapsed to one call
