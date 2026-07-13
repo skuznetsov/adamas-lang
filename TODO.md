@@ -28,15 +28,20 @@ accepted.
 CURRENT FLOOR: the fresh s2 compiler now segfaults with exit 139 in about one
 second while compiling `stage2_io_puts_bare_oracle.cr`. No consumer binary is
 produced. This is the first fail-loud successor after the parser correction;
-its owner edge is not yet localized. Do not infer that it is another union
+its owner edge is not yet localized. A host phase-local characterization now
+exercises the real `ExprId(Int32)` carrier across all three Arena variants:
+HIR has one direct argument, MIR has a two-argument virtual dispatch and three
+two-argument variant calls, and LLVM maps receiver plus `ExprId` consistently
+to `(ptr, ptr)`. This refutes a general host HIR-to-MIR arity or per-variant
+LLVM ABI mismatch. Do not infer that the successor is another union
 materialization defect, add a stub, or use debug STDERR probes that can perturb
 self-hosted inference.
 
-NEXT: preserve the parser/HIR specs as the fast regression layer, then obtain a
-non-perturbing source-matched HIR/static ownership signal for the new immediate
-segfault. Localize the earliest lost owner/type/arena boundary before changing
-production code. Do not start s3b until s2b passes the existing structural and
-runtime gates.
+NEXT: preserve the parser/HIR/MIR/LLVM specs as the fast regression layer, then
+obtain a non-perturbing source-matched ownership signal for the new immediate
+generated-stage-only segfault. Localize the earliest lost owner/type/arena
+boundary before changing production code or paying for another full s2 rebuild.
+Do not start s3b until s2b passes the existing structural and runtime gates.
 
 TEST FEEDBACK HARDENING: `run_all_specs.sh` now keeps ordinary specs ahead of
 the two known expensive generated-stage files while preserving deterministic,

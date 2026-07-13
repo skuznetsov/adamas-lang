@@ -44,8 +44,13 @@ produced s2 compiler builds successfully (SHA-256
 Scope: explicit dotted indexer
 argument transport is closed, not s2b. The fresh s2 now exits 139 in about one
 second while compiling `stage2_io_puts_bare_oracle.cr`, before a consumer binary
-exists; that successor is not yet localized. The full HIR sweep also retains
-two unrelated pre-existing red files. Decay trigger: any exact dotted indexer
+exists; that successor is not yet localized. A host phase-local characterization
+with the real `ExprId(Int32)` carrier covers all three Arena variants: HIR keeps
+one direct argument, MIR produces a two-argument virtual dispatch with three
+two-argument variant calls, and LLVM consistently maps receiver plus `ExprId`
+to `(ptr, ptr)`. This refutes a general host HIR-to-MIR arity or per-variant LLVM
+ABI mismatch but does not cover generated-stage state. The full HIR sweep also
+retains two unrelated pre-existing red files. Decay trigger: any exact dotted indexer
 form loses its arguments, a separated suffix is reclassified as an operator,
 the Arena-like HIR regains a zero-argument `#[]?` or result-side `#call`, or a
 source-matched s2 rebuild no longer succeeds.
