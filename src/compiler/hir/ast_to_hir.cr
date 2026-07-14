@@ -5582,8 +5582,8 @@ module Adamas::HIR
     @module_defs_suffix_lookup : Hash(String, String)
     @instance_method_names_cache : Hash(String, Array(String))
     @instance_method_names_cache_version : Int32
-    @defined_instance_method_full_names_cache : Hash({String, UInt64, UInt64, Int32}, Set(String))
-    @defined_class_method_full_names_cache : Hash({String, UInt64, UInt64, Int32}, Set(String))
+    @defined_instance_method_full_names_cache : Hash(String, Hash(UInt64, Hash(UInt64, DefinedMethodScanCacheEntry)))
+    @defined_class_method_full_names_cache : Hash(String, Hash(UInt64, Hash(UInt64, DefinedMethodScanCacheEntry)))
 
     # Type aliases (alias_name -> target_type_name)
     @type_aliases : Hash(String, String)
@@ -5624,6 +5624,14 @@ module Adamas::HIR
     # Guard HIR-only union storage sizing when a tuple/union variant refers
     # back to the union currently being sized before MIR descriptors exist.
     @hir_union_storage_in_progress : Set(String)
+
+    private class DefinedMethodScanCacheEntry
+      getter version : Int32
+      getter names : Set(String)
+
+      def initialize(@version : Int32, @names : Set(String))
+      end
+    end
 
     private struct ResolvedTypeNameCacheEntry
       getter value : String
@@ -6136,8 +6144,8 @@ module Adamas::HIR
       @module_defs_suffix_lookup = {} of String => String
       @instance_method_names_cache = {} of String => Array(String)
       @instance_method_names_cache_version = 0
-      @defined_instance_method_full_names_cache = {} of {String, UInt64, UInt64, Int32} => Set(String)
-      @defined_class_method_full_names_cache = {} of {String, UInt64, UInt64, Int32} => Set(String)
+      @defined_instance_method_full_names_cache = {} of String => Hash(UInt64, Hash(UInt64, DefinedMethodScanCacheEntry))
+      @defined_class_method_full_names_cache = {} of String => Hash(UInt64, Hash(UInt64, DefinedMethodScanCacheEntry))
       @type_aliases = {} of String => String
       @resolved_type_alias_cache = Hash(String, String).new(initial_capacity: 4096)
       @type_alias_keys_by_suffix = {} of String => Array(String)
@@ -17865,15 +17873,65 @@ module Adamas::HIR
       current
     end
 
+    # Mixed String/scalar Tuple keys are not a stable carrier in the generated
+    # compiler, while rebuilding a String token on every lookup creates severe
+    # self-build allocation pressure. Preserve O(1) identity lookup without
+    # either carrier by indexing each already-owned component separately. A
+    # hit still copies the Set so callers cannot mutate the cached collection.
+    # The object-id lifetime contract is unchanged from the old tuple key:
+    # bodies and arenas must stay live until the module-defs version advances.
+    private def lookup_defined_method_scan_cache(
+      cache : Hash(String, Hash(UInt64, Hash(UInt64, DefinedMethodScanCacheEntry))),
+      class_name : String,
+      body : Array(ExprId),
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Set(String)?
+      by_body = cache[class_name]? || return nil
+      by_arena = by_body[body.object_id]? || return nil
+      entry = by_arena[arena_map_key(arena)]? || return nil
+      return nil unless entry.version == @module_defs_cache_version
+      entry.names.dup
+    end
+
+    private def store_defined_method_scan_cache(
+      cache : Hash(String, Hash(UInt64, Hash(UInt64, DefinedMethodScanCacheEntry))),
+      class_name : String,
+      body : Array(ExprId),
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+      names : Set(String),
+    ) : Nil
+      by_body = cache[class_name]?
+      unless by_body
+        by_body = {} of UInt64 => Hash(UInt64, DefinedMethodScanCacheEntry)
+        cache[class_name] = by_body
+      end
+
+      body_id = body.object_id
+      by_arena = by_body[body_id]?
+      unless by_arena
+        by_arena = {} of UInt64 => DefinedMethodScanCacheEntry
+        by_body[body_id] = by_arena
+      end
+
+      by_arena[arena_map_key(arena)] = DefinedMethodScanCacheEntry.new(
+        @module_defs_cache_version,
+        names.dup,
+      )
+    end
+
     private def collect_defined_instance_method_full_names(
       class_name : String,
       body : Array(ExprId),
       arena : Adamas::Compiler::Frontend::ArenaLike?,
     ) : Set(String)
       scan_arena = (arena || @arena).as(Adamas::Compiler::Frontend::ArenaLike)
-      cache_key = {class_name, body.object_id, arena_map_key(scan_arena), @module_defs_cache_version}
-      if cached = @defined_instance_method_full_names_cache[cache_key]?
-        return cached.dup
+      if cached = lookup_defined_method_scan_cache(
+           @defined_instance_method_full_names_cache,
+           class_name,
+           body,
+           scan_arena,
+         )
+        return cached
       end
 
       defined = Set(String).new
@@ -17999,7 +18057,13 @@ module Adamas::HIR
         @current_typeof_local_names = old_typeof_locals
         @signature_scan_mode = old_signature_scan
       end
-      @defined_instance_method_full_names_cache[cache_key] = defined.dup
+      store_defined_method_scan_cache(
+        @defined_instance_method_full_names_cache,
+        class_name,
+        body,
+        scan_arena,
+        defined,
+      )
       defined
     end
 
@@ -18009,9 +18073,13 @@ module Adamas::HIR
       arena : Adamas::Compiler::Frontend::ArenaLike?,
     ) : Set(String)
       scan_arena = (arena || @arena).as(Adamas::Compiler::Frontend::ArenaLike)
-      cache_key = {class_name, body.object_id, arena_map_key(scan_arena), @module_defs_cache_version}
-      if cached = @defined_class_method_full_names_cache[cache_key]?
-        return cached.dup
+      if cached = lookup_defined_method_scan_cache(
+           @defined_class_method_full_names_cache,
+           class_name,
+           body,
+           scan_arena,
+         )
+        return cached
       end
 
       defined = Set(String).new
@@ -18124,7 +18192,13 @@ module Adamas::HIR
         @current_typeof_local_names = old_typeof_locals
         @signature_scan_mode = old_signature_scan
       end
-      @defined_class_method_full_names_cache[cache_key] = defined.dup
+      store_defined_method_scan_cache(
+        @defined_class_method_full_names_cache,
+        class_name,
+        body,
+        scan_arena,
+        defined,
+      )
       defined
     end
 

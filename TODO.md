@@ -1,6 +1,44 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-07-13 (explicit dotted indexer parsing closed; successor crash open).
+Updated: 2026-07-13 (defined-method scan cache carrier candidate; produced-stage gate pending).
+
+CURRENT CANDIDATE: the immediate full-prelude successor is localized to class
+registration before the body scan for
+`collect_defined_instance_method_full_names`. The source-matched baseline s2
+parses an empty program successfully but exits 139 during `lower_main`; its
+untraced generated HIR performs a lookup in
+`Hash(Tuple(String, UInt64, UInt64, Int32), Set(String))` before scanning the
+class body. This transfers the already verified mixed String/scalar tuple-key
+failure pattern from `@normalize_decl_cache` to the two defined-method scan
+caches.
+
+The current bounded candidate replaces that mixed tuple carrier with nested
+primitive-key maps: class name -> body object id -> arena id -> versioned Set.
+It preserves O(1) identity lookup, all four identity dimensions, and collection
+copy isolation without allocating a composite String on every hit. Copying the
+returned Set remains O(number of defined names). The focused cache specs
+pass 2 examples and the complete `spec/hir/ast_to_hir_spec.cr` passes 240
+examples with zero failures/errors and two existing pending examples. A host
+compiler build also exits 0. This is COMPLETED only at the host/unit boundary;
+the source-matched s1 -> s2 gate remains pending, so the generated-stage crash
+is not yet claimed fixed.
+
+REFUTED CARRIERS: a composite String token kept constant-time lookup but made
+the s1 self-build exceed 900 seconds without producing s2. A per-class Array
+bucket removed the tuple and allocation but made lookup O(k) and retained an
+unbounded reopen/reparse history. Do not retry either route.
+
+NEXT: after the safety-trigger cooldown, build one fresh source-matched s1 and
+run the cheapest HIR-only self-compile gate before paying for s2. If that gate
+does not regress relative to the retained baseline, build s2 and repeat the
+empty/puts `ADAMAS_STOP_AFTER_LOWER_MAIN` A/B. Only then promote the candidate
+to a closed root cause and resume the successor floor.
+
+RESIDUAL INVARIANT: as with the original tuple key, body and arena identities
+are stored as object ids rather than retained references. They must remain live
+until the module-defs version advances and clears both caches. The produced-stage
+gate must falsify accidental stale hits; do not generalize the candidate beyond
+that lifetime boundary.
 
 The Arena-union optional-index floor is CLOSED at its parser root. The source
 form `arena.[]?(root_id)` entered `parse_member_access`, but the empty dotted

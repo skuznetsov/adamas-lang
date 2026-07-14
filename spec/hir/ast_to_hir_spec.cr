@@ -183,6 +183,38 @@ class Adamas::HIR::AstToHir
     case_subject_cached_method_result?(ctx, value_id, source_name)
   end
 
+  def __test_bump_module_defs_cache_version : Nil
+    bump_module_defs_cache_version
+  end
+
+  def __test_defined_instance_method_scan_cache_body_count(class_name : String) : Int32
+    @defined_instance_method_full_names_cache[class_name]?.try(&.size) || 0
+  end
+
+  def __test_defined_instance_method_scan_cache_arena_count(
+    class_name : String,
+    body : Array(Adamas::Compiler::Frontend::ExprId),
+  ) : Int32
+    by_body = @defined_instance_method_full_names_cache[class_name]? || return 0
+    by_body[body.object_id]?.try(&.size) || 0
+  end
+
+  def __test_collect_defined_instance_method_full_names(
+    class_name : String,
+    body : Array(Adamas::Compiler::Frontend::ExprId),
+    arena : Adamas::Compiler::Frontend::ArenaLike,
+  ) : Set(String)
+    collect_defined_instance_method_full_names(class_name, body, arena)
+  end
+
+  def __test_collect_defined_class_method_full_names(
+    class_name : String,
+    body : Array(Adamas::Compiler::Frontend::ExprId),
+    arena : Adamas::Compiler::Frontend::ArenaLike,
+  ) : Set(String)
+    collect_defined_class_method_full_names(class_name, body, arena)
+  end
+
   def __test_function_def_names(prefix : String = "") : Array(String)
     @function_defs.keys.select { |name| prefix.empty? || name.starts_with?(prefix) }
   end
@@ -319,6 +351,107 @@ class Adamas::HIR::AstToHir
     raw.is_a?(Int64) ? raw : nil
   end
 
+end
+
+private def add_defined_scan_def(arena, name : String) : Adamas::Compiler::Frontend::ExprId
+  arena.retain_source(name)
+  arena.add_typed(Adamas::Compiler::Frontend::DefNode.new(
+    Adamas::Compiler::Frontend::Span.zero,
+    name.to_slice,
+    nil,
+    nil,
+    [] of Adamas::Compiler::Frontend::ExprId,
+  ))
+end
+
+describe "defined method scan caches" do
+  it "preserves class, body, arena, and version identity through primitive keys" do
+    first_arena = Adamas::Compiler::Frontend::AstArena.new
+    virtual_arena = Adamas::Compiler::Frontend::VirtualArena.new
+    page_arena = Adamas::Compiler::Frontend::PageArena.new
+    converter = Adamas::HIR::AstToHir.new(first_arena)
+
+    first_id = add_defined_scan_def(first_arena, "from_first_body")
+    second_id = add_defined_scan_def(first_arena, "from_second_body")
+    virtual_id = add_defined_scan_def(virtual_arena, "from_virtual_arena")
+    page_id = page_arena.add_typed(Adamas::Compiler::Frontend::NilNode.new(
+      Adamas::Compiler::Frontend::Span.zero,
+    ))
+    virtual_id.should eq(first_id)
+    page_id.should eq(first_id)
+    first_body = [first_id]
+    second_body = [second_id]
+
+    first_names = converter.__test_collect_defined_instance_method_full_names("IO::FileDescriptor", first_body, first_arena)
+    first_names.should contain("IO::FileDescriptor#from_first_body")
+    converter.__test_collect_defined_instance_method_full_names("IO::FileDescriptor", first_body, first_arena)
+      .should eq(first_names)
+    converter.__test_defined_instance_method_scan_cache_body_count("IO::FileDescriptor").should eq(1)
+    converter.__test_defined_instance_method_scan_cache_arena_count("IO::FileDescriptor", first_body).should eq(1)
+
+    converter.__test_collect_defined_instance_method_full_names("IO::FileDescriptor", second_body, first_arena)
+      .should contain("IO::FileDescriptor#from_second_body")
+    converter.__test_collect_defined_instance_method_full_names("IO::FileDescriptor", first_body, virtual_arena)
+      .should contain("IO::FileDescriptor#from_virtual_arena")
+    converter.__test_collect_defined_instance_method_full_names("IO::FileDescriptor", first_body, page_arena)
+      .should be_empty
+    converter.__test_defined_instance_method_scan_cache_body_count("IO::FileDescriptor").should eq(2)
+    converter.__test_defined_instance_method_scan_cache_arena_count("IO::FileDescriptor", first_body).should eq(3)
+    converter.__test_defined_instance_method_scan_cache_arena_count("IO::FileDescriptor", second_body).should eq(1)
+
+    converter.__test_collect_defined_instance_method_full_names("IO", first_body, first_arena)
+      .should contain("IO#from_first_body")
+    converter.__test_defined_instance_method_scan_cache_body_count("IO").should eq(1)
+    converter.__test_defined_instance_method_scan_cache_body_count("IO::FileDescriptor").should eq(2)
+
+    converter.__test_bump_module_defs_cache_version
+    converter.__test_defined_instance_method_scan_cache_body_count("IO::FileDescriptor").should eq(0)
+  end
+
+  it "isolates instance and class scans, cache results, and versioned rescans" do
+    arena, roots = parse(<<-CRYSTAL)
+      class ScanTarget
+        def foo
+        end
+
+        def self.bar
+        end
+      end
+    CRYSTAL
+    class_id = roots.find { |expr_id| arena[expr_id].is_a?(Adamas::Compiler::Frontend::ClassNode) }
+    class_id.should_not be_nil
+    class_node = arena[class_id.not_nil!].as(Adamas::Compiler::Frontend::ClassNode)
+    body = class_node.body.not_nil!
+    converter = Adamas::HIR::AstToHir.new(arena)
+
+    instance_names = converter.__test_collect_defined_instance_method_full_names("ScanTarget", body, arena)
+    class_names = converter.__test_collect_defined_class_method_full_names("ScanTarget", body, arena)
+    instance_names.should contain("ScanTarget#foo")
+    instance_names.should_not contain("ScanTarget.bar")
+    class_names.should contain("ScanTarget.bar")
+    class_names.should_not contain("ScanTarget#foo")
+
+    instance_names << "mutated caller copy"
+    cached_names = converter.__test_collect_defined_instance_method_full_names("ScanTarget", body, arena)
+    cached_names.should_not contain("mutated caller copy")
+
+    new_name = "after_bump"
+    arena.retain_source(new_name)
+    new_def = Adamas::Compiler::Frontend::DefNode.new(
+      Adamas::Compiler::Frontend::Span.zero,
+      new_name.to_slice,
+      nil,
+      nil,
+      [] of Adamas::Compiler::Frontend::ExprId,
+    )
+    body << arena.add_typed(new_def)
+    converter.__test_collect_defined_instance_method_full_names("ScanTarget", body, arena)
+      .should_not contain("ScanTarget#after_bump")
+
+    converter.__test_bump_module_defs_cache_version
+    converter.__test_collect_defined_instance_method_full_names("ScanTarget", body, arena)
+      .should contain("ScanTarget#after_bump")
+  end
 end
 
 describe "callsite splat suffix normalization" do

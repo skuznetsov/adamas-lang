@@ -12,6 +12,32 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-S2-DEFINED-METHOD-SCAN-CACHE-CARRIER|candidate OPEN 2026-07-13 {F:0.86 G:0.55 R:0.72}]:
+The source-matched baseline s2 parses an empty full-prelude input but exits 139
+during `lower_main`. The earliest non-perturbing generated-HIR owner edge is
+`collect_defined_instance_method_full_names`: before scanning the class body it
+looks up a mixed `Tuple(String, UInt64, UInt64, Int32)` key in a Hash. This is a
+second transfer case for LM-580's generated-stage mixed String/scalar tuple-key
+failure pattern. The current candidate decomposes the key into nested primitive
+maps keyed by class name, body object id, and arena id, with the module-defs
+version and copied Set in the leaf entry. This preserves all original identity
+coordinates and expected O(1) identity lookup while avoiding a new composite
+String per hit; Set copy on hits remains linear in the number of names. Focused
+cache specs pass 2/2; the full HIR spec passes 240 examples with
+zero failures/errors and two pre-existing pending examples; a host compiler
+build exits 0. Scope: host semantics and compilation only. Produced-stage A/B
+has not run after the latest carrier change, so this landmark remains OPEN and
+does not accept s2b. Refuted alternatives: a composite String token exceeded a
+900-second self-build budget without producing s2; a per-class Array bucket
+introduced O(k) lookup and unbounded reopen/reparse retention. Residual
+invariant: like the original tuple key, object ids are valid only while the body
+and arena remain live through the current module-defs version. Residual
+alternative: generated handling of the three-member ArenaLike union remains
+suspicious but is not changed by this candidate. Decay trigger: nested maps
+misidentify class/body/arena, returned Set mutation contaminates the cache, the
+version bump fails to invalidate it, the HIR-only self-build regresses, or a
+fresh s2 still exits at the same owner edge.
+
 [LM-SPEC-RUNNER-EXPENSIVE-TAIL|test feedback hardening 2026-07-13 {F:0.91 G:0.64 R:0.89}]:
 The deterministic spec manifest now stable-partitions exactly
 `produced_stage_bootstrap_spec.cr` and
