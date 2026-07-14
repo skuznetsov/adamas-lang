@@ -16611,3 +16611,80 @@ or plain-prelude success. The next frontier must be localized without restoring
 the removed Node-typed stub.
 
 Trust: {F/G/R: 0.96/0.61/0.94} [case provenance and helper materialization verified; runtime successor open]
+
+### LM-678 - Fresh s1 timeout is inside mass concrete virtual-target repair
+
+A source-matched original-Crystal build at clean HEAD `ae741456` produced s1
+SHA-256
+`7f5799c0c3b411e1719e3bef4e944c4b81606deb8a985c7a625318ec15c54a22`.
+Untraced phase gates move the current self-build boundary past the broad
+missing-demand machinery: initial missing-demand completion reaches 48,156 HIR
+functions in about 212 seconds, deferred allocators reach 48,366 in about 220
+seconds, and the first final `lower_missing_call_targets` reaches 48,498 in
+about 224 seconds. Stopping immediately after
+`repair_missing_concrete_virtual_targets` does not complete in the former
+420-second envelope.
+
+The collector-only gate is non-executing and reports 875 recorded virtual
+shapes, 564 active shapes, 5,762 admitted requests, 14 root requests, and 5,748
+child requests. It classifies 3,014 as direct declarations and 2,748 as
+inherited or unresolved; 5,562 candidate symbols are not started. A bounded
+execution probe of the first 20 requests takes 561.7 ms and creates 24 bodies.
+This predicts a large linear lowering bill and rejects the earlier framing of a
+second missing-demand fixed-point hang. The first 20 entries contain several
+Array/Hash `hash` specializations, but their order is not a representative
+histogram and cannot justify a method-specific filter.
+
+The attempted main-root reachability plus reachable-allocation restriction is
+also refuted at this boundary. It reduced a small pending-budget reducer from
+103 total / 57 maximum queue entries to 34 / 8 and kept focused/full HIR specs
+green, yet three full missing-demand gates still timed out. The complete source
+experiment was reverted. Separately, a minimal generic key-hash unit fixture
+preserved the concrete key receiver and recorded no broad virtual demand; its
+empty repaired-owner set was a bad fixture, not the desired fanout
+counterexample, so no test was retained.
+
+The unmodified, bounded 900-second s1-to-s2 run is now RED. The exact fresh s1
+hash was rechecked before the single run; `run_safe.sh` terminated it with exit
+143 after the real 900-second timeout, reported 12 file descriptors, and no s2
+artifact existed. Its compact log ended at the same normal lower-main and
+deferred `Iterator::Stop` allocator lines. The harness's `~714s` progress label
+counts monitor sleeps but omits probe time; it is not the wall-clock limit.
+This rejects the hypothesis that only the former 420-second envelope was stale.
+
+The next legal change needs a testable collection/execution seam. The leading
+bounded hypothesis is stale two-phase admission: all requests are collected
+before any shared resolved body is restored, and later requests are executed
+without revalidating the body-availability predicate. A unit spec must measure
+actual repair executions across that state transition; an unchanged final
+function set alone would be vacuous. If revalidation does not materially move
+the authoritative boundary, the next frame is richer receiver-flow provenance,
+not name filters, owner-count thresholds, or a `Hash#key_hash` exception.
+
+The first candidate makes that hypothesis executable. A focused inherited
+Parent/ChildA/ChildB fixture removes all three generated bodies after recording
+a live Parent-typed virtual call. The pre-fix execution seam is RED with
+`expected 1, got 3`, while the preceding assertions prove that repair restores
+only Parent and leaves both child wrappers absent. Revalidating candidate-body
+and resolved-body availability immediately before each execution makes the
+same fixture GREEN with one lowering. The full HIR spec file passes 243
+examples, zero failures/errors, and two existing pending examples. This is a
+verified local redundancy removal. A fresh original-built s1 is 44,315,920
+bytes with SHA-256
+`b7ef111dc7ae508e88741c7eb03ffb24c7f62676d95ff9b77c457642866e0255`.
+Its normal post-virtual-repair gate exits 0 at 54,655 functions with 1,468
+pending entries (wrapper progress about 418 seconds). That directly proves the
+former final-repair timeout moved. The legacy limited execution probe still
+bypasses the new execution helper and is explicitly non-authoritative for this
+post-fix measurement.
+
+The bootstrap successor remains RED. The only unmodified full run of the new
+s1 times out at the 900-second wall-clock boundary with exit 143 and produces
+no s2. Its compact log has the same last normal lower-main/deferred-allocator
+lines because `run_safe.sh` buffers compiler stderr until termination. The
+1,468-entry `final_missing` pending pass is therefore the leading next
+corridor, but the full timeout alone does not prove the exact inner stop. The
+next discriminating probes must use the existing pending context and pass
+gates; another full run before that localization is rejected.
+
+Trust: {F/G/R: 0.94/0.61/0.92} [stale repair work and phase advance verified; bootstrap successor open]

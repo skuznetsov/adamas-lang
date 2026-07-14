@@ -1,6 +1,74 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-07-14 (tuple-hash receiver ABI closed narrowly; self-build timeout remains open).
+Updated: 2026-07-14 (fresh s1 timeout localized to final concrete virtual-target repair).
+
+CURRENT ACTIVE FLOOR (newest): clean HEAD `ae741456` and a fresh
+original-Crystal-built s1 (SHA-256
+`7f5799c0c3b411e1719e3bef4e944c4b81606deb8a985c7a625318ec15c54a22`)
+do not hang in the initial missing-demand pass, deferred allocators, or the
+first final missing-demand pass. The phase gates complete at 48,156 functions
+in about 212 seconds, 48,366 functions in about 220 seconds, and 48,498
+functions in about 224 seconds respectively. The next gate, immediately after
+`repair_missing_concrete_virtual_targets`, does not complete in the former
+420-second envelope.
+
+The non-executing final-repair collector is the current factual boundary. It
+sees 875 recorded shapes, 564 with a surviving caller, and admits 5,762 repair
+requests: 14 roots and 5,748 child owners. Of those requests, 3,014 are direct
+declarations and 2,748 are inherited or unresolved; 5,562 candidate names have
+not started lowering. Executing the first 20 requests takes 561.7 ms and adds
+24 real function bodies. The early sample contains several Array/Hash `hash`
+targets, but it does not prove that method family is the global root. The
+measured pattern is a mass materialization cost, not one pathological request
+or another `lower_missing_call_targets` fixed point.
+
+Two tempting routes are currently refuted. Restricting the missing-demand scan
+to main-root reachability and a reachable-allocation fixed point improved small
+reducers but did not move three authoritative full gates; that experiment was
+fully reverted. A host-unit `KeyHash(K)#key_hash(key)` fixture retained its
+concrete key type and did not even record the broad virtual demand required by
+the hypothesis, so it was removed rather than accepted as a false RED test.
+
+The unmodified 900-second completion falsifier is now RED: the same fresh s1
+timed out with exit 143, 12 file descriptors, no s2 artifact, and the same last
+normal lower-main/deferred-allocator lines. The safe wrapper's internal progress
+counter reported about 714 seconds; that counter excludes monitor-probe time
+and does not weaken the real 900-second wall-clock timeout.
+
+NEXT: add a pure test seam around final-repair request collection/execution and
+make the stale-snapshot hypothesis measurable. In particular, a request admitted
+before another request restores a shared resolved body must be revalidated before
+paying for lowering; the test must count actual repair executions, not merely
+assert the unchanged final function set. If that does not materially reduce the
+authoritative request/run boundary, pivot to richer receiver-flow provenance.
+Do not prune by method name, owner-count threshold, or an inferred
+`Hash#key_hash` special case. Keep heavy self-host runs delegated and bounded;
+use focused `spec/*` tests as the fast regression layer before every new
+bootstrap attempt.
+
+VERIFIED PHASE FIX (bootstrap successor still open): final repair now
+rechecks the same candidate-body and resolved-body predicates immediately
+before each lowering. A focused Parent/ChildA/ChildB fixture is RED without
+the guard (`expected 1, got 3`) while proving that only the restored Parent
+body survives; with the guard it executes one repair and keeps both inherited
+child wrappers absent. The complete HIR spec file passes 243 examples with
+zero failures or errors and two existing pending examples. This establishes
+stale redundant work and local semantic preservation. A fresh original-built
+s1 is 44,315,920 bytes with SHA-256
+`b7ef111dc7ae508e88741c7eb03ffb24c7f62676d95ff9b77c457642866e0255`.
+Its ordinary post-virtual-repair gate exits 0 at 54,655 functions with 1,468
+pending entries (wrapper progress about 418 seconds); the same boundary was
+previously unreachable. The legacy execution-probe branch bypasses the new
+helper and is not a post-fix oracle.
+
+BOOTSTRAP SUCCESSOR: the sole unmodified full run of that s1 still times out at
+900 seconds with exit 143 and no s2 artifact. The final-repair gate proves the
+old floor moved, while the remaining 1,468-entry `final_missing`
+`process_pending_lower_functions` pass is now the leading bounded hypothesis,
+not yet a verified exact stop point. NEXT: use
+`ADAMAS_PENDING_PROCESS_CONTEXT_FILTER=final_missing` with the existing
+pass/first-item/pass-items-done stop gates. Do not repeat a full build until the
+pending corridor is localized and a focused spec or falsifier moves it.
 
 CURRENT ROOT SLICE: `Hash#key_hash` accepted a generic `Tuple#hash` target after
 checking only the live `Crystal::Hasher` parameter. A concrete

@@ -282,7 +282,7 @@ class Adamas::HIR::AstToHir
     @pending_function_queue.delete(name)
   end
 
-  def __test_repair_missing_concrete_virtual_targets : Nil
+  def __test_repair_missing_concrete_virtual_targets : Int32
     repair_missing_concrete_virtual_targets
   end
 
@@ -5285,6 +5285,62 @@ describe Adamas::HIR::AstToHir do
       # The inherited request must reuse the restored ancestor source rather
       # than materialize a redundant concrete child wrapper.
       converter.module.has_function_with_body?(child_name).should be_false
+    end
+
+    it "revalidates stale inherited repairs after restoring the parent body" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class Parent
+          def run(value : Int32) : Int32
+            value
+          end
+        end
+
+        class ChildA < Parent
+        end
+
+        class ChildB < Parent
+        end
+
+        def invoke(io : Parent, value : Int32) : Int32
+          io.run(value)
+        end
+
+        invoke(ChildA.new, 1)
+        invoke(ChildB.new, 2)
+      CRYSTAL
+
+      caller = converter.module.functions.find { |func| func.name.starts_with?("invoke$") }
+      caller.should_not be_nil
+      caller.not_nil!.blocks.flat_map(&.instructions).any? do |inst|
+        inst.is_a?(Adamas::HIR::Call) && inst.virtual
+      end.should be_true
+
+      parent_target = converter.module.functions.find { |func| func.name.starts_with?("Parent#run$") }
+      child_a_target = converter.module.functions.find { |func| func.name.starts_with?("ChildA#run$") }
+      child_b_target = converter.module.functions.find { |func| func.name.starts_with?("ChildB#run$") }
+      parent_target.should_not be_nil
+      child_a_target.should_not be_nil
+      child_b_target.should_not be_nil
+      parent_name = parent_target.not_nil!.name
+      child_a_name = child_a_target.not_nil!.name
+      child_b_name = child_b_target.not_nil!.name
+
+      converter.module.remove_function(parent_name).should be_true
+      converter.module.remove_function(child_a_name).should be_true
+      converter.module.remove_function(child_b_name).should be_true
+      converter.__test_reset_lowering_state(parent_name)
+      converter.__test_reset_lowering_state(child_a_name)
+      converter.__test_reset_lowering_state(child_b_name)
+      converter.__test_mark_live_type("ChildA")
+      converter.__test_mark_live_type("ChildB")
+      converter.module.has_function_with_body?(parent_name).should be_false
+
+      executed = converter.__test_repair_missing_concrete_virtual_targets
+
+      converter.module.has_function_with_body?(parent_name).should be_true
+      converter.module.has_function_with_body?(child_a_name).should be_false
+      converter.module.has_function_with_body?(child_b_name).should be_false
+      executed.should eq(1)
     end
 
     it "restores a concrete generic owner without duplicating the source body" do

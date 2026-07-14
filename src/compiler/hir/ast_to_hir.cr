@@ -57128,7 +57128,23 @@ module Adamas::HIR
       @module.functions.count { |func| @module.has_function_with_body?(func.name) }
     end
 
-    private def repair_missing_concrete_virtual_targets : Nil
+    private def execute_final_repair_virtual_target_requests(
+      requests : Array({String, String, Array(TypeRef), Bool, Bool}),
+    ) : Int32
+      executed = 0
+      requests.each do |owner, method_name, arg_types, has_block, has_splat|
+        base_name = "#{owner}##{method_name}"
+        candidate = mangle_function_name(base_name, arg_types, has_block)
+        next if @module.has_function_with_body?(candidate)
+        next if repair_resolved_body_available?(owner, base_name, candidate, arg_types, has_block, has_splat)
+
+        lower_final_repair_virtual_target_owner(owner, method_name, arg_types, has_block, has_splat)
+        executed += 1
+      end
+      executed
+    end
+
+    private def repair_missing_concrete_virtual_targets : Int32
       requests = [] of {String, String, Array(TypeRef), Bool, Bool}
       target_shapes = 0
       active_shapes = 0
@@ -57323,9 +57339,7 @@ module Adamas::HIR
         LibC._exit(0)
       end
 
-      requests.each do |owner, method_name, arg_types, has_block, has_splat|
-        lower_final_repair_virtual_target_owner(owner, method_name, arg_types, has_block, has_splat)
-      end
+      execute_final_repair_virtual_target_requests(requests)
     end
 
     private def stop_after_flush_phase(phase : String, env_key : String) : Nil
