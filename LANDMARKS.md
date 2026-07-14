@@ -16487,3 +16487,40 @@ Quadrumvirate synthesis:
   untraced dumps are required evidence.
 
 Trust: {F/G/R: 0.94/0.66/0.91} [included-module resolution/materialization verified; caller-body successor open]
+
+### LM-676 - Receiverless case subjects preserve repeated method reads
+
+`lower_case` used the ambient HIR locals map to decide whether a bare
+IdentifierNode subject should be re-registered and narrowed in each branch.
+That map is not lexical authority: compiler recovery can cache a prior
+receiverless method result under its source name. In `Lexer#next_token`, the
+shape `byte = current_byte; ...; case current_byte` therefore made the case
+subject look like a source local. Reads after `advance` copied the stale subject
+instead of invoking `current_byte`, leaving the escaped character's closing
+quote for the next token and making `foo('\\0')` fail in the generated parser.
+
+The case-subject classifier now requires lexical evidence for a bare local:
+the name must be assigned in the active method body or be a function parameter.
+Explicit assignment and type-declaration case subjects are unchanged.
+
+Evidence:
+
+- the same focused HIR regression is RED on detached pre-fix HEAD with one
+  `current_byte` call and GREEN on the fix with two independent calls; an
+  assigned local negative control remains one call and a real local;
+- `spec/hir/ast_to_hir_spec.cr` passes 237 examples, 0 failures, and 2 existing
+  pending examples;
+- a fresh original-Crystal-built compiler has SHA-256
+  `b9361ad5d56bac4a3e5d21c46459b235c9984b3bcb7508c979d527bb79b1dd51`;
+- its generated lexer produces Identifier/LParen/Char/RParen/EOF for
+  `foo('\\0')`, and its generated parser reports zero diagnostics;
+- the expanded `stage2_char_literal_parse_repro.sh` passes direct, ordinary
+  call, macro, newline, Unicode, `\\0`, and `\\1` call-argument cases.
+
+Adversary boundary: this verifies the escaped-character parser floor and the
+underlying case/local distinction. It does not prove a fresh s2 compiler or the
+plain/full-prelude bootstrap. The explicit-indexer and production-order
+ArenaLike probes are refuted routes, not supporting causes. The next gate is a
+fresh s2 followed by the minimal `puts 1` oracle.
+
+Trust: {F/G/R: 0.95/0.58/0.93} [root and generated parser gate verified; bootstrap successor open]

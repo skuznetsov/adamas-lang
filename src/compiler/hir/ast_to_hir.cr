@@ -70990,13 +70990,26 @@ module Adamas::HIR
         ["Int32", "Int64", "String", "Bool", "Nil", "Float64"].includes?(name)
     end
 
-    private def case_subject_var_name(expr_id : ExprId) : String?
+    # Return the local name represented by a case subject when branch
+    # narrowing should re-register that local.  A bare IdentifierNode is not
+    # necessarily a source local: lowering may already have cached a prior
+    # receiverless call under the same name (for example, `case current_byte`).
+    # Use lexical evidence instead of ctx.lookup_local; treating that cached
+    # method result as a local makes later calls read a stale subject value.
+    private def case_subject_var_name(
+      ctx : LoweringContext,
+      expr_id : ExprId,
+    ) : String?
       return nil if expr_id.invalid?
 
       node = node_for_expr(expr_id)
       case node
       when Adamas::Compiler::Frontend::IdentifierNode
-        safe_slice_to_string(node.name) || ""
+        name = safe_slice_to_string(node.name) || ""
+        assigned_locals = @assigned_vars_stack.last?
+        source_local = assigned_locals.try(&.includes?(name)) ||
+                       ctx.function.params.any? { |param| param.name == name }
+        source_local ? name : nil
       when Adamas::Compiler::Frontend::AssignNode
         target_node = node_for_expr(node.target)
         if target_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
@@ -71005,9 +71018,9 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::TypeDeclarationNode
         safe_slice_to_string(node.name) || ""
       when Adamas::Compiler::Frontend::GroupingNode
-        case_subject_var_name(node.expression)
+        case_subject_var_name(ctx, node.expression)
       when Adamas::Compiler::Frontend::MacroExpressionNode
-        case_subject_var_name(node.expression)
+        case_subject_var_name(ctx, node.expression)
       end
     end
 
@@ -71034,7 +71047,7 @@ module Adamas::HIR
       # Handles both `case x` (IdentifierNode) and `case x = expr` (AssignNode).
       subject_var_name : String? = nil
       if subj = node.value
-        subject_var_name = case_subject_var_name(subj)
+        subject_var_name = case_subject_var_name(ctx, subj)
       end
 
       merge_block = ctx.create_block

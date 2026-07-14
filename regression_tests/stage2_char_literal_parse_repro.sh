@@ -54,5 +54,7 @@ run_case "char_call_arg" $'class Probe\n  def self.hit(x)\n    x\n  end\nend\n\n
 run_case "char_macro_call" $'class Object\n  macro delegate\n    {% if hit(\'=\') %}\n      1\n    {% else %}\n      2\n    {% end %}\n  end\n\n  def self.hit(x)\n    x\n  end\nend\n\n1'
 run_case "char_escape_newline" $"'\\n'"
 run_case "char_escape_unicode" $"'\\u{41}'"
+run_case "char_escape_null_call_arg" $'class Probe\n  def self.hit(x)\n    x\n  end\nend\n\nProbe.hit(\'\\0\')'
+run_case "char_escape_octal_call_arg" $'class Probe\n  def self.hit(x)\n    x\n  end\nend\n\nProbe.hit(\'\\1\')'
 
 echo "not reproduced: char literals parse and compile across direct, call-arg, macro, and escape cases"

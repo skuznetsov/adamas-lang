@@ -10124,6 +10124,39 @@ Test policy from this floor:
 - every stage artifact manifest must record source hash, compiler hash, flags,
   and build time so mixed-generation evidence cannot masquerade as convergence.
 
+### Session 29: receiverless `case` subjects must not become locals (LM-676, 2026-07-13)
+
+The generated parser's escaped-character call-argument failure is closed at
+its lowering root. `lower_case` inferred a subject local from the ambient HIR
+locals map. That map may contain a cached result for a prior receiverless method
+read, so `case current_byte` was treated like `case byte`: later
+`current_byte` reads after `advance` copied the stale case subject and left the
+closing quote unconsumed. The fix accepts a bare case-subject identifier as a
+local only when lexical evidence exists (an assignment in the current method or
+a function parameter). Assignment and type-declaration subjects retain their
+existing narrowing behavior.
+
+Evidence:
+
+- the focused HIR spec is RED on the old implementation (`1` receiverless
+  `current_byte` call instead of `2`) and GREEN on the fix; the full file passes
+  237 examples with 0 failures and 2 existing pending examples;
+- a fresh original-Crystal-built s1 (`b9361ad5...`, ~572s) emits the correct
+  Identifier/LParen/Char/RParen/EOF token sequence for `foo('\\0')`;
+- the generated parser probe reports zero diagnostics for `foo('\\0')`;
+- `stage2_char_literal_parse_repro.sh` now covers `\\0` and `\\1` call
+  arguments and passes against that fresh s1.
+
+Rejected routes remain useful: explicit dotted indexer runtime dispatch and the
+production `ArenaLike = AstArena | VirtualArena | PageArena` ordering both pass
+generated probes and are not the parser root. A pre-fix s1 cannot validate this
+compiler change merely by requiring the new source: lowering is performed by
+the AstToHir implementation already embedded in that compiler.
+
+Next legal work: build one fresh s2 with the LM-676 source, rerun the plain
+`puts 1` oracle, and record the first successor before widening to the full
+produced-stage suite. Do not claim s2b or s3b from the parser gate alone.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

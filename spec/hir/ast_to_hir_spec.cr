@@ -1761,6 +1761,68 @@ describe Adamas::HIR::AstToHir do
       text.should contain("phi")
     end
 
+    it "keeps an unbound case subject as a receiverless method call" do
+      converter = lower_program(<<-CRYSTAL)
+        class Cursor
+          def current_byte : Int32
+            48
+          end
+
+          def advance : Nil
+          end
+
+          def parse : Int32
+            initial = current_byte
+            case current_byte
+            when 48
+              advance
+              current_byte
+            else
+              -1
+            end
+          end
+        end
+        CRYSTAL
+      func = converter.module.functions.find { |candidate| candidate.name.starts_with?("Cursor#parse") }.not_nil!
+
+      current_byte_calls = func.blocks.flat_map(&.instructions).compact_map do |instruction|
+        call = instruction.as?(Adamas::HIR::Call)
+        call if call && call.method_name.includes?("current_byte")
+      end
+
+      current_byte_calls.size.should eq(3)
+      hir_text(func).should_not contain("local current_byte")
+    end
+
+    it "still narrows a bound local used as a case subject" do
+      converter = lower_program(<<-CRYSTAL)
+        class Cursor
+          def current_byte : Int32
+            48
+          end
+
+          def parse : Int32
+            byte = current_byte
+            case byte
+            when 48
+              byte
+            else
+              -1
+            end
+          end
+        end
+        CRYSTAL
+      func = converter.module.functions.find { |candidate| candidate.name.starts_with?("Cursor#parse") }.not_nil!
+
+      current_byte_calls = func.blocks.flat_map(&.instructions).compact_map do |instruction|
+        call = instruction.as?(Adamas::HIR::Call)
+        call if call && call.method_name.includes?("current_byte")
+      end
+
+      current_byte_calls.size.should eq(1)
+      hir_text(func).should contain("local \"byte\"")
+    end
+
     it "lowers nested if" do
       func = lower_function("def foo(a : Bool, b : Bool); if a; if b; 1; end; end; end")
       text = hir_text(func)
