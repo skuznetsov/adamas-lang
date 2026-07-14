@@ -40,18 +40,22 @@ isolation, and version invalidation. Nested maps, scalar-id tuples, bounded
 buckets, and String tokens are retained as refuted performance/complexity
 routes.
 
-Bootstrap evidence still forbids a broader closure claim. The last
+Bootstrap evidence still forbids a broader closure claim. The final
 source-matched s1 timed out after 420 seconds while building s2 (exit 143, no
-artifact), but that run preceded the adversary-discovered guard on the
-parameter-stripped base target, which could bypass the direct fallback. The
-final combined source therefore needs one new source-matched s1 -> s2 gate at
-the same limit. If it remains red, the active successor is the
-running-compiler/source-shape distinction and the next probe is the retained
-old-s1/current-source versus current-s1/pre-candidate-source HIR cross A/B.
+artifact). A bounded HIR cross A/B then timed out identically at 300 seconds
+for old-s1/current-source and current-s1/old-source. The missing control is
+decisive: the same retained old s1 on the `5e44ccfa` source exits 0 after about
+101 seconds inside `run_safe` and produces a 91,804,121-byte HIR artifact.
+Therefore the cross timeouts are not explained by the environment or limit;
+both current source shape and current compiler state can reproduce the
+slowdown relative to the old/old baseline. The next legal probe is source
+subtraction or a minimal syntax/shape falsifier around the semantic
+`llvm_backend.cr` delta. The HIR source delta is only comments and formatting,
+so another cache carrier or repeated full self-build is not justified.
 Decay trigger: the exact admitted
 tuple uses different layout offsets or hash semantics, another Tuple/NamedTuple
 shape enters the direct fallback, a required String/Hasher callee is absent, or
-the cross A/B moves the earliest divergence outside the assumed HIR boundary.
+source subtraction moves the earliest divergence outside the tuple-hash patch.
 
 [LM-SPEC-RUNNER-EXPENSIVE-TAIL|test feedback hardening 2026-07-13 {F:0.91 G:0.64 R:0.89}]:
 The deterministic spec manifest now stable-partitions exactly

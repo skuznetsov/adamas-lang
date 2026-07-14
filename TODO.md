@@ -30,18 +30,22 @@ cache specs now cover nine distinct body and arena identities, class/instance
 isolation, copied Set results, and version invalidation; focused cache specs pass
 4 examples and the full HIR file passes 242 examples with two existing pending.
 
-BOOTSTRAP STATUS REMAINS OPEN: the last source-matched s1 timed out while
-building s2 at 420 seconds (exit 143, no s2 artifact). Adversary review then
-found that the parameter-stripped base-target path still bypassed the direct
-fallback; the final guarded source has not yet rerun the self-build. Therefore
-the timeout refutes the earlier partial guards, not the final combined patch.
-Do not raise the timeout or claim that the defined-method cache floor is closed.
+BOOTSTRAP STATUS REMAINS OPEN: the final source-matched s1 timed out while
+building s2 at 420 seconds (exit 143, no s2 artifact). A bounded HIR cross A/B
+then timed out identically at 300 seconds for both old-s1/current-source and
+current-s1/old-source. The required old-s1/old-source control succeeded in the
+same environment: exit 0 after about 101 seconds inside `run_safe`, producing a
+91,804,121-byte HIR artifact. This refutes environment or timeout drift and
+shows that both the current source shape and the current running compiler state
+can reproduce the slowdown relative to commit `5e44ccfa`.
 
-NEXT: commit this verified narrow ABI slice, then run one final source-matched
-s1 -> s2 gate at the existing 420-second limit. If it still times out, run the
-bounded HIR cross A/B: retained pre-candidate s1 and current source versus
-current s1 and pre-candidate source. This separates source shape from
-running-compiler state before another production change.
+NEXT: localize the semantic source delta before another production change. The
+HIR file differs from `5e44ccfa` only by comments and formatting of the same
+cache key; the only production semantic delta is the bounded tuple-hash ABI
+patch in `llvm_backend.cr`. Use source subtraction or a minimal syntax/shape
+falsifier for that method under the retained old compiler. Do not raise the
+timeout, repeat the full self-build, or claim that the defined-method cache
+floor is closed.
 
 REFUTED ROUTES: composite String token, nested Hashes, bounded/linear buckets,
 scalar class-id tuples, receiver guard alone, and the pre-adversary direct tuple
