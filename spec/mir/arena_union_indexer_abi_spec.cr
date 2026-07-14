@@ -35,7 +35,7 @@ private ARENA_UNION_INDEXER_SOURCE = <<-CRYSTAL
     end
   end
 
-  alias ArenaLike = AstArena | PageArena | VirtualArena
+  alias ArenaLike = AstArena | VirtualArena | PageArena
 
   def probe(arena : ArenaLike, root_id : ExprId) : Node?
     arena.[]?(root_id)
