@@ -25,6 +25,36 @@ class Adamas::MIR::HIRToMIRLowering
   ) : Array(Int32)
     virtual_dispatch_candidates(recv_desc, recv_type, method_suffix, arg_count).map(&.type_id)
   end
+
+  def __test_synthesize_class_dispatch_for_abstract(
+    class_name : String,
+    method_suffix : String,
+    candidates : Array(Tuple(String, Adamas::MIR::Function)),
+  ) : Adamas::MIR::Function?
+    synthesize_class_dispatch_for_abstract(class_name, method_suffix, candidates)
+  end
+
+  def __test_lower_virtual_dispatch_for_receiver(
+    recv_type : Adamas::HIR::TypeRef,
+    call : Adamas::HIR::Call,
+  ) : Adamas::MIR::ValueId?
+    @hir_value_types[call.receiver_value] = recv_type
+    test_func = @mir_module.create_function(
+      "__test_lower_virtual_dispatch",
+      Adamas::MIR::TypeRef.from_hir(call.type)
+    )
+    test_func.add_param("recv", Adamas::MIR::TypeRef.from_hir(recv_type))
+    @builder = Adamas::MIR::Builder.new(test_func)
+    lower_virtual_dispatch(call, [0_u32])
+  end
+
+  def __test_ensure_class_dispatch_for_union(
+    class_name : String,
+    receiver_type : Adamas::MIR::TypeRef,
+    call : Adamas::HIR::Call,
+  ) : Adamas::MIR::Function?
+    ensure_class_dispatch_for_union(class_name, "probe", receiver_type, call)
+  end
 end
 
 describe Adamas::MIR::HIRToMIRLowering do
@@ -90,6 +120,314 @@ describe Adamas::MIR::HIRToMIRLowering do
       fd_type = lowering.mir_module.type_registry.get_by_name("IO::FileDescriptor")
       fd_type.should_not be_nil, ids.inspect
       ids.should contain(fd_type.not_nil!.id.to_i32)
+    end
+
+    it "does not admit a concrete value owner to an Object class dispatch" do
+      hir_mod = Adamas::HIR::Module.new("value_owner_virtual_dispatch")
+      object_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(Adamas::HIR::TypeKind::Class, "Object"))
+      module_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(Adamas::HIR::TypeKind::Module, "M"))
+      value_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(Adamas::HIR::TypeKind::Class, "Value"))
+      struct_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(Adamas::HIR::TypeKind::Class, "Struct"))
+      box_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(Adamas::HIR::TypeKind::Class, "Box"))
+      fallback_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(Adamas::HIR::TypeKind::Class, "FallbackRef"))
+      array_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Array,
+        "Array(Int32)",
+        [Adamas::HIR::TypeRef::INT32]
+      ))
+      pointer_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Pointer,
+        "Pointer(Int32)",
+        [Adamas::HIR::TypeRef::INT32]
+      ))
+      color_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Struct,
+        "Color"
+      ))
+      hir_mod.register_class_parent("Value", "Object")
+      hir_mod.register_class_parent("Struct", "Value")
+      hir_mod.register_class_parent("Box", "Struct")
+      hir_mod.register_class_parent("FallbackRef", "Value")
+      hir_mod.register_class_parent("Int32", "Value")
+      hir_mod.register_class_parent("Array(Int32)", "Object")
+      hir_mod.register_class_parent("Pointer(Int32)", "Object")
+      hir_mod.register_class_parent("Color", "Value")
+      hir_mod.register_module_includer("M", "Array(Int32)")
+      hir_mod.register_module_includer("M", "Int32")
+      hir_mod.register_module_includer("M", "Pointer(Int32)")
+      hir_mod.register_module_includer("M", "Color")
+
+      empty_ivars = [] of Adamas::HIR::IVarInfo
+      empty_class_vars = [] of Adamas::HIR::ClassVarInfo
+      class_infos = {
+        "Object" => Adamas::HIR::ClassInfo.new("Object", object_ref, empty_ivars, empty_class_vars, 8, false, nil),
+        "Value"  => Adamas::HIR::ClassInfo.new("Value", value_ref, empty_ivars, empty_class_vars, 0, true, "Object"),
+        "Struct" => Adamas::HIR::ClassInfo.new("Struct", struct_ref, empty_ivars, empty_class_vars, 0, true, "Value"),
+        "Box"    => Adamas::HIR::ClassInfo.new("Box", box_ref, empty_ivars, empty_class_vars, 0, true, "Struct"),
+        "FallbackRef" => Adamas::HIR::ClassInfo.new("FallbackRef", fallback_ref, empty_ivars, empty_class_vars, 8, false, "Value"),
+      } of String => Adamas::HIR::ClassInfo
+
+      # Keep a concrete value-owner implementation in the MIR function family;
+      # the candidate census must filter it by the MIR value-type kind.
+      probe = hir_mod.create_function("Box#probe", Adamas::HIR::TypeRef::INT32)
+      probe.add_param("self", box_ref)
+      probe_block = probe.get_block(probe.entry_block)
+      probe_result = Adamas::HIR::Literal.new(probe.next_value_id, Adamas::HIR::TypeRef::INT32, 0_i64)
+      probe_block.add(probe_result)
+      probe_block.terminator = Adamas::HIR::Return.new(probe_result.id)
+      int_probe = hir_mod.create_function("Int32#probe", Adamas::HIR::TypeRef::INT32)
+      int_probe.add_param("self", Adamas::HIR::TypeRef::INT32)
+      int_probe_block = int_probe.get_block(int_probe.entry_block)
+      int_probe_result = Adamas::HIR::Literal.new(int_probe.next_value_id, Adamas::HIR::TypeRef::INT32, 0_i64)
+      int_probe_block.add(int_probe_result)
+      int_probe_block.terminator = Adamas::HIR::Return.new(int_probe_result.id)
+      array_probe = hir_mod.create_function("Array(Int32)#probe", Adamas::HIR::TypeRef::INT32)
+      array_probe.add_param("self", array_ref)
+      array_probe_block = array_probe.get_block(array_probe.entry_block)
+      array_probe_result = Adamas::HIR::Literal.new(array_probe.next_value_id, Adamas::HIR::TypeRef::INT32, 0_i64)
+      array_probe_block.add(array_probe_result)
+      array_probe_block.terminator = Adamas::HIR::Return.new(array_probe_result.id)
+      pointer_probe = hir_mod.create_function("Pointer(Int32)#probe", Adamas::HIR::TypeRef::INT32)
+      pointer_probe.add_param("self", pointer_ref)
+      pointer_probe_block = pointer_probe.get_block(pointer_probe.entry_block)
+      pointer_probe_result = Adamas::HIR::Literal.new(pointer_probe.next_value_id, Adamas::HIR::TypeRef::INT32, 0_i64)
+      pointer_probe_block.add(pointer_probe_result)
+      pointer_probe_block.terminator = Adamas::HIR::Return.new(pointer_probe_result.id)
+      color_probe = hir_mod.create_function("Color#probe", Adamas::HIR::TypeRef::INT32)
+      color_probe.add_param("self", color_ref)
+      color_probe_block = color_probe.get_block(color_probe.entry_block)
+      color_probe_result = Adamas::HIR::Literal.new(color_probe.next_value_id, Adamas::HIR::TypeRef::INT32, 0_i64)
+      color_probe_block.add(color_probe_result)
+      color_probe_block.terminator = Adamas::HIR::Return.new(color_probe_result.id)
+      fallback_probe = hir_mod.create_function("FallbackRef#fallback", Adamas::HIR::TypeRef::INT32)
+      fallback_probe.add_param("self", fallback_ref)
+      fallback_probe_block = fallback_probe.get_block(fallback_probe.entry_block)
+      fallback_probe_result = Adamas::HIR::Literal.new(fallback_probe.next_value_id, Adamas::HIR::TypeRef::INT32, 0_i64)
+      fallback_probe_block.add(fallback_probe_result)
+      fallback_probe_block.terminator = Adamas::HIR::Return.new(fallback_probe_result.id)
+
+      lowering = Adamas::MIR::HIRToMIRLowering.new(hir_mod)
+      lowering.register_class_types(class_infos)
+      lowering.register_enum_types(Set{"Color"}, hir_mod.types)
+      lowering.prepare
+      array_type_ref = Adamas::MIR::TypeRef.from_hir(array_ref)
+      array_type = lowering.mir_module.type_registry.create_type_with_id(
+        array_type_ref.id,
+        Adamas::MIR::TypeKind::Array,
+        "Array(Int32)",
+        24_u64,
+        8_u32
+      )
+      pointer_type_ref = Adamas::MIR::TypeRef.from_hir(pointer_ref)
+      pointer_type = lowering.mir_module.type_registry.create_type_with_id(
+        pointer_type_ref.id,
+        Adamas::MIR::TypeKind::Pointer,
+        "Pointer(Int32)",
+        8_u64,
+        8_u32
+      )
+
+      object_desc = hir_mod.get_type_descriptor(object_ref).not_nil!
+      ids = lowering.__test_virtual_dispatch_candidate_type_ids(object_desc, object_ref, "probe", 0)
+      box_type = lowering.mir_module.type_registry.get_by_name("Box")
+      box_type.should_not be_nil
+      box_type.not_nil!.is_value_type?.should be_true
+      ids.should_not contain(box_type.not_nil!.id.to_i32)
+      int_type = lowering.mir_module.type_registry.get_by_name("Int32")
+      int_type.should_not be_nil
+      int_type.not_nil!.kind.primitive?.should be_true
+      ids.should_not contain(int_type.not_nil!.id.to_i32)
+      ids.should contain(array_type.id.to_i32)
+      ids.should_not contain(pointer_type.id.to_i32)
+      fallback_ids = lowering.__test_virtual_dispatch_candidate_type_ids(object_desc, object_ref, "fallback", 0)
+      fallback_type = lowering.mir_module.type_registry.get_by_name("FallbackRef")
+      fallback_type.should_not be_nil
+      fallback_ids.should contain(fallback_type.not_nil!.id.to_i32)
+      # Int32 has no direct `fallback` body; the sibling fallback pass must not
+      # re-admit its primitive type id into an object-header dispatch table.
+      fallback_int_type = lowering.mir_module.type_registry.get_by_name("Int32")
+      fallback_int_type.should_not be_nil
+      fallback_ids.should_not contain(fallback_int_type.not_nil!.id.to_i32)
+      color_type = lowering.mir_module.type_registry.get_by_name("Color")
+      color_type.should_not be_nil
+      color_type.not_nil!.kind.should eq(Adamas::MIR::TypeKind::Enum)
+      ids.should_not contain(color_type.not_nil!.id.to_i32)
+
+      # Module/generic includer dispatch uses the same object-header switch;
+      # reject primitive, raw-pointer, and enum includers while retaining
+      # Array(T)'s runtime header representation.
+      module_desc = hir_mod.get_type_descriptor(module_ref).not_nil!
+      module_ids = lowering.__test_virtual_dispatch_candidate_type_ids(module_desc, module_ref, "probe", 0)
+      module_ids.should eq([array_type.id.to_i32])
+
+      # A value-layout class root cannot feed the class-header dispatch path,
+      # even when a reference descendant supplies an otherwise valid method.
+      invalid_root_call = Adamas::HIR::Call.with_receiver_virtual(
+        0_u32,
+        Adamas::HIR::TypeRef::INT32,
+        0_u32,
+        "Value#fallback",
+        [] of Adamas::HIR::ValueId,
+        true
+      )
+      value_mir_type = lowering.mir_module.type_registry.get_by_name("Value").not_nil!
+      value_mir_type.kind.should eq(Adamas::MIR::TypeKind::Struct)
+      Adamas::MIR.runtime_header_backed_type?(value_mir_type).should be_false
+      lowering.__test_lower_virtual_dispatch_for_receiver(value_ref, invalid_root_call).should be_nil
+      lowering.mir_module.functions.any? { |f| f.name.starts_with?("__vdispatch__Value#fallback") }.should be_false
+      mismatched_receiver_call = Adamas::HIR::Call.with_receiver_virtual(
+        0_u32,
+        Adamas::HIR::TypeRef::INT32,
+        0_u32,
+        "Object#probe",
+        [] of Adamas::HIR::ValueId,
+        true
+      )
+      lowering.__test_ensure_class_dispatch_for_union(
+        "Object",
+        Adamas::MIR::TypeRef.new(pointer_type.id),
+        mismatched_receiver_call
+      ).should be_nil
+
+      # The abstract-dispatch synthesis path has its own candidate admission
+      # loop.  Keep the same no-header families in that path: only Array(T)
+      # and Reference owners may produce object-header switch cases.
+      mir_probe = lowering.mir_module.get_function("Box#probe").not_nil!
+      mir_int_probe = lowering.mir_module.get_function("Int32#probe").not_nil!
+      mir_array_probe = lowering.mir_module.get_function("Array(Int32)#probe").not_nil!
+      mir_pointer_probe = lowering.mir_module.get_function("Pointer(Int32)#probe").not_nil!
+      mir_color_probe = lowering.mir_module.get_function("Color#probe").not_nil!
+      mir_fallback_probe = lowering.mir_module.get_function("FallbackRef#fallback").not_nil!
+      probe_candidates = [
+        {"Box", mir_probe},
+        {"Int32", mir_int_probe},
+        {"Array(Int32)", mir_array_probe},
+        {"Pointer(Int32)", mir_pointer_probe},
+        {"Color", mir_color_probe},
+      ] of Tuple(String, Adamas::MIR::Function)
+      abstract_dispatch = lowering.__test_synthesize_class_dispatch_for_abstract(
+        "Object", "probe", probe_candidates
+      )
+      abstract_dispatch.should_not be_nil
+      abstract_switch = abstract_dispatch.not_nil!.blocks.find { |block| block.terminator.is_a?(Adamas::MIR::Switch) }.not_nil!.terminator
+      abstract_switch.should be_a(Adamas::MIR::Switch)
+      abstract_cases = abstract_switch.as(Adamas::MIR::Switch).cases.map(&.first)
+      abstract_cases.should eq([array_type.id.to_i64])
+
+      # A value-layout root cannot read an object header either.  The helper
+      # must refuse to synthesize a dispatcher even when a reference child is
+      # otherwise eligible.
+      value_root_dispatch = lowering.__test_synthesize_class_dispatch_for_abstract(
+        "Value", "fallback", [{"FallbackRef", mir_fallback_probe}]
+      )
+      value_root_dispatch.should be_nil
+    end
+
+    it "rejects no-header nested class candidates from union dispatch" do
+      hir_mod = Adamas::HIR::Module.new("nested_union_header_dispatch")
+      array_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Array,
+        "Array(Int32)",
+        [Adamas::HIR::TypeRef::INT32]
+      ))
+      pointer_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Pointer,
+        "Pointer(Int32)",
+        [Adamas::HIR::TypeRef::INT32]
+      ))
+      color_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Struct,
+        "Color"
+      ))
+      array_child_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Class,
+        "ArrayChild"
+      ))
+      pointer_child_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Class,
+        "PointerChild"
+      ))
+      color_child_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Class,
+        "ColorChild"
+      ))
+      int_child_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Class,
+        "IntChild"
+      ))
+      union_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Union,
+        "NestedUnion",
+        [array_ref, pointer_ref, color_ref, Adamas::HIR::TypeRef::INT32]
+      ))
+      hir_mod.register_class_parent("ArrayChild", "Array(Int32)")
+      hir_mod.register_class_parent("PointerChild", "Pointer(Int32)")
+      hir_mod.register_class_parent("ColorChild", "Color")
+      hir_mod.register_class_parent("IntChild", "Int32")
+
+      [
+        {"ArrayChild", array_child_ref},
+        {"PointerChild", pointer_child_ref},
+        {"ColorChild", color_child_ref},
+        {"IntChild", int_child_ref}
+      ].each do |name, type_ref|
+        func = hir_mod.create_function("#{name}#probe", Adamas::HIR::TypeRef::INT32)
+        func.add_param("self", type_ref)
+      end
+
+      empty_ivars = [] of Adamas::HIR::IVarInfo
+      empty_class_vars = [] of Adamas::HIR::ClassVarInfo
+      class_infos = {
+        "ArrayChild" => Adamas::HIR::ClassInfo.new("ArrayChild", array_child_ref, empty_ivars, empty_class_vars, 8, false, "Array(Int32)"),
+        "PointerChild" => Adamas::HIR::ClassInfo.new("PointerChild", pointer_child_ref, empty_ivars, empty_class_vars, 8, false, "Pointer(Int32)"),
+        "ColorChild" => Adamas::HIR::ClassInfo.new("ColorChild", color_child_ref, empty_ivars, empty_class_vars, 8, false, "Color"),
+        "IntChild" => Adamas::HIR::ClassInfo.new("IntChild", int_child_ref, empty_ivars, empty_class_vars, 8, false, "Int32"),
+      } of String => Adamas::HIR::ClassInfo
+
+      lowering = Adamas::MIR::HIRToMIRLowering.new(hir_mod)
+      lowering.register_class_types(class_infos)
+      lowering.register_enum_types(Set{"Color"}, hir_mod.types)
+      array_type_ref = Adamas::MIR::TypeRef.from_hir(array_ref)
+      array_type = lowering.mir_module.type_registry.create_type_with_id(
+        array_type_ref.id,
+        Adamas::MIR::TypeKind::Array,
+        "Array(Int32)",
+        24_u64,
+        8_u32
+      )
+      pointer_type_ref = Adamas::MIR::TypeRef.from_hir(pointer_ref)
+      pointer_type = lowering.mir_module.type_registry.create_type_with_id(
+        pointer_type_ref.id,
+        Adamas::MIR::TypeKind::Pointer,
+        "Pointer(Int32)",
+        8_u64,
+        8_u32
+      )
+      color_type_ref = Adamas::MIR::TypeRef.from_hir(color_ref)
+      int_type_ref = Adamas::MIR::TypeRef::INT32
+      union_type_ref = Adamas::MIR::TypeRef.from_hir(union_ref)
+      descriptor = Adamas::MIR::UnionDescriptor.new(
+        "NestedUnion",
+        [
+          Adamas::MIR::UnionVariantDescriptor.new(array_type_ref.id.to_i32, array_type_ref, "Array(Int32)", 24, 8, nil),
+          Adamas::MIR::UnionVariantDescriptor.new(pointer_type_ref.id.to_i32, pointer_type_ref, "Pointer(Int32)", 8, 8, nil),
+          Adamas::MIR::UnionVariantDescriptor.new(color_type_ref.id.to_i32, color_type_ref, "Color", 4, 4, nil),
+          Adamas::MIR::UnionVariantDescriptor.new(int_type_ref.id.to_i32, int_type_ref, "Int32", 4, 4, nil),
+        ],
+        32,
+        8
+      )
+      lowering.register_union_types([
+        Adamas::HIR::UnionDescriptorRegistration.new(union_type_ref, descriptor),
+      ])
+      lowering.prepare
+
+      union_desc = hir_mod.get_type_descriptor(union_ref).not_nil!
+      ids = lowering.__test_virtual_dispatch_candidate_type_ids(union_desc, union_ref, "probe", 0)
+      ids.should eq([array_type.id.to_i32])
+      ids.should_not contain(pointer_type.id.to_i32)
+      ids.should_not contain(lowering.mir_module.type_registry.get_by_name("Color").not_nil!.id.to_i32)
+      ids.should_not contain(Adamas::MIR::TypeRef::INT32.id.to_i32)
     end
   end
 

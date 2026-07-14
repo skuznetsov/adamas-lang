@@ -57182,6 +57182,64 @@ module Adamas::HIR
     # can resolve an inherited implementation directly through the class
     # ancestor chain.  Keep the materialization request when that proof is not
     # available, but avoid synthesizing a redundant child wrapper otherwise.
+    #
+    # Descriptor kind is authoritative when available.  A stale ClassInfo
+    # layout flag must not suppress an abstract class-root demand whose
+    # non-value descendants still participate in dispatch; conversely, a
+    # concrete Struct descriptor must never be admitted as a class wrapper.
+    private def concrete_value_virtual_repair_owner?(owner : String) : Bool
+      owner_base = strip_generic_args(owner)
+      info = @class_info[owner]? || @class_info[owner_base]?
+      if info
+        if desc = @module.get_type_descriptor(info.type_ref)
+          return concrete_value_virtual_repair_descriptor?(desc, info)
+        end
+
+        # Primitive TypeRefs (for example Int32) do not always have a HIR
+        # descriptor.  In that case the registered layout flag is the only
+        # authoritative value/reference distinction available.
+        return info.is_struct
+      end
+
+      # ClassInfo normally exists for every registered concrete owner.  Keep
+      # descriptor-only runtime registrations conservative as well, without
+      # calling type_ref_for_name (which could intern a new class placeholder).
+      @module.types.reverse_each do |desc|
+        next unless desc.name == owner
+        return concrete_value_virtual_repair_descriptor?(desc, nil)
+      end
+      if owner_base != owner
+        @module.types.reverse_each do |desc|
+          next unless desc.name == owner_base
+          return concrete_value_virtual_repair_descriptor?(desc, nil)
+        end
+      end
+
+      false
+    end
+
+    private def concrete_value_virtual_repair_descriptor?(desc : TypeDescriptor, info : ClassInfo?) : Bool
+      case desc.kind
+      when TypeKind::Struct, TypeKind::Tuple, TypeKind::NamedTuple,
+           TypeKind::Primitive, TypeKind::Pointer
+        true
+      when TypeKind::Array
+        # HIR uses Array for both heap-backed Array(T) references and inline
+        # StaticArray(T, N) values.  The descriptor spelling is authoritative
+        # here: stale ClassInfo attached to Array(T) must not make a reference
+        # owner look like an inline value.
+        desc.name == "StaticArray" || desc.name.starts_with?("StaticArray(")
+      when TypeKind::Generic
+        # Generic placeholders inherit their storage class from the template
+        # metadata; without ClassInfo they remain admissible references.
+        info ? info.is_struct : false
+      else
+        # Explicit Class (and reference Array) owners remain admitted.  Other
+        # runtime descriptor kinds are not concrete value owners in this path.
+        false
+      end
+    end
+
     private def repair_resolved_body_available?(owner : String, base_name : String, candidate : String, arg_types : Array(TypeRef), has_block : Bool, has_splat : Bool) : Bool
       resolved = lookup_function_def_for_call(base_name, arg_types.size, has_block, arg_types, has_splat)
       return false unless resolved
@@ -57261,9 +57319,9 @@ module Adamas::HIR
 
       @virtual_targets_by_parent.each do |parent_name, targets|
         class_info = @class_info[parent_name]? || next
-        next if class_info.is_struct
         parent_desc = @module.get_type_descriptor(class_info.type_ref) || next
         next unless parent_desc.kind == TypeKind::Class
+        next if concrete_value_virtual_repair_owner?(parent_name)
 
         targets.each do |target|
           target_shapes += 1
@@ -57293,6 +57351,7 @@ module Adamas::HIR
           replay_flags |= 1_u8 if target.has_block
           replay_flags |= 2_u8 if target.has_splat
           collect_subclasses_cached(parent_name).each do |child_name|
+            next if concrete_value_virtual_repair_owner?(child_name)
             next unless rta_live_owner?(child_name)
             replay_key = {child_name, parent_name, target.method_name, arg_hash, replay_flags}
             next unless @virtual_target_replay_attempted.includes?(replay_key)

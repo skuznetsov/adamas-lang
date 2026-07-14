@@ -16731,3 +16731,43 @@ LM-679. Before another replay rule changes, classify remaining child demand by
 `resolved_missing_body`, `resolved_body_preserve`, resolved ancestor/other, and
 direct/included declaration. {F/G/R: 0.95/0.58/0.91} [local HIR and bounded census
 verified; produced bootstrap successor open]
+
+### LM-680 - Concrete value owners stop before class dispatch
+
+The root cause crossed the HIR→MIR boundary. HIR final virtual repair could
+admit concrete value owners through stale `ClassInfo.is_struct` metadata, while
+MIR direct, fallback, module/generic, abstract, and nested-union paths could
+reuse or create class dispatchers for receivers without a runtime header. The
+finite cross-phase invariant is now explicit: a non-tagged class receiver may
+enter class virtual repair or class dispatch only when its authoritative type is
+runtime-header-backed; inline Struct/Tuple/NamedTuple/Primitive/Pointer/
+StaticArray values are filtered before repair, cache reuse, or dispatcher
+creation. Tagged/mixed unions remain on their union-dispatch path.
+
+RED signals on the old behavior included HIR child-wrapper recreation, MIR
+Int32 direct/fallback admission, abstract synthesis candidates
+`[5,57,58,59]` instead of `[57]`, module candidates
+`[58,5,59,60]` instead of `[58]`, nested-union candidates
+`[52,53,54,5]` instead of `[52]`, and a stale invalid-root
+`__vdispatch__Value#fallback$T34` artifact. Focused HIR/MIR seams are GREEN;
+the full HIR file is 248 examples with 0 failures/errors and 2 existing
+pending examples, and the full MIR file is 30 examples with 0 failures/errors.
+
+The one bounded fresh original-host census used s1 SHA-256
+`72536d42845af7dca662841ceda5c0465ebd9775d0fcd4f6c51b0dcd2713ec83`, host
+release build wall 667.54s, and a collector gate with rc 0 and real wall
+66.17s. Authoritative request totals moved from prior raw 5,945 to 2,597
+(-3,348, -56.3%); `resolved_body_preserve` moved from 1,034 to 0; appended
+owners classified as concrete values were 0 (assertion true). The temporary
+HIR census observed 9,415 child-filter attempt events, led by
+`Pointer|Pointer=4641`, `Struct|Hash::Entry=1883`, `Struct|Slice=350`, and
+`Struct|Set=147`; these are repeated attempts, not unique owners. The prior
+broad Object/Reference total 5,911 and this run's child-only total 2,563 use
+different definitions, so no exact broad delta is claimed. No full s1→s2
+bootstrap claim is made.
+
+Adversary boundary: this is a local cross-phase admission fix, not a complete
+bootstrap closure. Residual risk remains in the separate HIR direct
+Pointer/StaticArray static-call guard and the surviving lookup-nil/missing-body
+reference tail. {F/G/R: 0.96/0.61/0.92} [HIR/MIR local tests and one bounded
+census complete; produced bootstrap successor open]

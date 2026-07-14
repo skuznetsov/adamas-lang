@@ -2,6 +2,42 @@
 
 Updated: 2026-07-14 (fresh s1 timeout localized to final concrete virtual-target repair).
 
+CURRENT CHANGE — concrete value-owner and class-header admission (bounded,
+2026-07-14): the root cause crossed the HIR→MIR boundary. HIR final virtual
+repair could admit concrete value owners through stale `ClassInfo.is_struct`
+metadata, while MIR direct, fallback, module/generic, abstract, and nested
+union paths could reuse or create class dispatchers for receivers without a
+runtime header. The finite cross-phase invariant is now explicit: a
+non-tagged class receiver may enter class virtual repair or class dispatch only
+when its authoritative type is runtime-header-backed; inline
+Struct/Tuple/NamedTuple/Primitive/Pointer/StaticArray values are filtered before
+repair, cache reuse, or dispatcher creation. Tagged/mixed unions remain on
+their union-dispatch path.
+
+RED signals on the old behavior included HIR child-wrapper recreation, MIR
+Int32 direct/fallback admission, abstract synthesis candidates
+`[5,57,58,59]` instead of `[57]`, module candidates
+`[58,5,59,60]` instead of `[58]`, nested-union candidates
+`[52,53,54,5]` instead of `[52]`, and a stale invalid-root
+`__vdispatch__Value#fallback$T34` artifact. The focused HIR/MIR seams are GREEN;
+the full HIR file is 248 examples with 0 failures/errors and 2 existing
+pending examples, and the full MIR file is 30 examples with 0 failures/errors.
+
+The one bounded fresh original-host census used s1 SHA-256
+`72536d42845af7dca662841ceda5c0465ebd9775d0fcd4f6c51b0dcd2713ec83`, host
+release build wall 667.54s, and a collector gate with rc 0 and real wall
+66.17s. Authoritative request totals moved from the prior raw 5,945 to 2,597
+(-3,348, -56.3%); `resolved_body_preserve` moved from 1,034 to 0; appended
+owners classified as concrete values were 0 (assertion true). The temporary
+HIR census observed 9,415 child-filter attempt events, led by
+`Pointer|Pointer=4641`, `Struct|Hash::Entry=1883`, `Struct|Slice=350`, and
+`Struct|Set=147`; these are repeated attempts, not unique owners. The prior
+broad Object/Reference total 5,911 and this run's child-only total 2,563 use
+different definitions, so no exact broad delta is claimed. No full s1→s2
+bootstrap claim is made. Residual risk remains in the separate HIR direct
+Pointer/StaticArray static-call guard and the surviving lookup-nil/missing-body
+reference tail.
+
 CURRENT ACTIVE FLOOR (newest): clean HEAD `ae741456` and a fresh
 original-Crystal-built s1 (SHA-256
 `7f5799c0c3b411e1719e3bef4e944c4b81606deb8a985c7a625318ec15c54a22`)

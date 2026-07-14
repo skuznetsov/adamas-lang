@@ -294,6 +294,26 @@ class Adamas::HIR::AstToHir
     collect_subclasses_cached(parent_name)
   end
 
+  def __test_replay_virtual_targets_for_registered_class(class_name : String) : Nil
+    replay_virtual_targets_for_registered_class(class_name)
+  end
+
+  def __test_concrete_value_virtual_repair_owner?(owner : String) : Bool
+    concrete_value_virtual_repair_owner?(owner)
+  end
+
+  def __test_register_virtual_repair_class_info(name : String, type_ref : Adamas::HIR::TypeRef, is_struct : Bool) : Nil
+    @class_info[name] = Adamas::HIR::ClassInfo.new(
+      name,
+      type_ref,
+      [] of Adamas::HIR::IVarInfo,
+      [] of Adamas::HIR::ClassVarInfo,
+      0,
+      is_struct,
+      nil
+    )
+  end
+
   def __test_queue_pending_inside_lowering(name : String) : Nil
     old_depth = @lowering_depth
     @lowering_depth = @lowering_depth_limit + 1
@@ -5111,6 +5131,77 @@ describe Adamas::HIR::AstToHir do
   end
 
   describe "missing concrete virtual target repair" do
+    it "classifies value and reference owners from HIR descriptors" do
+      converter = Adamas::HIR::AstToHir.new(Adamas::Compiler::Frontend::AstArena.new)
+      module_ = converter.module
+      module_.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Pointer,
+        "Pointer(Int32)",
+        [Adamas::HIR::TypeRef::INT32]
+      ))
+      # Insert the exact value descriptor before its reference-like base to
+      # prove descriptor-only lookup prefers the full owner spelling.
+      module_.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Struct,
+        "ExactValue(Int32)",
+        [Adamas::HIR::TypeRef::INT32]
+      ))
+      module_.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Class,
+        "ExactValue"
+      ))
+      static_array_ref = module_.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Array,
+        "StaticArray(Int32, 4)",
+        [Adamas::HIR::TypeRef::INT32]
+      ))
+      array_ref = module_.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Array,
+        "Array(Int32)",
+        [Adamas::HIR::TypeRef::INT32]
+      ))
+      module_.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Tuple,
+        "Tuple(Int32, String)",
+        [Adamas::HIR::TypeRef::INT32, Adamas::HIR::TypeRef::STRING]
+      ))
+      module_.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Primitive,
+        "Int32"
+      ))
+      widget_ref = module_.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Class,
+        "Widget"
+      ))
+      # Stale/mispaired layout flags must not turn reference descriptors into
+      # value owners; descriptor spelling remains authoritative for these kinds.
+      converter.__test_register_virtual_repair_class_info("StaticArray(Int32, 4)", static_array_ref, false)
+      converter.__test_register_virtual_repair_class_info("Array(Int32)", array_ref, true)
+      converter.__test_register_virtual_repair_class_info("Widget", widget_ref, true)
+      generic_value_ref = module_.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Generic,
+        "GenericBox(Int32)",
+        [Adamas::HIR::TypeRef::INT32]
+      ))
+      converter.__test_register_virtual_repair_class_info("GenericBox(Int32)", generic_value_ref, true)
+
+      mismatches = [] of String
+      {
+        {"Pointer(Int32)", true},
+        {"ExactValue(Int32)", true},
+        {"StaticArray(Int32, 4)", true},
+        {"Tuple(Int32, String)", true},
+        {"Int32", true},
+        {"GenericBox(Int32)", true},
+        {"Array(Int32)", false},
+        {"Widget", false},
+      }.each do |owner, expected_value|
+        actual = converter.__test_concrete_value_virtual_repair_owner?(owner)
+        mismatches << "#{owner}: expected=#{expected_value} actual=#{actual}" unless actual == expected_value
+      end
+      mismatches.should be_empty
+    end
+
     it "does not synthesize an inherited generic wrapper during virtual-target replay" do
       source = <<-CRYSTAL
         class Parent
@@ -5177,6 +5268,96 @@ describe Adamas::HIR::AstToHir do
       object_target.should_not be_nil
       converter.module.has_function_with_body?(object_target.not_nil!.name).should be_true
       converter.module.functions.any? { |func| func.name.starts_with?("Box(Int32)#to_s") }.should be_false
+    end
+
+    it "does not repair a concrete value owner admitted under an Object virtual demand" do
+      # Synthetic hierarchy fixture: Crystal structs cannot spell an explicit
+      # superclass, so these declarations model the built-in Object/Value/Struct
+      # chain needed to exercise replay admission for a concrete value owner.
+      source = <<-CRYSTAL
+        class Object
+          def probe : Int32
+            0
+          end
+        end
+
+        class Value < Object
+        end
+
+        class Struct < Value
+        end
+
+        struct Box
+          def probe : Int32
+            7
+          end
+        end
+
+        def invoke(value : Object) : Int32
+          value.probe
+        end
+
+        def static_probe(value : Box) : Int32
+          value.probe
+        end
+      CRYSTAL
+
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+      converter.arena = arena
+      class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+      def_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode) }
+      class_nodes.each { |node| converter.register_class(node) }
+      def_nodes.each { |node| converter.register_function(node) }
+
+      # Prove the concrete value method is registered and remains a static call
+      # before exercising the Object-root virtual demand.
+      converter.__test_function_def_names("Box#probe").should_not be_empty
+      converter.__test_collect_subclasses_cached("Object").should contain("Box")
+      static_node = def_nodes.find { |node| String.new(node.name.not_nil!) == "static_probe" }
+      static_node.should_not be_nil
+      converter.lower_def(static_node.not_nil!)
+      static = converter.module.functions.find { |func| func.name.starts_with?("static_probe$") }
+      static.should_not be_nil
+      static_calls = static.not_nil!.blocks.flat_map(&.instructions).compact_map { |inst| inst.as?(Adamas::HIR::Call) }
+      static_calls.any? { |call| call.method_name.starts_with?("Box#probe") }.should be_true
+      static_calls.none?(&.virtual).should be_true
+
+      invoke_node = def_nodes.find { |node| String.new(node.name.not_nil!) == "invoke" }
+      invoke_node.should_not be_nil
+      converter.lower_def(invoke_node.not_nil!)
+      invoke = converter.module.functions.find { |func| func.name.starts_with?("invoke$") }
+      invoke.should_not be_nil
+      invoke.not_nil!.blocks.flat_map(&.instructions).any? do |inst|
+        inst.is_a?(Adamas::HIR::Call) && inst.virtual
+      end.should be_true
+      converter.__test_mark_live_type("Box")
+      converter.__test_replay_virtual_targets_for_registered_class("Box")
+
+      target_names = converter.module.functions
+        .select { |func| func.name.starts_with?("Box#probe") }
+        .map(&.name)
+      target_names.should_not be_empty
+      target_names.each do |target_name|
+        converter.module.has_function_with_body?(target_name).should be_true
+        converter.module.remove_function(target_name).should be_true
+        converter.__test_reset_lowering_state(target_name)
+      end
+      converter.__test_mark_live_type("Box")
+      target_names.each do |target_name|
+        converter.module.has_function_with_body?(target_name).should be_false
+        converter.module.functions.any? { |func| func.name == target_name }.should be_false
+      end
+
+      executed = converter.__test_repair_missing_concrete_virtual_targets
+
+      # A value owner can satisfy the Object-root demand statically, but final
+      # repair must not fan out and recreate its removed body.
+      target_names.each do |target_name|
+        converter.module.has_function_with_body?(target_name).should be_false
+        converter.module.functions.any? { |func| func.name == target_name }.should be_false
+      end
+      executed.should eq(0)
     end
 
     it "recovers a removed target from the recorded virtual demand" do

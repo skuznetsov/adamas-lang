@@ -595,7 +595,11 @@ module Adamas
         # Use the receiver's reference TypeRef for the dispatch parameter so
         # downstream consumers see the abstract base type, not a concrete sub.
         recv_mir_type = @mir_module.type_registry.get_by_name(class_name)
-        receiver_type = recv_mir_type ? TypeRef.new(recv_mir_type.id) : template.params[0].type
+        # This dispatcher reads the receiver's object-header type id.  Refuse
+        # non-header roots (primitive, pointer, enum, or value-layout structs)
+        # rather than fabricating a class dispatch with an invalid receiver ABI.
+        return nil unless Adamas::MIR.runtime_header_backed_type?(recv_mir_type)
+        receiver_type = TypeRef.new(recv_mir_type.not_nil!.id)
         ret_type = template.return_type
         arg_params = template.params[1..]
 
@@ -603,7 +607,9 @@ module Adamas
         candidates.each do |sub_name, sub_func|
           sub_type = @mir_module.type_registry.get_by_name(sub_name)
           next unless sub_type
-          next if sub_type.is_value_type?
+          # Every class-dispatch case must carry the same runtime object header
+          # that `generate_vdispatch_body` reads from the receiver pointer.
+          next unless Adamas::MIR.runtime_header_backed_type?(sub_type)
           # Strict arity match — overrides should mirror the abstract signature.
           next unless sub_func.params.size == template.params.size
           vd_candidates << VDispatchCandidate.new(
@@ -7618,7 +7624,7 @@ module Adamas
               )
               existing_variant_ids.add(variant_id)
             elsif (mir_type = @mir_module.type_registry.get_by_name(variant_name)) &&
-                  !mir_type.is_value_type? &&
+                  Adamas::MIR.runtime_header_backed_type?(mir_type) &&
                   !subclasses_for(variant_name).empty?
               old_candidates << VDispatchCandidate.new(
                 type_id: variant_id,
@@ -7644,6 +7650,42 @@ module Adamas
           io << "$T"
           io << recv_type.id
         end
+
+        # Determine dispatch kind before materializing a dispatcher.  All-ref
+        # unions use the object header; tagged/mixed unions use the union
+        # discriminator.  Non-union Class dispatch likewise requires a
+        # registered header-backed MIR receiver.
+        is_union_type = recv_desc.kind == HIR::TypeKind::Union || !generic_union_ref.nil?
+        recv_mir = convert_type(recv_type)
+        is_allref = if is_union_type
+                      union_desc_ref = generic_union_ref || recv_mir
+                      if desc = @mir_module.get_union_descriptor(union_desc_ref)
+                        Adamas::MIR.union_storage_kind(@mir_module.type_registry, desc).runtime_header?
+                      else
+                        false
+                      end
+                    else
+                      false
+                    end
+        kind = (is_union_type && !is_allref) ? VDispatchKind::Union : VDispatchKind::Class
+
+        # Class dispatch reads an object-header type id from the receiver.  A
+        # non-union receiver must therefore be a registered header-backed MIR
+        # type; all-reference unions are admitted only when their union storage
+        # contract is the raw header pointer form.  Tagged/mixed unions keep
+        # their discriminator-based Union dispatch path unchanged.
+        if kind.class?
+          if is_union_type
+            return nil unless is_allref
+          else
+            recv_mir_type = @mir_module.type_registry.get(recv_mir)
+            return nil unless Adamas::MIR.runtime_header_backed_type?(recv_mir_type)
+          end
+        end
+
+        # Reuse a cached dispatcher only after the current receiver/storage
+        # admission has passed; a stale pre-created table must not bypass the
+        # class-header invariant above.
         if existing = @mir_module.get_function(dispatch_name)
           return @builder.not_nil!.call(existing.id, args, existing.return_type)
         end
@@ -7707,23 +7749,6 @@ module Adamas
         dispatch_builder = Builder.new(dispatch_func)
 
         candidates = old_candidates
-
-        # Determine dispatch kind:
-        # - All-ref unions (every variant is a class/Nil) use Class dispatch
-        #   because they're stored as raw pointers — type_id lives in the object header.
-        # - Mixed/tagged unions use Union dispatch — type_id is the union discriminator.
-        is_union_type = recv_desc.kind == HIR::TypeKind::Union || generic_union_ref
-        recv_mir = convert_type(recv_type)
-        is_allref = if is_union_type
-                      if desc = @mir_module.get_union_descriptor(recv_mir)
-                        Adamas::MIR.union_storage_kind(@mir_module.type_registry, desc).runtime_header?
-                      else
-                        false
-                      end
-                    else
-                      false
-                    end
-        kind = (is_union_type && !is_allref) ? VDispatchKind::Union : VDispatchKind::Class
 
         # Use unified generator
         generate_vdispatch_body(
@@ -7962,7 +7987,7 @@ module Adamas
                   dispatch_class: nil,
                 )
               elsif (mir_type = @mir_module.type_registry.get_by_name(variant.full_name)) &&
-                    !mir_type.is_value_type? &&
+                    Adamas::MIR.runtime_header_backed_type?(mir_type) &&
                     !subclasses_for(variant.full_name).empty?
                 candidates << VDispatchCandidate.new(
                   type_id: variant.type_id,
@@ -7993,6 +8018,10 @@ module Adamas
             func = func || resolve_virtual_method_for_class(class_name, method_suffix, arg_count)
             if func
               next unless mir_type = @mir_module.type_registry.get_by_name(class_name)
+              # Class-root vdispatch reads an object-header type id.  Admit
+              # only MIR types whose runtime representation carries that
+              # header; direct static calls remain untouched.
+              next unless Adamas::MIR.runtime_header_backed_type?(mir_type)
               candidates << VDispatchCandidate.new(
                 type_id: mir_type.id.to_i32,
                 type_ref: TypeRef.new(mir_type.id),
@@ -8002,9 +8031,10 @@ module Adamas
               )
             else
               # No function found for this class — record for fallback pass.
-              # Only reference types: value types can't appear in class dispatch.
+              # Only runtime-header-backed types can re-enter through an
+              # inherited/sibling fallback candidate.
               if mir_type = @mir_module.type_registry.get_by_name(class_name)
-                missing_classes << {class_name, mir_type} unless mir_type.is_value_type?
+                missing_classes << {class_name, mir_type} if Adamas::MIR.runtime_header_backed_type?(mir_type)
               end
             end
           end
@@ -8043,6 +8073,7 @@ module Adamas
                 current = parent || ""
               end
               if ff = fallback_func
+                next unless Adamas::MIR.runtime_header_backed_type?(mir_type)
                 if ENV["DEBUG_VDISPATCH_FALLBACK"]?
                   STDERR.puts "[VDISPATCH_FALLBACK] #{class_name}##{method_suffix} → #{ff.name}"
                 end
@@ -8085,7 +8116,7 @@ module Adamas
               mir_type = ensure_reference_type_for_name(class_name) ||
                          @mir_module.type_registry.get_by_name(class_name)
               next unless mir_type
-              next if mir_type.is_value_type?
+              next unless Adamas::MIR.runtime_header_backed_type?(mir_type)
               candidates << VDispatchCandidate.new(
                 type_id: mir_type.id.to_i32,
                 type_ref: TypeRef.new(mir_type.id),
@@ -8106,6 +8137,11 @@ module Adamas
         receiver_type : TypeRef,
         call : HIR::Call,
       ) : Adamas::MIR::Function?
+        root_mir_type = @mir_module.type_registry.get_by_name(class_name)
+        return nil unless Adamas::MIR.runtime_header_backed_type?(root_mir_type)
+        receiver_mir_type = @mir_module.type_registry.get(receiver_type)
+        return nil unless Adamas::MIR.runtime_header_backed_type?(receiver_mir_type)
+
         dispatch_name = "__vdispatch__#{class_name}##{method_suffix}"
         if existing = @mir_module.get_function(dispatch_name)
           return existing
@@ -8116,7 +8152,7 @@ module Adamas
         ([class_name] + subclasses_for(class_name)).each do |name|
           if func = resolve_virtual_method_for_class(name, method_suffix, call.args.size)
             next unless mir_type = @mir_module.type_registry.get_by_name(name)
-            next if mir_type.is_value_type?
+            next unless Adamas::MIR.runtime_header_backed_type?(mir_type)
             old_candidates << {type_id: mir_type.id.to_i32, func: func}
           end
         end
