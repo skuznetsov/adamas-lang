@@ -12239,6 +12239,10 @@ module Adamas::MIR
           return true
         end
 
+        if emit_direct_tuple_key_hash_override(mangled, key_llvm_type, key_type_ref)
+          return true
+        end
+
         if compiler_i32_wrapper_key_hash?(mangled)
           emit_struct_i32_field_key_hash_override(
             mangled,
@@ -14148,20 +14152,28 @@ module Adamas::MIR
 
       # Try exact specific hash(hasher) for this type
       target = "#{key_suffix}$Hhash$$Crystal$CCHasher"
-      if resolved = find_hash_with_hasher_target(target, key_suffix)
+      if resolved = find_hash_with_hasher_target(target, key_suffix, receiver_type: key_type_ref)
         return resolved
       end
 
       # For tuple types, try the generic Tuple#hash(Crystal::Hasher)
       if key_type.kind.tuple?
-        if resolved = find_hash_with_hasher_target("Tuple$Hhash$$Crystal$CCHasher", "Tuple$Hhash")
+        if resolved = find_hash_with_hasher_target(
+             "Tuple$Hhash$$Crystal$CCHasher",
+             "Tuple$Hhash",
+             receiver_type: key_type_ref,
+           )
           return resolved
         end
       end
 
       # For named tuple types, try the generic NamedTuple#hash(Crystal::Hasher)
       if key_type.name.starts_with?("NamedTuple(")
-        if resolved = find_hash_with_hasher_target("NamedTuple$Hhash$$Crystal$CCHasher", "NamedTuple$Hhash")
+        if resolved = find_hash_with_hasher_target(
+             "NamedTuple$Hhash$$Crystal$CCHasher",
+             "NamedTuple$Hhash",
+             receiver_type: key_type_ref,
+           )
           return resolved
         end
       end
@@ -14172,17 +14184,28 @@ module Adamas::MIR
       if base_name != key_type.name
         base_mangled = base_name.gsub("::", "$CC")
         base_target = "#{base_mangled}$Hhash$$Crystal$CCHasher"
-        if func = module_function_by_mangled_name(base_target)
-          return mangle_function_name(func.name)
+        if resolved = find_hash_with_hasher_target(
+             base_target,
+             "#{base_mangled}$Hhash",
+             receiver_type: key_type_ref,
+           )
+          return resolved
         end
       end
 
       nil
     end
 
-    private def find_hash_with_hasher_target(exact_mangled : String, generic_prefix : String) : String?
+    private def find_hash_with_hasher_target(
+      exact_mangled : String,
+      generic_prefix : String,
+      receiver_type : TypeRef? = nil,
+    ) : String?
       if func = module_function_by_mangled_name(exact_mangled)
-        return mangle_function_name(func.name)
+        if func.params.size >= 2 && emitted_param_llvm_type(func.params[1]) == "ptr" &&
+           (receiver_type.nil? || func.params[0].type == receiver_type)
+          return mangle_function_name(func.name)
+        end
       end
 
       functions = @module.functions
@@ -14191,7 +14214,8 @@ module Adamas::MIR
         function = functions.unsafe_fetch(idx)
         mangled = mangle_function_name(function.name)
         if (mangled == generic_prefix || mangled.starts_with?("#{generic_prefix}$$")) &&
-           function.params.size >= 2 && emitted_param_llvm_type(function.params[1]) == "ptr"
+           function.params.size >= 2 && emitted_param_llvm_type(function.params[1]) == "ptr" &&
+           (receiver_type.nil? || function.params[0].type == receiver_type)
           return mangled
         end
         idx += 1
@@ -14306,6 +14330,74 @@ module Adamas::MIR
       emit_raw "ret_hash:\n"
       emit_raw "  ret i32 %hash32\n"
       emit_raw "}\n\n"
+    end
+
+    private def emit_direct_tuple_key_hash_override(
+      mangled : String,
+      key_llvm_type : String,
+      key_type_ref : TypeRef,
+    ) : Bool
+      return false unless key_llvm_type == "ptr"
+      key_type = @module.type_registry.get(key_type_ref)
+      return false unless key_type && key_type.kind.tuple?
+      return false unless key_type.name == "Tuple(String, UInt64, UInt64, Int32)"
+      elements = key_type.element_types
+      return false unless elements && elements.size == 4
+      return false unless elements.unsafe_fetch(0).name == "String"
+      return false unless elements.unsafe_fetch(1).name == "UInt64"
+      return false unless elements.unsafe_fetch(2).name == "UInt64"
+      return false unless elements.unsafe_fetch(3).name == "Int32"
+      return false unless module_function_by_mangled_name("String$Hhash$$Crystal$CCHasher")
+
+      @called_crystal_functions["String$Hhash$$Crystal$CCHasher"] ||= {
+        "ptr", 2, ["ptr", "ptr"] of String,
+      }
+      @called_crystal_functions["Crystal$CCHasher$Hpermute$$UInt64"] ||= {
+        "ptr", 2, ["ptr", "i64"] of String,
+      }
+
+      layout = Adamas::LayoutContract.tuple_slot_layout(elements)
+      emit_raw "; #{mangled} — direct concrete tuple hash (layout-aware generic fallback)\n"
+      emit_raw "define i32 @#{mangled}(ptr %self, ptr %key) {\n"
+      emit_raw "entry:\n"
+      emit_inline_zeroed_hasher_allocation("hasher")
+
+      current_hasher = "hasher"
+      idx = 0
+      while idx < elements.size
+        element = elements.unsafe_fetch(idx)
+        element_ref = TypeRef.new(element.id)
+        element_llvm_type = @type_mapper.llvm_type(element_ref)
+        offset = layout.offsets.unsafe_fetch(idx)
+        emit_raw "  %tuple.elem#{idx}.ptr = getelementptr i8, ptr %key, i64 #{offset}\n"
+        emit_raw "  %tuple.elem#{idx} = load #{element_llvm_type}, ptr %tuple.elem#{idx}.ptr\n"
+
+        next_hasher = "hasher#{idx + 1}"
+        if element.name == "String" && element.kind.reference?
+          emit_raw "  %#{next_hasher} = call ptr @String$Hhash$$Crystal$CCHasher(ptr %tuple.elem#{idx}, ptr %#{current_hasher})\n"
+        elsif element.name == "UInt64"
+          scalar_name = "tuple.elem#{idx}.i64"
+          emit_raw "  %#{scalar_name} = urem i64 %tuple.elem#{idx}, 2305843009213693951\n"
+          emit_raw "  %#{next_hasher} = call ptr @Crystal$CCHasher$Hpermute$$UInt64(ptr %#{current_hasher}, i64 %#{scalar_name})\n"
+        else
+          scalar_name = "tuple.elem#{idx}.i64"
+          emit_raw "  %#{scalar_name} = sext i32 %tuple.elem#{idx} to i64\n"
+          emit_raw "  %#{next_hasher} = call ptr @Crystal$CCHasher$Hpermute$$UInt64(ptr %#{current_hasher}, i64 %#{scalar_name})\n"
+        end
+        current_hasher = next_hasher
+        idx += 1
+      end
+
+      emit_inline_hasher_result(current_hasher, "hash64")
+      emit_raw "  %hash32 = trunc i64 %hash64 to i32\n"
+      emit_raw "  %is_zero = icmp eq i32 %hash32, 0\n"
+      emit_raw "  br i1 %is_zero, label %ret_max, label %ret_hash\n"
+      emit_raw "ret_max:\n"
+      emit_raw "  ret i32 -1\n"
+      emit_raw "ret_hash:\n"
+      emit_raw "  ret i32 %hash32\n"
+      emit_raw "}\n\n"
+      true
     end
 
     private def emit_concrete_key_hash_delegate_override(mangled : String, key_llvm_type : String, target : String, *, note : String) : Nil

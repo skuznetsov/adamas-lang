@@ -1,44 +1,53 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-07-13 (defined-method scan cache carrier candidate; produced-stage gate pending).
+Updated: 2026-07-14 (tuple-hash receiver ABI closed narrowly; self-build timeout remains open).
 
-CURRENT CANDIDATE: the immediate full-prelude successor is localized to class
-registration before the body scan for
-`collect_defined_instance_method_full_names`. The source-matched baseline s2
-parses an empty program successfully but exits 139 during `lower_main`; its
-untraced generated HIR performs a lookup in
-`Hash(Tuple(String, UInt64, UInt64, Int32), Set(String))` before scanning the
-class body. This transfers the already verified mixed String/scalar tuple-key
-failure pattern from `@normalize_decl_cache` to the two defined-method scan
-caches.
+CURRENT ROOT SLICE: `Hash#key_hash` accepted a generic `Tuple#hash` target after
+checking only the live `Crystal::Hasher` parameter. A concrete
+`Tuple(String, UInt64, UInt64, Int32)` key and a bare `Tuple` receiver both map
+to LLVM `ptr`, but they do not share element metadata or byte geometry. The
+backend could therefore call a generic body that reads the concrete key with a
+default/stale tuple layout. A RED backend spec now constructs exactly this
+receiver mismatch. The accepted boundary requires an equal receiver `TypeRef`;
+when no compatible target exists, a compact direct fallback handles only the
+compiler-hot `Tuple(String, UInt64, UInt64, Int32)` shape through
+`LayoutContract.tuple_slot_layout` rather than falling through to the bare
+generic body. Other Tuple and NamedTuple shapes stay on their typed paths.
 
-The current bounded candidate replaces that mixed tuple carrier with nested
-primitive-key maps: class name -> body object id -> arena id -> versioned Set.
-It preserves O(1) identity lookup, all four identity dimensions, and collection
-copy isolation without allocating a composite String on every hit. Copying the
-returned Set remains O(number of defined names). The focused cache specs
-pass 2 examples and the complete `spec/hir/ast_to_hir_spec.cr` passes 240
-examples with zero failures/errors and two existing pending examples. A host
-compiler build also exits 0. This is COMPLETED only at the host/unit boundary;
-the source-matched s1 -> s2 gate remains pending, so the generated-stage crash
-is not yet claimed fixed.
+The admitted fallback uses byte offsets `0/8/16/24`, loads
+`ptr/i64/i64/i32`, hashes String through its concrete
+`hash(Crystal::Hasher)` target, reduces UInt64 like `Hasher.reduce_num`, and
+permutes the scalar leaves. The focused RED test and the full backend file pass
+80 examples. A fresh host s1 (`b14ef801...`) compiles and runs an exact produced
+reducer with independently allocated equal String values; observed values are
+`true, 17, 17, 29, 2` (the produced `puts` path concatenates them).
 
-REFUTED CARRIERS: a composite String token kept constant-time lookup but made
-the s1 self-build exceed 900 seconds without producing s2. A per-class Array
-bucket removed the tuple and allocation but made lookup O(k) and retained an
-unbounded reopen/reparse history. Do not retry either route.
+The nested-map carrier from the previous candidate is removed. The original
+exact `{String, UInt64, UInt64, Int32}` cache key is restored because nested
+maps, scalar-id tuples, bounded buckets, and composite String tokens all missed
+the practical self-build gate or weakened identity/complexity guarantees. The
+cache specs now cover nine distinct body and arena identities, class/instance
+isolation, copied Set results, and version invalidation; focused cache specs pass
+4 examples and the full HIR file passes 242 examples with two existing pending.
 
-NEXT: after the safety-trigger cooldown, build one fresh source-matched s1 and
-run the cheapest HIR-only self-compile gate before paying for s2. If that gate
-does not regress relative to the retained baseline, build s2 and repeat the
-empty/puts `ADAMAS_STOP_AFTER_LOWER_MAIN` A/B. Only then promote the candidate
-to a closed root cause and resume the successor floor.
+BOOTSTRAP STATUS REMAINS OPEN: the last source-matched s1 timed out while
+building s2 at 420 seconds (exit 143, no s2 artifact). Adversary review then
+found that the parameter-stripped base-target path still bypassed the direct
+fallback; the final guarded source has not yet rerun the self-build. Therefore
+the timeout refutes the earlier partial guards, not the final combined patch.
+Do not raise the timeout or claim that the defined-method cache floor is closed.
 
-RESIDUAL INVARIANT: as with the original tuple key, body and arena identities
-are stored as object ids rather than retained references. They must remain live
-until the module-defs version advances and clears both caches. The produced-stage
-gate must falsify accidental stale hits; do not generalize the candidate beyond
-that lifetime boundary.
+NEXT: commit this verified narrow ABI slice, then run one final source-matched
+s1 -> s2 gate at the existing 420-second limit. If it still times out, run the
+bounded HIR cross A/B: retained pre-candidate s1 and current source versus
+current s1 and pre-candidate source. This separates source shape from
+running-compiler state before another production change.
+
+REFUTED ROUTES: composite String token, nested Hashes, bounded/linear buckets,
+scalar class-id tuples, receiver guard alone, and the pre-adversary direct tuple
+hash path. The
+object-id lifetime invariant remains: body and arena owners must stay live until
+the module-defs version advances and clears both caches.
 
 The Arena-union optional-index floor is CLOSED at its parser root. The source
 form `arena.[]?(root_id)` entered `parse_member_access`, but the empty dotted

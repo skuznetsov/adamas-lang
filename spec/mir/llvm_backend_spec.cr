@@ -2230,6 +2230,120 @@ describe Adamas::MIR::LLVMIRGenerator do
       output.should contain("call ptr @Tuple$Hhash(ptr %key, ptr %hasher)")
       output.should_not contain("call ptr @Tuple$Hhash(ptr %key, ptr null)")
     end
+
+    it "does not delegate a concrete heterogeneous tuple key to a bare generic Tuple#hash" do
+      mod = Adamas::MIR::Module.new("test")
+      registry = mod.type_registry
+      registry.create_type(
+        Adamas::MIR::TypeKind::Struct,
+        "Crystal::Hasher",
+        16_u64,
+        8_u32
+      )
+
+      # The key has a concrete heterogeneous layout, but the only hash body
+      # available below is for the bare Tuple carrier.  Those receiver ABIs
+      # are not interchangeable just because both lower to ptr.
+      tuple_type = registry.create_type(
+        Adamas::MIR::TypeKind::Tuple,
+        "Tuple(String, UInt64, UInt64, Int32)",
+        32_u64,
+        8_u32
+      )
+      string_type = registry.get(Adamas::MIR::TypeRef::STRING)
+      uint64_type = registry.get(Adamas::MIR::TypeRef::UINT64)
+      int32_type = registry.get(Adamas::MIR::TypeRef::INT32)
+      {string_type, uint64_type, int32_type}.each(&.should_not be_nil)
+      tuple_type.add_element_type(string_type.not_nil!)
+      tuple_type.add_element_type(uint64_type.not_nil!)
+      tuple_type.add_element_type(uint64_type.not_nil!)
+      tuple_type.add_element_type(int32_type.not_nil!)
+      tuple_ref = Adamas::MIR::TypeRef.new(tuple_type.id)
+
+      # Make the concrete String hash target available to the layout-aware
+      # fallback.  The body is intentionally trivial; this example verifies
+      # that the tuple emitter passes the element and its live hasher to it.
+      string_hash = mod.create_function("String#hash$Crystal::Hasher", Adamas::MIR::TypeRef::POINTER)
+      string_hash.add_param("self", Adamas::MIR::TypeRef::STRING)
+      string_hash.add_param("hasher", Adamas::MIR::TypeRef::POINTER)
+      Adamas::MIR::Builder.new(string_hash).ret(0_u32)
+
+      bare_tuple = registry.create_type(
+        Adamas::MIR::TypeKind::Struct,
+        "Tuple",
+        0_u64,
+        8_u32
+      )
+      bare_tuple_ref = Adamas::MIR::TypeRef.new(bare_tuple.id)
+      tuple_hash = mod.create_function("Tuple#hash", Adamas::MIR::TypeRef::POINTER)
+      tuple_hash.add_param("self", bare_tuple_ref)
+      tuple_hash.add_param("hasher", Adamas::MIR::TypeRef::POINTER)
+      Adamas::MIR::Builder.new(tuple_hash).ret(1_u32)
+
+      wrong_base_hash = mod.create_function(
+        "Tuple#hash$Crystal::Hasher",
+        Adamas::MIR::TypeRef::POINTER
+      )
+      wrong_base_hash.add_param("self", bare_tuple_ref)
+      wrong_base_hash.add_param("hasher", Adamas::MIR::TypeRef::POINTER)
+      Adamas::MIR::Builder.new(wrong_base_hash).ret(1_u32)
+
+      wrong_exact_hash = mod.create_function(
+        "Tuple(String, UInt64, UInt64, Int32)#hash$Crystal::Hasher",
+        Adamas::MIR::TypeRef::POINTER
+      )
+      wrong_exact_hash.add_param("self", bare_tuple_ref)
+      wrong_exact_hash.add_param("hasher", Adamas::MIR::TypeRef::POINTER)
+      Adamas::MIR::Builder.new(wrong_exact_hash).ret(1_u32)
+
+      key_hash_name = "Hash(Tuple(String, UInt64, UInt64, Int32), Nil)#key_hash$Tuple(String, UInt64, UInt64, Int32)"
+      func = mod.create_function(key_hash_name, Adamas::MIR::TypeRef::INT32)
+      func.add_param("self", Adamas::MIR::TypeRef::POINTER)
+      func.add_param("key", tuple_ref)
+      builder = Adamas::MIR::Builder.new(func)
+      builder.ret(builder.const_int(0_i64, Adamas::MIR::TypeRef::INT32))
+
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
+      gen.emit_type_metadata = false
+      output = gen.generate
+
+      mapper = Adamas::MIR::LLVMTypeMapper.new(registry)
+      mangled = mapper.mangle_name(key_hash_name)
+      body = output[/define i32 @#{Regex.escape(mangled)}\([^)]*\) \{.*?\n\}/m]
+      body.should_not be_nil
+      body = body.not_nil!
+
+      # A concrete heterogeneous tuple must be read using its byte layout;
+      # struct-level GEP would silently apply the wrong element stride.
+      body.should contain("%tuple.elem0.ptr = getelementptr i8, ptr %key, i64 0")
+      body.should contain("%tuple.elem0 = load ptr, ptr %tuple.elem0.ptr")
+      body.should contain("%tuple.elem1.ptr = getelementptr i8, ptr %key, i64 8")
+      body.should contain("%tuple.elem1 = load i64, ptr %tuple.elem1.ptr")
+      body.should contain("%tuple.elem2.ptr = getelementptr i8, ptr %key, i64 16")
+      body.should contain("%tuple.elem2 = load i64, ptr %tuple.elem2.ptr")
+      body.should contain("%tuple.elem3.ptr = getelementptr i8, ptr %key, i64 24")
+      body.should contain("%tuple.elem3 = load i32, ptr %tuple.elem3.ptr")
+
+      # String receives the live hasher through its concrete hash method;
+      # scalar elements are mixed directly as UInt64 values.
+      body.should contain("call ptr @String$Hhash$$Crystal$CCHasher(ptr %tuple.elem0, ptr %hasher)")
+      permute = "call ptr @Crystal$CCHasher$Hpermute$$UInt64"
+      body.lines.count { |line| line.includes?(permute) }.should eq(3)
+      body.lines.count { |line| line.includes?("urem i64") }.should eq(2)
+
+      # Preserve the ABI-safety guard against both generic and concrete-named
+      # targets whose actual self TypeRef is the bare Tuple carrier.
+      body.should_not contain("call ptr @Tuple$Hhash")
+      body.should_not contain(
+        "call ptr @Tuple$LString$C$_UInt64$C$_UInt64$C$_Int32$R$Hhash$$Crystal$CCHasher"
+      )
+
+      # Hash result is i32, with Crystal's zero sentinel mapped to UInt32::MAX.
+      body.should contain("%hash32 = trunc i64 %hash64 to i32")
+      body.should contain("%is_zero = icmp eq i32 %hash32, 0")
+      body.should contain("ret i32 -1")
+      body.should contain("ret i32 %hash32")
+    end
   end
 end
 

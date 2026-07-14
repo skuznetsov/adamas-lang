@@ -188,15 +188,23 @@ class Adamas::HIR::AstToHir
   end
 
   def __test_defined_instance_method_scan_cache_body_count(class_name : String) : Int32
-    @defined_instance_method_full_names_cache[class_name]?.try(&.size) || 0
+    body_ids = Set(UInt64).new
+    @defined_instance_method_full_names_cache.each_key do |key|
+      body_ids << key[1] if key[0] == class_name
+    end
+    body_ids.size
   end
 
   def __test_defined_instance_method_scan_cache_arena_count(
     class_name : String,
     body : Array(Adamas::Compiler::Frontend::ExprId),
   ) : Int32
-    by_body = @defined_instance_method_full_names_cache[class_name]? || return 0
-    by_body[body.object_id]?.try(&.size) || 0
+    body_id = body.object_id
+    count = 0
+    @defined_instance_method_full_names_cache.each_key do |key|
+      count += 1 if key[0] == class_name && key[1] == body_id
+    end
+    count
   end
 
   def __test_collect_defined_instance_method_full_names(
@@ -406,6 +414,44 @@ describe "defined method scan caches" do
 
     converter.__test_bump_module_defs_cache_version
     converter.__test_defined_instance_method_scan_cache_body_count("IO::FileDescriptor").should eq(0)
+  end
+
+  it "retains distinct arena identities for exact cache hits" do
+    arenas = Array(Adamas::Compiler::Frontend::AstArena).new(9) do |index|
+      arena = Adamas::Compiler::Frontend::AstArena.new
+      add_defined_scan_def(arena, "arena_#{index}")
+      arena
+    end
+    converter = Adamas::HIR::AstToHir.new(arenas.first)
+    body = [Adamas::Compiler::Frontend::ExprId.new(0)]
+
+    arenas.each_with_index do |arena, index|
+      converter.__test_collect_defined_instance_method_full_names("Bounded", body, arena)
+        .should contain("Bounded#arena_#{index}")
+    end
+    converter.__test_defined_instance_method_scan_cache_arena_count("Bounded", body).should eq(9)
+
+    converter.__test_collect_defined_instance_method_full_names("Bounded", body, arenas.first)
+      .should contain("Bounded#arena_0")
+    converter.__test_defined_instance_method_scan_cache_arena_count("Bounded", body).should eq(9)
+  end
+
+  it "retains distinct body identities for exact cache hits" do
+    arena = Adamas::Compiler::Frontend::AstArena.new
+    bodies = Array(Array(Adamas::Compiler::Frontend::ExprId)).new(9) do |index|
+      [add_defined_scan_def(arena, "body_#{index}")]
+    end
+    converter = Adamas::HIR::AstToHir.new(arena)
+
+    bodies.each_with_index do |body, index|
+      converter.__test_collect_defined_instance_method_full_names("BoundedBodies", body, arena)
+        .should contain("BoundedBodies#body_#{index}")
+    end
+    converter.__test_defined_instance_method_scan_cache_body_count("BoundedBodies").should eq(9)
+
+    converter.__test_collect_defined_instance_method_full_names("BoundedBodies", bodies.first, arena)
+      .should contain("BoundedBodies#body_0")
+    converter.__test_defined_instance_method_scan_cache_body_count("BoundedBodies").should eq(9)
   end
 
   it "isolates instance and class scans, cache results, and versioned rescans" do

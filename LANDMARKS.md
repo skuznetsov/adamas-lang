@@ -1,6 +1,6 @@
 # LANDMARKS
 
-Updated: 2026-07-13
+Updated: 2026-07-14
 Context: compiler/bootstrap/stage2-stability
 
 This file is the active working set only. Historical landmarks before this
@@ -12,31 +12,46 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
-[LM-S2-DEFINED-METHOD-SCAN-CACHE-CARRIER|candidate OPEN 2026-07-13 {F:0.86 G:0.55 R:0.72}]:
-The source-matched baseline s2 parses an empty full-prelude input but exits 139
-during `lower_main`. The earliest non-perturbing generated-HIR owner edge is
-`collect_defined_instance_method_full_names`: before scanning the class body it
-looks up a mixed `Tuple(String, UInt64, UInt64, Int32)` key in a Hash. This is a
-second transfer case for LM-580's generated-stage mixed String/scalar tuple-key
-failure pattern. The current candidate decomposes the key into nested primitive
-maps keyed by class name, body object id, and arena id, with the module-defs
-version and copied Set in the leaf entry. This preserves all original identity
-coordinates and expected O(1) identity lookup while avoiding a new composite
-String per hit; Set copy on hits remains linear in the number of names. Focused
-cache specs pass 2/2; the full HIR spec passes 240 examples with
-zero failures/errors and two pre-existing pending examples; a host compiler
-build exits 0. Scope: host semantics and compilation only. Produced-stage A/B
-has not run after the latest carrier change, so this landmark remains OPEN and
-does not accept s2b. Refuted alternatives: a composite String token exceeded a
-900-second self-build budget without producing s2; a per-class Array bucket
-introduced O(k) lookup and unbounded reopen/reparse retention. Residual
-invariant: like the original tuple key, object ids are valid only while the body
-and arena remain live through the current module-defs version. Residual
-alternative: generated handling of the three-member ArenaLike union remains
-suspicious but is not changed by this candidate. Decay trigger: nested maps
-misidentify class/body/arena, returned Set mutation contaminates the cache, the
-version bump fails to invalidate it, the HIR-only self-build regresses, or a
-fresh s2 still exits at the same owner edge.
+[LM-S2-TUPLE-HASH-RECEIVER-ABI|narrow root CLOSED, bootstrap successor OPEN 2026-07-14 {F:0.94 G:0.61 R:0.86}]:
+`Hash#key_hash` selected a generic `Tuple#hash(Crystal::Hasher)` target by
+mangled-name prefix and hasher ABI, without proving that the target's receiver
+`TypeRef` matched the concrete Hash key. Both receivers lower to LLVM `ptr`, so
+the call type-checks while a bare Tuple body lacks the concrete element layout.
+A RED backend spec now supplies a concrete
+`Tuple(String, UInt64, UInt64, Int32)` key and a separate bare Tuple hash body;
+the old generator emits the unsafe call. The accepted boundary requires exact
+receiver identity for both generic and concrete-named targets. A compact
+fallback is admitted only for `Tuple(String, UInt64, UInt64, Int32)` and uses
+the authoritative layout contract: offsets `0/8/16/24`, typed
+`ptr/i64/i64/i32` loads, concrete String hashing, UInt64 numeric reduction, and
+scalar permutation. NamedTuple and other Tuple shapes remain on typed paths.
+
+The focused falsifier and all 80 backend examples pass. A fresh original-built
+s1 (`b14ef801dabe9108562032e4401f2ce5161780bd130ef4d46bb356b13820b7c8`)
+compiles an exact produced Hash reducer; independently allocated equal Strings
+retrieve the same value and the observed sequence is `true,17,17,29,2` with
+exit 0. This closes only the mismatched tuple-hash delegate and the supported
+direct layout fallback.
+
+The previous nested cache carrier is removed and the exact mixed key restored.
+Four focused cache examples and the full 242-example HIR file pass (two existing
+pending), including nine body identities, nine arena identities, copied result
+isolation, and version invalidation. Nested maps, scalar-id tuples, bounded
+buckets, and String tokens are retained as refuted performance/complexity
+routes.
+
+Bootstrap evidence still forbids a broader closure claim. The last
+source-matched s1 timed out after 420 seconds while building s2 (exit 143, no
+artifact), but that run preceded the adversary-discovered guard on the
+parameter-stripped base target, which could bypass the direct fallback. The
+final combined source therefore needs one new source-matched s1 -> s2 gate at
+the same limit. If it remains red, the active successor is the
+running-compiler/source-shape distinction and the next probe is the retained
+old-s1/current-source versus current-s1/pre-candidate-source HIR cross A/B.
+Decay trigger: the exact admitted
+tuple uses different layout offsets or hash semantics, another Tuple/NamedTuple
+shape enters the direct fallback, a required String/Hasher callee is absent, or
+the cross A/B moves the earliest divergence outside the assumed HIR boundary.
 
 [LM-SPEC-RUNNER-EXPENSIVE-TAIL|test feedback hardening 2026-07-13 {F:0.91 G:0.64 R:0.89}]:
 The deterministic spec manifest now stable-partitions exactly
