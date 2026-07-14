@@ -86,6 +86,29 @@ end
 
 describe Adamas::MIR::LLVMIRGenerator do
   describe "#generate" do
+    it "keeps direct tuple hash guards separate before layout access" do
+      source = File.read(File.expand_path("../../src/compiler/mir/llvm_backend.cr", __DIR__))
+      method_start = source.index("    private def emit_direct_tuple_key_hash_override(")
+      method_start.should_not be_nil
+      method_start = method_start.not_nil!
+      method_end = source.index("\n    private def ", method_start + 1)
+      method_end.should_not be_nil
+      method_end = method_end.not_nil!
+      method_source = source[method_start...method_end]
+
+      layout_call = "      layout = Adamas::LayoutContract.tuple_slot_layout(elements)"
+      layout_index = method_source.index(layout_call)
+      layout_index.should_not be_nil
+      layout_index = layout_index.not_nil!
+
+      guard_source = method_source[...layout_index]
+      guard_source.should contain(
+        "      return false unless elements\n" \
+        "      return false unless elements.size == 4\n"
+      )
+      guard_source.should_not contain("      return false unless elements && elements.size == 4\n")
+    end
+
     it "generates module header" do
       mod = Adamas::MIR::Module.new("test_module")
       mod.source_file = "test.cr"

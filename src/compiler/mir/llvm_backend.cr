@@ -14342,7 +14342,8 @@ module Adamas::MIR
       return false unless key_type && key_type.kind.tuple?
       return false unless key_type.name == "Tuple(String, UInt64, UInt64, Int32)"
       elements = key_type.element_types
-      return false unless elements && elements.size == 4
+      return false unless elements
+      return false unless elements.size == 4
       return false unless elements.unsafe_fetch(0).name == "String"
       return false unless elements.unsafe_fetch(1).name == "UInt64"
       return false unless elements.unsafe_fetch(2).name == "UInt64"
