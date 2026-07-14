@@ -10310,6 +10310,47 @@ Next legal work: localize the new post-macro-helper failure with a structural
 phase oracle, preserving untraced output as authority. Do not reintroduce the
 old Node-typed stub or count the moved failure as s2b success.
 
+### Session 31: inherited generic virtual-wrapper reuse (LM-679, 2026-07-14)
+
+The missing concrete virtual-target repair was caused by two related naming
+mistakes. Early replay treated a concrete generic owner spelling as a distinct
+implementation whenever lookup resolved to an ancestor, and final repair kept
+an overbroad generic-preservation rule. A non-generic ancestor body was
+therefore materialized again under owners such as `Box(Int32)#run`, even though
+MIR can route the runtime type id through the ancestor chain. Preservation now
+requires concrete generic source provenance (captured type-parameter binding,
+generic template/module source, or an unbound type-parameter signature); a
+materialized non-generic ancestor body is reused at both edges. Value/struct
+owner preservation and genuinely type-dependent generic module bodies remain
+covered.
+
+Evidence:
+
+- The inherited `Parent#run` replay regression was RED before the early gate
+  (`Box(Int32)#run$` existed) and GREEN after it. The explicit `Object#to_s`
+  fixture is also GREEN: it records a virtual call through `Object`, marks
+  `Box(Int32)` live for replay, confirms an `Object#to_s` body, and emits no
+  `Box(Int32)#to_s` wrapper. The true generic `Runner(T)#run` positive remains
+  materialized with an `Int32` return.
+- `crystal spec spec/hir/ast_to_hir_spec.cr` passes 246 examples with 0
+  failures/errors and 2 existing pending examples. A random-order probe later
+  hit an unrelated SIGSEGV in the existing
+  `collect_defined_instance_method_full_names` test; that order-sensitive
+  failure is unclosed and is neither evidence for nor against this fix.
+- The bounded final-repair census gate exited 0 in 67.46s. Compared with the
+  supplied broader baseline, requests moved `10048 -> 5945` (-40.8%), Array
+  owners `8403 -> 1244`, and Hash::Entry owners `1400 -> 554`. The temporary
+  histogram was placed after resolved-body skipping, so these reductions are
+  directional rather than apples-to-apples. Broad Object/Reference requests
+  still account for 5911 entries. No full s1-to-s2 or s2-to-s3 claim is made;
+  the fresh host s1 used for the gate was
+  `606926d303a7376966b2cafaf132ef94855ae897981eeb6efce61687563d3739`.
+
+Next legal work: classify the remaining child demand by
+`resolved_missing_body`, `resolved_body_preserve`, resolved ancestor/other,
+and direct/included declaration before changing another replay or preservation
+rule. Keep the census placement explicit when comparing future runs.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

@@ -16688,3 +16688,46 @@ next discriminating probes must use the existing pending context and pass
 gates; another full run before that localization is rejected.
 
 Trust: {F/G/R: 0.94/0.61/0.92} [stale repair work and phase advance verified; bootstrap successor open]
+
+### LM-679 - Concrete generic receivers reuse non-generic ancestor bodies
+
+The missing-wrapper root was an owner-spelling mismatch at two boundaries:
+`lower_virtual_target_owner` treated a concrete generic receiver as requiring a
+distinct child implementation whenever lookup resolved to an ancestor, while
+`repair_resolved_body_available?` preserved generic owners too broadly. This
+materialized non-generic ancestor bodies again under names such as
+`Box(Int32)#run`, despite MIR's runtime type-id dispatch being able to route the
+receiver through the ancestor chain.
+
+The bounded fix in
+`src/compiler/hir/ast_to_hir.cr` shares one provenance predicate at early replay
+and final repair. A wrapper is retained only when concrete generic source
+evidence exists: a captured type-parameter binding, a generic template/module
+source, an include-site binding, or an unbound type-parameter signature. Value
+and struct owner preservation is unchanged. The positive generic-module case
+(`Runner(T)#run` included into `Parent`) still materializes a concrete
+`Box(Int32)#run` with `Int32` return type.
+
+Unit evidence in
+`spec/hir/ast_to_hir_spec.cr` is RED on the old early replay behavior and GREEN
+after the fix. It includes an explicit `Object#to_s` virtual-call fixture that
+marks `Box(Int32)` live for replay, confirms the `Object#to_s` body, and asserts
+that no `Box(Int32)#to_s` wrapper symbol is emitted. The deterministic HIR file
+passes 246 examples with 0 failures/errors and 2 existing pending examples.
+
+The one bounded fresh-s1 collector gate used s1 SHA-256
+`606926d303a7376966b2cafaf132ef94855ae897981eeb6efce61687563d3739` and exited
+0 in 67.46s. Relative to the supplied broader baseline, requests moved
+`10048 -> 5945` (-40.8%), Array owners `8403 -> 1244`, and Hash::Entry owners
+`1400 -> 554`; broad Object/Reference requests remain 5911. The temporary
+histogram was collected after resolved-body skipping, so the reductions are
+directional and not an apples-to-apples proof of the full baseline. No full
+s1-to-s2 or s2-to-s3 claim is made.
+
+Adversary boundary: a random-order HIR probe hit an existing
+`collect_defined_instance_method_full_names` SIGSEGV. The test passes alone;
+the order-sensitive issue is unclosed and is neither evidence for nor against
+LM-679. Before another replay rule changes, classify remaining child demand by
+`resolved_missing_body`, `resolved_body_preserve`, resolved ancestor/other, and
+direct/included declaration. {F/G/R: 0.95/0.58/0.91} [local HIR and bounded census
+verified; produced bootstrap successor open]

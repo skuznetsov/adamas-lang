@@ -5111,6 +5111,74 @@ describe Adamas::HIR::AstToHir do
   end
 
   describe "missing concrete virtual target repair" do
+    it "does not synthesize an inherited generic wrapper during virtual-target replay" do
+      source = <<-CRYSTAL
+        class Parent
+          def run(value : Int32) : Int32
+            value
+          end
+        end
+
+        class Box(T) < Parent
+        end
+
+        def invoke(io : Parent, value : Int32) : Int32
+          io.run(value)
+        end
+      CRYSTAL
+
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+      converter.arena = arena
+      class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+      def_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode) }
+      class_nodes.each { |node| converter.register_class(node) }
+      def_nodes.each { |node| converter.register_function(node) }
+      converter.__test_monomorphize_generic_class("Box", ["Int32"], "Box(Int32)")
+      converter.lower_def(def_nodes.first)
+
+      parent_target = converter.module.functions.find { |func| func.name.starts_with?("Parent#run$") }
+      parent_target.should_not be_nil
+      converter.module.has_function_with_body?(parent_target.not_nil!.name).should be_true
+
+      # The generic child owner is a MIR runtime candidate, but its inherited
+      # implementation is already available under the non-generic ancestor.
+      converter.module.functions.any? { |func| func.name.starts_with?("Box(Int32)#run$") }.should be_false
+    end
+
+    it "does not synthesize a generic wrapper for an Object virtual target" do
+      source = <<-CRYSTAL
+        class Object
+          def to_s : String
+            "object"
+          end
+        end
+
+        class Box(T) < Object
+        end
+
+        def invoke(io : Object) : String
+          io.to_s
+        end
+      CRYSTAL
+
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+      converter.arena = arena
+      class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+      def_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode) }
+      class_nodes.each { |node| converter.register_class(node) }
+      def_nodes.each { |node| converter.register_function(node) }
+      converter.__test_monomorphize_generic_class("Box", ["Int32"], "Box(Int32)")
+      converter.lower_def(def_nodes.first)
+      converter.__test_mark_live_type("Box(Int32)")
+
+      object_target = converter.module.functions.find { |func| func.name.starts_with?("Object#to_s") }
+      object_target.should_not be_nil
+      converter.module.has_function_with_body?(object_target.not_nil!.name).should be_true
+      converter.module.functions.any? { |func| func.name.starts_with?("Box(Int32)#to_s") }.should be_false
+    end
+
     it "recovers a removed target from the recorded virtual demand" do
       converter = lower_program_with_main(<<-CRYSTAL)
         class Parent
@@ -5247,6 +5315,64 @@ describe Adamas::HIR::AstToHir do
       converter.module.has_function_with_body?(child_name).should be_false
     end
 
+    it "does not recreate an inherited generic child wrapper when the parent body remains" do
+      source = <<-CRYSTAL
+        class Parent
+          def run(value : Int32) : Int32
+            value
+          end
+        end
+
+        class Box(T) < Parent
+        end
+
+        def invoke(io : Parent, value : Int32) : Int32
+          io.run(value)
+        end
+      CRYSTAL
+
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+      converter.arena = arena
+      class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+      def_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode) }
+      class_nodes.each { |node| converter.register_class(node) }
+      def_nodes.each { |node| converter.register_function(node) }
+      converter.__test_monomorphize_generic_class("Box", ["Int32"], "Box(Int32)")
+      converter.lower_def(def_nodes.first)
+
+      caller = converter.module.functions.find { |func| func.name.starts_with?("invoke$") }
+      caller.should_not be_nil
+      caller.not_nil!.blocks.flat_map(&.instructions).any? do |inst|
+        inst.is_a?(Adamas::HIR::Call) && inst.virtual
+      end.should be_true
+
+      parent_target = converter.module.functions.find { |func| func.name.starts_with?("Parent#run$") }
+      # The replay path intentionally omits this redundant wrapper. Materialize
+      # it explicitly so this test can exercise final-repair behavior after a
+      # previously emitted target is removed.
+      converter.__test_lower_function_if_needed("Box(Int32)#run$Int32")
+      child_target = converter.module.functions.find { |func| func.name.starts_with?("Box(Int32)#run$") }
+      parent_target.should_not be_nil
+      child_target.should_not be_nil
+      parent_name = parent_target.not_nil!.name
+      child_name = child_target.not_nil!.name
+      converter.module.has_function_with_body?(parent_name).should be_true
+
+      converter.module.remove_function(child_name).should be_true
+      converter.__test_reset_lowering_state(child_name)
+      converter.__test_mark_live_type("Box(Int32)")
+      converter.module.has_function_with_body?(child_name).should be_false
+
+      converter.__test_repair_missing_concrete_virtual_targets
+
+      converter.module.has_function_with_body?(parent_name).should be_true
+      # MIR can map the concrete Box runtime type id to Parent#run. A missing
+      # generic child wrapper is therefore not a repair request when the
+      # ancestor body is already available.
+      converter.module.has_function_with_body?(child_name).should be_false
+    end
+
     it "restores an ancestor implementation when the inherited body is missing" do
       converter = lower_program_with_main(<<-CRYSTAL)
         class Parent
@@ -5343,12 +5469,16 @@ describe Adamas::HIR::AstToHir do
       executed.should eq(1)
     end
 
-    it "restores a concrete generic owner without duplicating the source body" do
+    it "restores a concrete generic owner when the body depends on its type parameter" do
       source = <<-CRYSTAL
-        class Parent
-          def run(value : Int32) : Int32
+        module Runner(T)
+          def run(value : T) : T
             value
           end
+        end
+
+        class Parent
+          include Runner(Int32)
         end
 
         class Box(T) < Parent
@@ -5362,20 +5492,19 @@ describe Adamas::HIR::AstToHir do
       arena, exprs = parse(source)
       converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
       converter.arena = arena
+      module_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ModuleNode) }
       class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
       def_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode) }
+      module_nodes.each { |node| converter.register_module(node) }
       class_nodes.each { |node| converter.register_class(node) }
       def_nodes.each { |node| converter.register_function(node) }
       converter.__test_monomorphize_generic_class("Box", ["Int32"], "Box(Int32)")
       converter.lower_def(def_nodes.first)
 
-      parent_target = converter.module.functions.find { |func| func.name.starts_with?("Parent#run$") }
       child_target = converter.module.functions.find { |func| func.name.starts_with?("Box(Int32)#run$") }
-      parent_target.should_not be_nil
       child_target.should_not be_nil
-      parent_name = parent_target.not_nil!.name
       child_name = child_target.not_nil!.name
-      converter.module.has_function_with_body?(parent_name).should be_true
+      converter.__test_get_type_name_from_ref(child_target.not_nil!.return_type).should eq("Int32")
 
       converter.module.remove_function(child_name).should be_true
       converter.__test_reset_lowering_state(child_name)
@@ -5385,7 +5514,6 @@ describe Adamas::HIR::AstToHir do
       functions_before_repair = converter.module.functions.map(&.name).to_set
       converter.__test_repair_missing_concrete_virtual_targets
 
-      converter.module.has_function_with_body?(parent_name).should be_true
       converter.module.has_function_with_body?(child_name).should be_true
       functions_after_repair = converter.module.functions.map(&.name).to_set
       (functions_after_repair - functions_before_repair).should eq(Set{child_name})

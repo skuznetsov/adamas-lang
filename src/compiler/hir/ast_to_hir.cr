@@ -8126,8 +8126,11 @@ module Adamas::HIR
         preserve_requested_owner =
           preserve_requested_value_owner_specialization?(candidate, resolved_name) ||
             preserve_requested_value_owner_specialization?(base_name, resolved_name)
+        inherited_generic_wrapper_reusable =
+          inherited_generic_wrapper_reusable?(owner, resolved_owner, resolved_name)
         if preserve_requested_owner ||
-           (!resolved_owner.empty? && strip_generic_args(resolved_owner) != strip_generic_args(owner))
+           (!resolved_owner.empty? && strip_generic_args(resolved_owner) != strip_generic_args(owner) &&
+            !inherited_generic_wrapper_reusable)
           lower_required_virtual_target_function(resolved_name, exact_demand: true)
           resolved_base = strip_type_suffix(resolved_name)
           lower_required_virtual_target_function(resolved_base, exact_demand: true) unless resolved_name == resolved_base
@@ -8142,6 +8145,32 @@ module Adamas::HIR
         lower_required_virtual_target_function(candidate)
         lower_required_virtual_target_function(base_name) unless candidate == base_name
       end
+    end
+
+    # A concrete generic receiver can share an inherited non-generic body when
+    # the body is already materialized and no generic source binding needs to
+    # be substituted.  In that case MIR's runtime type-id dispatch resolves the
+    # receiver through the class ancestor chain, so prelowering the concrete
+    # owner would only synthesize a redundant wrapper.  Keep this gate narrow:
+    # value/struct owners and generic module/template implementations still
+    # follow the preservation path above.
+    private def inherited_generic_wrapper_reusable?(
+      requested_owner : String,
+      resolved_owner : String,
+      resolved_name : String,
+    ) : Bool
+      return false if requested_owner.empty? || resolved_owner.empty?
+      return false if strip_generic_args(requested_owner) == strip_generic_args(resolved_owner)
+
+      requested_info = generic_owner_info(requested_owner)
+      return false unless requested_info && concrete_type_args?(requested_info.args)
+
+      resolved_base = strip_type_suffix(resolved_name)
+      resolved_has_body = @module.has_function_with_body?(resolved_name)
+      resolved_has_body ||= resolved_base != resolved_name && @module.has_function_with_body?(resolved_base)
+      return false unless resolved_has_body
+
+      !generic_source_owner_requires_specialization?(requested_owner, resolved_owner, resolved_name)
     end
 
     # Final repair runs after the initial virtual-target replay and must not
@@ -53825,7 +53854,7 @@ module Adamas::HIR
       resolved_owner = normalize_method_owner_name(raw_resolved_owner)
       return false if requested_owner == resolved_owner
 
-      return true if preserve_requested_generic_owner_specialization?(requested_owner, resolved_owner)
+      return true if preserve_requested_generic_owner_specialization?(requested_owner, resolved_owner, resolved_name)
 
       # A class includer of the resolved owner's module keeps its requested
       # specialization too: the module def lowers with self = the including
@@ -53847,7 +53876,11 @@ module Adamas::HIR
       false
     end
 
-    private def preserve_requested_generic_owner_specialization?(requested_owner : String, resolved_owner : String) : Bool
+    private def preserve_requested_generic_owner_specialization?(
+      requested_owner : String,
+      resolved_owner : String,
+      resolved_name : String,
+    ) : Bool
       info = generic_owner_info(requested_owner)
       return false unless info
       return false unless concrete_type_args?(info.args)
@@ -53856,11 +53889,60 @@ module Adamas::HIR
       resolved_base = strip_generic_args(resolved_owner)
 
       return true if requested_base == resolved_base
-      return true if resolved_base == "Object" || resolved_base == "Reference"
 
-      get_ancestor_chain(requested_owner).each do |ancestor|
-        next if ancestor == requested_owner
-        return true if strip_generic_args(ancestor) == resolved_base
+      generic_source_owner_requires_specialization?(requested_owner, resolved_owner, resolved_name)
+    end
+
+    # A concrete generic receiver only needs its own wrapper when the resolved
+    # implementation carries a generic source binding. An inherited method from
+    # a non-generic class has no receiver type parameter to substitute, so MIR
+    # can route the concrete runtime type id directly to the ancestor body.
+    private def generic_source_owner_requires_specialization?(
+      requested_owner : String,
+      resolved_owner : String,
+      resolved_name : String,
+    ) : Bool
+      requested_info = generic_owner_info(requested_owner)
+      return false unless requested_info && concrete_type_args?(requested_info.args)
+
+      resolved_base = strip_generic_args(resolved_owner)
+      resolved_base_name = strip_type_suffix(resolved_name)
+
+      # A captured map can survive on a concrete class owner after a generic
+      # module method has been copied into it. Treat that binding as the source
+      # provenance even though the resolved owner itself is non-generic.
+      if map = function_type_param_map_for(resolved_name, resolved_base_name)
+        return true if map.any? do |key, value|
+          key != "__block_return__" && concrete_type_param_binding_value?(value)
+        end
+      end
+
+      generic_source = @generic_templates.has_key?(resolve_generic_template_base(resolved_base))
+      unless generic_source
+        generic_source = @module_defs.has_key?(resolved_base)
+        unless generic_source
+          ensure_module_defs_stripped_lookup
+          generic_source = !module_defs_stripped_lookup(resolved_base).nil?
+        end
+      end
+      return false unless generic_source
+
+      # A captured map proves that the source was lowered under concrete
+      # generic bindings (including an included generic module). Keep the
+      # requested owner so those substitutions are not lost.
+      # If no captured map exists yet, inspect the declaring definition's
+      # signature for an unresolved type parameter. This covers lazy generic
+      # module/template definitions before their first concrete lowering.
+      if def_node = @function_defs[resolved_name]? || @function_defs[resolved_base_name]?
+        return with_isolated_type_param_map({} of String => String) do
+          def_has_unbound_type_params?(def_node)
+        end
+      end
+
+      # Include-site bindings can be recorded on the concrete receiver even
+      # when lookup returns the generic module owner spelling.
+      if map = included_module_type_param_map(requested_owner, resolved_base)
+        return map.any? { |_key, value| concrete_type_param_binding_value?(value) }
       end
 
       false
@@ -57110,11 +57192,13 @@ module Adamas::HIR
       resolved_has_body ||= resolved_base != resolved_name && @module.has_function_with_body?(resolved_base)
       return false unless resolved_has_body
 
+      resolved_owner = method_owner(resolved_base)
+      return false if generic_source_owner_requires_specialization?(owner, resolved_owner, resolved_name)
+
       return false if preserve_requested_value_owner_specialization?(candidate, resolved_name)
       return false if preserve_requested_value_owner_specialization?(base_name, resolved_name)
 
       requested_owner = owner
-      resolved_owner = method_owner(resolved_base)
       return false if requested_owner.empty? || resolved_owner.empty?
       return true if strip_generic_args(requested_owner) == strip_generic_args(resolved_owner)
 
