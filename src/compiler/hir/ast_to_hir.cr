@@ -70994,8 +70994,35 @@ module Adamas::HIR
     # narrowing should re-register that local.  A bare IdentifierNode is not
     # necessarily a source local: lowering may already have cached a prior
     # receiverless call under the same name (for example, `case current_byte`).
-    # Use lexical evidence instead of ctx.lookup_local; treating that cached
-    # method result as a local makes later calls read a stale subject value.
+    # Use lexical evidence plus bounded value provenance instead of trusting
+    # ctx.lookup_local alone; treating that cached method result as a local
+    # makes later calls read a stale subject value.
+    private def case_subject_cached_method_result?(
+      ctx : LoweringContext,
+      value_id : ValueId,
+      source_name : String,
+    ) : Bool
+      current = value_id
+      depth = 0
+      while depth < 16
+        value = ctx.value_for(current)
+        case value
+        when Copy
+          current = value.source
+        when Cast
+          current = value.value
+        when Call
+          call_base = strip_type_suffix(value.method_name)
+          call_name = method_short_from_name(call_base) || call_base
+          return call_name == source_name
+        else
+          return false
+        end
+        depth += 1
+      end
+      false
+    end
+
     private def case_subject_var_name(
       ctx : LoweringContext,
       expr_id : ExprId,
@@ -71009,6 +71036,11 @@ module Adamas::HIR
         assigned_locals = @assigned_vars_stack.last?
         source_local = assigned_locals.try(&.includes?(name)) ||
                        ctx.function.params.any? { |param| param.name == name }
+        if !source_local
+          if local_id = ctx.lookup_local(name)
+            source_local = !case_subject_cached_method_result?(ctx, local_id, name)
+          end
+        end
         source_local ? name : nil
       when Adamas::Compiler::Frontend::AssignNode
         target_node = node_for_expr(node.target)

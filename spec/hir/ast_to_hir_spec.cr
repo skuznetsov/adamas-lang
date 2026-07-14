@@ -175,6 +175,14 @@ class Adamas::HIR::AstToHir
     get_type_name_from_ref(type_ref)
   end
 
+  def __test_case_subject_cached_method_result?(
+    ctx : Adamas::HIR::LoweringContext,
+    value_id : Adamas::HIR::ValueId,
+    source_name : String,
+  ) : Bool
+    case_subject_cached_method_result?(ctx, value_id, source_name)
+  end
+
   def __test_function_def_names(prefix : String = "") : Array(String)
     @function_defs.keys.select { |name| prefix.empty? || name.starts_with?(prefix) }
   end
@@ -1821,6 +1829,41 @@ describe Adamas::HIR::AstToHir do
 
       current_byte_calls.size.should eq(1)
       hir_text(func).should contain("local \"byte\"")
+    end
+
+    it "distinguishes a cached method result from a local initialized by another call" do
+      arena = Adamas::Compiler::Frontend::AstArena.new
+      converter = Adamas::HIR::AstToHir.new(arena)
+      function = converter.module.create_function("__test_case_subject_provenance", Adamas::HIR::TypeRef::NIL)
+      ctx = Adamas::HIR::LoweringContext.new(function, converter.module, arena)
+
+      receiver = Adamas::HIR::Literal.new(ctx.next_id, Adamas::HIR::TypeRef::POINTER, nil)
+      ctx.emit(receiver)
+
+      current_byte = Adamas::HIR::Call.with_receiver(
+        ctx.next_id,
+        Adamas::HIR::TypeRef::INT32,
+        receiver.id,
+        "Cursor#current_byte",
+        [] of Adamas::HIR::ValueId,
+      )
+      ctx.emit(current_byte)
+      cached_read = Adamas::HIR::Copy.new(ctx.next_id, Adamas::HIR::TypeRef::INT32, current_byte.id)
+      ctx.emit(cached_read)
+
+      arena_read = Adamas::HIR::Call.with_receiver(
+        ctx.next_id,
+        Adamas::HIR::TypeRef::POINTER,
+        receiver.id,
+        "AstArena#[]$ExprId",
+        [] of Adamas::HIR::ValueId,
+      )
+      ctx.emit(arena_read)
+      local_value = Adamas::HIR::Copy.new(ctx.next_id, Adamas::HIR::TypeRef::POINTER, arena_read.id)
+      ctx.emit(local_value)
+
+      converter.__test_case_subject_cached_method_result?(ctx, cached_read.id, "current_byte").should be_true
+      converter.__test_case_subject_cached_method_result?(ctx, local_value.id, "node").should be_false
     end
 
     it "lowers nested if" do

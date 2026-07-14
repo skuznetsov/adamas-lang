@@ -16524,3 +16524,45 @@ ArenaLike probes are refuted routes, not supporting causes. The next gate is a
 fresh s2 followed by the minimal `puts 1` oracle.
 
 Trust: {F/G/R: 0.95/0.58/0.93} [root and generated parser gate verified; bootstrap successor open]
+
+### LM-677 - Case-subject provenance restores concrete macro helper demand
+
+The first LM-676-produced s2 exposed a deterministic abort for
+`CLI#macro_condition_call?(AstArena, Node, Set(String),
+MacroReflectionEvaluator)`. The corresponding full HIR contained a runtime
+`IsA(CallNode)` condition, but the true branch still copied the broad `Node`
+subject into the helper call. Because the declared helper requires `CallNode`,
+the Node-typed specialization had no body and became an abort stub.
+
+This was a false negative in the lexical-only case-subject classifier. During
+generated re-entrant lowering, the assigned-variable stack is not always a
+reliable authority even though the current HIR locals map contains the real
+binding. Trusting that map blindly would regress LM-676, because it also caches
+receiverless method results. The fix therefore walks at most 16 `Copy`/`Cast`
+edges without allocating. If the origin is a call whose method short name
+matches the source identifier, the value is a cached method read; otherwise the
+existing binding remains eligible for case narrowing.
+
+Evidence:
+
+- the focused unit layer passes 238 examples with 0 failures and 2 existing
+  pending examples. It distinguishes `current_byte -> Cursor#current_byte`
+  from `node -> AstArena#[]` directly, while retaining the LM-676 repeated-call
+  and bound-local controls;
+- baseline full HIR calls the helper with `Node` and has no matching body;
+  source-matched post-fix HIR calls it with `CallNode` and contains concrete
+  AstArena and PageArena helper bodies;
+- post-fix original-built s1 is
+  `ec0bef7ef72f80fa8859eb06a592d46b5a76ada828718221d7295f37cf729c29`;
+  its produced s2 is
+  `18b56da208453159b991538fa886b3d53c30e93f1b626a7485504438bfa71b61`;
+- both compilers build successfully, and the old macro helper abort is absent
+  from the unchanged `puts 1` run.
+
+Adversary boundary: the oracle still fails later after about one second and
+does not create the consumer binary. This landmark verifies case provenance,
+CallNode narrowing, and helper materialization only; it does not establish s2b
+or plain-prelude success. The next frontier must be localized without restoring
+the removed Node-typed stub.
+
+Trust: {F/G/R: 0.96/0.61/0.94} [case provenance and helper materialization verified; runtime successor open]

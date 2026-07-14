@@ -10157,6 +10157,40 @@ Next legal work: build one fresh s2 with the LM-676 source, rerun the plain
 `puts 1` oracle, and record the first successor before widening to the full
 produced-stage suite. Do not claim s2b or s3b from the parser gate alone.
 
+### Session 30: case-local provenance restores macro helper materialization (LM-677, 2026-07-13)
+
+The first fresh s2 after LM-676 built successfully but made the next missing
+body explicit while compiling `puts 1`:
+`CLI#macro_condition_call?(AstArena, Node, Set(String),
+MacroReflectionEvaluator)`. Final HIR showed the `IsA(CallNode)` check but no
+narrowing cast; the helper call kept `Node`, so no matching specialization was
+materialized. The lexical-only classifier from LM-676 was insufficient when
+generated re-entrant lowering temporarily had no reliable assigned-var stack.
+
+The classifier now combines lexical evidence with a bounded, allocation-free
+walk through `Copy`/`Cast` provenance. A value ending in a method call with the
+same source name (`current_byte -> Cursor#current_byte`) is a cached
+receiverless read, while a local initialized by a differently named call
+(`node -> AstArena#[]`) remains a local and can be narrowed.
+
+Evidence:
+
+- `spec/hir/ast_to_hir_spec.cr` passes 238 examples with 0 failures and 2
+  existing pending examples, including direct provenance positive/negative
+  controls;
+- pre-fix full HIR calls `macro_condition_call?` with `Node` and contains no
+  helper body; post-fix full HIR calls it with `CallNode` and contains real
+  AstArena and PageArena specializations;
+- source-matched s1 SHA-256 is `ec0bef7e...`; its s2 SHA-256 is `18b56da2...`,
+  and both build successfully under the safe wrapper;
+- the old macro helper abort is gone. The unchanged `puts 1` oracle now reaches
+  a later silent runtime failure after about one second and produces no
+  consumer artifact.
+
+Next legal work: localize the new post-macro-helper failure with a structural
+phase oracle, preserving untraced output as authority. Do not reintroduce the
+old Node-typed stub or count the moved failure as s2b success.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
