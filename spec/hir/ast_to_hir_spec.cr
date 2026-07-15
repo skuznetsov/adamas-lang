@@ -330,6 +330,116 @@ class Adamas::HIR::AstToHir
     )
   end
 
+  # Re-enter the synthesized allocator path after its body and the selected
+  # initializer body have been removed. This exercises the late
+  # rematerialization route rather than the direct resolver helper above.
+  def __test_regenerate_allocator(
+    class_name : String,
+    call_arg_types : Array(Adamas::HIR::TypeRef),
+  ) : Nil
+    generate_allocator(class_name, @class_info[class_name], call_arg_types)
+  end
+
+  def __test_replace_initializer_params(
+    class_name : String,
+    params : Array({String, Adamas::HIR::TypeRef}),
+  ) : Nil
+    @init_params[class_name] = params
+  end
+
+  def __test_allocator_initializer_def_name(
+    class_name : String,
+    init_name : String,
+    callsite_types : Array(Adamas::HIR::TypeRef),
+    call_has_block : Bool = false,
+    call_has_named_args : Bool = false,
+    call_named_arg_names : Array(String)? = nil,
+  ) : String?
+    resolved = allocator_initializer_def_for(
+      "#{class_name}#initialize",
+      init_name,
+      callsite_types,
+      call_has_block,
+      call_has_named_args,
+      call_named_arg_names,
+    )
+    resolved.try(&.[0])
+  end
+
+  def __test_allocator_initializer_def_name_for_base(
+    init_base_name : String,
+    init_name : String,
+    callsite_types : Array(Adamas::HIR::TypeRef),
+    call_has_block : Bool = false,
+    call_has_named_args : Bool = false,
+    call_named_arg_names : Array(String)? = nil,
+  ) : String?
+    resolved = allocator_initializer_def_for(
+      init_base_name,
+      init_name,
+      callsite_types,
+      call_has_block,
+      call_has_named_args,
+      call_named_arg_names,
+    )
+    resolved.try(&.[0])
+  end
+
+  def __test_allocator_unique_positional_def_name_for_base(
+    init_base_name : String,
+    requested_name : String,
+    callsite_types : Array(Adamas::HIR::TypeRef),
+    call_has_block : Bool = false,
+  ) : String?
+    resolved = allocator_unique_positional_def_for(
+      init_base_name,
+      requested_name,
+      callsite_types,
+      call_has_block,
+    )
+    resolved.try(&.[0])
+  end
+
+  # Deliberately invalidate a DefNode's typed annotation and the derived
+  # resolver caches. This models the late self-host metadata loss that makes
+  # normal type compatibility miss while preserving source arity/shape.
+  def __test_corrupt_function_def_param_type(
+    name : String,
+    replacement_type : String,
+  ) : Nil
+    def_node = @function_defs[name]?
+    return unless def_node
+    params = def_node.params
+    return unless params
+    replacement = [] of Adamas::Compiler::Frontend::Parameter
+    params.each do |param|
+      if param.is_block || param.is_splat || param.is_double_splat || param.type_annotation.nil?
+        replacement << param
+      else
+        replacement << Adamas::Compiler::Frontend::Parameter.new(
+          param.name,
+          param.external_name,
+          replacement_type.to_slice,
+          param.default_value,
+          param.span,
+          param.name_span,
+          param.external_name_span,
+          nil,
+          param.default_span,
+          param.is_splat,
+          param.is_double_splat,
+          param.is_block,
+          param.is_instance_var,
+        )
+      end
+    end
+    params.clear
+    params.concat(replacement)
+    @function_param_infos.delete(name)
+    @function_param_stats.delete(name)
+    @function_param_infos_by_def_id.delete(def_node.object_id.to_u64)
+  end
+
   def __test_repair_missing_concrete_virtual_targets : Int32
     repair_missing_concrete_virtual_targets
   end
@@ -4785,6 +4895,59 @@ describe Adamas::HIR::AstToHir do
       open_init_calls.first.not_nil!.args.size.should eq(1)
     end
 
+    it "resolves a missing typed allocator initializer by positional call shape" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class SetShape
+          def initialize(initial_capacity = nil)
+            @marker = 7
+          end
+
+          protected def initialize(*, using_hash @marker)
+            @marker = 99
+          end
+        end
+
+        SetShape.new(4)
+      CRYSTAL
+
+      converter.__test_allocator_initializer_def_name(
+        "SetShape",
+        "SetShape#initialize$Int32",
+        [Adamas::HIR::TypeRef::INT32],
+      ).should eq("SetShape#initialize$arity1")
+    end
+
+    it "keeps an explicit nil allocator on the positional initializer" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class SetShape
+          def initialize(initial_capacity : Int32? = nil)
+            @marker = 7
+          end
+
+          protected def initialize(*, using_hash @marker : Int32)
+            @marker = 99
+          end
+        end
+
+        SetShape.new(nil)
+      CRYSTAL
+
+      allocator = converter.module.function_by_name("SetShape.new$Nil")
+      allocator.should_not be_nil
+      calls = allocator.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call).try do |call|
+          call if call.method_name.includes?("SetShape#initialize")
+        end
+      end
+      calls.size.should eq(1)
+      init = calls.first.not_nil!.method_name
+      init.should_not contain("Hash")
+      public_init = converter.module.function_by_name(init)
+      public_init.should_not be_nil
+      hir_text(public_init.not_nil!).should contain("literal 7")
+      hir_text(public_init.not_nil!).should_not contain("literal 99")
+    end
+
     it "keeps a concrete optional tail type when forwarding allocator overloads" do
       converter = lower_program_with_main(<<-CRYSTAL)
         class ReceiverCarrier
@@ -4936,6 +5099,216 @@ describe Adamas::HIR::AstToHir do
       end
       calls.size.should eq(1)
       calls.first.not_nil!.method_name.should eq("SetShape(Int32)#initialize$Int32")
+    end
+
+    it "does not let a same-typed named-only initializer shadow positional identity" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class SameTypeCollision
+          getter marker : Int32
+
+          protected def initialize(*, value : Int32)
+            @marker = 99
+          end
+
+          def initialize(value : Int32)
+            @marker = 7
+          end
+        end
+
+        SameTypeCollision.new(1)
+      CRYSTAL
+
+      allocator = converter.module.function_by_name("SameTypeCollision.new$Int32")
+      allocator.should_not be_nil
+      call = allocator.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call).try do |candidate|
+          candidate if candidate.method_name.includes?("SameTypeCollision#initialize")
+        end
+      end.first?
+      call.should_not be_nil
+      selected = call.not_nil!.method_name
+      selected.should_not contain("arity")
+      body = converter.module.function_by_name(selected)
+      body.should_not be_nil
+      hir_text(body.not_nil!).should contain("literal 7")
+      hir_text(body.not_nil!).should_not contain("literal 99")
+    end
+
+    it "recovers a unique positional initializer when typed metadata is stale" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class CorruptLate
+          def initialize(value : Int32)
+            @marker = 7
+          end
+
+          protected def initialize(*, value : String)
+            @marker = 99
+          end
+        end
+
+        CorruptLate.new(1)
+      CRYSTAL
+
+      positional_name = "CorruptLate#initialize$Int32"
+      converter.__test_corrupt_function_def_param_type(positional_name, "Nil")
+      converter.__test_allocator_initializer_def_name(
+        "CorruptLate",
+        positional_name,
+        [Adamas::HIR::TypeRef::INT32],
+      ).should eq(positional_name)
+      converter.__test_allocator_unique_positional_def_name_for_base(
+        "CorruptLate#initialize",
+        "CorruptLate#initialize",
+        [Adamas::HIR::TypeRef::INT32],
+      ).should eq(positional_name)
+    end
+
+    it "fails closed when multiple positional initializer shapes share an arity" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class AmbiguousLate
+          def initialize(value : Int32)
+            @marker = 7
+          end
+
+          def initialize(value : String)
+            @marker = 99
+          end
+        end
+
+        AmbiguousLate.new(1)
+      CRYSTAL
+
+      converter.__test_allocator_unique_positional_def_name_for_base(
+        "AmbiguousLate#initialize",
+        "AmbiguousLate#initialize",
+        [Adamas::HIR::TypeRef::INT32],
+      ).should be_nil
+    end
+
+    it "keeps inherited initializer super dispatch on the defining owner" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class GrandParent
+          def initialize(value : Int32)
+            @marker = 1
+          end
+        end
+
+        class Parent < GrandParent
+          def initialize(value : Int32)
+            super(value)
+            @marker = 2
+          end
+        end
+
+        class Child < Parent
+        end
+
+        Child.new(1)
+      CRYSTAL
+
+      allocator = converter.module.function_by_name("Child.new$Int32")
+      allocator.should_not be_nil
+      init_call = allocator.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call).try do |call|
+          call if call.method_name.includes?("#initialize")
+        end
+      end.first?
+      init_call.should_not be_nil
+      init_call.not_nil!.method_name.should contain("Parent#initialize")
+
+      parent_init = converter.module.function_by_name("Parent#initialize$Int32")
+      parent_init.should_not be_nil
+      parent_text = hir_text(parent_init.not_nil!)
+      parent_text.should contain("GrandParent#initialize")
+      parent_text.should_not contain("Parent#initialize(%0")
+    end
+
+    it "carries a qualified generic positional identity through late allocator rematerialization" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class Hash(K, V)
+          def initialize
+          end
+        end
+
+        class Set(T)
+          getter marker : Int32
+
+          def initialize(initial_capacity = nil)
+            @marker = 7
+          end
+
+          protected def initialize(*, using_hash @hash : Hash(T, Nil))
+            @marker = 99
+          end
+
+          def self.named
+            ::Set(T).new(using_hash: Hash(T, Nil).new)
+          end
+        end
+
+        module Builder
+          def self.build
+            ::Set(Int32).new
+          end
+        end
+
+        Set(Int32).named
+        Builder.build
+      CRYSTAL
+
+      allocator = converter.module.functions.find { |func| func.name.ends_with?("Set(Int32).new") }
+      allocator.should_not be_nil
+
+      owner = allocator.not_nil!.name.sub(/\.new$/, "")
+      positional_name = "#{owner}#initialize$Nil"
+      base_name = "#{owner}#initialize"
+      arity_name = "#{owner}#initialize$arity1"
+      named_name = "#{owner}#initialize$Hash(Int32, Nil)"
+
+      unqualified_base = owner.starts_with?("::") ? owner.lchop("::") : owner
+      converter.__test_allocator_initializer_def_name_for_base(
+        "#{unqualified_base}#initialize",
+        base_name,
+        [Adamas::HIR::TypeRef::NIL],
+      ).should eq(arity_name)
+      converter.__test_allocator_initializer_def_name_for_base(
+        "NoSuchSet#initialize",
+        "NoSuchSet#initialize",
+        [Adamas::HIR::TypeRef::NIL, Adamas::HIR::TypeRef::NIL],
+      ).should be_nil
+
+      converter.__test_lower_function_if_needed(named_name)
+      named = converter.module.function_by_name(named_name)
+      named.should_not be_nil
+      hir_text(named.not_nil!).should contain("literal 99")
+
+      # Force the generated allocator to take the late rematerialization path:
+      # its body and the positional initializer body are both absent, while the
+      # stale Completed state remains visible to lower_function_if_needed.
+      converter.module.remove_function(allocator.not_nil!.name)
+      converter.module.remove_function(positional_name) if converter.module.has_function?(positional_name)
+      converter.__test_replace_initializer_params(owner, [] of {String, Adamas::HIR::TypeRef})
+      converter.__test_mark_lowering_completed(base_name)
+      converter.__test_regenerate_allocator(owner, [] of Adamas::HIR::TypeRef)
+
+      regenerated = converter.module.function_by_name(allocator.not_nil!.name)
+      regenerated.should_not be_nil
+      calls = regenerated.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call).try do |call|
+          call if call.method_name.includes?("Set(Int32)#initialize")
+        end
+      end
+      calls.size.should eq(1)
+      calls.first.not_nil!.method_name.should eq(arity_name)
+
+      positional = converter.module.function_by_name(arity_name)
+      positional.should_not be_nil
+      hir_text(positional.not_nil!).should contain("literal 7")
+      hir_text(positional.not_nil!).should_not contain("literal 99")
+
+      named = converter.module.function_by_name(named_name)
+      named.should_not be_nil
+      hir_text(named.not_nil!).should contain("literal 99")
     end
 
     it "recovers generic initializer identity when parameter storage is erased" do

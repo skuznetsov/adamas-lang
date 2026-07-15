@@ -33111,23 +33111,250 @@ module Adamas::HIR
       found
     end
 
+    # Treat a root-qualified and unqualified spelling of the same initializer
+    # base as one request. Type lookup may preserve `::` on the callsite while
+    # inheritance resolution returns the canonical unqualified owner.
+    private def allocator_initializer_base_request?(
+      init_name : String,
+      init_base_name : String,
+    ) : Bool
+      return true if init_name == init_base_name
+      return true if init_name.starts_with?("::") && init_name.lchop("::") == init_base_name
+      init_base_name.starts_with?("::") && init_base_name.lchop("::") == init_name
+    end
+
+    private def allocator_initializer_name_with_request_qualifier(
+      requested_name : String,
+      init_base_name : String,
+      resolved_name : String,
+    ) : String
+      return resolved_name if resolved_name.empty? || resolved_name.starts_with?("::")
+      if requested_name.starts_with?("::") || init_base_name.starts_with?("::")
+        return "::#{resolved_name}"
+      end
+      resolved_name
+    end
+
+    private def allocator_def_has_named_only?(def_node : Adamas::Compiler::Frontend::DefNode) : Bool
+      params = def_node.params
+      return false unless params
+      found = false
+      each_param(params) do |param|
+        if named_only_separator?(param)
+          found = true
+          break
+        end
+      end
+      found
+    end
+
+    # Validate an exact typed symbol before using it as an allocator target.
+    # Registration can leave a typed key pointing at a stale or differently
+    # shaped DefNode after nested lowering. Keep this check to call shape (and
+    # ordinary type compatibility when metadata is readable); a miss returns
+    # to the normal resolver and then to the unique arity fallback.
+    private def allocator_initializer_direct_shape_compatible?(
+      init_name : String,
+      init_def : Adamas::Compiler::Frontend::DefNode,
+      callsite_types : Array(TypeRef),
+      call_has_block : Bool,
+      call_has_named_args : Bool,
+      call_named_arg_names : Array(String)?,
+    ) : Bool
+      stats = function_param_stats(init_name, init_def)
+      return false if call_has_block ? !stats.has_block : stats.has_block
+      param_count, required, has_splat, has_double_splat, skip =
+        effective_arity_stats_for_call(stats, call_has_named_args)
+      return false if skip
+
+      arg_count = callsite_types.size
+      return false if arg_count < required
+      return false if arg_count > param_count && !has_splat && !has_double_splat
+
+      positional_arg_count = if call_has_named_args && call_named_arg_names
+                               count = arg_count - call_named_arg_names.not_nil!.size
+                               count < 0 ? 0 : count
+                             else
+                               arg_count
+                             end
+      return false unless named_args_compatible_with_def?(init_def, call_named_arg_names, positional_arg_count)
+
+      unless callsite_types.empty? || callsite_types.all? { |t| t == TypeRef::VOID }
+        return false unless params_compatible_with_args?(init_def, callsite_types, function_context_from_name(init_name))
+      end
+      true
+    end
+
+    # Last-resort positional recovery for a late allocator lookup. The normal
+    # resolver can miss after nested lowering mutates cached parameter metadata;
+    # only accept a unique non-named DefNode with compatible arity/block shape, and
+    # deduplicate aliases that point at the same DefNode. Ambiguity fails closed.
+    private def allocator_unique_positional_def_for(
+      init_base_name : String,
+      requested_name : String,
+      callsite_types : Array(TypeRef),
+      call_has_block : Bool = false,
+    ) : Tuple(String, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike)?
+      overloads = function_def_overloads(init_base_name)
+      if overloads.empty? && init_base_name.starts_with?("::")
+        overloads = function_def_overloads(init_base_name.lchop("::"))
+      end
+      return nil if overloads.empty?
+
+      candidates = [] of Tuple(String, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike)
+      overloads.each do |candidate_name|
+        candidate_def = @function_defs[candidate_name]?
+        next unless candidate_def
+        next if allocator_def_has_named_only?(candidate_def)
+        stats = function_param_stats(candidate_name, candidate_def)
+        next if call_has_block ? !stats.has_block : stats.has_block
+        param_count, required, has_splat, has_double_splat, skip =
+          effective_arity_stats_for_call(stats, false)
+        next if skip
+        arity = callsite_types.size
+        next if arity < required
+        next if !has_splat && !has_double_splat && arity > param_count
+        duplicate = candidates.any? { |(_, existing_def, _)| existing_def.same?(candidate_def) }
+        next if duplicate
+        arena = @function_def_arenas[candidate_name]? || resolve_arena_for_def(candidate_def, @arena)
+        candidates << {candidate_name, candidate_def, arena}
+      end
+
+      return nil unless candidates.size == 1
+      candidate_name, candidate_def, candidate_arena = candidates.first
+      selected_name = allocator_initializer_name_with_request_qualifier(
+        requested_name,
+        init_base_name,
+        candidate_name,
+      )
+      {selected_name, candidate_def, candidate_arena}
+    end
+
+    # Resolve the initializer body used by a synthesized allocator from the
+    # complete call shape. The bare `Class#initialize` entry is an alias used
+    # by registration and may point at a protected named-only overload when
+    # several initializers share the same source name. Positional allocator
+    # calls must therefore try the exact typed entry and the normal resolver
+    # before trusting that alias.
+    private def allocator_initializer_def_for(
+      init_base_name : String,
+      init_name : String,
+      callsite_types : Array(TypeRef),
+      call_has_block : Bool = false,
+      call_has_named_args : Bool = false,
+      call_named_arg_names : Array(String)? = nil,
+    ) : Tuple(String, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike)?
+      if init_def = @function_defs[init_name]?
+        # A bare base entry is only a registration alias. For positional
+        # allocator calls, always defer to the ordinary resolver so the
+        # selected arity DefNode remains authoritative; nested lowering may
+        # change the alias metadata after an earlier lookup. Exact typed names
+        # and named calls may still use the alias directly.
+        init_is_bare_alias = allocator_initializer_base_request?(init_name, init_base_name)
+        init_is_named_only = allocator_def_has_named_only?(init_def)
+        direct_shape_compatible = allocator_initializer_direct_shape_compatible?(
+          init_name,
+          init_def,
+          callsite_types,
+          call_has_block,
+          call_has_named_args,
+          call_named_arg_names,
+        )
+        unless (!call_has_named_args && (init_is_bare_alias || init_is_named_only)) || !direct_shape_compatible
+          init_arena = @function_def_arenas[init_name]? || resolve_arena_for_def(init_def, @arena)
+          return {init_name, init_def, init_arena}
+        end
+      end
+
+      if resolved = lookup_function_def_for_call(
+        init_base_name,
+        callsite_types.size,
+        call_has_block,
+        callsite_types,
+        false,
+        call_has_named_args,
+        call_named_arg_names,
+      )
+        resolved_name, resolved_def = resolved
+        resolved_name = allocator_initializer_name_with_request_qualifier(
+          init_name,
+          init_base_name,
+          resolved_name,
+        )
+        resolved_arena = @function_def_arenas[resolved_name]? || resolve_arena_for_def(resolved_def, @arena)
+        return {resolved_name, resolved_def, resolved_arena}
+      end
+
+      unless call_has_named_args
+        if fallback = allocator_unique_positional_def_for(
+          init_base_name,
+          init_name,
+          callsite_types,
+          call_has_block,
+        )
+          return fallback
+        end
+      end
+
+      # If positional resolution found no candidate, retain the bare alias only
+      # when it is not itself marked named-only. Named calls may intentionally
+      # target that protected definition, so retain the alias for that shape.
+      if base_def = @function_defs[init_base_name]?
+        stats = function_param_stats(init_base_name, base_def)
+        if call_has_named_args || !stats.has_named_only
+          selected_name = allocator_initializer_name_with_request_qualifier(
+            init_name,
+            init_base_name,
+            init_base_name,
+          )
+          base_arena = @function_def_arenas[selected_name]? ||
+                       @function_def_arenas[init_base_name]? ||
+                       resolve_arena_for_def(base_def, @arena)
+          return {selected_name, base_def, base_arena}
+        end
+      end
+
+      nil
+    end
+
     private def lower_allocator_initializer_body(
       class_name : String,
       class_info : ClassInfo,
       init_base_name : String,
       init_name : String,
       callsite_init_types : Array(TypeRef),
+      call_has_block : Bool = false,
+      call_has_named_args : Bool = false,
+      call_named_arg_names : Array(String)? = nil,
     ) : Nil
+      requested_init_name = init_name
+      if allocator_initializer_base_request?(requested_init_name, init_base_name) && !call_has_named_args
+        if resolved = allocator_initializer_def_for(
+          init_base_name,
+          requested_init_name,
+          callsite_init_types,
+          call_has_block,
+          call_has_named_args,
+          call_named_arg_names,
+        )
+          init_name = resolved[0]
+        end
+      end
       remember_callsite_arg_types(init_name, callsite_init_types) unless callsite_init_types.empty?
       lower_function_if_needed(init_name)
       # A declaration-only entry or stale Completed state does not prove that
       # the initializer body exists. Recover any missing body directly, while
       # preserving a complete state transaction around the direct fallback.
       rematerialize_missing_function_body(init_name) do
-        init_def = @function_defs[init_name]? || @function_defs[init_base_name]?
-        if init_def
-          init_arena = @function_def_arenas[init_name]? || @function_def_arenas[init_base_name]?
-          init_arena ||= resolve_arena_for_def(init_def, @arena)
+        if resolved = allocator_initializer_def_for(
+          init_base_name,
+          init_name,
+          callsite_init_types,
+          call_has_block,
+          call_has_named_args,
+          call_named_arg_names,
+        )
+          resolved_name, init_def, init_arena = resolved
           callsite_types = callsite_init_types.empty? ? nil : callsite_init_types
           # Use the defining class (from init_base_name) for super resolution context.
           # Without this, a subclass inheriting a parent constructor would set @current_class
@@ -33136,7 +33363,12 @@ module Adamas::HIR
           init_defining_class = init_base_name.split('#').first
           init_class_info = @class_info[init_defining_class]? || class_info
           with_arena(init_arena) do
-            lower_method(init_defining_class, init_class_info, init_def, callsite_types, nil, nil, init_name)
+            materialized_name = if allocator_initializer_base_request?(requested_init_name, init_base_name) && !call_has_named_args
+                                  resolved_name
+                                else
+                                  requested_init_name
+                                end
+            lower_method(init_defining_class, init_class_info, init_def, callsite_types, nil, nil, materialized_name)
           end
         end
       end
@@ -33293,16 +33525,36 @@ module Adamas::HIR
         else
           if call_arg_types && call_arg_types.any? { |t| t != TypeRef::VOID }
             if init_base_name = resolve_method_with_inheritance(class_name, "initialize")
-              remember_callsite_arg_types(
+              # An already-emitted allocator can still receive a new concrete
+              # call shape. Do not re-enter initializer lowering through the
+              # bare registration alias: after nested lowering that alias may
+              # point at the named-only DefNode. Resolve the positional shape
+              # first and carry the selected arity identity into the late path.
+              requested_init_base_name = if class_name.starts_with?("::") && !init_base_name.starts_with?("::")
+                                           "::#{init_base_name}"
+                                         else
+                                           init_base_name
+                                         end
+              if resolved = allocator_initializer_def_for(
                 init_base_name,
+                requested_init_base_name,
                 call_arg_types,
-                nil,
-                nil,
                 call_has_block,
                 call_has_named_args,
-                call_named_arg_names
+                call_named_arg_names,
               )
-              lower_function_if_needed(init_base_name)
+                init_name = resolved[0]
+                remember_callsite_arg_types(
+                  init_name,
+                  call_arg_types,
+                  nil,
+                  nil,
+                  call_has_block,
+                  call_has_named_args,
+                  call_named_arg_names
+                )
+                lower_function_if_needed(init_name)
+              end
             end
             generate_allocator_overload(class_name, class_info, call_arg_types, call_has_named_args, call_has_block, call_named_arg_names)
           end
@@ -33343,7 +33595,16 @@ module Adamas::HIR
             init_param_types = allocator_initializer_param_types(class_name, allocator_params, call_arg_types)
             init_name = mangle_function_name(init_base_name, init_param_types)
             callsite_init_types = init_param_types
-            lower_allocator_initializer_body(class_name, class_info, init_base_name, init_name, callsite_init_types)
+            lower_allocator_initializer_body(
+              class_name,
+              class_info,
+              init_base_name,
+              init_name,
+              callsite_init_types,
+              call_has_block,
+              call_has_named_args,
+              call_named_arg_names,
+            )
             if latest = @class_info[class_name]?
               class_info = latest
             end
@@ -33602,6 +33863,19 @@ module Adamas::HIR
         # Mangle the initialize call with parameter types
         init_param_types = allocator_initializer_param_types(class_name, allocator_params, call_arg_types)
         init_name = mangle_function_name(init_base_name, init_param_types)
+        requested_init_name = init_name
+        if allocator_initializer_base_request?(init_name, init_base_name) && !call_has_named_args
+          if resolved = allocator_initializer_def_for(
+            init_base_name,
+            init_name,
+            init_param_types,
+            call_has_block,
+            call_has_named_args,
+            call_named_arg_names,
+          )
+            init_name = resolved[0]
+          end
+        end
         callsite_init_types = init_param_types
         remember_callsite_arg_types(init_name, callsite_init_types) unless callsite_init_types.empty?
         lower_function_if_needed(init_name)
@@ -33609,10 +33883,15 @@ module Adamas::HIR
         # the initializer body exists. Recover it through the same state
         # transaction used by allocator pre-lowering.
         rematerialize_missing_function_body(init_name) do
-          init_def = @function_defs[init_name]? || @function_defs[init_base_name]?
-          if init_def
-            init_arena = @function_def_arenas[init_name]? || @function_def_arenas[init_base_name]?
-            init_arena ||= resolve_arena_for_def(init_def, @arena)
+          if resolved = allocator_initializer_def_for(
+            init_base_name,
+            init_name,
+            init_param_types,
+            call_has_block,
+            call_has_named_args,
+            call_named_arg_names,
+          )
+            resolved_name, init_def, init_arena = resolved
             callsite_types = callsite_init_types.empty? ? nil : callsite_init_types
             # Use the defining class (from init_base_name) for super resolution context.
             # Without this, a subclass inheriting a parent constructor would set @current_class
@@ -33621,7 +33900,12 @@ module Adamas::HIR
             init_defining_class = init_base_name.split('#').first
             init_class_info = @class_info[init_defining_class]? || class_info
             with_arena(init_arena) do
-              lower_method(init_defining_class, init_class_info, init_def, callsite_types, nil, nil, init_name)
+              materialized_name = if allocator_initializer_base_request?(requested_init_name, init_base_name) && !call_has_named_args
+                                    resolved_name
+                                  else
+                                    requested_init_name
+                                  end
+              lower_method(init_defining_class, init_class_info, init_def, callsite_types, nil, nil, materialized_name)
             end
           end
         end
@@ -33815,6 +34099,7 @@ module Adamas::HIR
       matched_init_name : String? = nil
       matched_init_def : Adamas::Compiler::Frontend::DefNode? = nil
       matched_init_arena : Adamas::Compiler::Frontend::ArenaLike? = nil
+      resolved_init_arena : Adamas::Compiler::Frontend::ArenaLike? = nil
       block_param_info : {String, TypeRef}? = nil
       trace_allocator_overload = env_get("ADAMAS_TRACE_ALLOCATOR_OVERLOAD") &&
                                  class_name.includes?(env_get("ADAMAS_TRACE_ALLOCATOR_OVERLOAD").not_nil!)
@@ -33830,10 +34115,30 @@ module Adamas::HIR
         if init_match.nil? && !call_has_named_args && call_arg_types.size > 0
           init_match = lookup_function_def_for_call(init_base, call_arg_types.size, call_has_block, call_arg_types, false, true, allocator_named_arg_names)
         end
+        if init_match.nil? || (!call_has_named_args && allocator_def_has_named_only?(init_match.not_nil![1]))
+          requested_init_name = if class_name.starts_with?("::") && !init_base.starts_with?("::")
+                                 "::#{init_base}"
+                               else
+                                 init_base
+                               end
+          if resolved = allocator_initializer_def_for(
+            init_base,
+            requested_init_name,
+            call_arg_types,
+            call_has_block,
+            call_has_named_args,
+            allocator_named_arg_names,
+          )
+            init_match = {resolved[0], resolved[1]}
+            resolved_init_arena = resolved[2]
+          else
+            init_match = nil
+          end
+        end
         if init_match
           matched_init_name = init_match[0]
           matched_init_def = init_match[1]
-          matched_init_arena = @function_def_arenas[matched_init_name]? || resolve_arena_for_def(matched_init_def, @arena)
+          matched_init_arena = resolved_init_arena || @function_def_arenas[matched_init_name]? || resolve_arena_for_def(matched_init_def, @arena)
           STDERR.puts "[ALLOC_OVERLOAD_TRACE] matched_init=#{matched_init_name}" if trace_allocator_overload
           if alt_params = matched_init_def.params
             alt_init_params = [] of {String, TypeRef}
@@ -34167,6 +34472,46 @@ module Adamas::HIR
                                typed_visibility == selected_visibility)
           if !typed_init_name.empty? && strip_type_suffix(typed_init_name) == strip_type_suffix(matched_init_name.not_nil!) && typed_def_matches
             init_name = typed_init_name
+          end
+        end
+        # Capture the effective requested spelling after resolver-selected typed
+        # overloads have been normalized (for example `$Nil | Int32` -> `$Nil`).
+        # Only a genuinely bare base request should be rematerialized under the
+        # resolver's arity identity; a typed request must retain its own symbol.
+        requested_init_name = init_name
+        # A non-generic untyped constructor is represented by its arity
+        # overload (`$arity1`), not by a call-site type spelling fabricated by
+        # the allocator. Keep that resolver identity so a protected named-only
+        # alias cannot be materialized under a public `$Int32` name.
+        base_has_named_only = if base_def = @function_defs[init_base_name]?
+                               function_param_stats(init_base_name, base_def).has_named_only
+                             else
+                               false
+                             end
+        if matched_init_name && matched_init_name.not_nil!.includes?("$arity") &&
+           base_has_named_only && !class_name.includes?("(")
+          if resolved = allocator_initializer_def_for(
+            init_base_name,
+            init_name,
+            init_param_types,
+            call_has_block,
+            call_has_named_args,
+            allocator_named_arg_names,
+          )
+            resolved_name = resolved[0]
+            init_name = resolved_name if resolved_name.includes?("$arity")
+          end
+        end
+        if allocator_initializer_base_request?(init_name, init_base_name) && !call_has_named_args
+          if resolved = allocator_initializer_def_for(
+            init_base_name,
+            init_name,
+            init_param_types,
+            call_has_block,
+            call_has_named_args,
+            allocator_named_arg_names,
+          )
+            init_name = resolved[0]
           end
         end
         if trace_allocator_overload
