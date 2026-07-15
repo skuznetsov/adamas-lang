@@ -26,6 +26,158 @@ end
 
 private CORRUPTED_PARAMETER_TYPE_SOURCE = "Nil"
 
+private def unreadable_parameter_type_annotation : Slice(UInt8)
+  Slice(UInt8).new(Pointer(UInt8).new(1_u64), 1)
+end
+
+private def lose_nonempty_typed_parameter_metadata(
+  arena : Adamas::Compiler::Frontend::ArenaLike,
+  exprs : Array(Adamas::Compiler::Frontend::ExprId),
+) : Nil
+  exprs.each do |expr_id|
+    node = arena[expr_id]
+    case node
+    when Adamas::Compiler::Frontend::ModuleNode
+      lose_nonempty_typed_parameter_metadata(arena, node.body.not_nil!) if node.body
+    when Adamas::Compiler::Frontend::ClassNode
+      lose_nonempty_typed_parameter_metadata(arena, node.body.not_nil!) if node.body
+    when Adamas::Compiler::Frontend::BlockNode
+      lose_nonempty_typed_parameter_metadata(arena, node.body)
+    when Adamas::Compiler::Frontend::DefNode
+      if (safe_name = node.name) && String.new(safe_name) == "initialize"
+        params = node.params
+        if params
+          replacement = [] of Adamas::Compiler::Frontend::Parameter
+          params.each do |param|
+            type_annotation = param.type_annotation
+            type_text = type_annotation ? String.new(type_annotation) : ""
+            if type_annotation &&
+               (type_text.includes?("Slice(") || type_text.includes?("Array(") || type_text.ends_with?("?"))
+              replacement << Adamas::Compiler::Frontend::Parameter.new(
+                param.name,
+                param.external_name,
+                CORRUPTED_PARAMETER_TYPE_SOURCE.to_slice,
+                param.default_value,
+                param.span,
+                param.name_span,
+                param.external_name_span,
+                nil,
+                param.default_span,
+                param.is_splat,
+                param.is_double_splat,
+                param.is_block,
+                param.is_instance_var,
+              )
+            else
+              replacement << param
+            end
+          end
+          params.clear
+          params.concat(replacement)
+        end
+      end
+      lose_nonempty_typed_parameter_metadata(arena, node.body.not_nil!) if node.body
+    end
+  end
+end
+
+private def replace_nonempty_typed_parameter_annotation_payload(
+  arena : Adamas::Compiler::Frontend::ArenaLike,
+  exprs : Array(Adamas::Compiler::Frontend::ExprId),
+) : Nil
+  exprs.each do |expr_id|
+    node = arena[expr_id]
+    case node
+    when Adamas::Compiler::Frontend::ModuleNode
+      replace_nonempty_typed_parameter_annotation_payload(arena, node.body.not_nil!) if node.body
+    when Adamas::Compiler::Frontend::ClassNode
+      replace_nonempty_typed_parameter_annotation_payload(arena, node.body.not_nil!) if node.body
+    when Adamas::Compiler::Frontend::BlockNode
+      replace_nonempty_typed_parameter_annotation_payload(arena, node.body)
+    when Adamas::Compiler::Frontend::DefNode
+      if (safe_name = node.name) && String.new(safe_name) == "initialize"
+        if params = node.params
+          replacement = [] of Adamas::Compiler::Frontend::Parameter
+          params.each do |param|
+            if param.type_annotation
+              replacement << Adamas::Compiler::Frontend::Parameter.new(
+                param.name,
+                param.external_name,
+                unreadable_parameter_type_annotation,
+                param.default_value,
+                param.span,
+                param.name_span,
+                param.external_name_span,
+                param.type_span,
+                param.default_span,
+                param.is_splat,
+                param.is_double_splat,
+                param.is_block,
+                param.is_instance_var,
+              )
+            else
+              replacement << param
+            end
+          end
+          params.clear
+          params.concat(replacement)
+        end
+      end
+      replace_nonempty_typed_parameter_annotation_payload(arena, node.body.not_nil!) if node.body
+    end
+  end
+end
+
+# Reproduce the self-host loss mode for an anonymous typed block parameter:
+# retain the block/name shape but replace its readable proc annotation with a
+# stale ordinary token and drop the dedicated type span. Source recovery must
+# use `& : String ->` as the authoritative witness and restore the proc type.
+private def corrupt_anonymous_typed_block_parameter(
+  arena : Adamas::Compiler::Frontend::ArenaLike,
+  exprs : Array(Adamas::Compiler::Frontend::ExprId),
+) : Nil
+  exprs.each do |expr_id|
+    node = arena[expr_id]
+    case node
+    when Adamas::Compiler::Frontend::ModuleNode
+      corrupt_anonymous_typed_block_parameter(arena, node.body.not_nil!) if node.body
+    when Adamas::Compiler::Frontend::ClassNode
+      corrupt_anonymous_typed_block_parameter(arena, node.body.not_nil!) if node.body
+    when Adamas::Compiler::Frontend::BlockNode
+      corrupt_anonymous_typed_block_parameter(arena, node.body)
+    when Adamas::Compiler::Frontend::DefNode
+      if params = node.params
+        replacement = [] of Adamas::Compiler::Frontend::Parameter
+        params.each do |param|
+          type_text = param.type_annotation.try { |slice| String.new(slice) }
+          if param.is_block && param.name.nil? && type_text == "String ->"
+            replacement << Adamas::Compiler::Frontend::Parameter.new(
+              param.name,
+              param.external_name,
+              CORRUPTED_PARAMETER_TYPE_SOURCE.to_slice,
+              param.default_value,
+              param.span,
+              param.name_span,
+              param.external_name_span,
+              nil,
+              param.default_span,
+              param.is_splat,
+              param.is_double_splat,
+              param.is_block,
+              param.is_instance_var,
+            )
+          else
+            replacement << param
+          end
+        end
+        params.clear
+        params.concat(replacement)
+      end
+      corrupt_anonymous_typed_block_parameter(arena, node.body.not_nil!) if node.body
+    end
+  end
+end
+
 # Test-only access to private parsing helpers (keeps production API small).
 class Adamas::HIR::AstToHir
   def __test_resolve_signature_short_name(name : String, candidates : Set(String)) : String?
@@ -176,6 +328,31 @@ class Adamas::HIR::AstToHir
     parameter_type_annotation_string(param, arena, false)
   end
 
+  def __test_source_recovered_def_for(
+    node : Adamas::Compiler::Frontend::DefNode,
+    arena : Adamas::Compiler::Frontend::ArenaLike,
+  ) : Adamas::Compiler::Frontend::DefNode?
+    source_recovered_def_for(node, arena)
+  end
+
+  def __test_source_recovered_def_for_with_owner(
+    node : Adamas::Compiler::Frontend::DefNode,
+    arena : Adamas::Compiler::Frontend::ArenaLike,
+    owner : String,
+  ) : Adamas::Compiler::Frontend::DefNode?
+    old_class = @current_class
+    @current_class = owner
+    begin
+      source_recovered_def_for(node, arena)
+    ensure
+      @current_class = old_class
+    end
+  end
+
+  def __test_generic_owner_info_map(owner : String) : Hash(String, String)?
+    generic_owner_info(owner).try(&.map)
+  end
+
   def __test_lower_function_if_needed(name : String) : Nil
     lower_function_if_needed(name)
   end
@@ -302,6 +479,14 @@ class Adamas::HIR::AstToHir
         param.is_block,
       }
     end
+  end
+
+  def __test_function_param_default_presence(name : String) : Array(Bool)
+    node = @function_defs[name]?
+    return [] of Bool unless node
+    params = node.params
+    return [] of Bool unless params
+    params.map { |param| !param.default_value.nil? }
   end
 
   def __test_register_concrete_class(
@@ -1231,6 +1416,78 @@ private def lower_source_backed_program_with_lost_nonempty_ivar_identity(code : 
   converter.lower_main(main_exprs) if main_exprs.size > 0
 
   converter
+end
+
+private def lower_source_backed_program_with_lost_nonempty_typed_parameters(code : String) : Adamas::HIR::AstToHir
+  arena, exprs = parse(code)
+  lose_nonempty_typed_parameter_metadata(arena, exprs)
+  converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => code})
+  converter.arena = arena
+
+  enum_nodes = [] of Adamas::Compiler::Frontend::EnumNode
+  module_nodes = [] of Adamas::Compiler::Frontend::ModuleNode
+  class_nodes = [] of Adamas::Compiler::Frontend::ClassNode
+  def_nodes = [] of Adamas::Compiler::Frontend::DefNode
+  alias_nodes = [] of Adamas::Compiler::Frontend::AliasNode
+
+  exprs.each do |expr_id|
+    node = arena[expr_id]
+    case node
+    when Adamas::Compiler::Frontend::EnumNode
+      enum_nodes << node
+    when Adamas::Compiler::Frontend::ModuleNode
+      module_nodes << node
+    when Adamas::Compiler::Frontend::ClassNode
+      class_nodes << node
+    when Adamas::Compiler::Frontend::DefNode
+      def_nodes << node
+    when Adamas::Compiler::Frontend::AliasNode
+      alias_nodes << node
+    end
+  end
+
+  enum_nodes.each { |node| converter.register_enum(node) }
+  module_nodes.each { |node| converter.register_module(node) }
+  class_nodes.each { |node| converter.register_class(node) }
+  alias_nodes.each { |node| converter.register_alias(node) }
+  def_nodes.each { |node| converter.register_function(node) }
+
+  module_nodes.each { |node| converter.lower_module(node) }
+  class_nodes.each { |node| converter.lower_class(node) }
+  def_nodes.each { |node| converter.lower_def(node) }
+  converter
+end
+
+private def find_initialize_def(
+  arena : Adamas::Compiler::Frontend::ArenaLike,
+  exprs : Array(Adamas::Compiler::Frontend::ExprId),
+) : Adamas::Compiler::Frontend::DefNode?
+  exprs.each do |expr_id|
+    node = arena[expr_id]
+    case node
+    when Adamas::Compiler::Frontend::ClassNode
+      if body = node.body
+        if found = find_initialize_def(arena, body.not_nil!)
+          return found
+        end
+      end
+    when Adamas::Compiler::Frontend::ModuleNode
+      if body = node.body
+        if found = find_initialize_def(arena, body.not_nil!)
+          return found
+        end
+      end
+    when Adamas::Compiler::Frontend::BlockNode
+      if found = find_initialize_def(arena, node.body)
+        return found
+      end
+    when Adamas::Compiler::Frontend::DefNode
+      if (safe_name = node.name) && String.new(safe_name) == "initialize"
+        return node
+      end
+    end
+  end
+  nil
 end
 
 private def lower_source_backed_program_with_erased_generic_annotations(code : String) : Adamas::HIR::AstToHir
@@ -5620,6 +5877,484 @@ describe Adamas::HIR::AstToHir do
       end
       uint_calls.size.should eq(1)
       uint_calls.first.not_nil!.method_name.should eq("SetShape(UInt32)#initialize$Int32")
+    end
+
+    it "recovers a non-empty typed ordinary signature from its same-file source" do
+      converter = lower_source_backed_program_with_lost_nonempty_typed_parameters(<<-CRYSTAL)
+        class Slice(T)
+        end
+
+        class Array(T)
+        end
+
+        class Parameter
+        end
+
+        class OrdinaryShape
+          def initialize(
+            buffer : Slice(UInt8),
+            params : Array(Parameter),
+            tail : String? = nil,
+            *,
+            &block
+          )
+          end
+        end
+      CRYSTAL
+
+      expected = ["Slice(UInt8)", "Array(Parameter)", "String?", nil, nil] of String?
+      recovered_name = converter.__test_function_def_names("OrdinaryShape#initialize").find do |name|
+        converter.__test_function_param_annotations(name) == expected
+      end
+      recovered_name.should_not be_nil
+      converter.__test_function_param_identity(recovered_name.not_nil!).should eq([
+        {"buffer", nil, "Slice(UInt8)", false, false, false},
+        {"params", nil, "Array(Parameter)", false, false, false},
+        {"tail", nil, "String?", false, false, false},
+        {nil, nil, nil, false, true, false},
+        {"block", nil, nil, false, false, true},
+      ])
+      converter.__test_function_param_default_presence(recovered_name.not_nil!).should eq(
+        [false, false, true, false, false]
+      )
+    end
+
+    it "recovers an anonymous typed block parameter from its same-file source" do
+      code = <<-CRYSTAL
+        def consume(& : String ->)
+        end
+      CRYSTAL
+      arena, exprs = parse(code)
+      corrupt_anonymous_typed_block_parameter(arena, exprs)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => code})
+      converter.arena = arena
+
+      node = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode) }
+        .find { |candidate| String.new(candidate.name) == "consume" }
+      node.should_not be_nil
+      recovered = converter.__test_source_recovered_def_for(node.not_nil!, arena)
+      recovered.should_not be_nil
+      recovered_params = recovered.not_nil!.params
+      recovered_params.should_not be_nil
+      recovered_params.not_nil!.size.should eq(1)
+      recovered_param = recovered_params.not_nil!.first
+      recovered_param.name.should be_nil
+      recovered_param.is_block.should be_true
+      recovered_param.type_annotation.should_not be_nil
+      String.new(recovered_param.type_annotation.not_nil!).should eq("String ->")
+    end
+
+    it "splits and recovers an anonymous typed block after an ordinary parameter" do
+      code = <<-CRYSTAL
+        def consume(value : Int32, & : String, Int32, Float64 -> Bool)
+        end
+      CRYSTAL
+      arena, exprs = parse(code)
+      node = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode) }
+        .find { |candidate| String.new(candidate.name) == "consume" }
+      node.should_not be_nil
+      params = node.not_nil!.params
+      params.should_not be_nil
+      params.not_nil!.size.should eq(2)
+      params.not_nil!.pop
+
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => code})
+      recovered = converter.__test_source_recovered_def_for(node.not_nil!, arena)
+      recovered.should_not be_nil
+      recovered_params = recovered.not_nil!.params
+      recovered_params.should_not be_nil
+      recovered_params.not_nil!.size.should eq(2)
+      recovered_block = recovered_params.not_nil!.last
+      recovered_block.name.should be_nil
+      recovered_block.is_block.should be_true
+      recovered_block.type_annotation.should_not be_nil
+      String.new(recovered_block.type_annotation.not_nil!).should eq("String, Int32, Float64 -> Bool")
+
+      converter.__test_split_generic_type_args(
+        "value : Int32, & : String, Int32, Float64 -> Bool"
+      ).should eq([
+        "value : Int32",
+        "& : String, Int32, Float64 -> Bool",
+      ])
+      converter.__test_split_generic_type_args(
+        "value : Hash(String, Array(Int32)), & : String, Int32, Float64 -> Bool"
+      ).should eq([
+        "value : Hash(String, Array(Int32))",
+        "& : String, Int32, Float64 -> Bool",
+      ])
+      converter.__test_split_generic_type_args(
+        "value : Int32, & : Hash(String, Array(Int32)), Tuple(Float64, Bool), String -> Bool"
+      ).should eq([
+        "value : Int32",
+        "& : Hash(String, Array(Int32)), Tuple(Float64, Bool), String -> Bool",
+      ])
+      converter.__test_split_generic_type_args(
+        "Hash(String, Array(Int32)), Tuple(Float64, Bool), String"
+      ).should eq([
+        "Hash(String, Array(Int32))",
+        "Tuple(Float64, Bool)",
+        "String",
+      ])
+    end
+
+    it "recovers a stale scalar annotation even when its type span remains readable" do
+      code = <<-CRYSTAL
+        def consume(value : Int32)
+        end
+      CRYSTAL
+      arena, exprs = parse(code)
+      node = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode) }
+        .find { |candidate| String.new(candidate.name) == "consume" }
+      node.should_not be_nil
+      params = node.not_nil!.params
+      params.should_not be_nil
+      original = params.not_nil!.first
+      params.not_nil![0] = Adamas::Compiler::Frontend::Parameter.new(
+        original.name,
+        original.external_name,
+        CORRUPTED_PARAMETER_TYPE_SOURCE.to_slice,
+        original.default_value,
+        original.span,
+        original.name_span,
+        original.external_name_span,
+        original.type_span,
+        original.default_span,
+        original.is_splat,
+        original.is_double_splat,
+        original.is_block,
+        original.is_instance_var,
+      )
+
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => code})
+      recovered = converter.__test_source_recovered_def_for(node.not_nil!, arena)
+      recovered.should_not be_nil
+      recovered_param = recovered.not_nil!.params.not_nil!.first
+      recovered_param.type_annotation.should_not be_nil
+      String.new(recovered_param.type_annotation.not_nil!).should eq("Int32")
+    end
+
+    it "recovers a stale anonymous proc annotation even when its type span remains readable" do
+      code = <<-CRYSTAL
+        def consume(& : String ->)
+        end
+      CRYSTAL
+      arena, exprs = parse(code)
+      node = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode) }
+        .find { |candidate| String.new(candidate.name) == "consume" }
+      node.should_not be_nil
+      params = node.not_nil!.params
+      params.should_not be_nil
+      original = params.not_nil!.first
+      params.not_nil![0] = Adamas::Compiler::Frontend::Parameter.new(
+        original.name,
+        original.external_name,
+        CORRUPTED_PARAMETER_TYPE_SOURCE.to_slice,
+        original.default_value,
+        original.span,
+        original.name_span,
+        original.external_name_span,
+        original.type_span,
+        original.default_span,
+        original.is_splat,
+        original.is_double_splat,
+        original.is_block,
+        original.is_instance_var,
+      )
+
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => code})
+      recovered = converter.__test_source_recovered_def_for(node.not_nil!, arena)
+      recovered.should_not be_nil
+      recovered_param = recovered.not_nil!.params.not_nil!.first
+      recovered_param.name.should be_nil
+      recovered_param.is_block.should be_true
+      recovered_param.type_annotation.should_not be_nil
+      String.new(recovered_param.type_annotation.not_nil!).should eq("String ->")
+    end
+
+    it "does not source-recover from an arena with a conflicting direct extra source" do
+      code = <<-CRYSTAL
+        def consume(& : String ->)
+        end
+      CRYSTAL
+      arena, exprs = parse(code)
+      corrupt_anonymous_typed_block_parameter(arena, exprs)
+      arena.retain_source("def generated(value : Int32)\nend\n")
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => code})
+
+      node = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode) }
+        .find { |candidate| String.new(candidate.name) == "consume" }
+      node.should_not be_nil
+      converter.__test_source_recovered_def_for(node.not_nil!, arena).should be_nil
+    end
+
+    it "recovers concrete and nullable metadata across a full constructor shape" do
+      converter = lower_source_backed_program_with_lost_nonempty_typed_parameters(<<-CRYSTAL)
+        class Span
+        end
+
+        class Slice(T)
+        end
+
+        class Array(T)
+        end
+
+        class Parameter
+        end
+
+        enum Visibility
+          Public
+        end
+
+        class ReceiverCarrierShape
+          def initialize(
+            span : Span,
+            name : Slice(UInt8),
+            params : Array(Parameter),
+            return_type : Slice(UInt8)?,
+            body : Array(Int32)?,
+            is_abstract : Bool? = nil,
+            visibility : Visibility? = nil,
+            receiver : String? = nil
+          )
+          end
+        end
+      CRYSTAL
+
+      expected = [
+        "Span",
+        "Slice(UInt8)",
+        "Array(Parameter)",
+        "Slice(UInt8)?",
+        "Array(Int32)?",
+        "Bool?",
+        "Visibility?",
+        "String?",
+      ] of String?
+      recovered_name = converter.__test_function_def_names("ReceiverCarrierShape#initialize").find do |name|
+        converter.__test_function_param_annotations(name) == expected
+      end
+      recovered_name.should_not be_nil
+      converter.__test_function_param_default_presence(recovered_name.not_nil!).should eq(
+        [false, false, false, false, false, true, true, true]
+      )
+    end
+
+    it "recovers concrete metadata when the raw annotation payload is unreadable" do
+      code = <<-CRYSTAL
+        class Slice(T)
+        end
+
+        class Array(T)
+        end
+
+        class Parameter
+        end
+
+        class ReceiverCarrierUnreadable
+          def initialize(
+            name : Slice(UInt8),
+            params : Array(Parameter),
+            tail : String?
+          )
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(code)
+      replace_nonempty_typed_parameter_annotation_payload(arena, exprs)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => code})
+      converter.__test_safe_slice_to_string(unreadable_parameter_type_annotation).should be_nil
+      node = find_initialize_def(arena, exprs)
+      node.should_not be_nil
+      recovered = converter.__test_source_recovered_def_for(node.not_nil!, arena)
+      recovered.should_not be_nil
+      recovered_params = recovered.not_nil!.params
+      recovered_params.should_not be_nil
+      recovered_params.not_nil!.map do |param|
+        param.type_annotation.try { |slice| String.new(slice) }
+      end.should eq(["Slice(UInt8)", "Array(Parameter)", "String?"] of String?)
+    end
+
+    it "preserves intact specialized parameter metadata against generic source" do
+      code = <<-CRYSTAL
+        class Pointer(T)
+        end
+
+        class GenericShape(T)
+          def initialize(value : Pointer(T))
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(code)
+      node = find_initialize_def(arena, exprs)
+      node.should_not be_nil
+      params = node.not_nil!.params
+      params.should_not be_nil
+      original = params.not_nil!.unsafe_fetch(0)
+      original.type_annotation.should_not be_nil
+      original.type_span.should_not be_nil
+      params.not_nil![0] = Adamas::Compiler::Frontend::Parameter.new(
+        original.name,
+        original.external_name,
+        "Pointer(UInt8)".to_slice,
+        original.default_value,
+        original.span,
+        original.name_span,
+        original.external_name_span,
+        original.type_span,
+        original.default_span,
+        original.is_splat,
+        original.is_double_splat,
+        original.is_block,
+        original.is_instance_var,
+      )
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => code})
+      converter.__test_source_recovered_def_for(node.not_nil!, arena).should be_nil
+    end
+
+    it "preserves specialized generic metadata when the raw annotation payload is unreadable" do
+      code = <<-CRYSTAL
+        class Pointer(T)
+        end
+
+        class GenericUnreadableShape(T)
+          def initialize(value : Pointer(T))
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(code)
+      replace_nonempty_typed_parameter_annotation_payload(arena, exprs)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => code})
+      class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+      class_nodes.each { |class_node| converter.register_class(class_node) }
+      node = find_initialize_def(arena, exprs)
+      node.should_not be_nil
+      converter.__test_source_recovered_def_for_with_owner(
+        node.not_nil!,
+        arena,
+        "GenericUnreadableShape(UInt8)"
+      ).should be_nil
+    end
+
+    it "preserves unreadable specialized metadata for a qualified nested generic owner" do
+      code = <<-CRYSTAL
+        class Pointer(T)
+        end
+
+        module Outer
+          class Box(T)
+            def initialize(value : Pointer(T))
+            end
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(code)
+      replace_nonempty_typed_parameter_annotation_payload(arena, exprs)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => code})
+      pointer_node = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+        .find { |class_node| String.new(class_node.name) == "Pointer" }
+      outer_node = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ModuleNode) }
+        .find { |module_node| String.new(module_node.name) == "Outer" }
+      pointer_node.should_not be_nil
+      outer_node.should_not be_nil
+      box_node = outer_node.not_nil!.body.not_nil!.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+      end.find { |class_node| String.new(class_node.name) == "Box" }
+      box_node.should_not be_nil
+
+      # Reproduce the self-host transport shape: the semantic nesting sidecar
+      # knows `Outer -> Box`, while the generic template itself arrived under
+      # its short source spelling rather than the qualified owner key.
+      converter.seed_nested_type_names({"Outer" => Set{"Box"}})
+      converter.register_class(pointer_node.not_nil!)
+      converter.register_class(box_node.not_nil!)
+
+      node = find_initialize_def(arena, exprs)
+      node.should_not be_nil
+      converter.__test_generic_owner_info_map("Outer::Box(UInt8)").should eq({"T" => "UInt8"})
+      converter.__test_source_recovered_def_for_with_owner(
+        node.not_nil!,
+        arena,
+        "Outer::Box(UInt8)"
+      ).should be_nil
+    end
+
+    it "normalizes a root-qualified exact nested generic owner" do
+      code = <<-CRYSTAL
+        module Outer
+          class Box(T)
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(code)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => code})
+      outer_node = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ModuleNode) }
+        .find { |module_node| String.new(module_node.name) == "Outer" }
+      outer_node.should_not be_nil
+      converter.register_module(outer_node.not_nil!)
+
+      converter.__test_generic_owner_info_map("Outer::Box(UInt8)").should eq({"T" => "UInt8"})
+      converter.__test_generic_owner_info_map("::Outer::Box(UInt8)").should eq({"T" => "UInt8"})
+    end
+
+    it "does not bind an ambiguous short generic template to a qualified owner" do
+      code = <<-CRYSTAL
+        module Outer
+          class Box(T)
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(code)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => code})
+      outer_node = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ModuleNode) }
+        .find { |module_node| String.new(module_node.name) == "Outer" }
+      outer_node.should_not be_nil
+      box_node = outer_node.not_nil!.body.not_nil!.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+      end.find { |class_node| String.new(class_node.name) == "Box" }
+      box_node.should_not be_nil
+
+      converter.seed_nested_type_names({"Outer" => Set{"Box"}, "Other" => Set{"Box"}})
+      converter.register_class(box_node.not_nil!)
+      converter.__test_generic_owner_info_map("Outer::Box(UInt8)").should be_nil
+    end
+
+    it "does not source-recover a non-empty untyped signature" do
+      code = <<-CRYSTAL
+        class UntypedShape
+          def initialize(buffer, params = nil)
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(code)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => code})
+      node = find_initialize_def(arena, exprs)
+      node.should_not be_nil
+      converter.__test_source_recovered_def_for(node.not_nil!, arena).should be_nil
+    end
+
+    it "does not source-recover when the arena has ambiguous extra sources" do
+      code = <<-CRYSTAL
+        class Slice(T)
+        end
+
+        class Array(T)
+        end
+
+        class Parameter
+        end
+
+        class AmbiguousShape
+          def initialize(buffer : Slice(UInt8), params : Array(Parameter), tail : String?)
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(code)
+      lose_nonempty_typed_parameter_metadata(arena, exprs)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => code})
+      converter.__test_store_extra_source(arena, "def generated(buffer : Nil)\nend\n")
+      node = find_initialize_def(arena, exprs)
+      node.should_not be_nil
+      converter.__test_source_recovered_def_for(node.not_nil!, arena).should be_nil
     end
 
     it "recovers the complete generic initializer signature when parameter storage is empty" do

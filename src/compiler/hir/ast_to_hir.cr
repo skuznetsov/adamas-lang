@@ -18732,6 +18732,151 @@ module Adamas::HIR
       end
     end
 
+    private struct SourceParameterShape
+      getter name : String?
+      getter external_name : String?
+      getter type_annotation : String?
+      getter is_splat : Bool
+      getter is_double_splat : Bool
+      getter is_block : Bool
+      getter is_instance_var : Bool
+      getter has_default : Bool
+
+      def initialize(
+        @name : String?,
+        @external_name : String?,
+        @type_annotation : String?,
+        @is_splat : Bool,
+        @is_double_splat : Bool,
+        @is_block : Bool,
+        @is_instance_var : Bool,
+        @has_default : Bool,
+      )
+      end
+    end
+
+    private def source_parameter_shape_from_part(part : String) : SourceParameterShape?
+      text = strip_single_line_comments(part).strip
+      return nil if text.empty?
+
+      default_idx = top_level_char_index(text, '=')
+      has_default = !!default_idx
+      core = default_idx ? text[0, default_idx.not_nil!].strip : text
+      return nil if core.empty?
+
+      is_splat = false
+      is_double_splat = false
+      is_block = false
+      if core.starts_with?("**")
+        is_double_splat = true
+        core = core[2..].not_nil!.lstrip
+      elsif core.starts_with?('*')
+        is_splat = true
+        core = core[1..].not_nil!.lstrip
+      elsif core.starts_with?('&')
+        is_block = true
+        core = core[1..].not_nil!.lstrip
+      end
+
+      # Anonymous `*` and `&` parameters carry only their calling-convention
+      # marker. Keep them in the sequence so later parameters remain aligned.
+      if core.empty?
+        return SourceParameterShape.new(nil, nil, nil, is_splat, is_double_splat, is_block, false, has_default)
+      end
+
+      colon_idx = top_level_accessor_colon_index(core)
+      left = colon_idx ? core[0, colon_idx.not_nil!].strip : core
+      # Anonymous typed block parameters use `& : ProcType` (for example
+      # `& : String ->`) and therefore have no source-level name before the
+      # colon. Preserve the block slot and its proc annotation instead of
+      # rejecting the shape as an unparseable ordinary parameter. The parser
+      # represents this form with `name == nil` and `is_block == true`.
+      if is_block && colon_idx && left.empty?
+        type_text = core.byte_slice(colon_idx.not_nil! + 1, core.bytesize - colon_idx.not_nil! - 1).strip
+        return nil if type_text.empty?
+        return SourceParameterShape.new(nil, nil, type_text, false, false, true, false, has_default)
+      end
+      return nil if left.empty?
+
+      type_name = nil.as(String?)
+      if colon_idx
+        type_text = core.byte_slice(colon_idx.not_nil! + 1, core.bytesize - colon_idx.not_nil! - 1).strip
+        return nil if type_text.empty?
+        type_name = type_text
+      end
+
+      external_name = nil.as(String?)
+      name = left
+      if left.starts_with?('"')
+        # Quoted external names may contain spaces; split at the closing quote
+        # instead of treating each word as a separate parameter.
+        quote_end = left.index('"', 1)
+        if quote_end && quote_end.not_nil! + 1 < left.bytesize
+          external_name = left[0, quote_end.not_nil! + 1]
+          name = left.byte_slice(quote_end.not_nil! + 1, left.bytesize - quote_end.not_nil! - 1).strip
+        end
+      elsif words = left.split
+        if words.size == 2
+          external_name = words[0]
+          name = words[1]
+        elsif words.size > 2
+          return nil
+        end
+      end
+
+      is_instance_var = name.starts_with?('@')
+      name = name[1..].not_nil! if is_instance_var
+      return nil if name.empty?
+      SourceParameterShape.new(
+        name,
+        external_name,
+        type_name,
+        is_splat,
+        is_double_splat,
+        is_block,
+        is_instance_var,
+        has_default,
+      )
+    end
+
+    private def source_parameter_shapes_for(
+      node : Adamas::Compiler::Frontend::DefNode,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Array(SourceParameterShape)?
+      if extras = extra_sources_for_arena(arena)
+        return nil unless extras.empty?
+      end
+      source = source_text_for_arena_or_file(arena)
+      return nil unless source
+      signature = source_definition_signature_from_span(node.span, source, [
+        "private abstract def ",
+        "protected abstract def ",
+        "abstract def ",
+        "private def ",
+        "protected def ",
+        "def ",
+      ])
+      return nil unless signature
+
+      open_idx = signature.index('(')
+      return nil unless open_idx
+      finish = balanced_parenthesized_finish(signature, open_idx.not_nil!)
+      return nil unless finish
+      inner = signature.byte_slice(open_idx.not_nil! + 1, finish.not_nil! - open_idx.not_nil! - 1)
+      return [] of SourceParameterShape if inner.strip.empty?
+
+      shapes = [] of SourceParameterShape
+      parts = split_generic_type_args(inner)
+      part_idx = 0
+      while part_idx < parts.size
+        shape = source_parameter_shape_from_part(parts.unsafe_fetch(part_idx))
+        return nil unless shape
+        shapes << shape.not_nil!
+        part_idx += 1
+      end
+      shapes
+    end
+
     private def source_ivar_param_entry(
       entries : Array(Tuple(String, String?))?,
       idx : Int32,
@@ -18929,61 +19074,100 @@ module Adamas::HIR
     end
 
     # Compare the live non-empty parameter shape with a same-file source
-    # witness.  A mismatch is admissible only for typed implicit-ivar headers;
-    # source text that does not prove such a header leaves the live node alone.
+    # witness. A mismatch is admissible only when the complete signature has at
+    # least one typed parameter; untyped signatures remain on the fast path.
     private def source_parameter_shape_disagrees?(
       node : Adamas::Compiler::Frontend::DefNode,
       params : Array(Adamas::Compiler::Frontend::Parameter),
       arena : Adamas::Compiler::Frontend::ArenaLike,
     ) : Bool
-      if extras = extra_sources_for_arena(arena)
-        return false unless extras.empty?
+      shapes = source_parameter_shapes_for(node, arena)
+      return false unless shapes
+      source_shapes = shapes.not_nil!
+      source_has_type = false
+      source_idx = 0
+      while source_idx < source_shapes.size
+        if source_shapes.unsafe_fetch(source_idx).type_annotation
+          source_has_type = true
+          break
+        end
+        source_idx += 1
+      end
+      return false unless source_has_type
+
+      live_params = [] of Adamas::Compiler::Frontend::Parameter
+      live_idx = 0
+      while live_idx < params.size
+        if param = param_at_or_nil(params, live_idx)
+          live_params << param
+        end
+        live_idx += 1
       end
 
-      shape = source_ivar_param_shape(node, arena)
-      return false unless shape
-      source_entries, source_has_named_only = shape
-      return false unless source_entries.any? { |entry| !entry[1].nil? }
+      return true unless source_shapes.size == live_params.size
 
-      live_ivar_params = [] of Adamas::Compiler::Frontend::Parameter
-      live_has_named_only = false
-      each_param(params) do |param|
-        if named_only_separator?(param)
-          live_has_named_only = true
-          next
+      source_idx = 0
+      while source_idx < source_shapes.size
+        source_shape = source_shapes.unsafe_fetch(source_idx)
+        index = source_idx
+        live_param = live_params.unsafe_fetch(index)
+        if source_shape.is_splat != live_param.is_splat ||
+           source_shape.is_double_splat != live_param.is_double_splat ||
+           source_shape.is_block != live_param.is_block ||
+           source_shape.is_instance_var != live_param.is_instance_var
+          return true
         end
 
-        is_ivar = param.is_instance_var
-        unless is_ivar
-          if name = param.name
-            is_ivar = (safe_slice_to_string(name) || "").starts_with?('@')
-          end
-        end
-        live_ivar_params << param if is_ivar
-      end
-
-      return true if source_has_named_only != live_has_named_only
-      return true unless source_entries.size == live_ivar_params.size
-
-      source_entries.each_with_index do |source_entry, index|
-        live_param = live_ivar_params.unsafe_fetch(index)
-        source_name = source_entry[0].lstrip('@')
         live_name = parameter_name_string(live_param, arena, false) ||
                     (live_param.name ? safe_slice_to_string(live_param.name.not_nil!) : nil)
-        return true unless live_name
-        return true unless live_name.not_nil!.lstrip('@') == source_name
-
-        source_type = source_entry[1]
-        live_type = parameter_type_annotation_string(live_param, arena, false)
-        if source_type
-          # A typed source ivar must retain a dedicated type span.  A raw type
-          # token alone is precisely the corrupted non-empty shape this path
-          # repairs; reparsing the same arena restores its stable span.
-          return true unless live_param.type_span
-          return true unless live_type && source_signature_type_equal?(source_type.not_nil!, live_type.not_nil!)
+        source_name = source_shape.name
+        if source_name
+          return true unless live_name && live_name.not_nil!.lstrip('@') == source_name
         else
-          return true if live_type
+          return true if live_name
         end
+
+        live_external = nil.as(String?)
+        if external_slice = live_param.external_name
+          live_external = safe_slice_to_string(external_slice)
+        end
+        return true unless live_external == source_shape.external_name
+        return true unless (live_param.default_value != nil) == source_shape.has_default
+
+        source_type = source_shape.type_annotation
+        if source_type
+          raw_annotation = live_param.type_annotation
+          return true unless raw_annotation
+          raw_type = safe_slice_to_string(raw_annotation.not_nil!)
+
+          # Compare the raw retained payload, not the span-backed accessor:
+          # a readable source span can otherwise mask a stale raw token (for
+          # example `Nil` retained beside the original `Int32` span).  A
+          # monomorphized owner is the exception: its concrete payload may
+          # intentionally differ from generic source such as `Pointer(T)`.
+          unless raw_type && source_signature_type_equal?(source_type, raw_type.not_nil!)
+            if raw_type && source_type_matches_live_generic_specialization?(source_type, raw_type.not_nil!)
+              source_idx += 1
+              next
+            end
+            if raw_type.nil? && source_type_depends_on_current_generic_owner?(source_type)
+              source_idx += 1
+              next
+            end
+            return true
+          end
+
+          # Equal raw text without a dedicated source span is still the known
+          # metadata-loss shape. Reparse it so downstream consumers retain a
+          # stable annotation slice and span.
+          return true unless live_param.type_span
+        elsif live_param.type_annotation && live_param.type_span.nil?
+          # Preserve an intact specialized annotation even when its source
+          # spelling cannot be read from the generic span. Only a raw token
+          # with no dedicated span is a recoverable corruption.
+          return true
+        end
+        source_idx += 1
       end
 
       false
@@ -18991,6 +19175,89 @@ module Adamas::HIR
 
     private def source_signature_type_equal?(left : String, right : String) : Bool
       left.gsub(/\s+/, "") == right.gsub(/\s+/, "")
+    end
+
+    # A generic source spelling may legitimately differ from live
+    # monomorphized metadata. Prefer the exact current-owner substitution when
+    # available; without owner context, admit only the same nested generic
+    # structure with short type-parameter leaves acting as wildcards.
+    private def source_type_matches_live_generic_specialization?(source_type : String, live_type : String) : Bool
+      owner = @current_class || @current_namespace_override
+      if owner
+        if info = generic_owner_info(owner.not_nil!)
+          depends_on_owner = info.map.keys.any? do |param_name|
+            contains_type_param_token?(source_type, param_name)
+          end
+          if depends_on_owner
+            specialized = substitute_type_params(source_type, info.map)
+            return source_signature_type_equal?(specialized, live_type)
+          end
+        end
+      end
+
+      source_type_structurally_specializes_to?(source_type, live_type)
+    end
+
+    private def source_type_structurally_specializes_to?(source_type : String, live_type : String) : Bool
+      source = source_type.strip
+      live = live_type.strip
+      return true if source_signature_type_equal?(source, live)
+      if short_type_param_name?(source) && type_param_like?(source)
+        return true
+      end
+
+      source_info = split_generic_base_and_args(source)
+      live_info = split_generic_base_and_args(live)
+      return false unless source_info && live_info
+      return false unless source_signature_type_equal?(source_info.base, live_info.base)
+
+      source_args = split_generic_type_args(source_info.args)
+      live_args = split_generic_type_args(live_info.args)
+      return false unless source_args.size == live_args.size
+      arg_idx = 0
+      while arg_idx < source_args.size
+        unless source_type_structurally_specializes_to?(
+          source_args.unsafe_fetch(arg_idx),
+          live_args.unsafe_fetch(arg_idx),
+        )
+          return false
+        end
+        arg_idx += 1
+      end
+      true
+    end
+
+    # Return true when a source annotation contains one of the template
+    # parameters owned by the current class/module context.  The source text
+    # is intentionally checked against the template names before applying the
+    # active specialization map: `Pointer(T)` must remain distinguishable from
+    # the concrete `Pointer(UInt8)` metadata retained by a monomorphized owner.
+    private def source_type_depends_on_current_generic_owner?(type_name : String) : Bool
+      owner = @current_class || @current_namespace_override
+      return false unless owner
+
+      names = [] of String
+      if split = split_generic_base_and_args(owner.not_nil!)
+        if template = @generic_templates[split.base]?
+          names = template.type_params
+        end
+      elsif template = @generic_templates[owner.not_nil!]?
+        names = template.type_params
+      end
+
+      if names.empty?
+        if info = generic_owner_info(owner.not_nil!)
+          names = info.map.keys
+        end
+      end
+
+      name_idx = 0
+      while name_idx < names.size
+        param_name = names.unsafe_fetch(name_idx)
+        return true if contains_type_param_token?(type_name, param_name)
+        name_idx += 1
+      end
+      false
     end
 
     # Recover a complete Parameter array when a self-hosted DefNode retained
@@ -19020,10 +19287,12 @@ module Adamas::HIR
       end
 
       # Empty parameter storage is the established self-host recovery case.
-      # For a non-empty array, only admit source recovery when a source-backed
-      # typed implicit-ivar signature proves the retained parameter shape is
-      # inconsistent.  This keeps ordinary methods on their existing fast path
-      # and avoids trusting ambiguous generated buffers.
+      # For a non-empty array, admit recovery only when a complete same-file
+      # source-backed typed signature proves that the retained parameter shape
+      # is inconsistent.  The shape comparison covers ordinary, named-only,
+      # splat, block, and implicit-ivar parameters; untyped signatures stay on
+      # the existing fast path, and converter-side extra-source buffers are
+      # rejected below unless they are uniquely attributable.
       needs_source_recovery = if param_count == 0
                                 true
                               else
@@ -19045,7 +19314,6 @@ module Adamas::HIR
       if extras = extra_sources_for_arena(arena)
         return nil unless extras.empty?
       end
-
       source = source_text_for_arena_or_file(arena)
       return nil unless source
       prefixes = [
@@ -19058,6 +19326,13 @@ module Adamas::HIR
       ]
       signature = source_definition_signature_from_span(node.span, source, prefixes)
       return nil unless signature
+      return nil if source_recovery_has_conflicting_arena_extra?(
+        node,
+        arena,
+        source,
+        signature.not_nil!,
+        prefixes,
+      )
 
       # Parse only the recovered header plus a synthetic terminator.  Parsing
       # into the caller's arena keeps default ExprIds usable by
@@ -19120,6 +19395,33 @@ module Adamas::HIR
       # must preserve the ordinary empty-parameter behavior rather than turn a
       # generated/macro definition into a guessed callable shape.
       nil
+    end
+
+    # Arena-retained strings also include harmless token/name slices, so a
+    # blanket `extra_sources.any?` guard would disable ordinary same-file
+    # recovery. Fail closed only when another retained buffer can itself be
+    # attributed to this DefNode span and yields a conflicting definition
+    # signature. Identical signatures remain safe parameter witnesses even if
+    # their bodies differ.
+    private def source_recovery_has_conflicting_arena_extra?(
+      node : Adamas::Compiler::Frontend::DefNode,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+      source : String,
+      signature : String,
+      prefixes : Array(String),
+    ) : Bool
+      extras = arena.extra_sources
+      extra_idx = 0
+      while extra_idx < extras.size
+        extra_source = extras.unsafe_fetch(extra_idx)
+        unless extra_source == source
+          if extra_signature = source_definition_signature_from_span(node.span, extra_source, prefixes)
+            return true unless extra_signature.not_nil!.strip == signature.strip
+          end
+        end
+        extra_idx += 1
+      end
+      false
     end
 
     private def source_ivar_param_entry_from_part(part : String) : Tuple(String, String?)?
@@ -51369,6 +51671,17 @@ module Adamas::HIR
           depth -= 1 if depth > 0
         when ','
           if depth == 0
+            # Definition signatures can encode an anonymous block proc with
+            # any number of unbraced input types:
+            # `& : String, Int32, Float64 -> Bool`. Generic type arguments
+            # cannot begin with `&`, so retain these commas only for that
+            # explicit parameter marker and leave ordinary generic splitting
+            # unchanged.
+            if block_parameter_proc_input_continuation?(params_str, start, i)
+              i += 1
+              next
+            end
+
             # If the next argument begins with `{`, this comma is a generic-arg
             # separator even if a top-level `->` appears later. This avoids
             # mis-parsing lists like `String, {String, _} ->` as a single proc
@@ -51403,6 +51716,61 @@ module Adamas::HIR
       @split_generic_args_last_input = params_str
       @split_generic_args_last_output = args
       args
+    end
+
+    # Return true when `comma_idx` separates two input types inside an
+    # anonymous block proc annotation. Unlike the generic proc heuristic below,
+    # this scan may cross further top-level commas until it finds the proc
+    # arrow, which is required for three-or-more input types. An arrow before
+    # the current comma means the proc annotation is already complete.
+    private def block_parameter_proc_input_continuation?(
+      source : String,
+      parameter_start : Int32,
+      comma_idx : Int32,
+    ) : Bool
+      marker_idx = parameter_start
+      while marker_idx < comma_idx
+        byte = source.byte_at(marker_idx)
+        break unless byte == 32_u8 || byte == 9_u8 || byte == 10_u8 || byte == 13_u8
+        marker_idx += 1
+      end
+      return false if marker_idx >= comma_idx
+      return false unless source.byte_at(marker_idx) == '&'.ord.to_u8
+
+      depth = 0
+      scan_idx = marker_idx + 1
+      while scan_idx + 1 < comma_idx
+        byte = source.byte_at(scan_idx)
+        case byte
+        when '('.ord.to_u8, '{'.ord.to_u8, '['.ord.to_u8
+          depth += 1
+        when ')'.ord.to_u8, '}'.ord.to_u8, ']'.ord.to_u8
+          depth -= 1 if depth > 0
+        when '-'.ord.to_u8
+          if depth == 0 && source.byte_at(scan_idx + 1) == '>'.ord.to_u8
+            return false
+          end
+        end
+        scan_idx += 1
+      end
+
+      depth = 0
+      scan_idx = comma_idx + 1
+      while scan_idx + 1 < source.bytesize
+        byte = source.byte_at(scan_idx)
+        case byte
+        when '('.ord.to_u8, '{'.ord.to_u8, '['.ord.to_u8
+          depth += 1
+        when ')'.ord.to_u8, '}'.ord.to_u8, ']'.ord.to_u8
+          depth -= 1 if depth > 0
+        when '-'.ord.to_u8
+          if depth == 0 && source.byte_at(scan_idx + 1) == '>'.ord.to_u8
+            return true
+          end
+        end
+        scan_idx += 1
+      end
+      false
     end
 
     # Split a union type string like "UInt32 | Int32" into top-level parts,
@@ -51450,8 +51818,15 @@ module Adamas::HIR
         end
         break
       end
-      if j < source.bytesize && source.byte_at(j) == '{'.ord.to_u8
-        return false
+      if j < source.bytesize
+        next_byte = source.byte_at(j)
+        # `&` starts a block-parameter slot in a definition signature; it
+        # cannot be an input type continuing an unbraced proc annotation.
+        # Therefore the preceding comma is a parameter separator even when
+        # the block annotation contains a later top-level `->`.
+        if next_byte == '{'.ord.to_u8 || next_byte == '&'.ord.to_u8
+          return false
+        end
       end
 
       while i + 1 < source.bytesize
@@ -74189,6 +74564,12 @@ module Adamas::HIR
       end
       return base if base.includes?('(')
 
+      if base.includes?("::")
+        if nested_short_base = exact_unambiguous_nested_short_template_base(base)
+          return nested_short_base
+        end
+      end
+
       unless base.includes?("::")
         _, lookup_base = resolve_generic_base_names(base)
         if @generic_templates.has_key?(lookup_base)
@@ -74206,6 +74587,40 @@ module Adamas::HIR
       base
     end
 
+    # Recover a qualified owner whose generic template was transported under
+    # its short source spelling. This is not suffix matching: the semantic
+    # nesting sidecar must prove the exact parent -> leaf edge, the leaf must
+    # not also be a top-level type, and no second normalized owner may claim
+    # the same short template.
+    private def exact_unambiguous_nested_short_template_base(base : String) : String?
+      separator_idx = base.rindex("::")
+      return nil unless separator_idx
+      parent = base[0, separator_idx.not_nil!]
+      leaf = base[(separator_idx.not_nil! + 2)..]
+      return nil unless leaf
+      leaf = leaf.not_nil!
+      return nil if parent.empty? || leaf.empty?
+      return nil unless @generic_templates.has_key?(leaf)
+      return nil if safe_set_includes?(@top_level_type_names, leaf)
+
+      parent_base = strip_generic_args(parent)
+      exact_nested = @nested_type_names[parent]? || @nested_type_names[parent_base]?
+      return nil unless exact_nested && safe_set_includes?(exact_nested.not_nil!, leaf)
+
+      unique_owner = nil.as(String?)
+      @nested_type_names.each do |owner_name, nested_names|
+        next unless safe_set_includes?(nested_names, leaf)
+        normalized_owner = strip_generic_args(owner_name)
+        if existing_owner = unique_owner
+          return nil unless existing_owner == normalized_owner
+        else
+          unique_owner = normalized_owner
+        end
+      end
+      return nil unless unique_owner == parent_base
+      leaf
+    end
+
     @[NoInline]
     private def generic_owner_info(owner : String) : GenericOwnerInfo?
       if @generic_owner_info_cache_gen != @subst_cache_gen
@@ -74216,7 +74631,9 @@ module Adamas::HIR
         return @generic_owner_info_cache[owner]
       end
 
-      info = split_generic_base_and_args(owner)
+      root_qualified = owner.starts_with?("::")
+      lookup_owner = root_qualified ? owner[2..].not_nil! : owner
+      info = split_generic_base_and_args(lookup_owner)
       unless info
         @generic_owner_info_cache[owner] = nil
         return nil
@@ -74272,6 +74689,7 @@ module Adamas::HIR
       end
 
       resolved_owner = "#{base}(#{substituted_args.join(", ")})"
+      resolved_owner = "::#{resolved_owner}" if root_qualified
       result = GenericOwnerInfo.new(base: template_base, owner: resolved_owner, args: substituted_args, map: map)
       @generic_owner_info_cache[owner] = result
       result
