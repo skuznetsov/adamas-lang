@@ -33846,6 +33846,14 @@ module Adamas::HIR
           next if call_type == TypeRef::VOID
           if param_type == TypeRef::VOID
             allocator_params[idx] = {param_name, call_type}
+          elsif is_union_or_nilable_type?(param_type) &&
+                call_type != param_type &&
+                get_union_member_variant_id(param_type, call_type) >= 0
+            # This overload is named from the concrete call shape. Keep its HIR
+            # parameters equally concrete; otherwise a `$String` allocator can
+            # silently forward a `Nil | String` value and bootstrap lowering may
+            # select the Nil specialization for an actually present receiver.
+            allocator_params[idx] = {param_name, call_type}
           end
         end
         # Append extra call_arg_types that exceed init_params size (overloaded constructor
@@ -33906,7 +33914,7 @@ module Adamas::HIR
       dead_init_func : Adamas::HIR::Function? = nil
       if env_has?("ADAMAS_SKIP_DEAD_DEFAULT_INIT")
         if di_base = resolve_method_with_inheritance(class_name, "initialize")
-          di_types = allocator_initializer_param_types(class_name, allocator_params, call_arg_types)
+          di_types = allocator_initializer_param_types(class_name, allocator_params, call_arg_types, true)
           di_name = matched_init_name || mangle_function_name(di_base, di_types, call_has_block)
           lower_function_if_needed(di_name)
           dead_init_func = @module.function_by_name(di_name)
@@ -34012,20 +34020,25 @@ module Adamas::HIR
 
       init_base_name = resolve_method_with_inheritance(class_name, "initialize")
       if init_base_name
-        init_param_types = allocator_initializer_param_types(class_name, allocator_params, call_arg_types)
+        init_param_types = allocator_initializer_param_types(class_name, allocator_params, call_arg_types, true)
         init_name = matched_init_name || mangle_function_name(init_base_name, init_param_types, call_has_block)
-        if matched_init_name && matched_init_name.not_nil!.includes?("$arity") &&
+        specializes_declared_union = init_param_types.each_with_index.any? do |init_type, idx|
+          next false if idx >= init_params.size
+          declared_type = init_params[idx][1]
+          init_type != TypeRef::VOID && init_type != declared_type &&
+            is_union_or_nilable_type?(declared_type) &&
+            get_union_member_variant_id(declared_type, init_type) >= 0
+        end
+        if matched_init_name &&
+           (matched_init_name.not_nil!.includes?("$arity") || specializes_declared_union) &&
            !init_param_types.empty? && init_param_types.none? { |t| t == TypeRef::VOID }
           typed_init_name = mangle_function_name(init_base_name, init_param_types, call_has_block)
-          # Preserve the resolver's selected constructor when a typed spelling
-          # already belongs to a different overload.  A positional, untyped
-          # initializer may be selected under `$arityN`, while a protected
-          # named-only initializer with the same concrete type has a `$Type`
-          # symbol.  Re-mangling the selected `$arityN` def to `$Type` loses
-          # the separator/external-name/visibility contract and dispatches the
-          # positional allocator into the protected overload.  A typed spelling
-          # is safe only when it is absent (a specialization to materialize) or
-          # points at the exact selected DefNode with the same visibility.
+          # Preserve the resolver's selected constructor identity when a typed
+          # spelling already belongs to a different overload. Re-mangling is
+          # safe only when the specialization is absent or points at the exact
+          # selected DefNode with the same visibility. This applies both to
+          # `$arityN` fallbacks and declared union overloads specialized for a
+          # concrete call variant.
           typed_def = @function_defs[typed_init_name]?
           selected_visibility = function_visibility(matched_init_name.not_nil!)
           typed_visibility = function_visibility(typed_init_name)
@@ -34092,6 +34105,7 @@ module Adamas::HIR
       class_name : String,
       allocator_params : Array({String, TypeRef}),
       call_arg_types : Array(TypeRef)?,
+      specialize_union_variants : Bool = false,
     ) : Array(TypeRef)
       init_param_types = allocator_params.map { |_, t| t }
       declared_params = @init_params[class_name]? || [] of {String, TypeRef}
@@ -34110,7 +34124,10 @@ module Adamas::HIR
                     end
 
         if is_union_or_nilable_type?(decl_type)
-          if param_type == decl_type || call_type == decl_type || get_union_variant_id(decl_type, call_type) >= 0
+          if specialize_union_variants && call_type != TypeRef::VOID && call_type != decl_type &&
+             get_union_member_variant_id(decl_type, call_type) >= 0
+            init_param_types[idx] = call_type
+          elsif param_type == decl_type || call_type == decl_type || get_union_variant_id(decl_type, call_type) >= 0
             init_param_types[idx] = decl_type
           end
         elsif param_type == TypeRef::VOID

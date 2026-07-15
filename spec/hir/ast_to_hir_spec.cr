@@ -4760,6 +4760,91 @@ describe Adamas::HIR::AstToHir do
       open_init_calls.first.not_nil!.args.size.should eq(1)
     end
 
+    it "keeps a concrete optional tail type when forwarding allocator overloads" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class ReceiverCarrier
+          def initialize(prefix : Int32, receiver : String? = nil)
+            @prefix = prefix
+            @receiver = receiver
+          end
+        end
+
+        ReceiverCarrier.new(1, "self")
+        ReceiverCarrier.new(2, nil)
+        ReceiverCarrier.new(3)
+      CRYSTAL
+
+      allocator = converter.module.function_by_name("ReceiverCarrier.new$Int32_String")
+      allocator.should_not be_nil
+      allocator.not_nil!.params[0].type.should eq(Adamas::HIR::TypeRef::INT32)
+      allocator.not_nil!.params[1].type.should eq(Adamas::HIR::TypeRef::STRING)
+      init_calls = allocator.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call).try do |call|
+          call if call.method_name.includes?("ReceiverCarrier#initialize")
+        end
+      end
+
+      init_calls.size.should eq(1)
+      init_calls.first.not_nil!.method_name.should eq(
+        "ReceiverCarrier#initialize$Int32_String"
+      )
+
+      nil_allocator = converter.module.function_by_name("ReceiverCarrier.new$Int32_Nil")
+      nil_allocator.should_not be_nil
+      nil_call = nil_allocator.not_nil!.blocks.flat_map(&.instructions).find do |instruction|
+        instruction.as?(Adamas::HIR::Call).try(&.method_name.includes?("ReceiverCarrier#initialize"))
+      end
+      nil_call.should_not be_nil
+      nil_call.not_nil!.as(Adamas::HIR::Call).method_name.should eq(
+        "ReceiverCarrier#initialize$Int32_Nil"
+      )
+
+      default_allocator = converter.module.function_by_name("ReceiverCarrier.new$Int32")
+      default_allocator.should_not be_nil
+      default_call = default_allocator.not_nil!.blocks.flat_map(&.instructions).find do |instruction|
+        instruction.as?(Adamas::HIR::Call).try(&.method_name.includes?("ReceiverCarrier#initialize"))
+      end
+      default_call.should_not be_nil
+      default_call.not_nil!.as(Adamas::HIR::Call).method_name.should eq(
+        "ReceiverCarrier#initialize$Int32_Nil | String"
+      )
+    end
+
+    it "does not retarget a positional nilable initializer into a named-only collision" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class OptionalCollision
+          def initialize(value : String?)
+            @marker = 7
+          end
+
+          protected def initialize(*, value : String)
+            @marker = 99
+          end
+        end
+
+        OptionalCollision.new("self")
+      CRYSTAL
+
+      allocator = converter.module.function_by_name("OptionalCollision.new$String")
+      allocator.should_not be_nil
+      init_calls = allocator.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call).try do |call|
+          call if call.method_name.includes?("OptionalCollision#initialize")
+        end
+      end
+      init_calls.size.should eq(1)
+      init_calls.first.not_nil!.method_name.should eq(
+        "OptionalCollision#initialize$Nil | String"
+      )
+
+      positional_init = converter.module.function_by_name(
+        "OptionalCollision#initialize$Nil | String"
+      )
+      positional_init.should_not be_nil
+      hir_text(positional_init.not_nil!).should contain("literal 7")
+      hir_text(positional_init.not_nil!).should_not contain("literal 99")
+    end
+
     it "preserves named constructor identity through allocator overload lookup" do
       converter = lower_program_with_main(<<-CRYSTAL)
         class SetShape(T)

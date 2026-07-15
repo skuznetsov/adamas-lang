@@ -36,6 +36,24 @@ default order and under seed 6003. This does not admit the adjacent nilable-tail
 ABI specialization, enum provenance, constructor source-order, indexed-loop,
 or LLVM carrier changes that remain dirty and independently unverified.
 
+VERIFIED ALLOCATOR OPTIONAL-TAIL HIR SLICE (bootstrap effect still open): a
+generated allocator overload named from a concrete member of a declared union
+kept the declared union in its own HIR parameter and forwarded call spelling.
+On clean `97fb159d` plus only the two focused examples, the concrete
+`String` case was RED (`TypeRef::STRING` expected, union id 33 observed).
+Allocator overload parameters now specialize only when the call type is an
+actual direct union member; initializer spelling follows the same bounded
+rule, while a colliding typed name is reused only when it retains the selected
+`DefNode` identity and visibility. Concrete String, Nil, omitted-default, and
+named-only collision cases pass. The isolated B-ABI-only HIR file passes 252
+examples with 0 failures/errors and 2 existing pending in default order and
+under `--order 6003`; `git diff --check` is clean. A separately rebuilt host
+compiler also passes the no-prelude optional-tail reducer, but the clean host
+already passed it. Therefore the reducer is a non-regression signal, not a
+RED-to-GREEN runtime oracle. Dynamic union values, larger unions, inheritance,
+and splat interactions remain unproven, and no produced-stage or s1-to-s2
+bootstrap claim is made from this internal HIR-shape correction.
+
 CURRENT CHANGE — concrete value-owner and class-header admission (bounded,
 2026-07-14): the root cause crossed the HIR→MIR boundary. HIR final virtual
 repair could admit concrete value owners through stale `ClassInfo.is_struct`

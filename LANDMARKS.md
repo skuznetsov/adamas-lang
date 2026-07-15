@@ -16839,3 +16839,37 @@ argument binding, enum identity, indexed-loop stability, LLVM default-argument
 carrier expansion, or any produced bootstrap stage. Those remain separate
 falsifier-backed slices. {F/G/R: 0.96/0.52/0.95} [isolated HIR state contract
 verified; produced bootstrap successor open]
+
+### LM-683 - Concrete allocator union members retain concrete HIR spelling
+
+Allocator overload names were derived from the concrete call shape, but their
+HIR parameters and initializer forwarding could still retain the initializer's
+declared union. The mismatch made a `$String` allocator carry `Nil | String`
+internally and left generated-stage lowering free to choose a different union
+specialization from the symbol spelling.
+
+The bounded rule now specializes an allocator parameter only when the call
+type is an exact direct member of the declared union. Initializer parameter
+selection uses the same direct-member predicate. Re-mangling a selected
+initializer remains guarded by base-name, `DefNode` identity, and visibility,
+so an unrelated named-only typed overload cannot capture the positional call.
+
+Falsifier evidence was isolated from all other dirty bootstrap work. Starting
+from `97fb159d` with only the two B-ABI specs, the concrete optional-tail case
+was RED: the allocator expected `TypeRef::STRING` but carried union id 33. The
+named-only collision negative already passed before the change. Applying only
+the five B-ABI production hunks made both focused examples GREEN. The complete
+isolated HIR file passed 252 examples with zero failures/errors and two
+existing pending in default order and under random order seed 6003. A
+separate-cache host compiler build succeeded and the no-prelude runtime guard
+printed `defnode_receiver_optional_tail_bootstrap_ok` both before and after the
+change.
+
+Adversary and value-proxy boundary: the internal HIR ABI-shape contract is
+ROBUST for concrete String, Nil/default, and the tested named-only collision.
+The runtime guard was never RED under the original-built host, so it does not
+prove bootstrap value. Dynamic nilable values, larger unions, inherited and
+splat constructors, and produced bootstrap stages remain unverified. The next
+authoritative counter-metric is a fresh current-source s1-to-s2 transition, not
+another host-only repetition. {F/G/R: 0.95/0.43/0.93} [isolated HIR contract
+verified; bootstrap effect open]
