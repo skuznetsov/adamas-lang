@@ -366,6 +366,25 @@ class Adamas::HIR::AstToHir
     resolved.try(&.[0])
   end
 
+  def __test_allocator_initializer_direct_shape_compatible?(
+    name : String,
+    callsite_types : Array(Adamas::HIR::TypeRef),
+    call_has_block : Bool = false,
+    call_has_named_args : Bool = false,
+    call_named_arg_names : Array(String)? = nil,
+  ) : Bool
+    def_node = @function_defs[name]?
+    return false unless def_node
+    allocator_initializer_direct_shape_compatible?(
+      name,
+      def_node,
+      callsite_types,
+      call_has_block,
+      call_has_named_args,
+      call_named_arg_names,
+    )
+  end
+
   def __test_allocator_initializer_def_name_for_base(
     init_base_name : String,
     init_name : String,
@@ -5151,6 +5170,10 @@ describe Adamas::HIR::AstToHir do
 
       positional_name = "CorruptLate#initialize$Int32"
       converter.__test_corrupt_function_def_param_type(positional_name, "Nil")
+      converter.__test_allocator_initializer_direct_shape_compatible?(
+        positional_name,
+        [Adamas::HIR::TypeRef::INT32],
+      ).should be_false
       converter.__test_allocator_initializer_def_name(
         "CorruptLate",
         positional_name,
