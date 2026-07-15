@@ -23318,10 +23318,16 @@ module Adamas::MIR
           arg_type_ref = @value_types[arg_id]? || TypeRef::POINTER
           arg_llvm = @type_mapper.llvm_type(arg_type_ref)
           param_llvm = @type_mapper.llvm_type(callee_func.params[param_idx].type)
+          arg_type_info = @module.type_registry.get(arg_type_ref)
+          arg_is_struct_carrier = !!(arg_type_info &&
+            arg_type_info.size > 0 &&
+            (arg_type_info.kind == TypeKind::Struct || arg_type_info.kind == TypeKind::Tuple))
 
-          # Check if arg is a ptr but callee expects a scalar — struct expansion needed.
-          # The ptr arg points to inline struct data whose fields match consecutive params.
-          if arg_llvm == "ptr" && param_llvm != "ptr" && !param_llvm.includes?(".union") &&
+          # Only actual inline struct/tuple carriers may be expanded. Nil and
+          # ordinary references also use the ptr ABI; expanding either reads
+          # object/null memory as fields and shifts every later argument.
+          if arg_is_struct_carrier && arg_llvm == "ptr" &&
+             param_llvm != "ptr" && !param_llvm.includes?(".union") &&
              param_idx + extra_params < param_count
             # Count how many consecutive scalar params could come from this struct.
             # Stop when we hit a ptr or union param (that's the next real arg).

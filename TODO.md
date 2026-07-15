@@ -70,6 +70,22 @@ materialization are dependency-coupled; ternary phi propagation is a separate
 transaction. No direct no-prelude generated-stage reducer was found, so no
 bootstrap transition is claimed from these HIR proofs.
 
+VERIFIED LLVM DEFAULT-ARG CARRIER SLICE (bootstrap effect still open): omitted
+default arguments triggered a pointer-to-scalar expansion based only on LLVM
+types. `Nil`, references, raw pointers, and actual inline structs all share the
+`ptr` ABI, so the old rule could read null/object memory as flattened fields and
+shift every later argument. On clean `6b9ac1dd` plus tests only, a Nil carrier
+was RED with generated `struct_expand` loads from `%owner_nil`, and a zero-sized
+Struct was independently RED; the nonzero Struct positive was already GREEN.
+Expansion now requires registry-backed nonzero `Struct` or `Tuple` identity in
+addition to the existing LLVM/gap checks. All three focused cases pass and the
+complete LLVM backend spec passes 84 examples with 0 failures/errors. MIR
+NamedTuple maps to Tuple; Reference, Pointer, Union, Nil/Void, and unregistered
+pointers are excluded. StaticArray normally remains a zero-sized Struct with
+dedicated layout and is excluded, but a future nonzero StaticArray or malformed
+Struct/Tuple descriptor is residual taxonomy risk. No bootstrap stage is
+claimed from this backend-local proof.
+
 CURRENT CHANGE — concrete value-owner and class-header admission (bounded,
 2026-07-14): the root cause crossed the HIR→MIR boundary. HIR final virtual
 repair could admit concrete value owners through stale `ClassInfo.is_struct`

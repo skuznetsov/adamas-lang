@@ -953,6 +953,120 @@ describe Adamas::MIR::LLVMIRGenerator do
       body.should_not contain("inttoptr i32 %self")
     end
 
+    it "does not expand a nil pointer as a struct when default call arguments are omitted" do
+      mod = Adamas::MIR::Module.new("nil_default_call_args")
+
+      callee = mod.create_function("context_new", Adamas::MIR::TypeRef::POINTER)
+      callee.add_param("variables", Adamas::MIR::TypeRef::POINTER)
+      callee.add_param("macro_vars", Adamas::MIR::TypeRef::POINTER)
+      callee.add_param("owner_type", Adamas::MIR::TypeRef::NIL)
+      callee.add_param("depth", Adamas::MIR::TypeRef::INT32)
+      callee.add_param("flags", Adamas::MIR::TypeRef::POINTER)
+      callee.add_param("block_id", Adamas::MIR::TypeRef::NIL)
+      callee.add_param("scope", Adamas::MIR::TypeRef::POINTER, "nil")
+      callee.add_param("preserve", Adamas::MIR::TypeRef::BOOL, "false")
+      callee_builder = Adamas::MIR::Builder.new(callee)
+      callee_builder.ret(0_u32)
+
+      caller = mod.create_function("call_context_new", Adamas::MIR::TypeRef::POINTER)
+      caller.add_param("variables", Adamas::MIR::TypeRef::POINTER)
+      caller.add_param("macro_vars", Adamas::MIR::TypeRef::POINTER)
+      # Nil literals are carried as null pointers before the callee signature
+      # re-establishes the semantic Nil type.
+      caller.add_param("owner_nil", Adamas::MIR::TypeRef::POINTER)
+      caller.add_param("depth", Adamas::MIR::TypeRef::INT32)
+      caller.add_param("flags", Adamas::MIR::TypeRef::POINTER)
+      caller.add_param("block_nil", Adamas::MIR::TypeRef::POINTER)
+      caller_builder = Adamas::MIR::Builder.new(caller)
+      call = caller_builder.call(
+        callee.id,
+        [0_u32, 1_u32, 2_u32, 3_u32, 4_u32, 5_u32],
+        Adamas::MIR::TypeRef::POINTER,
+      )
+      caller_builder.ret(call)
+
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
+      gen.emit_type_metadata = false
+      output = gen.generate
+
+      body = output[/define ptr @call_context_new\([^)]*\)\s*\{.*?\n\}/m]
+      body.should_not be_nil
+      body = body.not_nil!
+      body.should_not contain("struct_expand")
+      body.should contain(
+        "call ptr @context_new(ptr %variables, ptr %macro_vars, ptr %owner_nil, " \
+        "i32 %depth, ptr %flags, ptr %block_nil, ptr null, i1 0)"
+      )
+    end
+
+    it "still expands a registered struct carrier for a flattened callee" do
+      mod = Adamas::MIR::Module.new("struct_default_call_args")
+      pair_type = mod.type_registry.create_type(
+        Adamas::MIR::TypeKind::Struct,
+        "Pair",
+        8_u64,
+        4_u32,
+      )
+
+      callee = mod.create_function("flattened_pair", Adamas::MIR::TypeRef::POINTER)
+      callee.add_param("left", Adamas::MIR::TypeRef::INT32)
+      callee.add_param("right", Adamas::MIR::TypeRef::INT32)
+      callee.add_param("tail", Adamas::MIR::TypeRef::POINTER, "nil")
+      callee_builder = Adamas::MIR::Builder.new(callee)
+      callee_builder.ret(2_u32)
+
+      caller = mod.create_function("call_flattened_pair", Adamas::MIR::TypeRef::POINTER)
+      caller.add_param("pair", Adamas::MIR::TypeRef.new(pair_type.id))
+      caller_builder = Adamas::MIR::Builder.new(caller)
+      call = caller_builder.call(callee.id, [0_u32], Adamas::MIR::TypeRef::POINTER)
+      caller_builder.ret(call)
+
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
+      gen.emit_type_metadata = false
+      output = gen.generate
+
+      body = output[/define ptr @call_flattened_pair\([^)]*\)\s*\{.*?\n\}/m]
+      body.should_not be_nil
+      body = body.not_nil!
+      body.should contain("%struct_expand.0.val = load i32")
+      body.should contain("%struct_expand.1.val = load i32")
+      body.should contain(
+        "call ptr @flattened_pair(i32 %struct_expand.0.val, " \
+        "i32 %struct_expand.1.val, ptr null)"
+      )
+    end
+
+    it "does not expand a zero-sized struct carrier into scalar fields" do
+      mod = Adamas::MIR::Module.new("zero_struct_default_call_args")
+      empty_type = mod.type_registry.create_type(
+        Adamas::MIR::TypeKind::Struct,
+        "Empty",
+        0_u64,
+        1_u32,
+      )
+
+      callee = mod.create_function("flattened_empty", Adamas::MIR::TypeRef::POINTER)
+      callee.add_param("left", Adamas::MIR::TypeRef::INT32)
+      callee.add_param("right", Adamas::MIR::TypeRef::INT32)
+      callee.add_param("tail", Adamas::MIR::TypeRef::POINTER, "nil")
+      callee_builder = Adamas::MIR::Builder.new(callee)
+      callee_builder.ret(2_u32)
+
+      caller = mod.create_function("call_flattened_empty", Adamas::MIR::TypeRef::POINTER)
+      caller.add_param("empty", Adamas::MIR::TypeRef.new(empty_type.id))
+      caller_builder = Adamas::MIR::Builder.new(caller)
+      call = caller_builder.call(callee.id, [0_u32], Adamas::MIR::TypeRef::POINTER)
+      caller_builder.ret(call)
+
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
+      gen.emit_type_metadata = false
+      output = gen.generate
+
+      body = output[/define ptr @call_flattened_empty\([^)]*\)\s*\{.*?\n\}/m]
+      body.should_not be_nil
+      body.not_nil!.should_not contain("struct_expand")
+    end
+
     it "lowers abstract Int#to_s(IO, ...) on scalar receivers via concrete to_s plus String#to_s(IO)" do
       mod = Adamas::MIR::Module.new("test")
 

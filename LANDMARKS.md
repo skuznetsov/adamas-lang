@@ -16921,3 +16921,31 @@ seed-6003 runs pass 259 examples with zero failures/errors and two pending.
 Adversary boundary: this proves ternary HIR propagation only. Other merges and
 produced bootstrap stages remain outside the certificate. {F/G/R:
 0.97/0.44/0.95} [ternary enum identity verified; bootstrap effect open]
+
+### LM-686 - Default-argument expansion requires an inline aggregate carrier
+
+The LLVM call emitter filled omitted default parameters after first trying to
+expand any pointer-valued argument when the callee expected scalar parameters.
+That predicate confused the shared `ptr` ABI with storage identity: Nil,
+references, raw pointers, and inline aggregate carriers all look like pointers
+to LLVM, but only the aggregate may be read as consecutive fields.
+
+The expansion gate now requires a registry-backed, nonzero `Struct` or `Tuple`
+in addition to the existing pointer/scalar, union, gap, and field-count checks.
+Nil/Void, Reference/class, Pointer, Union, unregistered fallback pointers, and
+zero-sized structs fail closed. NamedTuple uses MIR `TypeKind::Tuple` and follows
+the tuple path; StaticArray normally uses a zero-sized Struct descriptor plus
+dedicated layout and remains excluded.
+
+In an isolated clean-`6b9ac1dd` test-first run, the Nil example was RED because
+the generated body loaded `struct_expand` fields from `%owner_nil` and shifted
+later arguments. The zero-sized Struct example was also RED with two expansion
+loads. A nonzero Struct positive was GREEN before the change and remained
+GREEN. With only the backend hunk, all three focused examples pass and the full
+LLVM backend spec passes 84 examples with zero failures/errors.
+
+Adversary boundary: the current matrix is ROBUST, but the classifier is still
+taxonomy-based. A future nonzero StaticArray or a malformed/non-carrier
+Struct/Tuple descriptor could be over-included; hypothetical StaticArray
+flattening remains unsupported. No produced-stage bootstrap effect is proven.
+{F/G/R: 0.97/0.51/0.95} [backend carrier gate verified; bootstrap effect open]
