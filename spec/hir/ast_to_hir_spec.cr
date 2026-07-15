@@ -102,6 +102,23 @@ class Adamas::HIR::AstToHir
     function
   end
 
+  def __test_lower_array_index_block_dynamic_with_stale_param(
+    block : Adamas::Compiler::Frontend::BlockNode,
+    block_arena : Adamas::Compiler::Frontend::ArenaLike,
+  ) : Adamas::HIR::Function
+    self.arena = block_arena
+    function = @module.create_function("__test_array_index_block_stale_param", Adamas::HIR::TypeRef::NIL)
+    ctx = Adamas::HIR::LoweringContext.new(function, @module, block_arena)
+    element = Adamas::HIR::Literal.new(ctx.next_id, Adamas::HIR::TypeRef::INT32, 0_i64)
+    ctx.emit(element)
+    ctx.register_type(element.id, Adamas::HIR::TypeRef::INT32)
+    array = Adamas::HIR::ArrayLiteral.new(ctx.next_id, Adamas::HIR::TypeRef::INT32, [element.id])
+    ctx.emit(array)
+    ctx.register_type(array.id, type_ref_for_name("Array(Int32)"))
+    lower_array_index_block_dynamic(ctx, array.id, block)
+    function
+  end
+
   def __test_rebind_stale_box_same_type(
     arena : Adamas::Compiler::Frontend::ArenaLike,
     target_expr : Adamas::Compiler::Frontend::ExprId,
@@ -198,6 +215,14 @@ class Adamas::HIR::AstToHir
 
   def __test_get_type_name_from_ref(type_ref : Adamas::HIR::TypeRef) : String
     get_type_name_from_ref(type_ref)
+  end
+
+  def __test_union_variant_id(union_type : Adamas::HIR::TypeRef, variant_type : Adamas::HIR::TypeRef) : Int32
+    get_union_variant_id(union_type, variant_type)
+  end
+
+  def __test_array_index_union_variant_ids(type_name : String) : Tuple(Int32, Int32)
+    array_index_union_variant_ids(type_ref_for_name(type_name))
   end
 
   def __test_case_subject_cached_method_result?(
@@ -1510,6 +1535,118 @@ describe Adamas::HIR::AstToHir do
       text.should_not contain("local \"variant\" : Void")
       text.should_not contain("local \"variant\" : 0")
       text.should contain("index_get")
+    end
+
+    it "lowers zero-argument Array#index block form as an Int32 search loop" do
+      source = "values.index { |variant| variant == 1 }"
+      owner_arena, owner_exprs = parse(source)
+      call = owner_arena[owner_exprs.first].as(Adamas::Compiler::Frontend::CallNode)
+      block = owner_arena[call.block.not_nil!].as(Adamas::Compiler::Frontend::BlockNode)
+      original_param = block.params.not_nil!.first
+      block.params.not_nil![0] = Adamas::Compiler::Frontend::Parameter.new(
+        "wrong".to_slice,
+        span: original_param.span,
+        name_span: original_param.name_span,
+      )
+
+      sources = {owner_arena.object_id.to_u64 => source}
+      converter = Adamas::HIR::AstToHir.new(owner_arena, sources_by_arena: sources)
+      function = converter.__test_lower_array_index_block_dynamic_with_stale_param(block, owner_arena)
+      instructions = function.blocks.flat_map(&.instructions)
+      phis = instructions.compact_map { |instruction| instruction.as?(Adamas::HIR::Phi) }
+      phis.any? { |phi| phi.type == Adamas::HIR::TypeRef::INT32 }.should be_true
+      result_phis = phis.select do |phi|
+        converter.__test_get_type_name_from_ref(phi.type) == "Nil | Int32"
+      end
+      result_phis.should_not be_empty
+      result_phis.any? { |phi| phi.incoming_size == 2 }.should be_true
+      result_type = converter.__test_type_ref_for_name("Nil | Int32")
+      nil_variant = converter.__test_union_variant_id(result_type, Adamas::HIR::TypeRef::NIL)
+      int_variant = converter.__test_union_variant_id(result_type, Adamas::HIR::TypeRef::INT32)
+      nil_variant.should be >= 0
+      int_variant.should be >= 0
+      nil_variant.should_not eq(int_variant)
+      instructions.compact_map { |instruction| instruction.as?(Adamas::HIR::Call) }
+        .none? { |call| call.method_name.includes?("#index") }
+        .should be_true
+    end
+
+    it "dispatches Array#index block form before Indexable expansion" do
+      converter = lower_program_with_sources(<<-CRYSTAL)
+        def probe(values : Array(Int32)) : Int32?
+          values.index { |element| element == 1 }
+        end
+      CRYSTAL
+      function = converter.module.functions.find { |candidate| candidate.name.starts_with?("probe") }
+      function.should_not be_nil
+      instructions = function.not_nil!.blocks.flat_map(&.instructions)
+      phis = instructions.compact_map { |instruction| instruction.as?(Adamas::HIR::Phi) }
+      phis.any? { |phi| phi.type == Adamas::HIR::TypeRef::INT32 }.should be_true
+      phis.any? do |phi|
+        converter.__test_get_type_name_from_ref(phi.type) == "Nil | Int32" && phi.incoming_size == 2
+      end.should be_true
+      instructions.compact_map { |instruction| instruction.as?(Adamas::HIR::Call) }
+        .none? { |call| call.method_name.includes?("#index") }
+        .should be_true
+    end
+
+    it "fails closed when the Array#index result union is missing Int32" do
+      converter = Adamas::HIR::AstToHir.new(Adamas::Compiler::Frontend::AstArena.new)
+
+      union_type = converter.__test_type_ref_for_name("Nil | Int32")
+      mir_union_type = Adamas::MIR::TypeRef.from_hir(union_type)
+      descriptor = converter.union_descriptors[mir_union_type].not_nil!
+      poisoned = Adamas::MIR::UnionDescriptor.new(
+        descriptor.name,
+        descriptor.variants.reject { |variant| variant.full_name == "Int32" },
+        descriptor.total_size,
+        descriptor.alignment,
+      )
+      converter.union_descriptors[mir_union_type] = poisoned
+      converter.union_descriptor_entries << Adamas::HIR::UnionDescriptorRegistration.new(mir_union_type, poisoned)
+
+      expect_raises(Adamas::HIR::LoweringError, /missing Nil and Int32/) do
+        converter.__test_array_index_union_variant_ids("Nil | Int32")
+      end
+    end
+
+    it "keeps StaticArray#index on the ordinary path instead of dynamic ArraySize" do
+      converter = lower_program_with_sources(<<-CRYSTAL)
+        def probe(values : StaticArray(Int32, 2)) : Int32?
+          values.index { |element| element == 1 }
+        end
+      CRYSTAL
+      function = converter.module.functions.find { |candidate| candidate.name.starts_with?("probe") }
+      function.should_not be_nil
+      instructions = function.not_nil!.blocks.flat_map(&.instructions)
+      instructions.count { |instruction| instruction.is_a?(Adamas::HIR::ArraySize) }.should eq(0)
+      instructions.compact_map { |instruction| instruction.as?(Adamas::HIR::Call) }
+        .any? { |call| call.method_name.includes?("#index") }
+        .should be_true
+    end
+
+    it "materializes a side-effecting Array#index block receiver exactly once" do
+      converter = lower_program_with_sources(<<-CRYSTAL)
+        class ProbeReceiver
+          def index(&block : Int32 -> Bool) : Int32?
+            nil
+          end
+        end
+
+        def receiver : ProbeReceiver
+          ProbeReceiver.new
+        end
+
+        def probe : Int32?
+          receiver.index { |element| element == 1 }
+        end
+      CRYSTAL
+      function = converter.module.functions.find { |candidate| candidate.name.starts_with?("probe") }
+      function.should_not be_nil
+      value_calls = function.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.select { |call| call.method_name.starts_with?("receiver") }
+      value_calls.size.should eq(1)
     end
   end
 

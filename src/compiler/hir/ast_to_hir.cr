@@ -55509,6 +55509,32 @@ module Adamas::HIR
       nil
     end
 
+    # Read one union discriminator from the authoritative append-only sidecar.
+    # This deliberately has no textual/positional or pointer-like fallback:
+    # Array#index must never turn a missing member into an arbitrary tag.
+    private def strict_union_member_variant_id(union_type : TypeRef, value_type : TypeRef) : Int32
+      return -1 if null_type_ref?(union_type) || null_type_ref?(value_type)
+      ensure_union_descriptor_for_type_ref(union_type)
+      descriptor = union_descriptor_from_sidecar(union_type)
+      return -1 unless descriptor
+
+      mir_value_ref = hir_to_mir_type_ref(value_type)
+      descriptor.variants.each do |variant|
+        return variant.type_id if variant.type_ref == mir_value_ref
+      end
+
+      if value_type == TypeRef::NIL || value_type == TypeRef::VOID
+        descriptor.variants.each do |variant|
+          if variant.type_ref == MIR::TypeRef::NIL || variant.type_ref == MIR::TypeRef::VOID ||
+             variant.full_name == "Nil" || variant.full_name == "Void"
+            return variant.type_id
+          end
+        end
+      end
+
+      -1
+    end
+
     # Get variant type_id for a value being assigned to union
     # Returns the declared variant.type_id of the matching variant, or -1 if not found.
     # IMPORTANT: variant array index is not guaranteed to match runtime type_id.
@@ -81772,6 +81798,21 @@ module Adamas::HIR
         end
       end
 
+      # Handle the zero-argument Array#index { |element| predicate } form only
+      # after the common receiver materialization above.  The early path used
+      # to lower `obj_expr` speculatively, then lower it again for ordinary
+      # method resolution when the receiver was not an Array.  Keeping this
+      # dispatch beside the positional index intrinsic guarantees one receiver
+      # evaluation while still allowing non-array receivers to fall through to
+      # their ordinary `#index` implementation.
+      if method_name == "index" && receiver_id && args.empty? && block_expr && node.named_args.nil?
+        blk_node = node_for_call_expr(call_arena, block_expr.not_nil!)
+        if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode) && array_intrinsic_receiver?(ctx, receiver_id)
+          trace_lower_call_arena_expr(ctx, node, "after.array_index_block_read", block_expr.not_nil!, call_arena, "lower_call.call")
+          return lower_array_index_block_dynamic(ctx, receiver_id, blk_node)
+        end
+      end
+
       # Handle Array#sort → dup + sort in-place via qsort
       if method_name == "sort" && receiver_id && args.empty?
         is_array = array_intrinsic_receiver?(ctx, receiver_id)
@@ -91710,7 +91751,7 @@ module Adamas::HIR
             var_type = ctx.type_of(var_val)
             if desc = @module.get_type_descriptor(var_type)
               return desc.kind == TypeKind::Array &&
-                (desc.name.starts_with?("Array(") || desc.name.starts_with?("StaticArray("))
+                desc.name.starts_with?("Array(")
             end
           end
         end
@@ -91729,7 +91770,7 @@ module Adamas::HIR
             var_type = ctx.type_of(var_val)
             if desc = @module.get_type_descriptor(var_type)
               if desc.kind == TypeKind::Array &&
-                 (desc.name.starts_with?("Array(") || desc.name.starts_with?("StaticArray("))
+                 desc.name.starts_with?("Array(")
                 return var_type
               end
             end
@@ -91793,7 +91834,7 @@ module Adamas::HIR
 
       if desc = @module.get_type_descriptor(receiver_type)
         return desc.kind == TypeKind::Array &&
-          (desc.name.starts_with?("Array(") || desc.name.starts_with?("StaticArray("))
+          desc.name.starts_with?("Array(")
       end
 
       false
@@ -93702,6 +93743,18 @@ module Adamas::HIR
       result_phi.id
     end
 
+    # Array#index always returns Nil | Int32.  Resolve both discriminators as
+    # direct union members before emitting any UnionWrap.  A missing member is
+    # a malformed/poisoned descriptor; do not silently reuse tag 0 for it.
+    private def array_index_union_variant_ids(result_type : TypeRef) : Tuple(Int32, Int32)
+      nil_variant = strict_union_member_variant_id(result_type, TypeRef::NIL)
+      int_variant = strict_union_member_variant_id(result_type, TypeRef::INT32)
+      if nil_variant < 0 || int_variant < 0
+        raise LoweringError.new("Array#index result union missing Nil and Int32 members")
+      end
+      {nil_variant, int_variant}
+    end
+
     # Lower Array#index(value) intrinsic.
     # Crystal's Indexable#index contract is Nil | Int32: index if found, nil if not found.
     private def lower_array_index_dynamic(
@@ -93711,6 +93764,7 @@ module Adamas::HIR
     ) : ValueId
       element_type = array_element_type_for_value(ctx, array_id, TypeRef::INT32)
       result_type = create_union_type_for_nullable(TypeRef::INT32)
+      nil_variant, int_variant = array_index_union_variant_ids(result_type)
 
       size_val = ArraySize.new(ctx.next_id, TypeRef::INT32, array_id)
       ctx.emit(size_val)
@@ -93721,8 +93775,7 @@ module Adamas::HIR
       nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
       ctx.emit(nil_lit)
       ctx.register_type(nil_lit.id, TypeRef::NIL)
-      nil_variant = get_union_variant_id(result_type, TypeRef::NIL)
-      nil_wrap = UnionWrap.new(ctx.next_id, result_type, nil_lit.id, nil_variant >= 0 ? nil_variant : 0)
+      nil_wrap = UnionWrap.new(ctx.next_id, result_type, nil_lit.id, nil_variant)
       ctx.emit(nil_wrap)
       ctx.register_type(nil_wrap.id, result_type)
 
@@ -93756,7 +93809,6 @@ module Adamas::HIR
 
       # Found block: return current index
       ctx.current_block = found_block
-      int_variant = get_union_variant_id(result_type, TypeRef::INT32)
       found_wrap = UnionWrap.new(ctx.next_id, result_type, index_phi.id, int_variant)
       ctx.emit(found_wrap)
       ctx.register_type(found_wrap.id, result_type)
@@ -93947,6 +93999,82 @@ module Adamas::HIR
       result.add_incoming(found_block, element.id)
       ctx.emit(result)
       ctx.register_type(result.id, return_type)
+      result.id
+    end
+
+    # Lower the zero-argument Array#index { |x| predicate } form.
+    # Indexable#index's block overload returns Nil | Int32: the first matching
+    # element's index, or nil when no element satisfies the predicate. Keep the
+    # loop and callback inline so stdlib Indexable expansion cannot degrade the
+    # element/index types or re-enter a materialized `#index` call.
+    private def lower_array_index_block_dynamic(
+      ctx : LoweringContext,
+      array_id : ValueId,
+      block : Adamas::Compiler::Frontend::BlockNode,
+    ) : ValueId
+      param_name = first_block_param_name(block, "__arr_elem")
+      element_type = array_element_type_for_value(ctx, array_id, TypeRef::INT32)
+      result_type = create_union_type_for_nullable(TypeRef::INT32)
+      nil_variant, int_variant = array_index_union_variant_ids(result_type)
+
+      entry_block = ctx.current_block
+      zero = Literal.new(ctx.next_id, TypeRef::INT32, 0_i64)
+      ctx.emit(zero)
+      nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+      ctx.emit(nil_lit)
+      ctx.register_type(nil_lit.id, TypeRef::NIL)
+      nil_wrap = UnionWrap.new(ctx.next_id, result_type, nil_lit.id, nil_variant)
+      ctx.emit(nil_wrap)
+      ctx.register_type(nil_wrap.id, result_type)
+
+      cond_block = ctx.create_block
+      body_block = ctx.create_block
+      incr_block = ctx.create_block
+      found_block = ctx.create_block
+      exit_block = ctx.create_block
+      ctx.terminate(Jump.new(cond_block))
+
+      ctx.current_block = cond_block
+      index_phi = Phi.new(ctx.next_id, TypeRef::INT32)
+      index_phi.add_incoming(entry_block, zero.id)
+      ctx.emit(index_phi)
+      size_value = ArraySize.new(ctx.next_id, TypeRef::INT32, array_id)
+      ctx.emit(size_value)
+      has_element = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Lt, index_phi.id, size_value.id)
+      ctx.emit(has_element)
+      ctx.terminate(Branch.new(has_element.id, body_block, exit_block))
+
+      ctx.current_block = body_block
+      ctx.push_scope(ScopeKind::Block)
+      element = IndexGet.new(ctx.next_id, element_type, array_id, index_phi.id)
+      ctx.emit(element)
+      ctx.register_type(element.id, element_type)
+      bind_array_block_element_params(ctx, block, element.id, element_type, param_name)
+
+      predicate_result = lower_array_predicate_block_body(ctx, block)
+      ctx.pop_scope
+      ctx.terminate(Branch.new(predicate_result, found_block, incr_block))
+
+      ctx.current_block = incr_block
+      one = Literal.new(ctx.next_id, TypeRef::INT32, 1_i64)
+      ctx.emit(one)
+      next_index = BinaryOperation.new(ctx.next_id, TypeRef::INT32, BinaryOp::Add, index_phi.id, one.id)
+      ctx.emit(next_index)
+      index_phi.add_incoming(incr_block, next_index.id)
+      ctx.terminate(Jump.new(cond_block))
+
+      ctx.current_block = found_block
+      found_wrap = UnionWrap.new(ctx.next_id, result_type, index_phi.id, int_variant)
+      ctx.emit(found_wrap)
+      ctx.register_type(found_wrap.id, result_type)
+      ctx.terminate(Jump.new(exit_block))
+
+      ctx.current_block = exit_block
+      result = Phi.new(ctx.next_id, result_type)
+      result.add_incoming(cond_block, nil_wrap.id)
+      result.add_incoming(found_block, found_wrap.id)
+      ctx.emit(result)
+      ctx.register_type(result.id, result_type)
       result.id
     end
 
