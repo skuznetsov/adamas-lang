@@ -21,6 +21,21 @@ storage contract only. Production parsing remains forced to `AstArena`, and
 the latest 900-second s1-to-s2 timeout was measured on an older source state;
 neither s2b nor later bootstrap stages are claimed green from this slice.
 
+VERIFIED ALLOCATOR BODY-STATE SLICE (bootstrap successor still open): allocator
+fallbacks previously treated `FunctionLoweringState::Completed` or a
+declaration-only HIR function as proof that an initializer body existed. In an
+isolated HEAD worktree, the typed-initializer reducer was RED because the
+selected initializer remained bodyless, and the abstract-initializer reducer
+was independently RED because a failed rematerialization left stale
+`Completed` state. One shared `rematerialize_missing_function_body` transaction
+now gates all three allocator fallback sites on authoritative body presence,
+marks recursive entry `InProgress`, and keeps `Completed` only when a body was
+actually produced. Both focused examples pass, and the isolated B-state-only
+HIR file passes 250 examples with 0 failures/errors and 2 existing pending in
+default order and under seed 6003. This does not admit the adjacent nilable-tail
+ABI specialization, enum provenance, constructor source-order, indexed-loop,
+or LLVM carrier changes that remain dirty and independently unverified.
+
 CURRENT CHANGE — concrete value-owner and class-header admission (bounded,
 2026-07-14): the root cause crossed the HIR→MIR boundary. HIR final virtual
 repair could admit concrete value owners through stale `ClassInfo.is_struct`

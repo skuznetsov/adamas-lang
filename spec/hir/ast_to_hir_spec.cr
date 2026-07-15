@@ -282,6 +282,29 @@ class Adamas::HIR::AstToHir
     @pending_function_queue.delete(name)
   end
 
+  def __test_mark_lowering_completed(name : String) : Nil
+    @function_lowering_states[name] = FunctionLoweringState::Completed
+  end
+
+  def __test_function_lowering_completed?(name : String) : Bool
+    function_state(name).completed?
+  end
+
+  def __test_lower_allocator_initializer_body(
+    class_name : String,
+    init_name : String,
+    callsite_types : Array(Adamas::HIR::TypeRef),
+  ) : Nil
+    info = @class_info[class_name]
+    lower_allocator_initializer_body(
+      class_name,
+      info,
+      "#{class_name}#initialize",
+      init_name,
+      callsite_types,
+    )
+  end
+
   def __test_repair_missing_concrete_virtual_targets : Int32
     repair_missing_concrete_virtual_targets
   end
@@ -4605,6 +4628,59 @@ describe Adamas::HIR::AstToHir do
   end
 
   describe "allocator lookup recovery" do
+    it "rematerializes a typed initializer body after a completed-state miss" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class RecoveryBox
+          def initialize(value : Int32)
+            @value = value
+          end
+        end
+
+        def build_recovery_box
+          RecoveryBox.new(7)
+        end
+
+        build_recovery_box
+      CRYSTAL
+
+      initializer_defs = converter.__test_function_def_names("RecoveryBox#initialize")
+      initializer_defs.should_not be_empty
+      allocator = converter.module.functions.find { |func| func.name.starts_with?("RecoveryBox.new") }
+      allocator.should_not be_nil
+      init_call = allocator.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call).try { |call| call if call.method_name.starts_with?("RecoveryBox#initialize") }
+      end.first?
+      init_call.should_not be_nil
+      initializer_name = init_call.not_nil!.method_name
+      initializer_defs.should contain(initializer_name)
+      converter.module.has_function_with_body?(initializer_name).should be_true
+    end
+
+    it "clears stale completed state when an abstract initializer has no body" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        abstract class AbstractRecovery
+          abstract def initialize(value : Int32)
+        end
+      CRYSTAL
+
+      initializer_name = converter.__test_function_def_names("AbstractRecovery#initialize").first?
+      initializer_name.should_not be_nil
+      name = initializer_name.not_nil!
+      converter.module.remove_function(name) if converter.module.has_function?(name)
+      converter.module.create_function(name, Adamas::HIR::TypeRef::VOID)
+      converter.module.has_function_with_body?(name).should be_false
+      converter.__test_mark_lowering_completed(name)
+
+      converter.__test_lower_allocator_initializer_body(
+        "AbstractRecovery",
+        name,
+        [Adamas::HIR::TypeRef::INT32],
+      )
+
+      converter.module.has_function_with_body?(name).should be_false
+      converter.__test_function_lowering_completed?(name).should be_false
+    end
+
     it "generates a class allocator for generic zero-arg .new calls" do
       converter = lower_program_with_main(<<-CRYSTAL)
         class Channel(T)

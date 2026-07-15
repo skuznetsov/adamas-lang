@@ -33000,12 +33000,10 @@ module Adamas::HIR
     ) : Nil
       remember_callsite_arg_types(init_name, callsite_init_types) unless callsite_init_types.empty?
       lower_function_if_needed(init_name)
-      # If the init def wasn't lowered (e.g., pending callsite got consumed),
-      # force a direct lower so allocator layout discovery sees ivars assigned
-      # only inside initialize before Class.new is emitted.
-      if !@module.has_function?(init_name) &&
-         !function_state(init_name).in_progress? &&
-         !function_state(init_name).completed?
+      # A declaration-only entry or stale Completed state does not prove that
+      # the initializer body exists. Recover any missing body directly, while
+      # preserving a complete state transaction around the direct fallback.
+      rematerialize_missing_function_body(init_name) do
         init_def = @function_defs[init_name]? || @function_defs[init_base_name]?
         if init_def
           init_arena = @function_def_arenas[init_name]? || @function_def_arenas[init_base_name]?
@@ -33020,6 +33018,22 @@ module Adamas::HIR
           with_arena(init_arena) do
             lower_method(init_defining_class, init_class_info, init_def, callsite_types, nil, nil, init_name)
           end
+        end
+      end
+    end
+
+    private def rematerialize_missing_function_body(name : String, &) : Nil
+      return if @module.has_function_with_body?(name)
+      return if function_state(name).in_progress?
+
+      @function_lowering_states[name] = FunctionLoweringState::InProgress
+      begin
+        yield
+      ensure
+        if @module.has_function_with_body?(name)
+          @function_lowering_states[name] = FunctionLoweringState::Completed
+        else
+          @function_lowering_states.delete(name)
         end
       end
     end
@@ -33471,11 +33485,10 @@ module Adamas::HIR
         callsite_init_types = init_param_types
         remember_callsite_arg_types(init_name, callsite_init_types) unless callsite_init_types.empty?
         lower_function_if_needed(init_name)
-        # If the init def wasn't lowered (e.g., pending callsite got consumed),
-        # force a direct lower so the allocator call has a matching body.
-        if !@module.has_function?(init_name) &&
-           !function_state(init_name).in_progress? &&
-           !function_state(init_name).completed?
+        # A declaration-only entry or stale Completed state does not prove that
+        # the initializer body exists. Recover it through the same state
+        # transaction used by allocator pre-lowering.
+        rematerialize_missing_function_body(init_name) do
           init_def = @function_defs[init_name]? || @function_defs[init_base_name]?
           if init_def
             init_arena = @function_def_arenas[init_name]? || @function_def_arenas[init_base_name]?
@@ -34029,9 +34042,10 @@ module Adamas::HIR
         end
         remember_callsite_arg_types(init_name, init_param_types, nil, nil, call_has_block) unless init_param_types.empty?
         lower_function_if_needed(init_name)
-        if !@module.has_function?(init_name) &&
-           !function_state(init_name).in_progress? &&
-           !function_state(init_name).completed?
+        # Body presence is authoritative: a declaration-only entry or stale
+        # Completed state must still be rematerialized through a guarded state
+        # transaction so recursive calls observe InProgress.
+        rematerialize_missing_function_body(init_name) do
           init_def = matched_init_def || @function_defs[init_name]?
           init_def_name = matched_init_name || (init_def ? init_name : nil)
           unless init_def

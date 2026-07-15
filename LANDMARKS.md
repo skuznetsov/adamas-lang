@@ -16809,3 +16809,33 @@ parser re-admission and not bootstrap completion. Parsing remains intentionally
 forced to `AstArena`; the authoritative s1-to-s2 timeout predates this source
 state and must be remeasured only after the cheap gates justify a heavy run.
 {F/G/R: 0.97/0.54/0.96} [PageArena storage verified; bootstrap successor open]
+
+### LM-682 - Allocator fallback state follows initializer body presence
+
+Allocator pre-lowering and emission had three copies of the same stale-state
+rule: retry only when the initializer symbol was absent and lowering state was
+neither `InProgress` nor `Completed`. A declaration-only function or stale
+`Completed` entry therefore suppressed the direct fallback even though no HIR
+body existed. This could leave allocator calls targeting a bodyless
+initializer and could make a failed abstract rematerialization look complete.
+
+The shared `rematerialize_missing_function_body` transaction uses
+`has_function_with_body?` as authority, refuses recursive `InProgress` entry,
+and marks `Completed` only after a body exists; otherwise it deletes the stale
+state in `ensure`. All three allocator fallback sites now consume this contract.
+
+Falsifier evidence was isolated from the other dirty bootstrap work. Starting
+from `04ef1c69` with only the two new specs, the typed initializer example was
+RED (`expected body true, got false`) and the abstract initializer example was
+RED (`expected completed false, got true`). Applying only the B-state helper,
+three callsite conversions, three test helpers, and those two examples made
+both focused tests GREEN. The complete isolated HIR file passed 250 examples
+with zero failures/errors and two existing pending examples in default order
+and with random seed 6003.
+
+Adversary boundary: this proves allocator body-state recovery only. It does not
+prove concrete forwarding through a nilable optional tail, self-hosted named
+argument binding, enum identity, indexed-loop stability, LLVM default-argument
+carrier expansion, or any produced bootstrap stage. Those remain separate
+falsifier-backed slices. {F/G/R: 0.96/0.52/0.95} [isolated HIR state contract
+verified; produced bootstrap successor open]
