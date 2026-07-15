@@ -2781,6 +2781,10 @@ module Adamas::MIR
         type_ref == TypeRef::UINT128
     end
 
+    private def integer_extension_op(type_ref : TypeRef) : String
+      type_ref == TypeRef::BOOL || unsigned_type_ref?(type_ref) ? "zext" : "sext"
+    end
+
     private def integer_scalar_llvm_type?(llvm_type : String) : Bool
       llvm_type.starts_with?('i') && !llvm_type.includes?(".union")
     end
@@ -23756,26 +23760,29 @@ module Adamas::MIR
                    emit "%trunc_to_i32.#{c} = trunc i64 #{val} to i32"
                    "i32 %trunc_to_i32.#{c}"
                  elsif expected_llvm_type == "i64" && (actual_llvm_type == "i32" || actual_llvm_type == "i16" || actual_llvm_type == "i8")
-                   # Smaller int to i64 - sign extend
+                   # Smaller int to i64 - extend according to the source signedness.
                    val = value_ref(a)
                    c = @cond_counter
                    @cond_counter += 1
-                   emit "%sext_to_i64.#{c} = sext #{actual_llvm_type} #{val} to i64"
-                   "i64 %sext_to_i64.#{c}"
+                   ext_op = integer_extension_op(actual_type)
+                   emit "%int_ext_to_i64.#{c} = #{ext_op} #{actual_llvm_type} #{val} to i64"
+                   "i64 %int_ext_to_i64.#{c}"
                  elsif expected_llvm_type == "i32" && (actual_llvm_type == "i16" || actual_llvm_type == "i8")
-                   # Smaller int to i32 - sign extend
+                   # Smaller int to i32 - extend according to the source signedness.
                    val = value_ref(a)
                    c = @cond_counter
                    @cond_counter += 1
-                   emit "%sext_to_i32.#{c} = sext #{actual_llvm_type} #{val} to i32"
-                   "i32 %sext_to_i32.#{c}"
+                   ext_op = integer_extension_op(actual_type)
+                   emit "%int_ext_to_i32.#{c} = #{ext_op} #{actual_llvm_type} #{val} to i32"
+                   "i32 %int_ext_to_i32.#{c}"
                  elsif expected_llvm_type == "i16" && actual_llvm_type == "i8"
-                   # i8 to i16 - sign extend
+                   # i8 to i16 - extend according to the source signedness.
                    val = value_ref(a)
                    c = @cond_counter
                    @cond_counter += 1
-                   emit "%sext_to_i16.#{c} = sext i8 #{val} to i16"
-                   "i16 %sext_to_i16.#{c}"
+                   ext_op = integer_extension_op(actual_type)
+                   emit "%int_ext_to_i16.#{c} = #{ext_op} i8 #{val} to i16"
+                   "i16 %int_ext_to_i16.#{c}"
                  elsif expected_llvm_type == "i16" && (actual_llvm_type == "i32" || actual_llvm_type == "i64")
                    # Larger int to i16 - truncate
                    val = value_ref(a)
@@ -23798,10 +23805,7 @@ module Adamas::MIR
                      c = @cond_counter
                      @cond_counter += 1
                      if expected_bits > actual_bits
-                       unsigned = param_type == TypeRef::UINT8 || param_type == TypeRef::UINT16 ||
-                                  param_type == TypeRef::UINT32 || param_type == TypeRef::UINT64 ||
-                                  param_type == TypeRef::UINT128
-                       op = unsigned ? "zext" : "sext"
+                       op = integer_extension_op(actual_type)
                        emit "%int_ext.#{c} = #{op} #{actual_llvm_type} #{val} to #{expected_llvm_type}"
                        "#{expected_llvm_type} %int_ext.#{c}"
                      else

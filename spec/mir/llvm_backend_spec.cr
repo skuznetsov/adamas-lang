@@ -739,6 +739,178 @@ describe Adamas::MIR::LLVMIRGenerator do
       body.should_not contain("sitofp i32 %x to double")
     end
 
+    it "extends integer call arguments according to the source signedness" do
+      mod = Adamas::MIR::Module.new("integer_cast_direction")
+
+      takes_i64 = mod.create_function("takes_i64", Adamas::MIR::TypeRef::INT64)
+      takes_i64.add_param("value", Adamas::MIR::TypeRef::INT64)
+      Adamas::MIR::Builder.new(takes_i64).ret(
+        Adamas::MIR::Builder.new(takes_i64).const_int(0_i64, Adamas::MIR::TypeRef::INT64)
+      )
+
+      takes_u64 = mod.create_function("takes_u64", Adamas::MIR::TypeRef::UINT64)
+      takes_u64.add_param("value", Adamas::MIR::TypeRef::UINT64)
+      Adamas::MIR::Builder.new(takes_u64).ret(
+        Adamas::MIR::Builder.new(takes_u64).const_uint(0_u64, Adamas::MIR::TypeRef::UINT64)
+      )
+
+      signed_to_unsigned = mod.create_function("signed_to_unsigned", Adamas::MIR::TypeRef::UINT64)
+      signed_to_unsigned.add_param("value", Adamas::MIR::TypeRef::INT8)
+      signed_builder = Adamas::MIR::Builder.new(signed_to_unsigned)
+      signed_call = signed_builder.call(
+        takes_u64.id,
+        ([0_u32] of Adamas::MIR::ValueId),
+        Adamas::MIR::TypeRef::UINT64
+      )
+      signed_builder.ret(signed_call)
+
+      unsigned_to_signed = mod.create_function("unsigned_to_signed", Adamas::MIR::TypeRef::INT64)
+      unsigned_to_signed.add_param("value", Adamas::MIR::TypeRef::UINT8)
+      unsigned_builder = Adamas::MIR::Builder.new(unsigned_to_signed)
+      unsigned_call = unsigned_builder.call(
+        takes_i64.id,
+        ([0_u32] of Adamas::MIR::ValueId),
+        Adamas::MIR::TypeRef::INT64
+      )
+      unsigned_builder.ret(unsigned_call)
+
+      takes_i16 = mod.create_function("takes_i16", Adamas::MIR::TypeRef::INT16)
+      takes_i16.add_param("value", Adamas::MIR::TypeRef::INT16)
+      Adamas::MIR::Builder.new(takes_i16).ret(
+        Adamas::MIR::Builder.new(takes_i16).const_int(0_i64, Adamas::MIR::TypeRef::INT16)
+      )
+
+      unsigned_to_i16 = mod.create_function("unsigned_to_i16", Adamas::MIR::TypeRef::INT16)
+      unsigned_to_i16.add_param("value", Adamas::MIR::TypeRef::UINT8)
+      unsigned_i16_builder = Adamas::MIR::Builder.new(unsigned_to_i16)
+      unsigned_i16_call = unsigned_i16_builder.call(
+        takes_i16.id,
+        ([0_u32] of Adamas::MIR::ValueId),
+        Adamas::MIR::TypeRef::INT16
+      )
+      unsigned_i16_builder.ret(unsigned_i16_call)
+
+      takes_i32 = mod.create_function("takes_i32", Adamas::MIR::TypeRef::INT32)
+      takes_i32.add_param("value", Adamas::MIR::TypeRef::INT32)
+      Adamas::MIR::Builder.new(takes_i32).ret(
+        Adamas::MIR::Builder.new(takes_i32).const_int(0_i64, Adamas::MIR::TypeRef::INT32)
+      )
+
+      signed_to_i32 = mod.create_function("signed_to_i32", Adamas::MIR::TypeRef::INT32)
+      signed_to_i32.add_param("value", Adamas::MIR::TypeRef::INT8)
+      signed_i32_builder = Adamas::MIR::Builder.new(signed_to_i32)
+      signed_i32_call = signed_i32_builder.call(
+        takes_i32.id,
+        ([0_u32] of Adamas::MIR::ValueId),
+        Adamas::MIR::TypeRef::INT32
+      )
+      signed_i32_builder.ret(signed_i32_call)
+
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
+      gen.emit_type_metadata = false
+      output = gen.generate
+
+      signed_body = output[/define i64 @signed_to_unsigned\([^)]*\)\s*\{.*?\n\}/m]
+      signed_body.should_not be_nil
+      signed_body = signed_body.not_nil!
+      signed_body.should contain("sext i8 %value to i64")
+
+      unsigned_body = output[/define i64 @unsigned_to_signed\([^)]*\)\s*\{.*?\n\}/m]
+      unsigned_body.should_not be_nil
+      unsigned_body = unsigned_body.not_nil!
+      unsigned_body.should contain("zext i8 %value to i64")
+
+      unsigned_i16_body = output[/define i16 @unsigned_to_i16\([^)]*\)\s*\{.*?\n\}/m]
+      unsigned_i16_body.should_not be_nil
+      unsigned_i16_body = unsigned_i16_body.not_nil!
+      unsigned_i16_body.should contain("zext i8 %value to i16")
+      unsigned_i16_body.should_not contain("sext i8 %value to i16")
+
+      signed_i32_body = output[/define i32 @signed_to_i32\([^)]*\)\s*\{.*?\n\}/m]
+      signed_i32_body.should_not be_nil
+      signed_i32_body = signed_i32_body.not_nil!
+      signed_i32_body.should contain("sext i8 %value to i32")
+      signed_i32_body.should_not contain("zext i8 %value to i32")
+    end
+
+    it "keeps truncation direction-independent and extension source-driven for wide calls" do
+      mod = Adamas::MIR::Module.new("integer_cast_widths")
+
+      takes_i8 = mod.create_function("takes_i8", Adamas::MIR::TypeRef::INT8)
+      takes_i8.add_param("value", Adamas::MIR::TypeRef::INT8)
+      takes_i8_builder = Adamas::MIR::Builder.new(takes_i8)
+      takes_i8_builder.ret(takes_i8_builder.const_int(0_i64, Adamas::MIR::TypeRef::INT8))
+
+      takes_i128 = mod.create_function("takes_i128", Adamas::MIR::TypeRef::INT128)
+      takes_i128.add_param("value", Adamas::MIR::TypeRef::INT128)
+      takes_i128_builder = Adamas::MIR::Builder.new(takes_i128)
+      takes_i128_builder.ret(takes_i128_builder.const_int(0_i64, Adamas::MIR::TypeRef::INT128))
+
+      signed_narrow = mod.create_function("signed_narrow", Adamas::MIR::TypeRef::UINT8)
+      signed_narrow.add_param("value", Adamas::MIR::TypeRef::INT64)
+      signed_narrow_builder = Adamas::MIR::Builder.new(signed_narrow)
+      signed_narrow_call = signed_narrow_builder.call(
+        takes_i8.id,
+        ([0_u32] of Adamas::MIR::ValueId),
+        Adamas::MIR::TypeRef::INT8
+      )
+      signed_narrow_builder.ret(signed_narrow_call)
+
+      unsigned_narrow = mod.create_function("unsigned_narrow", Adamas::MIR::TypeRef::INT8)
+      unsigned_narrow.add_param("value", Adamas::MIR::TypeRef::UINT64)
+      unsigned_narrow_builder = Adamas::MIR::Builder.new(unsigned_narrow)
+      unsigned_narrow_call = unsigned_narrow_builder.call(
+        takes_i8.id,
+        ([0_u32] of Adamas::MIR::ValueId),
+        Adamas::MIR::TypeRef::INT8
+      )
+      unsigned_narrow_builder.ret(unsigned_narrow_call)
+
+      unsigned_wide = mod.create_function("unsigned_wide", Adamas::MIR::TypeRef::INT128)
+      unsigned_wide.add_param("value", Adamas::MIR::TypeRef::UINT32)
+      unsigned_wide_builder = Adamas::MIR::Builder.new(unsigned_wide)
+      unsigned_wide_call = unsigned_wide_builder.call(
+        takes_i128.id,
+        ([0_u32] of Adamas::MIR::ValueId),
+        Adamas::MIR::TypeRef::INT128
+      )
+      unsigned_wide_builder.ret(unsigned_wide_call)
+
+      signed_wide = mod.create_function("signed_wide", Adamas::MIR::TypeRef::INT128)
+      signed_wide.add_param("value", Adamas::MIR::TypeRef::INT32)
+      signed_wide_builder = Adamas::MIR::Builder.new(signed_wide)
+      signed_wide_call = signed_wide_builder.call(
+        takes_i128.id,
+        ([0_u32] of Adamas::MIR::ValueId),
+        Adamas::MIR::TypeRef::INT128
+      )
+      signed_wide_builder.ret(signed_wide_call)
+
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
+      gen.emit_type_metadata = false
+      output = gen.generate
+
+      signed_narrow_body = output[/define i8 @signed_narrow\([^)]*\)\s*\{.*?\n\}/m]
+      signed_narrow_body.should_not be_nil
+      signed_narrow_body.not_nil!.should contain("trunc i64 %value to i8")
+
+      unsigned_narrow_body = output[/define i8 @unsigned_narrow\([^)]*\)\s*\{.*?\n\}/m]
+      unsigned_narrow_body.should_not be_nil
+      unsigned_narrow_body.not_nil!.should contain("trunc i64 %value to i8")
+
+      unsigned_wide_body = output[/define i128 @unsigned_wide\([^)]*\)\s*\{.*?\n\}/m]
+      unsigned_wide_body.should_not be_nil
+      unsigned_wide_body = unsigned_wide_body.not_nil!
+      unsigned_wide_body.should contain("zext i32 %value to i128")
+      unsigned_wide_body.should_not contain("sext i32 %value to i128")
+
+      signed_wide_body = output[/define i128 @signed_wide\([^)]*\)\s*\{.*?\n\}/m]
+      signed_wide_body.should_not be_nil
+      signed_wide_body = signed_wide_body.not_nil!
+      signed_wide_body.should contain("sext i32 %value to i128")
+      signed_wide_body.should_not contain("zext i32 %value to i128")
+    end
+
     it "uses fptoui for float64 argument when calling uint32 callee" do
       mod = Adamas::MIR::Module.new("test")
 
