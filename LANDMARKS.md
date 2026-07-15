@@ -16771,3 +16771,41 @@ bootstrap closure. Residual risk remains in the separate HIR direct
 Pointer/StaticArray static-call guard and the surviving lookup-nil/missing-body
 reference tail. {F/G/R: 0.96/0.61/0.92} [HIR/MIR local tests and one bounded
 census complete; produced bootstrap successor open]
+
+### LM-681 - PageArena pages retain node writes through reference-backed storage
+
+`PageArena` used `Array(StaticArray(TypedNode, PAGE))`. `StaticArray` is a
+value type, so indexing the outer `Array` returned a page copy. The nested
+write in `add` mutated that copy and left the stored slot uninitialized; a
+subsequent fetch could therefore dispatch through a garbage node vtable. This
+explains the earlier order/layout-sensitive HIR crash at
+`collect_defined_instance_method_full_names(..., PageArena)` and the existing
+parser workaround that forces `AstArena` while PageArena is untrusted.
+
+The bounded fix stores each page as a reference-backed `Array(TypedNode)` with
+capacity `PAGE` and appends nodes sequentially. Node references remain
+GC-visible, page allocation stays bounded to 1024 slots, and the implementation
+no longer exposes uninitialized `TypedNode` union storage. Safe lookup and
+debug-address paths also fail closed if internal page/offset storage is absent.
+
+Falsifier evidence:
+
+- Before the source change,
+  `crystal spec spec/page_arena_spec.cr --error-trace --no-color` failed on the
+  first add/fetch with an invalid node/vtable breakpoint.
+- The focused PageArena file now passes 3 examples covering heterogeneous
+  nodes, the 1023/1024 page boundary, safe invalid/out-of-bounds lookup, and
+  strict out-of-bounds failure.
+- The formerly crashing HIR example selected by
+  `--example 'preserves class, body, arena, and version identity through primitive keys'`
+  passes 1 example.
+- `crystal spec spec/hir/ast_to_hir_spec.cr --order 6003 --no-color` passes
+  259 examples with zero failures/errors and two existing pending examples.
+- `crystal spec spec/mir/arena_union_indexer_abi_spec.cr --no-color` passes
+  1 example with zero failures/errors.
+
+Adversary boundary: this verifies PageArena add/fetch storage, not production
+parser re-admission and not bootstrap completion. Parsing remains intentionally
+forced to `AstArena`; the authoritative s1-to-s2 timeout predates this source
+state and must be remeasured only after the cheap gates justify a heavy run.
+{F/G/R: 0.97/0.54/0.96} [PageArena storage verified; bootstrap successor open]

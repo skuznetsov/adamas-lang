@@ -4726,13 +4726,18 @@ module Adamas
       # PageArena: Page-backed arena to reduce GC reallocations
       class PageArena
         PAGE = 1024
-        @pages : Array(StaticArray(TypedNode, PAGE))
+        # StaticArray is a value type.  Indexing an Array(StaticArray(...))
+        # returns a copy, so `@pages[page_index][offset] = node` writes into a
+        # temporary page and leaves the stored slot uninitialized.  Keep each
+        # bounded page behind an Array reference so indexed writes mutate the
+        # owned page and node references remain GC-visible.
+        @pages : Array(Array(TypedNode))
         @count : Int32
         @extra_sources : Array(String)
         getter extra_sources : Array(String)
 
         def initialize
-          @pages = [] of StaticArray(TypedNode, PAGE)
+          @pages = [] of Array(TypedNode)
           @count = 0
           @extra_sources = [] of String
         end
@@ -4751,12 +4756,12 @@ module Adamas
             STDERR.puts "[PAGE_ARENA_ADD] phase=before id=#{idx} arg=#{node.class.name}"
           end
           if page_index >= @pages.size
-            page = uninitialized StaticArray(TypedNode, PAGE)
-            @pages << page
+            @pages << Array(TypedNode).new(PAGE)
           end
-          @pages[page_index][offset] = node
+          page = @pages[page_index]
+          page << node
           if debug_store
-            stored = @pages[page_index][offset]
+            stored = page[offset]
             arg_kind = Frontend.node_kind(node)
             stored_kind = Frontend.node_kind(stored)
             typed_same_type = stored.is_a?(typeof(node))
@@ -4796,7 +4801,10 @@ module Adamas
           return nil if idx < 0 || idx >= @count
           page_index = idx // PAGE
           offset = idx % PAGE
-          @pages[page_index][offset]
+          return nil if page_index >= @pages.size
+          page = @pages[page_index]
+          return nil if offset >= page.size
+          page[offset]
         end
 
         # Keep source strings alive for slices stored in nodes.
@@ -4815,7 +4823,10 @@ module Adamas
           return 0_u64 if idx < 0 || idx >= @count
           page_index = idx // PAGE
           offset = idx % PAGE
-          @pages[page_index][offset].unsafe_as(Pointer(Void)).address.to_u64
+          return 0_u64 if page_index >= @pages.size
+          page = @pages[page_index]
+          return 0_u64 if offset >= page.size
+          page[offset].unsafe_as(Pointer(Void)).address.to_u64
         end
 
         @[AlwaysInline]

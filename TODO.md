@@ -2,6 +2,25 @@
 
 Updated: 2026-07-14 (fresh s1 timeout localized to final concrete virtual-target repair).
 
+VERIFIED STABILITY SLICE (bootstrap successor still open): `PageArena` stored
+pages as `Array(StaticArray(TypedNode, 1024))`. Because `StaticArray` is a
+value type, `@pages[page_index]` returned a copy; nested assignment populated
+that temporary while the owned page retained an uninitialized node slot. The
+focused pre-fix `PageArena` spec failed on the first add/fetch with an invalid
+node/vtable breakpoint, and the prior HIR seed 6003 crash in
+`collect_defined_instance_method_full_names(..., PageArena)` was the same
+storage defect rather than a scan-cache identity failure. Pages now use
+reference-backed `Array(TypedNode)` carriers with fixed capacity 1024 and
+sequential append, preserving GC-visible node ownership without uninitialized
+union storage. Focused PageArena tests cover heterogeneous nodes, indices
+1023/1024, safe invalid/out-of-bounds lookup, and strict out-of-bounds lookup.
+They pass 3/3; the formerly crashing HIR example passes 1/1; the complete HIR
+file passes 259 examples with 0 failures/errors and 2 existing pending under
+seed 6003; the arena-union ABI spec passes 1/1. This closes the PageArena
+storage contract only. Production parsing remains forced to `AstArena`, and
+the latest 900-second s1-to-s2 timeout was measured on an older source state;
+neither s2b nor later bootstrap stages are claimed green from this slice.
+
 CURRENT CHANGE — concrete value-owner and class-header admission (bounded,
 2026-07-14): the root cause crossed the HIR→MIR boundary. HIR final virtual
 repair could admit concrete value owners through stale `ClassInfo.is_struct`
