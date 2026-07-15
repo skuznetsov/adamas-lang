@@ -65,6 +65,12 @@ module Adamas
       # Mapping from HIR ValueId to explicit Proc carrier provenance per function.
       @hir_value_carriers : ::Hash(HIR::ValueId, ProcCarrier)
 
+      # Stable per-module cache for the callback ABI recovered from a block
+      # type. HIR type descriptors and registered union descriptors are fixed
+      # before body lowering, so caching avoids repeating the registry scan for
+      # every yield in a helper with a materialized block.
+      @proc_callback_return_hir_cache : ::Hash(HIR::TypeRef, HIR::TypeRef?)
+
       # Proc carrier provenance that escapes through class variables. This is
       # module-scoped because a raw C callback can be stored in one function and
       # called from a callback thunk lowered earlier/later in function order.
@@ -210,6 +216,7 @@ module Adamas
         STDERR.puts "[MIR_INIT] value_map" if trace
         @hir_value_types = {} of HIR::ValueId => HIR::TypeRef
         @hir_value_carriers = {} of HIR::ValueId => ProcCarrier
+        @proc_callback_return_hir_cache = {} of HIR::TypeRef => HIR::TypeRef?
         @hir_classvar_carriers = {} of String => ProcCarrier
         @hir_constant_values = ::Set(HIR::ValueId).new
         STDERR.puts "[MIR_INIT] hir_value_types" if trace
@@ -9984,6 +9991,89 @@ module Adamas
       # Yield Lowering
       # ─────────────────────────────────────────────────────────────────────────
 
+      # A materialized `&block : A -> B?` is represented at the HIR call
+      # boundary as `Nil | Proc(A, B)`, while the raw callback function itself
+      # still has the ABI of `B`.  The yield expression can therefore have a
+      # wider nullable result type than the function pointer we call.  Recover
+      # the Proc descriptor from the registered union variant instead of using
+      # the yield expression type as the indirect-call return ABI.
+      private def proc_callback_return_hir_type(block_type : HIR::TypeRef) : HIR::TypeRef?
+        if @proc_callback_return_hir_cache.has_key?(block_type)
+          return @proc_callback_return_hir_cache[block_type]?
+        end
+
+        block_desc = @hir_module.get_type_descriptor(block_type)
+        unless block_desc
+          @proc_callback_return_hir_cache[block_type] = nil
+          return nil
+        end
+
+        if hir_proc_type?(block_type)
+          result = block_desc.type_params.last?
+          @proc_callback_return_hir_cache[block_type] = result
+          return result
+        end
+        unless block_desc.kind == HIR::TypeKind::Union
+          @proc_callback_return_hir_cache[block_type] = nil
+          return nil
+        end
+
+        # Union descriptors are kept in MIR because HIR union TypeDescriptors
+        # intentionally contain only the display name.  Invert the canonical
+        # HIR→MIR type mapping to find the Proc variant without parsing names or
+        # assuming that primitive/user type ids are identical across IRs.
+        union_desc = @mir_module.get_union_descriptor(convert_type(block_type))
+        unless union_desc
+          @proc_callback_return_hir_cache[block_type] = nil
+          return nil
+        end
+        matching_return : HIR::TypeRef? = nil
+        matching_count = 0
+        idx = 0
+        while idx < @hir_module.types.size
+          candidate = @hir_module.types.unsafe_fetch(idx)
+          candidate_ref = HIR::TypeRef.new(HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
+          if hir_proc_type?(candidate_ref)
+            candidate_mir_ref = convert_type(candidate_ref)
+            variant_match = false
+            variant_idx = 0
+            while variant_idx < union_desc.variants.size
+              if union_desc.variants.unsafe_fetch(variant_idx).type_ref == candidate_mir_ref
+                variant_match = true
+                break
+              end
+              variant_idx += 1
+            end
+            if variant_match
+              candidate_return = candidate.type_params.last?
+              unless candidate_return
+                @proc_callback_return_hir_cache[block_type] = nil
+                return nil
+              end
+              matching_count += 1
+              # A second Proc variant is ABI-ambiguous even when its return
+              # type matches: argument layouts may differ, and this raw call
+              # path has no runtime tag dispatch.
+              if previous = matching_return
+                unless previous == candidate_return
+                  @proc_callback_return_hir_cache[block_type] = nil
+                  return nil
+                end
+              else
+                matching_return = candidate_return
+              end
+            end
+          end
+          idx += 1
+        end
+        # A single concrete Proc variant is required. Even equal return types
+        # are not enough to merge multiple variants: their argument ABI may
+        # differ, and a raw indirect call has no runtime tag dispatch here.
+        result = matching_count == 1 ? matching_return : nil
+        @proc_callback_return_hir_cache[block_type] = result
+        result
+      end
+
       private def lower_yield(yld : HIR::Yield) : ValueId
         builder = @builder.not_nil!
         block_param_id = yld.target || @current_block_param_id
@@ -10049,7 +10139,27 @@ module Adamas
           end
         end
         @hir_value_types[yld.id] = yield_type
-        builder.call_indirect(block_val, args, convert_type(yield_type))
+        requires_proc_callback_abi = block_desc && (
+          block_desc.kind == HIR::TypeKind::Proc ||
+          (block_desc.kind == HIR::TypeKind::Union && block_desc.name.includes?("Proc("))
+        )
+        callback_return_type = if requires_proc_callback_abi
+                                proc_callback_return_hir_type(block_type)
+                              else
+                                yield_type
+                              end
+        unless callback_return_type
+          raise "MIR yield callback ABI unresolved for Proc block type #{block_type.id} in #{@current_lowering_func_name}"
+        end
+        call_value = builder.call_indirect(block_val, args, convert_type(callback_return_type))
+        # Preserve the HIR yield result contract (for example `Nil | Int32`)
+        # after calling the raw callback with its concrete ABI return (`Int32`).
+        # This emits the same canonical union wrap used by ordinary returns and
+        # keeps the indirect-call declaration compatible with the block body.
+        if callback_return_type != yield_type
+          return coerce_return_value(builder, call_value, callback_return_type, yield_type)
+        end
+        call_value
       end
 
       private def infer_yield_type_from_users(yield_id : HIR::ValueId) : HIR::TypeRef?

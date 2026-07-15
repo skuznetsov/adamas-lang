@@ -55,9 +55,231 @@ class Adamas::MIR::HIRToMIRLowering
   ) : Adamas::MIR::Function?
     ensure_class_dispatch_for_union(class_name, "probe", receiver_type, call)
   end
+
+  def __test_proc_callback_return_hir_type(
+    block_type : Adamas::HIR::TypeRef,
+  ) : Adamas::HIR::TypeRef?
+    proc_callback_return_hir_type(block_type)
+  end
+
+  def __test_heap_proc_indirect_calls : Array(Adamas::MIR::IndirectCall)
+    func = @mir_module.create_function("__test_heap_proc_dispatch", Adamas::MIR::TypeRef::INT32)
+    func.add_param("proc", Adamas::MIR::TypeRef::POINTER)
+    func.add_param("value", Adamas::MIR::TypeRef::INT32)
+    @builder = Adamas::MIR::Builder.new(func)
+    call_heap_proc(0_u32, [1_u32], Adamas::MIR::TypeRef::INT32)
+    func.blocks.flat_map(&.instructions).select(&.is_a?(Adamas::MIR::IndirectCall)).map(&.as(Adamas::MIR::IndirectCall))
+  end
 end
 
 describe Adamas::MIR::HIRToMIRLowering do
+  describe "materialized Proc yield ABI" do
+    it "recovers the concrete callback return from a Nil|Proc union" do
+      hir_mod = Adamas::HIR::Module.new("proc_yield_callback_return")
+      proc_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Proc,
+        "Proc",
+        [Adamas::HIR::TypeRef::INT32, Adamas::HIR::TypeRef::INT32]
+      ))
+      block_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Union,
+        "Nil | Proc(Int32, Int32)"
+      ))
+      result_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Union,
+        "Nil | Int32"
+      ))
+
+      block_mir_ref = Adamas::MIR::TypeRef.from_hir(block_ref)
+      proc_mir_ref = Adamas::MIR::TypeRef.from_hir(proc_ref)
+      descriptor = Adamas::MIR::UnionDescriptor.new(
+        "Nil | Proc(Int32, Int32)",
+        [
+          Adamas::MIR::UnionVariantDescriptor.new(
+            type_id: 1,
+            type_ref: proc_mir_ref,
+            full_name: "Proc(Int32, Int32)",
+            size: 8,
+            alignment: 8,
+            field_offsets: nil
+          ),
+          Adamas::MIR::UnionVariantDescriptor.new(
+            type_id: 0,
+            type_ref: Adamas::MIR::TypeRef::NIL,
+            full_name: "Nil",
+            size: 0,
+            alignment: 1,
+            field_offsets: nil
+          ),
+        ],
+        16,
+        8
+      )
+
+      result_mir_ref = Adamas::MIR::TypeRef.from_hir(result_ref)
+      result_descriptor = Adamas::MIR::UnionDescriptor.new(
+        "Nil | Int32",
+        [
+          Adamas::MIR::UnionVariantDescriptor.new(
+            type_id: Adamas::MIR::TypeRef::INT32.id.to_i32,
+            type_ref: Adamas::MIR::TypeRef::INT32,
+            full_name: "Int32",
+            size: 4,
+            alignment: 4,
+            field_offsets: nil
+          ),
+          Adamas::MIR::UnionVariantDescriptor.new(
+            type_id: 0,
+            type_ref: Adamas::MIR::TypeRef::NIL,
+            full_name: "Nil",
+            size: 0,
+            alignment: 1,
+            field_offsets: nil
+          ),
+        ],
+        16,
+        8
+      )
+
+      lowering = Adamas::MIR::HIRToMIRLowering.new(hir_mod)
+      lowering.register_union_types([
+        Adamas::HIR::UnionDescriptorRegistration.new(block_mir_ref, descriptor),
+        Adamas::HIR::UnionDescriptorRegistration.new(result_mir_ref, result_descriptor),
+      ])
+
+      lowering.__test_proc_callback_return_hir_type(block_ref).should eq(Adamas::HIR::TypeRef::INT32)
+    end
+
+    it "fails closed when a block union has Proc variants with different returns" do
+      hir_mod = Adamas::HIR::Module.new("ambiguous_proc_yield_callback_return")
+      proc_i32_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Proc,
+        "Proc",
+        [Adamas::HIR::TypeRef::INT32, Adamas::HIR::TypeRef::INT32]
+      ))
+      proc_i64_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Proc,
+        "Proc",
+        [Adamas::HIR::TypeRef::INT32, Adamas::HIR::TypeRef::INT64]
+      ))
+      block_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Union,
+        "Nil | Proc(Int32, Int32) | Proc(Int32, Int64)"
+      ))
+      result_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Union,
+        "Nil | Int32"
+      ))
+      func = hir_mod.create_function("invoke$ambiguous_block", result_ref)
+      block_param = func.add_param("block", block_ref, true)
+      func_block = func.get_block(func.entry_block)
+      arg = Adamas::HIR::Literal.new(func.next_value_id, Adamas::HIR::TypeRef::INT32, 1_i64)
+      func_block.add(arg)
+      yld = Adamas::HIR::Yield.new(func.next_value_id, result_ref, [arg.id], block_param.id)
+      func_block.add(yld)
+      func_block.terminator = Adamas::HIR::Return.new(yld.id)
+      descriptor = Adamas::MIR::UnionDescriptor.new(
+        "Nil | Proc(Int32, Int32) | Proc(Int32, Int64)",
+        [
+          Adamas::MIR::UnionVariantDescriptor.new(1, Adamas::MIR::TypeRef.from_hir(proc_i32_ref), "Proc(Int32, Int32)", 8, 8, nil),
+          Adamas::MIR::UnionVariantDescriptor.new(2, Adamas::MIR::TypeRef.from_hir(proc_i64_ref), "Proc(Int32, Int64)", 8, 8, nil),
+          Adamas::MIR::UnionVariantDescriptor.new(0, Adamas::MIR::TypeRef::NIL, "Nil", 0, 1, nil),
+        ],
+        16,
+        8
+      )
+      result_descriptor = Adamas::MIR::UnionDescriptor.new(
+        "Nil | Int32",
+        [
+          Adamas::MIR::UnionVariantDescriptor.new(Adamas::MIR::TypeRef::INT32.id.to_i32, Adamas::MIR::TypeRef::INT32, "Int32", 4, 4, nil),
+          Adamas::MIR::UnionVariantDescriptor.new(0, Adamas::MIR::TypeRef::NIL, "Nil", 0, 1, nil),
+        ],
+        16,
+        8
+      )
+      lowering = Adamas::MIR::HIRToMIRLowering.new(hir_mod)
+      lowering.register_union_types([
+        Adamas::HIR::UnionDescriptorRegistration.new(Adamas::MIR::TypeRef.from_hir(block_ref), descriptor),
+        Adamas::HIR::UnionDescriptorRegistration.new(Adamas::MIR::TypeRef.from_hir(result_ref), result_descriptor),
+      ])
+
+      lowering.__test_proc_callback_return_hir_type(block_ref).should be_nil
+      expect_raises(Exception, /yield callback ABI unresolved/) do
+        lowering.lower
+      end
+    end
+
+    it "preserves the heap Proc argument ABI on both env branches" do
+      lowering = Adamas::MIR::HIRToMIRLowering.new(Adamas::HIR::Module.new("heap_proc_indirect_abi"))
+      calls = lowering.__test_heap_proc_indirect_calls
+      calls.size.should eq(2)
+      calls.each { |call| call.unwrap_union_args.should be_false }
+    end
+
+    it "calls the raw callback with its concrete return ABI and wraps the yield result" do
+      hir_mod = Adamas::HIR::Module.new("proc_yield_callback_lowering")
+      proc_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Proc,
+        "Proc",
+        [Adamas::HIR::TypeRef::INT32, Adamas::HIR::TypeRef::INT32]
+      ))
+      block_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Union,
+        "Nil | Proc(Int32, Int32)"
+      ))
+      result_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Union,
+        "Nil | Int32"
+      ))
+      func = hir_mod.create_function("invoke$block", result_ref)
+      block_param = func.add_param("block", block_ref, true)
+      block = func.get_block(func.entry_block)
+      arg = Adamas::HIR::Literal.new(func.next_value_id, Adamas::HIR::TypeRef::INT32, 1_i64)
+      block.add(arg)
+      yld = Adamas::HIR::Yield.new(func.next_value_id, result_ref, [arg.id], block_param.id)
+      block.add(yld)
+      block.terminator = Adamas::HIR::Return.new(yld.id)
+
+      block_mir_ref = Adamas::MIR::TypeRef.from_hir(block_ref)
+      proc_mir_ref = Adamas::MIR::TypeRef.from_hir(proc_ref)
+      result_mir_ref = Adamas::MIR::TypeRef.from_hir(result_ref)
+      block_descriptor = Adamas::MIR::UnionDescriptor.new(
+        "Nil | Proc(Int32, Int32)",
+        [
+          Adamas::MIR::UnionVariantDescriptor.new(1, proc_mir_ref, "Proc(Int32, Int32)", 8, 8, nil),
+          Adamas::MIR::UnionVariantDescriptor.new(0, Adamas::MIR::TypeRef::NIL, "Nil", 0, 1, nil),
+        ],
+        16,
+        8
+      )
+      result_descriptor = Adamas::MIR::UnionDescriptor.new(
+        "Nil | Int32",
+        [
+          Adamas::MIR::UnionVariantDescriptor.new(Adamas::MIR::TypeRef::INT32.id.to_i32, Adamas::MIR::TypeRef::INT32, "Int32", 4, 4, nil),
+          Adamas::MIR::UnionVariantDescriptor.new(0, Adamas::MIR::TypeRef::NIL, "Nil", 0, 1, nil),
+        ],
+        16,
+        8
+      )
+      lowering = Adamas::MIR::HIRToMIRLowering.new(hir_mod)
+      lowering.register_union_types([
+        Adamas::HIR::UnionDescriptorRegistration.new(block_mir_ref, block_descriptor),
+        Adamas::HIR::UnionDescriptorRegistration.new(result_mir_ref, result_descriptor),
+      ])
+
+      mir_mod = lowering.lower
+      mir_func = mir_mod.functions.find { |candidate| candidate.name == "invoke$block" }.not_nil!
+      instructions = mir_func.blocks.flat_map(&.instructions)
+      indirect = instructions.select(&.is_a?(Adamas::MIR::IndirectCall)).first.not_nil!.as(Adamas::MIR::IndirectCall)
+      indirect.type.should eq(Adamas::MIR::TypeRef::INT32)
+      indirect.unwrap_union_args.should be_true
+      wrapped = instructions.select(&.is_a?(Adamas::MIR::UnionWrap)).first.not_nil!.as(Adamas::MIR::UnionWrap)
+      wrapped.type.should eq(result_mir_ref)
+      wrapped.value.should eq(indirect.id)
+      wrapped.variant_type_id.should eq(Adamas::MIR::TypeRef::INT32.id.to_i32)
+    end
+  end
+
   describe "virtual method family resolution" do
     it "resolves a typed call through a unique arity alias" do
       hir_mod = Adamas::HIR::Module.new("virtual_method_family")
