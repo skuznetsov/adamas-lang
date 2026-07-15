@@ -167,6 +167,31 @@ class Adamas::HIR::AstToHir
     get_function_return_type(name)
   end
 
+  def __test_enum_return_name_for(name : String) : String?
+    enum_return_name_for(name)
+  end
+
+  def __test_resolve_union_method_call(
+    type_name : String,
+    method_name : String,
+    arg_types : Array(Adamas::HIR::TypeRef) = [] of Adamas::HIR::TypeRef,
+    has_block_call : Bool = false,
+  ) : String?
+    resolve_union_method_call(type_name, method_name, arg_types, has_block_call)
+  end
+
+  def __test_register_function_type(name : String, return_type : Adamas::HIR::TypeRef) : Nil
+    register_function_type(name, return_type)
+  end
+
+  def __test_register_class_with_name(node : Adamas::Compiler::Frontend::ClassNode, name : String) : Nil
+    register_class_with_name(node, name)
+  end
+
+  def __test_register_enum_with_name(node : Adamas::Compiler::Frontend::EnumNode, name : String) : Nil
+    register_enum_with_name(node, name)
+  end
+
   def __test_type_ref_for_name(name : String) : Adamas::HIR::TypeRef
     type_ref_for_name(name)
   end
@@ -6465,6 +6490,208 @@ describe Adamas::HIR::AstToHir do
       text = hir_text(foo.not_nil!)
       text.should contain("binop Eq")
       text.should_not contain(".pipe?()")
+    end
+
+    it "records enum return identity for typed property getters" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        enum FileType
+          File
+          Pipe
+        end
+
+        class Info
+          property type : FileType
+
+          def initialize(@type : FileType)
+          end
+        end
+
+        Info.new(FileType::Pipe).type
+      CRYSTAL
+
+      converter.__test_enum_return_name_for("Info#type").should eq("FileType")
+    end
+
+    it "clears generated enum accessor identity when an explicit method replaces it" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        enum FileType
+          File
+          Pipe
+        end
+
+        class Info
+          property type : FileType
+        end
+
+        class Info
+          def type : Int32
+            7
+          end
+        end
+
+        Info.new.type
+      CRYSTAL
+
+      converter.__test_enum_return_name_for("Info#type").should be_nil
+    end
+
+    it "lazily resolves sibling enum identity for typed property getters registered before the enum" do
+      arena, exprs = parse(<<-CRYSTAL)
+        class Info
+          property type : Type
+        end
+
+        enum Type
+          File
+          Pipe
+        end
+      CRYSTAL
+      converter = Adamas::HIR::AstToHir.new(arena)
+      converter.arena = arena
+
+      class_expr = exprs.find { |expr_id| arena[expr_id].is_a?(Adamas::Compiler::Frontend::ClassNode) }
+      enum_expr = exprs.find { |expr_id| arena[expr_id].is_a?(Adamas::Compiler::Frontend::EnumNode) }
+      class_node = arena[class_expr.not_nil!].as(Adamas::Compiler::Frontend::ClassNode)
+      enum_node = arena[enum_expr.not_nil!].as(Adamas::Compiler::Frontend::EnumNode)
+
+      converter.__test_register_class_with_name(class_node, "Outer::Info")
+      converter.__test_register_enum_with_name(enum_node, "Outer::Type")
+
+      converter.__test_enum_return_name_for("Outer::Info#type").should eq("Outer::Type")
+    end
+
+    it "resolves generated enum accessors through nilable union receivers" do
+      source = <<-CRYSTAL
+        class Outer
+          class Info
+            property kind : FileType
+          end
+        end
+
+        class Registry
+          def get : Outer::Info?
+            nil
+          end
+
+          def check
+            get.kind.tuple?
+          end
+        end
+
+        enum FileType
+          Other
+          Tuple
+        end
+      CRYSTAL
+
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+      converter.arena = arena
+
+      outer_expr = exprs.find do |expr_id|
+        node = arena[expr_id]
+        node.is_a?(Adamas::Compiler::Frontend::ClassNode) &&
+          String.new(node.as(Adamas::Compiler::Frontend::ClassNode).name.not_nil!) == "Outer"
+      end
+      registry_expr = exprs.find do |expr_id|
+        node = arena[expr_id]
+        node.is_a?(Adamas::Compiler::Frontend::ClassNode) &&
+          String.new(node.as(Adamas::Compiler::Frontend::ClassNode).name.not_nil!) == "Registry"
+      end
+      enum_expr = exprs.find { |expr_id| arena[expr_id].is_a?(Adamas::Compiler::Frontend::EnumNode) }
+      outer_node = arena[outer_expr.not_nil!].as(Adamas::Compiler::Frontend::ClassNode)
+      registry_node = arena[registry_expr.not_nil!].as(Adamas::Compiler::Frontend::ClassNode)
+      enum_node = arena[enum_expr.not_nil!].as(Adamas::Compiler::Frontend::EnumNode)
+
+      # Force the generated getter to be registered before its enum declaration.
+      converter.register_class(outer_node)
+      converter.register_enum(enum_node)
+      resolved_name = converter.__test_resolve_union_method_call("Nil | Outer::Info", "kind")
+      resolved_name.should eq("Outer::Info#kind")
+      resolved_type = converter.__test_get_function_return_type(resolved_name.not_nil!)
+      converter.__test_get_type_name_from_ref(resolved_type).should eq("FileType")
+      converter.register_class(registry_node)
+
+      check_name = converter.__test_function_def_names("Registry#check").first?
+      check_name.should_not be_nil
+      converter.__test_lower_function_if_needed(check_name.not_nil!)
+      check = converter.module.function_by_name(check_name.not_nil!)
+      check.should_not be_nil
+      text = hir_text(check.not_nil!)
+      text.should contain("Outer::Info#kind")
+      text.should contain("binop Eq")
+      text.should_not contain(".tuple?()")
+    end
+
+    it "does not admit bodyless zero-arg union methods as generated accessors" do
+      source = <<-CRYSTAL
+        class Outer
+          class Info
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+      converter.arena = arena
+      outer_expr = exprs.find { |expr_id| arena[expr_id].is_a?(Adamas::Compiler::Frontend::ClassNode) }
+      outer_node = arena[outer_expr.not_nil!].as(Adamas::Compiler::Frontend::ClassNode)
+      converter.register_class(outer_node)
+
+      converter.__test_register_function_type("Outer::Info#bodyless", Adamas::HIR::TypeRef::BOOL)
+      converter.__test_resolve_union_method_call("Nil | Outer::Info", "bodyless").should be_nil
+    end
+
+    it "preserves enum identity across ternary branches for enum predicates" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class Box
+          enum Kind
+            Other
+            Tuple
+          end
+
+          def check(flag : Bool)
+            (flag ? Kind::Tuple : Kind::Other).tuple?
+          end
+        end
+
+        Box.new.check(true)
+      CRYSTAL
+
+      converter.__test_lower_function_if_needed("Box#check$Bool")
+      check = converter.module.function_by_name("Box#check$Bool")
+      check.should_not be_nil
+      text = hir_text(check.not_nil!)
+      text.should contain("binop Eq")
+      text.should_not contain(".tuple?()")
+    end
+
+    it "does not transfer enum identity across mixed ternary enum branches" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        enum LeftType
+          Other
+          Tuple
+        end
+
+        enum RightType
+          Other
+          Tuple
+        end
+
+        class Box
+          def check(flag : Bool)
+            (flag ? LeftType::Tuple : RightType::Tuple).tuple?
+          end
+        end
+
+        Box.new.check(true)
+      CRYSTAL
+
+      converter.__test_lower_function_if_needed("Box#check$Bool")
+      check = converter.module.function_by_name("Box#check$Bool")
+      check.should_not be_nil
+      text = hir_text(check.not_nil!)
+      text.should_not contain("binop Eq")
+      text.should contain("Int32#tuple?()")
     end
 
     it "inlines enum predicates in case-dot-when branches over enum-returning calls" do

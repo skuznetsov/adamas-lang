@@ -16873,3 +16873,51 @@ splat constructors, and produced bootstrap stages remain unverified. The next
 authoritative counter-metric is a fresh current-source s1-to-s2 transition, not
 another host-only repetition. {F/G/R: 0.95/0.43/0.93} [isolated HIR contract
 verified; bootstrap effect open]
+
+### LM-684 - Generated accessors retain enum identity through union lookup
+
+Compiler-generated typed getters had no `DefNode` from which the existing enum
+return lookup could recover provenance. When a sibling enum was registered
+after its accessor, the carrier `TypeRef` could already have collapsed to its
+integer representation. Nilable-union lookup then rejected the zero-argument
+getter because it had a registered type but no body to resolve.
+
+Generated accessors now retain the original annotation with their owner
+context and resolve it lazily after enum registration. Every getter
+registration path records the same metadata. Explicit method registration
+clears both exact and base provenance before installing its own return type, so
+stale generated identity cannot survive an override. Union lookup admits a
+bodyless zero-argument candidate only when it is a registered generated
+accessor that can be materialized from an actual ivar.
+
+On clean `ff60dc0a` plus tests only, the typed-property and late-sibling cases
+were RED with missing enum names, and the nilable-union receiver could not
+resolve `Outer::Info#kind`. The explicit-override and arbitrary bodyless-method
+negatives were already GREEN. Applying only the coupled provenance and
+generated-accessor hunks made all five cases GREEN. In the combined enum audit,
+the full HIR file passed 259 examples with zero failures/errors and two
+existing pending in default order and under random order seed 6003.
+
+Adversary boundary: provenance and zero-arg materialization are one dependent
+contract; neither is a complete fix alone. The verified scope covers typed,
+late sibling, explicit override, nilable union, and bodyless rejection paths.
+There is no produced-stage reducer or bootstrap transition evidence yet.
+{F/G/R: 0.96/0.48/0.94} [HIR accessor identity verified; bootstrap effect open]
+
+### LM-685 - Ternary phi nodes preserve only identical enum provenance
+
+Enum values lower to integer carriers, so a ternary phi lost the source enum
+identity even when both incoming branches were values of the same enum. A
+subsequent enum predicate therefore fell through to a bare method call such as
+`Int32#tuple?()`.
+
+The phi records enum identity only when both incoming values name the exact
+same enum. On clean `ff60dc0a` the same-enum example was RED and emitted the
+bare integer predicate call. The mixed-enum negative was already GREEN and
+proved that identity must not cross distinct enum domains. With the bounded
+phi change, both examples pass; the combined enum audit's full HIR default and
+seed-6003 runs pass 259 examples with zero failures/errors and two pending.
+
+Adversary boundary: this proves ternary HIR propagation only. Other merges and
+produced bootstrap stages remain outside the certificate. {F/G/R:
+0.97/0.44/0.95} [ternary enum identity verified; bootstrap effect open]

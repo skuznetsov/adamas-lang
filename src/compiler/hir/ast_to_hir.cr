@@ -1914,6 +1914,10 @@ module Adamas::HIR
     @function_base_return_types : Hash(String, TypeRef)
     # Enum return type names for functions whose declared return is an enum.
     @function_enum_return_names : Hash(String, String)
+    # Source-backed enum provenance for generated accessors whose annotation
+    # could not be resolved when the accessor was registered.  Keep the owner
+    # context with the original spelling so a later enum pass can resolve it.
+    @function_enum_return_provenance : Hash(String, Tuple(String, String))
 
     # Public accessor for enum names (used by MIR lowering to register enum types)
     def enum_names : Set(String)
@@ -5998,6 +6002,7 @@ module Adamas::HIR
       @instance_method_names_by_owner = Hash(String, Set(String)).new(initial_capacity: 2048)
       @function_base_return_types = Hash(String, TypeRef).new(initial_capacity: function_type_aux_capacity)
       @function_enum_return_names = {} of String => String
+      @function_enum_return_provenance = {} of String => Tuple(String, String)
       @function_return_type_literals = Set(String).new
       @class_info = Hash(String, ClassInfo).new(initial_capacity: 2048)
       @class_info_by_type_id = {} of TypeId => ClassInfo
@@ -7771,6 +7776,15 @@ module Adamas::HIR
         return enum_name
       end
 
+      # Generated accessors may be registered before their enum declaration.
+      # Retry the source annotation after the enum pass has populated
+      # `@enum_info`, then cache both exact and base keys for subsequent calls.
+      if enum_name = resolve_enum_name_for_accessor_provenance(function_name, base_name)
+        @function_enum_return_names[function_name] = enum_name
+        @function_enum_return_names[base_name] = enum_name
+        return enum_name
+      end
+
       # Fallback: derive enum return name from the def's return type annotation.
       def_node = @function_defs[function_name]? || @function_defs[base_name]?
       return nil unless def_node
@@ -7789,6 +7803,29 @@ module Adamas::HIR
       end
 
       nil
+    end
+
+    private def resolve_enum_name_for_accessor_provenance(
+      function_name : String,
+      base_name : String,
+    ) : String?
+      provenance = @function_enum_return_provenance[function_name]? ||
+                   @function_enum_return_provenance[base_name]?
+      return nil unless provenance
+
+      owner_name = provenance[0]
+      annotation_name = provenance[1]
+      old_class = @current_class
+      old_override = @current_namespace_override
+      @current_class = owner_name
+      @current_namespace_override = nil
+      begin
+        resolved_name = resolve_type_name_in_context(annotation_name)
+        resolve_enum_name(resolved_name)
+      ensure
+        @current_class = old_class
+        @current_namespace_override = old_override
+      end
     end
 
     private def track_enum_return_value(value_id : ValueId, function_name : String, return_type : TypeRef) : Nil
@@ -7825,6 +7862,44 @@ module Adamas::HIR
       end
 
       nil
+    end
+
+    # Preserve enum provenance for compiler-synthesized typed accessors.  A
+    # `property/getter field : Enum` has no DefNode for
+    # register_type_method_from_def to inspect, so its generated getter must
+    # carry the same return identity explicitly.  Resolve the original
+    # annotation while the accessor owner is active; the TypeRef can already
+    # have been collapsed to its integer carrier by an earlier registration
+    # pass, which is exactly the provenance that this side table repairs.
+    private def record_enum_return_name_for_accessor(
+      full_name : String,
+      base_name : String,
+      owner_name : String,
+      annotation_name : String?,
+      return_type : TypeRef,
+    ) : Nil
+      clear_enum_return_metadata(full_name, base_name)
+      if raw_name = annotation_name
+        normalized_name = raw_name.strip
+        unless normalized_name.empty?
+          provenance = {owner_name, normalized_name}
+          @function_enum_return_provenance[full_name] = provenance
+          @function_enum_return_provenance[base_name] = provenance
+        end
+      end
+      enum_name = resolve_enum_name_for_accessor_provenance(full_name, base_name)
+      enum_name ||= enum_name_for_type_ref(return_type)
+      return unless enum_name
+
+      @function_enum_return_names[full_name] = enum_name
+      @function_enum_return_names[base_name] = enum_name
+    end
+
+    private def clear_enum_return_metadata(full_name : String, base_name : String) : Nil
+      @function_enum_return_names.delete(full_name)
+      @function_enum_return_names.delete(base_name)
+      @function_enum_return_provenance.delete(full_name)
+      @function_enum_return_provenance.delete(base_name)
     end
 
     # Check if a function exists with given base name (fast O(1) lookup)
@@ -18511,6 +18586,13 @@ module Adamas::HIR
         unless defined_full_names.includes?(getter_full)
           register_function_type(getter_full, ivar_type)
         end
+        record_enum_return_name_for_accessor(
+          getter_full,
+          getter_base,
+          class_name,
+          accessor_type_annotation_text(spec),
+          ivar_type,
+        )
         set_accessor_visibility(getter_full, visibility)
       end
 
@@ -26605,15 +26687,8 @@ module Adamas::HIR
           alias_full_name = function_full_name_for_def(alias_base, param_types, member.params, has_block)
         end
       end
-      if enum_return_name
-        @function_enum_return_names[full_name] = enum_return_name
-        @function_enum_return_names[base_name] = enum_return_name
-        if alias_full_name
-          alias_base = strip_type_suffix(alias_full_name)
-          @function_enum_return_names[alias_full_name] = enum_return_name
-          @function_enum_return_names[alias_base] = enum_return_name
-        end
-      end
+      previous_enum_return_name = @function_enum_return_names[full_name]? ||
+                                  @function_enum_return_names[base_name]?
       if (existing_def = @function_defs[full_name]?) && !same_def_node?(existing_def, effective_member)
         previous_base = "#{base_name}_previous"
         previous_full = function_full_name_for_def(previous_base, param_types, effective_member.params, has_block)
@@ -26626,9 +26701,22 @@ module Adamas::HIR
         else
           set_function_def_arena(previous_full, member_arena)
         end
-        if prev_enum = @function_enum_return_names[full_name]? || @function_enum_return_names[base_name]?
+        if prev_enum = previous_enum_return_name
           @function_enum_return_names[previous_full] = prev_enum
           @function_enum_return_names[previous_base] = prev_enum
+        end
+      end
+      clear_enum_return_metadata(full_name, base_name)
+      if enum_return_name
+        @function_enum_return_names[full_name] = enum_return_name
+        @function_enum_return_names[base_name] = enum_return_name
+      end
+      if alias_full_name
+        alias_base = strip_type_suffix(alias_full_name)
+        clear_enum_return_metadata(alias_full_name, alias_base)
+        if enum_return_name
+          @function_enum_return_names[alias_full_name] = enum_return_name
+          @function_enum_return_names[alias_base] = enum_return_name
         end
       end
       register_function_type(full_name, return_type)
@@ -27927,6 +28015,13 @@ module Adamas::HIR
             getter_base = "#{class_name}##{getter_name}"
             full_name = mangle_function_name(getter_base, [] of TypeRef)
             register_function_type(full_name, ivar_type)
+            record_enum_return_name_for_accessor(
+              full_name,
+              getter_base,
+              class_name,
+              accessor_type_annotation_text(spec),
+              ivar_type,
+            )
             set_accessor_visibility(full_name, member.visibility)
           end
         when Adamas::Compiler::Frontend::SetterNode
@@ -27986,6 +28081,13 @@ module Adamas::HIR
             getter_base = "#{class_name}##{getter_name}"
             getter_full = mangle_function_name(getter_base, [] of TypeRef)
             register_function_type(getter_full, ivar_type)
+            record_enum_return_name_for_accessor(
+              getter_full,
+              getter_base,
+              class_name,
+              accessor_type_annotation_text(spec),
+              ivar_type,
+            )
             set_accessor_visibility(getter_full, member.visibility)
             setter_name = "#{class_name}##{storage_name}="
             setter_full = mangle_function_name(setter_name, [ivar_type])
@@ -30573,10 +30675,14 @@ module Adamas::HIR
                   record_type_literal_return(full_name, base_name)
                 end
               end
+              clear_enum_return_metadata(full_name, base_name)
               if enum_return_name
                 @function_enum_return_names[full_name] = enum_return_name
                 @function_enum_return_names[base_name] = enum_return_name
-                if alias_full_name && alias_base
+              end
+              if alias_full_name && alias_base
+                clear_enum_return_metadata(alias_full_name, alias_base)
+                if enum_return_name
                   @function_enum_return_names[alias_full_name] = enum_return_name
                   @function_enum_return_names[alias_base] = enum_return_name
                 end
@@ -30802,6 +30908,13 @@ module Adamas::HIR
                   getter_base = "#{class_name}##{getter_name}"
                   full_name = mangle_function_name(getter_base, [] of TypeRef)
                   register_function_type(full_name, ivar_type)
+                  record_enum_return_name_for_accessor(
+                    full_name,
+                    getter_base,
+                    class_name,
+                    source_type || accessor_type_annotation_text(spec),
+                    ivar_type,
+                  )
                   set_accessor_visibility(full_name, member.visibility)
                 end
               end
@@ -30882,6 +30995,13 @@ module Adamas::HIR
                   getter_base = "#{class_name}##{getter_name}"
                   getter_full = mangle_function_name(getter_base, [] of TypeRef)
                   register_function_type(getter_full, ivar_type)
+                  record_enum_return_name_for_accessor(
+                    getter_full,
+                    getter_base,
+                    class_name,
+                    source_type || accessor_type_annotation_text(spec),
+                    ivar_type,
+                  )
                   set_accessor_visibility(getter_full, member.visibility)
                   # Register setter method
                   setter_name = "#{class_name}##{storage_name}="
@@ -38826,9 +38946,13 @@ module Adamas::HIR
             else
               # No def node - check if it's a base name with typed overloads
               # If we have typed args, it should be safe to return
-              # If args are empty, check untyped overload instead
+              # If args are empty, admit only a registered generated accessor;
+              # materialization proves the zero-arg candidate is an ivar getter
+              # rather than an arbitrary bodyless function.
               if !arg_types.empty?
                 arity_ok = true
+              elsif registered_generated_accessor_request?(mangled, base_name)
+                arity_ok = maybe_generate_accessor_for_name(mangled)
               end
             end
             if arity_ok
@@ -70425,6 +70549,13 @@ module Adamas::HIR
           end
           ctx.emit(phi)
           ctx.register_type(phi.id, phi_type)
+          then_enum_name = enum_value_name_for(ctx, then_value)
+          else_enum_name = enum_value_name_for(ctx, else_value)
+          if then_enum_name
+            if else_enum_name == then_enum_name
+              (@enum_value_types ||= {} of ValueId => String)[phi.id] = then_enum_name
+            end
+          end
           return phi.id
         elsif then_flows_to_merge
           then_locals.each { |name, val| ctx.register_local(name, val) }
@@ -77453,6 +77584,13 @@ module Adamas::HIR
         base_name = "#{owner_name}.#{method_name}"
         full_name = mangle_function_name(base_name, [] of TypeRef)
         register_function_type(full_name, return_type)
+        record_enum_return_name_for_accessor(
+          full_name,
+          base_name,
+          owner_name,
+          accessor_type_annotation_text(spec),
+          return_type,
+        )
         set_accessor_visibility(full_name, visibility)
         entry = ClassAccessorEntry.new(owner_name, spec, @arena, :getter, visibility)
         @class_accessor_entries[full_name] = entry

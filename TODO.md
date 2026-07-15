@@ -54,6 +54,22 @@ RED-to-GREEN runtime oracle. Dynamic union values, larger unions, inheritance,
 and splat interactions remain unproven, and no produced-stage or s1-to-s2
 bootstrap claim is made from this internal HIR-shape correction.
 
+VERIFIED ENUM IDENTITY HIR SLICES (bootstrap effect still open): generated
+typed accessors now retain source-backed enum provenance even when their enum
+is registered later, and explicit methods clear stale generated metadata.
+Zero-argument union lookup materializes only a registered accessor backed by
+an actual ivar; arbitrary bodyless function registrations remain rejected.
+Same-enum ternary branches also transfer enum identity to their phi, while
+mixed-enum branches do not. In an isolated clean-HEAD run, typed getter, late
+sibling enum, nilable-union getter, and same-enum ternary examples were RED;
+the explicit-override, bodyless-method, and mixed-enum negatives were already
+GREEN. With only the enum hunks all seven focused cases pass, and the complete
+HIR file passes 259 examples with 0 failures/errors and 2 existing pending in
+default order and under `--order 6003`. Accessor provenance and zero-arg union
+materialization are dependency-coupled; ternary phi propagation is a separate
+transaction. No direct no-prelude generated-stage reducer was found, so no
+bootstrap transition is claimed from these HIR proofs.
+
 CURRENT CHANGE — concrete value-owner and class-header admission (bounded,
 2026-07-14): the root cause crossed the HIR→MIR boundary. HIR final virtual
 repair could admit concrete value owners through stale `ClassInfo.is_struct`
