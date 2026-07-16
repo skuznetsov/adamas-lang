@@ -1,6 +1,28 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-07-14 (fresh s1 timeout localized to final concrete virtual-target repair).
+Updated: 2026-07-16 (MIR abstract-dispatch demand gate verified; function-count blocker remains).
+
+CURRENT FRONTIER CHECKPOINT — MIR abstract-dispatch exact-demand gate
+(2026-07-16): `synthesize_abstract_method_dispatchers` now indexes exact
+canonical HIR virtual demand by owner and method suffix, skips `$`-mangled
+demands, and iterates only the demanded suffixes. TDD was RED before the gate;
+the focused seam is 4/0 and the full MIR file is 38/0. Production probes are
+green: descendant-only demand emits no parent wrapper; abstract dispatch
+returns rc 0; Object/Reference static calls return rc 0 without a root wrapper;
+typed Int32/Int64 overloads keep separate vdispatchers (rc 0). Hostile review
+verdict: ROBUST for this MIR/HIR boundary. A fresh original-built s1
+(`e200020a21d79820805f46bfe97fd27136ec610089904e49883ffb9dbe7a1b17`) runs the
+no-prelude interpolation smoke; full selfhost LLVM IR
+(`f3d0b5256cd842000c070af5a94f621f6bec679dbdaa42b2184aa8a0d6558f75`) exits 0
+with Pass3=62 and 88,504 definitions/197 declarations, down from 90,772 and
+the original 37,041. Root direct Object/Reference definitions fall 2,085→50;
+no root arena/type_registry families remain. Residual expansion is still
++51,463 definitions, dominated by join 12,151, inspect 8,543, to_s 6,265, and
+14,984 block procs; block-proc review attributes this to specialization fanout.
+Nested generic Array depth plus eager/safety-net demand is only a HYPOTHESIS
+(d2+ join 8,493, inspect 4,632), not a fix. s2b was intentionally not run.
+The `/private/tmp` artifacts and SHAs are ephemeral/local-only; refresh them
+after cleanup or any source/compiler change.
 
 VERIFIED STABILITY SLICE (bootstrap successor still open): `PageArena` stored
 pages as `Array(StaticArray(TypedNode, 1024))`. Because `StaticArray` is a

@@ -16949,3 +16949,34 @@ taxonomy-based. A future nonzero StaticArray or a malformed/non-carrier
 Struct/Tuple descriptor could be over-included; hypothetical StaticArray
 flattening remains unsupported. No produced-stage bootstrap effect is proven.
 {F/G/R: 0.97/0.51/0.95} [backend carrier gate verified; bootstrap effect open]
+
+### LM-687 - Exact HIR demand bounds MIR abstract-dispatch synthesis
+
+The MIR abstract-dispatch pass previously synthesized a canonical missing
+ancestor method for every descendant method suffix. Fresh same-source IR made
+the defect visible: Adamas emitted 90,772 definitions versus 37,041 from
+original Crystal, including 1,053 direct Object and 1,032 direct Reference
+methods with 1,023 shared suffixes. The pass now indexes exact canonical HIR
+virtual-target demands by owner and iterates only demanded suffixes. Typed
+demands containing `$` remain shape-specific and cannot infer a canonical
+dispatcher.
+
+The old pass was RED for undemanded and child-only parent synthesis; the first
+canonicalizing repair was separately RED because a mangled-only demand admitted
+the canonical wrapper. The final focused matrix passes 4/4 and the complete MIR
+spec passes 38/38. Concrete-only, abstract-receiver, Object/Reference-static,
+and typed-overload production reducers all compile, link, and run safely with
+exit 0. Independent hostile review is ROBUST within the demand-gate scope.
+
+Fresh final s1 evidence: SHA-256
+`e200020a21d79820805f46bfe97fd27136ec610089904e49883ffb9dbe7a1b17`;
+same-source IR SHA-256
+`f3d0b5256cd842000c070af5a94f621f6bec679dbdaa42b2184aa8a0d6558f75`;
+88,504 definitions, 197 declarations, 62 synthesized abstract dispatchers,
+and 50 direct Object+Reference methods. The root `arena`/`type_registry`
+wrappers are absent. This removes 2,268 definitions but leaves a 51,463-function
+excess over original Crystal. The dominant residual (`join`, `inspect`,
+`to_s`, and block procs) is unchanged; block-proc analysis attributes it to
+upstream generic specialization demand. Nested Array depth-2+ families are the
+next HIR hypothesis, not a verified fix. s2b and later stages remain open.
+{F/G/R: 0.97/0.62/0.95} [MIR demand gate verified; bootstrap successor open]

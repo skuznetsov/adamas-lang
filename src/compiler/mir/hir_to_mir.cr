@@ -550,6 +550,18 @@ module Adamas
       })
 
       def synthesize_abstract_method_dispatchers(progress : Bool = false) : Nil
+        # Index exact canonical HIR demands once. Typed symbols have a distinct
+        # ABI and must not infer a canonical dispatcher.
+        demanded_methods_by_owner = {} of String => ::Set(String)
+        @hir_module.virtual_dispatch_target_functions.each do |target|
+          hash_idx = target.index('#')
+          next unless hash_idx
+          owner = target.byte_slice(0, hash_idx)
+          method_suffix = target.byte_slice(hash_idx + 1, target.bytesize - hash_idx - 1)
+          next if owner.empty? || method_suffix.empty? || method_suffix.includes?('$')
+          (demanded_methods_by_owner[owner] ||= ::Set(String).new) << method_suffix
+        end
+
         # Build inverted index: method_suffix -> [{owner_class, mir_func}, ...]
         # Only canonical names (no "$" arity/type-suffix) are considered, so an
         # abstract symbol like "Node#span" is matched against subclass canonical
@@ -570,18 +582,22 @@ module Adamas
 
         generated = 0
         @class_children.each do |class_name, _direct_children|
+          demanded_suffixes = demanded_methods_by_owner[class_name]?
+          next unless demanded_suffixes
           descendants = subclasses_for(class_name)
           next if descendants.empty?
           descendant_set = ::Set(String).new(descendants)
 
-          method_owners.each do |_method_suffix, owners|
+          demanded_suffixes.each do |method_suffix|
+            owners = method_owners[method_suffix]?
+            next unless owners
             # Skip if the class itself already has a canonical implementation.
             next if owners.any? { |o| o[0] == class_name }
             # Keep only descendants of class_name as dispatch candidates.
             candidate_funcs = owners.select { |o| descendant_set.includes?(o[0]) }
             next if candidate_funcs.empty?
 
-            generated += 1 if synthesize_class_dispatch_for_abstract(class_name, _method_suffix, candidate_funcs)
+            generated += 1 if synthesize_class_dispatch_for_abstract(class_name, method_suffix, candidate_funcs)
           end
         end
 

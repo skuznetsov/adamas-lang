@@ -8,6 +8,37 @@ require "../../src/compiler/mir/mir"
 require "../../src/compiler/mir/hir_to_mir"
 
 class Adamas::MIR::HIRToMIRLowering
+  def self.__test_abstract_dispatch_fixture(
+    demand : String? = nil,
+  ) : Tuple(Adamas::HIR::Module, Adamas::MIR::HIRToMIRLowering)
+    hir_mod = Adamas::HIR::Module.new("abstract_dispatch_demand_gate")
+    parent_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+      Adamas::HIR::TypeKind::Class,
+      "Parent"
+    ))
+    child_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+      Adamas::HIR::TypeKind::Class,
+      "Child"
+    ))
+    hir_mod.register_class_parent("Child", "Parent")
+
+    empty_ivars = [] of Adamas::HIR::IVarInfo
+    empty_class_vars = [] of Adamas::HIR::ClassVarInfo
+    class_infos = {
+      "Parent" => Adamas::HIR::ClassInfo.new("Parent", parent_ref, empty_ivars, empty_class_vars, 8, false, nil),
+      "Child"  => Adamas::HIR::ClassInfo.new("Child", child_ref, empty_ivars, empty_class_vars, 8, false, "Parent"),
+    } of String => Adamas::HIR::ClassInfo
+
+    child_func = hir_mod.create_function("Child#probe", Adamas::HIR::TypeRef::INT32)
+    child_func.add_param("self", child_ref)
+
+    hir_mod.mark_virtual_dispatch_target_function(demand) if demand
+    lowering = Adamas::MIR::HIRToMIRLowering.new(hir_mod)
+    lowering.register_class_types(class_infos)
+    lowering.prepare
+    {hir_mod, lowering}
+  end
+
   def __test_resolve_virtual_method_for_class(
     class_name : String,
     method_suffix : String,
@@ -73,6 +104,43 @@ class Adamas::MIR::HIRToMIRLowering
 end
 
 describe Adamas::MIR::HIRToMIRLowering do
+  describe "abstract dispatcher demand gate" do
+    it "does not synthesize an undemanded parent dispatcher" do
+      _hir_mod, lowering = Adamas::MIR::HIRToMIRLowering.__test_abstract_dispatch_fixture
+
+      lowering.synthesize_abstract_method_dispatchers
+
+      lowering.mir_module.get_function("Parent#probe").should be_nil
+    end
+
+    it "does not promote a child-only demand to the parent dispatcher" do
+      _hir_mod, lowering = Adamas::MIR::HIRToMIRLowering.__test_abstract_dispatch_fixture("Child#probe")
+
+      lowering.synthesize_abstract_method_dispatchers
+
+      lowering.mir_module.get_function("Parent#probe").should be_nil
+    end
+
+    it "retains an explicitly demanded parent dispatcher with a switch" do
+      _hir_mod, lowering = Adamas::MIR::HIRToMIRLowering.__test_abstract_dispatch_fixture("Parent#probe")
+
+      lowering.synthesize_abstract_method_dispatchers
+
+      dispatch = lowering.mir_module.get_function("Parent#probe")
+      dispatch.should_not be_nil
+      switch = dispatch.not_nil!.blocks.find { |block| block.terminator.is_a?(Adamas::MIR::Switch) }
+      switch.should_not be_nil
+    end
+
+    it "does not infer a canonical parent dispatcher from a mangled demand" do
+      _hir_mod, lowering = Adamas::MIR::HIRToMIRLowering.__test_abstract_dispatch_fixture("Parent#probe$Int32")
+
+      lowering.synthesize_abstract_method_dispatchers
+
+      lowering.mir_module.get_function("Parent#probe").should be_nil
+    end
+  end
+
   describe "materialized Proc yield ABI" do
     it "recovers the concrete callback return from a Nil|Proc union" do
       hir_mod = Adamas::HIR::Module.new("proc_yield_callback_return")
