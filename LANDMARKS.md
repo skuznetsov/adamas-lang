@@ -1,6 +1,6 @@
 # LANDMARKS
 
-Updated: 2026-07-14
+Updated: 2026-07-16
 Context: compiler/bootstrap/stage2-stability
 
 This file is the active working set only. Historical landmarks before this
@@ -11,6 +11,41 @@ checkpoint remain recoverable from git history, especially:
   `d43826fdcc2277b6075026244764a84d0069d1a30b675642b603f3511b14a1e5`
 
 ## Active Bootstrap Gate
+
+[LM-LLVM-INHERITED-DEMAND-FANOUT|mechanism VERIFIED, full attribution OPEN 2026-07-16 {F:0.95 G:0.58 R:0.91}]:
+A fresh cross-compiler LLVM census and a no-prelude scaling falsifier separate a
+real semantic-demand multiplier from raw function-count noise. With no
+subclass, original Crystal and Adamas each emit one `Parent#value(Int32)` body
+and Adamas emits no dispatcher. Adding eight empty subclasses with no override
+leaves original at one body and a direct call, while Adamas HIR materializes the
+ancestor plus eight identical child-owned bodies; MIR then emits one
+`__vdispatch__Parent#value(Int32)$T33` table that calls every child body. The
+mechanism is already present before LLVM and scales with live descendants per
+virtual demand shape.
+
+The source corridor is HIR `record_virtual_target` /
+`lower_virtual_targets_for_child` / `lower_virtual_target_owner`, where the
+current reuse proof is limited to inherited concrete generic receivers, followed
+by MIR `virtual_dispatch_candidates`, which enumerates base plus all subclasses.
+The LLVM backend compounds retained work by emitting semantic definitions with
+default external linkage. In the fresh `basic_sanity.cr` pair, original
+reachability is 2,977/3,026 definitions with 3,008 internal symbols, while
+Adamas reachability is 1,433/2,458 definitions and all 2,636 symbols (including
+declarations) are external. This is static triage, not deletion proof; live
+vdispatch families and indirect/runtime consumers forbid blanket pruning.
+
+The reusable comparator keeps authoritative semantic matches separate from
+provisional ABI-shape hints and treats reverse demangling as display-only. Its
+ABI comparison is textual LLVM type shape, not a named-layout equivalence proof.
+The reachability tool follows body and header references plus conservative
+global initializer roots, but remains an approximation of runtime liveness.
+Combined focused verification is 8 examples with zero failures/errors, and the
+real pair reports deterministically. Full-selfhost attribution remains open:
+fresh Adamas selfhost emission currently overflows in HIR before an LLVM file is
+produced, so the historical 88,504-vs-37,041 delta is orientation only. Decay
+trigger: the empty-subclass slope no longer reproduces, candidate reuse semantics
+change, LLVM linkage policy changes, or a fresh same-source full pair contradicts
+the bounded census.
 
 [LM-S2-TUPLE-HASH-RECEIVER-ABI|narrow root CLOSED, bootstrap successor OPEN 2026-07-14 {F:0.94 G:0.61 R:0.86}]:
 `Hash#key_hash` selected a generic `Tuple#hash(Crystal::Hasher)` target by

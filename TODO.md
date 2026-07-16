@@ -1,6 +1,57 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-07-16 (MIR abstract-dispatch demand gate verified; function-count blocker remains).
+Updated: 2026-07-16 (LLVM census localizes inherited virtual-demand fanout; full attribution remains open).
+
+CURRENT DIAGNOSTIC FRONTIER — cross-compiler LLVM function census
+(2026-07-16): reusable streaming tools now compare original Crystal and Adamas
+function inventories by forward semantic identity and separately report static
+reference reachability. `scripts/compare_llvm_functions.py` keeps exact matches,
+provisional `$arity`/splat shape hints, receiver/implementation fanout, textual
+LLVM ABI shapes, body kind, and actual LLVM linkage distinct.
+`scripts/llvm_function_reachability.py` follows direct body/header references
+from entry roots and conservatively roots global initializer function targets;
+its result is triage, never deletion authority. The combined focused specs pass
+8/8 and both Python modules pass `py_compile` with a temporary cache prefix.
+
+The fresh apples-to-apples `basic_sanity.cr` pair is deliberately small and
+shows that over- and under-generation coexist: original has 3,026 definitions
+and 105 declarations; clean `c394b37d` s1 has 2,458 definitions and 178
+declarations. The semantic census finds 680 authoritative matches plus 50
+provisional shape hints, with 2,420 original-only and 2,006 Adamas-only rows;
+these inventories include runtime/intrinsic representation differences and are
+not direct missing/extra bug counts. The static graph reaches 2,977/3,026
+original definitions but only 1,433/2,458 Adamas definitions. Original emits
+3,008 internal and 123 external symbols including declarations; Adamas emits all
+2,636 symbols with external linkage. Thus 1,025 Adamas definitions are
+statically unreachable in this bounded graph and cannot be treated as ordinary
+internal dead code, although indirect/runtime consumers still need proof before
+any pruning.
+
+A no-prelude 0-versus-8 empty-subclass falsifier localizes one real
+multiplicative mechanism before LLVM. With no subclass, both compilers emit one
+`Parent#value(Int32)` body and Adamas emits no dispatcher. With eight empty
+subclasses and no override, original still emits one body and directly calls
+it; Adamas HIR already contains `Parent#value` plus eight identical child-owned
+bodies, and MIR adds one `$T33` vdispatch function with eight child branches.
+The direct code path is HIR virtual-target replay across every live descendant,
+followed by child-owner materialization when only the ancestor body exists;
+MIR then enumerates base plus all subclasses. This proves an
+`O(demand_shapes * live_descendants)` amplifier for inherited virtual demand.
+Nested generic owner fanout and block-proc creation can multiply that amplifier,
+but their share of the historical +51,463 full-selfhost delta remains a
+HYPOTHESIS until a fresh full pair exists.
+
+The fresh full original O0/no-debug IR succeeds at 36,677 definitions and 161
+declarations, but clean `c394b37d` s1, host-1.20.3 s1, and the current dirty-main
+snapshot all fail before LLVM with `OverflowError: Arithmetic overflow` in
+`AstToHir#resolve_call_tuple`. The previous 88,504-definition Adamas artifact
+depended on lost uncommitted prerequisite state and is historical orientation,
+not a reproducible comparison oracle. NEXT: add a RED HIR seam for the empty
+non-overriding child, generalize inherited-body reuse beyond the current
+generic-only gate, and independently test MIR direct-call collapse when every
+runtime candidate resolves to the same implementation. Treat broad
+internalization as a separate backend containment slice: it can reduce retained
+dead work but cannot prevent HIR/MIR demand expansion.
 
 CURRENT FRONTIER CHECKPOINT — MIR abstract-dispatch exact-demand gate
 (2026-07-16): `synthesize_abstract_method_dispatchers` now indexes exact
