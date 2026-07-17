@@ -1,6 +1,6 @@
 # LANDMARKS
 
-Updated: 2026-07-16
+Updated: 2026-07-17
 Context: compiler/bootstrap/stage2-stability
 
 This file is the active working set only. Historical landmarks before this
@@ -33,6 +33,52 @@ miss spikes; detached processes can escape the observed tree. Decay trigger:
 any source, producer, artifact, environment fingerprint, manifest schema,
 normalizer, or process-probe availability change. Refresh only in a fresh
 output directory.
+
+[LM-S2B-SEMANTIC-READINESS-BLOCKED|s1b-to-s2b gate IN_PROGRESS 2026-07-17 {F:0.91 G:0.43 R:0.95}]:
+The bounded s1b-to-s2b gate was executed from clean snapshot commit
+`d38e243c0c4c130f662e7d99dae2a47859303a5c`, a clean descendant of target
+`30b6e5a164405ded337d39905150d2f96b16aeb6`; the snapshot had no
+compiler-source edits. Manifest run ID `20260717T125255Z-12696` records source
+content/tree hashes, producer, flags,
+host/cache context, and stage lineage (manifest SHA-256
+`70760afc6ff7f5a13b9568a72ed241f6669b5b679d3c39cbafe5836c24fef0f6`). Host
+Crystal was 1.20.3 (`f7e63c58...`), LLVM was 22.1.8, and the target was
+`aarch64-apple-darwin25.5.0`.
+
+Stage 1 built with `run_safe`, and its plain and canonical no-prelude smokes
+passed. The fresh `cv2_s1` producer is
+`66428bcba74d70f780e954ebd9675e37744a4aaa0e01f1f0cbff7bf15c267009`. Stage 2
+was killed by the bounded timeout after 902.74 seconds (exit 143), peak RSS
+4,155,600 KB, with complete process-tree coverage; no `cv2_s2`, stage-2 smoke,
+or later stage is admitted. The stage-2 log is retained by the ephemeral run
+root with SHA-256 `e05c3ca9750383846d95e8e9be3697153d567843d9f9cd4b6c0168690c8435f4`.
+
+Preconditions are fresh and scoped: HIR 286/0/0 with two existing pending,
+MIR 39/0/0, the timing/integrity/compare harness specs, the exact-stage-1
+inherited-demand reducer, and seven same-source runtime/LLVM rows. No-override
+depths 0/1/8/16 retain one ancestor body and no child body/dispatcher; true
+override, generic, and overload controls remain green. These are bounded
+semantic preconditions, not a raw LLVM-count target or s2b readiness proof.
+
+Harness evidence is narrow and explicit: the first RED failure exposed the old
+one-line no-prelude smoke contract, and an adversarial wrong-content RED proved
+that line count plus marker presence was still insufficient. The GREEN harness
+requires exact canonical stdout and exactly one semantic marker; missing,
+duplicate, and semantically wrong output all fail closed. A HIR-only
+probe plus two samples consistently names
+`flush_pending_functions -> lower_missing_call_targets ->
+process_pending_lower_functions -> lower_method(force_class_method)` with an
+`inline_yield_function -> lower_while -> inline_block_body` hot branch; the
+`resolve_call_tuple` symbol is not the hot root. Progress telemetry shows finite
+but accelerating lazy-worklist growth, so this is a broad HIR performance/
+demand frontier, not a proven stationary loop.
+
+Residual and next action: perform one focused per-owner/context falsifier for
+the lazy worklist, refresh provenance, and stop. Do not run a longer heavy
+retry, reopen the inherited-demand slice, infer readiness from raw function
+counts, or advance to s3b-s5b. Decay trigger: source/producer/toolchain/cache,
+manifest schema, process-probe or classifier semantics change; a fresh s2b
+artifact plus semantic runtime gate is the event that can move this landmark.
 
 [LM-LLVM-INHERITED-DEMAND-FANOUT|mechanism VERIFIED, full attribution OPEN 2026-07-16 {F:0.95 G:0.58 R:0.91}]:
 A fresh cross-compiler LLVM census and a no-prelude scaling falsifier separate a

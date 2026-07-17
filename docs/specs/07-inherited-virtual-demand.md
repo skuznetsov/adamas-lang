@@ -97,14 +97,41 @@ fresh full Adamas selfhost remains independently blocked by the known HIR
 generic source binding, union storage, or candidate enumeration decay this
 certificate and require rerunning the reducer and focused specs.
 
-## 7. Prepared next G2 goal (not executed)
+## 7. Executed G2 goal: s1b to s2b blocked (2026-07-17)
 
-Start from the clean `s1b` boundary at the commit containing this slice and run
-only `s1b -> s2b`; do not widen the run to `s2b -> s5b`. Fresh provenance must
-bind the source, producer, output, flags, host/cache context, and run identity.
-The inherited-demand reducer, focused HIR/MIR specs, and same-source runtime /
-LLVM evidence are preconditions, not a raw function-count target. The goal is
-the produced `s2b` compile plus its semantic runtime gate, with a refreshed
-evidence packet and fallback JSON/schema/path checks. The known
-`resolve_call_tuple` HIR `OverflowError` is a separate blocker to classify if
-encountered; it is not evidence to relax this slice or to jump to later stages.
+The bounded G2 run started from clean snapshot commit
+`d38e243c0c4c130f662e7d99dae2a47859303a5c` (clean descendant of
+`30b6e5a164405ded337d39905150d2f96b16aeb6`) and bound source, producer,
+output, flags, host/cache context, and run identity in
+`20260717T125255Z-12696`. Host Crystal was 1.20.3, LLVM was 22.1.8, and the
+target was `aarch64-apple-darwin25.5.0`. The fresh stage-1 producer was
+`cv2_s1` SHA-256
+`66428bcba74d70f780e954ebd9675e37744a4aaa0e01f1f0cbff7bf15c267009`.
+
+Stage 1 built and both plain and canonical no-prelude smokes passed. Stage 2
+was then killed by the bounded `run_safe` timeout after 902.74 seconds (exit
+143), with peak RSS 4,155,600 KB and complete process-tree coverage. No
+`cv2_s2`, stage-2 semantic smoke, or later stage was produced or accepted.
+This leaves the G2 claim at `IN_PROGRESS`, not `VERIFIED` or ready.
+
+The focused HIR/MIR specs, exact-stage-1 inherited-demand reducer, and the
+same-source runtime/LLVM preconditions remain green. A HIR-only probe and two
+read-only samples place the timeout in lazy HIR pending lowering and forced
+class-method inline-yield/while work; `resolve_call_tuple` is not the hot-root
+owner. Progress telemetry shows finite but accelerating worklist demand, so the
+residual is a broad HIR performance/demand frontier rather than a proven
+stationary loop. Raw LLVM function totals remain inventory evidence only.
+
+The harness contract was repaired narrowly after two RED probes: the first
+exposed the stale one-line no-prelude assumption, and the second proved that
+line count plus marker presence admitted semantically wrong output. Plain and
+no-prelude smokes now require exact canonical stdout plus exactly one marker;
+missing, duplicate, and wrong-content fixtures fail closed. The durable blocked
+handoff is `.landmark/evidence/lep-20260717-s2b-semantic-readiness-blocked.json`.
+
+Next legal action is one focused per-owner/context falsifier for lazy-worklist
+demand with fresh provenance. Do not retry a longer heavy stage-2 run, reopen
+this inherited-demand slice, or advance to `s3b`-`s5b` until a fresh `s2b`
+artifact and semantic runtime gate exist. Changes to source/producer/toolchain,
+cache or manifest semantics, process-probe availability, or classifier
+authority decay this checkpoint and require refreshed evidence.

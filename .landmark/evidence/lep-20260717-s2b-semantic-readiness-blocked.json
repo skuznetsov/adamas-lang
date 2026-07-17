@@ -1,0 +1,201 @@
+{
+  "artifact_kind": "landmark_evidence_packet",
+  "schema_version": 1,
+  "id": "lep-20260717-s2b-semantic-readiness-blocked",
+  "created_at": "2026-07-17T13:34:22Z",
+  "canonical_status": "canonical_summary",
+  "source": {
+    "task": "Bound the s1b-to-s2b semantic readiness gate after the inherited virtual-demand slice",
+    "producer": "codex",
+    "bounded_context": "Adamas compiler bootstrap chain, HIR lazy lowering, and inherited-demand evidence"
+  },
+  "claim": {
+    "text": "The bounded s1b-to-s2b run has fresh provenance and green stage-1/precondition evidence, but stage 2 timed out in lazy HIR demand lowering before producing cv2_s2; semantic readiness remains open.",
+    "level": "IN_PROGRESS",
+    "scope": "Clean snapshot d38e243c0c4c130f662e7d99dae2a47859303a5c, a descendant of target 30b6e5a164405ded337d39905150d2f96b16aeb6, exact s1b producer 66428bcba74d70f780e954ebd9675e37744a4aaa0e01f1f0cbff7bf15c267009, and one bounded s1b-to-s2b gate",
+    "decay_trigger": "Any source or compiler change, producer/output/cache/toolchain change, manifest schema or process-probe change, classifier-authority change, or a fresh s2b artifact with a semantic runtime gate"
+  },
+  "evidence": [
+    {
+      "kind": "authoritative_provenance",
+      "ref": "/private/tmp/adamas_operator_gate_20260717T125232Z_12059/stages/bootstrap_chain.manifest",
+      "digest": "sha256:70760afc6ff7f5a13b9568a72ed241f6669b5b679d3c39cbafe5836c24fef0f6",
+      "signal": "Manifest run_id=20260717T125255Z-12696 binds clean source snapshot, producer, flags, host/cache context, stage lineage, and status=failed at stage 2; snapshot HEAD is d38e243c0c4c130f662e7d99dae2a47859303a5c and source git state is clean.",
+      "result": "passed_with_stage2_blocker"
+    },
+    {
+      "kind": "stage1_gate",
+      "ref": "/private/tmp/adamas_operator_gate_20260717T125232Z_12059/stages/bootstrap_chain.manifest",
+      "signal": "Host Crystal 1.20.3 built cv2_s1 in 15.24s with run_safe; plain and canonical no-prelude smokes passed. Stage-1 producer SHA-256 is 66428bcba74d70f780e954ebd9675e37744a4aaa0e01f1f0cbff7bf15c267009; host compiler SHA-256 is f7e63c58a8db10d26ffcf4f766ae8fe3e19773245802f8daf42e5b574a187593; LLVM 22.1.8; target aarch64-apple-darwin25.5.0.",
+      "result": "passed"
+    },
+    {
+      "kind": "stage2_timeout",
+      "ref": "/private/tmp/adamas_operator_gate_20260717T125232Z_12059/stages/stage2_build.log",
+      "digest": "sha256:e05c3ca9750383846d95e8e9be3697153d567843d9f9cd4b6c0168690c8435f4",
+      "signal": "Fresh cv2_s1 self-host build timed out after 902.74s with exit 143; run_safe observed max_rss_kb=4155600, complete pgrep tree coverage, and no cv2_s2 output. No stage-2 smoke or s3b-s5b run was accepted.",
+      "result": "blocked"
+    },
+    {
+      "kind": "harness_red_green",
+      "refs": [
+        "/private/tmp/adamas_operator_s2b_20260717T123601Z_40663/preconditions/bootstrap_chain_timing_spec.red.log",
+        "/private/tmp/adamas_operator_s2b_20260717T123601Z_40663/preconditions/bootstrap_chain_timing_spec.green.log",
+        "/private/tmp/adamas_operator_s2b_20260717T123601Z_40663/preconditions/bootstrap_evidence_integrity_spec.after_fix2.log"
+      ],
+      "digests": [
+        "sha256:505805bf03578f986467e009d37f7a9c66c11564436ab1938266a83b3ba073cc",
+        "sha256:f4abfa098bc5a0a360f5c6f2b789b23eb668ec3095439253aa0604cfaa336dbf",
+        "sha256:059e84d8e1555dd0a8b464667a7a0f3b1cc562a73b7419f059d2bc4e540aa9a1"
+      ],
+      "unretained_ref": "Interactive adversarial wrong-content RED transcript; observed before the exact-stdout fix and not retained as a canonical raw artifact",
+      "signal": "The retained first RED timing fixture proved the old one-line stdout contract rejected canonical no-prelude output (marker_count=1, stdout_lines=3). An unretained adversarial wrong-content RED then proved that line count plus marker presence admitted semantically wrong output. The final GREEN harness requires exact canonical stdout plus exactly one semantic marker; missing, duplicate, and wrong-content fixtures fail closed. Timing and integrity specs pass 3/0/0 each through run_safe with complete process-tree telemetry.",
+      "result": "passed"
+    },
+    {
+      "kind": "focused_specs",
+      "refs": [
+        "/private/tmp/adamas_operator_s2b_20260717T123601Z_40663/focused_specs/hir.log",
+        "/private/tmp/adamas_operator_s2b_20260717T123601Z_40663/focused_specs/mir.log",
+        "/private/tmp/adamas_operator_s2b_20260717T123601Z_40663/preconditions/bootstrap_compare_scripts_spec.log",
+        "/private/tmp/adamas_operator_s2b_20260717T123601Z_40663/preconditions/run_safe_process_tree_spec.log",
+        "/private/tmp/adamas_operator_s2b_20260717T123601Z_40663/preconditions/run_safe_resource_metrics_spec.log"
+      ],
+      "digests": [
+        "sha256:45a26fed1676282a0ad3464611ee240954cd574c1dbc6d8be5de6ef56248778c",
+        "sha256:69ee7923197ffeb6bd0fd9f7a5e77179553e58cbfc4bc4b5ae5d606f92cfe3c5",
+        "sha256:924a07c8d07458d1675b8610e7842213f031277f58b18b267779cd5159bed089",
+        "sha256:fd6c38b26e9a043ce6317371150a0421206c5cf05972cfb5d13cd38beee05614",
+        "sha256:a5ecd243493aac4b4e115b206522b4fdf9b4fadb26e77dd62907fd8105b15dab"
+      ],
+      "signal": "Focused HIR has 286 examples, 0 failures, 0 errors, and 2 existing pending; MIR has 39/0/0. Compare-script, process-tree, and resource-metric preconditions pass 6/0/0, 5/0/0, and 4/0/0 respectively.",
+      "result": "passed"
+    },
+    {
+      "kind": "fresh_exact_stage1_reducer",
+      "ref": "/private/tmp/adamas_operator_s2b_hirprobe_20260717T133100Z/reducer/reducer.log",
+      "digest": "sha256:0582334fbc66185ad67415c21117e54267c2e156d4d9a833fcca3f6e0715caec",
+      "signal": "Against authoritative cv2_s1, no_override d=0/1/8/16 reports body=1, child_body=0, dispatch=0; override d=8 reports body=2, Child0=1, Child1=0, dispatch=1; generic and overload negative controls pass.",
+      "result": "passed"
+    },
+    {
+      "kind": "same_source_runtime_precondition",
+      "refs": [
+        "docs/evidence/inherited_virtual_demand_runtime_matrix_20260717.md",
+        "/private/tmp/adamas_operator_s2b_20260717T123601Z_40663/runtime_refresh_2/runtime_oracle.log",
+        "/private/tmp/adamas_operator_s2b_20260717T123601Z_40663/runtime_refresh_2/runtime_ledger.txt"
+      ],
+      "digests": [
+        "sha256:10bdabfae32ccd2df3a4f69f74b619eb484f1de68cb89acb791f41fc0dc35b96",
+        "sha256:6c5716e573f0bd5fef10f87d90ecf8d3815d9fc60827035d61e56655aaf41894",
+        "sha256:5584d7e5ea680f75452771c9639887b724caa0007fd7dcab405d8294f700771c"
+      ],
+      "signal": "Seven same-source rows compile and run with matching statuses: no_override=41 at d=0/1/8/16, override=42, generic=41, overload=0. This precondition was produced by an earlier fresh stage-1 producer SHA-256 4c2881adba29f510dee37548057bea88845944b2271619718ce32a799d0026ca, not by the authoritative 66428bc... gate; it is not an s2b proof.",
+      "result": "passed_scoped_precondition"
+    },
+    {
+      "kind": "same_source_llvm_precondition",
+      "refs": [
+        "docs/evidence/inherited_virtual_demand_llvm_matrix_20260717.json",
+        "/private/tmp/adamas_operator_s2b_20260717T123601Z_40663/runtime_refresh_2/forward_classifier/*/summary.json"
+      ],
+      "digests": [
+        "sha256:fb8052f00a5e9265472ec35796d29f4481f2558fa06b654fd05a1d5f61ef7974",
+        "sha256:9d5f9708783a40503442163105d4327292c13bbbeec718534e23c9c37397602d"
+      ],
+      "signal": "Forward census and semantic shape assertions pass for all seven rows: no-override keeps one Parent body, zero Child bodies, and zero vdispatch; override retains Child plus vdispatch; generic omits Box value; overload retains both demanded Parent overloads. The fresh aggregate digest hashes concatenated summary JSON contents in sorted relative-path order. Raw function totals, linkage differences, and conservative reachability remain inventory/provisional evidence only. The matrix uses the earlier fresh stage-1 producer noted above.",
+      "result": "passed_scoped_precondition"
+    },
+    {
+      "kind": "hir_stack_samples",
+      "refs": [
+        "/private/tmp/adamas_operator_s2b_hirprobe_20260717T133100Z/sample1.txt",
+        "/private/tmp/adamas_operator_s2b_hirprobe_20260717T133100Z/sample2.txt"
+      ],
+      "digests": [
+        "sha256:815eac6a54bcf343e469fb901a8648b18a13302ce3e72c7967b881d7ad7f2ed2",
+        "sha256:7c2e93e1d902694d50309f148844232fcc1c5f28d1261e23dc82110d1cff0596"
+      ],
+      "signal": "Two read-only macOS samples of the exact s1b HIR-only probe agree on flush_pending_functions -> lower_missing_call_targets -> process_pending_lower_functions -> lower_method(force_class_method), with a hot inline_yield_function -> lower_while -> inline_block_body branch. resolve_call_tuple appears only in nested low-count branches and is not the hot root.",
+      "result": "classified"
+    },
+    {
+      "kind": "hir_progress_probe",
+      "ref": "ephemeral PTY transcript for exact s1b 60s HIR-only probe (not retained as a canonical raw artifact)",
+      "signal": "Existing progress telemetry shows finite but accelerating worklist demand: functions 218->494 (+276) after 259 lowered, 515->1322 (+807) after 531, and 1323->5909 (+4586) after 1742; the final observed queue grew from 1017 to 1426 while lowering. No pending-explosion marker appeared. Classify as broad HIR performance/demand frontier, not proven stationary nontermination.",
+      "result": "classified"
+    }
+  ],
+  "verification": {
+    "dod_commands": [
+      "python3 -m json.tool .landmark/evidence/lep-20260717-s2b-semantic-readiness-blocked.json",
+      "bash -n scripts/bootstrap_chain.sh",
+      "CRYSTAL_CACHE_DIR=<fresh> scripts/run_safe.sh /opt/homebrew/bin/crystal 900 12288 spec spec/bootstrap/bootstrap_chain_timing_spec.cr",
+      "CRYSTAL_CACHE_DIR=<fresh> scripts/run_safe.sh /opt/homebrew/bin/crystal 900 12288 spec spec/bootstrap/bootstrap_evidence_integrity_spec.cr",
+      "git diff --check",
+      "bash scripts/validate-landmark-graph.sh (not available in this checkout at G0; fallback only)"
+    ],
+    "dod_signal": "The packet parses, shell syntax and whitespace checks are clean, and focused timing/integrity specs pass; the canonical graph validator is unavailable, so JSON/schema/path checks are the strongest available fallback. The actual s2b capability remains unverified because stage 2 timed out before producing cv2_s2.",
+    "adversary_verdict": "VULNERABLE",
+    "trust": {
+      "F": 0.91,
+      "G": 0.43,
+      "R": 0.95
+    }
+  },
+  "boundaries": {
+    "allowed_paths": [
+      "src/adamas.cr",
+      "scripts/bootstrap_chain.sh",
+      "scripts/run_safe.sh",
+      "spec/bootstrap/bootstrap_chain_timing_spec.cr",
+      "spec/bootstrap/bootstrap_evidence_integrity_spec.cr",
+      "docs/specs/07-inherited-virtual-demand.md",
+      "TODO.md",
+      "LANDMARKS.md",
+      ".landmark/evidence/**"
+    ],
+    "changed_paths": [
+      "scripts/bootstrap_chain.sh",
+      "spec/bootstrap/bootstrap_chain_timing_spec.cr",
+      "spec/bootstrap/bootstrap_evidence_integrity_spec.cr",
+      "docs/specs/07-inherited-virtual-demand.md",
+      "TODO.md",
+      "LANDMARKS.md",
+      ".landmark/evidence/lep-20260717-s2b-semantic-readiness-blocked.json"
+    ],
+    "raw_artifacts": [
+      {
+        "availability": "ephemeral",
+        "ref": "/private/tmp/adamas_operator_gate_20260717T125232Z_12059/stages/bootstrap_chain.manifest",
+        "digest": "sha256:70760afc6ff7f5a13b9568a72ed241f6669b5b679d3c39cbafe5836c24fef0f6"
+      },
+      {
+        "availability": "ephemeral",
+        "ref": "/private/tmp/adamas_operator_gate_20260717T125232Z_12059/stages/stage2_build.log",
+        "digest": "sha256:e05c3ca9750383846d95e8e9be3697153d567843d9f9cd4b6c0168690c8435f4"
+      },
+      {
+        "availability": "ephemeral",
+        "ref": "/private/tmp/adamas_operator_s2b_hirprobe_20260717T133100Z/sample1.txt",
+        "digest": "sha256:815eac6a54bcf343e469fb901a8648b18a13302ce3e72c7967b881d7ad7f2ed2"
+      },
+      {
+        "availability": "ephemeral",
+        "ref": "/private/tmp/adamas_operator_s2b_hirprobe_20260717T133100Z/sample2.txt",
+        "digest": "sha256:7c2e93e1d902694d50309f148844232fcc1c5f28d1261e23dc82110d1cff0596"
+      }
+    ]
+  },
+  "residual_risk": "The compiler capability remains blocked before s2b output by broad lazy-HIR pending-lowering demand growth. The progress evidence is transient and not a canonical raw log; runtime/LLVM preconditions came from an earlier fresh stage-1 producer and are explicitly not authoritative s2b evidence. Original HIR/MIR remain unavailable, raw LLVM counts are not readiness, resolve_call_tuple was not the hot-root owner in the sampled path, and no s3b-s5b stage was run. The next legal step is a focused per-owner/context falsifier with fresh provenance, not a longer heavy retry.",
+  "links": {
+    "problem_card": "",
+    "frontier_sdd": "docs/specs/07-inherited-virtual-demand.md",
+    "next_goal": "docs/specs/07-inherited-virtual-demand.md#7-executed-g2-goal-s1b-to-s2b-blocked",
+    "protocol_proposal": "",
+    "related_packets": [
+      "lep-20260716-inherited-demand-canonicalization",
+      "lep-20260716-bootstrap-evidence-integrity"
+    ]
+  }
+}

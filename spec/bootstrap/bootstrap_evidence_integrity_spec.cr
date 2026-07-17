@@ -60,7 +60,7 @@ module BootstrapEvidenceIntegritySpec
           if [ "$mode" = "no-output" ] || { [ "$mode" = "stale" ] && [ "$(cat "$state")" -ge 2 ]; }; then
             exit 0
           fi
-          printf '#!/bin/sh\nprintf "no-prelude-ran\\n" >> "$FAKE_BOOTSTRAP_NOPRELUDE_MARKER"\nprintf "noprelude_interp_ok\\n"\n' > "$out"
+          printf '#!/bin/sh\nprintf "no-prelude-ran\\n" >> "$FAKE_BOOTSTRAP_NOPRELUDE_MARKER"\nprintf "hello world\\nn=42\\nnoprelude_interp_ok\\n"\n' > "$out"
           chmod +x "$out"
           ;;
         *)
@@ -84,9 +84,9 @@ module BootstrapEvidenceIntegritySpec
 
   def self.test_env(workdir : String, mode : String, plain_marker : String, no_prelude_marker : String) : Hash(String, String)
     {
-      "FAKE_BOOTSTRAP_MODE" => mode,
-      "FAKE_BOOTSTRAP_STATE" => File.join(workdir, "state"),
-      "FAKE_BOOTSTRAP_PLAIN_MARKER" => plain_marker,
+      "FAKE_BOOTSTRAP_MODE"             => mode,
+      "FAKE_BOOTSTRAP_STATE"            => File.join(workdir, "state"),
+      "FAKE_BOOTSTRAP_PLAIN_MARKER"     => plain_marker,
       "FAKE_BOOTSTRAP_NOPRELUDE_MARKER" => no_prelude_marker,
     }
   end

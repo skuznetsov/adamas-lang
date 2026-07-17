@@ -1,6 +1,51 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-07-16 (bootstrap evidence integrity hardened; bounded inherited-demand slice verified, full bootstrap remains open).
+Updated: 2026-07-17 (bounded s1b-to-s2b gate classified IN_PROGRESS and blocked; full bootstrap remains open).
+
+CURRENT BLOCKED G2 HANDOFF - s1b to s2b semantic readiness (2026-07-17)
+Claim level: IN_PROGRESS. This is a durable blocked handoff, not a readiness
+or completion claim. The authoritative run used clean snapshot commit
+`d38e243c0c4c130f662e7d99dae2a47859303a5c` (descendant of target
+`30b6e5a164405ded337d39905150d2f96b16aeb6`) with no compiler-source edits,
+host Crystal 1.20.3 (`f7e63c58...`), LLVM 22.1.8, and target
+`aarch64-apple-darwin25.5.0`. Manifest run ID:
+`20260717T125255Z-12696` (`bootstrap_chain.manifest` SHA-256
+`70760afc6ff7f5a13b9568a72ed241f6669b5b679d3c39cbafe5836c24fef0f6`).
+
+Stage 1 built successfully and both plain and no-prelude smokes passed. The
+fresh stage-1 producer is `cv2_s1` SHA-256
+`66428bcba74d70f780e954ebd9675e37744a4aaa0e01f1f0cbff7bf15c267009`. Stage 2
+then timed out under `run_safe` after 902.74 seconds (exit 143), peaking at
+4,155,600 KB with complete process-tree coverage; no `cv2_s2`, stage-2 smoke,
+or later stage was accepted. The stage-2 log SHA-256 is
+`e05c3ca9750383846d95e8e9be3697153d567843d9f9cd4b6c0168690c8435f4`.
+
+Preconditions remain green: focused HIR (286 examples, 0 failures/errors, 2
+existing pending), MIR (39/0/0), bootstrap timing/integrity/compare specs,
+fresh exact-stage-1 inherited-demand reducer, and the seven-row same-source
+runtime/LLVM matrices. The reducer still reports one ancestor body and no
+child body/dispatcher for no-override depths 0/1/8/16, while override, generic,
+and overload controls pass. These preconditions are evidence for the bounded
+inherited slice, not permission to infer s2b readiness or optimize raw LLVM
+counts.
+
+The harness RED-to-GREEN fix is intentionally narrow: plain and no-prelude
+smokes require their exact canonical stdout plus exactly one semantic marker.
+Negative fixtures reject missing, duplicate, and semantically wrong output. A
+90-second HIR-only probe and two
+macOS samples place the timeout in lazy HIR pending lowering
+(`lower_missing_call_targets` / `process_pending_lower_functions` / forced
+class-method inline-yield/while lowering), not at a hot-root
+`resolve_call_tuple`. A 60-second progress probe shows finite but accelerating
+worklist demand growth, so the residual is a broad HIR performance/demand
+frontier rather than a proven stationary loop.
+
+Next: run one focused per-owner/context falsifier for the lazy worklist and
+refresh provenance; do not repeat a longer heavy stage-2 retry, reopen the
+inherited-demand slice, infer readiness from function counts, or advance to
+s3b-s5b. Refresh this handoff when source/producer/toolchain/cache/manifest
+schema or classifier semantics change, or when a fresh s2b artifact and
+semantic runtime gate exist.
 
 VERIFIED BOUNDED SLICE — inherited virtual-demand canonicalization
 (2026-07-16): ordinary reference subclasses that inherit the selected concrete

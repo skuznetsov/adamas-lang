@@ -457,8 +457,12 @@ run_compiled_smoke() {
   local binary="$1"
   local marker="$2"
   local runtime_log="$3"
+  local expected_stdout_lines="$4"
+  local expected_stdout="$5"
   local marker_count
   local stdout_line_count
+  local actual_stdout
+  local stdout_match
 
   if ! "$SCRIPT_DIR/run_safe.sh" "$binary" 10 512 >"$runtime_log" 2>&1; then
     cat "$runtime_log"
@@ -477,8 +481,17 @@ run_compiled_smoke() {
     in_stdout && length($0) > 0 { count += 1 }
     END { print count + 0 }
   ' "$runtime_log")"
-  if [[ "$marker_count" != "1" || "$stdout_line_count" != "1" ]]; then
-    echo "error: smoke runtime output mismatch: binary=$binary marker=$marker marker_count=$marker_count stdout_lines=$stdout_line_count" >&2
+  actual_stdout="$(awk '
+    $0 == "=== STDOUT ===" { in_stdout = 1; next }
+    $0 == "=== STDERR ===" { in_stdout = 0 }
+    in_stdout { print }
+  ' "$runtime_log")"
+  stdout_match="yes"
+  if [[ "$actual_stdout" != "$expected_stdout" ]]; then
+    stdout_match="no"
+  fi
+  if [[ "$marker_count" != "1" || "$stdout_line_count" != "$expected_stdout_lines" || "$stdout_match" != "yes" ]]; then
+    echo "error: smoke runtime output mismatch: binary=$binary marker=$marker marker_count=$marker_count stdout_lines=$stdout_line_count expected_stdout_lines=$expected_stdout_lines stdout_match=$stdout_match" >&2
     return 1
   fi
 }
@@ -496,7 +509,7 @@ run_smoke_plain() {
       echo "error: smoke compiler exited successfully but produced no fresh executable: $binary" >&2
       exit 1
     fi
-    run_compiled_smoke "$binary" "42" "$OUT_DIR/_smoke_puts42.runtime.log"
+    run_compiled_smoke "$binary" "42" "$OUT_DIR/_smoke_puts42.runtime.log" 1 "42"
   ) >"$logfile" 2>&1
 }
 
@@ -513,7 +526,7 @@ run_smoke_noprelude() {
       echo "error: smoke compiler exited successfully but produced no fresh executable: $binary" >&2
       exit 1
     fi
-    run_compiled_smoke "$binary" "noprelude_interp_ok" "$OUT_DIR/_smoke_noprel.runtime.log"
+    run_compiled_smoke "$binary" "noprelude_interp_ok" "$OUT_DIR/_smoke_noprel.runtime.log" 3 $'hello world\nn=42\nnoprelude_interp_ok'
   ) >"$logfile" 2>&1
 }
 
