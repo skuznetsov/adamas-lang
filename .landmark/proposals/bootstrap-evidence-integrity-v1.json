@@ -1,0 +1,26 @@
+{
+  "artifact_kind": "landmark_protocol_proposal",
+  "schema_version": 1,
+  "id": "bootstrap-evidence-integrity-v1",
+  "status": "implemented",
+  "created_at": "2026-07-17T00:03:13Z",
+  "bounded_context": "Adamas bootstrap test and diagnostic harness",
+  "change": {
+    "summary": "Admit bootstrap evidence only from fresh provenance-bound artifacts and label partial telemetry or normalized IR comparisons conservatively.",
+    "admitted": [
+      "fresh output directory with atomic run manifest",
+      "source, producer, output, flags, time, host, cache, smoke, and contextual environment fingerprints",
+      "numeric RSS and FD maxima only for complete observed process-tree samples",
+      "IR_SHAPE_EQ for hash-verified normalized textual equality"
+    ],
+    "rejected": [
+      "reused stage directories as a new epoch",
+      "exit-zero production without a fresh artifact",
+      "numeric zero or parent-only maxima for unavailable process-tree telemetry",
+      "SEMANTIC_EQ as a label for normalized textual equality"
+    ]
+  },
+  "compatibility": "Existing callers must use a fresh output directory. IR comparison now requires bootstrap_stages.manifest. The resource line is additive and existing exit/kill markers remain.",
+  "rollback": "Revert the atomic implementation commit; no source compiler semantics or stdlib files are changed.",
+  "evidence_packet": "lep-20260716-bootstrap-evidence-integrity"
+}

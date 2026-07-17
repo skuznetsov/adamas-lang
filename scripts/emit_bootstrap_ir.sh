@@ -45,6 +45,16 @@ fi
 
 mkdir -p "$(dirname "$OUT_PREFIX")"
 
+LOCK_DIR="$OUT_PREFIX.emit.lock"
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  echo "error: bootstrap IR output prefix is already in use: $OUT_PREFIX" >&2
+  exit 1
+fi
+cleanup() {
+  rmdir "$LOCK_DIR" 2>/dev/null || true
+}
+trap cleanup EXIT
+
 run_emit() {
   local kind="$1"
   local stem="$OUT_PREFIX.$kind.out"
@@ -90,9 +100,13 @@ run_emit() {
   esac
   chmod +x "$wrapper"
 
+  # A compiler that exits successfully without publishing a new artifact must
+  # not inherit evidence from an earlier run with the same output prefix.
+  rm -f "$artifact" "$OUT_PREFIX.$kind"
+
   "$ROOT_DIR/scripts/run_safe.sh" "$wrapper" "$TIMEOUT_SEC" "$MEM_MB" >"$log" 2>&1
 
-  if [[ ! -f "$artifact" ]]; then
+  if [[ ! -f "$artifact" || -L "$artifact" || ! -s "$artifact" ]]; then
     echo "error: expected $kind artifact missing: $artifact" >&2
     tail -n 80 "$log" >&2 || true
     exit 1

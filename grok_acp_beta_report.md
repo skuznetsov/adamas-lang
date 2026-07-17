@@ -14,6 +14,25 @@
 
 ## Сессии
 
+### Session 32 — 2026-07-16 — Bootstrap evidence-integrity hostile audit
+**Task:** read-only audit of fresh-artifact provenance, stage lineage, resource
+telemetry, and IR comparison claims during G0 hardening.
+**Brief size:** bounded to the changed scripts/specs and requested concrete
+false-positive probes.
+**Latency:** returned during local RED-to-GREEN work.
+**Output quality:** useful adversarial hypothesis, not acceptance evidence.
+Grok highlighted the same high-risk class later reproduced locally: stale or
+partial observations can look numeric and therefore authoritative. The final
+acceptance evidence came from local fake-tool falsifiers, focused Crystal specs,
+and an independent hostile diff review.
+**What worked:** compact pressure on probe failure, mixed epochs, and proxy
+overclaiming.
+**What did not:** broad residual lists did not by themselves distinguish
+in-scope blockers from explicitly bounded limitations; local executable
+falsifiers remained necessary.
+**Verdict:** useful for hostile checklist generation; never sufficient for a
+VERIFIED harness claim without local reproduction.
+
 ### Session 31 — 2026-05-01 — Qualified module namespace drift audit
 **Task:** read-only audit of why produced `s2` registered
 `Float::FastFloat::ParsedNumberStringT` as `Float::Float::ParsedNumberStringT`.

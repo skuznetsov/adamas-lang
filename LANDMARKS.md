@@ -12,6 +12,28 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-BOOTSTRAP-EVIDENCE-INTEGRITY|harness VERIFIED, bootstrap state OPEN 2026-07-16 {F:0.94 G:0.72 R:0.90}]:
+Bootstrap evidence now fails closed on reused output directories, stale
+exit-zero producers, source/output overlap, dirty or unavailable Git state,
+producer/output mutation, and broken stage lineage. Atomic manifests bind one
+run ID to source-scope, producer, output, flags, time, host, cache, smoke, and
+contextual environment hashes. `run_safe` validates limits, bounds host probes,
+aggregates only complete observed process-tree samples, and emits `unknown`
+when measurement is unavailable or incomplete. IR emit rejects stale/symlink
+artifacts; comparison verifies successful stage provenance and hashes before
+emission. Its admitted success token is `IR_SHAPE_EQ` with
+`scope=normalized_text`, explicitly not semantic equivalence.
+
+Focused verification passes 5 bootstrap-manifest/timing examples, 9 resource
+and process-tree examples, and 6 IR-script examples. No s2b-to-s5b execution is
+part of this certificate, so the compiler bootstrap frontier remains open.
+Residual scope: environment values are fingerprinted but not hermetically
+isolated; endpoint hashes miss A-to-B-to-A and between-check replacement races; 0.5-second sampling can
+miss spikes; detached processes can escape the observed tree. Decay trigger:
+any source, producer, artifact, environment fingerprint, manifest schema,
+normalizer, or process-probe availability change. Refresh only in a fresh
+output directory.
+
 [LM-LLVM-INHERITED-DEMAND-FANOUT|mechanism VERIFIED, full attribution OPEN 2026-07-16 {F:0.95 G:0.58 R:0.91}]:
 A fresh cross-compiler LLVM census and a no-prelude scaling falsifier separate a
 real semantic-demand multiplier from raw function-count noise. With no

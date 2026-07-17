@@ -161,3 +161,35 @@ open, but only if:
 Current example: LM-559 fixes static callee and return ABI spelling, but
 produced `s2` no-prelude binary output still exits 139 after LLVM finalizes
 output. That is a separate CLI/file-output tail or outer-rescue frontier.
+
+## 6. Evidence Integrity
+
+A bootstrap result is admissible only for a fresh output directory. The
+canonical builder rejects reused or symlinked output directories, removes each
+expected artifact before invoking its producer, and requires a fresh regular,
+non-empty executable afterward. `bootstrap_chain.manifest` and
+`bootstrap_stages.manifest` bind the run ID, source and source-scope hashes,
+Git state, producer and output hashes, flags, timestamps, host identity,
+contextual environment fingerprints, cache declaration, smoke results, and
+stage-to-stage producer lineage. Environment hashes describe the observed
+context; they are not a hermetic-build or deterministic-reproduction claim.
+
+`scripts/run_safe.sh` emits exactly one terminal `[RESOURCE]` line. RSS and FD
+maxima are accepted only from complete observed process-tree samples. Missing,
+malformed, timed-out, or incomplete host probes must produce `unknown`, never a
+numeric zero or a parent-only maximum presented as tree-wide. The observation
+is sampled and best-effort: detached processes and sub-sample spikes remain
+outside this certificate.
+
+IR comparison requires the successful stage manifest and verifies each stage
+binary hash before emission. `IR_SHAPE_EQ` means equality of the normalized
+HIR/MIR/LLVM text used by the script. It is not semantic equivalence and cannot
+replace the original-vs-stage language or runtime oracle.
+
+Endpoint hashes do not prove that an input could not change and change back, or
+be replaced briefly between checks. Evidence decays when the source, producer,
+relevant environment fingerprint,
+stage artifact, manifest schema, normalization rule, or process-probe
+availability changes. Refresh by building into a new directory and rerunning
+the smallest relevant falsifier; never reuse an old stage directory as a new
+epoch.

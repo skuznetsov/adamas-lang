@@ -1,6 +1,26 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-07-16 (LLVM census localizes inherited virtual-demand fanout; full attribution remains open).
+Updated: 2026-07-16 (bootstrap evidence integrity hardened; inherited-demand amplifier remains the next semantic target).
+
+VERIFIED HARNESS SLICE — fresh bootstrap evidence and honest resource scope
+(2026-07-16): the canonical chain now rejects reused/symlinked output
+directories, stale exit-zero producers, source/output overlap, dirty or missing
+Git provenance, producer/output mutation, and broken stage lineage. Atomic
+manifests bind source, producer, output, flags, time, run, host, cache, smoke,
+and contextual environment fingerprints. Both host and generated-stage builds
+run under `run_safe`; incomplete or malformed process-tree probes report
+`unknown` instead of zero/parent-only maxima. IR emission deletes stale paths,
+rejects symlink artifacts, and stage comparison verifies manifest hashes before
+reporting the deliberately narrow `IR_SHAPE_EQ` signal. Focused evidence is
+5 bootstrap examples, 9 runtime examples, and 6 IR-script examples, all green;
+shell syntax and diff checks pass. No heavy s2b-to-s5b run was used or claimed.
+Residuals: environment fingerprints are contextual rather than hermetic,
+endpoint hashes cannot observe an A-to-B-to-A or between-check replacement race, 0.5-second resource
+sampling can miss spikes, and detached processes can escape the observed tree.
+NEXT: attack the bounded inherited virtual-demand amplifier with scaling
+falsifiers and a fresh same-source original-vs-Adamas census; do not optimize
+raw function count or run the later bootstrap ladder until the bounded gate
+moves safely.
 
 CURRENT DIAGNOSTIC FRONTIER — cross-compiler LLVM function census
 (2026-07-16): reusable streaming tools now compare original Crystal and Adamas

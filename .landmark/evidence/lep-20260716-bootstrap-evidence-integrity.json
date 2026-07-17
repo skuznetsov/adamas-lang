@@ -1,0 +1,93 @@
+{
+  "artifact_kind": "landmark_evidence_packet",
+  "schema_version": 1,
+  "id": "lep-20260716-bootstrap-evidence-integrity",
+  "created_at": "2026-07-17T00:03:13Z",
+  "canonical_status": "canonical_summary",
+  "source": {
+    "task": "Harden Adamas bootstrap evidence before changing compiler demand generation",
+    "producer": "codex with Luna Max implementation workers and hostile review",
+    "bounded_context": "Adamas bootstrap harness, run_safe telemetry, and normalized IR comparison"
+  },
+  "claim": {
+    "text": "The harness rejects stale or mixed stage evidence in its admitted scope, reports incomplete resource observation as unknown, and no longer labels normalized textual IR equality as semantic equality.",
+    "level": "VERIFIED",
+    "scope": "fresh local output directories, repository-subdirectory compiler source, ordinary process descendants observable through bounded pgrep or ps probes, and the existing HIR/MIR/LLVM normalizer",
+    "decay_trigger": "Any source, producer, output, environment fingerprint, manifest schema, process-probe availability, or IR normalization change"
+  },
+  "evidence": [
+    {
+      "kind": "falsifier",
+      "ref": "spec/bootstrap/bootstrap_evidence_integrity_spec.cr and spec/bootstrap/bootstrap_chain_timing_spec.cr",
+      "signal": "5 examples pass; stale exit-zero output and reused directories fail closed while manifests bind stage lineage",
+      "result": "passed"
+    },
+    {
+      "kind": "falsifier",
+      "ref": "spec/runtime/run_safe_resource_metrics_spec.cr and spec/runtime/run_safe_process_tree_spec.cr",
+      "signal": "9 examples pass; complete fake trees aggregate parent and child, malformed or partial probes become unknown, and timeout cleanup leaves no observed orphan",
+      "result": "passed"
+    },
+    {
+      "kind": "falsifier",
+      "ref": "spec/bootstrap_compare_scripts_spec.cr",
+      "signal": "6 examples pass; stale IR artifacts and stage-hash mismatches are rejected and normalized equality is labeled IR_SHAPE_EQ",
+      "result": "passed"
+    },
+    {
+      "kind": "hostile_review",
+      "ref": "Luna Max final exact-diff review",
+      "signal": "ROBUST for the scoped fresh-artifact, complete-tree telemetry, and IR-label claims; non-hermetic environment, endpoint races, detached processes, and sub-sample spikes remain typed residuals",
+      "result": "passed"
+    },
+    {
+      "kind": "broader_regression",
+      "ref": "crystal spec spec/runtime/ --order random --error-trace",
+      "signal": "52 runtime examples pass with zero failures or errors",
+      "result": "passed"
+    }
+  ],
+  "verification": {
+    "dod_commands": [
+      "crystal spec spec/bootstrap/bootstrap_evidence_integrity_spec.cr spec/bootstrap/bootstrap_chain_timing_spec.cr --order random --error-trace",
+      "crystal spec spec/runtime/run_safe_resource_metrics_spec.cr spec/runtime/run_safe_process_tree_spec.cr --order random --error-trace",
+      "crystal spec spec/bootstrap_compare_scripts_spec.cr --order random --error-trace",
+      "bash -n scripts/bootstrap_chain.sh scripts/build_bootstrap_stages.sh scripts/emit_bootstrap_ir.sh scripts/compare_bootstrap_stages.sh scripts/run_safe.sh",
+      "git diff --check"
+    ],
+    "dod_signal": "5 bootstrap, 9 runtime, and 6 IR-script examples pass with shell syntax and whitespace checks clean.",
+    "adversary_verdict": "ROBUST",
+    "trust": {
+      "F": 0.94,
+      "G": 0.72,
+      "R": 0.90
+    }
+  },
+  "boundaries": {
+    "changed_paths": [
+      "scripts/bootstrap_chain.sh",
+      "scripts/build_bootstrap_stages.sh",
+      "scripts/run_safe.sh",
+      "scripts/emit_bootstrap_ir.sh",
+      "scripts/compare_bootstrap_stages.sh",
+      "spec/bootstrap/bootstrap_evidence_integrity_spec.cr",
+      "spec/runtime/run_safe_resource_metrics_spec.cr",
+      "spec/runtime/run_safe_process_tree_spec.cr",
+      "spec/bootstrap_compare_scripts_spec.cr",
+      "docs/specs/00-bootstrap-contract.md",
+      "docs/specs/05-falsifier-matrix.md",
+      "TODO.md",
+      "LANDMARKS.md",
+      "grok_acp_beta_report.md"
+    ]
+  },
+  "residual_risk": "Environment values are fingerprinted but not hermetically isolated. Endpoint hashes miss A-to-B-to-A and between-check replacement races. Resource sampling and PID enumeration can miss sub-interval spikes or short-lived children, and detached processes can escape the observed tree. IR_SHAPE_EQ is normalized textual evidence only. No s2b-to-s5b bootstrap result is claimed.",
+  "links": {
+    "problem_card": "",
+    "frontier_sdd": "docs/specs/00-bootstrap-contract.md",
+    "protocol_proposal": "bootstrap-evidence-integrity-v1",
+    "related_packets": [
+      "lep-20260716-llvm-function-census"
+    ]
+  }
+}
