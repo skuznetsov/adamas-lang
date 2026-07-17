@@ -685,6 +685,97 @@ class Adamas::HIR::AstToHir
     replay_virtual_targets_for_registered_class(class_name)
   end
 
+  def __test_virtual_target_replay_attempted?(child_name : String, parent_name : String, method_name : String) : Bool
+    @virtual_target_replay_attempted.any? do |entry|
+      entry[0] == child_name && entry[1] == parent_name && entry[2] == method_name
+    end
+  end
+
+  def __test_mark_virtual_target_replay_attempted_without_lowering(
+    child_name : String,
+    parent_name : String,
+    method_name : String,
+  ) : Nil
+    @virtual_target_replay_attempted << {
+      child_name,
+      parent_name,
+      method_name,
+      arg_types_hash([] of Adamas::HIR::TypeRef),
+      0_u8,
+    }
+  end
+
+  def __test_admit_virtual_target_shape(parent_name : String, method_name : String) : Nil
+    caller = @module.create_function("__adamas_main", Adamas::HIR::TypeRef::VOID)
+    call = Adamas::HIR::Call.without_receiver(
+      caller.next_value_id,
+      Adamas::HIR::TypeRef::VOID,
+      "#{parent_name}##{method_name}",
+      [] of Adamas::HIR::ValueId,
+    )
+    block = caller.get_block(caller.entry_block)
+    block.add(call)
+    block.terminator = Adamas::HIR::Return.new
+    record_virtual_target(
+      parent_name,
+      method_name,
+      [] of Adamas::HIR::TypeRef,
+      false,
+      false,
+      {caller.name, caller.id},
+    )
+  end
+
+  def __test_mark_rta_live_owner(owner_name : String) : Nil
+    @live_types << owner_name
+  end
+
+  def __test_refresh_virtual_target_shape(parent_name : String, method_name : String) : Nil
+    refresh_admitted_virtual_target_shapes(
+      parent_name,
+      method_name,
+      [] of Adamas::HIR::TypeRef,
+      false,
+      false,
+    )
+  end
+
+  def __test_allocator_self_reference?(function_name : String, owner_name : String) : Bool
+    allocator_self_reference?(function_name, owner_name)
+  end
+
+  def __test_emit_concrete_call(caller_name : String, target_name : String) : Nil
+    caller = @module.create_function(caller_name, Adamas::HIR::TypeRef::VOID)
+    call = Adamas::HIR::Call.without_receiver(
+      caller.next_value_id,
+      Adamas::HIR::TypeRef::VOID,
+      target_name,
+      [] of Adamas::HIR::ValueId,
+    )
+    block = caller.get_block(caller.entry_block)
+    block.add(call)
+    block.terminator = Adamas::HIR::Return.new
+  end
+
+  def __test_lower_missing_call_targets : Nil
+    lower_missing_call_targets
+  end
+
+  def __test_backend_owned_runtime_intrinsic_call?(name : String) : Bool
+    backend_owned_runtime_intrinsic_call?(name)
+  end
+
+  def __test_rta_virtual_target_has_admitted_caller?(parent_name : String, method_name : String, symbol_arg : Bool = false) : Bool
+    arg_types = symbol_arg ? [Adamas::HIR::TypeRef::SYMBOL] : [] of Adamas::HIR::TypeRef
+    rta_virtual_target_has_admitted_caller?(
+      parent_name,
+      method_name,
+      arg_types,
+      false,
+      false,
+    )
+  end
+
   def __test_concrete_value_virtual_repair_owner?(owner : String) : Bool
     concrete_value_virtual_repair_owner?(owner)
   end
@@ -1619,6 +1710,57 @@ private def lower_program_with_sources(code : String) : Adamas::HIR::AstToHir
   converter.lower_main(main_exprs) if main_exprs.size > 0
 
   converter
+end
+
+# Register class method definitions without eagerly lowering every owner. This
+# keeps the lazy-RTA replay specs focused on owner admission rather than the
+# normal class pass, which intentionally lowers all declared methods.
+private def lower_owner_replay_program(code : String) : Adamas::HIR::AstToHir
+  arena, exprs = parse(code)
+  converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => code})
+  converter.arena = arena
+
+  class_nodes = [] of Adamas::Compiler::Frontend::ClassNode
+  def_nodes = [] of Adamas::Compiler::Frontend::DefNode
+  main_exprs = [] of UInt64
+  exprs.each do |expr_id|
+    node = arena[expr_id]
+    case node
+    when Adamas::Compiler::Frontend::ClassNode
+      class_nodes << node
+    when Adamas::Compiler::Frontend::DefNode
+      def_nodes << node
+    when Adamas::Compiler::Frontend::CallNode
+      main_exprs << expr_id.index.to_u64
+    end
+  end
+
+  class_nodes.each { |node| converter.register_class(node) }
+  def_nodes.each { |node| converter.register_function(node) }
+  def_nodes.each { |node| converter.lower_def(node) }
+  converter.lower_main(main_exprs) if main_exprs.size > 0
+  converter
+end
+
+private def lower_missing_admission_case(caller_name : String) : Tuple(Adamas::HIR::AstToHir, String)
+  code = "def demand_target; 42; end"
+  arena, exprs = parse(code)
+  converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => code})
+  converter.arena = arena
+
+  target_node = nil.as(Adamas::Compiler::Frontend::DefNode?)
+  exprs.each do |expr_id|
+    node = arena[expr_id]
+    if node.is_a?(Adamas::Compiler::Frontend::DefNode)
+      target_node = node
+      break
+    end
+  end
+  target_node = target_node.not_nil!
+  converter.register_function(target_node)
+  target_name = converter.__test_function_def_names("demand_target").first
+  converter.__test_emit_concrete_call(caller_name, target_name)
+  {converter, target_name}
 end
 
 # Helper to get HIR text output
@@ -8780,6 +8922,321 @@ describe Adamas::HIR::AstToHir do
       slice_allocator.not_nil!.blocks.any? { |block| !block.instructions.empty? }.should be_true
       hir_text(nil_allocator.not_nil!).should contain("AllocatorProbe#initialize$Nil")
       hir_text(slice_allocator.not_nil!).should contain("AllocatorProbe#initialize$Slice(UInt8)")
+    end
+  end
+
+  describe "lazy RTA live-owner virtual replay" do
+    it "does not materialize a registered but uninstantiated sibling owner" do
+      converter = lower_owner_replay_program(<<-CRYSTAL)
+        class Root
+          def ping(value : Int32) : Int32
+            value
+          end
+        end
+
+        class Left < Root
+          def ping(value : Int32) : Int32
+            value + 1
+          end
+        end
+
+        class Right < Root
+          def ping(value : Int32) : Int32
+            value + 2
+          end
+        end
+
+        def invoke(root : Root) : Int32
+          root.ping(1)
+        end
+
+        invoke(Left.new)
+      CRYSTAL
+      converter.flush_pending_functions
+
+      left = converter.module.functions.find { |func| func.name.starts_with?("Left#ping$") }
+      left.should_not be_nil
+      converter.module.has_function_with_body?(left.not_nil!.name).should be_true
+      converter.__test_virtual_target_replay_attempted?("Left", "Root", "ping").should be_true
+      converter.__test_virtual_target_replay_attempted?("Right", "Root", "ping").should be_false
+    end
+
+    it "does not refresh a historically attempted inactive sibling" do
+      converter = lower_owner_replay_program(<<-CRYSTAL)
+        class Root
+          def ping : Int32
+            1
+          end
+        end
+
+        class Left < Root
+          def ping : Int32
+            2
+          end
+        end
+
+        class Right < Root
+          def ping : Int32
+            3
+          end
+        end
+      CRYSTAL
+
+      converter.__test_admit_virtual_target_shape("Root", "ping")
+      converter.__test_mark_rta_live_owner("Left")
+      converter.__test_mark_virtual_target_replay_attempted_without_lowering("Left", "Root", "ping")
+      converter.__test_mark_virtual_target_replay_attempted_without_lowering("Right", "Root", "ping")
+      converter.__test_virtual_target_replay_attempted?("Right", "Root", "ping").should be_true
+      right_ping_name = converter.__test_function_def_names("Right#ping").first
+      converter.module.has_function_with_body?(right_ping_name).should be_false
+
+      converter.__test_refresh_virtual_target_shape("Root", "ping")
+
+      left_ping_name = converter.__test_function_def_names("Left#ping").first
+      converter.module.has_function_with_body?(left_ping_name).should be_true
+      converter.module.has_function_with_body?(right_ping_name).should be_false
+    end
+
+    it "replays every concrete owner that is proven live" do
+      converter = lower_owner_replay_program(<<-CRYSTAL)
+        class Root
+          def ping(value : Int32) : Int32
+            value
+          end
+        end
+
+        class Left < Root
+          def ping(value : Int32) : Int32
+            value + 1
+          end
+        end
+
+        class Right < Root
+          def ping(value : Int32) : Int32
+            value + 2
+          end
+        end
+
+        def invoke(root : Root) : Int32
+          root.ping(1)
+        end
+
+        invoke(Left.new)
+        invoke(Right.new)
+      CRYSTAL
+      converter.flush_pending_functions
+
+      {"Left", "Right"}.each do |owner|
+        target = converter.module.functions.find { |func| func.name.starts_with?("#{owner}#ping$") }
+        target.should_not be_nil
+        converter.module.has_function_with_body?(target.not_nil!.name).should be_true
+        converter.__test_virtual_target_replay_attempted?(owner, "Root", "ping").should be_true
+      end
+    end
+
+    it "does not classify an explicit instance new as a synthesized allocator" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        class Widget
+          def new : Int32
+            1
+          end
+        end
+
+        Widget.new
+      CRYSTAL
+      converter.flush_pending_functions
+
+      converter.__test_allocator_self_reference?("Widget#new", "Widget").should be_false
+      converter.__test_allocator_self_reference?("Widget.new", "Widget").should be_true
+    end
+  end
+
+  describe "backend-owned macro condition calls" do
+    it "does not admit macro helpers as source-level virtual targets" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        42
+      CRYSTAL
+
+      {
+        "flag?$Symbol",
+        "flag$Q$$Symbol",
+        "Fiber#flag?$Symbol",
+        "Fiber$Hflag$Q$$Symbol",
+        "Crystal::EventLoop.has_constant?$Symbol",
+        "Crystal::EventLoop#has_constant?$Symbol",
+        "Crystal$CCEventLoop$Dhas_constant$Q$$Symbol",
+      }.each do |name|
+        converter.__test_backend_owned_runtime_intrinsic_call?(name).should be_true
+      end
+      converter.__test_backend_owned_runtime_intrinsic_call?("Other#flag?$Symbol").should be_false
+      converter.__test_rta_virtual_target_has_admitted_caller?("Fiber", "flag?", true).should be_false
+    end
+  end
+
+  describe "missing-target caller admission" do
+    it "regression probe: canonicalizes an admitted bare default-arg call" do
+      converter = lower_program_with_sources(<<-CRYSTAL)
+        class DefaultAdvance
+          def advance(count : Int32 = 1) : Nil
+          end
+        end
+
+        def use_default_advance(lexer : DefaultAdvance) : Nil
+          lexer.advance
+        end
+
+        use_default_advance(DefaultAdvance.new)
+      CRYSTAL
+
+      advance_defs = converter.__test_function_def_names("DefaultAdvance#advance")
+      advance_defs.should eq(["DefaultAdvance#advance$Int32"])
+      caller = converter.module.function_by_name("__adamas_main")
+      caller.should_not be_nil
+      main = caller.not_nil!
+      default_arg = Adamas::HIR::Literal.new(main.next_value_id, Adamas::HIR::TypeRef::INT32, 1_i64)
+      main.get_block(main.entry_block).add(default_arg)
+      advance_call = Adamas::HIR::Call.without_receiver(
+        main.next_value_id,
+        Adamas::HIR::TypeRef::NIL,
+        "DefaultAdvance#advance",
+        [default_arg.id],
+      )
+      main.get_block(main.entry_block).add(advance_call)
+
+      converter.module.remove_function("DefaultAdvance#advance$Int32").should be_true
+      converter.__test_reset_lowering_state("DefaultAdvance#advance$Int32")
+
+      converter.__test_lower_missing_call_targets
+
+      advance_call.not_nil!.method_name.should eq("DefaultAdvance#advance$Int32")
+      converter.module.has_function_with_body?("DefaultAdvance#advance$Int32").should be_true
+    end
+
+    it "refines a virtual default-arg call without changing its dispatch family" do
+      converter = lower_program_with_sources(<<-CRYSTAL)
+        class Root
+          def ping(value : Int32 = 1) : Int32
+            value
+          end
+        end
+
+        class Left < Root
+          def ping(value : Int32 = 1) : Int32
+            value + 1
+          end
+        end
+
+        def invoke_default_ping(root : Root) : Int32
+          root.ping
+        end
+
+        invoke_default_ping(Left.new)
+      CRYSTAL
+
+      # The source call is virtual, but its helper body is not necessarily in
+      # the runtime-root admission ledger on the first safety-net pass.  Drive
+      # the same late-demand path from main so this regression isolates the
+      # overload-family refinement rather than caller admission ordering.
+      caller = converter.module.function_by_name("__adamas_main")
+      caller.should_not be_nil
+      main = caller.not_nil!
+      default_arg = Adamas::HIR::Literal.new(main.next_value_id, Adamas::HIR::TypeRef::INT32, 1_i64)
+      main.get_block(main.entry_block).add(default_arg)
+      advance_call = Adamas::HIR::Call.without_receiver_virtual(
+        main.next_value_id,
+        Adamas::HIR::TypeRef::INT32,
+        "Root#ping",
+        [default_arg.id],
+        true,
+      )
+      main.get_block(main.entry_block).add(advance_call)
+
+      converter.module.remove_function("Root#ping$Int32").should be_true
+      converter.__test_reset_lowering_state("Root#ping$Int32")
+
+      converter.__test_lower_missing_call_targets
+
+      advance_call.not_nil!.method_name.should eq("Root#ping$Int32")
+      advance_call.not_nil!.virtual.should be_true
+      converter.module.has_function_with_body?("Root#ping$Int32").should be_true
+    end
+
+    it "does not promote a target from an inactive manually-emitted caller" do
+      converter, target_name = lower_missing_admission_case("inactive_caller")
+
+      converter.__test_lower_missing_call_targets
+
+      converter.__test_rta_called_method?(target_name).should be_false
+      converter.module.has_function_with_body?(target_name).should be_false
+    end
+
+    it "promotes and materializes the same edge from the runtime root" do
+      converter, target_name = lower_missing_admission_case("__adamas_main")
+
+      converter.__test_lower_missing_call_targets
+
+      converter.__test_rta_called_method?(target_name).should be_true
+      converter.module.has_function_with_body?(target_name).should be_true
+    end
+
+    it "does not retain admission for a removed and recreated same-name function" do
+      converter, target_name = lower_missing_admission_case("__adamas_main")
+      converter.__test_lower_missing_call_targets
+
+      converter.module.remove_function("__adamas_main").should be_true
+      converter.module.remove_function(target_name).should be_true
+      converter.module.create_function(target_name, Adamas::HIR::TypeRef::VOID)
+      converter.__test_emit_concrete_call("replacement_inactive_caller", target_name)
+      converter.__test_lower_missing_call_targets
+
+      converter.module.has_function_with_body?(target_name).should be_false
+    end
+
+    it "propagates concrete demand from an admitted virtual target" do
+      converter = lower_owner_replay_program(<<-CRYSTAL)
+        class Root
+          def ping : Int32
+            helper
+          end
+
+          def helper : Int32
+            1
+          end
+        end
+
+        class Left < Root
+          def ping : Int32
+            helper
+          end
+
+          def helper : Int32
+            2
+          end
+        end
+
+        def invoke(root : Root) : Int32
+          root.ping
+        end
+
+        invoke(Left.new)
+      CRYSTAL
+
+      left_ping = converter.module.functions.find { |func| func.name.starts_with?("Left#ping") }
+      left_ping.should_not be_nil
+      left_helper_name = converter.__test_function_def_names("Left#helper").first?
+      root_helper_name = converter.__test_function_def_names("Root#helper").first?
+      left_helper_name.should_not be_nil
+      root_helper_name.should_not be_nil
+
+      left_ping_name = left_ping.not_nil!.name
+      converter.module.remove_function(left_ping_name).should be_true
+      converter.__test_reset_lowering_state(left_ping_name)
+
+      converter.flush_pending_functions
+
+      converter.module.has_function_with_body?(left_ping_name).should be_true
+      converter.module.has_function_with_body?(left_helper_name.not_nil!).should be_true
+      converter.module.has_function_with_body?(root_helper_name.not_nil!).should be_true
     end
   end
 end

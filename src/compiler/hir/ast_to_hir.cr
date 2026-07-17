@@ -1477,7 +1477,17 @@ module Adamas::HIR
       when "__adamas_string_eq",
            "__adamas_hash_get_entry_ptr",
            "__adamas_hash_entry_deleted",
-           "__adamas_select_ptr"
+           "__adamas_select_ptr",
+           # Macro-condition calls are emitted in HIR after the semantic macro
+           # branch has already been resolved. LLVM emits these exact helpers;
+           # they are not source-level Fiber/Crystal method demands.
+           "flag?$Symbol",
+           "flag$Q$$Symbol",
+           "Fiber#flag?$Symbol",
+           "Fiber$Hflag$Q$$Symbol",
+           "Crystal::EventLoop.has_constant?$Symbol",
+           "Crystal::EventLoop#has_constant?$Symbol",
+           "Crystal$CCEventLoop$Dhas_constant$Q$$Symbol"
         true
       else
         false
@@ -2364,6 +2374,16 @@ module Adamas::HIR
     @lazy_rta_active : Bool = false      # Set to true only during main process_pending pass
     # Method-level RTA: exact call target names from already-lowered functions
     @rta_called_methods : Set(String) = Set(String).new
+    # Safety-net caller admission: only functions reachable from a proven runtime
+    # root through concrete calls may contribute missing-target demand.  Keep the
+    # exact mangled function identity so overloads and callback shapes do not
+    # collapse into a broad method-name admission.
+    @rta_admitted_callers : Set({String, FunctionId}) = Set({String, FunctionId}).new
+    # A replayed virtual target can be lowered before the missing-target scan
+    # seeds its runtime roots.  This context carries the exact virtual-shape
+    # provenance into lower_required_virtual_target_function without admitting
+    # every globally materialized virtual target.
+    @rta_virtual_target_admission_context : Bool = false
     # Method-level RTA: method parts (after # or .) for virtual dispatch matching
     @rta_called_method_parts : Array(String) = [] of String
     # Method-level RTA: for each method part, the set of owner base types that are
@@ -2403,6 +2423,7 @@ module Adamas::HIR
 
       # Initial pending queue — these functions were deferred from lower_main
       # (prelude initialization, always needed). Mark their owner types as live.
+      # Initialization is fact-only; callers enable replay after this scan.
       @pending_function_queue.each do |name|
         mark_owner_type_live(name)
       end
@@ -2411,7 +2432,10 @@ module Adamas::HIR
       @module.functions.each do |func|
         scan_hir_function_for_live_types(func)
       end
-      @rta_scan_start_idx = @module.function_count
+      # The initial function snapshot was scanned with replay inactive. Rescan
+      # it from the first pending RTA interval after activation so recorded
+      # virtual demands are admitted for owners proven live by these facts.
+      @rta_scan_start_idx = 0
       @rta_type_scan_start_idx = @module.types.size
     end
 
@@ -4466,6 +4490,51 @@ module Adamas::HIR
       @live_types.includes?(owner_base)
     end
 
+    # Runtime entrypoints are the only roots allowed to seed the concrete-call
+    # admission ledger used by the missing-target safety net.  A function body
+    # emitted for a unit/spec helper is not a runtime root merely because it is
+    # present in the HIR module.
+    private def rta_runtime_root_function?(name : String) : Bool
+      base = strip_type_suffix(name)
+      base == "__adamas_main" || base == "__crystal_main" || base == "main"
+    end
+
+    private def seed_rta_runtime_root_callers : Nil
+      @module.functions.each do |func|
+        admit_rta_runtime_root_function(func)
+      end
+    end
+
+    private def admit_rta_runtime_root_function(func : Adamas::HIR::Function) : Nil
+      return unless rta_runtime_root_function?(func.name)
+      @rta_admitted_callers << {func.name, func.id}
+    end
+
+    private def rta_admitted_caller?(func : Adamas::HIR::Function) : Bool
+      return false unless @module.has_function_with_body?(func.name)
+      @rta_admitted_callers.includes?({func.name, func.id})
+    end
+
+    # Admission is keyed by the exact call symbol.  A target is eligible when
+    # it already exists as a HIR function/stub, has a registered source def, or
+    # is already tracked by the lowering state machine.  Unknown backend names
+    # are deliberately not promoted by this ledger.
+    private def rta_known_concrete_target?(name : String) : Bool
+      return false if name.empty?
+      return true if @module.has_function?(name)
+      return true if @function_defs.has_key?(name)
+
+      base = strip_type_suffix(name)
+      return true if base != name && @function_defs.has_key?(base)
+      @function_lowering_states.has_key?(name)
+    end
+
+    private def admit_rta_concrete_target(name : String) : Nil
+      return unless rta_known_concrete_target?(name)
+      function = @module.function_by_name(name) || @module.create_function(name, TypeRef::VOID)
+      @rta_admitted_callers << {function.name, function.id}
+    end
+
     private def rta_reason_key(reason : String, name : String) : String
       base = strip_type_suffix(name)
       stripped = strip_generic_receiver_from_base_name(base)
@@ -4546,6 +4615,12 @@ module Adamas::HIR
           case inst
           when Adamas::HIR::Allocate
             if desc = @module.get_type_descriptor(inst.type)
+              # Generated allocators contain their own Allocate instruction.
+              # Treating that self-allocation as runtime evidence makes every
+              # registered class live during the allocator safety pass, which
+              # reopens dead virtual-dispatch siblings. A real `.new` call is
+              # tracked below from the caller's Call instruction.
+              next if allocator_self_reference?(func.name, desc.name)
               if mark_live_type(desc.name)
                 new_types = true
                 base = strip_generics_simple(desc.name)
@@ -4590,6 +4665,7 @@ module Adamas::HIR
               after_dot = mname[(dot_idx + 1)..]
               if after_dot.starts_with?("new") && (after_dot.size == 3 || after_dot[3] == '$')
                 owner_name = mname[0, dot_idx]
+                next if allocator_self_reference?(func.name, owner_name)
                 if mark_live_type(owner_name)
                   new_types = true
                   owner_base = strip_generics_simple(owner_name)
@@ -4603,6 +4679,7 @@ module Adamas::HIR
             unless inst.virtual
               if hash_idx = mname.rindex('#')
                 owner = mname[0, hash_idx]
+                next if allocator_self_reference?(func.name, owner)
                 if mark_live_type(owner)
                   new_types = true
                   owner_base = strip_generics_simple(owner)
@@ -4612,6 +4689,7 @@ module Adamas::HIR
                 end
               elsif dot_idx2 = mname.rindex('.')
                 owner = mname[0, dot_idx2]
+                next if allocator_self_reference?(func.name, owner)
                 if mark_live_type(owner)
                   new_types = true
                   owner_base = strip_generics_simple(owner)
@@ -4625,6 +4703,19 @@ module Adamas::HIR
         end
       end
       new_types
+    end
+
+    private def allocator_self_reference?(function_name : String, owner_name : String) : Bool
+      return false unless @generated_allocators.includes?(owner_name)
+      base_name = strip_type_suffix(function_name)
+      class_allocator = allocator_new_name_for(owner_name)
+      instance_allocator = allocator_instance_new_name_for(owner_name)
+      return false unless base_name == class_allocator || base_name == instance_allocator
+
+      # An explicitly-defined `def new`/`def self.new` owns the same spelling;
+      # only the synthesized allocator identities are self-liveness edges.
+      return false if @function_defs.has_key?(base_name)
+      true
     end
 
     # Scan only newly-emitted functions since last scan
@@ -6476,6 +6567,8 @@ module Adamas::HIR
       @rta_type_scan_start_idx = 0
       @lazy_rta_active = false
       @rta_called_methods = Set(String).new
+      @rta_admitted_callers = Set({String, FunctionId}).new
+      @rta_virtual_target_admission_context = false
       @rta_called_method_parts = [] of String
       @rta_virtual_receivers = Hash(String, Set(String)).new
       @rta_type_to_modules = nil.as(Hash(String, Set(String))?)
@@ -8088,6 +8181,62 @@ module Adamas::HIR
       function.not_nil!.id == caller_token[1] && @module.has_function_with_body?(caller_token[0])
     end
 
+    private def rta_virtual_target_has_admitted_caller?(
+      parent_name : String,
+      method_name : String,
+      arg_types : Array(TypeRef),
+      has_block : Bool,
+      has_splat : Bool,
+    ) : Bool
+      # Macro-condition calls are represented as virtual HIR shapes while the
+      # backend owns their final helper symbols. Do not let the replay
+      # admission context reinterpret the raw shape (e.g. flag?$Symbol) as a
+      # source-level Fiber/Crystal owner; that would materialize an abort stub
+      # before LLVM emits the backend helper.
+      raw_shape_name = mangle_function_name(method_name, arg_types, has_block)
+      return false if backend_owned_runtime_intrinsic_call?(raw_shape_name)
+
+      key = virtual_target_shape_key(parent_name, method_name, arg_types, has_block, has_splat)
+      callers = @virtual_target_callers[key]?
+      return false unless callers
+
+      callers.not_nil!.any? do |caller_token|
+        (rta_runtime_root_function?(caller_token[0]) || @rta_admitted_callers.includes?(caller_token)) &&
+          virtual_target_caller_active?(caller_token)
+      end
+    end
+
+    # Revisit only virtual replay shapes that were already attempted for this
+    # exact parent/method/argument identity.  This repairs provenance when the
+    # caller was admitted after the first replay, without broadcasting a new
+    # virtual demand to every registered subclass.
+    private def refresh_admitted_virtual_target_shapes(
+      parent_name : String,
+      method_name : String,
+      arg_types : Array(TypeRef),
+      has_block : Bool,
+      has_splat : Bool,
+    ) : Nil
+      return unless rta_virtual_target_has_admitted_caller?(parent_name, method_name, arg_types, has_block, has_splat)
+
+      arg_hash = arg_types_hash(arg_types)
+      flags = 0_u8
+      flags |= 1_u8 if has_block
+      flags |= 2_u8 if has_splat
+      children = Set(String).new
+      @virtual_target_replay_attempted.each do |entry|
+        next unless entry[1] == parent_name
+        next unless entry[2] == method_name
+        next unless entry[3] == arg_hash && entry[4] == flags
+        children << entry[0]
+      end
+      children.each do |child|
+        next if concrete_value_virtual_repair_owner?(child)
+        next unless rta_live_owner?(child)
+        lower_virtual_targets_for_child(child, parent_name)
+      end
+    end
+
     private def record_virtual_target(
       parent_name : String,
       method_name : String,
@@ -8114,10 +8263,14 @@ module Adamas::HIR
       end
 
       # If descendants are already known, lower the recorded target for them
-      # immediately. For broad roots, only do this while lazy RTA can filter to
-      # live owners; otherwise late repair/force-lower paths replay Object or
-      # Reference targets across every generic helper seen by the compiler.
-      unless (parent_name == "Object" || parent_name == "Reference") && !@lazy_rta_active
+      # immediately only when lazy RTA is active (or explicitly disabled). Before
+      # activation, the live-owner set is not authoritative yet, so fan-out
+      # would materialize registered but uninstantiated siblings. The recorded
+      # demand remains in @virtual_targets_by_parent and is replayed for the
+      # live owners when lazy RTA activates.
+      replay_now = @lazy_rta_active ||
+                   (!lazy_rta_enabled? && parent_name != "Object" && parent_name != "Reference")
+      if replay_now
         collect_subclasses_cached(parent_name).each do |child_name|
           if @lazy_rta_active
             next unless rta_live_owner?(child_name)
@@ -8143,12 +8296,38 @@ module Adamas::HIR
         flags |= 1_u8 if target.has_block
         flags |= 2_u8 if target.has_splat
         key = {child_name, parent_name, target.method_name, ah, flags}
+        admitted_context = rta_virtual_target_has_admitted_caller?(
+          parent_name,
+          target.method_name,
+          target.arg_types,
+          target.has_block,
+          target.has_splat,
+        )
         if @virtual_target_replay_attempted.includes?(key)
           @vtr_stats_owner_skipped &+= 1 if @debug_virtual_target_replay_stats
+          if admitted_context
+            old_admission_context = @rta_virtual_target_admission_context
+            @rta_virtual_target_admission_context = true
+            begin
+              # The first replay may have occurred before the caller was
+              # admitted. Re-run the exact owner resolution now that provenance
+              # is live; body-present targets become admitted and missing bodies
+              # receive the same concrete materialization retry.
+              lower_virtual_target_owner(child_name, target.method_name, target.arg_types, target.has_block, target.has_splat)
+            ensure
+              @rta_virtual_target_admission_context = old_admission_context
+            end
+          end
           next
         end
         @virtual_target_replay_attempted << key
-        lower_virtual_target_owner(child_name, target.method_name, target.arg_types, target.has_block, target.has_splat)
+        old_admission_context = @rta_virtual_target_admission_context
+        @rta_virtual_target_admission_context = admitted_context
+        begin
+          lower_virtual_target_owner(child_name, target.method_name, target.arg_types, target.has_block, target.has_splat)
+        ensure
+          @rta_virtual_target_admission_context = old_admission_context
+        end
       end
     end
 
@@ -8156,6 +8335,7 @@ module Adamas::HIR
       @rta_called_methods << name if exact_demand
       @module.mark_virtual_dispatch_target_function(name)
       lower_function_if_needed(name)
+      admit_rta_concrete_target(name) if @rta_virtual_target_admission_context
     end
 
     private def replay_virtual_targets_for_registered_class(class_name : String) : Nil
@@ -57295,6 +57475,7 @@ module Adamas::HIR
       # Create __adamas_main function with void return type
       # Signature: fun __adamas_main(argc : Int32, argv : UInt8**)
       func = @module.create_function("__adamas_main", TypeRef::VOID)
+      admit_rta_runtime_root_function(func)
       STDERR.puts "[LOWER_MAIN_FRONTIER] function_created" if lower_main_frontier
       set_synthetic_main_definition_location(func)
       STDERR.puts "[LOWER_MAIN_FRONTIER] location_set" if lower_main_frontier
@@ -57765,6 +57946,7 @@ module Adamas::HIR
 
       # Create __crystal_main(argc, argv)
       func = @module.create_function("__adamas_main", TypeRef::VOID)
+      admit_rta_runtime_root_function(func)
       if path = source_path_for(@arena)
         func.definition_location = SourceLocation.new(path.not_nil!, node.span.start_line, node.span.start_column)
       end
@@ -58299,8 +58481,10 @@ module Adamas::HIR
           collect_subclasses_cached(parent_name).each do |child_name|
             next if concrete_value_virtual_repair_owner?(child_name)
             next unless rta_live_owner?(child_name)
-            replay_key = {child_name, parent_name, target.method_name, arg_hash, replay_flags}
-            next unless @virtual_target_replay_attempted.includes?(replay_key)
+            # A direct unit/recovery caller may invoke final repair before the
+            # lazy activation pass has replayed the recorded shape. The active
+            # parent demand plus surviving caller and live-owner proof is
+            # authoritative; replay-attempted is only a materialization trace.
             owners << child_name
           end
 
@@ -58675,6 +58859,11 @@ module Adamas::HIR
       stop_after_missing_phase("start", "ADAMAS_STOP_AFTER_HIR_MISSING_START", iteration, 0)
 
       while iteration < max_iterations
+        # Re-seed exact runtime entrypoints because the HIR module can gain its
+        # synthetic main shim after this safety net is constructed.  Admission
+        # then grows only through concrete calls observed in already-admitted
+        # bodies; unrelated helper bodies remain invisible to this scan.
+        seed_rta_runtime_root_callers
         STDERR.puts "[MISSING_TRACE] iter=#{iteration} funcs=#{@module.functions.size}" if trace_flush_enter
         missing = [] of String
         missing_summary = Hash(String, Int32).new(0) if debug_missing_summary
@@ -58685,6 +58874,7 @@ module Adamas::HIR
             STDERR.puts "[MISSING_TRACE] func[#{func_trace_idx}] #{func.name} params=#{func.params.size} blocks=#{func.blocks.size}"
           end
           func_trace_idx += 1
+          next unless rta_admitted_caller?(func)
           value_types = Hash(ValueId, TypeRef).new
           STDERR.puts "[MISSING_TRACE] params start" if trace_flush_enter
           func.params.each { |param| value_types[param.id] = param.type }
@@ -58754,11 +58944,51 @@ module Adamas::HIR
               end
               next if name.empty?
               next if backend_owned_runtime_intrinsic_call?(name)
+              arg_types = inst.args.map { |arg_id| value_types[arg_id]? || TypeRef::VOID }
+              # A default argument is materialized into HIR before this safety-net
+              # scan, but the call spelling can remain the bare family name.  A
+              # typed defaulted def (e.g. `advance(count : Int32 = 1)`) is
+              # registered only as `advance$Int32`; repeatedly queueing the bare
+              # spelling leaves the concrete call unsatisfied and churns the
+              # missing-target fixed point.  Canonicalize calls with fully known
+              # args, and only when resolver ownership is unchanged.  A virtual
+              # call keeps its virtual bit; only its overload family is refined.
+              if !name.includes?('$') && !arg_types.empty? &&
+                 arg_types.none? { |arg_type| arg_type == TypeRef::VOID }
+                if resolved_entry = lookup_function_def_for_call(
+                     name,
+                     arg_types.size,
+                     inst.has_block?,
+                     arg_types,
+                     false,
+                     false,
+                   )
+                  resolved_name = resolved_entry[0]
+                  if resolved_name != name && strip_type_suffix(resolved_name) == strip_type_suffix(name) &&
+                     @function_defs.has_key?(resolved_name)
+                    STDERR.puts "[MISSING_CANONICALIZE] requested=#{name} resolved=#{resolved_name} args=#{arg_types.size}" if env_has?("DEBUG_MISSING_CANONICALIZE")
+                    inst.method_name = resolved_name
+                    name = resolved_name
+                  end
+                end
+              end
+              admit_rta_concrete_target(name) unless inst.virtual
+              if inst.virtual
+                virtual_parts = parse_method_name_compact(name)
+                if virtual_method = virtual_parts.method
+                  refresh_admitted_virtual_target_shapes(
+                    virtual_parts.owner,
+                    virtual_method,
+                    arg_types,
+                    !!inst.block,
+                    false,
+                  )
+                end
+              end
               next if @module.has_function_with_body?(name)
               if debug_env_filter_match?("DEBUG_MISSING_TARGET", name)
                 STDERR.puts "[MISSING_TARGET] seen name=#{name} func=#{func.name} body=#{@module.has_function_with_body?(name)} state=#{function_state(name)}"
               end
-              arg_types = inst.args.map { |arg_id| value_types[arg_id]? || TypeRef::VOID }
               remember_callsite_arg_types(name, arg_types, nil, nil, !!inst.block)
               # A call instruction already emitted into HIR is concrete demand:
               # leaving it filtered here produces LLVM abort stubs. The queued
@@ -58800,6 +59030,7 @@ module Adamas::HIR
                 unless un_super.empty? || @module.has_function_with_body?(un_super) ||
                        function_state(un_super).in_progress?
                   if @function_defs.has_key?(un_super) || @function_defs.has_key?(strip_type_suffix(un_super))
+                    admit_rta_concrete_target(un_super) unless inst.virtual
                     if function_state(un_super).completed?
                       @function_lowering_states.delete(un_super)
                     end
