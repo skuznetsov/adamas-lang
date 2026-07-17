@@ -349,6 +349,50 @@ describe Adamas::MIR::HIRToMIRLowering do
   end
 
   describe "virtual method family resolution" do
+    it "direct-calls one shared inherited implementation without a dispatcher" do
+      hir_mod = Adamas::HIR::Module.new("unified_inherited_dispatch")
+      parent_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Class,
+        "Parent"
+      ))
+      child_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Class,
+        "Child"
+      ))
+      hir_mod.register_class_parent("Child", "Parent")
+
+      parent_func = hir_mod.create_function("Parent#probe", Adamas::HIR::TypeRef::INT32)
+      parent_func.add_param("self", parent_ref)
+
+      empty_ivars = [] of Adamas::HIR::IVarInfo
+      empty_class_vars = [] of Adamas::HIR::ClassVarInfo
+      class_infos = {
+        "Parent" => Adamas::HIR::ClassInfo.new("Parent", parent_ref, empty_ivars, empty_class_vars, 8, false, nil),
+        "Child"  => Adamas::HIR::ClassInfo.new("Child", child_ref, empty_ivars, empty_class_vars, 8, false, "Parent"),
+      } of String => Adamas::HIR::ClassInfo
+
+      lowering = Adamas::MIR::HIRToMIRLowering.new(hir_mod)
+      lowering.register_class_types(class_infos)
+      lowering.prepare
+
+      call = Adamas::HIR::Call.with_receiver_virtual(
+        0_u32,
+        Adamas::HIR::TypeRef::INT32,
+        0_u32,
+        "Parent#probe",
+        [] of Adamas::HIR::ValueId,
+        true
+      )
+      lowering.__test_lower_virtual_dispatch_for_receiver(parent_ref, call).should_not eq(0_u32)
+      lowering.mir_module.get_function("__vdispatch__Parent#probe$T#{parent_ref.id}").should be_nil
+
+      test_func = lowering.mir_module.get_function("__test_lower_virtual_dispatch").not_nil!
+      direct_call = test_func.blocks.flat_map(&.instructions).find(&.is_a?(Adamas::MIR::Call))
+      direct_call.should_not be_nil
+      direct_call = direct_call.not_nil!.as(Adamas::MIR::Call)
+      lowering.mir_module.functions.find { |func| func.id == direct_call.callee }.not_nil!.name.should eq("Parent#probe")
+    end
+
     it "resolves a typed call through a unique arity alias" do
       hir_mod = Adamas::HIR::Module.new("virtual_method_family")
       func = hir_mod.create_function("IO::FileDescriptor#write$arity1", Adamas::HIR::TypeRef::VOID)

@@ -1,0 +1,177 @@
+{
+  "artifact_kind": "inherited_virtual_demand_llvm_matrix",
+  "schema_version": 1,
+  "recorded_at": "2026-07-17T04:09:57Z",
+  "base_commit": "baaac5782cada620dfd8208aa2dfe98f3eb8c0cc",
+  "compiler": {
+    "adamas": {
+      "path": "/tmp/adamas_inherited_fix_final",
+      "sha256": "dfd2dc45204c4a093a244a965e1921e786f5e4955c4de61b7a7e9e88465e0272",
+      "flags": "--no-prelude --emit llvm-ir --no-link --no-llvm-opt --no-llvm-cache"
+    },
+    "original_crystal": {
+      "path": "/Users/sergey/Projects/Crystal/crystal/bin/crystal",
+      "sha256": "2d3047d39ce46273b9027d4a4847b4344aac30942a2c36b69a9e8b680d9e5d76",
+      "flags": "build --prelude=empty --emit=llvm-ir --no-debug -O0 --single-module"
+    }
+  },
+  "provenance": {
+    "original_crystal_git_sha": "da5a348c65cebd9d35f0e25fa50cd555a9592b7b",
+    "host_crystal_version": "1.20.3",
+    "llvm_clang_version": "22.1.8",
+    "target_triple": "aarch64-apple-darwin25.5.0",
+    "adamas_candidate": {
+      "base_commit": "baaac5782cada620dfd8208aa2dfe98f3eb8c0cc",
+      "status": "uncommitted candidate; built from base plus exactly the changed paths listed below",
+      "changed_paths": [
+        "LANDMARKS.md",
+        "TODO.md",
+        "docs/evidence/inherited_virtual_demand_runtime_matrix_20260717.md",
+        "docs/evidence/inherited_virtual_demand_llvm_matrix_20260717.json",
+        "docs/specs/05-falsifier-matrix.md",
+        "docs/specs/07-inherited-virtual-demand.md",
+        "docs/specs/README.md",
+        "spec/hir/ast_to_hir_spec.cr",
+        "spec/mir/hir_to_mir_spec.cr",
+        "src/compiler/hir/ast_to_hir.cr",
+        "src/compiler/mir/hir_to_mir.cr",
+        "regression_tests/inherited_virtual_demand_amplifier_no_prelude.sh",
+        "regression_tests/inherited_virtual_demand_runtime_oracle.sh",
+        ".landmark/evidence/lep-20260716-inherited-demand-canonicalization.json"
+      ]
+    }
+  },
+  "tools": {
+    "runtime_oracle": {
+      "path": "regression_tests/inherited_virtual_demand_runtime_oracle.sh",
+      "sha256": "d7cc5060bf0900ae41e2ff503944c8f6c651a0f9a8e8ccda2823a597aa3736d0"
+    },
+    "adamas_hir_mir_reducer": {
+      "path": "regression_tests/inherited_virtual_demand_amplifier_no_prelude.sh",
+      "sha256": "48ed5e0f56a748464438e9cc2de98052c48d8cdc5e94e3a5e590e14c9d0db38b"
+    },
+    "forward_function_census": {
+      "path": "scripts/compare_llvm_functions.py",
+      "sha256": "dee9465a47173a9899b071f655a28be4bcd064ce4ac84b13704ebe5717f2f9fa",
+      "authority": "forward semantic matcher; reverse decoding is display-only"
+    },
+    "reachability_census": {
+      "path": "scripts/llvm_function_reachability.py",
+      "sha256": "785f3addff38be8e2a74f97e96bf80947f51cdc43a75192b2ba41460ded1fdc6",
+      "authority": "conservative triage only; not linker-equivalent liveness"
+    }
+  },
+  "phase_boundaries": {
+    "adamas_hir_mir": "The reducer is authoritative for the bounded HIR body/child/dispatcher identities.",
+    "original_hir_mir": "Unavailable in the original compiler path; no parity claim is inferred.",
+    "llvm": "Each row is a fresh same-source original-vs-Adamas pair. Function census and textual shape are phase-local evidence, not full semantic equivalence.",
+    "reachability": "reachable_unmatched_provisional and unreachable_provisional are conservative inventory-derived counts, not source-classified semantic extras, and must not authorize deletion."
+  },
+  "rows": [
+    {
+      "tag": "no_override_0",
+      "mode": "no_override",
+      "descendants": 0,
+      "source_sha256": "e5ad86b011f8e08b81e76b0d6874b7acd185cf1ef6ae34a6add12654131ad9d1",
+      "runtime": {"adamas_compile": 0, "adamas_exit": 41, "original_compile": 0, "original_exit": 41, "adamas_llvm_compile": 0, "original_llvm_compile": 0},
+      "hir_mir": {"body_int32": 1, "child_body_int32": 0, "dispatch_int32": 0},
+      "llvm_sha256": {"original": "60d8ad2b3ef98ddb0e03c9ad181804924529fd3b4104c5a329a406782c81dc12", "adamas": "51fc97a2678adb8323e8777365b7b6f5f3e703c0d207a36014d6806dfeed358a"},
+      "llvm": {
+        "original": {"define": 4, "declare": 4, "reachable_definitions": 4, "reachable_declarations": 3, "reachable_symbols": 7},
+        "adamas": {"define": 128, "declare": 160, "reachable_definitions": 7, "reachable_declarations": 6, "reachable_symbols": 13},
+        "forward": {"matches": 7, "provisional_matches": 0, "original_only": 1, "adamas_only": 281, "required_missing": 0, "reachable_unmatched_provisional": 3, "unreachable_provisional": 121, "abi_mismatches": 0, "linkage_mismatches": 3, "body_states_same": 7, "ambiguous_rows": 6},
+        "semantic": {"original_parent_i32_defines": 1, "adamas_parent_i32_defines": 1, "adamas_child_i32_defines": 0, "adamas_vdispatch_i32_defines": 0, "adamas_direct_parent_i32_calls": 1, "adamas_dispatch_i32_calls": 0}
+      }
+    },
+    {
+      "tag": "no_override_1",
+      "mode": "no_override",
+      "descendants": 1,
+      "source_sha256": "3627fc8794b3f6985b673d7e7f13feb67226eebba27206e528a8d962a3465293",
+      "runtime": {"adamas_compile": 0, "adamas_exit": 41, "original_compile": 0, "original_exit": 41, "adamas_llvm_compile": 0, "original_llvm_compile": 0},
+      "hir_mir": {"body_int32": 1, "child_body_int32": 0, "dispatch_int32": 0},
+      "llvm_sha256": {"original": "09162ba41c3eac29f21fc8b989c3117dc464e99a996dc3f3f809a87c47a06bf4", "adamas": "8aa1672c1b412af1c885923203458d725954f916a0eae1498a1157677b2d1786"},
+      "llvm": {
+        "original": {"define": 4, "declare": 4, "reachable_definitions": 4, "reachable_declarations": 3, "reachable_symbols": 7},
+        "adamas": {"define": 128, "declare": 160, "reachable_definitions": 7, "reachable_declarations": 6, "reachable_symbols": 13},
+        "forward": {"matches": 7, "provisional_matches": 0, "original_only": 1, "adamas_only": 281, "required_missing": 0, "reachable_unmatched_provisional": 3, "unreachable_provisional": 121, "abi_mismatches": 0, "linkage_mismatches": 3, "body_states_same": 7, "ambiguous_rows": 6},
+        "semantic": {"original_parent_i32_defines": 1, "adamas_parent_i32_defines": 1, "adamas_child_i32_defines": 0, "adamas_vdispatch_i32_defines": 0, "adamas_direct_parent_i32_calls": 1, "adamas_dispatch_i32_calls": 0}
+      }
+    },
+    {
+      "tag": "no_override_8",
+      "mode": "no_override",
+      "descendants": 8,
+      "source_sha256": "c79d1177eb59239496007071e6dfd19b32488c7309e68465ea67ca233ebb4207",
+      "runtime": {"adamas_compile": 0, "adamas_exit": 41, "original_compile": 0, "original_exit": 41, "adamas_llvm_compile": 0, "original_llvm_compile": 0},
+      "hir_mir": {"body_int32": 1, "child_body_int32": 0, "dispatch_int32": 0},
+      "llvm_sha256": {"original": "18e2991400f2bd717f9928362002c3295f98c368838f46e94daaf45d4522ba90", "adamas": "b2ae9875af6010d641d465e82b700e10eb0257800b284e785f653846b58cb725"},
+      "llvm": {
+        "original": {"define": 4, "declare": 4, "reachable_definitions": 4, "reachable_declarations": 3, "reachable_symbols": 7},
+        "adamas": {"define": 128, "declare": 160, "reachable_definitions": 7, "reachable_declarations": 6, "reachable_symbols": 13},
+        "forward": {"matches": 7, "provisional_matches": 0, "original_only": 1, "adamas_only": 281, "required_missing": 0, "reachable_unmatched_provisional": 3, "unreachable_provisional": 121, "abi_mismatches": 0, "linkage_mismatches": 3, "body_states_same": 7, "ambiguous_rows": 6},
+        "semantic": {"original_parent_i32_defines": 1, "adamas_parent_i32_defines": 1, "adamas_child_i32_defines": 0, "adamas_vdispatch_i32_defines": 0, "adamas_direct_parent_i32_calls": 1, "adamas_dispatch_i32_calls": 0}
+      }
+    },
+    {
+      "tag": "no_override_16",
+      "mode": "no_override",
+      "descendants": 16,
+      "source_sha256": "1b6b317507317963d7b61b36fe75f3965ded64b28b7cc681c8dc2f57e9634599",
+      "runtime": {"adamas_compile": 0, "adamas_exit": 41, "original_compile": 0, "original_exit": 41, "adamas_llvm_compile": 0, "original_llvm_compile": 0},
+      "hir_mir": {"body_int32": 1, "child_body_int32": 0, "dispatch_int32": 0},
+      "llvm_sha256": {"original": "5dc9176468b50053fbafe5607ff8425f69642087ec52819d33181e0a08ca8ca0", "adamas": "bd2e7c73cf4c1193543c17c48d40fb3bab5518c8a3cade832c8765daf5bb26fe"},
+      "llvm": {
+        "original": {"define": 4, "declare": 4, "reachable_definitions": 4, "reachable_declarations": 3, "reachable_symbols": 7},
+        "adamas": {"define": 128, "declare": 160, "reachable_definitions": 7, "reachable_declarations": 6, "reachable_symbols": 13},
+        "forward": {"matches": 7, "provisional_matches": 0, "original_only": 1, "adamas_only": 281, "required_missing": 0, "reachable_unmatched_provisional": 3, "unreachable_provisional": 121, "abi_mismatches": 0, "linkage_mismatches": 3, "body_states_same": 7, "ambiguous_rows": 6},
+        "semantic": {"original_parent_i32_defines": 1, "adamas_parent_i32_defines": 1, "adamas_child_i32_defines": 0, "adamas_vdispatch_i32_defines": 0, "adamas_direct_parent_i32_calls": 1, "adamas_dispatch_i32_calls": 0}
+      }
+    },
+    {
+      "tag": "override_8",
+      "mode": "override",
+      "descendants": 8,
+      "source_sha256": "03993e6bce2aa4c05a812c957e1bac8c9690e8d39bf5579513ee54407539aff8",
+      "runtime": {"adamas_compile": 0, "adamas_exit": 42, "original_compile": 0, "original_exit": 42, "adamas_llvm_compile": 0, "original_llvm_compile": 0},
+      "hir_mir": {"body_int32": 2, "child_body_int32": 1, "child1_body_int32": 0, "dispatch_int32": 1},
+      "llvm_sha256": {"original": "652195afeef71b6963e81b1ce6e59cb9eb7879633233c06d0964e934d8e37e89", "adamas": "93c097a7de4975af802826f607f69383efa764f513661d0256d3ad2934610a23"},
+      "llvm": {
+        "original": {"define": 5, "declare": 4, "reachable_definitions": 5, "reachable_declarations": 3, "reachable_symbols": 8},
+        "adamas": {"define": 130, "declare": 160, "reachable_definitions": 9, "reachable_declarations": 6, "reachable_symbols": 15},
+        "forward": {"matches": 7, "provisional_matches": 0, "original_only": 2, "adamas_only": 283, "required_missing": 0, "reachable_unmatched_provisional": 4, "unreachable_provisional": 121, "abi_mismatches": 0, "linkage_mismatches": 3, "body_states_same": 7, "ambiguous_rows": 6},
+        "semantic": {"original_parent_i32_defines": 1, "original_child_i32_defines": {"status": "unresolved", "reason": "original LLVM keeps the override as an inline type-id branch; no named Child body is emitted"}, "original_vdispatch_defines": 0, "adamas_parent_i32_defines": 1, "adamas_child_i32_defines": 1, "adamas_vdispatch_i32_defines": 1, "adamas_direct_parent_i32_calls": 1, "adamas_dispatch_i32_calls": 1, "original_override_representation": "inline type-id branch returns 42 for Child0"}
+      }
+    },
+    {
+      "tag": "generic_8",
+      "mode": "generic",
+      "descendants": 8,
+      "source_sha256": "4f1da7a0746f36918979386591c3583b68b48c2d3a6891fb20d0a105da018a6d",
+      "runtime": {"adamas_compile": 0, "adamas_exit": 41, "original_compile": 0, "original_exit": 41, "adamas_llvm_compile": 0, "original_llvm_compile": 0},
+      "hir_mir": {"body_int32": 1, "child_body_int32": 0, "box_body_int32": 0, "dispatch_int32": 0},
+      "llvm_sha256": {"original": "6ab3071a3f823e839822d30faef83aab2a525ebb91f30c90bc6fb2a6eca6c994", "adamas": "ba81f4683e2d4f4b22d8f6f3c51b9feb2b0b737ca76ca73bb734e7cdf83bc7b2"},
+      "llvm": {
+        "original": {"define": 5, "declare": 4, "reachable_definitions": 5, "reachable_declarations": 3, "reachable_symbols": 8},
+        "adamas": {"define": 129, "declare": 160, "reachable_definitions": 8, "reachable_declarations": 6, "reachable_symbols": 14},
+        "forward": {"matches": 7, "provisional_matches": 0, "original_only": 2, "adamas_only": 282, "required_missing": 0, "reachable_unmatched_provisional": 3, "unreachable_provisional": 121, "abi_mismatches": 1, "linkage_mismatches": 3, "body_states_same": 7, "ambiguous_rows": 6},
+        "semantic": {"original_parent_i32_defines": 1, "adamas_parent_i32_defines": 1, "adamas_child_i32_defines": 0, "adamas_box_i32_value_defines": 0, "adamas_vdispatch_i32_defines": 0, "adamas_direct_parent_i32_calls": 1, "adamas_dispatch_i32_calls": 0}
+      }
+    },
+    {
+      "tag": "overload_8",
+      "mode": "overload",
+      "descendants": 8,
+      "source_sha256": "f87a39afe4048af2933d8e2f3fc107d792a7df19ab6986733205041f5806ee06",
+      "runtime": {"adamas_compile": 0, "adamas_exit": 0, "original_compile": 0, "original_exit": 0, "adamas_llvm_compile": 0, "original_llvm_compile": 0},
+      "hir_mir": {"body_int32": 1, "body_uint64": 1, "child_body_int32": 0, "child_body_uint64": 0, "dispatch_int32": 0, "dispatch_uint64": 0},
+      "llvm_sha256": {"original": "396cb941d91c283b8f3d8e15d47e2e335973b6ca59ff1162c878f6fbcb7c51a5", "adamas": "be5193ecc552ef0683fe7c787477ed724a7e7ae4efe1a4795c7f0541c32af3e0"},
+      "llvm": {
+        "original": {"define": 5, "declare": 4, "reachable_definitions": 5, "reachable_declarations": 3, "reachable_symbols": 8},
+        "adamas": {"define": 130, "declare": 160, "reachable_definitions": 9, "reachable_declarations": 6, "reachable_symbols": 15},
+        "forward": {"matches": 7, "provisional_matches": 0, "original_only": 2, "adamas_only": 283, "required_missing": 0, "reachable_unmatched_provisional": 4, "unreachable_provisional": 121, "abi_mismatches": 0, "linkage_mismatches": 3, "body_states_same": 7, "ambiguous_rows": 6},
+        "semantic": {"original_parent_i32_defines": 1, "original_parent_u64_defines": {"status": "optimized_away", "reason": "original LLVM constant-folds value(9_u64) to 42 inside exercise"}, "adamas_parent_i32_defines": 1, "adamas_parent_u64_defines": 1, "adamas_child_i32_defines": 0, "adamas_child_u64_defines": 0, "adamas_vdispatch_i32_defines": 0, "adamas_vdispatch_u64_defines": 0, "adamas_direct_parent_i32_calls": 1, "adamas_direct_parent_u64_calls": 1, "adamas_dispatch_i32_calls": 0, "adamas_dispatch_u64_calls": 0, "cross_compiler_unmatched_semantic": ["*exercise<Parent+>:Int32 (original-only; body contains the constant-folded UInt64 check)", "Parent$Hvalue$$UInt64 (Adamas-only; explicit overload body)"]}
+      }
+    }
+  ]
+}

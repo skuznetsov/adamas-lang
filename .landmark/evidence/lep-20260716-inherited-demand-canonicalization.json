@@ -1,0 +1,139 @@
+{
+  "artifact_kind": "landmark_evidence_packet",
+  "schema_version": 1,
+  "id": "lep-20260716-inherited-demand-canonicalization",
+  "created_at": "2026-07-17T03:34:21Z",
+  "canonical_status": "canonical_summary",
+  "source": {
+    "task": "Bound inherited virtual-demand amplification at the HIR/MIR implementation-identity boundary",
+    "producer": "codex",
+    "bounded_context": "Adamas HIR to MIR bootstrap compiler"
+  },
+  "claim": {
+    "text": "Ordinary non-overriding reference subclasses reuse the selected ancestor body, and MIR bypasses class dispatch only when every admitted candidate has the same concrete FunctionId.",
+    "level": "VERIFIED",
+    "scope": "One Int32 instance-method shape, ordinary reference inheritance, HIR replay/materialization, and non-union MIR class dispatch",
+    "decay_trigger": "Changes to DefNode selection, class registration, generic source binding, union storage, candidate enumeration, or a contradictory fresh same-source reducer"
+  },
+  "evidence": [
+    {
+      "kind": "red_baseline",
+      "ref": "/tmp/adamas_inherited_demand",
+      "signal": "The no-prelude reducer fails at d=1 with two value bodies, one Child body, and one dispatcher; this is the pre-fix RED slope.",
+      "result": "failed_as_expected"
+    },
+    {
+      "kind": "command",
+      "ref": "regression_tests/inherited_virtual_demand_amplifier_no_prelude.sh /tmp/adamas_inherited_fix_final",
+      "signal": "d=0/1/8/16 each report body=1, child_body=0, dispatch=0; override d=8 reports body=2, Child0=1, Child1=0, dispatch=1; generic and overload controls pass.",
+      "result": "passed"
+    },
+    {
+      "kind": "command",
+      "ref": "scripts/run_safe.sh /tmp/adamas_inherited_hir_spec2 120 3072",
+      "signal": "286 examples, 0 failures, 0 errors, 2 existing pending.",
+      "result": "passed"
+    },
+    {
+      "kind": "command",
+      "ref": "scripts/run_safe.sh /tmp/adamas_inherited_mir_spec2 120 3072",
+      "signal": "39 examples, 0 failures, 0 errors, 0 pending; the direct-call unit finds Parent#probe as the MIR callee and no vdispatch function.",
+      "result": "passed"
+    },
+    {
+      "kind": "same_source_runtime_matrix",
+      "ref": "docs/evidence/inherited_virtual_demand_runtime_matrix_20260717.md",
+      "signal": "Seven same-source rows cover no_override d=0/1/8/16, override d=8, generic d=8, and overload d=8. Every Adamas and original compile exits 0; runtime statuses match as 41, 42, 41, and 0 respectively. Compiler flags, compiler digests, source digests, and the explicit unavailable-original-HIR/MIR boundary are recorded.",
+      "result": "passed"
+    },
+    {
+      "kind": "same_source_llvm_matrix",
+      "ref": "docs/evidence/inherited_virtual_demand_llvm_matrix_20260717.json",
+      "signal": "Fresh original-vs-Adamas LLVM pairs cover every reducer row. Forward census reports 7 authoritative matches and 0 provisional matches per row; semantic shape keeps one inherited Parent body for no_override, retains Child plus vdispatch only for override, omits Box value wrappers for generic, and emits both demanded overload bodies for overload. Original HIR/MIR remain explicitly unavailable.",
+      "result": "passed",
+      "digests": {
+        "manifest": "sha256:fb8052f00a5e9265472ec35796d29f4481f2558fa06b654fd05a1d5f61ef7974"
+      }
+    },
+    {
+      "kind": "command",
+      "ref": "python3 -m json.tool .landmark/evidence/lep-20260716-inherited-demand-canonicalization.json",
+      "signal": "The packet parses as JSON and its top-level schema/paths were checked against the existing canonical packet shape; the repository's canonical graph validator was absent at G0.",
+      "result": "passed_with_infra_gap"
+    }
+  ],
+  "verification": {
+    "dod_commands": [
+      "regression_tests/inherited_virtual_demand_amplifier_no_prelude.sh <fresh-adamas-compiler>",
+      "CRYSTAL_CACHE_DIR=<tmp> crystal build spec/hir/ast_to_hir_spec.cr -o <hir-spec>",
+      "scripts/run_safe.sh <hir-spec> 120 3072",
+      "CRYSTAL_CACHE_DIR=<tmp> crystal build spec/mir/hir_to_mir_spec.cr -o <mir-spec>",
+      "scripts/run_safe.sh <mir-spec> 120 3072",
+      "INHERITED_RUNTIME_LLVM_DIR=<tmp> INHERITED_RUNTIME_LEDGER=<tmp> regression_tests/inherited_virtual_demand_runtime_oracle.sh <fresh-adamas-compiler> <original-crystal>",
+      "python3 scripts/compare_llvm_functions.py --original-ll <row>.ll --adamas-ll <row>.adamas.ll --out-dir <row-census>",
+      "python3 scripts/llvm_function_reachability.py --ll <row>.ll --out-dir <row-reachability>",
+      "git diff --check",
+      "python3 -m json.tool docs/evidence/inherited_virtual_demand_llvm_matrix_20260717.json",
+      "python3 -m json.tool .landmark/evidence/lep-20260716-inherited-demand-canonicalization.json"
+    ],
+    "dod_signal": "Focused RED/GREEN reducer, HIR and MIR specs, same-source runtime matrix, LLVM shape census, diff check, and fallback JSON/schema/path validation pass; the canonical Landmark graph validator is unavailable in this checkout.",
+    "adversary_verdict": "ROBUST",
+    "trust": {
+      "F": 0.96,
+      "G": 0.60,
+      "R": 0.93
+    }
+  },
+  "boundaries": {
+    "allowed_paths": [
+      "src/compiler/hir/ast_to_hir.cr",
+      "src/compiler/mir/hir_to_mir.cr",
+      "spec/hir/ast_to_hir_spec.cr",
+      "spec/mir/hir_to_mir_spec.cr",
+      "regression_tests/inherited_virtual_demand_amplifier_no_prelude.sh",
+      "regression_tests/inherited_virtual_demand_runtime_oracle.sh",
+      "docs/specs/07-inherited-virtual-demand.md",
+      "docs/evidence/inherited_virtual_demand_runtime_matrix_20260717.md",
+      "docs/evidence/inherited_virtual_demand_llvm_matrix_20260717.json",
+      "docs/specs/README.md",
+      "docs/specs/05-falsifier-matrix.md",
+      "TODO.md",
+      "LANDMARKS.md",
+      ".landmark/evidence/**"
+    ],
+    "changed_paths": [
+      "src/compiler/hir/ast_to_hir.cr",
+      "src/compiler/mir/hir_to_mir.cr",
+      "spec/hir/ast_to_hir_spec.cr",
+      "spec/mir/hir_to_mir_spec.cr",
+      "regression_tests/inherited_virtual_demand_amplifier_no_prelude.sh",
+      "regression_tests/inherited_virtual_demand_runtime_oracle.sh",
+      "docs/specs/07-inherited-virtual-demand.md",
+      "docs/evidence/inherited_virtual_demand_runtime_matrix_20260717.md",
+      "docs/evidence/inherited_virtual_demand_llvm_matrix_20260717.json",
+      "docs/specs/README.md",
+      "docs/specs/05-falsifier-matrix.md",
+      "TODO.md",
+      "LANDMARKS.md",
+      ".landmark/evidence/lep-20260716-inherited-demand-canonicalization.json"
+    ],
+    "raw_artifacts": [
+      {
+        "availability": "durable",
+        "ref": "docs/evidence/inherited_virtual_demand_llvm_matrix_20260717.json",
+        "digest": "sha256:fb8052f00a5e9265472ec35796d29f4481f2558fa06b654fd05a1d5f61ef7974"
+      }
+    ]
+  },
+  "residual_risk": "This packet proves one inherited-demand multiplier only. It does not prove complete full-selfhost attribution, full-prelude LLVM equivalence, broad generic/module alias coverage, or any s2b-to-s5b stage. Fresh full Adamas selfhost emission remains blocked by the independent HIR OverflowError in resolve_call_tuple. The canonical landmark graph validator was absent at G0; JSON/schema/path checks are the strongest available fallback and must be refreshed if that validator is restored.",
+  "links": {
+    "problem_card": "",
+    "frontier_sdd": "docs/specs/07-inherited-virtual-demand.md",
+    "next_goal": "docs/specs/07-inherited-virtual-demand.md#7-prepared-next-g2-goal-not-executed",
+    "protocol_proposal": "",
+    "related_packets": [
+      "lep-20260716-llvm-function-census",
+      "lep-20260716-mir-abstract-dispatch-demand"
+    ]
+  }
+}

@@ -6930,17 +6930,14 @@ describe Adamas::HIR::AstToHir do
       end.should be_true
 
       parent_target = converter.module.functions.find { |func| func.name.starts_with?("Parent#run$") }
-      child_target = converter.module.functions.find { |func| func.name.starts_with?("Child#run$") }
       parent_target.should_not be_nil
-      child_target.should_not be_nil
       parent_name = parent_target.not_nil!.name
-      child_name = child_target.not_nil!.name
+      child_name = "Child#run$Int32"
       converter.module.has_function_with_body?(parent_name).should be_true
-
-      converter.module.remove_function(child_name).should be_true
-      converter.__test_reset_lowering_state(child_name)
-      converter.__test_mark_live_type("Child")
+      # Ordinary inherited replay is canonicalized to the ancestor body.  The
+      # concrete child spelling is intentionally absent before final repair.
       converter.module.has_function_with_body?(child_name).should be_false
+      converter.__test_mark_live_type("Child")
 
       converter.__test_repair_missing_concrete_virtual_targets
 
@@ -6983,21 +6980,13 @@ describe Adamas::HIR::AstToHir do
       end.should be_true
 
       parent_target = converter.module.functions.find { |func| func.name.starts_with?("Parent#run$") }
-      # The replay path intentionally omits this redundant wrapper. Materialize
-      # it explicitly so this test can exercise final-repair behavior after a
-      # previously emitted target is removed.
-      converter.__test_lower_function_if_needed("Box(Int32)#run$Int32")
-      child_target = converter.module.functions.find { |func| func.name.starts_with?("Box(Int32)#run$") }
+      # The replay path intentionally omits this redundant wrapper.
       parent_target.should_not be_nil
-      child_target.should_not be_nil
       parent_name = parent_target.not_nil!.name
-      child_name = child_target.not_nil!.name
+      child_name = "Box(Int32)#run$Int32"
       converter.module.has_function_with_body?(parent_name).should be_true
-
-      converter.module.remove_function(child_name).should be_true
-      converter.__test_reset_lowering_state(child_name)
-      converter.__test_mark_live_type("Box(Int32)")
       converter.module.has_function_with_body?(child_name).should be_false
+      converter.__test_mark_live_type("Box(Int32)")
 
       converter.__test_repair_missing_concrete_virtual_targets
 
@@ -7027,18 +7016,15 @@ describe Adamas::HIR::AstToHir do
       CRYSTAL
 
       parent_target = converter.module.functions.find { |func| func.name.starts_with?("Parent#run$") }
-      child_target = converter.module.functions.find { |func| func.name.starts_with?("Child#run$") }
       parent_target.should_not be_nil
-      child_target.should_not be_nil
       parent_name = parent_target.not_nil!.name
-      child_name = child_target.not_nil!.name
+      child_name = "Child#run$Int32"
 
       converter.module.remove_function(parent_name).should be_true
-      converter.module.remove_function(child_name).should be_true
       converter.__test_reset_lowering_state(parent_name)
-      converter.__test_reset_lowering_state(child_name)
       converter.__test_mark_live_type("Child")
       converter.module.has_function_with_body?(parent_name).should be_false
+      converter.module.has_function_with_body?(child_name).should be_false
 
       converter.__test_repair_missing_concrete_virtual_targets
 
@@ -7077,24 +7063,18 @@ describe Adamas::HIR::AstToHir do
       end.should be_true
 
       parent_target = converter.module.functions.find { |func| func.name.starts_with?("Parent#run$") }
-      child_a_target = converter.module.functions.find { |func| func.name.starts_with?("ChildA#run$") }
-      child_b_target = converter.module.functions.find { |func| func.name.starts_with?("ChildB#run$") }
       parent_target.should_not be_nil
-      child_a_target.should_not be_nil
-      child_b_target.should_not be_nil
       parent_name = parent_target.not_nil!.name
-      child_a_name = child_a_target.not_nil!.name
-      child_b_name = child_b_target.not_nil!.name
+      child_a_name = "ChildA#run$Int32"
+      child_b_name = "ChildB#run$Int32"
 
       converter.module.remove_function(parent_name).should be_true
-      converter.module.remove_function(child_a_name).should be_true
-      converter.module.remove_function(child_b_name).should be_true
       converter.__test_reset_lowering_state(parent_name)
-      converter.__test_reset_lowering_state(child_a_name)
-      converter.__test_reset_lowering_state(child_b_name)
       converter.__test_mark_live_type("ChildA")
       converter.__test_mark_live_type("ChildB")
       converter.module.has_function_with_body?(parent_name).should be_false
+      converter.module.has_function_with_body?(child_a_name).should be_false
+      converter.module.has_function_with_body?(child_b_name).should be_false
 
       executed = converter.__test_repair_missing_concrete_virtual_targets
 

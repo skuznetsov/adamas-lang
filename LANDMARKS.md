@@ -114,6 +114,46 @@ tuple uses different layout offsets or hash semantics, another Tuple/NamedTuple
 shape enters the direct fallback, a required String/Hasher callee is absent, or
 source subtraction moves the earliest divergence outside the tuple-hash patch.
 
+[LM-INHERITED-DEMAND-CANONICALIZATION|bounded semantic slice VERIFIED, full attribution OPEN 2026-07-16 {F:0.96 G:0.60 R:0.93}]:
+The empty-subclass multiplier is closed at the HIR/MIR boundary for ordinary
+reference inheritance. HIR now reuses the selected concrete ancestor `DefNode`
+through both virtual-target replay and the later materialization seam when the
+class graph proves inheritance and no abstract, value-owner, or generic-source
+specialization guard rejects sharing. MIR then direct-calls the ancestor only
+when every admitted non-union class candidate points to the same concrete
+`FunctionId`; true overrides retain a switch dispatcher and union receivers
+retain their existing nil/unwrap semantics.
+
+The RED/GREEN no-prelude reducer
+`regression_tests/inherited_virtual_demand_amplifier_no_prelude.sh` reports one
+`Parent#value$Int32` body, zero child bodies, and zero dispatcher for 0/1/8/16
+empty descendants. Its override control reports Parent+Child0, no Child1
+wrapper, and one dispatcher; generic and both Int32/UInt64 overload controls
+pass. The same-source runtime matrix covers no-override d=0/1/8/16, override,
+generic, and overload rows; original Crystal and Adamas compile and run every
+row under `run_safe` with matching exit statuses. Original HIR/MIR for that
+matrix is unavailable and is not inferred from runtime agreement. The HIR
+repair file passes 286 examples with zero failures/errors and two existing
+pending; the MIR file passes 39/39. The phase-local SDD is
+`docs/specs/07-inherited-virtual-demand.md` and the durable evidence packet is
+`.landmark/evidence/lep-20260716-inherited-demand-canonicalization.json`.
+Fresh same-source LLVM pairs plus forward function census and conservative
+reachability reports for all seven rows are recorded in
+`docs/evidence/inherited_virtual_demand_llvm_matrix_20260717.json`; the
+reachability fields are unmatched/provisional inventory counts, not deletion
+authority. The runtime oracle verifies the dynamic override cast and checks
+both overload results rather than merely compiling them.
+
+Scope is deliberately bounded: this does not prove full-prelude LLVM
+equivalence, complete historical function-count attribution, or any s2b-to-s5b
+stage. Fresh full Adamas selfhost emission remains blocked by the independent
+HIR `OverflowError` in `resolve_call_tuple`. Decay trigger: a change to
+DefNode selection, class registration, generic source binding, union storage,
+candidate enumeration, or a fresh same-source census that reopens the empty
+subclass slope. The canonical Landmark graph validator was absent at G0;
+refresh the reducer, runtime matrix, both focused specs, JSON/schema/path
+fallback checks, and `git diff --check` before widening the claim.
+
 [LM-SPEC-RUNNER-EXPENSIVE-TAIL|test feedback hardening 2026-07-13 {F:0.91 G:0.64 R:0.89}]:
 The deterministic spec manifest now stable-partitions exactly
 `produced_stage_bootstrap_spec.cr` and

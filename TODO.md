@@ -1,6 +1,37 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-07-16 (bootstrap evidence integrity hardened; inherited-demand amplifier remains the next semantic target).
+Updated: 2026-07-16 (bootstrap evidence integrity hardened; bounded inherited-demand slice verified, full bootstrap remains open).
+
+VERIFIED BOUNDED SLICE — inherited virtual-demand canonicalization
+(2026-07-16): ordinary reference subclasses that inherit the selected concrete
+implementation no longer materialize one HIR body per live child.  The HIR
+replay and later materializer seam now reuse the ancestor-owned `DefNode` when
+class-graph, abstract/value-owner, and generic-source guards admit that
+identity.  MIR direct-calls the ancestor only for a non-union class receiver
+whose complete admitted candidate set points to one concrete `FunctionId`;
+true overrides retain the dispatcher, and union/value/generic-specialized paths
+stay guarded.  The new no-prelude reducer is RED on the baseline and GREEN on
+the fix: d=0/1/8/16 empty descendants each produce one `Parent#value$Int32`
+body, no child body, and no dispatcher; an override produces Parent+Child0 and
+one dispatcher; generic and overload controls pass.  The updated HIR repair
+spec passes 286/286 (2 existing pending), and the MIR spec passes 39/39.
+The same-source runtime matrix covers no-override d=0/1/8/16, a true override,
+generic inheritance, and both Int32/UInt64 overload shapes; original Crystal
+and Adamas compile every row under `run_safe` and agree on exit status. Original
+HIR/MIR for that matrix is unavailable and is explicitly not inferred from the
+runtime result; the Adamas phase-local HIR/MIR reducer remains authoritative for
+body and dispatcher identity.
+Fresh same-source original-vs-Adamas LLVM pairs and forward/reachability
+censuses for all seven rows are recorded in
+`docs/evidence/inherited_virtual_demand_llvm_matrix_20260717.json`; reachability
+extras remain explicitly provisional inventory counts.
+Residuals: this proves one semantic multiplier only; full-prelude LLVM
+equivalence, historical function-count attribution, and s2b-to-s5b remain
+open.  Fresh full Adamas selfhost emission is still blocked by the independent
+HIR `OverflowError` in `resolve_call_tuple`.  NEXT: re-run the same-source
+cross-compiler census when the compiler or census tools change, then attack the
+next measured fanout family; do not infer broad pruning or run later bootstrap
+stages from this phase-local evidence.
 
 VERIFIED HARNESS SLICE — fresh bootstrap evidence and honest resource scope
 (2026-07-16): the canonical chain now rejects reused/symlinked output

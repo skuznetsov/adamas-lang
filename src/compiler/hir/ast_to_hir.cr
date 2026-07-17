@@ -8201,11 +8201,29 @@ module Adamas::HIR
         preserve_requested_owner =
           preserve_requested_value_owner_specialization?(candidate, resolved_name) ||
             preserve_requested_value_owner_specialization?(base_name, resolved_name)
+        # An ordinary reference subclass that does not override the selected
+        # method must share the defining ancestor's implementation.  The
+        # resolver returns the ancestor-owned DefNode (for example
+        # Child#value -> Parent#value); materializing the requested Child name
+        # here would clone the same body once per live descendant.  Keep this
+        # proof separate from the generic-owner gate below: it is based on the
+        # selected implementation identity, the class graph, and the absence
+        # of value/generic source bindings.  Abstract targets remain on the
+        # dispatcher path so true overrides are still enumerated by MIR.
+        inherited_reference_reusable =
+          !preserve_requested_owner &&
+            inherited_reference_virtual_owner_reusable?(owner, resolved_owner, resolved_name)
+        if inherited_reference_reusable
+          lower_required_virtual_target_function(resolved_name, exact_demand: true)
+          resolved_base = strip_type_suffix(resolved_name)
+          lower_required_virtual_target_function(resolved_base, exact_demand: true) unless resolved_name == resolved_base
+          return
+        end
         inherited_generic_wrapper_reusable =
           inherited_generic_wrapper_reusable?(owner, resolved_owner, resolved_name)
         if preserve_requested_owner ||
            (!resolved_owner.empty? && strip_generic_args(resolved_owner) != strip_generic_args(owner) &&
-            !inherited_generic_wrapper_reusable)
+           !inherited_generic_wrapper_reusable)
           lower_required_virtual_target_function(resolved_name, exact_demand: true)
           resolved_base = strip_type_suffix(resolved_name)
           lower_required_virtual_target_function(resolved_base, exact_demand: true) unless resolved_name == resolved_base
@@ -8220,6 +8238,33 @@ module Adamas::HIR
         lower_required_virtual_target_function(candidate)
         lower_required_virtual_target_function(base_name) unless candidate == base_name
       end
+    end
+
+    # Return true only when `owner` is a reference class inheriting the exact
+    # resolved implementation owner.  This helper is intentionally stricter
+    # than a string-prefix/name comparison: overload selection has already
+    # happened in `resolved_name`, and generic/value-owner provenance is
+    # checked before admitting implementation sharing.
+    private def inherited_reference_virtual_owner_reusable?(
+      owner : String,
+      resolved_owner : String,
+      resolved_name : String,
+    ) : Bool
+      return false if owner.empty? || resolved_owner.empty?
+      return false if strip_generic_args(owner) == strip_generic_args(resolved_owner)
+      if abstract_def?(resolved_name) || abstract_def?(strip_type_suffix(resolved_name))
+        return false
+      end
+      if concrete_value_virtual_repair_owner?(owner)
+        return false
+      end
+      if generic_source_owner_requires_specialization?(owner, resolved_owner, resolved_name)
+        return false
+      end
+
+      owner_base = strip_generic_args(owner)
+      resolved_base = strip_generic_args(resolved_owner)
+      class_inherits_from?(owner, resolved_owner) || class_inherits_from?(owner_base, resolved_base)
     end
 
     # A concrete generic receiver can share an inherited non-generic body when
@@ -77697,6 +77742,22 @@ module Adamas::HIR
       preserve_requested_wrapper_owner =
         materialize_requested_instance_wrapper &&
           preserve_requested_value_owner_specialization?(name, resolved_target_name)
+
+      # Once overload resolution selected an ancestor DefNode, an ordinary
+      # reference subclass shares that implementation identity.  Do not let
+      # the materialization seam recreate a child-owned wrapper merely because
+      # the request arrived with the child spelling.  Value/generic/abstract
+      # owners are excluded by the same proof used during virtual-target
+      # replay, and real overrides still resolve to a child-owned target.
+      inherited_reference_reusable =
+        materialize_requested_instance_wrapper &&
+          !preserve_requested_wrapper_owner &&
+          inherited_reference_virtual_owner_reusable?(
+            requested_owner,
+            target_parts.owner,
+            resolved_target_name
+          )
+      materialize_requested_instance_wrapper = false if inherited_reference_reusable
 
       if preserve_requested_wrapper_owner
         if info = generic_owner_info(requested_owner)

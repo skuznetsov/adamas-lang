@@ -24,6 +24,7 @@ time.
 | `04-llvm-emission.md` | LLVM callee naming, return spelling, and backend lookup invariants. |
 | `05-falsifier-matrix.md` | Claim-to-reproducer mapping for the above contracts. |
 | `06-cli-output-contract.md` | CLI compile modes, output side effects, and post-LLVM tail behavior. |
+| `07-inherited-virtual-demand.md` | Canonical inherited bodies and MIR same-implementation dispatch collapse. |
 
 ## Contract Language
 

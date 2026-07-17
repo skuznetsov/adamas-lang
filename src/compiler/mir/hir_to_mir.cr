@@ -7706,6 +7706,29 @@ module Adamas
           end
         end
 
+        # A non-union reference receiver does not need a runtime dispatcher when
+        # every admitted type-id resolves to the same MIR function identity.
+        # This is the ordinary inherited-method case (Parent#value shared by
+        # Parent and all non-overriding children).  Keep the proof deliberately
+        # narrow: tagged/all-ref unions retain their existing nil/unwrap
+        # semantics, and any override or unresolved candidate keeps the switch.
+        if kind.class? && generic_union_ref.nil? && recv_desc.kind == HIR::TypeKind::Class
+          if unified = unified_virtual_dispatch_target(old_candidates)
+            if unified.params.size == args.size
+              hir_args_with_receiver = [call.receiver_value] + call.args
+              coerced_args = coerce_call_args(@builder.not_nil!, args, hir_args_with_receiver, unified)
+              direct_return_type = unified.return_type
+              hir_return_type = convert_type(call.type)
+              if is_union_type?(hir_return_type) && !is_union_type?(unified.return_type)
+                direct_return_type = hir_return_type
+              elsif direct_return_type == TypeRef::VOID && hir_return_type != TypeRef::VOID
+                direct_return_type = hir_return_type
+              end
+              return @builder.not_nil!.call(unified.id, coerced_args, direct_return_type)
+            end
+          end
+        end
+
         # Reuse a cached dispatcher only after the current receiver/storage
         # admission has passed; a stale pre-created table must not bypass the
         # class-header invariant above.
@@ -7795,6 +7818,29 @@ module Adamas
         end
 
         @builder.not_nil!.call(dispatch_func.id, call_args, dispatch_func.return_type)
+      end
+
+      # Return one implementation only when every candidate is concrete, has
+      # no class-specific fallback, and points at the exact same MIR function
+      # identity.  Function-name equality is intentionally not used: the MIR
+      # function id is the selected DefNode/body identity after HIR lowering.
+      private def unified_virtual_dispatch_target(
+        candidates : ::Array(VDispatchCandidate),
+      ) : Adamas::MIR::Function?
+        return nil if candidates.empty?
+
+        unified : Adamas::MIR::Function? = nil
+        candidates.each do |candidate|
+          return nil unless candidate.dispatch_class.nil?
+          function = candidate.func
+          return nil unless function
+          if existing = unified
+            return nil unless existing.id == function.id
+          else
+            unified = function
+          end
+        end
+        unified
       end
 
       private def extract_method_suffix(full_name : String) : String?
