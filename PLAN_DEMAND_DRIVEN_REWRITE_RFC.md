@@ -1,6 +1,6 @@
 # RFC: Demand-Driven Semantic Rewrite for Compile Path
 
-Status: Draft; R0 disposable integration/source-guard evidence reconciled 2026-07-18
+Status: Draft; R0 sealed current-source evidence reconciled 2026-07-18
 Audience: Claude Opus implementation track, architecture review  
 Scope: Compiler compile path only; check path unification is part of rollout, not day 1  
 Supersedes: high-level direction in `PLAN_DEMAND_DRIVEN_REWRITE.md`
@@ -52,12 +52,33 @@ partial only. A 2026-07-14 fresh run took roughly 711 seconds with no-prelude
 green/plain red; G7, G8, and G9 took 1962.79, 1791.78, and 1768.73 seconds and
 both smoke modes were red.
 
-R0 disposable integration and source-shape guards completed against a snapshot
-of the current dirty source. Current dirty-source B4-F/B5 remains
-red/unmeasured because host Crystal spawn infrastructure failed before a valid
-fresh stage certificate existed. That failure is infrastructure evidence, not
-proof of compiler equivalence or of a compiler-local regression. Historical G9
-is retained only as a diagnostic candidate.
+R0 now has a sealed current-source snapshot: base `c216b9ef...`, tree
+`1efb635...`, exactly seven tracked compiler/spec paths, patch SHA-256
+`d7ad2cacb1472d07daf6cc5793bce52a1940ed967bfce2a2322d67a291a967fc`, and
+passing snapshot diff-check. The manifest is
+`/private/tmp/adamas_r0_current_c216_manifest.md`; host spawn preflight is
+green. With fresh cache/output, `s1` built in 14.13s and passed exact plain
+(`42`) and no-prelude (`hello world`, `n=42`, `noprelude_interp_ok`) smokes.
+The `s2` self-host build timed out with exit 143 at 182.54s and 1361.03 MiB
+externally sampled peak RSS; the outer chain exited 1 at 219.32s and produced
+no `cv2_s2`. B4-F is therefore compiler-side performance red. Stage2 semantic
+smokes are unavailable, not semantic red or green. The host-infrastructure
+blocker is refuted; R0 promotion remains blocked by B4-F and the missing
+same-source fresh T0 A/B. Historical G9 remains diagnostic-only, and T8 remains
+`[MISSING-FALSIFIER]` until an executable validator is committed.
+
+A bounded stats-on repeat used the sealed `cv2_s1` with only
+`ADAMAS_PHASE_STATS=1` under the same 180-second/12288-MB safe-run envelope.
+It timed out with exit 143 at 182.60s, produced no `cv2_s2`, and did not capture
+peak RSS. Completed phase counters were `process_pending` 218 -> 591 (+373) in
+555.2ms and `emit_tracked_sigs` 591 -> 604 (+13) in 235.0ms. The first open
+phase, `lower_missing.initial`, grew internally 604 -> 1535 -> 7422 -> 19238 ->
+28234 (+27,630 from 604) before timeout; no completion, phase timing, or
+normalized top-prefix exists. The log SHA-256 is
+`1cc025cc5930ebd0513382e68dbb400e763002186f227288683d6bc710f79ecd`.
+This is sealed-current revalidation/evolution of the historical 2026-04-29
+localization, not a normalized before/after result: observation definitions
+differ, and stats-on versus uninstrumented timing is diagnostic-only.
 
 ### 2.2 Typed materialization diagnostic boundary
 
@@ -80,6 +101,14 @@ on one reducer.
 The identity authority for this boundary is
 `DefInstanceKey(def.object_id, actual typed args, block/named)`. The mangled
 name is only its later serialized form and must not replace the typed key.
+
+The active bounded target is therefore a typed resolution-to-materialization
+queue payload/transaction guard at final HIR emission and `lower_missing`
+replay. Current evidence supports a high-confidence hypothesis of string-keyed
+replay/materialization amplification, not causal proof. The falsifier is a
+bounded typed payload/shadow that reduces duplicate shape expansion while
+preserving selected target, call shape, body/symbol continuity, and exact
+semantics. It remains guard/shadow-only; no default-path consumer is admitted.
 
 ## 3. Non-Negotiable Invariants
 
@@ -212,8 +241,9 @@ Exit criteria:
 - normalized comparison format is implemented or fully specified
 - legacy-path metrics are observable in CI/local runs
 - kill-switch assertions are defined for new flag
-- host Crystal spawn infrastructure can produce a valid fresh-stage result;
-  completed disposable source guards alone do not satisfy B4-F
+- same-source fresh T0 A/B and B4-F must pass before promotion; the current
+  sealed attempt is performance red, and manifest evidence does not replace
+  the still-missing committed T8 validator
 
 ### Phase 1: Canonical Semantic Identity Layer
 

@@ -2,13 +2,45 @@
 
 Updated: 2026-07-18 (R0 performance/semantic frontier and typed materialization falsifier).
 
-CURRENT R0 FRONTIER (architecture admitted, production fix still open): fresh
-`s1 -> s2b` readiness is now a vector: <=180 seconds on a manifested fresh
-output plus exact plain/full-prelude and no-prelude smokes. The strongest
-surviving historical fresh both-smoke certificate is 231.37 seconds; later
-evidence degraded through roughly 711 seconds with a semantic split to
-1768.73-1962.79 seconds with both modes red. The <=180-second value is the new
-acceptance target, not a recovered historical full-green measurement.
+CURRENT R0 FRONTIER (architecture admitted, production fix still open): the
+current dirty source is sealed reproducibly at base
+`c216b9ef66f9c8360278304f684299879ca67392`, tree `1efb635...`, and exactly
+seven tracked compiler/spec paths under patch SHA-256
+`d7ad2cacb1472d07daf6cc5793bce52a1940ed967bfce2a2322d67a291a967fc`;
+snapshot diff-check passes. Manifest:
+`/private/tmp/adamas_r0_current_c216_manifest.md`.
+
+Host spawn preflight is GREEN. With fresh cache/output and the canonical
+`--stages 2 --timeout 180 --mem 12288` chain, host-built `s1` is GREEN in
+14.13s; its plain smoke prints `42` in 20.29s and its no-prelude smoke prints
+the exact `hello world` / `n=42` / `noprelude_interp_ok` markers in 0.65s.
+The `s2` self-host build is compiler-side performance RED: timeout exit 143,
+stage wall 182.54s, externally sampled peak RSS 1361.03 MiB, no `cv2_s2`;
+outer chain exit 1 at 219.32s. Stage2 semantic smokes are unavailable because
+there is no artifact, not semantic red or green. The host-infrastructure
+blocker is refuted. R0 promotion remains blocked by B4-F and the missing
+same-source fresh T0 A/B; T8 remains `[MISSING-FALSIFIER]` until an executable
+validator is committed. The <=180-second value remains a new acceptance
+target, not a recovered historical full-green measurement.
+
+SEALED-CURRENT STATS-ON LOCALIZATION (diagnostic only): from the disposable
+worktree, the only compiler instrumentation flag was `ADAMAS_PHASE_STATS=1`:
+`ADAMAS_PHASE_STATS=1 /usr/bin/time -p scripts/run_safe.sh
+/private/tmp/adamas_r0_current_c216_out.8teyio/cv2_s1 180 12288
+src/adamas.cr -o
+/private/tmp/adamas_r0_current_c216_phase_stats.F9HAyu/cv2_s2`. It timed out
+with exit 143 at 182.60s and produced no `cv2_s2`; peak RSS was not captured.
+Completed phases were `process_pending` 218 -> 591 (+373) in 555.2ms and
+`emit_tracked_sigs` 591 -> 604 (+13) in 235.0ms. The first open phase was
+`lower_missing.initial`; its internal passes grew 604 -> 1535 -> 7422 ->
+19238 -> 28234 (+27,630 from 604) before timeout, with no phase completion,
+timing, or normalized top-prefix. Log SHA-256:
+`1cc025cc5930ebd0513382e68dbb400e763002186f227288683d6bc710f79ecd`.
+This revalidates/evolves the 2026-04-29 `lower_missing.initial` localization;
+the old and current observation definitions differ, so no exact improvement or
+regression delta is admitted. Stats-on versus uninstrumented timing is also
+diagnostic-only. The current classification is a high-confidence hypothesis
+of string-keyed replay/materialization amplification, not causal proof.
 
 The first typed materialization falsifier is RED on current `bin/adamas` and
 historical G9 stage1. Original Crystal lawfully specializes
@@ -21,9 +53,12 @@ concrete append wraps `AstArena` into the union before calling the
 `AstArena`-parameter specialization. The retained full-G9 LLVM additionally
 contains one zero-argument call and one zero-argument unreachable definition
 for that `push` target. Next legal work is a behavior-neutral typed
-resolution-to-materialization record/sidecar plus guards at final HIR call
-emission and late missing-target replay; do not fix this by forcing all calls
-to the union specialization or by reducing raw function count alone.
+resolution-to-materialization queue payload/transaction shadow plus guards at
+final HIR call emission and `lower_missing` replay. Its falsifier is a bounded
+typed payload/shadow that reduces duplicate shape expansion while preserving
+selected target, arity, body/symbol continuity, and exact semantics. Keep the
+default-path consumer blocked; guard/shadow only. Do not fix this by forcing
+all calls to the union specialization or by reducing raw function count alone.
 
 VERIFIED STABILITY SLICE (bootstrap successor still open): `PageArena` stored
 pages as `Array(StaticArray(TypedNode, 1024))`. Because `StaticArray` is a

@@ -1,12 +1,12 @@
 # Compiler Decomposition and Semantic Replacement — Frontier SDD
 
-> Status: DESIGN-SEALED; R0 DISPOSABLE INTEGRATION/SOURCE GUARDS COMPLETED,
-> B4-F PERFORMANCE/SEMANTIC CERTIFICATE STILL RED OR UNMEASURED
+> Status: DESIGN-SEALED; R0 CURRENT-SOURCE SNAPSHOT SEALED,
+> B4-F PERFORMANCE RED; STAGE2 SEMANTIC SMOKES UNAVAILABLE
 > (documentation-only amendment, 2026-07-18).
-> Audit snapshot: source-shape counts at checkout `05954794`; the active
-> integration base is `548d29b1` with a dirty worktree. No compiler build,
-> generated-stage run, or runtime claim is made by this document; measured
-> evidence states are recorded below and must be refreshed at the R0 join.
+> Audit snapshot: source-shape counts remain scoped to checkout `05954794`.
+> Current R0 evidence is the seven-path dirty-source snapshot sealed at base
+> `c216b9ef...`, tree `1efb635...`, patch `d7ad2cac...`; measured evidence and
+> remaining promotion gates are recorded below.
 > Bounded context: Adamas compile semantics from parser arenas through HIR,
 > MIR, and LLVM emission.
 
@@ -49,7 +49,8 @@ without a semantic boundary would be cosmetic.
 ```text
 signal:   semantic decisions are repeated or transported as mutable maps,
           rendered names, pending queues, and arena-local numeric indices;
-          the current B5 self-build frontier remains inside AstToHir.
+          the current B4-F self-build bottleneck remains inside AstToHir,
+          while the old B5 lower-method locator is historical only.
 why_now:  the active bootstrap loop is red, while both the architecture SDD
           and demand-driven RFC are otherwise easy to misread as permission
           for a broad rewrite.
@@ -65,10 +66,12 @@ improvement_probe: replace one semantic decision with an immutable typed fact,
 unknowns:  the complete writer/reader census, arena retention cost, the exact
            compile-path declaration fixed point, and which legacy helpers are
            genuinely leaf-only.
-freshness: fresh for source shape at 05954794; runtime frontier evidence is
-           inherited from the current architecture SDD and must be refreshed.
-safe_next_move: P2W-ready for a docs/ledger slice; implementation remains
-                guard-only until the first identity falsifiers exist.
+freshness: source shape remains scoped to 05954794; runtime frontier is
+           refreshed by the sealed c216b9ef current-source manifest and decays
+           when the base, seven-path patch, host/cache policy, or command moves.
+safe_next_move: typed resolution-to-materialization queue payload/transaction
+                guard plus legacy shadow at final HIR emission and
+                lower_missing replay; no default-path consumer.
 validation_boundary: the first vertical ResolutionId/MethodInstanceKey slice
                      must preserve old behavior and prove identity continuity.
 ```
@@ -98,9 +101,11 @@ keeps source revisions, generated artifacts, and the dirty worktree distinct.
 | G8 snapshot | `REFUTED AS RELEASE CANDIDATE` | Produced `s2` after 1791.78 seconds; both semantic smoke modes were red. |
 | G9 snapshot | `DIAGNOSTIC CANDIDATE ONLY` | Produced `s2` after 1768.73 seconds; both semantic smoke modes were red. Its retained HIR/MIR/LLVM artifacts may localize typed materialization divergence, but cannot certify current source. |
 | `91ebe332` Slice 1A | `T0 COMPLETED / GUARD-ONLY` | Stage1 passes; fresh `s1 -> s2` reaches the same 900-second timeout as the clean control. HIR provenance ON/OFF is byte-identical, but no `ResolutionId`/materialization consumer is present. |
-| R0 disposable integration/source guards | `COMPLETED / NON-PROMOTING` | Disposable integration and source-shape guards completed against a snapshot of the dirty source without changing the main worktree. |
-| Dirty-source B4-F measurement | `RED / UNMEASURED` | Host Crystal spawn infrastructure failed before a valid fresh performance/semantic certificate could be produced. This is an infrastructure result, not evidence of compiler equivalence or a compiler-local regression. |
-| Dirty main worktree | `UNADMITTED` | User-owned uncommitted compiler/spec changes remain unsuitable as a direct baseline; only the disposable snapshot and its manifest may carry R0 evidence. |
+| R0 sealed current-source snapshot | `COMPLETED / NON-PROMOTING` | Base `c216b9ef...`, tree `1efb635...`, exactly seven tracked compiler/spec paths, patch SHA-256 `d7ad2cac...`; snapshot diff-check passes. Manifest: `/private/tmp/adamas_r0_current_c216_manifest.md`. |
+| Host preflight and stage1 | `GREEN` | Host spawn green; host build 14.13s; plain smoke `42` in 20.29s; exact no-prelude markers in 0.65s; `cv2_s1` SHA-256 `dfe3c0e8...`. |
+| Fresh current-source B4-F | `MEASURED RED` | Stage2 timeout exit 143 at 182.54s, externally sampled peak RSS 1361.03 MiB; outer chain exit 1 at 219.32s; no `cv2_s2`. Compiler-side performance red; stage2 semantic smokes unavailable, not red/green. |
+| Sealed-current stats-on localization | `DIAGNOSTIC / OPEN PHASE` | With only `ADAMAS_PHASE_STATS=1` on sealed `cv2_s1` under timeout 180s/memory 12288 MB, the run ended at wall 182.60s, exit 143, without `cv2_s2`; peak RSS is unavailable. `process_pending` completed 218 -> 591 (+373) in 555.2ms and `emit_tracked_sigs` 591 -> 604 (+13) in 235.0ms. The first open phase was `lower_missing.initial`; internal growth was 604 -> 1535 -> 7422 -> 19238 -> 28234 (+27,630 from 604) before timeout, with no completion/timing/normalized top-prefix. Log SHA-256 `1cc025cc5930ebd0513382e68dbb400e763002186f227288683d6bc710f79ecd`. This revalidates/evolves the 2026-04-29 localization; observation definitions differ, and stats-on/uninstrumented timing is diagnostic-only. |
+| T0 same-source fresh A/B | `NOT COMPLETED` | R0 promotion remains blocked independently of B4-F; T8 also remains missing until an executable validator is committed. |
 
 These states supersede an unqualified `B4 GREEN` label. They do not discard
 the historical artifact; they prevent it from being used as evidence for fresh
@@ -139,16 +144,22 @@ The declared B5 frontier remains useful as a historical locator: the first bad
 stop was the `AstToHir#lower_method` body loop for
 `Adamas::Compiler::CLI#run$IO_IO`, at roughly 4.8 GB peak RSS, under
 `ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_BODY_LOWERED`; the pre-body
-gates were recorded clean. It is not a current green claim. The R0 join must
-refresh B4-F/B5 against the reconciled source before any promotion.
+gates were recorded clean. It is not a current green claim. The sealed R0 run
+now classifies B4-F as performance red; B5 remains unavailable without `cv2_s2`.
 
 Decision:
 
 1. The demand-driven pipeline in the RFC is the strategic destination.
-2. The immediate route is a selective strangler: introduce an owner record,
-   shadow it, route one consumer, then retire the old path only after its
-   falsifiers pass.
-3. A blank-slate compiler rewrite is not admitted at the current B5 frontier.
+2. The immediate route is a selective strangler: introduce a typed
+   resolution-to-materialization queue payload/transaction guard at final HIR
+   emission and `lower_missing` replay, then shadow it against the legacy
+   string-keyed route. The current amplification classification is a
+   high-confidence hypothesis, not causal proof; its falsifier is reduced
+   duplicate shape expansion with selected target, call shape, body/symbol
+   continuity, and exact semantics preserved. Keep the default-path consumer
+   blocked; guard/shadow only.
+3. A blank-slate compiler rewrite is not admitted while B4-F is red and B5 is
+   unreachable from the current source.
 4. Physical file splitting is delayed until semantic contracts reduce the
    state surface of the moved code.
 5. The R0 reconciliation seal is mandatory before Slice 1B: the active dirty
@@ -496,15 +507,15 @@ compared as if they were one compiler.
    declaring the result non-discriminating. Only then may Slice 1B introduce a
    real `ResolutionId`/materialization consumer.
 
-The disposable integration and source-guard portion of R0 is complete. The
-current dirty-source B4-F measurement is not: host Crystal spawn infrastructure
-failed before a valid fresh stage and both-smoke result existed. Until that
-infrastructure lane is rerun successfully, B4-F remains red/unmeasured and the
-historical G9 snapshot remains diagnostic-only.
+The current-source snapshot/source-guard portion and host preflight are
+complete. The fresh chain classifies B4-F as compiler-side performance red:
+stage2 timed out at 182.54 seconds with exit 143 and no `cv2_s2`. Stage2
+semantic smokes are unavailable because no artifact exists; they are not
+semantic red or green. Historical G9 remains diagnostic-only.
 
-R0 as a promotion seal is complete only when the current source snapshot, not
-B4-H or G9, has a known fresh-s2 classification and both semantic smoke modes
-have an explicit result.
+R0 as a promotion seal remains open until the same sealed source passes B4-F,
+produces explicit stage2 semantic smoke results, and completes the fresh T0
+A/B. Neither B4-H, G9, nor the manifest substitutes for those gates.
 
 ### 9.2 Reliability/architecture two-track join
 
@@ -515,9 +526,11 @@ The work proceeds on two coordinated tracks:
   green across every promoted slice. It owns source snapshots, generated
   stage provenance, resource budgets, and bootstrap rollback.
 - **Architecture track:** move from T0 guard-only provenance to typed
-  `ResolutionId`, `CallResolution`, and materialization records without
-  injecting whole compiler contexts. It owns identity/lifetime contracts,
-  normalized shadow, and structural tripwires.
+  `ResolutionId`, `CallResolution`, and a typed
+  resolution-to-materialization queue payload/transaction guard at final HIR
+  emission plus `lower_missing` replay without injecting whole compiler
+  contexts. It owns identity/lifetime contracts, normalized shadow, and
+  structural tripwires; the default-path consumer remains blocked.
 
 The **join** is a release gate: an architecture slice may run in guard/shadow
 mode while reliability is red, but it cannot change the default path, delete a

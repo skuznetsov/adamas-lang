@@ -29,7 +29,7 @@ Document contract (hard rules):
   `s2` passed the downstream full-prelude classifier and printed `42` under
   `scripts/run_safe.sh`. This remains useful compatibility evidence, but it
   does not prove that current source can produce a fresh `s2b`.
-- **B4-F (fresh current source): FRONTIER.** A clean-output `s1 -> s2b`
+- **B4-F (fresh current source): MEASURED RED.** A clean-output `s1 -> s2b`
   build from the reconciled source must finish in at most **180 seconds** on
   the recorded host/cache policy (faster is the stretch target). The output
   directory is new and the manifest records fresh-output/source/output hashes
@@ -38,14 +38,14 @@ Document contract (hard rules):
   The exact plain/full-prelude and exact no-prelude semantic smokes
   are co-equal release gates; worker-only or emit-only success cannot mask
   either failure. This is a new acceptance target, not a recovered historical
-  full-green certificate.
-- **B5 (s2 self-build -> s3): HISTORICAL RED / REFRESH REQUIRED.** The
+  full-green certificate. The sealed current snapshot reached stage2 timeout
+  exit 143 at 182.54 seconds and produced no `cv2_s2`.
+- **B5 (s2 self-build -> s3): BLOCKED BY B4-F / HISTORICAL LOCATOR ONLY.** The
   historical first bad stop was
   `ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_BODY_LOWERED` inside the
   `AstToHir#lower_method` body loop (`body_size=44`) for
   `Adamas::Compiler::CLI#run$IO_IO`, at roughly 4.8 GB peak RSS. The R0
-  reconciliation must rerun the classifier before treating this as the active
-  frontier.
+  locator cannot be refreshed until B4-F produces a stage2 artifact.
 
 Current evidence is deliberately revision-scoped:
 
@@ -60,9 +60,11 @@ Current evidence is deliberately revision-scoped:
 | G8 snapshot | 1791.78 seconds; both semantic smokes red | Refuted as release candidate. |
 | G9 snapshot | 1768.73 seconds; both semantic smokes red | Diagnostic candidate only; not a release candidate. |
 | `91ebe332` T0 | Same 900-second fresh-stage timeout as clean control; HIR provenance ON/OFF byte-identical | Guard-only provenance; no behavior promotion. |
-| R0 disposable integration/source guards | Completed against a snapshot of the dirty source | Non-promoting source/integration certificate only. |
-| Dirty-source B4-F/B5 | Host Crystal spawn infrastructure failure prevented a valid fresh stage measurement | Release gate red/unmeasured; not compiler-semantic evidence. |
-| Dirty main worktree | User-owned uncommitted compiler/spec changes | Direct worktree remains unadmitted; only disposable snapshot evidence is usable. |
+| R0 sealed current-source snapshot | Base `c216b9ef...`, tree `1efb635...`, exactly seven tracked compiler/spec paths, patch `d7ad2cac...`; snapshot diff-check passes | Reproducible current-source certificate; manifest `/private/tmp/adamas_r0_current_c216_manifest.md`. |
+| Host preflight and stage1 | Host spawn green; host build 14.13s; plain smoke `42` in 20.29s; exact no-prelude markers in 0.65s; `cv2_s1` SHA-256 `dfe3c0e8...` | Host-infrastructure blocker refuted; stage1 corridor green. |
+| Fresh current-source B4-F | Stage2 timeout exit 143, stage wall 182.54s, externally sampled peak RSS 1361.03 MiB; outer chain exit 1 at 219.32s; no `cv2_s2` | Compiler-side performance red. Stage2 semantic smokes unavailable, not red/green. |
+| Sealed-current stats-on localization | Only `ADAMAS_PHASE_STATS=1` on sealed `cv2_s1`, safe-run timeout 180s/memory 12288 MB: wall 182.60s, exit 143, no `cv2_s2`; peak RSS unavailable. Completed `process_pending` 218 -> 591 (+373) in 555.2ms and `emit_tracked_sigs` 591 -> 604 (+13) in 235.0ms; open `lower_missing.initial` grew 604 -> 1535 -> 7422 -> 19238 -> 28234 before timeout. Log SHA-256 `1cc025cc...`. | Revalidates/evolves the historical 2026-04-29 locator. No completion/timing/top-prefix for the open phase; definitions differ from the old observation, and stats-on/uninstrumented timing is diagnostic-only. |
+| T0 same-source A/B | Not completed on the sealed snapshot | R0 promotion remains blocked independently of B4-F. |
 
 The old `B4 GREEN` wording is therefore split into B4-H and B4-F rather than
 silently reused. A diagnostic timeout is not an acceptance budget.
@@ -81,7 +83,7 @@ arguments. Full G9
 `push$AstArena()` plus a zero-argument unreachable stub. Late HIR
 materialization or a missing selected target is therefore a high-confidence
 hypothesis for the malformed body, not yet a proven creation mechanism; T9 is
-the missing selected-Def/instance/coercion/arity/body/symbol continuity
+the current-red selected-Def/instance/coercion/arity/body/symbol continuity
 falsifier.
 
 ### 0.2 Authority-edge state table
@@ -1113,26 +1115,32 @@ frontier and must not stage, clean, or rewrite the user's main worktree.
    the result non-discriminating. Only after this seal may Slice 1B introduce a
    real `ResolutionId`/materialization consumer.
 
-The disposable integration and source-guard subgate is complete. The current
-dirty-source fresh-stage measurement is not: host Crystal spawn infrastructure
-failed before a valid B4-F/B5 artifact and both-smoke result existed. B4-F is
-therefore red/unmeasured, B5 remains historical/unrefreshed, and G9 is only a
+The disposable snapshot/source-guard subgate and host preflight are complete.
+The sealed current-source run classifies B4-F as compiler-side performance red:
+stage2 timed out at 182.54 seconds with exit 143 and no `cv2_s2`. Stage2
+semantic smokes are unavailable because no artifact exists; they are not
+semantic red or green. B5 remains historical/unrefreshed, and G9 remains only a
 diagnostic candidate.
 
-R0 as a promotion seal is complete only when the current source snapshot has a
-known fresh-s2 classification and explicit results for both semantic smoke
-modes. Neither B4-H nor G9 substitutes for B4-F.
+R0 as a promotion seal remains open until the same sealed source passes B4-F,
+produces explicit stage2 semantic smoke results, and completes the fresh T0
+A/B. Neither B4-H, G9, nor the manifest substitutes for those gates.
 
 ### Phase 0a.1: Reliability/architecture two-track join
 
 The reliability track owns the <=180s fresh-stage budget, generated-stage
 provenance, exact plain/no-prelude smokes, and rollback. The architecture track
-owns T0 -> typed `ResolutionId`/`CallResolution`/materialization contracts,
-normalized shadow, and structural budgets. Architecture work may remain
-guard/shadow-only while reliability is red, but neither track may promote a
-default behavior, delete a queue/shim, or claim a speedup until the same
-source snapshot passes B4-F and both semantic gates. Reliability fixes must
-name an owner boundary; architecture slices must retain a legacy kill switch.
+owns T0 -> typed `ResolutionId`/`CallResolution`/materialization contracts and
+the active typed resolution-to-materialization queue payload/transaction guard
+at final HIR emission plus `lower_missing` replay. Evidence currently supports
+a high-confidence string-keyed replay/materialization amplification hypothesis,
+not causal proof. Its falsifier is a bounded typed payload/shadow that reduces
+duplicate shape expansion while preserving exact semantics. Architecture work
+must remain guard/shadow-only while reliability is red; the default-path
+consumer stays blocked. Neither track may delete a queue/shim or claim a
+speedup until the same source snapshot passes B4-F and both semantic gates.
+Reliability fixes must name an owner boundary; architecture slices must retain
+a legacy kill switch.
 
 ### Phase 0b: Architecture transition gate
 
@@ -1144,6 +1152,9 @@ Admitted work:
 - read-only or docs-only owner ledgers;
 - scripts that census semantic decision sites without changing compiler output;
 - focused reducers that prove a boundary before a behavior change;
+- the bounded typed resolution-to-materialization queue payload/transaction
+  guard and legacy shadow at final HIR emission plus `lower_missing` replay,
+  with no default-path consumer;
 - emergency bootstrap fixes only when they update the owner ledger or falsifier
   roster in the same logical change.
 
