@@ -10,6 +10,7 @@ require "./debug_hooks"
 require "./memory_strategy"
 require "../layout_probe"
 require "../frontend/ast"
+require "../semantic/identity/arena_id"
 require "../semantic/identity/dry_run_tracker"
 require "../mir/mir"
 require "../../runtime"
@@ -4844,6 +4845,11 @@ module Adamas::HIR
 
     # Phase 1: Identity dry-run tracker (side-channel, no behavior change)
     getter identity_tracker : Adamas::Compiler::Semantic::IdentityDryRunTracker?
+    # Compile-scoped owner registry for candidate DefIdentity provenance. The
+    # legacy phase0 counters below retain their historical numeric identity;
+    # this registry is only consulted by the resolution assertion guard. Keep
+    # it lazy so the default path retains neither owners nor a Hash lookup.
+    @arena_identity_registry : Adamas::Compiler::Semantic::ArenaIdentityRegistry? = nil
 
     # Tracks nesting depth of force_lower_function_for_return_type to prevent
     # unbounded recursion when inferring return types triggers more return type inferences.
@@ -5528,6 +5534,9 @@ module Adamas::HIR
     # Init at ctor from BootstrapEnv; guard hot-path debug prints.
     @trace_shovel_types_ast_enabled : Bool
     @debug_bypass_generic_split_cache : Bool
+    # Cached once at construction; only the assertion-enabled path may allocate
+    # or populate the candidate arena identity registry.
+    @arena_identity_assert_enabled : Bool = false
     # Negative env cache: avoid repeated getenv for keys that are unset.
     # Paired with @env_cache (which only stores set values).
     @env_missing_cache : Set(String)
@@ -6047,6 +6056,7 @@ module Adamas::HIR
       @function_defs = Hash(String, Adamas::Compiler::Frontend::DefNode).new(initial_capacity: 32768)
       @source_recovered_defs = {} of UInt64 => Adamas::Compiler::Frontend::DefNode
       @function_visibilities = Hash(String, Adamas::Compiler::Frontend::Visibility).new(initial_capacity: 4096)
+      @arena_identity_registry = nil
       @function_def_arenas = Hash(String, Adamas::Compiler::Frontend::ArenaLike).new(initial_capacity: 32768)
       @function_def_overloads = Hash(String, Array(String)).new(initial_capacity: 8192)
       @function_defs_cache_size = 0
@@ -6425,6 +6435,8 @@ module Adamas::HIR
       # Env cache
       @env_cache = {} of String => String
       @env_missing_cache = Set(String).new
+      @arena_identity_assert_enabled = env_has?("ADAMAS_RESOLUTION_ASSERT")
+      @arena_identity_registry = nil
       # Block lookup caches
       @block_lookup_cache = {} of BlockLookupKey => Tuple(String, Adamas::Compiler::Frontend::DefNode)?
       @block_lookup_cache_size = 0
@@ -15448,6 +15460,11 @@ module Adamas::HIR
     end
 
     private def set_function_def_arena(name : String, arena : Adamas::Compiler::Frontend::ArenaLike) : Nil
+      # Register the owner at the centralized arena seam. The resulting
+      # ArenaId is compile-scoped; no rendered function name participates in
+      # the identity. DefNode/ExprId provenance is recovered only by the
+      # fail-closed resolver guard below once the owner is selected.
+      arena_identity_registry!.id_for(arena) if @arena_identity_assert_enabled
       existing = @function_def_arenas[name]?
       if existing && existing.object_id == arena.object_id
         @arena_stats_set_skipped += 1 if @debug_arena_stats
@@ -15464,6 +15481,19 @@ module Adamas::HIR
       end
       add_unique_def_arena(arena)
       @function_def_arenas_last_refresh_size = @function_def_arenas.size
+    end
+
+    # Allocate the candidate owner registry only for the assertion-enabled
+    # provenance guard. The default lowering path must not retain every arena
+    # or pay a registry Hash lookup at the function-definition seam.
+    private def arena_identity_registry! : Adamas::Compiler::Semantic::ArenaIdentityRegistry
+      if registry = @arena_identity_registry
+        registry
+      else
+        registry = Adamas::Compiler::Semantic::ArenaIdentityRegistry.new
+        @arena_identity_registry = registry
+        registry
+      end
     end
 
     private def set_function_def_arena_if_missing(name : String, arena : Adamas::Compiler::Frontend::ArenaLike) : Nil
@@ -15758,6 +15788,84 @@ module Adamas::HIR
       expr_index = phase0_body_infer_expr_index(node, canonical_arena, node_expr_id)
       return nil if expr_index < 0
       Adamas::Compiler::Semantic::DefIdentity.new(canonical_arena.object_id.to_u64, expr_index)
+    end
+
+    # Candidate-only provenance lookup for a selected resolver DefNode. Unlike
+    # the phase0 body-infer helper above, each owner scan must be unique:
+    # returning the first structurally matching node would silently turn a
+    # reparsed or macro-duplicated definition into semantic authority. The
+    # boolean reports multiple matches in one owner; zero and multiple owner
+    # candidates are handled by canonical_def_identity_for_provenance. The scan
+    # is intentionally uncached so the guard cannot mutate legacy lookasides.
+    private def unique_def_expr_index_for_provenance(
+      node : Adamas::Compiler::Frontend::DefNode,
+      canonical_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : {Int32?, Bool}
+      match : Int32? = nil
+      i = 0
+      while i < canonical_arena.size
+        candidate = canonical_arena[Adamas::Compiler::Frontend::ExprId.new(i)]
+        if candidate.is_a?(Adamas::Compiler::Frontend::DefNode) &&
+           def_matches_phase0_body_infer_identity?(candidate, node)
+          return {nil, true} if match
+          match = i
+        end
+        i += 1
+      end
+      {match, false}
+    end
+
+    private def append_provenance_arena(
+      arenas : Array(Adamas::Compiler::Frontend::ArenaLike),
+      seen : Hash(Adamas::Compiler::Frontend::ArenaLike, Bool),
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Nil
+      return if seen.has_key?(arena)
+      seen[arena] = true
+      arenas << arena
+    end
+
+    private def provenance_candidate_arenas(
+      resolved_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Array(Adamas::Compiler::Frontend::ArenaLike)
+      arenas = [] of Adamas::Compiler::Frontend::ArenaLike
+      seen = {} of Adamas::Compiler::Frontend::ArenaLike => Bool
+      append_provenance_arena(arenas, seen, resolved_arena)
+      @main_arenas.each { |arena| append_provenance_arena(arenas, seen, arena) }
+      # Read the existing name→arena registration values without refreshing or
+      # mutating the legacy unique-arena cache from inside an assertion guard.
+      @function_def_arenas.each_value { |arena| append_provenance_arena(arenas, seen, arena) }
+      @unique_def_arenas_list.each { |arena| append_provenance_arena(arenas, seen, arena) }
+      if inline_arenas = @inline_arenas
+        inline_arenas.each { |arena| append_provenance_arena(arenas, seen, arena) }
+      end
+      arenas
+    end
+
+    # Resolve an owner-scoped DefIdentity without using a rendered symbol or a
+    # DefNode address. Every known owner arena is scanned and exactly one
+    # (arena, ExprId) candidate is required; reparsed copies therefore fail
+    # closed instead of being hidden by canonical-arena selection. This is
+    # guard-only until ResolutionId/CallResolution is introduced; the legacy
+    # resolver and materialization path remain intact.
+    private def canonical_def_identity_for_provenance(
+      node : Adamas::Compiler::Frontend::DefNode,
+      resolved_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Adamas::Compiler::Semantic::DefIdentity?
+      candidate : {Adamas::Compiler::Frontend::ArenaLike, Int32}? = nil
+      provenance_candidate_arenas(resolved_arena).each do |arena|
+        next unless arena_fits_def?(arena, node)
+        expr_index, ambiguous = unique_def_expr_index_for_provenance(node, arena)
+        return nil if ambiguous
+        next unless expr_index
+        return nil if candidate
+        candidate = {arena, expr_index}
+      end
+      return nil unless candidate
+
+      arena, expr_index = candidate.not_nil!
+      arena_id = arena_identity_registry!.id_for(arena)
+      Adamas::Compiler::Semantic::DefIdentity.from_arena_id(arena_id, expr_index)
     end
 
     private def arena_fits_body_ids?(
@@ -89498,11 +89606,16 @@ module Adamas::HIR
       t = resolve_call_tuple(input)
       return nil unless t
       res = resolution_from_selected_name(t[0], t[1])
-      if env_has?("ADAMAS_RESOLUTION_ASSERT")
+      if @arena_identity_assert_enabled
         rebuilt = method_instance_symbol(res.key)
         STDERR.puts "[RESOLUTION_SEEN] selected=#{t[0]}"
         unless rebuilt == t[0] && res.def_node == t[1]
           STDERR.puts "[RESOLUTION_MISMATCH] selected=#{t[0]} rebuilt=#{rebuilt} def_eq=#{res.def_node == t[1]}"
+        end
+        if identity = canonical_def_identity_for_provenance(res.def_node, @arena)
+          STDERR.puts "[DEF_PROVENANCE] selected=#{t[0]} arena_id=#{identity.arena_id} expr_index=#{identity.expr_index} status=exact"
+        else
+          STDERR.puts "[DEF_PROVENANCE] selected=#{t[0]} status=unresolved"
         end
       end
       res

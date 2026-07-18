@@ -10,11 +10,17 @@
 # canonical-arena id + Phase0BodyInferLookasideKey (structural fields aligned with
 # def_matches_phase0_body_infer_identity?), not by DefNode heap identity.
 # Cache hits are still verified with def_matches_phase0_body_infer_identity?; misses are not cached as -1.
+#
+# `arena_id` stores the numeric payload of a compile-scoped ArenaId. The legacy
+# UInt64 constructor remains for existing Phase0 counters; candidate identity
+# code must use `.from_arena_id` so an arena address cannot become authority.
+
+require "./arena_id"
 
 module Adamas::Compiler::Semantic
   # Structured def identity — injective by construction.
   # Two fields uniquely identify a Def within one compilation:
-  # - arena_id: object_id of the AstArena containing this Def
+  # - arena_id: compile-scoped ArenaId payload of the owner arena
   # - expr_index: ExprId.index within that arena
   #
   # This pair is stable within one compilation and cannot collide.
@@ -23,6 +29,10 @@ module Adamas::Compiler::Semantic
     getter expr_index : Int32
 
     def initialize(@arena_id : UInt64, @expr_index : Int32)
+    end
+
+    def self.from_arena_id(arena_id : ArenaId, expr_index : Int32) : DefIdentity
+      new(arena_id.value, expr_index)
     end
 
     def ==(other : DefIdentity) : Bool

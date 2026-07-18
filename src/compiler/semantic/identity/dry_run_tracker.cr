@@ -11,12 +11,15 @@
 # Enable with: ADAMAS_IDENTITY_DRY_RUN=1
 
 require "./semantic_type_id"
+require "./arena_id"
 require "./def_identity"
 require "./def_instance_key"
 
 module Adamas::Compiler::Semantic
-  # Fallback surrogate for call sites where ExprId is not yet available.
-  # Will be removed once ExprId is plumbed to all call sites.
+  # Legacy-only fallback for call sites where ExprId is not yet available.
+  # Will be removed once ExprId is plumbed to all call sites. Candidate
+  # owner-scoped provenance must use ArenaIdentityRegistry + DefIdentity and
+  # must never promote this object-address surrogate into semantic authority.
   struct DryRunDefKey
     getter arena_id : UInt64
     getter node_object_id : UInt64
