@@ -1,8 +1,12 @@
 # Compiler Decomposition and Semantic Replacement — Frontier SDD
 
-> Status: DESIGN-SEALED, documentation-only (2026-07-18).
-> Audit snapshot: checkout `05954794`, with a dirty worktree. No compiler
-> build, generated-stage run, or runtime claim is made by this document.
+> Status: DESIGN-SEALED; R0 DISPOSABLE INTEGRATION/SOURCE GUARDS COMPLETED,
+> B4-F PERFORMANCE/SEMANTIC CERTIFICATE STILL RED OR UNMEASURED
+> (documentation-only amendment, 2026-07-18).
+> Audit snapshot: source-shape counts at checkout `05954794`; the active
+> integration base is `548d29b1` with a dirty worktree. No compiler build,
+> generated-stage run, or runtime claim is made by this document; measured
+> evidence states are recorded below and must be refreshed at the R0 join.
 > Bounded context: Adamas compile semantics from parser arenas through HIR,
 > MIR, and LLVM emission.
 
@@ -75,20 +79,68 @@ positive and negative reducers, not a successful host build alone.
 
 ## 2. Current frontier and transition decision
 
-The declared bootstrap frontier in the current architecture SDD is:
+The old architecture SDD recorded B4 as green because a previously generated
+`s2` artifact passed a downstream full-prelude smoke. That is useful historical
+evidence, but it is not proof that the current source can produce a fresh
+`s2b`. The following table is the R0 reconciliation input; it deliberately
+keeps source revisions, generated artifacts, and the dirty worktree distinct.
 
-- B4 (produced s2 compiles a full-prelude tiny source) is recorded GREEN.
-- B5 (s2 self-build to s3) is recorded RED. The first bad stop is the
-  `AstToHir#lower_method` body loop for
-  `Adamas::Compiler::CLI#run$IO_IO`, at roughly 4.8 GB peak RSS, under
-  `ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_BODY_LOWERED`; the
-  pre-body gates are recorded clean.
+### 2.1 R0 evidence state
 
-This is a declared frontier, not a fresh build result: this docs-only change
-does not rerun the classifiers. A later source or evidence change invalidates
-the statement and requires the B4/B5 gates in
-`docs/compiler_architecture_sdd.md` and `docs/specs/05-falsifier-matrix.md`
-to be refreshed.
+| Evidence | State | Interpretation for the plan |
+|---|---|---|
+| Clean `548d29b1` baseline | `IN_PROGRESS / NON-DISCRIMINATING` | Stage1 and host/no-prelude probes pass, but fresh `s1 -> s2` timed out at the 900-second diagnostic cap without producing a new `s2`. It is a control, not a release certificate. |
+| `04b98b04` demand-amplifier lineage | `DIAGNOSTIC` | Direct `Object`/`Reference` method census fell from 2085 to 50. This explains one cross-product, but the branch is not a speed or semantic release certificate by itself. |
+| Historical fresh both-smoke green runs | `HISTORICAL GREEN / ABOVE TARGET` | The strongest surviving fresh certificate is 231.37 seconds; 251.91 and 253.42 seconds corroborate that both smoke modes have been green, but none satisfies the new <=180-second B4-F target. |
+| Historical ~178-190-second records | `PARTIAL ONLY` | These are no-prelude or otherwise partial records. They are not recovered full-green certificates and cannot satisfy B4-F. |
+| 2026-07-14 fresh run | `SEMANTIC SPLIT / RED` | Roughly 711 seconds; no-prelude was green while the plain/full-prelude smoke was red. |
+| G7 snapshot | `REFUTED AS RELEASE CANDIDATE` | Produced `s2` after 1962.79 seconds; both semantic smoke modes were red. |
+| G8 snapshot | `REFUTED AS RELEASE CANDIDATE` | Produced `s2` after 1791.78 seconds; both semantic smoke modes were red. |
+| G9 snapshot | `DIAGNOSTIC CANDIDATE ONLY` | Produced `s2` after 1768.73 seconds; both semantic smoke modes were red. Its retained HIR/MIR/LLVM artifacts may localize typed materialization divergence, but cannot certify current source. |
+| `91ebe332` Slice 1A | `T0 COMPLETED / GUARD-ONLY` | Stage1 passes; fresh `s1 -> s2` reaches the same 900-second timeout as the clean control. HIR provenance ON/OFF is byte-identical, but no `ResolutionId`/materialization consumer is present. |
+| R0 disposable integration/source guards | `COMPLETED / NON-PROMOTING` | Disposable integration and source-shape guards completed against a snapshot of the dirty source without changing the main worktree. |
+| Dirty-source B4-F measurement | `RED / UNMEASURED` | Host Crystal spawn infrastructure failed before a valid fresh performance/semantic certificate could be produced. This is an infrastructure result, not evidence of compiler equivalence or a compiler-local regression. |
+| Dirty main worktree | `UNADMITTED` | User-owned uncommitted compiler/spec changes remain unsuitable as a direct baseline; only the disposable snapshot and its manifest may carry R0 evidence. |
+
+These states supersede an unqualified `B4 GREEN` label. They do not discard
+the historical artifact; they prevent it from being used as evidence for fresh
+source readiness.
+
+### 2.2 B4 split and the performance/semantic release target
+
+The bootstrap contract now has two explicitly different rows:
+
+- **B4-H (historical artifact):** an already generated `s2` may be used for
+  downstream diagnosis and compatibility archaeology. Its smoke result is
+  retained as historical evidence and cannot promote a source change.
+- **B4-F (fresh current source):** a clean-output `s1 -> s2b` build from the
+  reconciled source must finish in **at most 180 seconds** on the recorded host
+  and explicit cache policy. The output directory must be new and
+  the manifest records fresh-output/source/output hashes and `cache_mode`; no generated
+  stage may be reused. Cold and warm results are reported separately, and a
+  warm run cannot satisfy a missing cold/fresh result.
+  Faster is the stretch target. A longer diagnostic timeout may be used to
+  obtain a failure artifact, but it never relaxes this acceptance budget.
+
+B4-F has two co-equal semantic gates: the exact plain/full-prelude smoke and
+the exact no-prelude smoke must both compile and run under the safe runner,
+with the expected behavior/oracle output. Worker count, cached old artifacts,
+or emit-only success cannot mask a failure in either mode. A candidate is not
+fresh-s2 ready unless the 180-second budget and both semantic gates pass.
+
+The <=180-second threshold is a new acceptance target, not a recovered
+historical full-green certificate. The strongest surviving fresh both-smoke
+green result is 231.37 seconds (with 251.91 and 253.42 second corroborating
+runs); the ~178-190-second records cover only no-prelude or partial lanes.
+
+### 2.3 Transition decision
+
+The declared B5 frontier remains useful as a historical locator: the first bad
+stop was the `AstToHir#lower_method` body loop for
+`Adamas::Compiler::CLI#run$IO_IO`, at roughly 4.8 GB peak RSS, under
+`ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_BODY_LOWERED`; the pre-body
+gates were recorded clean. It is not a current green claim. The R0 join must
+refresh B4-F/B5 against the reconciled source before any promotion.
 
 Decision:
 
@@ -99,6 +151,36 @@ Decision:
 3. A blank-slate compiler rewrite is not admitted at the current B5 frontier.
 4. Physical file splitting is delayed until semantic contracts reduce the
    state surface of the moved code.
+5. The R0 reconciliation seal is mandatory before Slice 1B: the active dirty
+   frontier is snapshotted, a same-source A/B control is run with and without
+   T0, and the fresh-s2 plus plain/no-prelude gates are classified together.
+
+### 2.4 Typed union materialization diagnostic
+
+R0 also exposed a narrower semantic boundary in the historical G9 artifacts.
+The source call is `main_arenas << map_arena`, where the container expects the
+union element type. In the minimal G9 probe, static-value insertion selects
+`push$AstArena`, while an explicit upcast selects the union target. The upstream
+Crystal audit establishes that both are lawful, distinct generic instances:
+concrete flow through `Array(ArenaLike) << AstArena` specializes `<<`/`push`
+with `AstArena`, while explicit `.as(ArenaLike)` and true union flow specialize
+with the union or a lawful reduced union.
+
+Instance authority is the selected definition plus actual typed arguments,
+block shape, and named arguments (`DefInstanceKey` uses `def.object_id` at this
+oracle boundary). The mangled name is only the later serialization of that
+identity; equal display families do not require equal instances.
+
+The minimal probe preserves both call arguments through HIR, MIR, and LLVM, so
+it does not reproduce argument loss. The full G9 `s2` LLVM artifact instead
+contains a union `<<` path that calls zero-argument `push$AstArena()` and a
+zero-argument unreachable stub. That makes late HIR materialization or a
+missing selected target a high-confidence hypothesis for zero-argument body
+creation, but it is not yet proven. G9 is therefore retained only as a
+diagnostic candidate. T9 permits the lawful concrete and union instances and
+requires one reducer to join selected definition/instance, coercion and value
+type, receiver/value arity, materialized body, and emitted symbol before any
+fix or promotion.
 
 ## 3. Surface policy
 
@@ -125,6 +207,8 @@ Decision:
   or infers layout from strings after HIR/MIR has emitted facts.
 - A global queue removal before the semantic pipeline has a fixed declaration
   point and an explicit recursive in-progress state.
+- A new owner that accepts the whole `AstToHir`/`TypeInferenceEngine` context
+  instead of a narrow typed contract; this only relocates ambient authority.
 - Stdlib edits, parser replacement, or a broad ABI representation change as a
   side effect of this architecture transition.
 
@@ -136,6 +220,11 @@ Decision:
   `emit_all_tracked_signatures`, `process_pending_lower_functions`,
   `force_lower_function_for_return_type`, or non-zero legacy pending demand
   under the candidate path.
+- T0 provenance/arena guard records, including `ArenaId` and fail-closed owner
+  checks. T0 remains diagnostic until a real typed consumer reads the record.
+  If two subsequent architecture slices finish without such a consumer, the
+  guard-only slice expires: its flag, ledger, and unused registry retention
+  are removed or explicitly re-admitted with a new owner and falsifier.
 - Typed facades over `@function_defs`, `@class_info`, generic templates,
   arena storage, materialization, and ABI/layout facts.
 - A typed streaming LLVM writer and an allocation census. The current textual
@@ -208,6 +297,10 @@ surface has fewer authorities and a smaller state contract.
     dynamic census, negative-use proof, and replacement ownership agree.
 12. **Rollback is a feature.** Every candidate path has a kill switch and the
     legacy path remains runnable until the declared soak window ends.
+13. **No whole-context injection.** A new owner may not receive `AstToHir`,
+    `TypeInferenceEngine`, or another monolithic context as an implicit service
+    locator. It receives only a narrow typed input/facade whose reads and
+    lifetime are part of the owner contract.
 
 ## 6. String, enum, and domain-ID taxonomy
 
@@ -238,6 +331,10 @@ create two caches with different meanings.
 ## 7. Zero-copy ownership and lifetime contracts
 
 Zero-copy is admitted only where the producer's owner outlives every consumer.
+The non-negotiable rule is: **no borrow without a lifetime proof; no copy
+without a named boundary reason**. A copy is an explicit ownership transfer,
+not an accidental workaround, and a borrow is never justified by an index or
+an apparent current-arena coincidence.
 
 1. **Parser arena.** The parser owns AST nodes. An `AstNodeRef` carries the
    owning arena, `ExprId`, source span, and origin. HIR may borrow it only while
@@ -372,7 +469,67 @@ a silent implementation dependency.
 The order reconciles the current architecture SDD's owner-first phases with the
 RFC's demand-driven phases:
 
-0. **Bootstrap freeze.** Keep B4/B5 evidence current. Permit docs, census,
+### 9.1 R0 reconciliation gate (before Slice 1B)
+
+R0 is a required evidence seal, not another semantic owner. It prevents a
+dirty worktree, an old generated artifact, and a new identity guard from being
+compared as if they were one compiler.
+
+1. Snapshot the current dirty frontier into a disposable worktree without
+   changing, staging, or cleaning the user's main worktree.
+2. Produce an A/B pair from the same snapshot: A without T0 and B with
+   `91ebe332` T0 provenance. Record source revision, flags, cache policy,
+   worker count, wall time, peak RSS, and generated-artifact provenance. Use a
+   new output directory, verify fresh-output/source/output hashes, and record
+   `cache_mode`; report any external host cache separately and hold it
+   constant.
+3. Run host/unit guards, plain/full-prelude smoke, and no-prelude smoke on
+   both A and B. A/B must be semantically equal before any architecture
+   consumer is promoted; a timeout is classified as non-discriminating, not
+   as evidence that B caused the slowdown.
+4. Run the fresh `s1 -> s2b` classifier with a diagnostic cap sufficient to
+   leave an attributable artifact, then apply the actual B4-F budget of 180
+   seconds. Compare function/materialization demand, duplicate bodies, queue
+   peaks, phase times, and RSS; do not use a single timeout or function count
+   as a value proxy.
+5. Write a compact evidence manifest naming the first divergent owner or
+   declaring the result non-discriminating. Only then may Slice 1B introduce a
+   real `ResolutionId`/materialization consumer.
+
+The disposable integration and source-guard portion of R0 is complete. The
+current dirty-source B4-F measurement is not: host Crystal spawn infrastructure
+failed before a valid fresh stage and both-smoke result existed. Until that
+infrastructure lane is rerun successfully, B4-F remains red/unmeasured and the
+historical G9 snapshot remains diagnostic-only.
+
+R0 as a promotion seal is complete only when the current source snapshot, not
+B4-H or G9, has a known fresh-s2 classification and both semantic smoke modes
+have an explicit result.
+
+### 9.2 Reliability/architecture two-track join
+
+The work proceeds on two coordinated tracks:
+
+- **Reliability track:** restore a fresh B4-F build at or below 180 seconds
+  (with a faster stretch target), then keep exact plain and no-prelude smokes
+  green across every promoted slice. It owns source snapshots, generated
+  stage provenance, resource budgets, and bootstrap rollback.
+- **Architecture track:** move from T0 guard-only provenance to typed
+  `ResolutionId`, `CallResolution`, and materialization records without
+  injecting whole compiler contexts. It owns identity/lifetime contracts,
+  normalized shadow, and structural tripwires.
+
+The **join** is a release gate: an architecture slice may run in guard/shadow
+mode while reliability is red, but it cannot change the default path, delete a
+queue/shim, or claim a performance win until the same source snapshot passes
+B4-F plus both semantic smoke modes. Conversely, a reliability fix cannot
+enter the architecture track without naming the owner boundary and preserving
+the typed shadow ledger. A lower queue count or faster host build cannot
+compensate for a semantic mismatch, and a semantic parity result cannot hide a
+10x fresh-stage slowdown.
+
+0. **Bootstrap freeze.** Keep B4-F/B5 evidence current and label B4-H as
+   historical only. Permit docs, census,
    reducers, and emergency fixes that add an owner ledger; stop broad refactor
    while the frontier moves.
 1. **Decision and dead-code census.** Enumerate semantic writers/readers,
@@ -435,6 +592,7 @@ retire existing B4/B5, name-resolution, materialization, or layout rows.
 |---|---|---|
 | `ResolutionId` preserves typed identity continuity. | Direct versus alias-derived generic calls, named arguments, block calls, absolute `::Hash`, and two distinct declarations with the same display spelling. | Any collision, remint, or owner loss stops the slice. |
 | `MethodInstanceKey` is injective for body/materialization demand. | Same declaration with different receiver/arg/block/named-arg types; same rendered name with different `DefIdentity`. | A key collision or mutable-key change rejects cache promotion. |
+| Lawful concrete and union generic instances preserve identity and body continuity through materialization. | [Reducer](../../regression_tests/union_static_generic_materialization_guard.cr) and [guard](../../regression_tests/union_static_generic_materialization_guard.sh) compare concrete `main_arenas << map_arena`, explicit `.as(ArenaLike)`, and true union flow; they join selected instance, coercion/value type, receiver/value arity, HIR body, and optional full-stage LLVM symbol/stub shape. | Concrete flow may select the `AstArena` instance; explicit and true union flow may select union/reduced-union instances. Any owner/key discontinuity, lost receiver/value argument, unmatched body/symbol, or orphan zero-argument call/stub fails T9. Current focused HIR and full-G9 artifact modes are both measured red, so T9 is falsifiable but unsatisfied. |
 | No semantic string keys remain on the candidate route. | Source-shape scan plus runtime ledger for mangled-name cache/owner decisions and late string rewrites. | Any semantic branch driven by a string remains guard-only. |
 | Arena identity is preserved. | Block, macro, inline, reparsed, and current-arena `ExprId` reducers with equal numeric indices. | Index-only fallback or stale dereference fails closed. |
 | No legacy queue is required. | `ADAMAS_SEMANTIC_ASSERT_NO_LEGACY_QUEUE=1` on hello, generic, macro, block, recursive, and stage2/3 reducers. | Any legacy queue/safety-net execution blocks promotion. |
@@ -492,10 +650,21 @@ and peak RSS) remain release-blocking.
    negative lifetime case, and an owner-approved budget before zero-copy
    promotion.
 
-### 13.2 First vertical `ResolutionId` / `MethodInstanceKey` slice
+### 13.2 T0 provenance guard classification
 
-The first implementation slice is intentionally narrow and behavior-neutral;
-it evolves existing scaffolding rather than duplicating it:
+Slice 1A (`91ebe332`) is **T0: guard-only provenance**, not the first vertical
+semantic replacement. It adds compile-scoped `ArenaId` provenance and a
+fail-closed registry under an assertion flag; the default route remains
+behavior-neutral and lazy. Its evidence is useful for owner diagnostics, but
+it does not yet construct `ResolutionId`, feed `CallResolution`, or reduce
+materialization demand. T0 is therefore `COMPLETED` as a guard slice and
+`UNADMITTED` as a behavior/architecture authority until R0 produces the same
+source A/B result and a real consumer is named.
+
+### 13.3 First vertical `ResolutionId` / `MethodInstanceKey` slice
+
+The first admitted semantic consumer slice is intentionally narrow and
+behavior-neutral; it evolves existing scaffolding rather than duplicating it:
 
 1. Extend `src/compiler/semantic/identity/def_identity.cr`,
    `semantic_type_id.cr`, `def_instance_key.cr`, and `hir_adapter.cr`. Add
@@ -522,6 +691,13 @@ compile path. The next local track is the state-scope/materialization seal;
 the demand-driven body cache remains later until declaration fixed-point parity
 is demonstrated.
 
+T9 is a prerequisite for promoting this slice on the union-container path.
+The upstream audit admits the distinct concrete and union instances. The
+remaining defect is continuity: the zero-arg call/stub in full G9 LLVM must
+remain a late-materialization/missing-target hypothesis until one reducer joins
+selected `Def`/`DefInstanceKey`, coercion/value type, receiver/value arity,
+materialized body, and emitted symbol for all three lawful flows.
+
 ## 14. Stop, dirty-worktree, and rollback rules
 
 Stop and return to census/design when:
@@ -532,9 +708,16 @@ Stop and return to census/design when:
   context;
 - a shadow mismatch, legacy queue execution, arena-expiry failure, or backend
   reconstruction appears;
+- a union insertion loses selected `Def`/instance identity, coercion/value
+  type, receiver/value arity, body/symbol continuity, or becomes an orphan
+  malformed/zero-argument body/call;
 - a zero-copy change improves an allocation proxy while worsening normalized
   semantics, peak RSS, or retention;
+- a fresh `s1 -> s2b` build exceeds the 180-second B4-F budget, or either
+  exact plain/full-prelude or no-prelude smoke diverges;
 - a B4/B5 run moves to an earlier or unexplained frontier;
+- an architecture slice is promoted without the reliability/architecture join
+  on the same source snapshot;
 - three attempts operate at the same observation level without changing the
   targeted edge;
 - a deletion is proposed before `CodePathStatus=delete_ready` and its negative
@@ -545,7 +728,14 @@ untracked probes. This SDD, its README index row, and the falsifier-matrix
 section are the only owned paths for the documentation slice. Do not stage,
 format, revert, or commit unrelated work. Before implementation, use an
 isolated branch/worktree or an equivalent ownership checkpoint and stage exact
-paths only.
+paths only. If parallel work creates another
+numeric-slot-07 document (for example `07-inherited-virtual-demand.md`), keep
+`07-compiler-decomposition-and-semantic-replacement.md` as the canonical
+architecture-transition SDD and keep one README index row for slot 07. Do not
+rename a user-owned file in this slice; at the next docs merge, assign the
+other bounded contract the next unused numeric slot and update its links,
+preserving its git history. Never admit two different SDDs under numeric slot
+07.
 
 Rollback is by disabling the candidate flag and returning consumers to the
 legacy path. Do not delete queues, old registries, or compatibility shims until
@@ -557,9 +747,10 @@ continuing.
 
 - This document: transition boundary, identity/lifetime taxonomy, migration
   order, seals, and residual rejected surface.
-- `docs/compiler_architecture_sdd.md`: current owner records, B4/B5 frontier,
-  architecture phases, and authority-edge table. It remains the main SDD and
-  is intentionally not edited in this docs-only slice.
+- `docs/compiler_architecture_sdd.md`: current owner records, the split B4-H /
+  B4-F frontier, architecture phases, and authority-edge table. It remains
+  the main SDD; its section 0 and execution gate are updated with this R0
+  amendment in the same documentation change.
 - `docs/compiler_refactor_architecture_plan.md`: deferred physical/backend
   refactor options; revisit after semantic ownership is sealed.
 - `PLAN_DEMAND_DRIVEN_REWRITE_RFC.md`: strategic semantic pipeline, canonical

@@ -1,6 +1,6 @@
 # RFC: Demand-Driven Semantic Rewrite for Compile Path
 
-Status: Draft  
+Status: Draft; R0 disposable integration/source-guard evidence reconciled 2026-07-18
 Audience: Claude Opus implementation track, architecture review  
 Scope: Compiler compile path only; check path unification is part of rollout, not day 1  
 Supersedes: high-level direction in `PLAN_DEMAND_DRIVEN_REWRITE.md`
@@ -39,6 +39,47 @@ source maps.
 
 Important rollout constraint: raw HIR equality is not a valid shadow gate.
 Function ids, value ids, block ids, and type ids are order-sensitive.
+
+### 2.1 R0 readiness boundary
+
+Fresh-source readiness is a performance and semantic vector, not a recovered
+historical label. B4-F requires a new-output `s1 -> s2b` build in <=180 seconds
+plus exact green plain/full-prelude and no-prelude smokes. The <=180-second
+budget is a new acceptance target: the strongest surviving fresh both-smoke
+green certificate is 231.37 seconds, with 251.91 and 253.42 second
+corroborating runs. Historical ~178-190-second records are no-prelude or
+partial only. A 2026-07-14 fresh run took roughly 711 seconds with no-prelude
+green/plain red; G7, G8, and G9 took 1962.79, 1791.78, and 1768.73 seconds and
+both smoke modes were red.
+
+R0 disposable integration and source-shape guards completed against a snapshot
+of the current dirty source. Current dirty-source B4-F/B5 remains
+red/unmeasured because host Crystal spawn infrastructure failed before a valid
+fresh stage certificate existed. That failure is infrastructure evidence, not
+proof of compiler equivalence or of a compiler-local regression. Historical G9
+is retained only as a diagnostic candidate.
+
+### 2.2 Typed materialization diagnostic boundary
+
+For source `main_arenas << map_arena`, the minimal G9 HIR selects
+`push$AstArena` for the static value and the union target for an explicit
+upcast. The upstream Crystal audit establishes both as lawful, distinct generic
+instances: concrete flow through `Array(ArenaLike) << AstArena` specializes
+`<<`/`push` with `AstArena`, while explicit `.as(ArenaLike)` and true union
+flow specialize with a union or lawful reduced union. The same minimal probe
+preserves both arguments through HIR, MIR, and LLVM. Full G9
+`s2` LLVM instead contains a union `<<` call to zero-argument
+`push$AstArena()` and a zero-argument unreachable stub.
+
+The exact zero-argument creation mechanism is not proven. Late HIR
+materialization or a missing selected target is a high-confidence hypothesis,
+and must remain one until T9 joins selected `Def`/`DefInstanceKey`,
+coercion/value type, receiver/value arity, materialized body, and emitted symbol
+on one reducer.
+
+The identity authority for this boundary is
+`DefInstanceKey(def.object_id, actual typed args, block/named)`. The mangled
+name is only its later serialized form and must not replace the typed key.
 
 ## 3. Non-Negotiable Invariants
 
@@ -115,6 +156,16 @@ Required normalized comparison includes:
 - LLVM generation success
 - reducer runtime behavior on selected smoke cases
 
+### 3.5 Typed target identity survives materialization
+
+A call's selected `Def`/`DefInstanceKey`, coercion/value type, receiver/value
+arity, body, and emitted symbol must remain continuous through materialization
+and emission unless an explicit typed conversion or wrapper/forwarder contract
+says otherwise. Concrete insertion may select the concrete `AstArena` instance;
+explicit-cast and true-union flows may select union/reduced-union instances.
+HIR, MIR, LLVM, and the materialized body must preserve the receiver/value call
+shape; an orphan malformed zero-argument call or unreachable stub fails closed.
+
 ## 4. Feature Flags
 
 ### 4.1 Primary flag
@@ -142,6 +193,15 @@ Purpose:
 Must produce:
 - contract doc for HIR inputs required by MIR and LLVM
 - normalized shadow comparator spec
+- a B4-F evidence manifest that distinguishes the new <=180-second acceptance
+  target from historical full-green, no-prelude-only, partial, and both-red
+  records
+- the T9 [reducer](regression_tests/union_static_generic_materialization_guard.cr)
+  and [guard](regression_tests/union_static_generic_materialization_guard.sh),
+  joining static union insertion target selection to
+  selected definition/instance, coercion/value type, receiver/value arity,
+  materialization, and emission for concrete, explicit-cast, and true-union
+  flows; focused HIR and optional full-G9 modes are current-red falsifiers
 - counters for legacy supply-driven behavior:
   - forced lowers
   - pending queue growth
@@ -152,6 +212,8 @@ Exit criteria:
 - normalized comparison format is implemented or fully specified
 - legacy-path metrics are observable in CI/local runs
 - kill-switch assertions are defined for new flag
+- host Crystal spawn infrastructure can produce a valid fresh-stage result;
+  completed disposable source guards alone do not satisfy B4-F
 
 ### Phase 1: Canonical Semantic Identity Layer
 
@@ -251,6 +313,10 @@ Core rules:
 - bodies are analyzed only when reached from top-level demand
 - each typed def is analyzed once per unique `DefInstanceKey`
 - generic instantiation is on-demand
+- typed target identity retains selected `Def`/`DefInstanceKey`,
+  coercion/value type, receiver/value arity, body, and emitted-symbol continuity
+  from resolution through body cache and materialization; concrete and union
+  flows may retain distinct lawful instances
 - recursive and cyclic cases use explicit in-progress states, not fallback queue
   growth
 
@@ -277,6 +343,8 @@ Forbidden bridge:
 
 Must emit:
 - HIR instructions compatible with current `hir_to_mir`
+- typed selected/materialized target identity and call arity sufficient to
+  reject a malformed or zero-argument late materialization
 - method effect summaries
 - lifetime and taint seeds required downstream
 - class hierarchy and module includers
@@ -308,12 +376,16 @@ Required shadow suite:
 - macro-heavy reducer
 - enum/lib/alias reducer
 - current stage2/stage3 compile reducers
+- static union-container insertion versus explicit upcast (T9)
 
 Exit criteria:
 - normalized comparator green on agreed suite
 - downstream MIR/LLVM green
 - no regressions in runtime smoke behavior
 - no legacy queue assertions fired
+- fresh B4-F reaches <=180 seconds and both exact semantic smoke modes are
+  green on the same manifested source/artifact; historical G9 cannot satisfy
+  this gate
 
 ### Phase 7: Default Switch and Deletion
 
@@ -372,6 +444,7 @@ Primary metrics:
 - duplicate typed-body analysis count
 - compile wall time
 - peak RSS on selected reducers
+- B4-F certificate class: fresh both-smoke, no-prelude-only, partial, or red
 
 Secondary metrics:
 
@@ -395,5 +468,8 @@ This RFC is complete when:
 - legacy supply-driven queue machinery is not required under the new flag
 - normalized shadow suite is green
 - bootstrap and reducer suite are green enough to justify default switch
+- B4-F has a fresh <=180-second both-smoke green certificate and T9 proves
+  concrete, explicit-cast, and true-union insertion preserve selected
+  definition/instance, coercion/value type, receiver/value arity, body/symbol
+  continuity, and non-stub materialization
 - semantic and HIR type identity boundary is explicit and stable
-

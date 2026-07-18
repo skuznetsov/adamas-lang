@@ -1,6 +1,6 @@
 # Compiler Architecture SDD
 
-> Status: ACTIVE spec, rebuilt 2026-07-03.
+> Status: ACTIVE spec; R0 reconciliation in progress (amended 2026-07-18).
 > Scope: target ownership architecture for the Adamas compiler
 > (HIR -> MIR -> LLVM) and the migration contract toward it.
 > The 2026-06-25..07-03 execution ledger (145 slices, ~11,600 lines) that
@@ -25,23 +25,64 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
-- **B4 (produced s2 compiles full-prelude source): GREEN.**
-  `GENERATED_S2=<cv2_s2> REQUIRE_CLEAN=1
-  scripts/generated_stage_llvm_entry_classifier.sh` reports
-  `classification=clean_both_modes`; the produced binary prints `42` under
-  `scripts/run_safe.sh`.
-- **B5 (s2 self-build -> s3): RED.** `PENDING_TARGET_ONLY=1
-  STAGE1_COMPILER=<cv2_s2> REQUIRE_CLASSIFICATION=1 STOP_TIMEOUT=900
-  STOP_MEM_MB=12288 HIGH_RSS_MB=12288
-  scripts/generated_stage_self_build_hir_boundary_classifier.sh` reports
-  `classification=self_build_hir_pending_target_lower_method_body_lowered_boundary`.
-  First bad stop gate:
-  `ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_BODY_LOWERED` — the
-  self-build exits 139 at ~4.8 GB peak RSS inside the `AstToHir#lower_method`
-  body loop (`body_size=44`) for `Adamas::Compiler::CLI#run$IO_IO`; all
-  pre-body gates are clean.
-- Regression gates: 152/152 full + 36/36 combined
-  (`regression_tests/run_all_suites.sh <stage1> 4`).
+- **B4-H (historical generated artifact): HISTORICAL.** A previously generated
+  `s2` passed the downstream full-prelude classifier and printed `42` under
+  `scripts/run_safe.sh`. This remains useful compatibility evidence, but it
+  does not prove that current source can produce a fresh `s2b`.
+- **B4-F (fresh current source): FRONTIER.** A clean-output `s1 -> s2b`
+  build from the reconciled source must finish in at most **180 seconds** on
+  the recorded host/cache policy (faster is the stretch target). The output
+  directory is new and the manifest records fresh-output/source/output hashes
+  plus `cache_mode`; no generated stage is reused. Any external host cache is
+  recorded and held constant, with cold and warm results reported separately.
+  The exact plain/full-prelude and exact no-prelude semantic smokes
+  are co-equal release gates; worker-only or emit-only success cannot mask
+  either failure. This is a new acceptance target, not a recovered historical
+  full-green certificate.
+- **B5 (s2 self-build -> s3): HISTORICAL RED / REFRESH REQUIRED.** The
+  historical first bad stop was
+  `ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_BODY_LOWERED` inside the
+  `AstToHir#lower_method` body loop (`body_size=44`) for
+  `Adamas::Compiler::CLI#run$IO_IO`, at roughly 4.8 GB peak RSS. The R0
+  reconciliation must rerun the classifier before treating this as the active
+  frontier.
+
+Current evidence is deliberately revision-scoped:
+
+| Source/artifact | Current classification | Consequence |
+|---|---|---|
+| `548d29b1` clean baseline | Stage1 and host/no-prelude probes pass; fresh `s1 -> s2` timed out at 900 seconds | Control only; no fresh-s2 certificate. |
+| `04b98b04` lineage | Direct `Object`/`Reference` method census 2085 -> 50 | Diagnostic demand-amplifier evidence; not a release certificate. |
+| Historical fresh both-smoke green | 231.37 seconds strongest surviving certificate; 251.91/253.42 seconds corroborating | Above the new <=180-second target; not current-source admission. |
+| Historical ~178-190-second runs | No-prelude or partial lanes only | Not full-green B4-F certificates. |
+| 2026-07-14 fresh run | ~711 seconds; no-prelude green, plain/full-prelude red | Semantic split; release red. |
+| G7 snapshot | 1962.79 seconds; both semantic smokes red | Refuted as release candidate. |
+| G8 snapshot | 1791.78 seconds; both semantic smokes red | Refuted as release candidate. |
+| G9 snapshot | 1768.73 seconds; both semantic smokes red | Diagnostic candidate only; not a release candidate. |
+| `91ebe332` T0 | Same 900-second fresh-stage timeout as clean control; HIR provenance ON/OFF byte-identical | Guard-only provenance; no behavior promotion. |
+| R0 disposable integration/source guards | Completed against a snapshot of the dirty source | Non-promoting source/integration certificate only. |
+| Dirty-source B4-F/B5 | Host Crystal spawn infrastructure failure prevented a valid fresh stage measurement | Release gate red/unmeasured; not compiler-semantic evidence. |
+| Dirty main worktree | User-owned uncommitted compiler/spec changes | Direct worktree remains unadmitted; only disposable snapshot evidence is usable. |
+
+The old `B4 GREEN` wording is therefore split into B4-H and B4-F rather than
+silently reused. A diagnostic timeout is not an acceptance budget.
+
+R0 also selected historical G9 only as a typed-materialization diagnostic.
+For source `main_arenas << map_arena`, the minimal G9 HIR chooses
+`push$AstArena` for the static value but the union target for an explicit
+upcast. The upstream Crystal audit establishes both as lawful: concrete flow
+through `Array(ArenaLike) << AstArena` specializes `<<`/`push` with `AstArena`,
+while explicit `.as(ArenaLike)` and true union flow select union or lawful
+reduced-union instances. Instance authority is
+`DefInstanceKey(def.object_id, actual typed args, block/named)`; the mangled
+name is later serialization. The minimal HIR/MIR/LLVM probe preserves two
+arguments. Full G9
+`s2` LLVM instead contains a union `<<` path calling zero-argument
+`push$AstArena()` plus a zero-argument unreachable stub. Late HIR
+materialization or a missing selected target is therefore a high-confidence
+hypothesis for the malformed body, not yet a proven creation mechanism; T9 is
+the missing selected-Def/instance/coercion/arity/body/symbol continuity
+falsifier.
 
 ### 0.2 Authority-edge state table
 
@@ -69,6 +110,9 @@ family); `output-file-owned-by-cli` and `tail-stub-from-mutable-sets`
 consumed as a behavior fix); `MaterializationAttemptResult` terminal-status
 owner type (paper-only); vertical `MethodBodyLoweringContext` /
 `SemanticStateScope` slice.
+The static-union insertion target/materialization edge is also residual: T9
+must join selected HIR target to materialized body and emitted call before an
+owner record can be marked consumed.
 
 ## 1. Admitted surface
 
@@ -633,7 +677,13 @@ Key falsifiers:
   `$arityN_block` fallback;
 - the `@block_owner Hash#[]=` current frontier must either materialize the body
   under the emitted call symbol or emit an explicit wrapper/forwarder; a body
-  under only the target symbol is a failing state.
+  under only the target symbol is a failing state;
+- `main_arenas << map_arena` and its explicit-upcast control may select
+  distinct lawful concrete and union instances. Concrete, explicit-cast, and
+  true-union flows must each preserve selected `Def`/`DefInstanceKey`,
+  coercion/value type, receiver/value arity, materialized body, and emitted
+  symbol through HIR/MIR/LLVM, and emit neither an orphan zero-argument
+  `push$AstArena()` call nor a malformed zero-argument unreachable stub.
 
 ### 6.6 AbiFacts and LayoutContract
 
@@ -1021,7 +1071,9 @@ CopyPropagation, not a contract record.
 
 Do not start broad refactor while current `s2b`/`s3b` bug frontiers are moving.
 Only add SDDs, probes, and small tactical fixes needed to restore the bootstrap
-corridor.
+corridor. The active performance objective is fresh `s1 -> s2b` in <=180s
+(with a faster stretch target), not merely a downstream run of an old generated
+artifact.
 
 Additional stop-rule after the 2026-07-01 checkpoint: a tactical fix is allowed
 only when it names the owning semantic boundary and either consumes an existing
@@ -1031,9 +1083,56 @@ boundary, stop and route the work to Phase 1 census.
 
 Exit signal:
 
-- `s2b` reaches a stable smoke target;
+- fresh B4-F `s1 -> s2b` reaches the <=180s budget and both exact
+  plain/full-prelude and no-prelude smokes pass;
 - `s3b` status is known;
 - active frontiers have problem cards and reducers or smoke scripts.
+
+### Phase 0a: R0 frontier reconciliation
+
+R0 is the mandatory join before Slice 1B or any default-path semantic
+promotion. It must be run from a disposable snapshot of the current dirty
+frontier and must not stage, clean, or rewrite the user's main worktree.
+
+1. Build an A/B pair from the same source snapshot: A without T0 provenance
+   and B with `91ebe332` T0. Record revision, flags, cache policy, workers,
+   wall time, peak RSS, and generated-artifact provenance. Use a new output
+   directory, verify fresh-output/source/output hashes, and record
+   `cache_mode`; record any external host cache separately and hold it
+   constant.
+2. Run host/unit guards plus exact plain/full-prelude and exact no-prelude
+   semantic smokes on both A and B under `scripts/run_safe.sh`. Both modes are
+   co-equal gates; a timeout is non-discriminating rather than proof that T0 is
+   the cause.
+3. Run a fresh `s1 -> s2b` classifier with a diagnostic cap sufficient to
+   leave an attributable artifact, then apply the B4-F acceptance budget of
+   <=180s. Compare materialization requests, duplicate bodies, forced lowers,
+   queue peaks, phase times, and RSS; no single function count or timeout is a
+   value proxy.
+4. Write an evidence manifest naming the first divergent owner or declaring
+   the result non-discriminating. Only after this seal may Slice 1B introduce a
+   real `ResolutionId`/materialization consumer.
+
+The disposable integration and source-guard subgate is complete. The current
+dirty-source fresh-stage measurement is not: host Crystal spawn infrastructure
+failed before a valid B4-F/B5 artifact and both-smoke result existed. B4-F is
+therefore red/unmeasured, B5 remains historical/unrefreshed, and G9 is only a
+diagnostic candidate.
+
+R0 as a promotion seal is complete only when the current source snapshot has a
+known fresh-s2 classification and explicit results for both semantic smoke
+modes. Neither B4-H nor G9 substitutes for B4-F.
+
+### Phase 0a.1: Reliability/architecture two-track join
+
+The reliability track owns the <=180s fresh-stage budget, generated-stage
+provenance, exact plain/no-prelude smokes, and rollback. The architecture track
+owns T0 -> typed `ResolutionId`/`CallResolution`/materialization contracts,
+normalized shadow, and structural budgets. Architecture work may remain
+guard/shadow-only while reliability is red, but neither track may promote a
+default behavior, delete a queue/shim, or claim a speedup until the same
+source snapshot passes B4-F and both semantic gates. Reliability fixes must
+name an owner boundary; architecture slices must retain a legacy kill switch.
 
 ### Phase 0b: Architecture transition gate
 
@@ -1260,6 +1359,10 @@ Work items:
 Exit falsifiers:
 
 - distinct block-shape split functions are emitted and called,
+- concrete `main_arenas << map_arena`, explicit `.as(ArenaLike)`, and true
+  union flow preserve their lawful selected `Def`/instance, coercion/value
+  type, receiver/value arity, matching body/symbol, and no orphan malformed
+  stub,
 - `@block_owner Hash#[]=` does not leave a body only under the target symbol
   while the emitted call uses the requested symbol,
 - pending queue does not drop shape-specific requests,
@@ -1336,6 +1439,15 @@ future architecture work:
 - layout probe / `ADAMAS_LAYOUT_ASSERT` - slot/access divergence.
 - super-chain module/class collision reducers.
 - block-call mega-union and class-arg overload dispatch reducers.
+- typed union-container insertion target/materialization reducer (T9): join
+  selected `Def`/`DefInstanceKey`, coercion/value type, receiver/value arity,
+  materialized body, and emitted symbol for lawful concrete, explicit-cast,
+  and true-union flows. The
+  [reducer](../regression_tests/union_static_generic_materialization_guard.cr)
+  and [guard](../regression_tests/union_static_generic_materialization_guard.sh)
+  are current-red: focused HIR reports signature/conversion discontinuities,
+  and optional full-G9 mode classifies the orphan zero-argument call/stub as
+  `MEASURED_RED`.
 - dead-code deletion smoke - targeted reducer set plus `s2b`/`s3b` frontier
   comparison for removed paths in compiler hot code.
 
@@ -1355,6 +1467,9 @@ Stop and return to census/design when any of these occurs:
   symbols agree;
 - a body is created under one symbol while the emitted call names another
   symbol and there is no explicit wrapper/forwarder contract;
+- a union-container flow loses selected `Def`/instance, coercion/value type,
+  receiver/value arity, body/emitted-symbol continuity, or creates/emits an
+  orphan malformed zero-argument call/body/stub;
 - an AST-node consumer patch is proposed before the raw `@arena[expr_id]` read
   has been classified as current-arena-owned, call-arena-owned, block-owned,
   macro-owned, reparsed-owned, or stale/corrupt;

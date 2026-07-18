@@ -1,6 +1,29 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-07-14 (fresh s1 timeout localized to final concrete virtual-target repair).
+Updated: 2026-07-18 (R0 performance/semantic frontier and typed materialization falsifier).
+
+CURRENT R0 FRONTIER (architecture admitted, production fix still open): fresh
+`s1 -> s2b` readiness is now a vector: <=180 seconds on a manifested fresh
+output plus exact plain/full-prelude and no-prelude smokes. The strongest
+surviving historical fresh both-smoke certificate is 231.37 seconds; later
+evidence degraded through roughly 711 seconds with a semantic split to
+1768.73-1962.79 seconds with both modes red. The <=180-second value is the new
+acceptance target, not a recovered historical full-green measurement.
+
+The first typed materialization falsifier is RED on current `bin/adamas` and
+historical G9 stage1. Original Crystal lawfully specializes
+`Array(ArenaLike)#push` by the actual expression type, so concrete
+`push$AstArena` is not itself a bug. The real invariant is continuity from the
+selected `Def`/typed instance through coercion, receiver/value arity, body, and
+emitted symbol. The focused HIR guard finds two violations: the explicit-union
+append is declared with the union return type while returning `Array`, and the
+concrete append wraps `AstArena` into the union before calling the
+`AstArena`-parameter specialization. The retained full-G9 LLVM additionally
+contains one zero-argument call and one zero-argument unreachable definition
+for that `push` target. Next legal work is a behavior-neutral typed
+resolution-to-materialization record/sidecar plus guards at final HIR call
+emission and late missing-target replay; do not fix this by forcing all calls
+to the union specialization or by reducing raw function count alone.
 
 VERIFIED STABILITY SLICE (bootstrap successor still open): `PageArena` stored
 pages as `Array(StaticArray(TypedNode, 1024))`. Because `StaticArray` is a

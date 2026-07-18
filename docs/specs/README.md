@@ -24,7 +24,14 @@ time.
 | `04-llvm-emission.md` | LLVM callee naming, return spelling, and backend lookup invariants. |
 | `05-falsifier-matrix.md` | Claim-to-reproducer mapping for the above contracts. |
 | `06-cli-output-contract.md` | CLI compile modes, output side effects, and post-LLVM tail behavior. |
-| `07-compiler-decomposition-and-semantic-replacement.md` | Frontier SDD for typed semantic ownership, selective replacement, zero-copy contracts, and normalized shadow gates. |
+| `07-compiler-decomposition-and-semantic-replacement.md` | Frontier SDD for typed semantic ownership, lawful `DefInstanceKey` materialization continuity with the current-red T9 [reducer](../../regression_tests/union_static_generic_materialization_guard.cr) and [guard](../../regression_tests/union_static_generic_materialization_guard.sh), selective replacement, zero-copy contracts, and normalized shadow gates. |
+
+Numeric-slot policy: `07-compiler-decomposition-and-semantic-replacement.md`
+is the canonical architecture-transition SDD for slot 07. A bounded contract
+that arrives with another `07-*.md` name (for example
+`07-inherited-virtual-demand.md`) must not create a second slot-07 index row.
+Keep the user-owned filename unchanged until a coordinated docs merge, then
+assign the next unused numeric slot and update links while preserving history.
 
 ## Contract Language
 
