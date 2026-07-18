@@ -89,7 +89,24 @@ Each non-refuted row has a phase pressure:
 | C1 | Emit-only success does not prove normal binary output success. | `06-cli-output-contract.md` section 2 | Compile the same reducer with `--emit llvm-ir --no-link` and with normal `-o <bin>`; emit-only pass plus normal-mode exit 139 is the divergence signature. No dedicated script. | current | [MISSING-FALSIFIER] |
 | C2 | Post-LLVM tail fixes must localize crash after LLVM finalization. | `06-cli-output-contract.md` section 4, LM-564 | `regression_tests/p2_stage2_cli_output_tail_no_prelude.sh <compiler>`; a tail fix lacking the section 7 localization log is invalid evidence. | current | [FALSIFIABLE] |
 
-## 8. Refuted Branches
+## 8. Architecture Transition
+
+These rows are the compact admission surface for
+`07-compiler-decomposition-and-semantic-replacement.md`. They are design
+guards until the named scripts/reducers exist; they do not authorize a default
+compile-path switch.
+
+| ID | Claim | Source | Smallest Falsifier | Phase | Status |
+|----|-------|--------|--------------------|-------|--------|
+| T1 | `ResolutionId` and `MethodInstanceKey` preserve typed identity continuity across resolution, materialization, and emission. | `07-compiler-decomposition-and-semantic-replacement.md` sections 6 and 13 | Direct/alias generic calls, named/block arguments, absolute `::Hash`, and same-spelling distinct declarations produce no collision or owner loss. | next-touch | [MISSING-FALSIFIER] |
+| T2 | Candidate semantic decisions do not use rendered/mangled strings as authority. | `07-compiler-decomposition-and-semantic-replacement.md` sections 5–6 | Source-shape plus runtime ledger finds no string-keyed semantic cache, owner choice, overload choice, or late name rewrite on the candidate route. | next-touch | [MISSING-FALSIFIER] |
+| T3 | The candidate semantic pipeline does not require the legacy supply-driven queue. | `PLAN_DEMAND_DRIVEN_REWRITE_RFC.md` sections 3.2, 4, and 7 | With `ADAMAS_SEMANTIC_COMPILE=1 ADAMAS_SEMANTIC_ASSERT_NO_LEGACY_QUEUE=1`, hello, generic, macro, block, recursive, and stage reducers execute none of `emit_all_tracked_signatures`, `process_pending_lower_functions`, or `force_lower_function_for_return_type`. | next-touch | [MISSING-FALSIFIER] |
+| T4 | Legacy and candidate paths are normalized-equivalent before promotion. | `PLAN_DEMAND_DRIVEN_REWRITE_RFC.md` section 6; `07-compiler-decomposition-and-semantic-replacement.md` section 10 | Normalize IDs, function/signature sets, instruction/call shapes, effects, hierarchy, externs, type descriptors; then require MIR, LLVM, and selected runtime smokes to agree. | next-touch | [MISSING-FALSIFIER] |
+| T5 | A zero-copy change is safe and resource-positive under an explicit ownership contract. | `07-compiler-decomposition-and-semantic-replacement.md` section 7 and 12 | Allocation/retention census plus arena-expiry negatives records copies, retained bytes, temporary strings, and peak RSS across parser→HIR→MIR→LLVM; unknown lifetime or protected-metric regression fails. | next-touch | [MISSING-FALSIFIER] |
+| T6 | Backend emission remains mechanical and does not reconstruct source semantics. | `docs/compiler_architecture_sdd.md` sections 6.7 and 9; `07-compiler-decomposition-and-semantic-replacement.md` section 8 | Backend source-shape/IR guard proves it consumes typed symbols and `AbiFacts` without calling name resolution, overload selection, materialization, arena recovery, or string-prefix layout inference. | next-touch | [MISSING-FALSIFIER] |
+| T7 | Candidate owners stay within structural budgets; the existing `TypeInferenceEngine` is not promoted unchanged as a new authority. | `07-compiler-decomposition-and-semantic-replacement.md` sections 4.1 and 8.2 | Source-shape census checks coordinator/method/file/public-API/state-surface ceilings and requires a same-slice exception record (reason, owner, impact, expiry, replacement, falsifier) for every breach; a direct unchanged `TypeInferenceEngine` promotion fails. | next-touch | [MISSING-FALSIFIER] |
+
+## 9. Refuted Branches
 
 | ID | Branch | Evidence | Status |
 |----|--------|----------|--------|
@@ -98,7 +115,7 @@ Each non-refuted row has a phase pressure:
 | R3 | Source-gating generic-template nested-type body scan. | Failed earlier around `Crystal::PointerLinkedList` / trace paths. | [REFUTED] |
 | R4 | Re-enabling source-backed top-level return annotations after LM-558. | Regressed produced `s2` full-prelude `puts 42` to earlier class registration crash around `class register idx=51/104`. | [REFUTED] |
 
-## 9. Bootstrap Investigation Process
+## 10. Bootstrap Investigation Process
 
 | ID | Claim | Source | Smallest Falsifier | Phase | Status |
 |----|-------|--------|--------------------|-------|--------|

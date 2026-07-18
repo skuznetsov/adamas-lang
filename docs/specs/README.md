@@ -24,6 +24,7 @@ time.
 | `04-llvm-emission.md` | LLVM callee naming, return spelling, and backend lookup invariants. |
 | `05-falsifier-matrix.md` | Claim-to-reproducer mapping for the above contracts. |
 | `06-cli-output-contract.md` | CLI compile modes, output side effects, and post-LLVM tail behavior. |
+| `07-compiler-decomposition-and-semantic-replacement.md` | Frontier SDD for typed semantic ownership, selective replacement, zero-copy contracts, and normalized shadow gates. |
 
 ## Contract Language
 
