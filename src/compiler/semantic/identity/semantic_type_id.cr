@@ -10,6 +10,7 @@
 # into HIR TypeRef or mangled names.
 
 require "./name_id"
+require "./type_declaration_identity"
 
 module Adamas::Compiler::Semantic
   # Canonical semantic type identity produced by SemanticTypeInternTable.
@@ -87,6 +88,14 @@ module Adamas::Compiler::Semantic
       new(values.sort_by { |value| yield value }, true)
     end
 
+    # Builds a fresh backing array and adopts it without a second defensive
+    # copy. The caller's input array is read-only and is never retained.
+    def self.map_owned(values : Array(U), &block : U -> T) : self forall U
+      mapped = Array(T).new(values.size)
+      values.each { |value| mapped << yield value }
+      new(mapped, true)
+    end
+
     private def initialize(@values : Array(T), _owned : Bool)
     end
 
@@ -155,36 +164,59 @@ module Adamas::Compiler::Semantic
     Generic
     Alias
     Lib
+    # Keep new kinds at the tail so existing serialized ordinals remain stable.
+    Instance
   end
 
   alias SemanticTypeComponents = ImmutableValueArray(SemanticTypeId)
 
   # Structural key for the intern table. NOT the identity itself —
   # the identity is the SemanticTypeId assigned by the table.
-  # NameId is table-local; the raw spelling never participates in Hash
-  # equality or hashing.
+  # NameId is table-local; raw spelling never participates directly in Hash
+  # equality or hashing. For source-backed nominal types, declaration identity
+  # plus the NameId owner replaces the spelling ordinal in equality/hash; the
+  # short name is diagnostic only and keys from different sessions stay unequal.
   struct SemanticTypeKey
     getter kind : TypeKind
     getter name_id : NameId
     getter type_params : SemanticTypeComponents
+    getter declaration_identity : TypeDeclarationIdentity?
 
     # Raw constructor accepts a NameId from the same compile-session name
     # table as the owning SemanticTypeInternTable. Cross-table use is invalid.
-    def initialize(@kind : TypeKind, @name_id : NameId, type_params : Array(SemanticTypeId))
+    def initialize(
+      @kind : TypeKind,
+      @name_id : NameId,
+      type_params : Array(SemanticTypeId),
+      @declaration_identity : TypeDeclarationIdentity? = nil,
+    )
       @type_params = SemanticTypeComponents.new(type_params)
     end
 
-    def initialize(@kind : TypeKind, @name_id : NameId, @type_params : SemanticTypeComponents)
+    def initialize(
+      @kind : TypeKind,
+      @name_id : NameId,
+      @type_params : SemanticTypeComponents,
+      @declaration_identity : TypeDeclarationIdentity? = nil,
+    )
     end
 
     def ==(other : SemanticTypeKey) : Bool
-      @kind == other.kind && @name_id == other.name_id && @type_params == other.type_params
+      @kind == other.kind &&
+        @type_params == other.type_params &&
+        @declaration_identity == other.declaration_identity &&
+        (@declaration_identity ? @name_id.same_owner?(other.name_id) : @name_id == other.name_id)
     end
 
     def hash(hasher)
       hasher = @kind.hash(hasher)
-      hasher = @name_id.hash(hasher)
-      @type_params.hash(hasher)
+      hasher = if declaration = @declaration_identity
+                 declaration.hash(@name_id.owner_hash(hasher))
+               else
+                 @name_id.hash(hasher)
+               end
+      hasher = @type_params.hash(hasher)
+      hasher
     end
   end
 
@@ -192,6 +224,8 @@ module Adamas::Compiler::Semantic
   # Owns one NameInternTable for the whole compile session. IDs, keys, and
   # caches produced here must not be mixed with another table instance.
   class SemanticTypeInternTable
+    getter names : NameInternTable
+
     @table : ::Hash(SemanticTypeKey, SemanticTypeId)
     @reverse : ::Hash(SemanticTypeId, SemanticTypeKey)
     @names : NameInternTable
@@ -290,6 +324,20 @@ module Adamas::Compiler::Semantic
       intern_named(kind, base_name, args)
     end
 
+    def nominal(
+      name : String,
+      kind : TypeKind,
+      declaration_identity : TypeDeclarationIdentity,
+      args : ::Array(SemanticTypeId),
+    ) : SemanticTypeId
+      unless kind.class? || kind.instance? || kind.struct? || kind.module? || kind.enum?
+        raise ArgumentError.new("#{kind} is not a nominal semantic type kind")
+      end
+
+      name_id = @names.intern(name)
+      intern(SemanticTypeKey.new(kind, name_id, args, declaration_identity))
+    end
+
     def union(variants : ::Array(SemanticTypeId)) : SemanticTypeId
       # Order-independent: sorted by id so Union(A|B) == Union(B|A)
       components = SemanticTypeComponents.sorted_copy(variants) { |id| id.id }
@@ -322,7 +370,7 @@ module Adamas::Compiler::Semantic
       key_name = @names.lookup(key.name_id) || "Unknown"
 
       case key.kind
-      when .primitive?, .class?, .struct?, .module?, .enum?, .lib?, .alias?, .array?, .hash?
+      when .primitive?, .class?, .instance?, .struct?, .module?, .enum?, .lib?, .alias?, .array?, .hash?
         if key.type_params.empty?
           key_name
         else

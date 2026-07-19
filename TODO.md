@@ -1,6 +1,6 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-07-18 (R0 frontier, typed materialization falsifier, and STABLE6 refutation).
+Updated: 2026-07-19 (bounded T1a producer; T1b and performance frontier remain open).
 
 CURRENT R0 FRONTIER (architecture admitted, production fix still open): the
 current dirty source is sealed reproducibly at base
@@ -22,6 +22,51 @@ blocker is refuted. R0 promotion remains blocked by B4-F and the missing
 same-source fresh T0 A/B; T8 remains `[MISSING-FALSIFIER]` until an executable
 validator is committed. The <=180-second value remains a new acceptance
 target, not a recovered historical full-green measurement.
+
+CURRENT T1 FRONTIER: the bounded T1a semantic producer now lives at the
+`TypeInferenceEngine` post-selection seam. It mints owner-scoped
+`ResolutionId`/`CallsiteIdentity` values and immutable `CallResolution` facts
+for explicit-receiver, single-target source methods, fully typed blocks, and
+ordinary source-order named arguments without blocks. Generic declarations are
+admitted only from their concrete semantic call arguments; the string-derived
+`MethodSymbol#type_parameters` field is not identity authority. Nominal type
+keys use source-backed declaration identity, so equal short names in different
+namespaces do not coalesce. Focused specs also
+prove that an unsupported named-tuple, unowned type parameter, or synthetic
+builtin `ExprId(0)` fails this read-only sidecar closed without changing
+inferred type. This is a local semantic-carrier slice only: it retains only the
+latest diagnostic resolution per callsite, emits no T1 telemetry or body key,
+and changes no HIR/MIR/LLVM consumer or compile route. Capture is a typed
+constructor capability and default-off; the legacy path allocates no resolution
+context or semantic identity tables until a caller explicitly enables it.
+
+The compile-scoped owner retains the real AST arena and semantic interner,
+rejects foreign tables/arenas and invalid call/def coordinates, and claims each
+`ResolutionId` once in issue order without a per-call replay Hash. Rejected
+construction burns and cancels its pending issue, so it cannot poison the next
+valid issue or regain validity through stale-token ABA. This keeps
+the owner/lifetime guard O(1) beyond the intentional resolution/type tables.
+
+The T1a exclusions are deliberate: receiverless/new/type-application,
+union/virtual target sets, named blocks, default/splat expansion,
+restriction-normalized `Match` facts, owner/state selection, and unbound generic
+parameters still use only the legacy path. The new carrier is not yet a full
+Crystal-equivalent `DefInstanceKey` input set.
+
+Frontend signature debt remains explicit: `DefNode` does not retain typed
+`TypeExpr` or `forall/free_vars`, so declaration-level generic classification
+still comes from annotation strings and cannot be trusted as identity. A later
+refactor must make those frontend facts typed before T1 can impose stricter
+generic-declaration policy without heuristics.
+
+T1b remains `MEASURED_RED`. The bounded same-target guard observes two source
+calls but only one legacy MAT transaction/completion, two MAT emit rows, and
+zero `t1_resolution_terminal_v1` rows. Therefore the downstream path still
+cannot correlate each semantic resolution through inline/materialization/body/
+emission without a typed handoff; joining by method or materialized-name string
+is rejected. Full T1, named/default/splat forwarding equivalence, the explosion
+ledger, and B4-F <=180 seconds remain open. No speed or body-deduplication claim
+is made from T1a.
 
 SEALED-CURRENT STATS-ON LOCALIZATION (diagnostic only): from the disposable
 worktree, the only compiler instrumentation flag was `ADAMAS_PHASE_STATS=1`:

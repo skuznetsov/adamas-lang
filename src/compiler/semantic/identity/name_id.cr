@@ -45,6 +45,13 @@ module Adamas::Compiler::Semantic
       @owner.same?(other.@owner)
     end
 
+    # Hash only the compile-session owner, intentionally excluding the spelling
+    # ordinal. Nominal semantic keys use this when declaration identity, rather
+    # than spelling, is authoritative.
+    def owner_hash(hasher)
+      @owner.hash(hasher)
+    end
+
     def to_s(io : IO) : Nil
       io << "Name#" << @id
     end

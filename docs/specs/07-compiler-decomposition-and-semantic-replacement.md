@@ -3,6 +3,9 @@
 > Status: DESIGN-SEALED; R0 CURRENT-SOURCE SNAPSHOT SEALED,
 > B4-F PERFORMANCE RED; STAGE2 SEMANTIC SMOKES UNAVAILABLE
 > (documentation-only amendment, 2026-07-18).
+> Live T1a/T1b producer and Crystal-oracle audit amendment: 2026-07-19;
+> bounded local T1a producer implemented, T1b downstream handoff current-red,
+> no compile-speed claim.
 > Audit snapshot: source-shape counts remain scoped to checkout `05954794`.
 > Current R0 evidence is the seven-path dirty-source snapshot sealed at base
 > `c216b9ef...`, tree `1efb635...`, patch `d7ad2cac...`; measured evidence and
@@ -304,6 +307,114 @@ identity continuity, or equivalence of selected definition, coercion, body,
 and emitted symbol. No rewrite, broad in-process owner, or performance claim
 is admitted.
 
+### 2.7 T1a/T1b producer and handoff split
+
+The live audit fixes the producer boundary before the HIR boundary. **T1a is
+the semantic producer seam:** `Adamas::Compiler::Semantic::TypeInferenceEngine`
+is the canonical place to capture one call decision, at `infer_call`
+(`src/compiler/semantic/type_inference_engine.cr:6846-7367`) after
+receiver/argument/block/named types are known and at `lookup_method`
+(`:8507-8574`) after overload filtering and specificity selection. This names
+the seam, not an admission of the current monolith or its transitional caches
+as a finished authority. The bounded T1a implementation now returns an
+immutable `CallResolution`, mints one owner-scoped `ResolutionId`, preserves
+the selected `DefIdentity`, and retains semantic receiver, positional,
+typed-block, and source-ordered named-argument facts before HIR/value or ABI
+coercion. Its admitted scope is explicit-receiver, single-target, source-backed
+ordinary overloads; typed blocks with a complete declared signature and known
+actual result; concretely typed generic calls whose carried receiver/argument/
+block/named facts contain no unresolved `TypeParameter`; and ordinary named
+calls without a block. Receiverless calls,
+constructors/type applications, unions/virtual target sets, named-block calls,
+default/splat expansion, unresolved type parameters, synthetic methods, and
+body-key normalization remain outside T1a. Such shapes fail this read-only
+sidecar closed and leave inference on the legacy path; the legacy builtin
+`ExprId(0)` placeholder is never admitted as a `DefIdentity`.
+Capture is an explicit typed `TypeInferenceEngine` constructor capability and
+is default-off. Until T1b names a consumer and a matched resource gate measures
+the carrier, the legacy compile path allocates no `CallResolutionContext`,
+resolution map, or semantic identity interner.
+Nominal semantic IDs additionally carry a source-backed
+`TypeDeclarationIdentity(arena_id, expr_index)`: the short `NameId` remains
+diagnostic spelling, so equal local names in different namespaces cannot
+coalesce. Legacy name-only `TypeParameter` values fail closed until their
+declaration owner is represented.
+`ResolutionScope` retains the actual `AstArena` and semantic interner owners,
+not only their numeric IDs, and permits each issued ordinal to be claimed once
+in order. A rejected carrier construction cancels its pending issue so a
+foreign semantic table cannot poison the next valid issue. The rejected
+ordinal is burned rather than reused: gaps are legal, while stale-token ABA is
+not.
+`CallResolutionContext` derives its arena ID from that retained owner
+and verifies source-backed `CallNode`/`DefNode` coordinates before publication.
+
+The current `MethodSymbol#type_parameters` is not an admitted identity or
+generic-provenance source. `DefNode` does not retain typed signature nodes or
+`forall/free_vars`, and the collector derives this field by walking annotation
+strings; for example, without a source declaration it can mistake `Object` in
+`Int32 -> Object` for a method type parameter. T1a therefore keys only the
+actual semantic call types and lets the typed encoder reject a surviving
+`TypeParameter`. A later signature refactor must retain `TypeExpr` plus explicit
+free-variable identity in the frontend before declaration-level generic policy
+can be enforced without string heuristics.
+
+The `AstToHir` M1/M2 records are rejected as the producer. `CallShape`,
+`MethodInstanceKey`, and `Resolution` are explicitly inert scaffolding
+(`src/compiler/hir/ast_to_hir.cr:771-847`); `resolution_from_selected_name`
+(`:38880-38908`) splits a selected string and carries its suffix verbatim. It
+is a string/HIR identity sidecar, not semantic resolution. The downstream
+`lower_call`/`lookup_function_def_for_call` path may collapse aliases, lose
+per-call facts, or reconstitute identity from a requested name, so it cannot
+retroactively become the producer.
+
+**T1b is the explicit downstream handoff and remains current-red.** A
+versioned, read-only handoff
+must carry `ResolutionId`, selected `DefIdentity`, owner/state scope, and the
+immutable `MethodInstanceKey` inputs through HIR, MAT, body, and emission
+terminal records. The existing MAT/HIR path is a consumer of T1a facts; it
+must not re-resolve or infer a missing callsite identity. Because the current
+MAT/HIR streams collapse or drop per-call identity, T1b remains pending and
+cannot be replaced by a join on `materialized_name`.
+
+The first targeted diagnostic is an **identity explosion ledger**, not a speed
+benchmark. For each resolution, preserve the tuple
+`(resolution_id, selected_def, owner, semantic_args, block_shape, named_args)`
+and compare its cardinality with `materialized_name`. A one-to-many mapping is
+not automatically a bug: it must first be classified as an explicit wrapper /
+forwarder, dynamic-dispatch branch, or a duplicate body. The ledger must keep
+named arguments in source order; sorting is a later hypothesis, not a producer
+normalization. No compile-time or memory improvement claim follows from this
+diagnostic alone.
+
+### 2.8 Original Crystal oracle (comparison only)
+
+The pinned Crystal source is a behavior and phase oracle, not an ownership or
+performance template:
+
+- `semantic/call.cr:37-137` waits for operand types, performs exact lookup then
+  autocast retry; `semantic/method_lookup.cr:192-377` fixes the selected `Def`
+  and restriction-normalized positional/named types in `Match`.
+- `semantic/call.cr:365-403` removes literal wrappers, chooses the owner,
+  builds `DefInstanceKey`, inserts the typed definition before recursive body
+  walking, and skips the walk on a cache hit. `types.cr:865-902` defines the
+  per-owner cache; `semantic/match.cr:1-38` records the known inherited-owner
+  duplication trade-off.
+- `codegen/codegen.cr:1704-1711` does not emit a regular method body when
+  visiting `Def`. `codegen/call.cr:433-491` emits only when a call reaches
+  `target_def_fun`, while simple literals/self/ivar/primitive bodies inline;
+  `codegen/fun.cr:20-25,64-220` turns the typed body into an LLVM function.
+  `codegen/call.cr:332-431` intentionally materializes each virtual-dispatch
+  branch.
+
+Crystal's source-order named-argument arrays are part of its forwarding and
+  default-expansion behavior (`semantic/default_arguments.cr:4-113,180-250`),
+  even though exact-match comparison sorts names
+  (`semantic/method_lookup.cr:379-395`). Adamas therefore preserves source
+  order in `CallResolution`; any canonical sort in `DefInstanceKey` stays
+  guard-only until a forwarding-equivalence proof covers defaults, splats,
+  double splats, and expansion identity. This oracle section makes no speed
+  claim.
+
 ## 3. Surface policy
 
 ### 3.1 Admitted
@@ -385,10 +496,11 @@ These are different programs and must not share a readiness label.
 
 | Existing asset/context | Reuse now | Rewrite now |
 |---|---|---|
-| `DefIdentity`, `SemanticTypeId`, `DefInstanceKey`, and `SemanticToHIRAdapter` in `src/compiler/semantic/identity/` | Extend these as the canonical identity substrate; add the missing `ResolutionId` beside them and keep the one-way HIR adapter. | Do not create parallel `*Key2`, duplicate type interners, or a second semantic-to-HIR bridge. |
+| `DefIdentity`, `TypeDeclarationIdentity`, `SemanticTypeId`, `DefInstanceKey`, and `SemanticToHIRAdapter` in `src/compiler/semantic/identity/` | Extend these as the canonical identity substrate; keep `ResolutionId` owner-scoped beside them and preserve the one-way HIR adapter. | Do not create parallel `*Key2`, duplicate type interners, or a second semantic-to-HIR bridge. |
 | `DefInstanceKey` named-argument component | The isolated candidate now owns canonical `NameId` pairs through an immutable value carrier; each `NameId` is authoritative only as `(owner interner reference, ordinal)`, and production callsite plumbing/downstream correlation remain pending. | Do not treat isolated candidate handles as cross-run authority or as a promoted semantic producer. |
 | Current `AstToHir` maps, queues, and owner records | Keep as a legacy compatibility carrier behind facades and differential ledgers. | Do not remove queues or rewrite all lowerers in the first slice. |
-| `TypeInferenceEngine` (13,201 lines, 464 `def` lines) | Reuse as a leaf/legacy differential oracle where its result is already needed. | Do not promote the class unchanged as the new declaration, resolution, or body-cache authority; it must be decomposed behind the budgets below. |
+| `TypeInferenceEngine` (13,201 lines, 464 `def` lines) | Treat its existing `infer_call` -> `lookup_method` -> `infer_method_call_result` seam as the canonical T1a producer boundary; reuse the rest as a leaf/legacy differential oracle where needed. | Do not promote the class unchanged as the new declaration, resolution, or body-cache authority; it must be decomposed behind the budgets below. |
+| `AstToHir` M1/M2 resolution scaffolding (`CallShape`, `Resolution`, string-derived `MethodInstanceKey`) | Keep only as a diagnostic/HIR compatibility carrier while T1a facts are handed off explicitly. | Reject it as a semantic producer: its selected-name suffix carrier and `lower_call`/MAT path can collapse or drop per-call identity. |
 | Existing LLVM text/output path | Reuse output and ownership contracts while semantic facts are sealed. | Do not start with a backend rewrite or let backend code repair missing semantic facts. |
 | Original Crystal compiler | Reuse for behavior and phase invariants at an explicit comparison boundary. | Do not copy upstream implementation classes, ownership, queues, or backend internals. |
 
@@ -450,6 +562,25 @@ many resolutions can request one method instance, and one resolution can be
 rejected without producing a method instance. The bridge from source spelling
 to IDs must record the owner, scope, and decay trigger; a later phase may not
 silently remint a second identity from the same string.
+
+#### Context bridge: resolution versus body identity
+
+| Field | Semantic-resolution context | Body/materialization context |
+|---|---|---|
+| Term | `ResolutionId` | `MethodInstanceKey` |
+| Sense | One call/name-resolution decision, including rejection or a selected target set. | One immutable typed body-demand identity, independent of callsite spelling. |
+| Relation | One resolution may produce zero, one, or many instance keys (for example, virtual dispatch). | Many resolutions may coalesce to one instance key when declaration, owner scope, receiver, argument, block, and named facts are equal. |
+| Allowed transfer | Carry the ID and selected facts downstream as an explicit handoff. | Use only the typed key for body cache/materialization; retain the source `ResolutionId` for correlation. |
+| Loss/fit note | A resolution is not a body; a rejected resolution has no instance. | A key cannot reconstruct the original callsite or justify overload selection. |
+| Decay trigger | Resolver contract, semantic type interner, or owner scope changes. | Key schema, forwarding semantics, ABI shape, or declaration fixed point changes. |
+| Evidence | T1a producer record at the semantic seam. | T1b handoff and body/emission join; no name-only reconstruction. |
+
+This is a lossy bridge in both directions and must be treated as such. In
+particular, `CallResolution` preserves source-order named arguments. A sorted
+or otherwise canonicalized named component in `DefInstanceKey` is not admitted
+until a forwarding-equivalence proof demonstrates that reordered defaults,
+splats, double splats, and generated forwarding definitions preserve the same
+selected body and ABI.
 
 In the current tree, `DefInstanceKey` is the existing scaffolding for the
 target `MethodInstanceKey` contract. The migration may evolve or rename that
@@ -541,7 +672,7 @@ owner-scoped references; strings are retained only for spelling/diagnostics.
 |---|---|---|---|
 | `DeclarationIndex` | parser declarations, `DefIdentity`, source/arena provenance | immutable declaration records, owner/name/type membership, declaration fixed-point status | backend emission, overload choice, ambient `@type_param_map`, rendered-name identity |
 | `NameTypeIdentity` | source spelling, absolute marker, lexical owner, generic arguments, declaration identity | `NameRef`, canonical `NameId`/`SemanticTypeId`, alias chain, type-kind facts | call resolution, materialization, LLVM layout, bare `ExprId` ownership |
-| `CallResolver` | receiver/argument types, named arguments, block shape, callsite scope, `DeclarationIndex` | `ResolutionId`, `CallResolution`, selected `DefIdentity`, rejection reasons, `MethodInstanceKey` inputs | body lowering, pending-queue mutation, LLVM symbol construction, backend fallback |
+| `CallResolver` | receiver/argument types, source-ordered named arguments, block shape, callsite scope, `DeclarationIndex` | `ResolutionId`, `CallResolution`, selected `DefIdentity`, rejection reasons, `MethodInstanceKey` inputs | body lowering, pending-queue mutation, LLVM symbol construction, backend fallback |
 | `DemandGraph` + `BodyCache` | `MethodInstanceKey`, call edges, declaration fixed point, recursion state | demand nodes, in-progress/completed body states, cache hits/misses, bounded worklist | rendered/mangled cache keys, ad-hoc source scans, backend requests, unbounded legacy queue |
 | `MaterializationRegistry` | `ResolutionId`, selected definition, `MethodInstanceKey`, state scope, ABI shape | materialized body identity, requested/target/body/call symbols, explicit wrapper/forwarder contract | overload selection, name re-resolution, ambient-map guesses, backend reconstruction |
 | `HIRBuilder` | typed semantic facts, `SemanticToHIRAdapter`, materialization results, owner-scoped AST refs | HIR functions/instructions, normalized semantic metadata, source provenance | direct backend calls, semantic cache mutation, arena scans by index, string-based overload choice |
@@ -795,56 +926,71 @@ source A/B result and a real consumer is named.
 
 T1 is a guard-only, current-red diagnostic. It is not a global absence proof,
 an identity-continuity proof, or a performance measurement. The first slice
-must remain behavior-neutral and proceed in this order:
+must remain behavior-neutral and proceed in two separately falsifiable
+sub-slices: **T1a (semantic producer)** and **T1b (explicit downstream
+handoff)**. T1b cannot be admitted by a late MAT/HIR join if T1a did not carry
+the per-call identity.
 
-The 2026-07-18 isolated candidate has completed only the substrate sub-step:
-`NameId` replaces named-argument strings and generic/tuple/named sequences are
-owned by immutable value carriers. `NameId` and `SemanticTypeId` are current
-16B handles keyed by `(owner interner reference, ordinal)`; owners validate
-issued ordinals, cross-table equal ordinals are unequal, and no separate
-`IdentityScope` token exists. Residual performance measurement is required;
-this is not a speed claim. No production semantic callsite producer,
-`resolution_id` handoff, or downstream correlation has been admitted; the
-fresh B4-F <=180-second frontier remains red.
+The 2026-07-19 bounded T1a candidate now includes the substrate and one local
+producer. `NameId` replaces named-argument strings, generic/tuple/named
+sequences are owned by immutable value carriers, and nominal semantic keys use
+source-backed `TypeDeclarationIdentity` rather than short-name equality.
+`NameId` and `SemanticTypeId` remain owner-scoped handles; cross-table equal
+ordinals are unequal. The producer stores only the latest resolution per
+callsite for diagnostic lookup and returns each newly minted resolution from
+its context; it does not retain a replay history. No streaming identity record,
+`MethodInstanceKey`, `resolution_id` handoff, or downstream correlation is
+admitted. Residual resource measurement is required, no speed claim is made,
+and the fresh B4-F <=180-second frontier remains red. Capture is a typed
+constructor capability and default-off; normal legacy inference does not
+allocate the context or identity tables. Capture-on resource measurement
+remains required before T1b promotion.
 
-1. **Ownership and `NameId` invariant.** Seal one owner for canonical names,
-   declaration identity, and callsite semantic types. Replace named-argument
-   strings with owned/interned `NameId` components before candidate promotion;
-   make generic/tuple `SemanticTypeKey` components immutable copies or owned
-   IDs rather than aliases to caller arrays. Falsifiers include a raw-string
-   semantic branch, a post-insertion mutation that changes a key/hash, a
-   generic/tuple order collision, or two owners minting different IDs for the
-   same canonical name.
-2. **Local typed decision.** Return a typed `CallResolution` and
-   `MethodInstanceKey` locally from the existing resolution owner, at the
-   post-resolution boundary after semantic literal/autocast normalization if
-   applicable, and before Adamas HIR/value/ABI coercion or inline
-   materialization. Do not add a new `AstToHir` ivar, broad context owner,
-   parallel interner, or default-path consumer; keep the legacy route
+1. **Ownership and `NameId` invariant.** Seal explicit owners for canonical
+   names, source-backed nominal declarations, resolution ordinals, and callsite
+   semantic types. Replace named-argument strings with owned/interned `NameId`
+   components before candidate promotion; make generic/tuple `SemanticTypeKey`
+   components immutable owned arrays rather than aliases to caller arrays.
+   Falsifiers include a raw-string semantic branch, short-name nominal
+   collision, unowned type parameter, forged call/def coordinate, replayed
+   resolution, foreign semantic interner, post-insertion key mutation,
+   generic/tuple order collision, or mixed owner scope.
+2. **T1a — local typed decision.** At the existing semantic
+   `TypeInferenceEngine` call-resolution seam, return a typed `CallResolution`
+   carrying selected definition, actual semantic receiver/argument types,
+   known block result, and source-ordered named facts before Adamas
+   HIR/value/ABI coercion or inline materialization. This slice does not claim
+   Crystal-style restriction-normalized `Match` facts, virtual target sets,
+   owner/state selection, or a constructed `MethodInstanceKey`; those remain
+   explicit future inputs. Do not add a new `AstToHir` ivar, broad context
+   owner, parallel interner, or default-path consumer; keep the legacy route
    authoritative.
-3. **Streaming producer (boundedness pending).** Emit the exact
-   `t1_identity_join_v1` record at that owner boundary. The producer
-   serializes typed IDs for telemetry only; `lower_function_if_needed` and the
-   MAT string ledger remain rejected producers. Any current log ceiling is
-   diagnostic unless a guard hard-caps it, so no bounded-memory or backpressure
-   claim is admitted yet.
-4. **External join (pending downstream enrichment).** The existing MAT ledger
+3. **T1a — optional diagnostic serialization (pending, not authority).** If an
+   external diagnosis needs it, emit the exact `t1_identity_join_v1` record at
+   the owner boundary and serialize typed IDs for telemetry only. This is not a
+   T1a DoD and cannot replace the typed T1b handoff; the current producer emits
+   no telemetry. `lower_function_if_needed` and the MAT string ledger remain
+   rejected producers. Any current log ceiling is diagnostic unless a guard
+   hard-caps it, so no bounded-memory or backpressure claim is admitted yet.
+4. **T1b — explicit downstream handoff (pending enrichment).** The existing MAT ledger
    lacks `resolution_id` and cannot be joined deterministically. Define and
    emit a second versioned downstream correlation record/enrichment carrying
    `resolution_id` through inline, materialization, body, and emission-terminal
    states; until that exists, keep the external join pending rather than
    claiming that the existing streams suffice.
-5. **One downstream correlation consumer.** After the second record exists,
+5. **T1b — one downstream correlation consumer.** After the second record exists,
    add exactly one read-only, default-off consumer that correlates selected
    resolution to materialized body/call symbol. Its falsifiers are missing
    rows, duplicate IDs, changed selected definition, receiver/value arity loss,
    body/symbol mismatch, and any legacy queue or backend reconstruction. Keep
    all other consumers on the legacy path.
 
-The first DoD is ownership/NameId and selected-definition continuity with zero
-HIR/MIR/LLVM behavior delta. It is not a queue reduction, compile-speed claim,
-or rewrite authorization. The demand-driven body cache remains later until
-declaration fixed-point parity is demonstrated.
+The T1a DoD is ownership/NameId and selected-definition continuity with zero
+HIR/MIR/LLVM behavior delta. The T1b DoD is an explicit per-call handoff with
+no dropped or reminted `ResolutionId` through the downstream terminal. Neither
+DoD is a queue reduction, compile-speed claim, or rewrite authorization. The
+demand-driven body cache remains later until declaration fixed-point parity is
+demonstrated.
 
 T9 is a prerequisite for promoting this slice on the union-container path.
 The upstream audit admits the distinct concrete and union instances. The
@@ -852,6 +998,52 @@ remaining defect is continuity: the zero-arg call/stub in full G9 LLVM must
 remain a late-materialization/missing-target hypothesis until one reducer joins
 selected `Def`/`DefInstanceKey`, coercion/value type, receiver/value arity,
 materialized body, and emitted symbol for all three lawful flows.
+
+### 13.4 Future body-dedup LTP/WBA audit (guard-only)
+
+Body deduplication is a candidate local move, not an automatic optimization.
+The promotion card is:
+
+```text
+Window or trigger:
+  The T1 explosion ledger finds one equal semantic instance tuple mapped to
+  multiple materialized names, after explicit wrapper/forwarder and dispatch
+  cases have been classified.
+Transport corridor:
+  T1a CallResolution -> T1b handoff -> DemandGraph/BodyCache ->
+  MaterializationRegistry -> body/emission terminal.
+Legal move:
+  Coalesce only equal immutable MethodInstanceKey values; preserve an explicit
+  wrapper_forwarder or dispatch branch and derive, never parse, the emit name.
+Boundary safety:
+  DefIdentity, owner/state scope, receiver type, ordered argument types, full
+  block shape, ordered named arguments, ABI facts, and declaration fixed point
+  must all match. Unknown or missing facts fail closed.
+Lexicographic potential:
+  (normalized semantic mismatches, unjoined/dropped identity rows,
+   duplicate body instances, peak RSS, compile wall time).
+  The first two components must remain zero/non-increasing; only then may a
+  duplicate-body reduction be considered. No speed claim is implied.
+Recompute safety:
+  Replay the raw resolution->body->emit rows, re-run plain/no-prelude positive
+  and negative reducers, and re-evaluate recursive, default/named, and virtual
+  dispatch edges after coalescing.
+Dual frame:
+  Semantic demand identity and emitted LLVM symbol/ABI identity are compared
+  as normalized facts; equal strings alone are not a bridge.
+Local certificate:
+  Before/after ledger cardinalities plus an exact key-equality witness, an
+  explicit wrapper/forwarder classification, zero dropped rows, and bounded
+  log/resource evidence.
+Fail policy:
+  Reject promotion and keep the legacy path on any collision, owner loss,
+  order-dependent forwarding difference, unresolved ABI, missing join row,
+  log-cap breach, or resource regression. Do not repair the mismatch in LLVM.
+```
+
+This card remains `guard-only` until T1a and T1b records exist and the
+recomputed potential descends. It is an LTP/WBA audit boundary, not a license
+to add another cache, retry loop, or string-based deduplication pass.
 
 ## 14. Stop, dirty-worktree, and rollback rules
 

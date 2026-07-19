@@ -16,6 +16,7 @@ require "./types/type_parameter"
 require "./types/module_type"
 require "./types/enum_type"
 require "./types/virtual_type"
+require "./call_resolution"
 require "../hir/debug_hooks"
 require "./analyzer"
 require "./macro_expander"
@@ -186,10 +187,12 @@ module Adamas
           @context : TypeContext = TypeContext.new,
           @extra_roots : Array(ExprId) = [] of ExprId,
           @flags : Set(String) = Runtime.target_flags,
+          capture_call_resolutions : Bool = false,
         )
           # Self-hosted binaries have shown unstable reads through Program#arena.
           # Type inference only operates on parser-built AstArena programs here.
           @arena = @program.ast_arena
+          @call_resolution_context = capture_call_resolutions ? CallResolutionContext.new(@arena) : nil
           @diagnostics = [] of Diagnostic
           @assignments = {} of String => Type        # Track variable assignments: name → type
           @instance_var_types = {} of String => Type # Phase 5A: Track instance variable types by owner-scoped key
@@ -223,6 +226,17 @@ module Adamas
           @depth = 0
           @debug_enabled = ENV["TYPE_INFERENCE_DEBUG"]? == "1"
           @unknown_type = PrimitiveType.new("Unknown")
+        end
+
+        # Returns the latest semantic resolution for this callsite in the
+        # current inference session. The carrier owns only compile-scoped IDs;
+        # AST/source data remains borrowed from @program/@arena.
+        def resolution_for(callsite : CallsiteIdentity) : CallResolution?
+          @call_resolution_context.try { |context| context[callsite] }
+        end
+
+        def semantic_type_context : SemanticTypeInternTable?
+          @call_resolution_context.try(&.semantic_type_context)
         end
 
         # Debug helper
@@ -7064,6 +7078,7 @@ module Adamas
                   if result = infer_named_argument_method_call(
                        receiver_type,
                        method_name,
+                       expr_id,
                        arg_ids,
                        arg_types,
                        named_arg_types,
@@ -7128,7 +7143,7 @@ module Adamas
           infer_pointer_linked_list_block(node, receiver_type, method_name)
 
           if named_arg_types && !named_arg_types.empty?
-            if result = infer_named_argument_method_call(receiver_type, method_name, arg_ids, arg_types, named_arg_types, named_arg_expr_ids || {} of String => ExprId, has_block, node)
+            if result = infer_named_argument_method_call(receiver_type, method_name, expr_id, arg_ids, arg_types, named_arg_types, named_arg_expr_ids || {} of String => ExprId, has_block, node)
               return result
             end
           end
@@ -7324,7 +7339,8 @@ module Adamas
           end
 
           if method = lookup_method(receiver_type, method_name, arg_types, has_block, arg_ids.map { |arg_id| arg_id.as(ExprId?) })
-            infer_explicit_receiver_block_if_present(method, receiver_type, node) if has_block
+            block_result = infer_explicit_receiver_block_if_present(method, receiver_type, node) if has_block
+            record_call_resolution(expr_id, method, receiver_type, arg_types, node, block_result: block_result)
             if centralized_method_dispatch_required?(method, receiver_type)
               infer_method_call_result(method, receiver_type, arg_types, node)
             elsif ann = method.return_annotation
@@ -7512,6 +7528,7 @@ module Adamas
         private def infer_named_argument_method_call(
           receiver_type : Type,
           method_name : String,
+          callsite_expr_id : ExprId,
           positional_arg_ids : Array(ExprId),
           positional_arg_types : Array(Type),
           named_arg_types : Hash(String, Type),
@@ -7544,6 +7561,7 @@ module Adamas
                      end
 
           forwarded_arg_types = append_keyword_rest_carrier(selected[0], selected[1], named_arg_types)
+          record_call_resolution(callsite_expr_id, selected[0], receiver_type, forwarded_arg_types, call_node, named_arg_types)
           infer_method_call_result(selected[0], receiver_type, forwarded_arg_types, call_node)
         end
 
@@ -7726,8 +7744,90 @@ module Adamas
           method : MethodSymbol,
           receiver_type : Type,
           node : Frontend::CallNode
+        ) : Type?
+          infer_method_block_result_type(method, receiver_type, node).try(&.[0])
+        end
+
+        # Publish the semantic decision while the selected MethodSymbol and
+        # semantic Type objects are still authoritative. Unsupported type
+        # shapes fail closed inside CallResolutionContext; the existing type
+        # inference result is never replaced by an identity side effect.
+        private def record_call_resolution(
+          callsite_expr_id : ExprId,
+          method : MethodSymbol,
+          receiver_type : Type,
+          arg_types : Array(Type),
+          call_node : Frontend::CallNode,
+          named_arg_types : Hash(String, Type)? = nil,
+          *,
+          block_result : Type? = nil,
         ) : Nil
-          infer_method_block_result_type(method, receiver_type, node)
+          context = @call_resolution_context
+          return unless context
+          return if method.node_id.invalid?
+          return unless method.direct_declaration_origin?
+          return unless method.node_id.index < @arena.size
+          return unless @arena[method.node_id].is_a?(Frontend::DefNode)
+          return if method.params.any? do |param|
+            param.default_value || param.is_double_splat || (!param.is_block && positional_splat?(param))
+          end
+
+          block_type = if call_has_block?(call_node)
+                         semantic_call_block_type(method, receiver_type, block_result)
+                       end
+          return if call_has_block?(call_node) && block_type.nil?
+
+          named_types = named_arg_types.try { |types| source_named_argument_types(call_node, types) }
+          return if named_arg_types && named_types.nil?
+
+          def_identity = DefIdentity.new(@arena.object_id.to_u64, method.node_id.index)
+          context.record(
+            callsite_expr_id,
+            CallsiteIdentity.new(@arena.object_id.to_u64, callsite_expr_id.index),
+            def_identity,
+            receiver_type,
+            arg_types,
+            block_type,
+            named_types,
+          )
+        end
+
+        private def source_named_argument_types(
+          call_node : Frontend::CallNode,
+          inferred_types : Hash(String, Type),
+        ) : Array({String, Type})?
+          named_args = call_node.named_args
+          return nil unless named_args
+
+          ordered = [] of {String, Type}
+          named_args.each do |named_arg|
+            name = intern_name(named_arg.name)
+            type = inferred_types[name]?
+            return nil unless type
+            ordered << {name, type}
+          end
+          ordered
+        end
+
+        private def semantic_call_block_type(
+          method : MethodSymbol,
+          receiver_type : Type,
+          actual_return_type : Type?,
+        ) : Type?
+          block_param = method.params.find(&.is_block)
+          return nil unless type_annotation = block_param.try(&.type_annotation)
+
+          signature = method_block_signature(type_annotation, receiver_type, method.scope)
+          return nil unless signature
+
+          param_types, return_type_name = signature
+          # This first producer slice admits only fully typed blocks. An
+          # omitted/underscore return is not a reliable semantic Proc type and
+          # therefore fails closed instead of pretending it is Nil.
+          return nil unless return_type_name
+          return nil unless actual_return_type
+          return nil if unknownish_type?(actual_return_type) || union_contains_unknownish?(actual_return_type)
+          ProcType.new(param_types, actual_return_type)
         end
 
         private def infer_call_block_with_param_types(node : Frontend::CallNode, param_types : Array(Type)) : Type?
