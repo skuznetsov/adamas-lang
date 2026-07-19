@@ -4,9 +4,10 @@
 > B4-F PERFORMANCE RED; STAGE2 SEMANTIC SMOKES UNAVAILABLE
 > (documentation-only amendment, 2026-07-18).
 > Live T1a/T1b producer and Crystal-oracle audit amendment: 2026-07-19;
-> bounded local T1a producer, T1b0 same-owner carrier, and the default-off
-> T1b1a canonical parsed-owner candidate are implemented; T1b1b generated/
-> reparse ownership, T1b2, and the full production handoff remain current-red.
+> bounded local T1a producer, T1b0 same-owner carrier, the default-off T1b1a
+> canonical parsed-owner candidate, and the T1b1b1 owner-tagged macro-result
+> boundary are implemented; T1b1b2 generated/reparse ownership, T1b2, and the
+> full production handoff remain current-red.
 > Resource evidence is scoped below and is not a fresh-s2 or <=180-second
 > compile-speed claim.
 > Audit snapshot: source-shape counts remain scoped to checkout `05954794`.
@@ -419,11 +420,17 @@ T1b is therefore split without weakening its final DoD:
   before either consumer). The shadow reparse remains diagnostic and cannot be
   the production handoff source. This sub-slice covers the initial parsed graph,
   not independent HIR reparse arenas.
-- **T1b1b — generated/reparse ownership closure.** Every macro, inline, repair,
-  or reparse `ExprId` that crosses arena context must carry an owner token or an
-  equivalent typed reference. Bare numeric IDs, size/span scans, and scan-order
-  selection cannot recover that owner. Unowned generated provenance fails
-  closed, and source-text helpers must select the owning view before reading.
+- **T1b1b1 — macro-result ownership boundary.** The result of macro expansion
+  must cross into HIR as one owner-tagged reference minted around the trusted
+  producer call. The capture API owns the append floor and supplies the exact
+  owner to that producer, so the bare ID cannot cross the boundary separately.
+  The consumer must dereference only that retained owner and must not recover
+  ownership from a bare numeric ID, size/span scan, source text, or scan order.
+- **T1b1b2 — remaining generated/reparse ownership closure.** Every inline,
+  repair, nested-macro, body-inference, source-helper, or reparse `ExprId` that
+  crosses arena context must carry an owner token or an equivalent typed
+  reference. Unowned generated provenance fails closed, and source-text helpers
+  must select the owning view before reading.
 - **T1b2 — materialization/emission terminal.** Only after T1b1b may the
   production path carry the original `ResolutionId` and equal typed body key
   through demand, cache-hit/materialized/inline classification, MIR, and the
@@ -511,17 +518,59 @@ the active root, analysis-root, generated-node, identifier, file, and
 diagnostic counts stay matched. This is evidence that removing the duplicate
 aggregate parse improves this bounded failing lane; it is not a completed
 full-prelude parity result, a stable benchmark, a body-deduplication result, or
-evidence for B4-F. This seals only T1b1a. `arena_for_expr?` still receives a
-bare `ExprId`, so an ID from an independent macro/reparse arena can numerically
-collide with a valid canonical ID; no scan order can distinguish them. Several
-legacy HIR source/body helpers also use dynamic view `size` or full-node scans
-before owner selection. ID-aware view access rejects foreign or unregistered
-generated IDs, but it cannot prove the origin of an equal numeric ID from
-another arena, and bulk `nodes` is traversal/debug data rather than identity
-authority. The scoped adversarial verdict is **ROBUST** for the canonical
-parsed graph and **VULNERABLE/OPEN** for full T1b1. T1b1b must add owner-tagged
-generated/reparse transport and remove raw size/span recovery before default
-promotion or T1b2.
+evidence for B4-F. This seals T1b1a only for the canonical parsed graph.
+
+T1b1b1 migrates the first demonstrated cross-arena generated boundary. A
+compile-scoped `OwnedExprRef` retains the exact dynamic `AstArena` or
+`CanonicalSyntaxView`, the 4-byte `ExprId`, and an `OwnedExprOrigin : UInt8`
+enum. `capture_macro_expansion(owner) { |exact_owner| producer(exact_owner) }`
+is the only factory admitted for macro results: it captures the append floor
+itself, supplies the exact retained owner to the producer, and tags the result
+before the bare `ExprId` can escape. Null/invalid macro output becomes no
+reference; a stale/pre-existing or out-of-bounds ID, foreign canonical-view ID,
+shrinking owner, or unsupported `VirtualArena`/`PageArena` owner fails closed.
+The typed `lower_expanded_macro_result` consumer calls `fetch?` on that retained
+owner and never invokes `arena_for_expr?`, scans paths/spans/sizes, or searches
+other arenas. Retaining the exact canonical view preserves its registered-
+generated-ID provenance; collapsing it to its shared source arena would lose
+that proof. This changes neither `ExprId` layout nor parser/LLVM ABI and copies
+no AST node. It does allocate one short-lived reference object for each
+non-null macro result on the two migrated expansion call paths, so this is not
+a zero-allocation or compile-speed claim.
+
+A plain append-only `AstArena` has no per-node provenance ledger and therefore
+cannot authenticate a deliberately dishonest producer that ignores the owner
+supplied by the capture block and returns an equal-index ID from another plain
+arena. T1b1b1 removes that separable pair from the migrated production API and
+source-checks that both producers use the supplied owner; it does not claim
+cryptographic or type-level proof against a malicious closure. Canonical views
+add the stronger generated-ID ledger check. Any future API that again accepts
+`(plain owner, bare generated ExprId)` from separate sources is rejected and
+belongs to T1b1b2 unless plain arenas gain an owner-issued generation token.
+
+The T1b1b1 falsifier constructs independent owners and an exact canonical view
+with colliding numeric IDs, rejects foreign-view/stale/pre-floor IDs, exercises
+a fresh positive generated ID through the capture block, retains interned
+slices through GC churn, pins `sizeof(ExprId) == 4`, and source-checks that both
+producers use the supplied owner while the consumer has no old
+`ArenaLike + ExprId` signature. Focused evidence is 6/0; the targeted owner,
+macro, semantic-CLI, and HIR set is 334/0; full `spec/semantic` is 958/0; the
+host compiler builds; and a no-prelude macro artifact compiles and exits 0.
+The same-target guard deliberately remains `MEASURED_RED` with two source
+calls, one legacy MAT transaction/completion, two emits, and zero terminal
+rows. That result is a boundary certificate, not a regression.
+
+T1b1b2 remains open. `arena_for_expr?` and several nested macro, inline,
+repair, body-inference, and source-text helpers still accept bare `ExprId` or
+use size/span/full-node recovery; an equal numeric ID from an independent arena
+can still collide there. The proposed packed-main-root seam was not selected:
+all current generated `program.arena` calls to `collect_top_level_nodes` pass
+`collect_main_exprs=false`, so no generated root escape through `main_exprs`
+was demonstrated. That observation does not prove the broader helper graph
+safe. Bulk `nodes` remains traversal/debug data rather than identity authority.
+The scoped verdict is **ROBUST** for T1b1a plus the migrated T1b1b1 boundary and
+**VULNERABLE/OPEN** for full T1b1 until T1b1b2 removes the remaining raw owner
+recovery before default promotion or T1b2.
 
 The bounded T1b0 implementation satisfies only the first bullet on a manually
 bound test path. Its focused same-owner spec proves distinct callsites retain
@@ -561,6 +610,15 @@ diagnostic alone.
 The pinned Crystal source is a behavior and phase oracle, not an ownership or
 performance template:
 
+- `syntax/ast.cr:80-86` clones AST nodes into fresh objects while preserving
+  their locations; identity is the live node object, not `(path, span)`.
+  `semantic/ast.cr:139-190` keeps `owner`, `original_owner`, and `macro_owner`
+  as semantic provenance on `Def`; those fields do not search an arena from a
+  local numeric node ID. `types.cr:883-902` keys typed def instances with the
+  selected `Def#object_id` plus typed arguments, block type, and named facts.
+  Adamas cannot copy that heap-object representation directly, but its arena
+  equivalent must preserve `(exact owner, ExprId)` and mint a fresh identity
+  when a node is cloned/reparsed.
 - `semantic/call.cr:37-137` waits for operand types, performs exact lookup then
   autocast retry; `semantic/method_lookup.cr:192-377` fixes the selected `Def`
   and restriction-normalized positional/named types in `Match`.
@@ -1170,12 +1228,24 @@ remains required before T1b promotion.
    provenance fail closed. Full-prelude semantic compile still stops at the
    parent's existing generated-macro frontier, so this is not a promotion or a
    full semantic-parity claim.
-6. **T1b1b — owner-tagged generated/reparse transport (open).** Replace bare
-   cross-arena generated IDs and raw size/span recovery with an explicit owner
-   token or typed node reference. Audit macro, inline, repair, body-inference,
-   and source-text helpers against equal numeric IDs from independent arenas;
-   the bulk view `nodes` array is never identity authority.
-7. **T1b2 — explicit downstream terminal and one consumer.** After T1b1b,
+6. **T1b1b1 — owner-tagged macro-result boundary (implemented).** The two
+   production macro-expansion result paths now mint `OwnedExprRef` inside a
+   capture block that owns the pre-expansion floor and passes the exact owner to
+   the producer. The consumer fetches directly through the retained exact
+   owner/view. Equal numeric IDs, stale/pre-existing IDs, foreign canonical-view
+   IDs, unsupported owner kinds, and owner lifetime are executable falsifiers.
+   Plain arenas rely on the trusted producer using the supplied owner because
+   they have no generated-node ledger; reintroducing a separable plain-owner/
+   bare-ID API is rejected. `ExprId` remains 4 bytes and no AST node is copied;
+   one short-lived reference allocation per non-null result remains measured
+   resource debt.
+7. **T1b1b2 — remaining owner-tagged generated/reparse transport (open).**
+   Replace bare cross-arena IDs and raw size/span recovery in nested macro,
+   inline, repair, body-inference, and source-text helpers with explicit owner
+   tokens or typed node references. Audit each route against equal numeric IDs
+   from independent arenas; the bulk view `nodes` array is never identity
+   authority.
+8. **T1b2 — explicit downstream terminal and one consumer.** After T1b1b2,
    define and emit the versioned correlation enrichment carrying the original
    `resolution_id` through inline, materialization, body, and emission-terminal
    states. Add exactly one default-off consumer correlating resolution to typed

@@ -14,6 +14,39 @@
 
 ## Сессии
 
+### Session 32 — 2026-07-19 — T1b1b owner-tagged syntax boundary audit
+**Task:** Read-only audit of `AstNodeRef`, `arena_for_expr?`, canonical syntax
+views, and macro reparse helpers; identify the smallest production boundary
+that can stop equal-index cross-owner arena guessing.
+**Brief size:** One narrow prompt naming five exact source anchors and requiring
+root cause, a RED falsifier, a bounded migration seam, and risks.
+**Latency:** Completed within the local architecture-audit window, exit 0.
+**Output quality:** Useful but partial. Grok correctly identified that the
+existing `AstNodeRef` records an explicit owner while production recovery still
+calls the bare-ID `arena_for_expr?` heuristic. It also proposed the right
+equal-index independent-arena falsifier.
+**What worked:** Fast confirmation that path/span/size and scan order cannot
+recover ownership, plus exact anchors for the diagnostic reference and macro
+reparse corridor.
+**What did not:** Grok proposed call-lowering instrumentation as the first
+production seam without proving that it is the first escaping owner boundary.
+Local source tracing showed that `lower_call` already begins under its current
+arena, while the more useful first slice is the macro expansion result crossing
+into lowering as a still-separable `(arena, ExprId)` pair.
+**Adversary check:** The owner-loss mechanism was verified directly in source.
+A competing Luna proposal to replace packed main roots was rejected after all
+new `program.arena` collector calls were shown to pass
+`collect_main_exprs=false`; that route would have been architectural cleanup,
+not a demonstrated generated-root fix. A later hostile pass also rejected a
+public `(owner, bare ExprId, generated_floor)` factory for plain arenas: equal
+numeric IDs still cannot prove provenance without a ledger. The final bounded
+design captures the producer under the exact owner and tags its result before
+the bare ID crosses the boundary; plain-owner trust and the stronger canonical
+view ledger are documented separately.
+**Verdict:** Useful as a compact hypothesis and anchor generator, not sufficient
+to select the first implementation slice without local call-path verification.
+**Cost saved:** Approximately 2-3k Codex tokens of repeated source searching.
+
 ### Session 31 — 2026-05-01 — Qualified module namespace drift audit
 **Task:** read-only audit of why produced `s2` registered
 `Float::FastFloat::ParsedNumberStringT` as `Float::Float::ParsedNumberStringT`.

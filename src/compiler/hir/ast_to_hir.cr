@@ -10,6 +10,7 @@ require "./debug_hooks"
 require "./memory_strategy"
 require "../layout_probe"
 require "../frontend/ast"
+require "../frontend/owned_expr_ref"
 require "../semantic/identity/def_identity"
 require "../mir/mir"
 require "../../runtime"
@@ -12326,19 +12327,18 @@ module Adamas::HIR
     # Expand a macro call inline using the full macro expander.
     private def lower_expanded_macro_result(
       ctx : LoweringContext,
-      macro_arena : Adamas::Compiler::Frontend::ArenaLike,
-      expanded_id : ExprId,
+      expanded_ref : Adamas::Compiler::Frontend::OwnedExprRef?,
     ) : ValueId
-      if expanded_id.invalid?
+      if expanded_ref.nil? || expanded_ref.fetch?.nil?
         nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
         ctx.emit(nil_lit)
         return nil_lit.id
       end
 
       old_arena = @arena
-      @arena = macro_arena
+      @arena = expanded_ref.arena
       begin
-        last_id = lower_expanded_macro_expr(ctx, expanded_id)
+        last_id = lower_expanded_macro_expr(ctx, expanded_ref.expr_id)
         last_id || begin
           nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
           ctx.emit(nil_lit)
@@ -12358,8 +12358,12 @@ module Adamas::HIR
       block_id : ExprId?,
       macro_key : String,
     ) : ValueId
-      expanded_id = expand_macro_expr(macro_def, macro_arena, args, named_args, block_id, macro_key)
-      lower_expanded_macro_result(ctx, macro_arena, expanded_id)
+      expanded_ref = Adamas::Compiler::Frontend::OwnedExprRef.capture_macro_expansion(
+        macro_arena
+      ) do |owned_arena|
+        expand_macro_expr(macro_def, owned_arena, args, named_args, block_id, macro_key)
+      end
+      lower_expanded_macro_result(ctx, expanded_ref)
     end
 
     private def with_macro_owner_context(owner_name : String, &)
@@ -12405,11 +12409,14 @@ module Adamas::HIR
       macro_key : String,
       owner_name : String,
     ) : ValueId
-      expanded_id = ExprId.new(-1)
-      with_macro_owner_context(owner_name) do
-        expanded_id = expand_macro_expr(macro_def, macro_arena, args, named_args, block_id, macro_key)
+      expanded_ref = with_macro_owner_context(owner_name) do
+        Adamas::Compiler::Frontend::OwnedExprRef.capture_macro_expansion(
+          macro_arena
+        ) do |owned_arena|
+          expand_macro_expr(macro_def, owned_arena, args, named_args, block_id, macro_key)
+        end
       end
-      lower_expanded_macro_result(ctx, macro_arena, expanded_id)
+      lower_expanded_macro_result(ctx, expanded_ref)
     end
 
     private def normalize_macro_call_args(
