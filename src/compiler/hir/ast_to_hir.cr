@@ -14456,22 +14456,49 @@ module Adamas::HIR
 
     private def arena_for_expr?(expr_id : ExprId) : Adamas::Compiler::Frontend::ArenaLike?
       return nil if expr_id.index < 0
-      return @arena if expr_id.index < @arena.size
+
+      if canonical = @arena.as?(Adamas::Compiler::Frontend::CanonicalSyntaxView)
+        return @arena if canonical_view_accepts_expr?(canonical, expr_id)
+      else
+        return @arena if expr_id.index < @arena.size
+      end
+
       if arenas = @inline_arenas
         idx = 0
         while idx < arenas.size
           candidate = arenas.unsafe_fetch(idx)
-          return candidate if expr_id.index < candidate.size
+          if canonical = candidate.as?(Adamas::Compiler::Frontend::CanonicalSyntaxView)
+            return candidate if canonical_view_accepts_expr?(canonical, expr_id)
+          end
           idx += 1
+        end
+
+        idx = 0
+        while idx < arenas.size
+          candidate = arenas.unsafe_fetch(idx)
+          idx += 1
+          next if candidate.is_a?(Adamas::Compiler::Frontend::CanonicalSyntaxView)
+          return candidate if expr_id.index < candidate.size
         end
       end
       # Fallback: scan known arenas (macros/expansions) for an index match.
       if !@main_arenas.empty?
+        idx = 0
+        while idx < @main_arenas.size
+          candidate = @main_arenas.unsafe_fetch(idx)
+          if canonical = candidate.as?(Adamas::Compiler::Frontend::CanonicalSyntaxView)
+            return candidate if canonical_view_accepts_expr?(canonical, expr_id)
+          end
+          idx += 1
+        end
+
         best = nil
         best_size = Int32::MAX
         idx = 0
         while idx < @main_arenas.size
           candidate = @main_arenas.unsafe_fetch(idx)
+          idx += 1
+          next if candidate.is_a?(Adamas::Compiler::Frontend::CanonicalSyntaxView)
           if expr_id.index < candidate.size
             size = candidate.size
             if size < best_size
@@ -14479,11 +14506,17 @@ module Adamas::HIR
               best_size = size
             end
           end
-          idx += 1
         end
         return best if best
       end
       nil
+    end
+
+    private def canonical_view_accepts_expr?(
+      view : Adamas::Compiler::Frontend::CanonicalSyntaxView,
+      expr_id : ExprId,
+    ) : Bool
+      view.owns_source_id?(expr_id) || view.owns_generated_id?(expr_id)
     end
 
     private def arena_for_expr(expr_id : ExprId) : Adamas::Compiler::Frontend::ArenaLike

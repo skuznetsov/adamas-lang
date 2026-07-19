@@ -212,6 +212,7 @@ module Adamas
           # Zero-copy AST slices point into the lexer source, so the resized
           # arena must retain the source just like the initial temporary one.
           @arena.retain_source(@source)
+          @arena.as(AstArena).retain_string_pool(@string_pool)
           parser_init_trace("ctor1 done token_count=#{token_count} arena_capacity=#{capacity}")
         end
 
@@ -356,6 +357,10 @@ module Adamas
           @brace_depth = 0
           @no_type_declaration = 0                     # Phase 103: Type annotations enabled by default
           @string_pool = lexer.string_pool             # Week 1 Day 2: share string pool for deduplication
+          arena = @arena
+          if arena.is_a?(AstArena)
+            arena.retain_string_pool(@string_pool)
+          end
           @debug_enabled = ::Adamas::Compiler::BootstrapEnv.get?("PARSER_DEBUG") == "1" # Enable debug via PARSER_DEBUG=1
           @parsing_call_args = 0                       # Not parsing call args initially
           @macro_mode = 0

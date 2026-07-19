@@ -4,8 +4,11 @@
 > B4-F PERFORMANCE RED; STAGE2 SEMANTIC SMOKES UNAVAILABLE
 > (documentation-only amendment, 2026-07-18).
 > Live T1a/T1b producer and Crystal-oracle audit amendment: 2026-07-19;
-> bounded local T1a producer and T1b0 same-owner carrier implemented;
-> production T1b1/T1b2 handoff remains current-red, no compile-speed claim.
+> bounded local T1a producer, T1b0 same-owner carrier, and the default-off
+> T1b1a canonical parsed-owner candidate are implemented; T1b1b generated/
+> reparse ownership, T1b2, and the full production handoff remain current-red.
+> Resource evidence is scoped below and is not a fresh-s2 or <=180-second
+> compile-speed claim.
 > Audit snapshot: source-shape counts remain scoped to checkout `05954794`.
 > Current R0 evidence is the seven-path dirty-source snapshot sealed at base
 > `c216b9ef...`, tree `1efb635...`, patch `d7ad2cac...`; measured evidence and
@@ -410,17 +413,115 @@ T1b is therefore split without weakening its final DoD:
   that lease requires a unique compile-session/arena token first and is not
   part of this smallest plumbing slice. T1b0 is partial transport evidence,
   not a production T1b terminal.
-- **T1b1 — canonical syntax ownership.** Remove the compile-path dual-parse
+- **T1b1a — canonical parsed syntax ownership.** Remove the compile-path dual-parse
   identity split: semantic resolution and HIR lowering must consume one
   canonical syntax owner (or an explicitly shared typed syntax identity issued
   before either consumer). The shadow reparse remains diagnostic and cannot be
-  the production handoff source. Macro/generated provenance must have an
-  owner-scoped typed mapping or fail closed.
-- **T1b2 — materialization/emission terminal.** Only after T1b1 may the
+  the production handoff source. This sub-slice covers the initial parsed graph,
+  not independent HIR reparse arenas.
+- **T1b1b — generated/reparse ownership closure.** Every macro, inline, repair,
+  or reparse `ExprId` that crosses arena context must carry an owner token or an
+  equivalent typed reference. Bare numeric IDs, size/span scans, and scan-order
+  selection cannot recover that owner. Unowned generated provenance fails
+  closed, and source-text helpers must select the owning view before reading.
+- **T1b2 — materialization/emission terminal.** Only after T1b1b may the
   production path carry the original `ResolutionId` and equal typed body key
   through demand, cache-hit/materialized/inline classification, MIR, and the
   versioned terminal record. The existing name-keyed MAT ledger is observation
   data, not the join authority.
+
+The admitted T1b1a candidate is one parse-time `AstArena` shared by every
+active source parser before either semantic analysis or HIR lowering begins.
+Its `ExprId` sequence is therefore globally unique inside that compile
+session, including child IDs stored inside AST nodes; no node clone, ID rewrite,
+path lookup, or source-coordinate join is needed. Semantic analysis consumes
+that exact arena directly. HIR keeps its existing per-file path/source context
+through one lightweight view per parsed unit. Every view can dereference the
+whole frozen parsed-ID prefix so embedded global child IDs remain valid, but it
+claims source provenance only for its unit's explicit `[start, end)` parse
+range. Generated nodes appended through a canonical view are allocated
+monotonically in the shared owner so they cannot collide between those views;
+each view keeps only a sorted compact list of the IDs it issued. A shared node
+that no view registered is rejected by ID-aware view access and HIR owner
+recovery. This guarantee does not cover an equal numeric ID from an independent
+arena; that is T1b1b. HIR owner recovery must prefer the unique unit range or
+registered generated owner before its legacy size heuristic. `AstArena` and
+canonical views lazily retain every parser `StringPool` written into them, and
+parsed units/semantic aggregates retain the source-parse pools as well.
+VirtualArena/PageArena pool leases are outside this slice. Retaining only source
+text or installing an unrelated fresh pool is not a lifetime proof. Replacing
+or reparsing the canonical arena
+invalidates every resolution and view derived from it; the owner is
+compile-session local and is not a cross-run cache key.
+
+The candidate is default-off outside `ADAMAS_SEMANTIC_COMPILE`. The legacy
+per-file parse topology and the diagnostic `ADAMAS_SEMANTIC_SHADOW` reparse
+remain unchanged; both legacy and canonical aggregates now explicitly retain
+their parser pools because that is a lifetime correction, not candidate
+authority. The candidate route must bypass AST-cache load/save until cached
+trees can be imported with a typed owner-preserving relocation contract; local
+IDs from independently cached arenas cannot enter the shared owner. Semantic
+macro expansion may add nodes to the canonical arena, but those generated IDs
+do not automatically become source-backed HIR identities. They require an
+explicit generated provenance mapping in a later slice or fail closed.
+
+Rejected T1b1a alternatives are: a `VirtualArena` over independently parsed
+files, because embedded child IDs are not rewritten to its global offsets;
+per-file semantic analyzers sharing one context, because symbols still carry
+bare `ExprId` values; cloning/importing trees into an aggregate arena, because
+every embedded ID would need a proven deep relocation; one aggregate HIR arena
+without per-file views, because current `__FILE__`, diagnostic, and source maps
+are arena-scoped; and any path/span/text/local-ordinal join. Original Crystal's
+`Def#object_id` and `DefInstanceContainer` support the same owner-scoped
+principle, not a source-stable identity claim.
+
+The executable T1b1a falsifier parses identical source/path pairs under two
+independent owners and requires their equal spans and local ordinals to remain
+different identities and fail cross-owner admission. Its positive half parses
+multiple units into one owner and requires globally distinct IDs, exact node
+address continuity through each unit view, correct per-unit source/path
+projection, and fail-closed generated/view-local IDs. Promotion additionally
+requires semantic compile/no-prelude parity, a production assertion that no
+second compile aggregate parse occurred, unchanged default-route semantics/
+parse topology, and matched allocation/RSS evidence. This slice creates no
+T1b0 handoff payload and
+authorizes no MAT, body-cache, MIR, or LLVM consumer.
+
+The implemented candidate selects the shared arena before recursive parsing,
+captures each unit's parsed range, binds the per-unit views only after the final
+parsed limit is known, and constructs the semantic aggregate from the original
+roots and diagnostics without invoking the diagnostic reparse builder. AST
+cache load/save is disabled only on this candidate route. The legacy per-file
+route and `ADAMAS_SEMANTIC_SHADOW` retain their prior builders; their aggregates
+now retain the pools that already own their interned slices. Focused owner
+specs pass 8/0; the targeted semantic/HIR/CLI set passes 456/0; the full
+`spec/semantic` directory passes 958/0; and the host compiler builds. A
+cross-file candidate no-prelude compile reports `syntax_owner=canonical`, and
+an arithmetic no-prelude artifact compiles and exits successfully; the legacy
+no-prelude `puts 7` compile still prints `7`.
+
+Full-prelude semantic compile is not green on either the candidate or its
+`eae05ff3` parent: both stop in the existing generated-macro resolution family
+with 140 diagnostics. A single matched safe-run measurement to that same
+failure boundary reports the final hardened candidate at 1628.6 ms and
+118,603,776-byte peak RSS versus parent 2460.4 ms and 178,176,000 bytes. The
+candidate retains 800 more
+parsed nodes because inactive/skipped units remain in the shared owner, while
+the active root, analysis-root, generated-node, identifier, file, and
+diagnostic counts stay matched. This is evidence that removing the duplicate
+aggregate parse improves this bounded failing lane; it is not a completed
+full-prelude parity result, a stable benchmark, a body-deduplication result, or
+evidence for B4-F. This seals only T1b1a. `arena_for_expr?` still receives a
+bare `ExprId`, so an ID from an independent macro/reparse arena can numerically
+collide with a valid canonical ID; no scan order can distinguish them. Several
+legacy HIR source/body helpers also use dynamic view `size` or full-node scans
+before owner selection. ID-aware view access rejects foreign or unregistered
+generated IDs, but it cannot prove the origin of an equal numeric ID from
+another arena, and bulk `nodes` is traversal/debug data rather than identity
+authority. The scoped adversarial verdict is **ROBUST** for the canonical
+parsed graph and **VULNERABLE/OPEN** for full T1b1. T1b1b must add owner-tagged
+generated/reparse transport and remove raw size/span recovery before default
+promotion or T1b2.
 
 The bounded T1b0 implementation satisfies only the first bullet on a manually
 bound test path. Its focused same-owner spec proves distinct callsites retain
@@ -1061,12 +1162,20 @@ remains required before T1b promotion.
    one-payload-per-call route is not admitted. Owner retention, body-key
    interning/compact ownership, and aggregate call-count cost remain promotion
    gates.
-5. **T1b1 — canonical syntax owner.** Eliminate or bypass the production
-   semantic-shadow reparse for the candidate compile route so semantic and HIR
-   consume one owner-scoped syntax identity. Reject path/span/text/local-index
-   joins; a parity probe is diagnostic only. Generated nodes without typed
-   provenance fail closed.
-6. **T1b2 — explicit downstream terminal and one consumer.** After T1b1,
+5. **T1b1a — canonical parsed syntax owner (implemented, candidate route only).** The
+   default-off semantic compile route parses all units into one shared owner,
+   gives HIR per-unit source views, and builds the semantic aggregate from the
+   original nodes without reparsing. Path/span/text/local-index joins remain
+   rejected; a parity probe is diagnostic only. Generated nodes without typed
+   provenance fail closed. Full-prelude semantic compile still stops at the
+   parent's existing generated-macro frontier, so this is not a promotion or a
+   full semantic-parity claim.
+6. **T1b1b — owner-tagged generated/reparse transport (open).** Replace bare
+   cross-arena generated IDs and raw size/span recovery with an explicit owner
+   token or typed node reference. Audit macro, inline, repair, body-inference,
+   and source-text helpers against equal numeric IDs from independent arenas;
+   the bulk view `nodes` array is never identity authority.
+7. **T1b2 — explicit downstream terminal and one consumer.** After T1b1b,
    define and emit the versioned correlation enrichment carrying the original
    `resolution_id` through inline, materialization, body, and emission-terminal
    states. Add exactly one default-off consumer correlating resolution to typed

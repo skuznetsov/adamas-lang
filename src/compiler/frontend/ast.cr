@@ -4442,14 +4442,35 @@ module Adamas
       class AstArena
         getter extra_sources : Array(String)
         @node_slots : Array(NodeSlot)
+        @string_pools : Array(StringPool)?
         @debug_arena_add : String?
         @debug_arena_fetch : String?
 
         def initialize(capacity : Int32 = 0)
           @node_slots = [] of NodeSlot
           @extra_sources = [] of String
+          @string_pools = nil
           @debug_arena_add = ENV["DEBUG_ARENA_ADD"]?
           @debug_arena_fetch = ENV["DEBUG_ARENA_FETCH"]?
+        end
+
+        # Keep parser-owned interned strings alive for AST Slice fields. The
+        # pool list is lazy so arenas that only contain source-backed slices do
+        # not pay for an extra allocation.
+        def retain_string_pool(pool : StringPool) : Nil
+          pools = @string_pools ||= [] of StringPool
+          return if pools.any? { |retained| retained.same?(pool) }
+          pools << pool
+        end
+
+        def string_pool_count : Int32
+          @string_pools.try(&.size) || 0
+        end
+
+        def retains_string_pool?(pool : StringPool) : Bool
+          pools = @string_pools
+          return false unless pools
+          pools.any? { |retained| retained.same?(pool) }
         end
 
         @[AlwaysInline]
@@ -4558,6 +4579,167 @@ module Adamas
           idx = id.index
           return 0_u64 if idx < 0 || idx >= @node_slots.size
           @node_slots.unsafe_fetch(idx).raw_address
+        end
+      end
+
+      # A per-unit view over one canonical parse arena.
+      #
+      # Parsed nodes keep their global ExprId and are never copied: every ID
+      # below the frozen parsed prefix delegates to the shared AstArena. A
+      # view's generated macro/repair nodes are appended to the shared owner,
+      # so their ExprIds remain globally unique across all views. Each view
+      # keeps a compact ownership list for routing those IDs back to the
+      # correct semantic context.
+      # `parsed_prefix_start`/`parsed_prefix_end` identify the unit's own parse
+      # range, while the whole earlier prefix remains readable so child IDs
+      # and traversal retain the original global addressing contract.
+      class CanonicalSyntaxView < AstArena
+        getter parsed_prefix_start : Int32
+        getter parsed_prefix_end : Int32
+        getter parsed_limit : Int32
+        @generated_sources : Array(String)
+        @unit_source : String
+        @generated_ids : Array(Int32)
+
+        def initialize(
+          @source_owner : AstArena,
+          @parsed_prefix_start : Int32,
+          @parsed_prefix_end : Int32,
+          source : String = "",
+          parsed_limit : Int32? = nil,
+        )
+          raise ArgumentError.new("canonical parsed prefix start cannot be negative") if @parsed_prefix_start < 0
+          raise ArgumentError.new("canonical parsed prefix end precedes start") if @parsed_prefix_end < @parsed_prefix_start
+          @parsed_limit = parsed_limit || @parsed_prefix_end
+          raise ArgumentError.new("canonical parsed prefix end exceeds parsed limit") if @parsed_prefix_end > @parsed_limit
+          raise ArgumentError.new("canonical parsed limit exceeds source owner") if @parsed_limit > @source_owner.size
+
+          super(0)
+          @generated_sources = [] of String
+          @unit_source = ""
+          @generated_ids = [] of Int32
+          retain_source(source) unless source.empty?
+        end
+
+        def add(node) : ExprId
+          generated_id = @source_owner.add(node)
+          if generated_id.index < @parsed_limit
+            raise IndexError.new("canonical generated id precedes parsed limit")
+          end
+          @generated_ids << generated_id.index
+          generated_id
+        end
+
+        def add_typed(node) : ExprId
+          add(node)
+        end
+
+        def [](id : ExprId) : TypedNode
+          if id.null_ptr?
+            return @source_owner[ExprId.new(0)] if @parsed_prefix_end > 0
+            if generated_id = @generated_ids.first?
+              return @source_owner[ExprId.new(generated_id)]
+            end
+            raise IndexError.new("CanonicalSyntaxView is empty")
+          end
+
+          index = id.index
+          if index >= 0 && index < @parsed_limit
+            return @source_owner[id]
+          end
+          if owns_generated_id?(id)
+            return @source_owner[id]
+          end
+
+          raise IndexError.new("CanonicalSyntaxView index out of bounds: #{index} (size #{size})")
+        end
+
+        def []?(id : ExprId) : TypedNode?
+          return nil if id.null_ptr? || id.invalid?
+
+          index = id.index
+          if index >= 0 && index < @parsed_limit
+            @source_owner[id]?
+          elsif owns_generated_id?(id)
+            @source_owner[id]?
+          else
+            nil
+          end
+        end
+
+        def typed?(id : ExprId) : Bool
+          return false if id.null_ptr? || id.invalid?
+          index = id.index
+          (index >= 0 && index < @parsed_limit) || owns_generated_id?(id)
+        end
+
+        def get_typed(id : ExprId) : TypedNode
+          self[id]
+        end
+
+        def nodes : Array(TypedNode)
+          @source_owner.nodes
+        end
+
+        def size : Int32
+          @source_owner.size
+        end
+
+        def debug_node_address(id : ExprId) : UInt64
+          return 0_u64 if id.null_ptr? || id.invalid?
+
+          index = id.index
+          if index >= 0 && index < @parsed_limit
+            @source_owner.debug_node_address(id)
+          elsif owns_generated_id?(id)
+            @source_owner.debug_node_address(id)
+          else
+            0_u64
+          end
+        end
+
+        # Only the unit's own parsed range has source provenance. Earlier
+        # prefix IDs remain readable for traversal but are not owned by this
+        # view; generated IDs intentionally return nil as well.
+        def source_owner_for(id : ExprId) : AstArena?
+          owns_source_id?(id) ? @source_owner : nil
+        end
+
+        def owns_source_id?(id : ExprId) : Bool
+          return false if id.null_ptr? || id.invalid?
+          index = id.index
+          index >= @parsed_prefix_start && index < @parsed_prefix_end
+        end
+
+        def owns_generated_id?(id : ExprId) : Bool
+          return false if id.null_ptr? || id.invalid?
+          index = id.index
+          low = 0
+          high = @generated_ids.size - 1
+          while low <= high
+            middle = (low + high) // 2
+            generated_index = @generated_ids.unsafe_fetch(middle)
+            return true if generated_index == index
+            if generated_index < index
+              low = middle + 1
+            else
+              high = middle - 1
+            end
+          end
+          false
+        end
+
+        # Keep only this unit's source in the view. Extra source text needed by
+        # generated nodes is retained in a view-private sidecar, while the
+        # inherited `extra_sources` remains the unit source only.
+        def retain_source(source : String) : Nil
+          return if source.empty?
+          if @unit_source.empty?
+            @unit_source = source
+            super(source)
+          elsif source != @unit_source
+            @generated_sources << source unless @generated_sources.includes?(source)
+          end
         end
       end
 

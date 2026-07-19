@@ -129,14 +129,36 @@ module Adamas
         getter path : String
         getter source : String
         getter parse_diagnostics : Array(Frontend::Diagnostic)
+        getter string_pool : Frontend::StringPool
+        getter canonical_prefix_start : Int32?
+        getter canonical_prefix_end : Int32?
 
         def initialize(
           @arena : Frontend::AstArena,
           @roots : Array(Frontend::ExprId),
           @path : String,
           @source : String,
-          @parse_diagnostics : Array(Frontend::Diagnostic) = [] of Frontend::Diagnostic
+          @parse_diagnostics : Array(Frontend::Diagnostic) = [] of Frontend::Diagnostic,
+          @string_pool : Frontend::StringPool = Frontend::StringPool.new,
+          @canonical_prefix_start : Int32? = nil,
+          @canonical_prefix_end : Int32? = nil,
         )
+        end
+
+        def bind_canonical_view(shared_arena : Frontend::AstArena, parsed_limit : Int32) : Nil
+          return unless prefix_start = @canonical_prefix_start
+          return unless prefix_end = @canonical_prefix_end
+          unless @arena.same?(shared_arena)
+            raise "canonical syntax view must bind the original shared parse arena"
+          end
+
+          @arena = Frontend::CanonicalSyntaxView.new(
+            shared_arena,
+            prefix_start,
+            prefix_end,
+            @source,
+            parsed_limit,
+          )
         end
       end
 
@@ -220,6 +242,7 @@ module Adamas
         getter semantic_diagnostic_count : Int32
         getter resolution_diagnostic_count : Int32
         getter type_diagnostic_count : Int32
+        getter syntax_owner : String
 
         def initialize(
           @files_count : Int32,
@@ -237,6 +260,7 @@ module Adamas
           @semantic_diagnostic_count : Int32,
           @resolution_diagnostic_count : Int32,
           @type_diagnostic_count : Int32,
+          @syntax_owner : String,
         )
         end
       end
@@ -1593,6 +1617,14 @@ module Adamas
         parse_start = Time.instant
         stage2_debug("[STAGE2_DEBUG] parse step start", err_io)
 
+        # The candidate semantic route chooses its canonical syntax owner
+        # before any file is parsed. Legacy parsing keeps one AstArena per
+        # unit; the candidate passes this shared owner through every recursive
+        # require and binds per-unit views after the complete parse prefix is
+        # known.
+        semantic_compile_active = semantic_compile_enabled?
+        canonical_syntax_arena = semantic_compile_active ? Frontend::AstArena.new : nil
+
         stage2_debug("[STAGE2_DEBUG] loaded_files init", err_io)
         loaded_files = Set(String).new
         all_arenas = [] of ParsedUnit
@@ -1625,7 +1657,7 @@ module Adamas
             stage2_debug("[STAGE2_DEBUG] prelude exists", err_io)
             log(options, out_io, "  Loading prelude: #{prelude_path}")
             prelude_start = Time.instant
-            parse_file_recursive(prelude_path, all_arenas, loaded_files, input_file, input_base_dir, options, out_io)
+            parse_file_recursive(prelude_path, all_arenas, loaded_files, input_file, input_base_dir, options, out_io, canonical_syntax_arena)
             stage2_debug("[STAGE2_DEBUG] prelude parsed", err_io)
             if options.stats
               timings["parse_prelude"] = (Time.instant - prelude_start).total_milliseconds
@@ -1642,7 +1674,7 @@ module Adamas
         # Parse user's input file
         user_parse_start = Time.instant
         bootstrap_trace_puts "[S2_COMPILE] parsing user file start"; STDERR.flush
-        parse_file_recursive(input_file, all_arenas, loaded_files, input_file, input_base_dir, options, out_io)
+        parse_file_recursive(input_file, all_arenas, loaded_files, input_file, input_base_dir, options, out_io, canonical_syntax_arena)
         stage2_debug("[STAGE2_DEBUG] user file parsed", err_io)
         bootstrap_trace_puts "[S2_COMPILE] parse done arenas=#{all_arenas.size}"; STDERR.flush
         log_generated_stage_memory_phase(
@@ -1671,6 +1703,9 @@ module Adamas
           err_io.puts "error: no valid source files found"
           emit_timings(options, out_io, timings, total_start)
           return 1
+        end
+        if shared_arena = canonical_syntax_arena
+          bind_canonical_syntax_views(all_arenas, shared_arena)
         end
         if debug_profile
           timings["dbg_count_parse_arenas"] = all_arenas.size.to_f
@@ -1702,11 +1737,10 @@ module Adamas
           return 0
         end
 
-        semantic_compile_active = semantic_compile_enabled?
         log_codepath_branch("cli.semantic", "semantic_compile_prepass", semantic_compile_active, "CLI")
         if semantic_compile_active
           semantic_compile_start = Time.instant
-          if status = run_semantic_compile_prepass(all_arenas, options, out_io, err_io)
+          if status = run_semantic_compile_prepass(all_arenas, options, out_io, err_io, canonical_syntax_arena.not_nil!)
             timings["semantic_compile_prepass"] = (Time.instant - semantic_compile_start).total_milliseconds if options.stats
             emit_timings(options, out_io, timings, total_start)
             return status
@@ -4133,7 +4167,8 @@ module Adamas
         input_file : String,
         input_base_dir : String,
         options : Options,
-        out_io : IO
+        out_io : IO,
+        canonical_syntax_arena : Frontend::AstArena? = nil,
       )
         debug_parse = env_enabled?("STAGE2_DEBUG") || env_enabled?("STAGE2_BOOTSTRAP_TRACE")
         if debug_parse && file_path.size > 0
@@ -4192,7 +4227,7 @@ module Adamas
         {% unless flag?(:bootstrap_fast) %}
         # V2 BOOTSTRAP: Disable AST cache — File operations call check_no_null_byte
         # which is broken in stage2 (V2's String#byte_index falsely finds null bytes).
-        if false && options.ast_cache
+        if false && canonical_syntax_arena.nil? && options.ast_cache
           source_mtime_ns = begin
             stat2 = uninitialized LibC::Stat
             if LibC.stat(abs_path.to_unsafe, pointerof(stat2)) == 0
@@ -4226,13 +4261,13 @@ module Adamas
             if cached_requires
               log(options, out_io, "  Require cache hit (#{cached_requires.size}): #{abs_path}") if options.verbose
               cached_requires.each do |req_path|
-                parse_file_recursive(req_path, results, loaded, input_file, input_base_dir, options, out_io)
+                parse_file_recursive(req_path, results, loaded, input_file, input_base_dir, options, out_io, canonical_syntax_arena)
               end
             else
               log(options, out_io, "  Require cache miss: #{abs_path}") if options.verbose
               requires = [] of String
               scan_requires_from_exprs(arena, exprs, source, base_dir, input_base_dir, options, out_io, requires)
-              parse_required_files(requires, 0, results, loaded, input_file, input_base_dir, options, out_io)
+              parse_required_files(requires, 0, results, loaded, input_file, input_base_dir, options, out_io, canonical_syntax_arena)
               needs_source_fallback = source_requires_fallback?(source, requires, loaded)
               if needs_source_fallback
                 if options.verbose && !requires.empty?
@@ -4278,7 +4313,7 @@ module Adamas
                     end
                   end
                 end
-                parse_required_files(requires, fallback_start, results, loaded, input_file, input_base_dir, options, out_io)
+                parse_required_files(requires, fallback_start, results, loaded, input_file, input_base_dir, options, out_io, canonical_syntax_arena)
                 if options.verbose
                   log(options, out_io, "  Source fallback resolved=#{fallback_resolved} unresolved=#{fallback_unresolved}")
                 end
@@ -4294,9 +4329,14 @@ module Adamas
         {% end %}
 
         bootstrap_trace_puts "[S2_PARSE] creating lexer"; STDERR.flush
+        canonical_prefix_start = canonical_syntax_arena.try(&.size)
         lexer = Frontend::Lexer.new(source)
         bootstrap_trace_puts "[S2_PARSE] creating parser"; STDERR.flush
-        parser = Frontend::Parser.new(lexer)
+        parser = if shared_arena = canonical_syntax_arena
+                   Frontend::Parser.new(lexer, shared_arena)
+                 else
+                   Frontend::Parser.new(lexer)
+                 end
         bootstrap_trace_puts "[S2_PARSE] parser created"; STDERR.flush
         if debug_parse
           out_io.puts "[STAGE2_DEBUG] parse_file_recursive parse start abs_path=#{abs_path}"
@@ -4326,6 +4366,7 @@ module Adamas
           out_io.puts "[STAGE2_DEBUG] parse_file_recursive parse ok abs_path=#{abs_path}"
         end
         arena = parser.arena.as(Frontend::AstArena)
+        canonical_prefix_end = canonical_syntax_arena.try(&.size)
         expr_count = exprs.size
         debug_cli_root_block_state("parse_file_recursive_after_parse", arena, exprs)
         trace_parsed_class_state("parse_file_recursive_after_parse", abs_path, arena, exprs)
@@ -4359,7 +4400,7 @@ module Adamas
         # the live recursive frame in parse_file_recursive before self-hosted
         # bootstraps walk large prelude graphs.
         scan_requires_from_exprs(arena, exprs, source, base_dir, input_base_dir, options, out_io, requires)
-        parse_required_files(requires, 0, results, loaded, input_file, input_base_dir, options, out_io)
+        parse_required_files(requires, 0, results, loaded, input_file, input_base_dir, options, out_io, canonical_syntax_arena)
         if @parse_trace
           bootstrap_trace_puts "[REQSCAN_DONE] #{abs_path} reqs=#{requires.size}"
         end
@@ -4410,13 +4451,22 @@ module Adamas
               end
             end
           end
-          parse_required_files(requires, fallback_start, results, loaded, input_file, input_base_dir, options, out_io)
+          parse_required_files(requires, fallback_start, results, loaded, input_file, input_base_dir, options, out_io, canonical_syntax_arena)
           if options.verbose
             log(options, out_io, "  Source fallback resolved=#{fallback_resolved} unresolved=#{fallback_unresolved}")
           end
         end
 
-        results << ParsedUnit.new(arena, exprs, abs_path, source, parse_diagnostics)
+        results << ParsedUnit.new(
+          arena,
+          exprs,
+          abs_path,
+          source,
+          parse_diagnostics,
+          parser.string_pool,
+          canonical_prefix_start,
+          canonical_prefix_end,
+        )
         debug_cli_root_block_state("parse_file_recursive_after_append", arena, exprs)
         trace_parsed_class_state("parse_file_recursive_after_append", abs_path, arena, exprs)
         if debug_parse
@@ -4424,7 +4474,7 @@ module Adamas
         end
 
         {% unless flag?(:bootstrap_fast) %}
-        if options.ast_cache && arena.is_a?(Frontend::AstArena)
+        if canonical_syntax_arena.nil? && options.ast_cache && arena.is_a?(Frontend::AstArena)
           begin
             cache = LSP::AstCache.new(arena, exprs, lexer.string_pool)
             cache.save(abs_path)
@@ -4689,11 +4739,12 @@ module Adamas
         input_file : String,
         input_base_dir : String,
         options : Options,
-        out_io : IO
+        out_io : IO,
+        canonical_syntax_arena : Frontend::AstArena? = nil,
       ) : Nil
         req_i = start_index
         while req_i < requires.size
-          parse_file_recursive(requires.unsafe_fetch(req_i), results, loaded, input_file, input_base_dir, options, out_io)
+          parse_file_recursive(requires.unsafe_fetch(req_i), results, loaded, input_file, input_base_dir, options, out_io, canonical_syntax_arena)
           req_i += 1
         end
       end
@@ -7463,12 +7514,38 @@ module Adamas
         active_units
       end
 
+      private def bind_canonical_syntax_views(
+        units : Array(ParsedUnit),
+        shared_arena : Frontend::AstArena,
+      ) : Nil
+        parsed_limit = shared_arena.size
+        units.each do |unit|
+          unit.bind_canonical_view(shared_arena, parsed_limit)
+        end
+      end
+
       private def build_semantic_shadow_aggregate(units : Array(ParsedUnit)) : Semantic::CompileShadowAggregate
         shadow_units = [] of NamedTuple(path: String, source: String)
         units.each do |unit|
           shadow_units << {path: unit.path, source: unit.source}
         end
         Semantic::CompileShadowAggregate.build(shadow_units)
+      end
+
+      private def build_semantic_compile_aggregate(
+        units : Array(ParsedUnit),
+        shared_arena : Frontend::AstArena,
+      ) : Semantic::CompileShadowAggregate
+        canonical_units = units.map do |unit|
+          Semantic::CompileShadowAggregate::CanonicalUnitInput.new(
+            path: unit.path,
+            source: unit.source,
+            roots: unit.roots,
+            parse_diagnostics: unit.parse_diagnostics,
+            string_pool: unit.string_pool,
+          )
+        end
+        Semantic::CompileShadowAggregate.build_canonical(shared_arena, canonical_units)
       end
 
       private def emit_semantic_compile_prepass_summary(
@@ -7495,6 +7572,7 @@ module Adamas
           "semantic_diags=#{summary.semantic_diagnostic_count}",
           "resolution_diags=#{summary.resolution_diagnostic_count}",
           "type_diags=#{summary.type_diagnostic_count}",
+          "syntax_owner=#{summary.syntax_owner}",
         ].join(" ")
       end
 
@@ -7509,6 +7587,7 @@ module Adamas
         semantic_diagnostic_count : Int32,
         resolution_diagnostic_count : Int32,
         type_diagnostic_count : Int32,
+        syntax_owner : String,
       ) : SemanticCompilePrepassSummary
         SemanticCompilePrepassSummary.new(
           files_count: units.size,
@@ -7526,6 +7605,7 @@ module Adamas
           semantic_diagnostic_count: semantic_diagnostic_count,
           resolution_diagnostic_count: resolution_diagnostic_count,
           type_diagnostic_count: type_diagnostic_count,
+          syntax_owner: syntax_owner,
         )
       end
 
@@ -7534,9 +7614,10 @@ module Adamas
         options : Options,
         out_io : IO,
         err_io : IO,
+        shared_arena : Frontend::AstArena,
       ) : Int32?
         active_units = active_semantic_units(units)
-        aggregate = build_semantic_shadow_aggregate(active_units)
+        aggregate = build_semantic_compile_aggregate(active_units, shared_arena)
         analyzer = Semantic::Analyzer.new(aggregate.program)
         sources_by_path = aggregate.sources_by_path
         compile_parse_diagnostics = active_units.flat_map(&.parse_diagnostics)
@@ -7564,6 +7645,7 @@ module Adamas
               0,
               0,
               0,
+              "canonical",
             ),
             options,
             out_io
@@ -7595,6 +7677,7 @@ module Adamas
               semantic_diagnostics.size,
               0,
               0,
+              "canonical",
             ),
             options,
             out_io
@@ -7621,6 +7704,7 @@ module Adamas
               semantic_diagnostics.size,
               resolution_diagnostics.size,
               0,
+              "canonical",
             ),
             options,
             out_io
@@ -7647,6 +7731,7 @@ module Adamas
             semantic_diagnostics.size,
             resolution_diagnostics.size,
             type_diagnostics.size,
+            "canonical",
           ),
           options,
           out_io

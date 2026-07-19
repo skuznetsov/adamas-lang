@@ -63,6 +63,17 @@ module Adamas
           node_count : Int32,
           parse_diagnostic_count : Int32
 
+        # Already-parsed unit input for the canonical-owner aggregate. The
+        # factory below consumes the shared arena and these original roots; it
+        # deliberately has no parser/lexer entry point and therefore cannot
+        # create a shadow syntax owner.
+        record CanonicalUnitInput,
+          path : String,
+          source : String,
+          roots : Array(Frontend::ExprId),
+          parse_diagnostics : Array(Frontend::Diagnostic),
+          string_pool : Frontend::StringPool
+
         record SummaryUnitMetrics,
           path : String,
           roots_count : Int32,
@@ -86,16 +97,57 @@ module Adamas
         getter program : Frontend::Program
         getter unit_summaries : Array(UnitSummary)
 
+        def self.build_canonical(
+          shared_arena : Frontend::AstArena,
+          units : Array(CanonicalUnitInput),
+        ) : self
+          merged_roots = [] of Frontend::ExprId
+          unit_summaries = [] of UnitSummary
+          unit_index_by_node = [] of Int32
+          parse_diagnostics = [] of Frontend::Diagnostic
+          string_pools = [] of Frontend::StringPool
+
+          units.each_with_index do |unit, unit_index|
+            string_pools << unit.string_pool
+            roots = unit.roots.dup
+            merged_roots.concat(roots)
+            unit_parse_diagnostics = unit.parse_diagnostics.map do |diagnostic|
+              diagnostic.with_file_path(unit.path)
+            end
+            parse_diagnostics.concat(unit_parse_diagnostics)
+            grow_index_owner_map(unit_index_by_node, shared_arena.size)
+            node_count = assign_unit_nodes(shared_arena, roots, unit_index.to_i32, unit_index_by_node)
+            unit_summaries << UnitSummary.new(
+              unit_index: unit_index.to_i32,
+              path: unit.path,
+              source: unit.source,
+              roots: roots,
+              node_count: node_count,
+              parse_diagnostic_count: unit_parse_diagnostics.size,
+            )
+          end
+
+          new(
+            Frontend::Program.new(shared_arena, merged_roots),
+            unit_summaries,
+            unit_index_by_node,
+            parse_diagnostics,
+            string_pools,
+          )
+        end
+
         def self.build(units : Array(NamedTuple(path: String, source: String))) : self
           aggregate_arena = Frontend::AstArena.new
           merged_roots = [] of Frontend::ExprId
           unit_summaries = [] of UnitSummary
           unit_index_by_node = [] of Int32
           parse_diagnostics = [] of Frontend::Diagnostic
+          string_pools = [] of Frontend::StringPool
 
           units.each_with_index do |unit, unit_index|
             lexer = Frontend::Lexer.new(unit[:source])
             parser = Frontend::Parser.new(lexer, aggregate_arena)
+            string_pools << parser.string_pool
             roots = parser.parse_program_roots
             unit_parse_diagnostics = parser.diagnostics.map do |diagnostic|
               diagnostic.with_file_path(unit[:path])
@@ -119,6 +171,7 @@ module Adamas
             unit_summaries,
             unit_index_by_node,
             parse_diagnostics,
+            string_pools,
           )
         end
 
@@ -127,7 +180,9 @@ module Adamas
           @unit_summaries : Array(UnitSummary),
           @unit_index_by_node : Array(Int32),
           @parse_diagnostics : Array(Frontend::Diagnostic),
+          string_pools : Array(Frontend::StringPool) = [] of Frontend::StringPool,
         )
+          @string_pools = string_pools.dup
           @unit_index_by_path = {} of String => Int32
           @unit_summaries.each do |unit_summary|
             @unit_index_by_path[unit_summary.path] = unit_summary.unit_index
@@ -143,6 +198,14 @@ module Adamas
 
         def parse_diagnostics : Array(Frontend::Diagnostic)
           @parse_diagnostics.dup
+        end
+
+        def string_pool_count : Int32
+          @string_pools.size
+        end
+
+        def retains_string_pool?(pool : Frontend::StringPool) : Bool
+          @string_pools.any? { |retained| retained.same?(pool) }
         end
 
         def unit_index_for(expr_id : Frontend::ExprId) : Int32?

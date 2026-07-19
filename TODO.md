@@ -1,7 +1,8 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-07-19 (bounded T1a producer and T1b0 same-owner transport;
-production T1b and performance frontier remain open).
+Updated: 2026-07-19 (bounded T1a producer, T1b0 same-owner transport, and
+default-off T1b1a canonical parsed-owner candidate; T1b1b, T1b2, and B4-F
+remain open).
 
 CURRENT R0 FRONTIER (architecture admitted, production fix still open): the
 current dirty source is sealed reproducibly at base
@@ -60,33 +61,60 @@ still comes from annotation strings and cannot be trusted as identity. A later
 refactor must make those frontend facts typed before T1 can impose stricter
 generic-declaration policy without heuristics.
 
-T1b0 is now completed as partial same-owner carrier plumbing. An immutable
+T1b0 is completed as partial same-owner carrier plumbing. An immutable
 `CallResolutionHandoff` derives one typed `DefInstanceKey` from a lawful T1a
 resolution, revalidates its source call/def coordinates, and survives one
-manually bound ordinary direct MIR route plus a copy-propagation clone.
-Production attachment is intentionally absent because current HIR cannot prove
-that a resolution and HIR call share a source owner. HIR call recreation,
-virtual dispatch, and stack promotion remain outside T1b0.
+manually bound ordinary direct MIR route plus a copy-propagation clone. HIR
+call recreation, virtual dispatch, and stack promotion remain outside T1b0.
 The payload is default-off and inert, but its nullable field increases
-`HIR::Call` from 56 to 64 bytes and `MIR::Call` from 128 to 136 bytes. This
-bounded unit path shares the exact carrier reference without copying its
-semantic argument array, yet each allocated payload is 128 bytes and embeds an
-88-byte `DefInstanceKey`. Production allocates none today. T1b1 must not create
-one payload per call without an interned/compact body-key owner and matched
-allocation/retention/RSS evidence. It also cannot bind production calls because
-semantic prepass and HIR still parse into different arena owners.
+`HIR::Call` from 56 to 64 bytes and `MIR::Call` from 128 to 136 bytes. Each
+allocated payload is 128 bytes with an inline 88-byte `DefInstanceKey`;
+production still allocates none. A one-payload-per-call production route remains
+rejected without an interned/compact body-key owner and matched resource proof.
 
-Full T1b remains `MEASURED_RED`. The bounded same-target guard observes two source
-calls but only one legacy MAT transaction/completion, two MAT emit rows, and
-zero `t1_resolution_terminal_v1` rows. Therefore the downstream path still
-cannot correlate each semantic resolution through inline/materialization/body/
-emission because the typed handoff is not production-bound or consumed;
-joining by method or materialized-name string is rejected. Next is T1b1:
-eliminate or bypass the dual-parse owner split with one canonical syntax owner,
-then T1b2 may add the materialization/body/emission terminal. Full T1,
-named/default/splat forwarding equivalence, the explosion ledger, and B4-F
-<=180 seconds remain open. No speed or body-deduplication claim is made from
-T1a/T1b0.
+T1b1a is implemented behind `ADAMAS_SEMANTIC_COMPILE`. Recursive parsing now
+uses one compile-scoped `AstArena`; each unit records a global parsed range and
+receives a lightweight source view after the final parsed limit is known. The
+semantic aggregate consumes the original arena, roots, and diagnostics without
+the diagnostic shadow reparse. Candidate AST-cache load/save is disabled until
+a typed relocation contract exists; the legacy per-file route and
+`ADAMAS_SEMANTIC_SHADOW` keep their prior parse/build topology, while their
+aggregates receive the same explicit pool-lifetime correction. Parsed IDs and
+embedded child IDs are globally unique, per-unit source provenance is
+range-owned, and generated IDs appended through a canonical view are globally
+allocated and view-registered. ID-aware view access rejects generated IDs that
+are not registered on that view. `AstArena` and canonical views lazily retain
+every parser `StringPool` written into them; VirtualArena/PageArena parser-pool
+ownership is outside this slice. Source retention alone does not own interned
+Strings referenced by raw AST slices.
+
+T1b1a evidence is bounded but green: focused canonical-owner 8/0, targeted
+semantic/HIR/CLI 456/0, full semantic 958/0, host build, candidate cross-file
+and arithmetic no-prelude compiles, and legacy no-prelude `puts 7`. Candidate
+and parent full-prelude semantic compiles both stop at the existing
+generated-macro resolution family with 140 diagnostics. To that same failing
+boundary, one matched measurement is 1628.6 ms and 118,603,776-byte peak RSS
+for the candidate versus 2460.4 ms and 178,176,000 bytes for the parent. The
+candidate retains 800 more parsed inactive/skipped nodes; active roots and the
+other semantic counters match. This is useful evidence for removing the
+duplicate parse, not a stable benchmark, complete full-prelude parity, a
+fresh-s2 result, or the <=180-second B4-F certificate. Scoped adversarial
+verdict is `ROBUST` for the initial canonical parsed graph and `VULNERABLE` for
+full T1b1: a bare `ExprId` from an independent macro/reparse arena can collide
+with a canonical numeric ID, and legacy HIR helpers still contain raw
+size/span/full-node recovery.
+
+Full T1b remains `MEASURED_RED`. The bounded same-target guard still observes
+two source calls but one legacy MAT transaction/completion, two MAT emit rows,
+and zero `t1_resolution_terminal_v1` rows. The next slice is T1b1b: owner-tagged
+generated/reparse transport plus removal of raw HIR owner recovery. Only then
+may T1b2 add production attachment plus the materialization/body/emission
+terminal and exactly one
+typed consumer, with no method-name or materialized-name join. Full T1,
+named/default/splat forwarding equivalence, the explosion ledger, generated
+provenance beyond the admitted owner rules, full-prelude semantic parity, and
+B4-F <=180 seconds remain open. No body-deduplication or fresh-s2 speed claim is
+made from T1a/T1b0/T1b1a.
 
 SEALED-CURRENT STATS-ON LOCALIZATION (diagnostic only): from the disposable
 worktree, the only compiler instrumentation flag was `ADAMAS_PHASE_STATS=1`:
