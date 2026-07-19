@@ -2812,16 +2812,6 @@ module Adamas
           log_codepath_status("cli.metrics", "phase0_metrics", "not_taken", "CLI")
         end
 
-        # Phase 1: identity dry-run stats (side-channel, no behavior change)
-        if BootstrapEnv.enabled?("ADAMAS_IDENTITY_DRY_RUN")
-          log_codepath_status("cli.metrics", "identity_dry_run", "taken", "CLI")
-          if tracker = hir_converter.identity_tracker
-            tracker.dump(STDERR)
-          end
-        else
-          log_codepath_status("cli.metrics", "identity_dry_run", "not_taken", "CLI")
-        end
-
         if options.stats
           hir_details = [] of String
           if options.verbose

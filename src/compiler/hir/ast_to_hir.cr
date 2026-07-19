@@ -10,7 +10,7 @@ require "./debug_hooks"
 require "./memory_strategy"
 require "../layout_probe"
 require "../frontend/ast"
-require "../semantic/identity/dry_run_tracker"
+require "../semantic/identity/def_identity"
 require "../mir/mir"
 require "../../runtime"
 require "../semantic/macro_expander"
@@ -4842,9 +4842,6 @@ module Adamas::HIR
     # Misses (-1) are not cached.
     @phase0_body_infer_expr_index_cache : Hash(Tuple(UInt64, Phase0BodyInferLookasideKey), Int32) = {} of Tuple(UInt64, Phase0BodyInferLookasideKey) => Int32
 
-    # Phase 1: Identity dry-run tracker (side-channel, no behavior change)
-    getter identity_tracker : Adamas::Compiler::Semantic::IdentityDryRunTracker?
-
     # Tracks nesting depth of force_lower_function_for_return_type to prevent
     # unbounded recursion when inferring return types triggers more return type inferences.
     @force_lower_return_type_depth : Int32 = 0
@@ -6487,10 +6484,6 @@ module Adamas::HIR
       @suppress_force_lower_return_type_depth = 0
       @force_lower_yield_free_only_depth = 0
       @defer_body_return_inference = false
-      # Phase 1: identity dry-run tracker
-      if ::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_IDENTITY_DRY_RUN") == "1"
-        @identity_tracker = Adamas::Compiler::Semantic::IdentityDryRunTracker.new
-      end
       # --- End: explicit init for ALL remaining inline-default ivars ---
     end
 
@@ -21468,49 +21461,13 @@ module Adamas::HIR
       # caller-local DefNode heap identity.
       body_infer_identity : Adamas::Compiler::Semantic::DefIdentity? = nil
       phase0_metrics_enabled = env_has?("ADAMAS_PHASE0_METRICS")
-      if phase0_metrics_enabled || @identity_tracker
+      if phase0_metrics_enabled
         body_infer_identity = canonical_def_identity_for_body_infer(node, resolved_arena, node_expr_id)
         if phase0_metrics_enabled && body_infer_identity
           @phase0_body_infer_counts[body_infer_identity] = (@phase0_body_infer_counts[body_infer_identity]? || 0) + 1
         end
       end
 
-      # Phase 1.5: identity dry-run — AFTER final arena resolution so the key
-      # uses the same canonical def identity that the actual body-walk metric uses.
-      if tracker = @identity_tracker
-        recv_type = self_type_name ? tracker.intern_type_name(self_type_name) : nil
-
-        # Intern parameter type annotations for arg separation
-        arg_sem_types = [] of Adamas::Compiler::Semantic::SemanticTypeId
-        block_sem_type = nil
-        if params = node.params
-          params.each do |param|
-            if param.is_block
-              if ann = param.type_annotation
-                ann_str = safe_slice_to_string(ann)
-                block_sem_type = tracker.intern_type_name(ann_str) if ann_str
-              end
-            else
-              if ann = param.type_annotation
-                ann_str = safe_slice_to_string(ann)
-                arg_sem_types << tracker.intern_type_name(ann_str || "?")
-              else
-                arg_sem_types << Adamas::Compiler::Semantic::SemanticTypeId::UNKNOWN
-              end
-            end
-          end
-        end
-
-        if def_id = body_infer_identity
-          key = Adamas::Compiler::Semantic::DefInstanceKey.new(
-            def_identity: def_id,
-            receiver_type: recv_type,
-            arg_types: arg_sem_types,
-            block_type: block_sem_type,
-          )
-          tracker.record_canonical(key)
-        end
-      end
       extra_type_params = {} of String => String
       if self_type_name
         full_name ||= "#{self_type_name}##{method_name}"

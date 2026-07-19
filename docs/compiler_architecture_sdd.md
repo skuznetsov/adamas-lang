@@ -153,6 +153,15 @@ parity verdict. T1 remains **MISSING** because HIR `TypeRef`/name shape is not
 semantic identity, and B4-F (<=180 seconds) remains red/open with no speed
 claim.
 
+The same-source subtractive candidate A/B is structural-only evidence: the
+candidate growth was **599 -> 1529 -> 7306 -> 19044 -> 27994**, versus the
+control **604 -> 1535 -> 7422 -> 19238 -> 28234**; candidate binary delta was
+**-132,544 bytes** (smaller), and both runs exited 143 with no `s2` and no stack
+overflow. Candidate wall time was **182.69s**. These observations do not prove
+speedup, do not satisfy the fresh <=180-second B4-F gate, and do not admit T1;
+the production semantic callsite producer and downstream `resolution_id`
+correlation remain absent.
+
 Pivot: do not add another large in-process callsite owner or new `AstToHir`
 ivars. Reuse the existing materialization ledger and semantic
 `DefIdentity`/`DefInstanceKey` only as a later join input; it lacks
@@ -193,15 +202,26 @@ therefore requires a second versioned downstream record/enrichment carrying
 that ID through inline, materialization, body, and emission-terminal states;
 until it exists, the external join is pending.
 
-Current blockers are explicit and remain red:
+Current blockers and candidate-only substrate status are explicit:
 
-- there is no actual semantic callsite type interner that can authoritatively
-  populate the receiver and argument semantic type IDs;
-- `DefInstanceKey` named arguments are still `String`, not `NameId`;
-- `SemanticTypeKey` currently retains mutable caller-owned arrays for generic
-  and tuple forms, violating hash-key immutability and lifetime ownership;
-- `IdentityDryRunTracker` is a definition-annotation/body-infer proxy and is
-  in-process, not the semantic callsite producer.
+- The isolated candidate now owns named-argument identity with `NameId` and
+  owns generic/tuple/named sequences through immutable value carriers. `NameId`
+  and `SemanticTypeId` are 16B handles whose equality/hash authority is the
+  `(owner interner reference, ordinal)` pair; each owner validates issued
+  ordinals, and equal ordinals from different tables are unequal. No separate
+  `IdentityScope` token is used. This closes those substrate blockers only in
+  the candidate; it is not production callsite evidence or a promoted
+  consumer, and residual performance measurement is still required.
+- There is still no production semantic callsite type interner that can
+  authoritatively populate receiver and argument semantic type IDs, no
+  production `resolution_id` producer, and no downstream correlation through
+  inline, materialization, body, and emission-terminal states.
+- `IdentityDryRunTracker` and its source file are removed from the isolated
+  candidate. The retired path was a definition-annotation/body-infer proxy,
+  not the semantic callsite producer; its historical counts are archival only.
+- Fresh current-source B4-F remains **MEASURED RED** at the <=180-second
+  target; no fresh `s2` semantic smoke or T1 admission follows from the
+  candidate substrate.
 
 The T1 guard is **availability/current-red only**: it can show whether the
 current source/configuration emitted a row or exposed the current failing

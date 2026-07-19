@@ -16949,3 +16949,21 @@ taxonomy-based. A future nonzero StaticArray or a malformed/non-carrier
 Struct/Tuple descriptor could be over-included; hypothetical StaticArray
 flattening remains unsupported. No produced-stage bootstrap effect is proven.
 {F/G/R: 0.97/0.51/0.95} [backend carrier gate verified; bootstrap effect open]
+
+[LM-ARCH-T1-IDENTITY-DRY-RUN-RETIRED|current-frontier 2026-07-18]:
+The historical `IdentityDryRunTracker` cleanup path is superseded: the
+isolated candidate removed the definition-annotation/body-infer proxy, and the
+active selector now supports only `phase0_metrics` and
+`fused_parallel_requested`. The candidate also closes named-argument `String`
+and mutable generic/tuple sequence substrate issues with `NameId` and
+immutable value carriers. `NameId` and `SemanticTypeId` are current 16B
+handles keyed by `(owner interner reference, ordinal)`; owners validate issued
+ordinals, equal ordinals from different tables are unequal, and no separate
+`IdentityScope` token exists. Residual performance measurement is required,
+so this is not a speed claim. No production semantic callsite producer or
+downstream `resolution_id` correlation exists. Same-source subtractive A/B is
+structural-only: candidate growth **599 -> 1529 -> 7306 -> 19044 -> 27994**
+versus control **604 -> 1535 -> 7422 -> 19238 -> 28234**, candidate binary delta
+**-132,544 bytes** (smaller), both exit 143 with no `s2` and no stack overflow,
+candidate wall **182.69s**. This is not speed or T1 admission evidence;
+fresh B4-F <=180s remains red.

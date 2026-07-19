@@ -3,8 +3,8 @@ set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
   echo "usage: $0 <compiler> [source.cr [compiler-args...]]" >&2
-  echo "env: TIMEOUT=180 MEM_MB=4096 SELECTED_CLEANUP_PATH=identity_dry_run LIST_RUNTIME_PATHS=0 REQUIRE_DELETE_READY=0" >&2
-  echo "supported SELECTED_CLEANUP_PATH values: identity_dry_run, phase0_metrics, fused_parallel_requested" >&2
+  echo "env: TIMEOUT=180 MEM_MB=4096 SELECTED_CLEANUP_PATH=phase0_metrics LIST_RUNTIME_PATHS=0 REQUIRE_DELETE_READY=0" >&2
+  echo "supported SELECTED_CLEANUP_PATH values: phase0_metrics, fused_parallel_requested" >&2
   exit 2
 fi
 
@@ -14,7 +14,7 @@ shift
 
 TIMEOUT="${TIMEOUT:-180}"
 MEM_MB="${MEM_MB:-4096}"
-SELECTED_CLEANUP_PATH="${SELECTED_CLEANUP_PATH:-identity_dry_run}"
+SELECTED_CLEANUP_PATH="${SELECTED_CLEANUP_PATH:-phase0_metrics}"
 LIST_RUNTIME_PATHS="${LIST_RUNTIME_PATHS:-0}"
 REQUIRE_DELETE_READY="${REQUIRE_DELETE_READY:-0}"
 mkdir -p "$ROOT_DIR/tmp"
@@ -47,9 +47,6 @@ fi
 
 selected_env_name() {
   case "$SELECTED_CLEANUP_PATH" in
-    identity_dry_run)
-      echo "ADAMAS_IDENTITY_DRY_RUN"
-      ;;
     phase0_metrics)
       echo "ADAMAS_PHASE0_METRICS"
       ;;
@@ -67,7 +64,7 @@ SELECTED_ENV="$(selected_env_name)"
 
 selected_expected_category() {
   case "$SELECTED_CLEANUP_PATH" in
-    identity_dry_run|phase0_metrics)
+    phase0_metrics)
       echo "cli.metrics"
       ;;
     fused_parallel_requested)
@@ -82,7 +79,7 @@ selected_expected_category() {
 
 selected_cleanup_status() {
   case "$SELECTED_CLEANUP_PATH" in
-    identity_dry_run|phase0_metrics)
+    phase0_metrics)
       echo "debug_only"
       ;;
     fused_parallel_requested)
@@ -97,7 +94,7 @@ selected_cleanup_status() {
 
 selected_cleanup_action() {
   case "$SELECTED_CLEANUP_PATH" in
-    identity_dry_run|phase0_metrics)
+    phase0_metrics)
       echo "classify_only"
       ;;
     fused_parallel_requested)

@@ -12,29 +12,43 @@
 # - No HIR::TypeRef in the key
 # - No object_id as identity (use DefIdentity)
 # - Keyed entirely by semantic identity
+# - NameId values are table/session-local; keys and caches must not cross
+#   compile-session boundaries
 
 require "./semantic_type_id"
 require "./def_identity"
+require "./name_id"
 
 module Adamas::Compiler::Semantic
   struct DefInstanceKey
     getter def_identity : DefIdentity
     getter receiver_type : SemanticTypeId?
-    getter arg_types : Array(SemanticTypeId)
+    getter arg_types : SemanticTypeComponents
     getter block_type : SemanticTypeId?
-    getter named_arg_types : Array({String, SemanticTypeId})?
+    getter named_arg_types : ImmutableValueArray({NameId, SemanticTypeId})?
 
     def initialize(
       @def_identity : DefIdentity,
       @receiver_type : SemanticTypeId? = nil,
       arg_types : Array(SemanticTypeId) = [] of SemanticTypeId,
       @block_type : SemanticTypeId? = nil,
-      named_arg_types : Array({String, SemanticTypeId})? = nil
+      named_arg_types : Array({NameId, SemanticTypeId})? = nil,
     )
-      # Defensive copy: keys must be immutable once constructed.
-      # Caller-owned arrays could be mutated later, invalidating hash/equality.
-      @arg_types = arg_types.dup
-      @named_arg_types = named_arg_types.try(&.dup)
+      @arg_types = SemanticTypeComponents.new(arg_types)
+      @named_arg_types = named_arg_types.try do |values|
+        # The semantic cache key uses canonical NameId order. Source argument
+        # order remains available to the resolver before this key is built.
+        sorted = ImmutableValueArray({NameId, SemanticTypeId}).sorted_copy(values) { |entry| entry[0].id }
+        index = 1
+        while index < sorted.size
+          if sorted[index - 1][0] == sorted[index][0]
+            raise ArgumentError.new("duplicate named argument NameId=#{sorted[index][0].id}")
+          end
+          index += 1
+        end
+        sorted
+      end
+      validate_identity_scopes!
     end
 
     def ==(other : DefInstanceKey) : Bool
@@ -60,12 +74,65 @@ module Adamas::Compiler::Semantic
         io << " recv=" << recv
       end
       unless @arg_types.empty?
-        io << " args=[" << @arg_types.join(", ") << "]"
+        io << " args=[" << @arg_types.map(&.to_s).join(", ") << "]"
       end
       if bt = @block_type
         io << " block=" << bt
       end
+      if named = @named_arg_types
+        unless named.empty?
+          io << " named=[" << named.map { |entry| "#{entry[0]}:#{entry[1]}" }.join(", ") << "]"
+        end
+      end
       io << ")"
+    end
+
+    private def validate_identity_scopes! : Nil
+      semantic_scope : SemanticTypeId? = nil
+      if receiver = @receiver_type
+        semantic_scope = validate_semantic_type!(receiver, semantic_scope)
+      end
+      @arg_types.each do |type|
+        semantic_scope = validate_semantic_type!(type, semantic_scope)
+      end
+      if block = @block_type
+        semantic_scope = validate_semantic_type!(block, semantic_scope)
+      end
+
+      name_scope : NameId? = nil
+      if named = @named_arg_types
+        named.each do |name, type|
+          unless name.canonical?
+            raise ArgumentError.new("raw or UNKNOWN NameId cannot enter DefInstanceKey")
+          end
+          if previous = name_scope
+            unless previous.same_owner?(name)
+              raise ArgumentError.new("mixed NameId scopes cannot enter DefInstanceKey")
+            end
+          else
+            name_scope = name
+          end
+
+          unless type.accepts_name?(name)
+            raise ArgumentError.new("NameId is not owned by the SemanticTypeInternTable for this key")
+          end
+          semantic_scope = validate_semantic_type!(type, semantic_scope)
+        end
+      end
+    end
+
+    private def validate_semantic_type!(type : SemanticTypeId, scope : SemanticTypeId?) : SemanticTypeId
+      unless type.canonical?
+        raise ArgumentError.new("raw or UNKNOWN SemanticTypeId cannot enter DefInstanceKey")
+      end
+      if previous = scope
+        unless previous.same_owner?(type)
+          raise ArgumentError.new("mixed SemanticTypeId scopes cannot enter DefInstanceKey")
+        end
+        scope
+      else
+        type
+      end
     end
   end
 end

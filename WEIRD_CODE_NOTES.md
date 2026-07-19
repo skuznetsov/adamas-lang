@@ -283,3 +283,18 @@ be verified anchors, not broad opinions.
   exposed generated-stage2 null-load crashes. Keep the central guard, and route
   future block-return precision through demanded callsite/lowering logic rather
   than broad registration-time AST walks.
+
+## 2026-07-18 supersession — identity dry-run note is historical
+
+The earlier note that gated canonical body-inference diagnostics on
+`ADAMAS_IDENTITY_DRY_RUN` described the retired `IdentityDryRunTracker` proxy;
+it is no longer an active path and the cleanup selector no longer exports or
+asserts that environment. The isolated candidate instead owns names with
+`NameId` and generic/tuple/named sequences with immutable value carriers.
+`NameId` and `SemanticTypeId` are current 16B handles keyed by `(owner interner
+reference, ordinal)`; owners validate issued ordinals, equal ordinals from
+different tables are unequal, and no separate `IdentityScope` token exists.
+Residual performance measurement is required, so this is not a speed claim.
+This does not provide a production semantic callsite producer or downstream
+`resolution_id` correlation, and fresh B4-F remains red at <=180s. Preserve the
+older note as historical evidence, not as a current cleanup instruction.

@@ -10599,3 +10599,20 @@ A/B via `--no-ltp` / `--no-mir-opt` / `--no-llvm-opt`; only then optimize:
 
 Healthy as-is (do not touch without a profile): hint-gated passes, DCE-2 only
 after DCE-1 progress, `optimize_with_potential` monotone-potential break.
+
+### 2026-07-18 supersession — retired identity dry-run cleanup path
+
+Historical entries above that select `identity_dry_run` describe the retired
+`IdentityDryRunTracker` definition-annotation/body-infer proxy. The candidate
+removed that tracker; the active cleanup selector now defaults to
+`phase0_metrics` and supports only `phase0_metrics` and
+`fused_parallel_requested`. The isolated candidate substrate closes the
+named-argument `String` and mutable generic/tuple sequence issues with
+`NameId` and immutable value carriers. `NameId` and `SemanticTypeId` are
+current 16B handles keyed by `(owner interner reference, ordinal)`; owners
+validate issued ordinals, equal ordinals from different tables are unequal,
+and no separate `IdentityScope` token exists. Residual performance measurement
+is required, so this is not a speed claim. No production semantic callsite
+producer or downstream `resolution_id` correlation exists. Fresh B4-F remains
+red at the <=180-second target; do not read the candidate as T1 admission
+evidence.

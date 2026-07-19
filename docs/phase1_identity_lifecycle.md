@@ -2,13 +2,22 @@
 
 ## 1. SemanticTypeId Lifecycle
 
-**Creation:** `SemanticTypeInternTable.intern(key)` assigns a unique `UInt32` id.
+**Creation:** `SemanticTypeInternTable.intern(key)` assigns an ordinal owned by
+that table.
 
-**Stability scope:** One compilation run. Ids are NOT stable across runs
-(the intern table starts at 0 each time).
+**Representation and authority:** The current candidate represents each
+`SemanticTypeId` as a 16B handle containing the owner interner reference and a
+`UInt32` ordinal. Equality and hashing use the pair
+`(owner interner reference, ordinal)`; the owner validates that the ordinal was
+issued before the handle is canonical. The same ordinal from two interner
+instances is therefore unequal. `NameId` uses the same 16B representation and
+authority with `NameInternTable` as its owner. No separate `IdentityScope` token
+participates.
 
-**Equality contract:** Two `SemanticTypeId` values are equal iff their `.id` matches.
-Since ids are assigned by the intern table (not hashed), there are zero collisions.
+**Stability scope:** One compilation run. Ordinals are NOT stable across runs
+(the interner starts at 0 each time). The 16B size is a current representation
+fact only; residual performance/memory measurement is required and no speed
+claim follows.
 
 **Invalidation:** SemanticTypeId values become invalid when the `SemanticTypeInternTable`
 that created them is discarded (end of compilation).
@@ -39,13 +48,17 @@ called with different argument types produces different keys.
 **Components:**
 - `def_identity`: which syntactic def
 - `receiver_type`: semantic type of receiver (nil for top-level)
-- `arg_types`: ordered list of argument semantic types
+- `arg_types`: ordered list of argument semantic types, held by an owned
+  immutable value carrier
 - `block_type`: semantic type of block argument (if any)
-- `named_arg_types`: ordered list of `{name, type}` for named arguments
+- `named_arg_types`: canonical ordered list of `{NameId, SemanticTypeId}`
+  pairs; source spellings remain diagnostic reverse-lookup data only
 
-**Equality contract:** All components must match. Arrays are defensively copied
-in the constructor, so mutation of the original array after key creation does
-not affect the key.
+**Equality contract:** All components must match. Generic/tuple components and
+named-argument pairs are copied into immutable value carriers, so mutation of
+caller-owned arrays after key creation cannot change equality or hashing. The
+`SemanticTypeId` and `NameId` components compare by their owner-interner
+reference plus ordinal; equal ordinals from different tables are unequal.
 
 **Cache semantics (future Phase 4):**
 - First encounter with a DefInstanceKey → analyze body, cache result
@@ -70,21 +83,30 @@ that needs an HIR representation gets registered exactly once.
 
 **Invalidation:** Same as SemanticTypeInternTable — valid for one compilation run.
 
-## 5. DryRunTracker Lifecycle
+## 5. IdentityDryRunTracker Lifecycle — RETIRED / REFUTED
 
-**Purpose:** Observation-only side channel. Counts how many body inferences
-would be cache hits if a DefInstanceKey cache existed.
+As of 2026-07-18, `IdentityDryRunTracker` and
+`src/compiler/semantic/identity/dry_run_tracker.cr` are removed from the
+isolated candidate. The old tracker was a definition-annotation/body-infer
+proxy: it observed declarations while inferring bodies, not the semantic
+callsite resolution that chooses receiver, argument, block, and named types.
+It therefore could not establish `ResolutionId` or typed identity continuity.
 
-**Behavior guarantee:** The tracker changes NO compilation behavior.
-It only observes and reports statistics.
+`ADAMAS_IDENTITY_DRY_RUN` and the `[IDENTITY_DRY_RUN]` output are retired
+interfaces, not supported activation or evidence paths. Historical dry-run
+counts below are archival measurements from the pre-removal experiment only;
+they are not current behavior, admission evidence, or a cache-success claim.
 
-**Activation:** `ADAMAS_IDENTITY_DRY_RUN=1` environment variable.
-
-**Output:** After compilation, dumps to STDERR:
-```
-[IDENTITY_DRY_RUN] lookups=N hits=N misses=N hit_rate=N%
-[IDENTITY_DRY_RUN] unique_keys=N duplicate_keys=N interned_types=N
-```
+The replacement substrate is compile-session scoped and owner-scoped:
+`NameId` and `SemanticTypeId` are current 16B handles whose equality/hash
+authority is `(owner interner reference, ordinal)`, with owner validation of
+issued ordinals; no separate `IdentityScope` token is used. `NameId` owns
+canonical name ordinals, `SemanticTypeId` owns interned semantic type ordinals,
+and `DefInstanceKey` combines those with `DefIdentity` and immutable value
+carriers. The 16B representation still needs residual performance/memory
+measurement and is not a speed claim. This substrate is a prerequisite for a
+future producer record; it is not itself a semantic callsite producer or a
+promoted T1 consumer.
 
 ## 6. Boundary: SemanticTypeId vs HIR TypeRef
 
@@ -96,7 +118,10 @@ HIR TypeRef lives in HIR Module, functions, instructions.
 **Never cross back:** HIR TypeRef must not appear in DefInstanceKey or
 any semantic cache key. The adapter's reverse lookup is for diagnostics only.
 
-## 7. Dry-Run Results (hello world)
+## 7. Historical Dry-Run Results (archival; not current)
+
+The following numbers document the retired tracker experiment and must not be
+read as evidence that the current candidate still runs this path.
 
 **Dual-path keying:**
 

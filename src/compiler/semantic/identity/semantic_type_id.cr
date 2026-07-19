@@ -1,29 +1,62 @@
 # Canonical semantic type identity for V2 compile path.
 #
 # SemanticTypeId is a table-backed interned identifier. Each unique semantic
-# type gets a unique UInt32 id from the intern table. Two types with the
-# same structure always get the same id. Hash collisions are impossible
-# because identity is the interned UInt32, not a hash of the structure.
+# type gets a unique UInt32 id from one SemanticTypeInternTable. Two types with
+# the same structure always get the same id within that table. IDs are
+# compile-session-local and must not cross table or cache boundaries.
 #
 # This is the V2 equivalent of original Crystal's type object identity.
 # It is used in DefInstanceKey for semantic caching and must NOT leak
 # into HIR TypeRef or mangled names.
 
+require "./name_id"
+
 module Adamas::Compiler::Semantic
-  # Canonical semantic type identity — interned, collision-free.
+  # Canonical semantic type identity produced by SemanticTypeInternTable.
+  # The raw initializer is for tests/transport only; its ordinal is never an
+  # authority for any SemanticTypeInternTable.
   struct SemanticTypeId
     getter id : UInt32
+    @owner : SemanticTypeInternTable?
 
     def initialize(@id : UInt32)
+      @owner = nil
+    end
+
+    # Table-backed constructor. A caller may duplicate an issued ID, but an
+    # unissued ordinal remains non-canonical because the owner validates it.
+    def initialize(@owner : SemanticTypeInternTable?, @id : UInt32)
     end
 
     def ==(other : SemanticTypeId) : Bool
-      @id == other.id
+      @id == other.id && @owner.same?(other.@owner)
     end
 
     def hash(hasher)
-      hasher = @id.hash(hasher)
-      hasher
+      hasher = @owner.hash(hasher)
+      @id.hash(hasher)
+    end
+
+    def owned_by?(owner : SemanticTypeInternTable) : Bool
+      !!(@owner && @owner.not_nil!.same?(owner) && owner.issued_ordinal?(@id))
+    end
+
+    def unknown? : Bool
+      @owner.nil? && @id == UInt32::MAX
+    end
+
+    def canonical? : Bool
+      !!(@owner && @owner.not_nil!.issued_ordinal?(@id))
+    end
+
+    def same_owner?(other : SemanticTypeId) : Bool
+      @owner.same?(other.@owner)
+    end
+
+    # Named arguments must come from the NameInternTable attached to the
+    # SemanticTypeInternTable that issued this type ID.
+    def accepts_name?(name : NameId) : Bool
+      !!(@owner && canonical? && @owner.not_nil!.accepts_name?(name))
     end
 
     def to_s(io : IO) : Nil
@@ -31,15 +64,79 @@ module Adamas::Compiler::Semantic
     end
 
     # Sentinel for unresolved/unknown types
-    UNKNOWN = new(UInt32::MAX)
+    UNKNOWN = new(nil, UInt32::MAX)
   end
 
-  # Structural key for the intern table. NOT the identity itself —
-  # the identity is the SemanticTypeId assigned by the table.
-  record SemanticTypeKey,
-    kind : TypeKind,
-    name : String,
-    type_params : Array(SemanticTypeId)
+  # Shallow immutable-value carrier for an owned sequence used in a semantic
+  # identity key. T must itself have immutable value semantics (for example,
+  # SemanticTypeId or a tuple of IDs); this carrier does not deep-freeze T.
+  # The backing Array is copied at construction and never exposed. Methods
+  # returning a collection return a fresh copy, so a key remains safe as a
+  # Hash key for its whole lifetime.
+  struct ImmutableValueArray(T)
+    @values : Array(T)
+
+    def initialize(values : Array(T))
+      @values = values.dup
+    end
+
+    # Sorts a caller-owned array into a fresh backing array before transferring
+    # it to the carrier. The input is never borrowed, even though the private
+    # constructor can adopt the internally-created sorted result.
+    def self.sorted_copy(values : Array(T), &block : T -> U) : self forall U
+      new(values.sort_by { |value| yield value }, true)
+    end
+
+    private def initialize(@values : Array(T), _owned : Bool)
+    end
+
+    def [](index : Int) : T
+      @values[index]
+    end
+
+    def each(&block : T ->) : Nil
+      @values.each { |value| yield value }
+    end
+
+    def map(&block : T -> U) : Array(U) forall U
+      @values.map { |value| yield value }
+    end
+
+    def empty? : Bool
+      @values.empty?
+    end
+
+    def size : Int32
+      @values.size
+    end
+
+    def first : T
+      @values.first
+    end
+
+    def last : T
+      @values.last
+    end
+
+    def to_a : Array(T)
+      @values.dup
+    end
+
+    def ==(other : ImmutableValueArray(T)) : Bool
+      return false unless @values.size == other.size
+
+      index = 0
+      while index < @values.size
+        return false unless @values[index] == other[index]
+        index += 1
+      end
+      true
+    end
+
+    def hash(hasher)
+      @values.hash(hasher)
+    end
+  end
 
   enum TypeKind : UInt8
     Primitive
@@ -60,30 +157,118 @@ module Adamas::Compiler::Semantic
     Lib
   end
 
+  alias SemanticTypeComponents = ImmutableValueArray(SemanticTypeId)
+
+  # Structural key for the intern table. NOT the identity itself —
+  # the identity is the SemanticTypeId assigned by the table.
+  # NameId is table-local; the raw spelling never participates in Hash
+  # equality or hashing.
+  struct SemanticTypeKey
+    getter kind : TypeKind
+    getter name_id : NameId
+    getter type_params : SemanticTypeComponents
+
+    # Raw constructor accepts a NameId from the same compile-session name
+    # table as the owning SemanticTypeInternTable. Cross-table use is invalid.
+    def initialize(@kind : TypeKind, @name_id : NameId, type_params : Array(SemanticTypeId))
+      @type_params = SemanticTypeComponents.new(type_params)
+    end
+
+    def initialize(@kind : TypeKind, @name_id : NameId, @type_params : SemanticTypeComponents)
+    end
+
+    def ==(other : SemanticTypeKey) : Bool
+      @kind == other.kind && @name_id == other.name_id && @type_params == other.type_params
+    end
+
+    def hash(hasher)
+      hasher = @kind.hash(hasher)
+      hasher = @name_id.hash(hasher)
+      @type_params.hash(hasher)
+    end
+  end
+
   # Intern table: StructuralKey → unique SemanticTypeId.
-  # Single source of truth for type identity.
+  # Owns one NameInternTable for the whole compile session. IDs, keys, and
+  # caches produced here must not be mixed with another table instance.
   class SemanticTypeInternTable
     @table : ::Hash(SemanticTypeKey, SemanticTypeId)
     @reverse : ::Hash(SemanticTypeId, SemanticTypeKey)
+    @names : NameInternTable
     @next_id : UInt32 = 0
 
-    def initialize
+    def initialize(@names : NameInternTable = NameInternTable.new)
       @table = {} of SemanticTypeKey => SemanticTypeId
       @reverse = {} of SemanticTypeId => SemanticTypeKey
     end
 
+    # Returns a diagnostic copy; the NameInternTable's stored spelling never
+    # escapes its ownership boundary.
+    def name_for(id : NameId) : String?
+      @names.lookup(id)
+    end
+
     def intern(key : SemanticTypeKey) : SemanticTypeId
+      validate_key!(key)
       if existing = @table[key]?
         return existing
       end
-      id = SemanticTypeId.new(@next_id)
-      @next_id += 1
+      id = allocate_id
       @table[key] = id
       @reverse[id] = key
       id
     end
 
+    private def allocate_id : SemanticTypeId
+      raise "SemanticTypeInternTable exhausted: SemanticTypeId::UNKNOWN is reserved" if @next_id == UInt32::MAX
+
+      id = SemanticTypeId.new(self, @next_id)
+      @next_id += 1
+      id
+    end
+
+    def issued_ordinal?(id : UInt32) : Bool
+      id != UInt32::MAX && id < @reverse.size.to_u32
+    end
+
+    def accepts_name?(name : NameId) : Bool
+      @names.owns?(name)
+    end
+
+    private def validate_key!(key : SemanticTypeKey) : Nil
+      if key.name_id.unknown?
+        unless unnamed_kind?(key.kind)
+          raise ArgumentError.new("named semantic type #{key.kind} requires an owned NameId")
+        end
+      elsif unnamed_kind?(key.kind)
+        raise ArgumentError.new("unnamed semantic type #{key.kind} must use NameId::UNKNOWN")
+      elsif !@names.owns?(key.name_id)
+        raise ArgumentError.new("foreign NameId cannot be admitted to this semantic type table")
+      end
+
+      key.type_params.each do |component|
+        unless component.owned_by?(self)
+          raise ArgumentError.new("foreign or raw SemanticTypeId component cannot be admitted")
+        end
+      end
+    end
+
+    private def unnamed_kind?(kind : TypeKind) : Bool
+      case kind
+      when .union?, .tuple?, .proc?, .pointer?
+        true
+      else
+        false
+      end
+    end
+
+    private def intern_named(kind : TypeKind, spelling : String, type_params : Array(SemanticTypeId)) : SemanticTypeId
+      name_id = @names.intern(spelling)
+      intern(SemanticTypeKey.new(kind, name_id, type_params))
+    end
+
     def lookup(id : SemanticTypeId) : SemanticTypeKey?
+      return nil unless id.owned_by?(self)
       @reverse[id]?
     end
 
@@ -94,52 +279,54 @@ module Adamas::Compiler::Semantic
     # ── Convenience constructors ──
 
     def primitive(name : String) : SemanticTypeId
-      intern(SemanticTypeKey.new(TypeKind::Primitive, name, [] of SemanticTypeId))
+      intern_named(TypeKind::Primitive, name, [] of SemanticTypeId)
     end
 
     def named(name : String, kind : TypeKind) : SemanticTypeId
-      intern(SemanticTypeKey.new(kind, name, [] of SemanticTypeId))
+      intern_named(kind, name, [] of SemanticTypeId)
     end
 
     def generic(base_name : String, kind : TypeKind, args : ::Array(SemanticTypeId)) : SemanticTypeId
-      intern(SemanticTypeKey.new(kind, base_name, args))
+      intern_named(kind, base_name, args)
     end
 
     def union(variants : ::Array(SemanticTypeId)) : SemanticTypeId
       # Order-independent: sorted by id so Union(A|B) == Union(B|A)
-      sorted = variants.sort_by(&.id)
-      intern(SemanticTypeKey.new(TypeKind::Union, "", sorted))
+      components = SemanticTypeComponents.sorted_copy(variants) { |id| id.id }
+      intern(SemanticTypeKey.new(TypeKind::Union, NameId::UNKNOWN, components))
     end
 
     def tuple(elements : ::Array(SemanticTypeId)) : SemanticTypeId
-      intern(SemanticTypeKey.new(TypeKind::Tuple, "", elements))
+      intern(SemanticTypeKey.new(TypeKind::Tuple, NameId::UNKNOWN, elements))
     end
 
     def proc_type(arg_types : ::Array(SemanticTypeId), return_type : SemanticTypeId) : SemanticTypeId
       params = arg_types + [return_type]
-      intern(SemanticTypeKey.new(TypeKind::Proc, "", params))
+      intern(SemanticTypeKey.new(TypeKind::Proc, NameId::UNKNOWN, params))
     end
 
     def pointer(element : SemanticTypeId) : SemanticTypeId
-      intern(SemanticTypeKey.new(TypeKind::Pointer, "", [element]))
+      intern(SemanticTypeKey.new(TypeKind::Pointer, NameId::UNKNOWN, [element]))
     end
 
     def static_array(element : SemanticTypeId, size_name : String) : SemanticTypeId
-      intern(SemanticTypeKey.new(TypeKind::StaticArray, size_name, [element]))
+      intern_named(TypeKind::StaticArray, size_name, [element])
     end
 
     # ── Normalized printable form ──
 
     def normalized_name(id : SemanticTypeId) : String
+      return "Unknown" unless id.owned_by?(self)
       key = @reverse[id]?
       return "Unknown" unless key
+      key_name = @names.lookup(key.name_id) || "Unknown"
 
       case key.kind
       when .primitive?, .class?, .struct?, .module?, .enum?, .lib?, .alias?, .array?, .hash?
         if key.type_params.empty?
-          key.name
+          key_name
         else
-          "#{key.name}(#{key.type_params.map { |p| normalized_name(p) }.join(", ")})"
+          "#{key_name}(#{key.type_params.map { |p| normalized_name(p) }.join(", ")})"
         end
       when .union?
         # Sort by printable name (not intern id) for stable display across runs
@@ -147,23 +334,23 @@ module Adamas::Compiler::Semantic
       when .tuple?
         "Tuple(#{key.type_params.map { |p| normalized_name(p) }.join(", ")})"
       when .named_tuple?
-        "NamedTuple(#{key.name})"
+        "NamedTuple(#{key_name})"
       when .proc?
         if key.type_params.empty?
           "Proc(Nil)"
         else
-          args = key.type_params[0...-1].map { |p| normalized_name(p) }
+          args = key.type_params.to_a[0...-1].map { |p| normalized_name(p) }
           ret = normalized_name(key.type_params.last)
           "Proc(#{args.join(", ")}, #{ret})"
         end
       when .pointer?
         "Pointer(#{normalized_name(key.type_params.first)})"
       when .static_array?
-        "StaticArray(#{normalized_name(key.type_params.first)}, #{key.name})"
+        "StaticArray(#{normalized_name(key.type_params.first)}, #{key_name})"
       when .generic?
-        "#{key.name}(#{key.type_params.map { |p| normalized_name(p) }.join(", ")})"
+        "#{key_name}(#{key.type_params.map { |p| normalized_name(p) }.join(", ")})"
       else
-        key.name
+        key_name
       end
     end
   end

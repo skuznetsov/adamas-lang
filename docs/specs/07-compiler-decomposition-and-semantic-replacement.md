@@ -276,15 +276,26 @@ therefore requires a second versioned downstream record/enrichment carrying
 that ID through inline, materialization, body, and emission-terminal states;
 until it exists, the external join is pending.
 
-Current blockers are explicit and remain red:
+Current blockers and candidate-only substrate status are explicit:
 
-- there is no actual semantic callsite type interner that can authoritatively
-  populate the receiver and argument semantic type IDs;
-- `DefInstanceKey` named arguments are still `String`, not `NameId`;
-- `SemanticTypeKey` currently retains mutable caller-owned arrays for generic
-  and tuple forms, violating hash-key immutability and lifetime ownership;
-- `IdentityDryRunTracker` is a definition-annotation/body-infer proxy and is
-  in-process, not the semantic callsite producer.
+- The isolated candidate now owns named-argument identity with `NameId` and
+  owns generic/tuple/named sequences through immutable value carriers. `NameId`
+  and `SemanticTypeId` are 16B handles whose equality/hash authority is the
+  `(owner interner reference, ordinal)` pair; each owner validates issued
+  ordinals, and equal ordinals from different tables are unequal. No separate
+  `IdentityScope` token is used. This closes those substrate blockers only in
+  the candidate; it is not production callsite evidence or a promoted
+  consumer, and residual performance measurement is still required.
+- There is still no production semantic callsite type interner that can
+  authoritatively populate receiver and argument semantic type IDs, no
+  production `resolution_id` producer, and no downstream correlation through
+  inline, materialization, body, and emission-terminal states.
+- `IdentityDryRunTracker` and its source file are removed from the isolated
+  candidate. The retired path was a definition-annotation/body-infer proxy,
+  not the semantic callsite producer; its historical counts are archival only.
+- Fresh current-source B4-F remains **MEASURED RED** at the <=180-second
+  target; no fresh `s2` semantic smoke or T1 admission follows from the
+  candidate substrate.
 
 The T1 guard is **availability/current-red only**: it can show whether the
 current source/configuration emitted a row or exposed the current failing
@@ -375,7 +386,7 @@ These are different programs and must not share a readiness label.
 | Existing asset/context | Reuse now | Rewrite now |
 |---|---|---|
 | `DefIdentity`, `SemanticTypeId`, `DefInstanceKey`, and `SemanticToHIRAdapter` in `src/compiler/semantic/identity/` | Extend these as the canonical identity substrate; add the missing `ResolutionId` beside them and keep the one-way HIR adapter. | Do not create parallel `*Key2`, duplicate type interners, or a second semantic-to-HIR bridge. |
-| `DefInstanceKey` named-argument component | Reuse through a compatibility adapter while its `String` names are canonicalized to `NameId`/typed argument-name IDs before candidate promotion. | Do not treat the current `Array({String, SemanticTypeId})` field as the final no-semantic-string contract. |
+| `DefInstanceKey` named-argument component | The isolated candidate now owns canonical `NameId` pairs through an immutable value carrier; each `NameId` is authoritative only as `(owner interner reference, ordinal)`, and production callsite plumbing/downstream correlation remain pending. | Do not treat isolated candidate handles as cross-run authority or as a promoted semantic producer. |
 | Current `AstToHir` maps, queues, and owner records | Keep as a legacy compatibility carrier behind facades and differential ledgers. | Do not remove queues or rewrite all lowerers in the first slice. |
 | `TypeInferenceEngine` (13,201 lines, 464 `def` lines) | Reuse as a leaf/legacy differential oracle where its result is already needed. | Do not promote the class unchanged as the new declaration, resolution, or body-cache authority; it must be decomposed behind the budgets below. |
 | Existing LLVM text/output path | Reuse output and ownership contracts while semantic facts are sealed. | Do not start with a backend rewrite or let backend code repair missing semantic facts. |
@@ -785,6 +796,16 @@ source A/B result and a real consumer is named.
 T1 is a guard-only, current-red diagnostic. It is not a global absence proof,
 an identity-continuity proof, or a performance measurement. The first slice
 must remain behavior-neutral and proceed in this order:
+
+The 2026-07-18 isolated candidate has completed only the substrate sub-step:
+`NameId` replaces named-argument strings and generic/tuple/named sequences are
+owned by immutable value carriers. `NameId` and `SemanticTypeId` are current
+16B handles keyed by `(owner interner reference, ordinal)`; owners validate
+issued ordinals, cross-table equal ordinals are unequal, and no separate
+`IdentityScope` token exists. Residual performance measurement is required;
+this is not a speed claim. No production semantic callsite producer,
+`resolution_id` handoff, or downstream correlation has been admitted; the
+fresh B4-F <=180-second frontier remains red.
 
 1. **Ownership and `NameId` invariant.** Seal one owner for canonical names,
    declaration identity, and callsite semantic types. Replace named-argument
