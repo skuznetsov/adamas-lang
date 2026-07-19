@@ -6404,7 +6404,7 @@ module Adamas
               elsif call_return_type == TypeRef::VOID && hir_call_return_type != TypeRef::VOID
                 call_return_type = hir_call_return_type
               end
-              return builder.call(exact_static_func.id, coerced_args, call_return_type, materialization_tx_id: materialization_tx_id, materialization_contract: materialization_contract)
+              return builder.call(exact_static_func.id, coerced_args, call_return_type, materialization_tx_id: materialization_tx_id, materialization_contract: materialization_contract, resolution_handoff: call.resolution_handoff)
             end
           end
         end
@@ -6472,7 +6472,7 @@ module Adamas
             elsif call_return_type == TypeRef::VOID && hir_call_return_type != TypeRef::VOID
               call_return_type = hir_call_return_type
             end
-            return builder.call(exact_func.id, coerced_args, call_return_type, materialization_tx_id: materialization_tx_id, materialization_contract: materialization_contract)
+            return builder.call(exact_func.id, coerced_args, call_return_type, materialization_tx_id: materialization_tx_id, materialization_contract: materialization_contract, resolution_handoff: call.resolution_handoff)
           end
         end
 
@@ -6939,7 +6939,7 @@ module Adamas
             elsif call_return_type == TypeRef::VOID && hir_call_return_type != TypeRef::VOID
               call_return_type = hir_call_return_type
             end
-            return builder.call(callee_id, coerced_args, call_return_type, materialization_tx_id: materialization_tx_id, materialization_contract: materialization_contract)
+            return builder.call(callee_id, coerced_args, call_return_type, materialization_tx_id: materialization_tx_id, materialization_contract: materialization_contract, resolution_handoff: call.resolution_handoff)
           else
             effective_args = args
             effective_hir_args = hir_args_for_coerce
@@ -6962,7 +6962,7 @@ module Adamas
             elsif call_return_type == TypeRef::VOID && hir_call_return_type != TypeRef::VOID
               call_return_type = hir_call_return_type
             end
-            return builder.call(callee_id, coerced_args, call_return_type, materialization_tx_id: materialization_tx_id, materialization_contract: materialization_contract)
+            return builder.call(callee_id, coerced_args, call_return_type, materialization_tx_id: materialization_tx_id, materialization_contract: materialization_contract, resolution_handoff: call.resolution_handoff)
           end
         end
 
@@ -7070,7 +7070,7 @@ module Adamas
             if call_return_type == TypeRef::VOID && hir_call_return_type != TypeRef::VOID
               call_return_type = hir_call_return_type
             end
-            return builder.call(func.id, coerced_args, call_return_type, materialization_tx_id: materialization_tx_id, materialization_contract: materialization_contract)
+            return builder.call(func.id, coerced_args, call_return_type, materialization_tx_id: materialization_tx_id, materialization_contract: materialization_contract, resolution_handoff: call.resolution_handoff)
           end
         end
         if ENV.has_key?("ADAMAS_UNRESOLVED_CALL_TRACE")

@@ -4,8 +4,8 @@
 > B4-F PERFORMANCE RED; STAGE2 SEMANTIC SMOKES UNAVAILABLE
 > (documentation-only amendment, 2026-07-18).
 > Live T1a/T1b producer and Crystal-oracle audit amendment: 2026-07-19;
-> bounded local T1a producer implemented, T1b downstream handoff current-red,
-> no compile-speed claim.
+> bounded local T1a producer and T1b0 same-owner carrier implemented;
+> production T1b1/T1b2 handoff remains current-red, no compile-speed claim.
 > Audit snapshot: source-shape counts remain scoped to checkout `05954794`.
 > Current R0 evidence is the seven-path dirty-source snapshot sealed at base
 > `c216b9ef...`, tree `1efb635...`, patch `d7ad2cac...`; measured evidence and
@@ -375,6 +375,75 @@ terminal records. The existing MAT/HIR path is a consumer of T1a facts; it
 must not re-resolve or infer a missing callsite identity. Because the current
 MAT/HIR streams collapse or drop per-call identity, T1b remains pending and
 cannot be replaced by a join on `materialized_name`.
+
+The 2026-07-19 T1b owner audit found an earlier production boundary that must
+be removed rather than bridged heuristically. `run_semantic_compile_prepass`
+re-parses every active unit into one new `CompileShadowAggregate` arena, while
+the normal HIR path lowers the original per-file `ParsedUnit` arenas. The
+semantic engine is then discarded before `AstToHir` is constructed. Therefore
+the producer `CallsiteIdentity(arena_id, expr_index)` and selected
+`DefIdentity` do not name nodes in the HIR owner, even when a simple source
+happens to receive the same local expression ordinals in both parses.
+
+Path, source spelling, span, node text, and local-expression ordinal parity are
+rejected as production identity joins. Macro/generated nodes, conditional
+selection, require ordering, and future AST-cache behavior can invalidate such
+a join while leaving its strings or simple ordinals apparently equal. A typed
+`SourceUnitId + local ordinal` parity probe may exist only as a default-off,
+fail-closed transition diagnostic with explicit graph-parity evidence; it may
+not mint `CallsiteIdentity`, `DefIdentity`, or a body key and may not authorize
+materialization.
+
+T1b is therefore split without weakening its final DoD:
+
+- **T1b0 — same-owner carrier plumbing.** On a deliberately same-arena test
+  path, carry an immutable `CallResolutionHandoff` from the T1a resolution into
+  HIR and MIR. Two distinct source callsites selecting the same typed def must
+  retain distinct owner-scoped `ResolutionId` values while comparing equal by
+  one `DefInstanceKey`. The carrier is default-off, changes no selection or
+  emission behavior, and performs no string re-resolution. It may retain only
+  the existing compile-scoped arena lease already required to prevent numeric
+  `arena_id` reuse/ABA; it must not inject or retain the whole
+  `CallResolutionContext`, `TypeInferenceEngine`, or semantic graph. Payload
+  production is default-off, but the nullable HIR/MIR pointer slots exist on
+  every call instruction and are therefore not zero-footprint. Detaching
+  that lease requires a unique compile-session/arena token first and is not
+  part of this smallest plumbing slice. T1b0 is partial transport evidence,
+  not a production T1b terminal.
+- **T1b1 — canonical syntax ownership.** Remove the compile-path dual-parse
+  identity split: semantic resolution and HIR lowering must consume one
+  canonical syntax owner (or an explicitly shared typed syntax identity issued
+  before either consumer). The shadow reparse remains diagnostic and cannot be
+  the production handoff source. Macro/generated provenance must have an
+  owner-scoped typed mapping or fail closed.
+- **T1b2 — materialization/emission terminal.** Only after T1b1 may the
+  production path carry the original `ResolutionId` and equal typed body key
+  through demand, cache-hit/materialized/inline classification, MIR, and the
+  versioned terminal record. The existing name-keyed MAT ledger is observation
+  data, not the join authority.
+
+The bounded T1b0 implementation satisfies only the first bullet on a manually
+bound test path. Its focused same-owner spec proves distinct callsites retain
+distinct `ResolutionId` and `CallsiteIdentity` values, same-def/same-type calls
+share one immutable `DefInstanceKey`, different overload definitions remain
+distinct despite equal display spelling, source call/def coordinates are
+revalidated through the retained owner, and one ordinary non-virtual,
+non-stack-promoted HIR-to-MIR route plus one copy-propagation clone retain the
+exact carrier. Named calls are rejected by the handoff factory; default/splat
+expansions remain rejected upstream by T1a and produce no carrier input. HIR
+call-recreation postpasses, virtual dispatch, and stack-promotion replacement
+remain outside T1b0. No production adapter/attach API exists because current
+HIR cannot prove source-owner association; no production CLI path constructs
+or consumes this carrier. Matched `instance_sizeof` measurement
+against parent `a74172f7` records `HIR::Call` 56 -> 64 bytes and `MIR::Call`
+128 -> 136 bytes: +8 bytes per instruction in each layer. The carrier is a
+shared reference across the tested HIR/MIR/clone corridor, so that corridor
+does not copy its semantic argument sequence or 88-byte `DefInstanceKey`.
+However, each allocated `CallResolutionHandoff` object is 128 bytes. Production
+allocates none today; a future one-payload-per-source-call route is rejected
+unless body keys are interned/shared (or another compact typed owner is proven)
+and the matched allocation/retention/RSS gate passes. This is explicit T1b0
+resource debt and prevents any zero-cost, memory, or speed claim.
 
 The first targeted diagnostic is an **identity explosion ledger**, not a speed
 benchmark. For each resolution, preserve the tuple
@@ -931,17 +1000,21 @@ sub-slices: **T1a (semantic producer)** and **T1b (explicit downstream
 handoff)**. T1b cannot be admitted by a late MAT/HIR join if T1a did not carry
 the per-call identity.
 
-The 2026-07-19 bounded T1a candidate now includes the substrate and one local
-producer. `NameId` replaces named-argument strings, generic/tuple/named
+The 2026-07-19 bounded candidate now includes the T1a substrate/local producer
+and T1b0 same-owner carrier plumbing. `NameId` replaces named-argument strings,
+generic/tuple/named
 sequences are owned by immutable value carriers, and nominal semantic keys use
 source-backed `TypeDeclarationIdentity` rather than short-name equality.
 `NameId` and `SemanticTypeId` remain owner-scoped handles; cross-table equal
 ordinals are unequal. The producer stores only the latest resolution per
 callsite for diagnostic lookup and returns each newly minted resolution from
-its context; it does not retain a replay history. No streaming identity record,
-`MethodInstanceKey`, `resolution_id` handoff, or downstream correlation is
-admitted. Residual resource measurement is required, no speed claim is made,
-and the fresh B4-F <=180-second frontier remains red. Capture is a typed
+its context; it does not retain a replay history. T1b0 can derive one immutable
+`DefInstanceKey` and carry the exact handoff through manually bound same-owner
+HIR and direct MIR, but no streaming identity record, production CLI binding,
+MAT/body/emission consumer, or downstream terminal is admitted. Residual
+resource measurement records +8 bytes for every HIR and MIR call instruction;
+no speed claim is made, and the fresh B4-F <=180-second frontier remains red.
+Capture is a typed
 constructor capability and default-off; normal legacy inference does not
 allocate the context or identity tables. Capture-on resource measurement
 remains required before T1b promotion.
@@ -972,22 +1045,41 @@ remains required before T1b promotion.
    no telemetry. `lower_function_if_needed` and the MAT string ledger remain
    rejected producers. Any current log ceiling is diagnostic unless a guard
    hard-caps it, so no bounded-memory or backpressure claim is admitted yet.
-4. **T1b — explicit downstream handoff (pending enrichment).** The existing MAT ledger
-   lacks `resolution_id` and cannot be joined deterministically. Define and
-   emit a second versioned downstream correlation record/enrichment carrying
+4. **T1b0 — same-owner carrier plumbing (completed, partial only).** A
+   read-only typed handoff now exists on a manually bound same-arena test path.
+   It preserves
+   two distinct
+   source-call `ResolutionId` values through HIR and MIR while both handoffs
+   compare equal by one immutable `DefInstanceKey`. No string-derived lookup,
+   behavior change, backend row, production attach API, or production CLI join
+   is admitted by this sub-slice. HIR postpass reconstruction, virtual dispatch,
+   and stack promotion are explicitly outside it. The carrier preserves the existing compile-scoped owner lease
+   through its IDs but does not retain or inject the whole semantic context.
+   It adds one nullable pointer slot to every HIR and MIR call (+8 bytes each
+   in the matched parent/candidate measurement). The shared payload is 128
+   bytes with an inline 88-byte body key; production allocates none, and a raw
+   one-payload-per-call route is not admitted. Owner retention, body-key
+   interning/compact ownership, and aggregate call-count cost remain promotion
+   gates.
+5. **T1b1 — canonical syntax owner.** Eliminate or bypass the production
+   semantic-shadow reparse for the candidate compile route so semantic and HIR
+   consume one owner-scoped syntax identity. Reject path/span/text/local-index
+   joins; a parity probe is diagnostic only. Generated nodes without typed
+   provenance fail closed.
+6. **T1b2 — explicit downstream terminal and one consumer.** After T1b1,
+   define and emit the versioned correlation enrichment carrying the original
    `resolution_id` through inline, materialization, body, and emission-terminal
-   states; until that exists, keep the external join pending rather than
-   claiming that the existing streams suffice.
-5. **T1b — one downstream correlation consumer.** After the second record exists,
-   add exactly one read-only, default-off consumer that correlates selected
-   resolution to materialized body/call symbol. Its falsifiers are missing
-   rows, duplicate IDs, changed selected definition, receiver/value arity loss,
-   body/symbol mismatch, and any legacy queue or backend reconstruction. Keep
-   all other consumers on the legacy path.
+   states. Add exactly one default-off consumer correlating resolution to typed
+   body/call symbol. Its falsifiers are missing rows, duplicate IDs, changed
+   selected definition, receiver/value arity loss, body/symbol mismatch, and
+   any legacy queue or backend reconstruction. Keep all other consumers on the
+   legacy path.
 
 The T1a DoD is ownership/NameId and selected-definition continuity with zero
-HIR/MIR/LLVM behavior delta. The T1b DoD is an explicit per-call handoff with
-no dropped or reminted `ResolutionId` through the downstream terminal. Neither
+HIR/MIR/LLVM behavior delta. T1b0 closes only same-owner HIR/MIR carrier
+continuity; it does not satisfy T1b. The full T1b DoD remains an explicit
+production per-call handoff with no dropped or reminted `ResolutionId` through
+the downstream terminal after canonical syntax ownership is sealed. Neither
 DoD is a queue reduction, compile-speed claim, or rewrite authorization. The
 demand-driven body cache remains later until declaration fixed-point parity is
 demonstrated.

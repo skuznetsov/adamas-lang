@@ -14,6 +14,7 @@
 # type references (LayoutContract reads MIR::TypeKind; MIR::Type calls
 # LayoutContract) globally, so require order is irrelevant.
 require "../layout_contract"
+require "../semantic/identity/call_resolution_handoff"
 
 module Adamas::MIR
   # ═══════════════════════════════════════════════════════════════════════════
@@ -1865,6 +1866,9 @@ module Adamas::MIR
     getter args : Array(ValueId)
     property materialization_tx_id : String? = nil
     property materialization_contract : MaterializationContractFacts? = nil
+    # Optional semantic identity transport. T1b0 keeps this metadata inert:
+    # MIR/LLVM selection and materialization still use their existing paths.
+    getter resolution_handoff : Adamas::Compiler::Semantic::CallResolutionHandoff?
 
     # A' mini-AbiFacts: durable per-site classification of an Array(C) @buffer bulk
     # op that lowers as a Call to a shared `Pointer(C)#` body (clear / move_from /
@@ -1896,6 +1900,7 @@ module Adamas::MIR
       @args : Array(ValueId),
       @materialization_tx_id : String? = nil,
       @materialization_contract : MaterializationContractFacts? = nil,
+      @resolution_handoff : Adamas::Compiler::Semantic::CallResolutionHandoff? = nil,
     )
       super(id, type)
     end
@@ -2935,8 +2940,9 @@ module Adamas::MIR
       return_type : TypeRef,
       materialization_tx_id : String? = nil,
       materialization_contract : MaterializationContractFacts? = nil,
+      resolution_handoff : Adamas::Compiler::Semantic::CallResolutionHandoff? = nil,
     ) : ValueId
-      emit(Call.new(@function.next_value_id, return_type, callee, args, materialization_tx_id, materialization_contract))
+      emit(Call.new(@function.next_value_id, return_type, callee, args, materialization_tx_id, materialization_contract, resolution_handoff))
     end
 
     def call_indirect(callee_ptr : ValueId, args : Array(ValueId), return_type : TypeRef, unwrap_union_args : Bool = true) : ValueId

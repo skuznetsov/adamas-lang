@@ -1,6 +1,7 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-07-19 (bounded T1a producer; T1b and performance frontier remain open).
+Updated: 2026-07-19 (bounded T1a producer and T1b0 same-owner transport;
+production T1b and performance frontier remain open).
 
 CURRENT R0 FRONTIER (architecture admitted, production fix still open): the
 current dirty source is sealed reproducibly at base
@@ -59,14 +60,33 @@ still comes from annotation strings and cannot be trusted as identity. A later
 refactor must make those frontend facts typed before T1 can impose stricter
 generic-declaration policy without heuristics.
 
-T1b remains `MEASURED_RED`. The bounded same-target guard observes two source
+T1b0 is now completed as partial same-owner carrier plumbing. An immutable
+`CallResolutionHandoff` derives one typed `DefInstanceKey` from a lawful T1a
+resolution, revalidates its source call/def coordinates, and survives one
+manually bound ordinary direct MIR route plus a copy-propagation clone.
+Production attachment is intentionally absent because current HIR cannot prove
+that a resolution and HIR call share a source owner. HIR call recreation,
+virtual dispatch, and stack promotion remain outside T1b0.
+The payload is default-off and inert, but its nullable field increases
+`HIR::Call` from 56 to 64 bytes and `MIR::Call` from 128 to 136 bytes. This
+bounded unit path shares the exact carrier reference without copying its
+semantic argument array, yet each allocated payload is 128 bytes and embeds an
+88-byte `DefInstanceKey`. Production allocates none today. T1b1 must not create
+one payload per call without an interned/compact body-key owner and matched
+allocation/retention/RSS evidence. It also cannot bind production calls because
+semantic prepass and HIR still parse into different arena owners.
+
+Full T1b remains `MEASURED_RED`. The bounded same-target guard observes two source
 calls but only one legacy MAT transaction/completion, two MAT emit rows, and
 zero `t1_resolution_terminal_v1` rows. Therefore the downstream path still
 cannot correlate each semantic resolution through inline/materialization/body/
-emission without a typed handoff; joining by method or materialized-name string
-is rejected. Full T1, named/default/splat forwarding equivalence, the explosion
-ledger, and B4-F <=180 seconds remain open. No speed or body-deduplication claim
-is made from T1a.
+emission because the typed handoff is not production-bound or consumed;
+joining by method or materialized-name string is rejected. Next is T1b1:
+eliminate or bypass the dual-parse owner split with one canonical syntax owner,
+then T1b2 may add the materialization/body/emission terminal. Full T1,
+named/default/splat forwarding equivalence, the explosion ledger, and B4-F
+<=180 seconds remain open. No speed or body-deduplication claim is made from
+T1a/T1b0.
 
 SEALED-CURRENT STATS-ON LOCALIZATION (diagnostic only): from the disposable
 worktree, the only compiler instrumentation flag was `ADAMAS_PHASE_STATS=1`:

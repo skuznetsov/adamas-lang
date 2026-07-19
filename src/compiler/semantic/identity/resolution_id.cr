@@ -7,6 +7,8 @@
 # single-threaded; issue/claim ordering is deliberately not synchronized.
 
 require "../../frontend/ast"
+require "./callsite_identity"
+require "./def_identity"
 require "./semantic_type_id"
 
 module Adamas::Compiler::Semantic
@@ -24,6 +26,22 @@ module Adamas::Compiler::Semantic
 
     def owns_semantic_context?(owner : SemanticTypeInternTable) : Bool
       @semantic_owner.same?(owner)
+    end
+
+    # Revalidate coordinates through the retained arena before a semantic
+    # decision is allowed to cross into downstream metadata.
+    def owns_source_coordinates?(
+      callsite : CallsiteIdentity,
+      def_identity : DefIdentity,
+    ) : Bool
+      return false unless callsite.arena_id == @arena_id && def_identity.arena_id == @arena_id
+      return false if callsite.expr_index >= @arena_owner.size
+      return false if def_identity.expr_index < 0 || def_identity.expr_index >= @arena_owner.size
+
+      call_expr_id = Frontend::ExprId.new(callsite.expr_index)
+      def_expr_id = Frontend::ExprId.new(def_identity.expr_index)
+      @arena_owner[call_expr_id].is_a?(Frontend::CallNode) &&
+        @arena_owner[def_expr_id].is_a?(Frontend::DefNode)
     end
 
     def issue : ResolutionId
@@ -93,6 +111,14 @@ module Adamas::Compiler::Semantic
 
     def canonical? : Bool
       !!(@owner && @owner.not_nil!.issued?(@id))
+    end
+
+    def owns_source_coordinates?(
+      callsite : CallsiteIdentity,
+      def_identity : DefIdentity,
+    ) : Bool
+      owner = @owner
+      !!(owner && owner.owns_source_coordinates?(callsite, def_identity))
     end
 
     def unknown? : Bool

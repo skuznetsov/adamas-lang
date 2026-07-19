@@ -7,6 +7,7 @@ require "../frontend/ast"
 require "./identity/def_identity"
 require "./identity/name_id"
 require "./identity/callsite_identity"
+require "./identity/call_resolution_handoff"
 require "./identity/resolution_id"
 require "./identity/semantic_type_id"
 require "./identity/type_declaration_identity"
@@ -210,6 +211,34 @@ module Adamas::Compiler::Semantic
       else
         type
       end
+    end
+  end
+
+  # Producer-side construction seam for the lightweight carrier. It accepts a
+  # claimed CallResolution, then revalidates its source nodes through the
+  # retained ResolutionScope owner. Raw, foreign, or coordinate-only facts
+  # cannot mint a HIR/MIR handoff; converting the same admitted resolution
+  # again reconstructs an equal carrier with the same ResolutionId.
+  class CallResolutionHandoff
+    def self.from(resolution : CallResolution) : self?
+      return nil if resolution.named_arg_types
+      unless resolution.resolution_id.canonical?
+        raise ArgumentError.new("CallResolution handoff requires a canonical ResolutionId")
+      end
+      unless resolution.resolution_id.owns_source_coordinates?(resolution.callsite, resolution.def_identity)
+        raise ArgumentError.new("CallResolution handoff requires source-backed call and definition coordinates")
+      end
+
+      new(
+        resolution.resolution_id,
+        resolution.callsite,
+        DefInstanceKey.new(
+          def_identity: resolution.def_identity,
+          receiver_type: resolution.receiver_type,
+          arg_types: resolution.arg_types,
+          block_type: resolution.block_type,
+        ),
+      )
     end
   end
 

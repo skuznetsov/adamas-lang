@@ -8,6 +8,7 @@
 # See docs/codegen_architecture.md for full specification.
 
 require "../layout_probe"
+require "../semantic/identity/call_resolution_handoff"
 
 module Adamas::HIR
   # ═══════════════════════════════════════════════════════════════════════════
@@ -714,6 +715,9 @@ module Adamas::HIR
 
     property method_name : String
     property args : Array(ValueId)
+    # Optional same-owner semantic identity transport. It is metadata only in
+    # T1b0: no call selection, materialization, or emission path reads it.
+    getter resolution_handoff : Adamas::Compiler::Semantic::CallResolutionHandoff? = nil
     @receiver_value : ValueId = NO_RECEIVER
     @block_value : BlockId = NO_BLOCK
     getter virtual : Bool

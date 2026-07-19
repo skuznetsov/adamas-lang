@@ -1591,7 +1591,7 @@ module Adamas::MIR
       when Call
         new_args = inst.args.map { |a| resolve(a, replacements, block_id, inst_index, def_blocks, def_index, dominance_info) }
         return inst if new_args == inst.args
-        copy = Call.new(inst.id, inst.type, inst.callee, new_args, inst.materialization_tx_id, inst.materialization_contract)
+        copy = Call.new(inst.id, inst.type, inst.callee, new_args, inst.materialization_tx_id, inst.materialization_contract, inst.resolution_handoff)
         copy.array_bulk_op = inst.array_bulk_op
         copy.array_bulk_stride = inst.array_bulk_stride
         copy.array_bulk_logical_count = inst.array_bulk_logical_count

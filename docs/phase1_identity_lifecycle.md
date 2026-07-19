@@ -83,6 +83,44 @@ that needs an HIR representation gets registered exactly once.
 
 **Invalidation:** Same as SemanticTypeInternTable — valid for one compilation run.
 
+### 4.1 CallResolutionHandoff lifecycle (T1b0)
+
+**Creation:** Only `CallResolutionHandoff.from(CallResolution)` may construct
+the carrier. It revalidates source-backed `CallNode` and `DefNode` coordinates
+through the retained `ResolutionScope`, preserves the original owner-scoped
+`ResolutionId` and `CallsiteIdentity`, then derives an immutable
+`DefInstanceKey` without copying the already-owned `SemanticTypeComponents`
+backing array. Named calls are rejected by the factory; default and splat
+expansions are rejected by the canonical T1a producer and therefore produce no
+handoff input.
+
+**Attachment:** T1b0 deliberately exposes no production semantic-to-HIR attach
+API because current HIR has no typed source owner with which to validate a
+binding. The focused spec manually binds the private field by reopening the
+class only in test code. For that deliberately narrow ordinary, non-virtual,
+non-stack-promoted direct path, HIR-to-MIR and copy-propagation retain the same
+carrier reference. HIR postpasses that recreate calls, virtual dispatch,
+stack-promotion replacement, selection, materialization, and LLVM emission are
+outside T1b0. T1b1 must establish canonical syntax ownership before any
+production binding seam is exposed.
+
+**Ownership and invalidation:** The carrier is valid only for the compilation
+session owning its semantic IDs. The zero-copy argument component is safe
+because `ImmutableValueArray` never exposes its backing array. The current
+owner references remain reachable for that compile-scoped lifetime; T1b0 does
+not detach them into cross-run IDs.
+
+**Resource boundary:** Payload production is default-off, and synthetic or
+unsupported calls retain `nil`. The nullable storage slot is unconditional:
+matched parent/candidate `instance_sizeof` is 56/64 bytes for `HIR::Call` and
+128/136 bytes for `MIR::Call`. The optional payload is one shared class
+reference across HIR, MIR, and tested clones, but the allocated object itself
+is 128 bytes and embeds an 88-byte `DefInstanceKey`. No second semantic-argument
+array is copied. Production currently allocates no handoff payloads; enabling
+one allocation per call without body-key interning or another measured compact
+owner is rejected. These costs are explicit resource debt, not a speed or
+memory improvement claim.
+
 ## 5. IdentityDryRunTracker Lifecycle — RETIRED / REFUTED
 
 As of 2026-07-18, `IdentityDryRunTracker` and

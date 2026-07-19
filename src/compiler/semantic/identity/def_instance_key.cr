@@ -51,6 +51,21 @@ module Adamas::Compiler::Semantic
       validate_identity_scopes!
     end
 
+    # Transfers an already immutable semantic argument component without
+    # rebuilding its backing Array. Call-resolution handoffs use this overload
+    # after CallResolution has admitted and frozen the source-order component;
+    # the ordinary Array overload above remains the defensive boundary for
+    # callers that still own mutable input arrays.
+    def initialize(
+      @def_identity : DefIdentity,
+      @receiver_type : SemanticTypeId?,
+      @arg_types : SemanticTypeComponents,
+      @block_type : SemanticTypeId? = nil,
+    )
+      @named_arg_types = nil
+      validate_identity_scopes!
+    end
+
     def ==(other : DefInstanceKey) : Bool
       @def_identity == other.def_identity &&
         @receiver_type == other.receiver_type &&
