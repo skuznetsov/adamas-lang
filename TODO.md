@@ -1,6 +1,6 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-07-18 (R0 performance/semantic frontier and typed materialization falsifier).
+Updated: 2026-07-18 (R0 frontier, typed materialization falsifier, and STABLE6 refutation).
 
 CURRENT R0 FRONTIER (architecture admitted, production fix still open): the
 current dirty source is sealed reproducibly at base
@@ -52,13 +52,55 @@ append is declared with the union return type while returning `Array`, and the
 concrete append wraps `AstArena` into the union before calling the
 `AstArena`-parameter specialization. The retained full-G9 LLVM additionally
 contains one zero-argument call and one zero-argument unreachable definition
-for that `push` target. Next legal work is a behavior-neutral typed
-resolution-to-materialization queue payload/transaction shadow plus guards at
-final HIR call emission and `lower_missing` replay. Its falsifier is a bounded
-typed payload/shadow that reduces duplicate shape expansion while preserving
-selected target, arity, body/symbol continuity, and exact semantics. Keep the
-default-path consumer blocked; guard/shadow only. Do not fix this by forcing
-all calls to the union specialization or by reducing raw function count alone.
+for that `push` target. The attempted STABLE6 in-process callsite-owner
+prototype is now refuted and is not an admitted route. Do not add another large
+owner or new `AstToHir` ivars. The next safe route reuses the existing
+materialization ledger and semantic `DefIdentity`/`DefInstanceKey`; add only a
+minimal bounded producer record if necessary, serialize it as telemetry rather
+than authority, and perform the composite join/census externally and offline.
+Join actual semantic-instance/body creation, queue growth, wall time, and RSS
+before choosing the smallest behavior change. The external analyzer must be
+bounded and streaming. Do not fix this by forcing all calls to the union
+specialization or by reducing raw function count alone.
+
+CURRENT STABLE6 FRONTIER (refuted in-process prototype, not admitted): the
+attempted private `MaterializationReplayShadow` used a typed numeric
+`CallSiteRef`, explicit statuses, a composite typed HIR request-shape index,
+bounded logs, owner-local scratch, and a final read-only scan. It added no
+`HIR::Call` field and changed no fixed-point, queue, lowering, or routing
+behavior, but the prototype is removed from main code and preserved only in
+`/private/tmp`. Default-OFF is not zero compile-time cost; strict assertion is
+not an admission path.
+
+Scoped local evidence remains simple OFF/ON HIR/runtime parity, focused
+**17/0**, baseline HIR **286/0 with two existing pending examples**, host
+build, and a local adversary verdict **ROBUST** for those checks only.
+Full-prelude/union telemetry is intentionally red/noisy and must not be
+combined with the separate similar plain run: the audit reducer observed about
+**2673 registered, 2568 agree, 404 mismatch, 1 stale, 199 untracked required,
+225 unjoined, 1 ambiguous, and 11377 calls**. These are orientation-only proxy
+counters; they do not prove duplicate semantic instances or speed.
+
+The system discriminator overrides local admission. On frozen pre-shadow
+`c216b9ef...` plus `d7ad2cac...`, phase-stats only timed out at 180 seconds
+(`run_safe` exit 143), produced no `s2`, and grew **604 -> 1535 -> 7422 ->
+19238 -> 28234 (+27630)** without stack overflow; repeat-control log prefix
+`e568...`. With the same binary's STABLE6 ON and OFF, both produced no `s2`
+and hit exit 11 stack overflow in `declared_type_match_score`/alias/type-name
+work during `lower_missing` p0 around **#800** (ON about **141s**, OFF about
+**139s**), with identical growth **604 -> 1544 -> 7430 -> 19246 -> 28369
+(+27765)**. ON/OFF log prefixes are `18603d...`/`51146a...`; RSS is
+unavailable. ON final-scan-i4 orientation was
+`registered=27363`, `agree=42801`, `mismatch=484`, `unjoined=4459`,
+`ambiguous=300`, `no_mat=12864`, `calls=60909`, `not_yet=1`.
+
+This is not causal proof of the compiler root, but admission is rejected
+because runtime-OFF changes the self-host source/workload and failure class.
+The whole-system Adversary verdict is **BROKEN for admission**, despite the
+local parity verdict. T1 remains **MISSING** because HIR `TypeRef`/name shape
+is not semantic identity. B4-F (<=180 seconds) remains red/open and no speed
+claim is made. Keep the context bridge explicit: `StaleCallSite`,
+`UntrackedRequiredCallSite`, and `StaleTransactionRef` are distinct meanings.
 
 VERIFIED STABILITY SLICE (bootstrap successor still open): `PageArena` stored
 pages as `Array(StaticArray(TypedNode, 1024))`. Because `StaticArray` is a

@@ -177,10 +177,12 @@ concrete flow through `Array(ArenaLike) << AstArena` specializes `<<`/`push`
 with `AstArena`, while explicit `.as(ArenaLike)` and true union flow specialize
 with the union or a lawful reduced union.
 
-Instance authority is the selected definition plus actual typed arguments,
-block shape, and named arguments (`DefInstanceKey` uses `def.object_id` at this
-oracle boundary). The mangled name is only the later serialization of that
-identity; equal display families do not require equal instances.
+At the original Crystal oracle boundary, instance authority is the selected
+definition plus actual typed arguments, block shape, and named arguments
+(`DefInstanceKey` uses `def.object_id` there). That `object_id` detail is not
+Adamas authority: Adamas requires `DefIdentity`. The mangled name is only the
+later serialization of that identity; equal display families do not require
+equal instances.
 
 The minimal probe preserves both call arguments through HIR, MIR, and LLVM, so
 it does not reproduce argument loss. The full G9 `s2` LLVM artifact instead
@@ -192,6 +194,104 @@ diagnostic candidate. T9 permits the lawful concrete and union instances and
 requires one reducer to join selected definition/instance, coercion and value
 type, receiver/value arity, materialized body, and emitted symbol before any
 fix or promotion.
+
+### 2.5 STABLE6 — refuted in-process prototype / not admitted
+
+The attempted `MaterializationReplayShadow` is **REFUTED IN-PROCESS
+PROTOTYPE / NOT ADMITTED**. Its local shape used a typed numeric `CallSiteRef`,
+explicit replay statuses, a composite typed HIR request-shape index, diagnostic
+logs with a ceiling (not a hard cap), owner-local scratch, and a final
+read-only scan, with no `HIR::Call`
+field and no fixed-point, queue, lowering, or routing change. The prototype is
+preserved only in `/private/tmp` and removed from main code; default-OFF is not
+itself zero compile-time cost.
+
+Scoped local evidence remains: OFF/ON no-prelude and plain HIR/runtime parity,
+focused **17/0**, baseline HIR **286/0 plus two existing pending examples**,
+and host build. The local adversary is **ROBUST** only for those simple parity
+checks. Full-prelude/union telemetry remains red/noisy and separate from the
+similar plain run (about 2673 registered, 2568 agree, 404 mismatch, 1 stale,
+199 untracked required, 225 unjoined, 1 ambiguous, and 11377 calls in the
+audit reducer); the counters are orientation-only and do not prove duplicate
+semantic instances or speed. The context bridge remains explicit:
+`StaleCallSite`, `UntrackedRequiredCallSite`, and `StaleTransactionRef` are
+distinct meanings.
+
+The system discriminator overrides local admission. On frozen pre-shadow
+`c216b9ef...` plus `d7ad2cac...`, phase-stats only timed out at 180 seconds
+(`run_safe` exit 143), produced no `s2`, and grew 604 -> 1535 -> 7422 ->
+19238 -> 28234 (+27630) without stack overflow; repeat-control log prefix
+`e568...`. With the same binary's STABLE6 ON and OFF, both produced no `s2`
+and hit exit 11 stack overflow in `declared_type_match_score`/alias/type-name
+work during `lower_missing` p0 around #800 (about 141s/139s), with identical
+growth 604 -> 1544 -> 7430 -> 19246 -> 28369 (+27765); ON/OFF log prefixes
+are `18603d...`/`51146a...`, and RSS is unavailable. ON final-scan-i4
+orientation was `registered=27363`, `agree=42801`, `mismatch=484`,
+`unjoined=4459`, `ambiguous=300`, `no_mat=12864`, `calls=60909`,
+`not_yet=1`.
+
+This does not prove causality, but admission is rejected because runtime-OFF
+changes the self-host source/workload and failure class. Whole-system
+Adversary verdict: **BROKEN for admission**. T1 remains **MISSING** because
+HIR `TypeRef`/name shape is not semantic identity, and B4-F (<=180 seconds)
+remains red/open with no speed claim.
+
+Pivot: do not add another large in-process callsite owner or new `AstToHir`
+ivars. Reuse the existing materialization ledger and semantic
+`DefIdentity`/`DefInstanceKey` only as a later join input; it lacks
+`resolution_id`, so it cannot be joined deterministically today. The full path
+requires a second versioned downstream correlation record/enrichment carrying
+`resolution_id` through inline, materialization, body, and emission-terminal
+states. Until that record exists, the external join remains pending and this
+document does not claim that existing streams suffice. A future analyzer may
+stream its inputs, but the current log ceiling is diagnostic unless a guard
+hard-caps it; no bounded-memory or backpressure claim is admitted.
+
+### 2.6 T1 identity-join boundary (current-red)
+
+T1 rejects the late `lower_function_if_needed` / MAT string ledger as the
+semantic producer. That point is downstream of resolution and can also be
+after semantic literal/autocast normalization, Adamas HIR/value/ABI coercion,
+or inline materialization, so it cannot establish which semantic callsite
+identity was selected. The authoritative producer boundary is **post-resolution,
+after semantic literal/autocast normalization if applicable, before Adamas
+HIR/value/ABI coercion**, analogous to the original Crystal
+`Call#instantiate` boundary. This is an ownership placement, not a behavior
+or performance claim.
+
+The first admitted semantic-producer handoff is this versioned,
+telemetry-only record shape:
+
+```text
+[T1_IDENTITY_JOIN] schema=t1_identity_join_v1 case_id=<opaque-case-id> resolution_id=<u64> def_arena_id=<u64> def_expr_index=<i32> receiver_semantic_type_id=<u32|none> arg_semantic_type_ids=<ordered-u32-list|none> block_semantic_type_id=<u32|none> named_semantic_args=<ordered-NameId:SemanticTypeId-list|none> producer_phase=post_resolution_pre_hir_coercion
+```
+
+The producer and join operate on typed IDs and ordered fields. Strings are
+serialization only: `case_id/correlation` is an opaque external correlation
+token, and any rendered name is diagnostic/ABI text, never a semantic key or
+owner decision. The record is not an in-process authority and must not be
+used to silently route the legacy path. The existing MAT ledger cannot be
+joined deterministically because it lacks `resolution_id`. Full correlation
+therefore requires a second versioned downstream record/enrichment carrying
+that ID through inline, materialization, body, and emission-terminal states;
+until it exists, the external join is pending.
+
+Current blockers are explicit and remain red:
+
+- there is no actual semantic callsite type interner that can authoritatively
+  populate the receiver and argument semantic type IDs;
+- `DefInstanceKey` named arguments are still `String`, not `NameId`;
+- `SemanticTypeKey` currently retains mutable caller-owned arrays for generic
+  and tuple forms, violating hash-key immutability and lifetime ownership;
+- `IdentityDryRunTracker` is a definition-annotation/body-infer proxy and is
+  in-process, not the semantic callsite producer.
+
+The T1 guard is **availability/current-red only**: it can show whether the
+current source/configuration emitted a row or exposed the current failing
+boundary. It does not prove global absence of another producer, semantic
+identity continuity, or equivalence of selected definition, coercion, body,
+and emitted symbol. No rewrite, broad in-process owner, or performance claim
+is admitted.
 
 ## 3. Surface policy
 
@@ -222,6 +322,12 @@ fix or promotion.
   instead of a narrow typed contract; this only relocates ambient authority.
 - Stdlib edits, parser replacement, or a broad ABI representation change as a
   side effect of this architecture transition.
+- The STABLE6 in-process callsite-owner prototype: it is not an admitted
+  default-off guard, and must not be replaced by another large owner or new
+  `AstToHir` ivars. Only a minimal producer record, serialized as telemetry
+  rather than authority, may be reconsidered after an external streaming
+  composite census; current log ceilings do not establish bounded memory or
+  backpressure unless a guard hard-caps them.
 
 ### 3.3 Guard-only future
 
@@ -674,35 +780,50 @@ materialization demand. T0 is therefore `COMPLETED` as a guard slice and
 `UNADMITTED` as a behavior/architecture authority until R0 produces the same
 source A/B result and a real consumer is named.
 
-### 13.3 First vertical `ResolutionId` / `MethodInstanceKey` slice
+### 13.3 T1 identity-join guard and first vertical slice
 
-The first admitted semantic consumer slice is intentionally narrow and
-behavior-neutral; it evolves existing scaffolding rather than duplicating it:
+T1 is a guard-only, current-red diagnostic. It is not a global absence proof,
+an identity-continuity proof, or a performance measurement. The first slice
+must remain behavior-neutral and proceed in this order:
 
-1. Extend `src/compiler/semantic/identity/def_identity.cr`,
-   `semantic_type_id.cr`, `def_instance_key.cr`, and `hir_adapter.cr`. Add
-   immutable `ResolutionId` beside those records, and evolve the current
-   `DefInstanceKey` named-argument field from rendered `String` names to
-   canonical `NameId`/typed argument-name IDs through a compatibility adapter.
-   Do not add a parallel key or interner; do not put mangled strings or
-   mutable arrays in the candidate key.
-2. At one existing call-resolution owner, emit the evolved records alongside
-   the legacy selected name and pending request. Keep the old route
+1. **Ownership and `NameId` invariant.** Seal one owner for canonical names,
+   declaration identity, and callsite semantic types. Replace named-argument
+   strings with owned/interned `NameId` components before candidate promotion;
+   make generic/tuple `SemanticTypeKey` components immutable copies or owned
+   IDs rather than aliases to caller arrays. Falsifiers include a raw-string
+   semantic branch, a post-insertion mutation that changes a key/hash, a
+   generic/tuple order collision, or two owners minting different IDs for the
+   same canonical name.
+2. **Local typed decision.** Return a typed `CallResolution` and
+   `MethodInstanceKey` locally from the existing resolution owner, at the
+   post-resolution boundary after semantic literal/autocast normalization if
+   applicable, and before Adamas HIR/value/ABI coercion or inline
+   materialization. Do not add a new `AstToHir` ivar, broad context owner,
+   parallel interner, or default-path consumer; keep the legacy route
    authoritative.
-3. Join the records through materialization and emit a default-off ledger that
-   reports selected definition, scope authority, target/body/call symbols, and
-   key components.
-4. Run positive/negative identity reducers and normalized shadow comparison.
-   The candidate record must not alter HIR/MIR/LLVM, queue behavior, or backend
-   calls. A mismatch remains on the legacy route and names the first owner.
-5. Promote exactly one legacy consumer to read the typed record in parity mode;
-   do not add a second diagnostic ledger unless it completes this transaction.
+3. **Streaming producer (boundedness pending).** Emit the exact
+   `t1_identity_join_v1` record at that owner boundary. The producer
+   serializes typed IDs for telemetry only; `lower_function_if_needed` and the
+   MAT string ledger remain rejected producers. Any current log ceiling is
+   diagnostic unless a guard hard-caps it, so no bounded-memory or backpressure
+   claim is admitted yet.
+4. **External join (pending downstream enrichment).** The existing MAT ledger
+   lacks `resolution_id` and cannot be joined deterministically. Define and
+   emit a second versioned downstream correlation record/enrichment carrying
+   `resolution_id` through inline, materialization, body, and emission-terminal
+   states; until that exists, keep the external join pending rather than
+   claiming that the existing streams suffice.
+5. **One downstream correlation consumer.** After the second record exists,
+   add exactly one read-only, default-off consumer that correlates selected
+   resolution to materialized body/call symbol. Its falsifiers are missing
+   rows, duplicate IDs, changed selected definition, receiver/value arity loss,
+   body/symbol mismatch, and any legacy queue or backend reconstruction. Keep
+   all other consumers on the legacy path.
 
-The slice is design-sealed, not implemented by this document. Its first DoD is
-identity continuity and zero behavior delta, not a queue reduction or a new
-compile path. The next local track is the state-scope/materialization seal;
-the demand-driven body cache remains later until declaration fixed-point parity
-is demonstrated.
+The first DoD is ownership/NameId and selected-definition continuity with zero
+HIR/MIR/LLVM behavior delta. It is not a queue reduction, compile-speed claim,
+or rewrite authorization. The demand-driven body cache remains later until
+declaration fixed-point parity is demonstrated.
 
 T9 is a prerequisite for promoting this slice on the union-container path.
 The upstream audit admits the distinct concrete and union instances. The

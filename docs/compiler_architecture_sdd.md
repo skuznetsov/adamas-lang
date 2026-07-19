@@ -75,9 +75,11 @@ For source `main_arenas << map_arena`, the minimal G9 HIR chooses
 upcast. The upstream Crystal audit establishes both as lawful: concrete flow
 through `Array(ArenaLike) << AstArena` specializes `<<`/`push` with `AstArena`,
 while explicit `.as(ArenaLike)` and true union flow select union or lawful
-reduced-union instances. Instance authority is
-`DefInstanceKey(def.object_id, actual typed args, block/named)`; the mangled
-name is later serialization. The minimal HIR/MIR/LLVM probe preserves two
+reduced-union instances. At the original Crystal oracle boundary, instance
+authority is `DefInstanceKey(def.object_id, actual typed args, block/named)`;
+that `object_id` detail is not Adamas authority. Adamas requires `DefIdentity`
+plus actual typed args, block, and named arguments; the mangled name is later
+serialization. The minimal HIR/MIR/LLVM probe preserves two
 arguments. Full G9
 `s2` LLVM instead contains a union `<<` path calling zero-argument
 `push$AstArena()` plus a zero-argument unreachable stub. Late HIR
@@ -103,6 +105,110 @@ falsifier.
 | non-void call result slots | none (backend behavior fix `aae7c0f8`) | `scripts/generated_stage_return_contract_mismatch_report.sh` (`normal_llc_type_mismatch=0`) | consumed; typed owner residual |
 | zero struct sentinels | none (raw value storage `be44b058`) | `REQUIRE_SELECTED=1 scripts/generated_stage_zero_struct_sentinel_report.sh` | consumed |
 | GC-aware realloc demand | LLVMEmissionSession `GRH` tag (`31cd6009`) | `scripts/generated_stage_gc_realloc_helper_report.sh` + `regression_tests/gc_aware_realloc_gating_repro.sh` | consumed |
+| STABLE6 materialization replay shadow | none on main (`MaterializationReplayShadow` prototype only in `/private/tmp`) | in-process prototype discriminator; no admitted owner | REFUTED IN-PROCESS PROTOTYPE / NOT ADMITTED |
+
+### 0.3 STABLE6 — refuted in-process prototype / not admitted
+
+STABLE6 is **REFUTED IN-PROCESS PROTOTYPE / NOT ADMITTED**. The attempted
+`MaterializationReplayShadow` used a typed numeric `CallSiteRef`, explicit
+statuses (`Unjoined`, `HIRShapeAgree`, `HIRShapeMismatch`, `StaleCallSite`,
+`UntrackedRequiredCallSite`, `StaleTransactionRef`, `AmbiguousHIRShape`, and
+`NoMaterializationRequired`), a composite typed HIR request-shape index,
+diagnostic logs with a ceiling (not a hard cap), owner-local scratch, and a
+final read-only scan. Those local
+shapes remain useful evidence, but no in-process owner is admitted and the
+prototype has been removed from main code and preserved only in
+`/private/tmp`.
+
+Scoped local evidence remains: focused **17/0**, baseline HIR
+**286/0 with two existing pending examples**, host build, and simple OFF/ON
+HIR/runtime parity. The local adversary is **ROBUST** only for those bounded
+parity checks. Full-prelude/union telemetry remains intentionally red/noisy
+and separate from the similar plain run (about **2673 registered, 2568 agree,
+404 mismatch, 1 stale, 199 untracked required, 225 unjoined, 1 ambiguous, and
+11377 calls** in the audit reducer); these counters are proxy orientation only
+and do not prove duplicate semantic instances or speed. A strict assertion is
+not an admission path.
+
+The system discriminator overrides that local result. On the frozen pre-shadow
+base `c216b9ef...` plus patch `d7ad2cac...`, with phase stats as the only
+instrumentation, the control timed out at 180 seconds (`run_safe` exit 143),
+produced no `s2`, and grew **604 -> 1535 -> 7422 -> 19238 -> 28234
+(+27630)** without stack overflow; the repeat-control log prefix is
+`e568...`. With the STABLE6 source/executable in the same binary, both runtime
+OFF and ON also produced no `s2` and hit exit 11 stack overflow in
+`declared_type_match_score`/alias/type-name work during `lower_missing` p0
+around item **#800** (ON about **141s**, OFF about **139s**), with identical
+completed growth **604 -> 1544 -> 7430 -> 19246 -> 28369 (+27765)**. The ON
+and OFF log prefixes are `18603d...` and `51146a...`; RSS was unavailable.
+The ON final-scan-i4 orientation counters were
+`registered=27363`, `agree=42801`, `mismatch=484`, `unjoined=4459`,
+`ambiguous=300`, `no_mat=12864`, `calls=60909`, and `not_yet=1`.
+
+This is not causal proof of the underlying compiler root, but admission is
+rejected because runtime-OFF still changes the self-host source/workload and
+failure class. Default-off is therefore not zero compile-time cost. The
+whole-system Adversary verdict is **BROKEN for admission**, despite the local
+parity verdict. T1 remains **MISSING** because HIR `TypeRef`/name shape is not
+semantic identity, and B4-F (<=180 seconds) remains red/open with no speed
+claim.
+
+Pivot: do not add another large in-process callsite owner or new `AstToHir`
+ivars. Reuse the existing materialization ledger and semantic
+`DefIdentity`/`DefInstanceKey` only as a later join input; it lacks
+`resolution_id`, so it cannot be joined deterministically today. The full path
+requires a second versioned downstream correlation record/enrichment carrying
+`resolution_id` through inline, materialization, body, and emission-terminal
+states. Until that record exists, the external join remains pending and this
+document does not claim that existing streams suffice. A future analyzer may
+stream its inputs, but the current log ceiling is diagnostic unless a guard
+hard-caps it; no bounded-memory or backpressure claim is admitted.
+
+### 0.4 T1 identity-join boundary (current-red)
+
+T1 rejects the late `lower_function_if_needed` / MAT string ledger as the
+semantic producer. That point is downstream of resolution and can also be
+after semantic literal/autocast normalization, Adamas HIR/value/ABI coercion,
+or inline materialization, so it cannot establish which semantic callsite
+identity was selected. The authoritative producer boundary is **post-resolution,
+after semantic literal/autocast normalization if applicable, before Adamas
+HIR/value/ABI coercion**, analogous to the original Crystal
+`Call#instantiate` boundary. This is an ownership placement, not a behavior
+or performance claim.
+
+The first admitted semantic-producer handoff is this versioned,
+telemetry-only record shape:
+
+```text
+[T1_IDENTITY_JOIN] schema=t1_identity_join_v1 case_id=<opaque-case-id> resolution_id=<u64> def_arena_id=<u64> def_expr_index=<i32> receiver_semantic_type_id=<u32|none> arg_semantic_type_ids=<ordered-u32-list|none> block_semantic_type_id=<u32|none> named_semantic_args=<ordered-NameId:SemanticTypeId-list|none> producer_phase=post_resolution_pre_hir_coercion
+```
+
+The producer and join operate on typed IDs and ordered fields. Strings are
+serialization only: `case_id/correlation` is an opaque external correlation
+token, and any rendered name is diagnostic/ABI text, never a semantic key or
+owner decision. The record is not an in-process authority and must not be
+used to silently route the legacy path. The existing MAT ledger cannot be
+joined deterministically because it lacks `resolution_id`. Full correlation
+therefore requires a second versioned downstream record/enrichment carrying
+that ID through inline, materialization, body, and emission-terminal states;
+until it exists, the external join is pending.
+
+Current blockers are explicit and remain red:
+
+- there is no actual semantic callsite type interner that can authoritatively
+  populate the receiver and argument semantic type IDs;
+- `DefInstanceKey` named arguments are still `String`, not `NameId`;
+- `SemanticTypeKey` currently retains mutable caller-owned arrays for generic
+  and tuple forms, violating hash-key immutability and lifetime ownership;
+- `IdentityDryRunTracker` is a definition-annotation/body-infer proxy and is
+  in-process, not the semantic callsite producer.
+
+The T1 guard is **availability/current-red only**: it can show whether the
+current source/configuration emitted a row or exposed the current failing
+boundary. It does not prove global absence of another producer, semantic
+identity continuity, or equivalence of selected definition, coercion, body,
+and emitted symbol. No rewrite, broad in-process owner, or performance claim
+is admitted.
 
 Named residuals (explicitly NOT migrated): method-pointer thunks, proc
 literals, block-to-proc body lowering scopes (MethodBodyLoweringScopeSnapshot
@@ -558,6 +664,12 @@ Key falsifiers:
   collide through a shared block target;
 - `Array(UInt32)#join(io, sep) { ... }` must not fall back to a one-argument
   non-block `join`.
+
+The semantic producer for this record is post-resolution, after semantic
+literal/autocast normalization if applicable, and before Adamas HIR/value/ABI
+coercion, analogous to Crystal `Call#instantiate`. A late
+`lower_function_if_needed` or MAT string ledger is therefore a rejected
+producer; it may only consume or serialize an already typed resolution.
 
 ### 6.4 SemanticStateScope
 
@@ -1340,6 +1452,16 @@ Exit falsifiers:
 - Array join block-overload/super recursion,
 - class-arg overload dispatch,
 - block-call mega-union return leakage.
+
+### Phase 3a: T1 identity-join guard and first vertical slice
+
+Keep this phase behavior-neutral and follow the canonical five-step slice in
+`docs/specs/07-compiler-decomposition-and-semantic-replacement.md` section
+13.3: seal ownership/`NameId`, return the local typed decision, stream the
+producer record, keep boundedness diagnostic until a guard hard-caps it, keep
+the external join pending until downstream `resolution_id` enrichment exists,
+then add one read-only correlation consumer. Its first DoD is identity
+continuity with zero HIR/MIR/LLVM delta, not queue reduction or a speed claim.
 
 ### Phase 4: Seal NameResolution and TypeIdentity
 
