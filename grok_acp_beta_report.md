@@ -14,6 +14,37 @@
 
 ## Сессии
 
+### Session 33 — 2026-07-19 — T1b1b2 raw owner-recovery audit
+**Task:** Read-only classification of every remaining `arena_for_expr?` use and
+the smallest owner-bound HIR migration after the T1b1b1 macro-result boundary.
+**Brief size:** One bounded prompt with exact helper/source anchors, the current
+SDD exclusions, and a required ranking of producer-to-consumer paths.
+**Latency:** Completed during the local source-tracing window, exit 0.
+**Output quality:** Useful as a broad inventory, but not sufficient to select
+the implementation seam. Grok correctly repeated that equal numeric IDs,
+path/span, size, and scan order cannot recover AST ownership, and it proposed
+the right independent-arena negative shape.
+**What worked:** The response grouped main-root, macro/reparse, type-inference,
+and source-text recovery surfaces quickly and kept the audit read-only.
+**What did not:** It again recommended the packed-main-root cleanup even though
+the packed pair already carries an explicit arena index and current generated
+collectors pass `collect_main_exprs=false`. It also suggested a macro-result
+escape without proving that T1b1b1's exact-owner consumer loses that owner.
+Local tracing found the smaller actionable contract: `lower_call` captures the
+exact call owner, but `node_for_call_expr` globally recovers an out-of-range
+child, while trailing-argument and inline-yield readers bypass the helper.
+Original Crystal's direct `Call` child objects and two executable collision
+negatives made that boundary decidable without the broader guesses.
+**Adversary check:** No current production producer of a foreign call child was
+found. The then-selected T1b1b2a slice was therefore fail-open contract hardening,
+not an observed root-cause, bootstrap, or performance claim. Plain-arena OOB
+and canonical generated-owner cases must fail closed; valid same-owner calls
+must remain green.
+**Verdict:** Partial evidence value. Good inventory and falsifier shape; local
+producer/consumer tracing and the original Crystal oracle were required to
+choose the seam and reject two unproven recommendations.
+**Cost saved:** Approximately 1-2k Codex tokens of initial helper inventory.
+
 ### Session 32 — 2026-07-19 — T1b1b owner-tagged syntax boundary audit
 **Task:** Read-only audit of `AstNodeRef`, `arena_for_expr?`, canonical syntax
 views, and macro reparse helpers; identify the smallest production boundary

@@ -1,8 +1,9 @@
 # Adamas Bootstrap TODO
 
 Updated: 2026-07-19 (bounded T1a producer, T1b0 same-owner transport,
-default-off T1b1a canonical parsed-owner candidate, and T1b1b1 owner-tagged
-macro-result boundary; T1b1b2, T1b2, and B4-F remain open).
+default-off T1b1a canonical parsed-owner candidate, T1b1b1 owner-tagged
+macro-result boundary, and implemented/ROBUST T1b1b2a exact call-tail/block
+admission; T1b1b2b, T1b2, and B4-F remain open).
 
 CURRENT R0 FRONTIER (architecture admitted, production fix still open): the
 current dirty source is sealed reproducibly at base
@@ -108,8 +109,9 @@ before its bare result ID can escape. The reference stores an
 lifetime, and dereferences directly through that owner. The migrated
 `lower_expanded_macro_result` consumer has no bare `ArenaLike + ExprId`
 signature and performs no path/span/size or `arena_for_expr?` recovery.
-`ExprId` remains 4 bytes, and no AST node is copied. Each non-null result on the
-two migrated paths does allocate one short-lived reference object, so this is
+`ExprId` remains 4 bytes, and no ownership-only AST copy is introduced. Each
+non-null result on the two migrated paths does allocate one short-lived
+reference object, so this is
 not a zero-allocation or compile-speed claim.
 
 T1b1b1 evidence is green: focused owner-reference 6/0, targeted owner/macro/
@@ -127,25 +129,49 @@ slice because current generated `program.arena` collection calls all pass
 `collect_main_exprs=false`; that observation is not a proof that the remaining
 helper graph is safe.
 
-Scoped adversarial status is `ROBUST` for the initial canonical parsed graph
-and the migrated T1b1b1 macro-result corridor, and `VULNERABLE/OPEN` for full
-T1b1. T1b1b2 must still replace bare IDs and raw size/span/full-node recovery
-in nested macro, inline, repair, body-inference, source-text, and reparse
-helpers. VirtualArena/PageArena ownership and parser-pool leases remain outside
-the admitted slice.
+T1b1b2a exact call-tail/block admission is implemented with scoped adversarial
+status `ROBUST`. `lower_call` admits the complete call shape before semantic
+child classification and type-like/`is_a?` fast returns: direct `node.block`,
+the final positional expression, and trailing `&` operands are validated
+through the exact captured `call_arena`; downstream block/proc/inline-yield
+readers use the same owner and safe `[]?`. Missing, out-of-range, and foreign
+canonical-generated/unregistered IDs fail with stable `LoweringError`
+diagnostics before ordinary or global recovery. Shared parsed-prefix IDs remain
+intentionally readable by canonical views.
 
-Full T1b remains `MEASURED_RED`. The bounded same-target guard still observes
-two source calls but one legacy MAT transaction/completion, two MAT emit rows,
-and zero `t1_resolution_terminal_v1` rows. The next slice is T1b1b2: complete
-owner-tagged generated/reparse transport and remove remaining raw HIR owner
-recovery. Only then may T1b2 add production attachment plus the
+The dedicated `spec/hir/call_child_owner_spec.cr` passes 21/0, covering plain
+and canonical collision negatives, exact-owner positives, block-pass helper
+rejection, direct/trailing fast-return negatives, and source-shape guards. The
+final six-file target is 355/0, and full `spec/semantic/` is green at 958/0
+across 86/86 files; host build rc=0; corrected no-prelude three-shape smoke
+(ordinary block, macro-expanded block, trailing `&proc`) compiles rc=0 and
+safe-runs rc=0 with exit-only oracle outputs `42`, `41`, `42`. The
+implementation follows original Crystal's direct `Call` child-object
+ownership. A shared parsed prefix is intentionally readable by canonical
+views, while a plain `AstArena` cannot authenticate a deliberately forged
+equal-index ID without a generated-node ledger. No ownership-only AST copy is
+introduced and no per-read owner object is allocated; existing block-pass
+synthesis writes into the retained owner. This is not a production
+foreign-edge, bootstrap, or speed claim.
+
+T1b1b2b is the next T1 frontier: replace bare IDs and raw size/span/full-node
+recovery in non-last/nested copied arguments, general `lower_expr`, nested
+macro/inline repair, body inference, source-text helpers, and main-root repair.
+VirtualArena/PageArena ownership and parser-pool leases remain outside the
+admitted slice.
+
+Full T1b terminal remains `MEASURED_RED`. The bounded same-target guard
+still observes two source calls but one legacy MAT transaction/completion, two
+MAT emit rows, and zero `t1_resolution_terminal_v1` rows. The next slice is
+T1b1b2b: complete owner-tagged generated/reparse transport and remove remaining
+raw HIR owner recovery. Only then may T1b2 add production attachment plus the
 materialization/body/emission
 terminal and exactly one
 typed consumer, with no method-name or materialized-name join. Full T1,
 named/default/splat forwarding equivalence, the explosion ledger, generated
 provenance beyond the admitted owner rules, full-prelude semantic parity, and
 B4-F <=180 seconds remain open. No body-deduplication or fresh-s2 speed claim is
-made from T1a/T1b0/T1b1a/T1b1b1.
+made from T1a/T1b0/T1b1a/T1b1b1/T1b1b2a.
 
 SEALED-CURRENT STATS-ON LOCALIZATION (diagnostic only): from the disposable
 worktree, the only compiler instrumentation flag was `ADAMAS_PHASE_STATS=1`:

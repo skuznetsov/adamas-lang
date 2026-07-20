@@ -2,12 +2,12 @@
 
 > Status: DESIGN-SEALED; R0 CURRENT-SOURCE SNAPSHOT SEALED,
 > B4-F PERFORMANCE RED; STAGE2 SEMANTIC SMOKES UNAVAILABLE
-> (documentation-only amendment, 2026-07-18).
+> (implementation/SDD amendment, 2026-07-19).
 > Live T1a/T1b producer and Crystal-oracle audit amendment: 2026-07-19;
 > bounded local T1a producer, T1b0 same-owner carrier, the default-off T1b1a
-> canonical parsed-owner candidate, and the T1b1b1 owner-tagged macro-result
-> boundary are implemented; T1b1b2 generated/reparse ownership, T1b2, and the
-> full production handoff remain current-red.
+> canonical parsed-owner candidate, the T1b1b1 owner-tagged macro-result
+> boundary, and T1b1b2a exact call-tail/block admission are implemented;
+> T1b1b2b, T1b2, and the full production handoff remain current-red/open.
 > Resource evidence is scoped below and is not a fresh-s2 or <=180-second
 > compile-speed claim.
 > Audit snapshot: source-shape counts remain scoped to checkout `05954794`.
@@ -431,6 +431,23 @@ T1b is therefore split without weakening its final DoD:
   crosses arena context must carry an owner token or an equivalent typed
   reference. Unowned generated provenance fails closed, and source-text helpers
   must select the owning view before reading.
+  - **T1b1b2a — exact call-tail/block child admission (implemented).** `lower_call`
+    captures the `CallNode` owner before semantic child classification or any
+    fast-return path. Admission validates direct `node.block`, the final
+    positional expression, and a trailing `&` operand through that exact owner;
+    every downstream block/proc/inline-yield reader uses the retained
+    `call_arena` and safe `[]?` lookup. Missing, out-of-range, or foreign
+    canonical-generated/unregistered IDs fail with a stable `LoweringError`
+    before ordinary argument lowering or unsafe/global recovery. Shared parsed
+    prefix IDs remain intentionally readable by canonical views. This sub-slice
+    introduces no ownership-only AST copy, no per-read owner allocation, and
+    keeps existing block-pass synthesis writes in the retained owner. It is
+    contract hardening, not evidence that a foreign-child production edge
+    currently exists and not a compile-speed, bootstrap, or body-deduplication
+    claim.
+  - **T1b1b2b — remaining raw recovery (open).** Nested macro/inline repair,
+    body inference, main-root repair, general `lower_expr`, and semantic source-
+    text helpers still require their own owner-tagged boundaries and falsifiers.
 - **T1b2 — materialization/emission terminal.** Only after T1b1b may the
   production path carry the original `ResolutionId` and equal typed body key
   through demand, cache-hit/materialized/inline classification, MIR, and the
@@ -533,8 +550,9 @@ The typed `lower_expanded_macro_result` consumer calls `fetch?` on that retained
 owner and never invokes `arena_for_expr?`, scans paths/spans/sizes, or searches
 other arenas. Retaining the exact canonical view preserves its registered-
 generated-ID provenance; collapsing it to its shared source arena would lose
-that proof. This changes neither `ExprId` layout nor parser/LLVM ABI and copies
-no AST node. It does allocate one short-lived reference object for each
+that proof. This changes neither `ExprId` layout nor parser/LLVM ABI and
+introduces no ownership-only AST copy at this boundary. It does allocate one
+short-lived reference object for each
 non-null macro result on the two migrated expansion call paths, so this is not
 a zero-allocation or compile-speed claim.
 
@@ -560,7 +578,7 @@ The same-target guard deliberately remains `MEASURED_RED` with two source
 calls, one legacy MAT transaction/completion, two emits, and zero terminal
 rows. That result is a boundary certificate, not a regression.
 
-T1b1b2 remains open. `arena_for_expr?` and several nested macro, inline,
+T1b1b2b remains open. `arena_for_expr?` and several nested macro, inline,
 repair, body-inference, and source-text helpers still accept bare `ExprId` or
 use size/span/full-node recovery; an equal numeric ID from an independent arena
 can still collide there. The proposed packed-main-root seam was not selected:
@@ -568,9 +586,36 @@ all current generated `program.arena` calls to `collect_top_level_nodes` pass
 `collect_main_exprs=false`, so no generated root escape through `main_exprs`
 was demonstrated. That observation does not prove the broader helper graph
 safe. Bulk `nodes` remains traversal/debug data rather than identity authority.
-The scoped verdict is **ROBUST** for T1b1a plus the migrated T1b1b1 boundary and
-**VULNERABLE/OPEN** for full T1b1 until T1b1b2 removes the remaining raw owner
-recovery before default promotion or T1b2.
+The scoped verdict is **ROBUST** for T1b1a, the migrated T1b1b1 boundary, and
+implemented T1b1b2a; it remains **VULNERABLE/OPEN** for full T1b1 because
+T1b1b2b must still remove the remaining raw owner recovery before default
+promotion or T1b2.
+
+T1b1b2a exact call-tail/block child admission is implemented as the first
+bounded fail-open contract at the `lower_call` boundary, without claiming an
+observed foreign-child production bug. The complete call shape is admitted
+before type-like and `is_a?` fast returns. Direct blocks, final positional
+expressions, trailing `&` operands, and all downstream block/proc/inline-yield
+readers use the exact captured `call_arena`; missing, out-of-range, or foreign
+canonical-generated/unregistered children raise stable `LoweringError`
+diagnostics before ordinary lowering or global recovery. The dedicated
+`spec/hir/call_child_owner_spec.cr` covers 21/0: plain and canonical collision
+negatives, exact-owner positives, block-pass helper rejection, direct/trailing
+fast-return negatives, and source-shape guards for every call-child reader. The
+six-file target is 355/0; full `spec/semantic/` is green at 958/0 across
+86/86 files. The host build is rc=0;
+the corrected no-prelude three-shape smoke (ordinary block, macro-expanded
+block, and trailing `&proc`) compiles rc=0 and safe-runs rc=0 with exit-only
+oracle outputs `42`, `41`, and `42`.
+
+The source contract follows original Crystal's direct `Call` child-object
+ownership: a shared parsed prefix is intentionally readable by canonical
+views, while a plain `AstArena` cannot authenticate a deliberately forged
+equal-index ID without a generated-node ledger. No ownership-only AST copy is
+introduced and no per-read owner object is allocated; existing block-pass
+synthesis writes into the retained owner. Nested/non-last argument recovery,
+copied nested `CallNode` child IDs, general `lower_expr`, body inference, source
+helpers, and main-root repair remain T1b1b2b.
 
 The bounded T1b0 implementation satisfies only the first bullet on a manually
 bound test path. Its focused same-owner spec proves distinct callsites retain
@@ -610,6 +655,14 @@ diagnostic alone.
 The pinned Crystal source is a behavior and phase oracle, not an ownership or
 performance template:
 
+- `syntax/ast.cr:849-869,900-915` stores `Call` receiver, arguments, block,
+  block argument, and named arguments as direct child `ASTNode` references,
+  records the exact `block.call` back-reference, traverses those exact objects,
+  and deep-clones the child graph. There is no local numeric child ID and no
+  cross-tree fallback. `semantic/main_visitor.cr:1341-1369` and
+  `semantic/bindings.cr:179-269` retain exact object identity when binding and
+  propagating an enclosing call. The faithful arena translation is therefore
+  an exact owner-bound child lookup that fails closed, not a global arena scan.
 - `syntax/ast.cr:80-86` clones AST nodes into fresh objects while preserving
   their locations; identity is the live node object, not `(path, span)`.
   `semantic/ast.cr:139-190` keeps `owner`, `original_owner`, and `macro_owner`
@@ -1236,15 +1289,21 @@ remains required before T1b promotion.
    IDs, unsupported owner kinds, and owner lifetime are executable falsifiers.
    Plain arenas rely on the trusted producer using the supplied owner because
    they have no generated-node ledger; reintroducing a separable plain-owner/
-   bare-ID API is rejected. `ExprId` remains 4 bytes and no AST node is copied;
-   one short-lived reference allocation per non-null result remains measured
-   resource debt.
+   bare-ID API is rejected. `ExprId` remains 4 bytes and no ownership-only AST
+   copy is introduced; one short-lived reference allocation per non-null result
+   remains measured resource debt.
 7. **T1b1b2 — remaining owner-tagged generated/reparse transport (open).**
-   Replace bare cross-arena IDs and raw size/span recovery in nested macro,
-   inline, repair, body-inference, and source-text helpers with explicit owner
-   tokens or typed node references. Audit each route against equal numeric IDs
-   from independent arenas; the bulk view `nodes` array is never identity
-   authority.
+   T1b1b2a exact call-tail/block admission is implemented: every `lower_call`
+   block-child classification now
+   uses the exact captured call owner and safe `[]?`, with independent-arena
+   and canonical-generated-owner collision negatives plus same-owner positives.
+   It introduces no ownership-only AST copy or per-read reference allocation
+   and makes no observed-production-bug or speed claim. T1b1b2b remains the
+   next slice: replace bare
+   cross-arena IDs and raw size/span recovery in nested macro/inline repair,
+   body-inference, main-root, general lowering, and source-text helpers. Audit
+   each route against equal numeric IDs from independent arenas; the bulk view
+   `nodes` array is never identity authority.
 8. **T1b2 — explicit downstream terminal and one consumer.** After T1b1b2,
    define and emit the versioned correlation enrichment carrying the original
    `resolution_id` through inline, materialization, body, and emission-terminal

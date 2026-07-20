@@ -15120,10 +15120,7 @@ module Adamas::HIR
       call_arena : Adamas::Compiler::Frontend::ArenaLike,
       expr_id : ExprId,
     ) : Adamas::Compiler::Frontend::Node?
-      if expr_id.index >= 0 && expr_id.index < call_arena.size
-        return with_arena(call_arena) { @arena[expr_id] }
-      end
-      node_for_expr(expr_id)
+      call_arena[expr_id]?
     end
 
     @[AlwaysInline]
@@ -53503,8 +53500,9 @@ module Adamas::HIR
           end
         end
         if param_types
-          block_for_inline = build_block_from_block_pass(block_pass_expr, param_types, span)
-          return inline_block_return_type_name(block_for_inline, param_types, self_type_name)
+          if block_for_inline = build_block_from_block_pass(@arena, block_pass_expr, param_types, span)
+            return inline_block_return_type_name(block_for_inline, param_types, self_type_name)
+          end
         end
       end
 
@@ -78712,6 +78710,47 @@ module Adamas::HIR
       trace_lower_call_arena_phase(ctx, node, "call_arena_set", call_arena)
       trace_lower_call_arena_expr(ctx, node, "call_arena.callee", node.callee, call_arena, "lower_call.call")
 
+      call_args = node.args
+      block_expr = node.block
+      block_pass_expr : ExprId? = nil
+
+      if block_expr
+        direct_block_node = node_for_call_expr(call_arena, block_expr)
+        unless direct_block_node.is_a?(Adamas::Compiler::Frontend::BlockNode) ||
+               direct_block_node.is_a?(Adamas::Compiler::Frontend::ProcLiteralNode)
+          raise LoweringError.new("call block expression is not owned by call arena")
+        end
+      end
+
+      if block_expr.nil? && !call_args.empty?
+        last_id = call_args.last
+        last_node = node_for_call_expr(call_arena, last_id)
+        raise LoweringError.new("call trailing expression is not owned by call arena") unless last_node
+        case last_node
+        when Adamas::Compiler::Frontend::BlockNode
+          block_expr = last_id
+          call_args = call_args[0...-1]
+        when Adamas::Compiler::Frontend::UnaryNode
+          if (safe_slice_to_string(last_node.operator) || "") == "&"
+            operand = last_node.operand
+            operand_node = node_for_call_expr(call_arena, operand)
+            raise LoweringError.new("call block-pass operand is not owned by call arena") unless operand_node
+            trace_lower_call_arena_expr(ctx, node, "before.trailing_amp_operand_read", operand, call_arena, "lower_call.call")
+            if operand_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
+              block_expr = operand
+            else
+              block_pass_expr = operand
+            end
+            call_args = call_args[0...-1]
+          end
+        end
+      end
+      block_expr_index = block_expr.nil? ? -1 : block_expr.not_nil!.index
+      block_pass_expr_index = block_pass_expr.nil? ? -1 : block_pass_expr.not_nil!.index
+      block_expr_present = block_expr_index >= 0
+      block_pass_expr_present = block_pass_expr_index >= 0
+      has_block_call = block_expr_present || block_pass_expr_present
+
       call_named_arg_names = named_arg_names_for(node.named_args)
       # Stage2 self-hosting has shown unstable nilable-ivar payloads while
       # constructing this cache's string scope key. The cache is only a lookup
@@ -78721,7 +78760,7 @@ module Adamas::HIR
         @callsite_method_cache_scope = nil
       end
       trace_lower_call_arena_phase(ctx, node, "before.type_like_call", call_arena)
-      if type_like_call_expr?(node)
+      if !has_block_call && type_like_call_expr?(node)
         base = resolve_path_like_name(node.callee) || stringify_type_expr(node.callee)
         if base
           args = node.args.compact_map { |arg| stringify_type_expr(arg) }
@@ -78768,7 +78807,7 @@ module Adamas::HIR
 
       # Intrinsic: obj.is_a?(Type) should lower to IsA/UnionIs without a runtime method call.
       no_named_args = node.named_args.nil?
-      if no_named_args
+      if no_named_args && !has_block_call
         if callee_node.is_a?(Adamas::Compiler::Frontend::MemberAccessNode) &&
            begin
              is_a_member_name = member_access_name_text(callee_node)
@@ -78797,36 +78836,6 @@ module Adamas::HIR
         end
       end
 
-      call_args = node.args
-      block_expr = node.block
-      block_pass_expr : ExprId? = nil
-
-      if block_expr.nil? && !call_args.empty?
-        last_id = call_args.last
-        last_node = node_for_expr(last_id)
-        case last_node
-        when Adamas::Compiler::Frontend::BlockNode
-          block_expr = last_id
-          call_args = call_args[0...-1]
-        when Adamas::Compiler::Frontend::UnaryNode
-          if (safe_slice_to_string(last_node.operator) || "") == "&"
-            operand = last_node.operand
-            trace_lower_call_arena_expr(ctx, node, "before.trailing_amp_operand_read", operand, call_arena, "lower_call.call")
-            operand_node = @arena[operand]
-            if operand_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
-              block_expr = operand
-            else
-              block_pass_expr = operand
-            end
-            call_args = call_args[0...-1]
-          end
-        end
-      end
-      block_expr_index = block_expr.nil? ? -1 : block_expr.not_nil!.index
-      block_pass_expr_index = block_pass_expr.nil? ? -1 : block_pass_expr.not_nil!.index
-      block_expr_present = block_expr_index >= 0
-      block_pass_expr_present = block_pass_expr_index >= 0
-      has_block_call = block_expr_present || block_pass_expr_present
       # M3a sidecar (docs/method_resolution_architecture_map.md): assemble a
       # structured CallShape from the callsite facts already known at the front of
       # lower_call. NOT consumed — selection/materialization/cache keys untouched;
@@ -79268,7 +79277,7 @@ module Adamas::HIR
         if method_name == "each_char" && block_expr && call_args.empty? && @current_class == "String"
           self_id = receiver_id || emit_self(ctx)
           trace_lower_call_arena_expr(ctx, node, "before.bare_each_char_block_read", block_expr.not_nil!, call_arena, "lower_call.call")
-          blk_node = @arena[block_expr]
+          blk_node = node_for_call_expr(call_arena, block_expr)
           if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
             return lower_string_each_char_intrinsic(ctx, self_id, blk_node)
           end
@@ -79496,7 +79505,7 @@ module Adamas::HIR
             recv_type = ctx.type_of(recv_id)
             if recv_type == TypeRef::STRING || recv_type == TypeRef::POINTER
               trace_lower_call_arena_expr(ctx, node, "before.each_char_block_read", block_expr.not_nil!, call_arena, "lower_call.call")
-              blk_node = @arena[block_expr]
+              blk_node = node_for_call_expr(call_arena, block_expr)
               if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
                 return lower_string_each_char_intrinsic(ctx, recv_id, blk_node)
               end
@@ -79603,7 +79612,7 @@ module Adamas::HIR
             recv_id = lower_expr(ctx, obj_expr)
             if array_intrinsic_receiver?(ctx, recv_id)
               trace_lower_call_arena_expr(ctx, node, "before.array_count_block_read", block_expr.not_nil!, call_arena, "lower_call.call")
-              blk_node = @arena[block_expr]
+              blk_node = node_for_call_expr(call_arena, block_expr)
               if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
                 return lower_array_count_dynamic(ctx, recv_id, blk_node)
               end
@@ -79615,7 +79624,7 @@ module Adamas::HIR
           # `UptoIterator(typeof(self), typeof(to))` which are not yet fully monomorphized in codegen.
           if method_name == "each"
             if blk_expr = block_expr
-              blk_node = @arena[blk_expr]
+              blk_node = node_for_call_expr(call_arena, blk_expr)
               if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode) && obj_node.is_a?(Adamas::Compiler::Frontend::CallNode)
                 inner_call = obj_node
                 if inner_call.block.nil?
@@ -81350,8 +81359,9 @@ module Adamas::HIR
       arg_lowering_arena : Adamas::Compiler::Frontend::ArenaLike = call_arena || @arena
       args = with_arena(call_arena) do
         if DebugHooks::ENABLED && block_pass_expr
-          kind = Adamas::Compiler::Frontend.node_kind(@arena[block_pass_expr])
-          debug_hook("call.block_pass", "method=#{method_name} kind=#{kind}")
+          block_pass_kind_node = node_for_call_expr(call_arena, block_pass_expr.not_nil!)
+          kind = block_pass_kind_node ? Adamas::Compiler::Frontend.node_kind(block_pass_kind_node) : nil
+          debug_hook("call.block_pass", "method=#{method_name} kind=#{kind || "unknown"}")
         end
         if env_get("DEBUG_SPLAT_TRACE")
           kinds = call_args.map do |arg_id|
@@ -81999,7 +82009,7 @@ module Adamas::HIR
           end
           if inner_obj.is_a?(Adamas::Compiler::Frontend::RangeNode)
             if blk_expr = block_expr
-              blk_node = @arena[blk_expr]
+              blk_node = node_for_call_expr(call_arena, blk_expr)
               if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
                 return lower_range_each_intrinsic(ctx, inner_obj, blk_node)
               end
@@ -82008,7 +82018,7 @@ module Adamas::HIR
           # Array#each intrinsic - check if inner_obj is ArrayLiteralNode or identifier
           if inner_obj.is_a?(Adamas::Compiler::Frontend::ArrayLiteralNode)
             if blk_expr = block_expr
-              blk_node = @arena[blk_expr]
+              blk_node = node_for_call_expr(call_arena, blk_expr)
               if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
                 # Lower array first, then call array_each
                 array_id = lower_array_literal(ctx, inner_obj)
@@ -82020,7 +82030,7 @@ module Adamas::HIR
         # arr.each where arr is a variable (receiver_id set)
         if receiver_id
           if blk_expr = block_expr
-            blk_node = @arena[blk_expr]
+            blk_node = node_for_call_expr(call_arena, blk_expr)
             if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
               if array_intrinsic_receiver?(ctx, receiver_id)
                 # For arrays, use dynamic size via ArraySize.
@@ -82045,7 +82055,7 @@ module Adamas::HIR
       if method_name == "each_with_index"
         if receiver_id
           if blk_expr = block_expr
-            blk_node = @arena[blk_expr]
+            blk_node = node_for_call_expr(call_arena, blk_expr)
             if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
               # Check direct type first, then fall back to original object type
               # (method resolution may retype receiver to module like Enumerable)
@@ -82083,7 +82093,7 @@ module Adamas::HIR
           # Array literal: [1, 2, 3].map { |x| x * 2 }
           if inner_obj.is_a?(Adamas::Compiler::Frontend::ArrayLiteralNode)
             if blk_expr = block_expr
-              blk_node = @arena[blk_expr]
+              blk_node = node_for_call_expr(call_arena, blk_expr)
               if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
                 array_id = lower_array_literal(ctx, inner_obj)
                 return lower_array_map_intrinsic(ctx, array_id, inner_obj.elements.size, blk_node)
@@ -82094,7 +82104,7 @@ module Adamas::HIR
         # arr.map where arr is a variable (receiver_id set)
         if receiver_id
           if blk_expr = block_expr
-            blk_node = @arena[blk_expr]
+            blk_node = node_for_call_expr(call_arena, blk_expr)
             if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
               if array_intrinsic_receiver?(ctx, receiver_id)
                 return lower_array_map_dynamic(ctx, receiver_id, blk_node)
@@ -82109,7 +82119,7 @@ module Adamas::HIR
       # path, which can degrade block element receivers to Pointer in V2.
       if method_name == "sum" && receiver_id && args.empty?
         if blk_expr = block_expr
-          blk_node = @arena[blk_expr]
+          blk_node = node_for_call_expr(call_arena, blk_expr)
           if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
             if array_intrinsic_receiver?(ctx, receiver_id)
               element_type = array_element_type_for_value(ctx, receiver_id, TypeRef::POINTER)
@@ -82123,7 +82133,7 @@ module Adamas::HIR
       if method_name == "map_with_index"
         if receiver_id
           if blk_expr = block_expr
-            blk_node = @arena[blk_expr]
+            blk_node = node_for_call_expr(call_arena, blk_expr)
             if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
               is_array = array_intrinsic_receiver?(ctx, receiver_id)
               if !is_array && callee_node.is_a?(Adamas::Compiler::Frontend::MemberAccessNode)
@@ -82144,7 +82154,7 @@ module Adamas::HIR
           # Array literal: [1, 2, 3].select { |x| x > 1 }
           if inner_obj.is_a?(Adamas::Compiler::Frontend::ArrayLiteralNode)
             if blk_expr = block_expr
-              blk_node = @arena[blk_expr]
+              blk_node = node_for_call_expr(call_arena, blk_expr)
               if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
                 # Pass element expressions for compile-time predicate evaluation
                 return lower_array_select_intrinsic_with_ast(ctx, inner_obj, blk_node)
@@ -82155,7 +82165,7 @@ module Adamas::HIR
         # arr.select where arr is a variable (receiver_id set)
         if receiver_id
           if blk_expr = block_expr
-            blk_node = @arena[blk_expr]
+            blk_node = node_for_call_expr(call_arena, blk_expr)
             if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
               if array_intrinsic_receiver?(ctx, receiver_id)
                 return lower_array_select_dynamic(ctx, receiver_id, blk_node)
@@ -82169,7 +82179,7 @@ module Adamas::HIR
       if method_name == "reject"
         if receiver_id
           if blk_expr = block_expr
-            blk_node = @arena[blk_expr]
+            blk_node = node_for_call_expr(call_arena, blk_expr)
             if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
               if array_intrinsic_receiver?(ctx, receiver_id)
                 return lower_array_reject_dynamic(ctx, receiver_id, blk_node)
@@ -82187,7 +82197,7 @@ module Adamas::HIR
       if method_name == "compact_map"
         if receiver_id
           if blk_expr = block_expr
-            blk_node = @arena[blk_expr]
+            blk_node = node_for_call_expr(call_arena, blk_expr)
             if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
               if array_intrinsic_receiver?(ctx, receiver_id)
                 return lower_array_compact_map_dynamic(ctx, receiver_id, blk_node)
@@ -82258,7 +82268,7 @@ module Adamas::HIR
       if method_name == "find" && node.args.empty? && node.named_args.nil?
         if receiver_id
           if blk_expr = block_expr
-            blk_node = @arena[blk_expr]
+            blk_node = node_for_call_expr(call_arena, blk_expr)
             if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
               if array_intrinsic_receiver?(ctx, receiver_id)
                 return lower_array_find_dynamic(ctx, receiver_id, blk_node)
@@ -82272,7 +82282,7 @@ module Adamas::HIR
       if method_name == "any?"
         if receiver_id
           if blk_expr = block_expr
-            blk_node = @arena[blk_expr]
+            blk_node = node_for_call_expr(call_arena, blk_expr)
             if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
               if array_intrinsic_receiver?(ctx, receiver_id)
                 return lower_array_any_dynamic(ctx, receiver_id, blk_node)
@@ -82286,7 +82296,7 @@ module Adamas::HIR
       if method_name == "all?"
         if receiver_id
           if blk_expr = block_expr
-            blk_node = @arena[blk_expr]
+            blk_node = node_for_call_expr(call_arena, blk_expr)
             if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
               if array_intrinsic_receiver?(ctx, receiver_id)
                 return lower_array_all_dynamic(ctx, receiver_id, blk_node)
@@ -82300,7 +82310,7 @@ module Adamas::HIR
       if method_name == "none?"
         if receiver_id
           if blk_expr = block_expr
-            blk_node = @arena[blk_expr]
+            blk_node = node_for_call_expr(call_arena, blk_expr)
             if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
               if array_intrinsic_receiver?(ctx, receiver_id)
                 return lower_array_none_dynamic(ctx, receiver_id, blk_node)
@@ -82323,7 +82333,7 @@ module Adamas::HIR
       if method_name == "reduce"
         if receiver_id
           if blk_expr = block_expr
-            blk_node = @arena[blk_expr]
+            blk_node = node_for_call_expr(call_arena, blk_expr)
             if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
               if array_intrinsic_receiver?(ctx, receiver_id)
                 return lower_array_reduce_dynamic(ctx, receiver_id, blk_node)
@@ -82337,7 +82347,7 @@ module Adamas::HIR
       if method_name == "count"
         if receiver_id
           if blk_expr = block_expr
-            blk_node = @arena[blk_expr]
+            blk_node = node_for_call_expr(call_arena, blk_expr)
             if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
               if array_intrinsic_receiver?(ctx, receiver_id)
                 return lower_array_count_dynamic(ctx, receiver_id, blk_node)
@@ -83609,7 +83619,7 @@ module Adamas::HIR
       proc_for_inline : Adamas::Compiler::Frontend::ProcLiteralNode? = nil
       block_param_types_inline : Array(TypeRef)? = nil
       if block_expr
-        blk_node = node_for_expr(block_expr)
+        blk_node = node_for_call_expr(call_arena, block_expr)
         if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
           block_param_types_inline = block_param_types_for_call(
             mangled_method_name,
@@ -83644,7 +83654,7 @@ module Adamas::HIR
             block_param_types_inline = [ctx.type_of(receiver_id)]
           end
         end
-        block_for_inline = build_block_from_block_pass(block_pass_expr, block_param_types_inline, node.span)
+        block_for_inline = build_block_from_block_pass(call_arena, block_pass_expr, block_param_types_inline, node.span)
       end
       if block_param_types_inline.nil? && static_class_name && method_name == "new"
         block_param_types_inline = [type_ref_for_name(static_class_name)]
@@ -84208,7 +84218,7 @@ module Adamas::HIR
                        block_param_types = [ctx.type_of(receiver_id)]
                      end
                    end
-                   lower_block_pass_proc(ctx, block_pass_expr, block_param_types)
+                   lower_block_pass_proc(ctx, call_arena, block_pass_expr, block_param_types)
                  else
                    nil
                  end
@@ -87130,7 +87140,7 @@ module Adamas::HIR
       # bare `$block`, typed `_block`, and arity/splat variants.
       block_suffix = method_suffix(mangled_method_name)
       if block_pass_expr && block_suffix && suffix_has_block_flag?(block_suffix)
-        block_pass_node = @arena[block_pass_expr]
+        block_pass_node = node_for_call_expr(call_arena, block_pass_expr.not_nil!)
         block_local_name = case block_pass_node
                            when Adamas::Compiler::Frontend::IdentifierNode
                              s = safe_slice_to_string(block_pass_node.name)
@@ -102464,11 +102474,25 @@ module Adamas::HIR
 
     private def lower_block_pass_proc(
       ctx : LoweringContext,
+      call_arena : Adamas::Compiler::Frontend::ArenaLike,
       proc_expr : ExprId,
+      param_types : Array(TypeRef)? = nil,
+    ) : BlockId?
+      proc_node = call_arena[proc_expr]?
+      return nil unless proc_node
+
+      with_arena(call_arena) do
+        lower_block_pass_proc_in_owner(ctx, proc_expr, proc_node, param_types)
+      end
+    end
+
+    private def lower_block_pass_proc_in_owner(
+      ctx : LoweringContext,
+      proc_expr : ExprId,
+      proc_node : Adamas::Compiler::Frontend::Node,
       param_types : Array(TypeRef)? = nil,
     ) : BlockId
       @inline_yield_proc_depth += 1
-      proc_node = @arena[proc_expr]
       if env_get("DEBUG_BLOCK_PARAMS") && proc_node.is_a?(Adamas::Compiler::Frontend::ProcLiteralNode) == false
         STDERR.puts "[BLOCK_PARAMS] proc_node=#{proc_node.class}"
       end
@@ -102548,11 +102572,13 @@ module Adamas::HIR
     # Build a synthetic BlockNode for block pass (&block) so yield inlining can substitute it.
     # The block body calls proc.call(__arg0, __arg1, ...)
     private def build_block_from_block_pass(
+      call_arena : Adamas::Compiler::Frontend::ArenaLike,
       proc_expr : ExprId,
       param_types : Array(TypeRef)?,
       span : Adamas::Compiler::Frontend::Span,
-    ) : Adamas::Compiler::Frontend::BlockNode
-      proc_node = @arena[proc_expr]
+    ) : Adamas::Compiler::Frontend::BlockNode?
+      proc_node = call_arena[proc_expr]?
+      return nil unless proc_node
       param_count = if param_types
                       param_types.size
                     elsif proc_node.is_a?(Adamas::Compiler::Frontend::ProcLiteralNode) && (params = proc_node.params)
@@ -102568,60 +102594,70 @@ module Adamas::HIR
           name = "__arg#{idx}"
           name_slice = name.to_slice
           params << Adamas::Compiler::Frontend::Parameter.new(name_slice, span: span, name_span: span)
-          arg_ids << @arena.add_typed(Adamas::Compiler::Frontend::IdentifierNode.new(span, name_slice))
+          arg_ids << call_arena.add_typed(Adamas::Compiler::Frontend::IdentifierNode.new(span, name_slice))
         end
       end
 
-      if arg_ids.first? && block_pass_implicit_receiver?(proc_expr)
-        rewritten = rewrite_block_pass_receiver(proc_expr, arg_ids.first, span)
-        block_node = Adamas::Compiler::Frontend::BlockNode.new(span, params.empty? ? nil : params, [rewritten])
-        @block_node_arenas[block_node.object_id] = @arena
-        return block_node
+      if arg_ids.first? && block_pass_implicit_receiver?(call_arena, proc_expr)
+        if rewritten = rewrite_block_pass_receiver(call_arena, proc_expr, arg_ids.first, span)
+          block_node = Adamas::Compiler::Frontend::BlockNode.new(span, params.empty? ? nil : params, [rewritten])
+          @block_node_arenas[block_node.object_id] = call_arena
+          return block_node
+        end
+        return nil
       end
 
-      call_member = @arena.add_typed(
+      call_member = call_arena.add_typed(
         Adamas::Compiler::Frontend::MemberAccessNode.new(span, proc_expr, "call".to_slice)
       )
-      call_expr = @arena.add_typed(
+      call_expr = call_arena.add_typed(
         Adamas::Compiler::Frontend::CallNode.new(span, call_member, arg_ids, nil)
       )
 
       block_node = Adamas::Compiler::Frontend::BlockNode.new(span, params.empty? ? nil : params, [call_expr])
-      @block_node_arenas[block_node.object_id] = @arena
+      @block_node_arenas[block_node.object_id] = call_arena
       block_node
     end
 
-    private def block_pass_implicit_receiver?(expr_id : ExprId) : Bool
-      node = @arena[expr_id]
+    private def block_pass_implicit_receiver?(
+      call_arena : Adamas::Compiler::Frontend::ArenaLike,
+      expr_id : ExprId,
+    ) : Bool
+      node = call_arena[expr_id]?
+      return false unless node
       case node
       when Adamas::Compiler::Frontend::ImplicitObjNode,
            Adamas::Compiler::Frontend::SelfNode
         true
       when Adamas::Compiler::Frontend::MemberAccessNode
-        block_pass_implicit_receiver?(node.object)
+        block_pass_implicit_receiver?(call_arena, node.object)
       when Adamas::Compiler::Frontend::CallNode
-        block_pass_implicit_receiver?(node.callee)
+        block_pass_implicit_receiver?(call_arena, node.callee)
       else
         false
       end
     end
 
     private def rewrite_block_pass_receiver(
+      call_arena : Adamas::Compiler::Frontend::ArenaLike,
       expr_id : ExprId,
       arg_id : ExprId,
       span : Adamas::Compiler::Frontend::Span,
-    ) : ExprId
-      node = @arena[expr_id]
+    ) : ExprId?
+      node = call_arena[expr_id]?
+      return nil unless node
       case node
       when Adamas::Compiler::Frontend::ImplicitObjNode,
            Adamas::Compiler::Frontend::SelfNode
         arg_id
       when Adamas::Compiler::Frontend::MemberAccessNode
-        new_obj = rewrite_block_pass_receiver(node.object, arg_id, span)
-        @arena.add_typed(Adamas::Compiler::Frontend::MemberAccessNode.new(node.span, new_obj, node.member))
+        new_obj = rewrite_block_pass_receiver(call_arena, node.object, arg_id, span)
+        return nil unless new_obj
+        call_arena.add_typed(Adamas::Compiler::Frontend::MemberAccessNode.new(node.span, new_obj, node.member))
       when Adamas::Compiler::Frontend::CallNode
-        new_callee = rewrite_block_pass_receiver(node.callee, arg_id, span)
-        @arena.add_typed(
+        new_callee = rewrite_block_pass_receiver(call_arena, node.callee, arg_id, span)
+        return nil unless new_callee
+        call_arena.add_typed(
           if named_args = node.named_args
             if block = node.block
               Adamas::Compiler::Frontend::CallNode.new(node.span, new_callee, node.args, block, named_args)
