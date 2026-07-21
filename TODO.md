@@ -1,6 +1,7 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-07-19 (bounded T1a producer, T1b0 same-owner transport,
+Updated: 2026-07-20 (T8 fresh-s2 validator falsifiable, bounded T1a producer,
+T1b0 same-owner transport,
 default-off T1b1a canonical parsed-owner candidate, T1b1b1 owner-tagged
 macro-result boundary, and implemented/ROBUST T1b1b2a exact call-tail/block
 admission; T1b1b2b, T1b2, and B4-F remain open).
@@ -18,13 +19,35 @@ Host spawn preflight is GREEN. With fresh cache/output and the canonical
 14.13s; its plain smoke prints `42` in 20.29s and its no-prelude smoke prints
 the exact `hello world` / `n=42` / `noprelude_interp_ok` markers in 0.65s.
 The `s2` self-host build is compiler-side performance RED: timeout exit 143,
-stage wall 182.54s, externally sampled peak RSS 1361.03 MiB, no `cv2_s2`;
-outer chain exit 1 at 219.32s. Stage2 semantic smokes are unavailable because
-there is no artifact, not semantic red or green. The host-infrastructure
-blocker is refuted. R0 promotion remains blocked by B4-F and the missing
-same-source fresh T0 A/B; T8 remains `[MISSING-FALSIFIER]` until an executable
-validator is committed. The <=180-second value remains a new acceptance
-target, not a recovered historical full-green measurement.
+stage wall 182.52s (`real`, user 187.85s, sys 13.25s), no `cv2_s2`, and no
+`[RESOURCE]` telemetry; outer chain exit 1. Stage2 semantic smokes are
+unavailable because there is no artifact, not semantic red or green. The
+host-infrastructure blocker is refuted. The committed T8 validator is now
+`[FALSIFIABLE]`: its real receipt is `MEASURED_RED/stage2_timeout`, pinned to
+180s/12288 MiB, cold/private cache, fresh output, and resource unknown. The
+synthetic matrix is ROBUST for bounded one-time classification, but real GREEN
+remains VULNERABLE/P1-blocked on producer-owned provenance/cache attestations,
+physical artifact identity, resource ownership, independent timing authority,
+wall precision, and stage2 smoke-log ownership. R0 promotion remains blocked
+by B4-F and the missing same-source fresh T0 A/B. The <=180-second value
+remains a new acceptance target, not a recovered historical full-green
+measurement.
+
+Stage1 built in 17.65s; its exact plain smoke printed `42` in 22.52s and its
+exact no-prelude smoke printed `hello world`, `n=42`, and
+`noprelude_interp_ok` in 0.64s, with empty child stderr. The receipt seals
+source entry `86975a1f...` before/after, source tree `b3a3693a...`, patch
+`e3b0c442...`, runner `be40c738...`, and stage1 `8c95c736...`.
+
+T8 evidence: HEAD `8cf29e1bc7b909781db8c966ba16068903e390b6`; validator
+SHA-256 `5078da999103acff29c667d9a75a04a28b1ccf95d85015e0ebccd72ebca68982`;
+fake harness SHA-256
+`49e950c6c03f7c7754ddeefab823502dabd4f567c0284ada3936cd6fe22a957c`;
+full matrix safe-run rc=0 (36 bounded classifications). The final receipt
+SHA-256 is `3425818523878b6e32ae0b884a6f50c7fef9e115b6e62de523fc08ee23d02895`.
+Next admitted code slice: a bounded streaming `lower_missing` demand ledger
+with no behavior change; after its receipt, T1b1b2b. Do not expand the harness
+or claim speed from T8.
 
 CURRENT T1 FRONTIER: the bounded T1a semantic producer now lives at the
 `TypeInferenceEngine` post-selection seam. It mints owner-scoped

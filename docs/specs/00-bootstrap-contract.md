@@ -139,6 +139,23 @@ scripts/run_safe.sh /tmp/cv2_stage1 300 4096 src/adamas.cr -o /tmp/cv2_s2/cv2_s2
 The produced compiler MUST then pass the fast guards relevant to the changed
 contract family.
 
+### 4.2.1 Fresh-s2 readiness classifier
+
+`scripts/t8_fresh_s2_readiness_validator.sh` is the executable T8 classifier
+for the fresh `s1 -> s2b` vector. It allocates fresh output/private-cache
+scope and records source/patch provenance, artifact path/hash evidence, exact
+runtime transcripts, integer-millisecond wall reports, and resource reports
+when present. Its receipt uses schema `t8_fresh_s2_v1` and reports
+`T8_STATUS`/`T8_CLASSIFICATION`.
+
+Only `T8_STATUS=GREEN` with both exact smoke outputs, `stage2_wall_ms <=
+180000`, and complete resource evidence is a readiness certificate. Missing or
+partial resource telemetry is `RESOURCE_UNKNOWN`; reused, symlinked, or
+contradictory provenance/artifacts are `ERROR`; timeout, over-budget, or
+semantic smoke failures are measured red. T8 classifies the gate; it does not
+promote B4-F without producer-owned provenance, artifact, resource, and timing
+authority.
+
 ### 4.3 Runtime Gate
 
 Any produced test binary MUST be executed through:

@@ -2,7 +2,8 @@
 
 > Status: DESIGN-SEALED; R0 CURRENT-SOURCE SNAPSHOT SEALED,
 > B4-F PERFORMANCE RED; STAGE2 SEMANTIC SMOKES UNAVAILABLE
-> (implementation/SDD amendment, 2026-07-19).
+> (implementation/SDD amendment, 2026-07-20). T8 fresh-s2 readiness is
+> executable but does not promote B4-F.
 > Live T1a/T1b producer and Crystal-oracle audit amendment: 2026-07-19;
 > bounded local T1a producer, T1b0 same-owner carrier, the default-off T1b1a
 > canonical parsed-owner candidate, the T1b1b1 owner-tagged macro-result
@@ -110,9 +111,9 @@ keeps source revisions, generated artifacts, and the dirty worktree distinct.
 | `91ebe332` Slice 1A | `T0 COMPLETED / GUARD-ONLY` | Stage1 passes; fresh `s1 -> s2` reaches the same 900-second timeout as the clean control. HIR provenance ON/OFF is byte-identical, but no `ResolutionId`/materialization consumer is present. |
 | R0 sealed current-source snapshot | `COMPLETED / NON-PROMOTING` | Base `c216b9ef...`, tree `1efb635...`, exactly seven tracked compiler/spec paths, patch SHA-256 `d7ad2cac...`; snapshot diff-check passes. Manifest: `/private/tmp/adamas_r0_current_c216_manifest.md`. |
 | Host preflight and stage1 | `GREEN` | Host spawn green; host build 14.13s; plain smoke `42` in 20.29s; exact no-prelude markers in 0.65s; `cv2_s1` SHA-256 `dfe3c0e8...`. |
-| Fresh current-source B4-F | `MEASURED RED` | Stage2 timeout exit 143 at 182.54s, externally sampled peak RSS 1361.03 MiB; outer chain exit 1 at 219.32s; no `cv2_s2`. Compiler-side performance red; stage2 semantic smokes unavailable, not red/green. |
+| Fresh current-source B4-F | `MEASURED RED` | Current HEAD `8cf29e1b...`: stage2 timeout exit 143 at 182.52s (`real`, user 187.85s, sys 13.25s), no `cv2_s2`, and no `[RESOURCE]` telemetry. Compiler-side performance red; stage2 semantic smokes unavailable, not red/green. Historical 182.54s corroborates the same boundary. |
 | Sealed-current stats-on localization | `DIAGNOSTIC / OPEN PHASE` | With only `ADAMAS_PHASE_STATS=1` on sealed `cv2_s1` under timeout 180s/memory 12288 MB, the run ended at wall 182.60s, exit 143, without `cv2_s2`; peak RSS is unavailable. `process_pending` completed 218 -> 591 (+373) in 555.2ms and `emit_tracked_sigs` 591 -> 604 (+13) in 235.0ms. The first open phase was `lower_missing.initial`; internal growth was 604 -> 1535 -> 7422 -> 19238 -> 28234 (+27,630 from 604) before timeout, with no completion/timing/normalized top-prefix. Log SHA-256 `1cc025cc5930ebd0513382e68dbb400e763002186f227288683d6bc710f79ecd`. This revalidates/evolves the 2026-04-29 localization; observation definitions differ, and stats-on/uninstrumented timing is diagnostic-only. |
-| T0 same-source fresh A/B | `NOT COMPLETED` | R0 promotion remains blocked independently of B4-F; T8 also remains missing until an executable validator is committed. |
+| T0 same-source fresh A/B | `NOT COMPLETED` | R0 promotion remains blocked independently of B4-F; T8 is now executable as a falsifier, not a promotion seal. |
 
 These states supersede an unqualified `B4 GREEN` label. They do not discard
 the historical artifact; they prevent it from being used as evidence for fresh
@@ -144,6 +145,12 @@ The <=180-second threshold is a new acceptance target, not a recovered
 historical full-green certificate. The strongest surviving fresh both-smoke
 green result is 231.37 seconds (with 251.91 and 253.42 second corroborating
 runs); the ~178-190-second records cover only no-prelude or partial lanes.
+
+T8 is a bounded classifier, not a GREEN-ready claim. Its synthetic matrix is
+ROBUST for one-time status classification; real GREEN remains
+VULNERABLE/P1-blocked until producer-owned provenance/cache attestations,
+physical artifact identity, resource ownership, independent timing authority,
+wall precision, and stage2 smoke-log ownership are admitted.
 
 ### 2.3 Transition decision
 
@@ -1036,15 +1043,16 @@ compared as if they were one compiler.
    declaring the result non-discriminating. Only then may Slice 1B introduce a
    real `ResolutionId`/materialization consumer.
 
-The current-source snapshot/source-guard portion and host preflight are
-complete. The fresh chain classifies B4-F as compiler-side performance red:
-stage2 timed out at 182.54 seconds with exit 143 and no `cv2_s2`. Stage2
+The current-source snapshot/source-guard portion, host preflight, and T8
+classifier are complete. The fresh chain classifies B4-F as compiler-side
+performance red: stage2 timed out at 182.52 seconds with exit 143 and no `cv2_s2`. Stage2
 semantic smokes are unavailable because no artifact exists; they are not
 semantic red or green. Historical G9 remains diagnostic-only.
 
 R0 as a promotion seal remains open until the same sealed source passes B4-F,
 produces explicit stage2 semantic smoke results, and completes the fresh T0
-A/B. Neither B4-H, G9, nor the manifest substitutes for those gates.
+A/B. T8 makes the falsifier executable but does not substitute for those
+gates; neither B4-H, G9, nor its receipt does.
 
 ### 9.2 Reliability/architecture two-track join
 
@@ -1053,7 +1061,7 @@ The work proceeds on two coordinated tracks:
 - **Reliability track:** restore a fresh B4-F build at or below 180 seconds
   (with a faster stretch target), then keep exact plain and no-prelude smokes
   green across every promoted slice. It owns source snapshots, generated
-  stage provenance, resource budgets, and bootstrap rollback.
+  stage provenance, resource budgets, bootstrap rollback, and the T8 receipt.
 - **Architecture track:** move from T0 guard-only provenance to typed
   `ResolutionId`, `CallResolution`, and a typed
   resolution-to-materialization queue payload/transaction guard at final HIR
@@ -1074,30 +1082,33 @@ compensate for a semantic mismatch, and a semantic parity result cannot hide a
    historical only. Permit docs, census,
    reducers, and emergency fixes that add an owner ledger; stop broad refactor
    while the frontier moves.
-1. **Decision and dead-code census.** Enumerate semantic writers/readers,
+1. **T8 receipt and demand ledger.** Run the fresh classifier once, retain its
+   bounded receipt, then build a streaming, behavior-neutral `lower_missing`
+   demand ledger. Do not expand the harness or claim speed from T8.
+2. **Decision and dead-code census.** Enumerate semantic writers/readers,
    string rewrites, ambient maps, arena reads, pending queues, and candidate
    shims. No behavior change.
-2. **Identity substrate.** Seal `DefIdentity`, `NameId`, `TypeId`,
+3. **Identity substrate.** Seal `DefIdentity`, `NameId`, `TypeId`,
    `ResolutionId`, and `MethodInstanceKey`; bridge to existing string/HIR
    records without changing selected targets.
-3. **CallResolution.** Make overload, named-argument, receiver, and block
+4. **CallResolution.** Make overload, named-argument, receiver, and block
    presence one typed decision. Shadow candidate rejection and target identity.
-4. **State scope and materialization.** Carry requested, selected, target,
+5. **State scope and materialization.** Carry requested, selected, target,
    body, and emitted identities through one transaction; make type-parameter
    authority explicit; retain legacy queue behavior under parity.
-5. **Compile-path substrate and declaration fixed point.** Extend the semantic
+6. **Compile-path substrate and declaration fixed point.** Extend the semantic
    stack to the complete prelude/require/macro graph before demand-driven body
    typing. No later phase may discover declarations ad hoc.
-6. **Demand-driven body cache and HIR bridge.** Analyze each
+7. **Demand-driven body cache and HIR bridge.** Analyze each
    `MethodInstanceKey` once, use explicit in-progress states for recursion, and
    allow only leaf HIR emission helpers. The semantic path must not invoke the
    legacy supply-driven queue.
-7. **Normalized shadow rollout.** Compare legacy/candidate HIR, MIR, LLVM, and
+8. **Normalized shadow rollout.** Compare legacy/candidate HIR, MIR, LLVM, and
    runtime behavior, then enable the candidate behind a kill switch.
-8. **AbiFacts and mechanical backend.** Move representation/layout facts to
+9. **AbiFacts and mechanical backend.** Move representation/layout facts to
    their owners; only after semantic identity is stable, introduce the typed
    streaming writer and zero-copy allocation seal.
-9. **Physical split and deletion.** Move files/modules only after state
+10. **Physical split and deletion.** Move files/modules only after state
    contracts are smaller; retire shims and queues only after negative-use and
    bootstrap falsifiers pass.
 
