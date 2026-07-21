@@ -8,6 +8,7 @@
 require "./hir"
 require "./debug_hooks"
 require "./memory_strategy"
+require "./lower_missing_ledger"
 require "../layout_probe"
 require "../frontend/ast"
 require "../frontend/owned_expr_ref"
@@ -2722,7 +2723,8 @@ module Adamas::HIR
       status = materialization_attempt_terminal_status(has_function_bool, has_body_bool)
       reason = materialization_attempt_terminal_reason(has_function_bool, has_body_bool, created_function_count)
       created_relation, created_symbols = materialization_created_function_summary(materialized_name, function_count_before)
-      STDERR.puts "[MAT_DONE] requested=#{ledger_token(requested_name)} target=#{ledger_token(target_name)} materialized=#{ledger_token(materialized_name)} has_function=#{has_function} has_body=#{has_body} state=#{ledger_token(state)} status=#{ledger_token(status)} reason=#{ledger_token(reason)} created_function_count=#{created_function_count} producer_path=#{ledger_token(producer_path)} created_symbol_relation=#{ledger_token(created_relation)} created_symbols=#{ledger_token(created_symbols)}"
+      requested_id = Adamas::HIR::LowerMissingDemandIdentity.hash_name(requested_name)
+      STDERR.puts "[MAT_DONE] requested=#{ledger_token(requested_name)} requested_id=0x#{requested_id.to_s(16)} target=#{ledger_token(target_name)} materialized=#{ledger_token(materialized_name)} has_function=#{has_function} has_body=#{has_body} state=#{ledger_token(state)} status=#{ledger_token(status)} reason=#{ledger_token(reason)} created_function_count=#{created_function_count} producer_path=#{ledger_token(producer_path)} created_symbol_relation=#{ledger_token(created_relation)} created_symbols=#{ledger_token(created_symbols)}"
     end
 
     private def log_semantic_state_scope_shadow(
@@ -57883,7 +57885,7 @@ module Adamas::HIR
         phase_step_count = @module.function_count
         phase_step_time = Time.instant
       end
-      lower_missing_call_targets
+      lower_missing_call_targets(LowerMissingDemandContext::Initial)
       stop_after_flush_phase("missing_initial", "ADAMAS_STOP_AFTER_HIR_FLUSH_MISSING_INITIAL")
       if phase_stats
         phase_step_time = phase_stats_step("lower_missing.initial", phase_step_count.not_nil!, phase_step_time.not_nil!)
@@ -57936,7 +57938,7 @@ module Adamas::HIR
       loop do
         before_final_missing = @module.function_count
         before_final_missing_bodies = hir_function_body_count
-        lower_missing_call_targets
+        lower_missing_call_targets(LowerMissingDemandContext::Final)
         stop_after_flush_phase("final_missing_lower_missing", "ADAMAS_STOP_AFTER_HIR_FINAL_MISSING_LOWER_MISSING")
         repair_missing_concrete_virtual_targets
         stop_after_flush_phase("final_missing_virtual_repair", "ADAMAS_STOP_AFTER_HIR_FINAL_MISSING_VIRTUAL_REPAIR")
@@ -58609,10 +58611,23 @@ module Adamas::HIR
 
     # Lower any missing call targets that already appear in the HIR module.
     # This is a safety net for late-resolved overloads (defaults, implicit generics).
-    private def lower_missing_call_targets
+    private def lower_missing_call_targets(context : LowerMissingDemandContext)
       max_iterations = 20
       budget = env_get("ADAMAS_MISSING_BUDGET").try(&.to_i?) || 0
       iteration = 0
+      lower_missing_ledger = if value = env_get("ADAMAS_LOWER_MISSING_LEDGER")
+                               if value != "0" && value != "false"
+                                 configured_limit = env_nonnegative_int32("ADAMAS_LOWER_MISSING_LEDGER_LIMIT")
+                                 limit = configured_limit > 0 ? configured_limit : LowerMissingDemandLedger::DEFAULT_LIMIT
+                                 LowerMissingDemandLedger.new(
+                                   limit,
+                                   STDERR,
+                                   @module.function_count,
+                                   @pending_function_queue.size,
+                                 )
+                               end
+                             end
+      lower_missing_ledger.try { |ledger| ledger.checkpoint(0, context, false) }
       ast_method_names = @ast_reachable_method_names
       ast_owner_types = @ast_reachable_owner_types
       ast_method_bases = @ast_reachable_method_bases
@@ -58720,6 +58735,7 @@ module Adamas::HIR
                 @function_lowering_states.delete(name)
               end
               next if function_state(name).in_progress?
+              lower_missing_ledger.try { |ledger| ledger.observe(name, inst.resolution_handoff, arg_types, !!inst.block) }
               missing << name
               if summary = missing_summary
                 parts3 = parse_method_name_compact(name)
@@ -58807,7 +58823,12 @@ module Adamas::HIR
           # records the demand. process_pending_lower_functions deduplicates
           # via its `processed` Set, so a duplicate enqueue is benign.
           @function_lowering_states[name] = FunctionLoweringState::Pending
+          pending_before = @pending_function_queue.size
           @pending_function_queue << name
+          if ledger = lower_missing_ledger
+            reason = name.ends_with?("_super") ? LowerMissingDemandReason::SuperAlias : LowerMissingDemandReason::CallTarget
+            ledger.queued(iteration, context, reason, name, before, pending_before)
+          end
         end
         stop_after_missing_phase("queue", "ADAMAS_STOP_AFTER_HIR_MISSING_QUEUE", iteration, missing.size)
         with_pending_process_context("missing_initial", iteration, missing.size) do
@@ -58825,10 +58846,24 @@ module Adamas::HIR
           if name.includes?('.') && !@module.has_function?(name)
             force_lower_module_method_by_name(name)
           end
+          if ledger = lower_missing_ledger
+            status = if @module.has_function_with_body?(name)
+                       LowerMissingDemandOutcome::Materialized
+                     elsif function_state(name).pending?
+                       LowerMissingDemandOutcome::Deferred
+                     else
+                       LowerMissingDemandOutcome::StillMissing
+                     end
+            ledger.outcome(name, status, @module.functions.size, @pending_function_queue.size)
+          end
         end
         stop_after_missing_phase("force_modules", "ADAMAS_STOP_AFTER_HIR_MISSING_FORCE_MODULES", iteration, missing.size)
         iteration += 1
         break if @module.functions.size == before
+      end
+      lower_missing_ledger.try do |ledger|
+        ledger.checkpoint(iteration, context, true)
+        ledger.summary(iteration, context, @module.function_count, @pending_function_queue.size)
       end
     end
 

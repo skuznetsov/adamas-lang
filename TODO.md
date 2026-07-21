@@ -45,9 +45,23 @@ fake harness SHA-256
 `49e950c6c03f7c7754ddeefab823502dabd4f567c0284ada3936cd6fe22a957c`;
 full matrix safe-run rc=0 (36 bounded classifications). The final receipt
 SHA-256 is `3425818523878b6e32ae0b884a6f50c7fef9e115b6e62de523fc08ee23d02895`.
-Next admitted code slice: a bounded streaming `lower_missing` demand ledger
-with no behavior change; after its receipt, T1b1b2b. Do not expand the harness
-or claim speed from T8.
+Next admitted code slice: consume the bounded streaming `lower_missing` demand
+ledger receipt with its external analyzer, then continue to T1b1b2b. The
+producer is default-off (`ADAMAS_LOWER_MISSING_LEDGER=1`), cap-bounded, scalar
+and enum-based, and emits up to its cap one terminal row per retained hash-keyed
+queue observation that reaches an outcome; overflow and timeout checkpoints
+make dropped or partial evidence explicit. `[MAT_DONE]` carries the same FNV
+`requested_id` only under its existing debug gate, so the analyzer can correlate
+completion observations in either order. Focused producer/analyzer regressions
+and a host build are green. A fresh instrumented s1-to-s2 run reached the safe
+timeout (`rc=143`, no s2). Its 121,183,235-byte raw log was correctly rejected
+by the 64 MiB analyzer cap; an immutable ledger-only snapshot preserved all
+3,202 lower-missing and 30,661 MAT_DONE rows (19,719,564 bytes, SHA-256
+`2d2ba7a58712363df728c74c910222d9de99718013de17105dc51c1dada79707`)
+and parsed with `stream_complete=0 root_cause=unclassified`. H1/H2/H3 remain
+hypotheses: FNV collisions are not checked, so even a joined row is not proof
+of semantic identity or causality; the receipt proves neither speed nor memory
+improvement. Do not expand the harness or claim speed from T8.
 
 CURRENT T1 FRONTIER: the bounded T1a semantic producer now lives at the
 `TypeInferenceEngine` post-selection seam. It mints owner-scoped

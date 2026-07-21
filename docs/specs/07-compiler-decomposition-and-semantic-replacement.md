@@ -657,6 +657,37 @@ named arguments in source order; sorting is a later hypothesis, not a producer
 normalization. No compile-time or memory improvement claim follows from this
 diagnostic alone.
 
+The first bounded producer slice is now implemented separately from that full
+identity ledger. When `ADAMAS_LOWER_MISSING_LEDGER=1` is enabled,
+`src/compiler/hir/lower_missing_ledger.cr` streams one terminal demand row for
+each retained hash-keyed queue observation that reaches an outcome, up to the
+cap, and records only scalar FNV identities, owner/context and reason enums,
+queue counters, an optional numeric `CallResolutionHandoff` projection, and HIR
+argument-shape mismatch counters. A per-invocation cap is enforced
+(`ADAMAS_LOWER_MISSING_LEDGER_LIMIT`, default 4096); overflow is summarized
+rather than retained. Start/completion checkpoints make a timeout observable,
+and `scripts/lower_missing_demand_ledger_analyzer.sh` accepts a byte/row/ID-
+bounded immutable partial-log snapshot and can correlate `requested_id` with
+the existing default-off `[MAT_DONE]` rows. The producer does not alter target
+lookup, queue admission, or lowering, and it retains no AST/HIR names or event
+graph. This is a diagnostic receipt only: it does not classify H1/H2/H3. FNV
+collisions are neither detected nor resolved, so even a joined row remains a
+candidate correlation rather than proof of semantic identity, body causality,
+or duplication. No compile-speed or memory improvement follows.
+
+The first fresh instrumented s1-to-s2 receipt ended at the safe timeout
+(`rc=143`) without an s2 binary. The 121,183,235-byte raw log was rejected by
+the analyzer's 64 MiB input cap. An immutable target-row snapshot retained all
+3,202 `[LOWER_MISSING_LEDGER]` and 30,661 `[MAT_DONE]` rows, was 19,719,564
+bytes (SHA-256
+`2d2ba7a58712363df728c74c910222d9de99718013de17105dc51c1dada79707`),
+and produced `demand_rows=3201`, `typed_handoff=0`, `name_only=3201`,
+`materialized=2872`, `deferred=1`, `still_missing=328`,
+`repeated_requested_ids=104`, `shape_ambiguous_rows=104`,
+`shape_mismatch_observations=214`, `stream_complete=0`, and
+`root_cause=unclassified`. This is a bounded partial observation, not a speed,
+identity, or causal result.
+
 ### 2.8 Original Crystal oracle (comparison only)
 
 The pinned Crystal source is a behavior and phase oracle, not an ownership or
@@ -1083,8 +1114,10 @@ compensate for a semantic mismatch, and a semantic parity result cannot hide a
    reducers, and emergency fixes that add an owner ledger; stop broad refactor
    while the frontier moves.
 1. **T8 receipt and demand ledger.** Run the fresh classifier once, retain its
-   bounded receipt, then build a streaming, behavior-neutral `lower_missing`
-   demand ledger. Do not expand the harness or claim speed from T8.
+   bounded receipt, and consume the implemented streaming, behavior-neutral
+   `lower_missing` receipt through its bounded analyzer. Keep the full
+   identity-explosion ledger and any speed claim closed until the external join
+   identifies a repeated semantic shape with matching body/emission evidence.
 2. **Decision and dead-code census.** Enumerate semantic writers/readers,
    string rewrites, ambient maps, arena reads, pending queues, and candidate
    shims. No behavior change.
