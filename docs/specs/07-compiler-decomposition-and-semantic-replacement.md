@@ -8,7 +8,9 @@
 > bounded local T1a producer, T1b0 same-owner carrier, the default-off T1b1a
 > canonical parsed-owner candidate, the T1b1b1 owner-tagged macro-result
 > boundary, and T1b1b2a exact call-tail/block admission are implemented;
-> T1b1b2b, T1b2, and the full production handoff remain current-red/open.
+> T1b1b2b.1 bounded source/path and exact body-tail ownership is implemented,
+> while T1b1b2b.2,
+> T1b2, and the full production handoff remain current-red/open.
 > Resource evidence is scoped below and is not a fresh-s2 or <=180-second
 > compile-speed claim.
 > Audit snapshot: source-shape counts remain scoped to checkout `05954794`.
@@ -585,7 +587,25 @@ The same-target guard deliberately remains `MEASURED_RED` with two source
 calls, one legacy MAT transaction/completion, two emits, and zero terminal
 rows. That result is a boundary certificate, not a regression.
 
-T1b1b2b remains open. `arena_for_expr?` and several nested macro, inline,
+T1b1b2b.1 closes only the bounded source/path and body-tail helper sub-slice.
+The owner-threaded `stringify_type_expr_owned` and
+`infer_type_literal_name_from_expr_owned` entries select one exact retained
+`ArenaLike` at ingress and pass it through bounded Path/Generic recursion.
+The return-body tail wrapper also revalidates every Grouping/MacroExpression/
+Return child through that owner before inference. Canonical views require
+`canonical_view_accepts_expr?` for every root and child, so foreign parsed,
+unregistered generated, and out-of-range IDs return nil before source text or
+path rendering can hide the mismatch. Plain arenas intentionally remain
+bounds-only because they do not authenticate an equal numeric ID from another
+plain arena. The legacy one-argument stringify wrapper remains for unmigrated
+general callers and still performs its old heuristic owner selection; no
+production HIR/MIR `CallResolutionHandoff` is attached by this slice. Focused
+`spec/hir/expr_owner_source_helper_spec.cr` is 6/0. The no-owner
+`macro_value_for_expr` tail callers remain legacy routes. Typeof/MacroIf
+resolution, unary source fallback, and other broad body-inference routes remain
+deferred to T1b1b2b.2.
+
+T1b1b2b.2 remains open. `arena_for_expr?` and several nested macro, inline,
 repair, body-inference, and source-text helpers still accept bare `ExprId` or
 use size/span/full-node recovery; an equal numeric ID from an independent arena
 can still collide there. The proposed packed-main-root seam was not selected:
@@ -593,10 +613,14 @@ all current generated `program.arena` calls to `collect_top_level_nodes` pass
 `collect_main_exprs=false`, so no generated root escape through `main_exprs`
 was demonstrated. That observation does not prove the broader helper graph
 safe. Bulk `nodes` remains traversal/debug data rather than identity authority.
-The scoped verdict is **ROBUST** for T1b1a, the migrated T1b1b1 boundary, and
-implemented T1b1b2a; it remains **VULNERABLE/OPEN** for full T1b1 because
-T1b1b2b must still remove the remaining raw owner recovery before default
-promotion or T1b2.
+The scoped verdict is **FALSIFIABLE/CURRENT** for the bounded T1b1b2b.1
+source/path/body-tail seam (focused and targeted specs are green, and the
+bounded adversary verdict is ROBUST); overall T1b1b2b remains
+**VULNERABLE/OPEN** and
+full T1b1 remains **VULNERABLE/OPEN** because
+T1b1b2b.2 must still remove the remaining raw owner recovery before default
+promotion or T1b2. Earlier T1b1a, T1b1b1, and T1b1b2a verdicts remain scoped
+to their own independent evidence.
 
 T1b1b2a exact call-tail/block child admission is implemented as the first
 bounded fail-open contract at the `lower_call` boundary, without claiming an

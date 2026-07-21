@@ -13008,6 +13008,76 @@ module Adamas::HIR
       end
     end
 
+    # Owner-threaded path lookup used by source/type helpers.  The legacy
+    # resolve_path_like_name above remains for callers that have not yet
+    # crossed an explicit owner boundary; this variant never recovers an owner
+    # from the numeric ExprId and reads every child through the retained owner.
+    private def resolve_path_like_name_owned(
+      expr_id : ExprId,
+      owner : Adamas::Compiler::Frontend::ArenaLike,
+    ) : String?
+      return nil if expr_id.null_ptr? || expr_id.invalid?
+      node = exact_owner_node_for_expr(owner, expr_id)
+      return nil unless node
+
+      case node
+      when Adamas::Compiler::Frontend::IdentifierNode
+        safe_slice_to_string(node.name) || ""
+      when Adamas::Compiler::Frontend::ConstantNode
+        safe_slice_to_string(node.name) || ""
+      when Adamas::Compiler::Frontend::PathNode
+        return nil unless exact_owner_path_tree?(expr_id, owner)
+        with_arena(owner) { collect_path_string(node) }
+      when Adamas::Compiler::Frontend::GenericNode
+        resolve_path_like_name_owned(node.base_type, owner)
+      else
+        nil
+      end
+    end
+
+    # Canonical views are intentionally stricter than a plain append-only
+    # arena: a parsed prefix can be read only through the view that owns that
+    # source range, and generated IDs must be registered by that view. Plain
+    # arenas retain their documented bounds-only behavior because they have no
+    # per-node provenance ledger.
+    private def exact_owner_node_for_expr(
+      owner : Adamas::Compiler::Frontend::ArenaLike,
+      expr_id : ExprId,
+    ) : Adamas::Compiler::Frontend::Node?
+      return nil if expr_id.null_ptr? || expr_id.invalid?
+      if view = owner.as?(Adamas::Compiler::Frontend::CanonicalSyntaxView)
+        return nil unless canonical_view_accepts_expr?(view, expr_id)
+      end
+      owner[expr_id]?
+    end
+
+    # Validate a path's complete child tree before the existing renderer reads
+    # it under with_arena(owner). This is O(path depth), allocates no AST or
+    # per-child owner object, and keeps the renderer's established spelling and
+    # source fallback behavior unchanged.
+    private def exact_owner_path_tree?(
+      expr_id : ExprId,
+      owner : Adamas::Compiler::Frontend::ArenaLike,
+      depth : Int32 = 0,
+    ) : Bool
+      return false if depth > 256
+      node = exact_owner_node_for_expr(owner, expr_id)
+      return false unless node
+      case node
+      when Adamas::Compiler::Frontend::PathNode
+        return false unless exact_owner_path_tree?(node.right, owner, depth + 1)
+        if left_id = node.left
+          return exact_owner_path_tree?(left_id, owner, depth + 1)
+        end
+        true
+      when Adamas::Compiler::Frontend::IdentifierNode,
+           Adamas::Compiler::Frontend::ConstantNode
+        true
+      else
+        false
+      end
+    end
+
     private def source_text_for_expr_in_current_arena(expr_id : ExprId) : String?
       source = source_for_arena(@arena)
       return nil unless source
@@ -13024,11 +13094,29 @@ module Adamas::HIR
       arena = arena_for_expr?(expr_id)
       return nil unless arena
 
-      with_arena(arena) { stringify_type_expr_in_current_arena(expr_id) }
+      stringify_type_expr_owned(expr_id, arena)
     end
 
-    private def stringify_type_expr_in_current_arena(expr_id : ExprId) : String?
-      node = @arena[expr_id]
+    # Exact-owner entry point for source/type helpers.  The owner is selected at
+    # ingress and threaded unchanged through all recursive child reads.  Plain
+    # arenas intentionally provide bounds-only admission; canonical views add
+    # their own generated-ID registration checks in []?.
+    private def stringify_type_expr_owned(
+      expr_id : ExprId,
+      owner : Adamas::Compiler::Frontend::ArenaLike,
+    ) : String?
+      return nil if expr_id.null_ptr? || expr_id.invalid?
+      return nil unless exact_owner_node_for_expr(owner, expr_id)
+
+      with_arena(owner) { stringify_type_expr_in_current_arena(expr_id, owner) }
+    end
+
+    private def stringify_type_expr_in_current_arena(
+      expr_id : ExprId,
+      owner : Adamas::Compiler::Frontend::ArenaLike,
+    ) : String?
+      node = exact_owner_node_for_expr(owner, expr_id)
+      return nil unless node
       case node
       when Adamas::Compiler::Frontend::TypeofNode
         resolve_typeof_exprs(node.args)
@@ -13083,13 +13171,14 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::NumberNode
         (safe_slice_to_string(node.value) || "")
       when Adamas::Compiler::Frontend::PathNode
-        raw_path = collect_path_string(node)
+        return nil unless exact_owner_path_tree?(expr_id, owner)
+        raw_path = with_arena(owner) { collect_path_string(node) }
         # Substitute type params in path prefix (e.g., D::CACHE -> ImplInfo_Float32::CACHE)
         substituted = substitute_type_params_in_type_name(raw_path)
         return substituted if substituted.starts_with?("::")
         resolve_path_string_in_context(substituted)
       when Adamas::Compiler::Frontend::CallNode
-        base = resolve_path_like_name(node.callee) || stringify_type_expr(node.callee)
+        base = resolve_path_like_name_owned(node.callee, owner) || stringify_type_expr_owned(node.callee, owner)
         return nil unless base
         # typeof(expr) parsed as CallNode — resolve the inner expression type
         if base == "typeof"
@@ -13097,48 +13186,52 @@ module Adamas::HIR
         end
         args = [] of String
         node.args.each do |arg|
-          if str = stringify_type_expr(arg)
-            args << str
-          end
+          str = stringify_type_expr_owned(arg, owner)
+          return nil unless str
+          args << str
         end
         "#{base}(#{args.join(", ")})"
       when Adamas::Compiler::Frontend::GenericNode
-        base = stringify_type_expr(node.base_type)
+        base = stringify_type_expr_owned(node.base_type, owner)
         return nil unless base
         args = [] of String
         node.type_args.each do |arg|
-          if str = stringify_type_expr(arg)
-            args << str
-          end
+          str = stringify_type_expr_owned(arg, owner)
+          return nil unless str
+          args << str
         end
         if base == "Union" && args.size == 1
           return args.first
         end
         "#{base}(#{args.join(", ")})"
       when Adamas::Compiler::Frontend::SplatNode
-        stringify_type_expr(node.expr)
+        stringify_type_expr_owned(node.expr, owner)
       when Adamas::Compiler::Frontend::TupleLiteralNode
         args = [] of String
         node.elements.each do |elem|
-          args << (stringify_type_expr(elem) || "Unknown")
+          value = stringify_type_expr_owned(elem, owner)
+          return nil unless value
+          args << value
         end
         "Tuple(#{args.join(", ")})"
       when Adamas::Compiler::Frontend::NamedTupleLiteralNode
         entries = node.entries.map do |entry|
           key = (safe_slice_to_string(entry.key) || "")
-          value = stringify_type_expr(entry.value) || "Unknown"
+          value = stringify_type_expr_owned(entry.value, owner)
+          return nil unless value
           "#{key}: #{value}"
         end
         "NamedTuple(#{entries.join(", ")})"
       when Adamas::Compiler::Frontend::IndexNode
-        base = stringify_type_expr(node.object)
+        base = stringify_type_expr_owned(node.object, owner)
         return nil unless base
         if node.indexes.size == 1
-          idx_node = @arena[node.indexes.first]
+          idx_node = exact_owner_node_for_expr(owner, node.indexes.first)
+          return nil unless idx_node
           if idx_node.is_a?(Adamas::Compiler::Frontend::NumberNode)
             idx_str = (safe_slice_to_string(idx_node.value) || "")
             return "StaticArray(#{base}, #{idx_str})"
-          elsif idx_str = stringify_type_expr(node.indexes.first)
+          elsif idx_str = stringify_type_expr_owned(node.indexes.first, owner)
             return "StaticArray(#{base}, #{idx_str})"
           end
         end
@@ -13146,7 +13239,7 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::UnaryNode
         op = unary_operator_text(node)
         if op == "->"
-          ret = stringify_type_expr(node.operand) || "Void"
+          ret = stringify_type_expr_owned(node.operand, owner) || "Void"
           ret = normalize_declared_type_name(ret)
           # HIR represents nilary callback bodies that don't produce a consumed
           # value as Void. Keep `of -> Nil` aligned with emitted MakeProc types
@@ -13154,7 +13247,7 @@ module Adamas::HIR
           ret = "Void" if ret == "Nil"
           return "Proc(#{ret})"
         end
-        base = stringify_type_expr(node.operand)
+        base = stringify_type_expr_owned(node.operand, owner)
         return nil unless base
         case op
         when "?"
@@ -13167,8 +13260,8 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::BinaryNode
         op = (safe_slice_to_string(node.operator) || "")
         return nil unless op == "|"
-        left = stringify_type_expr(node.left)
-        right = stringify_type_expr(node.right)
+        left = stringify_type_expr_owned(node.left, owner)
+        right = stringify_type_expr_owned(node.right, owner)
         return nil unless left && right
         "#{left} | #{right}"
       when Adamas::Compiler::Frontend::SelfNode
@@ -20233,7 +20326,7 @@ module Adamas::HIR
                     contains_yield = has_block || def_contains_yield?(member, member_arena)
                     has_block = true if contains_yield
 
-                    type_literal_name = @defer_body_return_inference ? nil : infer_type_literal_return_name_from_body(member, class_name)
+                    type_literal_name = @defer_body_return_inference ? nil : infer_type_literal_return_name_from_body(member, class_name, member_arena)
                     defer = @defer_body_return_inference
                     return_type = if rt = member.return_type
                                     rt_name = (safe_slice_to_string(rt) || "")
@@ -20706,7 +20799,7 @@ module Adamas::HIR
                     contains_yield = has_block || def_contains_yield?(member, member_arena)
                     has_block = true if contains_yield
 
-                    type_literal_name = infer_type_literal_return_name_from_body(member, class_name)
+                    type_literal_name = infer_type_literal_return_name_from_body(member, class_name, member_arena)
                     return_type = if rt = member.return_type
                                     rt_name = (safe_slice_to_string(rt) || "")
                                     inferred = module_like_type_name?(rt_name) ? infer_concrete_return_type_from_body(member, class_name, member_arena, node_expr_id: member_id) : nil
@@ -21334,11 +21427,19 @@ module Adamas::HIR
       nil
     end
 
-    private def tail_expr_id_for_body(body : Array(ExprId)) : ExprId?
+    private def tail_expr_id_for_body(
+      body : Array(ExprId),
+      owner : Adamas::Compiler::Frontend::ArenaLike? = nil,
+    ) : ExprId?
       return nil if body.empty?
       expr_id = body.last
       loop do
-        expr_node = @arena[expr_id]
+        expr_node = if retained_owner = owner
+                      exact_owner_node_for_expr(retained_owner, expr_id)
+                    else
+                      @arena[expr_id]?
+                    end
+        return nil unless expr_node
         case expr_node
         when Adamas::Compiler::Frontend::GroupingNode
           expr_id = expr_node.expression
@@ -21356,76 +21457,92 @@ module Adamas::HIR
     end
 
     private def infer_type_literal_name_from_expr(expr_id : ExprId) : String?
-      node = node_for_expr(expr_id)
+      infer_type_literal_name_from_expr_owned(expr_id, @arena)
+    end
+
+    # Exact-owner source/path inference. The owner is captured once at ingress
+    # and reused for every nested expression; no child ID is re-routed through
+    # global owner recovery or the aggregate nodes view.
+    private def infer_type_literal_name_from_expr_owned(
+      expr_id : ExprId,
+      owner : Adamas::Compiler::Frontend::ArenaLike,
+    ) : String?
+      return nil if expr_id.null_ptr? || expr_id.invalid?
+      node = exact_owner_node_for_expr(owner, expr_id)
       return nil unless node
 
-      case node
-      when Adamas::Compiler::Frontend::PathNode
-        path_arena = arena_for_expr?(expr_id) || @arena
-        raw_path : String? = nil
-        absolute_path = false
-        if source = source_for_arena(path_arena)
-          if snippet = slice_source_for_span(node.span, source)
-            trimmed = strip_ascii_edge_whitespace(snippet)
-            unless trimmed.empty?
-              raw_path = trimmed
-              absolute_path = trimmed.starts_with?("::")
+      with_arena(owner) do
+        case node
+        when Adamas::Compiler::Frontend::PathNode
+          # Validate every path child through the exact owner before allowing
+          # source text to stand in for the rendered representation. This keeps
+          # a foreign canonical child from being hidden by a valid span.
+          return nil unless exact_owner_path_tree?(expr_id, owner)
+          path_structure = with_arena(owner) { collect_path_string(node) }
+          return nil if path_structure.empty?
+          raw_path : String? = nil
+          absolute_path = false
+          if source = source_for_arena(owner)
+            if snippet = slice_source_for_span(node.span, source)
+              trimmed = strip_ascii_edge_whitespace(snippet)
+              unless trimmed.empty?
+                raw_path = trimmed
+                absolute_path = trimmed.starts_with?("::")
+              end
             end
           end
-        end
-        unless raw_path
-          with_arena(path_arena) do
-            raw_path = collect_path_string(node)
-            absolute_path = path_is_absolute?(node)
+          unless raw_path
+            raw_path = path_structure
+            absolute_path = path_structure.starts_with?("::")
           end
-        end
-        path_text = raw_path.not_nil!
-        type_name = if absolute_path
-                      strip_absolute_name_prefix(path_text)
-                    else
-                      resolve_path_string_in_context(path_text)
-                    end
-        type_name = resolve_type_name_in_context(type_name)
-        type_name = resolve_type_alias_chain(type_name)
-        return type_name if type_name_exists?(type_name) || @module_defs.has_key?(type_name) || @generic_templates.has_key?(type_name)
-      when Adamas::Compiler::Frontend::GenericNode
-        if type_name = stringify_type_expr(expr_id)
+          path_text = raw_path.not_nil!
+          type_name = if absolute_path
+                        strip_absolute_name_prefix(path_text)
+                      else
+                        resolve_path_string_in_context(path_text)
+                      end
           type_name = resolve_type_name_in_context(type_name)
           type_name = resolve_type_alias_chain(type_name)
-          return type_name if type_name_exists?(type_name) || @generic_templates.has_key?(type_name)
-          if info = split_generic_base_and_args(type_name)
-            base = info.base
-            return type_name if @generic_templates.has_key?(base) || type_name_exists?(base)
-          end
-        end
-      when Adamas::Compiler::Frontend::MacroIfNode
-        result = try_evaluate_macro_condition(node.condition)
-        if result == true
-          return infer_type_literal_name_from_expr(node.then_body)
-        elsif result == false
-          if else_body = node.else_body
-            return infer_type_literal_name_from_expr(else_body)
-          end
-        end
-      when Adamas::Compiler::Frontend::MacroLiteralNode
-        if raw_text = macro_literal_raw_text(node)
-          text = raw_text.strip
-          if text.includes?("{%")
-            if expanded = expand_flag_macro_text(text)
-              text = expanded.strip
-            else
-              return nil
+          return type_name if type_name_exists?(type_name) || @module_defs.has_key?(type_name) || @generic_templates.has_key?(type_name)
+        when Adamas::Compiler::Frontend::GenericNode
+          if type_name = stringify_type_expr_owned(expr_id, owner)
+            type_name = resolve_type_name_in_context(type_name)
+            type_name = resolve_type_alias_chain(type_name)
+            return type_name if type_name_exists?(type_name) || @generic_templates.has_key?(type_name)
+            if info = split_generic_base_and_args(type_name)
+              base = info.base
+              return type_name if @generic_templates.has_key?(base) || type_name_exists?(base)
             end
           end
-          if text.match(/\A[A-Z][A-Za-z0-9_]*(::[A-Z][A-Za-z0-9_]*)*\z/)
-            resolved = resolve_path_string_in_context(text)
-            resolved = resolve_type_alias_chain(resolved)
-            return resolved if type_name_exists?(resolved) || @module_defs.has_key?(resolved) || @generic_templates.has_key?(resolved)
+        when Adamas::Compiler::Frontend::MacroIfNode
+          result = try_evaluate_macro_condition(node.condition)
+          if result == true
+            return infer_type_literal_name_from_expr_owned(node.then_body, owner)
+          elsif result == false
+            if else_body = node.else_body
+              return infer_type_literal_name_from_expr_owned(else_body, owner)
+            end
           end
-        end
-      when Adamas::Compiler::Frontend::BlockNode
-        if !node.body.empty?
-          return infer_type_literal_name_from_expr(node.body.last)
+        when Adamas::Compiler::Frontend::MacroLiteralNode
+          if raw_text = macro_literal_raw_text(node)
+            text = raw_text.strip
+            if text.includes?("{%")
+              if expanded = expand_flag_macro_text(text)
+                text = expanded.strip
+              else
+                return nil
+              end
+            end
+            if text.match(/\A[A-Z][A-Za-z0-9_]*(::[A-Z][A-Za-z0-9_]*)*\z/)
+              resolved = resolve_path_string_in_context(text)
+              resolved = resolve_type_alias_chain(resolved)
+              return resolved if type_name_exists?(resolved) || @module_defs.has_key?(resolved) || @generic_templates.has_key?(resolved)
+            end
+          end
+        when Adamas::Compiler::Frontend::BlockNode
+          if !node.body.empty?
+            return infer_type_literal_name_from_expr_owned(node.body.last, owner)
+          end
         end
       end
 
@@ -21435,17 +21552,19 @@ module Adamas::HIR
     private def infer_type_literal_return_name_from_body(
       node : Adamas::Compiler::Frontend::DefNode,
       self_type_name : String? = nil,
+      preferred_arena : Adamas::Compiler::Frontend::ArenaLike? = nil,
     ) : String?
       return nil if env_has?("ADAMAS_SKIP_EAGER_TYPE_LITERAL_RETURN")
       body = node.body
       return nil unless body && !body.empty?
-      expr_id = tail_expr_id_for_body(body)
+      owner = preferred_arena || @arena
+      expr_id = tail_expr_id_for_body(body, owner)
       return nil unless expr_id
 
       old_class = @current_class
       @current_class = self_type_name if self_type_name
       begin
-        infer_type_literal_name_from_expr(expr_id)
+        infer_type_literal_name_from_expr_owned(expr_id, owner)
       ensure
         @current_class = old_class
       end
@@ -21787,7 +21906,7 @@ module Adamas::HIR
         def_arena = @function_def_arenas[candidate]? || @function_def_arenas[base_name]? || @arena
 
         type_literal_name = with_arena(def_arena) do
-          infer_type_literal_return_name_from_body(def_node, self_type_name)
+          infer_type_literal_return_name_from_body(def_node, self_type_name, def_arena)
         end
         if debug_type_literal
           STDERR.puts "[TYPE_LITERAL_RETURN] candidate=#{candidate} owner=#{owner} inferred_name=#{type_literal_name.inspect}"
@@ -30809,7 +30928,7 @@ module Adamas::HIR
                   STDERR.puts "[PRIMITIVE_REG] #{base_name} → :#{prim}"
                 end
               end
-              type_literal_name = infer_type_literal_return_name_from_body(member, class_name)
+              type_literal_name = infer_type_literal_return_name_from_body(member, class_name, member_arena)
               STDERR.puts "[REG_METHOD_PHASE] class=#{class_name} method=#{method_name} phase=after_type_literal inferred=#{type_literal_name || "(nil)"}" if trace_method_phase
               enum_return_name : String? = nil
               STDERR.puts "[REG_METHOD_PHASE] class=#{class_name} method=#{method_name} phase=before_return_field" if trace_method_phase

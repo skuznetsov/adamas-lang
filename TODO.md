@@ -4,7 +4,8 @@ Updated: 2026-07-20 (T8 fresh-s2 validator falsifiable, bounded T1a producer,
 T1b0 same-owner transport,
 default-off T1b1a canonical parsed-owner candidate, T1b1b1 owner-tagged
 macro-result boundary, and implemented/ROBUST T1b1b2a exact call-tail/block
-admission; T1b1b2b, T1b2, and B4-F remain open).
+admission; bounded T1b1b2b.1 owner-threaded source helpers are implemented;
+T1b1b2b.2, T1b2, and B4-F remain open).
 
 CURRENT R0 FRONTIER (architecture admitted, production fix still open): the
 current dirty source is sealed reproducibly at base
@@ -191,11 +192,20 @@ introduced and no per-read owner object is allocated; existing block-pass
 synthesis writes into the retained owner. This is not a production
 foreign-edge, bootstrap, or speed claim.
 
-T1b1b2b is the next T1 frontier: replace bare IDs and raw size/span/full-node
-recovery in non-last/nested copied arguments, general `lower_expr`, nested
-macro/inline repair, body inference, source-text helpers, and main-root repair.
-VirtualArena/PageArena ownership and parser-pool leases remain outside the
-admitted slice.
+T1b1b2b.1 is implemented as a bounded source/path and return-body-tail seam:
+`stringify_type_expr_owned` and the type-literal source/path family accept an exact
+retained arena at ingress, bounded Path/Generic recursion and
+Grouping/MacroExpression/Return tail unwrapping stay on that owner, and
+canonical foreign/unregistered/out-of-range IDs fail closed without a global
+scan. Equal numeric IDs in independent plain arenas remain bounds-only by
+design because plain arenas have no provenance ledger. Focused owner/source
+evidence is 6/0; this adds no AST copy, child `OwnedExprRef`, HIR/MIR handoff,
+or speed claim. Typeof/MacroIf, unary source fallback, legacy macro-value tail
+callers, and broad body inference remain deferred to T1b1b2b.2. The
+remaining T1b1b2b.2 frontier replaces raw IDs and size/span/full-node recovery
+in non-last/nested copied arguments, general `lower_expr`, nested macro/inline
+repair, body inference, and main-root repair. VirtualArena/PageArena ownership
+and parser-pool leases remain outside the admitted slice.
 
 Full T1b terminal remains `MEASURED_RED`. The bounded same-target guard
 still observes two source calls but one legacy MAT transaction/completion, two
