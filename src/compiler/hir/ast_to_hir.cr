@@ -54882,6 +54882,30 @@ module Adamas::HIR
       end
     end
 
+    # Unlike resolve_class_method_with_inheritance, this check does not use the
+    # Object fallback. Allocator selection only needs to know whether the
+    # receiver or one of its registered ancestors declares a class-level method.
+    private def class_method_declared_in_ancestry?(class_name : String, method_name : String) : Bool
+      current = normalize_method_owner_name(class_name)
+      visited = Set(String).new
+      loop do
+        break if visited.includes?(current)
+        visited << current
+        test_name = "#{current}.#{method_name}"
+        return true if @function_defs.has_key?(test_name) ||
+                       class_method_overload_exists?(test_name) ||
+                       @class_accessor_entries.has_key?(test_name)
+        if info = @class_info[current]?
+          if parent = info.parent_name
+            current = parent
+            next
+          end
+        end
+        break
+      end
+      false
+    end
+
     private def class_method_defined?(name : String) : Bool
       # V2 safety: String reference can be null
       return false if name.unsafe_as(UInt64) == 0_u64
@@ -80642,6 +80666,15 @@ module Adamas::HIR
                   if expanded_types.size != call_arg_types.size
                     call_arg_types = expanded_types
                   end
+                end
+                # Auto-allocators bind named arguments against initialize's
+                # external parameter names before the allocator overload is
+                # materialized. Explicit class-level new methods retain their
+                # own argument contract, including inherited definitions.
+                unless class_method_declared_in_ancestry?(class_name_str, "new")
+                  prefer_allocator_new_call = true
+                  constructor_arg_binding_name = resolve_method_with_inheritance(class_name_str, "initialize") ||
+                                                 "#{class_name_str}#initialize"
                 end
                 # Named-arg constructor calls need reorder_named_args/apply_default_args
                 # before the overload shape is known. Generating allocator overloads

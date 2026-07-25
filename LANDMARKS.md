@@ -16949,3 +16949,36 @@ taxonomy-based. A future nonzero StaticArray or a malformed/non-carrier
 Struct/Tuple descriptor could be over-included; hypothetical StaticArray
 flattening remains unsupported. No produced-stage bootstrap effect is proven.
 {F/G/R: 0.97/0.51/0.95} [backend carrier gate verified; bootstrap effect open]
+
+### LM-687 - Auto constructors bind named arguments through initialize
+
+Source-backed lazy lowering previously treated class-literal auto `.new` calls
+as already-positional allocator shapes. `NamedSlotProbe.new(third: 30)` became
+`NamedSlotProbe.new$Int32(%30)`, and the allocator forwarded the value into the
+first optional initializer slot. Ordinary function named arguments passed the
+same slot-order controls, excluding parser storage and the shared
+named-argument reorderer as the root.
+
+Class-literal auto constructors now select `#initialize` as their argument
+binding contract before defaults and allocator materialization. A bounded
+ancestry check preserves source-declared class-level `new` methods without
+using the resolver's extra Object fallback. Direct, inherited, and
+module-extended explicit-new tests each carry a conflicting four-slot
+initializer: an erroneous allocator route would have four arguments, while the
+explicit route has one. A separate eager test proves `self.new(third: 30)`
+uses the four-slot auto allocator.
+
+Evidence: both focused HIR examples pass; the complete HIR file passes 288
+examples with zero failures/errors and two existing pending examples; a
+source-matched host compiler build exits 0; and
+`regression_tests/named_arg_optional_slot_order_repro.sh` compiles and runs
+with exit 0 and prints `named_arg_optional_slot_order_repro_ok`. The scoped
+Adversary verdict is ROBUST.
+
+Bootstrap boundary: a fresh infrastructure-corrected B4-F chain built s1 in
+14.98 seconds and passed both exact s1 smokes, but s1-to-s2 timed out at the
+180-second gate (182.52-second script wall, 1,331,216 KB RSS, no artifact). A
+separate non-acceptance 300-second diagnostic also timed out at 2,048,080 KB
+RSS without `cv2_s2`. This landmark verifies host/HIR constructor binding, not
+produced-stage behavior or B4-F. {F/G/R: 0.95/0.52/0.92} [host/HIR constructor
+binding verified; produced-stage successor open]

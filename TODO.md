@@ -1,6 +1,38 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-07-18 (R0 frontier, typed materialization falsifier, and STABLE6 refutation).
+Updated: 2026-07-25 (constructor named-argument binding verified at host/HIR scope; B4-F remeasured red).
+
+VERIFIED CONSTRUCTOR NAMED-ARGUMENT SLICE (produced-stage successor still
+open): source-backed lazy lowering collapsed
+`NamedSlotProbe.new(third: 30)` to `NamedSlotProbe.new$Int32(%30)`, so the
+allocator forwarded `30` into the first optional initializer slot. Ordinary
+function named arguments already preserved their slots, which localized the
+defect to class-literal auto-allocator selection rather than parser storage or
+general named-argument lowering. Auto `.new` calls now bind against the
+resolved `#initialize` parameter names before allocator materialization.
+Direct, inherited, and module-extended explicit class-level `new` definitions
+retain their one-argument route; their tests deliberately define a conflicting
+four-slot initializer so a mistaken allocator route cannot pass by symbol
+coincidence. Eager class-method lowering also verifies
+`self.new(third: 30)` expands to the four-slot auto allocator.
+
+The focused source-backed examples pass, the complete HIR file passes 288
+examples with zero failures/errors and two existing pending examples, and a
+source-matched original-Crystal-built host passes
+`regression_tests/named_arg_optional_slot_order_repro.sh`: compiler and
+produced binary both exit 0 with
+`named_arg_optional_slot_order_repro_ok`. The scoped Adversary verdict is
+ROBUST for optional-slot auto constructors and the tested explicit-new routing
+boundaries.
+
+B4-F remains independently MEASURED RED. The infrastructure-corrected fresh
+chain built s1 in 14.98 seconds and passed exact plain and no-prelude s1
+smokes, but s1-to-s2 hit the 180-second safe-run limit (script wall 182.52
+seconds, 1,331,216 KB RSS, exit 143) without a `cv2_s2`. A separate
+non-acceptance 300-second diagnostic also timed out (2,048,080 KB RSS) without
+an artifact. Therefore no produced-stage constructor or callback-ABI claim is
+made from this slice, and the callback parameter-scan change remains
+IN_PROGRESS behind B4-F despite its historical LLDB root evidence.
 
 CURRENT R0 FRONTIER (architecture admitted, production fix still open): the
 current dirty source is sealed reproducibly at base

@@ -5176,6 +5176,147 @@ describe Adamas::HIR::AstToHir do
   end
 
   describe "allocator lookup recovery" do
+    it "binds constructor named arguments through initializer parameter names" do
+      source = <<-CRYSTAL
+        class NamedSlotProbe
+          def initialize(
+            @first : Int32 = 1,
+            @second : Int32 = 2,
+            @third : Int32 = 3,
+            @fourth : Int32 = 4,
+          )
+          end
+        end
+
+        class ExplicitNamedNewProbe
+          def initialize(
+            @first : Int32 = 1,
+            @second : Int32 = 2,
+            @third : Int32 = 3,
+            @fourth : Int32 = 4,
+          )
+          end
+
+          def self.new(*, value : Int32 = 1) : Int32
+            value
+          end
+        end
+
+        class ExplicitNamedNewBase
+          def initialize(
+            @first : Int32 = 1,
+            @second : Int32 = 2,
+            @third : Int32 = 3,
+            @fourth : Int32 = 4,
+          )
+          end
+
+          def self.new(*, value : Int32 = 1) : Int32
+            value
+          end
+        end
+
+        class ExplicitNamedNewChild < ExplicitNamedNewBase
+        end
+
+        module ExtendedNamedNew
+          def new(*, value : Int32 = 1) : Int32
+            value
+          end
+        end
+
+        class ExtendedNamedNewProbe
+          extend ExtendedNamedNew
+
+          def initialize(
+            @first : Int32 = 1,
+            @second : Int32 = 2,
+            @third : Int32 = 3,
+            @fourth : Int32 = 4,
+          )
+          end
+        end
+
+        NamedSlotProbe.new(third: 30)
+        NamedSlotProbe.new(fourth: 40, second: 20)
+        ExplicitNamedNewProbe.new(value: 30)
+        ExplicitNamedNewChild.new(value: 30)
+        ExtendedNamedNewProbe.new(value: 30)
+      CRYSTAL
+
+      # Match the production CLI's lazy ordering: register class signatures,
+      # then lower top-level calls before eagerly lowering class bodies.
+      arena, roots = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      main_exprs = [] of UInt64
+      roots.each do |expr_id|
+        case node = arena[expr_id]
+        when Adamas::Compiler::Frontend::ModuleNode
+          converter.register_module(node)
+        when Adamas::Compiler::Frontend::ClassNode
+          converter.register_class(node)
+        when Adamas::Compiler::Frontend::CallNode
+          main_exprs << expr_id.index.to_u64
+        end
+      end
+      converter.lower_main(main_exprs)
+
+      main = converter.module.function_by_name("__adamas_main").not_nil!
+      constructor_calls = main.blocks.flat_map(&.instructions).compact_map(&.as?(Adamas::HIR::Call)).select do |call|
+        call.method_name.starts_with?("NamedSlotProbe.new")
+      end
+
+      constructor_calls.size.should eq(2)
+      constructor_calls.each do |call|
+        call.method_name.should eq("NamedSlotProbe.new$Int32_Int32_Int32_Int32")
+        call.args.size.should eq(4)
+      end
+
+      explicit_new_calls = main.blocks.flat_map(&.instructions).compact_map(&.as?(Adamas::HIR::Call)).select do |call|
+        (call.method_name.includes?("ExplicitNamedNew") || call.method_name.includes?("ExtendedNamedNewProbe")) &&
+          call.method_name.includes?(".new")
+      end
+      explicit_new_calls.size.should eq(3)
+      explicit_new_calls.each do |call|
+        call.method_name.should end_with(".new$Int32")
+        call.args.size.should eq(1)
+      end
+    end
+
+    it "binds auto self.new named arguments through initialize" do
+      converter = lower_program_with_sources(<<-CRYSTAL)
+        class AutoSelfNewProbe
+          def initialize(
+            @first : Int32 = 1,
+            @second : Int32 = 2,
+            @third : Int32 = 3,
+            @fourth : Int32 = 4,
+          )
+          end
+
+          def self.build
+            self.new(third: 30)
+          end
+        end
+      CRYSTAL
+
+      builder = converter.module.functions.find do |func|
+        func.name.starts_with?("AutoSelfNewProbe.build")
+      end
+      builder.should_not be_nil
+      self_new_call = builder.not_nil!.blocks.flat_map(&.instructions).compact_map(&.as?(Adamas::HIR::Call)).find do |call|
+        call.method_name.starts_with?("AutoSelfNewProbe.new")
+      end
+
+      self_new_call.should_not be_nil
+      self_new_call.not_nil!.method_name.should eq("AutoSelfNewProbe.new$Int32_Int32_Int32_Int32")
+      self_new_call.not_nil!.args.size.should eq(4)
+    end
+
     it "rematerializes a typed initializer body after a completed-state miss" do
       converter = lower_program_with_main(<<-CRYSTAL)
         class RecoveryBox
