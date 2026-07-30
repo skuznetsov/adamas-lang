@@ -1,6 +1,65 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-07-25 (constructor named-argument binding verified at host/HIR scope; B4-F remeasured red).
+Updated: 2026-07-30 (bounded incremental
+missing-scan falsifier measured; B4-F remains red).
+
+
+CURRENT B4-F / INCREMENTAL-SCAN FRONTIER: every compiler stage in
+`scripts/bootstrap_chain.sh` is now supervised by `scripts/run_safe.sh`, and
+the invalid Bash `break unless` in the wrapper is fixed. A source-matched fresh
+s1 built in 21.58s and passed plain/no-prelude smoke. Its s2 timed out at the
+180-second gate (script wall 182.59s, exit 143, no `cv2_s2`); external snapshots
+grew from about 663 MiB to 1.20 GiB with FD count 12. This remains a
+compute/materialization performance RED, not an observed memory/FD runaway.
+
+The default-off missing-scan shadow is observational only: production retains
+the legacy full scan, budget prefix, and function-count stop. An initial
+caller-only carry matched HIR tests but was refuted on the real self-host
+workload at iteration 2 (`full=1280`, `shadow=1279`,
+`full_only=Fiber#next`). The root contract error was dropping raw demands while
+their targets temporarily had bodies or were in progress.
+
+The shadow now keeps exact ordered raw and occurrence-time-admitted demand
+segments per live HIR `Function#id`, removes segments for vanished function
+identities, and recomputes both ordered vectors without probabilistic
+fingerprints or flat backlog carry. Capturing admission at the call occurrence
+is required: a later accessor/materialization in the same scan can change the
+target body/state before an end-of-scan certificate is sampled. End-of-scan
+target certificates still record body presence, lowering state, and queue
+membership as invalidation telemetry. The exact queue snapshot is retained
+after enqueue, and its metric is explicitly the post-enqueue-to-next-
+post-process transition rather than a general queue revision.
+
+Segment replacement/removal/order, monotonic function replacement identity,
+occurrence-time admission versus later target state, target body/state/queue,
+and bounded-budget regressions are green. The standalone exact-shadow group is
+**5/0**; the isolated staged snapshot combined with its base HIR file is
+**293/0** with two existing pending examples.
+
+A source-matched bounded self-host gate is green through iteration 3. Exact
+full/shadow raw counts were `420/420`, `933/933`, `4705/4705`, and
+`12904/12904`; occurrence-admitted and selected counts matched at
+`94`, `183`, `982`, and `2036`. All four rows reported `match=1`, and
+mismatch count stayed zero. Iterations 1-3 observed the post-enqueue-to-next-
+post-process queue transition with prior queue sizes 94, 183, and 982; the
+comparison gate exited 0 after about 84 seconds before processing iteration 3.
+
+A same-source cold-cache ON/OFF gate also reached the identical iteration-3
+post-enqueue boundary (`funcs=19293`, `missing=2036`, `pending=2036`, exit 0).
+Sequential `time -p` walls were 105.20s OFF and 105.16s ON (safe-wrapper child
+intervals about 83s each), which is noise-bounded parity evidence, not a
+speedup claim. The current source-matched s1 also passes the default-off
+no-prelude smoke with the exact `hello world`, `n=42`, and
+`noprelude_interp_ok` markers.
+
+Do not promote this shadow to production authority or claim a speedup. Exact
+segment changes are still discovered by the authoritative full scan, the
+post-process terminal fixed point remains unproven, the A/B timing is
+single-sample and cold-cache, and B4-F remains red. The next admissible step is
+a mutation-owned function/body/state/queue revision source; repeat same-source
+ON/OFF cost and parity at that boundary before using cached segments as
+authority. Do not replace the full scan, add arbitrary pruning, or optimize
+from raw function count alone.
 
 VERIFIED CONSTRUCTOR NAMED-ARGUMENT SLICE (produced-stage successor still
 open): source-backed lazy lowering collapsed

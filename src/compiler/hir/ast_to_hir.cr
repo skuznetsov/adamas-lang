@@ -58636,6 +58636,150 @@ module Adamas::HIR
       end
     end
 
+    private def select_missing_call_target_batch(
+      missing : Array(String),
+      budget : Int32,
+    ) : {Array(String), Bool}
+      if budget > 0 && missing.size > budget
+        {missing.first(budget), true}
+      else
+        {missing, false}
+      end
+    end
+
+    private struct MissingIncrementalTargetCertificate
+      getter body_present : Bool
+      getter state : FunctionLoweringState
+      getter queued : Bool
+
+      def initialize(@body_present, @state, @queued)
+      end
+    end
+
+    private def missing_incremental_refresh_segments(
+      cached : Hash(UInt64, Array(String)),
+      order : Array(UInt64),
+      current : Hash(UInt64, Array(String)),
+    ) : {Array(Array(String)), Int32}
+      active = Set(UInt64).new(order.size)
+      segments = [] of Array(String)
+      changed = 0
+
+      order.each do |function_identity|
+        active.add(function_identity)
+        segment = current[function_identity]
+        if cached_segment = cached[function_identity]?
+          unless cached_segment == segment
+            cached[function_identity] = segment.dup
+            changed += 1
+          end
+        else
+          cached[function_identity] = segment.dup
+          changed += 1
+        end
+        segments << cached[function_identity]
+      end
+
+      cached.keys.each do |function_identity|
+        next if active.includes?(function_identity)
+        cached.delete(function_identity)
+        changed += 1
+      end
+
+      {segments, changed}
+    end
+
+    private def missing_incremental_flatten_segments(
+      segments : Array(Array(String)),
+    ) : Array(String)
+      demands = [] of String
+      seen = Set(String).new
+      segments.each do |segment|
+        segment.each do |name|
+          next if seen.includes?(name)
+          seen.add(name)
+          demands << name
+        end
+      end
+      demands
+    end
+
+    private def missing_incremental_target_certificate(
+      name : String,
+      queued_names : Set(String),
+    ) : MissingIncrementalTargetCertificate
+      MissingIncrementalTargetCertificate.new(
+        @module.has_function_with_body?(name),
+        function_state(name),
+        queued_names.includes?(name),
+      )
+    end
+
+    private def missing_incremental_target_certificates(
+      demands : Array(String),
+      queued_names : Set(String),
+    ) : Hash(String, MissingIncrementalTargetCertificate)
+      certificates = Hash(String, MissingIncrementalTargetCertificate).new
+      demands.each do |name|
+        certificates[name] = missing_incremental_target_certificate(name, queued_names)
+      end
+      certificates
+    end
+
+    private def missing_incremental_target_invalidation_count(
+      previous : Hash(String, MissingIncrementalTargetCertificate),
+      current : Hash(String, MissingIncrementalTargetCertificate),
+    ) : Int32
+      invalidated = 0
+      current.each do |name, certificate|
+        invalidated += 1 unless previous[name]? == certificate
+      end
+      previous.each_key do |name|
+        invalidated += 1 unless current.has_key?(name)
+      end
+      invalidated
+    end
+
+    private def missing_incremental_shadow_difference_sample(
+      full : Array(String),
+      shadow : Array(String),
+      limit : Int32 = 3,
+    ) : String
+      if full.size == shadow.size && full != shadow
+        index = 0
+        while index < full.size
+          full_name = full.unsafe_fetch(index)
+          shadow_name = shadow.unsafe_fetch(index)
+          if full_name != shadow_name
+            return "order_index=#{index},full=#{missing_incremental_sample_token(full_name)},shadow=#{missing_incremental_sample_token(shadow_name)}"
+          end
+          index += 1
+        end
+      end
+
+      full_set = Set(String).new(full.size)
+      full.each { |name| full_set.add(name) }
+      shadow_set = Set(String).new(shadow.size)
+      shadow.each { |name| shadow_set.add(name) }
+      full_only = [] of String
+      full.each do |name|
+        next if shadow_set.includes?(name)
+        full_only << missing_incremental_sample_token(name)
+        break if full_only.size >= limit
+      end
+      shadow_only = [] of String
+      shadow.each do |name|
+        next if full_set.includes?(name)
+        shadow_only << missing_incremental_sample_token(name)
+        break if shadow_only.size >= limit
+      end
+      "full_only=#{full_only.join(";")},shadow_only=#{shadow_only.join(";")}"
+    end
+
+    private def missing_incremental_sample_token(name : String, limit : Int32 = 120) : String
+      name.bytesize <= limit ? name : "#{name[0, limit]}..."
+    end
+
     # Lower any missing call targets that already appear in the HIR module.
     # This is a safety net for late-resolved overloads (defaults, implicit generics).
     private def lower_missing_call_targets
@@ -58650,16 +58794,37 @@ module Adamas::HIR
       debug_missing_samples = env_get("DEBUG_MISSING_SAMPLES")
       debug_missing_top = env_get("DEBUG_MISSING_TOP").try(&.to_i?) || 20
       trace_flush_enter = env_has?("ADAMAS_TRACE_FLUSH_ENTER")
+      incremental_falsifier = env_has?("ADAMAS_MISSING_INCREMENTAL_FALSIFIER")
+      incremental_cached_segments = incremental_falsifier ? Hash(UInt64, Array(String)).new : nil
+      incremental_cached_available_segments = incremental_falsifier ? Hash(UInt64, Array(String)).new : nil
+      incremental_previous_target_certificates = incremental_falsifier ? Hash(String, MissingIncrementalTargetCertificate).new : nil
+      incremental_previous_queue = incremental_falsifier ? [] of String : nil
+      incremental_has_previous_iteration = false
+      incremental_mismatch_count = 0
+      incremental_terminal_emitted = false
       STDERR.puts "[MISSING_LOWER] start" if debug_missing
       stop_after_missing_phase("start", "ADAMAS_STOP_AFTER_HIR_MISSING_START", iteration, 0)
 
       while iteration < max_iterations
         STDERR.puts "[MISSING_TRACE] iter=#{iteration} funcs=#{@module.functions.size}" if trace_flush_enter
         missing = [] of String
+        incremental_full_demands = incremental_falsifier ? [] of String : nil
+        incremental_segment_order = incremental_falsifier ? [] of UInt64 : nil
+        incremental_current_segments = incremental_falsifier ? Hash(UInt64, Array(String)).new : nil
+        incremental_current_available_segments = incremental_falsifier ? Hash(UInt64, Array(String)).new : nil
         missing_summary = Hash(String, Int32).new(0) if debug_missing_summary
         missing_samples = Hash(String, Array(String)).new if debug_missing_samples
         func_trace_idx = 0
         @module.functions.each do |func|
+          incremental_function_identity = 0_u64
+          incremental_function_demands = nil.as(Array(String)?)
+          incremental_function_available_demands = nil.as(Array(String)?)
+          if segment_order = incremental_segment_order
+            incremental_function_identity = func.id.to_u64
+            incremental_function_demands = [] of String
+            incremental_function_available_demands = [] of String
+            segment_order << incremental_function_identity
+          end
           if trace_flush_enter
             STDERR.puts "[MISSING_TRACE] func[#{func_trace_idx}] #{func.name} params=#{func.params.size} blocks=#{func.blocks.size}"
           end
@@ -58733,6 +58898,12 @@ module Adamas::HIR
               end
               next if name.empty?
               next if backend_owned_runtime_intrinsic_call?(name)
+              if full_demands = incremental_full_demands
+                full_demands << name
+              end
+              if function_demands = incremental_function_demands
+                function_demands << name
+              end
               next if @module.has_function_with_body?(name)
               if debug_env_filter_match?("DEBUG_MISSING_TARGET", name)
                 STDERR.puts "[MISSING_TARGET] seen name=#{name} func=#{func.name} body=#{@module.has_function_with_body?(name)} state=#{function_state(name)}"
@@ -58750,6 +58921,9 @@ module Adamas::HIR
               end
               next if function_state(name).in_progress?
               missing << name
+              if available_demands = incremental_function_available_demands
+                available_demands << name
+              end
               if summary = missing_summary
                 parts3 = parse_method_name_compact(name)
                 owner3 = parts3.owner || "(top-level)"
@@ -58782,17 +58956,115 @@ module Adamas::HIR
                     if function_state(un_super).completed?
                       @function_lowering_states.delete(un_super)
                     end
+                    if full_demands = incremental_full_demands
+                      full_demands << un_super
+                    end
+                    if function_demands = incremental_function_demands
+                      function_demands << un_super
+                    end
                     missing << un_super
+                    if available_demands = incremental_function_available_demands
+                      available_demands << un_super
+                    end
                   end
                 end
               end
             end
           end
+          if current_segments = incremental_current_segments
+            current_segments[incremental_function_identity] =
+              incremental_function_demands.not_nil!
+          end
+          if current_available_segments = incremental_current_available_segments
+            current_available_segments[incremental_function_identity] =
+              incremental_function_available_demands.not_nil!
+          end
         end
         stop_after_missing_phase("scan", "ADAMAS_STOP_AFTER_HIR_MISSING_SCAN", iteration, missing.size)
         missing.uniq!
         stop_after_missing_phase("uniq", "ADAMAS_STOP_AFTER_HIR_MISSING_UNIQ", iteration, missing.size)
+        if incremental_falsifier
+          full_raw = incremental_full_demands.not_nil!
+          full_raw.uniq!
+          shadow_segments, changed_segments =
+            missing_incremental_refresh_segments(
+              incremental_cached_segments.not_nil!,
+              incremental_segment_order.not_nil!,
+              incremental_current_segments.not_nil!,
+            )
+          shadow_raw = missing_incremental_flatten_segments(shadow_segments)
+          shadow_available_segments, changed_available_segments =
+            missing_incremental_refresh_segments(
+              incremental_cached_available_segments.not_nil!,
+              incremental_segment_order.not_nil!,
+              incremental_current_available_segments.not_nil!,
+            )
+          shadow_available =
+            missing_incremental_flatten_segments(shadow_available_segments)
+          queued_names = Set(String).new(@pending_function_queue.size)
+          @pending_function_queue.each { |name| queued_names.add(name) }
+          shadow_certificates = missing_incremental_target_certificates(
+            shadow_raw,
+            queued_names,
+          )
+          previous_certificates = incremental_previous_target_certificates.not_nil!
+          target_invalidations = incremental_has_previous_iteration ?
+            missing_incremental_target_invalidation_count(
+              previous_certificates,
+              shadow_certificates,
+            ) : 0
+          previous_queue = incremental_previous_queue.not_nil!
+          post_enqueue_queue_changed = incremental_has_previous_iteration &&
+                                       previous_queue != @pending_function_queue
+          previous_post_enqueue_queue_size = previous_queue.size
+          full_available = missing
+          full_selected, full_has_more = select_missing_call_target_batch(
+            full_available,
+            budget,
+          )
+          shadow_selected, shadow_has_more = select_missing_call_target_batch(
+            shadow_available,
+            budget,
+          )
+          matches = full_raw == shadow_raw &&
+                    full_available == shadow_available &&
+                    full_selected == shadow_selected &&
+                    full_has_more == shadow_has_more
+          incremental_mismatch_count += 1 unless matches
+          sample = if matches
+                     "none"
+                   elsif full_available != shadow_available
+                     missing_incremental_shadow_difference_sample(
+                       full_available,
+                       shadow_available,
+                     )
+                   else
+                     "raw_" + missing_incremental_shadow_difference_sample(
+                       full_raw,
+                       shadow_raw,
+                     )
+                   end
+          if !matches && incremental_mismatch_count <= 3
+            STDERR.puts "[MISSING_INCREMENTAL_MISMATCH] iter=#{iteration} full_raw=#{full_raw.size} shadow_raw=#{shadow_raw.size} full=#{full_available.size} shadow=#{shadow_available.size}"
+            STDERR.puts "[MISSING_INCREMENTAL_DIFF] #{missing_incremental_sample_token(sample, 160)}"
+            STDERR.flush
+          end
+          if matches || incremental_mismatch_count <= 3
+            STDERR.puts "[MISSING_INCREMENTAL] iter=#{iteration} funcs=#{@module.functions.size} tracked_segments=#{incremental_cached_segments.not_nil!.size} changed_segments=#{changed_segments} changed_available_segments=#{changed_available_segments} target_invalidations=#{target_invalidations} post_enqueue_queue_changed=#{post_enqueue_queue_changed ? 1 : 0} previous_post_enqueue_queue_size=#{previous_post_enqueue_queue_size} queue_size=#{@pending_function_queue.size} full_raw=#{full_raw.size} shadow_raw=#{shadow_raw.size} full=#{full_available.size} shadow=#{shadow_available.size} full_selected=#{full_selected.size} shadow_selected=#{shadow_selected.size} full_more=#{full_has_more ? 1 : 0} shadow_more=#{shadow_has_more ? 1 : 0} match=#{matches ? 1 : 0} mismatches=#{incremental_mismatch_count} sample=#{sample}"
+          end
+          incremental_has_previous_iteration = true
+          stop_after_missing_phase(
+            "incremental_compare",
+            "ADAMAS_STOP_AFTER_HIR_MISSING_INCREMENTAL_COMPARE",
+            iteration,
+            full_available.size,
+          )
+        end
         if missing.empty?
+          if incremental_falsifier
+            STDERR.puts "[MISSING_INCREMENTAL_TERMINAL] iter=#{iteration} reason=no_missing hir_shape_stable=1 mismatches=#{incremental_mismatch_count} verdict=#{incremental_mismatch_count == 0 ? "observed_match" : "inconclusive"}"
+            incremental_terminal_emitted = true
+          end
           stop_after_missing_phase("queue", "ADAMAS_STOP_AFTER_HIR_MISSING_QUEUE", iteration, 0)
           stop_after_missing_phase("process", "ADAMAS_STOP_AFTER_HIR_MISSING_PROCESS", iteration, 0)
           stop_after_missing_phase("force_modules", "ADAMAS_STOP_AFTER_HIR_MISSING_FORCE_MODULES", iteration, 0)
@@ -58825,7 +59097,7 @@ module Adamas::HIR
           next if function_state(name).in_progress?
           @rta_called_methods << name
           if debug_env_filter_match?("DEBUG_MISSING_TARGET", name)
-            STDERR.puts "[MISSING_TARGET] queue name=#{name} state=#{function_state(name)} funcs=#{@module.functions.size}"
+            STDERR.puts "[MISSING_TARGET] queue iter=#{iteration} name=#{name} state=#{function_state(name)} funcs=#{@module.functions.size}"
           end
           # Always (re-)enqueue when the body is missing.
           # A function may have state=Pending but no longer be in the queue:
@@ -58838,6 +59110,22 @@ module Adamas::HIR
           @function_lowering_states[name] = FunctionLoweringState::Pending
           @pending_function_queue << name
         end
+        if incremental_falsifier
+          previous_queue = incremental_previous_queue.not_nil!
+          previous_queue.clear
+          previous_queue.concat(@pending_function_queue)
+          queued_names = Set(String).new(@pending_function_queue.size)
+          @pending_function_queue.each { |name| queued_names.add(name) }
+          queued_certificates = missing_incremental_target_certificates(
+            incremental_full_demands.not_nil!,
+            queued_names,
+          )
+          previous_certificates = incremental_previous_target_certificates.not_nil!
+          previous_certificates.clear
+          queued_certificates.each do |name, certificate|
+            previous_certificates[name] = certificate
+          end
+        end
         stop_after_missing_phase("queue", "ADAMAS_STOP_AFTER_HIR_MISSING_QUEUE", iteration, missing.size)
         with_pending_process_context("missing_initial", iteration, missing.size) do
           process_pending_lower_functions
@@ -58845,7 +59133,7 @@ module Adamas::HIR
         stop_after_missing_phase("process", "ADAMAS_STOP_AFTER_HIR_MISSING_PROCESS", iteration, missing.size)
         missing.each do |name|
           if debug_env_filter_match?("DEBUG_MISSING_TARGET", name)
-            STDERR.puts "[MISSING_TARGET] after_process name=#{name} body=#{@module.has_function_with_body?(name)} state=#{function_state(name)} funcs=#{@module.functions.size}"
+            STDERR.puts "[MISSING_TARGET] after_process iter=#{iteration} name=#{name} body=#{@module.has_function_with_body?(name)} state=#{function_state(name)} funcs=#{@module.functions.size}"
           end
           # If the missing call is a module/class method and still unresolved,
           # attempt a direct module-method lower against the recorded def.
@@ -58857,12 +59145,24 @@ module Adamas::HIR
         end
         stop_after_missing_phase("force_modules", "ADAMAS_STOP_AFTER_HIR_MISSING_FORCE_MODULES", iteration, missing.size)
         iteration += 1
-        break if @module.functions.size == before
+        if @module.functions.size == before
+          if incremental_falsifier
+            STDERR.puts "[MISSING_INCREMENTAL_TERMINAL] iter=#{iteration - 1} reason=legacy_function_count_stop hir_shape_stable=unknown mismatches=#{incremental_mismatch_count} verdict=inconclusive"
+            incremental_terminal_emitted = true
+          end
+          break
+        end
+      end
+      if incremental_falsifier && !incremental_terminal_emitted
+        STDERR.puts "[MISSING_INCREMENTAL_TERMINAL] iter=#{iteration} reason=max_iterations hir_shape_stable=unknown mismatches=#{incremental_mismatch_count} verdict=inconclusive"
       end
     end
 
     private def stop_after_missing_phase(phase : String, env_key : String, iteration : Int32, missing_count : Int32) : Nil
       if env_has?(env_key)
+        if gate_iteration = env_get("ADAMAS_MISSING_GATE_ITERATION").try(&.to_i?)
+          return unless iteration == gate_iteration
+        end
         log_missing_phase_status("stop_after_#{phase}", "taken", iteration, missing_count)
         STDERR.puts "[MISSING_GATE] stop_after=#{phase} env=#{env_key} iter=#{iteration} missing=#{missing_count} pending=#{@pending_function_queue.size} funcs=#{@module.function_count}"
         LibC._exit(0)
