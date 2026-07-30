@@ -104,7 +104,9 @@ kill_child_briefly() {
       */run_safe.sh|run_safe.sh) term_limit=30 ;;
     esac
     while [ $term_ticks -lt $term_limit ]; do
-      break unless kill -0 "$target_pid" 2>/dev/null
+      if ! kill -0 "$target_pid" 2>/dev/null; then
+        break
+      fi
       sleep 0.1
       term_ticks=$((term_ticks + 1))
     done

@@ -8,6 +8,9 @@ describe "bootstrap chain timing" do
 
     script.should_not contain("/usr/bin/time -l")
     script.scan("/usr/bin/time -p").size.should be >= 3
+    script.should contain(
+      %(/usr/bin/time -p "$SCRIPT_DIR/run_safe.sh" "$HOST_CRYSTAL" "$TIMEOUT_SEC" "$MEM_MB")
+    )
 
     stdout = IO::Memory.new
     stderr = IO::Memory.new

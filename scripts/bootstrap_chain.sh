@@ -9,12 +9,12 @@
 # Environment (defaults if flags omitted):
 #   CRYSTAL_HOST   — host compiler for stage1 (default: crystal)
 #   BOOTSTRAP_CHAIN_STAGES / BOOTSTRAP_CHAIN_SOURCE / BOOTSTRAP_CHAIN_OUT
-#   BOOTSTRAP_TIMEOUT_SEC — run_safe timeout for stage2+ (default 900)
-#   BOOTSTRAP_MEM_MB      — run_safe RSS cap for stage2+ (default 12288)
+#   BOOTSTRAP_TIMEOUT_SEC — run_safe compiler timeout for every stage (default 900)
+#   BOOTSTRAP_MEM_MB      — run_safe compiler RSS cap for every stage (default 12288)
 #   BOOTSTRAP_SMOKE_PLAIN_MEM_MB — RSS cap for plain smoke only (default 8192).
 #       Plain smoke uses the full prelude; 1024MB triggers false OOM under run_safe.
 #
-# Stage1 uses:  host build SOURCE -o OUT/cv2_s1 --error-trace
+# Stage1 uses:  scripts/run_safe.sh host timeout mem build SOURCE -o OUT/cv2_s1 --error-trace
 # Stage2+:      scripts/run_safe.sh PREV timeout mem SOURCE -o OUT/cv2_sN
 #
 set -uo pipefail
@@ -42,11 +42,11 @@ Usage:
 Environment (optional):
   CRYSTAL_HOST          Host compiler for stage1 (default: crystal)
   BOOTSTRAP_CHAIN_STAGES / BOOTSTRAP_CHAIN_SOURCE / BOOTSTRAP_CHAIN_OUT
-  BOOTSTRAP_TIMEOUT_SEC run_safe timeout for stage2+ (default: 900)
-  BOOTSTRAP_MEM_MB      run_safe RSS cap for stage2+ (default: 12288)
+  BOOTSTRAP_TIMEOUT_SEC run_safe compiler timeout for every stage (default: 900)
+  BOOTSTRAP_MEM_MB      run_safe compiler RSS cap for every stage (default: 12288)
   BOOTSTRAP_SMOKE_PLAIN_MEM_MB  RSS cap for plain smoke only (default: 8192)
 
-Stage1:  host build SOURCE -o OUT/cv2_s1 --error-trace
+Stage1:  scripts/run_safe.sh host timeout mem build SOURCE -o OUT/cv2_s1 --error-trace
 Stage2+: scripts/run_safe.sh PREV timeout mem SOURCE -o OUT/cv2_sN
 USAGE
 }
@@ -147,7 +147,8 @@ run_stage1_host() {
   local logfile="$2"
   (
     cd "$REPO_ROOT"
-    /usr/bin/time -p "$HOST_CRYSTAL" build "$SOURCE_REL" -o "$out_bin" --error-trace
+    /usr/bin/time -p "$SCRIPT_DIR/run_safe.sh" "$HOST_CRYSTAL" "$TIMEOUT_SEC" "$MEM_MB" \
+      build "$SOURCE_REL" -o "$out_bin" --error-trace
   ) >"$logfile" 2>&1
 }
 
@@ -224,7 +225,7 @@ echo "stages:     $STAGES"
 echo "host (s1):  $HOST_CRYSTAL"
 echo "source:     $SOURCE_REL"
 echo "out dir:    $OUT_DIR"
-echo "stage2+ run_safe: timeout=${TIMEOUT_SEC}s mem=${MEM_MB}MB"
+echo "compiler run_safe: timeout=${TIMEOUT_SEC}s mem=${MEM_MB}MB"
 echo "smoke plain run_safe: timeout=60s mem=${SMOKE_PLAIN_MEM_MB}MB (override BOOTSTRAP_SMOKE_PLAIN_MEM_MB)"
 echo ""
 
