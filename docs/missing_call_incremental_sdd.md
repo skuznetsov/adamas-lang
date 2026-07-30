@@ -5,7 +5,9 @@ Document status: **GUARD-ONLY VERIFIED; PRODUCTION PROMOTION REJECTED.**
 Current frontier: `AstToHir#lower_missing_call_targets` retains the legacy full
 HIR scan as production authority. The default-off exact shadow can reconstruct
 ordered raw and occurrence-admitted demand segments, but it still discovers
-segment changes by performing that full scan. B4-F remains measured-red.
+segment changes by performing that full scan. Per-function raw-local telemetry
+now separates stable HIR demand input from global availability context and is
+explicitly non-authoritative. B4-F remains measured-red.
 
 Bounded context:
 
@@ -29,6 +31,11 @@ demand and emit an LLVM abort stub.
   lowering-state/queue mutations.
 - A default-off shadow may report whether a revision certificate *would* reuse
   a segment and compare that decision with the exact full-scan result.
+- Raw-local `{body_revision, demand_revision}` equality may be recorded as
+  orientation evidence only when the log also states
+  `scope=per_function_raw`, `authority=full_scan`, and `promotion=forbidden`.
+- Raw-local exact equality and occurrence-availability mismatch are separate
+  counters; their coexistence is an expected falsifier, not a contradiction.
 - Any missing, wrapped, inconsistent, or unqualified revision fails closed to
   rescan.
 - Revision coordinates remain a vector. They are not folded into one readiness
@@ -43,6 +50,9 @@ demand and emit an LLVM abort stub.
 - Queue membership alone cannot decide availability.
 - A body/state/queue revision does not certify function-definition lookup,
   module/include resolution, or same-scan accessor materialization.
+- Raw-local stability does not certify function domain/order, target body,
+  lowering state, queue membership, definition/type lookup, class/include/enum
+  metadata, RTA side state, or public mutable HIR/AST aliases.
 - No speedup, B4-F admission, or post-process fixed-point claim follows from a
   zero false-reuse count.
 
@@ -100,6 +110,10 @@ changed exact segment.
     must never authorize a skipped scan.
 11. **Fail closed.** Revision equality is necessary, never sufficient, until the
    exact full-scan shadow reports no false reuse across the admitted gates.
+12. **Raw/availability separation.** The raw-local comparison can describe
+    unchanged per-function HIR input, but it cannot admit an available segment.
+    Any cached/current availability difference is counted independently while
+    the full scan remains authority.
 
 ## 5. Execution order
 
@@ -121,7 +135,10 @@ changed exact segment.
   demand revision must change and exact raw order must reflect the new name.
 - **F3 — same-scan materialization:** a later accessor/union resolution changes
   body/state after an earlier call occurrence; occurrence-admitted parity must
-  remain exact and would-reuse must be rejected.
+  remain exact and would-reuse must be rejected. Implemented by
+  `regression_tests/missing_incremental_same_scan_union_accessor.sh`: scan 1
+  preserves the early admission, and scan 2 observes raw-local stability
+  together with an availability mismatch.
 - **F4 — definition replacement:** replace a `DefNode` under an existing key;
   definition revision must change, while reinstalling the same node is a no-op.
 - **F4b — inferred type replacement:** replace an inferred function return type;
@@ -131,6 +148,8 @@ changed exact segment.
 - **F6 — mutation census:** bounded source search must find no direct admitted
   state/queue/definition/type writes outside the named helpers and no
   production instruction/call mutation that bypasses the body/demand mutator.
+  A seeded direct `Call#method_name=` bypass must be detected as raw-local false
+  reuse; this qualifies the negative detector without claiming public closure.
 - **F7 — staged system gate:** isolated staged snapshot HIR plus same-source
   ON/OFF iteration boundary must preserve exact raw/admitted/budget/queue shape.
 
@@ -179,11 +198,16 @@ semantic zeroes and improves the full B4-F corridor.
   `missing_revision_ledger_spec.cr`.
 - **Falsifiers:** F1-F7.
 - **Boundary:** default-off guard-only; no production scan skip.
-- **Observed staged gate:** 301 HIR examples passed with two existing pending
-  examples; source-matched iteration 3 preserved exact full/shadow demand
-  vectors with zero false reuse.
+- **Observed staged gate:** 304 HIR examples passed with two existing pending
+  examples; the integrated same-scan accessor/union regression, ownership
+  census, compiler build, and default-off no-prelude regression passed.
+- **Source-matched telemetry:** iterations 1-3 observed 603, 1539, and 7471
+  raw-local stable segments with zero raw-local false reuse, while 198, 345,
+  and 984 of those segments changed occurrence availability. Full/shadow raw
+  and available vectors remained exact through iteration 3.
 - **Adversary verdict:** robust for the bounded observational guard, vulnerable
   for universal mutation ownership or cached-scan authority.
-- **Next local track:** isolate scan-side mutation, add an integrated F3
-  accessor/union materialization falsifier, and only then seek non-zero stable
-  candidates. Cached segments remain non-authoritative.
+- **Next local track:** design an explicit availability replay certificate
+  covering target state and traversal order, or refute that route before any
+  production raw-segment skip. Public mutable aliases and unrevisioned
+  class/include/enum/RTA metadata remain rejected boundaries.

@@ -87,6 +87,32 @@ point, and an integrated same-scan accessor/union materialization falsifier
 remain open. Next isolate scan-side mutations and add that integrated falsifier
 before considering any production reuse.
 
+RAW-LOCAL ATTRIBUTION DIAGNOSTIC VERIFIED; AVAILABILITY REPLAY REMAINS
+REJECTED. The zero full-vector candidates were caused by temporal/global
+poisoning: scan-side global bumps invalidate functions sampled earlier, while
+enqueue/process changes global function-set/body/definition/type/state/queue
+coordinates between iterations. A second default-off comparison now observes
+only per-function body/demand input and labels every row
+`scope=per_function_raw`, `authority=full_scan`, and `promotion=forbidden`.
+
+The isolated staged HIR gate is 304 examples, 0 failures, 0 errors, with two
+existing pending examples. The integrated union-accessor regression passes
+through the real missing-call loop: an earlier bodyless
+`Outer::Info#kind` occurrence stays admitted when a later union call
+materializes the getter, then the next scan reports raw-local stability
+together with changed availability. A seeded public `Call#method_name=` bypass
+is detected as raw-local false reuse, qualifying the negative detector without
+claiming universal mutation ownership.
+
+The source-matched staged iteration-3 gate preserved exact full/shadow raw and
+available vectors with zero raw-local false reuse. Raw-local stable counts were
+603, 1539, and 7471 at iterations 1-3, while availability mismatches were 198,
+345, and 984. This is evidence against promotion: local raw stability is common
+but does not certify target availability. The staged compiler build, ownership
+census, integrated F3 runner, and default-off no-prelude regression are green.
+Next either design an explicit availability/order replay certificate or refute
+that route before any production raw-segment skip. B4-F remains red.
+
 VERIFIED CONSTRUCTOR NAMED-ARGUMENT SLICE (produced-stage successor still
 open): source-backed lazy lowering collapsed
 `NamedSlotProbe.new(third: 30)` to `NamedSlotProbe.new$Int32(%30)`, so the

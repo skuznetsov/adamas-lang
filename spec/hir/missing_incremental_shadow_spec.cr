@@ -165,6 +165,155 @@ class Adamas::HIR::AstToHir
       current_available,
     )
   end
+
+  def __test_exact_shadow_union_materialization_revision_compare(
+    func : Adamas::HIR::Function,
+    union_name : String,
+    method_name : String,
+    target_name : String,
+  )
+    function_identity = func.id.to_u64
+    before_target_body = @module.has_function_with_body?(target_name)
+    before_certificate = missing_incremental_revision_certificate(func)
+    previous = {
+      function_identity => before_certificate,
+    }
+    before_scan = {
+      function_identity => before_certificate,
+    }
+    resolved_name = resolve_union_method_call(
+      union_name,
+      method_name,
+      [] of Adamas::HIR::TypeRef,
+      false,
+    )
+    after_target_body = @module.has_function_with_body?(target_name)
+    after_scan = {
+      function_identity => missing_incremental_revision_certificate(func),
+    }
+    cached_raw = {
+      function_identity => [target_name],
+    }
+    current_raw = {
+      function_identity => [target_name],
+    }
+    cached_available = {
+      function_identity => (before_target_body ? [] of String : [target_name]),
+    }
+    current_available = {
+      function_identity => (after_target_body ? [] of String : [target_name]),
+    }
+
+    full_compare = missing_incremental_revision_compare(
+      previous,
+      before_scan,
+      after_scan,
+      cached_raw,
+      cached_available,
+      current_raw,
+      current_available,
+    )
+    raw_compare = missing_incremental_raw_local_compare(
+      previous,
+      before_scan,
+      after_scan,
+      cached_raw,
+      cached_available,
+      current_raw,
+      current_available,
+    )
+    {
+      resolved_name,
+      before_target_body,
+      after_target_body,
+      full_compare,
+      raw_compare,
+      cached_available != current_available,
+    }
+  end
+
+  def __test_exact_shadow_raw_local_compare(
+    func : Adamas::HIR::Function,
+    cached_name : String,
+    current_name : String,
+    mutate_during_scan : Bool,
+  ) : {Int32, Int32, Int32, Int32, Int32}
+    function_identity = func.id.to_u64
+    before_certificate = missing_incremental_revision_certificate(func)
+    previous = {
+      function_identity => before_certificate,
+    }
+    before_scan = {
+      function_identity => before_certificate,
+    }
+    if mutate_during_scan
+      func.get_block(func.entry_block).add(
+        Adamas::HIR::Literal.new(
+          func.next_value_id,
+          Adamas::HIR::TypeRef::INT32,
+          1_i64,
+        )
+      )
+    end
+    after_scan = {
+      function_identity => missing_incremental_revision_certificate(func),
+    }
+    cached_raw = {
+      function_identity => [cached_name],
+    }
+    current_raw = {
+      function_identity => [current_name],
+    }
+    cached_available = {
+      function_identity => [] of String,
+    }
+    current_available = {
+      function_identity => [] of String,
+    }
+
+    missing_incremental_raw_local_compare(
+      previous,
+      before_scan,
+      after_scan,
+      cached_raw,
+      cached_available,
+      current_raw,
+      current_available,
+    )
+  end
+
+  def __test_exact_shadow_raw_local_public_call_bypass(
+    func : Adamas::HIR::Function,
+    call : Adamas::HIR::Call,
+    rewritten_name : String,
+  ) : {Int32, Int32, Int32, Int32, Int32}
+    function_identity = func.id.to_u64
+    cached_name = call.method_name
+    before_certificate = missing_incremental_revision_certificate(func)
+    previous = {
+      function_identity => before_certificate,
+    }
+    before_scan = {
+      function_identity => before_certificate,
+    }
+    call.method_name = rewritten_name
+    after_scan = {
+      function_identity => missing_incremental_revision_certificate(func),
+    }
+    empty_available = {
+      function_identity => [] of String,
+    }
+
+    missing_incremental_raw_local_compare(
+      previous,
+      before_scan,
+      after_scan,
+      {function_identity => [cached_name]},
+      empty_available,
+      {function_identity => [rewritten_name]},
+      empty_available,
+    )
+  end
 end
 
 private def parse_exact_shadow_source(code : String) : {Adamas::Compiler::Frontend::ArenaLike, Array(Adamas::Compiler::Frontend::ExprId)}
@@ -521,5 +670,131 @@ describe "missing-call exact incremental shadow" do
       "Owner#new",
       true,
     ).should eq({1, 0, 1, 0})
+  end
+
+  it "separates raw stability from later same-scan union accessor materialization" do
+    source = <<-CRYSTAL
+      class Outer
+        class Info
+          property kind : FileType
+        end
+      end
+
+      enum FileType
+        Other
+        Tuple
+      end
+    CRYSTAL
+    arena, roots = parse_exact_shadow_source(source)
+    converter = Adamas::HIR::AstToHir.new(
+      arena,
+      sources_by_arena: {arena.object_id.to_u64 => source},
+    )
+    converter.arena = arena
+    outer_expr = roots.find do |expr_id|
+      node = arena[expr_id]
+      node.is_a?(Adamas::Compiler::Frontend::ClassNode) &&
+        String.new(
+          node.as(Adamas::Compiler::Frontend::ClassNode).name.not_nil!,
+        ) == "Outer"
+    end
+    enum_expr = roots.find do |expr_id|
+      arena[expr_id].is_a?(Adamas::Compiler::Frontend::EnumNode)
+    end
+    converter.register_class(
+      arena[outer_expr.not_nil!].as(Adamas::Compiler::Frontend::ClassNode),
+    )
+    converter.register_enum(
+      arena[enum_expr.not_nil!].as(Adamas::Compiler::Frontend::EnumNode),
+    )
+
+    target_name = "Outer::Info#kind"
+    driver = converter.module.create_function(
+      "Owner#same_scan_driver",
+      Adamas::HIR::TypeRef::VOID,
+    )
+    driver.get_block(driver.entry_block).add(
+      Adamas::HIR::Call.new(
+        driver.next_value_id,
+        Adamas::HIR::TypeRef::VOID,
+        target_name,
+      )
+    )
+
+    resolved_name,
+      before_target_body,
+      after_target_body,
+      full_compare,
+      raw_compare,
+      availability_changed =
+        converter.__test_exact_shadow_union_materialization_revision_compare(
+          driver,
+          "Nil | Outer::Info",
+          "kind",
+          target_name,
+        )
+
+    resolved_name.should eq(target_name)
+    before_target_body.should be_false
+    after_target_body.should be_true
+    full_compare.should eq({1, 0, 1, 0})
+    raw_compare.should eq({1, 1, 0, 0, 1})
+    availability_changed.should be_true
+  end
+
+  it "detects raw false reuse and local scan mutation" do
+    converter = exact_shadow_converter
+    stable = converter.module.create_function(
+      "Owner#raw_stable_revision_probe",
+      Adamas::HIR::TypeRef::VOID,
+    )
+    converter.__test_exact_shadow_raw_local_compare(
+      stable,
+      "Owner#target",
+      "Owner#target",
+      false,
+    ).should eq({1, 1, 0, 0, 0})
+
+    false_reuse = converter.module.create_function(
+      "Owner#raw_false_reuse_probe",
+      Adamas::HIR::TypeRef::VOID,
+    )
+    converter.__test_exact_shadow_raw_local_compare(
+      false_reuse,
+      "Owner#old",
+      "Owner#new",
+      false,
+    ).should eq({1, 1, 0, 1, 0})
+
+    scan_mutation = converter.module.create_function(
+      "Owner#raw_scan_mutation_probe",
+      Adamas::HIR::TypeRef::VOID,
+    )
+    converter.__test_exact_shadow_raw_local_compare(
+      scan_mutation,
+      "Owner#old",
+      "Owner#new",
+      true,
+    ).should eq({1, 0, 1, 0, 0})
+  end
+
+  it "detects a public Call mutation that bypasses the owner ledger" do
+    converter = exact_shadow_converter
+    function = converter.module.create_function(
+      "Owner#raw_public_bypass_probe",
+      Adamas::HIR::TypeRef::VOID,
+    )
+    call = Adamas::HIR::Call.new(
+      function.next_value_id,
+      Adamas::HIR::TypeRef::VOID,
+      "Owner#before",
+    )
+    function.get_block(function.entry_block).add(call)
+
+    converter.__test_exact_shadow_raw_local_public_call_bypass(
+      function,
+      call,
+      "Owner#after",
+    ).should eq({1, 1, 0, 1, 0})
   end
 end
