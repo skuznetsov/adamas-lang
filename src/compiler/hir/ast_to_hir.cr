@@ -2325,8 +2325,12 @@ module Adamas::HIR
 
     # Per-function lowering state
     @function_lowering_states : Hash(String, FunctionLoweringState) = Hash(String, FunctionLoweringState).new(initial_capacity: 32768)
+    @function_def_revision : UInt64 = 0_u64
+    @function_type_revision : UInt64 = 0_u64
+    @function_lowering_state_revision : UInt64 = 0_u64
     # Queue for pending lower requests to avoid O(n^2) scans of the state hash.
     @pending_function_queue : Array(String) = [] of String
+    @pending_function_queue_revision : UInt64 = 0_u64
     # Debug-only ownership context for process_pending_lower_functions stop gates.
     @pending_process_context : String? = nil
     @pending_process_iteration : Int32 = -1
@@ -4805,7 +4809,7 @@ module Adamas::HIR
         if should_undefer
           @rta_deferred_set.delete(name)
           maybe_log_pending_explosion(name, "rta_undefer")
-          @pending_function_queue << name
+          enqueue_pending_function(name)
           count += 1
           true
         else
@@ -4868,6 +4872,42 @@ module Adamas::HIR
       @function_lowering_states[name]? || FunctionLoweringState::NotStarted
     end
 
+    private def set_function_state(
+      name : String,
+      state : FunctionLoweringState,
+    ) : Nil
+      return if @function_lowering_states[name]? == state
+      @function_lowering_states[name] = state # missing-revision-owner
+      @function_lowering_state_revision =
+        @function_lowering_state_revision &+ 1_u64
+    end
+
+    private def clear_function_state(name : String) : Nil
+      return unless @function_lowering_states.has_key?(name)
+      @function_lowering_states.delete(name) # missing-revision-owner
+      @function_lowering_state_revision =
+        @function_lowering_state_revision &+ 1_u64
+    end
+
+    private def clear_function_type_entry(name : String) : Nil
+      return unless @function_types.has_key?(name)
+      @function_types.delete(name) # missing-revision-owner
+      @function_type_revision = @function_type_revision &+ 1_u64
+    end
+
+    private def enqueue_pending_function(name : String) : Nil
+      @pending_function_queue << name # missing-revision-owner
+      @pending_function_queue_revision =
+        @pending_function_queue_revision &+ 1_u64
+    end
+
+    private def clear_pending_function_queue : Nil
+      return if @pending_function_queue.empty?
+      @pending_function_queue.clear # missing-revision-owner
+      @pending_function_queue_revision =
+        @pending_function_queue_revision &+ 1_u64
+    end
+
     # Helper: check if function can be lowered (not already in progress or completed)
     private def can_start_lowering?(name : String) : Bool
       state = function_state(name)
@@ -4896,6 +4936,9 @@ module Adamas::HIR
     ) : Nil
       old_def = @function_defs[name]?
       is_new = old_def.nil?
+      if is_new || old_def != def_node
+        @function_def_revision = @function_def_revision &+ 1_u64
+      end
       if debug_owner_probe_name?(name)
         STDERR.puts "[OWNER_PROBE_SET] name=#{name} is_new=#{is_new ? 1 : 0} old_id=#{old_def ? old_def.object_id : 0} new_id=#{def_node.object_id}"
       end
@@ -4918,7 +4961,7 @@ module Adamas::HIR
         end
       end
       if is_new
-        @function_defs[name] = def_node
+        @function_defs[name] = def_node # missing-revision-owner
         set_function_visibility(name, def_node.visibility)
         STDERR.puts "[SET_FDEF] phase=after_map_write name=#{name}" if env_has?("DEBUG_REGISTER_DEF_RAW")
         seed_function_param_caches(name, def_node)
@@ -4966,7 +5009,7 @@ module Adamas::HIR
             end
           end
         end
-        @function_defs[name] = def_node
+        @function_defs[name] = def_node # missing-revision-owner
         set_function_visibility(name, def_node.visibility)
         if env_has?("DEBUG_SET_FDEF_STEPS")
           if filter = env_get("DEBUG_SET_FDEF")
@@ -4984,7 +5027,7 @@ module Adamas::HIR
           end
         end
       elsif !is_new
-        @function_defs[name] = def_node
+        @function_defs[name] = def_node # missing-revision-owner
         set_function_visibility(name, def_node.visibility)
         seed_function_param_caches(name, def_node)
       end
@@ -5079,7 +5122,8 @@ module Adamas::HIR
           end
         end
       end
-      @function_types[name] = return_type
+      @function_types[name] = return_type # missing-revision-owner
+      @function_type_revision = @function_type_revision &+ 1_u64
       if is_new
         index_function_type_key_entry(name)
         @function_types_processed_for_keys = @function_types.size
@@ -6452,7 +6496,11 @@ module Adamas::HIR
       @lower_histo_total = 0_i64
       # Function lowering
       @function_lowering_states = Hash(String, FunctionLoweringState).new(initial_capacity: 32768)
+      @function_def_revision = 0_u64
+      @function_type_revision = 0_u64
+      @function_lowering_state_revision = 0_u64
       @pending_function_queue = [] of String
+      @pending_function_queue_revision = 0_u64
       @pending_queue_remove_set = Set(String).new
       @pending_source_counts = {} of String => Int32
       @pending_source_samples = {} of String => Array(String)
@@ -32307,14 +32355,14 @@ module Adamas::HIR
 
         requeue_exact_demand = @rta_called_methods.includes?(name)
         next unless @module.remove_function(name)
-        @function_lowering_states.delete(name)
+        clear_function_state(name)
         # Do not delete from the live pending worklist.  The pending lowering
         # pass walks this Array by index, so deletion shifts later entries and
         # can silently skip unrelated demands.  Stale entries are safe: the
         # worklist already ignores functions whose body/state has settled.
         if requeue_exact_demand
-          @function_lowering_states[name] = FunctionLoweringState::Pending
-          @pending_function_queue << name
+          set_function_state(name, FunctionLoweringState::Pending)
+          enqueue_pending_function(name)
         end
         delete_yield_function(name)
         @yield_return_functions.delete(name)
@@ -33680,14 +33728,14 @@ module Adamas::HIR
       return if @module.has_function_with_body?(name)
       return if function_state(name).in_progress?
 
-      @function_lowering_states[name] = FunctionLoweringState::InProgress
+      set_function_state(name, FunctionLoweringState::InProgress)
       begin
         yield
       ensure
         if @module.has_function_with_body?(name)
-          @function_lowering_states[name] = FunctionLoweringState::Completed
+          set_function_state(name, FunctionLoweringState::Completed)
         else
-          @function_lowering_states.delete(name)
+          clear_function_state(name)
         end
       end
     end
@@ -33936,7 +33984,7 @@ module Adamas::HIR
       # Mark the allocator as in-progress so layout invalidation (which can
       # be triggered by lower_expr/lower_function_if_needed inside body gen)
       # does NOT remove this function from the module mid-generation.
-      @function_lowering_states[func_name] = FunctionLoweringState::InProgress
+      set_function_state(func_name, FunctionLoweringState::InProgress)
 
       if debug_filter = env_get("DEBUG_INIT_PARAMS")
         if debug_filter == "*" || class_name.includes?(debug_filter)
@@ -34259,7 +34307,7 @@ module Adamas::HIR
         instance_ctx.terminate(Return.new(new_call.id))
       end
 
-      @function_lowering_states[func_name] = FunctionLoweringState::Completed
+      set_function_state(func_name, FunctionLoweringState::Completed)
 
       generate_allocator_overload(class_name, class_info, call_arg_types, call_has_named_args, call_has_block, call_named_arg_names)
     end
@@ -36544,7 +36592,7 @@ module Adamas::HIR
       # lower_method would append another implicit self + params to the same HIR function.
       # Treat an already-emitted body as authoritative for this exact full_name.
       if @module.has_function_with_body?(full_name)
-        @function_lowering_states[full_name] = FunctionLoweringState::Completed
+        set_function_state(full_name, FunctionLoweringState::Completed)
         @current_typeof_locals = old_typeof_locals
         @current_typeof_local_names = old_typeof_local_names
         @enum_value_types = old_enum_value_types
@@ -37079,7 +37127,7 @@ module Adamas::HIR
       @enum_value_types = old_enum_value_types
       @closure_ref_cells = saved_closure_ref_cells_lm
       @closure_ref_prefer_cell = saved_closure_ref_prefer_lm
-      @function_lowering_states[full_name] = FunctionLoweringState::Completed
+      set_function_state(full_name, FunctionLoweringState::Completed)
       stop_after_pending_target_lower_method_phase(
         "lower_method_completed",
         "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_COMPLETED",
@@ -42260,7 +42308,7 @@ module Adamas::HIR
                      else
                        Call.with_receiver_virtual(inst.id, return_type, recv, inst.method_name, inst.args, true)
                      end
-          block.instructions[idx] = new_call
+          block.replace(idx, new_call)
           ctx.register_type(inst.id, return_type)
         end
       end
@@ -42315,7 +42363,7 @@ module Adamas::HIR
                 # `x != nil` -> true, `x == nil` -> false
                 folded_value = inst.op == BinaryOp::Ne
                 folded = Literal.new(inst.id, TypeRef::BOOL, folded_value)
-                block.instructions[idx] = folded
+                block.replace(idx, folded)
                 value_types[inst.id] = TypeRef::BOOL
               end
             end
@@ -42377,7 +42425,7 @@ module Adamas::HIR
             # TODO(s2b-union-arg-abi): root cause is s2b mislowering a `Nil | UInt32`
             # argument followed by a `String` argument into the overloaded constructor;
             # this branch-split is a tactical avoidance, not the ABI fix.
-            block.instructions[idx] = new_call
+            block.replace(idx, new_call)
             value_types[inst.id] = resolved_type
             repaired_value_types[inst.id] = resolved_type
             repaired += 1
@@ -42398,11 +42446,23 @@ module Adamas::HIR
               if idx > 0
                 if local = block.instructions[idx - 1].as?(Local)
                   if local.type != repaired_type
-                    block.instructions[idx - 1] = Local.new(local.id, repaired_type, local.name, local.scope, local.mutable)
+                    block.replace(
+                      idx - 1,
+                      Local.new(
+                        local.id,
+                        repaired_type,
+                        local.name,
+                        local.scope,
+                        local.mutable,
+                      ),
+                    )
                   end
                 end
               end
-              block.instructions[idx] = Copy.new(inst.id, repaired_type, inst.source)
+              block.replace(
+                idx,
+                Copy.new(inst.id, repaired_type, inst.source),
+              )
               value_types[inst.id] = repaired_type
               repaired_value_types[inst.id] = repaired_type
               propagated += 1
@@ -42629,11 +42689,23 @@ module Adamas::HIR
                   if idx > 0
                     if local = block.instructions[idx - 1].as?(Local)
                       if local.type != repaired_type
-                        block.instructions[idx - 1] = Local.new(local.id, repaired_type, local.name, local.scope, local.mutable)
+                        block.replace(
+                          idx - 1,
+                          Local.new(
+                            local.id,
+                            repaired_type,
+                            local.name,
+                            local.scope,
+                            local.mutable,
+                          ),
+                        )
                       end
                     end
                   end
-                  block.instructions[idx] = Copy.new(inst.id, repaired_type, inst.source)
+                  block.replace(
+                    idx,
+                    Copy.new(inst.id, repaired_type, inst.source),
+                  )
                   value_types[inst.id] = repaired_type
                   repaired_value_types[inst.id] = repaired_type
                 end
@@ -42707,13 +42779,16 @@ module Adamas::HIR
                   corrected_name = block_entry[0]
                   return_type = get_function_return_type(corrected_name)
                   return_type = inst.type if return_type == TypeRef::VOID
-                  block.instructions[idx] = Call.without_receiver_block(
-                    inst.id,
-                    return_type,
-                    corrected_name,
-                    inst.args,
-                    inst.block_value,
-                    false
+                  block.replace(
+                    idx,
+                    Call.without_receiver_block(
+                      inst.id,
+                      return_type,
+                      corrected_name,
+                      inst.args,
+                      inst.block_value,
+                      false,
+                    ),
                   )
                   value_types[inst.id] = return_type
                   repaired_value_types[inst.id] = return_type
@@ -42753,11 +42828,14 @@ module Adamas::HIR
                   if typed_target_known && typed_target != method_name_text
                     return_type = get_function_return_type(typed_target)
                     return_type = inst.type if return_type == TypeRef::VOID
-                    block.instructions[idx] = Call.without_receiver(
-                      inst.id,
-                      return_type,
-                      typed_target,
-                      inst.args,
+                    block.replace(
+                      idx,
+                      Call.without_receiver(
+                        inst.id,
+                        return_type,
+                        typed_target,
+                        inst.args,
+                      ),
                     )
                     value_types[inst.id] = return_type
                     repaired_value_types[inst.id] = return_type
@@ -42812,11 +42890,24 @@ module Adamas::HIR
                 if corrected_name
                   return_type = get_function_return_type(corrected_name)
                   return_type = inst.type if return_type == TypeRef::VOID
-                  block.instructions[idx] = if block_id = inst.block
-                                              Call.without_receiver_block(inst.id, return_type, corrected_name, inst.args, block_id, false)
-                                            else
-                                              Call.without_receiver(inst.id, return_type, corrected_name, inst.args)
-                                            end
+                  replacement_call = if block_id = inst.block
+                                       Call.without_receiver_block(
+                                         inst.id,
+                                         return_type,
+                                         corrected_name,
+                                         inst.args,
+                                         block_id,
+                                         false,
+                                       )
+                                     else
+                                       Call.without_receiver(
+                                         inst.id,
+                                         return_type,
+                                         corrected_name,
+                                         inst.args,
+                                       )
+                                     end
+                  block.replace(idx, replacement_call)
                   value_types[inst.id] = return_type
                   repaired_value_types[inst.id] = return_type
                   targets_to_lower << corrected_name
@@ -43023,11 +43114,27 @@ module Adamas::HIR
             if env_get("DEBUG_L13") && corrected_name.includes?("map")
               STDERR.puts "[L13_REPAIR] rewrite old=#{method_name_text} new=#{corrected_name} recv=#{receiver_name} block=#{inst.block ? 1 : 0} func=#{func.name}"
             end
-            block.instructions[idx] = if block_id = inst.block
-                                        Call.with_receiver_block(inst.id, return_type, recv, corrected_name, inst.args, block_id, inst.virtual)
-                                      else
-                                        Call.with_receiver_virtual(inst.id, return_type, recv, corrected_name, inst.args, inst.virtual)
-                                      end
+            replacement_call = if block_id = inst.block
+                                 Call.with_receiver_block(
+                                   inst.id,
+                                   return_type,
+                                   recv,
+                                   corrected_name,
+                                   inst.args,
+                                   block_id,
+                                   inst.virtual,
+                                 )
+                               else
+                                 Call.with_receiver_virtual(
+                                   inst.id,
+                                   return_type,
+                                   recv,
+                                   corrected_name,
+                                   inst.args,
+                                   inst.virtual,
+                                 )
+                               end
+            block.replace(idx, replacement_call)
             value_types[inst.id] = return_type
             repaired_value_types[inst.id] = return_type
             targets_to_lower << corrected_name
@@ -43041,9 +43148,9 @@ module Adamas::HIR
 
       targets_to_lower.each do |name|
         unless @module.has_function_with_body?(name)
-          @function_lowering_states.delete(name)
+          clear_function_state(name)
           base_name = strip_type_suffix(name)
-          @function_lowering_states.delete(base_name) unless base_name == name
+          clear_function_state(base_name) unless base_name == name
         end
         if env_get("DEBUG_L13") && name.includes?("map")
           STDERR.puts "[L13_REPAIR] lower_target name=#{name} has_body=#{@module.has_function_with_body?(name) ? 1 : 0}"
@@ -58656,6 +58763,100 @@ module Adamas::HIR
       end
     end
 
+    private struct MissingIncrementalRevisionCertificate
+      getter function_set_revision : UInt64
+      getter hir_body_revision : UInt64
+      getter function_def_revision : UInt64
+      getter lowering_state_revision : UInt64
+      getter pending_queue_revision : UInt64
+      getter function_body_revision : UInt64
+      getter function_demand_revision : UInt64
+      getter function_type_revision : UInt64
+
+      def initialize(
+        @function_set_revision,
+        @hir_body_revision,
+        @function_def_revision,
+        @lowering_state_revision,
+        @pending_queue_revision,
+        @function_body_revision,
+        @function_demand_revision,
+        @function_type_revision,
+      )
+      end
+
+      def ==(other : self) : Bool
+        @function_set_revision == other.function_set_revision &&
+          @hir_body_revision == other.hir_body_revision &&
+          @function_def_revision == other.function_def_revision &&
+          @lowering_state_revision == other.lowering_state_revision &&
+          @pending_queue_revision == other.pending_queue_revision &&
+          @function_body_revision == other.function_body_revision &&
+          @function_demand_revision == other.function_demand_revision &&
+          @function_type_revision == other.function_type_revision
+      end
+    end
+
+    private def missing_incremental_revision_certificate(
+      func : Function,
+    ) : MissingIncrementalRevisionCertificate
+      MissingIncrementalRevisionCertificate.new(
+        @module.function_set_revision,
+        @module.hir_body_revision,
+        @function_def_revision,
+        @function_lowering_state_revision,
+        @pending_function_queue_revision,
+        func.body_revision,
+        func.demand_revision,
+        @function_type_revision,
+      )
+    end
+
+    private def missing_incremental_revision_compare(
+      previous : Hash(UInt64, MissingIncrementalRevisionCertificate),
+      before_scan : Hash(UInt64, MissingIncrementalRevisionCertificate),
+      after_scan : Hash(UInt64, MissingIncrementalRevisionCertificate),
+      cached_raw : Hash(UInt64, Array(String)),
+      cached_available : Hash(UInt64, Array(String)),
+      current_raw : Hash(UInt64, Array(String)),
+      current_available : Hash(UInt64, Array(String)),
+    ) : {Int32, Int32, Int32, Int32}
+      candidates = 0
+      stable = 0
+      scan_invalidated = 0
+      false_reuse = 0
+
+      before_scan.each do |function_identity, before_certificate|
+        after_certificate = after_scan[function_identity]?
+        if after_certificate != before_certificate
+          scan_invalidated += 1
+        end
+
+        previous_certificate = previous[function_identity]?
+        next unless previous_certificate == before_certificate
+        candidates += 1
+        next unless after_certificate == before_certificate
+        stable += 1
+
+        raw_matches = cached_raw[function_identity]? == current_raw[function_identity]?
+        available_matches =
+          cached_available[function_identity]? == current_available[function_identity]?
+        false_reuse += 1 unless raw_matches && available_matches
+      end
+
+      {candidates, stable, scan_invalidated, false_reuse}
+    end
+
+    private def missing_incremental_replace_revision_certificates(
+      previous : Hash(UInt64, MissingIncrementalRevisionCertificate),
+      current : Hash(UInt64, MissingIncrementalRevisionCertificate),
+    ) : Nil
+      previous.clear
+      current.each do |function_identity, certificate|
+        previous[function_identity] = certificate
+      end
+    end
+
     private def missing_incremental_refresh_segments(
       cached : Hash(UInt64, Array(String)),
       order : Array(UInt64),
@@ -58799,8 +59000,14 @@ module Adamas::HIR
       incremental_cached_available_segments = incremental_falsifier ? Hash(UInt64, Array(String)).new : nil
       incremental_previous_target_certificates = incremental_falsifier ? Hash(String, MissingIncrementalTargetCertificate).new : nil
       incremental_previous_queue = incremental_falsifier ? [] of String : nil
+      incremental_previous_revision_certificates =
+        incremental_falsifier ?
+          Hash(UInt64, MissingIncrementalRevisionCertificate).new : nil
       incremental_has_previous_iteration = false
       incremental_mismatch_count = 0
+      incremental_revision_stable_count = 0
+      incremental_revision_scan_invalidated_count = 0
+      incremental_revision_false_reuse_count = 0
       incremental_terminal_emitted = false
       STDERR.puts "[MISSING_LOWER] start" if debug_missing
       stop_after_missing_phase("start", "ADAMAS_STOP_AFTER_HIR_MISSING_START", iteration, 0)
@@ -58812,6 +59019,9 @@ module Adamas::HIR
         incremental_segment_order = incremental_falsifier ? [] of UInt64 : nil
         incremental_current_segments = incremental_falsifier ? Hash(UInt64, Array(String)).new : nil
         incremental_current_available_segments = incremental_falsifier ? Hash(UInt64, Array(String)).new : nil
+        incremental_before_scan_revision_certificates =
+          incremental_falsifier ?
+            Hash(UInt64, MissingIncrementalRevisionCertificate).new : nil
         missing_summary = Hash(String, Int32).new(0) if debug_missing_summary
         missing_samples = Hash(String, Array(String)).new if debug_missing_samples
         func_trace_idx = 0
@@ -58824,6 +59034,9 @@ module Adamas::HIR
             incremental_function_demands = [] of String
             incremental_function_available_demands = [] of String
             segment_order << incremental_function_identity
+            incremental_before_scan_revision_certificates.not_nil![
+              incremental_function_identity
+            ] = missing_incremental_revision_certificate(func)
           end
           if trace_flush_enter
             STDERR.puts "[MISSING_TRACE] func[#{func_trace_idx}] #{func.name} params=#{func.params.size} blocks=#{func.blocks.size}"
@@ -58868,7 +59081,7 @@ module Adamas::HIR
                   end
                   if resolved = resolve_union_method_call(union_name, method, arg_types, has_block_call)
                     STDERR.puts "[UNION_REWRITE] resolved=#{resolved}" if env_get("DEBUG_UNION_REWRITE")
-                    inst.method_name = resolved
+                    func.rewrite_call_method_name(inst, resolved)
                     name = resolved
                   end
                 end
@@ -58887,7 +59100,7 @@ module Adamas::HIR
                         alt_name = "#{alt_base}#{suffix2}"
                         if @function_defs.has_key?(alt_name) || @function_defs.has_key?(alt_base) ||
                            class_method_overload_exists?(alt_base)
-                          inst.method_name = alt_name
+                          func.rewrite_call_method_name(inst, alt_name)
                           name = alt_name
                           break
                         end
@@ -58917,7 +59130,7 @@ module Adamas::HIR
               if function_state(name).completed?
                 # Some flows mark completed without emitting a function body.
                 # Clear the completed state to allow a re-lower pass.
-                @function_lowering_states.delete(name)
+                clear_function_state(name)
               end
               next if function_state(name).in_progress?
               missing << name
@@ -58954,7 +59167,7 @@ module Adamas::HIR
                        function_state(un_super).in_progress?
                   if @function_defs.has_key?(un_super) || @function_defs.has_key?(strip_type_suffix(un_super))
                     if function_state(un_super).completed?
-                      @function_lowering_states.delete(un_super)
+                      clear_function_state(un_super)
                     end
                     if full_demands = incremental_full_demands
                       full_demands << un_super
@@ -58986,6 +59199,30 @@ module Adamas::HIR
         if incremental_falsifier
           full_raw = incremental_full_demands.not_nil!
           full_raw.uniq!
+          incremental_after_scan_revision_certificates =
+            Hash(UInt64, MissingIncrementalRevisionCertificate).new
+          @module.functions.each do |func|
+            function_identity = func.id.to_u64
+            next unless incremental_before_scan_revision_certificates.not_nil!
+              .has_key?(function_identity)
+            incremental_after_scan_revision_certificates[function_identity] =
+              missing_incremental_revision_certificate(func)
+          end
+          revision_candidates,
+            revision_stable,
+            revision_scan_invalidated,
+            revision_false_reuse = missing_incremental_revision_compare(
+              incremental_previous_revision_certificates.not_nil!,
+              incremental_before_scan_revision_certificates.not_nil!,
+              incremental_after_scan_revision_certificates,
+              incremental_cached_segments.not_nil!,
+              incremental_cached_available_segments.not_nil!,
+              incremental_current_segments.not_nil!,
+              incremental_current_available_segments.not_nil!,
+            )
+          incremental_revision_stable_count += revision_stable
+          incremental_revision_scan_invalidated_count += revision_scan_invalidated
+          incremental_revision_false_reuse_count += revision_false_reuse
           shadow_segments, changed_segments =
             missing_incremental_refresh_segments(
               incremental_cached_segments.not_nil!,
@@ -59050,8 +59287,12 @@ module Adamas::HIR
             STDERR.flush
           end
           if matches || incremental_mismatch_count <= 3
-            STDERR.puts "[MISSING_INCREMENTAL] iter=#{iteration} funcs=#{@module.functions.size} tracked_segments=#{incremental_cached_segments.not_nil!.size} changed_segments=#{changed_segments} changed_available_segments=#{changed_available_segments} target_invalidations=#{target_invalidations} post_enqueue_queue_changed=#{post_enqueue_queue_changed ? 1 : 0} previous_post_enqueue_queue_size=#{previous_post_enqueue_queue_size} queue_size=#{@pending_function_queue.size} full_raw=#{full_raw.size} shadow_raw=#{shadow_raw.size} full=#{full_available.size} shadow=#{shadow_available.size} full_selected=#{full_selected.size} shadow_selected=#{shadow_selected.size} full_more=#{full_has_more ? 1 : 0} shadow_more=#{shadow_has_more ? 1 : 0} match=#{matches ? 1 : 0} mismatches=#{incremental_mismatch_count} sample=#{sample}"
+            STDERR.puts "[MISSING_INCREMENTAL] iter=#{iteration} funcs=#{@module.functions.size} tracked_segments=#{incremental_cached_segments.not_nil!.size} changed_segments=#{changed_segments} changed_available_segments=#{changed_available_segments} revision_candidates=#{revision_candidates} revision_stable=#{revision_stable} revision_scan_invalidated=#{revision_scan_invalidated} revision_false_reuse=#{revision_false_reuse} target_invalidations=#{target_invalidations} post_enqueue_queue_changed=#{post_enqueue_queue_changed ? 1 : 0} previous_post_enqueue_queue_size=#{previous_post_enqueue_queue_size} queue_size=#{@pending_function_queue.size} full_raw=#{full_raw.size} shadow_raw=#{shadow_raw.size} full=#{full_available.size} shadow=#{shadow_available.size} full_selected=#{full_selected.size} shadow_selected=#{shadow_selected.size} full_more=#{full_has_more ? 1 : 0} shadow_more=#{shadow_has_more ? 1 : 0} match=#{matches ? 1 : 0} mismatches=#{incremental_mismatch_count} sample=#{sample}"
           end
+          missing_incremental_replace_revision_certificates(
+            incremental_previous_revision_certificates.not_nil!,
+            incremental_after_scan_revision_certificates,
+          )
           incremental_has_previous_iteration = true
           stop_after_missing_phase(
             "incremental_compare",
@@ -59062,7 +59303,25 @@ module Adamas::HIR
         end
         if missing.empty?
           if incremental_falsifier
-            STDERR.puts "[MISSING_INCREMENTAL_TERMINAL] iter=#{iteration} reason=no_missing hir_shape_stable=1 mismatches=#{incremental_mismatch_count} verdict=#{incremental_mismatch_count == 0 ? "observed_match" : "inconclusive"}"
+            exact_verdict =
+              incremental_mismatch_count == 0 ? "observed_match" : "inconclusive"
+            revision_verdict =
+              if incremental_revision_false_reuse_count > 0
+                "false_reuse"
+              elsif incremental_revision_scan_invalidated_count > 0
+                "scan_invalidated"
+              elsif incremental_revision_stable_count > 0
+                "observed_no_false_reuse"
+              else
+                "cold"
+              end
+            verdict = if exact_verdict == "observed_match" &&
+                         revision_verdict == "observed_no_false_reuse"
+                        "observed_match"
+                      else
+                        "inconclusive"
+                      end
+            STDERR.puts "[MISSING_INCREMENTAL_TERMINAL] iter=#{iteration} reason=no_missing hir_shape_stable=1 mismatches=#{incremental_mismatch_count} revision_stable=#{incremental_revision_stable_count} revision_scan_invalidated=#{incremental_revision_scan_invalidated_count} revision_false_reuse=#{incremental_revision_false_reuse_count} exact_verdict=#{exact_verdict} revision_verdict=#{revision_verdict} verdict=#{verdict}"
             incremental_terminal_emitted = true
           end
           stop_after_missing_phase("queue", "ADAMAS_STOP_AFTER_HIR_MISSING_QUEUE", iteration, 0)
@@ -59107,8 +59366,8 @@ module Adamas::HIR
           # would never be satisfied — even though @rta_called_methods now
           # records the demand. process_pending_lower_functions deduplicates
           # via its `processed` Set, so a duplicate enqueue is benign.
-          @function_lowering_states[name] = FunctionLoweringState::Pending
-          @pending_function_queue << name
+          set_function_state(name, FunctionLoweringState::Pending)
+          enqueue_pending_function(name)
         end
         if incremental_falsifier
           previous_queue = incremental_previous_queue.not_nil!
@@ -59147,14 +59406,14 @@ module Adamas::HIR
         iteration += 1
         if @module.functions.size == before
           if incremental_falsifier
-            STDERR.puts "[MISSING_INCREMENTAL_TERMINAL] iter=#{iteration - 1} reason=legacy_function_count_stop hir_shape_stable=unknown mismatches=#{incremental_mismatch_count} verdict=inconclusive"
+            STDERR.puts "[MISSING_INCREMENTAL_TERMINAL] iter=#{iteration - 1} reason=legacy_function_count_stop hir_shape_stable=unknown mismatches=#{incremental_mismatch_count} revision_stable=#{incremental_revision_stable_count} revision_scan_invalidated=#{incremental_revision_scan_invalidated_count} revision_false_reuse=#{incremental_revision_false_reuse_count} exact_verdict=#{incremental_mismatch_count == 0 ? "observed_match" : "inconclusive"} revision_verdict=inconclusive verdict=inconclusive"
             incremental_terminal_emitted = true
           end
           break
         end
       end
       if incremental_falsifier && !incremental_terminal_emitted
-        STDERR.puts "[MISSING_INCREMENTAL_TERMINAL] iter=#{iteration} reason=max_iterations hir_shape_stable=unknown mismatches=#{incremental_mismatch_count} verdict=inconclusive"
+        STDERR.puts "[MISSING_INCREMENTAL_TERMINAL] iter=#{iteration} reason=max_iterations hir_shape_stable=unknown mismatches=#{incremental_mismatch_count} revision_stable=#{incremental_revision_stable_count} revision_scan_invalidated=#{incremental_revision_scan_invalidated_count} revision_false_reuse=#{incremental_revision_false_reuse_count} exact_verdict=#{incremental_mismatch_count == 0 ? "observed_match" : "inconclusive"} revision_verdict=inconclusive verdict=inconclusive"
       end
     end
 
@@ -59323,9 +59582,9 @@ module Adamas::HIR
       return false if target_name == call.method_name
 
       default_rehash = Literal.new(func.next_value_id, TypeRef::BOOL, false)
-      block.instructions.insert(inst_idx, default_rehash)
-      call.args << default_rehash.id
-      call.method_name = target_name
+      block.insert(inst_idx, default_rehash)
+      func.append_call_arg(call, default_rehash.id)
+      func.rewrite_call_method_name(call, target_name)
       @rta_called_methods << target_name
       true
     end
@@ -59377,7 +59636,7 @@ module Adamas::HIR
       return if function_state(name).in_progress?
       if function_state(name).completed?
         # Clear completed state to allow a direct lower (some flows mark completed without emit).
-        @function_lowering_states.delete(name)
+        clear_function_state(name)
       end
       with_arena(func_arena || @arena) do
         lower_module_method(owner, func_def, nil, nil, nil, name)
@@ -59529,7 +59788,7 @@ module Adamas::HIR
           next if function_state(name).in_progress?
 
           # Clear pending state so it can be lowered
-          @function_lowering_states.delete(name)
+          clear_function_state(name)
           attempt_counts[name] = attempt_count + 1
           stop_after_pending_phase("first_lower_ready", "ADAMAS_STOP_AFTER_HIR_PENDING_FIRST_LOWER_READY", pass, idx, name, "attempt=#{attempt_count + 1}")
           if progress_log && (pass_lowered % 100 == 0 || pass_lowered < 10)
@@ -59562,7 +59821,7 @@ module Adamas::HIR
 
         # Clear the queue — everything up to idx has been visited
         stop_after_pending_phase("pass_items_done", "ADAMAS_STOP_AFTER_HIR_PENDING_PASS_ITEMS_DONE", pass, idx, nil, "lowered=#{pass_lowered},deferred=#{pass_deferred}")
-        @pending_function_queue.clear
+        clear_pending_function_queue
 
         # End-of-pass RTA scan
         if lazy_rta
@@ -65679,7 +65938,7 @@ module Adamas::HIR
 
       # Mark as completed so lower_function_if_needed won't try to lower it again.
       # The function is already in @module via create_function.
-      @function_lowering_states[func_name] = FunctionLoweringState::Completed
+      set_function_state(func_name, FunctionLoweringState::Completed)
 
       # Restore state
       @arena = saved_arena
@@ -74763,7 +75022,7 @@ module Adamas::HIR
         end
       end
 
-      @function_lowering_states[name] = FunctionLoweringState::Completed
+      set_function_state(name, FunctionLoweringState::Completed)
       true
     end
 
@@ -75664,7 +75923,7 @@ module Adamas::HIR
       # and function_state(name).completed?, so leaving stale entries in
       # the queue is safe.
       if function_state(name).pending?
-        @function_lowering_states.delete(name)
+        clear_function_state(name)
       end
 
       saved_depth = @lowering_depth
@@ -75882,9 +76141,9 @@ module Adamas::HIR
       if inside_lowering? && !immediate_leaf_guard_lower_target?(name)
         unless has_method_separator?(name)
           unless function_state(name).pending?
-            @function_lowering_states[name] = FunctionLoweringState::Pending
+            set_function_state(name, FunctionLoweringState::Pending)
             maybe_log_pending_explosion(name, "defer")
-            @pending_function_queue << name
+            enqueue_pending_function(name)
             STDERR.puts "[LOWER_FUNC_TRACE] queued_bare name=#{name} queue=#{@pending_function_queue.size}" if debug_lower_func
           end
           STDERR.puts "[LOWER_FUNC_TRACE] early=inside_lowering_bare name=#{name} state=#{function_state(name)}" if debug_lower_func
@@ -75926,9 +76185,9 @@ module Adamas::HIR
           end
         end
         unless function_state(name).pending?
-          @function_lowering_states[name] = FunctionLoweringState::Pending
+          set_function_state(name, FunctionLoweringState::Pending)
           maybe_log_pending_explosion(name, "defer")
-          @pending_function_queue << name
+          enqueue_pending_function(name)
           STDERR.puts "[LOWER_FUNC_TRACE] queued name=#{name} queue=#{@pending_function_queue.size}" if debug_lower_func
           # Keep AST reachability filter aligned for deferred functions.
           if @ast_filter_active
@@ -76277,12 +76536,12 @@ module Adamas::HIR
               callsite = pop_pending_callsite_args(name, base_name)
               arg_types = callsite ? callsite.types : parse_types_from_suffix(name_parts.suffix || "")
               if wrapper = ensure_unbound_instance_method_wrapper(owner, method_part, arg_types)
-                @function_lowering_states[wrapper] = FunctionLoweringState::Completed
+                set_function_state(wrapper, FunctionLoweringState::Completed)
                 return
               end
               meta_owner = module_type_ref?(type_ref_for_name(owner)) ? "Module" : "Class"
               if wrapper = ensure_type_literal_class_method(owner, method_part, arg_types, meta_owner)
-                @function_lowering_states[wrapper] = FunctionLoweringState::Completed
+                set_function_state(wrapper, FunctionLoweringState::Completed)
                 return
               end
             end
@@ -77485,7 +77744,7 @@ module Adamas::HIR
         if base_name != name && maybe_generate_accessor_for_name(base_name)
           return
         end
-        @function_lowering_states[target_name] = FunctionLoweringState::InProgress
+        set_function_state(target_name, FunctionLoweringState::InProgress)
         return
       end
 
@@ -78073,7 +78332,7 @@ module Adamas::HIR
       record_pending_callee_for_rta(target_name)
       # Re-parse resolved target name once for use in the rest of this function
       resolved_parts = parse_method_name(target_name)
-      @function_lowering_states[materialized_name] = FunctionLoweringState::InProgress
+      set_function_state(materialized_name, FunctionLoweringState::InProgress)
       materialization_function_count_before = @module.functions.size
       materialization_producer_path = "not_entered"
 
@@ -78535,9 +78794,9 @@ module Adamas::HIR
         # WORK QUEUE: Restore previous inside_lowering state
         @lowering_depth -= 1
         if @module.has_function_with_body?(materialized_name)
-          @function_lowering_states[materialized_name] = FunctionLoweringState::Completed
+          set_function_state(materialized_name, FunctionLoweringState::Completed)
         else
-          @function_lowering_states.delete(materialized_name)
+          clear_function_state(materialized_name)
         end
         log_materialization_completion_ledger(name, target_name, materialized_name, materialization_function_count_before, materialization_producer_path)
         debug_hook("function.lower.done", "name=#{materialized_name}")
@@ -101785,17 +102044,46 @@ module Adamas::HIR
                   rhs_type = repaired
                   block.instructions.each_with_index do |inst, i|
                     if inst.is_a?(Call) && inst.id == rhs_id && inst.type == TypeRef::VOID
-                      block.instructions[i] = if inst.has_receiver?
-                                                if block_id = inst.block
-                                                  Call.with_receiver_block(rhs_id, repaired, inst.receiver_value, inst.method_name, inst.args, block_id, inst.virtual)
-                                                else
-                                                  Call.with_receiver_virtual(rhs_id, repaired, inst.receiver_value, inst.method_name, inst.args, inst.virtual)
-                                                end
-                                              elsif block_id = inst.block
-                                                Call.without_receiver_block(rhs_id, repaired, inst.method_name, inst.args, block_id, inst.virtual)
-                                              else
-                                                Call.without_receiver_virtual(rhs_id, repaired, inst.method_name, inst.args, inst.virtual)
-                                              end
+                      replacement_call = if inst.has_receiver?
+                                           if block_id = inst.block
+                                             Call.with_receiver_block(
+                                               rhs_id,
+                                               repaired,
+                                               inst.receiver_value,
+                                               inst.method_name,
+                                               inst.args,
+                                               block_id,
+                                               inst.virtual,
+                                             )
+                                           else
+                                             Call.with_receiver_virtual(
+                                               rhs_id,
+                                               repaired,
+                                               inst.receiver_value,
+                                               inst.method_name,
+                                               inst.args,
+                                               inst.virtual,
+                                             )
+                                           end
+                                         elsif block_id = inst.block
+                                           Call.without_receiver_block(
+                                             rhs_id,
+                                             repaired,
+                                             inst.method_name,
+                                             inst.args,
+                                             block_id,
+                                             inst.virtual,
+                                           )
+                                         else
+                                           Call.without_receiver_virtual(
+                                             rhs_id,
+                                             repaired,
+                                             inst.method_name,
+                                             inst.args,
+                                             inst.virtual,
+                                           )
+                                         end
+                      block.replace(i, replacement_call)
                       ctx.register_type(rhs_id, repaired)
                     end
                   end

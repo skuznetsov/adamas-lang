@@ -72,6 +72,99 @@ class Adamas::HIR::AstToHir
       name == base_name || name.starts_with?("#{base_name}$")
     end
   end
+
+  def __test_exact_shadow_revision_certificate(
+    func : Adamas::HIR::Function,
+  ) : {UInt64, UInt64, UInt64, UInt64, UInt64, UInt64, UInt64, UInt64}
+    certificate = missing_incremental_revision_certificate(func)
+    {
+      certificate.function_set_revision,
+      certificate.hir_body_revision,
+      certificate.function_def_revision,
+      certificate.lowering_state_revision,
+      certificate.pending_queue_revision,
+      certificate.function_body_revision,
+      certificate.function_demand_revision,
+      certificate.function_type_revision,
+    }
+  end
+
+  def __test_exact_shadow_set_owned_state(
+    name : String,
+    state : FunctionLoweringState,
+  ) : Nil
+    set_function_state(name, state)
+  end
+
+  def __test_exact_shadow_enqueue_owned(name : String) : Nil
+    enqueue_pending_function(name)
+  end
+
+  def __test_exact_shadow_set_function_type(
+    name : String,
+    return_type : Adamas::HIR::TypeRef,
+  ) : Bool
+    set_function_type_entry(name, return_type)
+  end
+
+  def __test_exact_shadow_rewrite_hash_call(
+    func : Adamas::HIR::Function,
+    block : Adamas::HIR::Block,
+    index : Int32,
+    call : Adamas::HIR::Call,
+  ) : Bool
+    rewrite_hash_do_compaction_default_call(func, block, index, call)
+  end
+
+  def __test_exact_shadow_revision_compare(
+    func : Adamas::HIR::Function,
+    cached_name : String,
+    current_name : String,
+    mutate_during_scan : Bool,
+  ) : {Int32, Int32, Int32, Int32}
+    function_identity = func.id.to_u64
+    before_certificate = missing_incremental_revision_certificate(func)
+    previous = {
+      function_identity => before_certificate,
+    }
+    before_scan = {
+      function_identity => before_certificate,
+    }
+    if mutate_during_scan
+      func.get_block(func.entry_block).add(
+        Adamas::HIR::Literal.new(
+          func.next_value_id,
+          Adamas::HIR::TypeRef::INT32,
+          1_i64,
+        )
+      )
+    end
+    after_scan = {
+      function_identity => missing_incremental_revision_certificate(func),
+    }
+    cached_raw = {
+      function_identity => [cached_name],
+    }
+    cached_available = {
+      function_identity => [cached_name],
+    }
+    current_raw = {
+      function_identity => [current_name],
+    }
+    current_available = {
+      function_identity => [current_name],
+    }
+
+    missing_incremental_revision_compare(
+      previous,
+      before_scan,
+      after_scan,
+      cached_raw,
+      cached_available,
+      current_raw,
+      current_available,
+    )
+  end
 end
 
 private def parse_exact_shadow_source(code : String) : {Adamas::Compiler::Frontend::ArenaLike, Array(Adamas::Compiler::Frontend::ExprId)}
@@ -268,5 +361,165 @@ describe "missing-call exact incremental shadow" do
         ENV.delete("ADAMAS_MISSING_INCREMENTAL_FALSIFIER")
       end
     end
+  end
+
+  it "invalidates the revision certificate at every mutation owner" do
+    converter = exact_shadow_converter
+    function = converter.module.create_function(
+      "Owner#revision_driver",
+      Adamas::HIR::TypeRef::VOID,
+    )
+    block = function.get_block(function.entry_block)
+    baseline = converter.__test_exact_shadow_revision_certificate(function)
+
+    call = Adamas::HIR::Call.new(
+      function.next_value_id,
+      Adamas::HIR::TypeRef::VOID,
+      "Owner#first",
+    )
+    block.add(call)
+    after_call = converter.__test_exact_shadow_revision_certificate(function)
+    after_call[1].should be > baseline[1]
+    after_call[5].should be > baseline[5]
+    after_call[6].should be > baseline[6]
+
+    converter.__test_exact_shadow_set_owned_state(
+      function.name,
+      Adamas::HIR::AstToHir::FunctionLoweringState::Pending,
+    )
+    after_state = converter.__test_exact_shadow_revision_certificate(function)
+    after_state[3].should be > after_call[3]
+    converter.__test_exact_shadow_set_owned_state(
+      function.name,
+      Adamas::HIR::AstToHir::FunctionLoweringState::Pending,
+    )
+    converter.__test_exact_shadow_revision_certificate(function)[3]
+      .should eq(after_state[3])
+
+    converter.__test_exact_shadow_enqueue_owned(function.name)
+    after_enqueue = converter.__test_exact_shadow_revision_certificate(function)
+    after_enqueue[4].should be > after_state[4]
+    converter.__test_exact_shadow_enqueue_owned(function.name)
+    converter.__test_exact_shadow_revision_certificate(function)[4]
+      .should be > after_enqueue[4]
+  end
+
+  it "rejects same-scan reuse after the Hash call rewrite mutates HIR" do
+    converter = exact_shadow_converter
+    function = converter.module.create_function(
+      "Owner#hash_revision_driver",
+      Adamas::HIR::TypeRef::VOID,
+    )
+    block = function.get_block(function.entry_block)
+    call = Adamas::HIR::Call.new(
+      function.next_value_id,
+      Adamas::HIR::TypeRef::VOID,
+      "Hash(String,Int32)#do_compaction",
+    )
+    block.add(call)
+    before = converter.__test_exact_shadow_revision_certificate(function)
+
+    converter.__test_exact_shadow_rewrite_hash_call(
+      function,
+      block,
+      0,
+      call,
+    ).should be_true
+    after_rewrite =
+      converter.__test_exact_shadow_revision_certificate(function)
+
+    block.instructions.size.should eq(2)
+    call.args.size.should eq(1)
+    call.method_name.should_not eq("Hash(String,Int32)#do_compaction")
+    after_rewrite[1].should be > before[1]
+    after_rewrite[5].should be > before[5]
+    after_rewrite[6].should be > before[6]
+  end
+
+  it "bumps the function-def revision only for semantic registry changes" do
+    source = "def revision_target; 1; end"
+    arena, roots = parse_exact_shadow_source(source)
+    converter = Adamas::HIR::AstToHir.new(
+      arena,
+      sources_by_arena: {arena.object_id.to_u64 => source},
+    )
+    converter.arena = arena
+    probe = converter.module.create_function(
+      "Owner#def_revision_probe",
+      Adamas::HIR::TypeRef::VOID,
+    )
+    before = converter.__test_exact_shadow_revision_certificate(probe)
+    def_node = roots.compact_map do |expr_id|
+      arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode)
+    end.first
+
+    converter.register_function(def_node)
+    after_register =
+      converter.__test_exact_shadow_revision_certificate(probe)
+    after_register[2].should be > before[2]
+
+    converter.register_function(def_node)
+    converter.__test_exact_shadow_revision_certificate(probe)[2]
+      .should eq(after_register[2])
+  end
+
+  it "bumps the function-type revision only for semantic changes" do
+    converter = exact_shadow_converter
+    function = converter.module.create_function(
+      "Owner#type_revision_probe",
+      Adamas::HIR::TypeRef::VOID,
+    )
+    before = converter.__test_exact_shadow_revision_certificate(function)
+
+    converter.__test_exact_shadow_set_function_type(
+      function.name,
+      Adamas::HIR::TypeRef::INT32,
+    ).should be_true
+    after_update =
+      converter.__test_exact_shadow_revision_certificate(function)
+    after_update[7].should be > before[7]
+
+    converter.__test_exact_shadow_set_function_type(
+      function.name,
+      Adamas::HIR::TypeRef::INT32,
+    ).should be_false
+    converter.__test_exact_shadow_revision_certificate(function)[7]
+      .should eq(after_update[7])
+  end
+
+  it "distinguishes stable reuse, false reuse, and scan invalidation" do
+    converter = exact_shadow_converter
+    stable = converter.module.create_function(
+      "Owner#stable_revision_probe",
+      Adamas::HIR::TypeRef::VOID,
+    )
+    converter.__test_exact_shadow_revision_compare(
+      stable,
+      "Owner#target",
+      "Owner#target",
+      false,
+    ).should eq({1, 1, 0, 0})
+
+    false_reuse = converter.module.create_function(
+      "Owner#false_reuse_probe",
+      Adamas::HIR::TypeRef::VOID,
+    )
+    converter.__test_exact_shadow_revision_compare(
+      false_reuse,
+      "Owner#old",
+      "Owner#new",
+      false,
+    ).should eq({1, 1, 0, 1})
+
+    scan_mutation = converter.module.create_function(
+      "Owner#scan_mutation_probe",
+      Adamas::HIR::TypeRef::VOID,
+    )
+    converter.__test_exact_shadow_revision_compare(
+      scan_mutation,
+      "Owner#old",
+      "Owner#new",
+      true,
+    ).should eq({1, 0, 1, 0})
   end
 end

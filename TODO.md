@@ -61,6 +61,32 @@ ON/OFF cost and parity at that boundary before using cached segments as
 authority. Do not replace the full scan, add arbitrary pruning, or optimize
 from raw function count alone.
 
+GUARD-ONLY REVISION DIAGNOSTIC IMPLEMENTED; PRODUCTION PROMOTION REMAINS
+REJECTED. Shared monotonic ledgers now cover module function-set/HIR-body,
+function body/demand, function-definition/type, lowering-state, and pending-
+queue mutations. The default-off shadow samples those eight coordinates before
+and after the authoritative full scan and treats cold state, scan invalidation,
+false reuse, exact mismatch, legacy function-count termination, and iteration
+limits as inconclusive. The staged ownership census passes and the isolated
+staged HIR gate is 301 examples, 0 failures, 0 errors, with two existing
+pending examples.
+
+The source-matched iteration-3 ON gate preserved exact full/shadow raw counts
+of 420, 933, 4709, and 12909 and admitted counts of 94, 183, 982, and 2037,
+with zero mismatches and zero false reuse. It also rejected every potential
+reuse because the scan itself changed revision coordinates
+(`revision_candidates=0`, `revision_scan_invalidated>0`). The matching OFF
+boundary reached `funcs=19308`, `missing=2037`, and `pending=0`; single-sample
+walls were 157.43s ON and 166.53s OFF and remain noise-only evidence, not a
+speedup claim. The staged s1 default-off no-prelude regression is green.
+
+Hostile verdict: ROBUST for the bounded observational guard, VULNERABLE for
+universal mutation ownership or cached-scan authority. Public mutable HIR
+views, include/class/RTA side metadata, the legacy raw function-count fixed
+point, and an integrated same-scan accessor/union materialization falsifier
+remain open. Next isolate scan-side mutations and add that integrated falsifier
+before considering any production reuse.
+
 VERIFIED CONSTRUCTOR NAMED-ARGUMENT SLICE (produced-stage successor still
 open): source-backed lazy lowering collapsed
 `NamedSlotProbe.new(third: 30)` to `NamedSlotProbe.new$Int32(%30)`, so the

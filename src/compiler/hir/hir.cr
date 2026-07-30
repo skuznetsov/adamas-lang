@@ -1675,6 +1675,55 @@ module Adamas::HIR
   # BLOCKS & SCOPES
   # ═══════════════════════════════════════════════════════════════════════════
 
+  # Monotonic mutation source for conservative incremental consumers.
+  #
+  # The ledger deliberately records semantic mutation events instead of
+  # deriving freshness from collection sizes or object addresses. Consumers
+  # must still fail closed when a relevant owner does not route writes through
+  # these methods.
+  class RevisionLedger
+    getter function_set_revision : UInt64
+    getter hir_body_revision : UInt64
+
+    def initialize
+      @function_set_revision = 0_u64
+      @hir_body_revision = 0_u64
+    end
+
+    def note_function_set_mutation : Nil
+      @function_set_revision = @function_set_revision &+ 1_u64
+    end
+
+    def note_hir_body_mutation : Nil
+      @hir_body_revision = @hir_body_revision &+ 1_u64
+    end
+
+    def note_runtime_reset : Nil
+      note_function_set_mutation
+      note_hir_body_mutation
+    end
+  end
+
+  class FunctionRevisionLedger
+    getter body_revision : UInt64
+    getter demand_revision : UInt64
+
+    def initialize(@module_ledger : RevisionLedger)
+      @body_revision = 0_u64
+      @demand_revision = 0_u64
+    end
+
+    def note_body_mutation : Nil
+      @body_revision = @body_revision &+ 1_u64
+      @module_ledger.note_hir_body_mutation
+    end
+
+    def note_demand_mutation : Nil
+      note_body_mutation
+      @demand_revision = @demand_revision &+ 1_u64
+    end
+  end
+
   # Basic block: sequence of instructions ending with terminator
   class Block
     getter id : BlockId
@@ -1683,21 +1732,55 @@ module Adamas::HIR
     getter terminator : Terminator
     getter body_emitted : Bool
 
-    def initialize(@id : BlockId, @scope : ScopeId)
+    def initialize(
+      @id : BlockId,
+      @scope : ScopeId,
+      @revision_ledger : FunctionRevisionLedger =
+        FunctionRevisionLedger.new(RevisionLedger.new),
+    )
       @instructions = [] of Value
       @terminator = Unreachable.new
       @body_emitted = false
     end
 
     def add(instruction : Value) : Value
-      @instructions << instruction
+      @instructions << instruction # missing-revision-owner
       @body_emitted = true
+      if instruction.is_a?(Call)
+        @revision_ledger.note_demand_mutation
+      else
+        @revision_ledger.note_body_mutation
+      end
+      instruction
+    end
+
+    def insert(index : Int32, instruction : Value) : Value
+      @instructions.insert(index, instruction) # missing-revision-owner
+      @body_emitted = true
+      if instruction.is_a?(Call)
+        @revision_ledger.note_demand_mutation
+      else
+        @revision_ledger.note_body_mutation
+      end
+      instruction
+    end
+
+    def replace(index : Int32, instruction : Value) : Value
+      previous = @instructions[index]
+      @instructions[index] = instruction # missing-revision-owner
+      @body_emitted = true
+      if previous.is_a?(Call) || instruction.is_a?(Call)
+        @revision_ledger.note_demand_mutation
+      else
+        @revision_ledger.note_body_mutation
+      end
       instruction
     end
 
     def terminator=(terminator : Terminator)
       @terminator = terminator
       @body_emitted = true
+      @revision_ledger.note_body_mutation
     end
 
     def to_s(io : IO) : Nil
@@ -1785,7 +1868,7 @@ module Adamas::HIR
     @id : FunctionId
     @name : String
     @return_type : TypeRef
-    property return_type : TypeRef
+    getter return_type : TypeRef
     @scopes : Array(Scope)
     getter scopes : Array(Scope)
     @blocks : Array(Block)
@@ -1807,8 +1890,14 @@ module Adamas::HIR
     @param_names : Array(String)
     @param_default_literals : Array(String?)
     @param_is_blocks : Array(Bool)
+    @revision_ledger : FunctionRevisionLedger
 
-    def initialize(id : FunctionId, name : String, return_type : TypeRef)
+    def initialize(
+      id : FunctionId,
+      name : String,
+      return_type : TypeRef,
+      module_revision_ledger : RevisionLedger = RevisionLedger.new,
+    )
       @id = id
       @name = name
       @return_type = return_type
@@ -1824,9 +1913,27 @@ module Adamas::HIR
       @param_default_literals = [] of String?
       @param_is_blocks = [] of Bool
       @definition_location = nil
+      @revision_ledger = FunctionRevisionLedger.new(module_revision_ledger)
 
       # Create entry block and function scope
-      @entry_block = create_block(create_scope(ScopeKind::Function))
+      @entry_block = create_block(
+        create_scope(ScopeKind::Function),
+        track_revision: false,
+      )
+    end
+
+    def body_revision : UInt64
+      @revision_ledger.body_revision
+    end
+
+    def demand_revision : UInt64
+      @revision_ledger.demand_revision
+    end
+
+    def return_type=(return_type : TypeRef) : Nil
+      return if @return_type == return_type
+      @return_type = return_type
+      @revision_ledger.note_demand_mutation
     end
 
     def next_value_id : ValueId
@@ -1843,12 +1950,28 @@ module Adamas::HIR
       id
     end
 
-    def create_block(scope : ScopeId) : BlockId
+    def create_block(
+      scope : ScopeId,
+      track_revision : Bool = true,
+    ) : BlockId
       id = @next_block_id
       @next_block_id += 1
-      block = Block.new(id, scope)
+      block = Block.new(id, scope, @revision_ledger)
       @blocks << block
+      @revision_ledger.note_body_mutation if track_revision
       id
+    end
+
+    def rewrite_call_method_name(call : Call, method_name : String) : Bool
+      return false if call.method_name == method_name
+      call.method_name = method_name # missing-revision-owner
+      @revision_ledger.note_demand_mutation
+      true
+    end
+
+    def append_call_arg(call : Call, arg : ValueId) : Nil
+      call.args << arg # missing-revision-owner
+      @revision_ledger.note_demand_mutation
     end
 
     def get_block(id : BlockId) : Block
@@ -1891,12 +2014,15 @@ module Adamas::HIR
       @param_names << param.name
       @param_default_literals << param.default_literal
       @param_is_blocks << param.is_block
+      @revision_ledger.note_demand_mutation
       param
     end
 
     def set_param_default_literal(index : Int32, default_literal : String?) : Nil
       return if index < 0 || index >= @param_default_literals.size
+      return if @param_default_literals[index]? == default_literal
       @param_default_literals[index] = default_literal
+      @revision_ledger.note_demand_mutation
     end
 
     def record_value_location(value_id : ValueId, location : SourceLocation) : Nil
@@ -2014,8 +2140,10 @@ module Adamas::HIR
     @extern_functions_by_lib_and_name : Hash(Tuple(String, String), ExternFunction)
     @extern_globals_by_any_name : Hash(String, ExternGlobal)
     @extern_globals_by_lib_and_name : Hash(Tuple(String, String), ExternGlobal)
+    @revision_ledger : RevisionLedger
 
     def initialize(@name : String = "main")
+      @revision_ledger = RevisionLedger.new
       @functions = [] of Function
       @functions_by_name = {} of String => Function
       @functions_by_base_name = {} of String => Array(Function)
@@ -2052,6 +2180,7 @@ module Adamas::HIR
     end
 
     private def reset_runtime_state : Nil
+      @revision_ledger.note_runtime_reset
       @functions = [] of Function
       @functions_by_name = {} of String => Function
       @functions_by_base_name = {} of String => Array(Function)
@@ -2314,7 +2443,7 @@ module Adamas::HIR
       # end
       id = @next_function_id
       @next_function_id += 1
-      func = Function.new(id, name, return_type)
+      func = Function.new(id, name, return_type, @revision_ledger)
       @functions << func
       @functions_by_name[name] = func
       if dollar = name.index('$')
@@ -2323,7 +2452,16 @@ module Adamas::HIR
         base_name = name
       end
       (@functions_by_base_name[base_name] ||= [] of Function) << func
+      @revision_ledger.note_function_set_mutation
       func
+    end
+
+    def function_set_revision : UInt64
+      @revision_ledger.function_set_revision
+    end
+
+    def hir_body_revision : UInt64
+      @revision_ledger.hir_body_revision
     end
 
     def has_function?(name : String) : Bool
@@ -2383,6 +2521,7 @@ module Adamas::HIR
         @functions_by_base_name.delete(base_name) if funcs.empty?
       end
 
+      @revision_ledger.note_function_set_mutation
       true
     end
 
