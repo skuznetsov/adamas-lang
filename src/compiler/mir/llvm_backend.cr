@@ -11319,6 +11319,10 @@ module Adamas::MIR
         end
         register_called_crystal_functions_from_ir(ir)
         emit_raw ir
+        # The raw override's ABI is fixed independently of a possibly stale
+        # unannotated MIR Function return type. Publish it before emit_function
+        # performs the shared bookkeeping step.
+        @emitted_function_return_types[mangled] = "i32"
         return true
       when "JSON$CCBuilder$CCEscape$Hread$$Slice$LUInt8$R"
         io_memory_tid = @module.type_registry.get_by_name("IO::Memory").try(&.id.to_i32)
@@ -19106,7 +19110,11 @@ module Adamas::MIR
     end
 
     private def validate_worker_side_effect_artifact(emission_session : LLVMEmissionSession, se_file : String, pid : Int32) : Nil
-      File.each_line(se_file) do |line|
+      # File.each_line exposes an untyped block contract in the bundled stdlib.
+      # Preserve the textual artifact boundary explicitly for self-hosted block
+      # lowering instead of letting the callback parameter decay to Pointer.
+      File.each_line(se_file) do |raw_line|
+        line = raw_line.as(String)
         next if line.strip.empty?
 
         parts = line.chomp.split('\t')
@@ -19221,7 +19229,8 @@ module Adamas::MIR
       side_effect_string_counter_tag = emission_session.side_effect_string_counter_tag
 
       if File.exists?(se_file)
-        File.each_line(se_file) do |line|
+        File.each_line(se_file) do |raw_line|
+          line = raw_line.as(String)
           parts = line.split('\t')
           next if parts.empty?
           case parts[0]
@@ -22658,10 +22667,12 @@ module Adamas::MIR
       return false unless @inline_value_array_storage
       stride = inst.array_bulk_stride
       return false unless stride > 0
-      return false unless raw_name && raw_name.starts_with?("Pointer(")
+      return false unless raw_name
+      stable_raw_name : String = raw_name.not_nil!
+      return false unless stable_raw_name.starts_with?("Pointer(")
       lc = inst.array_bulk_logical_count
       return false unless lc
-      m = raw_name.includes?('#') ? raw_name.split('#', 2)[1] : raw_name
+      m = stable_raw_name.includes?('#') ? stable_raw_name.split('#', 2)[1] : stable_raw_name
       m = m.split('$', 2)[0]
       case m
       when "clear"
@@ -22703,9 +22714,10 @@ module Adamas::MIR
 
     private def materialization_emit_token(value : String?) : String
       return "none" unless value
-      return "none" if value.empty?
+      stable_value : String = value.not_nil!
+      return "none" if stable_value.empty?
 
-      value.gsub(' ', "%20").gsub('\t', "%09").gsub('\n', "%0A").gsub('\r', "%0D")
+      stable_value.gsub(' ', "%20").gsub('\t', "%09").gsub('\n', "%0A").gsub('\r', "%0D")
     end
 
     private def log_materialization_emit_ledger(

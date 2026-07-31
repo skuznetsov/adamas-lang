@@ -19,6 +19,16 @@ class Adamas::MIR::DwarfDebugContext
   end
 end
 
+class Adamas::MIR::LLVMIRGenerator
+  def __test_emitted_function_return_type(name : String) : String?
+    @emitted_function_return_types[name]?
+  end
+
+  def __test_materialization_emit_token(value : String?) : String
+    materialization_emit_token(value)
+  end
+end
+
 describe Adamas::MIR::LLVMTypeMapper do
   describe "#llvm_type" do
     it "maps primitive types correctly" do
@@ -85,6 +95,17 @@ describe Adamas::MIR::LLVMTypeMapper do
 end
 
 describe Adamas::MIR::LLVMIRGenerator do
+  describe "#materialization_emit_token" do
+    it "keeps nil fail-closed and escapes ledger separators" do
+      mod = Adamas::MIR::Module.new("materialization_emit_token")
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
+
+      gen.__test_materialization_emit_token(nil).should eq("none")
+      gen.__test_materialization_emit_token("").should eq("none")
+      gen.__test_materialization_emit_token("a b\tc\nd\r").should eq("a%20b%09c%0Ad%0D")
+    end
+  end
+
   describe "#generate" do
     it "keeps direct tuple hash guards separate before layout access" do
       source = File.read(File.expand_path("../../src/compiler/mir/llvm_backend.cr", __DIR__))
@@ -153,6 +174,26 @@ describe Adamas::MIR::LLVMIRGenerator do
       body = body.not_nil!
       body.should contain("call i32 @pthread_mutexattr_settype(ptr %attr, i32 1)")
       body.should_not contain("@LibC__classvar__PTHREAD_MUTEX_ERRORCHECK")
+    end
+
+    it "publishes the raw IO#pos override's i32 ABI despite a stale void function type" do
+      mod = Adamas::MIR::Module.new("io_pos_override")
+      mod.type_registry.create_type(
+        Adamas::MIR::TypeKind::Reference,
+        "IO::Memory",
+        12_u64,
+        4_u32,
+      )
+      func = mod.create_function("IO#pos", Adamas::MIR::TypeRef::VOID)
+      func.add_param("self", Adamas::MIR::TypeRef::POINTER)
+
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
+      gen.emit_type_metadata = false
+      output = gen.generate
+
+      output.should contain("define i32 @IO$Hpos(ptr %self)")
+      output.should_not contain("define void @IO$Hpos")
+      gen.__test_emitted_function_return_type("IO$Hpos").should eq("i32")
     end
 
     it "uses byte-stride copy-before-clear only for inline composite Array#pop" do
