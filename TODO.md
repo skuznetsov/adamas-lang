@@ -10580,6 +10580,25 @@ buckets). Pointer-backed structs need a real copy-on-read/borrow contract; the
 registry ordering fix is intentionally bounded and does not claim the global
 Hash::Entry value ABI is solved.
 
+### Session 27 follow-up: generated Hash compaction regression (2026-07-31)
+
+The `8faaea47` return-order refinement admitted `Hash#each_entry_with_index`
+into direct yield inlining because its only explicit return precedes the first
+yield. Inside `Hash#do_compaction`, the yielded block mutates the caller's
+`new_entry_index`; the nested `upto` loop then reused that branch-local update
+on the skipped/deleted-entry path. At the 16-to-32 entry growth boundary,
+compaction cleared live entries from offset zero while indices pointed at stale
+rows.
+
+Keep the early-return optimization for blocks that do not mutate visible caller
+locals. For the narrower early-return plus caller-mutation shape, retain the
+closure path until direct inline lowering carries branch-local loop-backedge
+state explicitly. The exact generated HIR registry remove/re-add fixture and
+the generated nilable-value Hash resize fixture now pass; the full HIR suite
+passes 366 examples with 0 failures/errors and 2 existing pending examples.
+This closes the registry/Hash compaction regression only; it does not close the
+separate formatter specialization residual or the full B4-F bootstrap gate.
+
 ## Stop Conditions
 
 - Do not run `s3b+` until generated `s2b` passes plain/no-prelude smokes and

@@ -1654,6 +1654,11 @@ describe "block shorthand parameter identity" do
         yield 1
       end
 
+      def pre_yield_return_with_state(flag : Bool, &)
+        return if flag
+        yield 1
+      end
+
       def post_yield_return(&)
         yield 1
         return
@@ -1681,7 +1686,9 @@ describe "block shorthand parameter identity" do
       end
 
       def return_order_driver : Nil
+        total = 0
         pre_yield_return(false) { |value| value }
+        pre_yield_return_with_state(false) { |value| total += value }
         post_yield_return { |value| value }
         postfix_yield_return { |value| value }
         case_value_yield_return { |value| value }
@@ -1697,7 +1704,8 @@ describe "block shorthand parameter identity" do
       instruction.as?(Adamas::HIR::Call)
     end
 
-    calls.none? { |call| call.method_name.starts_with?("pre_yield_return") && call.has_block? }.should be_true
+    calls.none? { |call| call.method_name.starts_with?("pre_yield_return$") && call.has_block? }.should be_true
+    calls.any? { |call| call.method_name.starts_with?("pre_yield_return_with_state$") && call.has_block? }.should be_true
     calls.any? { |call| call.method_name.starts_with?("post_yield_return") && call.has_block? }.should be_true
     calls.any? { |call| call.method_name.starts_with?("postfix_yield_return") && call.has_block? }.should be_true
     calls.any? { |call| call.method_name.starts_with?("case_value_yield_return") && call.has_block? }.should be_true

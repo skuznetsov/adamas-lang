@@ -49595,6 +49595,36 @@ module Adamas::HIR
       result
     end
 
+    # An early return before the first yield is safe to inline when the block is
+    # observationally pure with respect to the caller. If the block mutates a
+    # caller local, however, a nested iterator in the callee must merge that
+    # mutation across both the yielded and skipped paths. The direct inline
+    # path does not yet carry that branch-local backedge state, so retain the
+    # closure path for this narrower shape. Returns after yield remain unsafe
+    # for direct inlining regardless of block mutation.
+    private def yield_return_requires_block_fallback?(
+      ctx : LoweringContext,
+      node : Adamas::Compiler::Frontend::DefNode,
+      callee_arena : Adamas::Compiler::Frontend::ArenaLike,
+      block : Adamas::Compiler::Frontend::BlockNode,
+      block_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Bool
+      return true if def_contains_return_after_yield?(node, callee_arena)
+
+      body = node.body
+      return false unless body
+      return false unless with_arena(callee_arena) { contains_return?(body) }
+
+      assigned = with_arena(block_arena) { collect_assigned_vars(block.body) }
+      idx = 0
+      while idx < assigned.size
+        name = assigned.unsafe_fetch(idx)
+        return true if ctx.lookup_local(name) || inline_caller_local_id(name)
+        idx += 1
+      end
+      false
+    end
+
     private def yield_return_only?(body : Array(ExprId)) : Bool
       return false if body.empty?
       return false unless tail_is_return?(body)
@@ -89199,15 +89229,18 @@ module Adamas::HIR
               else
                 receiver_id
               end
-              selected_callee_has_return_after_yield = false
-              selected_callee_has_return_after_yield =
-                def_contains_return_after_yield?(selected_def, selected_arena)
-              selected_block_has_return = with_arena(
-                @block_node_arenas[block_for_inline.object_id]? ||
-                resolve_arena_for_block(block_for_inline, @arena) ||
-                @arena
-              ) { contains_return?(block_for_inline.body) }
-              unless selected_callee_has_return_after_yield && !selected_block_has_return && def_contains_yield?(selected_def, selected_arena)
+              selected_block_arena = @block_node_arenas[block_for_inline.object_id]? ||
+                                     resolve_arena_for_block(block_for_inline, @arena) ||
+                                     @arena
+              selected_callee_requires_fallback = yield_return_requires_block_fallback?(
+                ctx,
+                selected_def,
+                selected_arena,
+                block_for_inline,
+                selected_block_arena,
+              )
+              selected_block_has_return = with_arena(selected_block_arena) { contains_return?(block_for_inline.body) }
+              unless selected_callee_requires_fallback && !selected_block_has_return && def_contains_yield?(selected_def, selected_arena)
                 debug_hook("call.inline.yield", "callee=#{selected_name} source=selected_binding")
                 return inline_yield_function(
                   ctx,
@@ -89238,13 +89271,18 @@ module Adamas::HIR
               entry_name = entry[0]
               if def_node = @function_defs[entry_name]?
                 def_arena = @function_def_arenas[entry_name]? || @arena
-                callee_has_return_after_yield =
-                  def_contains_return_after_yield?(def_node, def_arena)
                 block_arena = @block_node_arenas[block_for_inline.object_id]? ||
                               resolve_arena_for_block(block_for_inline, @arena) ||
                               @arena
+                callee_requires_fallback = yield_return_requires_block_fallback?(
+                  ctx,
+                  def_node,
+                  def_arena,
+                  block_for_inline,
+                  block_arena,
+                )
                 block_has_return = with_arena(block_arena) { contains_return?(block_for_inline.body) }
-                if def_contains_yield?(def_node, def_arena) && callee_has_return_after_yield && !block_has_return
+                if def_contains_yield?(def_node, def_arena) && callee_requires_fallback && !block_has_return
                   skip_inline = true
                   debug_hook("call.inline.skip", "callee=#{mangled_method_name} reason=callee_yield_with_return")
                 end
@@ -89703,10 +89741,14 @@ module Adamas::HIR
             # bypass normal Call emission when yield+return in the callee makes inline-yield unsafe.
             skip_late_inline = false
             if def_contains_yield?(yield_def, callee_arena)
-              callee_has_return_after_yield_late = false
-              callee_has_return_after_yield_late =
-                def_contains_return_after_yield?(yield_def, callee_arena)
-              if callee_has_return_after_yield_late
+              callee_requires_fallback_late = yield_return_requires_block_fallback?(
+                ctx,
+                yield_def,
+                callee_arena,
+                block_for_inline,
+                block_arena,
+              )
+              if callee_requires_fallback_late
                 skip_late_inline = true
                 debug_hook("call.inline.skip", "callee=#{yield_name} reason=callee_yield_with_return_late")
               end
