@@ -1281,3 +1281,49 @@ top diagnosis was wrong. Local safe-wrapper, LLDB, generated LLVM, and original
 Crystal source remain authoritative.
 **Cost saved:** small source-search time; no implementation decision was
 delegated.
+
+### Session 51 — 2026-07-14 — Nullable enum-predicate/property-getter audit
+**Task:** read-only adversarial audit of a full self-host LLVM path where a
+nullable `Nil | Adamas::MIR::Type` receiver lowered `try(&.kind.tuple?)` to a
+bare `tuple?` call, while a small concrete enum getter fixture lowered to an
+`Eq` operation. The prompt required `function_enum_return_names`, union
+dispatch/`actual_name`, `TypeKind` registration, a falsifier, and a general
+fix sketch; no files were to be edited.
+**Brief size:** bounded ACP prompt with exact source files and the generated
+LLVM artifact; read/grep only; about 23 seconds, exit 0.
+**Output quality:** mixed but useful. Grok independently agreed that enum
+identity metadata is keyed by concrete function names and may be lost across
+generated accessors or union dispatch. It then made a misleading general
+claim that the nullable `try` path safely short-circuits and therefore cannot
+produce the bare call. Direct local inspection of `cv2_s2.ll` refuted that
+claim: the measured path at line ~4315295 calls
+`__vdispatch__Nil|Adamas::MIR::Type#kind`, then bare `tuple$Q`; the shim is
+defined around ~4804862 and `tuple$Q` is an abort stub around ~5100251.
+**Adversary check:** a focused host spec falsifier independently exposed the
+first missing edge: `function_enum_return_names["Info#type"]` is nil for a
+typed `property type : FileType` getter, while the hand-written
+`def type : FileType` fixture passes. A later full-HIR artifact then exposed a
+second independent edge: the zero-argument generated getter was not selected
+through the `Nil | Adamas::MIR::Type` union, so its concrete return type became
+`Void` before the enum predicate was lowered. Both edges require local proof;
+the accessor metadata result alone is not the complete root cause.
+**Verdict:** useful sidecar for enum-identity/keying hypotheses; its nullable
+short-circuit conclusion was wrong and must not be treated as evidence.
+**Cost saved:** small source-search time; local HIR assertions and generated
+LLVM remain authoritative.
+
+## 2026-07-15 — B-ABI allocator optional-tail hostile review (candidate only)
+
+Direct `grok_acp_delegate.py` with `--always-approve` completed quickly on a
+strictly read-only brief limited to `generate_allocator_overload`,
+`allocator_initializer_param_types`, the two focused HIR examples, and the
+no-prelude runtime guard. Grok correctly identified the intended boundary:
+concrete union members may specialize, a dynamic union must remain declared,
+and a typed-name collision is admissible only when it retains the selected
+`DefNode` identity and visibility. It proposed the named-only collision as the
+strongest negative and returned `ROBUST`.
+
+Evidence caution: the sidecar only read and searched files; despite wording
+that the tests "pass", it did not execute them. Treat the verdict as a useful
+control-flow audit, not verification. The independent isolated RED/GREEN run
+remains authoritative.
