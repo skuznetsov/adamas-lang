@@ -49596,12 +49596,12 @@ module Adamas::HIR
     end
 
     # An early return before the first yield is safe to inline when the block is
-    # observationally pure with respect to the caller. If the block mutates a
-    # caller local, however, a nested iterator in the callee must merge that
-    # mutation across both the yielded and skipped paths. The direct inline
-    # path does not yet carry that branch-local backedge state, so retain the
-    # closure path for this narrower shape. Returns after yield remain unsafe
-    # for direct inlining regardless of block mutation.
+    # observationally pure with respect to caller state. If the block assigns a
+    # visible caller local, however, a nested iterator in the callee may need to
+    # merge that mutation across both yielded and skipped paths. The direct
+    # inline path does not yet carry that branch-local backedge state, so retain
+    # the closure path conservatively. Returns after yield remain unsafe for
+    # direct inlining regardless of block mutation.
     private def yield_return_requires_block_fallback?(
       ctx : LoweringContext,
       node : Adamas::Compiler::Frontend::DefNode,
@@ -49615,14 +49615,221 @@ module Adamas::HIR
       return false unless body
       return false unless with_arena(callee_arena) { contains_return?(body) }
 
-      assigned = with_arena(block_arena) { collect_assigned_vars(block.body) }
-      idx = 0
-      while idx < assigned.size
-        name = assigned.unsafe_fetch(idx)
-        return true if ctx.lookup_local(name) || inline_caller_local_id(name)
-        idx += 1
+      bound_names = Set(String).new
+      if params = block.params
+        params.each do |param|
+          if name = param.name
+            if name_str = safe_slice_to_string(name)
+              bound_names.add(name_str)
+            end
+          end
+        end
       end
-      false
+
+      # collect_assigned_vars intentionally serves loop-phi discovery and does
+      # not descend through every capture-bearing AST shape. Keep that global
+      # contract unchanged and use a dedicated, scope-aware walk here. It checks
+      # assignments in every visited expression position against caller locals
+      # and fails closed on unclassified wrappers, because a missed captured
+      # assignment would reintroduce the skipped-path merge bug fixed by the
+      # closure fallback.
+      with_arena(block_arena) { yield_block_has_capture_scan_barrier?(ctx, block.body, bound_names) }
+    end
+
+    private def yield_block_has_capture_scan_barrier?(ctx : LoweringContext, body : Array(ExprId), bound_names : Set(String)) : Bool
+      body.any? { |expr_id| yield_expr_has_capture_scan_barrier?(ctx, expr_id, bound_names) }
+    end
+
+    private def yield_expr_has_capture_scan_barrier?(ctx : LoweringContext, expr_id : ExprId, bound_names : Set(String)) : Bool
+      return true if expr_id.null_ptr? || expr_id.invalid?
+      node = @arena[expr_id]
+
+      case node
+      when Adamas::Compiler::Frontend::UntilNode,
+           Adamas::Compiler::Frontend::ForNode,
+           Adamas::Compiler::Frontend::SelectNode,
+           Adamas::Compiler::Frontend::ProcLiteralNode,
+           Adamas::Compiler::Frontend::SpawnNode,
+           Adamas::Compiler::Frontend::MacroExpressionNode,
+           Adamas::Compiler::Frontend::MacroLiteralNode,
+           Adamas::Compiler::Frontend::MacroIfNode,
+           Adamas::Compiler::Frontend::MacroForNode
+        true
+      when Adamas::Compiler::Frontend::VisibilityModifierNode
+        yield_expr_has_capture_scan_barrier?(ctx, node.expression, bound_names)
+      when Adamas::Compiler::Frontend::AssignNode
+        target = @arena[node.target]
+        if target.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
+          name = safe_slice_to_string(target.name)
+          return true unless name
+          unless bound_names.includes?(name)
+            return true if ctx.lookup_local(name) || inline_caller_local_id(name)
+          end
+        elsif yield_expr_has_capture_scan_barrier?(ctx, node.target, bound_names)
+          return true
+        end
+        yield_expr_has_capture_scan_barrier?(ctx, node.value, bound_names)
+      when Adamas::Compiler::Frontend::MultipleAssignNode
+        node.targets.each do |target_id|
+          target = @arena[target_id]
+          if target.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
+            name = safe_slice_to_string(target.name)
+            return true unless name
+            unless bound_names.includes?(name)
+              return true if ctx.lookup_local(name) || inline_caller_local_id(name)
+            end
+          elsif yield_expr_has_capture_scan_barrier?(ctx, target_id, bound_names)
+            return true
+          end
+        end
+        yield_expr_has_capture_scan_barrier?(ctx, node.value, bound_names)
+      when Adamas::Compiler::Frontend::TypeDeclarationNode
+        name = safe_slice_to_string(node.name)
+        return true unless name
+        unless bound_names.includes?(name)
+          return true if ctx.lookup_local(name) || inline_caller_local_id(name)
+        end
+        node.value ? yield_expr_has_capture_scan_barrier?(ctx, node.value.not_nil!, bound_names) : false
+      when Adamas::Compiler::Frontend::MemberAccessNode,
+           Adamas::Compiler::Frontend::SafeNavigationNode
+        yield_expr_has_capture_scan_barrier?(ctx, node.object, bound_names)
+      when Adamas::Compiler::Frontend::CallNode
+        return true if yield_expr_has_capture_scan_barrier?(ctx, node.callee, bound_names)
+        return true if yield_block_has_capture_scan_barrier?(ctx, node.args, bound_names)
+        if named_args = node.named_args
+          return true if named_args.any? { |arg| yield_expr_has_capture_scan_barrier?(ctx, arg.value, bound_names) }
+        end
+        if block_id = node.block
+          return true if yield_expr_has_capture_scan_barrier?(ctx, block_id, bound_names)
+        end
+        false
+      when Adamas::Compiler::Frontend::SplatNode
+        yield_expr_has_capture_scan_barrier?(ctx, node.expr, bound_names)
+      when Adamas::Compiler::Frontend::UnaryNode
+        yield_expr_has_capture_scan_barrier?(ctx, node.operand, bound_names)
+      when Adamas::Compiler::Frontend::BinaryNode
+        yield_expr_has_capture_scan_barrier?(ctx, node.left, bound_names) ||
+          yield_expr_has_capture_scan_barrier?(ctx, node.right, bound_names)
+      when Adamas::Compiler::Frontend::TernaryNode
+        yield_expr_has_capture_scan_barrier?(ctx, node.condition, bound_names) ||
+          yield_expr_has_capture_scan_barrier?(ctx, node.true_branch, bound_names) ||
+          yield_expr_has_capture_scan_barrier?(ctx, node.false_branch, bound_names)
+      when Adamas::Compiler::Frontend::GroupingNode
+        yield_expr_has_capture_scan_barrier?(ctx, node.expression, bound_names)
+      when Adamas::Compiler::Frontend::IfNode
+        return true if yield_expr_has_capture_scan_barrier?(ctx, node.condition, bound_names)
+        return true if yield_block_has_capture_scan_barrier?(ctx, node.then_body, bound_names)
+        if branches = node.elsifs
+          branches.each do |branch|
+            return true if yield_expr_has_capture_scan_barrier?(ctx, branch.condition, bound_names)
+            return true if yield_block_has_capture_scan_barrier?(ctx, branch.body, bound_names)
+          end
+        end
+        node.else_body.try { |else_body| yield_block_has_capture_scan_barrier?(ctx, else_body, bound_names) } || false
+      when Adamas::Compiler::Frontend::UnlessNode
+        return true if yield_expr_has_capture_scan_barrier?(ctx, node.condition, bound_names)
+        return true if yield_block_has_capture_scan_barrier?(ctx, node.then_branch, bound_names)
+        node.else_branch.try { |else_body| yield_block_has_capture_scan_barrier?(ctx, else_body, bound_names) } || false
+      when Adamas::Compiler::Frontend::WhileNode
+        yield_expr_has_capture_scan_barrier?(ctx, node.condition, bound_names) ||
+          yield_block_has_capture_scan_barrier?(ctx, node.body, bound_names)
+      when Adamas::Compiler::Frontend::LoopNode
+        yield_block_has_capture_scan_barrier?(ctx, node.body, bound_names)
+      when Adamas::Compiler::Frontend::BlockNode
+        nested_bound_names = bound_names.dup
+        if params = node.params
+          params.each do |param|
+            if name = param.name
+              if name_str = safe_slice_to_string(name)
+                nested_bound_names.add(name_str)
+              end
+            end
+          end
+        end
+        yield_block_has_capture_scan_barrier?(ctx, node.body, nested_bound_names)
+      when Adamas::Compiler::Frontend::CaseNode
+        if value = node.value
+          return true if yield_expr_has_capture_scan_barrier?(ctx, value, bound_names)
+        end
+        node.when_branches.each do |branch|
+          return true if yield_block_has_capture_scan_barrier?(ctx, branch.conditions, bound_names)
+          return true if yield_block_has_capture_scan_barrier?(ctx, branch.body, bound_names)
+        end
+        if branches = node.in_branches
+          branches.each do |branch|
+            return true if yield_block_has_capture_scan_barrier?(ctx, branch.conditions, bound_names)
+            return true if yield_block_has_capture_scan_barrier?(ctx, branch.body, bound_names)
+          end
+        end
+        node.else_branch.try { |else_body| yield_block_has_capture_scan_barrier?(ctx, else_body, bound_names) } || false
+      when Adamas::Compiler::Frontend::BeginNode
+        return true if yield_block_has_capture_scan_barrier?(ctx, node.body, bound_names)
+        if clauses = node.rescue_clauses
+          return true if clauses.any? { |clause| yield_block_has_capture_scan_barrier?(ctx, clause.body, bound_names) }
+        end
+        if else_body = node.else_body
+          return true if yield_block_has_capture_scan_barrier?(ctx, else_body, bound_names)
+        end
+        node.ensure_body.try { |ensure_body| yield_block_has_capture_scan_barrier?(ctx, ensure_body, bound_names) } || false
+      when Adamas::Compiler::Frontend::ReturnNode,
+           Adamas::Compiler::Frontend::BreakNode,
+           Adamas::Compiler::Frontend::NextNode,
+           Adamas::Compiler::Frontend::RaiseNode
+        node.value ? yield_expr_has_capture_scan_barrier?(ctx, node.value.not_nil!, bound_names) : false
+      when Adamas::Compiler::Frontend::YieldNode
+        node.args.try { |args| yield_block_has_capture_scan_barrier?(ctx, args, bound_names) } || false
+      when Adamas::Compiler::Frontend::ArrayLiteralNode
+        return true if yield_block_has_capture_scan_barrier?(ctx, node.elements, bound_names)
+        return true if node.of_type.try { |of_type| yield_expr_has_capture_scan_barrier?(ctx, of_type, bound_names) }
+        node.custom_name.try { |custom_name| yield_expr_has_capture_scan_barrier?(ctx, custom_name, bound_names) } || false
+      when Adamas::Compiler::Frontend::TupleLiteralNode
+        yield_block_has_capture_scan_barrier?(ctx, node.elements, bound_names)
+      when Adamas::Compiler::Frontend::HashLiteralNode
+        return true if node.entries.any? do |entry|
+          yield_expr_has_capture_scan_barrier?(ctx, entry.key, bound_names) ||
+            yield_expr_has_capture_scan_barrier?(ctx, entry.value, bound_names)
+        end
+        node.custom_name.try { |custom_name| yield_expr_has_capture_scan_barrier?(ctx, custom_name, bound_names) } || false
+      when Adamas::Compiler::Frontend::NamedTupleLiteralNode
+        node.entries.any? { |entry| yield_expr_has_capture_scan_barrier?(ctx, entry.value, bound_names) }
+      when Adamas::Compiler::Frontend::StringInterpolationNode
+        node.pieces.any? do |piece|
+          piece.kind == Adamas::Compiler::Frontend::StringPiece::Kind::Expression &&
+            piece.expr.try { |expression| yield_expr_has_capture_scan_barrier?(ctx, expression, bound_names) }
+        end
+      when Adamas::Compiler::Frontend::IndexNode
+        yield_expr_has_capture_scan_barrier?(ctx, node.object, bound_names) ||
+          yield_block_has_capture_scan_barrier?(ctx, node.indexes, bound_names)
+      when Adamas::Compiler::Frontend::RangeNode
+        yield_expr_has_capture_scan_barrier?(ctx, node.begin_expr, bound_names) ||
+          yield_expr_has_capture_scan_barrier?(ctx, node.end_expr, bound_names)
+      when Adamas::Compiler::Frontend::AsNode,
+           Adamas::Compiler::Frontend::AsQuestionNode,
+           Adamas::Compiler::Frontend::IsANode
+        yield_expr_has_capture_scan_barrier?(ctx, node.expression, bound_names)
+      when Adamas::Compiler::Frontend::RespondsToNode
+        yield_expr_has_capture_scan_barrier?(ctx, node.expression, bound_names) ||
+          yield_expr_has_capture_scan_barrier?(ctx, node.method_name, bound_names)
+      when Adamas::Compiler::Frontend::WithNode
+        yield_expr_has_capture_scan_barrier?(ctx, node.receiver, bound_names) ||
+          yield_block_has_capture_scan_barrier?(ctx, node.body, bound_names)
+      when Adamas::Compiler::Frontend::NumberNode,
+           Adamas::Compiler::Frontend::IdentifierNode,
+           Adamas::Compiler::Frontend::StringNode,
+           Adamas::Compiler::Frontend::CharNode,
+           Adamas::Compiler::Frontend::RegexNode,
+           Adamas::Compiler::Frontend::BoolNode,
+           Adamas::Compiler::Frontend::NilNode,
+           Adamas::Compiler::Frontend::SymbolNode,
+           Adamas::Compiler::Frontend::InstanceVarNode,
+           Adamas::Compiler::Frontend::ClassVarNode,
+           Adamas::Compiler::Frontend::GlobalNode,
+           Adamas::Compiler::Frontend::SelfNode,
+           Adamas::Compiler::Frontend::ImplicitObjNode
+        false
+      else
+        true
+      end
     end
 
     private def yield_return_only?(body : Array(ExprId)) : Bool

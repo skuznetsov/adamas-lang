@@ -1659,6 +1659,31 @@ describe "block shorthand parameter identity" do
         yield 1
       end
 
+      def pre_yield_return_with_nested_state(flag : Bool, &)
+        return if flag
+        yield 1
+      end
+
+      def pre_yield_return_with_condition_state(flag : Bool, &)
+        return if flag
+        yield 1
+      end
+
+      def pre_yield_return_with_local_state(flag : Bool, &)
+        return if flag
+        yield 1
+      end
+
+      def pre_yield_return_with_shadow(flag : Bool, &)
+        return if flag
+        yield 1
+      end
+
+      def pre_yield_return_with_nested_shadow(flag : Bool, &)
+        return if flag
+        yield 1
+      end
+
       def post_yield_return(&)
         yield 1
         return
@@ -1689,6 +1714,25 @@ describe "block shorthand parameter identity" do
         total = 0
         pre_yield_return(false) { |value| value }
         pre_yield_return_with_state(false) { |value| total += value }
+        pre_yield_return_with_nested_state(false) do |value|
+          index = 0
+          until index >= 1
+            total += value
+            index += 1
+          end
+        end
+        pre_yield_return_with_condition_state(false) do |value|
+          value if (total = value) > 0
+        end
+        pre_yield_return_with_local_state(false) do |value|
+          local_only = value
+          local_only
+        end
+        shadow = 0
+        pre_yield_return_with_shadow(false) { |shadow| shadow = shadow + 1 }
+        pre_yield_return_with_nested_shadow(false) do |value|
+          [value].each { |shadow| shadow = shadow + 1 }
+        end
         post_yield_return { |value| value }
         postfix_yield_return { |value| value }
         case_value_yield_return { |value| value }
@@ -1706,6 +1750,11 @@ describe "block shorthand parameter identity" do
 
     calls.none? { |call| call.method_name.starts_with?("pre_yield_return$") && call.has_block? }.should be_true
     calls.any? { |call| call.method_name.starts_with?("pre_yield_return_with_state$") && call.has_block? }.should be_true
+    calls.any? { |call| call.method_name.starts_with?("pre_yield_return_with_nested_state$") && call.has_block? }.should be_true
+    calls.any? { |call| call.method_name.starts_with?("pre_yield_return_with_condition_state$") && call.has_block? }.should be_true
+    calls.none? { |call| call.method_name.starts_with?("pre_yield_return_with_local_state$") && call.has_block? }.should be_true
+    calls.none? { |call| call.method_name.starts_with?("pre_yield_return_with_shadow$") && call.has_block? }.should be_true
+    calls.none? { |call| call.method_name.starts_with?("pre_yield_return_with_nested_shadow$") && call.has_block? }.should be_true
     calls.any? { |call| call.method_name.starts_with?("post_yield_return") && call.has_block? }.should be_true
     calls.any? { |call| call.method_name.starts_with?("postfix_yield_return") && call.has_block? }.should be_true
     calls.any? { |call| call.method_name.starts_with?("case_value_yield_return") && call.has_block? }.should be_true

@@ -10599,6 +10599,15 @@ passes 366 examples with 0 failures/errors and 2 existing pending examples.
 This closes the registry/Hash compaction regression only; it does not close the
 separate formatter specialization residual or the full B4-F bootstrap gate.
 
+Adversary hardening keeps the fallback conservative without broadening the
+loop-phi assignment collector: block parameters and block-local assignments are
+excluded from captured mutations, while caller-local assignments plus `until`,
+`for`, `select`, proc/spawn, macro, and unknown wrapper shapes retain the
+closure path. The focused HIR contract covers a nested `until` mutation, a
+caller assignment in a condition, a pure block-local assignment, and top-level
+plus nested same-name block-parameter shadows. The residual cost is lost
+direct-inline coverage for unclassified AST shapes.
+
 ## Stop Conditions
 
 - Do not run `s3b+` until generated `s2b` passes plain/no-prelude smokes and
