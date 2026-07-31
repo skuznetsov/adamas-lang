@@ -8255,6 +8255,66 @@ describe Adamas::HIR::AstToHir do
       text.should_not contain("Pointer(Void)")
     end
 
+    it "keeps String::Builder exact through inspect without specializing unrelated IO methods" do
+      source = <<-CRYSTAL
+        abstract class IO
+        end
+
+        class String::Builder < IO
+        end
+
+        class Object
+          def inspect : String
+            inspect(String::Builder.new)
+            ""
+          end
+
+          def inspect(io : IO) : Nil
+          end
+        end
+
+        class Reference < Object
+        end
+
+        class BuilderBox(T) < Reference
+          def inspect(io : IO) : Nil
+            to_s(io)
+          end
+
+          def to_s(io : IO) : Nil
+            render(io)
+          end
+
+          def render(io : IO) : Nil
+          end
+        end
+      CRYSTAL
+
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+      converter.arena = arena
+      class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+      class_nodes.each { |node| converter.register_class(node) }
+      converter.module.class_parents["String::Builder"] = "IO"
+      converter.__test_monomorphize_generic_class("BuilderBox", ["Int32"], "BuilderBox(Int32)")
+
+      converter.__test_lower_function_if_needed("BuilderBox(Int32)#inspect")
+      converter.__test_lower_function_if_needed("BuilderBox(Int32)#inspect$String::Builder")
+      converter.__test_lower_function_if_needed("BuilderBox(Int32)#to_s$String::Builder")
+      converter.__test_lower_function_if_needed("BuilderBox(Int32)#render$IO")
+
+      inspect = converter.module.function_by_name("BuilderBox(Int32)#inspect$String::Builder")
+      inspect.should_not be_nil
+      converter.__test_get_type_name_from_ref(inspect.not_nil!.params[1].type).should eq("String::Builder")
+
+      to_s = converter.module.function_by_name("BuilderBox(Int32)#to_s$String::Builder")
+      to_s.should_not be_nil
+      converter.__test_get_type_name_from_ref(to_s.not_nil!.params[1].type).should eq("String::Builder")
+
+      converter.module.function_by_name("BuilderBox(Int32)#render$String::Builder").should be_nil
+      converter.module.function_by_name("BuilderBox(Int32)#render$IO").should_not be_nil
+    end
+
     it "prunes impossible numeric named-container branches before lowering their body" do
       converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
         def guarded_numeric_lookup(flag : Bool, value : Float64, key : String) : Float64

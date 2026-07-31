@@ -201,16 +201,19 @@ describe "generated HIR runtime" do
   it "preserves real stdlib nested-struct specialization shapes" do
     hir = GeneratedHIRRuntimeSpec.emit_stdlib_specialization_hir
 
-    hir.should match(/call %\d+\.Array\(Outer::Inner::Point\)#inspect\$IO/)
+    hir.should match(/call %\d+\.Array\(Outer::Inner::Point\)#inspect\$String::Builder/)
     hir.should contain("func @Array(Outer::Inner::Point)#inspect$IO")
     hir.should match(/call %\d+\.Outer::Inner::Point#inspect\$IO\(%\d+\)/)
     hir.should contain("func @Outer::Inner::Point#inspect$IO")
   end
 
-  pending "preserves original Crystal nested-struct Builder specialization parity" do
+  it "preserves original Crystal nested-struct Builder specialization parity" do
     hir = GeneratedHIRRuntimeSpec.emit_stdlib_specialization_hir
 
     hir.should contain("func @Array(Outer::Inner::Point)#inspect$String::Builder")
+    hir.should match(/call %\d+\.Array\(Outer::Inner::Point\)#to_s\$String::Builder\(%\d+\)/)
+    hir.should contain("func @Array(Outer::Inner::Point)#to_s$String::Builder")
+    hir.should match(/call %\d+\.Outer::Inner::Point#inspect\$String::Builder\(%\d+\)/)
     hir.should contain("func @Outer::Inner::Point#inspect$String::Builder")
   end
 

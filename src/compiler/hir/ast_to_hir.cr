@@ -4993,6 +4993,11 @@ module Adamas::HIR
     # Tracks nesting depth of lowering operations.
     # When > 0, new lower requests are queued instead of executed immediately.
     @lowering_depth : Int32 = 0
+    # Exact formatter specialization is transported only from a structurally
+    # admitted Object wrapper and through the call targets it produces.
+    @object_wrapper_formatting_seed_depth : Int32 = 0
+    @string_builder_formatting_corridor_depth : Int32 = 0
+    @string_builder_formatting_corridor_targets : Set(String) = Set(String).new
     # Allow a shallow amount of recursive lowering before deferring to the queue.
     # 0 = current behavior (defer as soon as inside lowering).
     # V2 BOOTSTRAP: ENV access crashes V2-compiled binaries. Use 0 default.
@@ -15148,6 +15153,71 @@ module Adamas::HIR
       resolved_name = resolve_type_alias_chain(resolved_name)
       resolved_name = strip_absolute_name_prefix(resolved_name) if absolute_name_prefix_bytes?(resolved_name)
       exact_call_type_required_for_annotation_name?(resolved_name, call_name)
+    end
+
+    # Recognize the exact ABI shape transported from an Object convenience
+    # wrapper. Admission is controlled separately by wrapper/corridor provenance
+    # so ordinary inspect/to_s calls do not create a global subtype lane.
+    private def string_builder_formatting_shape?(
+      method_name : String,
+      type_ann : String?,
+      call_type : TypeRef,
+    ) : Bool
+      return false unless method_name == "inspect" || method_name == "to_s"
+      return false unless type_ann
+      return false unless get_type_name_from_ref(call_type) == "String::Builder"
+
+      annotation_name = ascii_strip(type_ann.not_nil!)
+      annotation_name = strip_absolute_name_prefix(annotation_name) if absolute_name_prefix_bytes?(annotation_name)
+      annotation_name = resolve_contextual_type_alias_name(annotation_name) || annotation_name
+      annotation_name = resolve_type_alias_chain(annotation_name)
+      annotation_name = strip_absolute_name_prefix(annotation_name) if absolute_name_prefix_bytes?(annotation_name)
+      return false unless annotation_name == "IO"
+
+      inherits_from?("String::Builder", "IO")
+    end
+
+    private def current_object_wrapper_formatting_seed_call?(base_method_name : String) : Bool
+      return false unless @object_wrapper_formatting_seed_depth > 0
+      current_class = @current_class
+      current_method = @current_method
+      return false unless current_class && current_method
+
+      parts = parse_method_name(base_method_name)
+      parts.is_instance && parts.owner == current_class && parts.method == current_method
+    end
+
+    private def string_builder_formatting_corridor_source_entry(
+      name : String,
+    ) : Tuple(String, Adamas::Compiler::Frontend::DefNode)?
+      return nil unless @string_builder_formatting_corridor_targets.includes?(name)
+
+      parts = parse_method_name(name)
+      method_name = parts.method
+      suffix = parts.suffix
+      return nil unless method_name && suffix && !suffix.empty?
+      return nil if suffix_has_block_flag?(suffix)
+
+      call_types = parse_types_from_suffix(strip_mangled_suffix_flags(suffix))
+      return nil unless call_types.size == 1
+
+      function_def_overloads(parts.base).each do |entry_name|
+        def_node = @function_defs[entry_name]?
+        next unless def_node
+
+        regular_params = function_param_infos(def_node).select do |param|
+          !param.is_block && !param.is_splat && !param.is_double_splat && !named_only_separator?(param)
+        end
+        next unless regular_params.size == 1
+
+        type_name = regular_params.first.type_annotation
+        next unless type_name
+        next unless string_builder_formatting_shape?(method_name, type_name, call_types.first)
+
+        return {entry_name, def_node}
+      end
+
+      nil
     end
 
     private def exact_call_type_required_for_annotation_name?(annotation_name : String, call_name : String) : Bool
@@ -38251,7 +38321,9 @@ module Adamas::HIR
                                      elsif use_specialized_runtime_param_types &&
                                         !param.is_block && !param.is_splat && !param.is_double_splat &&
                                         (should_use_exact_call_type_for_local_inference?(param_type, call_type_for_param) ||
-                                        should_use_exact_call_type_for_annotation?(raw_type_ann_str || type_ann_str, call_type_for_param))
+                                        should_use_exact_call_type_for_annotation?(raw_type_ann_str || type_ann_str, call_type_for_param) ||
+                                        (@string_builder_formatting_corridor_depth > 0 &&
+                                        string_builder_formatting_shape?(method_name, raw_type_ann_str || type_ann_str, call_type_for_param)))
                                        call_type_for_param
                                      else
                                        param_type
@@ -43733,6 +43805,7 @@ module Adamas::HIR
         def_node,
         arg_types
       )
+      formatting_corridor_transport = false
       unless needs_callsite_specialization
         call_index = 0
         function_param_infos(def_node).each do |param|
@@ -43742,8 +43815,14 @@ module Adamas::HIR
           if type_name = param.type_annotation
             param_type = type_ref_for_name(type_name)
             call_type = arg_types[call_index]
+            method_name = method_short_from_name(base_method_name) || ""
+            formatting_corridor_transport =
+              string_builder_formatting_shape?(method_name, type_name, call_type) &&
+                (@string_builder_formatting_corridor_depth > 0 ||
+                current_object_wrapper_formatting_seed_call?(base_method_name))
             if should_use_exact_call_type_for_local_inference?(param_type, call_type) ||
-               should_use_exact_call_type_for_annotation?(type_name, call_type)
+               should_use_exact_call_type_for_annotation?(type_name, call_type) ||
+               formatting_corridor_transport
               needs_callsite_specialization = true
               break
             end
@@ -43755,6 +43834,7 @@ module Adamas::HIR
       return nil unless needs_callsite_specialization
 
       callsite = mangle_function_name(base_method_name, arg_types, has_block_call)
+      @string_builder_formatting_corridor_targets.add(callsite) if formatting_corridor_transport
       return nil if callsite == resolved_name
 
       callsite
@@ -81149,7 +81229,8 @@ module Adamas::HIR
           STDERR.puts "[LOWER_FUNC_TRACE] early=speculative_root_fallback_helper name=#{name}" if debug_lower_func
           return
         end
-        if recursive_formatting_helper_defer?(name)
+        if recursive_formatting_helper_defer?(name) &&
+           !@string_builder_formatting_corridor_targets.includes?(name)
           STDERR.puts "[LOWER_FUNC_TRACE] early=recursive_formatting_helper name=#{name}" if debug_lower_func
           return
         end
@@ -81272,6 +81353,15 @@ module Adamas::HIR
             end
           end
         end
+      end
+      # An admitted formatting target reuses the compatible source overload but
+      # keeps its exact call-site symbol and ABI. This is the materialization
+      # half of the wrapper/corridor transport contract; ordinary formatter
+      # helpers still follow the recursion guard above.
+      if !func_def && (formatting_source = string_builder_formatting_corridor_source_entry(name))
+        source_name, func_def = formatting_source
+        arena = @function_def_arenas[source_name]?
+        target_name = name
       end
       lookup_start_instant = Time.instant if env_has?("ADAMAS_PHASE_STATS")
       # Parse name once at the start - reuse for all lookups
@@ -83371,10 +83461,13 @@ module Adamas::HIR
           target_parts.is_instance &&
           !requested_owner.empty? &&
           requested_owner != target_parts.owner
+      preserve_runtime_reference_wrapper_owner =
+        materialize_requested_instance_wrapper &&
+          preserve_requested_runtime_reference_wrapper_owner?(name, resolved_target_name, resolved_func_def)
       preserve_requested_wrapper_owner =
         materialize_requested_instance_wrapper &&
           (preserve_requested_value_owner_specialization?(name, resolved_target_name) ||
-           preserve_requested_runtime_reference_wrapper_owner?(name, resolved_target_name, resolved_func_def))
+           preserve_runtime_reference_wrapper_owner)
 
       if preserve_requested_wrapper_owner
         if info = generic_owner_info(requested_owner)
@@ -83602,7 +83695,16 @@ module Adamas::HIR
                   param_count = resolved_func_def.params.try(&.size) || 0
                   STDERR.puts "[ENTRY_MATCHES_LOWER] name=#{name} target=#{target_name} owner=#{owner} override=#{override} param_count=#{param_count} call_arg_types=#{call_arg_types.try(&.map(&.id).join(",")) || "nil"} type_params=#{type_param_map_debug_string}"
                 end
-                lower_method(owner, class_info, resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, override, force_class_method: force_class_method)
+                old_wrapper_seed_depth = @object_wrapper_formatting_seed_depth
+                old_formatting_corridor_depth = @string_builder_formatting_corridor_depth
+                @object_wrapper_formatting_seed_depth += 1 if preserve_runtime_reference_wrapper_owner
+                @string_builder_formatting_corridor_depth += 1 if @string_builder_formatting_corridor_targets.includes?(override)
+                begin
+                  lower_method(owner, class_info, resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, override, force_class_method: force_class_method)
+                ensure
+                  @object_wrapper_formatting_seed_depth = old_wrapper_seed_depth
+                  @string_builder_formatting_corridor_depth = old_formatting_corridor_depth
+                end
                 if pending_target_gate_enabled?
                   stop_after_pending_target_phase(
                     "lower_func_after_instance_lower_method",
@@ -88742,6 +88844,7 @@ module Adamas::HIR
         STDERR.puts "[CALL_LOWER_ENTER] caller=#{ctx.function.name} lookup=#{lookup_name} full=#{full_method_name || "nil"} base=#{base_method_name} args=#{args.size} arg_types=#{arg_desc} block=#{has_block_call ? 1 : 0} named=#{has_named_args ? 1 : 0} splat=#{has_splat ? 1 : 0}"
       end
       resolved_by_lookup = false
+      selected_call_entry_def : Adamas::Compiler::Frontend::DefNode? = nil
       # Preserve the authoritative structured-resolver selection for the
       # inline-yield corridor.  The legacy block lookup below intentionally
       # accepts a source arity plus already-normalized argument types; replaying
@@ -88940,6 +89043,7 @@ module Adamas::HIR
           stats = function_param_stats(entry_name, entry_def)
           STDERR.puts "[CALL_LOWER_HIT] caller=#{ctx.function.name} lookup=#{lookup_name} entry=#{entry_name} mangled=#{mangled_method_name} base=#{base_method_name} required=#{stats.required} param_count=#{stats.param_count} block_def=#{stats.has_block ? 1 : 0}"
         end
+        selected_call_entry_def = entry_def
         selected_block_entry = {entry_name, entry_def} if has_block_call
       elsif debug_env_filter_match?("DEBUG_CALL_LOOKUP", ctx.function.name, lookup_name, base_method_name)
         overloads = function_def_overloads(lookup_name)
@@ -88964,6 +89068,23 @@ module Adamas::HIR
         if full_method_name
           specialized_full_method_name = specialize_method_owner_name(full_method_name, concrete_call_owner)
           full_method_name = specialized_full_method_name
+        end
+      end
+      if selected_def = selected_call_entry_def
+        formatting_transport_authorized =
+          @string_builder_formatting_corridor_depth > 0 ||
+            current_object_wrapper_formatting_seed_call?(base_method_name)
+        if formatting_transport_authorized && arg_types.size == 1
+          regular_param = function_param_infos(selected_def).find do |param|
+            !param.is_block && !param.is_splat && !param.is_double_splat && !named_only_separator?(param)
+          end
+          if type_name = regular_param.try(&.type_annotation)
+            if string_builder_formatting_shape?(method_name, type_name, arg_types.first)
+              exact_formatting_target = mangle_function_name(base_method_name, arg_types, has_block_call)
+              @string_builder_formatting_corridor_targets.add(exact_formatting_target)
+              mangled_method_name = exact_formatting_target
+            end
+          end
         end
       end
       # Narrow stage2/bootstrap recovery: some lowered calls can lose receiver and

@@ -1,7 +1,7 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-07-30 (macro-source provenance hardened; bounded incremental
-missing-scan falsifier measured; B4-F remains red).
+Updated: 2026-07-31 (String::Builder formatter specialization parity restored;
+B4-F remains red).
 
 VERIFIED RECORD-MACRO INITIALIZER SLICE (bootstrap successor still open):
 record-style macro assignments now retain their right-hand-side text when
@@ -10629,16 +10629,24 @@ The old generated assertion for `Point#inspect()` was retired: the original
 Crystal compiler does not emit or call the zero-argument Point wrapper for
 `[Point].inspect`; `Array#to_s(IO)` invokes the element overload directly. The
 corrected semantic owner gate is RED on the pre-change compiler and GREEN on the
-current compiler. Original Crystal does specialize the remaining chain through
-`String::Builder`, while current HIR stops at `Array(Point)#inspect(IO)` and
-`Point#inspect(IO)`; that implementation-parity requirement is retained as an
-explicit pending generated gate rather than treated as closed. The full HIR
-suite is green at 370 examples with two existing pending examples, and the
-focused formatter, nested-struct owner, generated registry, and nilable runtime
-gates all pass. Full nested-fixture execution still reaches the pre-existing
-`Fiber#exec_recursive_hash` startup crash, so this slice proves semantic HIR
-demand and owner identity rather than Builder parity or end-to-end runtime
-readiness.
+current compiler.
+
+String::Builder follow-up: an explicit wrapper-derived corridor now admits the
+exact `String::Builder` call-site type only at `inspect(io : IO)` and
+`to_s(io : IO)` boundaries; ordinary specialization may then materialize their
+transitive helpers such as `join`. The real stdlib chain materializes and calls
+`Array(Point)#inspect(String::Builder) -> Array(Point)#to_s(String::Builder) ->
+Point#inspect(String::Builder)`, matching the original Crystal specialization
+oracle while retaining the existing `$IO` functions and calls. A focused
+negative control keeps an unrelated `render(io : IO)` method at `$IO`, bounding
+the rule away from general reference-subtype specialization. On the real
+fixture, the corridor emits 3946 functions versus the 3864-function baseline
+(+2.1%); the rejected global name-family candidate emitted 4130 (+6.9%). The
+full HIR suite is green at 371 examples with two existing pending examples; all
+nine generated integration examples pass. Full nested-fixture execution still
+reaches the pre-existing
+`Fiber#exec_recursive_hash` startup crash, so this slice proves Builder parity
+through semantic HIR demand rather than end-to-end runtime readiness.
 
 ## Stop Conditions
 
