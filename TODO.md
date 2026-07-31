@@ -1,7 +1,7 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-07-31 (plain float formatter tables restored; precision flags and
-B4-F remain red).
+Updated: 2026-07-31 (float formatter tables and precision callback returns
+restored; B4-F remains red).
 
 VERIFIED RECORD-MACRO INITIALIZER SLICE (bootstrap successor still open):
 record-style macro assignments now retain their right-hand-side text when
