@@ -10144,10 +10144,23 @@ module Adamas
           (block_desc.kind == HIR::TypeKind::Union && block_desc.name.includes?("Proc("))
         )
         callback_return_type = if requires_proc_callback_abi
-                                proc_callback_return_hir_type(block_type)
-                              else
-                                yield_type
-                              end
+                                 declared_return = proc_callback_return_hir_type(block_type)
+                                 # Unannotated `&` params can retain a Proc(..., Nil)
+                                 # descriptor even after HIR has inferred a concrete
+                                 # yield result from the supplied block.  The yield
+                                 # instruction is the local callback ABI contract in
+                                 # that case; using the stale Nil descriptor discards
+                                 # the callback return register before a later wrap.
+                                 if declared_return &&
+                                    (declared_return == HIR::TypeRef::VOID || declared_return == HIR::TypeRef::NIL) &&
+                                    yield_type != HIR::TypeRef::VOID && yield_type != HIR::TypeRef::NIL
+                                   yield_type
+                                 else
+                                   declared_return
+                                 end
+                               else
+                                 yield_type
+                               end
         unless callback_return_type
           raise "MIR yield callback ABI unresolved for Proc block type #{block_type.id} in #{@current_lowering_func_name}"
         end

@@ -216,6 +216,40 @@ describe Adamas::MIR::HIRToMIRLowering do
       calls.each { |call| call.unwrap_union_args.should be_false }
     end
 
+    it "uses the concrete yield type when an unannotated block keeps a Nil or Void return descriptor" do
+      [Adamas::HIR::TypeRef::NIL, Adamas::HIR::TypeRef::VOID].each do |stale_return|
+        hir_mod = Adamas::HIR::Module.new("unannotated_proc_yield_callback_return_#{stale_return.id}")
+        block_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+          Adamas::HIR::TypeKind::Proc,
+          "Proc",
+          [Adamas::HIR::TypeRef::INT32, stale_return]
+        ))
+        func = hir_mod.create_function("invoke$unannotated_block", Adamas::HIR::TypeRef::CHAR)
+        block_param = func.add_param("block", block_ref, true)
+        block = func.get_block(func.entry_block)
+        arg = Adamas::HIR::Literal.new(func.next_value_id, Adamas::HIR::TypeRef::INT32, 51_i64)
+        block.add(arg)
+        yld = Adamas::HIR::Yield.new(
+          func.next_value_id,
+          Adamas::HIR::TypeRef::CHAR,
+          [arg.id],
+          block_param.id
+        )
+        block.add(yld)
+        block.terminator = Adamas::HIR::Return.new(yld.id)
+
+        mir_mod = Adamas::MIR::HIRToMIRLowering.new(hir_mod).lower
+        mir_func = mir_mod.functions.find { |candidate| candidate.name == "invoke$unannotated_block" }.not_nil!
+        indirect = mir_func.blocks
+          .flat_map(&.instructions)
+          .select(&.is_a?(Adamas::MIR::IndirectCall))
+          .first
+          .not_nil!
+          .as(Adamas::MIR::IndirectCall)
+        indirect.type.should eq(Adamas::MIR::TypeRef::CHAR)
+      end
+    end
+
     it "calls the raw callback with its concrete return ABI and wraps the yield result" do
       hir_mod = Adamas::HIR::Module.new("proc_yield_callback_lowering")
       proc_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(

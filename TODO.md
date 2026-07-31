@@ -10680,6 +10680,18 @@ all ten generated integration examples pass. This closes plain `%f` table
 initialization only. `%.3f` still aborts from `String::Formatter#consume_type`
 and is the next formatter frontier; B4-F remains independently red.
 
+Formatter precision follow-up: MIR lowering now treats a concrete HIR `yield`
+type as the callback ABI when an unannotated block parameter has retained a
+stale `Proc(..., Nil)` or `Proc(..., Void)` return descriptor. Previously
+`Char::Reader#decode_char_at` invoked a generated `Char` callback as returning
+`Nil`, discarded the return register, and wrapped that zero value as `Char`;
+`String::Formatter#consume_precision` therefore advanced its reader to `3` but
+saw `next_char == '\0'`, skipped `consume_number`, and rejected `%.3f` in
+`consume_type`. Ambiguous Proc-union callback descriptors remain fail-closed.
+The focused MIR regression proves the indirect call returns `Char`, and the
+real formatter runtime now additionally renders `sprintf("%.3f", 1.25_f64)` as
+`1.250`. B4-F remains independently red.
+
 ## Stop Conditions
 
 - Do not run `s3b+` until generated `s2b` passes plain/no-prelude smokes and
