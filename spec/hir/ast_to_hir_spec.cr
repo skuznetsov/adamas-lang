@@ -310,6 +310,10 @@ class Adamas::HIR::AstToHir
     safe_slice_to_string(slice)
   end
 
+  def __test_has_protected_access_to(current_name : String, owner_name : String) : Bool
+    has_protected_access_to?(current_name, owner_name)
+  end
+
   def __test_safe_slice_guard?(slice : Slice(UInt8)) : Bool
     safe_slice_guard?(slice)
   end
@@ -349,6 +353,22 @@ class Adamas::HIR::AstToHir
     end
   end
 
+  def __test_macro_generated_ivar_param_entries(
+    node : Adamas::Compiler::Frontend::DefNode,
+    arena : Adamas::Compiler::Frontend::ArenaLike,
+    expected_method_name : String,
+  ) : Array(Tuple(String, String?))?
+    macro_generated_ivar_param_entries(node, arena, expected_method_name)
+  end
+
+  def __test_remember_macro_generated_parameter_sources(
+    expr_id : Adamas::Compiler::Frontend::ExprId,
+    arena : Adamas::Compiler::Frontend::ArenaLike,
+    source : String,
+  ) : Nil
+    remember_macro_generated_parameter_sources(expr_id, arena, source)
+  end
+
   def __test_generic_owner_info_map(owner : String) : Hash(String, String)?
     generic_owner_info(owner).try(&.map)
   end
@@ -357,12 +377,136 @@ class Adamas::HIR::AstToHir
     lower_function_if_needed(name)
   end
 
+  def __test_lower_inherited_method_specialization(
+    source_name : String,
+    materialized_owner : String,
+    target_name : String,
+    call_arg_types : Array(Adamas::HIR::TypeRef),
+  ) : Nil
+    source_def = @function_defs[source_name]
+    owner_info = @class_info[materialized_owner]
+    old_override = @current_namespace_override
+    @current_namespace_override = method_owner_from_name(source_name)
+    begin
+      lower_method(
+        materialized_owner,
+        owner_info,
+        source_def,
+        call_arg_types,
+        full_name_override: target_name,
+      )
+    ensure
+      @current_namespace_override = old_override
+    end
+  end
+
+  def __test_resolve_generic_return_type(
+    owner : String,
+    method_name : String,
+    call_arg_count : Int32,
+  ) : Adamas::HIR::TypeRef?
+    receiver_type = type_ref_for_name(owner)
+    base_name = "#{owner}##{method_name}"
+    resolve_return_type_from_def(
+      base_name,
+      base_name,
+      receiver_type == Adamas::HIR::TypeRef::VOID ? nil : receiver_type,
+      call_arg_count,
+    )
+  end
+
+  def __test_set_lazy_module_methods(value : Bool) : Nil
+    @lazy_module_methods = value
+  end
+
+  def __test_process_pending_lower_functions : Nil
+    process_pending_lower_functions
+  end
+
+  # Test-only bridge for the bounded missing-call sweep. The production method
+  # intentionally reads its budget from the environment; keep the mutation
+  # scoped to this call so focused specs can exercise the exact quota path
+  # without leaking state into neighboring examples.
+  def __test_lower_missing_call_targets_with_budget(budget : Int32) : Nil
+    previous = ENV["ADAMAS_MISSING_BUDGET"]?
+    ENV["ADAMAS_MISSING_BUDGET"] = budget.to_s
+    lower_missing_call_targets
+  ensure
+    if previous
+      ENV["ADAMAS_MISSING_BUDGET"] = previous
+    else
+      ENV.delete("ADAMAS_MISSING_BUDGET")
+    end
+  end
+
+  def __test_lower_receiver_repair_target_with_fallback(
+    exact_target : String,
+    fallback_base : String,
+  ) : {Bool, Bool}
+    exact_targets = Set(String).new
+    fallback_requests = [] of ReceiverRepairFallback
+    fallback_seen = Set(ReceiverRepairFallback).new
+    record_receiver_repair_target(
+      exact_targets,
+      fallback_requests,
+      fallback_seen,
+      exact_target,
+      fallback_base,
+    )
+    lower_receiver_repair_targets(exact_targets, fallback_requests)
+    {
+      @module.has_function_with_body?(exact_target),
+      @module.has_function_with_body?(fallback_base),
+    }
+  end
+
+  def __test_lower_receiver_repair_targets_with_fallbacks(
+    requests : Array({String, String, Array(Adamas::HIR::TypeRef)}),
+  ) : Nil
+    exact_targets = Set(String).new
+    fallback_requests = [] of ReceiverRepairFallback
+    fallback_seen = Set(ReceiverRepairFallback).new
+    requests.each do |exact_target, fallback_base, arg_types|
+      record_receiver_repair_target(
+        exact_targets,
+        fallback_requests,
+        fallback_seen,
+        exact_target,
+        fallback_base,
+        "",
+        arg_types,
+      )
+    end
+    lower_receiver_repair_targets(exact_targets, fallback_requests)
+  end
+
   def __test_get_function_return_type(name : String) : Adamas::HIR::TypeRef
     get_function_return_type(name)
   end
 
   def __test_enum_return_name_for(name : String) : String?
     enum_return_name_for(name)
+  end
+
+  def __test_force_ivar_type(owner : String, ivar_name : String, type_name : String) : Nil
+    info = @class_info[owner]?
+    raise "test class not found: #{owner}" unless info
+    type_ref = type_ref_for_name(type_name)
+    raise "test type not found: #{type_name}" if type_ref == Adamas::HIR::TypeRef::VOID
+    index = info.not_nil!.ivars.index { |ivar| ivar.name == ivar_name }
+    raise "test ivar not found: #{owner}##{ivar_name}" unless index
+    existing = info.not_nil!.ivars[index.not_nil!]
+    info.not_nil!.ivars[index.not_nil!] = Adamas::HIR::IVarInfo.new(
+      existing.name,
+      type_ref,
+      existing.offset,
+      existing.default_expr_id,
+      existing.default_arena,
+    )
+  end
+
+  def __test_enum_metadata_target_compatible(type_name : String, enum_name : String) : Bool
+    enum_metadata_target_compatible?(type_ref_for_name(type_name), enum_name)
   end
 
   def __test_resolve_union_method_call(
@@ -392,6 +536,428 @@ class Adamas::HIR::AstToHir
 
   def __test_get_type_name_from_ref(type_ref : Adamas::HIR::TypeRef) : String
     get_type_name_from_ref(type_ref)
+  end
+
+  def __test_local_inference_after_dependency_update(
+    body : Array(Adamas::Compiler::Frontend::ExprId),
+    name : String,
+    dependency : String,
+  ) : {String?, String?}
+    old_locals = @current_typeof_locals
+    old_local_names = @current_typeof_local_names
+    @current_typeof_locals = {} of String => Adamas::HIR::TypeRef
+    @current_typeof_local_names = {} of String => String
+    @infer_type_cache_version += 1
+    begin
+      before = infer_local_type_from_body(body, name, nil)
+      update_typeof_local(dependency, Adamas::HIR::TypeRef::INT32)
+      after = infer_local_type_from_body(body, name, nil)
+      {
+        before.try { |type_ref| get_type_name_from_ref(type_ref) },
+        after.try { |type_ref| get_type_name_from_ref(type_ref) },
+      }
+    ensure
+      @current_typeof_locals = old_locals
+      @current_typeof_local_names = old_local_names
+      @infer_type_cache_version += 1
+    end
+  end
+
+  def __test_block_param_types_after_stale_yield_cache(
+    function_name : String,
+    receiver_name : String,
+    arg_type_names : Array(String),
+  ) : Array(String)?
+    resolved_function_name = function_name
+    func_def = @function_defs[resolved_function_name]?
+    unless func_def
+      method_tail = function_name.rindex('#').try { |index| function_name[index..] } || function_name
+      requested_owner = function_name.rindex('#').try { |index| function_name[0...index] } || ""
+      requested_owner_base = strip_generic_args(requested_owner)
+      @function_defs.each do |candidate_name, candidate_def|
+        if candidate_name.includes?(requested_owner_base) &&
+           candidate_name.includes?(method_tail) &&
+           method_suffix(candidate_name).try { |suffix| suffix_has_block_flag?(suffix) }
+          resolved_function_name = candidate_name
+          func_def = candidate_def
+          break
+        end
+      end
+    end
+    return nil unless func_def
+    body = func_def.not_nil!.body
+    return nil unless body
+    def_arena = @function_def_arenas[resolved_function_name]? || @arena
+
+    old_arena = @arena
+    old_locals = @current_typeof_locals
+    old_local_names = @current_typeof_local_names
+    @arena = def_arena
+    @current_typeof_locals = {} of String => Adamas::HIR::TypeRef
+    @current_typeof_local_names = {} of String => String
+    @infer_type_cache_version += 1
+    begin
+      yield_args = [] of Array(Adamas::Compiler::Frontend::ExprId)
+      collect_yield_arg_lists(body, yield_args)
+      first_yield_arg = yield_args.first?.try(&.first?)
+      return nil unless first_yield_arg
+
+      # Simulate an earlier inference pass that saw the yield expression before
+      # its nested block parameter had a type and cached VOID for that AST node.
+      infer_type_from_expr(first_yield_arg, receiver_name)
+
+      receiver_type = type_ref_for_name(receiver_name)
+      arg_types = arg_type_names.map { |name| type_ref_for_name(name) }
+      param_map = type_param_map_for_receiver_type(receiver_type)
+      inferred = infer_yield_param_types_from_body(
+        func_def.not_nil!,
+        resolved_function_name,
+        strip_type_suffix(resolved_function_name),
+        receiver_type,
+        param_map,
+        arg_types,
+      )
+      inferred.try(&.map { |type_ref| get_type_name_from_ref(type_ref) })
+    ensure
+      @arena = old_arena
+      @current_typeof_locals = old_locals
+      @current_typeof_local_names = old_local_names
+      @infer_type_cache_version += 1
+    end
+  end
+
+  def __test_block_param_types_for_call(
+    base_method_name : String,
+    mangled_method_name : String,
+    receiver_name : String,
+    arg_type_names : Array(String),
+  ) : Array(String)?
+    receiver_type = type_ref_for_name(receiver_name)
+    arg_types = arg_type_names.map { |name| type_ref_for_name(name) }
+    block_param_types_for_call(
+      base_method_name,
+      mangled_method_name,
+      receiver_type,
+      arg_types,
+    ).try(&.map { |type_ref| get_type_name_from_ref(type_ref) })
+  end
+
+  def __test_block_param_types_for_call_in_context(
+    base_method_name : String,
+    mangled_method_name : String,
+    current_name : String,
+    ambient_type_params : Hash(String, String),
+    arg_type_names : Array(String),
+  ) : Array(String)?
+    old_class = @current_class
+    old_method = @current_method
+    old_override = @current_namespace_override
+    @current_class = current_name
+    @current_method = "#{current_name}#each"
+    @current_namespace_override = nil
+    arg_types = arg_type_names.map { |name| type_ref_for_name(name) }
+    begin
+      with_type_param_map(ambient_type_params) do
+        block_param_types_for_call(
+          base_method_name,
+          mangled_method_name,
+          Adamas::HIR::TypeRef::VOID,
+          arg_types,
+        ).try(&.map { |type_ref| get_type_name_from_ref(type_ref) })
+      end
+    ensure
+      @current_class = old_class
+      @current_method = old_method
+      @current_namespace_override = old_override
+    end
+  end
+
+  def __test_non_nil_type_name_without_legacy_descriptor(union_name : String) : String?
+    union_type = type_ref_for_name(union_name)
+    @union_descriptors.delete(hir_to_mir_type_ref(union_type))
+    narrowed = non_nil_type_for_union(union_type)
+    narrowed ? generic_param_type_name_from_ref(narrowed) : nil
+  end
+
+  def __test_exact_union_variant_name(
+    full_name : String,
+    type_ref : Adamas::MIR::TypeRef = Adamas::MIR::TypeRef::VOID,
+  ) : String?
+    variant = Adamas::MIR::UnionVariantDescriptor.new(1, type_ref, full_name, 8, 8, nil)
+    exact = exact_hir_type_ref_for_union_variant(variant)
+    exact == Adamas::HIR::TypeRef::VOID ? nil : generic_param_type_name_from_ref(exact)
+  end
+
+  def __test_method_resolution_cache_key(
+    call_has_named_args : Bool,
+    named_args_count : Int32,
+    named_arg_names : Array(String)? = nil,
+  ) : UInt64
+    method_resolution_cache_key(
+      Adamas::HIR::TypeRef::INT32,
+      "probe",
+      [Adamas::HIR::TypeRef::INT32],
+      false,
+      false,
+      true,
+      false,
+      call_has_named_args,
+      named_args_count,
+      named_arg_names_hash(canonical_named_arg_names(named_arg_names)),
+      "DispatchRoot::Mutable(Int32)",
+    )
+  end
+
+  def __test_select_missing_call_target_batch(
+    missing : Array(String),
+    budget : Int32,
+  ) : {Array(String), Bool}
+    select_missing_call_target_batch(missing, budget)
+  end
+
+  def __test_missing_incremental_refresh_segments(
+    cached : Hash(UInt64, Array(String)),
+    order : Array(UInt64),
+    current : Hash(UInt64, Array(String)),
+  ) : {Array(Array(String)), Int32}
+    missing_incremental_refresh_segments(cached, order, current)
+  end
+
+  def __test_missing_incremental_flatten_segments(
+    segments : Array(Array(String)),
+  ) : Array(String)
+    missing_incremental_flatten_segments(segments)
+  end
+
+  def __test_missing_incremental_target_certificate(
+    name : String,
+    queued_names : Array(String),
+  ) : {Bool, String, Bool}
+    queued = Set(String).new(queued_names.size)
+    queued_names.each { |queued_name| queued.add(queued_name) }
+    certificate = missing_incremental_target_certificate(name, queued)
+    {
+      certificate.body_present,
+      certificate.state.to_s,
+      certificate.queued,
+    }
+  end
+
+  def __test_set_missing_incremental_target_state(
+    name : String,
+    state : String,
+  ) : Nil
+    @function_lowering_states[name] = case state
+                                      when "pending"
+                                        FunctionLoweringState::Pending
+                                      when "in_progress"
+                                        FunctionLoweringState::InProgress
+                                      when "completed"
+                                        FunctionLoweringState::Completed
+                                      else
+                                        FunctionLoweringState::NotStarted
+                                      end
+  end
+
+  def __test_module_virtual_fanout_shape_key(
+    receiver_name : String,
+    arg_types : Array(Adamas::HIR::TypeRef),
+  ) : String
+    virtual_target_shape_key(receiver_name, "probe", arg_types, false, false)
+  end
+
+  def __test_module_fanout_owner_shape_compatible?(
+    owner_name : String,
+    receiver_shape : String,
+  ) : Bool
+    module_fanout_owner_shape_compatible?(owner_name, receiver_shape)
+  end
+
+  def __test_class_include_instantiations(owner_name : String) : Array(String)
+    @class_include_instantiations[owner_name]? || [] of String
+  end
+
+  def __test_module_shape_has_unbound_params?(type_name : String) : Bool
+    module_shape_has_unbound_params?(type_name)
+  end
+
+  def __test_module_fanout_owner_plan(
+    module_base : String,
+    receiver_shape : String,
+  ) : Array(String)
+    module_fanout_owner_plan(
+      module_base,
+      receiver_shape,
+      @module_includers[module_base]?,
+    )[0]
+  end
+
+  def __test_record_class_include_instantiation(
+    owner_name : String,
+    instantiation : String,
+  ) : Nil
+    record_class_include_instantiation(owner_name, instantiation)
+  end
+
+  def __test_module_virtual_target_deferred_then_retry(
+    owner_name : String,
+    method_name : String,
+    arg_types : Array(Adamas::HIR::TypeRef),
+  ) : {Bool, Bool, Bool}
+    base_name = "#{owner_name}##{method_name}"
+    resolved = lookup_function_def_for_call(
+      base_name,
+      arg_types.size,
+      false,
+      arg_types,
+      false,
+    )
+    raise "missing virtual target fixture: #{base_name}" unless resolved
+
+    resolved_name = resolved[0]
+    resolved_base = strip_type_suffix(resolved_name)
+    target_names = [resolved_name, resolved_base].uniq
+    target_names.each do |name|
+      @module.remove_function(name)
+      @function_lowering_states.delete(name)
+      @pending_function_queue.delete(name)
+    end
+
+    saved_depth = @lowering_depth
+    begin
+      @lowering_depth = @lowering_depth_limit + 1
+      first_complete = lower_virtual_target_resolved(
+        owner_name,
+        method_name,
+        arg_types,
+        false,
+        false,
+      )
+
+      target_names.each do |name|
+        @function_lowering_states.delete(name)
+        @pending_function_queue.delete(name)
+      end
+      @lowering_depth = 0
+      second_complete = lower_virtual_target_resolved(
+        owner_name,
+        method_name,
+        arg_types,
+        false,
+        false,
+      )
+
+      body_available = target_names.any? do |name|
+        @module.has_function_with_body?(name)
+      end
+      {first_complete, second_complete, body_available}
+    ensure
+      @lowering_depth = saved_depth
+    end
+  end
+
+  def __test_fanout_pending_survives_def_replacement(
+    def_name : String,
+    replacement_def_name : String,
+    method_name : String,
+  ) : Bool
+    original_key = @function_defs.keys.find do |name|
+      name == def_name || name.starts_with?("#{def_name}$")
+    end || raise "missing original def fixture: #{def_name}"
+    replacement_key = @function_defs.keys.find do |name|
+      name == replacement_def_name || name.starts_with?("#{replacement_def_name}$")
+    end
+    replacement = replacement_key.try { |name| @function_defs[name]? } ||
+                  raise "missing replacement def fixture: #{replacement_def_name}"
+
+    fanout_key = "test-fanout\u{1f}#{method_name}"
+    pending_target = "DeferredOwner##{method_name}$Int32"
+    (@module_virtual_fanout_keys_by_method[method_name] ||= Set(String).new) << fanout_key
+    @module_virtual_fanout_pending_targets[fanout_key] = {
+      pending_target => ModuleVirtualFanoutPendingTarget.new(
+        pending_target,
+        "DeferredOwner",
+        method_name,
+        [Adamas::HIR::TypeRef::INT32],
+        false,
+        false,
+      ),
+    }
+
+    set_function_def_entry(original_key, replacement, record_current_arena: false)
+
+    @module_virtual_fanout_pending_targets[fanout_key]?
+      .try(&.has_key?(pending_target)) || false
+  end
+
+  def __test_terminal_fanout_discard_invalidates_result(
+    method_name : String,
+  ) : {Int32, Int32, Bool, Bool, Bool}
+    fanout_key = "terminal-fanout\u{1f}#{method_name}"
+    pending_target = "NeverMaterialized##{method_name}$Int32"
+    (@module_virtual_fanout_keys_by_method[method_name] ||= Set(String).new) << fanout_key
+    @module_virtual_fanout_versions[fanout_key] =
+      module_virtual_fanout_registry_version("NeverMaterialized")
+    @module_virtual_fanout_pending_targets[fanout_key] = {
+      pending_target => ModuleVirtualFanoutPendingTarget.new(
+        pending_target,
+        "NeverMaterialized",
+        method_name,
+        [Adamas::HIR::TypeRef::INT32],
+        false,
+        false,
+      ),
+    }
+
+    discarded, unresolved = discard_terminal_module_virtual_fanout_pending_targets
+    {
+      discarded,
+      unresolved,
+      @module_virtual_fanout_pending_targets.has_key?(fanout_key),
+      @module_virtual_fanout_versions.has_key?(fanout_key),
+      @module_virtual_fanout_keys_by_method[method_name]?.try(&.includes?(fanout_key)) || false,
+    }
+  end
+
+  def __test_terminal_fanout_preserves_concrete_bodyless_target(
+    def_name : String,
+    method_name : String,
+  ) : {Int32, Int32, Bool, Bool}
+    concrete_def_name = @function_defs.keys.find do |name|
+      name == def_name || name.starts_with?("#{def_name}$")
+    end || raise "missing concrete def fixture: #{def_name}"
+
+    # Typed DefNodes are registered under their concrete suffix (for example,
+    # `ConcreteTerminalOwner#probe$Int32`). Keep that exact symbol as the
+    # pending target; remangling it would produce a distinct invalid key.
+    target_name = concrete_def_name
+    remove_hir_function(target_name)
+    @function_lowering_states.delete(target_name)
+
+    owner = method_owner(concrete_def_name)
+    fanout_key = "concrete-terminal-fanout\u{1f}#{method_name}"
+    (@module_virtual_fanout_keys_by_method[method_name] ||= Set(String).new) << fanout_key
+    @module_virtual_fanout_versions[fanout_key] =
+      module_virtual_fanout_registry_version(owner)
+    @module_virtual_fanout_pending_targets[fanout_key] = {
+      target_name => ModuleVirtualFanoutPendingTarget.new(
+        target_name,
+        owner,
+        method_name,
+        [Adamas::HIR::TypeRef::INT32],
+        false,
+        false,
+      ),
+    }
+
+    discarded, unresolved = discard_terminal_module_virtual_fanout_pending_targets
+    {
+      discarded,
+      unresolved,
+      @module_virtual_fanout_pending_targets[fanout_key]?
+        .try(&.has_key?(target_name)) || false,
+      @module_virtual_fanout_versions.has_key?(fanout_key),
+    }
   end
 
   def __test_union_variant_id(union_type : Adamas::HIR::TypeRef, variant_type : Adamas::HIR::TypeRef) : Int32
@@ -508,6 +1074,12 @@ class Adamas::HIR::AstToHir
     union_type_for_values(left_type, right_type)
   end
 
+  def __test_union_type_for_value_set(
+    types : Array(Adamas::HIR::TypeRef),
+  ) : Adamas::HIR::TypeRef?
+    union_type_for_value_set(types)
+  end
+
   def __test_repair_stale_call_return_types : Nil
     repair_stale_call_return_types
   end
@@ -555,6 +1127,25 @@ class Adamas::HIR::AstToHir
     params : Array({String, Adamas::HIR::TypeRef}),
   ) : Nil
     @init_params[class_name] = params
+  end
+
+  def __test_initializer_params(class_name : String) : Array({String, String})
+    params = @init_params[class_name]? || [] of {String, Adamas::HIR::TypeRef}
+    params.map do |name, type_ref|
+      {name, get_type_name_from_ref(type_ref)}
+    end
+  end
+
+  def __test_refine_captured_initializer_proc_type(
+    class_name : String,
+    proc_type_name : String,
+    observed_return_type_name : String,
+  ) : Nil
+    refine_captured_initializer_proc_type(
+      class_name,
+      type_ref_for_name(proc_type_name),
+      type_ref_for_name(observed_return_type_name),
+    )
   end
 
   def __test_allocator_initializer_def_name(
@@ -744,6 +1335,17 @@ class Adamas::HIR::AstToHir
     missing_required_runtime_param_types?(node, call_types)
   end
 
+  def __test_merge_call_arg_type_names_from_suffix(
+    node : Adamas::Compiler::Frontend::DefNode,
+    call_type_names : Array(String),
+    suffix_type_names : Array(String),
+  ) : Array(String)
+    call_types = call_type_names.map { |name| type_ref_for_name(name) }
+    suffix_types = suffix_type_names.map { |name| type_ref_for_name(name) }
+    merge_call_arg_types_from_suffix_with_signature(call_types, suffix_types, node)
+      .map { |type_ref| get_type_name_from_ref(type_ref) }
+  end
+
   def __test_classvar_lazy_init_key?(key : String) : Bool
     @classvar_lazy_init_info.has_key?(key)
   end
@@ -765,7 +1367,6 @@ class Adamas::HIR::AstToHir
     raw = value.value
     raw.is_a?(Int64) ? raw : nil
   end
-
 end
 
 private def add_defined_scan_def(arena, name : String) : Adamas::Compiler::Frontend::ExprId
@@ -933,6 +1534,43 @@ describe "specialized function-name suffix stripping" do
 end
 
 describe "block shorthand parameter identity" do
+  it "keeps as? provenance local to one lowering context" do
+    arena = Adamas::Compiler::Frontend::AstArena.new
+    converter = Adamas::HIR::AstToHir.new(arena)
+    first = converter.module.create_function("__as_question_scope_first", Adamas::HIR::TypeRef::NIL)
+    second = converter.module.create_function("__as_question_scope_second", Adamas::HIR::TypeRef::NIL)
+    first_ctx = Adamas::HIR::LoweringContext.new(first, converter.module, arena)
+    second_ctx = Adamas::HIR::LoweringContext.new(second, converter.module, arena)
+    shared_value_id = 7_u32
+
+    first_ctx.mark_as_question_result(shared_value_id)
+
+    first_ctx.as_question_result?(shared_value_id).should be_true
+    second_ctx.as_question_result?(shared_value_id).should be_false
+  end
+
+  it "narrows a nilable receiver from the descriptor sidecar when the legacy map entry is missing" do
+    converter = Adamas::HIR::AstToHir.new(Adamas::Compiler::Frontend::AstArena.new)
+
+    converter
+      .__test_non_nil_type_name_without_legacy_descriptor("Nil | Hash(String, String)")
+      .should eq("Hash(String, String)")
+  end
+
+  it "preserves the full Proc identity when narrowing a nilable receiver" do
+    converter = Adamas::HIR::AstToHir.new(Adamas::Compiler::Frontend::AstArena.new)
+
+    converter
+      .__test_non_nil_type_name_without_legacy_descriptor("Nil | Proc(Int32, Nil | Exception, Nil)")
+      .should eq("Proc(Int32, Nil | Exception, Nil)")
+  end
+
+  it "does not fabricate an unknown exact union variant" do
+    converter = Adamas::HIR::AstToHir.new(Adamas::Compiler::Frontend::AstArena.new)
+
+    converter.__test_exact_union_variant_name("MissingArm").should be_nil
+  end
+
   it "keeps the generated receiver bound for Array#reject(&.empty?)" do
     converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
       def keep_nonempty(values : Array(String)) : Array(String)
@@ -950,6 +1588,293 @@ describe "block shorthand parameter identity" do
 
     call_names.should contain("String#empty?")
     call_names.should_not contain("empty?")
+  end
+
+  it "keeps the non-nil Array receiver for nilable try(&.[index]?)" do
+    converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+      def lookup(values : Array(Int32)?, index : Int32) : Int32?
+        values.try(&.[index]?)
+      end
+
+      lookup([7], 0)
+    CRYSTAL
+
+    function = converter.module.functions.find { |candidate| candidate.name.starts_with?("lookup$") }
+    function.should_not be_nil
+    call_names = function.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+      instruction.as?(Adamas::HIR::Call).try(&.method_name)
+    end
+
+    call_names.any? { |name| name.starts_with?("Array(Int32)#[]?") }.should be_true
+    call_names.none? { |name| name.starts_with?("Nil#[]?") }.should be_true
+  end
+
+  it "carries a nil-initialized caller local across inlined yield iterations" do
+    converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+      def walk_twice(&)
+        index = 0
+        while index < 2
+          yield index
+          index += 1
+        end
+      end
+
+      def carried_slice(pattern : String) : String
+        start_pos = nil
+
+        walk_twice do |index|
+          if index == 0
+            start_pos = index
+          else
+            start = start_pos.not_nil! + 1
+            return pattern.byte_slice(start, 1)
+          end
+        end
+
+        pattern
+      end
+
+      carried_slice("ab")
+    CRYSTAL
+
+    function = converter.module.functions.find { |candidate| candidate.name.starts_with?("carried_slice$") }
+    function.should_not be_nil
+    call_names = function.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+      instruction.as?(Adamas::HIR::Call).try(&.method_name)
+    end
+
+    call_names.should contain("String#byte_slice$Int32_Int32")
+    call_names.none? { |name| name.starts_with?("String#byte_slice$Nil") }.should be_true
+  end
+
+  it "distinguishes an early return before yield from a return after yield" do
+    converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+      def pre_yield_return(flag : Bool, &)
+        return if flag
+        yield 1
+      end
+
+      def post_yield_return(&)
+        yield 1
+        return
+      end
+
+      def postfix_yield_return(&)
+        return true if yield 1
+        false
+      end
+
+      def case_value_yield_return(&)
+        case yield 1
+        when 1
+          return true
+        end
+        false
+      end
+
+      def case_condition_yield_return(&)
+        case 1
+        when yield 1
+          return true
+        end
+        false
+      end
+
+      def return_order_driver : Nil
+        pre_yield_return(false) { |value| value }
+        post_yield_return { |value| value }
+        postfix_yield_return { |value| value }
+        case_value_yield_return { |value| value }
+        case_condition_yield_return { |value| value }
+      end
+
+      return_order_driver
+    CRYSTAL
+
+    function = converter.module.functions.find { |candidate| candidate.name == "return_order_driver" }
+    function.should_not be_nil
+    calls = function.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+      instruction.as?(Adamas::HIR::Call)
+    end
+
+    calls.none? { |call| call.method_name.starts_with?("pre_yield_return") && call.has_block? }.should be_true
+    calls.any? { |call| call.method_name.starts_with?("post_yield_return") && call.has_block? }.should be_true
+    calls.any? { |call| call.method_name.starts_with?("postfix_yield_return") && call.has_block? }.should be_true
+    calls.any? { |call| call.method_name.starts_with?("case_value_yield_return") && call.has_block? }.should be_true
+    calls.any? { |call| call.method_name.starts_with?("case_condition_yield_return") && call.has_block? }.should be_true
+  end
+
+  it "keeps nil out of shorthand and guarded-result receivers for a nilable Hash ivar" do
+    converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+      class LookupOwner
+        @values : Hash(String, String)?
+
+        def initialize(@values : Hash(String, String)?)
+        end
+
+        def present?(name : String) : Bool
+          if value = @values.try(&.[name]?)
+            !value.empty?
+          else
+            false
+          end
+        end
+      end
+
+      LookupOwner.new({"key" => "value"}).present?("key")
+    CRYSTAL
+
+    function = converter.module.functions.find { |candidate| candidate.name.starts_with?("LookupOwner#present?") }
+    function.should_not be_nil
+    call_names = function.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+      instruction.as?(Adamas::HIR::Call).try(&.method_name)
+    end
+
+    call_names.any? { |name| name.starts_with?("Hash(String, String)#[]?") }.should be_true
+    call_names.none? { |name| name.starts_with?("Nil#[]?") || name == "Nil#empty?" }.should be_true
+  end
+end
+
+describe "assignment expression type preservation" do
+  it "keeps a lazy-initialized class variable non-nil for the following index call" do
+    converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+      class LazyRegistry
+        @@values : Hash(String, String)? = nil
+
+        def self.lookup(key : String) : String?
+          values = @@values ||= Hash(String, String).new
+          values[key]?
+        end
+      end
+
+      LazyRegistry.lookup("key")
+    CRYSTAL
+
+    function = converter.module.functions.find { |candidate| candidate.name.starts_with?("LazyRegistry.lookup$") }
+    function.should_not be_nil
+    call_names = function.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+      instruction.as?(Adamas::HIR::Call).try(&.method_name)
+    end
+
+    call_names.any? { |name| name.starts_with?("Hash(String, String)#[]?") }.should be_true
+    call_names.none? { |name| name.starts_with?("Nil#[]?") }.should be_true
+  end
+
+  it "keeps a lazy-initialized instance variable non-nil for the following index call" do
+    converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+      class LazyIvarRegistry
+        @values : Hash(String, String)?
+
+        def initialize
+          @values = nil
+        end
+
+        def lookup(key : String) : String?
+          values = @values ||= Hash(String, String).new
+          values[key]?
+        end
+      end
+
+      LazyIvarRegistry.new.lookup("key")
+    CRYSTAL
+
+    function = converter.module.functions.find { |candidate| candidate.name.starts_with?("LazyIvarRegistry#lookup$") }
+    function.should_not be_nil
+    call_names = function.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+      instruction.as?(Adamas::HIR::Call).try(&.method_name)
+    end
+
+    call_names.any? { |name| name.starts_with?("Hash(String, String)#[]?") }.should be_true
+    call_names.none? { |name| name.starts_with?("Nil#[]?") }.should be_true
+  end
+end
+
+describe "yield parameter flow narrowing" do
+  it "keeps a guard-narrowed yielded value non-nil in the caller block" do
+    converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+      class YieldToken
+        def []?(index : Int32) : String?
+          nil
+        end
+      end
+
+      class GuardedProducer
+        def self.find : YieldToken?
+          YieldToken.new
+        end
+
+        def self.with_token(&)
+          token = find
+          return unless token
+          while token
+            yield token
+            token = find
+          end
+        end
+      end
+
+      def consume_token(token)
+        token[0]?
+      end
+
+      GuardedProducer.with_token { |token| consume_token(token) }
+    CRYSTAL
+
+    consume_functions = converter.module.functions.select do |candidate|
+      candidate.name.starts_with?("consume_token$")
+    end
+    consume_functions.empty?.should be_false
+    consume_functions.none? { |candidate| candidate.name.includes?("Nil |") }.should be_true
+    call_names = consume_functions.flat_map(&.blocks).flat_map(&.instructions).compact_map do |instruction|
+      instruction.as?(Adamas::HIR::Call).try(&.method_name)
+    end
+
+    call_names.any? { |name| name.starts_with?("YieldToken#[]?") }.should be_true
+    call_names.none? { |name| name.starts_with?("Nil#[]?") }.should be_true
+  end
+end
+
+describe "while assignment flow narrowing" do
+  it "keeps an assigned nilable Proc non-nil inside the loop body" do
+    converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+      class ExitHandlerException
+      end
+
+      module ExitHandlerStore
+        def self.add(handler)
+          handlers = @@handlers ||= [] of Int32, ExitHandlerException? ->
+          handlers << handler
+        end
+
+        def self.synchronize(&)
+          yield
+        end
+
+        def self.run(status : Int32) : Int32
+          return status unless @@handlers
+          while handler = synchronize { @@handlers.try(&.pop?) }
+            begin
+              handler.call status, nil
+            rescue handler_exception
+              status = 1
+            end
+          end
+          status
+        end
+      end
+
+      ExitHandlerStore.add(->(status : Int32, exception : ExitHandlerException?) { nil })
+      ExitHandlerStore.run(0)
+    CRYSTAL
+
+    function = converter.module.functions.find { |candidate| candidate.name.starts_with?("ExitHandlerStore.run$") }
+    function.should_not be_nil
+    call_names = function.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+      instruction.as?(Adamas::HIR::Call).try(&.method_name)
+    end
+
+    call_names.any? { |name| name.starts_with?("Proc") && name.includes?("#call") }.should be_true
+    call_names.none? { |name| name.starts_with?("Nil#call") }.should be_true
   end
 end
 
@@ -1627,7 +2552,608 @@ private def hir_text(func : Adamas::HIR::Function) : String
 end
 
 describe Adamas::HIR::AstToHir do
+  describe "method-resolution cache identity" do
+    it "separates positional and named self-call shapes" do
+      converter = lower_program_with_main("1")
+
+      positional = converter.__test_method_resolution_cache_key(false, 0)
+      named = converter.__test_method_resolution_cache_key(true, 1, ["value"])
+      two_named = converter.__test_method_resolution_cache_key(true, 2)
+      other_named = converter.__test_method_resolution_cache_key(true, 1, ["other"])
+
+      positional.should_not eq(named)
+      named.should_not eq(two_named)
+      named.should_not eq(other_named)
+    end
+
+    it "keeps module fanout receiver and argument shapes exact" do
+      converter = lower_program_with_main("1")
+
+      int_receiver = converter.__test_module_virtual_fanout_shape_key(
+        "Enumerable(Int32)",
+        [] of Adamas::HIR::TypeRef,
+      )
+      string_receiver = converter.__test_module_virtual_fanout_shape_key(
+        "Enumerable(String)",
+        [] of Adamas::HIR::TypeRef,
+      )
+      unknown_arg = converter.__test_module_virtual_fanout_shape_key(
+        "Enumerable(Int32)",
+        [Adamas::HIR::TypeRef::VOID],
+      )
+
+      int_receiver.should_not eq(string_receiver)
+      int_receiver.should_not eq(unknown_arg)
+    end
+
+    it "filters only explicitly incompatible generic module includers" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        module TypedRoot(T)
+          abstract def probe : T
+        end
+
+        class IntOwner
+          include TypedRoot(Int32)
+
+          def probe : Int32
+            1
+          end
+        end
+
+        class StringOwner
+          include TypedRoot(String)
+
+          def probe : String
+            "x"
+          end
+        end
+
+        class IntParent
+          include TypedRoot(Int32)
+
+          def probe : Int32
+            2
+          end
+        end
+
+        class ConflictingChild < IntParent
+          include TypedRoot(String)
+
+          def probe : String
+            "child"
+          end
+        end
+
+        IntOwner.new.probe
+        StringOwner.new.probe
+        ConflictingChild.new.probe
+      CRYSTAL
+
+      converter.__test_module_fanout_owner_shape_compatible?(
+        "IntOwner",
+        "TypedRoot(Int32)",
+      ).should be_true
+      converter.__test_class_include_instantiations("IntOwner")
+        .should contain("TypedRoot(Int32)")
+      converter.__test_class_include_instantiations("StringOwner")
+        .should contain("TypedRoot(String)")
+      converter.__test_module_shape_has_unbound_params?("TypedRoot(Int32)")
+        .should be_false
+      converter.__test_module_shape_has_unbound_params?("TypedRoot(String)")
+        .should be_false
+      converter.__test_module_shape_has_unbound_params?("TypedRoot(T)")
+        .should be_true
+      converter.__test_module_fanout_owner_shape_compatible?(
+        "StringOwner",
+        "TypedRoot(Int32)",
+      ).should be_false
+      converter.__test_module_fanout_owner_shape_compatible?(
+        "ConflictingChild",
+        "TypedRoot(Int32)",
+      ).should be_true
+      converter.__test_module_fanout_owner_shape_compatible?(
+        "MetadataMissingOwner",
+        "TypedRoot(Int32)",
+      ).should be_true
+      converter.__test_module_fanout_owner_shape_compatible?(
+        "StringOwner",
+        "TypedRoot(T)",
+      ).should be_true
+    end
+
+    it "invalidates an owner plan when exact include-site metadata changes" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        module PlannedRoot(T)
+          abstract def probe : T
+        end
+
+        class PlannedIntOwner
+          include PlannedRoot(Int32)
+
+          def probe : Int32
+            1
+          end
+        end
+
+        class PlannedStringOwner
+          include PlannedRoot(String)
+
+          def probe : String
+            "x"
+          end
+        end
+
+        PlannedIntOwner.new.probe
+        PlannedStringOwner.new.probe
+      CRYSTAL
+
+      before = converter.__test_module_fanout_owner_plan(
+        "PlannedRoot",
+        "PlannedRoot(Int32)",
+      )
+      before.should contain("PlannedIntOwner")
+      before.should_not contain("PlannedStringOwner")
+
+      converter.__test_record_class_include_instantiation(
+        "PlannedStringOwner",
+        "PlannedRoot(Int32)",
+      )
+      after = converter.__test_module_fanout_owner_plan(
+        "PlannedRoot",
+        "PlannedRoot(Int32)",
+      )
+      after.should contain("PlannedStringOwner")
+    end
+
+    it "does not certify a deferred module virtual target before a retry emits its body" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        module RetryRoot
+          abstract def probe(value : Int32) : Int32
+        end
+
+        class RetryOwner
+          include RetryRoot
+
+          def probe(value : Int32) : Int32
+            value + 1
+          end
+        end
+
+        RetryOwner.new.probe(1)
+      CRYSTAL
+
+      converter.__test_module_virtual_target_deferred_then_retry(
+        "RetryOwner",
+        "probe",
+        [Adamas::HIR::TypeRef::INT32],
+      ).should eq({false, true, true})
+    end
+
+    it "preserves exact deferred targets when a DefNode replacement invalidates fanout results" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class ReplacementOwner
+          def probe(value : Int32) : Int32
+            value
+          end
+
+          def alternate(value : Int32) : Int32
+            value + 1
+          end
+        end
+
+        owner = ReplacementOwner.new
+        owner.probe(1)
+        owner.alternate(1)
+      CRYSTAL
+
+      converter.__test_fanout_pending_survives_def_replacement(
+        "ReplacementOwner#probe",
+        "ReplacementOwner#alternate",
+        "probe",
+      ).should be_true
+    end
+
+    it "invalidates a fanout result when terminal cleanup discards an unresolved candidate" do
+      converter = lower_program_with_main("1")
+
+      converter.__test_terminal_fanout_discard_invalidates_result("probe")
+        .should eq({1, 0, false, false, true})
+    end
+
+    it "keeps a concrete bodyless target visible as a fail-closed obligation" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class ConcreteTerminalOwner
+          def probe(value : Int32) : Int32
+            value + 1
+          end
+        end
+
+        ConcreteTerminalOwner.new.probe(1)
+      CRYSTAL
+
+      converter.__test_terminal_fanout_preserves_concrete_bodyless_target(
+        "ConcreteTerminalOwner#probe",
+        "probe",
+      ).should eq({0, 1, true, false})
+    end
+
+  end
+
+  describe "missing-call target batching" do
+    it "retains unresolved demands in full-scan order across a bounded batch" do
+      converter = lower_program_with_main("1")
+      materialized = converter.module.create_function(
+        "materialized",
+        Adamas::HIR::TypeRef::VOID,
+      )
+      materialized.get_block(materialized.entry_block).add(
+        Adamas::HIR::Literal.new(
+          materialized.next_value_id,
+          Adamas::HIR::TypeRef::INT32,
+          1_i64,
+        )
+      )
+      cached = {
+        1_u64 => ["stale"],
+        3_u64 => ["removed"],
+      }
+      current = {
+        1_u64 => ["carry", "done"],
+        2_u64 => ["new", "carry", "materialized"],
+      }
+      current_available = {
+        1_u64 => ["carry", "done"],
+        2_u64 => ["new", "carry"],
+      }
+      segments, changed = converter.__test_missing_incremental_refresh_segments(
+        cached,
+        [1_u64, 2_u64],
+        current,
+      )
+      changed.should eq(3)
+      cached.keys.sort.should eq([1_u64, 2_u64])
+      demands = converter.__test_missing_incremental_flatten_segments(segments)
+      available_segments, available_changed =
+        converter.__test_missing_incremental_refresh_segments(
+          Hash(UInt64, Array(String)).new,
+          [1_u64, 2_u64],
+          current_available,
+        )
+      available_changed.should eq(2)
+      available =
+        converter.__test_missing_incremental_flatten_segments(available_segments)
+      available.should eq(["carry", "done", "new"])
+
+      selected, has_more = converter.__test_select_missing_call_target_batch(
+        available,
+        1,
+      )
+      selected.should eq(["carry"])
+      has_more.should be_true
+    end
+
+    it "preserves occurrence-time admission when the target changes later" do
+      converter = lower_program_with_main("1")
+      target_name = "late_available"
+      admitted_segments, changed =
+        converter.__test_missing_incremental_refresh_segments(
+          Hash(UInt64, Array(String)).new,
+          [1_u64],
+          {1_u64 => [target_name]},
+        )
+      changed.should eq(1)
+
+      target = converter.module.create_function(
+        target_name,
+        Adamas::HIR::TypeRef::VOID,
+      )
+      target.get_block(target.entry_block).add(
+        Adamas::HIR::Literal.new(
+          target.next_value_id,
+          Adamas::HIR::TypeRef::INT32,
+          1_i64,
+        )
+      )
+      converter.__test_missing_incremental_flatten_segments(admitted_segments)
+        .should eq([target_name])
+      converter.__test_missing_incremental_target_certificate(
+        target_name,
+        [] of String,
+      ).should eq({true, "NotStarted", false})
+
+      first_id = target.id
+      converter.module.remove_function(target_name).should be_true
+      replacement = converter.module.create_function(
+        target_name,
+        Adamas::HIR::TypeRef::VOID,
+      )
+      replacement.id.should_not eq(first_id)
+      converter.__test_set_missing_incremental_target_state(target_name, "pending")
+      converter.__test_missing_incremental_target_certificate(
+        target_name,
+        [target_name],
+      ).should eq({false, "Pending", true})
+
+      converter.__test_set_missing_incremental_target_state(target_name, "in_progress")
+      converter.__test_missing_incremental_target_certificate(
+        target_name,
+        [target_name],
+      ).should eq({false, "InProgress", true})
+    end
+
+    it "selects the exact legacy prefix and reports remaining work" do
+      converter = lower_program_with_main("1")
+
+      converter.__test_select_missing_call_target_batch(
+        ["stuck", "next", "later"],
+        1,
+      ).should eq({["stuck"], true})
+    end
+
+    it "keeps the complete legacy list when the budget is unlimited" do
+      converter = lower_program_with_main("1")
+
+      converter.__test_select_missing_call_target_batch(
+        ["stuck", "next", "later"],
+        0,
+      ).should eq({["stuck", "next", "later"], false})
+    end
+
+    it "reuses exact segments only while their contents and function order stay equal" do
+      converter = lower_program_with_main("1")
+      cached = {
+        1_u64 => ["first"],
+        2_u64 => ["second"],
+      }
+      current = {
+        1_u64 => ["first"],
+        2_u64 => ["second"],
+      }
+      segments, changed = converter.__test_missing_incremental_refresh_segments(
+        cached,
+        [2_u64, 1_u64],
+        current,
+      )
+      changed.should eq(0)
+      converter.__test_missing_incremental_flatten_segments(segments)
+        .should eq(["second", "first"])
+
+      current[2_u64] = ["second", "late_missing_target"]
+      segments, changed = converter.__test_missing_incremental_refresh_segments(
+        cached,
+        [2_u64, 1_u64],
+        current,
+      )
+      changed.should eq(1)
+      converter.__test_missing_incremental_flatten_segments(segments)
+        .should eq(["second", "late_missing_target", "first"])
+    end
+
+    it "keeps the legacy no-progress stop with the incremental falsifier off or on" do
+      source = "def concrete_tail; 1; end"
+      arena, roots = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+
+      def_node = roots.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode)
+      end.first
+      raise "No concrete_tail definition found" unless def_node
+      converter.register_function(def_node)
+
+      target_name = converter.__test_function_def_names("concrete_tail").first?
+      raise "No registered concrete_tail target" unless target_name
+
+      converter.module.create_function(target_name, Adamas::HIR::TypeRef::INT32)
+      converter.module.has_function_with_body?(target_name).should be_false
+
+      driver = converter.module.create_function("__test_missing_budget_driver", Adamas::HIR::TypeRef::VOID)
+      block = driver.get_block(driver.entry_block)
+      34.times do |index|
+        block.add(
+          Adamas::HIR::Call.without_receiver(
+            driver.next_value_id,
+            Adamas::HIR::TypeRef::VOID,
+            "missing_budget_head_#{index}",
+            [] of Adamas::HIR::ValueId,
+          )
+        )
+      end
+      block.add(
+        Adamas::HIR::Call.without_receiver(
+          driver.next_value_id,
+          Adamas::HIR::TypeRef::INT32,
+          target_name,
+          [] of Adamas::HIR::ValueId,
+        )
+      )
+
+      previous_falsifier = ENV["ADAMAS_MISSING_INCREMENTAL_FALSIFIER"]?
+      begin
+        ENV.delete("ADAMAS_MISSING_INCREMENTAL_FALSIFIER")
+        converter.__test_lower_missing_call_targets_with_budget(34)
+        converter.module.has_function_with_body?(target_name).should be_false
+
+        ENV["ADAMAS_MISSING_INCREMENTAL_FALSIFIER"] = "1"
+        converter.__test_lower_missing_call_targets_with_budget(34)
+        converter.module.has_function_with_body?(target_name).should be_false
+      ensure
+        if previous_falsifier
+          ENV["ADAMAS_MISSING_INCREMENTAL_FALSIFIER"] = previous_falsifier
+        else
+          ENV.delete("ADAMAS_MISSING_INCREMENTAL_FALSIFIER")
+        end
+      end
+    end
+  end
+
+  describe "receiver-repair target fallback" do
+    it "does not lower a base fallback after the exact target materializes" do
+      source = <<-CRYSTAL
+        def exact_receiver_target : Int32
+          1
+        end
+
+        def fallback_receiver_target : Int32
+          2
+        end
+      CRYSTAL
+      arena, roots = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      roots.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode)
+      end.each { |def_node| converter.register_function(def_node) }
+
+      exact = converter.__test_function_def_names("exact_receiver_target").first
+      fallback = converter.__test_function_def_names("fallback_receiver_target").first
+      converter.__test_lower_receiver_repair_target_with_fallback(exact, fallback)
+        .should eq({true, false})
+    end
+
+    it "fails closed when fallback lowering cannot materialize a direct exact target" do
+      source = <<-CRYSTAL
+        def fallback_receiver_target : Int32
+          2
+        end
+      CRYSTAL
+      arena, roots = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      roots.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode)
+      end.each { |def_node| converter.register_function(def_node) }
+
+      exact = "MissingReceiver#target$Int32"
+      fallback = converter.__test_function_def_names("fallback_receiver_target").first
+      converter.module.create_function(exact, Adamas::HIR::TypeRef::INT32)
+      expect_raises(Exception, /receiver repair left bodyless target/) do
+        converter.__test_lower_receiver_repair_target_with_fallback(exact, fallback)
+      end
+      converter.module.has_function_with_body?(exact).should be_false
+      converter.module.has_function_with_body?(fallback).should be_true
+    end
+
+    it "materializes both direct overload shapes that share one fallback base" do
+      source = <<-CRYSTAL
+        class ReceiverOverloads
+          def target(value : Int32) : Int32
+            value
+          end
+
+          def target(value : String) : String
+            value
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+      end.each { |node| converter.register_class(node) }
+
+      int_target = "ReceiverOverloads#target$Int32"
+      string_target = "ReceiverOverloads#target$String"
+      base = "ReceiverOverloads#target"
+      converter.__test_lower_receiver_repair_targets_with_fallbacks([
+        {int_target, base, [Adamas::HIR::TypeRef::INT32]},
+        {string_target, base, [Adamas::HIR::TypeRef::STRING]},
+      ])
+
+      int_body = converter.module.function_by_name(int_target)
+      string_body = converter.module.function_by_name(string_target)
+      int_body.should_not be_nil
+      string_body.should_not be_nil
+      converter.module.has_function_with_body?(int_target).should be_true
+      converter.module.has_function_with_body?(string_target).should be_true
+      int_body.not_nil!.params.last.type.should eq(Adamas::HIR::TypeRef::INT32)
+      string_body.not_nil!.params.last.type.should eq(Adamas::HIR::TypeRef::STRING)
+    end
+
+    it "preserves a concrete generic owner before considering its inherited base" do
+      source = <<-CRYSTAL
+        module Runner(T)
+          def run(value : T) : T
+            value
+          end
+        end
+
+        class Parent
+          include Runner(Int32)
+        end
+
+        class Box(T) < Parent
+        end
+
+        def invoke(io : Parent, value : Int32) : Int32
+          io.run(value)
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ModuleNode)
+      end.each { |node| converter.register_module(node) }
+      exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+      end.each { |node| converter.register_class(node) }
+      def_nodes = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode)
+      end
+      def_nodes.each { |node| converter.register_function(node) }
+      converter.__test_monomorphize_generic_class("Box", ["Int32"], "Box(Int32)")
+      converter.lower_def(def_nodes.first)
+
+      exact = converter.module.functions.find { |func| func.name.starts_with?("Box(Int32)#run$") }
+      exact.should_not be_nil
+      exact_name = exact.not_nil!.name
+      converter.module.remove_function(exact_name).should be_true
+      converter.__test_reset_lowering_state(exact_name)
+
+      converter.__test_lower_receiver_repair_target_with_fallback(exact_name, "Parent#run")
+        .should eq({true, false})
+      converter.__test_get_type_name_from_ref(
+        converter.module.function_by_name(exact_name).not_nil!.return_type
+      ).should eq("Int32")
+    end
+  end
+
   describe "protected access through included modules" do
+    it "treats absolute and relative spellings of the same generic owner as identical" do
+      arena, _ = parse("1")
+      converter = Adamas::HIR::AstToHir.new(arena)
+
+      converter.__test_has_protected_access_to(
+        "::Hash(String, Int32)",
+        "Hash(String, Int32)",
+      ).should be_true
+      converter.__test_has_protected_access_to(
+        "Hash(String, Int32)",
+        "::Hash(String, Int32)",
+      ).should be_true
+      converter.__test_has_protected_access_to(
+        "::Array(String)",
+        "Hash(String, Int32)",
+      ).should be_false
+    end
+
     it "allows an included module singleton method to call the owner's protected method" do
       converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
         module WorkerSystem
@@ -1666,6 +3192,704 @@ describe Adamas::HIR::AstToHir do
           StrangerSystem.run(Worker.new)
         CRYSTAL
       end
+    end
+  end
+
+  describe "macro-expanded explicit return contracts" do
+    it "lets a later same-signature expansion replace the current return contract" do
+      source = <<-CRYSTAL
+        macro define_contract(return_type)
+          def stable_name(value : Bool) : {{return_type.id}}
+            value
+          end
+        end
+
+        class MacroSameSignatureContract
+          define_contract String
+          define_contract Int32
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      macro_node = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::MacroDefNode)
+      end.first
+      class_node = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+      end.first
+
+      converter.register_macro(macro_node)
+      converter.register_class(class_node)
+
+      return_type = converter.__test_get_function_return_type(
+        "MacroSameSignatureContract#stable_name$Bool"
+      )
+      converter.__test_get_type_name_from_ref(return_type).should eq("Int32")
+
+      converter.lower_class(class_node)
+      lowered = converter.module.function_by_name(
+        "MacroSameSignatureContract#stable_name$Bool"
+      )
+      lowered.should_not be_nil
+      converter.__test_get_type_name_from_ref(
+        lowered.not_nil!.return_type
+      ).should eq("Int32")
+    end
+
+    it "lowers the latest same-signature expansion body" do
+      source = <<-CRYSTAL
+        macro define_body(result)
+          def stable_body(value : Bool) : Int32
+            {{result}}
+          end
+        end
+
+        class MacroSameSignatureBody
+          define_body 11
+          define_body 22
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      macro_node = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::MacroDefNode)
+      end.first
+      class_node = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+      end.first
+
+      converter.register_macro(macro_node)
+      converter.register_class(class_node)
+      converter.lower_class(class_node)
+
+      lowered = converter.module.function_by_name(
+        "MacroSameSignatureBody#stable_body$Bool"
+      )
+      lowered.should_not be_nil
+      literals = lowered.not_nil!.blocks.flat_map(&.instructions)
+        .select { |inst| inst.is_a?(Adamas::HIR::Literal) }
+        .map { |inst| inst.as(Adamas::HIR::Literal).value }
+      literals.includes?(22_i64).should be_true
+      literals.includes?(11_i64).should be_false
+    end
+  end
+
+  describe "macro-expanded initializer parameter capture" do
+    it "refines an untyped initializer ivar from a typed macro accessor" do
+      source = <<-CRYSTAL
+        macro add_accessor
+          getter value : String
+        end
+
+        class MacroAccessorOwner
+          def initialize(@value)
+          end
+
+          add_accessor()
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      macro_node = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::MacroDefNode)
+      end.first
+      class_node = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+      end.first
+
+      converter.register_macro(macro_node)
+      converter.register_class(class_node)
+
+      value_ivar = converter.class_info["MacroAccessorOwner"].ivars.find do |ivar|
+        ivar.name == "@value"
+      end
+      value_ivar.should_not be_nil
+      converter.__test_get_type_name_from_ref(value_ivar.not_nil!.type).should eq("String")
+    end
+
+    it "materializes a nested macro accessor with its concrete value ABI" do
+      source = <<-CRYSTAL
+        macro add_accessor
+          getter count : Int32
+        end
+
+        class MacroIntAccessorOwner
+          def initialize(@count)
+          end
+
+          add_accessor()
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      macro_node = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::MacroDefNode)
+      end.first
+      class_node = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+      end.first
+
+      converter.register_macro(macro_node)
+      converter.register_class(class_node)
+      converter.lower_class(class_node)
+
+      count_ivar = converter.class_info["MacroIntAccessorOwner"].ivars.find do |ivar|
+        ivar.name == "@count"
+      end
+      count_ivar.should_not be_nil
+      count_ivar.not_nil!.type.should eq(Adamas::HIR::TypeRef::INT32)
+
+      getter = converter.module.function_by_name("MacroIntAccessorOwner#count")
+      getter.should_not be_nil
+      getter.not_nil!.return_type.should eq(Adamas::HIR::TypeRef::INT32)
+      hir_text(getter.not_nil!).should contain("field_get")
+    end
+
+    it "materializes a nested predicate accessor as Bool" do
+      source = <<-CRYSTAL
+        macro add_predicate
+          getter? ready : Bool
+        end
+
+        class MacroPredicateAccessorOwner
+          def initialize(@ready)
+          end
+
+          add_predicate()
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      macro_node = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::MacroDefNode)
+      end.first
+      class_node = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+      end.first
+
+      converter.register_macro(macro_node)
+      converter.register_class(class_node)
+      converter.lower_class(class_node)
+
+      ready_ivar = converter.class_info["MacroPredicateAccessorOwner"].ivars.find do |ivar|
+        ivar.name == "@ready"
+      end
+      ready_ivar.should_not be_nil
+      ready_ivar.not_nil!.type.should eq(Adamas::HIR::TypeRef::BOOL)
+
+      getter = converter.module.function_by_name("MacroPredicateAccessorOwner#ready?")
+      getter.should_not be_nil
+      getter.not_nil!.return_type.should eq(Adamas::HIR::TypeRef::BOOL)
+      hir_text(getter.not_nil!).should contain("field_get")
+    end
+
+    it "materializes both sides of a nested typed property" do
+      source = <<-CRYSTAL
+        macro add_property
+          property level : Int32
+        end
+
+        class MacroPropertyAccessorOwner
+          def initialize(@level)
+          end
+
+          add_property()
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      macro_node = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::MacroDefNode)
+      end.first
+      class_node = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+      end.first
+
+      converter.register_macro(macro_node)
+      converter.register_class(class_node)
+      converter.lower_class(class_node)
+
+      level_ivar = converter.class_info["MacroPropertyAccessorOwner"].ivars.find do |ivar|
+        ivar.name == "@level"
+      end
+      level_ivar.should_not be_nil
+      level_ivar.not_nil!.type.should eq(Adamas::HIR::TypeRef::INT32)
+
+      getter = converter.module.function_by_name("MacroPropertyAccessorOwner#level")
+      setter = converter.module.function_by_name("MacroPropertyAccessorOwner#level=$Int32")
+      getter.should_not be_nil
+      setter.should_not be_nil
+      getter.not_nil!.return_type.should eq(Adamas::HIR::TypeRef::INT32)
+      setter.not_nil!.return_type.should eq(Adamas::HIR::TypeRef::INT32)
+      hir_text(getter.not_nil!).should contain("field_get")
+      hir_text(setter.not_nil!).should contain("field_set")
+    end
+
+    it "rejects nested accessor shapes without a proven storage ABI" do
+      source = <<-CRYSTAL
+        macro add_untyped_accessor
+          getter value
+        end
+
+        class UnsupportedNestedAccessorOwner
+          def initialize(@value)
+          end
+
+          add_untyped_accessor()
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      macro_node = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::MacroDefNode)
+      end.first
+      class_node = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+      end.first
+
+      converter.register_macro(macro_node)
+      expect_raises(Exception, /unsupported nested accessor macro output/) do
+        converter.register_class(class_node)
+      end
+    end
+
+    it "keeps an unannotated captured block as a Proc ABI parameter" do
+      source = <<-CRYSTAL
+        class UntypedBlockCapture
+          def initialize(&@proc)
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      class_node = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+      end.first
+
+      converter.register_class(class_node)
+
+      params = converter.__test_initializer_params("UntypedBlockCapture")
+      params.map(&.[0]).should eq(["proc"])
+      params.map(&.[1]).should eq(["Proc"])
+      proc_ivar = converter.class_info["UntypedBlockCapture"].ivars.find do |ivar|
+        ivar.name == "@proc"
+      end
+      proc_ivar.should_not be_nil
+      converter.__test_get_type_name_from_ref(proc_ivar.not_nil!.type).should eq("Proc")
+    end
+
+    it "keeps a block constructor call on its class allocator" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class CompetingBlockConstructor
+          def self.new(&block)
+            block
+          end
+        end
+
+        class UntypedBlockRuntime
+          def initialize(&@proc)
+          end
+
+          def run
+            @proc.call
+          end
+        end
+
+        def consume(value)
+          value
+        end
+
+        consume((UntypedBlockRuntime.new { 42 }).run)
+      CRYSTAL
+
+      main = converter.module.function_by_name("__adamas_main")
+      main.should_not be_nil
+      main_text = hir_text(main.not_nil!)
+      main_text.should contain("UntypedBlockRuntime.new")
+      main_text.should_not contain("call Proc.new$block")
+
+      initializer = converter.module.function_by_name(
+        "UntypedBlockRuntime#initialize$block"
+      )
+      initializer.should_not be_nil
+      converter.__test_get_type_name_from_ref(
+        initializer.not_nil!.params.last.type
+      ).should eq("Proc")
+      hir_text(initializer.not_nil!).should_not contain("make_proc")
+
+      proc_ivar = converter.class_info["UntypedBlockRuntime"].ivars.find do |ivar|
+        ivar.name == "@proc"
+      end
+      proc_ivar.should_not be_nil
+      proc_desc = converter.module.get_type_descriptor(proc_ivar.not_nil!.type)
+      proc_desc.should_not be_nil
+      proc_desc.not_nil!.type_params.last.should eq(Adamas::HIR::TypeRef::INT32)
+
+      run = converter.module.function_by_name("UntypedBlockRuntime#run")
+      run.should_not be_nil
+      run.not_nil!.return_type.should eq(Adamas::HIR::TypeRef::INT32)
+    end
+
+    it "refines a captured Proc reader on the inherited initializer owner" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class InheritedProcBase
+          def initialize(&@proc)
+          end
+
+          def run
+            @proc.call
+          end
+        end
+
+        class InheritedProcChild < InheritedProcBase
+        end
+
+        def consume(value)
+          value
+        end
+
+        consume((InheritedProcChild.new { 42 }).run)
+      CRYSTAL
+
+      base_ivar = converter.class_info["InheritedProcBase"].ivars.find do |ivar|
+        ivar.name == "@proc"
+      end
+      child_ivar = converter.class_info["InheritedProcChild"].ivars.find do |ivar|
+        ivar.name == "@proc"
+      end
+      base_ivar.should_not be_nil
+      child_ivar.should_not be_nil
+      base_desc = converter.module.get_type_descriptor(base_ivar.not_nil!.type)
+      child_desc = converter.module.get_type_descriptor(child_ivar.not_nil!.type)
+      base_desc.should_not be_nil
+      child_desc.should_not be_nil
+      base_desc.not_nil!.type_params.last.should eq(Adamas::HIR::TypeRef::INT32)
+      child_desc.not_nil!.type_params.last.should eq(Adamas::HIR::TypeRef::INT32)
+
+      run = converter.module.function_by_name("InheritedProcBase#run")
+      run.should_not be_nil
+      run.not_nil!.return_type.should eq(Adamas::HIR::TypeRef::INT32)
+    end
+
+    it "rejects incompatible captured Proc return ABIs" do
+      source = <<-CRYSTAL
+        class ConflictingProcCapture
+          def initialize(&@proc)
+          end
+
+          def run
+            @proc.call
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      class_node = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+      end.first
+      converter.register_class(class_node)
+
+      converter.__test_refine_captured_initializer_proc_type(
+        "ConflictingProcCapture",
+        "Proc(Int32)",
+        "Int32",
+      )
+      expect_raises(Exception, /captured initializer Proc ABI conflict/) do
+        converter.__test_refine_captured_initializer_proc_type(
+          "ConflictingProcCapture",
+          "Proc(String)",
+          "String",
+        )
+      end
+    end
+
+    it "does not recover generated parameter spans from the enclosing source" do
+      source = <<-CRYSTAL
+        # deliberately long prefix whose offsets overlap the generated def
+        class MacroInitializerCapture
+          class Stack
+          end
+
+          {% begin %}
+          def initialize(@name : String?, @stack : Stack, &@proc : ->)
+          end
+          {% end %}
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      class_node = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+      end.first
+
+      converter.register_class(class_node)
+
+      params = converter.__test_initializer_params("MacroInitializerCapture")
+      params.map(&.[0]).should eq(["name", "stack", "proc"])
+      params[0][1].should eq("Nil | String")
+      params[1][1].should eq("MacroInitializerCapture::Stack")
+
+      converter.__test_function_def_names(
+        "MacroInitializerCapture#initialize"
+      ).should contain(
+        "MacroInitializerCapture#initialize$Nil | String_MacroInitializerCapture::Stack_block"
+      )
+    end
+
+    it "captures a generated ordinary initializer from retained macro output" do
+      source = <<-CRYSTAL
+        # Keep the generated parameter span unrelated to the enclosing source.
+        class MacroNoIvarInitializer
+          {% begin %}
+          def initialize(value : Int32)
+          end
+          {% end %}
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      class_node = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+      end.first
+
+      converter.register_class(class_node)
+
+      converter.__test_initializer_params("MacroNoIvarInitializer").should eq([
+        {"value", "Int32"},
+      ])
+      converter.__test_function_def_names(
+        "MacroNoIvarInitializer#initialize"
+      ).should contain("MacroNoIvarInitializer#initialize$Int32")
+    end
+
+    it "does not trust same-arena retained foreign raw slices for ordinary initialization" do
+      source = <<-CRYSTAL
+        class OrdinaryRetainedForeignInitializer
+          def initialize(value : Int32)
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      class_node = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+      end.first
+      initialize_node = class_node.body.not_nil!.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode)
+      end.find { |node| String.new(node.name.not_nil!) == "initialize" }
+      initialize_node.should_not be_nil
+
+      # Reparse an unrelated signature into the same arena. The existing-arena
+      # parser retains this buffer, so copying its token slices reproduces the
+      # stale foreign payload while the original spans still point at `value`
+      # and `Int32` in the source-backed class.
+      foreign_source = "def generated(other : String)\nend\n"
+      foreign_parser = Adamas::Compiler::Frontend::Parser.new(
+        Adamas::Compiler::Frontend::Lexer.new(foreign_source),
+        arena,
+        recovery_mode: true,
+      )
+      foreign_program = foreign_parser.parse_program
+      foreign_node = foreign_program.roots.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode)
+      end.first
+      foreign_node.should_not be_nil
+      foreign_param = foreign_node.params.not_nil!.first
+      original_param = initialize_node.not_nil!.params.not_nil!.first
+      initialize_node.not_nil!.params.not_nil![0] = Adamas::Compiler::Frontend::Parameter.new(
+        foreign_param.name,
+        original_param.external_name,
+        foreign_param.type_annotation,
+        original_param.default_value,
+        original_param.span,
+        original_param.name_span,
+        original_param.external_name_span,
+        original_param.type_span,
+        original_param.default_span,
+        original_param.is_splat,
+        original_param.is_double_splat,
+        original_param.is_block,
+        original_param.is_instance_var,
+      )
+
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      # Converter-side extras make source recovery fail closed, matching the
+      # ambiguous retained-buffer state seen during self-hosted macro replay.
+      converter.__test_store_extra_source(arena, foreign_source)
+      converter.register_class(class_node)
+
+      converter.__test_initializer_params(
+        "OrdinaryRetainedForeignInitializer"
+      ).should eq([{"value", "Int32"}])
+      converter.__test_function_def_names(
+        "OrdinaryRetainedForeignInitializer#initialize"
+      ).should contain(
+        "OrdinaryRetainedForeignInitializer#initialize$Int32"
+      )
+      converter.__test_function_def_names(
+        "OrdinaryRetainedForeignInitializer#initialize$String"
+      ).should be_empty
+    end
+
+    it "requires an exact source certificate for generated parameter recovery" do
+      source = "def initialize(@value : Int32)\nend\n"
+      foreign_source = "def initialize(@wrong : UInt8)\nend\n"
+      source.bytesize.should eq(foreign_source.bytesize)
+
+      arena, exprs = parse(source)
+      initialize_node = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode)
+      end.first
+
+      converter = Adamas::HIR::AstToHir.new(arena)
+      converter.arena = arena
+      converter.__test_store_extra_source(arena, source)
+      converter.__test_store_extra_source(arena, foreign_source)
+
+      converter.__test_macro_generated_ivar_param_entries(
+        initialize_node,
+        arena,
+        "initialize",
+      ).should be_nil
+
+      converter.__test_remember_macro_generated_parameter_sources(
+        exprs.first,
+        arena,
+        source,
+      )
+      foreign_arena, _ = parse(foreign_source)
+      converter.__test_macro_generated_ivar_param_entries(
+        initialize_node,
+        foreign_arena,
+        "initialize",
+      ).should be_nil
+      converter.__test_macro_generated_ivar_param_entries(
+        initialize_node,
+        arena,
+        "initialize",
+      ).should eq([{"value", "Int32"}])
+    end
+
+    it "keeps ordinary parameter identity when only parser-retained source is available" do
+      source = <<-CRYSTAL
+        class RetainedOnlyInitializer
+          def initialize(value : Int32, &@proc : ->)
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena)
+      converter.arena = arena
+      class_node = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+      end.first
+
+      converter.register_class(class_node)
+
+      params = converter.__test_initializer_params("RetainedOnlyInitializer")
+      params.map(&.[0]).should eq(["value", "proc"])
+      params.map { |entry| entry[1] }.should eq(["Int32", "Proc"])
+      converter.__test_function_def_names(
+        "RetainedOnlyInitializer#initialize"
+      ).should contain(
+        "RetainedOnlyInitializer#initialize$Int32_block"
+      )
+    end
+
+    it "binds a forwarded Proc constructor wrapper to the macro block initializer" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class MacroForwardedBlockInitializer
+          class Stack
+          end
+
+          {% begin %}
+          def initialize(@name : String?, @stack : Stack, &@proc : ->)
+            11
+          end
+          {% end %}
+
+          def initialize(stack : Pointer(Void), thread : Stack)
+            22
+          end
+        end
+
+        MacroForwardedBlockInitializer.new(
+          nil,
+          MacroForwardedBlockInitializer::Stack.new,
+          -> { nil },
+        )
+      CRYSTAL
+
+      allocator = converter.module.functions.find do |function|
+        function.name.starts_with?("MacroForwardedBlockInitializer.new$") &&
+          function.name.ends_with?("_Proc")
+      end
+      allocator.should_not be_nil
+
+      initializer_call = allocator.not_nil!.blocks
+        .flat_map(&.instructions)
+        .compact_map(&.as?(Adamas::HIR::Call))
+        .find { |call| call.method_name.starts_with?("MacroForwardedBlockInitializer#initialize") }
+      initializer_call.should_not be_nil
+      initializer_call.not_nil!.method_name.should start_with(
+        "MacroForwardedBlockInitializer#initialize$"
+      )
+      initializer_call.not_nil!.method_name.should end_with("_block")
+
+      initializer = converter.module.function_by_name(initializer_call.not_nil!.method_name)
+      initializer.should_not be_nil
+      literals = initializer.not_nil!.blocks.flat_map(&.instructions)
+        .select { |instruction| instruction.is_a?(Adamas::HIR::Literal) }
+        .map { |instruction| instruction.as(Adamas::HIR::Literal).value }
+      literals.includes?(11_i64).should be_true
+      literals.includes?(22_i64).should be_false
     end
   end
 
@@ -2308,6 +4532,46 @@ describe Adamas::HIR::AstToHir do
       text.should contain("@value")
     end
 
+    it "refines an untyped ivar shortcut from a later typed getter" do
+      source = <<-CRYSTAL
+        class DeferredIvarType
+          def initialize(@path)
+          end
+
+          getter path : String
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      class_node = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+      end.first
+      converter.register_class(class_node)
+
+      path_ivar = converter.class_info["DeferredIvarType"].ivars.find do |ivar|
+        ivar.name == "@path"
+      end
+      path_ivar.should_not be_nil
+      path_ivar.not_nil!.type.should eq(Adamas::HIR::TypeRef::STRING)
+    end
+
+    it "invalidates a cached nil local inference after a dependency is typed" do
+      arena, roots = parse("x = y")
+      converter = Adamas::HIR::AstToHir.new(arena)
+
+      before, after = converter.__test_local_inference_after_dependency_update(
+        roots,
+        "x",
+        "y",
+      )
+      before.should be_nil
+      after.should eq("Int32")
+    end
+
     it "lowers class variable read" do
       func = lower_function("def foo; @@count; end")
       text = hir_text(func)
@@ -2746,6 +5010,328 @@ describe Adamas::HIR::AstToHir do
       call.not_nil!.as(Adamas::HIR::Call).method_name.should eq("Signal#reset")
     end
 
+    it "drops enum identity across integer conversion calls" do
+      converter = lower_program(<<-CRYSTAL)
+        enum ConvertedSignal
+          Ready
+        end
+
+        class ConvertedSignalSink
+          def add(value : ConvertedSignal)
+          end
+
+          def add(value : Int32)
+          end
+        end
+
+        def converted_signal_to_integer(
+          sink : ConvertedSignalSink,
+          signal : ConvertedSignal,
+        )
+          sink.add(signal.to_i)
+        end
+      CRYSTAL
+
+      function = converter.module.functions.find do |candidate|
+        candidate.name.starts_with?("converted_signal_to_integer$")
+      end
+      function.should_not be_nil
+      add_call = function.not_nil!.blocks.flat_map(&.instructions)
+        .compact_map { |instruction| instruction.as?(Adamas::HIR::Call) }
+        .find { |call| call.method_name.starts_with?("ConvertedSignalSink#add") }
+      add_call.should_not be_nil
+      add_call.not_nil!.method_name.should eq(
+        "ConvertedSignalSink#add$Int32",
+      )
+    end
+
+    it "does not propagate enum identity from an unrelated mixed-union arm" do
+      converter = lower_program(<<-CRYSTAL)
+        enum MixedUnionSignal
+          Ready
+
+          def to_s : String
+            "signal"
+          end
+        end
+
+        def mixed_union_string_to_s(value : MixedUnionSignal | String) : String
+          value.as(String).to_s
+        end
+      CRYSTAL
+
+      function = converter.module.functions.find do |candidate|
+        candidate.name.starts_with?("mixed_union_string_to_s$")
+      end
+      function.should_not be_nil
+      calls = function.not_nil!.blocks.flat_map(&.instructions)
+        .compact_map { |instruction| instruction.as?(Adamas::HIR::Call) }
+      calls.none? do |call|
+        call.method_name.starts_with?("MixedUnionSignal#to_s")
+      end.should be_true
+    end
+
+    it "does not propagate enum identity into a raw carrier union arm" do
+      converter = lower_program(<<-CRYSTAL)
+        struct Int32
+          def mixed_union_marker : Int32
+            1
+          end
+        end
+
+        enum CarrierUnionSignal
+          Ready
+
+          def mixed_union_marker : Int32
+            2
+          end
+        end
+
+        def carrier_union_marker(signal : CarrierUnionSignal) : Int32
+          value : CarrierUnionSignal | Int32 = signal
+          value.as(Int32).mixed_union_marker
+        end
+      CRYSTAL
+
+      function = converter.module.functions.find do |candidate|
+        candidate.name.starts_with?("carrier_union_marker$")
+      end
+      function.should_not be_nil
+      marker_call = function.not_nil!.blocks.flat_map(&.instructions)
+        .compact_map { |instruction| instruction.as?(Adamas::HIR::Call) }
+        .find { |call| call.method_name.includes?("mixed_union_marker") }
+      marker_call.should_not be_nil
+      marker_call.not_nil!.method_name.should eq("Int32#mixed_union_marker")
+    end
+
+    it "preserves enum call argument identity through conditional local phis" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        module EnumPhiProbe
+          class Value
+            property strategy : Strategy?
+
+            def initialize(@strategy : Strategy? = nil)
+            end
+          end
+
+          enum Strategy
+            Stack
+            GC
+          end
+
+          class Result
+            def add(id : UInt32, strategy : Strategy)
+            end
+          end
+
+          class Assigner
+            def choose(value : Value) : Strategy
+              Strategy::Stack
+            end
+
+            def assign(result : Result, value : Value, force : Bool)
+              strategy = if explicit = value.strategy
+                           explicit == Strategy::Stack ? choose(value) : explicit
+                         else
+                           choose(value)
+                         end
+              strategy = Strategy::GC if force
+              result.add(1_u32, strategy)
+            end
+          end
+        end
+
+        EnumPhiProbe::Assigner.new.assign(
+          EnumPhiProbe::Result.new,
+          EnumPhiProbe::Value.new,
+          false,
+        )
+      CRYSTAL
+
+      assign_name =
+        "EnumPhiProbe::Assigner#assign$EnumPhiProbe::Result_EnumPhiProbe::Value_Bool"
+      converter.__test_lower_function_if_needed(assign_name)
+      assign = converter.module.function_by_name(assign_name)
+      assign.should_not be_nil
+
+      add_call = assign.not_nil!.blocks
+        .flat_map(&.instructions)
+        .select(Adamas::HIR::Call)
+        .find { |call| call.method_name.starts_with?("EnumPhiProbe::Result#add") }
+      add_call.should_not be_nil
+      add_call.not_nil!.method_name.should eq(
+        "EnumPhiProbe::Result#add$UInt32_EnumPhiProbe::Strategy",
+      )
+    end
+
+    it "recovers forward enum identity from inline getter provenance" do
+      arena, exprs = parse(<<-CRYSTAL)
+        module Adamas
+          module HIR
+            class EnumPhiValue
+              property strategy : EnumPhiStrategy?
+            end
+
+            enum EnumPhiStrategy
+              Stack
+              GC
+            end
+
+            class EnumPhiResult
+              def add(id : UInt32, strategy : EnumPhiStrategy)
+              end
+            end
+
+            class EnumPhiAssigner
+              def choose(value : EnumPhiValue) : EnumPhiStrategy
+                EnumPhiStrategy::Stack
+              end
+
+              def assign(
+                result : EnumPhiResult,
+                value : EnumPhiValue,
+                force : Bool,
+              )
+                strategy = if explicit = value.strategy
+                             explicit == EnumPhiStrategy::Stack ? choose(value) : explicit
+                           else
+                             choose(value)
+                           end
+                strategy = EnumPhiStrategy::GC if force
+                result.add(1_u32, strategy)
+              end
+            end
+          end
+        end
+      CRYSTAL
+
+      converter = Adamas::HIR::AstToHir.new(arena)
+      converter.arena = arena
+      module_expr = exprs.find do |expr_id|
+        arena[expr_id].is_a?(Adamas::Compiler::Frontend::ModuleNode)
+      end
+      module_expr.should_not be_nil
+      converter.register_module(
+        arena[module_expr.not_nil!].as(Adamas::Compiler::Frontend::ModuleNode),
+      )
+
+      getter_name = "Adamas::HIR::EnumPhiValue#strategy"
+      converter.__test_enum_return_name_for(getter_name).should eq(
+        "Adamas::HIR::EnumPhiStrategy",
+      )
+      converter.__test_enum_metadata_target_compatible(
+        "Int32 | Nil",
+        "Adamas::HIR::EnumPhiStrategy",
+      ).should be_true
+      converter.__test_enum_metadata_target_compatible(
+        "String | Nil",
+        "Adamas::HIR::EnumPhiStrategy",
+      ).should be_false
+      converter.__test_enum_metadata_target_compatible(
+        "Int32",
+        "Adamas::HIR::EnumPhiStrategy",
+      ).should be_false
+      converter.__test_enum_metadata_target_compatible(
+        "Void",
+        "Adamas::HIR::EnumPhiStrategy",
+      ).should be_false
+      converter.__test_enum_metadata_target_compatible(
+        "Int32 | Nil",
+        "Adamas::HIR::MissingEnum",
+      ).should be_false
+      converter.__test_force_ivar_type(
+        "Adamas::HIR::EnumPhiValue",
+        "@strategy",
+        "Int32 | Nil",
+      )
+
+      assign_name =
+        "Adamas::HIR::EnumPhiAssigner#assign$Adamas::HIR::EnumPhiResult_Adamas::HIR::EnumPhiValue_Bool"
+      converter.__test_lower_function_if_needed(assign_name)
+      assign = converter.module.function_by_name(assign_name)
+      assign.should_not be_nil
+
+      add_call = assign.not_nil!.blocks
+        .flat_map(&.instructions)
+        .select(Adamas::HIR::Call)
+        .find { |call| call.method_name.starts_with?("Adamas::HIR::EnumPhiResult#add") }
+      add_call.should_not be_nil
+      add_call.not_nil!.method_name.should eq(
+        "Adamas::HIR::EnumPhiResult#add$UInt32_Adamas::HIR::EnumPhiStrategy",
+      )
+    end
+
+    it "preserves enum identity through nullable union wraps in nested each blocks" do
+      arena, exprs = parse(<<-CRYSTAL)
+        module Adamas
+          module HIR
+            enum NestedUnionStrategy
+              Stack
+              GC
+              Unknown
+            end
+
+            class NestedUnionValue
+              property strategy : NestedUnionStrategy? = nil
+              getter id : UInt32
+
+              def initialize(@id : UInt32)
+              end
+            end
+
+            class NestedUnionResult
+              def add(id : UInt32, strategy : NestedUnionStrategy)
+              end
+            end
+
+            class NestedUnionAssigner
+              getter result : NestedUnionResult
+
+              def initialize
+                @result = NestedUnionResult.new
+              end
+
+              def assign(values : Array(NestedUnionValue))
+                values.each do |value|
+                  strategy = if explicit = value.strategy
+                               explicit == NestedUnionStrategy::Unknown ? NestedUnionStrategy::Stack : explicit
+                             else
+                               NestedUnionStrategy::GC
+                             end
+                  @result.add(value.id, strategy)
+                end
+              end
+            end
+          end
+        end
+      CRYSTAL
+
+      converter = Adamas::HIR::AstToHir.new(arena)
+      converter.arena = arena
+      module_expr = exprs.find do |expr_id|
+        arena[expr_id].is_a?(Adamas::Compiler::Frontend::ModuleNode)
+      end
+      module_expr.should_not be_nil
+      converter.register_module(
+        arena[module_expr.not_nil!].as(Adamas::Compiler::Frontend::ModuleNode),
+      )
+
+      assign_name =
+        "Adamas::HIR::NestedUnionAssigner#assign$Array(Adamas::HIR::NestedUnionValue)"
+      converter.__test_lower_function_if_needed(assign_name)
+      assign = converter.module.function_by_name(assign_name)
+      assign.should_not be_nil
+
+      add_calls = assign.not_nil!.blocks
+        .flat_map(&.instructions)
+        .select(Adamas::HIR::Call)
+        .select { |call| call.method_name.starts_with?("Adamas::HIR::NestedUnionResult#add") }
+      add_calls.size.should eq(1)
+      add_calls.first.method_name.should eq(
+        "Adamas::HIR::NestedUnionResult#add$UInt32_Adamas::HIR::NestedUnionStrategy",
+      )
+    end
+
     it "applies default args for member access calls" do
       code = <<-CRYSTAL
         class Foo
@@ -2792,6 +5378,82 @@ describe Adamas::HIR::AstToHir do
       text = hir_text(func.not_nil!)
       text.should contain("literal 0 : Int32")
       text.should_not contain("local \"offset\" : 0")
+    end
+
+    it "consumes a packed splat slot before trailing named defaults" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class BacktraceSink
+        end
+
+        class ErrorProbe
+          def inspect_with_backtrace(io : BacktraceSink) : Nil
+          end
+        end
+
+        module BufferedProbe
+          def self.message(message : String, *args, exception = nil, backtrace = nil)
+            exception.inspect_with_backtrace(backtrace) if exception
+          end
+        end
+
+        BufferedProbe.message(
+          "message",
+          "arg",
+          exception: ErrorProbe.new,
+          backtrace: BacktraceSink.new,
+        )
+      CRYSTAL
+
+      message = converter.module.functions.find do |func|
+        func.name.starts_with?("BufferedProbe.message$String_Tuple(String)_ErrorProbe_BacktraceSink")
+      end
+      message.should_not be_nil
+      message.not_nil!.params.map { |param| converter.__test_get_type_name_from_ref(param.type) }.should eq([
+        "String",
+        "Tuple(String)",
+        "ErrorProbe",
+        "BacktraceSink",
+      ])
+
+      call = message.not_nil!.blocks.flat_map(&.instructions).compact_map(&.as?(Adamas::HIR::Call)).find do |candidate|
+        candidate.method_name.includes?("inspect_with_backtrace")
+      end
+      call.should_not be_nil
+      call.not_nil!.method_name.should eq("ErrorProbe#inspect_with_backtrace$BacktraceSink")
+      converter.module.has_function_with_body?(call.not_nil!.method_name).should be_true
+    end
+
+    it "reuses a materialized splat body for its packed tuple ABI" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class PackedSplatReceiver
+          def match?(*sets : String) : Bool
+            true
+          end
+        end
+
+        def packed_splat_probe(receiver : PackedSplatReceiver, sets : Tuple(String)) : Bool
+          receiver.match?(*sets)
+        end
+
+        packed_splat_probe(PackedSplatReceiver.new, {"set"})
+      CRYSTAL
+
+      function = converter.module.functions.find { |candidate| candidate.name.starts_with?("packed_splat_probe$") }
+      function.should_not be_nil
+      call = function.not_nil!.blocks.flat_map(&.instructions).compact_map(&.as?(Adamas::HIR::Call)).find do |candidate|
+        candidate.method_name.includes?("PackedSplatReceiver#match?")
+      end
+      call.should_not be_nil
+      call.not_nil!.method_name = "PackedSplatReceiver#match?$Tuple(String)_splat"
+
+      converter.flush_pending_functions
+
+      repaired = function.not_nil!.blocks.flat_map(&.instructions).compact_map(&.as?(Adamas::HIR::Call)).find do |candidate|
+        candidate.method_name.includes?("PackedSplatReceiver#match?")
+      end
+      repaired.should_not be_nil
+      repaired.not_nil!.method_name.should eq("PackedSplatReceiver#match?$String_splat")
+      converter.module.has_function_with_body?(repaired.not_nil!.method_name).should be_true
     end
 
     it "synthesizes zero-arg allocators for generic structs before MIR lowering" do
@@ -3780,6 +6442,34 @@ describe Adamas::HIR::AstToHir do
   end
 
   describe "macro expansion in HIR" do
+    it "expands control branches before interpolation in mixed macro literals" do
+      converter = lower_program_with_sources(<<-CRYSTAL)
+        macro define_mixed_value
+          {% if flag?(:tracing) %}
+            def mixed_macro_value : Int32
+              {{ 1 + 2 }}
+            end
+          {% else %}
+            def mixed_macro_value : Int32
+              {{ 3 + 4 }}
+            end
+          {% end %}
+        end
+
+        define_mixed_value()
+        mixed_macro_value()
+      CRYSTAL
+
+      converter.__test_lower_function_if_needed("mixed_macro_value")
+      function = converter.module.functions.find do |func|
+        func.name == "mixed_macro_value" || func.name.starts_with?("mixed_macro_value$")
+      end
+      function.should_not be_nil
+      text = hir_text(function.not_nil!)
+      text.should contain("literal 7")
+      text.should_not contain("literal 3")
+    end
+
     it "binds named args with external names" do
       code = <<-CRYSTAL
         macro delegate(*methods, to object)
@@ -3821,6 +6511,13 @@ describe Adamas::HIR::AstToHir do
                 getter :{{property.id}}
               {% end %}
             {% end %}
+
+            def initialize({{
+                             properties.map do |field|
+                               "@\#{field.id}".id
+                             end.splat
+                           }})
+            end
 
             def copy_with({{
                             properties.map do |property|
@@ -3868,6 +6565,13 @@ describe Adamas::HIR::AstToHir do
       converter = lower_program_with_sources(code)
       converter.module.has_function?("Point#x").should be_true
       converter.module.has_function?("Point#y").should be_true
+      initialize_name = converter.__test_function_def_names("Point#initialize").first?
+      initialize_name.should_not be_nil
+      converter.__test_function_param_default_presence(initialize_name.not_nil!).should eq([false, true])
+      converter.__test_initializer_params("Point").should eq([{"x", "Int32"}, {"y", "Int32"}])
+      point_ivar_names = converter.class_info["Point"].ivars.map(&.name)
+      point_ivar_names.should contain("@x")
+      point_ivar_names.should contain("@y")
       copy_with = converter.module.functions.find { |func| func.name.starts_with?("Point#copy_with") }
       copy_with.should_not be_nil
       if func = copy_with
@@ -3943,6 +6647,52 @@ describe Adamas::HIR::AstToHir do
 
       mixed_union = converter.__test_union_type_for_values(Adamas::HIR::TypeRef::POINTER, header)
       converter.__test_get_type_name_from_ref(mixed_union).should eq("Pointer | String")
+    end
+
+    it "normalizes a repeated return-type set in one batch without losing variants" do
+      arena, _ = parse("def placeholder; 1; end")
+      converter = Adamas::HIR::AstToHir.new(arena)
+      unique_types = Array(Adamas::HIR::TypeRef).new(200) do |index|
+        converter.__test_type_ref_for_name("IncluderReturn#{index}")
+      end
+      repeated_types = [] of Adamas::HIR::TypeRef
+      4.times { unique_types.each { |type_ref| repeated_types << type_ref } }
+
+      merged = converter.__test_union_type_for_value_set(repeated_types)
+      merged.should_not be_nil
+      variants = converter.__test_get_type_name_from_ref(merged.not_nil!)
+        .split('|')
+        .map(&.strip)
+
+      variants.size.should eq(unique_types.size)
+      variants.to_set.size.should eq(unique_types.size)
+      variants.should contain("IncluderReturn0")
+      variants.should contain("IncluderReturn199")
+    end
+
+    it "preserves a sole existing union and flattens it only when merging other returns" do
+      arena, _ = parse("def placeholder; 1; end")
+      converter = Adamas::HIR::AstToHir.new(arena)
+      existing = converter.__test_union_type_for_values(
+        Adamas::HIR::TypeRef::INT32,
+        Adamas::HIR::TypeRef::UINT8,
+      )
+
+      converter.__test_union_type_for_value_set([existing, existing]).should eq(existing)
+
+      merged = converter.__test_union_type_for_value_set([
+        existing,
+        Adamas::HIR::TypeRef::STRING,
+        Adamas::HIR::TypeRef::INT32,
+        Adamas::HIR::TypeRef::NIL,
+      ])
+      merged.should_not be_nil
+      variants = converter.__test_get_type_name_from_ref(merged.not_nil!)
+        .split('|')
+        .map(&.strip)
+        .to_set
+
+      variants.should eq(Set{"Nil", "Int32", "String", "UInt8"})
     end
 
     it "preserves the concrete pointee type produced by pointerof" do
@@ -4045,6 +6795,222 @@ describe Adamas::HIR::AstToHir do
         .should be_true
       converter.__test_get_type_name_from_ref(func.not_nil!.return_type).should eq(pointer_name)
     end
+
+    it "keeps inherited parameter annotations in the defining owner's namespace" do
+      converter = lower_program(<<-CRYSTAL)
+        module LexicalPointerOwner
+          module Event
+          end
+
+          abstract class Polling
+            struct Event
+            end
+
+            def add_timer(event : Event*) : Nil
+              consume(event)
+            end
+
+            private def consume(event : Event*) : Nil
+              nil
+            end
+          end
+
+          class Kqueue < Polling
+          end
+        end
+      CRYSTAL
+
+      target_name =
+        "LexicalPointerOwner::Kqueue#add_timer$Pointer(LexicalPointerOwner::Polling::Event)"
+      pointer_type =
+        converter.__test_type_ref_for_name("Pointer(LexicalPointerOwner::Polling::Event)")
+      source_name =
+        "LexicalPointerOwner::Polling#add_timer$Pointer(LexicalPointerOwner::Polling::Event)"
+      converter.__test_lower_inherited_method_specialization(
+        source_name,
+        "LexicalPointerOwner::Kqueue",
+        target_name,
+        [pointer_type],
+      )
+      target = converter.module.function_by_name(target_name)
+      target.should_not be_nil
+
+      pointer_name = converter.__test_get_type_name_from_ref(target.not_nil!.params.last.type)
+      pointer_name.should eq("Pointer(LexicalPointerOwner::Polling::Event)")
+
+      calls = target.not_nil!.blocks
+        .flat_map(&.instructions)
+        .compact_map(&.as?(Adamas::HIR::Call))
+        .map(&.method_name)
+      calls.any? do |name|
+        name.starts_with?(
+          "LexicalPointerOwner::Polling#consume$Pointer(LexicalPointerOwner::Polling::Event)"
+        )
+      end.should be_true
+      calls.none? do |name|
+        name.includes?("Pointer(LexicalPointerOwner::Event)")
+      end.should be_true
+    end
+
+    it "narrows a nilable index before specializing mixed-width slice arguments" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class NarrowedIndexBuffer
+          def size : Int32
+            8
+          end
+
+          def index(value : Int32, offset) : Nil | Int32 | UInt32
+            if value < 0
+              nil
+            elsif offset > 0
+              offset
+            else
+              4
+            end
+          end
+
+          def [](start : Int, count : Int) : Int32
+            count
+          end
+        end
+
+        class NarrowedIndexDecoder
+          def initialize
+            @buffer = NarrowedIndexBuffer.new
+          end
+
+          def decode(offset)
+            if offset < @buffer.size
+              index = @buffer.index(0, offset: offset)
+              return @buffer[offset, index - offset] if index
+            end
+            0
+          end
+        end
+
+        NarrowedIndexDecoder.new.decode(1_u32)
+      CRYSTAL
+      converter.flush_pending_functions
+
+      target = converter.module.function_by_name("NarrowedIndexDecoder#decode$UInt32")
+      target.should_not be_nil
+      calls = target.not_nil!.blocks
+        .flat_map(&.instructions)
+        .compact_map(&.as?(Adamas::HIR::Call))
+        .select { |call| call.method_name.starts_with?("NarrowedIndexBuffer#[]$") }
+      calls.size.should eq(1)
+      calls.first.method_name.should_not contain("Nil")
+      lowered_target = converter.module.function_by_name(calls.first.method_name)
+      lowered_target.should_not be_nil
+      lowered_target.not_nil!.blocks.any? { |block| !block.instructions.empty? }.should be_true
+      argument_types = calls.first.args.map do |arg|
+        value = target.not_nil!.params.find { |param| param.id == arg } ||
+                target.not_nil!.blocks.flat_map(&.instructions).find { |inst| inst.id == arg }
+        value ? converter.__test_get_type_name_from_ref(value.type) : "missing"
+      end
+      argument_types.first.should eq("UInt32")
+      argument_types.last.should_not contain("Nil")
+    end
+
+    it "narrows mixed primitive unions on the truthy side of ||" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class CoalescedIndexBuffer
+          def index(value : Int32, offset) : Nil | Int32 | UInt32
+            if value < 0
+              nil
+            elsif offset > 0
+              offset
+            else
+              4
+            end
+          end
+
+          def [](start : Int, count : Int) : Int32
+            count
+          end
+        end
+
+        class CoalescedIndexDecoder
+          def initialize
+            @buffer = CoalescedIndexBuffer.new
+          end
+
+          def coalesce(offset)
+            index = @buffer.index(0, offset: offset)
+            @buffer[index || 0, 1]
+          end
+        end
+
+        CoalescedIndexDecoder.new.coalesce(1_u32)
+      CRYSTAL
+      converter.flush_pending_functions
+
+      target = converter.module.function_by_name("CoalescedIndexDecoder#coalesce$UInt32")
+      target.should_not be_nil
+      wraps = target.not_nil!.blocks.flat_map(&.instructions)
+        .compact_map(&.as?(Adamas::HIR::UnionWrap))
+      wraps.any? do |wrap|
+        wrap.variant_type_id == -2 &&
+          converter.__test_get_type_name_from_ref(wrap.type) == "Int32 | UInt32"
+      end.should be_true
+
+      calls = target.not_nil!.blocks
+        .flat_map(&.instructions)
+        .compact_map(&.as?(Adamas::HIR::Call))
+        .select { |call| call.method_name.starts_with?("CoalescedIndexBuffer#[]$") }
+      calls.size.should eq(1)
+      calls.first.method_name.should_not contain("Nil")
+      converter.module.function_by_name(calls.first.method_name).should_not be_nil
+      argument_types = calls.first.args.map do |arg|
+        value = target.not_nil!.params.find { |param| param.id == arg } ||
+                target.not_nil!.blocks.flat_map(&.instructions).find { |inst| inst.id == arg }
+        value ? converter.__test_get_type_name_from_ref(value.type) : "missing"
+      end
+      argument_types.none? { |type_name| type_name.includes?("Nil") }.should be_true
+    end
+
+    it "does not lower a truthy-only call for a Nil block specialization" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class NilBlockBranchProbe
+          private def consume(value) : Int32
+            value.to_i
+          end
+
+          private def dispatch(value, &)
+            if value
+              consume(value)
+            elsif yield
+              1
+            else
+              0
+            end
+          end
+
+          def warm : Int32
+            dispatch(1_u8) { false }
+          end
+
+          def nil_path : Int32
+            dispatch(nil) { true }
+          end
+        end
+
+        probe = NilBlockBranchProbe.new
+        probe.warm
+        probe.nil_path
+      CRYSTAL
+      converter.flush_pending_functions
+
+      nil_path = converter.module.functions.find do |function|
+        function.name.starts_with?("NilBlockBranchProbe#nil_path")
+      end
+      nil_path.should_not be_nil
+      calls = nil_path.not_nil!.blocks.flat_map(&.instructions)
+        .compact_map(&.as?(Adamas::HIR::Call))
+      calls.none? do |call|
+        call.method_name.includes?("consume") || call.method_name.starts_with?("Nil#to_i")
+      end.should be_true
+    end
   end
 
   describe "block parameter types" do
@@ -4108,6 +7074,275 @@ describe Adamas::HIR::AstToHir do
       else
         param_type.should eq(Adamas::HIR::TypeRef::INT32)
       end
+    end
+
+    it "preserves a pointer element type through transitive generic yields" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        module YieldNS
+          struct Descriptor
+            def owned_by?(owner) : Bool
+              true
+            end
+          end
+
+          class Arena(T, N)
+            struct Index
+              getter index
+
+              def initialize(@index : Int32)
+              end
+            end
+
+            struct Entry(T)
+              def pointer : Pointer(T)
+                Pointer(T).null
+              end
+            end
+
+            def get?(index : Index, &) : Bool
+              at?(index) do |entry|
+                yield entry.value.pointer
+                return true
+              end
+              false
+            end
+
+            private def at?(index : Index, &) : Nil
+              return unless entry = at?(index.index)
+              yield entry
+            end
+
+            private def at?(index : Int32) : Pointer(Entry(T))?
+              Pointer(Entry(T)).null
+            end
+          end
+
+          class Caller(T)
+            def run(arena : YieldNS::Arena(YieldNS::Descriptor, Int32)) : Bool
+              relay(arena) do |pointer|
+                pointer.value.owned_by?(self)
+              end
+            end
+
+            private def relay(arena, &)
+              index = YieldNS::Arena::Index.new(0)
+              arena.get?(index) do |pointer|
+                yield pointer
+              end
+            end
+          end
+        end
+
+        YieldNS::Caller(UInt8).new.run(YieldNS::Arena(YieldNS::Descriptor, Int32).new)
+      CRYSTAL
+
+      target_name = "YieldNS::Caller(UInt8)#run$YieldNS::Arena(YieldNS::Descriptor, Int32)"
+      converter.__test_lower_function_if_needed(target_name)
+      target = converter.module.function_by_name(target_name)
+      target.should_not be_nil
+
+      producer_name =
+        "YieldNS::Arena(YieldNS::Descriptor, Int32)#at?$YieldNS::Arena::Index_block"
+      converter.__test_lower_function_if_needed(producer_name)
+      producer = converter.module.function_by_name(producer_name)
+      producer.should_not be_nil
+      producer_values =
+        producer.not_nil!.params + producer.not_nil!.blocks.flat_map(&.instructions)
+      yielded = producer.not_nil!.blocks
+        .flat_map(&.instructions)
+        .compact_map(&.as?(Adamas::HIR::Yield))
+        .first?
+      yielded.should_not be_nil
+      yielded_arg = yielded.not_nil!.args.first?
+      yielded_arg.should_not be_nil
+      yielded_value = producer_values.find { |value| value.id == yielded_arg }
+      yielded_value.should_not be_nil
+      converter.__test_get_type_name_from_ref(yielded_value.not_nil!.type).should eq(
+        "Pointer(YieldNS::Arena::Entry(YieldNS::Descriptor))"
+      )
+
+      calls = target.not_nil!.blocks
+        .flat_map(&.instructions)
+        .compact_map(&.as?(Adamas::HIR::Call))
+        .map(&.method_name)
+      calls.any? { |name| name.starts_with?("YieldNS::Descriptor#owned_by?") }.should be_true
+      calls.none? { |name| name.starts_with?("UInt8#owned_by?") }.should be_true
+    end
+
+    it "preserves the concrete element type through an unannotated generic buffer getter" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class YieldBuffer(T)
+          protected getter buffer
+
+          def initialize
+            @buffer = Pointer(T).null
+          end
+
+          def each(& : T ->) : Nil
+            YieldBuffer.half_slices(self) do |slice|
+              slice.each do |element|
+                yield element
+              end
+            end
+          end
+
+          def self.half_slices(buffer : ::YieldBuffer, &)
+            yield Slice(typeof(buffer.buffer.value)).new(buffer.buffer, 0)
+          end
+        end
+
+        YieldBuffer(Int32).new.each { |value| value }
+      CRYSTAL
+
+      converter.__test_block_param_types_for_call(
+        "YieldBuffer.half_slices",
+        "YieldBuffer(Int32).half_slices$YieldBuffer(Int32)_block",
+        "YieldBuffer(Int32)",
+        ["YieldBuffer(Int32)"],
+      ).should eq(["Slice(Int32)"])
+
+      converter.__test_block_param_types_for_call_in_context(
+        "YieldBuffer.half_slices",
+        "YieldBuffer(Int32).half_slices$YieldBuffer(Int32)_block",
+        "YieldBuffer(Int32)",
+        {"T" => "Int32"},
+        ["YieldBuffer(Int32)"],
+      ).should eq(["Slice(Int32)"])
+    end
+
+    it "invalidates stale yield-expression types when entering a block contract scope" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        module YieldCacheNS
+          struct Descriptor
+          end
+
+          class Arena
+            struct Index
+              def initialize(@index : Int32)
+              end
+            end
+
+            struct Entry
+              def pointer : Pointer(Descriptor)
+                Pointer(Descriptor).null
+              end
+            end
+
+            def get?(index : Index, &) : Bool
+              at?(index) do |entry|
+                yield entry.value.pointer
+                return true
+              end
+              false
+            end
+
+            private def at?(index : Index, &) : Nil
+              return unless entry = at?(index.index)
+              yield entry
+            end
+
+            private def at?(index : Int32) : Pointer(Entry)?
+              Pointer(Entry).null
+            end
+          end
+        end
+
+        arena = YieldCacheNS::Arena.new
+        arena.get?(YieldCacheNS::Arena::Index.new(0)) { |pointer| pointer }
+      CRYSTAL
+
+      receiver_name = "YieldCacheNS::Arena"
+      function_name = "#{receiver_name}#get?"
+      converter.__test_block_param_types_after_stale_yield_cache(
+        function_name,
+        receiver_name,
+        ["YieldCacheNS::Arena::Index"],
+      ).should eq(["Pointer(YieldCacheNS::Descriptor)"])
+    end
+
+    it "preserves receiver generic bindings in explicit transitive yield annotations" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        module YieldExplicitNS
+          struct Descriptor
+            def owned_by?(owner) : Bool
+              true
+            end
+          end
+
+          class Arena(T, N)
+            struct Index
+              def initialize(@index : Int32)
+              end
+            end
+
+            struct Entry(T)
+              def pointer : Pointer(T)
+                Pointer(T).null
+              end
+            end
+
+            def allocate_at?(index : Int32, &) : Index?
+              entry = at(Index.new(index))
+              yield entry.value.pointer, Index.new(index)
+              nil
+            end
+
+            private def at(index : Index) : Pointer(Entry(T))
+              Pointer(Entry(T)).null
+            end
+          end
+
+          class Caller(T)
+            def run(arena : YieldExplicitNS::Arena(YieldExplicitNS::Descriptor, Int32)) : Bool
+              arena.allocate_at?(0) do |pointer, index|
+                pointer.value.owned_by?(self)
+              end
+              true
+            end
+          end
+        end
+
+        YieldExplicitNS::Caller(UInt8).new.run(
+          YieldExplicitNS::Arena(YieldExplicitNS::Descriptor, Int32).new
+        )
+      CRYSTAL
+
+      target_name =
+        "YieldExplicitNS::Caller(UInt8)#run$YieldExplicitNS::Arena(YieldExplicitNS::Descriptor, Int32)"
+      converter.__test_lower_function_if_needed(target_name)
+      target = converter.module.function_by_name(target_name)
+      target.should_not be_nil
+
+      calls = target.not_nil!.blocks
+        .flat_map(&.instructions)
+        .compact_map(&.as?(Adamas::HIR::Call))
+        .map(&.method_name)
+      calls.any? { |name| name.starts_with?("YieldExplicitNS::Descriptor#owned_by?") }.should be_true
+      calls.none? { |name| name.starts_with?("UInt8#owned_by?") }.should be_true
+    end
+
+    it "fails closed on ambiguous generic-template return annotations" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class GenericConflict(T)
+          def probe : Int32
+            1
+          end
+        end
+
+        class GenericConflict(T)
+          def probe : String
+            "conflict"
+          end
+        end
+
+        GenericConflict(Int32).new
+      CRYSTAL
+
+      converter.__test_resolve_generic_return_type(
+        "GenericConflict(Int32)",
+        "probe",
+        0,
+      ).should be_nil
     end
 
     it "lowers enum literal to_i/value without a method call" do
@@ -6628,6 +9863,43 @@ describe Adamas::HIR::AstToHir do
   end
 
   describe "parent overload lookup" do
+    it "skips a nearer wrong-arity overload for an inherited bare call" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class BareRoot
+          def render : String
+            "root"
+          end
+        end
+
+        class TypedParent < BareRoot
+          def render(io : Int32) : String
+            "typed"
+          end
+        end
+
+        class BareChild < TypedParent
+        end
+
+        def render_child(child : BareChild) : String
+          child.render
+        end
+
+        render_child(BareChild.new)
+      CRYSTAL
+
+      caller = converter.module.function_by_name("render_child$BareChild")
+      caller.should_not be_nil
+      calls = caller.not_nil!.blocks.flat_map(&.instructions)
+        .compact_map { |instruction| instruction.as?(Adamas::HIR::Call) }
+      render_call = calls.find { |call| call.method_name.includes?("#render") }
+      render_call.should_not be_nil
+      render_call.not_nil!.method_name.should_not contain("$Int32")
+
+      inherited_target = converter.module.function_by_name(render_call.not_nil!.method_name)
+      inherited_target.should_not be_nil
+      inherited_target.not_nil!.params.size.should eq(1)
+    end
+
     it "keeps inherited typed overload callsites specialized" do
       converter = lower_program_with_main(<<-CRYSTAL)
         class Parent
@@ -7416,6 +10688,115 @@ describe Adamas::HIR::AstToHir do
       text.should_not contain("local \"to_set\" : Void")
     end
 
+    it "materializes a typed method from a transitive generic module inclusion" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class HashState
+        end
+
+        class Object
+          abstract def hash(state : HashState) : HashState
+        end
+
+        module HashLike(T)
+          def hash(state : HashState) : HashState
+            state
+          end
+        end
+
+        module MutableHashLike(T)
+          include HashLike(T)
+        end
+
+        struct FixedHashLike(T, N)
+          include MutableHashLike(T)
+        end
+
+        def hash_fixed(value : FixedHashLike(UInt8, Int32), state : HashState)
+          value.hash(state)
+        end
+
+        hash_fixed(FixedHashLike(UInt8, Int32).new, HashState.new)
+      CRYSTAL
+
+      target_name = "FixedHashLike(UInt8, Int32)#hash$HashState"
+      converter.__test_lower_function_if_needed(target_name)
+
+      target = converter.module.function_by_name(target_name)
+      target.should_not be_nil
+      target.not_nil!.blocks.any? { |block| !block.instructions.empty? }.should be_true
+
+      converter.module.remove_function(target_name).should be_true
+      converter.__test_reset_lowering_state(target_name)
+      converter.__test_lower_receiver_repair_targets_with_fallbacks([
+        {
+          target_name,
+          "FixedHashLike(UInt8, Int32)#hash",
+          [converter.__test_type_ref_for_name("HashState")],
+        },
+      ])
+
+      converter.module.has_function_with_body?(target_name).should be_true
+    end
+
+    it "prefers a lazy included-module body over an inherited parent body" do
+      source = <<-CRYSTAL
+        class LazyHashState
+        end
+
+        module LazyHashLike(T)
+          def hash(state : LazyHashState) : Int32
+            7
+          end
+        end
+
+        module LazyMutableHashLike(T)
+          include LazyHashLike(T)
+        end
+
+        class LazyHashParent
+          def hash(state : LazyHashState) : Int32
+            9
+          end
+        end
+
+        class LazyFixedHash(T) < LazyHashParent
+          include LazyMutableHashLike(T)
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      converter.__test_set_lazy_module_methods(true)
+
+      exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ModuleNode)
+      end.each { |node| converter.register_module(node) }
+      exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+      end.each { |node| converter.register_class(node) }
+      converter.__test_monomorphize_generic_class(
+        "LazyFixedHash",
+        ["UInt8"],
+        "LazyFixedHash(UInt8)",
+      )
+
+      target_name = "LazyFixedHash(UInt8)#hash$LazyHashState"
+      converter.__test_remember_callsite_arg_types(
+        target_name,
+        [converter.__test_type_ref_for_name("LazyHashState")],
+      )
+      converter.__test_lower_function_if_needed(target_name)
+
+      target = converter.module.function_by_name(target_name)
+      target.should_not be_nil
+      text = hir_text(target.not_nil!)
+      text.should contain("literal 7")
+      text.should_not contain("literal 9")
+    end
+
     it "resolves a bare included method registered after generic monomorphization" do
       source = <<-CRYSTAL
         module EnumerableLike(T)
@@ -7506,6 +10887,233 @@ describe Adamas::HIR::AstToHir do
       tail = converter.module.function_by_name("OwnerProbe(UInt32)#tail_value")
       tail.should_not be_nil
       tail.not_nil!.blocks.any? { |block| !block.instructions.empty? }.should be_true
+    end
+
+    it "does not bind a generic module self call to the only already-lowered includer" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        module StaticDispatchControl
+          def self.marker : Int32
+            7
+          end
+
+          def self.via_self : Int32
+            self.marker
+          end
+        end
+
+        enum DispatchEnum
+          A
+        end
+
+        module DispatchRoot(T)
+          abstract def size : Int32
+          abstract def unsafe_fetch(index : Int32) : T
+          abstract def unsafe_put(index : Int32, value : T)
+          abstract def classify(value : Int32) : Int32
+          abstract def classify(value : String) : String
+        end
+
+        module DispatchRoot::Mutable(T)
+          include DispatchRoot(T)
+
+          def self.size : Int32
+            99
+          end
+
+          def swap(index0 : Int32, index1 : Int32) : self
+            tmp = unsafe_fetch(index0)
+            unsafe_put(index0, unsafe_fetch(index1))
+            unsafe_put(index1, tmp)
+            self
+          end
+
+          def explicit_fetch(index : Int32) : T
+            self.unsafe_fetch(index)
+          end
+
+          def grouped_fetch(index : Int32) : T
+            (self).unsafe_fetch(index)
+          end
+
+          def explicit_size : Int32
+            self.size
+          end
+
+          def grouped_size : Int32
+            (self).size
+          end
+
+          def explicit_classify(value : Int32) : Int32
+            self.classify(value)
+          end
+
+          def default_probe(value : Int32 = 17) : Int32
+            value
+          end
+
+          def explicit_default_probe : Int32
+            self.default_probe
+          end
+
+          def explicit_module_marker : Int32
+            StaticDispatchControl.marker
+          end
+        end
+
+        class Materialized(T)
+          include DispatchRoot::Mutable(T)
+
+          def unsafe_fetch(index : Int32) : T
+            uninitialized T
+          end
+
+          def unsafe_put(index : Int32, value : T)
+          end
+
+          def size : Int32
+            1
+          end
+
+          def classify(value : Int32) : Int32
+            value
+          end
+
+          def classify(value : String) : String
+            value
+          end
+
+          def default_probe(value : Int32 = 99) : Int32
+            value
+          end
+        end
+
+        Materialized(Int32).new.unsafe_fetch(0)
+      CRYSTAL
+
+      converter.__test_monomorphize_generic_class(
+        "DispatchRoot::Mutable",
+        ["Int32"],
+        "DispatchRoot::Mutable(Int32)",
+      )
+      module_desc = Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Generic,
+        "DispatchRoot::Mutable(Int32)",
+        [Adamas::HIR::TypeRef::INT32],
+      )
+      module_ref = converter.module.intern_type(module_desc)
+      converter.module.types.each_with_index do |desc, index|
+        converter.module.types[index] = module_desc if desc.name == module_desc.name
+      end
+      converter.__test_register_virtual_repair_class_info(
+        "DispatchRoot::Mutable(Int32)",
+        module_ref,
+        false,
+      )
+      converter.__test_lower_function_if_needed(
+        "DispatchRoot::Mutable(Int32)#swap$Int32_Int32",
+      )
+      converter.__test_lower_function_if_needed(
+        "DispatchRoot::Mutable(Int32)#explicit_fetch$Int32",
+      )
+      converter.__test_lower_function_if_needed(
+        "DispatchRoot::Mutable(Int32)#grouped_fetch$Int32",
+      )
+      converter.__test_lower_function_if_needed(
+        "DispatchRoot::Mutable(Int32)#explicit_size",
+      )
+      converter.__test_lower_function_if_needed(
+        "DispatchRoot::Mutable(Int32)#grouped_size",
+      )
+      converter.__test_lower_function_if_needed(
+        "DispatchRoot::Mutable(Int32)#explicit_classify$Int32",
+      )
+      converter.__test_lower_function_if_needed(
+        "DispatchRoot::Mutable(Int32)#explicit_default_probe",
+      )
+      converter.__test_lower_function_if_needed(
+        "DispatchRoot::Mutable(Int32)#explicit_module_marker",
+      )
+      converter.__test_lower_function_if_needed("StaticDispatchControl.via_self")
+
+      swap = converter.module.functions.find do |func|
+        func.name.starts_with?("DispatchRoot::Mutable(Int32)#swap")
+      end
+      explicit_fetch = converter.module.functions.find do |func|
+        func.name.starts_with?("DispatchRoot::Mutable(Int32)#explicit_fetch")
+      end
+      grouped_fetch = converter.module.functions.find do |func|
+        func.name.starts_with?("DispatchRoot::Mutable(Int32)#grouped_fetch")
+      end
+      explicit_size = converter.module.functions.find do |func|
+        func.name.starts_with?("DispatchRoot::Mutable(Int32)#explicit_size")
+      end
+      grouped_size = converter.module.functions.find do |func|
+        func.name.starts_with?("DispatchRoot::Mutable(Int32)#grouped_size")
+      end
+      explicit_classify = converter.module.functions.find do |func|
+        func.name.starts_with?("DispatchRoot::Mutable(Int32)#explicit_classify")
+      end
+      explicit_default_probe = converter.module.functions.find do |func|
+        func.name.starts_with?("DispatchRoot::Mutable(Int32)#explicit_default_probe")
+      end
+      explicit_module_marker = converter.module.functions.find do |func|
+        func.name.starts_with?("DispatchRoot::Mutable(Int32)#explicit_module_marker")
+      end
+      static_via_self = converter.module.functions.find do |func|
+        func.name.starts_with?("StaticDispatchControl.via_self")
+      end
+      swap.should_not be_nil
+      explicit_fetch.should_not be_nil
+      grouped_fetch.should_not be_nil
+      explicit_size.should_not be_nil
+      grouped_size.should_not be_nil
+      explicit_classify.should_not be_nil
+      explicit_default_probe.should_not be_nil
+      explicit_module_marker.should_not be_nil
+      static_via_self.should_not be_nil
+
+      functions = [
+        swap.not_nil!,
+        explicit_fetch.not_nil!,
+        grouped_fetch.not_nil!,
+        explicit_size.not_nil!,
+        grouped_size.not_nil!,
+        explicit_classify.not_nil!,
+        explicit_default_probe.not_nil!,
+      ]
+      text = functions.map { |func| hir_text(func) }.join('\n')
+      text.should contain("DispatchRoot::Mutable(Int32)#unsafe_fetch")
+      text.should contain("DispatchRoot::Mutable(Int32)#unsafe_put")
+      text.should contain("DispatchRoot::Mutable(Int32)#size")
+      text.should contain("DispatchRoot::Mutable(Int32)#classify$Int32")
+      text.should contain("DispatchRoot::Mutable(Int32)#default_probe$Int32")
+      text.should_not contain("Materialized(Int32)#unsafe_fetch")
+      text.should_not contain("Materialized(Int32)#unsafe_put")
+      text.should_not contain("Materialized(Int32)#size")
+      text.should_not contain("Materialized(Int32)#classify")
+      text.should_not contain("Materialized(Int32)#default_probe")
+
+      dispatch_calls = functions.flat_map(&.blocks).flat_map(&.instructions).compact_map do |instruction|
+        call = instruction.as?(Adamas::HIR::Call)
+        call if call && (
+          call.method_name.includes?("#unsafe_fetch") ||
+          call.method_name.includes?("#unsafe_put") ||
+          call.method_name.includes?("#size") ||
+          call.method_name.includes?("#classify") ||
+          call.method_name.includes?("#default_probe")
+        )
+      end
+      dispatch_calls.should_not be_empty
+      dispatch_calls.each { |call| call.virtual.should be_true }
+      dispatch_calls.select { |call| call.method_name.includes?("#unsafe_fetch") }
+        .each { |call| call.type.should eq(Adamas::HIR::TypeRef::INT32) }
+
+      static_text = [
+        hir_text(explicit_module_marker.not_nil!),
+        hir_text(static_via_self.not_nil!),
+      ].join('\n')
+      static_text.should contain("StaticDispatchControl.marker")
+      static_text.should_not contain("StaticDispatchControl#marker")
     end
 
     it "keeps included zero-arg receiver calls bound to the inferred owner type" do
@@ -8765,6 +12373,56 @@ describe Adamas::HIR::AstToHir do
     end
   end
 
+  describe "Pointer#value boundaries" do
+    it "does not substitute an ambient generic type into Pointer(Void)#value" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class PointerValueBoundary(T)
+          def read(pointer : Pointer(Void))
+            pointer.value
+          end
+        end
+
+        def boundary_read(box : PointerValueBoundary(Int32), pointer : Pointer(Void))
+          box.read(pointer)
+        end
+
+        boundary_read(PointerValueBoundary(Int32).new, Pointer(Void).null)
+      CRYSTAL
+
+      read = converter.module.functions.find do |function|
+        function.name.starts_with?("PointerValueBoundary(Int32)#read$Pointer(Void)")
+      end
+      read.should_not be_nil
+      read.not_nil!.return_type.should eq(Adamas::HIR::TypeRef::VOID)
+      loads = read.not_nil!.blocks.flat_map(&.instructions)
+        .compact_map(&.as?(Adamas::HIR::PointerLoad))
+      loads.size.should eq(1)
+      loads.first.type.should eq(Adamas::HIR::TypeRef::VOID)
+    end
+
+    it "unwraps a sole concrete pointer arm before loading value" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        def load_optional(pointer : Pointer(Int32) | Nil) : Int32
+          return 0 unless pointer
+          pointer.value
+        end
+
+        load_optional(Pointer(Int32).null)
+      CRYSTAL
+
+      load = converter.module.functions.find do |function|
+        function.name.starts_with?("load_optional$")
+      end
+      load.should_not be_nil
+      instructions = load.not_nil!.blocks.flat_map(&.instructions)
+      unwrap = instructions.compact_map(&.as?(Adamas::HIR::UnionUnwrap))
+      pointer_load = instructions.compact_map(&.as?(Adamas::HIR::PointerLoad))
+      unwrap.size.should eq(1)
+      pointer_load.size.should eq(1)
+      pointer_load.first.type.should eq(Adamas::HIR::TypeRef::INT32)
+    end
+  end
+
   describe "Pointer(Void) arithmetic" do
     it "keeps Pointer(Void) addition byte-strided inside struct initializers" do
       converter = lower_program_with_sources(<<-CRYSTAL)
@@ -8941,6 +12599,71 @@ describe Adamas::HIR::AstToHir do
       slice_allocator.not_nil!.blocks.any? { |block| !block.instructions.empty? }.should be_true
       hir_text(nil_allocator.not_nil!).should contain("AllocatorProbe#initialize$Nil")
       hir_text(slice_allocator.not_nil!).should contain("AllocatorProbe#initialize$Slice(UInt8)")
+    end
+  end
+
+  describe "materialized symbol ABI identity" do
+    it "uses the full positional suffix type instead of a narrower callsite variant" do
+      arena, exprs = parse(<<-CRYSTAL)
+        class Left
+        end
+
+        class Right
+        end
+
+        def accept(value : Left | Right)
+          value
+        end
+      CRYSTAL
+      converter = Adamas::HIR::AstToHir.new(arena)
+      converter.arena = arena
+      def_node = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode) }.first
+
+      converter.__test_merge_call_arg_type_names_from_suffix(
+        def_node,
+        ["Left"],
+        ["Left | Right"],
+      ).should eq(["Left | Right"])
+    end
+  end
+
+  describe "abstract binary operator dispatch" do
+    it "keeps the operator call virtual and materializes the concrete override" do
+      converter = lower_program_with_sources(<<-CRYSTAL)
+        abstract class EqualityRoot
+          abstract def ==(other)
+
+          def matches(other)
+            self == other
+          end
+        end
+
+        class EqualityLeaf < EqualityRoot
+          def ==(other)
+            true
+          end
+        end
+
+        def compare(root : EqualityRoot, value : Int32)
+          root.matches(value)
+        end
+      CRYSTAL
+
+      converter.__test_lower_function_if_needed("EqualityRoot#matches$Int32")
+      converter.__test_process_pending_lower_functions
+      matches = converter.module.function_by_name("EqualityRoot#matches$Int32")
+      matches.should_not be_nil
+      equality_call = matches.not_nil!.blocks.flat_map(&.instructions)
+        .compact_map { |instruction| instruction.as?(Adamas::HIR::Call) }
+        .find { |call| call.method_name.includes?("#==") }
+      equality_call.should_not be_nil
+      equality_call.not_nil!.virtual.should be_true
+
+      leaf_target = converter.module.functions.find do |function|
+        function.name.starts_with?("EqualityLeaf#==$Int32")
+      end
+      leaf_target.should_not be_nil
+      leaf_target.not_nil!.blocks.any? { |block| !block.instructions.empty? }.should be_true
     end
   end
 end

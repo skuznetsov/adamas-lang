@@ -10,11 +10,6 @@ require "./escape_analysis"
 require "./taint_analysis"
 
 module Adamas::HIR
-  # Extend Allocate with strategy slot (only when memory_strategy is loaded)
-  class Allocate
-    property memory_strategy : MemoryStrategy? = nil
-  end
-
   # Memory management strategy for an allocation
   enum MemoryStrategy
     Stack       # LLVM alloca, automatic cleanup
@@ -34,6 +29,13 @@ module Adamas::HIR
       else                "unknown"
       end
     end
+  end
+
+  # Keep the enum definition before this typed extension. The self-hosted
+  # registration pass must see the semantic enum identity before it records the
+  # nilable accessor; otherwise the getter can retain only its Int32 carrier.
+  class Allocate
+    property memory_strategy : MemoryStrategy? = nil
   end
 
   # Configuration for memory strategy decisions

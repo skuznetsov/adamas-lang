@@ -10,6 +10,7 @@ module GeneratedHIRRuntimeSpec
   STDLIB_FIXTURE = File.join(__DIR__, "test_data", "stdlib_specialization_contract.cr")
   NILABLE_LOOP_ENSURE_FIXTURE = File.join(__DIR__, "test_data", "nilable_loop_ensure_runtime.cr")
   REFERENCE_ARRAY_FIND_NEXT_FIXTURE = File.join(__DIR__, "test_data", "reference_array_find_next_hir.cr")
+  DEQUE_INCLUDES_FIXTURE = File.join(__DIR__, "test_data", "deque_includes_runtime.cr")
 
   private def self.run_safely(binary : String, timeout : Int32, max_mem_mb : Int32, args : Array(String)) : {Process::Status, String}
     stdout = IO::Memory.new
@@ -148,6 +149,27 @@ module GeneratedHIRRuntimeSpec
       artifacts.each { |path| File.delete(path) if File.exists?(path) }
     end
   end
+
+  def self.compile_and_run_deque_includes_fixture : String
+    stem = File.join(Dir.tempdir, "adamas_deque_includes_#{Process.pid}_#{Random.rand(1_000_000)}")
+    artifacts = [stem, "#{stem}.ll", "#{stem}.ll.opt.ll", "#{stem}.o", "#{stem}.dwarf"]
+
+    begin
+      compile_status, compile_output = run_safely(
+        COMPILER,
+        360,
+        8192,
+        [DEQUE_INCLUDES_FIXTURE, "-o", stem]
+      )
+      raise "Deque#includes? fixture compilation failed:\n#{compile_output}" unless compile_status.success?
+
+      run_status, run_output = run_safely(stem, 20, 2048, [] of String)
+      raise "Deque#includes? fixture execution failed:\n#{run_output}" unless run_status.success?
+      run_output
+    ensure
+      artifacts.each { |path| File.delete(path) if File.exists?(path) }
+    end
+  end
 end
 
 describe "generated HIR runtime" do
@@ -185,5 +207,11 @@ describe "generated HIR runtime" do
     output = GeneratedHIRRuntimeSpec.compile_and_run_reference_array_find_next_fixture
     output.should contain("generated-reference-array-find-next-ok")
     output.should_not contain("generated-reference-array-find-next-wrong")
+  end
+
+  it "preserves nested yield callbacks through Deque#includes?" do
+    output = GeneratedHIRRuntimeSpec.compile_and_run_deque_includes_fixture
+    output.should contain("generated-deque-includes-ok")
+    output.should_not contain("generated-deque-includes-wrong")
   end
 end

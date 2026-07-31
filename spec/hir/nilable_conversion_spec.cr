@@ -95,6 +95,29 @@ describe "nilable numeric conversion typing" do
     types[index_get.not_nil!.index].should eq(Adamas::HIR::TypeRef::INT32)
   end
 
+  it "keeps a truthy narrowing after an exhaustive nested return branch" do
+    _converter, function = lower_conversion_function(<<-CRYSTAL, "guarded_index")
+      def guarded_index(index : Int32?, flag : Bool)
+        unless index
+          if flag
+            return 0
+          else
+            return 1
+          end
+        end
+        index + 1
+      end
+    CRYSTAL
+
+    types = function_value_types(function)
+    addition = function.blocks.flat_map(&.instructions).compact_map do |instruction|
+      binary = instruction.as?(Adamas::HIR::BinaryOperation)
+      binary if binary && binary.op == Adamas::HIR::BinaryOp::Add
+    end.first?
+    addition.should_not be_nil
+    types[addition.not_nil!.left].should eq(Adamas::HIR::TypeRef::INT32)
+  end
+
   it "does not override a user-defined to_i? on a non-builtin receiver" do
     converter, functions = lower_conversion_program(<<-CRYSTAL)
       class FakeNumber

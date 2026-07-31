@@ -1,8 +1,20 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-07-30 (bounded incremental
+Updated: 2026-07-30 (macro-source provenance hardened; bounded incremental
 missing-scan falsifier measured; B4-F remains red).
 
+VERIFIED RECORD-MACRO INITIALIZER SLICE (bootstrap successor still open):
+record-style macro assignments now retain their right-hand-side text when
+`MacroValue#node_identifier_name` renders `AssignNode` values, so generated
+initializer parameters keep their defaults. Generated `DefNode` parameter
+recovery no longer reverse-scans retained sources by equal span. Each generated
+definition is now paired with its exact macro output and arena in a sidecar;
+missing or wrong-arena certificates fail closed to the raw-slice path. The
+focused same-length foreign-source falsifier, record initializer/default
+regression, full HIR **366/0**, macro **30/0**, LLVM backend **88/0**, and
+`tuple_to_static_array_shape_repro_ok` runtime oracle are green. This is scoped
+to `MacroExpander#expand` output-backed definitions; literal-only macro paths
+without a certificate still conservatively fall back.
 
 CURRENT B4-F / INCREMENTAL-SCAN FRONTIER: every compiler stage in
 `scripts/bootstrap_chain.sh` is now supervised by `scripts/run_safe.sh`, and
