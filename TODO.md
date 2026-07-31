@@ -10608,6 +10608,19 @@ caller assignment in a condition, a pure block-local assignment, and top-level
 plus nested same-name block-parameter shadows. The residual cost is lost
 direct-inline coverage for unclassified AST shapes.
 
+Formatter follow-up: concrete generic arguments are now accepted by matching
+bare generic arms of a union parameter, so `Tuple(Float64)` can materialize the
+real `String::Formatter(Tuple(Float64))` specialization. Before lowering a
+short-circuit condition body, HIR now folds the narrow proven-false
+`Float64.is_a?(Hash | NamedTuple)` guards used by the formatter. The generated
+stdlib HIR contract requires both `arg_at(String)` and the Float64 formatter
+body while rejecting the impossible `Float64#[](String)` demand; focused unit
+contracts retain legal Hash and NamedTuple indexing. The pre-existing nested
+`Point#inspect` specialization assertions are now a separate red gate: both the
+pre-change and current compilers lower the inherited zero-argument wrapper with
+`self : Object`, so that issue remains a distinct materialization-identity
+frontier rather than part of the formatter change.
+
 ## Stop Conditions
 
 - Do not run `s3b+` until generated `s2b` passes plain/no-prelude smokes and

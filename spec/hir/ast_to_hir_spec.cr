@@ -8255,6 +8255,93 @@ describe Adamas::HIR::AstToHir do
       text.should_not contain("Pointer(Void)")
     end
 
+    it "prunes impossible numeric named-container branches before lowering their body" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        def guarded_numeric_lookup(flag : Bool, value : Float64, key : String) : Float64
+          if flag && value.is_a?(Hash)
+            value[key]
+          end
+          value
+        end
+
+        guarded_numeric_lookup(true, 1.25_f64, "x")
+      CRYSTAL
+
+      function = converter.module.functions.find do |candidate|
+        candidate.name.starts_with?("guarded_numeric_lookup")
+      end
+      function.should_not be_nil
+
+      calls = function.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end
+      calls.none? { |call| call.method_name.includes?("Float64#[]$String") }.should be_true
+    end
+
+    it "preserves dynamic receiver evaluation before pruning an impossible named-container branch" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        def dynamic_numeric_value(value : Float64) : Float64
+          value
+        end
+
+        def guarded_dynamic_lookup(flag : Bool, value : Float64, key : String) : Float64
+          if flag && dynamic_numeric_value(value).is_a?(Hash)
+            value[key]
+          end
+          value
+        end
+
+        guarded_dynamic_lookup(true, 1.25_f64, "x")
+      CRYSTAL
+
+      function = converter.module.functions.find do |candidate|
+        candidate.name.starts_with?("guarded_dynamic_lookup")
+      end
+      function.should_not be_nil
+
+      calls = function.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end
+      calls.any? { |call| call.method_name.starts_with?("dynamic_numeric_value") }.should be_true
+      calls.none? { |call| call.method_name.includes?("Float64#[]$String") }.should be_true
+    end
+
+    it "preserves concrete Hash and NamedTuple indexing behind named-container guards" do
+      hash_converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        def guarded_hash_lookup(value : Hash(String, Int32), key : String) : Int32
+          if value.is_a?(Hash)
+            return value[key]
+          end
+          0
+        end
+
+        guarded_hash_lookup({"x" => 3}, "x")
+      CRYSTAL
+
+      hash_calls = hash_converter.module.functions.flat_map(&.blocks).flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end
+      hash_calls.any? { |call| call.method_name == "Hash(String, Int32)#[]$String" }.should be_true
+
+      named_converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        def guarded_named_lookup(value : NamedTuple(x: Int32), key : String) : Int32
+          if value.is_a?(NamedTuple)
+            return value[key]
+          end
+          0
+        end
+
+        guarded_named_lookup({x: 3}, "x")
+      CRYSTAL
+
+      named_calls = named_converter.module.functions.flat_map(&.blocks).flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end
+      named_calls.any? do |call|
+        call.method_name.includes?("NamedTuple(") && call.method_name.includes?("#[]$String")
+      end.should be_true
+    end
+
     it "preserves concrete owner type params for generic-module unsafe_as and constants" do
       converter = lower_program_with_main(<<-CRYSTAL)
         module Reint(F, U)

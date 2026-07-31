@@ -188,12 +188,19 @@ describe "generated HIR runtime" do
     output.should contain("generated-method-effect-provider-ok")
   end
 
-  it "preserves real stdlib formatter and nested-struct specialization shapes" do
+  it "preserves real stdlib formatter specialization shapes" do
     hir = GeneratedHIRRuntimeSpec.emit_stdlib_specialization_hir
 
     hir.should contain("func @String::Formatter(Tuple(Float64))#arg_at$Nil")
+    hir.should contain("func @String::Formatter(Tuple(Float64))#arg_at$String")
     hir.should contain("func @String::Formatter(Tuple(Float64))#float$String::Formatter::Flags_Float64")
     hir.should_not contain("String::Formatter(Tuple(Float64))#float$String::Formatter::Flags_Int32")
+    hir.should_not contain("Float64#[]$String")
+  end
+
+  it "preserves real stdlib nested-struct specialization shapes" do
+    hir = GeneratedHIRRuntimeSpec.emit_stdlib_specialization_hir
+
     hir.should match(/call %\d+\.Outer::Inner::Point#inspect\(\)/)
     hir.should contain("func @Outer::Inner::Point#inspect$String::Builder")
   end

@@ -15135,7 +15135,17 @@ module Adamas::HIR
           variant_type != TypeRef::VOID && get_union_member_variant_id(param_type, variant_type) >= 0
         end
       else
-        get_union_member_variant_id(param_type, call_type) >= 0
+        return true if get_union_member_variant_id(param_type, call_type) >= 0
+
+        # A bare generic union arm admits its concrete instantiations. For
+        # example, `Array | Tuple` accepts `Tuple(Float64)` even though the
+        # concrete TypeRef is not identical to the registry entry for `Tuple`.
+        call_name = get_type_name_from_ref(call_type)
+        return false if call_name.empty? || !call_name.includes?('(')
+        call_base = strip_generic_args(call_name)
+        split_union_type_name(param_desc.name).any? do |variant_name|
+          variant_name == call_name || (variant_name == call_base && call_base != call_name)
+        end
       end
     end
 
@@ -72855,6 +72865,17 @@ module Adamas::HIR
         end
       end
 
+      # A short-circuit RHS may be a statically known `is_a?`/`nil?` test even
+      # when the enclosing condition is not statically known. Prune it before
+      # lowering the untaken body; otherwise impossible calls such as
+      # Float64#[]$String in Formatter(Tuple(Float64)) become live demand.
+      static_val = static_is_a_condition_value(ctx, expr_id)
+      static_val = static_nil_condition_value(ctx, expr_id) if static_val.nil?
+      unless static_val.nil?
+        ctx.terminate(Jump.new(static_val ? then_block : else_block))
+        return
+      end
+
       cond_id = lower_expr(ctx, expr_id)
       cond_type = ctx.type_of(cond_id)
       cond_bool = lower_truthy_check(ctx, cond_id, cond_type)
@@ -73314,6 +73335,16 @@ module Adamas::HIR
 
       value_desc = @module.get_type_descriptor(value_type)
       check_desc = @module.get_type_descriptor(check_type)
+
+      # Numeric values cannot satisfy the formatter's named-container guards.
+      # Keep this proof deliberately narrow: broader primitive-vs-reference
+      # folding could erase valid module or ancestor checks whose hierarchy is
+      # not registered yet.
+      if numeric_primitive?(value_type)
+        check_name = check_desc.try(&.name) || get_type_name_from_ref(check_type)
+        return false if check_name == "Hash" || check_name == "NamedTuple"
+      end
+
       return nil unless value_desc && check_desc
       return nil if value_desc.kind == TypeKind::Union || check_desc.kind == TypeKind::Union
       return false if value_desc.kind == TypeKind::Primitive && check_desc.kind == TypeKind::Primitive
