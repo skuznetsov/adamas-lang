@@ -89060,6 +89060,14 @@ module Adamas::HIR
           concrete_call_owner = receiver_type_name
         end
       end
+      if concrete_call_owner.nil? && receiver_id
+        receiver_type = ctx.type_of(receiver_id)
+        if receiver_desc = @module.get_type_descriptor(receiver_type)
+          if receiver_desc.kind == TypeKind::Tuple && receiver_desc.name.starts_with?("Tuple(")
+            concrete_call_owner = receiver_desc.name
+          end
+        end
+      end
       if concrete_call_owner
         specialized_base_method_name = specialize_method_owner_name(base_method_name, concrete_call_owner)
         specialized_mangled_method_name = specialize_method_owner_name(mangled_method_name, concrete_call_owner)

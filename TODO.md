@@ -10648,6 +10648,19 @@ reaches the pre-existing
 `Fiber#exec_recursive_hash` startup crash, so this slice proves Builder parity
 through semantic HIR demand rather than end-to-end runtime readiness.
 
+Concrete Tuple call-owner follow-up: a value receiver whose HIR descriptor is
+`Tuple(...)` now specializes a resolved inherited method target to that exact
+owner before materialization. Root: `String::Formatter(Tuple(Float64))#arg_at`
+selected `Indexable(T)#fetch`, but emitted the target as bare
+`Tuple#fetch$Int32_block`; its nested `unsafe_fetch` therefore returned `Int32`
+despite a `Tuple(Float64)` self parameter. The real stdlib HIR gate now requires
+`Tuple(Float64)#fetch$Int32_block` and its exact
+`Tuple(Float64)#unsafe_fetch$Int32` call. A safe runtime regression proves that
+the fetched value remains `1.25_f64` and that `%s` formatting no longer crashes.
+A fresh replay also invalidates the stale `Fiber#exec_recursive_hash` residual:
+the remaining formatter frontier is independent float formatting (`%f` emits
+`0.000000`; `%.3f` raises from `consume_type`).
+
 ## Stop Conditions
 
 - Do not run `s3b+` until generated `s2b` passes plain/no-prelude smokes and

@@ -8,6 +8,7 @@ module GeneratedHIRRuntimeSpec
   VALUE_HASH_FIXTURE = File.join(__DIR__, "test_data", "value_hash_call_identity.cr")
   METHOD_EFFECT_FIXTURE = File.join(__DIR__, "test_data", "method_effect_provider_runtime.cr")
   STDLIB_FIXTURE = File.join(__DIR__, "test_data", "stdlib_specialization_contract.cr")
+  FORMATTER_TUPLE_FETCH_FIXTURE = File.join(__DIR__, "test_data", "formatter_tuple_fetch_runtime.cr")
   NILABLE_LOOP_ENSURE_FIXTURE = File.join(__DIR__, "test_data", "nilable_loop_ensure_runtime.cr")
   REFERENCE_ARRAY_FIND_NEXT_FIXTURE = File.join(__DIR__, "test_data", "reference_array_find_next_hir.cr")
   DEQUE_INCLUDES_FIXTURE = File.join(__DIR__, "test_data", "deque_includes_runtime.cr")
@@ -107,6 +108,27 @@ module GeneratedHIRRuntimeSpec
     end
   end
 
+  def self.compile_and_run_formatter_tuple_fetch_fixture : String
+    stem = File.join(Dir.tempdir, "adamas_formatter_tuple_fetch_#{Process.pid}_#{Random.rand(1_000_000)}")
+    artifacts = [stem, "#{stem}.ll", "#{stem}.ll.opt.ll", "#{stem}.o", "#{stem}.dwarf"]
+
+    begin
+      compile_status, compile_output = run_safely(
+        COMPILER,
+        360,
+        8192,
+        [FORMATTER_TUPLE_FETCH_FIXTURE, "-o", stem]
+      )
+      raise "formatter tuple-fetch fixture compilation failed:\n#{compile_output}" unless compile_status.success?
+
+      run_status, run_output = run_safely(stem, 20, 2048, [] of String)
+      raise "formatter tuple-fetch fixture execution failed:\n#{run_output}" unless run_status.success?
+      run_output
+    ensure
+      artifacts.each { |path| File.delete(path) if File.exists?(path) }
+    end
+  end
+
 
   def self.compile_and_run_nilable_loop_ensure_fixture : String
     stem = File.join(Dir.tempdir, "adamas_nilable_loop_ensure_#{Process.pid}_#{Random.rand(1_000_000)}")
@@ -196,6 +218,19 @@ describe "generated HIR runtime" do
     hir.should contain("func @String::Formatter(Tuple(Float64))#float$String::Formatter::Flags_Float64")
     hir.should_not contain("String::Formatter(Tuple(Float64))#float$String::Formatter::Flags_Int32")
     hir.should_not contain("Float64#[]$String")
+
+    consume_type = hir.match(/func @String::Formatter\(Tuple\(Float64\)\)#consume_type\$String::Formatter::Flags_Nil\(.*?\n\}/m)
+    consume_type.should_not be_nil
+    consume_type.not_nil![0].should contain("String::Formatter(Tuple(Float64))#current_char()")
+    consume_type.not_nil![0].should contain("String::Formatter(Tuple(Float64))#float$String::Formatter::Flags_Float64")
+
+    arg_at = hir.match(/func @String::Formatter\(Tuple\(Float64\)\)#arg_at\$Nil\(.*?\n\}/m)
+    arg_at.should_not be_nil
+    arg_at.not_nil![0].should contain("Tuple(Float64)#fetch$Int32_block")
+
+    tuple_fetch = hir.match(/func @Tuple\(Float64\)#fetch\$Int32_block\(.*?\n\}/m)
+    tuple_fetch.should_not be_nil
+    tuple_fetch.not_nil![0].should contain("Tuple(Float64)#unsafe_fetch$Int32")
   end
 
   it "preserves real stdlib nested-struct specialization shapes" do
@@ -215,6 +250,13 @@ describe "generated HIR runtime" do
     hir.should contain("func @Array(Outer::Inner::Point)#to_s$String::Builder")
     hir.should match(/call %\d+\.Outer::Inner::Point#inspect\$String::Builder\(%\d+\)/)
     hir.should contain("func @Outer::Inner::Point#inspect$String::Builder")
+  end
+
+  it "preserves concrete tuple fetch values through the real stdlib formatter" do
+    output = GeneratedHIRRuntimeSpec.compile_and_run_formatter_tuple_fetch_fixture
+
+    output.should contain("formatter-tuple-fetch-ok")
+    output.should contain("formatter-tuple-string-ok")
   end
 
   it "preserves nilable outer-local assignments through looped ensure scopes" do
