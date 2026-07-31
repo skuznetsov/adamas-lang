@@ -1160,8 +1160,7 @@ module Adamas
         # Uses immediate visit() pattern - generates AST node and immediately
         # processes it to register as MethodSymbol. No AST mutation needed.
         private def expand_accessor_macro(node_id : Frontend::ExprId, node : Frontend::TypedNode)
-          specs = Frontend.node_accessor_specs(node)
-          return unless specs
+          specs = accessor_specs(node)
           class_accessor = accessor_is_class?(node)
 
           specs.each do |spec|
@@ -1303,9 +1302,24 @@ module Adamas
           end
         end
 
+        # Extract accessor specs without relying on overload selection through
+        # the base `TypedNode` type. The generated compiler can otherwise bind
+        # `Frontend.node_accessor_specs(TypedNode)`, whose fallback is Nil.
+        private def accessor_specs(node : Frontend::TypedNode) : Array(Frontend::AccessorSpec)
+          case node
+          when Frontend::GetterNode
+            node.specs
+          when Frontend::SetterNode
+            node.specs
+          when Frontend::PropertyNode
+            node.specs
+          else
+            [] of Frontend::AccessorSpec
+          end
+        end
+
         private def record_accessor_storage_types(node : Frontend::TypedNode, node_id : Frontend::ExprId) : Nil
-          specs = Frontend.node_accessor_specs(node)
-          return unless specs
+          specs = accessor_specs(node)
 
           if accessor_is_class?(node)
             specs.each do |spec|
@@ -1519,8 +1533,7 @@ module Adamas
         private def attach_accessor_annotations(class_symbol : ClassSymbol, node : Frontend::TypedNode, annotation_ids : Array(Frontend::ExprId))
           return if annotation_ids.empty?
 
-          specs = Frontend.node_accessor_specs(node)
-          return unless specs
+          specs = accessor_specs(node)
 
           # Build all annotation infos up front to reuse for each spec
           infos = annotation_ids.compact_map do |ann_id|

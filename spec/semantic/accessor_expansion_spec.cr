@@ -97,6 +97,37 @@ describe "Phase 87B-1: Accessor Macro Expansion" do
       person_class.scope.lookup("age").should be_a(Semantic::MethodSymbol)
       person_class.scope.lookup("email").should be_a(Semantic::MethodSymbol)
     end
+
+    it "records accessor storage and annotation metadata through the base-node collector path" do
+      source = <<-CR
+        annotation Stored
+        end
+
+        class Config
+          @[Stored]
+          getter name : String = "default"
+        end
+      CR
+
+      lexer = Frontend::Lexer.new(source)
+      parser = Frontend::Parser.new(lexer)
+      program = parser.parse_program
+
+      context = Semantic::Context.new(Semantic::SymbolTable.new)
+      collector = Semantic::SymbolCollector.new(program, context)
+      collector.collect
+
+      config = context.symbol_table.lookup("Config").as(Semantic::ClassSymbol)
+      info = config.get_instance_var_info("name")
+      info.should_not be_nil
+      info.not_nil!.type_annotation.should eq("String")
+      info.not_nil!.has_default?.should be_true
+      info.not_nil!.default_value.should_not be_nil
+
+      annotations = config.ivar_annotations["name"]?
+      annotations.should_not be_nil
+      annotations.not_nil!.map(&.full_name).should contain("Stored")
+    end
   end
 
   describe "setter expansion" do
