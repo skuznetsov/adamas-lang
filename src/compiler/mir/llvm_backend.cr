@@ -27337,7 +27337,27 @@ module Adamas::MIR
       effective_element_type_ref = inst.element_type
 
       if is_static_array
-        # StaticArray stores elements inline at offset 0
+        # StaticArray stores elements inline at offset 0. Primitive-only
+        # tuples are the one aggregate family whose value ABI is inline bytes;
+        # return a heap carrier copy just like the Slice/Array paths so a
+        # `StaticArray(Tuple(...), N)#[]` value remains a tuple pointer while
+        # the slot itself stays payload bytes (not a pointer word).
+        if elem_mir = @module.type_registry.get(inst.element_type)
+          if inline_primitive_tuple_type?(elem_mir)
+            stride = elem_mir.size
+            emit "%#{base_name}.idx_i64 = sext i32 #{index} to i64"
+            emit "%#{base_name}.byte_off = mul i64 %#{base_name}.idx_i64, #{stride}"
+            emit "%#{base_name}.elem_ptr = getelementptr i8, ptr #{array_ptr}, i64 %#{base_name}.byte_off"
+            raw = "%#{base_name}.ipt_raw"
+            emit "#{raw} = call ptr @__adamas_malloc64(i64 #{stride + 8}) ; static-array tuple carrier"
+            emit "store i64 9223372036854775807, ptr #{raw}, align 8"
+            emit "#{name} = getelementptr i8, ptr #{raw}, i64 8"
+            emit "call void @llvm.memcpy.p0.p0.i64(ptr #{name}, ptr %#{base_name}.elem_ptr, i64 #{stride}, i1 false)"
+            @value_types[inst.id] = effective_element_type_ref
+            record_emitted_type(name, "ptr")
+            return
+          end
+        end
         emit "%#{base_name}.elem_ptr = getelementptr #{element_type}, ptr #{array_ptr}, i32 #{index}"
         emit "#{name} = load #{element_type}, ptr %#{base_name}.elem_ptr"
       else
@@ -27682,7 +27702,24 @@ module Adamas::MIR
       end
 
       if is_static_array
-        # StaticArray stores elements inline at offset 0
+        # StaticArray stores elements inline at offset 0. Keep primitive-only
+        # tuple payloads inline and copy the incoming tuple carrier into the
+        # byte slot; storing the ptr itself would disagree with Slice(Tuple)'s
+        # value ABI and make the subsequent fetch copy the pointer word.
+        if elem_mir = @module.type_registry.get(inst.element_type)
+          if inline_primitive_tuple_type?(elem_mir)
+            stride = elem_mir.size
+            emit "%#{base_name}.idx_i64 = sext i32 #{index} to i64"
+            emit "%#{base_name}.byte_off = mul i64 %#{base_name}.idx_i64, #{stride}"
+            emit "%#{base_name}.elem_ptr = getelementptr i8, ptr #{array_ptr}, i64 %#{base_name}.byte_off"
+            if value == "null"
+              emit "call void @llvm.memset.p0.i64(ptr %#{base_name}.elem_ptr, i8 0, i64 #{stride}, i1 false)"
+            else
+              emit "call void @llvm.memcpy.p0.p0.i64(ptr %#{base_name}.elem_ptr, ptr #{value}, i64 #{stride}, i1 false)"
+            end
+            return
+          end
+        end
         emit "%#{base_name}.elem_ptr = getelementptr #{element_type}, ptr #{array_ptr}, i32 #{index}"
         emit "store #{element_type} #{value}, ptr %#{base_name}.elem_ptr"
       else
