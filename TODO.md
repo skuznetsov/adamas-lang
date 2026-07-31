@@ -10615,11 +10615,30 @@ short-circuit condition body, HIR now folds the narrow proven-false
 `Float64.is_a?(Hash | NamedTuple)` guards used by the formatter. The generated
 stdlib HIR contract requires both `arg_at(String)` and the Float64 formatter
 body while rejecting the impossible `Float64#[](String)` demand; focused unit
-contracts retain legal Hash and NamedTuple indexing. The pre-existing nested
-`Point#inspect` specialization assertions are now a separate red gate: both the
-pre-change and current compilers lower the inherited zero-argument wrapper with
-`self : Object`, so that issue remains a distinct materialization-identity
-frontier rather than part of the formatter change.
+contracts retain legal Hash and NamedTuple indexing.
+
+Nested-struct follow-up: an inherited `Object` convenience wrapper requested
+for a concrete runtime generic reference owner now retains that exact owner
+when the source wrapper delegates to another overload of the same method. This
+makes `Array(Outer::Inner::Point)#inspect` lower with `self : Array(Point)` and
+preserves the real stdlib chain through `Array(Point)#inspect(IO)` to the static
+`Point#inspect(IO)` call. A negative control keeps a non-delegating inherited
+`Object#stable` body with a same-name local under `self : Object`, bounding the
+new admission rule to actual self calls instead of identifier-token matches.
+The old generated assertion for `Point#inspect()` was retired: the original
+Crystal compiler does not emit or call the zero-argument Point wrapper for
+`[Point].inspect`; `Array#to_s(IO)` invokes the element overload directly. The
+corrected semantic owner gate is RED on the pre-change compiler and GREEN on the
+current compiler. Original Crystal does specialize the remaining chain through
+`String::Builder`, while current HIR stops at `Array(Point)#inspect(IO)` and
+`Point#inspect(IO)`; that implementation-parity requirement is retained as an
+explicit pending generated gate rather than treated as closed. The full HIR
+suite is green at 370 examples with two existing pending examples, and the
+focused formatter, nested-struct owner, generated registry, and nilable runtime
+gates all pass. Full nested-fixture execution still reaches the pre-existing
+`Fiber#exec_recursive_hash` startup crash, so this slice proves semantic HIR
+demand and owner identity rather than Builder parity or end-to-end runtime
+readiness.
 
 ## Stop Conditions
 

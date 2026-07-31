@@ -10,6 +10,7 @@ require "./debug_hooks"
 require "./memory_strategy"
 require "../layout_probe"
 require "../frontend/ast"
+require "../frontend/dispatch"
 require "../semantic/identity/dry_run_tracker"
 require "../mir/mir"
 require "../../runtime"
@@ -2633,6 +2634,77 @@ module Adamas::HIR
         base_info.is_struct,
         base_info.parent_name,
       )
+    end
+
+    # Object-level convenience wrappers such as `inspect : String` delegate to
+    # another overload on `self`. Preserve the concrete runtime generic owner
+    # only for that structural wrapper shape; ordinary inherited Object bodies
+    # keep their existing ancestor-owned lowering.
+    private def preserve_requested_runtime_reference_wrapper_owner?(
+      requested_name : String,
+      resolved_name : String,
+      resolved_def : Adamas::Compiler::Frontend::DefNode,
+    ) : Bool
+      requested_parts = parse_method_name(requested_name)
+      resolved_parts = parse_method_name(resolved_name)
+      return false unless requested_parts.is_instance && resolved_parts.is_instance
+
+      requested_owner = requested_parts.owner
+      return false if requested_owner.empty? || !requested_owner.includes?('(')
+      return false unless resolved_parts.owner == "Object"
+      return false unless @module.class_parents[requested_owner]? == "Reference"
+      return false unless object_wrapper_source_delegates_to_same_method?(resolved_name, resolved_def)
+
+      @class_info.has_key?(requested_owner)
+    end
+
+    private def object_wrapper_source_delegates_to_same_method?(
+      resolved_name : String,
+      resolved_def : Adamas::Compiler::Frontend::DefNode,
+    ) : Bool
+      method_name = parse_method_name(resolved_name).method
+      body = resolved_def.body
+      return false unless method_name && body
+
+      source_arena = @function_def_arenas[resolved_name]? ||
+                     @function_def_arenas[strip_type_suffix(resolved_name)]? ||
+                     resolve_arena_for_def(resolved_def, @arena)
+      old_arena = @arena
+      @arena = source_arena
+      begin
+        body.any? do |expr_id|
+          expression_contains_self_call_named?(expr_id, method_name, source_arena)
+        end
+      ensure
+        @arena = old_arena
+      end
+    end
+
+    private def expression_contains_self_call_named?(
+      expr_id : Adamas::Compiler::Frontend::ExprId,
+      method_name : String,
+      source_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Bool
+      return false if expr_id.index < 0 || expr_id.index >= source_arena.size
+
+      node = source_arena[expr_id]
+      if node.is_a?(Adamas::Compiler::Frontend::CallNode)
+        callee = source_arena[node.callee]
+        case callee
+        when Adamas::Compiler::Frontend::IdentifierNode
+          return true if identifier_name_text(callee, source_arena) == method_name
+        when Adamas::Compiler::Frontend::MemberAccessNode
+          receiver = source_arena[callee.object]
+          if receiver.is_a?(Adamas::Compiler::Frontend::SelfNode) &&
+             member_access_name_text(callee) == method_name
+            return true
+          end
+        end
+      end
+
+      Adamas::Compiler::Frontend::NodeDispatch.get_child_exprs(source_arena, expr_id).any? do |child_id|
+        expression_contains_self_call_named?(child_id, method_name, source_arena)
+      end
     end
 
     private def materialization_transaction_ledger_enabled? : Bool
@@ -83301,7 +83373,8 @@ module Adamas::HIR
           requested_owner != target_parts.owner
       preserve_requested_wrapper_owner =
         materialize_requested_instance_wrapper &&
-          preserve_requested_value_owner_specialization?(name, resolved_target_name)
+          (preserve_requested_value_owner_specialization?(name, resolved_target_name) ||
+           preserve_requested_runtime_reference_wrapper_owner?(name, resolved_target_name, resolved_func_def))
 
       if preserve_requested_wrapper_owner
         if info = generic_owner_info(requested_owner)

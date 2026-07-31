@@ -10248,6 +10248,54 @@ describe Adamas::HIR::AstToHir do
       converter.module.functions.any? { |func| func.name.starts_with?("Box(Int32)#run$") }.should be_false
     end
 
+    it "retains an exact runtime generic owner for an inherited Object wrapper" do
+      source = <<-CRYSTAL
+        class Object
+          def inspect : String
+            inspect(0)
+            ""
+          end
+
+          def inspect(io : Int32) : Nil
+          end
+
+          def stable : Int32
+            stable = 7
+            stable
+          end
+        end
+
+        class Reference < Object
+        end
+
+        class Box(T) < Reference
+          def inspect(io : Int32) : Nil
+          end
+        end
+      CRYSTAL
+
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+      converter.arena = arena
+      class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+      class_nodes.each { |node| converter.register_class(node) }
+      converter.__test_monomorphize_generic_class("Box", ["Int32"], "Box(Int32)")
+
+      converter.__test_lower_function_if_needed("Box(Int32)#inspect")
+      wrapper = converter.module.function_by_name("Box(Int32)#inspect")
+      wrapper.should_not be_nil
+      converter.__test_get_type_name_from_ref(wrapper.not_nil!.params.first.type).should eq("Box(Int32)")
+
+      text = hir_text(wrapper.not_nil!)
+      text.should contain("Box(Int32)#inspect$Int32")
+      text.should_not contain("Object#inspect$Int32")
+
+      converter.__test_lower_function_if_needed("Box(Int32)#stable")
+      stable = converter.module.function_by_name("Box(Int32)#stable")
+      stable.should_not be_nil
+      converter.__test_get_type_name_from_ref(stable.not_nil!.params.first.type).should eq("Object")
+    end
+
     it "does not synthesize a generic wrapper for an Object virtual target" do
       source = <<-CRYSTAL
         class Object
