@@ -9039,11 +9039,18 @@ module Adamas
           text = bytes_window_to_string(buffer.to_slice, 0, buffer.size)
           text = text.rstrip if trim_trailing
 
-          # Capture span if we have start and end tokens
-          span = if start_span && end_span
-                   start_span.cover(end_span)
-                 elsif start_span
-                   start_span
+          # Capture span if we have start and end tokens. Keep the values
+          # concretely typed inside the guarded branch: self-hosted
+          # specialization can still lower this branch for an otherwise
+          # unreachable start_span=Nil call shape.
+          span = if start_span
+                   stable_start_span : Span = start_span.not_nil!
+                   if end_span
+                     stable_end_span : Span = end_span.not_nil!
+                     stable_start_span.cover(stable_end_span)
+                   else
+                     stable_start_span
+                   end
                  end
 
           pieces << MacroPiece.text(text, span)
@@ -12832,13 +12839,20 @@ module Adamas
           # Materialize arrays once, then compute span cheaply (closing paren already consumed)
           args = args_b.to_a
           named_args = named_b.to_a
-          closing_span = previous_token.try(&.span)
-          call_span = if named_args.size > 0
+          closing_span = if (closing_token = previous_token) &&
+                            operator_token?(closing_token, Token::Kind::RParen)
+                           closing_token.span
+                         end
+          call_span = if closing_span
+                        # The closing parenthesis is part of the call syntax and
+                        # establishes the statement's real ending line. Using
+                        # only the last argument made a postfix modifier on the
+                        # `)` line look like a new prefix statement.
+                        node_span(callee).cover(closing_span)
+                      elsif named_args.size > 0
                         node_span(callee).cover(named_args.last.span)
                       elsif args.size > 0
                         node_span(callee).cover(@arena[args.last].span)
-                      elsif closing_span
-                        node_span(callee).cover(closing_span)
                       else
                         node_span(callee)
                       end
@@ -14611,7 +14625,9 @@ current_token.kind == Token::Kind::Identifier &&
         end
 
         # Phase 77: Peek ahead to find next non-trivia token
-        private def peek_next_non_trivia
+        # Keep the value contract explicit: self-hosted body inference can see
+        # the loop as Nil before it accounts for the early `return token`.
+        private def peek_next_non_trivia : Token
           offset = 1
           loop do
             token = peek_token(offset)
@@ -14624,7 +14640,9 @@ current_token.kind == Token::Kind::Identifier &&
 
         # Peek ahead, skipping whitespace/comments but preserving newlines.
         # Useful for pointer suffix parsing where line breaks terminate a type.
-        private def peek_next_non_space_or_comment
+        # As with peek_next_non_trivia above, the loop always returns a Token;
+        # keep that contract explicit for self-hosted body inference.
+        private def peek_next_non_space_or_comment : Token
           offset = 1
           loop do
             token = peek_token(offset)
@@ -15453,12 +15471,16 @@ current_token.kind == Token::Kind::Identifier &&
 
                 directive_end = find_embedded_macro_directive_end(source_slice, i, is_control)
                 return nil unless directive_end
-                directive_len = directive_end - i
+                # Keep the loop-carried index concretely Int32. During
+                # self-hosting, the nilable pre-guard value can otherwise leak
+                # across the back-edge and specialize Slice#unsafe_fetch$Nil.
+                stable_directive_end : Int32 = directive_end.not_nil!
+                directive_len = stable_directive_end - i
                 directive_str = bytes_window_to_string(source_slice, i, directive_len)
                 sub_pieces = sub_parse_embedded_macro_directive(directive_str)
                 return nil unless sub_pieces
                 sub_pieces.each { |p| pieces << rebind_macro_piece_span(p, anchor) }
-                i = directive_end
+                i = stable_directive_end
                 text_start = i
                 next
               end
