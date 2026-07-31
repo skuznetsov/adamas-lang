@@ -113,6 +113,40 @@ census, integrated F3 runner, and default-off no-prelude regression are green.
 Next either design an explicit availability/order replay certificate or refute
 that route before any production raw-segment skip. B4-F remains red.
 
+PRE-SCAN AVAILABILITY REPLAY REFUTED; FULL SCAN REMAINS AUTHORITATIVE. A
+default-off model now snapshots target body/lowering/queue state before the
+scan, replays the canonical raw segment against that snapshot, and compares the
+prediction with occurrence-time admission. It is labelled
+`scope=pre_scan_target_snapshot`, `authority=full_scan`, and
+`promotion=forbidden`; any model mismatch or stable false reuse keeps the
+terminal verdict inconclusive.
+
+The real same-scan union/accessor regression now runs both occurrence orders.
+`direct T -> union materializer T` admits the early bodyless getter, while
+`union materializer T -> direct T` materializes it before either occurrence can
+be admitted. Both traces end with the same canonical target names and getter
+body, but their available segments differ. The pre-scan replay model reports a
+mismatch, and the focused helper independently detects an intervening target
+materialization against a locally stable observer.
+
+The isolated staged HIR gate is 305 examples, 0 failures, 0 errors, with two
+existing pending examples. The source-matched iteration-3 gate preserved exact
+full/shadow raw and available vectors. Its ordinary trace observed 603, 1539,
+and 7471 stable pre-scan replays at iterations 1-3 with zero model mismatch and
+zero stable false reuse. Those zeroes are orientation only: the targeted
+two-order F3 counterexample is sufficient to reject universal replay authority.
+The compiler build, ownership census, integrated runner, and default-off
+no-prelude regression are green.
+
+This is a bounded refutation of canonical per-segment availability replay, not
+an implementation gap that one more target epoch can close. A sound route
+would need pre-canonical occurrence provenance, side-effect position, ordered
+function/block/instruction identity, resolver metadata, target-state
+transitions, and RTA/worklist/budget order—effectively a replay transcript.
+Next separate mutation-producing canonicalization from pure demand collection,
+or design an immutable pre-canonical occurrence index and falsify it before any
+production scan reduction. B4-F remains red.
+
 VERIFIED CONSTRUCTOR NAMED-ARGUMENT SLICE (produced-stage successor still
 open): source-backed lazy lowering collapsed
 `NamedSlotProbe.new(third: 30)` to `NamedSlotProbe.new$Int32(%30)`, so the

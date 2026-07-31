@@ -58896,6 +58896,55 @@ module Adamas::HIR
       }
     end
 
+    private def missing_incremental_replay_available_segment(
+      raw : Array(String),
+      target_certificates : Hash(String, MissingIncrementalTargetCertificate),
+    ) : Array(String)
+      available = [] of String
+      raw.each do |name|
+        if certificate = target_certificates[name]?
+          next if certificate.body_present || certificate.state.in_progress?
+        end
+        available << name
+      end
+      available
+    end
+
+    private def missing_incremental_availability_replay_compare(
+      previous : Hash(UInt64, MissingIncrementalRevisionCertificate),
+      before_scan : Hash(UInt64, MissingIncrementalRevisionCertificate),
+      after_scan : Hash(UInt64, MissingIncrementalRevisionCertificate),
+      replay_available : Hash(UInt64, Array(String)),
+      current_available : Hash(UInt64, Array(String)),
+    ) : {Int32, Int32, Int32, Int32}
+      observed = 0
+      model_mismatch = 0
+      stable = 0
+      false_reuse = 0
+
+      current_available.each do |function_identity, current_segment|
+        replay_segment = replay_available[function_identity]?
+        next unless replay_segment
+        observed += 1
+        model_mismatch += 1 unless replay_segment == current_segment
+      end
+
+      before_scan.each do |function_identity, before_certificate|
+        previous_certificate = previous[function_identity]?
+        next unless previous_certificate &&
+                    previous_certificate.raw_input_equal?(before_certificate)
+
+        after_certificate = after_scan[function_identity]?
+        next unless after_certificate &&
+                    before_certificate.raw_input_equal?(after_certificate)
+        stable += 1
+        false_reuse += 1 unless replay_available[function_identity]? ==
+                                current_available[function_identity]?
+      end
+
+      {observed, model_mismatch, stable, false_reuse}
+    end
+
     private def missing_incremental_replace_revision_certificates(
       previous : Hash(UInt64, MissingIncrementalRevisionCertificate),
       current : Hash(UInt64, MissingIncrementalRevisionCertificate),
@@ -59061,6 +59110,9 @@ module Adamas::HIR
       incremental_raw_local_scan_invalidated_count = 0
       incremental_raw_local_false_reuse_count = 0
       incremental_raw_local_available_mismatch_count = 0
+      incremental_availability_replay_model_mismatch_count = 0
+      incremental_availability_replay_stable_count = 0
+      incremental_availability_replay_false_reuse_count = 0
       incremental_terminal_emitted = false
       STDERR.puts "[MISSING_LOWER] start" if debug_missing
       stop_after_missing_phase("start", "ADAMAS_STOP_AFTER_HIR_MISSING_START", iteration, 0)
@@ -59075,6 +59127,25 @@ module Adamas::HIR
         incremental_before_scan_revision_certificates =
           incremental_falsifier ?
             Hash(UInt64, MissingIncrementalRevisionCertificate).new : nil
+        incremental_pre_scan_target_certificates =
+          incremental_falsifier ?
+            Hash(String, MissingIncrementalTargetCertificate).new : nil
+        if incremental_falsifier
+          queued_names = Set(String).new(@pending_function_queue.size)
+          @pending_function_queue.each { |name| queued_names.add(name) }
+          @module.functions.each do |func|
+            incremental_pre_scan_target_certificates.not_nil![func.name] =
+              missing_incremental_target_certificate(func.name, queued_names)
+          end
+          @function_lowering_states.each_key do |name|
+            incremental_pre_scan_target_certificates.not_nil![name] ||=
+              missing_incremental_target_certificate(name, queued_names)
+          end
+          @pending_function_queue.each do |name|
+            incremental_pre_scan_target_certificates.not_nil![name] ||=
+              missing_incremental_target_certificate(name, queued_names)
+          end
+        end
         missing_summary = Hash(String, Int32).new(0) if debug_missing_summary
         missing_samples = Hash(String, Array(String)).new if debug_missing_samples
         func_trace_idx = 0
@@ -59295,6 +59366,32 @@ module Adamas::HIR
           incremental_raw_local_false_reuse_count += raw_local_false_reuse
           incremental_raw_local_available_mismatch_count +=
             raw_local_available_mismatch
+          incremental_replay_available_segments =
+            Hash(UInt64, Array(String)).new
+          incremental_current_segments.not_nil!.each do |function_identity, raw_segment|
+            incremental_replay_available_segments[function_identity] =
+              missing_incremental_replay_available_segment(
+                raw_segment,
+                incremental_pre_scan_target_certificates.not_nil!,
+              )
+          end
+          availability_replay_observed,
+            availability_replay_model_mismatch,
+            availability_replay_stable,
+            availability_replay_false_reuse =
+              missing_incremental_availability_replay_compare(
+                incremental_previous_revision_certificates.not_nil!,
+                incremental_before_scan_revision_certificates.not_nil!,
+                incremental_after_scan_revision_certificates,
+                incremental_replay_available_segments.not_nil!,
+                incremental_current_available_segments.not_nil!,
+              )
+          incremental_availability_replay_model_mismatch_count +=
+            availability_replay_model_mismatch
+          incremental_availability_replay_stable_count +=
+            availability_replay_stable
+          incremental_availability_replay_false_reuse_count +=
+            availability_replay_false_reuse
           shadow_segments, changed_segments =
             missing_incremental_refresh_segments(
               incremental_cached_segments.not_nil!,
@@ -59359,7 +59456,7 @@ module Adamas::HIR
             STDERR.flush
           end
           if matches || incremental_mismatch_count <= 3
-            STDERR.puts "[MISSING_INCREMENTAL] iter=#{iteration} funcs=#{@module.functions.size} tracked_segments=#{incremental_cached_segments.not_nil!.size} changed_segments=#{changed_segments} changed_available_segments=#{changed_available_segments} revision_candidates=#{revision_candidates} revision_stable=#{revision_stable} revision_scan_invalidated=#{revision_scan_invalidated} revision_false_reuse=#{revision_false_reuse} raw_local_observed=#{raw_local_observed} raw_local_stable=#{raw_local_stable} raw_local_scan_invalidated=#{raw_local_scan_invalidated} raw_local_false_reuse=#{raw_local_false_reuse} raw_local_available_mismatch=#{raw_local_available_mismatch} raw_local_scope=per_function_raw raw_local_authority=full_scan raw_local_promotion=forbidden target_invalidations=#{target_invalidations} post_enqueue_queue_changed=#{post_enqueue_queue_changed ? 1 : 0} previous_post_enqueue_queue_size=#{previous_post_enqueue_queue_size} queue_size=#{@pending_function_queue.size} full_raw=#{full_raw.size} shadow_raw=#{shadow_raw.size} full=#{full_available.size} shadow=#{shadow_available.size} full_selected=#{full_selected.size} shadow_selected=#{shadow_selected.size} full_more=#{full_has_more ? 1 : 0} shadow_more=#{shadow_has_more ? 1 : 0} match=#{matches ? 1 : 0} mismatches=#{incremental_mismatch_count} sample=#{sample}"
+            STDERR.puts "[MISSING_INCREMENTAL] iter=#{iteration} funcs=#{@module.functions.size} tracked_segments=#{incremental_cached_segments.not_nil!.size} changed_segments=#{changed_segments} changed_available_segments=#{changed_available_segments} revision_candidates=#{revision_candidates} revision_stable=#{revision_stable} revision_scan_invalidated=#{revision_scan_invalidated} revision_false_reuse=#{revision_false_reuse} raw_local_observed=#{raw_local_observed} raw_local_stable=#{raw_local_stable} raw_local_scan_invalidated=#{raw_local_scan_invalidated} raw_local_false_reuse=#{raw_local_false_reuse} raw_local_available_mismatch=#{raw_local_available_mismatch} raw_local_scope=per_function_raw raw_local_authority=full_scan raw_local_promotion=forbidden availability_replay_observed=#{availability_replay_observed} availability_replay_model_mismatch=#{availability_replay_model_mismatch} availability_replay_stable=#{availability_replay_stable} availability_replay_false_reuse=#{availability_replay_false_reuse} availability_replay_scope=pre_scan_target_snapshot availability_replay_authority=full_scan availability_replay_promotion=forbidden target_invalidations=#{target_invalidations} post_enqueue_queue_changed=#{post_enqueue_queue_changed ? 1 : 0} previous_post_enqueue_queue_size=#{previous_post_enqueue_queue_size} queue_size=#{@pending_function_queue.size} full_raw=#{full_raw.size} shadow_raw=#{shadow_raw.size} full=#{full_available.size} shadow=#{shadow_available.size} full_selected=#{full_selected.size} shadow_selected=#{shadow_selected.size} full_more=#{full_has_more ? 1 : 0} shadow_more=#{shadow_has_more ? 1 : 0} match=#{matches ? 1 : 0} mismatches=#{incremental_mismatch_count} sample=#{sample}"
           end
           missing_incremental_replace_revision_certificates(
             incremental_previous_revision_certificates.not_nil!,
@@ -59400,14 +59497,26 @@ module Adamas::HIR
               else
                 "cold"
               end
+            availability_replay_verdict =
+              if incremental_availability_replay_model_mismatch_count > 0
+                "pre_scan_model_refuted"
+              elsif incremental_availability_replay_false_reuse_count > 0
+                "false_reuse"
+              elsif incremental_availability_replay_stable_count > 0
+                "observed_no_false_reuse"
+              else
+                "cold"
+              end
             verdict = if exact_verdict == "observed_match" &&
                          revision_verdict == "observed_no_false_reuse" &&
-                         incremental_raw_local_false_reuse_count == 0
+                         incremental_raw_local_false_reuse_count == 0 &&
+                         incremental_availability_replay_model_mismatch_count == 0 &&
+                         incremental_availability_replay_false_reuse_count == 0
                         "observed_match"
                       else
                         "inconclusive"
                       end
-            STDERR.puts "[MISSING_INCREMENTAL_TERMINAL] iter=#{iteration} reason=no_missing hir_shape_stable=1 mismatches=#{incremental_mismatch_count} revision_stable=#{incremental_revision_stable_count} revision_scan_invalidated=#{incremental_revision_scan_invalidated_count} revision_false_reuse=#{incremental_revision_false_reuse_count} raw_local_stable=#{incremental_raw_local_stable_count} raw_local_scan_invalidated=#{incremental_raw_local_scan_invalidated_count} raw_local_false_reuse=#{incremental_raw_local_false_reuse_count} raw_local_available_mismatch=#{incremental_raw_local_available_mismatch_count} raw_local_scope=per_function_raw raw_local_authority=full_scan raw_local_promotion=forbidden exact_verdict=#{exact_verdict} revision_verdict=#{revision_verdict} raw_local_verdict=#{raw_local_verdict} verdict=#{verdict}"
+            STDERR.puts "[MISSING_INCREMENTAL_TERMINAL] iter=#{iteration} reason=no_missing hir_shape_stable=1 mismatches=#{incremental_mismatch_count} revision_stable=#{incremental_revision_stable_count} revision_scan_invalidated=#{incremental_revision_scan_invalidated_count} revision_false_reuse=#{incremental_revision_false_reuse_count} raw_local_stable=#{incremental_raw_local_stable_count} raw_local_scan_invalidated=#{incremental_raw_local_scan_invalidated_count} raw_local_false_reuse=#{incremental_raw_local_false_reuse_count} raw_local_available_mismatch=#{incremental_raw_local_available_mismatch_count} raw_local_scope=per_function_raw raw_local_authority=full_scan raw_local_promotion=forbidden availability_replay_model_mismatch=#{incremental_availability_replay_model_mismatch_count} availability_replay_stable=#{incremental_availability_replay_stable_count} availability_replay_false_reuse=#{incremental_availability_replay_false_reuse_count} availability_replay_scope=pre_scan_target_snapshot availability_replay_authority=full_scan availability_replay_promotion=forbidden exact_verdict=#{exact_verdict} revision_verdict=#{revision_verdict} raw_local_verdict=#{raw_local_verdict} availability_replay_verdict=#{availability_replay_verdict} verdict=#{verdict}"
             incremental_terminal_emitted = true
           end
           stop_after_missing_phase("queue", "ADAMAS_STOP_AFTER_HIR_MISSING_QUEUE", iteration, 0)
@@ -59492,14 +59601,14 @@ module Adamas::HIR
         iteration += 1
         if @module.functions.size == before
           if incremental_falsifier
-            STDERR.puts "[MISSING_INCREMENTAL_TERMINAL] iter=#{iteration - 1} reason=legacy_function_count_stop hir_shape_stable=unknown mismatches=#{incremental_mismatch_count} revision_stable=#{incremental_revision_stable_count} revision_scan_invalidated=#{incremental_revision_scan_invalidated_count} revision_false_reuse=#{incremental_revision_false_reuse_count} raw_local_stable=#{incremental_raw_local_stable_count} raw_local_scan_invalidated=#{incremental_raw_local_scan_invalidated_count} raw_local_false_reuse=#{incremental_raw_local_false_reuse_count} raw_local_available_mismatch=#{incremental_raw_local_available_mismatch_count} raw_local_scope=per_function_raw raw_local_authority=full_scan raw_local_promotion=forbidden exact_verdict=#{incremental_mismatch_count == 0 ? "observed_match" : "inconclusive"} revision_verdict=inconclusive raw_local_verdict=inconclusive verdict=inconclusive"
+            STDERR.puts "[MISSING_INCREMENTAL_TERMINAL] iter=#{iteration - 1} reason=legacy_function_count_stop hir_shape_stable=unknown mismatches=#{incremental_mismatch_count} revision_stable=#{incremental_revision_stable_count} revision_scan_invalidated=#{incremental_revision_scan_invalidated_count} revision_false_reuse=#{incremental_revision_false_reuse_count} raw_local_stable=#{incremental_raw_local_stable_count} raw_local_scan_invalidated=#{incremental_raw_local_scan_invalidated_count} raw_local_false_reuse=#{incremental_raw_local_false_reuse_count} raw_local_available_mismatch=#{incremental_raw_local_available_mismatch_count} raw_local_scope=per_function_raw raw_local_authority=full_scan raw_local_promotion=forbidden availability_replay_model_mismatch=#{incremental_availability_replay_model_mismatch_count} availability_replay_stable=#{incremental_availability_replay_stable_count} availability_replay_false_reuse=#{incremental_availability_replay_false_reuse_count} availability_replay_scope=pre_scan_target_snapshot availability_replay_authority=full_scan availability_replay_promotion=forbidden exact_verdict=#{incremental_mismatch_count == 0 ? "observed_match" : "inconclusive"} revision_verdict=inconclusive raw_local_verdict=inconclusive availability_replay_verdict=inconclusive verdict=inconclusive"
             incremental_terminal_emitted = true
           end
           break
         end
       end
       if incremental_falsifier && !incremental_terminal_emitted
-        STDERR.puts "[MISSING_INCREMENTAL_TERMINAL] iter=#{iteration} reason=max_iterations hir_shape_stable=unknown mismatches=#{incremental_mismatch_count} revision_stable=#{incremental_revision_stable_count} revision_scan_invalidated=#{incremental_revision_scan_invalidated_count} revision_false_reuse=#{incremental_revision_false_reuse_count} raw_local_stable=#{incremental_raw_local_stable_count} raw_local_scan_invalidated=#{incremental_raw_local_scan_invalidated_count} raw_local_false_reuse=#{incremental_raw_local_false_reuse_count} raw_local_available_mismatch=#{incremental_raw_local_available_mismatch_count} raw_local_scope=per_function_raw raw_local_authority=full_scan raw_local_promotion=forbidden exact_verdict=#{incremental_mismatch_count == 0 ? "observed_match" : "inconclusive"} revision_verdict=inconclusive raw_local_verdict=inconclusive verdict=inconclusive"
+        STDERR.puts "[MISSING_INCREMENTAL_TERMINAL] iter=#{iteration} reason=max_iterations hir_shape_stable=unknown mismatches=#{incremental_mismatch_count} revision_stable=#{incremental_revision_stable_count} revision_scan_invalidated=#{incremental_revision_scan_invalidated_count} revision_false_reuse=#{incremental_revision_false_reuse_count} raw_local_stable=#{incremental_raw_local_stable_count} raw_local_scan_invalidated=#{incremental_raw_local_scan_invalidated_count} raw_local_false_reuse=#{incremental_raw_local_false_reuse_count} raw_local_available_mismatch=#{incremental_raw_local_available_mismatch_count} raw_local_scope=per_function_raw raw_local_authority=full_scan raw_local_promotion=forbidden availability_replay_model_mismatch=#{incremental_availability_replay_model_mismatch_count} availability_replay_stable=#{incremental_availability_replay_stable_count} availability_replay_false_reuse=#{incremental_availability_replay_false_reuse_count} availability_replay_scope=pre_scan_target_snapshot availability_replay_authority=full_scan availability_replay_promotion=forbidden exact_verdict=#{incremental_mismatch_count == 0 ? "observed_match" : "inconclusive"} revision_verdict=inconclusive raw_local_verdict=inconclusive availability_replay_verdict=inconclusive verdict=inconclusive"
       end
     end
 

@@ -314,6 +314,59 @@ class Adamas::HIR::AstToHir
       empty_available,
     )
   end
+
+  def __test_exact_shadow_availability_replay_intervening_target_mutation(
+    func : Adamas::HIR::Function,
+    target : Adamas::HIR::Function,
+  ) : {Array(String), Array(String), {Int32, Int32, Int32, Int32}}
+    function_identity = func.id.to_u64
+    target_name = target.name
+    before_certificate = missing_incremental_revision_certificate(func)
+    previous = {
+      function_identity => before_certificate,
+    }
+    before_scan = {
+      function_identity => before_certificate,
+    }
+    queued_names = Set(String).new
+    target_certificates = missing_incremental_target_certificates(
+      [target_name],
+      queued_names,
+    )
+    replay_available = {
+      function_identity => missing_incremental_replay_available_segment(
+        [target_name],
+        target_certificates,
+      ),
+    }
+
+    target.get_block(target.entry_block).add(
+      Adamas::HIR::Literal.new(
+        target.next_value_id,
+        Adamas::HIR::TypeRef::INT32,
+        1_i64,
+      )
+    )
+    after_scan = {
+      function_identity => missing_incremental_revision_certificate(func),
+    }
+    current_available = {
+      function_identity => [] of String,
+    }
+    compare = missing_incremental_availability_replay_compare(
+      previous,
+      before_scan,
+      after_scan,
+      replay_available,
+      current_available,
+    )
+
+    {
+      replay_available[function_identity],
+      current_available[function_identity],
+      compare,
+    }
+  end
 end
 
 private def parse_exact_shadow_source(code : String) : {Adamas::Compiler::Frontend::ArenaLike, Array(Adamas::Compiler::Frontend::ExprId)}
@@ -796,5 +849,29 @@ describe "missing-call exact incremental shadow" do
       call,
       "Owner#after",
     ).should eq({1, 1, 0, 1, 0})
+  end
+
+  it "rejects a pre-scan target snapshot after an intervening materialization" do
+    converter = exact_shadow_converter
+    target = converter.module.create_function(
+      "Owner#availability_replay_target",
+      Adamas::HIR::TypeRef::INT32,
+    )
+    observer = converter.module.create_function(
+      "Owner#availability_replay_observer",
+      Adamas::HIR::TypeRef::VOID,
+    )
+
+    replay_available,
+      current_available,
+      compare =
+        converter.__test_exact_shadow_availability_replay_intervening_target_mutation(
+          observer,
+          target,
+        )
+
+    replay_available.should eq([target.name])
+    current_available.should be_empty
+    compare.should eq({1, 1, 1, 1})
   end
 end

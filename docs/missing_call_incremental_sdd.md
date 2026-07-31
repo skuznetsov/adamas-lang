@@ -7,7 +7,9 @@ HIR scan as production authority. The default-off exact shadow can reconstruct
 ordered raw and occurrence-admitted demand segments, but it still discovers
 segment changes by performing that full scan. Per-function raw-local telemetry
 now separates stable HIR demand input from global availability context and is
-explicitly non-authoritative. B4-F remains measured-red.
+explicitly non-authoritative. A pre-scan target-state replay model is also
+measured and explicitly refuted by occurrence-order side effects. B4-F remains
+measured-red.
 
 Bounded context:
 
@@ -36,6 +38,10 @@ demand and emit an LLVM abort stub.
   `scope=per_function_raw`, `authority=full_scan`, and `promotion=forbidden`.
 - Raw-local exact equality and occurrence-availability mismatch are separate
   counters; their coexistence is an expected falsifier, not a contradiction.
+- A default-off pre-scan target snapshot may be compared with the authoritative
+  occurrence-admitted segment only as a falsifier. Every row must state
+  `scope=pre_scan_target_snapshot`, `authority=full_scan`, and
+  `promotion=forbidden`.
 - Any missing, wrapped, inconsistent, or unqualified revision fails closed to
   rescan.
 - Revision coordinates remain a vector. They are not folded into one readiness
@@ -53,6 +59,13 @@ demand and emit an LLVM abort stub.
 - Raw-local stability does not certify function domain/order, target body,
   lowering state, queue membership, definition/type lookup, class/include/enum
   metadata, RTA side state, or public mutable HIR/AST aliases.
+- Canonical post-rewrite raw demand plus a pre-scan or final target-state
+  snapshot cannot reconstruct occurrence-time availability. A resolver can
+  materialize a target between two occurrences during the scan.
+- A sufficient replay transcript would need pre-canonical occurrence identity,
+  side-effect position, ordered function/block/instruction domain, resolver
+  metadata epochs, target-state transitions, RTA/worklist state, and budget
+  order. That is not admitted as a bounded per-segment certificate.
 - No speedup, B4-F admission, or post-process fixed-point claim follows from a
   zero false-reuse count.
 
@@ -114,18 +127,25 @@ changed exact segment.
     unchanged per-function HIR input, but it cannot admit an available segment.
     Any cached/current availability difference is counted independently while
     the full scan remains authority.
+13. **Occurrence-time causality.** Availability is sampled after each
+    canonicalization side effect, not once per target or segment. Two scans can
+    end with the same canonical raw names and target body/state while admitting
+    different demand because the materializing occurrence moved.
 
 ## 5. Execution order
 
-1. Capture per-function revision vectors immediately before the legacy HIR
+1. Capture pre-scan target body/state/queue snapshots for the diagnostic model.
+2. Capture per-function revision vectors immediately before the legacy HIR
    collection window.
-2. Run the unchanged full HIR collection and collect exact raw/admitted
+3. Run the unchanged full HIR collection and collect exact raw/admitted
    segments.
-3. Capture vectors immediately after collection, before enqueue/process.
-4. Refresh exact cached segments as today.
-5. Compare each would-reuse decision with exact segment equality.
-6. Emit bounded false-reuse diagnostics.
-7. Continue through the unchanged legacy budget/queue/process path.
+4. Replay current canonical raw names against the pre-scan snapshot and compare
+   with occurrence-time admission; any mismatch refutes that replay model.
+5. Capture vectors immediately after collection, before enqueue/process.
+6. Refresh exact cached segments as today.
+7. Compare each would-reuse decision with exact segment equality.
+8. Emit bounded false-reuse diagnostics.
+9. Continue through the unchanged legacy budget/queue/process path.
 
 ## 6. Falsifier roster
 
@@ -136,9 +156,10 @@ changed exact segment.
 - **F3 — same-scan materialization:** a later accessor/union resolution changes
   body/state after an earlier call occurrence; occurrence-admitted parity must
   remain exact and would-reuse must be rejected. Implemented by
-  `regression_tests/missing_incremental_same_scan_union_accessor.sh`: scan 1
-  preserves the early admission, and scan 2 observes raw-local stability
-  together with an availability mismatch.
+  `regression_tests/missing_incremental_same_scan_union_accessor.sh`. The real
+  missing-call loop runs both occurrence orders. Both canonicalize to the same
+  getter demand, but demand-first admits the getter while materializer-first
+  does not; the pre-scan replay model reports a mismatch in both traces.
 - **F4 — definition replacement:** replace a `DefNode` under an existing key;
   definition revision must change, while reinstalling the same node is a no-op.
 - **F4b — inferred type replacement:** replace an inferred function return type;
@@ -198,16 +219,21 @@ semantic zeroes and improves the full B4-F corridor.
   `missing_revision_ledger_spec.cr`.
 - **Falsifiers:** F1-F7.
 - **Boundary:** default-off guard-only; no production scan skip.
-- **Observed staged gate:** 304 HIR examples passed with two existing pending
+- **Observed staged gate:** 305 HIR examples passed with two existing pending
   examples; the integrated same-scan accessor/union regression, ownership
   census, compiler build, and default-off no-prelude regression passed.
 - **Source-matched telemetry:** iterations 1-3 observed 603, 1539, and 7471
   raw-local stable segments with zero raw-local false reuse, while 198, 345,
   and 984 of those segments changed occurrence availability. Full/shadow raw
-  and available vectors remained exact through iteration 3.
+  and available vectors remained exact through iteration 3. The pre-scan replay
+  model observed 603, 1539, and 7471 stable segments with zero mismatch on that
+  ordinary trace; the two-order F3 counterexample still refutes universal
+  sufficiency, so these zeroes are not promotion evidence.
 - **Adversary verdict:** robust for the bounded observational guard, vulnerable
-  for universal mutation ownership or cached-scan authority.
-- **Next local track:** design an explicit availability replay certificate
-  covering target state and traversal order, or refute that route before any
-  production raw-segment skip. Public mutable aliases and unrevisioned
+  for the diagnostic implementation, and broken for bounded canonical
+  availability replay as production authority.
+- **Next local track:** separate mutation-producing canonicalization from pure
+  demand collection, or build an immutable pre-canonical occurrence index that
+  preserves side-effect order. Measure that boundary before considering any
+  production scan reduction. Public mutable aliases and unrevisioned
   class/include/enum/RTA metadata remain rejected boundaries.
