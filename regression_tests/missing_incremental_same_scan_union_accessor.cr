@@ -3,6 +3,10 @@ require "../src/compiler/frontend/lexer"
 require "../src/compiler/frontend/parser"
 
 class Adamas::HIR::AstToHir
+  def __probe_precanonical_call_names : Array(String)
+    missing_incremental_precanonical_occurrences.map(&.raw_name)
+  end
+
   def __probe_function_def_names(base_name : String) : Array(String)
     @function_defs.keys.select do |name|
       name == base_name || name.starts_with?("#{base_name}$")
@@ -92,9 +96,11 @@ block.add(
     second_scan_target,
   )
 )
+precanonical_call_names = converter.__probe_precanonical_call_names
 
 puts "[SAME_SCAN_ACCESSOR] order=#{order} before_getter_body=#{converter.module.has_function_with_body?(getter_target) ? 1 : 0}"
 ENV["ADAMAS_MISSING_INCREMENTAL_FALSIFIER"] = "1"
 converter.__probe_lower_missing_call_targets
+puts "[SAME_SCAN_ACCESSOR] order=#{order} precanonical=#{precanonical_call_names.join(" -> ")}"
 puts "[SAME_SCAN_ACCESSOR] order=#{order} canonical_getter=#{getter_call.method_name} canonical_union=#{union_call.method_name}"
 puts "[SAME_SCAN_ACCESSOR] order=#{order} after_getter_body=#{converter.module.has_function_with_body?(getter_target) ? 1 : 0} second_scan_body=#{converter.module.has_function_with_body?(second_scan_target) ? 1 : 0}"

@@ -4,6 +4,17 @@ require "../../src/compiler/frontend/parser"
 require "../../src/compiler/frontend/lexer"
 
 class Adamas::HIR::AstToHir
+  def __test_exact_shadow_precanonical_occurrences : Array(Tuple(UInt64, BlockId, ValueId, String))
+    missing_incremental_precanonical_occurrences.map do |occurrence|
+      {
+        occurrence.function_identity,
+        occurrence.block_id,
+        occurrence.call_id,
+        occurrence.raw_name,
+      }
+    end
+  end
+
   def __test_exact_shadow_select_batch(
     missing : Array(String),
     budget : Int32,
@@ -381,6 +392,79 @@ private def exact_shadow_converter : Adamas::HIR::AstToHir
 end
 
 describe "missing-call exact incremental shadow" do
+  it "captures immutable pre-canonical call identity and order without resolving calls" do
+    converter = exact_shadow_converter
+    target = converter.module.create_function(
+      "Owner#precanonical_target",
+      Adamas::HIR::TypeRef::INT32,
+    )
+    demand_first = converter.module.create_function(
+      "Owner#precanonical_demand_first",
+      Adamas::HIR::TypeRef::VOID,
+    )
+    demand_block = demand_first.get_block(demand_first.entry_block)
+    direct_call = Adamas::HIR::Call.new(
+      demand_first.next_value_id,
+      Adamas::HIR::TypeRef::VOID,
+      target.name,
+    )
+    materializer_call = Adamas::HIR::Call.new(
+      demand_first.next_value_id,
+      Adamas::HIR::TypeRef::VOID,
+      "Nil | Owner#precanonical_target",
+    )
+    demand_block.add(direct_call)
+    demand_block.add(materializer_call)
+
+    materializer_first = converter.module.create_function(
+      "Owner#precanonical_materializer_first",
+      Adamas::HIR::TypeRef::VOID,
+    )
+    materializer_block = materializer_first.get_block(materializer_first.entry_block)
+    reverse_materializer = Adamas::HIR::Call.new(
+      materializer_first.next_value_id,
+      Adamas::HIR::TypeRef::VOID,
+      "Nil | Owner#precanonical_target",
+    )
+    reverse_direct = Adamas::HIR::Call.new(
+      materializer_first.next_value_id,
+      Adamas::HIR::TypeRef::VOID,
+      target.name,
+    )
+    materializer_block.add(reverse_materializer)
+    materializer_block.add(reverse_direct)
+
+    converter.module.has_function_with_body?(target.name).should be_false
+    before_demand_revision =
+      converter.__test_exact_shadow_revision_certificate(demand_first)[6]
+    occurrences = converter.__test_exact_shadow_precanonical_occurrences
+    occurrences.select { |entry| entry[0] == demand_first.id.to_u64 }.should eq([
+      {demand_first.id.to_u64, demand_block.id, direct_call.id, target.name},
+      {demand_first.id.to_u64, demand_block.id, materializer_call.id, "Nil | Owner#precanonical_target"},
+    ])
+    occurrences.select { |entry| entry[0] == materializer_first.id.to_u64 }.should eq([
+      {materializer_first.id.to_u64, materializer_block.id, reverse_materializer.id, "Nil | Owner#precanonical_target"},
+      {materializer_first.id.to_u64, materializer_block.id, reverse_direct.id, target.name},
+    ])
+
+    demand_first.rewrite_call_method_name(materializer_call, target.name)
+    late_call = Adamas::HIR::Call.new(
+      demand_first.next_value_id,
+      Adamas::HIR::TypeRef::VOID,
+      "Owner#precanonical_late",
+    )
+    demand_block.add(late_call)
+    occurrences.select { |entry| entry[0] == demand_first.id.to_u64 }.map(&.[3])
+      .should eq([target.name, "Nil | Owner#precanonical_target"])
+    converter.__test_exact_shadow_precanonical_occurrences
+      .select { |entry| entry[0] == demand_first.id.to_u64 }
+      .map(&.[3])
+      .should eq([target.name, target.name, late_call.method_name])
+    converter.__test_exact_shadow_revision_certificate(demand_first)[6]
+      .should be > before_demand_revision
+    converter.module.has_function_with_body?(target.name).should be_false
+  end
+
   it "retains raw and occurrence-admitted demands in full-scan order" do
     converter = exact_shadow_converter
     cached = {

@@ -38,8 +38,20 @@ if ! rg -q '\[SAME_SCAN_ACCESSOR\] order=demand_first canonical_getter=Outer::In
   exit 1
 fi
 
+if ! rg -Fq '[SAME_SCAN_ACCESSOR] order=demand_first precanonical=Outer::Info#kind -> Nil | Outer::Info#kind -> ' "$DEMAND_FIRST_LOG"; then
+  echo "same-scan union accessor regression: demand-first raw occurrence order was not preserved" >&2
+  cat "$DEMAND_FIRST_LOG" >&2
+  exit 1
+fi
+
 if ! rg -q '\[MISSING_INCREMENTAL\] iter=0 .*raw_local_scan_invalidated=[1-9][0-9]* .*availability_replay_model_mismatch=[1-9][0-9]* .*full_raw=2 .*full=2 .*match=1' "$DEMAND_FIRST_LOG"; then
   echo "same-scan union accessor regression: first-scan occurrence evidence missing" >&2
+  cat "$DEMAND_FIRST_LOG" >&2
+  exit 1
+fi
+
+if ! rg -q '\[MISSING_INCREMENTAL\] iter=0 .*precanonical_indexed=3 .*precanonical_observed=3 .*precanonical_match=1 .*precanonical_authority=full_scan precanonical_promotion=forbidden' "$DEMAND_FIRST_LOG"; then
+  echo "same-scan union accessor regression: demand-first pre-canonical occurrence index mismatch" >&2
   cat "$DEMAND_FIRST_LOG" >&2
   exit 1
 fi
@@ -56,7 +68,7 @@ if rg -q 'raw_local_false_reuse=[1-9][0-9]*' "$DEMAND_FIRST_LOG"; then
   exit 1
 fi
 
-if ! rg -q '\[MISSING_INCREMENTAL_TERMINAL\] .*availability_replay_verdict=pre_scan_model_refuted verdict=inconclusive' "$DEMAND_FIRST_LOG"; then
+if ! rg -q '\[MISSING_INCREMENTAL_TERMINAL\] .*availability_replay_verdict=pre_scan_model_refuted .*verdict=inconclusive' "$DEMAND_FIRST_LOG"; then
   echo "same-scan union accessor regression: demand-first terminal did not fail closed" >&2
   cat "$DEMAND_FIRST_LOG" >&2
   exit 1
@@ -80,13 +92,25 @@ if ! rg -q '\[SAME_SCAN_ACCESSOR\] order=materializer_first canonical_getter=Out
   exit 1
 fi
 
+if ! rg -Fq '[SAME_SCAN_ACCESSOR] order=materializer_first precanonical=Nil | Outer::Info#kind -> Outer::Info#kind -> ' "$MATERIALIZER_FIRST_LOG"; then
+  echo "same-scan union accessor regression: materializer-first raw occurrence order was not preserved" >&2
+  cat "$MATERIALIZER_FIRST_LOG" >&2
+  exit 1
+fi
+
 if ! rg -q '\[MISSING_INCREMENTAL\] iter=0 .*availability_replay_model_mismatch=[1-9][0-9]* .*full_raw=2 .*full=1 .*match=1' "$MATERIALIZER_FIRST_LOG"; then
   echo "same-scan union accessor regression: reordered availability falsifier missing" >&2
   cat "$MATERIALIZER_FIRST_LOG" >&2
   exit 1
 fi
 
-if ! rg -q '\[MISSING_INCREMENTAL_TERMINAL\] .*availability_replay_verdict=pre_scan_model_refuted verdict=inconclusive' "$MATERIALIZER_FIRST_LOG"; then
+if ! rg -q '\[MISSING_INCREMENTAL\] iter=0 .*precanonical_indexed=3 .*precanonical_observed=3 .*precanonical_match=1 .*precanonical_authority=full_scan precanonical_promotion=forbidden' "$MATERIALIZER_FIRST_LOG"; then
+  echo "same-scan union accessor regression: materializer-first pre-canonical occurrence index mismatch" >&2
+  cat "$MATERIALIZER_FIRST_LOG" >&2
+  exit 1
+fi
+
+if ! rg -q '\[MISSING_INCREMENTAL_TERMINAL\] .*availability_replay_verdict=pre_scan_model_refuted .*verdict=inconclusive' "$MATERIALIZER_FIRST_LOG"; then
   echo "same-scan union accessor regression: materializer-first terminal did not fail closed" >&2
   cat "$MATERIALIZER_FIRST_LOG" >&2
   exit 1

@@ -159,6 +159,31 @@ Next separate mutation-producing canonicalization from pure demand collection,
 or design an immutable pre-canonical occurrence index and falsify it before any
 production scan reduction. B4-F remains red.
 
+PRE-CANONICAL OCCURRENCE IDENTITY/ORDER BOUNDARY VERIFIED; SEMANTIC REPLAY
+REMAINS REJECTED. The default-off missing-scan diagnostic now takes a pure,
+immutable `(Function#id, Block#id, Call#id, raw_name)` snapshot before any scan
+canonicalization and compares it with the raw identities encountered by the
+unchanged authoritative full scan. Owned rewrite plus insertion leaves the old
+snapshot unchanged, changes the function demand revision, and makes a fresh
+snapshot differ. The focused exact-shadow group passes 15 examples; the
+revision ownership census and both-order same-scan union/accessor regression
+pass. In F3, the immutable raw order remains distinct after both live calls
+canonicalize to `Outer::Info#kind`; demand-first still admits two occurrences,
+while materializer-first admits one, and the pre-scan availability replay stays
+refuted/inconclusive.
+
+A source-matched diagnostic stopped after iteration 3 in about 105 seconds.
+Indexed/observed occurrence counts matched exactly at 7517, 11740, 41080, and
+113005; full/shadow raw and available vectors also matched. This is traversal
+identity/order evidence only: the same run retained 253, 621, and 1801
+raw-stable availability mismatches at iterations 1-3. The index does not carry
+argument/block ABI, canonical target identity, resolver metadata, target-state
+transitions, or class/include/enum/RTA state, so it cannot authorize replay or
+a skipped scan. The run is diagnostic overhead, not a B4-F or speed
+certificate. Next classify a read-only per-occurrence transcript of
+canonicalization side effects and falsify resolver purity before considering
+any reuse. B4-F remains red.
+
 VERIFIED CONSTRUCTOR NAMED-ARGUMENT SLICE (produced-stage successor still
 open): source-backed lazy lowering collapsed
 `NamedSlotProbe.new(third: 30)` to `NamedSlotProbe.new$Int32(%30)`, so the

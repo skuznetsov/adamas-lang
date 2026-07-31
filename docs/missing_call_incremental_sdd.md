@@ -42,6 +42,11 @@ demand and emit an LLVM abort stub.
   occurrence-admitted segment only as a falsifier. Every row must state
   `scope=pre_scan_target_snapshot`, `authority=full_scan`, and
   `promotion=forbidden`.
+- A default-off pre-canonical occurrence index may copy ordered
+  `(Function#id, Block#id, Call#id, raw_name)` records before the scan and
+  compare them with the raw identities observed on entry to the authoritative
+  scan. Its scope is occurrence identity/order only; every row states
+  `authority=full_scan` and `promotion=forbidden`.
 - Any missing, wrapped, inconsistent, or unqualified revision fails closed to
   rescan.
 - Revision coordinates remain a vector. They are not folded into one readiness
@@ -62,6 +67,9 @@ demand and emit an LLVM abort stub.
 - Canonical post-rewrite raw demand plus a pre-scan or final target-state
   snapshot cannot reconstruct occurrence-time availability. A resolver can
   materialize a target between two occurrences during the scan.
+- Exact pre-canonical occurrence identity/order does not certify canonical
+  target identity, resolver purity, argument/block ABI, target availability, or
+  semantic parity. It cannot authorize replay or a skipped scan.
 - A sufficient replay transcript would need pre-canonical occurrence identity,
   side-effect position, ordered function/block/instruction domain, resolver
   metadata epochs, target-state transitions, RTA/worklist state, and budget
@@ -131,21 +139,30 @@ changed exact segment.
     canonicalization side effect, not once per target or segment. Two scans can
     end with the same canonical raw names and target body/state while admitting
     different demand because the materializing occurrence moved.
+14. **Pre-canonical identity boundary.** An immutable occurrence snapshot copies
+    stable function/block/call ids plus the raw call spelling without invoking
+    a resolver. Any added, removed, reordered, replaced, or renamed occurrence
+    rejects that observation window. Equality proves traversal identity/order
+    only; all semantic coordinates remain outside the certificate.
 
 ## 5. Execution order
 
-1. Capture pre-scan target body/state/queue snapshots for the diagnostic model.
-2. Capture per-function revision vectors immediately before the legacy HIR
+1. Capture the immutable pre-canonical occurrence index without resolving or
+   mutating calls.
+2. Capture pre-scan target body/state/queue snapshots for the diagnostic model.
+3. Capture per-function revision vectors immediately before the legacy HIR
    collection window.
-3. Run the unchanged full HIR collection and collect exact raw/admitted
-   segments.
-4. Replay current canonical raw names against the pre-scan snapshot and compare
+4. Run the unchanged full HIR collection, record raw occurrence identities on
+   entry, and collect exact raw/admitted segments.
+5. Compare the immutable index with the observed occurrence identity/order;
+   any mismatch keeps the diagnostic inconclusive.
+6. Replay current canonical raw names against the pre-scan snapshot and compare
    with occurrence-time admission; any mismatch refutes that replay model.
-5. Capture vectors immediately after collection, before enqueue/process.
-6. Refresh exact cached segments as today.
-7. Compare each would-reuse decision with exact segment equality.
-8. Emit bounded false-reuse diagnostics.
-9. Continue through the unchanged legacy budget/queue/process path.
+7. Capture vectors immediately after collection, before enqueue/process.
+8. Refresh exact cached segments as today.
+9. Compare each would-reuse decision with exact segment equality.
+10. Emit bounded false-reuse diagnostics.
+11. Continue through the unchanged legacy budget/queue/process path.
 
 ## 6. Falsifier roster
 
@@ -173,6 +190,11 @@ changed exact segment.
   reuse; this qualifies the negative detector without claiming public closure.
 - **F7 — staged system gate:** isolated staged snapshot HIR plus same-source
   ON/OFF iteration boundary must preserve exact raw/admitted/budget/queue shape.
+- **F8 — pre-canonical identity/order:** direct-first and materializer-first F3
+  runs must retain distinct immutable raw occurrence order even though both
+  live calls canonicalize to the same getter name. Owned rewrite/insertion must
+  leave the old snapshot unchanged, change demand revision, and make a fresh
+  index differ.
 
 ## 7. Stop rules
 
@@ -185,17 +207,20 @@ changed exact segment.
 ## 8. LTP/WBA audit card
 
 - **Window or trigger:** repeated missing-call iteration after HIR growth.
-- **Transport corridor:** HIR mutation API -> revision vector -> exact shadow
-  comparison -> unchanged legacy queue/process path.
+- **Transport corridor:** immutable pre-canonical occurrence index -> HIR
+  mutation API -> revision vector -> exact shadow comparison -> unchanged
+  legacy queue/process path.
 - **Legal move:** guard-only would-reuse classification.
 - **Boundary safety:** full scan and occurrence-time admission remain authority.
 - **Lexicographic potential:** `(semantic mismatches, false reuse, abort-stub
   obligations, wall time, peak RSS, remaining missing targets)`.
 - **Recompute safety:** recompute the complete vector and exact segments after
   every observed mutation window.
-- **Dual frame:** per-function demand revision plus global semantic revisions.
-- **Local certificate:** unchanged vector and exact segment equality at the
-  same iteration boundary.
+- **Dual frame:** immutable occurrence identity/order plus per-function demand
+  revision and global semantic revisions.
+- **Local certificate:** exact occurrence identity/order, unchanged vector, and
+  exact segment equality at the same iteration boundary. This remains
+  observational because resolver side effects are not replayed.
 
 No Collapse/promotion is admitted until recomputed global potential preserves
 semantic zeroes and improves the full B4-F corridor.
@@ -216,12 +241,12 @@ semantic zeroes and improves the full B4-F corridor.
 
 - **Source/spec:** `hir.cr`, `ast_to_hir.cr`,
   `missing_incremental_shadow_spec.cr`,
-  `missing_revision_ledger_spec.cr`.
-- **Falsifiers:** F1-F7.
+  `missing_revision_ledger_spec.cr`, and the two-order same-scan accessor
+  regression.
+- **Falsifiers:** F1-F8.
 - **Boundary:** default-off guard-only; no production scan skip.
-- **Observed staged gate:** 305 HIR examples passed with two existing pending
-  examples; the integrated same-scan accessor/union regression, ownership
-  census, compiler build, and default-off no-prelude regression passed.
+- **Observed focused gate:** the exact-shadow group passes 15 examples; the
+  integrated same-scan accessor/union regression and ownership census pass.
 - **Source-matched telemetry:** iterations 1-3 observed 603, 1539, and 7471
   raw-local stable segments with zero raw-local false reuse, while 198, 345,
   and 984 of those segments changed occurrence availability. Full/shadow raw
@@ -229,11 +254,20 @@ semantic zeroes and improves the full B4-F corridor.
   model observed 603, 1539, and 7471 stable segments with zero mismatch on that
   ordinary trace; the two-order F3 counterexample still refutes universal
   sufficiency, so these zeroes are not promotion evidence.
+- **Pre-canonical staged telemetry:** a source-matched stop after iteration 3
+  observed exact indexed/entered occurrence counts of 7517, 11740, 41080, and
+  113005, with identity/order match on all four rows. Full/shadow raw and
+  available vectors also matched. The same rows still exposed 253, 621, and
+  1801 raw-stable availability mismatches at iterations 1-3; identity/order
+  equality is therefore not semantic replay evidence. The diagnostic exited 0
+  at the requested boundary after about 105 seconds, before processing
+  iteration 3, and is not a B4-F or speed certificate.
 - **Adversary verdict:** robust for the bounded observational guard, vulnerable
   for the diagnostic implementation, and broken for bounded canonical
   availability replay as production authority.
-- **Next local track:** separate mutation-producing canonicalization from pure
-  demand collection, or build an immutable pre-canonical occurrence index that
-  preserves side-effect order. Measure that boundary before considering any
-  production scan reduction. Public mutable aliases and unrevisioned
-  class/include/enum/RTA metadata remain rejected boundaries.
+- **Next local track:** use the immutable identity/order boundary to classify a
+  read-only occurrence transcript of canonicalization side effects, then
+  falsify whether any resolver family is actually pure. Do not replay even a
+  matching occurrence until argument/block ABI, definition/type/class/include/
+  enum/RTA metadata, target-state transitions, and budget order are bounded.
+  Public mutable aliases remain a rejected boundary.
