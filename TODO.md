@@ -1,7 +1,7 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-07-31 (String::Builder formatter specialization parity restored;
-B4-F remains red).
+Updated: 2026-07-31 (plain float formatter tables restored; precision flags and
+B4-F remain red).
 
 VERIFIED RECORD-MACRO INITIALIZER SLICE (bootstrap successor still open):
 record-style macro assignments now retain their right-hand-side text when
@@ -10660,6 +10660,25 @@ the fetched value remains `1.25_f64` and that `%s` formatting no longer crashes.
 A fresh replay also invalidates the stale `Fiber#exec_recursive_hash` residual:
 the remaining formatter frontier is independent float formatting (`%f` emits
 `0.000000`; `%.3f` raises from `consume_type`).
+
+Deferred constant class-call follow-up: non-numeric constant initializers now
+carry a separate lexical owner while they are lowered into `__adamas_main`.
+Unqualified calls bind to a declared class/module method on that owner without
+changing the surrounding method context, and the late module-instance rewrite
+does not convert that proven dot target back to `#`. This materializes the real
+`Float::Printer::RyuPrintf.put` calls used to populate `POW10_SPLIT` instead of
+leaving its tuple rows zero-filled. A broader `@current_method_is_class`
+candidate was rejected because it corrupted inline-block locals in
+`Exception::CallStack::CURRENT_DIR` and fed a null `self` into `Path[]`.
+
+The module-scoped regression covers a deferred initializer containing both a
+bare class-method call and a nilable inline block; its HIR retains the dot call,
+the union payload, and no synthetic `self`. The generated formatter runtime now
+proves `%s` plus `%f`, with `1.25_f64` rendered as `1.250000`. The full HIR suite
+passes 372 examples with zero failures/errors and two existing pending examples;
+all ten generated integration examples pass. This closes plain `%f` table
+initialization only. `%.3f` still aborts from `String::Formatter#consume_type`
+and is the next formatter frontier; B4-F remains independently red.
 
 ## Stop Conditions
 

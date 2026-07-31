@@ -11588,6 +11588,43 @@ describe Adamas::HIR::AstToHir do
       bits_idx.not_nil!.should be < modulus_idx.not_nil!
     end
 
+    it "keeps unqualified class-method calls inside deferred constant initializers" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        module DeferredConstantCall
+          def record : Nil
+          end
+
+          def self.record(values : Array(Int32), value : Int32) : Nil
+            values << value
+          end
+
+          VALUES = begin
+            values = Array(Int32).new
+            7.as(Int32?).try { |value| record(values, value) }
+            values
+          end
+        end
+
+        def consume_deferred_values(values : Array(Int32))
+          values
+        end
+
+        consume_deferred_values(DeferredConstantCall::VALUES)
+      CRYSTAL
+
+      main = converter.module.function_by_name("__adamas_main")
+      main.should_not be_nil
+      main_text = hir_text(main.not_nil!)
+      main_text.should contain("DeferredConstantCall.record$Array(Int32)_Int32")
+      main_text.should_not contain("DeferredConstantCall#record")
+      main_text.should contain("union_unwrap")
+      main_text.should_not contain("local \"self\"")
+
+      record = converter.module.function_by_name("DeferredConstantCall.record$Array(Int32)_Int32")
+      record.should_not be_nil
+      hir_text(record.not_nil!).should contain("Array(Int32)#<<$Int32")
+    end
+
     it "keeps source order for unrelated deferred constants instead of preferring deeper namespaces" do
       converter = lower_program_with_sources(<<-CRYSTAL)
         class H

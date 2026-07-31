@@ -257,6 +257,7 @@ describe "generated HIR runtime" do
 
     output.should contain("formatter-tuple-fetch-ok")
     output.should contain("formatter-tuple-string-ok")
+    output.should contain("1.250000")
   end
 
   it "preserves nilable outer-local assignments through looped ensure scopes" do

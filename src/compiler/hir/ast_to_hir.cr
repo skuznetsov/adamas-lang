@@ -6234,6 +6234,10 @@ module Adamas::HIR
     # Deferred constant initializations (non-numeric constants like string literals).
     # Stores: {owner_name, const_name, value_expr_id, arena}
     @deferred_constant_inits : Array(DeferredConstantInit)
+    # Lexical owner while lowering a deferred constant initializer in main.
+    # This is deliberately separate from method context: inline blocks in a
+    # constant initializer still need their original local/capture semantics.
+    @deferred_constant_owner : String?
 
     # Lazy classvar init: maps "Owner::cvar_name" → {expr_id, arena, owner_class}
     @classvar_lazy_init_info = {} of String => DeferredClassvarInit
@@ -6576,6 +6580,7 @@ module Adamas::HIR
       @pending_def_annotations = [] of Tuple(Adamas::Compiler::Frontend::AnnotationNode, Adamas::Compiler::Frontend::ArenaLike)
       @deferred_classvar_inits = [] of DeferredClassvarInit
       @deferred_constant_inits = [] of DeferredConstantInit
+      @deferred_constant_owner = nil
       @pending_offsetof_constants = [] of Tuple(String, Adamas::Compiler::Frontend::ExprId, Adamas::Compiler::Frontend::ArenaLike, String?)
       # Constants whose literal value could not be folded at record time because
       # the RHS references another constant not yet registered (forward/cross-file
@@ -6839,6 +6844,7 @@ module Adamas::HIR
       @pending_def_annotations = [] of Tuple(Adamas::Compiler::Frontend::AnnotationNode, Adamas::Compiler::Frontend::ArenaLike)
       @deferred_classvar_inits = [] of DeferredClassvarInit
       @deferred_constant_inits = [] of DeferredConstantInit
+      @deferred_constant_owner = nil
       @pending_offsetof_constants = [] of Tuple(String, Adamas::Compiler::Frontend::ExprId, Adamas::Compiler::Frontend::ArenaLike, String?)
       @pending_alias_constants = [] of Tuple(String, Adamas::Compiler::Frontend::ExprId, Adamas::Compiler::Frontend::ArenaLike, String?)
       @pending_enum_constant_resolutions = [] of Tuple(String, String, String)
@@ -62106,24 +62112,30 @@ module Adamas::HIR
           end
           @arena = init_arena
           old_class = @current_class
+          old_deferred_constant_owner = @deferred_constant_owner
           @current_class = owner == "$" ? nil : owner
-          if env_has?("DEBUG_DEFERRED_CONST")
-            if value_id.index >= 0 && value_id.index < @arena.size
-              val_node = @arena[value_id]
-              STDERR.puts "[DEFERRED_CONST] Lowering #{owner}::#{const_name} val_node=#{val_node.class.name}"
+          @deferred_constant_owner = owner == "$" ? nil : owner
+          begin
+            if env_has?("DEBUG_DEFERRED_CONST")
+              if value_id.index >= 0 && value_id.index < @arena.size
+                val_node = @arena[value_id]
+                STDERR.puts "[DEFERRED_CONST] Lowering #{owner}::#{const_name} val_node=#{val_node.class.name}"
+              end
             end
+            value = lower_runtime_deferred_top_level_constant(ctx, owner, const_name) || lower_expr(ctx, value_id)
+            value_type = ctx.type_of(value)
+            full_name = constant_full_name(owner == "$" ? nil : owner, const_name)
+            storage_owner, storage_name = constant_storage_info(full_name)
+            record_lowered_constant_type(full_name, value_type)
+            if env_has?("DEBUG_DEFERRED_CONST")
+              STDERR.puts "[DEFERRED_CONST] OK #{owner}::#{const_name} → value=#{value} type=#{value_type.id}"
+            end
+            set = ClassVarSet.new(ctx.next_id, value_type, storage_owner, storage_name, value)
+            ctx.emit(set)
+          ensure
+            @deferred_constant_owner = old_deferred_constant_owner
+            @current_class = old_class
           end
-          value = lower_runtime_deferred_top_level_constant(ctx, owner, const_name) || lower_expr(ctx, value_id)
-          value_type = ctx.type_of(value)
-          full_name = constant_full_name(owner == "$" ? nil : owner, const_name)
-          storage_owner, storage_name = constant_storage_info(full_name)
-          record_lowered_constant_type(full_name, value_type)
-          if env_has?("DEBUG_DEFERRED_CONST")
-            STDERR.puts "[DEFERRED_CONST] OK #{owner}::#{const_name} → value=#{value} type=#{value_type.id}"
-          end
-          set = ClassVarSet.new(ctx.next_id, value_type, storage_owner, storage_name, value)
-          ctx.emit(set)
-          @current_class = old_class
         end
         @arena = old_arena
         @deferred_constant_inits.clear
@@ -62198,15 +62210,21 @@ module Adamas::HIR
           end
           @arena = init_arena
           old_class = @current_class
+          old_deferred_constant_owner = @deferred_constant_owner
           @current_class = owner == "$" ? nil : owner
-          value = lower_runtime_deferred_top_level_constant(ctx, owner, const_name) || lower_expr(ctx, value_id)
-          value_type = ctx.type_of(value)
-          full_name = constant_full_name(owner == "$" ? nil : owner, const_name)
-          storage_owner, storage_name = constant_storage_info(full_name)
-          record_lowered_constant_type(full_name, value_type)
-          set = ClassVarSet.new(ctx.next_id, value_type, storage_owner, storage_name, value)
-          ctx.emit(set)
-          @current_class = old_class
+          @deferred_constant_owner = owner == "$" ? nil : owner
+          begin
+            value = lower_runtime_deferred_top_level_constant(ctx, owner, const_name) || lower_expr(ctx, value_id)
+            value_type = ctx.type_of(value)
+            full_name = constant_full_name(owner == "$" ? nil : owner, const_name)
+            storage_owner, storage_name = constant_storage_info(full_name)
+            record_lowered_constant_type(full_name, value_type)
+            set = ClassVarSet.new(ctx.next_id, value_type, storage_owner, storage_name, value)
+            ctx.emit(set)
+          ensure
+            @deferred_constant_owner = old_deferred_constant_owner
+            @current_class = old_class
+          end
         end
         @arena = old_arena
         @deferred_constant_inits.clear
@@ -84705,6 +84723,21 @@ module Adamas::HIR
             current_is_class = true if ctx.type_literal?(self_id)
           end
         end
+        # An unqualified call in a constant initializer is resolved in the
+        # lexical owner's class-method namespace. Keep this narrower than
+        # changing @current_method_is_class: doing that corrupts inline-block
+        # locals such as `value.try { |item| ... }` during deferred lowering.
+        if full_method_name.nil? && (deferred_owner = @deferred_constant_owner) && method_name != "new"
+          if class_method_base = resolve_class_method_with_inheritance(deferred_owner, method_name)
+            full_method_name = class_method_base
+            static_class_name = method_owner(class_method_base) || deferred_owner
+            current_is_class = true
+          elsif find_module_class_def(deferred_owner, method_name, call_args.size)
+            full_method_name = "#{deferred_owner}.#{method_name}"
+            static_class_name = deferred_owner
+            current_is_class = true
+          end
+        end
         if current_is_class && (current = @current_class) && method_name == "new"
           full_method_name = "#{current}.#{method_name}"
           static_class_name = current
@@ -92072,7 +92105,11 @@ module Adamas::HIR
       if receiver_id.nil? && full_method_name && !@current_method_is_class && @current_class
         if full_method_name.includes?('.')
           owner = method_owner(full_method_name)
-          if owner == @current_class && module_like_type_name?(owner)
+          preserve_deferred_class_call = owner &&
+                                         @deferred_constant_owner == owner &&
+                                         class_method_defined?("#{owner}.#{method_name}")
+          if owner == @current_class && module_like_type_name?(owner) &&
+             !preserve_deferred_class_call
             receiver_id = emit_self(ctx)
             mangled_method_name = mangled_method_name.sub(".", "#")
             primary_mangled_name = primary_mangled_name.sub(".", "#")
