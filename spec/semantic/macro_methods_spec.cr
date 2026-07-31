@@ -38,6 +38,24 @@ private def expand_first_top_level_macro_text(source : String) : {String, Array(
   {output.strip, expander.diagnostics.dup}
 end
 
+private def macro_id_for_assignment_source(source : String) : String
+  lexer = Frontend::Lexer.new(source)
+  parser = Frontend::Parser.new(lexer)
+  program = parser.parse_program
+
+  assignment_id = program.roots.find do |id|
+    program.arena[id].is_a?(Frontend::AssignNode)
+  end
+  assignment_id.should_not be_nil
+
+  value = Semantic::MacroNodeValue.new(
+    assignment_id.not_nil!,
+    program.arena,
+    program.string_pool
+  )
+  value.call_method("id", [] of Semantic::MacroValue, nil).as(Semantic::MacroIdValue).value
+end
+
 describe "Phase 87B-6: Macro Methods (.stringify, .id, .class_name)" do
   # ==================================================================
   # Category 1: .stringify method (5 tests)
@@ -103,6 +121,22 @@ describe "Phase 87B-6: Macro Methods (.stringify, .id, .class_name)" do
       collector.collect
 
       collector.diagnostics.select(&.level.error?).should be_empty
+    end
+  end
+
+  describe "MacroNodeValue assignment ids" do
+    it "preserves a binary assignment RHS" do
+      macro_id_for_assignment_source("x = 1 + 2\n").should eq("x = 1 + 2")
+    end
+
+    it "preserves range and index assignment RHS forms" do
+      macro_id_for_assignment_source("x = 0..3\n").should eq("x = 0..3")
+      macro_id_for_assignment_source("x = values[1]\n").should eq("x = values[1]")
+    end
+
+    it "preserves a conditional assignment RHS" do
+      source = "x = if true\n  1\nelse\n  2\nend\n"
+      macro_id_for_assignment_source(source).should eq("x = if true\n  1\nelse\n  2\nend")
     end
   end
 

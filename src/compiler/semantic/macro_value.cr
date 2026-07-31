@@ -596,7 +596,10 @@ module Adamas
               nil
             end
           when Frontend::AssignNode
-            node_identifier_name(@arena[node.target])
+            target = node_identifier_name(@arena[node.target]) || stringify_node(@arena[node.target])
+            value_node = @arena[node.value]
+            value = source_text_for_assign_rhs(value_node) || stringify_assign_rhs(value_node)
+            value.empty? ? target : "#{target} = #{value}"
           when Frontend::PathNode
             parts = [] of String
             current = node
@@ -617,6 +620,192 @@ module Adamas
             parts.reverse.join("::")
           else
             nil
+          end
+        end
+
+        # `ASTNode#to_macro_id` is source-like (`to_s`) for assignment nodes.
+        # Keep this recovery scoped to the RHS so ordinary MacroNodeValue output
+        # retains its existing behavior. A span is valid only against the
+        # retained source buffer that owns a descendant zero-copy slice.
+        private def source_text_for_assign_rhs(node : Frontend::Node) : String?
+          span = node.span
+          return nil if span.end_offset <= span.start_offset
+          return nil if span.start_offset < 0
+
+          sources = @arena.extra_sources
+          return nil if sources.empty?
+
+          source = sources.find { |candidate| source_has_assign_rhs_anchor?(node, candidate) }
+          source ||= sources.first if sources.size == 1
+          return nil unless source
+
+          start = span.start_offset
+          length = span.end_offset - span.start_offset
+          return nil if start >= source.bytesize
+          return nil if start + length > source.bytesize
+          source.byte_slice(start, length)
+        end
+
+        private def source_has_assign_rhs_anchor?(node : Frontend::Node, source : String) : Bool
+          case node
+          when Frontend::NumberNode
+            slice_points_into_assign_source?(node.value, source)
+          when Frontend::StringNode
+            slice_points_into_assign_source?(node.value, source)
+          when Frontend::CharNode
+            slice_points_into_assign_source?(node.value, source)
+          when Frontend::SymbolNode
+            slice_points_into_assign_source?(node.name, source)
+          when Frontend::IdentifierNode
+            slice_points_into_assign_source?(node.name, source)
+          when Frontend::ConstantNode
+            slice_points_into_assign_source?(node.name, source)
+          when Frontend::InstanceVarNode
+            slice_points_into_assign_source?(node.name, source)
+          when Frontend::ClassVarNode
+            slice_points_into_assign_source?(node.name, source)
+          when Frontend::GlobalNode
+            slice_points_into_assign_source?(node.name, source)
+          when Frontend::MemberAccessNode
+            slice_points_into_assign_source?(node.member, source) ||
+              source_has_assign_rhs_anchor?(@arena[node.object], source)
+          when Frontend::SafeNavigationNode
+            slice_points_into_assign_source?(node.member, source) ||
+              source_has_assign_rhs_anchor?(@arena[node.object], source)
+          when Frontend::BinaryNode
+            slice_points_into_assign_source?(node.operator, source) ||
+              source_has_assign_rhs_anchor?(@arena[node.left], source) ||
+              source_has_assign_rhs_anchor?(@arena[node.right], source)
+          when Frontend::CallNode
+            source_has_assign_rhs_anchor?(@arena[node.callee], source) ||
+              source_has_assign_rhs_anchor_ids?(node.args, source)
+          when Frontend::RangeNode
+            source_has_assign_rhs_anchor?(@arena[node.begin_expr], source) ||
+              source_has_assign_rhs_anchor?(@arena[node.end_expr], source)
+          when Frontend::UnaryNode
+            slice_points_into_assign_source?(node.operator, source) ||
+              source_has_assign_rhs_anchor?(@arena[node.operand], source)
+          when Frontend::TernaryNode
+            source_has_assign_rhs_anchor?(@arena[node.condition], source) ||
+              source_has_assign_rhs_anchor?(@arena[node.true_branch], source) ||
+              source_has_assign_rhs_anchor?(@arena[node.false_branch], source)
+          when Frontend::GroupingNode
+            source_has_assign_rhs_anchor?(@arena[node.expression], source)
+          when Frontend::IndexNode
+            source_has_assign_rhs_anchor?(@arena[node.object], source) ||
+              source_has_assign_rhs_anchor_ids?(node.indexes, source)
+          when Frontend::AssignNode
+            source_has_assign_rhs_anchor?(@arena[node.target], source) ||
+              source_has_assign_rhs_anchor?(@arena[node.value], source)
+          when Frontend::TypeDeclarationNode
+            if value_id = node.value
+              source_has_assign_rhs_anchor?(@arena[value_id], source)
+            else
+              false
+            end
+          when Frontend::GenericNode
+            source_has_assign_rhs_anchor?(@arena[node.base_type], source) ||
+              source_has_assign_rhs_anchor_ids?(node.type_args, source)
+          when Frontend::PathNode
+            if source_has_assign_rhs_anchor?(@arena[node.right], source)
+              true
+            elsif left_id = node.left
+              source_has_assign_rhs_anchor?(@arena[left_id], source)
+            else
+              false
+            end
+          when Frontend::IfNode
+            return true if source_has_assign_rhs_anchor?(@arena[node.condition], source)
+            return true if source_has_assign_rhs_anchor_ids?(node.then_body, source)
+            if else_body = node.else_body
+              return true if source_has_assign_rhs_anchor_ids?(else_body, source)
+            end
+            if elsifs = node.elsifs
+              elsifs.each do |elsif_branch|
+                return true if source_has_assign_rhs_anchor?(@arena[elsif_branch.condition], source)
+                return true if source_has_assign_rhs_anchor_ids?(elsif_branch.body, source)
+              end
+            end
+            false
+          else
+            false
+          end
+        end
+
+        private def source_has_assign_rhs_anchor_ids?(
+          ids : Array(Frontend::ExprId),
+          source : String,
+        ) : Bool
+          ids.each do |id|
+            return true if source_has_assign_rhs_anchor?(@arena[id], source)
+          end
+          false
+        end
+
+        private def slice_points_into_assign_source?(slice : Slice(UInt8), source : String) : Bool
+          return false if slice.empty? || source.empty?
+
+          slice_start = slice.to_unsafe.address
+          source_start = source.to_unsafe.address
+          slice_finish = slice_start &+ slice.size.to_u64
+          source_finish = source_start &+ source.bytesize.to_u64
+          slice_finish >= slice_start && source_finish >= source_start &&
+            slice_start >= source_start && slice_finish <= source_finish
+        end
+
+        # Bounded fallback for RHS forms whose source buffer is unavailable.
+        # This is intentionally separate from `stringify_node` so non-Assign
+        # MacroNodeValue behavior remains unchanged.
+        private def stringify_assign_rhs(node : Frontend::Node, indent : Int32 = 0) : String
+          case node
+          when Frontend::BinaryNode
+            "#{stringify_assign_rhs(@arena[node.left], indent)} #{String.new(node.operator)} #{stringify_assign_rhs(@arena[node.right], indent)}"
+          when Frontend::RangeNode
+            begin_text = stringify_assign_rhs(@arena[node.begin_expr], indent)
+            end_text = stringify_assign_rhs(@arena[node.end_expr], indent)
+            operator = node.exclusive ? "..." : ".."
+            "#{begin_text}#{operator}#{end_text}"
+          when Frontend::IndexNode
+            object = stringify_assign_rhs(@arena[node.object], indent)
+            indexes = node.indexes.map { |index| stringify_assign_rhs(@arena[index], indent) }
+            "#{object}[#{indexes.join(", ")}]"
+          when Frontend::TernaryNode
+            "#{stringify_assign_rhs(@arena[node.condition], indent)} ? #{stringify_assign_rhs(@arena[node.true_branch], indent)} : #{stringify_assign_rhs(@arena[node.false_branch], indent)}"
+          when Frontend::IfNode
+            stringify_assign_rhs_if(node)
+          else
+            stringify_node(node)
+          end
+        end
+
+        private def stringify_assign_rhs_if(node : Frontend::IfNode) : String
+          text = String.build do |io|
+            io << "if " << stringify_assign_rhs(@arena[node.condition])
+            append_assign_rhs_if_body(io, node.then_body, 2)
+            if elsifs = node.elsifs
+              elsifs.each do |elsif_branch|
+                io << "\nelsif " << stringify_assign_rhs(@arena[elsif_branch.condition])
+                append_assign_rhs_if_body(io, elsif_branch.body, 2)
+              end
+            end
+            if else_body = node.else_body
+              io << "\nelse"
+              append_assign_rhs_if_body(io, else_body, 2)
+            end
+            io << "\nend"
+          end
+          text
+        end
+
+        private def append_assign_rhs_if_body(
+          io : String::Builder,
+          body : Array(Frontend::ExprId),
+          indent : Int32,
+        ) : Nil
+          body.each do |body_id|
+            body_text = stringify_assign_rhs(@arena[body_id], indent)
+            prefix = " " * indent
+            io << "\n" << prefix << body_text.gsub("\n", "\n#{prefix}")
           end
         end
 
