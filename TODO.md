@@ -1,7 +1,7 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-07-31 (T1 semantic identity ownership substrate landed;
-T1 and B4-F remain red).
+Updated: 2026-08-01 (expired HIR identity sidecars pruned; T1 and B4-F remain
+red).
 
 T1 OWNERSHIP/NAME-ID SUBSTRATE VERIFIED; CALL RESOLUTION CONTINUITY REMAINS
 OPEN. `SemanticIdentityRegistry` is now the compile-session owner for canonical
@@ -11,8 +11,11 @@ arguments use ordered `{NameId, SemanticTypeId}` components, and both it and
 storage. The identity/generic group passes 52 examples, the compiler builds,
 and the same-spelling reducer still executes correctly while the exact T1
 producer remains deliberately absent (`T1_STATUS=MEASURED_RED`). Next return a
-local typed `CallResolution` from the existing post-resolution owner without a
-new `AstToHir` owner or default-path behavior change.
+typed `CallResolution` only from the semantic owner after a same-arena handoff
+is proven. The HIR compatibility path now exposes only
+`SelectedCallTarget {symbol_name, def_node}`; the unused `CallShape`,
+`ResolutionBinding`, string-round-trip `MethodInstanceKey`, and their unconsumed
+assertion paths were removed rather than promoted into semantic authority.
 
 OFFLINE BOOTSTRAP READINESS VALIDATOR VERIFIED; B4-F REMAINS RED.
 `scripts/validate_bootstrap_manifest.sh` independently consumes a

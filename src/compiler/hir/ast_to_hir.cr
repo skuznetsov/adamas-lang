@@ -782,83 +782,21 @@ module Adamas::HIR
       end
     end
 
-    # --- Method-resolution migration scaffolding (M1) ---
-    # See docs/method_resolution_architecture_map.md. Pure data containers. They
-    # carry NO behavior on their own and do not change selection/materialization.
-    # M1 wires only MethodInstanceKey (via method_instance_symbol) behind a
-    # differential assertion; CallShape and Resolution are introduced here for
-    # M2/M3 and are intentionally not yet consumed.
-
-    # Captured at a callsite by lower_call (M3). Structured replacement for the
-    # ad-hoc string the call path builds today.
-    private struct CallShape
-      getter receiver_type : TypeRef?
-      getter method : String
-      getter arg_types : Array(TypeRef)
-      getter named_names : Array(String)?
-      getter has_block : Bool
-      getter has_splat : Bool
-      getter has_double_splat : Bool
-
-      def initialize(
-        @method : String,
-        @arg_types : Array(TypeRef),
-        @receiver_type : TypeRef? = nil,
-        @named_names : Array(String)? = nil,
-        @has_block : Bool = false,
-        @has_splat : Bool = false,
-        @has_double_splat : Bool = false,
-      )
-      end
-    end
-
-    # Stable identity of one concrete callable. Serializes to the mangled symbol
-    # via the single mangling path (method_instance_symbol). For M1 it wraps the
-    # exact inputs of mangle_function_name so serialization is byte-identical to
-    # the legacy string; owner/method/arity decomposition lands in M2.
-    private struct MethodInstanceKey
-      getter base_name : String # already-joined overload family, e.g. "Foo#hash"
-      getter param_types : Array(TypeRef)
-      getter has_block : Bool
-      getter has_named_only : Bool
-      # When non-nil, the key carries an already-resolved final suffix verbatim
-      # (e.g. "arity1", "Int32_splat", "Crystal::Hasher_block"). This lets a key
-      # built from a SELECTED name round-trip to that exact name including the
-      # $arity/splat/block/named post-processing that function_full_name_for_def
-      # appends on top of the base mangle. nil = derive the suffix from
-      # param_types (the M1 base-mangle path). M2 scaffolding; see
-      # docs/method_resolution_architecture_map.md.
-      getter resolved_suffix : String?
-
-      def initialize(
-        @base_name : String,
-        @param_types : Array(TypeRef),
-        @has_block : Bool = false,
-        @has_named_only : Bool = false,
-        @resolved_suffix : String? = nil,
-      )
-      end
-    end
-
-    # Output of the unified resolver (M2+). Couples the selected identity with the
-    # def it materializes, so lower_function_if_needed stops minting identity from
-    # a requested string. Not yet produced in M1.
-    private struct Resolution
-      getter key : MethodInstanceKey
+    # Legacy resolver result. The symbol is explicit serialization, not semantic
+    # identity; the T1 CallResolution contract must be produced by the semantic
+    # owner rather than extending this HIR compatibility carrier.
+    private struct SelectedCallTarget
+      getter symbol_name : String
       getter def_node : Adamas::Compiler::Frontend::DefNode
-      getter owner_via_inheritance : Bool
 
       def initialize(
-        @key : MethodInstanceKey,
+        @symbol_name : String,
         @def_node : Adamas::Compiler::Frontend::DefNode,
-        @owner_via_inheritance : Bool = false,
       )
       end
     end
 
-    # The EXACT resolver-input tuple consumed by lookup_function_def_for_call
-    # (M3c). This is precisely the shape full M3 must produce from a CallShape, so
-    # it is the seam to de-risk. Captured at the resolver chokepoint, not consumed.
+    # Legacy HIR facts consumed by lookup_function_def_for_call.
     # NOTE: there is deliberately no has_double_splat axis here: callsite `**` is
     # folded into args+named upstream by ensure_double_splat_arg (keyed on the
     # callee's `**` param) before the resolver runs, so double-splat is carried by
@@ -881,43 +819,6 @@ module Adamas::HIR
         @has_named : Bool,
         @named_names : Array(String)?,
       )
-      end
-    end
-
-    # The explicit binding model at a callsite (M4b). Diagnostic-only: separates the
-    # roles one string plays today so the arity-shadow danger is visible BEFORE any
-    # behavior change. family_name = overload family; selected_name = what the
-    # resolver picked; primary_name = the primary mangled name; emit_name = the name
-    # the HIR Call will carry (at binding time = mangled_method_name; the dedicated
-    # emit name derives from it downstream). dangerous? flags the arity-shadow class:
-    # a selected def with more required params than the call supplies and no splat to
-    # absorb the gap (the shape the backend would null-pad).
-    private struct ResolutionBinding
-      getter family_name : String
-      getter selected_name : String
-      getter primary_name : String
-      getter emit_name : String
-      getter arg_count : Int32
-      getter selected_required : Int32
-      getter selected_param_count : Int32
-      getter selected_has_splat : Bool
-      getter selected_has_double_splat : Bool
-
-      def initialize(
-        @family_name : String,
-        @selected_name : String,
-        @primary_name : String,
-        @emit_name : String,
-        @arg_count : Int32,
-        @selected_required : Int32,
-        @selected_param_count : Int32,
-        @selected_has_splat : Bool,
-        @selected_has_double_splat : Bool,
-      )
-      end
-
-      def dangerous? : Bool
-        arg_count < selected_required && !selected_has_splat && !selected_has_double_splat
       end
     end
 
@@ -36189,9 +36090,10 @@ module Adamas::HIR
       return unless call_arg_types
       return if call_arg_types.empty?
 
-      # Allocator generation is downstream of lower_call's full CallShape. Keep
-      # the canonical names when this is a named call; internal positional
-      # materialization must continue to carry nil rather than stale names.
+      # Allocator generation is downstream of lower_call's complete callsite
+      # facts. Keep the canonical names when this is a named call; internal
+      # positional materialization must continue to carry nil rather than stale
+      # names.
       allocator_named_arg_names = call_has_named_args ? canonical_named_arg_names(call_named_arg_names) : nil
 
       return if call_arg_types.all? { |t| t == TypeRef::VOID }
@@ -41107,50 +41009,6 @@ module Adamas::HIR
       suffix.empty? ? base_name : "#{base_name}$#{suffix}"
     end
 
-    # Single mangling entry for a MethodInstanceKey (M1). Delegates to the
-    # existing pure mangler so the emitted symbol is byte-identical to the legacy
-    # string path. This is the "to_symbol" of the design in
-    # docs/method_resolution_architecture_map.md.
-    private def method_instance_symbol(key : MethodInstanceKey) : String
-      # A key built from an already-resolved name carries the full post-processed
-      # suffix verbatim, so reproduce it exactly (M2). Otherwise fall back to the
-      # base mangle from param_types (M1).
-      if suffix = key.resolved_suffix
-        return suffix.empty? ? key.base_name : "#{key.base_name}$#{suffix}"
-      end
-      mangle_function_name(key.base_name, key.param_types, key.has_block, key.has_named_only)
-    end
-
-    # Build a Resolution from a SELECTED final name (M2 sidecar). Splits the name
-    # at the first '$' — consistent with mangle_function_name's own base/suffix
-    # convention — and carries the suffix verbatim so the key round-trips to the
-    # exact selected name (including $arity/splat/block/named post-processing).
-    # Pure helper; produces a Resolution but changes no selection/materialization.
-    #
-    # WARNING (read before M3/M4): the MethodInstanceKey produced here is a
-    # VERBATIM SELECTED-SYMBOL CARRIER, not a semantic identity. resolved_suffix
-    # is the raw post-'$' tail of an already-resolved string — it is NOT a
-    # structured decomposition into owner/method/arity/typed-params. Do NOT make
-    # owner/method/overload/materialization decisions from this key; doing so
-    # would just re-encode the legacy string soup inside a struct. A semantic
-    # MethodInstanceKey (structured fields, mangling derived FROM them) is a later
-    # migration step; until then treat this purely as round-trip carriage.
-    private def resolution_from_selected_name(
-      name : String,
-      def_node : Adamas::Compiler::Frontend::DefNode,
-      owner_via_inheritance : Bool = false,
-    ) : Resolution
-      if d = ascii_byte_index(name, '$'.ord.to_u8)
-        base = name[0, d]
-        suffix = name[(d + 1), name.bytesize - d - 1]
-      else
-        base = name
-        suffix = ""
-      end
-      key = MethodInstanceKey.new(base, [] of TypeRef, resolved_suffix: suffix)
-      Resolution.new(key, def_node, owner_via_inheritance)
-    end
-
     private def function_full_name_for_def(
       base_name : String,
       param_types : Array(TypeRef),
@@ -41196,13 +41054,6 @@ module Adamas::HIR
       end
 
       full_name = mangle_function_name(base_name, param_types, has_block, has_named_only)
-      # M1 differential guard (inert unless ADAMAS_MIKEY_ASSERT is set): the
-      # structured MethodInstanceKey must serialize byte-identically to the
-      # legacy mangle. No control-flow change; only warns on divergence.
-      if env_has?("ADAMAS_MIKEY_ASSERT")
-        mikey = method_instance_symbol(MethodInstanceKey.new(base_name, param_types, has_block, has_named_only))
-        STDERR.puts "[MIKEY_MISMATCH] key=#{mikey} legacy=#{full_name}" unless mikey == full_name
-      end
       if has_double_splat
         full_name = full_name.includes?('$') ? "#{full_name}_double_splat" : "#{base_name}$double_splat"
       elsif has_splat
@@ -84695,40 +84546,6 @@ module Adamas::HIR
       block_expr_present = block_expr_index >= 0
       block_pass_expr_present = block_pass_expr_index >= 0
       has_block_call = block_expr_present || block_pass_expr_present
-      # M3a sidecar (docs/method_resolution_architecture_map.md): assemble a
-      # structured CallShape from the callsite facts already known at the front of
-      # lower_call. NOT consumed — selection/materialization/cache keys untouched;
-      # this is the seam M3 will route the call name through. arg_types and
-      # receiver_type are intentionally left empty/nil here: they are not known
-      # until args are lowered / the receiver is resolved downstream, and M3a only
-      # captures the source-shape facts (method/block/named/splat). Under
-      # ADAMAS_CALLSHAPE_ASSERT it checks the gather invariant that a real
-      # Identifier/MemberAccess call yields a non-empty method name. The front
-      # shape is persisted (m3_front_shape) so the M3b completion point can
-      # cross-check that the source-shape facts survive arg/receiver lowering.
-      m3_front_shape : CallShape? = nil
-      if env_has?("ADAMAS_CALLSHAPE_ASSERT")
-        cs_node_method = case callee_node
-                         when Adamas::Compiler::Frontend::MemberAccessNode
-                           member_access_name_text(callee_node)
-                         when Adamas::Compiler::Frontend::IdentifierNode
-                           identifier_name_text(callee_node, call_arena)
-                         else
-                           nil
-                         end
-        call_shape = CallShape.new(
-          method: cs_node_method || "",
-          arg_types: [] of TypeRef,
-          receiver_type: nil,
-          named_names: call_named_arg_names,
-          has_block: has_block_call,
-          has_splat: call_args.any? { |a| call_arena[a].is_a?(Adamas::Compiler::Frontend::SplatNode) },
-        )
-        m3_front_shape = call_shape
-        if cs_node_method && call_shape.method.empty?
-          STDERR.puts "[CALLSHAPE_MISMATCH] empty_method callee=#{callee_node.class.name} func=#{ctx.function.name}"
-        end
-      end
       if block_expr_present
         block_node = node_for_call_expr(call_arena, block_expr.not_nil!)
         if block_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
@@ -88384,40 +88201,6 @@ module Adamas::HIR
       if debug_env_filter_match?("DEBUG_L10_MNAME", method_name, full_method_name || "")
         STDERR.puts "[L10_MN] site=B method=#{method_name} full=#{full_method_name || "nil"}"
       end
-      # M3b sidecar (docs/method_resolution_architecture_map.md): assemble the
-      # COMPLETE CallShape now that arg_types and the receiver are resolved (M3a's
-      # front shape had arg_types=[] and receiver_type=nil). Still NOT consumed:
-      # selection, materialization, and cache keys are untouched, and no selected
-      # name is derived from this shape. Under ADAMAS_CALLSHAPE_ASSERT it emits a
-      # committed non-vacuity line (CALLSHAPE_SEEN) and cross-checks that the
-      # source-shape facts captured at the front of lower_call (m3_front_shape)
-      # survived arg/receiver lowering (block/splat/named). The bare method name is
-      # NOT cross-checked here: legacy rewrites method_name (operators, .new short
-      # form, the v2_string_readable guard above) so a strict equality would be a
-      # false positive, not a real divergence.
-      if env_has?("ADAMAS_CALLSHAPE_ASSERT")
-        m3b_has_splat = call_args.any? { |a| call_arena[a].is_a?(Adamas::Compiler::Frontend::SplatNode) }
-        complete_shape = CallShape.new(
-          method: method_name,
-          arg_types: arg_types,
-          receiver_type: receiver_id ? ctx.type_of(receiver_id) : nil,
-          named_names: call_named_arg_names,
-          has_block: has_block_call,
-          has_splat: m3b_has_splat,
-        )
-        STDERR.puts "[CALLSHAPE_SEEN] stage=complete args=#{complete_shape.arg_types.size} rcv=#{complete_shape.receiver_type ? 1 : 0} block=#{complete_shape.has_block ? 1 : 0} splat=#{complete_shape.has_splat ? 1 : 0}"
-        if fs = m3_front_shape
-          if fs.has_block != complete_shape.has_block
-            STDERR.puts "[CALLSHAPE_MISMATCH] stage=complete has_block front=#{fs.has_block} complete=#{complete_shape.has_block} func=#{ctx.function.name}"
-          end
-          if fs.has_splat != complete_shape.has_splat
-            STDERR.puts "[CALLSHAPE_MISMATCH] stage=complete has_splat front=#{fs.has_splat} complete=#{complete_shape.has_splat} func=#{ctx.function.name}"
-          end
-          if fs.named_names != complete_shape.named_names
-            STDERR.puts "[CALLSHAPE_MISMATCH] stage=complete named front=#{fs.named_names} complete=#{complete_shape.named_names} func=#{ctx.function.name}"
-          end
-        end
-      end
       if debug_env_filter_match?("DEBUG_CALL_TRACE", method_name, method_name, full_method_name || "")
         type_ids = arg_types.map(&.id)
         type_names = arg_types.map { |t| get_type_name_from_ref(t) }
@@ -88455,7 +88238,6 @@ module Adamas::HIR
           has_named: call_has_named_args,
           named_names: canonical_named_arg_names(call_named_arg_names),
         ) : nil
-        STDERR.puts "[M3F_SITE_SEEN] site=class_refine name=#{full_method_name} readable=#{m3f_input_c ? 1 : 0}" if env_has?("ADAMAS_CALLSHAPE_ASSERT")
         if entry = (m3f_input_c ? resolve_call_input(m3f_input_c) : nil)
           full_method_name = entry[0]
         end
@@ -88538,7 +88320,6 @@ module Adamas::HIR
             has_named: has_named_args,
             named_names: canonical_named_arg_names(call_named_arg_names),
           ) : nil
-          STDERR.puts "[M3F_SITE_SEEN] site=path_refine name=#{path_base} readable=#{m3f_input_p ? 1 : 0}" if env_has?("ADAMAS_CALLSHAPE_ASSERT")
           if entry = (m3f_input_p ? resolve_call_input(m3f_input_p) : nil)
             full_method_name = entry[0]
             static_class_name = method_owner(path_base)
@@ -88953,11 +88734,11 @@ module Adamas::HIR
       # normalized the arguments.
       selected_block_entry : Tuple(String, Adamas::Compiler::Frontend::DefNode)? = nil
       block_proc_expected_return_type = nil.as(TypeRef?)
-      # M3e (docs/method_resolution_architecture_map.md): first direct consumption
-      # of Resolution in the lowering path. A non-readable name still yields nil,
-      # named args remain canonicalized, and the resolver is called exactly once.
-      # Other lookup sites still use the tuple adapter; cache keys and
-      # materialization are unchanged. CallShape is not routed here yet.
+      # Keep the selected symbol and DefNode together across the main lowering
+      # handoff. A non-readable name still yields nil, named args remain
+      # canonicalized, and the resolver is called exactly once. Other lookup sites
+      # still use the legacy tuple adapter; cache keys and materialization are
+      # unchanged.
       m3e_input = admitted_self_dispatch_root.nil? && v2_string_readable?(lookup_name) ? CallResolutionInput.new(
         func_name: lookup_name,
         arg_count: args.size,
@@ -88967,11 +88748,10 @@ module Adamas::HIR
         has_named: has_named_args,
         named_names: canonical_named_arg_names(call_named_arg_names),
       ) : nil
-      STDERR.puts "[M3E_SITE_SEEN] name=#{lookup_name} argc=#{args.size} readable=#{m3e_input ? 1 : 0}" if env_has?("ADAMAS_CALLSHAPE_ASSERT")
-      if m3e_resolution = (m3e_input ? resolve_call_resolution(m3e_input) : nil)
+      if selected_target = (m3e_input ? resolve_call_target(m3e_input) : nil)
         resolved_by_lookup = true
-        entry_name = method_instance_symbol(m3e_resolution.key)
-        entry_def = m3e_resolution.def_node
+        entry_name = selected_target.symbol_name
+        entry_def = selected_target.def_node
         if has_block_call
           block_proc_expected_return_type = expected_nil_block_return_type_for_def(entry_name, entry_def)
         end
@@ -89356,7 +89136,6 @@ module Adamas::HIR
                              has_named: has_named_args,
                              named_names: canonical_named_arg_names(call_named_arg_names),
                            ) : nil
-                           STDERR.puts "[M3H_SITE_SEEN] site=explicit_new name=#{full_method_name} readable=#{m3h_input ? 1 : 0}" if env_has?("ADAMAS_CALLSHAPE_ASSERT")
                            m3h_input ? resolve_call_input(m3h_input) : nil
                          end
         explicit_new = !!explicit_match
@@ -89552,34 +89331,6 @@ module Adamas::HIR
           callsite_arg_enum_names = nil
           mangled_method_name = mangle_function_name(base_method_name, arg_types, false)
           primary_mangled_name = mangled_method_name
-        end
-      end
-      # M4b binding model (diagnostic-only; docs/method_resolution_architecture_map.md):
-      # record the explicit family/selected/primary/emit binding for the resolver's
-      # selected def, after primary_mangled_name/mangled_method_name are computed.
-      # Inert unless ADAMAS_BINDING_ASSERT; changes no call target/materialization/
-      # registration/cache. BINDING_DANGEROUS surfaces the arity-shadow population
-      # (selected def needs more required args than the call supplies, no splat) —
-      # the exact shape the backend would null-pad. The count is a finding, not a
-      # target to fudge.
-      if env_has?("ADAMAS_BINDING_ASSERT")
-        if (sel = entry_name) && (sdef = entry_def)
-          bstats = @function_param_stats[sel]? || function_param_stats(sel, sdef)
-          binding = ResolutionBinding.new(
-            family_name: base_method_name,
-            selected_name: sel,
-            primary_name: primary_mangled_name,
-            emit_name: mangled_method_name,
-            arg_count: args.size,
-            selected_required: bstats.required,
-            selected_param_count: bstats.param_count,
-            selected_has_splat: bstats.has_splat,
-            selected_has_double_splat: bstats.has_double_splat,
-          )
-          STDERR.puts "[BINDING_SEEN] family=#{binding.family_name} selected=#{binding.selected_name} primary=#{binding.primary_name} emit=#{binding.emit_name} argc=#{binding.arg_count} req=#{binding.selected_required} pc=#{binding.selected_param_count} splat=#{binding.selected_has_splat ? 1 : 0} dsplat=#{binding.selected_has_double_splat ? 1 : 0}"
-          if binding.dangerous?
-            STDERR.puts "[BINDING_DANGEROUS] selected=#{binding.selected_name} emit=#{binding.emit_name} argc=#{binding.arg_count} req=#{binding.selected_required} caller=#{ctx.function.name}"
-          end
         end
       end
       receiver_name = ""
@@ -92328,7 +92079,6 @@ module Adamas::HIR
                 has_named: has_named_args,
                 named_names: canonical_named_arg_names(call_named_arg_names),
               ) : nil
-              STDERR.puts "[M3J_SITE_SEEN] site=value_receiver_static name=#{concrete_base} readable=#{m3j_input ? 1 : 0}" if env_has?("ADAMAS_CALLSHAPE_ASSERT")
               if resolved = (m3j_input ? resolve_call_input(m3j_input) : nil)
                 resolved_name = value_receiver_static_dispatch_target(concrete_base, resolved[0], arg_types, has_block_call)
                 base_method_name = strip_type_suffix(resolved_name)
@@ -92549,7 +92299,6 @@ module Adamas::HIR
                   has_named: has_named_args,
                   named_names: canonical_named_arg_names(call_named_arg_names),
                 ) : nil
-                STDERR.puts "[M3K_SITE_SEEN] site=module_base_loop name=#{module_base_name} readable=#{m3k_input ? 1 : 0}" if env_has?("ADAMAS_CALLSHAPE_ASSERT")
                 if resolved = (m3k_input ? resolve_call_input(m3k_input) : nil)
                   resolved_name = resolved[0]
                   lower_function_if_needed(resolved_name)
@@ -92699,7 +92448,6 @@ module Adamas::HIR
                 has_named: has_named_args,
                 named_names: canonical_named_arg_names(call_named_arg_names),
               ) : nil
-              STDERR.puts "[M3G_SITE_SEEN] site=receiver_repair name=#{resolved_base} readable=#{m3g_input_r ? 1 : 0}" if env_has?("ADAMAS_CALLSHAPE_ASSERT")
               if entry = (m3g_input_r ? resolve_call_input(m3g_input_r) : nil)
                 resolved_name = entry[0]
                 resolved_name = prefer_callsite_over_arity(resolved_name, resolved_base, arg_types, has_block_call)
@@ -92796,7 +92544,6 @@ module Adamas::HIR
           has_named: has_named_args,
           named_names: canonical_named_arg_names(call_named_arg_names),
         ) : nil
-        STDERR.puts "[M3G_SITE_SEEN] site=final_rematch name=#{base_method_name} readable=#{m3g_input_f ? 1 : 0}" if env_has?("ADAMAS_CALLSHAPE_ASSERT")
         if rematched = (m3g_input_f ? resolve_call_input(m3g_input_f) : nil)
           rematched_name = rematched[0]
           if rematched_name.includes?('$')
@@ -93368,7 +93115,6 @@ module Adamas::HIR
           has_named: has_named_args,
           named_names: canonical_named_arg_names(call_named_arg_names),
         ) : nil
-        STDERR.puts "[M3I_SITE_SEEN] site=direct_block_entry name=#{base_method_name} readable=#{m3i_input ? 1 : 0}" if env_has?("ADAMAS_CALLSHAPE_ASSERT")
         if direct_block_entry = (m3i_input ? resolve_call_input(m3i_input) : nil)
           # Per-shape block specialization (4th / emit-time site, see
           # shape_keyed_block_target): re-key the emit-time block target to the
@@ -94689,7 +94435,6 @@ module Adamas::HIR
         has_named: call_has_named_args,
         named_names: canonical_named_arg_names(nil),
       ) : nil
-      STDERR.puts "[M3L_SITE_SEEN] site=splat_pack_entry name=#{func_name} args=#{args.size} types=#{arg_types.size} splat=#{call_has_splat ? 1 : 0}" if env_has?("ADAMAS_CALLSHAPE_ASSERT")
       entry = m3l_input ? resolve_call_input(m3l_input) : nil
       return {args, false} unless entry
 
@@ -94754,7 +94499,6 @@ module Adamas::HIR
           has_named: call_has_named_args,
           named_names: canonical_named_arg_names(nil),
         ) : nil
-        STDERR.puts "[M3M_SITE_SEEN] site=non_splat_match name=#{func_name} args=#{args.size} splat=0" if env_has?("ADAMAS_CALLSHAPE_ASSERT")
         non_splat_match = m3m_input ? resolve_call_input(m3m_input) : nil
         if non_splat_match
           ns_name = non_splat_match[0]
@@ -94876,7 +94620,6 @@ module Adamas::HIR
         has_named: call_has_named_args,
         named_names: canonical_named_arg_names(nil),
       ) : nil
-      STDERR.puts "[M3N_SITE_SEEN] site=double_splat_arg name=#{func_name} args=#{args.size}" if env_has?("ADAMAS_CALLSHAPE_ASSERT")
       entry = m3n_input ? resolve_call_input(m3n_input) : nil
       return args unless entry
       # V2 workaround: validate tuple pointer before accessing elements.
@@ -95645,10 +95388,6 @@ module Adamas::HIR
       false
     end
 
-    # Thin legacy wrapper (M3d): guard, canonicalize named args, build the
-    # structured CallResolutionInput, and delegate to the structured resolver.
-    # Kept so the existing callers and the internal recursive calls below need no
-    # changes. No CallShape mapping yet; no behavior change.
     # Bug 1 helper: true when every present positional argument EXACTLY type-matches `def_node`'s
     # corresponding positional parameter (declared_type_match_score == 2). Conservative: an untyped
     # or only-numerically-compatible positional param does NOT qualify, so this never rescues a
@@ -95697,44 +95436,23 @@ module Adamas::HIR
       ))
     end
 
-    # Structured resolver return (M4a): promote the resolver's selected {name, def}
-    # to a Resolution. resolution_from_selected_name carries the selected symbol
-    # verbatim, so method_instance_symbol(res.key) reproduces the EXACT selected
-    # name (proven byte-identical in M2). Under ADAMAS_RESOLUTION_ASSERT it checks
-    # that parity and emits a non-vacuity line. No behavior change: the core
-    # (resolve_call_tuple) is unchanged; legacy callers still go via
-    # resolve_call_input while the main M3e lowering site consumes Resolution.
-    # NOTE: res.key is still a verbatim selected-symbol carrier, NOT yet a semantic
-    # identity (owner/method/arity decomposition). Materialization/registration must
-    # not key off it until that promotion happens (later step).
-    private def resolve_call_resolution(input : CallResolutionInput) : Resolution?
+    # Keep the legacy resolver's selected symbol and DefNode together. This is a
+    # behavior-neutral compatibility result, not semantic CallResolution identity.
+    private def resolve_call_target(input : CallResolutionInput) : SelectedCallTarget?
       t = resolve_call_tuple(input)
       return nil unless t
-      res = resolution_from_selected_name(t[0], t[1])
-      if env_has?("ADAMAS_RESOLUTION_ASSERT")
-        rebuilt = method_instance_symbol(res.key)
-        STDERR.puts "[RESOLUTION_SEEN] selected=#{t[0]}"
-        unless rebuilt == t[0] && res.def_node == t[1]
-          STDERR.puts "[RESOLUTION_MISMATCH] selected=#{t[0]} rebuilt=#{rebuilt} def_eq=#{res.def_node == t[1]}"
-        end
-      end
-      res
+      SelectedCallTarget.new(t[0], t[1])
     end
 
-    # Legacy {name, def} adapter (M4a): unwraps a Resolution back to the tuple that
-    # existing callers (the lookup_function_def_for_call wrapper and the M3e..M3n
-    # converted sites) expect. Byte-identical to the pre-M4a resolve_call_input,
-    # since method_instance_symbol(res.key) == the selected name and res.def_node is
-    # the selected def.
+    # Legacy {name, def} adapter for callers not yet moved to SelectedCallTarget.
     private def resolve_call_input(input : CallResolutionInput) : Tuple(String, Adamas::Compiler::Frontend::DefNode)?
-      res = resolve_call_resolution(input)
-      return nil unless res
-      {method_instance_symbol(res.key), res.def_node}
+      target = resolve_call_target(input)
+      return nil unless target
+      {target.symbol_name, target.def_node}
     end
 
-    # Tuple-producing resolver core (M3d body, unchanged): consumes
-    # CallResolutionInput, destructuring the legacy locals from the input. Named
-    # args are already canonicalized by the lookup_function_def_for_call wrapper.
+    # Tuple-producing legacy resolver core. Named args are canonicalized by the
+    # lookup_function_def_for_call wrapper.
     private def resolve_call_tuple(input : CallResolutionInput) : Tuple(String, Adamas::Compiler::Frontend::DefNode)?
       func_name = input.func_name
       arg_count = input.arg_count
@@ -95743,24 +95461,6 @@ module Adamas::HIR
       call_has_splat = input.has_splat
       call_has_named_args = input.has_named
       named_arg_names = input.named_names
-      # M3c sidecar (docs/method_resolution_architecture_map.md): the resolver input
-      # is now the structured CallResolutionInput itself, so the round-trip is an
-      # identity (the prior explicit round-trip check is therefore dropped). Under
-      # ADAMAS_CALLSHAPE_ASSERT we keep the committed RESINPUT_SEEN non-vacuity line
-      # and the holding invariant that a resolver call has a non-empty name.
-      if env_has?("ADAMAS_CALLSHAPE_ASSERT")
-        named_without_names = input.has_named && (input.named_names.nil? || input.named_names.not_nil!.empty?)
-        STDERR.puts "[RESINPUT_SEEN] name=#{input.func_name} argc=#{input.arg_count} types=#{input.arg_types.try(&.size) || -1} block=#{input.has_block ? 1 : 0} splat=#{input.has_splat ? 1 : 0} named=#{input.has_named ? 1 : 0} named_no_names=#{named_without_names ? 1 : 0} caller=#{@current_class || "?"}##{@current_method || "?"}"
-        # Holding invariant (0 hits): a resolver call always has a non-empty name.
-        # NOTE: has_named does NOT imply named_names present — falsified by 534 cases
-        # on the direct-hash compile (to_s(io)/`.new` wrappers pass has_named=true
-        # with nil/empty names). That is the SEEN observation named_no_names above,
-        # NOT an invariant; full M3's CallShape->resolver mapping must allow
-        # has_named with no explicit names.
-        if input.func_name.empty?
-          STDERR.puts "[RESINPUT_MISMATCH] empty_name argc=#{input.arg_count} caller=#{@current_class || "?"}##{@current_method || "?"}"
-        end
-      end
       debug_call_lookup = debug_env_filter_match?("DEBUG_CALL_LOOKUP", func_name)
       if debug_call_lookup
         arg_desc = if arg_types
@@ -96331,17 +96031,6 @@ module Adamas::HIR
         STDERR.puts "[DEBUG_PUTS_LOOKUP] func=#{func_name} count=#{arg_count} args=#{type_names} best=#{best_name}"
       end
       result = {best_name, best}
-      # M2 sidecar: build a Resolution alongside the legacy {name, def} and verify
-      # its key round-trips to the EXACT selected name (full post-processing, not
-      # just the base mangle). Inert unless ADAMAS_MIKEY_ASSERT; the Resolution is
-      # discarded — selection/materialization are untouched.
-      if env_has?("ADAMAS_MIKEY_ASSERT")
-        if (sel_name = best_name) && (sel_def = best)
-          resolution = resolution_from_selected_name(sel_name, sel_def)
-          rebuilt = method_instance_symbol(resolution.key)
-          STDERR.puts "[MIKEY_M2_MISMATCH] key=#{rebuilt} selected=#{sel_name}" unless rebuilt == sel_name
-        end
-      end
       if env_get("DEBUG_HASH_DELETE_LOOKUP") && func_name.includes?("Hash(String, Int32)#delete")
         STDERR.puts "[HASH_DELETE_LOOKUP] selected=#{best_name} block_call=#{has_block}"
       end

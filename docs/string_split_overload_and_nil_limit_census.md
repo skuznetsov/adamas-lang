@@ -179,9 +179,11 @@ ivar lookup misses, and `@items = [] of UInt32` gets a null FieldSet type → MI
 **The §48 localization (`resolve_untyped_overload` / `prefer_non_named` / `has_named_only`) is
 STALE.** Probe (always-on, full compile): `resolve_untyped_overload` is **never called for split**.
 `split('/')` resolves through the **M3/M4 typed resolver** `lookup_function_def_for_call` →
-`resolve_call_input` → `resolve_call_resolution` → **`resolve_call_tuple`** (ast_to_hir.cr ~80308).
-`ADAMAS_RESOLUTION_ASSERT=1` confirms it selects `String#split$Nil | Int32` (the whitespace
-`split(limit : Int32?)` overload, Char→limit) for `split('/')`.
+`resolve_call_input` → `resolve_call_target` → **`resolve_call_tuple`**. Historical
+`ADAMAS_RESOLUTION_ASSERT=1` evidence confirmed it selected `String#split$Nil | Int32` (the
+whitespace `split(limit : Int32?)` overload, Char→limit) for `split('/')`; that expired
+string-round-trip assertion was removed on 2026-08-01. `DEBUG_CALL_LOOKUP=split` is the current
+selection trace.
 
 The SAME `next if prefer_non_named && stats.has_named_only` skip exists in `resolve_call_tuple`'s
 candidate loop (~80746), and there `arg_types` is already local. But un-skipping the Char overload

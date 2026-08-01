@@ -7,6 +7,15 @@ CrystalV2; Crystal stdlib remains a compatible subset layer.
 
 This document is a map + plan only. No behavior change is shipped by writing it.
 
+Current implementation note (2026-08-01): the M1-M4 diagnostic sidecars
+described below are historical evidence, not the live contract. Their
+repository-unconsumed assertion paths and string-round-trip
+`MethodInstanceKey`/`CallShape`/`ResolutionBinding` carriers were removed. HIR
+keeps only `CallResolutionInput` plus
+`SelectedCallTarget {symbol_name, def_node}` as explicit legacy compatibility;
+semantic `CallResolution` remains unimplemented and must originate from the
+semantic owner with same-arena provenance.
+
 ---
 
 ## 0. Motivating defect (grounded, VERIFIED on `39d2026b`)
@@ -173,7 +182,12 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 
 ---
 
-## 3. Migration plan (small, safe, ordered commits)
+## 3. Historical migration log (archived)
+
+The “landed” statements in this section record experiments on earlier
+revisions. They are not descriptions of the current implementation and must
+not be used as live flags, APIs, or acceptance evidence; the current boundary
+is the implementation note at the top of this document.
 
 > Progress: **M1 landed** (`ca75ecab`) — structs + `method_instance_symbol`
 > (base-mangle parity) + `ADAMAS_MIKEY_ASSERT` guard. **M2 landed** —
