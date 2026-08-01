@@ -9,8 +9,10 @@ describe "bootstrap chain timing" do
     script.should_not contain("/usr/bin/time -l")
     script.scan("/usr/bin/time -p").size.should be >= 3
     script.should contain(
-      %(/usr/bin/time -p "$SCRIPT_DIR/run_safe.sh" "$HOST_CRYSTAL" "$TIMEOUT_SEC" "$MEM_MB")
+      %(RUN_SAFE_RESOURCE_FILE="$resource_file" /usr/bin/time -p "$SCRIPT_DIR/run_safe.sh" "$HOST_COMPILER_RESOLVED" "$TIMEOUT_SEC" "$MEM_MB")
     )
+    wrapper = File.read(File.join(root, "scripts", "build_bootstrap_stages.sh"))
+    wrapper.should_not contain(%(mkdir -p "$OUT_DIR"))
 
     stdout = IO::Memory.new
     stderr = IO::Memory.new
@@ -72,13 +74,15 @@ describe "bootstrap chain timing" do
       stdout = IO::Memory.new
       stderr = IO::Memory.new
       status = Process.run(
-        File.join(root, "scripts", "bootstrap_chain.sh"),
+        File.join(root, "scripts", "build_bootstrap_stages.sh"),
         ["--stages", "2", "--host", fake_compiler, "--out", outdir, "--timeout", "10", "--mem", "256"],
         output: stdout,
         error: stderr
       )
 
       status.success?.should be_true, "#{stdout}\n#{stderr}"
+      File.symlink?(File.join(outdir, "s1_bootstrap")).should be_true
+      File.symlink?(File.join(outdir, "s2b")).should be_true
       File.read_lines(plain_marker).should eq(["plain-ran", "plain-ran"])
       File.read_lines(no_prelude_marker).should eq(["no-prelude-ran", "no-prelude-ran"])
     ensure

@@ -139,6 +139,40 @@ scripts/run_safe.sh /tmp/cv2_stage1 300 4096 src/adamas.cr -o /tmp/cv2_s2/cv2_s2
 The produced compiler MUST then pass the fast guards relevant to the changed
 contract family.
 
+#### 4.2.1 Fresh Bootstrap Evidence Producer
+
+`scripts/bootstrap_chain.sh` accepts only an absent run-directory path whose
+existing parent resolves outside the source evidence scope. The producer
+creates that directory and its initially empty compiler cache itself with mode
+`0700`; an existing path, including an empty directory, is rejected. Adamas,
+worker, and run-safe control overrides are rejected, while known generic
+compiler/linker controls are removed before target launch. Hashes of the
+remaining `PATH`, `HOME`, and `TMPDIR` context are recorded without persisting
+their values.
+
+Each stage output must be a new regular, nonempty, executable, single-link
+file. Every generated stage records the hash of its producer before and after
+the stage; stage N+1 is admitted only when that producer hash equals the prior
+stage's stable output hash.
+
+Each build is supervised with a new B7 resource receipt. Build logs, resource
+receipts, smoke binaries, and exact plain/no-prelude runtime transcripts must
+remain regular single-link files and are hashed into the producer-owned
+`bootstrap_chain_v3` manifest. A final pass revalidates every successful-stage
+artifact, B7 success receipt, and exact transcript immediately before manifest
+publication. Source content, source-scope hashes, source symlink absence, and
+run/cache directory identities are checked at the two endpoints. The manifest
+is installed atomically without overwriting an existing path; collision fails
+the chain.
+
+This manifest is a compositional receipt, not a readiness verdict. A consumer
+must rehash its referenced on-disk files, validate lineage and transcript
+content, and apply performance/resource policy. T8 owns that offline decision.
+The source certificate is explicitly endpoint consistency, not proof that no
+mutate-then-restore event occurred, and it does not close all external stdlib,
+toolchain, or same-UID hostile-writer inputs. Those contexts remain outside the
+B6 producer claim and must not be inferred from a successful receipt.
+
 ### 4.3 Runtime Gate
 
 Any produced test binary MUST be executed through:

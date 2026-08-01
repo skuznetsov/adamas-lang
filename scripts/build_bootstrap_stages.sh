@@ -49,8 +49,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-mkdir -p "$OUT_DIR"
-
 if [[ ${#CHAIN_ARGS[@]} -gt 0 ]]; then
   "$ROOT_DIR/scripts/bootstrap_chain.sh" --out "$OUT_DIR" --stages "$STAGES" "${CHAIN_ARGS[@]}"
 else

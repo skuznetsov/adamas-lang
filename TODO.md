@@ -3,6 +3,23 @@
 Updated: 2026-07-31 (float formatter tables and precision callback returns
 restored; B4-F remains red).
 
+BOOTSTRAP EVIDENCE PRODUCER VERIFIED; T8/B4-F REMAIN OPEN.
+`scripts/bootstrap_chain.sh` now requires an absent run path and creates the
+mode-0700 run directory and empty cache itself. It rejects semantic control
+overrides, sanitizes known generic compiler/linker controls, and binds every
+stage producer hash to the previous stable output. Stage artifacts, logs,
+successful B7 receipts, smoke binaries, and exact plain/no-prelude transcripts
+have regular-file/single-link checks and hashes in an atomic
+`bootstrap_chain_v3` manifest, with a final revalidation before publication.
+Source scope and run/cache identities are endpoint-checked. The focused
+integrity/timing group passes 16 examples, including absolute, relative, and
+symlink-parent paths into the source scope, and the scoped hostile review is
+ROBUST. T8 must still rehash the receipt on disk and enforce <=180 seconds,
+numeric resource coverage, normal build policy, and both stage2 semantics
+before B4-F can turn green. B6 does not prove absence of transient
+mutate-restore events, external stdlib/toolchain closure, or safety against a
+same-UID hostile writer.
+
 RUN_SAFE ROOTED-ANCESTRY RESOURCE OWNER VERIFIED; B4-F/T8 REMAIN OPEN.
 `scripts/run_safe.sh` now owns a versioned resource row and can publish it to a
 new atomic evidence file that target output cannot impersonate. Numeric RSS is
