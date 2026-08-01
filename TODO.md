@@ -3,6 +3,21 @@
 Updated: 2026-07-31 (float formatter tables and precision callback returns
 restored; B4-F remains red).
 
+RUN_SAFE ROOTED-ANCESTRY RESOURCE OWNER VERIFIED; B4-F/T8 REMAIN OPEN.
+`scripts/run_safe.sh` now owns a versioned resource row and can publish it to a
+new atomic evidence file that target output cannot impersonate. Numeric RSS is
+admitted only when every scheduled visible-ancestry snapshot is valid; numeric
+FDs additionally require full PID coverage and stable paired topology.
+Malformed/unavailable `ps`, empty/malformed/partial `lsof`, and FD topology
+fence failure/churn fail the affected metric closed to `unknown`. Malformed
+bounds, pre-existing evidence paths, publication races, and target marker
+spoofing have negative guards. The focused resource/process-tree group passes
+17 examples, including timeout, TERM-ignoring parent, nested
+supervisor, and successful-parent descendant cleanup. This is the scoped B7
+evidence owner needed by a future B6 manifest/T8 validator; it does not make
+B4-F green and does not prove between-sample peaks, detached/reparented process
+coverage, or aggregate cap enforcement when host probes are unavailable.
+
 VERIFIED RECORD-MACRO INITIALIZER SLICE (bootstrap successor still open):
 record-style macro assignments now retain their right-hand-side text when
 `MacroValue#node_identifier_name` renders `AssignNode` values, so generated

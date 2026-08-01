@@ -64,6 +64,42 @@ describe "run_safe process-tree cleanup" do
     end
   end
 
+  it "kills a TERM-ignoring parent and its live child without leaving an orphan" do
+    root = File.expand_path("../..", __DIR__)
+    runner = File.join(root, "scripts", "run_safe.sh")
+    pid_file = File.join(Dir.tempdir, "adamas_run_safe_term_ignore_#{Process.pid}_#{Random.rand(1_000_000)}.pid")
+    child_pid : Int32? = nil
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+
+    begin
+      status = Process.run(
+        runner,
+        [
+          "/bin/sh",
+          "1",
+          "64",
+          "-c",
+          "trap '' TERM; sleep 37 & echo $! > #{Process.quote(pid_file)}; wait",
+        ],
+        output: stdout,
+        error: stderr
+      )
+
+      status.success?.should be_false
+      File.exists?(pid_file).should be_true
+      child_pid = File.read(pid_file).strip.to_i
+      wait_until_process_exits(child_pid).should be_true
+      "#{stdout}#{stderr}".should contain("[KILL] Timeout after 1s")
+      "#{stdout}#{stderr}".should contain("[RUN_SAFE_RESOURCE]")
+    ensure
+      if pid = child_pid
+        Process.signal(Signal::KILL, pid) if Process.exists?(pid)
+      end
+      File.delete(pid_file) if File.exists?(pid_file)
+    end
+  end
+
   it "recursively cleans nested supervisor process groups" do
     root = File.expand_path("../..", __DIR__)
     runner = File.join(root, "scripts", "run_safe.sh")

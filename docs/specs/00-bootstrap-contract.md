@@ -161,3 +161,32 @@ open, but only if:
 Current example: LM-559 fixes static callee and return ABI spelling, but
 produced `s2` no-prelude binary output still exits 139 after LLVM finalizes
 output. That is a separate CLI/file-output tail or outer-rescue frontier.
+
+## 6. Resource Evidence Integrity
+
+`scripts/run_safe.sh` is the sole owner of supervised process resource
+evidence. It emits one diagnostic `[RUN_SAFE_RESOURCE]` row for a launched
+target. When `RUN_SAFE_RESOURCE_FILE` names a new absolute path, the wrapper also
+publishes exactly one producer-owned `run_safe_resource_v1` row there without
+overwriting an existing path. A destination collision or publication race
+makes the wrapper fail. Consumers MUST require wrapper success and use that
+file, not captured target output, as the authoritative channel.
+
+RSS maxima are admitted only when every scheduled RSS observation is a valid
+`ps` point-snapshot of the visible ancestry rooted at the supervised target.
+FD maxima additionally require `lsof` to name every PID with at least one
+canonical FD row and a second `ps` topology fence to preserve the same
+PID/PPID/process-group relation. Missing tools, malformed rows, partial PID
+coverage, or a failed observation must produce `unknown` for the affected
+metric; a partial-PID or empty probe must never be serialized as a tree-wide
+numeric zero.
+
+The row records the outcome, reason, exit code, per-metric sample counts,
+coverage, observation mode, and maximum observed ancestry width. It is sampled
+evidence over the visible rooted ancestry, not a hermetic resource proof:
+detached or reparented processes and between-sample spikes remain outside the
+certificate. When probes are unavailable, the wall-clock watchdog and target
+process-group cleanup remain active, but aggregate RSS/FD cap enforcement is
+not certified. Evidence decays when the supervisor, process-probe availability,
+sampling interval, or process ownership changes. Refresh it with the B7
+falsifier before consuming it in bootstrap readiness evidence.
