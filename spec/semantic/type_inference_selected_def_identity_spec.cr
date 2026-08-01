@@ -166,6 +166,67 @@ describe Semantic::TypeInferenceEngine do
       r1.arg_types.should eq(r3.arg_types)
     end
 
+    it "rejects a same-shaped receiver symbol owned by another analyzer" do
+      _program, analyzer, engine = build_selected_def_identity_fixture
+      _foreign_program, foreign_analyzer, _foreign_engine = build_selected_def_identity_fixture
+      left = analyzer.global_context.symbol_table.lookup("T1Left").as(Semantic::ClassSymbol)
+      foreign_left = foreign_analyzer.global_context.symbol_table.lookup("T1Left").as(Semantic::ClassSymbol)
+
+      left.node_id.should eq(foreign_left.node_id)
+      left.name.should eq(foreign_left.name)
+      engine.__test_local_method_instance_key(
+        route_method_with_arg(left, "Int32"),
+        Semantic::InstanceType.new(foreign_left),
+        [Semantic::PrimitiveType.new("Int32")] of Semantic::Type,
+      ).should be_nil
+    end
+
+    it "accepts a receiver owned below a parent semantic context" do
+      source = <<-CRYSTAL
+        class LocalOwner
+          def route(value : Int32) : Int32
+            value
+          end
+        end
+
+        LocalOwner.new.route(1)
+      CRYSTAL
+
+      program = Frontend::Parser.new(Frontend::Lexer.new(source)).parse_program
+      parent_table = Semantic::SymbolTable.new
+      file_table = Semantic::SymbolTable.new(parent_table)
+      analyzer = Semantic::Analyzer.new(program, Semantic::Context.new(file_table))
+      analyzer.collect_symbols
+      name_result = analyzer.resolve_names
+      engine = analyzer.infer_types(name_result.identifier_symbols)
+      owner = file_table.lookup_local("LocalOwner").as(Semantic::ClassSymbol)
+
+      engine.__test_local_method_instance_key(
+        route_method_with_arg(owner, "Int32"),
+        Semantic::InstanceType.new(owner),
+        [Semantic::PrimitiveType.new("Int32")] of Semantic::Type,
+      ).should_not be_nil
+    end
+
+    it "accepts the canonical receiver re-exported into the current table" do
+      program, analyzer, _engine = build_selected_def_identity_fixture
+      owner = analyzer.global_context.symbol_table.lookup("T1Left").as(Semantic::ClassSymbol)
+      reexported_table = Semantic::SymbolTable.new
+      reexported_table.define(owner.name, owner)
+      reexported_engine = Semantic::TypeInferenceEngine.new(
+        program,
+        {} of Frontend::ExprId => Semantic::Symbol,
+        reexported_table,
+        identity_registry: analyzer.identity_registry,
+      )
+
+      reexported_engine.__test_local_method_instance_key(
+        route_method_with_arg(owner, "Int32"),
+        Semantic::InstanceType.new(owner),
+        [Semantic::PrimitiveType.new("Int32")] of Semantic::Type,
+      ).should_not be_nil
+    end
+
     it "keeps same-named nested receiver declarations distinct" do
       source = <<-CRYSTAL
         module LeftOwner

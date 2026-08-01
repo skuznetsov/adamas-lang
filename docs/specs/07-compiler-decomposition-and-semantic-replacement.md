@@ -1,8 +1,9 @@
 # Compiler Decomposition and Semantic Replacement — Frontier SDD
 
 > Status: DESIGN-SEALED; R0 CURRENT-SOURCE SNAPSHOT SEALED,
-> B4-F PERFORMANCE RED; STAGE2 SEMANTIC SMOKES UNAVAILABLE
-> (documentation-only amendment, 2026-07-18).
+> B4-F PERFORMANCE RED; STAGE2 SEMANTIC SMOKES UNAVAILABLE;
+> T1 LOCAL TYPED DECISION GUARDED, CROSS-PHASE CONSUMER ABSENT
+> (frontier refresh, 2026-08-01).
 > Audit snapshot: source-shape counts remain scoped to checkout `05954794`.
 > Current R0 evidence is the seven-path dirty-source snapshot sealed at base
 > `c216b9ef...`, tree `1efb635...`, patch `d7ad2cac...`; measured evidence and
@@ -107,7 +108,7 @@ keeps source revisions, generated artifacts, and the dirty worktree distinct.
 | Sealed-current stats-on localization | `DIAGNOSTIC / OPEN PHASE` | With only `ADAMAS_PHASE_STATS=1` on sealed `cv2_s1` under timeout 180s/memory 12288 MB, the run ended at wall 182.60s, exit 143, without `cv2_s2`; peak RSS is unavailable. `process_pending` completed 218 -> 591 (+373) in 555.2ms and `emit_tracked_sigs` 591 -> 604 (+13) in 235.0ms. The first open phase was `lower_missing.initial`; internal growth was 604 -> 1535 -> 7422 -> 19238 -> 28234 (+27,630 from 604) before timeout, with no completion/timing/normalized top-prefix. Log SHA-256 `1cc025cc5930ebd0513382e68dbb400e763002186f227288683d6bc710f79ecd`. This revalidates/evolves the 2026-04-29 localization; observation definitions differ, and stats-on/uninstrumented timing is diagnostic-only. |
 | T0 same-source fresh A/B | `NOT COMPLETED` | R0 promotion remains blocked independently of B4-F. |
 | T8 offline readiness validator | `COMPLETED / NO CURRENT GREEN RECEIPT` | The committed validator rehashes B6/B7 evidence and enforces trusted host, normal no-worker build, numeric resource coverage, both exact stage2 smokes, and the inclusive <=180-second budget. B4-F remains red until a fresh current receipt passes it. |
-| T1 ownership/NameId substrate | `COMPLETED / T1 STILL RED` | One `SemanticIdentityRegistry` owns canonical session-local names and the existing semantic type table; `DefInstanceKey` named arguments are typed `NameId` pairs, and retained semantic key arrays are mutation-safe. Expired HIR-only identity sidecars were pruned instead of promoted; `SelectedCallTarget` is explicitly legacy symbol/DefNode compatibility. No live semantic `CallResolution`, producer row, downstream join, or lowering behavior change is claimed. |
+| T1 ownership/NameId substrate | `LOCAL GUARD COMPLETED / T1 STILL RED` | One `SemanticIdentityRegistry` owns canonical session-local names and the existing semantic type table; `DefInstanceKey` named arguments are typed `NameId` pairs, and retained semantic key arrays are mutation-safe. Exact r1-r5 explicit-receiver shapes now build and immediately validate one private `LocalCallResolution {MethodSymbol, DefInstanceKey}` before unchanged legacy body inference. Selected Def payload plus receiver visibility/owner provenance fail closed for independent roots while canonical symbol re-export remains valid. Expired HIR-only sidecars were pruned; `SelectedCallTarget` remains legacy compatibility. No `ResolutionId`, producer row, cross-arena handoff, downstream join, or lowering behavior change is claimed. |
 
 These states supersede an unqualified `B4 GREEN` label. They do not discard
 the historical artifact; they prevent it from being used as evidence for fresh
@@ -281,17 +282,27 @@ until it exists, the external join is pending.
 
 Current blockers are explicit and remain red:
 
-- there is no actual semantic callsite type interner that can authoritatively
-  populate the receiver and argument semantic type IDs;
-- `IdentityDryRunTracker` is a definition-annotation/body-infer proxy and is
-  in-process, not the semantic callsite producer.
+- exact r1-r5 shapes have a local semantic decision, but semantic analysis owns
+  an aggregate reparse arena while `AstToHir` later consumes the original
+  per-file arenas;
+- no owned callsite mapping or genuine downstream compiler consumer exists for
+  a `ResolutionId`; an inference-order ordinal or raw `ExprId` surrogate is
+  rejected;
+- `IdentityDryRunTracker` remains a definition-annotation/body-infer proxy, not
+  the semantic callsite producer.
 
-The ownership precursor is now implemented: `SemanticIdentityRegistry` owns
-canonical session-local names alongside the existing type table,
-`DefInstanceKey` uses ordered `{NameId, SemanticTypeId}` named components, and
-`SemanticTypeKey`/`DefInstanceKey` retain owned arrays without exposing their
-mutable storage. This closes only step 1 of section 13.3; it does not create a
-live resolution owner or make T1 green.
+The ownership precursor and bounded local decision are implemented:
+`SemanticIdentityRegistry` owns canonical session-local names and types;
+`DefInstanceKey` owns ordered positional, block, and `{NameId,
+SemanticTypeId}` named components; and the private `LocalCallResolution` is
+constructed and immediately revalidated for the exact T1 r1-r5 shapes before
+unchanged legacy body inference. Parser-owned selected definitions and nominal
+receiver symbols from an independent Analyzer/root table fail closed, while
+the same canonical symbol may be re-exported into a file-local table. Shared
+symbol-table roots across multiple analyzers and reopened-class arena identity
+remain unresolved. This completes the local portion of steps 1-2 in section
+13.3. It does not authorize a stream, create a cross-arena consumer, or make
+T1 green.
 
 The T1 guard is **availability/current-red only**: it can show whether the
 current source/configuration emitted a row or exposed the current failing
@@ -331,10 +342,11 @@ is admitted.
   side effect of this architecture transition.
 - The STABLE6 in-process callsite-owner prototype: it is not an admitted
   default-off guard, and must not be replaced by another large owner or new
-  `AstToHir` ivars. Only a minimal producer record, serialized as telemetry
-  rather than authority, may be reconsidered after an external streaming
-  composite census; current log ceilings do not establish bounded memory or
-  backpressure unless a guard hard-caps them.
+  `AstToHir` ivars. A minimal producer record, serialized as telemetry rather
+  than authority, may be reconsidered only after a bounded callsite/arena
+  ownership falsifier names one downstream compiler consumer; an external
+  census alone is insufficient. Current log ceilings do not establish bounded
+  memory or backpressure unless a guard hard-caps them.
 
 ### 3.3 Guard-only future
 
@@ -801,19 +813,22 @@ must remain behavior-neutral and proceed in this order:
    semantic branch, a post-insertion mutation that changes a key/hash, a
    generic/tuple order collision, or two owners minting different IDs for the
    same canonical name.
-2. **Local typed decision.** Return a typed `CallResolution` and
+2. **Local typed decision (bounded exact shapes complete).** Return a typed `CallResolution` and
    `MethodInstanceKey` locally from the existing resolution owner, at the
    post-resolution boundary after semantic literal/autocast normalization if
    applicable, and before Adamas HIR/value/ABI coercion or inline
    materialization. Do not add a new `AstToHir` ivar, broad context owner,
    parallel interner, or default-path consumer; keep the legacy route
    authoritative.
-3. **Streaming producer (boundedness pending).** Emit the exact
+3. **Streaming producer (blocked by consumer ownership).** Emit the exact
    `t1_identity_join_v1` record at that owner boundary. The producer
    serializes typed IDs for telemetry only; `lower_function_if_needed` and the
    MAT string ledger remain rejected producers. Any current log ceiling is
    diagnostic unless a guard hard-caps it, so no bounded-memory or backpressure
-   claim is admitted yet.
+   claim is admitted yet. The external availability guard is not a live
+   compiler consumer. Do not mint an ordinal `ResolutionId` or emit rows until
+   a bounded callsite/arena ownership falsifier proves the handoff to one named
+   downstream compiler consumer.
 4. **External join (pending downstream enrichment).** The existing MAT ledger
    lacks `resolution_id` and cannot be joined deterministically. Define and
    emit a second versioned downstream correlation record/enrichment carrying

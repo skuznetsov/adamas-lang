@@ -148,8 +148,8 @@ module Adamas
           end
         end
 
-        # Guard-only typed decision for the first positional explicit-receiver
-        # family. Legacy lookup_method remains the selected-target authority.
+        # Guard-only typed decision for the exact T1 explicit-receiver shapes.
+        # Legacy selectors remain the selected-target authority.
         private struct LocalCallResolution
           getter method : MethodSymbol
           getter method_instance_key : DefInstanceKey
@@ -7519,6 +7519,7 @@ module Adamas
             return nil if type_args && !type_args.empty?
 
             symbol = type.class_symbol
+            return nil unless local_class_symbol_owned?(symbol)
             type_parameters = symbol.type_parameters
             return nil if type_parameters && !type_parameters.empty?
             class_node = @arena[symbol.node_id]?
@@ -7530,6 +7531,28 @@ module Adamas
             identity_registry.types.nominal(symbol.name, kind, declaration_identity)
           else
             nil
+          end
+        end
+
+        private def local_class_symbol_owned?(symbol : ClassSymbol) : Bool
+          owner_table = symbol.scope.parent
+          return false unless owner_table && owner_table.lookup_local(symbol.name).same?(symbol)
+
+          global_table = @global_table
+          return false unless global_table
+
+          visible_table = global_table
+          loop do
+            if visible = visible_table.lookup_local(symbol.name)
+              return true if visible.same?(symbol)
+              break
+            end
+            visible_table = visible_table.parent || break
+          end
+
+          loop do
+            return true if owner_table.same?(global_table)
+            owner_table = owner_table.parent || return false
           end
         end
 

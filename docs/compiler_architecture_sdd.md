@@ -1,6 +1,7 @@
 # Compiler Architecture SDD
 
-> Status: ACTIVE spec; R0 reconciliation in progress (amended 2026-07-18).
+> Status: ACTIVE spec; R0 reconciliation in progress; T1 local typed decision
+> guarded but cross-phase consumer absent (amended 2026-08-01).
 > Scope: target ownership architecture for the Adamas compiler
 > (HIR -> MIR -> LLVM) and the migration contract toward it.
 > The 2026-06-25..07-03 execution ledger (145 slices, ~11,600 lines) that
@@ -46,6 +47,13 @@ Document contract (hard rules):
   enforces normal no-worker production, numeric resource coverage, both exact
   semantic smokes, and stage2 wall <=180 seconds. The validator exists; the
   measured-red current run has not passed it.
+- **T1 (typed call identity): LOCAL GUARD COMPLETE / CONTINUITY RED.** Exact
+  r1-r5 explicit-receiver shapes construct and immediately validate one
+  private `LocalCallResolution {MethodSymbol, DefInstanceKey}` before legacy
+  body inference. Selected Def payload plus receiver visibility/owner
+  provenance fail closed for independent roots while canonical re-export
+  remains valid. No `ResolutionId`, producer stream, aggregate-to-original arena
+  handoff, downstream join, or lowering authority is admitted.
 - **B5 (s2 self-build -> s3): BLOCKED BY B4-F / HISTORICAL LOCATOR ONLY.** The
   historical first bad stop was
   `ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_BODY_LOWERED` inside the
@@ -201,17 +209,26 @@ until it exists, the external join is pending.
 
 Current blockers are explicit and remain red:
 
-- there is no actual semantic callsite type interner that can authoritatively
-  populate the receiver and argument semantic type IDs;
-- `IdentityDryRunTracker` is a definition-annotation/body-infer proxy and is
-  in-process, not the semantic callsite producer.
+- exact r1-r5 shapes have a local semantic decision, but semantic analysis owns
+  an aggregate reparse arena while `AstToHir` consumes original per-file
+  arenas;
+- no owned callsite mapping or genuine downstream compiler consumer exists for
+  a `ResolutionId`; inference-order ordinals and raw `ExprId` surrogates are
+  rejected;
+- `IdentityDryRunTracker` remains a definition-annotation/body-infer proxy, not
+  the semantic callsite producer.
 
-The ownership precursor is complete: `SemanticIdentityRegistry` owns canonical
-session-local names alongside the existing type table, `DefInstanceKey` uses
-ordered `{NameId, SemanticTypeId}` named components, and retained
-`SemanticTypeKey`/`DefInstanceKey` arrays cannot be mutated through caller
-aliases or getters. This does not yet provide a live `CallResolution`, producer
-row, or downstream continuity proof, so T1 remains red.
+The ownership precursor and bounded local decision are complete:
+`SemanticIdentityRegistry` owns canonical session-local names and types;
+`DefInstanceKey` owns ordered positional, block, and `{NameId,
+SemanticTypeId}` named components; and the private `LocalCallResolution` is
+constructed and immediately revalidated for exact r1-r5 shapes before
+unchanged legacy body inference. Parser-owned selected definitions and nominal
+receiver symbols from an independent Analyzer/root table fail closed, while
+canonical symbol re-export into a file-local table remains valid. Shared
+symbol-table roots across multiple analyzers and reopened-class arena identity
+remain unresolved. This does not authorize a producer stream, create a
+cross-arena consumer, or make T1 green.
 
 The T1 guard is **availability/current-red only**: it can show whether the
 current source/configuration emitted a row or exposed the current failing
@@ -1467,11 +1484,13 @@ Exit falsifiers:
 
 Keep this phase behavior-neutral and follow the canonical five-step slice in
 `docs/specs/07-compiler-decomposition-and-semantic-replacement.md` section
-13.3: seal ownership/`NameId`, return the local typed decision, stream the
-producer record, keep boundedness diagnostic until a guard hard-caps it, keep
-the external join pending until downstream `resolution_id` enrichment exists,
-then add one read-only correlation consumer. Its first DoD is identity
-continuity with zero HIR/MIR/LLVM delta, not queue reduction or a speed claim.
+13.3. Ownership/`NameId` and the exact r1-r5 local typed decision are complete.
+Next prove a bounded aggregate-to-original callsite/arena handoff to one named
+downstream compiler consumer; only then mint `ResolutionId` and stream the
+producer record. Keep boundedness diagnostic until a guard hard-caps it and
+the external join pending until downstream `resolution_id` enrichment exists.
+Its first DoD is identity continuity with zero HIR/MIR/LLVM delta, not queue
+reduction or a speed claim.
 
 ### Phase 4: Seal NameResolution and TypeIdentity
 

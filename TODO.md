@@ -35,16 +35,22 @@ before the unchanged legacy return/body inference. Combined block-plus-named,
 defaulted/external/multiple named arguments, splats, double splats, forwarded
 procs, and unannotated blocks deliberately remain on the legacy selector/body
 path after the shared parser-backed selected-definition ownership check, rather
-than broadening the typed-key guard. The local adapter interns nominal receiver keys
-with declaration `DefIdentity`, so equal local class spellings in different
-owners cannot collide on this path. Foreign `ClassSymbol` provenance and
-reopened-class canonical identity remain undecided; scope, return/type-parameter
-metadata, shared parameter mutation, non-`self` explicit receivers, and
-generic/union/container types remain outside this narrow guard. This is not
-the general `CallResolution`, a `ResolutionId`, T1 telemetry, downstream
-continuity, or new selection authority. Next decide whether evidence justifies
-widening this same guard or moving to the bounded local producer; do not add
-another owner or parallel record. The HIR compatibility path now exposes only
+than broadening the typed-key guard. The local adapter admits a nominal
+receiver only when the same `ClassSymbol` is visible from this engine's global
+table or its canonical owner-chain reaches that table, then interns it with
+declaration `DefIdentity`; equal local spellings in different owners remain
+distinct, and a same-shaped symbol from an independent Analyzer/root table is
+rejected. Shared-context reopening identity, scope,
+return/type-parameter metadata, in-place shared parameter payload mutation,
+non-`self` explicit receivers, and generic/union/container types remain outside
+this narrow guard. This is not the general `CallResolution`, a `ResolutionId`,
+T1 telemetry, downstream continuity, or new selection authority. The proposed
+stream-only producer is rejected for now: the external T1 guard is not a live
+compiler consumer, semantic analysis owns an aggregate reparse arena, and HIR
+later consumes the original per-file arenas. Do not add `ResolutionId`, an
+ordinal call token, or another bridge until a bounded callsite/arena ownership
+falsifier names a genuine downstream consumer. The HIR compatibility path now
+exposes only
 `SelectedCallTarget {symbol_name, def_node}`; the unused `CallShape`,
 `ResolutionBinding`, string-round-trip `MethodInstanceKey`, and their unconsumed
 assertion paths were removed rather than promoted into semantic authority.
@@ -364,9 +370,9 @@ contains one zero-argument call and one zero-argument unreachable definition
 for that `push` target. The attempted STABLE6 in-process callsite-owner
 prototype is now refuted and is not an admitted route. Do not add another large
 owner or new `AstToHir` ivars. The next safe route reuses the existing
-materialization ledger and semantic `DefIdentity`/`DefInstanceKey`; add only a
-minimal bounded producer record if necessary, serialize it as telemetry rather
-than authority, and perform the composite join/census externally and offline.
+materialization ledger and semantic `DefIdentity`/`DefInstanceKey`; before any
+producer record, prove a bounded callsite/arena handoff to one downstream
+compiler consumer. External telemetry alone is insufficient authority.
 Join actual semantic-instance/body creation, queue growth, wall time, and RSS
 before choosing the smallest behavior change. The external analyzer must be
 bounded and streaming. Do not fix this by forcing all calls to the union
