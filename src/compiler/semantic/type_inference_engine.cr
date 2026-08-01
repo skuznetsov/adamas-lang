@@ -7084,7 +7084,8 @@ module Adamas
                        named_arg_types,
                        named_arg_expr_ids,
                        has_block,
-                       node
+                       node,
+                       expr_id
                      )
                     return result
                   end
@@ -7143,7 +7144,7 @@ module Adamas
           infer_pointer_linked_list_block(node, receiver_type, method_name)
 
           if named_arg_types && !named_arg_types.empty?
-            if result = infer_named_argument_method_call(receiver_type, method_name, arg_ids, arg_types, named_arg_types, named_arg_expr_ids || {} of String => ExprId, has_block, node)
+            if result = infer_named_argument_method_call(receiver_type, method_name, arg_ids, arg_types, named_arg_types, named_arg_expr_ids || {} of String => ExprId, has_block, node, expr_id)
               return result
             end
           end
@@ -7343,9 +7344,12 @@ module Adamas
               emit_error("Selected method '#{method.name}' no longer matches its owning definition payload", expr_id)
               return @unknown_type
             end
-            infer_explicit_receiver_block_if_present(method, receiver_type, node) if has_block
-            if !has_block && !node.named_args && (resolution = local_positional_call_resolution(method, receiver_type, arg_types))
-              infer_local_call_resolution_result(resolution, receiver_type, arg_types, node, expr_id)
+            # Match Crystal's DefInstanceKey call-identity input: the selected def and
+            # receiver/args fix the annotated block parameter shape, while this
+            # component records the actual inferred block result type.
+            block_type = infer_explicit_receiver_block_if_present(method, receiver_type, node) if has_block
+            if !node.named_args && (resolution = local_call_resolution(method, receiver_type, arg_types, node, block_type))
+              infer_local_call_resolution_result(resolution, receiver_type, arg_types, node, expr_id, block_type)
             else
               infer_selected_explicit_receiver_method_result(method, receiver_type, arg_types, node)
             end
@@ -7388,11 +7392,31 @@ module Adamas
           DefIdentity.new(@arena.object_id.to_u64, method.node_id.index)
         end
 
-        private def local_positional_call_resolution(
+        private def local_call_resolution(
           method : MethodSymbol,
           receiver_type : Type,
           arg_types : Array(Type),
+          node : Frontend::CallNode? = nil,
+          block_type : Type? = nil,
+          named_arg_types : Hash(String, Type)? = nil,
         ) : LocalCallResolution?
+          method_type_parameters = method.type_parameters
+          return nil if method_type_parameters && !method_type_parameters.empty?
+
+          if node
+            node_has_block = call_has_block?(node)
+            node_has_named_args = !node.named_args.nil?
+            return nil if node_has_block && node_has_named_args
+            return nil unless node_has_block == !block_type.nil?
+            return nil unless node_has_named_args == !named_arg_types.nil?
+            return nil if block_type && !local_inline_block_call_admitted?(method, arg_types, node)
+            if named_arg_types
+              return nil unless local_direct_named_call_admitted?(method, arg_types, node, named_arg_types)
+            end
+          elsif block_type || named_arg_types
+            return nil
+          end
+
           def_identity = validated_selected_def_identity(method)
           return nil unless def_identity
           receiver_type_id = local_resolution_type_id(receiver_type)
@@ -7405,12 +7429,84 @@ module Adamas
             arg_type_ids << arg_type_id
           end
 
+          block_type_id = block_type.try { |type| local_resolution_type_id(type) }
+          return nil if block_type && !block_type_id
+
+          named_arg_type_ids = if named_arg_types
+                                 return nil unless node
+                                 local_named_arg_type_ids(node, named_arg_types)
+                               end
+          return nil if named_arg_types && !named_arg_type_ids
+
           instance_key = DefInstanceKey.new(
             def_identity: def_identity,
             receiver_type: receiver_type_id,
             arg_types: arg_type_ids,
+            block_type: block_type_id,
+            named_arg_types: named_arg_type_ids,
           )
           LocalCallResolution.new(method, instance_key)
+        end
+
+        private def local_inline_block_call_admitted?(
+          method : MethodSymbol,
+          arg_types : Array(Type),
+          node : Frontend::CallNode,
+        ) : Bool
+          return false unless node.block
+          return false if node.named_args
+          return false unless arg_types.size == 1
+
+          return false unless method.params.size == 2
+          value_param = method.params[0]
+          return false if value_param.is_block || value_param.is_splat || value_param.is_double_splat
+          return false if value_param.default_value || value_param.external_name || value_param.name.nil?
+          block_param = method.params[1]
+          return false unless block_param.is_block
+          !block_param.type_annotation.nil?
+        end
+
+        private def local_direct_named_call_admitted?(
+          method : MethodSymbol,
+          positional_arg_types : Array(Type),
+          node : Frontend::CallNode,
+          named_arg_types : Hash(String, Type),
+        ) : Bool
+          return false unless positional_arg_types.empty?
+          return false if call_has_block?(node)
+          node_named_args = node.named_args
+          return false unless node_named_args && node_named_args.size == 1
+          return false unless named_arg_types.size == 1
+          return false unless method.params.size == 2
+          return false unless named_only_separator?(method.params[0])
+
+          param = method.params[1]
+          return false if param.is_block || param.is_splat || param.is_double_splat
+          return false if param.default_value || param.external_name
+          param_name = param.name
+          return false unless param_name
+
+          intern_name(param_name) == intern_name(node_named_args.first.name)
+        end
+
+        private def local_named_arg_type_ids(
+          node : Frontend::CallNode,
+          named_arg_types : Hash(String, Type),
+        ) : Array({NameId, SemanticTypeId})?
+          node_named_args = node.named_args
+          return nil unless node_named_args
+          return nil unless node_named_args.size == named_arg_types.size
+
+          ids = [] of {NameId, SemanticTypeId}
+          node_named_args.each do |named_arg|
+            name = intern_name(named_arg.name)
+            type = named_arg_types[name]?
+            return nil unless type
+            type_id = local_resolution_type_id(type)
+            return nil unless type_id
+            ids << {identity_registry.intern_name(name), type_id}
+          end
+          ids
         end
 
         private def local_resolution_type_id(type : Type) : SemanticTypeId?
@@ -7423,6 +7519,8 @@ module Adamas
             return nil if type_args && !type_args.empty?
 
             symbol = type.class_symbol
+            type_parameters = symbol.type_parameters
+            return nil if type_parameters && !type_parameters.empty?
             class_node = @arena[symbol.node_id]?
             return nil unless class_node.is_a?(Frontend::ClassNode)
             return nil unless intern_name(class_node.name) == symbol.name
@@ -7445,8 +7543,10 @@ module Adamas
           arg_types : Array(Type),
           node : Frontend::CallNode,
           expr_id : ExprId,
+          block_type : Type? = nil,
+          named_arg_types : Hash(String, Type)? = nil,
         ) : Type
-          unless local_call_resolution_matches?(resolution, receiver_type, arg_types, node)
+          unless local_call_resolution_matches?(resolution, receiver_type, arg_types, node, block_type, named_arg_types)
             emit_error("Typed call resolution no longer matches the selected method or call shape", expr_id)
             return @unknown_type
           end
@@ -7459,8 +7559,11 @@ module Adamas
           receiver_type : Type,
           arg_types : Array(Type),
           node : Frontend::CallNode,
+          block_type : Type? = nil,
+          named_arg_types : Hash(String, Type)? = nil,
         ) : Bool
-          return false if call_has_block?(node) || node.named_args
+          method_type_parameters = resolution.method.type_parameters
+          return false if method_type_parameters && !method_type_parameters.empty?
 
           key = resolution.method_instance_key
           selected_identity = validated_selected_def_identity(resolution.method)
@@ -7475,7 +7578,37 @@ module Adamas
             return false unless arg_type_id && key.arg_type_at(index) == arg_type_id
           end
 
-          key.block_type.nil? && key.named_arg_types.nil?
+          node_has_block = call_has_block?(node)
+          return false if node_has_block && node.named_args
+          return false unless node_has_block == !block_type.nil?
+          if block_type
+            return false unless local_inline_block_call_admitted?(resolution.method, arg_types, node)
+            block_type_id = local_resolution_type_id(block_type)
+            return false unless block_type_id && key.block_type == block_type_id
+          else
+            return false unless key.block_type.nil?
+          end
+
+          if named_arg_types
+            return false unless local_direct_named_call_admitted?(resolution.method, arg_types, node, named_arg_types)
+            return false unless key.has_named_arg_types?
+            node_named_args = node.named_args
+            return false unless node_named_args
+            return false unless key.named_arg_type_count == node_named_args.size
+            node_named_args.each_with_index do |named_arg, index|
+              name = intern_name(named_arg.name)
+              type = named_arg_types[name]?
+              return false unless type
+              type_id = local_resolution_type_id(type)
+              return false unless type_id
+              expected = {identity_registry.intern_name(name), type_id}
+              return false unless key.named_arg_type_at(index) == expected
+            end
+          else
+            return false if node.named_args || key.has_named_arg_types?
+          end
+
+          true
         end
 
         private def infer_selected_explicit_receiver_method_result(
@@ -7657,7 +7790,8 @@ module Adamas
           named_arg_types : Hash(String, Type),
           named_arg_expr_ids : Hash(String, ExprId),
           has_block : Bool,
-          call_node : Frontend::CallNode
+          call_node : Frontend::CallNode,
+          expr_id : ExprId,
         ) : Type?
           matches = [] of {MethodSymbol, Array(Type), Array(ExprId?)}
 
@@ -7683,8 +7817,27 @@ module Adamas
                        matches.max_by { |entry| specificity_score(entry[0], entry[1]) }
                      end
 
-          forwarded_arg_types = append_keyword_rest_carrier(selected[0], selected[1], named_arg_types)
-          infer_method_call_result(selected[0], receiver_type, forwarded_arg_types, call_node)
+          selected_method = selected[0]
+          if @arena[selected_method.node_id]?.is_a?(Frontend::DefNode) && !validated_selected_def_identity(selected_method)
+            emit_error("Selected method '#{selected_method.name}' no longer matches its owning definition payload", expr_id)
+            return @unknown_type
+          end
+
+          if !has_block && (resolution = local_call_resolution(
+                              selected_method,
+                              receiver_type,
+                              positional_arg_types,
+                              call_node,
+                              named_arg_types: named_arg_types
+                            ))
+            unless local_call_resolution_matches?(resolution, receiver_type, positional_arg_types, call_node, named_arg_types: named_arg_types)
+              emit_error("Typed call resolution no longer matches the selected method or call shape", expr_id)
+              return @unknown_type
+            end
+          end
+
+          forwarded_arg_types = append_keyword_rest_carrier(selected_method, selected[1], named_arg_types)
+          infer_method_call_result(selected_method, receiver_type, forwarded_arg_types, call_node)
         end
 
         private def ordered_call_arguments(
@@ -7866,8 +8019,9 @@ module Adamas
           method : MethodSymbol,
           receiver_type : Type,
           node : Frontend::CallNode
-        ) : Nil
-          infer_method_block_result_type(method, receiver_type, node)
+        ) : Type?
+          result = infer_method_block_result_type(method, receiver_type, node)
+          result.try(&.[0])
         end
 
         private def infer_call_block_with_param_types(node : Frontend::CallNode, param_types : Array(Type)) : Type?

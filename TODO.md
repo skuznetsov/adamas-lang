@@ -21,18 +21,30 @@ kind still match the owning `DefNode`. For positional, no-block r1-r3 calls,
 the Analyzer-owned `SemanticIdentityRegistry` now builds and immediately
 consumes one local `LocalCallResolution {MethodSymbol, DefInstanceKey}`. A
 standalone engine creates the same registry lazily only when this path needs it.
-The consumer revalidates selected `DefIdentity`, receiver/argument semantic IDs,
-and positional/no-block shape before the unchanged legacy return/body
-inference. The local adapter interns nominal receiver keys with declaration
-`DefIdentity`, so equal local class spellings in different owners cannot collide
-on this path. Foreign `ClassSymbol` provenance and reopened-class canonical
-identity remain undecided; scope, return/type-parameter metadata, shared parameter
-mutation, non-`self` explicit receivers, generic/union/container types, named
-arguments, and block shape remain outside this narrow guard. This is not the
-general `CallResolution`, a `ResolutionId`, T1 telemetry, downstream continuity,
-or new selection authority. Next extend this same local record and registry to
-the r4 block and r5 named shapes without adding another owner or parallel
-record. The HIR compatibility path now exposes only
+The same local record now also covers the exact T1 r4/r5 shapes: one direct
+positional argument plus an explicit inline block selected against one
+annotated block parameter, and one required direct named-only argument. The r4
+key records the inferred block result type,
+matching Crystal's `DefInstanceKey`; the selected definition plus
+receiver/positional arguments fixes the declared block parameter shape. Block
+inference therefore precedes key construction, while key mismatch still stops
+callee-body inference. The r5 key records the AST-ordered shared-registry
+`{NameId, SemanticTypeId}` pair. The consumer revalidates selected
+`DefIdentity`, receiver/argument IDs, block result, named pair, and AST shape
+before the unchanged legacy return/body inference. Combined block-plus-named,
+defaulted/external/multiple named arguments, splats, double splats, forwarded
+procs, and unannotated blocks deliberately remain on the legacy selector/body
+path after the shared parser-backed selected-definition ownership check, rather
+than broadening the typed-key guard. The local adapter interns nominal receiver keys
+with declaration `DefIdentity`, so equal local class spellings in different
+owners cannot collide on this path. Foreign `ClassSymbol` provenance and
+reopened-class canonical identity remain undecided; scope, return/type-parameter
+metadata, shared parameter mutation, non-`self` explicit receivers, and
+generic/union/container types remain outside this narrow guard. This is not
+the general `CallResolution`, a `ResolutionId`, T1 telemetry, downstream
+continuity, or new selection authority. Next decide whether evidence justifies
+widening this same guard or moving to the bounded local producer; do not add
+another owner or parallel record. The HIR compatibility path now exposes only
 `SelectedCallTarget {symbol_name, def_node}`; the unused `CallShape`,
 `ResolutionBinding`, string-round-trip `MethodInstanceKey`, and their unconsumed
 assertion paths were removed rather than promoted into semantic authority.

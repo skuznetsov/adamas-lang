@@ -15,12 +15,28 @@ class Adamas::Compiler::Semantic::TypeInferenceEngine
     validated_selected_def_identity(method)
   end
 
-  def __test_local_positional_method_instance_key(
+  def __test_local_method_instance_key(
     method : MethodSymbol,
     receiver_type : Type,
     arg_types : Array(Type),
+    node : Adamas::Compiler::Frontend::CallNode? = nil,
+    block_type : Type? = nil,
+    named_arg_types : Hash(String, Type)? = nil,
   ) : DefInstanceKey?
-    local_positional_call_resolution(method, receiver_type, arg_types).try(&.method_instance_key)
+    local_call_resolution(method, receiver_type, arg_types, node, block_type, named_arg_types).try(&.method_instance_key)
+  end
+
+  def __test_local_call_resolution_matches_with_key(
+    method : MethodSymbol,
+    method_instance_key : DefInstanceKey,
+    receiver_type : Type,
+    arg_types : Array(Type),
+    node : Adamas::Compiler::Frontend::CallNode,
+    block_type : Type? = nil,
+    named_arg_types : Hash(String, Type)? = nil,
+  ) : Bool
+    resolution = LocalCallResolution.new(method, method_instance_key)
+    local_call_resolution_matches?(resolution, receiver_type, arg_types, node, block_type, named_arg_types)
   end
 
   def __test_infer_local_call_resolution_with_key(
@@ -30,9 +46,11 @@ class Adamas::Compiler::Semantic::TypeInferenceEngine
     arg_types : Array(Type),
     node : Adamas::Compiler::Frontend::CallNode,
     expr_id : Adamas::Compiler::Frontend::ExprId,
+    block_type : Type? = nil,
+    named_arg_types : Hash(String, Type)? = nil,
   ) : Type
     resolution = LocalCallResolution.new(method, method_instance_key)
-    infer_local_call_resolution_result(resolution, receiver_type, arg_types, node, expr_id)
+    infer_local_call_resolution_result(resolution, receiver_type, arg_types, node, expr_id, block_type, named_arg_types)
   end
 end
 
@@ -124,17 +142,17 @@ describe Semantic::TypeInferenceEngine do
       int_type = Semantic::PrimitiveType.new("Int32")
       string_type = Semantic::PrimitiveType.new("String")
 
-      r1 = engine.__test_local_positional_method_instance_key(
+      r1 = engine.__test_local_method_instance_key(
         left_int,
         Semantic::InstanceType.new(left),
         [int_type] of Semantic::Type,
       ).not_nil!
-      r2 = engine.__test_local_positional_method_instance_key(
+      r2 = engine.__test_local_method_instance_key(
         left_string,
         Semantic::InstanceType.new(left),
         [string_type] of Semantic::Type,
       ).not_nil!
-      r3 = engine.__test_local_positional_method_instance_key(
+      r3 = engine.__test_local_method_instance_key(
         right_int,
         Semantic::InstanceType.new(right),
         [int_type] of Semantic::Type,
@@ -179,18 +197,316 @@ describe Semantic::TypeInferenceEngine do
       right = right_owner.scope.lookup("Thing").as(Semantic::ClassSymbol)
       arg_types = [Semantic::PrimitiveType.new("Int32")] of Semantic::Type
 
-      left_key = engine.__test_local_positional_method_instance_key(
+      left_key = engine.__test_local_method_instance_key(
         route_method_with_arg(left, "Int32"),
         Semantic::InstanceType.new(left),
         arg_types,
       ).not_nil!
-      right_key = engine.__test_local_positional_method_instance_key(
+      right_key = engine.__test_local_method_instance_key(
         route_method_with_arg(right, "Int32"),
         Semantic::InstanceType.new(right),
         arg_types,
       ).not_nil!
 
       left_key.receiver_type.should_not eq(right_key.receiver_type)
+    end
+
+    it "does not mint an unresolved generic receiver identity" do
+      source = <<-CRYSTAL
+        class T1Generic(T)
+          def route(value : Int32) : Int32
+            value
+          end
+        end
+
+        class T1MethodGeneric
+          def route(value : U) : U forall U
+            value
+          end
+        end
+
+        T1MethodGeneric.new.route(1)
+      CRYSTAL
+
+      program = Frontend::Parser.new(Frontend::Lexer.new(source)).parse_program
+      analyzer = Semantic::Analyzer.new(program)
+      analyzer.collect_symbols
+      name_result = analyzer.resolve_names
+      engine = Semantic::TypeInferenceEngine.new(
+        program,
+        name_result.identifier_symbols,
+        analyzer.global_context.symbol_table,
+        identity_registry: analyzer.identity_registry,
+      )
+      owner = analyzer.global_context.symbol_table.lookup("T1Generic").as(Semantic::ClassSymbol)
+      method_owner = analyzer.global_context.symbol_table.lookup("T1MethodGeneric").as(Semantic::ClassSymbol)
+      method = route_methods(method_owner).first
+      call_id = program.roots.last
+      call_node = program.ast_arena[call_id].as(Frontend::CallNode)
+      int_type = Semantic::PrimitiveType.new("Int32")
+
+      engine.__test_local_method_instance_key(
+        route_method_with_arg(owner, "Int32"),
+        Semantic::InstanceType.new(owner),
+        [Semantic::PrimitiveType.new("Int32")] of Semantic::Type,
+      ).should be_nil
+      engine.__test_local_method_instance_key(
+        method,
+        Semantic::InstanceType.new(method_owner),
+        [int_type] of Semantic::Type,
+      ).should be_nil
+
+      method_identity = engine.__test_validated_selected_def_identity(method).not_nil!
+      receiver_identity = Semantic::DefIdentity.new(program.ast_arena.object_id.to_u64, method_owner.node_id.index)
+      fabricated_key = Semantic::DefInstanceKey.new(
+        def_identity: method_identity,
+        receiver_type: analyzer.identity_registry.types.nominal("T1MethodGeneric", Semantic::TypeKind::Class, receiver_identity),
+        arg_types: [analyzer.identity_registry.types.primitive("Int32")],
+      )
+      engine.__test_local_call_resolution_matches_with_key(
+        method,
+        fabricated_key,
+        Semantic::InstanceType.new(method_owner),
+        [int_type] of Semantic::Type,
+        call_node,
+      ).should be_false
+    end
+
+    it "keys and validates the r4 block result and single r5 named argument" do
+      source = <<-CRYSTAL
+        class T1Block
+          def route(value : Int32, &block : Int32 -> Int32) : Int32
+            yield value
+          end
+        end
+
+        class T1Named
+          def route(*, level : Int32) : Int32
+            level
+          end
+        end
+
+        T1Block.new.route(2) { |value| value + 1 }
+        T1Named.new.route(level: 3)
+      CRYSTAL
+
+      program = Frontend::Parser.new(Frontend::Lexer.new(source)).parse_program
+      analyzer = Semantic::Analyzer.new(program)
+      analyzer.collect_symbols
+      name_result = analyzer.resolve_names
+      guard_engine = Semantic::TypeInferenceEngine.new(
+        program,
+        name_result.identifier_symbols,
+        analyzer.global_context.symbol_table,
+        identity_registry: analyzer.identity_registry,
+      )
+      engine = analyzer.infer_types(name_result.identifier_symbols)
+      table = analyzer.global_context.symbol_table
+      block_owner = table.lookup("T1Block").as(Semantic::ClassSymbol)
+      named_owner = table.lookup("T1Named").as(Semantic::ClassSymbol)
+      block_method = route_method_with_arg(block_owner, "Int32")
+      named_method = route_methods(named_owner).first
+      block_call = program.ast_arena[program.roots[-2]].as(Frontend::CallNode)
+      named_call = program.ast_arena[program.roots.last].as(Frontend::CallNode)
+      int_type = Semantic::PrimitiveType.new("Int32")
+      named_types = {
+        "level" => int_type.as(Semantic::Type),
+      }
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots[-2]).to_s.should eq("Int32")
+      engine.context.get_type(program.roots.last).to_s.should eq("Int32")
+
+      block_key = guard_engine.__test_local_method_instance_key(
+        block_method,
+        Semantic::InstanceType.new(block_owner),
+        [int_type] of Semantic::Type,
+        block_call,
+        int_type,
+      ).not_nil!
+      named_key = guard_engine.__test_local_method_instance_key(
+        named_method,
+        Semantic::InstanceType.new(named_owner),
+        [] of Semantic::Type,
+        named_call,
+        named_arg_types: named_types,
+      ).not_nil!
+
+      block_key.block_type.should_not be_nil
+      block_key.named_arg_types.should be_nil
+      named_key.block_type.should be_nil
+      named_key.arg_types.should be_empty
+      named_entries = named_key.named_arg_types.not_nil!
+      named_entries.map { |entry| analyzer.identity_registry.lookup_name(entry[0]).not_nil! }.should eq(["level"])
+
+      guard_engine.__test_local_call_resolution_matches_with_key(
+        block_method,
+        block_key,
+        Semantic::InstanceType.new(block_owner),
+        [int_type] of Semantic::Type,
+        block_call,
+        int_type,
+      ).should be_true
+      guard_engine.__test_local_call_resolution_matches_with_key(
+        named_method,
+        named_key,
+        Semantic::InstanceType.new(named_owner),
+        [] of Semantic::Type,
+        named_call,
+        named_arg_types: named_types,
+      ).should be_true
+
+      wrong_block_key = Semantic::DefInstanceKey.new(
+        def_identity: block_key.def_identity,
+        receiver_type: block_key.receiver_type,
+        arg_types: block_key.arg_types,
+        block_type: analyzer.identity_registry.types.primitive("String"),
+      )
+      wrong_named_key = Semantic::DefInstanceKey.new(
+        def_identity: named_key.def_identity,
+        receiver_type: named_key.receiver_type,
+        named_arg_types: [{analyzer.identity_registry.intern_name("other"), named_entries.first[1]}],
+      )
+
+      guard_engine.__test_local_call_resolution_matches_with_key(
+        block_method,
+        wrong_block_key,
+        Semantic::InstanceType.new(block_owner),
+        [int_type] of Semantic::Type,
+        block_call,
+        int_type,
+      ).should be_false
+      guard_engine.__test_local_call_resolution_matches_with_key(
+        named_method,
+        wrong_named_key,
+        Semantic::InstanceType.new(named_owner),
+        [] of Semantic::Type,
+        named_call,
+        named_arg_types: named_types,
+      ).should be_false
+
+      guard_engine.__test_infer_local_call_resolution_with_key(
+        block_method,
+        wrong_block_key,
+        Semantic::InstanceType.new(block_owner),
+        [int_type] of Semantic::Type,
+        block_call,
+        program.roots[-2],
+        int_type,
+      ).to_s.should eq("Unknown")
+      guard_engine.__test_infer_local_call_resolution_with_key(
+        named_method,
+        wrong_named_key,
+        Semantic::InstanceType.new(named_owner),
+        [] of Semantic::Type,
+        named_call,
+        program.roots.last,
+        named_arg_types: named_types,
+      ).to_s.should eq("Unknown")
+      guard_engine.diagnostics.map(&.message).should eq([
+        "Typed call resolution no longer matches the selected method or call shape",
+        "Typed call resolution no longer matches the selected method or call shape",
+      ])
+    end
+
+    it "leaves defaulted named calls on the legacy path" do
+      source = <<-CRYSTAL
+        class T1NamedDefault
+          def route(*, level : Int32 = 1) : Int32
+            level
+          end
+        end
+
+        T1NamedDefault.new.route(level: 2)
+      CRYSTAL
+
+      program = Frontend::Parser.new(Frontend::Lexer.new(source)).parse_program
+      analyzer = Semantic::Analyzer.new(program)
+      analyzer.collect_symbols
+      name_result = analyzer.resolve_names
+      engine = analyzer.infer_types(name_result.identifier_symbols)
+      owner = analyzer.global_context.symbol_table.lookup("T1NamedDefault").as(Semantic::ClassSymbol)
+      method = route_methods(owner).first
+      call_id = program.roots.last
+      call_node = program.ast_arena[call_id].as(Frontend::CallNode)
+      named_types = {"level" => Semantic::PrimitiveType.new("Int32").as(Semantic::Type)}
+
+      engine.__test_local_method_instance_key(
+        method,
+        Semantic::InstanceType.new(owner),
+        [] of Semantic::Type,
+        call_node,
+        named_arg_types: named_types,
+      ).should be_nil
+      engine.diagnostics.should be_empty
+      engine.context.get_type(call_id).to_s.should eq("Int32")
+    end
+
+    it "does not classify a pre-separator parameter as named-only" do
+      source = <<-CRYSTAL
+        class T1NamedBeforeSeparator
+          def route(level : Int32, *) : Int32
+            level
+          end
+        end
+
+        T1NamedBeforeSeparator.new.route(level: 2)
+      CRYSTAL
+
+      program = Frontend::Parser.new(Frontend::Lexer.new(source)).parse_program
+      analyzer = Semantic::Analyzer.new(program)
+      analyzer.collect_symbols
+      name_result = analyzer.resolve_names
+      engine = analyzer.infer_types(name_result.identifier_symbols)
+      owner = analyzer.global_context.symbol_table.lookup("T1NamedBeforeSeparator").as(Semantic::ClassSymbol)
+      method = route_methods(owner).first
+      call_id = program.roots.last
+      call_node = program.ast_arena[call_id].as(Frontend::CallNode)
+      named_types = {"level" => Semantic::PrimitiveType.new("Int32").as(Semantic::Type)}
+
+      engine.__test_local_method_instance_key(
+        method,
+        Semantic::InstanceType.new(owner),
+        [] of Semantic::Type,
+        call_node,
+        named_arg_types: named_types,
+      ).should be_nil
+      engine.diagnostics.should be_empty
+      engine.context.get_type(call_id).to_s.should eq("Int32")
+    end
+
+    it "leaves optional positional block calls on the legacy path" do
+      source = <<-CRYSTAL
+        class T1BlockDefault
+          def route(value : Int32 = 1, &block : Int32 -> Int32) : Int32
+            yield value
+          end
+        end
+
+        T1BlockDefault.new.route { |value| value }
+      CRYSTAL
+
+      program = Frontend::Parser.new(Frontend::Lexer.new(source)).parse_program
+      analyzer = Semantic::Analyzer.new(program)
+      analyzer.collect_symbols
+      name_result = analyzer.resolve_names
+      engine = analyzer.infer_types(name_result.identifier_symbols)
+      owner = analyzer.global_context.symbol_table.lookup("T1BlockDefault").as(Semantic::ClassSymbol)
+      method = route_methods(owner).first
+      call_id = program.roots.last
+      call_node = program.ast_arena[call_id].as(Frontend::CallNode)
+
+      engine.__test_local_method_instance_key(
+        method,
+        Semantic::InstanceType.new(owner),
+        [] of Semantic::Type,
+        call_node,
+        Semantic::PrimitiveType.new("Int32"),
+      ).should be_nil
+      engine.diagnostics.should be_empty
+      engine.context.get_type(call_id).to_s.should eq("Int32")
     end
 
     it "rejects method symbols whose definition payload was detached" do
@@ -260,6 +576,40 @@ describe Semantic::TypeInferenceEngine do
       engine.context.get_type(program.roots.last).to_s.should eq("Unknown")
     end
 
+    it "fails the live named-call path closed for a detached selected definition" do
+      source = <<-CRYSTAL
+        class T1NamedDetached
+          def route(*, level : Int32) : Int32
+            level
+          end
+        end
+
+        T1NamedDetached.new.route(level: 1)
+      CRYSTAL
+
+      program = Frontend::Parser.new(Frontend::Lexer.new(source)).parse_program
+      analyzer = Semantic::Analyzer.new(program)
+      analyzer.collect_symbols
+      name_result = analyzer.resolve_names
+      owner = analyzer.global_context.symbol_table.lookup("T1NamedDetached").as(Semantic::ClassSymbol)
+      method = route_methods(owner).first
+      detached = Semantic::MethodSymbol.new(
+        method.name,
+        method.node_id,
+        params: method.params.dup,
+        return_annotation: method.return_annotation,
+        scope: method.scope,
+      )
+      owner.scope.redefine("route", detached)
+
+      engine = analyzer.infer_types(name_result.identifier_symbols)
+
+      engine.diagnostics.map(&.message).should contain(
+        "Selected method 'route' no longer matches its owning definition payload"
+      )
+      engine.context.get_type(program.roots.last).to_s.should eq("Unknown")
+    end
+
     it "rejects a mismatched typed key before method body inference" do
       source = <<-CRYSTAL
         class T1TypedMismatch
@@ -286,7 +636,7 @@ describe Semantic::TypeInferenceEngine do
         analyzer.global_context.symbol_table,
         identity_registry: analyzer.identity_registry,
       )
-      valid_key = engine.__test_local_positional_method_instance_key(method, receiver_type, arg_types).not_nil!
+      valid_key = engine.__test_local_method_instance_key(method, receiver_type, arg_types).not_nil!
       wrong_key = Semantic::DefInstanceKey.new(
         def_identity: Semantic::DefIdentity.new(valid_key.def_identity.arena_id, valid_key.def_identity.expr_index + 1),
         receiver_type: valid_key.receiver_type,

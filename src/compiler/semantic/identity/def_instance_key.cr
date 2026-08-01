@@ -54,6 +54,18 @@ module Adamas::Compiler::Semantic
       @named_arg_types.try(&.dup)
     end
 
+    def has_named_arg_types? : Bool
+      !@named_arg_types.nil?
+    end
+
+    def named_arg_type_count : Int32
+      @named_arg_types.try(&.size) || 0
+    end
+
+    def named_arg_type_at(index : Int32) : {NameId, SemanticTypeId}?
+      @named_arg_types.try(&.[index]?)
+    end
+
     def ==(other : DefInstanceKey) : Bool
       @def_identity == other.def_identity &&
         @receiver_type == other.receiver_type &&
