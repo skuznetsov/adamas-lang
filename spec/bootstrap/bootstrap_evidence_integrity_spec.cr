@@ -106,7 +106,7 @@ module BootstrapEvidenceIntegritySpec
     stdout = IO::Memory.new
     stderr = IO::Memory.new
     env = {
-      "FAKE_BOOTSTRAP_MODE" => mode,
+      "FAKE_BOOTSTRAP_MODE"  => mode,
       "FAKE_BOOTSTRAP_STATE" => File.join(workdir, "state"),
     }
     extra_env.each { |key, value| env[key] = value }
@@ -413,6 +413,10 @@ describe "bootstrap evidence integrity" do
       fields["host_compiler_sha256"].should match(/\A[0-9a-f]{64}\z/)
       fields["harness_bootstrap_chain_sha256"].should match(/\A[0-9a-f]{64}\z/)
       fields["harness_run_safe_sha256"].should match(/\A[0-9a-f]{64}\z/)
+      fields["harness_evidence_contract_sha256"].should match(/\A[0-9a-f]{64}\z/)
+      fields["smoke_plain_source_sha256"].should match(/\A[0-9a-f]{64}\z/)
+      fields["smoke_noprelude_oracle_sha256_start"].should match(/\A[0-9a-f]{64}\z/)
+      fields["smoke_noprelude_oracle_sha256_end"].should eq(fields["smoke_noprelude_oracle_sha256_start"])
       fields["source_consistency_model"].should eq("endpoint_before_after")
       fields["run_directory_policy"].should eq("producer_created_absent_path")
       fields["run_directory_identity"].should match(/\A[0-9]+:[0-9]+\z/)

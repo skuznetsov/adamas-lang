@@ -3,7 +3,23 @@
 Updated: 2026-07-31 (float formatter tables and precision callback returns
 restored; B4-F remains red).
 
-BOOTSTRAP EVIDENCE PRODUCER VERIFIED; T8/B4-F REMAIN OPEN.
+OFFLINE BOOTSTRAP READINESS VALIDATOR VERIFIED; B4-F REMAINS RED.
+`scripts/validate_bootstrap_manifest.sh` independently consumes a
+`bootstrap_chain_v3` run directory and an explicitly trusted host compiler.
+It rehashes live source/git/harness identity, run/cache identities, every
+stage artifact and transcript, successful numeric B7 receipts, and producer
+lineage before enforcing the normal two-stage build, no-worker policy, exact
+plain/no-prelude semantics, and inclusive stage2 wall budget of <=180 seconds.
+The focused validator group passes 26 examples, including post-publication
+artifact tampering, semantically wrong or framed but rehashed transcripts,
+forged/partial resource evidence, log/receipt mismatch, ambiguous wall rows,
+wall/log mismatch, a relaxed caller budget,
+lineage/build-policy or smoke-input identity violations, duplicate or symlink evidence, an
+untrusted/non-executable host, a run path inside the source scope, and the
+180.01-second negative. T8 is now executable; B4-F remains measured red until
+a fresh current-source run passes this validator.
+
+BOOTSTRAP EVIDENCE PRODUCER VERIFIED; B4-F REMAINS OPEN.
 `scripts/bootstrap_chain.sh` now requires an absent run path and creates the
 mode-0700 run directory and empty cache itself. It rejects semantic control
 overrides, sanitizes known generic compiler/linker controls, and binds every
@@ -14,13 +30,14 @@ have regular-file/single-link checks and hashes in an atomic
 Source scope and run/cache identities are endpoint-checked. The focused
 integrity/timing group passes 16 examples, including absolute, relative, and
 symlink-parent paths into the source scope, and the scoped hostile review is
-ROBUST. T8 must still rehash the receipt on disk and enforce <=180 seconds,
-numeric resource coverage, normal build policy, and both stage2 semantics
-before B4-F can turn green. B6 does not prove absence of transient
+ROBUST. T8 now rehashes the receipt on disk and enforces <=180 seconds,
+numeric resource coverage, normal build policy, and both stage2 semantics;
+a real fresh run must still pass it before B4-F can turn green. B6 does not
+prove absence of transient
 mutate-restore events, external stdlib/toolchain closure, or safety against a
 same-UID hostile writer.
 
-RUN_SAFE ROOTED-ANCESTRY RESOURCE OWNER VERIFIED; B4-F/T8 REMAIN OPEN.
+RUN_SAFE ROOTED-ANCESTRY RESOURCE OWNER VERIFIED; B4-F REMAINS OPEN.
 `scripts/run_safe.sh` now owns a versioned resource row and can publish it to a
 new atomic evidence file that target output cannot impersonate. Numeric RSS is
 admitted only when every scheduled visible-ancestry snapshot is valid; numeric
@@ -31,7 +48,7 @@ bounds, pre-existing evidence paths, publication races, and target marker
 spoofing have negative guards. The focused resource/process-tree group passes
 17 examples, including timeout, TERM-ignoring parent, nested
 supervisor, and successful-parent descendant cleanup. This is the scoped B7
-evidence owner needed by a future B6 manifest/T8 validator; it does not make
+evidence owner consumed by the B6 manifest and T8 validator; it does not make
 B4-F green and does not prove between-sample peaks, detached/reparented process
 coverage, or aggregate cap enforcement when host probes are unavailable.
 
@@ -265,9 +282,9 @@ stage wall 182.54s, externally sampled peak RSS 1361.03 MiB, no `cv2_s2`;
 outer chain exit 1 at 219.32s. Stage2 semantic smokes are unavailable because
 there is no artifact, not semantic red or green. The host-infrastructure
 blocker is refuted. R0 promotion remains blocked by B4-F and the missing
-same-source fresh T0 A/B; T8 remains `[MISSING-FALSIFIER]` until an executable
-validator is committed. The <=180-second value remains a new acceptance
-target, not a recovered historical full-green measurement.
+same-source fresh T0 A/B. T8 is now an executable falsifier, but no fresh
+current-source run has passed it. The <=180-second value remains a new
+acceptance target, not a recovered historical full-green measurement.
 
 SEALED-CURRENT STATS-ON LOCALIZATION (diagnostic only): from the disposable
 worktree, the only compiler instrumentation flag was `ADAMAS_PHASE_STATS=1`:

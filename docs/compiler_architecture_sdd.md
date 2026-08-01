@@ -33,13 +33,19 @@ Document contract (hard rules):
   build from the reconciled source must finish in at most **180 seconds** on
   the recorded host/cache policy (faster is the stretch target). The output
   directory is new and the manifest records fresh-output/source/output hashes
-  plus `cache_mode`; no generated stage is reused. Any external host cache is
+  plus `cache_policy`, `cache_dir_rel`, and `cache_directory_identity`; no generated stage is reused. Any external host cache is
   recorded and held constant, with cold and warm results reported separately.
   The exact plain/full-prelude and exact no-prelude semantic smokes
   are co-equal release gates; worker-only or emit-only success cannot mask
   either failure. This is a new acceptance target, not a recovered historical
   full-green certificate. The sealed current snapshot reached stage2 timeout
   exit 143 at 182.54 seconds and produced no `cv2_s2`.
+- **T8 (offline fresh-s2 decision): EXECUTABLE / NO CURRENT GREEN RECEIPT.**
+  `scripts/validate_bootstrap_manifest.sh` rehashes a canonical B6/B7 receipt
+  against current source, harness, and an explicitly trusted host, then
+  enforces normal no-worker production, numeric resource coverage, both exact
+  semantic smokes, and stage2 wall <=180 seconds. The validator exists; the
+  measured-red current run has not passed it.
 - **B5 (s2 self-build -> s3): BLOCKED BY B4-F / HISTORICAL LOCATOR ONLY.** The
   historical first bad stop was
   `ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_BODY_LOWERED` inside the
@@ -1212,7 +1218,7 @@ frontier and must not stage, clean, or rewrite the user's main worktree.
    and B with `91ebe332` T0. Record revision, flags, cache policy, workers,
    wall time, peak RSS, and generated-artifact provenance. Use a new output
    directory, verify fresh-output/source/output hashes, and record
-   `cache_mode`; record any external host cache separately and hold it
+   `cache_policy`, `cache_dir_rel`, and `cache_directory_identity`; record any external host cache separately and hold it
    constant.
 2. Run host/unit guards plus exact plain/full-prelude and exact no-prelude
    semantic smokes on both A and B under `scripts/run_safe.sh`. Both modes are

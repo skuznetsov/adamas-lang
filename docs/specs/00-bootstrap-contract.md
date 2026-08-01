@@ -173,6 +173,35 @@ mutate-then-restore event occurred, and it does not close all external stdlib,
 toolchain, or same-UID hostile-writer inputs. Those contexts remain outside the
 B6 producer claim and must not be inferred from a successful receipt.
 
+#### 4.2.2 Offline Fresh-S2 Readiness Validator
+
+`scripts/validate_bootstrap_manifest.sh --run-dir <dir> --expected-host <path>`
+is the T8 consumer for one canonical two-stage B4-F run. The expected host is
+an explicit trust input, not a manifest assertion. The validator is read-only
+and requires the current source/git state and B6/B7 harness hashes to match the
+receipt before consuming it.
+
+Producer and consumer share the strict transcript, resource-row, and build-wall
+parsers in `scripts/lib/bootstrap_evidence_contract.sh`; the producer records
+that file's hash and the consumer rechecks it. This keeps acceptance grammar
+from drifting across two independently edited parser copies.
+
+For both stages it rehashes the normal executable, build log, producer-owned
+B7 receipt, smoke binaries, compile logs, and exact runtime transcripts. It
+also binds the producer-created `puts 42` source and the canonical repository
+no-prelude oracle by path and hash, rejecting stale or symlinked smoke inputs.
+It requires complete numeric rooted-ancestry RSS and FD coverage, successful
+resource outcomes, producer lineage, producer-created run/cache identities,
+normal build flags, and `CRYSTAL_WORKERS`-unset policy. Stage2 wall time must be
+at most 180 seconds; exactly 180 seconds is admitted. Any mismatch rejects the
+receipt without rerunning a generated compiler.
+
+T8 is a decision procedure over a B6 receipt, not evidence that a current
+receipt is green. B4-F remains red until a fresh current-source two-stage run
+passes T8 with both semantic transcripts and numeric resource coverage. T8
+inherits B6's non-hermetic boundary: trusting a host binary hash does not seal
+external stdlib/toolchain files or same-UID hostile writers.
+
 ### 4.3 Runtime Gate
 
 Any produced test binary MUST be executed through:

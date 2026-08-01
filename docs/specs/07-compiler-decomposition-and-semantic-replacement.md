@@ -105,7 +105,8 @@ keeps source revisions, generated artifacts, and the dirty worktree distinct.
 | Host preflight and stage1 | `GREEN` | Host spawn green; host build 14.13s; plain smoke `42` in 20.29s; exact no-prelude markers in 0.65s; `cv2_s1` SHA-256 `dfe3c0e8...`. |
 | Fresh current-source B4-F | `MEASURED RED` | Stage2 timeout exit 143 at 182.54s, externally sampled peak RSS 1361.03 MiB; outer chain exit 1 at 219.32s; no `cv2_s2`. Compiler-side performance red; stage2 semantic smokes unavailable, not red/green. |
 | Sealed-current stats-on localization | `DIAGNOSTIC / OPEN PHASE` | With only `ADAMAS_PHASE_STATS=1` on sealed `cv2_s1` under timeout 180s/memory 12288 MB, the run ended at wall 182.60s, exit 143, without `cv2_s2`; peak RSS is unavailable. `process_pending` completed 218 -> 591 (+373) in 555.2ms and `emit_tracked_sigs` 591 -> 604 (+13) in 235.0ms. The first open phase was `lower_missing.initial`; internal growth was 604 -> 1535 -> 7422 -> 19238 -> 28234 (+27,630 from 604) before timeout, with no completion/timing/normalized top-prefix. Log SHA-256 `1cc025cc5930ebd0513382e68dbb400e763002186f227288683d6bc710f79ecd`. This revalidates/evolves the 2026-04-29 localization; observation definitions differ, and stats-on/uninstrumented timing is diagnostic-only. |
-| T0 same-source fresh A/B | `NOT COMPLETED` | R0 promotion remains blocked independently of B4-F; T8 also remains missing until an executable validator is committed. |
+| T0 same-source fresh A/B | `NOT COMPLETED` | R0 promotion remains blocked independently of B4-F. |
+| T8 offline readiness validator | `COMPLETED / NO CURRENT GREEN RECEIPT` | The committed validator rehashes B6/B7 evidence and enforces trusted host, normal no-worker build, numeric resource coverage, both exact stage2 smokes, and the inclusive <=180-second budget. B4-F remains red until a fresh current receipt passes it. |
 
 These states supersede an unqualified `B4 GREEN` label. They do not discard
 the historical artifact; they prevent it from being used as evidence for fresh
@@ -121,7 +122,8 @@ The bootstrap contract now has two explicitly different rows:
 - **B4-F (fresh current source):** a clean-output `s1 -> s2b` build from the
   reconciled source must finish in **at most 180 seconds** on the recorded host
   and explicit cache policy. The output directory must be new and
-  the manifest records fresh-output/source/output hashes and `cache_mode`; no generated
+  the manifest records fresh-output/source/output hashes plus `cache_policy`,
+  `cache_dir_rel`, and `cache_directory_identity`; no generated
   stage may be reused. Cold and warm results are reported separately, and a
   warm run cannot satisfy a missing cold/fresh result.
   Faster is the stretch target. A longer diagnostic timeout may be used to
@@ -598,7 +600,7 @@ compared as if they were one compiler.
    `91ebe332` T0 provenance. Record source revision, flags, cache policy,
    worker count, wall time, peak RSS, and generated-artifact provenance. Use a
    new output directory, verify fresh-output/source/output hashes, and record
-   `cache_mode`; report any external host cache separately and hold it
+   `cache_policy`, `cache_dir_rel`, and `cache_directory_identity`; report any external host cache separately and hold it
    constant.
 3. Run host/unit guards, plain/full-prelude smoke, and no-prelude smoke on
    both A and B. A/B must be semantically equal before any architecture

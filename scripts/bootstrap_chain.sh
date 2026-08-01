@@ -21,6 +21,7 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/lib/bootstrap_evidence_contract.sh"
 
 STAGES="${BOOTSTRAP_CHAIN_STAGES:-5}"
 HOST_CRYSTAL="${CRYSTAL_HOST:-crystal}"
@@ -52,6 +53,11 @@ USAGE
 }
 
 while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --stages|--host|--source|--out|--timeout|--mem)
+      [[ $# -ge 2 ]] || { echo "error: missing value for $1" >&2; exit 1; }
+      ;;
+  esac
   case "$1" in
     --stages)
       STAGES="$2"
@@ -156,12 +162,20 @@ if [[ ! -f "$SOURCE_ABS" ]]; then
   echo "error: source not found: $SOURCE_ABS" >&2
   exit 1
 fi
-if [[ ! -f "$NO_PRELUDE_ORACLE" ]]; then
+if [[ ! -f "$NO_PRELUDE_ORACLE" || -L "$NO_PRELUDE_ORACLE" || "$(bootstrap_file_nlink "$NO_PRELUDE_ORACLE")" != "1" ]]; then
   echo "error: no-prelude oracle not found: $NO_PRELUDE_ORACLE" >&2
   exit 1
 fi
 
 REPO_REAL="$(cd "$REPO_ROOT" && pwd -P)"
+NO_PRELUDE_ORACLE_REAL="$(realpath "$NO_PRELUDE_ORACLE" 2>/dev/null)" || {
+  echo "error: no-prelude oracle cannot be resolved: $NO_PRELUDE_ORACLE" >&2
+  exit 1
+}
+if [[ "$NO_PRELUDE_ORACLE_REAL" != "$REPO_REAL/regression_tests/combined/test_no_prelude_interpolation.cr" ]]; then
+  echo "error: no-prelude oracle resolves outside its canonical repository path" >&2
+  exit 1
+fi
 SOURCE_DIR_REAL="$(cd "$(dirname "$SOURCE_ABS")" && pwd -P)"
 case "$SOURCE_DIR_REAL/$(basename "$SOURCE_ABS")" in
   "$REPO_REAL"/*) ;;
@@ -237,26 +251,12 @@ resolve_tool_path() {
   realpath "$found" 2>/dev/null || return 1
 }
 
-file_nlink() {
-  stat -f '%l' "$1" 2>/dev/null || stat -c '%h' "$1" 2>/dev/null
-}
-
-directory_identity() {
-  [[ -d "$1" && ! -L "$1" ]] || return 1
-  stat -f '%d:%i' "$1" 2>/dev/null || stat -c '%d:%i' "$1" 2>/dev/null
-}
-
-directory_mode() {
-  [[ -d "$1" && ! -L "$1" ]] || return 1
-  stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null
-}
-
 valid_fresh_executable() {
-  [[ -f "$1" && ! -L "$1" && -s "$1" && -x "$1" && "$(file_nlink "$1")" == "1" ]]
+  [[ -f "$1" && ! -L "$1" && -s "$1" && -x "$1" && "$(bootstrap_file_nlink "$1")" == "1" ]]
 }
 
 valid_evidence_file() {
-  [[ -f "$1" && ! -L "$1" && -s "$1" && "$(file_nlink "$1")" == "1" ]]
+  [[ -f "$1" && ! -L "$1" && -s "$1" && "$(bootstrap_file_nlink "$1")" == "1" ]]
 }
 
 HOST_COMPILER_RESOLVED="$(resolve_tool_path "$HOST_CRYSTAL")" || {
@@ -271,6 +271,8 @@ SOURCE_CONTENT_SHA256_START="$(sha256_file "$SOURCE_ABS")" || exit 1
 SOURCE_TREE_SHA256_START="$(hash_source_tree)" || exit 1
 HARNESS_CHAIN_SHA256="$(sha256_file "$SCRIPT_DIR/bootstrap_chain.sh")" || exit 1
 HARNESS_RUN_SAFE_SHA256="$(sha256_file "$SCRIPT_DIR/run_safe.sh")" || exit 1
+HARNESS_EVIDENCE_CONTRACT_SHA256="$(sha256_file "$SCRIPT_DIR/lib/bootstrap_evidence_contract.sh")" || exit 1
+NO_PRELUDE_ORACLE_SHA256_START="$(sha256_file "$NO_PRELUDE_ORACLE_REAL")" || exit 1
 GIT_HEAD="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || printf 'unknown')"
 SOURCE_GIT_STATUS="$(git -C "$REPO_ROOT" status --porcelain=v1 --untracked-files=all -- "$SOURCE_SCOPE_REL" 2>/dev/null || true)"
 SOURCE_GIT_DIFF="$(git -C "$REPO_ROOT" diff --no-ext-diff --binary -- "$SOURCE_SCOPE_REL" 2>/dev/null || true)"
@@ -283,9 +285,9 @@ SANITIZED_ENV_NAMES_SHA256="$(sha256_text "${SANITIZED_ENV_NAMES% }")"
 
 mkdir "$CACHE_DIR" || exit 1
 chmod 700 "$CACHE_DIR" || exit 1
-OUT_DIR_ID_START="$(directory_identity "$OUT_DIR")" || exit 1
-CACHE_DIR_ID_START="$(directory_identity "$CACHE_DIR")" || exit 1
-if [[ "$(directory_mode "$OUT_DIR")" != "700" || "$(directory_mode "$CACHE_DIR")" != "700" ]]; then
+OUT_DIR_ID_START="$(bootstrap_directory_identity "$OUT_DIR")" || exit 1
+CACHE_DIR_ID_START="$(bootstrap_directory_identity "$CACHE_DIR")" || exit 1
+if [[ "$(bootstrap_directory_mode "$OUT_DIR")" != "700" || "$(bootstrap_directory_mode "$CACHE_DIR")" != "700" ]]; then
   echo "error: bootstrap output and cache directories must be mode 700" >&2
   exit 1
 fi
@@ -294,18 +296,7 @@ export CRYSTAL_CACHE_DIR="$CACHE_DIR"
 cat > "$SMOKE_SRC" <<'EOF'
 puts 42
 EOF
-
-parse_time_real() {
-  local logfile="$1"
-  # Portable time -p prints "real N.NN" and preserves the child exit status.
-  # macOS time -l performs a kern.clockrate sysctl after the child exits; in a
-  # sandbox that probe fails and changes an otherwise successful build to RC 1.
-  awk '
-    /^\[RUN_SAFE_RESOURCE\] schema=run_safe_resource_v1 / { after_owned_resource = 1; real_count = 0; value = ""; next }
-    after_owned_resource && $0 ~ /^real [0-9]+([.][0-9]+)?$/ { real_count++; value = $2 }
-    END { if (real_count == 1) print value }
-  ' "$logfile"
-}
+SMOKE_SOURCE_SHA256="$(sha256_file "$SMOKE_SRC")" || exit 1
 
 parse_time_l_max_rss_bytes() {
   local resource_file="$1"
@@ -321,38 +312,14 @@ parse_time_l_max_rss_bytes() {
   ' "$resource_file"
 }
 
-resource_schema() {
-  awk '
-    /^\[RUN_SAFE_RESOURCE\]/ {
-      rows++
-      for (i = 1; i <= NF; i++) if ($i ~ /^schema=/) { split($i, a, "="); schema = a[2] }
-    }
-    END { if (NR == 1 && rows == 1) print schema }
-  ' "$1"
-}
-
-resource_field() {
-  local field="$1"
-  local resource_file="$2"
-  awk -v wanted="$field" '
-    /^\[RUN_SAFE_RESOURCE\]/ {
-      rows++
-      for (i = 1; i <= NF; i++) {
-        split($i, a, "=")
-        if (a[1] == wanted) { count++; value = substr($i, length(wanted) + 2) }
-      }
-    }
-    END { if (NR == 1 && rows == 1 && count == 1) print value }
-  ' "$resource_file"
-}
-
 resource_success_contract() {
   local resource_file="$1"
   valid_evidence_file "$resource_file" &&
-    [[ "$(resource_field schema "$resource_file")" == "run_safe_resource_v1" ]] &&
-    [[ "$(resource_field outcome "$resource_file")" == "exit" ]] &&
-    [[ "$(resource_field reason "$resource_file")" == "exit" ]] &&
-    [[ "$(resource_field exit_code "$resource_file")" == "0" ]]
+    bootstrap_exact_success_resource_file "$resource_file" &&
+    [[ "$(bootstrap_resource_field schema "$resource_file")" == "run_safe_resource_v1" ]] &&
+    [[ "$(bootstrap_resource_field outcome "$resource_file")" == "exit" ]] &&
+    [[ "$(bootstrap_resource_field reason "$resource_file")" == "exit" ]] &&
+    [[ "$(bootstrap_resource_field exit_code "$resource_file")" == "0" ]]
 }
 
 bytes_to_mb() {
@@ -398,31 +365,8 @@ run_compiled_smoke() {
     return 1
   fi
   cat "$runtime_log"
-  exact_smoke_transcript "$runtime_log" "$marker"
-}
-
-exact_smoke_transcript() {
-  local runtime_log="$1"
-  local marker="$2"
-  local counts
-
-  counts="$(awk -v wanted="$marker" '
-    $0 == "=== STDOUT ===" { stdout_headers++; section = "stdout"; next }
-    $0 == "=== STDERR ===" { stderr_headers++; section = "stderr"; next }
-    /^\[EXIT: 0\] / { exit_rows++; section = ""; next }
-    /^\[RUN_SAFE_RESOURCE\] schema=run_safe_resource_v1 / { resource_rows++; next }
-    section == "stdout" {
-      stdout_lines++
-      if ($0 == wanted) marker_count++; else wrong_stdout++
-    }
-    section == "stderr" { stderr_lines++ }
-    END {
-      print marker_count + 0, stdout_lines + 0, wrong_stdout + 0, stderr_lines + 0,
-        stdout_headers + 0, stderr_headers + 0, exit_rows + 0, resource_rows + 0
-    }
-  ' "$runtime_log")"
-  if [[ "$counts" != "1 1 0 0 1 1 1 1" ]]; then
-    echo "error: smoke runtime transcript mismatch: log=$runtime_log marker=$marker counts=$counts" >&2
+  if ! bootstrap_exact_smoke_transcript "$runtime_log" "$marker"; then
+    echo "error: smoke runtime transcript mismatch: log=$runtime_log marker=$marker" >&2
     return 1
   fi
 }
@@ -527,14 +471,15 @@ final_stage_evidence_valid() {
     hash_matches "$OUT_DIR/stage${stage}_build.log" "${ST_BUILD_LOG_HASH[$stage]}" evidence &&
     hash_matches "$OUT_DIR/stage${stage}_build.resource" "${ST_RESOURCE_HASH[$stage]}" evidence &&
     resource_success_contract "$OUT_DIR/stage${stage}_build.resource" &&
+    [[ "$(bootstrap_build_resource_row "$OUT_DIR/stage${stage}_build.log")" == "$(sed -n '1p' "$OUT_DIR/stage${stage}_build.resource")" ]] &&
     hash_matches "$OUT_DIR/stage${stage}_smoke_plain.bin" "${ST_SMOKE_P_BIN_HASH[$stage]}" executable &&
     hash_matches "$OUT_DIR/stage${stage}_smoke_plain.log" "${ST_SMOKE_P_COMPILE_LOG_HASH[$stage]}" evidence &&
     hash_matches "$OUT_DIR/stage${stage}_smoke_plain.runtime.log" "${ST_SMOKE_P_LOG_HASH[$stage]}" evidence &&
-    exact_smoke_transcript "$OUT_DIR/stage${stage}_smoke_plain.runtime.log" "42" &&
+    bootstrap_exact_smoke_transcript "$OUT_DIR/stage${stage}_smoke_plain.runtime.log" "42" &&
     hash_matches "$OUT_DIR/stage${stage}_smoke_noprelude.bin" "${ST_SMOKE_N_BIN_HASH[$stage]}" executable &&
     hash_matches "$OUT_DIR/stage${stage}_smoke_noprelude.log" "${ST_SMOKE_N_COMPILE_LOG_HASH[$stage]}" evidence &&
     hash_matches "$OUT_DIR/stage${stage}_smoke_noprelude.runtime.log" "${ST_SMOKE_N_LOG_HASH[$stage]}" evidence &&
-    exact_smoke_transcript "$OUT_DIR/stage${stage}_smoke_noprelude.runtime.log" "noprelude_interp_ok"
+    bootstrap_exact_smoke_transcript "$OUT_DIR/stage${stage}_smoke_noprelude.runtime.log" "noprelude_interp_ok"
 }
 
 write_manifest() {
@@ -571,6 +516,12 @@ write_manifest() {
     echo "host_compiler_sha256=$HOST_COMPILER_SHA256"
     echo "harness_bootstrap_chain_sha256=$HARNESS_CHAIN_SHA256"
     echo "harness_run_safe_sha256=$HARNESS_RUN_SAFE_SHA256"
+    echo "harness_evidence_contract_sha256=$HARNESS_EVIDENCE_CONTRACT_SHA256"
+    echo "smoke_plain_source_rel=_smoke_puts42.cr"
+    echo "smoke_plain_source_sha256=$SMOKE_SOURCE_SHA256"
+    echo "smoke_noprelude_oracle_rel=regression_tests/combined/test_no_prelude_interpolation.cr"
+    echo "smoke_noprelude_oracle_sha256_start=$NO_PRELUDE_ORACLE_SHA256_START"
+    echo "smoke_noprelude_oracle_sha256_end=$NO_PRELUDE_ORACLE_SHA256_END"
     echo "environment_path_sha256=$ENV_PATH_SHA256"
     echo "environment_home_sha256=$ENV_HOME_SHA256"
     echo "environment_tmpdir_sha256=$ENV_TMPDIR_SHA256"
@@ -717,9 +668,9 @@ for ((s = 1; s <= STAGES; s++)); do
   ST_BUILD_LOG_HASH[$s]="$(sha256_file "$LOG_B" 2>/dev/null || printf 'missing')"
   if valid_evidence_file "$RESOURCE_B"; then
     ST_RESOURCE_HASH[$s]="$(sha256_file "$RESOURCE_B" 2>/dev/null || printf 'missing')"
-    ST_RESOURCE_SCHEMA[$s]="$(resource_schema "$RESOURCE_B" 2>/dev/null || true)"
+    ST_RESOURCE_SCHEMA[$s]="$(bootstrap_resource_schema "$RESOURCE_B" 2>/dev/null || true)"
   fi
-  WALL_REAL="$(parse_time_real "$LOG_B" || true)"
+  WALL_REAL="$(bootstrap_build_wall "$LOG_B" || true)"
   RSS_B="$(parse_time_l_max_rss_bytes "$RESOURCE_B" 2>/dev/null || true)"
   PEAK_MB="$(bytes_to_mb "$RSS_B")"
 
@@ -869,8 +820,9 @@ done
 
 SOURCE_CONTENT_SHA256_END="$(sha256_file "$SOURCE_ABS" 2>/dev/null || printf 'missing')"
 SOURCE_TREE_SHA256_END="$(hash_source_tree 2>/dev/null || printf 'missing')"
-OUT_DIR_ID_END="$(directory_identity "$OUT_DIR" 2>/dev/null || printf 'missing')"
-CACHE_DIR_ID_END="$(directory_identity "$CACHE_DIR" 2>/dev/null || printf 'missing')"
+NO_PRELUDE_ORACLE_SHA256_END="$(sha256_file "$NO_PRELUDE_ORACLE_REAL" 2>/dev/null || printf 'missing')"
+OUT_DIR_ID_END="$(bootstrap_directory_identity "$OUT_DIR" 2>/dev/null || printf 'missing')"
+CACHE_DIR_ID_END="$(bootstrap_directory_identity "$CACHE_DIR" 2>/dev/null || printf 'missing')"
 if [[ "$SOURCE_CONTENT_SHA256_END" == "$SOURCE_CONTENT_SHA256_START" &&
       "$SOURCE_TREE_SHA256_END" == "$SOURCE_TREE_SHA256_START" &&
       -z "$(find "$SOURCE_SCOPE_REAL" -type l -print -quit 2>/dev/null)" ]]; then
@@ -883,10 +835,18 @@ else
     FIRST_SYMPTOM="bootstrap source scope changed during the run"
   fi
 fi
+if [[ "$NO_PRELUDE_ORACLE_SHA256_END" != "$NO_PRELUDE_ORACLE_SHA256_START" ||
+      "$(sha256_file "$SMOKE_SRC" 2>/dev/null || printf missing)" != "$SMOKE_SOURCE_SHA256" ]]; then
+  if [[ -z "$FIRST_FAIL" ]]; then
+    FIRST_FAIL="smoke_input"
+    FIRST_FAIL_KIND="smoke_input_mutated"
+    FIRST_SYMPTOM="bootstrap semantic smoke input changed during the run"
+  fi
+fi
 if [[ "$OUT_DIR_ID_END" != "$OUT_DIR_ID_START" ||
       "$CACHE_DIR_ID_END" != "$CACHE_DIR_ID_START" ||
-      "$(directory_mode "$OUT_DIR" 2>/dev/null || printf missing)" != "700" ||
-      "$(directory_mode "$CACHE_DIR" 2>/dev/null || printf missing)" != "700" ]]; then
+      "$(bootstrap_directory_mode "$OUT_DIR" 2>/dev/null || printf missing)" != "700" ||
+      "$(bootstrap_directory_mode "$CACHE_DIR" 2>/dev/null || printf missing)" != "700" ]]; then
   if [[ -z "$FIRST_FAIL" ]]; then
     FIRST_FAIL="context"
     FIRST_FAIL_KIND="directory_identity"
