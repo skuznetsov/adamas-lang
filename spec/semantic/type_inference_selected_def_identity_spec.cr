@@ -227,6 +227,109 @@ describe Semantic::TypeInferenceEngine do
       ).should_not be_nil
     end
 
+    it "keeps one receiver identity across class reopenings" do
+      source = <<-CRYSTAL
+        class T1Reopened
+          def route(value : Int32) : Int32
+            value
+          end
+        end
+
+        class T1Reopened
+          def route(value : String) : Int32
+            value.size
+          end
+        end
+
+        reopened = T1Reopened.new
+        reopened.route(1)
+        reopened.route("x")
+      CRYSTAL
+
+      program = Frontend::Parser.new(Frontend::Lexer.new(source)).parse_program
+      analyzer = Semantic::Analyzer.new(program)
+      analyzer.collect_symbols
+      name_result = analyzer.resolve_names
+      engine = analyzer.infer_types(name_result.identifier_symbols)
+      owner = analyzer.global_context.symbol_table.lookup("T1Reopened").as(Semantic::ClassSymbol)
+      int_method = route_method_with_arg(owner, "Int32")
+      string_method = route_method_with_arg(owner, "String")
+
+      int_key = engine.__test_local_method_instance_key(
+        int_method,
+        Semantic::InstanceType.new(owner),
+        [Semantic::PrimitiveType.new("Int32")] of Semantic::Type,
+      ).not_nil!
+      string_key = engine.__test_local_method_instance_key(
+        string_method,
+        Semantic::InstanceType.new(owner),
+        [Semantic::PrimitiveType.new("String")] of Semantic::Type,
+      ).not_nil!
+
+      program.roots[0].should_not eq(program.roots[1])
+      int_key.receiver_type.should eq(string_key.receiver_type)
+      int_key.def_identity.should_not eq(string_key.def_identity)
+      engine.diagnostics.should be_empty
+    end
+
+    it "rejects stale receiver and method symbols after a shared context is recollected" do
+      source = <<-CRYSTAL
+        class T1SharedContext
+          def route(value : Int32) : Int32
+            value
+          end
+        end
+      CRYSTAL
+
+      shared_context = Semantic::Context.new(Semantic::SymbolTable.new)
+      first_program = Frontend::Parser.new(Frontend::Lexer.new(source)).parse_program
+      first_analyzer = Semantic::Analyzer.new(first_program, shared_context)
+      first_analyzer.collect_symbols
+      first_names = first_analyzer.resolve_names
+      first_owner = shared_context.symbol_table.lookup("T1SharedContext").as(Semantic::ClassSymbol)
+      first_method = first_owner.scope.lookup("route").as(Semantic::MethodSymbol)
+      first_engine = Semantic::TypeInferenceEngine.new(
+        first_program,
+        first_names.identifier_symbols,
+        shared_context.symbol_table,
+        identity_registry: first_analyzer.identity_registry,
+      )
+
+      second_program = Frontend::Parser.new(Frontend::Lexer.new(source)).parse_program
+      second_analyzer = Semantic::Analyzer.new(second_program, shared_context)
+      second_analyzer.collect_symbols
+      second_names = second_analyzer.resolve_names
+      second_owner = shared_context.symbol_table.lookup("T1SharedContext").as(Semantic::ClassSymbol)
+      second_method = second_owner.scope.lookup("route").as(Semantic::OverloadSetSymbol).overloads.find do |candidate|
+        def_node = second_program.ast_arena[candidate.node_id].as(Frontend::DefNode)
+        def_node.params_storage.same?(candidate.params)
+      end.not_nil!
+      second_engine = Semantic::TypeInferenceEngine.new(
+        second_program,
+        second_names.identifier_symbols,
+        shared_context.symbol_table,
+        identity_registry: second_analyzer.identity_registry,
+      )
+      arg_types = [Semantic::PrimitiveType.new("Int32")] of Semantic::Type
+
+      first_owner.should_not be(second_owner)
+      first_engine.__test_local_method_instance_key(
+        first_method,
+        Semantic::InstanceType.new(first_owner),
+        arg_types,
+      ).should be_nil
+      second_engine.__test_local_method_instance_key(
+        first_method,
+        Semantic::InstanceType.new(second_owner),
+        arg_types,
+      ).should be_nil
+      second_engine.__test_local_method_instance_key(
+        second_method,
+        Semantic::InstanceType.new(second_owner),
+        arg_types,
+      ).should_not be_nil
+    end
+
     it "keeps same-named nested receiver declarations distinct" do
       source = <<-CRYSTAL
         module LeftOwner

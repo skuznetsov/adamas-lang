@@ -40,10 +40,16 @@ receiver only when the same `ClassSymbol` is visible from this engine's global
 table or its canonical owner-chain reaches that table, then interns it with
 declaration `DefIdentity`; equal local spellings in different owners remain
 distinct, and a same-shaped symbol from an independent Analyzer/root table is
-rejected. Shared-context reopening identity, scope,
-return/type-parameter metadata, in-place shared parameter payload mutation,
-non-`self` explicit receivers, and generic/union/container types remain outside
-this narrow guard. This is not the general `CallResolution`, a `ResolutionId`,
+rejected. Same-arena class reopenings retain one receiver identity across
+distinct method definitions; after a shared context is recollected, stale
+receiver and method symbols from the prior arena fail closed while the
+replacement symbol remains valid. Cross-arena admission for declarations
+retained from another per-file Analyzer, same-arena stale-`MethodSymbol`
+admission and duplicate-signature redefinition ordering,
+scope/return/type-parameter metadata, in-place shared parameter payload
+mutation, non-`self` explicit receivers, and generic/union/container types
+remain outside this narrow guard. This is not the general `CallResolution`, a
+`ResolutionId`,
 T1 telemetry, downstream continuity, or new selection authority. The proposed
 stream-only producer is rejected for now: the external T1 guard is not a live
 compiler consumer, semantic analysis owns an aggregate reparse arena, and HIR

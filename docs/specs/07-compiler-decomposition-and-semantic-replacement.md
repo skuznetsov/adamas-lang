@@ -298,11 +298,15 @@ SemanticTypeId}` named components; and the private `LocalCallResolution` is
 constructed and immediately revalidated for the exact T1 r1-r5 shapes before
 unchanged legacy body inference. Parser-owned selected definitions and nominal
 receiver symbols from an independent Analyzer/root table fail closed, while
-the same canonical symbol may be re-exported into a file-local table. Shared
-symbol-table roots across multiple analyzers and reopened-class arena identity
-remain unresolved. This completes the local portion of steps 1-2 in section
-13.3. It does not authorize a stream, create a cross-arena consumer, or make
-T1 green.
+the same canonical symbol may be re-exported into a file-local table. Same-arena
+class reopenings preserve one receiver identity across distinct selected Defs;
+recollecting a shared symbol-table context from a distinct arena rejects stale
+receiver and method symbols while admitting the replacement symbol.
+Cross-arena admission for declarations retained from another per-file Analyzer
+and same-arena stale-`MethodSymbol` admission/duplicate-signature redefinition
+ordering remain unresolved. This completes the local portion of steps 1-2 in
+section 13.3. It does not authorize a stream, create a cross-arena consumer, or
+make T1 green.
 
 The T1 guard is **availability/current-red only**: it can show whether the
 current source/configuration emitted a row or exposed the current failing
