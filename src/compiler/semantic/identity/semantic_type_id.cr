@@ -34,13 +34,6 @@ module Adamas::Compiler::Semantic
     UNKNOWN = new(UInt32::MAX)
   end
 
-  # Structural key for the intern table. NOT the identity itself —
-  # the identity is the SemanticTypeId assigned by the table.
-  record SemanticTypeKey,
-    kind : TypeKind,
-    name : String,
-    type_params : Array(SemanticTypeId)
-
   enum TypeKind : UInt8
     Primitive
     Class
@@ -58,6 +51,37 @@ module Adamas::Compiler::Semantic
     Generic
     Alias
     Lib
+  end
+
+  # Structural key for the intern table. NOT the identity itself —
+  # the identity is the SemanticTypeId assigned by the table.
+  #
+  # The key owns its dynamic components and never returns the retained array.
+  # Otherwise caller mutation after insertion could change Hash equality and
+  # make an interned semantic type unreachable.
+  struct SemanticTypeKey
+    getter kind : TypeKind
+    getter name : String
+    @type_params : Array(SemanticTypeId)
+
+    def initialize(@kind : TypeKind, name : String, type_params : Array(SemanticTypeId))
+      @name = name.dup
+      @type_params = type_params.dup
+    end
+
+    def type_params : Array(SemanticTypeId)
+      @type_params.dup
+    end
+
+    def ==(other : SemanticTypeKey) : Bool
+      @kind == other.kind && @name == other.name && @type_params == other.@type_params
+    end
+
+    def hash(hasher)
+      hasher = @kind.hash(hasher)
+      hasher = @name.hash(hasher)
+      @type_params.hash(hasher)
+    end
   end
 
   # Intern table: StructuralKey → unique SemanticTypeId.

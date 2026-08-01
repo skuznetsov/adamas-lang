@@ -221,8 +221,12 @@ record DefInstanceKey,
   receiver_type : SemanticTypeId?,
   arg_types : Array(SemanticTypeId),
   block_type : SemanticTypeId?,
-  named_arg_types : Array({String, SemanticTypeId})?
+  named_arg_types : Array({NameId, SemanticTypeId})?
 ```
+
+`NameId` and `SemanticTypeId` are session-local values minted by the shared
+`SemanticIdentityRegistry`. Dynamic key arrays are retained as owned copies and
+are not exposed mutably after insertion.
 
 **Why structured pair, not XOR/hash?**
 - XOR of arena_id and expr_id is NOT injective — distinct defs can collide

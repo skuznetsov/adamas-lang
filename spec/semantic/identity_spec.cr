@@ -1,4 +1,6 @@
 require "spec"
+require "../../src/compiler/semantic/identity/name_id"
+require "../../src/compiler/semantic/identity/identity_registry"
 require "../../src/compiler/semantic/identity/semantic_type_id"
 require "../../src/compiler/semantic/identity/def_identity"
 require "../../src/compiler/semantic/identity/def_instance_key"
@@ -7,6 +9,33 @@ require "../../src/compiler/semantic/identity/def_instance_key"
 
 module IdentitySpec
   include Adamas::Compiler::Semantic
+
+  # ── NameId / SemanticIdentityRegistry ──
+
+  describe "SemanticIdentityRegistry" do
+    it "interns one canonical name to one NameId" do
+      registry = SemanticIdentityRegistry.new
+
+      first = registry.intern_name("level")
+      second = registry.intern_name("level")
+      other = registry.intern_name("value")
+
+      first.should eq(second)
+      first.should_not eq(other)
+      registry.lookup_name(first).should eq("level")
+      registry.name_count.should eq(2)
+    end
+
+    it "owns the semantic type table beside canonical names" do
+      registry = SemanticIdentityRegistry.new
+
+      first = registry.types.primitive("Int32")
+      second = registry.types.primitive("Int32")
+
+      first.should eq(second)
+      registry.types.size.should eq(1)
+    end
+  end
 
   # ── SemanticTypeId ──
 
@@ -161,6 +190,22 @@ module IdentitySpec
       key.not_nil!.name.should eq "Float64"
       key.not_nil!.kind.should eq TypeKind::Primitive
     end
+
+    it "owns structural key components after interning" do
+      t = SemanticTypeInternTable.new
+      int = t.primitive("Int32")
+      string = t.primitive("String")
+      params = [int]
+      generic = t.generic("Box", TypeKind::Generic, params)
+
+      params[0] = string
+      exposed = t.lookup(generic).not_nil!.type_params
+      exposed[0] = string
+
+      t.generic("Box", TypeKind::Generic, [int]).should eq(generic)
+      t.generic("Box", TypeKind::Generic, [string]).should_not eq(generic)
+      t.normalized_name(generic).should eq("Box(Int32)")
+    end
   end
 
   # ── DefIdentity ──
@@ -229,6 +274,21 @@ module IdentitySpec
       key = DefInstanceKey.new(def_identity: def_id, arg_types: args)
       args << SemanticTypeId.new(99_u32)
       key.arg_types.size.should eq 1
+    end
+
+    it "owns named argument NameIds and does not expose mutable key arrays" do
+      registry = SemanticIdentityRegistry.new
+      def_id = DefIdentity.new(1_u64, 0)
+      level = registry.intern_name("level")
+      int = SemanticTypeId.new(20_u32)
+      string = SemanticTypeId.new(21_u32)
+      named = [{level, int}]
+      key = DefInstanceKey.new(def_identity: def_id, named_arg_types: named)
+
+      named[0] = {registry.intern_name("other"), string}
+      key.named_arg_types.not_nil![0] = {registry.intern_name("third"), string}
+
+      key.named_arg_types.should eq([{level, int}])
     end
 
     it "works as hash key" do

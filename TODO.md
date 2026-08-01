@@ -1,7 +1,18 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-07-31 (float formatter tables and precision callback returns
-restored; B4-F remains red).
+Updated: 2026-07-31 (T1 semantic identity ownership substrate landed;
+T1 and B4-F remain red).
+
+T1 OWNERSHIP/NAME-ID SUBSTRATE VERIFIED; CALL RESOLUTION CONTINUITY REMAINS
+OPEN. `SemanticIdentityRegistry` is now the compile-session owner for canonical
+`NameId` values and the existing semantic type table. `DefInstanceKey` named
+arguments use ordered `{NameId, SemanticTypeId}` components, and both it and
+`SemanticTypeKey` own their dynamic key arrays without exposing mutable retained
+storage. The identity/generic group passes 52 examples, the compiler builds,
+and the same-spelling reducer still executes correctly while the exact T1
+producer remains deliberately absent (`T1_STATUS=MEASURED_RED`). Next return a
+local typed `CallResolution` from the existing post-resolution owner without a
+new `AstToHir` owner or default-path behavior change.
 
 OFFLINE BOOTSTRAP READINESS VALIDATOR VERIFIED; B4-F REMAINS RED.
 `scripts/validate_bootstrap_manifest.sh` independently consumes a

@@ -13,6 +13,7 @@
 require "./semantic_type_id"
 require "./def_identity"
 require "./def_instance_key"
+require "./identity_registry"
 
 module Adamas::Compiler::Semantic
   # Fallback surrogate for call sites where ExprId is not yet available.
@@ -45,7 +46,7 @@ module Adamas::Compiler::Semantic
       @def_key : DryRunDefKey,
       @receiver_type : SemanticTypeId? = nil,
       arg_types : Array(SemanticTypeId) = [] of SemanticTypeId,
-      @block_type : SemanticTypeId? = nil
+      @block_type : SemanticTypeId? = nil,
     )
       @arg_types = arg_types.dup
     end
@@ -67,7 +68,7 @@ module Adamas::Compiler::Semantic
   end
 
   class IdentityDryRunTracker
-    getter type_intern : SemanticTypeInternTable
+    getter identity_registry : SemanticIdentityRegistry
     getter total_lookups : Int32 = 0
     getter cache_hits : Int32 = 0
     getter cache_misses : Int32 = 0
@@ -78,10 +79,13 @@ module Adamas::Compiler::Semantic
     @canonical_keys : ::Hash(DefInstanceKey, Int32)
     @surrogate_keys : ::Hash(DryRunInstanceKey, Int32)
 
-    def initialize
-      @type_intern = SemanticTypeInternTable.new
+    def initialize(@identity_registry : SemanticIdentityRegistry = SemanticIdentityRegistry.new)
       @canonical_keys = {} of DefInstanceKey => Int32
       @surrogate_keys = {} of DryRunInstanceKey => Int32
+    end
+
+    def type_intern : SemanticTypeInternTable
+      @identity_registry.types
     end
 
     # Record using canonical DefInstanceKey (ExprId available).
@@ -118,23 +122,23 @@ module Adamas::Compiler::Semantic
     # Simplified: maps type name string → semantic type.
     # In Phase 2+, this will use proper semantic type resolution.
     def intern_type_name(name : String, kind : TypeKind = TypeKind::Class) : SemanticTypeId
-      return @type_intern.primitive("Nil") if name == "Nil" || name == "Void"
-      return @type_intern.primitive("Bool") if name == "Bool"
-      return @type_intern.primitive("Int32") if name == "Int32"
-      return @type_intern.primitive("Int64") if name == "Int64"
-      return @type_intern.primitive("UInt32") if name == "UInt32"
-      return @type_intern.primitive("UInt64") if name == "UInt64"
-      return @type_intern.primitive("Float64") if name == "Float64"
-      return @type_intern.primitive("String") if name == "String"
-      return @type_intern.primitive("Char") if name == "Char"
+      return type_intern.primitive("Nil") if name == "Nil" || name == "Void"
+      return type_intern.primitive("Bool") if name == "Bool"
+      return type_intern.primitive("Int32") if name == "Int32"
+      return type_intern.primitive("Int64") if name == "Int64"
+      return type_intern.primitive("UInt32") if name == "UInt32"
+      return type_intern.primitive("UInt64") if name == "UInt64"
+      return type_intern.primitive("Float64") if name == "Float64"
+      return type_intern.primitive("String") if name == "String"
+      return type_intern.primitive("Char") if name == "Char"
 
       # Check for generic: Array(Int32) → generic("Array", [intern("Int32")])
       if paren = name.index('(')
         base = name[0...paren]
         # For dry-run, treat the whole name as identity (Phase 2 will parse args)
-        @type_intern.named(name, kind)
+        type_intern.named(name, kind)
       else
-        @type_intern.named(name, kind)
+        type_intern.named(name, kind)
       end
     end
 
@@ -148,7 +152,7 @@ module Adamas::Compiler::Semantic
       canonical_pct = @total_lookups > 0 ? (@canonical_lookups * 100.0 / @total_lookups).round(1) : 0.0
       io.puts "[IDENTITY_DRY_RUN] lookups=#{@total_lookups} hits=#{@cache_hits} misses=#{@cache_misses} hit_rate=#{hit_rate}%"
       io.puts "[IDENTITY_DRY_RUN] canonical=#{@canonical_lookups}(#{canonical_pct}%) surrogate=#{@surrogate_lookups}"
-      io.puts "[IDENTITY_DRY_RUN] unique_keys=#{total_unique} (canonical=#{canonical_unique} surrogate=#{surrogate_unique}) interned_types=#{@type_intern.size}"
+      io.puts "[IDENTITY_DRY_RUN] unique_keys=#{total_unique} (canonical=#{canonical_unique} surrogate=#{surrogate_unique}) interned_types=#{type_intern.size}"
     end
   end
 end

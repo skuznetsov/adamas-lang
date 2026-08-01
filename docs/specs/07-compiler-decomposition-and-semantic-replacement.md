@@ -107,6 +107,7 @@ keeps source revisions, generated artifacts, and the dirty worktree distinct.
 | Sealed-current stats-on localization | `DIAGNOSTIC / OPEN PHASE` | With only `ADAMAS_PHASE_STATS=1` on sealed `cv2_s1` under timeout 180s/memory 12288 MB, the run ended at wall 182.60s, exit 143, without `cv2_s2`; peak RSS is unavailable. `process_pending` completed 218 -> 591 (+373) in 555.2ms and `emit_tracked_sigs` 591 -> 604 (+13) in 235.0ms. The first open phase was `lower_missing.initial`; internal growth was 604 -> 1535 -> 7422 -> 19238 -> 28234 (+27,630 from 604) before timeout, with no completion/timing/normalized top-prefix. Log SHA-256 `1cc025cc5930ebd0513382e68dbb400e763002186f227288683d6bc710f79ecd`. This revalidates/evolves the 2026-04-29 localization; observation definitions differ, and stats-on/uninstrumented timing is diagnostic-only. |
 | T0 same-source fresh A/B | `NOT COMPLETED` | R0 promotion remains blocked independently of B4-F. |
 | T8 offline readiness validator | `COMPLETED / NO CURRENT GREEN RECEIPT` | The committed validator rehashes B6/B7 evidence and enforces trusted host, normal no-worker build, numeric resource coverage, both exact stage2 smokes, and the inclusive <=180-second budget. B4-F remains red until a fresh current receipt passes it. |
+| T1 ownership/NameId substrate | `COMPLETED / T1 STILL RED` | One `SemanticIdentityRegistry` owns canonical session-local names and the existing semantic type table; `DefInstanceKey` named arguments are typed `NameId` pairs, and retained semantic key arrays are mutation-safe. No live `CallResolution`, producer row, downstream join, or lowering behavior change is claimed. |
 
 These states supersede an unqualified `B4 GREEN` label. They do not discard
 the historical artifact; they prevent it from being used as evidence for fresh
@@ -282,11 +283,15 @@ Current blockers are explicit and remain red:
 
 - there is no actual semantic callsite type interner that can authoritatively
   populate the receiver and argument semantic type IDs;
-- `DefInstanceKey` named arguments are still `String`, not `NameId`;
-- `SemanticTypeKey` currently retains mutable caller-owned arrays for generic
-  and tuple forms, violating hash-key immutability and lifetime ownership;
 - `IdentityDryRunTracker` is a definition-annotation/body-infer proxy and is
   in-process, not the semantic callsite producer.
+
+The ownership precursor is now implemented: `SemanticIdentityRegistry` owns
+canonical session-local names alongside the existing type table,
+`DefInstanceKey` uses ordered `{NameId, SemanticTypeId}` named components, and
+`SemanticTypeKey`/`DefInstanceKey` retain owned arrays without exposing their
+mutable storage. This closes only step 1 of section 13.3; it does not create a
+live resolution owner or make T1 green.
 
 The T1 guard is **availability/current-red only**: it can show whether the
 current source/configuration emitted a row or exposed the current failing
@@ -377,7 +382,7 @@ These are different programs and must not share a readiness label.
 | Existing asset/context | Reuse now | Rewrite now |
 |---|---|---|
 | `DefIdentity`, `SemanticTypeId`, `DefInstanceKey`, and `SemanticToHIRAdapter` in `src/compiler/semantic/identity/` | Extend these as the canonical identity substrate; add the missing `ResolutionId` beside them and keep the one-way HIR adapter. | Do not create parallel `*Key2`, duplicate type interners, or a second semantic-to-HIR bridge. |
-| `DefInstanceKey` named-argument component | Reuse through a compatibility adapter while its `String` names are canonicalized to `NameId`/typed argument-name IDs before candidate promotion. | Do not treat the current `Array({String, SemanticTypeId})` field as the final no-semantic-string contract. |
+| `DefInstanceKey` named-argument component | Reuse the current ordered `Array({NameId, SemanticTypeId})` field from the shared registry owner. | Do not reconstruct it from raw strings downstream or add a parallel compatibility key. |
 | Current `AstToHir` maps, queues, and owner records | Keep as a legacy compatibility carrier behind facades and differential ledgers. | Do not remove queues or rewrite all lowerers in the first slice. |
 | `TypeInferenceEngine` (13,201 lines, 464 `def` lines) | Reuse as a leaf/legacy differential oracle where its result is already needed. | Do not promote the class unchanged as the new declaration, resolution, or body-cache authority; it must be decomposed behind the budgets below. |
 | Existing LLVM text/output path | Reuse output and ownership contracts while semantic facts are sealed. | Do not start with a backend rewrite or let backend code repair missing semantic facts. |

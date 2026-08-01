@@ -203,11 +203,15 @@ Current blockers are explicit and remain red:
 
 - there is no actual semantic callsite type interner that can authoritatively
   populate the receiver and argument semantic type IDs;
-- `DefInstanceKey` named arguments are still `String`, not `NameId`;
-- `SemanticTypeKey` currently retains mutable caller-owned arrays for generic
-  and tuple forms, violating hash-key immutability and lifetime ownership;
 - `IdentityDryRunTracker` is a definition-annotation/body-infer proxy and is
   in-process, not the semantic callsite producer.
+
+The ownership precursor is complete: `SemanticIdentityRegistry` owns canonical
+session-local names alongside the existing type table, `DefInstanceKey` uses
+ordered `{NameId, SemanticTypeId}` named components, and retained
+`SemanticTypeKey`/`DefInstanceKey` arrays cannot be mutated through caller
+aliases or getters. This does not yet provide a live `CallResolution`, producer
+row, or downstream continuity proof, so T1 remains red.
 
 The T1 guard is **availability/current-red only**: it can show whether the
 current source/configuration emitted a row or exposed the current failing
