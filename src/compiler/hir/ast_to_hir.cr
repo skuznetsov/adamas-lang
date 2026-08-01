@@ -88953,13 +88953,11 @@ module Adamas::HIR
       # normalized the arguments.
       selected_block_entry : Tuple(String, Adamas::Compiler::Frontend::DefNode)? = nil
       block_proc_expected_return_type = nil.as(TypeRef?)
-      # M3e (docs/method_resolution_architecture_map.md): FIRST real consumption —
-      # this one site calls the structured resolver directly instead of the legacy
-      # wrapper. Wrapper semantics are preserved verbatim: a non-readable name
-      # yields nil, named args are canonicalized. Exactly one call (the resolver
-      # mutates the lookup cache / last-result state, so no double-call). Other
-      # lookup sites still use the wrapper; cache keys and materialization are
-      # unchanged. CallShape is not routed here yet.
+      # M3e (docs/method_resolution_architecture_map.md): first direct consumption
+      # of Resolution in the lowering path. A non-readable name still yields nil,
+      # named args remain canonicalized, and the resolver is called exactly once.
+      # Other lookup sites still use the tuple adapter; cache keys and
+      # materialization are unchanged. CallShape is not routed here yet.
       m3e_input = admitted_self_dispatch_root.nil? && v2_string_readable?(lookup_name) ? CallResolutionInput.new(
         func_name: lookup_name,
         arg_count: args.size,
@@ -88970,10 +88968,10 @@ module Adamas::HIR
         named_names: canonical_named_arg_names(call_named_arg_names),
       ) : nil
       STDERR.puts "[M3E_SITE_SEEN] name=#{lookup_name} argc=#{args.size} readable=#{m3e_input ? 1 : 0}" if env_has?("ADAMAS_CALLSHAPE_ASSERT")
-      if entry = (m3e_input ? resolve_call_input(m3e_input) : nil)
+      if m3e_resolution = (m3e_input ? resolve_call_resolution(m3e_input) : nil)
         resolved_by_lookup = true
-        entry_name = entry[0]
-        entry_def = entry[1]
+        entry_name = method_instance_symbol(m3e_resolution.key)
+        entry_def = m3e_resolution.def_node
         if has_block_call
           block_proc_expected_return_type = expected_nil_block_return_type_for_def(entry_name, entry_def)
         end
@@ -95704,7 +95702,8 @@ module Adamas::HIR
     # verbatim, so method_instance_symbol(res.key) reproduces the EXACT selected
     # name (proven byte-identical in M2). Under ADAMAS_RESOLUTION_ASSERT it checks
     # that parity and emits a non-vacuity line. No behavior change: the core
-    # (resolve_call_tuple) is unchanged and callers still go via resolve_call_input.
+    # (resolve_call_tuple) is unchanged; legacy callers still go via
+    # resolve_call_input while the main M3e lowering site consumes Resolution.
     # NOTE: res.key is still a verbatim selected-symbol carrier, NOT yet a semantic
     # identity (owner/method/arity decomposition). Materialization/registration must
     # not key off it until that promotion happens (later step).
