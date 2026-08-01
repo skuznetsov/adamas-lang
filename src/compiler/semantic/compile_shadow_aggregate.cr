@@ -60,6 +60,8 @@ module Adamas
           path : String,
           source : String,
           roots : Array(Frontend::ExprId),
+          node_offset : Int32,
+          allocated_node_count : Int32,
           node_count : Int32,
           parse_diagnostic_count : Int32
 
@@ -94,9 +96,11 @@ module Adamas
           parse_diagnostics = [] of Frontend::Diagnostic
 
           units.each_with_index do |unit, unit_index|
+            node_offset = aggregate_arena.size
             lexer = Frontend::Lexer.new(unit[:source])
             parser = Frontend::Parser.new(lexer, aggregate_arena)
             roots = parser.parse_program_roots
+            allocated_node_count = aggregate_arena.size - node_offset
             unit_parse_diagnostics = parser.diagnostics.map do |diagnostic|
               diagnostic.with_file_path(unit[:path])
             end
@@ -109,6 +113,8 @@ module Adamas
               path: unit[:path],
               source: unit[:source],
               roots: roots,
+              node_offset: node_offset,
+              allocated_node_count: allocated_node_count,
               node_count: node_count,
               parse_diagnostic_count: unit_parse_diagnostics.size,
             )
@@ -179,6 +185,71 @@ module Adamas
             sources[unit_summary.path] = unit_summary.source
           end
           sources
+        end
+
+        # The semantic compile path reparses each source into one aggregate arena,
+        # while HIR retains the original per-file arenas. Before any semantic
+        # decision can cross that boundary, verify the shared structural facts:
+        # source, allocation order, roots, node kinds, spans, and child topology.
+        # Target-specific payload fields still require validation at the eventual
+        # narrow call/def adapter; this method does not claim payload equivalence.
+        def original_unit_structure_error(
+          unit_index : Int32,
+          path : String,
+          source : String,
+          original_arena : Frontend::AstArena,
+          original_roots : Array(Frontend::ExprId),
+        ) : String?
+          return "unit index #{unit_index} is out of range" if unit_index < 0 || unit_index >= @unit_summaries.size
+          unit = @unit_summaries.unsafe_fetch(unit_index)
+          return "path differs for unit #{unit_index}: original=#{path} shadow=#{unit.path}" unless path == unit.path
+          return "source differs for #{unit.path}" unless source == unit.source
+          if original_arena.size != unit.allocated_node_count
+            return "arena node count differs for #{unit.path}: original=#{original_arena.size} shadow=#{unit.allocated_node_count}"
+          end
+          if original_roots.size != unit.roots.size
+            return "root count differs for #{unit.path}: original=#{original_roots.size} shadow=#{unit.roots.size}"
+          end
+
+          original_roots.each_with_index do |original_root, root_index|
+            shadow_root = unit.roots.unsafe_fetch(root_index)
+            unless equivalent_unit_expr_id?(original_root, shadow_root, unit.node_offset, unit.allocated_node_count)
+              return "root #{root_index} differs for #{unit.path}: original=#{original_root.index} shadow=#{shadow_root.index}"
+            end
+          end
+
+          shadow_arena = @program.ast_arena
+          local_index = 0
+          while local_index < unit.allocated_node_count
+            original_id = Frontend::ExprId.new(local_index)
+            shadow_id = Frontend::ExprId.new(unit.node_offset + local_index)
+            original_node = original_arena[original_id]
+            shadow_node = shadow_arena[shadow_id]
+            original_kind = Frontend.node_kind(original_node)
+            shadow_kind = Frontend.node_kind(shadow_node)
+            unless original_kind == shadow_kind
+              return "node #{local_index} kind differs for #{unit.path}: original=#{original_kind} shadow=#{shadow_kind}"
+            end
+            unless equivalent_span?(original_node.span, shadow_node.span)
+              return "node #{local_index} span differs for #{unit.path}"
+            end
+
+            original_children = Frontend::NodeDispatch.get_child_exprs(original_arena, original_id)
+            shadow_children = Frontend::NodeDispatch.get_child_exprs(shadow_arena, shadow_id)
+            if original_children.size != shadow_children.size
+              return "node #{local_index} child count differs for #{unit.path}: original=#{original_children.size} shadow=#{shadow_children.size}"
+            end
+            original_children.each_with_index do |original_child, child_index|
+              shadow_child = shadow_children.unsafe_fetch(child_index)
+              unless equivalent_unit_expr_id?(original_child, shadow_child, unit.node_offset, unit.allocated_node_count)
+                return "node #{local_index} child #{child_index} differs for #{unit.path}: original=#{original_child.index} shadow=#{shadow_child.index}"
+              end
+            end
+
+            local_index += 1
+          end
+
+          nil
         end
 
         private def attach_generated_node_paths(generated_node_file_paths : Hash(Int32, String)) : Nil
@@ -598,6 +669,34 @@ module Adamas
           while unit_index_by_node.size < arena_size
             unit_index_by_node << -1
           end
+        end
+
+        private def equivalent_span?(left : Frontend::Span, right : Frontend::Span) : Bool
+          left.start_offset == right.start_offset &&
+            left.end_offset == right.end_offset &&
+            left.start_line == right.start_line &&
+            left.start_column == right.start_column &&
+            left.end_line == right.end_line &&
+            left.end_column == right.end_column
+        end
+
+        private def equivalent_unit_expr_id?(
+          original_id : Frontend::ExprId,
+          shadow_id : Frontend::ExprId,
+          shadow_offset : Int32,
+          node_count : Int32,
+        ) : Bool
+          if original_id.invalid? || shadow_id.invalid?
+            return original_id.invalid? && shadow_id.invalid? && original_id.index == shadow_id.index
+          end
+
+          original_index = original_id.index.to_i64
+          shadow_index = shadow_id.index.to_i64
+          offset = shadow_offset.to_i64
+          count = node_count.to_i64
+          return false if original_index < 0 || original_index >= count
+          return false if shadow_index < offset || shadow_index >= offset + count
+          original_index == shadow_index - offset
         end
 
         private def self.assign_unit_nodes(

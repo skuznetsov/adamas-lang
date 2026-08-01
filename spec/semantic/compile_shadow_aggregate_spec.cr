@@ -30,6 +30,18 @@ private def build_shadow_sources(aggregate : Semantic::CompileShadowAggregate) :
   sources
 end
 
+private def parse_shadow_source(source : String) : {Frontend::AstArena, Array(Frontend::ExprId)}
+  parser = Frontend::Parser.new(Frontend::Lexer.new(source))
+  roots = parser.parse_program_roots
+  {parser.arena.as(Frontend::AstArena), roots}
+end
+
+private def dispatched_children(node : Frontend::TypedNode) : Array(Frontend::ExprId)
+  arena = Frontend::AstArena.new
+  root = arena.add_typed(node)
+  Frontend::NodeDispatch.get_child_exprs(arena, root)
+end
+
 private def attach_generated_shadow_overlay(
   aggregate : Semantic::CompileShadowAggregate,
   analyzer : Semantic::Analyzer
@@ -38,6 +50,129 @@ private def attach_generated_shadow_overlay(
 end
 
 describe "compile semantic shadow aggregate" do
+  it "accepts matching original per-file parse structure" do
+    sources = [
+      "def alpha(value : Int32)\n  value + 1\nend\n",
+      "first = alpha(1)\nsecond = alpha(2)\n",
+    ]
+    aggregate = build_shared_shadow_aggregate(sources)
+
+    sources.each_with_index do |source, unit_index|
+      arena, roots = parse_shadow_source(source)
+      aggregate.original_unit_structure_error(
+        unit_index.to_i32,
+        "unit_#{unit_index}.cr",
+        source,
+        arena,
+        roots,
+      ).should be_nil
+    end
+  end
+
+  it "assigns ownership through type-operator children" do
+    aggregate = build_shared_shadow_aggregate(["value.as(Int32)\n"])
+    root = aggregate.unit_summaries.first.roots.first
+    node = aggregate.program.ast_arena[root].as(Frontend::AsNode)
+
+    aggregate.path_for(root).should eq("unit_0.cr")
+    aggregate.path_for(node.expression).should eq("unit_0.cr")
+  end
+
+  it "dispatches every direct child family omitted by the former leaf fallback" do
+    span = Frontend::Span.zero
+    first = Frontend::ExprId.new(10)
+    second = Frontend::ExprId.new(11)
+
+    dispatched_children(Frontend::NextNode.new(span, first)).should eq([first])
+    dispatched_children(Frontend::WithNode.new(span, first, [second])).should eq([first, second])
+    dispatched_children(Frontend::AsNode.new(span, first, "Int32".to_slice)).should eq([first])
+    dispatched_children(Frontend::AsQuestionNode.new(span, first, "Int32".to_slice)).should eq([first])
+    dispatched_children(Frontend::IsANode.new(span, first, "Int32".to_slice)).should eq([first])
+    dispatched_children(Frontend::RespondsToNode.new(span, first, second)).should eq([first, second])
+    dispatched_children(Frontend::UninitializedNode.new(span, first)).should eq([first])
+    dispatched_children(Frontend::InstanceAlignofNode.new(span, [first])).should eq([first])
+    dispatched_children(Frontend::SuperNode.new(span, [first])).should eq([first])
+    dispatched_children(Frontend::PreviousDefNode.new(span, [first])).should eq([first])
+    dispatched_children(Frontend::GenericNode.new(span, first, [second])).should eq([first, second])
+    dispatched_children(Frontend::PathNode.new(span, first, second)).should eq([first, second])
+    dispatched_children(Frontend::InstanceVarDeclNode.new(span, "@x".to_slice, "Int32".to_slice, first)).should eq([first])
+    dispatched_children(Frontend::ClassVarDeclNode.new(span, "@@x".to_slice, "Int32".to_slice, first)).should eq([first])
+  end
+
+  it "dispatches nested defaults, begin else bodies, and macro iterables" do
+    span = Frontend::Span.zero
+    default_value = Frontend::ExprId.new(10)
+    body = Frontend::ExprId.new(11)
+    else_value = Frontend::ExprId.new(12)
+    ensure_value = Frontend::ExprId.new(13)
+    parameter = Frontend::Parameter.new("value".to_slice, default_value: default_value)
+    accessor = Frontend::AccessorSpec.new("value".to_slice, default_value: default_value)
+
+    dispatched_children(Frontend::BlockNode.new(span, [parameter], [body])).should eq([default_value, body])
+    dispatched_children(Frontend::ProcLiteralNode.new(span, [parameter], nil, [body])).should eq([default_value, body])
+    dispatched_children(Frontend::DefNode.new(span, "run".to_slice, [parameter], nil, [body])).should eq([default_value, body])
+    dispatched_children(Frontend::FunNode.new(span, "run".to_slice, nil, [parameter], nil, false)).should eq([default_value])
+    dispatched_children(Frontend::GetterNode.new(span, [accessor])).should eq([default_value])
+    dispatched_children(Frontend::SetterNode.new(span, [accessor])).should eq([default_value])
+    dispatched_children(Frontend::PropertyNode.new(span, [accessor])).should eq([default_value])
+    dispatched_children(Frontend::BeginNode.new(span, [body], nil, [else_value], [ensure_value])).should eq([body, else_value, ensure_value])
+
+    macro_piece = Frontend::MacroPiece.control(
+      Frontend::MacroPiece::Kind::ControlStart,
+      "for",
+      iterable: default_value,
+    )
+    dispatched_children(Frontend::MacroLiteralNode.new(span, [macro_piece], false, false)).should eq([default_value])
+  end
+
+  it "rejects a same-source original parse with different root ownership" do
+    source = "first = 1\nsecond = 2\n"
+    aggregate = build_shared_shadow_aggregate([source])
+    arena, roots = parse_shadow_source(source)
+
+    error = aggregate.original_unit_structure_error(
+      0,
+      "unit_0.cr",
+      source,
+      arena,
+      roots.reverse,
+    )
+    error.should_not be_nil
+    error.not_nil!.should contain("root 0 differs")
+  end
+
+  it "keeps identical per-file ExprIds distinct through unit offsets" do
+    source = "value = 1\n"
+    aggregate = build_shared_shadow_aggregate([source, source])
+    first = aggregate.unit_summaries[0]
+    second = aggregate.unit_summaries[1]
+    first.roots.first.index.should eq(second.roots.first.index - second.node_offset)
+    first.node_offset.should eq(0)
+    second.node_offset.should eq(first.allocated_node_count)
+
+    arena, roots = parse_shadow_source(source)
+    aggregate.original_unit_structure_error(0, "unit_0.cr", source, arena, roots).should be_nil
+    aggregate.original_unit_structure_error(1, "unit_1.cr", source, arena, roots).should be_nil
+  end
+
+  it "rejects a foreign-unit ExprId that would normalize to an invalid sentinel" do
+    source = "value = 1\n"
+    aggregate = build_shared_shadow_aggregate([source, source])
+    foreign_root = aggregate.unit_summaries[0].roots.first
+    aggregate.unit_summaries[1].roots[0] = foreign_root
+    arena, _roots = parse_shadow_source(source)
+
+    error = aggregate.original_unit_structure_error(
+      1,
+      "unit_1.cr",
+      source,
+      arena,
+      [Frontend::ExprId.new(-1)],
+    )
+    error.should_not be_nil
+    error.not_nil!.should contain("root 0 differs")
+  end
+
   it "exposes per-file source lookup and defensive source snapshots" do
     aggregate = build_shared_shadow_aggregate([
       "def alpha\n  41\nend\n",
@@ -69,6 +204,9 @@ describe "compile semantic shadow aggregate" do
     aggregate.parse_diagnostics.first.file_path.should eq("unit_0.cr")
     aggregate.diagnostic_counts_by_unit(aggregate.parse_diagnostics).should eq([1, 0])
     aggregate.generated_diagnostic_counts_by_unit(aggregate.parse_diagnostics).should eq([0, 0])
+
+    arena, roots = parse_shadow_source(")\n")
+    aggregate.original_unit_structure_error(0, "unit_0.cr", ")\n", arena, roots).should be_nil
   end
 
   it "counts parse diagnostics without node ids by file path" do

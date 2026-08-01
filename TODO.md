@@ -1,7 +1,7 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-08-01 (expired HIR identity sidecars pruned; T1 and B4-F remain
-red).
+Updated: 2026-08-01 (semantic reparse structure is fail-closed; T1 and B4-F
+remain red).
 
 T1 OWNERSHIP/NAME-ID SUBSTRATE VERIFIED; CALL RESOLUTION CONTINUITY REMAINS
 OPEN. `SemanticIdentityRegistry` is now the compile-session owner for canonical
@@ -10,9 +10,15 @@ arguments use ordered `{NameId, SemanticTypeId}` components, and both it and
 `SemanticTypeKey` own their dynamic key arrays without exposing mutable retained
 storage. The identity/generic group passes 52 examples, the compiler builds,
 and the same-spelling reducer still executes correctly while the exact T1
-producer remains deliberately absent (`T1_STATUS=MEASURED_RED`). Next return a
-typed `CallResolution` only from the semantic owner after a same-arena handoff
-is proven. The HIR compatibility path now exposes only
+producer remains deliberately absent (`T1_STATUS=MEASURED_RED`). The semantic
+compile path now rejects a shadow reparse unless source, allocation order,
+roots, node kinds, spans, and child topology match the original per-file parse;
+49 focused aggregate/dispatch examples plus multi-unit/T1 semantic compile
+probes pass.
+This is a structural prerequisite, not payload equivalence or T1 continuity.
+Next add one narrow call/def adapter that validates target payload fields and
+owner-qualified identities before returning a typed `CallResolution`. The HIR
+compatibility path now exposes only
 `SelectedCallTarget {symbol_name, def_node}`; the unused `CallShape`,
 `ResolutionBinding`, string-round-trip `MethodInstanceKey`, and their unconsumed
 assertion paths were removed rather than promoted into semantic authority.

@@ -7547,6 +7547,18 @@ module Adamas
       ) : Int32?
         active_units = active_semantic_units(units)
         aggregate = build_semantic_shadow_aggregate(active_units)
+        active_units.each_with_index do |unit, unit_index|
+          if structure_error = aggregate.original_unit_structure_error(
+               unit_index.to_i32,
+               unit.path,
+               unit.source,
+               unit.arena,
+               unit.roots,
+             )
+            err_io.puts "error: semantic compile reparse structure mismatch: #{structure_error}"
+            return 1
+          end
+        end
         analyzer = Semantic::Analyzer.new(aggregate.program)
         sources_by_path = aggregate.sources_by_path
         compile_parse_diagnostics = active_units.flat_map(&.parse_diagnostics)
