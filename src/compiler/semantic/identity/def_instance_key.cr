@@ -42,6 +42,14 @@ module Adamas::Compiler::Semantic
       @arg_types.dup
     end
 
+    def arg_type_count : Int32
+      @arg_types.size
+    end
+
+    def arg_type_at(index : Int32) : SemanticTypeId?
+      @arg_types[index]?
+    end
+
     def named_arg_types : Array({NameId, SemanticTypeId})?
       @named_arg_types.try(&.dup)
     end

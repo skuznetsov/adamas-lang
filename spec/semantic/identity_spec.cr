@@ -77,6 +77,21 @@ module IdentitySpec
       (a == b).should be_false
     end
 
+    it "distinguishes nominal declarations with the same local name" do
+      t = SemanticTypeInternTable.new
+      left_def = DefIdentity.new(0xA0_u64, 7)
+      right_def = DefIdentity.new(0xA0_u64, 11)
+
+      left = t.nominal("Thing", TypeKind::Class, left_def)
+      left_again = t.nominal("Thing", TypeKind::Class, left_def)
+      right = t.nominal("Thing", TypeKind::Class, right_def)
+
+      left.should eq(left_again)
+      left.should_not eq(right)
+      t.normalized_name(left).should eq("Thing")
+      t.normalized_name(right).should eq("Thing")
+    end
+
     it "Union(A|B) == Union(B|A) — order independent" do
       t = SemanticTypeInternTable.new
       int = t.primitive("Int32")

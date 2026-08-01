@@ -16,7 +16,8 @@ require "./types/type_parameter"
 require "./types/module_type"
 require "./types/enum_type"
 require "./types/virtual_type"
-require "./identity/def_identity"
+require "./identity/identity_registry"
+require "./identity/def_instance_key"
 require "../hir/debug_hooks"
 require "./analyzer"
 require "./macro_expander"
@@ -83,6 +84,7 @@ module Adamas
         @macro_expression_cache : Hash(Int32, ExprId)
         @unknown_type : PrimitiveType
         @flags : Set(String)
+        @identity_registry : SemanticIdentityRegistry?
 
         SELF_FLOW_NARROWING_KEY = "<self>"
 
@@ -146,6 +148,16 @@ module Adamas
           end
         end
 
+        # Guard-only typed decision for the first positional explicit-receiver
+        # family. Legacy lookup_method remains the selected-target authority.
+        private struct LocalCallResolution
+          getter method : MethodSymbol
+          getter method_instance_key : DefInstanceKey
+
+          def initialize(@method : MethodSymbol, @method_instance_key : DefInstanceKey)
+          end
+        end
+
         private struct RespondsToNarrowingKey
           getter receiver_id : UInt64
           getter name : String
@@ -187,7 +199,9 @@ module Adamas
           @context : TypeContext = TypeContext.new,
           @extra_roots : Array(ExprId) = [] of ExprId,
           @flags : Set(String) = Runtime.target_flags,
+          identity_registry : SemanticIdentityRegistry? = nil,
         )
+          @identity_registry = identity_registry
           # Self-hosted binaries have shown unstable reads through Program#arena.
           # Type inference only operates on parser-built AstArena programs here.
           @arena = @program.ast_arena
@@ -7330,12 +7344,10 @@ module Adamas
               return @unknown_type
             end
             infer_explicit_receiver_block_if_present(method, receiver_type, node) if has_block
-            if centralized_method_dispatch_required?(method, receiver_type)
-              infer_method_call_result(method, receiver_type, arg_types, node)
-            elsif ann = method.return_annotation
-              resolve_method_annotation_type(ann, receiver_type, method.scope, class_method_context: method.is_class_method?)
+            if !has_block && !node.named_args && (resolution = local_positional_call_resolution(method, receiver_type, arg_types))
+              infer_local_call_resolution_result(resolution, receiver_type, arg_types, node, expr_id)
             else
-              infer_method_body_type(method, receiver_type, arg_types, node)
+              infer_selected_explicit_receiver_method_result(method, receiver_type, arg_types, node)
             end
           elsif return_type = infer_union_argument_overload_call_result(receiver_type, method_name, arg_types, has_block, node)
             return_type
@@ -7374,6 +7386,111 @@ module Adamas
           return nil unless node_is_class_method == method.is_class_method?
 
           DefIdentity.new(@arena.object_id.to_u64, method.node_id.index)
+        end
+
+        private def local_positional_call_resolution(
+          method : MethodSymbol,
+          receiver_type : Type,
+          arg_types : Array(Type),
+        ) : LocalCallResolution?
+          def_identity = validated_selected_def_identity(method)
+          return nil unless def_identity
+          receiver_type_id = local_resolution_type_id(receiver_type)
+          return nil unless receiver_type_id
+
+          arg_type_ids = [] of SemanticTypeId
+          arg_types.each do |arg_type|
+            arg_type_id = local_resolution_type_id(arg_type)
+            return nil unless arg_type_id
+            arg_type_ids << arg_type_id
+          end
+
+          instance_key = DefInstanceKey.new(
+            def_identity: def_identity,
+            receiver_type: receiver_type_id,
+            arg_types: arg_type_ids,
+          )
+          LocalCallResolution.new(method, instance_key)
+        end
+
+        private def local_resolution_type_id(type : Type) : SemanticTypeId?
+          case type
+          when PrimitiveType
+            return nil if type.name == "Unknown"
+            identity_registry.types.primitive(type.name)
+          when InstanceType
+            type_args = type.type_args
+            return nil if type_args && !type_args.empty?
+
+            symbol = type.class_symbol
+            class_node = @arena[symbol.node_id]?
+            return nil unless class_node.is_a?(Frontend::ClassNode)
+            return nil unless intern_name(class_node.name) == symbol.name
+
+            declaration_identity = DefIdentity.new(@arena.object_id.to_u64, symbol.node_id.index)
+            kind = symbol.is_struct? ? TypeKind::Struct : TypeKind::Class
+            identity_registry.types.nominal(symbol.name, kind, declaration_identity)
+          else
+            nil
+          end
+        end
+
+        private def identity_registry : SemanticIdentityRegistry
+          @identity_registry ||= SemanticIdentityRegistry.new
+        end
+
+        private def infer_local_call_resolution_result(
+          resolution : LocalCallResolution,
+          receiver_type : Type,
+          arg_types : Array(Type),
+          node : Frontend::CallNode,
+          expr_id : ExprId,
+        ) : Type
+          unless local_call_resolution_matches?(resolution, receiver_type, arg_types, node)
+            emit_error("Typed call resolution no longer matches the selected method or call shape", expr_id)
+            return @unknown_type
+          end
+
+          infer_selected_explicit_receiver_method_result(resolution.method, receiver_type, arg_types, node)
+        end
+
+        private def local_call_resolution_matches?(
+          resolution : LocalCallResolution,
+          receiver_type : Type,
+          arg_types : Array(Type),
+          node : Frontend::CallNode,
+        ) : Bool
+          return false if call_has_block?(node) || node.named_args
+
+          key = resolution.method_instance_key
+          selected_identity = validated_selected_def_identity(resolution.method)
+          return false unless selected_identity && key.def_identity == selected_identity
+
+          receiver_type_id = local_resolution_type_id(receiver_type)
+          return false unless receiver_type_id && key.receiver_type == receiver_type_id
+          return false unless key.arg_type_count == arg_types.size
+
+          arg_types.each_with_index do |arg_type, index|
+            arg_type_id = local_resolution_type_id(arg_type)
+            return false unless arg_type_id && key.arg_type_at(index) == arg_type_id
+          end
+
+          key.block_type.nil? && key.named_arg_types.nil?
+        end
+
+        private def infer_selected_explicit_receiver_method_result(
+          method : MethodSymbol,
+          receiver_type : Type,
+          arg_types : Array(Type),
+          node : Frontend::CallNode,
+        ) : Type
+          if centralized_method_dispatch_required?(method, receiver_type)
+            infer_method_call_result(method, receiver_type, arg_types, node)
+          elsif ann = method.return_annotation
+            resolve_method_annotation_type(ann, receiver_type, method.scope, class_method_context: method.is_class_method?)
+          else
+            infer_method_body_type(method, receiver_type, arg_types, node)
+          end
         end
 
         private def infer_union_argument_overload_call_result(

@@ -9,6 +9,8 @@
 # It is used in DefInstanceKey for semantic caching and must NOT leak
 # into HIR TypeRef or mangled names.
 
+require "./def_identity"
+
 module Adamas::Compiler::Semantic
   # Canonical semantic type identity — interned, collision-free.
   struct SemanticTypeId
@@ -62,9 +64,15 @@ module Adamas::Compiler::Semantic
   struct SemanticTypeKey
     getter kind : TypeKind
     getter name : String
+    getter declaration_identity : DefIdentity?
     @type_params : Array(SemanticTypeId)
 
-    def initialize(@kind : TypeKind, name : String, type_params : Array(SemanticTypeId))
+    def initialize(
+      @kind : TypeKind,
+      name : String,
+      type_params : Array(SemanticTypeId),
+      @declaration_identity : DefIdentity? = nil,
+    )
       @name = name.dup
       @type_params = type_params.dup
     end
@@ -74,12 +82,16 @@ module Adamas::Compiler::Semantic
     end
 
     def ==(other : SemanticTypeKey) : Bool
-      @kind == other.kind && @name == other.name && @type_params == other.@type_params
+      @kind == other.kind &&
+        @name == other.name &&
+        @declaration_identity == other.declaration_identity &&
+        @type_params == other.@type_params
     end
 
     def hash(hasher)
       hasher = @kind.hash(hasher)
       hasher = @name.hash(hasher)
+      hasher = @declaration_identity.hash(hasher)
       @type_params.hash(hasher)
     end
   end
@@ -123,6 +135,17 @@ module Adamas::Compiler::Semantic
 
     def named(name : String, kind : TypeKind) : SemanticTypeId
       intern(SemanticTypeKey.new(kind, name, [] of SemanticTypeId))
+    end
+
+    # Nominal declarations must include parser-owner identity. Local spelling
+    # alone is not injective for nested or namespaced types.
+    def nominal(
+      name : String,
+      kind : TypeKind,
+      declaration_identity : DefIdentity,
+      type_params : ::Array(SemanticTypeId) = [] of SemanticTypeId,
+    ) : SemanticTypeId
+      intern(SemanticTypeKey.new(kind, name, type_params, declaration_identity))
     end
 
     def generic(base_name : String, kind : TypeKind, args : ::Array(SemanticTypeId)) : SemanticTypeId

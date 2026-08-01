@@ -8,24 +8,31 @@ OPEN. `SemanticIdentityRegistry` is now the compile-session owner for canonical
 `NameId` values and the existing semantic type table. `DefInstanceKey` named
 arguments use ordered `{NameId, SemanticTypeId}` components, and both it and
 `SemanticTypeKey` own their dynamic key arrays without exposing mutable retained
-storage. The identity/generic group passes 52 examples, the compiler builds,
+storage. The identity/generic group passes 53 examples, the compiler builds,
 and the same-spelling reducer still executes correctly while the exact T1
 producer remains deliberately absent (`T1_STATUS=MEASURED_RED`). The semantic
 compile path now rejects a shadow reparse unless source, allocation order,
 roots, node kinds, spans, and child topology match the original per-file parse;
 49 focused aggregate/dispatch examples plus multi-unit/T1 semantic compile
 probes pass.
-The legacy explicit-receiver overload seam now also rejects a parser-backed
-selected method unless its name, exact parameter storage, and class/instance
-receiver kind still match the owning `DefNode`. The guard consumes the presence
-of an owner-qualified `DefIdentity` certificate, but does not yet carry that
-identity into body inference. Scope, return/type-parameter metadata, shared
-parameter mutation, and non-`self` explicit receivers are outside this narrow
-check. This is not general payload equivalence, a typed `CallResolution`, or T1
-continuity. Next return and immediately consume one narrow typed
-`CallResolution` for the positional explicit-receiver r1-r3 family; named
-arguments and full block shape remain separate boundaries. The HIR compatibility
-path now exposes only
+The legacy explicit-receiver overload seam rejects a parser-backed selected
+method unless its name, exact parameter storage, and class/instance receiver
+kind still match the owning `DefNode`. For positional, no-block r1-r3 calls,
+the Analyzer-owned `SemanticIdentityRegistry` now builds and immediately
+consumes one local `LocalCallResolution {MethodSymbol, DefInstanceKey}`. A
+standalone engine creates the same registry lazily only when this path needs it.
+The consumer revalidates selected `DefIdentity`, receiver/argument semantic IDs,
+and positional/no-block shape before the unchanged legacy return/body
+inference. The local adapter interns nominal receiver keys with declaration
+`DefIdentity`, so equal local class spellings in different owners cannot collide
+on this path. Foreign `ClassSymbol` provenance and reopened-class canonical
+identity remain undecided; scope, return/type-parameter metadata, shared parameter
+mutation, non-`self` explicit receivers, generic/union/container types, named
+arguments, and block shape remain outside this narrow guard. This is not the
+general `CallResolution`, a `ResolutionId`, T1 telemetry, downstream continuity,
+or new selection authority. Next extend this same local record and registry to
+the r4 block and r5 named shapes without adding another owner or parallel
+record. The HIR compatibility path now exposes only
 `SelectedCallTarget {symbol_name, def_node}`; the unused `CallShape`,
 `ResolutionBinding`, string-round-trip `MethodInstanceKey`, and their unconsumed
 assertion paths were removed rather than promoted into semantic authority.

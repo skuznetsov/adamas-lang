@@ -19,8 +19,15 @@ module Adamas
         getter semantic_diagnostics : Array(Diagnostic)
         getter name_resolver_diagnostics : Array(Frontend::Diagnostic)
         getter type_inference_diagnostics : Array(Diagnostic)
+        @identity_registry : SemanticIdentityRegistry?
 
-        def initialize(@program : Program, context : Context? = nil)
+        def initialize(
+          @program : Program,
+          context : Context? = nil,
+          *,
+          identity_registry : SemanticIdentityRegistry? = nil,
+        )
+          @identity_registry = identity_registry
           @global_context = context || Context.new(SymbolTable.new)
           @semantic_diagnostics = [] of Diagnostic
           @name_resolver_diagnostics = [] of Frontend::Diagnostic
@@ -42,6 +49,10 @@ module Adamas
           @generated_overlay.dup
         end
 
+        def identity_registry : SemanticIdentityRegistry
+          @identity_registry ||= SemanticIdentityRegistry.new
+        end
+
         def resolve_names(*, defer_method_body_receiverless_candidates : Bool = false)
           debug_hook("analyzer.resolve.start", "roots=#{analysis_root_count}")
           result = NameResolver.new(
@@ -58,7 +69,14 @@ module Adamas
 
         def infer_types(identifier_symbols : Hash(ExprId, Symbol))
           debug_hook("analyzer.infer.start", "symbols=#{identifier_symbols.size} roots=#{analysis_root_count}")
-          engine = TypeInferenceEngine.new(@program, identifier_symbols, @global_context.symbol_table, extra_roots: @generated_overlay.top_level_roots, flags: @global_context.flags)
+          engine = TypeInferenceEngine.new(
+            @program,
+            identifier_symbols,
+            @global_context.symbol_table,
+            extra_roots: @generated_overlay.top_level_roots,
+            flags: @global_context.flags,
+            identity_registry: identity_registry,
+          )
           engine.infer_types
           @type_inference_diagnostics = engine.diagnostics
           debug_hook("analyzer.infer.finish", "diagnostics=#{@type_inference_diagnostics.size}")
