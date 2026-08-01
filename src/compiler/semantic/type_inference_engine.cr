@@ -16,6 +16,7 @@ require "./types/type_parameter"
 require "./types/module_type"
 require "./types/enum_type"
 require "./types/virtual_type"
+require "./identity/def_identity"
 require "../hir/debug_hooks"
 require "./analyzer"
 require "./macro_expander"
@@ -7324,6 +7325,10 @@ module Adamas
           end
 
           if method = lookup_method(receiver_type, method_name, arg_types, has_block, arg_ids.map { |arg_id| arg_id.as(ExprId?) })
+            if @arena[method.node_id]?.is_a?(Frontend::DefNode) && !validated_selected_def_identity(method)
+              emit_error("Selected method '#{method.name}' no longer matches its owning definition payload", expr_id)
+              return @unknown_type
+            end
             infer_explicit_receiver_block_if_present(method, receiver_type, node) if has_block
             if centralized_method_dispatch_required?(method, receiver_type)
               infer_method_call_result(method, receiver_type, arg_types, node)
@@ -7351,6 +7356,24 @@ module Adamas
             end
             @context.nil_type
           end
+        end
+
+        # MethodSymbol is the legacy overload-resolution result. Before a
+        # parser-backed target enters body inference, prove that it still
+        # aliases the minimum DefNode payload from which the symbol was
+        # collected. The caller consumes only certificate presence for now;
+        # this is not a cross-phase resolution record.
+        private def validated_selected_def_identity(method : MethodSymbol) : DefIdentity?
+          def_node = @arena[method.node_id]?
+          return nil unless def_node.is_a?(Frontend::DefNode)
+          return nil unless intern_name(def_node.name) == method.name
+          return nil unless def_node.params_storage.same?(method.params)
+
+          receiver = def_node.receiver
+          node_is_class_method = receiver ? intern_name(receiver) == "self" : false
+          return nil unless node_is_class_method == method.is_class_method?
+
+          DefIdentity.new(@arena.object_id.to_u64, method.node_id.index)
         end
 
         private def infer_union_argument_overload_call_result(

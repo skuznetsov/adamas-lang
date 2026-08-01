@@ -1,7 +1,7 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-08-01 (semantic reparse structure is fail-closed; T1 and B4-F
-remain red).
+Updated: 2026-08-01 (selected semantic Def ownership and reparse structure are
+fail-closed; T1 and B4-F remain red).
 
 T1 OWNERSHIP/NAME-ID SUBSTRATE VERIFIED; CALL RESOLUTION CONTINUITY REMAINS
 OPEN. `SemanticIdentityRegistry` is now the compile-session owner for canonical
@@ -15,10 +15,17 @@ compile path now rejects a shadow reparse unless source, allocation order,
 roots, node kinds, spans, and child topology match the original per-file parse;
 49 focused aggregate/dispatch examples plus multi-unit/T1 semantic compile
 probes pass.
-This is a structural prerequisite, not payload equivalence or T1 continuity.
-Next add one narrow call/def adapter that validates target payload fields and
-owner-qualified identities before returning a typed `CallResolution`. The HIR
-compatibility path now exposes only
+The legacy explicit-receiver overload seam now also rejects a parser-backed
+selected method unless its name, exact parameter storage, and class/instance
+receiver kind still match the owning `DefNode`. The guard consumes the presence
+of an owner-qualified `DefIdentity` certificate, but does not yet carry that
+identity into body inference. Scope, return/type-parameter metadata, shared
+parameter mutation, and non-`self` explicit receivers are outside this narrow
+check. This is not general payload equivalence, a typed `CallResolution`, or T1
+continuity. Next return and immediately consume one narrow typed
+`CallResolution` for the positional explicit-receiver r1-r3 family; named
+arguments and full block shape remain separate boundaries. The HIR compatibility
+path now exposes only
 `SelectedCallTarget {symbol_name, def_node}`; the unused `CallShape`,
 `ResolutionBinding`, string-round-trip `MethodInstanceKey`, and their unconsumed
 assertion paths were removed rather than promoted into semantic authority.
