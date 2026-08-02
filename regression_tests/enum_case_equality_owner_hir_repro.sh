@@ -24,6 +24,7 @@ fi
 WRAPPER="$WORK_DIR/run.sh"
 LOG="$WORK_DIR/run.log"
 ARTIFACT="$WORK_DIR/out.hir"
+MAIN_ARTIFACT="$WORK_DIR/main.hir"
 
 {
   echo "#!/usr/bin/env bash"
@@ -47,19 +48,29 @@ if [[ $STATUS -ne 0 || ! -f "$ARTIFACT" ]]; then
   exit 1
 fi
 
-exact_count="$(rg -c -F 'CaseKind#===$CaseKind' "$ARTIFACT" || true)"
-nilable_count="$(rg -c -F 'CaseKind#===$Nil | CaseKind' "$ARTIFACT" || true)"
+awk '
+  /^func @__adamas_main\(/ { in_main = 1 }
+  in_main { print }
+  in_main && /^}$/ { exit }
+' "$ARTIFACT" >"$MAIN_ARTIFACT"
+
+exact_call_count="$(rg -c -F '.CaseKind#===$CaseKind' "$ARTIFACT" || true)"
+nilable_call_count="$(rg -c -F '.CaseKind#===$Nil | CaseKind' "$ARTIFACT" || true)"
+main_exact_call_count="$(rg -c -F '.CaseKind#===$CaseKind' "$MAIN_ARTIFACT" || true)"
+main_nilable_call_count="$(rg -c -F '.CaseKind#===$Nil | CaseKind' "$MAIN_ARTIFACT" || true)"
 object_count="$(rg -c -F 'Object#===' "$ARTIFACT" || true)"
 integer_count="$(rg -c 'Int(32|64)#===' "$ARTIFACT" || true)"
 carrier_count="$(rg -c 'func @CaseKind#===.*\(%0: 4,' "$ARTIFACT" || true)"
 
-if [[ "${exact_count:-0}" != "2" ||
-      "${nilable_count:-0}" != "2" ||
+if [[ "${exact_call_count:-0}" != "2" ||
+      "${nilable_call_count:-0}" != "2" ||
+      "${main_exact_call_count:-0}" != "1" ||
+      "${main_nilable_call_count:-0}" != "1" ||
       "${object_count:-0}" != "0" ||
       "${integer_count:-0}" != "0" ||
       "${carrier_count:-0}" != "2" ]]; then
   echo "reproduced: enum case-equality owner or receiver ABI drifted" >&2
-  echo "exact=${exact_count:-0} nilable=${nilable_count:-0} object=${object_count:-0} integer=${integer_count:-0} carrier=${carrier_count:-0}" >&2
+  echo "exact_calls=${exact_call_count:-0} nilable_calls=${nilable_call_count:-0} main_exact=${main_exact_call_count:-0} main_nilable=${main_nilable_call_count:-0} object=${object_count:-0} integer=${integer_count:-0} carrier=${carrier_count:-0}" >&2
   rg -n 'CaseKind#===|Object#===|Int(32|64)#===' "$ARTIFACT" >&2 || true
   exit 1
 fi

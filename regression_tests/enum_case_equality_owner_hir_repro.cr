@@ -41,3 +41,17 @@ end
 
 compare_exact
 compare_nilable
+
+case exact_kind
+when CaseKind::First
+  true
+else
+  false
+end
+
+case nilable_kind
+when CaseKind::First
+  true
+else
+  false
+end

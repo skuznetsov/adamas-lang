@@ -11208,15 +11208,71 @@ The comparable unique-target count increased from 2048 to 2052, so no global
 fanout or speedup claim is admitted. No full fresh stage2, <=180-second
 admission, or produced-stage semantic-smoke claim is made.
 
-The durable oracle is intentionally function-scoped like the classified
-full-source occurrences. Its top-level `__adamas_main` variant still emits
-integer-owned `===`; that is a separate observed frontier, not covered by this
-closure claim.
+At this session checkpoint the durable oracle was intentionally
+function-scoped like the classified full-source occurrences. Its top-level
+`__adamas_main` variant still emitted integer-owned `===`; that separate
+observed frontier is addressed in Session 35 below.
 
 Next legal work: classify the top-level `__adamas_main` owner loss, then the new
 four-target delta and remaining leading `queue@iter2` families before changing
 another contract. Preserve the semantic owner/physical ABI split; require a
 reducer and the same census boundary for any further production change.
+
+### Session 35: top-level enum-owner ledger continuity (2026-08-02)
+
+The synthetic `__adamas_main` lowering did not follow the function-local enum
+provenance lifecycle used by `lower_def` and `lower_method`. Top-level enum
+values were tagged while HIR was emitted, but their transient map was never
+retained under `__adamas_main`. Late receiver repair therefore saw only the
+physical `Int32` carrier and left exact and nilable `case` calls as
+`Int32#===` even though the same source inside functions repaired to
+`CaseKind#===`.
+
+On successful completion, `lower_main` now mirrors the existing narrow
+lifecycle: save the active map, start an empty function-local map, retain it
+under the completed synthetic function, and restore the outer map. No `case`
+special case, new registry, fallback, cast, dispatch rule, or wrapper contract
+was added. The existing semantic-owner/physical-ABI split remains
+authoritative.
+
+The durable enum case-equality oracle now contains exact and nilable patterns
+both inside functions and directly at top level. It counts the two call sites
+for each shape separately from the two carrier-backed wrapper definitions, and
+rejects `Object#===`, `Int32#===`, or `Int64#===` targets.
+
+Evidence:
+
+- the pre-fix source-matched compiler reproduces exactly two function-owned
+  calls plus two top-level `Int32#===` calls; after the lifecycle fix, all four
+  calls are `CaseKind#===` and the integer targets are absent;
+- the full HIR suite passes 377 examples with no failures/errors and two
+  existing pending examples;
+- the fresh source-matched compiler (lowering source SHA-256
+  `1e9dbb929f231b95321e7d2eb896391a2005bbad21133ee4900199de74ca6fee`,
+  binary SHA-256
+  `c6e92237a1cd55628cb036729f0ca5ac5e5f29a31fb5c0ed9894e9725c4b26b7`)
+  passes the durable oracle, emits HIR/MIR/LLVM, links the no-prelude reducer,
+  and runs it with exit 0 under `run_safe`;
+- the fresh `queue@iter2` census is unchanged at 2052 unique missing targets,
+  12854 functions, and `Hash#==` 55. `Object#===` remains absent and the enum
+  families remain exactly `NodeKind#===` 78, `Token::Kind#===` 47, and
+  `DWARF::AT#===` 12. The gate exited 0 after about 101 seconds. Internal RSS/FD
+  telemetry is unknown because sandboxed `ps` probes were unavailable; live
+  external samples observed one compiler core and at most 1.3% process memory.
+
+Boundary: this closes only the demonstrated synthetic-main enum-ledger gap.
+It does not claim B4-F closure, a fanout reduction, a full fresh stage2, the
+<=180-second admission gate, or produced-stage semantic smoke. Review also
+found that `lower_main` leaves `@arena` on the last top-level arena after normal
+completion. That context leak is not the cause of this enum-owner defect and
+is deliberately excluded from this atomic change. The existing main lowering
+also lacks exception-safe restoration; successful normal completion is the
+only cleanup contract claimed here.
+
+Next legal work: give the `lower_main` arena restoration gap its own source
+reproducer and falsifier before changing cleanup structure. Keep the enum
+ledger lifecycle fixed; do not broaden this patch into generic main-state
+cleanup without evidence for each restored field.
 
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 

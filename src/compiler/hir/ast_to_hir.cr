@@ -62045,6 +62045,11 @@ module Adamas::HIR
     # to it, because the (unmodifiable) original stdlib's `fun main` calls
     # LibCrystalMain.__crystal_main (src/stdlib/crystal/main.cr).
     def lower_main(main_exprs : Array(UInt64)) : Adamas::HIR::Function
+      # Enum provenance is function-local. Keep the synthetic main isolated just
+      # like lower_def/lower_method so late receiver repair can recover semantic
+      # enum owners from their integer carriers.
+      old_main_enum_value_types = @enum_value_types
+      @enum_value_types = nil
       lower_main_frontier = env_has?("DEBUG_LOWER_MAIN_FRONTIER")
       STDERR.puts "[LOWER_MAIN_FRONTIER] enter exprs=#{main_exprs.size}" if lower_main_frontier
       # Create __adamas_main function with void return type
@@ -62429,6 +62434,8 @@ module Adamas::HIR
       STDERR.puts "[LOWER_MAIN_FRONTIER] eager_pending_done" if lower_main_frontier
 
       STDERR.puts "[LOWER_MAIN_FRONTIER] before_owner_restore" if lower_main_frontier
+      retain_function_enum_value_types(func.name)
+      @enum_value_types = old_main_enum_value_types
       @current_class = old_main_class
       @current_namespace_override = old_main_namespace
       STDERR.puts "[LOWER_MAIN_FRONTIER] owner_restore_done" if lower_main_frontier
