@@ -1320,6 +1320,10 @@ class Adamas::HIR::AstToHir
     remember_callsite_arg_types(name, arg_types, has_block: has_block)
   end
 
+  def __test_concrete_suffix_types_for_reselect?(suffix : String, observed_arity : Int32?) : Bool
+    !concrete_suffix_types_for_reselect(suffix, observed_arity).nil?
+  end
+
   def __test_repair_partial_untyped_call_types_from_history(
     lookup_name : String,
     node : Adamas::Compiler::Frontend::DefNode,
@@ -12917,6 +12921,53 @@ describe Adamas::HIR::AstToHir do
   end
 
   describe "abstract binary operator dispatch" do
+    it "does not borrow a typed equality overload from a sibling callsite" do
+      source = <<-CRYSTAL
+        class EqualityBox
+          def ==(other : EqualityBox)
+            true
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      class_node = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+      end.first
+      converter.register_class(class_node)
+
+      box_ref = converter.__test_type_ref_for_name("EqualityBox")
+      compatible_name = "EqualityBox#==$EqualityBox"
+      incompatible_name = "EqualityBox#==$Int32"
+      converter.__test_remember_callsite_arg_types(compatible_name, [box_ref])
+      converter.__test_remember_callsite_arg_types(incompatible_name, [Adamas::HIR::TypeRef::INT32])
+
+      converter.__test_lower_function_if_needed(incompatible_name)
+      converter.module.has_function_with_body?(compatible_name).should be_false
+      converter.module.has_function_with_body?(incompatible_name).should be_false
+
+      converter.__test_lower_function_if_needed(compatible_name)
+      converter.module.has_function_with_body?(compatible_name).should be_true
+    end
+
+    it "uses only complete positional suffixes as authoritative evidence" do
+      arena, _ = parse("")
+      converter = Adamas::HIR::AstToHir.new(arena)
+
+      converter.__test_concrete_suffix_types_for_reselect?("Int32", 1).should be_true
+      converter.__test_concrete_suffix_types_for_reselect?("Int32_String", 2).should be_true
+      converter.__test_concrete_suffix_types_for_reselect?("Int32", nil).should be_false
+      converter.__test_concrete_suffix_types_for_reselect?("Int32_block", 1).should be_false
+      converter.__test_concrete_suffix_types_for_reselect?("Int32$arity2", 2).should be_false
+      converter.__test_concrete_suffix_types_for_reselect?("arity2", 2).should be_false
+      converter.__test_concrete_suffix_types_for_reselect?("Int32_arity2", 2).should be_false
+      converter.__test_concrete_suffix_types_for_reselect?("My_Type", 1).should be_false
+    end
+
     it "keeps the operator call virtual and materializes the concrete override" do
       converter = lower_program_with_sources(<<-CRYSTAL)
         abstract class EqualityRoot

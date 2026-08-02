@@ -82007,27 +82007,29 @@ module Adamas::HIR
           best_name : String? = nil
           best_param_count = Int32::MAX
           best_score = Int32::MIN
-          requested_arity = if cs = lookup_callsite
-                              ts = cs.types
-                              # V2 bootstrap: CallsiteArgs may be zero-initialized (zombie union);
-                              # Array(TypeRef) ptr at offset 0 of struct may be null → guard before .size
-                              pointerof(ts).as(Pointer(UInt64)).value != 0_u64 ? ts.size : nil
-                            else
-                              name_parts.suffix ? suffix_param_count(name_parts.suffix.not_nil!) : nil
-                            end
+          observed_requested_arity = if cs = lookup_callsite
+                                       ts = cs.types
+                                       # V2 bootstrap: CallsiteArgs may be zero-initialized (zombie union);
+                                       # Array(TypeRef) ptr at offset 0 of struct may be null → guard before .size
+                                       pointerof(ts).as(Pointer(UInt64)).value != 0_u64 ? ts.size : nil
+                                     end
+          requested_arity = observed_requested_arity ||
+                            (name_parts.suffix ? suffix_param_count(name_parts.suffix.not_nil!) : nil)
           # Re-select fix (docs/string_split_overload_and_nil_limit_census.md): the legacy pass below
           # scores candidates against ALL recorded call_entries and picks the global-best, ignoring
           # the requested name's own type suffix — so a typed request like
           # `String#split$String_Nil_Bool` can resolve to a `…$Char$arity3` def when a Char split
           # coexists (its [Char,Int32,Bool] entry out-scores [String,Nil,Bool]). When the requested
           # name carries a concrete type suffix, score candidates against THOSE parsed types only.
-          # Fail closed to the legacy all-call_entries pass when the suffix is empty/VOID or no
-          # compatible suffix-scored candidate exists. Uses the mangled request name, never DefNode
-          # annotation text. Generic — no per-method special-case.
-          req_suffix_types : Array(TypeRef)? = nil
-          if (sfx_for_reselect = name_parts.suffix)
-            __pst = parse_types_from_suffix(strip_mangled_suffix_flags(sfx_for_reselect))
-            req_suffix_types = __pst if !__pst.empty? && __pst.none? { |t| t == TypeRef::VOID }
+          # Fall back to the legacy all-call_entries pass only when the suffix has no complete
+          # positional type evidence (empty/VOID, sparse `$arityN`, or a dropped marker part).
+          # Fully decoded positional types with no compatible candidate are authoritative
+          # negative evidence: borrowing another callsite's typed overload would violate the
+          # requested argument ABI.
+          # Uses the mangled request name, never DefNode annotation text. Generic — no
+          # per-method special-case.
+          req_suffix_types = name_parts.suffix.try do |suffix|
+            concrete_suffix_types_for_reselect(suffix, observed_requested_arity)
           end
           if rst = req_suffix_types
             overload_keys.each do |key|
@@ -82058,7 +82060,7 @@ module Adamas::HIR
               end
             end
           end
-          if !best_def && callsite_by_arity && !callsite_by_arity.empty?
+          if !best_def && req_suffix_types.nil? && callsite_by_arity && !callsite_by_arity.empty?
             overload_keys.each do |key|
               next unless key.starts_with?(mangled_prefix)
               def_node = @function_defs[key]?
@@ -112676,6 +112678,27 @@ module Adamas::HIR
         i += 1
       end
       compact
+    end
+
+    private def concrete_suffix_types_for_reselect(
+      suffix : String,
+      observed_arity : Int32?,
+    ) : Array(TypeRef)?
+      # Partially typed signatures drop VOID positions and preserve only an
+      # `$arityN` discriminator. Their remaining types are not positional
+      # authority, so they must retain callsite-history fallback.
+      return nil unless observed_arity
+
+      stripped = strip_mangled_suffix_flags(suffix)
+      # Block/splat/named/super shape is a separate resolver contract. It must
+      # not be mistaken for complete positional-type evidence here.
+      return nil if stripped.empty? || stripped != suffix
+
+      parsed = parse_types_from_suffix(stripped)
+      return nil if parsed.empty? || parsed.size != suffix_part_count(stripped)
+      return nil if parsed.size != observed_arity
+      return nil if parsed.any? { |type_ref| type_ref == TypeRef::VOID }
+      parsed
     end
 
     # Parse types from mangled name suffix (e.g., "Pointer(LibC::Kevent)_Int32" -> [Pointer(LibC::Kevent), Int32])

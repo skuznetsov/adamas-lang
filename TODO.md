@@ -11058,6 +11058,49 @@ Next legal work: classify the remaining child demand by
 and direct/included declaration before changing another replay or preservation
 rule. Keep the census placement explicit when comparing future runs.
 
+### Session 32: concrete call suffix rejects sibling typed overloads (2026-08-01)
+
+`lower_function_if_needed` still had a legacy all-callsite fallback after its
+requested-suffix compatibility pass. When no compatible candidate existed, a
+fully decoded positional request such as `Hash(Int32, String)#==$Int32` could
+therefore borrow the body selected for
+`Hash(Int32, String)#==$Hash(Int32, String)`. That fallback is now legal only
+when the request has no complete positional type evidence. Sparse `$arityN`
+and compacted marker suffixes retain callsite-history fallback; complete
+negative positional evidence continues to the normal exact-name parent lookup
+rather than crossing to a sibling argument ABI.
+
+Evidence:
+
+- the focused regression is RED under condition ablation and GREEN after the
+  positional-authority guard is restored; the adjacent valid override remains
+  GREEN;
+- the suffix-completeness regression admits only unflagged positional types
+  whose decoded count matches observed callsite arity; it rejects missing
+  arity evidence, shape flags, sparse `$arityN`, dropped marker parts, and
+  ambiguous underscore splits;
+- the complete `ast_to_hir_spec.cr` file passes 374 examples with no failures
+  or errors and two existing pending examples;
+- the existing String split collision, no-prelude pending-budget, and universal
+  helper fanout guards pass;
+- the fresh full-source lookup now preserves
+  `Hash(Int32, String)#==$Int32` through `parent_fallback_cached`, and a compiled
+  runtime oracle returns `false` for both `Hash == Int32` and `Int32 == Hash`,
+  matching host Crystal.
+
+Boundary: this is an ABI/correctness fix, not the B4-F fanout fix. The bounded
+iteration-1 census changed only from 13338 to 13300 functions, and the
+`Hash#==` supplier remained at 484 enqueue events. The hypothesis that sibling
+overload borrowing was the primary growth source is refuted. Block, splat, and
+named shape selection are separate resolver contracts, not claimed by this
+positional-type guard.
+
+Next legal work: classify the paired concrete and bare equality demands emitted
+from `Object#===`, separating required exact parent fallbacks from duplicate
+base/typed supply. Do not add a method allowlist, another registry, or a budget
+cap; require a measured reduction at the existing census boundary before
+calling the next change a B4-F improvement.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
