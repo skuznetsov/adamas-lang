@@ -423,6 +423,10 @@ class Adamas::HIR::AstToHir
     process_pending_lower_functions
   end
 
+  def __test_repair_receiver_bound_call_targets : Nil
+    repair_receiver_bound_call_targets
+  end
+
   # Test-only bridge for the bounded missing-call sweep. The production method
   # intentionally reads its budget from the environment; keep the mutation
   # scoped to this call so focused specs can exercise the exact quota path
@@ -10512,6 +10516,160 @@ describe Adamas::HIR::AstToHir do
       equality_call.should_not be_nil
       equality_call.not_nil!.method_name.should eq("Box(Int32)#==$Int32")
       equality_call.not_nil!.type.should eq(Adamas::HIR::TypeRef::BOOL)
+    end
+
+    it "retains tracked enum owners for Object case-equality wrappers" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        class Object
+          def ===(other) : Bool
+            self == other
+          end
+
+          def ==(other) : Bool
+            false
+          end
+        end
+
+        enum CaseKind
+          First
+          Second
+        end
+
+        enum OtherKind
+          First
+          Second
+        end
+
+        def exact_kind : CaseKind
+          CaseKind::First
+        end
+
+        def nilable_kind : CaseKind?
+          nil
+        end
+
+        def compare_exact : Bool
+          case exact_kind
+          when CaseKind::First
+            true
+          else
+            false
+          end
+        end
+
+        def compare_nilable : Bool
+          case nilable_kind
+          when CaseKind::First
+            true
+          else
+            false
+          end
+        end
+
+        def compare_nilable_receiver : Bool
+          case CaseKind::First
+          when nilable_kind
+            true
+          else
+            false
+          end
+        end
+
+        def compare_cross_owner : Bool
+          case exact_kind
+          when OtherKind::First
+            true
+          else
+            false
+          end
+        end
+      CRYSTAL
+
+      nilable_receiver_caller = converter.module.functions.find do |func|
+        func.name.starts_with?("compare_nilable_receiver")
+      end
+      nilable_receiver_caller.should_not be_nil
+      nilable_receiver_call = nilable_receiver_caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.find { |call| call.method_name.includes?("#===") }
+      nilable_receiver_call.should_not be_nil
+      nilable_receiver_call.not_nil!.method_name.should_not start_with("CaseKind#===")
+
+      converter.__test_process_pending_lower_functions
+
+      cross_owner_caller = converter.module.functions.find do |func|
+        func.name.starts_with?("compare_cross_owner")
+      end
+      cross_owner_caller.should_not be_nil
+      cross_owner_call = cross_owner_caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.find { |call| call.method_name.includes?("#===") }
+      cross_owner_call.should_not be_nil
+      cross_owner_target = cross_owner_call.not_nil!.method_name
+      cross_owner_target.should start_with("OtherKind#===")
+      cross_owner_wrapper = converter.module.function_by_name(cross_owner_target)
+      cross_owner_wrapper.should_not be_nil
+      converter.module.has_function_with_body?(cross_owner_target).should be_true
+
+      poisoned_caller = converter.module.functions.find { |func| func.name.starts_with?("compare_exact") }
+      poisoned_caller.should_not be_nil
+      poisoned_call = poisoned_caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.find { |call| call.method_name.includes?("#===") }
+      poisoned_call.should_not be_nil
+      poisoned_caller.not_nil!.rewrite_call_method_name(
+        poisoned_call.not_nil!,
+        cross_owner_target,
+      ).should be_true
+
+      converter.__test_repair_receiver_bound_call_targets
+
+      repaired_poisoned_call = poisoned_caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.find { |call| call.method_name.includes?("#===") }
+      repaired_poisoned_call.should_not be_nil
+      repaired_poisoned_call.not_nil!.method_name.should eq("CaseKind#===$CaseKind")
+      converter.module.has_function_with_body?("CaseKind#===$Nil | CaseKind").should be_true
+      poisoned_caller.not_nil!.rewrite_call_method_name(
+        repaired_poisoned_call.not_nil!,
+        "CaseKind#===$Nil | CaseKind",
+      ).should be_true
+
+      converter.__test_repair_receiver_bound_call_targets
+
+      {
+        "compare_exact"   => "CaseKind#===$CaseKind",
+        "compare_nilable" => "CaseKind#===$Nil | CaseKind",
+      }.each do |caller_prefix, expected_target|
+        caller = converter.module.functions.find { |func| func.name.starts_with?(caller_prefix) }
+        caller.should_not be_nil
+
+        case_equality_call = caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+          instruction.as?(Adamas::HIR::Call)
+        end.find { |call| call.method_name.includes?("#===") }
+        case_equality_call.should_not be_nil
+        case_equality_call.not_nil!.method_name.should eq(expected_target)
+        case_equality_call.not_nil!.type.should eq(Adamas::HIR::TypeRef::BOOL)
+        case_equality_call.not_nil!.virtual.should be_false
+        case_equality_call.not_nil!.block.should be_nil
+
+        wrapper = converter.module.function_by_name(expected_target)
+        wrapper.should_not be_nil
+        converter.module.has_function_with_body?(expected_target).should be_true
+        wrapper.not_nil!.return_type.should eq(Adamas::HIR::TypeRef::BOOL)
+        wrapper.not_nil!.params.size.should eq(2)
+        receiver_type = caller.not_nil!.blocks.flat_map(&.instructions).find do |instruction|
+          instruction.id == case_equality_call.not_nil!.receiver_value
+        end.try(&.type)
+        receiver_type.should_not be_nil
+        receiver_type.not_nil!.should eq(Adamas::HIR::TypeRef::INT32)
+        wrapper.not_nil!.params.first.type.should eq(receiver_type.not_nil!)
+        argument_type = caller.not_nil!.blocks.flat_map(&.instructions).find do |instruction|
+          instruction.id == case_equality_call.not_nil!.args.first
+        end.try(&.type)
+        argument_type.should_not be_nil
+        wrapper.not_nil!.params[1].type.should eq(argument_type.not_nil!)
+      end
     end
 
     it "does not synthesize a generic wrapper for an Object virtual target" do

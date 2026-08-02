@@ -9744,7 +9744,7 @@ module Adamas::HIR
       end
     end
 
-    private def receiver_repair_semantic_arg_type(
+    private def receiver_repair_semantic_value_type(
       function_name : String,
       value_id : ValueId,
       raw_type : TypeRef,
@@ -43818,7 +43818,7 @@ module Adamas::HIR
     end
 
     @[AlwaysInline]
-    private def runtime_reference_case_equality_primary?(
+    private def runtime_case_equality_primary?(
       primary_mangled_name : String,
       resolved_method_name : String,
       receiver_type : TypeRef,
@@ -43835,11 +43835,24 @@ module Adamas::HIR
       resolved_def = @function_defs[resolved_method_name]? || @function_defs[resolved_base]?
       return false unless resolved_def
 
-      return false unless preserve_requested_runtime_reference_wrapper_owner?(
+      requested_owner = method_owner(strip_type_suffix(primary_mangled_name))
+      resolved_owner = method_owner(resolved_base)
+      preserves_value_owner = (@enum_info.try(&.has_key?(requested_owner)) || false) &&
+                              resolved_owner == "Object" &&
+                              preserve_requested_value_owner_specialization?(
+                                primary_mangled_name,
+                                resolved_method_name,
+                              ) &&
+                              object_wrapper_source_redispatches_through_self?(
+                                resolved_method_name,
+                                resolved_def,
+                              )
+      preserves_reference_owner = preserve_requested_runtime_reference_wrapper_owner?(
         primary_mangled_name,
         resolved_method_name,
         resolved_def,
       )
+      return false unless preserves_value_owner || preserves_reference_owner
 
       return true unless has_body
       primary = @module.function_by_name(primary_mangled_name)
@@ -45784,7 +45797,18 @@ module Adamas::HIR
             method_name = method_short_from_name(base_name) || demangle_type_fragment(base_name)
             next if method_name.empty?
 
-            receiver_name = normalize_method_owner_name(get_type_name_from_ref(receiver_type))
+            receiver_dispatch_type = if method_name == "==="
+                                       receiver_repair_semantic_value_type(
+                                         func.name,
+                                         recv,
+                                         receiver_type,
+                                       )
+                                     else
+                                       receiver_type
+                                     end
+            receiver_name = normalize_method_owner_name(
+              get_type_name_from_ref(receiver_dispatch_type),
+            )
             next if receiver_name.empty? || receiver_name == "Void" || receiver_name == "Unknown"
             arg_types = inst.args.map do |arg|
               raw_type = recover_receiver_repair_call_value_type(
@@ -45793,10 +45817,20 @@ module Adamas::HIR
                 value_types,
                 repaired_value_types,
               )
-              receiver_repair_semantic_arg_type(func.name, arg, raw_type)
+              receiver_repair_semantic_value_type(func.name, arg, raw_type)
             end
             has_block_call = !inst.block.nil?
             named_call_shape = named_call_shape_for(func.name, inst.id)
+            same_owner_body_shape_matches = true
+            if method_name == "===" && enum_name_for_type_ref(receiver_dispatch_type)
+              same_owner_body_shape_matches = !has_block_call &&
+                                              arg_types.all? { |arg_type| arg_type != TypeRef::VOID } &&
+                                              method_name_text == mangle_function_name(
+                                                base_name,
+                                                arg_types,
+                                                false,
+                                              )
+            end
             if debug_env_filter_match?(
                  "DEBUG_RECEIVER_REPAIR_CALL",
                  func.name,
@@ -46015,7 +46049,8 @@ module Adamas::HIR
                !current_owner.empty? && current_owner_base == receiver_base
               # Receiver matches the textual owner in `inst.method_name`. If a real body is
               # already registered under this exact symbol, nothing to do.
-              if @module.has_function_with_body?(method_name_text) || @module.has_function_with_body?(base_name)
+              if same_owner_body_shape_matches &&
+                 (@module.has_function_with_body?(method_name_text) || @module.has_function_with_body?(base_name))
                 next
               end
               if env_get("DEBUG_L13") && method_name_text.includes?("map")
@@ -74134,8 +74169,9 @@ module Adamas::HIR
           end
         end
       end
+      dispatch_left_type = op == "===" ? enum_tracked_type(ctx, left) : left_type
       ensure_monomorphized_type(left_type) unless left_type == TypeRef::VOID
-      type_desc = @module.get_type_descriptor(left_type)
+      type_desc = @module.get_type_descriptor(dispatch_left_type)
       class_name = type_desc.try(&.name) || ""
       class_name = normalize_method_owner_name(class_name)
       base_method_name = class_name.empty? ? op : "#{class_name}##{op}"
@@ -74163,7 +74199,7 @@ module Adamas::HIR
       if method_name != primary_mangled_name
         lower_function_if_needed(method_name)
       end
-      use_primary_case_equality = op == "===" && runtime_reference_case_equality_primary?(
+      use_primary_case_equality = op == "===" && runtime_case_equality_primary?(
         primary_mangled_name,
         method_name,
         left_type,

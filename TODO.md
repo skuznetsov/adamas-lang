@@ -11159,6 +11159,65 @@ Keep the current structural/ABI guard fixed; do not generalize it to all
 operators or add a name allowlist. A new production change needs a reducer and
 a measured reduction at the same `queue@iter2` boundary.
 
+### Session 34: enum `Object#===` semantic-owner continuity (2026-08-02)
+
+The remaining 137 `Object#===` demands were enum case-pattern receivers whose
+HIR values used integer carriers. Initial binary-call lowering could recover
+the enum owner, but late receiver repair reconstructed the owner from the raw
+carrier (`Int32` or `UInt32`) and rewrote the semantic target back to an
+integer/Object family.
+
+The repair now reuses the existing retained per-function enum-value sidecar
+only for `===` receiver dispatch. The sidecar supplies the semantic owner used
+by normal method repair; the emitted receiver value, its descriptor, and the
+callee receiver ABI remain the original integer carrier. Missing or stale
+sidecar evidence therefore falls back to the existing physical-type repair.
+No preservation bypass, enum registry, method allowlist, or cast was added.
+
+The regression covers exact and nilable enum patterns, a nilable-left negative
+guard, and two hostile bodyful targets. A `CaseKind` receiver is first poisoned
+with `OtherKind#===$CaseKind`, where both owners share the same `Int32`
+carrier, and then with the same-owner wrong shape
+`CaseKind#===$Nil | CaseKind`. Late repair must restore the exact target. The
+test also checks `Bool`, non-virtual/no-block call shape, body availability,
+both wrapper parameters, and the physical receiver/argument ABI.
+
+Evidence:
+
+- the full HIR suite passes 377 examples with no failures/errors and two
+  existing pending examples;
+- a fresh source-matched compiler (source SHA-256
+  `5491f0d66aac594f98aa08c9d4750e1e736294e28d0a1a79339c5e66f7779b7d`,
+  binary SHA-256
+  `c3c7c7824d4a2ef3bedf4e64d4dde8291ed27dcd1c3ecce809303a879be321c3`)
+  emits exact and nilable `CaseKind#===` wrappers through HIR, MIR, and LLVM;
+  the wrapper receiver parameter remains carrier type `4` (`Int32`), and the
+  linked reducer exits 0 under `run_safe`;
+- the durable `regression_tests/enum_case_equality_owner_hir_repro.sh` oracle
+  passes against that fresh compiler;
+- at the same fresh `queue@iter2` gate, `Object#===` is absent and the 137
+  occurrences are conserved exactly as `NodeKind#===` 78,
+  `Token::Kind#===` 47, and `DWARF::AT#===` 12. The gate reports 2052 unique
+  missing targets, 12854 functions, and `Hash#==` 55; run-safe telemetry is
+  stable at peak 973904 KiB RSS. FD evidence is explicitly unknown because
+  one of 132 topology samples was unstable; 131 stable pairs and the full
+  process-tree census remained available.
+
+Boundary: this closes the classified enum-owner continuity defect, not B4-F.
+The comparable unique-target count increased from 2048 to 2052, so no global
+fanout or speedup claim is admitted. No full fresh stage2, <=180-second
+admission, or produced-stage semantic-smoke claim is made.
+
+The durable oracle is intentionally function-scoped like the classified
+full-source occurrences. Its top-level `__adamas_main` variant still emits
+integer-owned `===`; that is a separate observed frontier, not covered by this
+closure claim.
+
+Next legal work: classify the top-level `__adamas_main` owner loss, then the new
+four-target delta and remaining leading `queue@iter2` families before changing
+another contract. Preserve the semantic owner/physical ABI split; require a
+reducer and the same census boundary for any further production change.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
