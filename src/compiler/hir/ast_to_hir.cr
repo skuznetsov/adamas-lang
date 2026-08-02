@@ -2537,8 +2537,8 @@ module Adamas::HIR
       )
     end
 
-    # Object-level convenience wrappers such as `inspect : String` delegate to
-    # another overload on `self`. Preserve the concrete runtime generic owner
+    # Object-level convenience wrappers such as `inspect : String` and `===`
+    # redispatch through `self`. Preserve the concrete runtime generic owner
     # only for that structural wrapper shape; ordinary inherited Object bodies
     # keep their existing ancestor-owned lowering.
     private def preserve_requested_runtime_reference_wrapper_owner?(
@@ -2554,12 +2554,12 @@ module Adamas::HIR
       return false if requested_owner.empty? || !requested_owner.includes?('(')
       return false unless resolved_parts.owner == "Object"
       return false unless @module.class_parents[requested_owner]? == "Reference"
-      return false unless object_wrapper_source_delegates_to_same_method?(resolved_name, resolved_def)
+      return false unless object_wrapper_source_redispatches_through_self?(resolved_name, resolved_def)
 
       @class_info.has_key?(requested_owner)
     end
 
-    private def object_wrapper_source_delegates_to_same_method?(
+    private def object_wrapper_source_redispatches_through_self?(
       resolved_name : String,
       resolved_def : Adamas::Compiler::Frontend::DefNode,
     ) : Bool
@@ -2573,11 +2573,71 @@ module Adamas::HIR
       old_arena = @arena
       @arena = source_arena
       begin
-        body.any? do |expr_id|
+        same_method_delegate = body.any? do |expr_id|
           expression_contains_self_call_named?(expr_id, method_name, source_arena)
         end
+        case_equality_delegate = false
+        if param_name = canonical_case_equality_wrapper_param_name(resolved_def, source_arena)
+          case_equality_delegate = body.size == 1 &&
+                                   expression_is_case_equality_self_delegate?(
+                                     body.first,
+                                     method_name,
+                                     param_name,
+                                     source_arena,
+                                   )
+        end
+        same_method_delegate || case_equality_delegate
       ensure
         @arena = old_arena
+      end
+    end
+
+    private def canonical_case_equality_wrapper_param_name(
+      resolved_def : Adamas::Compiler::Frontend::DefNode,
+      source_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : String?
+      params = resolved_def.params
+      return nil unless params && params.size == 1
+
+      param = params.first
+      return nil unless param.default_value.nil?
+      return nil if param.is_splat || param.is_double_splat || param.is_block
+      return nil if param.type_annotation
+      if return_type = resolved_def.return_type
+        return_type_name = safe_slice_to_string(return_type).try(&.strip)
+        return nil unless return_type_name == "Bool" || return_type_name == "::Bool"
+      end
+
+      parameter_name_string(param, source_arena, false)
+    end
+
+    private def expression_is_case_equality_self_delegate?(
+      expr_id : Adamas::Compiler::Frontend::ExprId,
+      wrapper_method_name : String,
+      delegate_param_name : String,
+      source_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Bool
+      return false if expr_id.index < 0 || expr_id.index >= source_arena.size
+
+      node = source_arena[expr_id]
+      case node
+      when Adamas::Compiler::Frontend::BinaryNode
+        delegated_operator = node.operator_string
+        right = source_arena[node.right]
+        source_arena[node.left].is_a?(Adamas::Compiler::Frontend::SelfNode) &&
+          right.is_a?(Adamas::Compiler::Frontend::IdentifierNode) &&
+          identifier_name_text(right, source_arena) == delegate_param_name &&
+          delegated_operator == "==" &&
+          wrapper_method_name == "#{delegated_operator}="
+      when Adamas::Compiler::Frontend::GroupingNode
+        expression_is_case_equality_self_delegate?(
+          node.expression,
+          wrapper_method_name,
+          delegate_param_name,
+          source_arena,
+        )
+      else
+        false
       end
     end
 
@@ -43758,6 +43818,40 @@ module Adamas::HIR
     end
 
     @[AlwaysInline]
+    private def runtime_reference_case_equality_primary?(
+      primary_mangled_name : String,
+      resolved_method_name : String,
+      receiver_type : TypeRef,
+      right_type : TypeRef,
+    ) : Bool
+      return false if right_type == TypeRef::VOID
+
+      has_body = @module.has_function_with_body?(primary_mangled_name)
+      pending_and_queued = function_state(primary_mangled_name).pending? &&
+                           @pending_function_queue.includes?(primary_mangled_name)
+      return false unless has_body || pending_and_queued
+
+      resolved_base = strip_type_suffix(resolved_method_name)
+      resolved_def = @function_defs[resolved_method_name]? || @function_defs[resolved_base]?
+      return false unless resolved_def
+
+      return false unless preserve_requested_runtime_reference_wrapper_owner?(
+        primary_mangled_name,
+        resolved_method_name,
+        resolved_def,
+      )
+
+      return true unless has_body
+      primary = @module.function_by_name(primary_mangled_name)
+      return false unless primary
+      return false unless primary.params.size == 2
+      return false unless primary.params.first.type == receiver_type
+      return false unless primary.return_type == TypeRef::BOOL
+
+      primary.params[1].type == right_type
+    end
+
+    @[AlwaysInline]
     private def prefer_primary_call_target(
       resolved_method_name : String,
       primary_mangled_name : String,
@@ -74069,7 +74163,17 @@ module Adamas::HIR
       if method_name != primary_mangled_name
         lower_function_if_needed(method_name)
       end
-      call_target_name = prefer_primary_call_target(method_name, primary_mangled_name, [right_type])
+      use_primary_case_equality = op == "===" && runtime_reference_case_equality_primary?(
+        primary_mangled_name,
+        method_name,
+        left_type,
+        right_type,
+      )
+      call_target_name = if use_primary_case_equality
+                           primary_mangled_name
+                         else
+                           prefer_primary_call_target(method_name, primary_mangled_name, [right_type])
+                         end
       call_virtual = false
       if left_desc = @module.get_type_descriptor(left_type)
         if left_desc.kind == TypeKind::Class

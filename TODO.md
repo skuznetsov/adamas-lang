@@ -11101,6 +11101,64 @@ base/typed supply. Do not add a method allowlist, another registry, or a budget
 cap; require a measured reduction at the existing census boundary before
 calling the next change a B4-F improvement.
 
+### Session 33: concrete generic `Object#===` wrapper ownership (2026-08-02)
+
+The paired equality demand came from losing the concrete receiver while
+lowering the inherited `Object#===` wrapper. For a call such as
+`Hash(String, Int32)#===$Int32`, lazy RTA queued the concrete wrapper but exact
+lookup materialized `Object#===$Int32`; its `self == other` body was then
+lowered with `Object` self and opened Object-wide virtual `==` fanout.
+
+Concrete ownership is now preserved only when all of these facts agree:
+
+- the requested owner is a materialized generic type whose direct parent is
+  `Reference`, while lookup resolved the source body from `Object`;
+- the Object body structurally redispatches through `self`: either the existing
+  same-method wrapper shape or exactly `def ===(other); self == other; end`.
+  The case-equality form requires one untyped required positional parameter,
+  no default/splat/block shape, the same parameter on the binary RHS, and no
+  explicit return annotation other than `Bool`;
+- binary call-target preference invokes this rule only for `===`; the generic
+  target-preference helper and other operators are unchanged;
+- an already materialized primary body must have the exact receiver and
+  positional argument ABI plus a `Bool` return. A pending primary must still be
+  present in the queue and is admitted through the same source-shape producer
+  predicate. `Void` argument evidence fails closed.
+
+The negative controls keep ordinary inherited bodies, indirect `self.stable`,
+an unrelated method containing `self == 1`, defaulted extra parameters, an
+unrelated RHS, typed source parameters, explicit non-Bool returns, and Void
+callsite evidence ancestor-owned. Other binary-operator pairs are not admitted
+by this corridor. This avoids a method/type allowlist, a new registry, and a
+budget cap.
+
+Evidence:
+
+- the focused wrapper examples pass 2/0, the adjacent missing-target repair
+  block passes 13/0, the abstract binary-dispatch block passes 3/0, and the
+  full `ast_to_hir_spec.cr` file passes 376 examples with no failures/errors
+  and two existing pending examples;
+- the full-stdlib `Hash === Int32` reducer shrinks from 198999 to 190531 HIR
+  lines and from 157 to 3 `#==$Int32` bodies. Its top-level call and wrapper
+  body use `Hash(String, Int32)#===$Int32`; no `Object#===$Int32` body remains;
+- a compiled runtime control prints `0`, `1`, `1`, `1` for Hash case equality,
+  inherited typed equality, direct typed equality, and an explicit concrete
+  `===` override;
+- the comparable bounded self-build gate remains at 13300 functions after
+  `process@iter1`. At `queue@iter2`, `Hash#==` demand falls from 484 to 63
+  (-87.0%) while the gate still exits before processing that queue.
+
+Boundary: this is a measured B4-F improvement, not B4-F closure. The same
+iteration-2 scan still reports 2048 unique missing targets and 137
+`Object#===` occurrences. No full fresh stage2, <=180-second admission, or
+produced-stage semantic-smoke claim is made.
+
+Next legal work: classify the remaining 137 `Object#===` occurrences by
+receiver ownership and downstream target before changing another contract.
+Keep the current structural/ABI guard fixed; do not generalize it to all
+operators or add a name allowlist. A new production change needs a reducer and
+a measured reduction at the same `queue@iter2` boundary.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

@@ -10327,6 +10327,14 @@ describe Adamas::HIR::AstToHir do
             stable = 7
             stable
           end
+
+          def indirect : Int32
+            self.stable
+          end
+
+          def unrelated : Bool
+            self == 1
+          end
         end
 
         class Reference < Object
@@ -10358,6 +10366,152 @@ describe Adamas::HIR::AstToHir do
       stable = converter.module.function_by_name("Box(Int32)#stable")
       stable.should_not be_nil
       converter.__test_get_type_name_from_ref(stable.not_nil!.params.first.type).should eq("Object")
+
+      converter.__test_lower_function_if_needed("Box(Int32)#indirect")
+      indirect = converter.module.function_by_name("Box(Int32)#indirect")
+      indirect.should_not be_nil
+      converter.__test_get_type_name_from_ref(indirect.not_nil!.params.first.type).should eq("Object")
+
+      converter.__test_lower_function_if_needed("Box(Int32)#unrelated")
+      unrelated = converter.module.function_by_name("Box(Int32)#unrelated")
+      unrelated.should_not be_nil
+      converter.__test_get_type_name_from_ref(unrelated.not_nil!.params.first.type).should eq("Object")
+    end
+
+    it "rejects noncanonical Object case-equality wrappers while the concrete target is pending" do
+      wrappers = [
+        "def ===(other, extra = 0) : Bool\n  self == other\nend",
+        "def ===(other) : Bool\n  self == 1\nend",
+        "def ===(other : String) : Bool\n  self == other\nend",
+        "def ===(other) : Int32\n  self == other\nend",
+      ]
+
+      wrappers.each do |wrapper_source|
+        source = <<-CRYSTAL
+          class Object
+            #{wrapper_source}
+
+            def ==(other) : Bool
+              false
+            end
+          end
+
+          class Reference < Object
+          end
+
+          class Box(T) < Reference
+            def ==(other : Int32) : Bool
+              true
+            end
+          end
+
+          def compare_noncanonical(box : Box(Int32), other : Int32) : Bool
+            box === other
+          end
+        CRYSTAL
+
+        arena, exprs = parse(source)
+        converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+        converter.arena = arena
+        class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+        def_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode) }
+        class_nodes.each { |node| converter.register_class(node) }
+        def_nodes.each { |node| converter.register_function(node) }
+        converter.__test_monomorphize_generic_class("Box", ["Int32"], "Box(Int32)")
+
+        converter.__test_queue_pending_inside_lowering("Box(Int32)#===$Int32")
+        converter.lower_def(def_nodes.first)
+        caller = converter.module.functions.find { |func| func.name.starts_with?("compare_noncanonical$") }
+        caller.should_not be_nil
+        case_equality_call = caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+          instruction.as?(Adamas::HIR::Call)
+        end.find { |call| call.method_name.includes?("#===") }
+        case_equality_call.should_not be_nil
+        case_equality_call.not_nil!.method_name.should start_with("Object#===")
+      end
+    end
+
+    it "retains an exact runtime generic owner when an Object wrapper redispatches through self" do
+      source = <<-CRYSTAL
+        class Object
+          def ===(other) : Bool
+            self == other
+          end
+
+          def ==(other) : Bool
+            false
+          end
+        end
+
+        class Reference < Object
+          def ==(other : self) : Bool
+            false
+          end
+
+          def ==(other) : Bool
+            false
+          end
+        end
+
+        class Box(T) < Reference
+          def ==(other : Int32) : Bool
+            true
+          end
+        end
+
+        def compare(box : Box(Int32), other : Int32) : Bool
+          box === other
+        end
+
+        def compare_unknown(box : Box(Int32), other) : Bool
+          box === other
+        end
+      CRYSTAL
+
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+      converter.arena = arena
+      class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+      def_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode) }
+      class_nodes.each { |node| converter.register_class(node) }
+      def_nodes.each { |node| converter.register_function(node) }
+      converter.__test_monomorphize_generic_class("Box", ["Int32"], "Box(Int32)")
+
+      converter.__test_queue_pending_inside_lowering("Box(Int32)#===$Int32")
+      converter.lower_def(def_nodes.first)
+      caller = converter.module.functions.find { |func| func.name.starts_with?("compare$") }
+      caller.should_not be_nil
+      case_equality_call = caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.find { |call| call.method_name.includes?("#===") }
+      case_equality_call.should_not be_nil
+      case_equality_call.not_nil!.method_name.should eq("Box(Int32)#===$Int32")
+      converter.__test_pending_function?("Box(Int32)#===$Int32").should be_true
+
+      converter.lower_def(def_nodes[1])
+      unknown_caller = converter.module.functions.find { |func| func.name.starts_with?("compare_unknown$") }
+      unknown_caller.should_not be_nil
+      unknown_case_equality_call = unknown_caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.find { |call| call.method_name.includes?("#===") }
+      unknown_case_equality_call.should_not be_nil
+      unknown_case_equality_call.not_nil!.method_name.should start_with("Object#===")
+
+      converter.__test_process_pending_lower_functions
+      converter.__test_lower_function_if_needed("Box(Int32)#===$Int32")
+      wrapper = converter.module.function_by_name("Box(Int32)#===$Int32")
+      wrapper.should_not be_nil
+      converter.__test_get_type_name_from_ref(wrapper.not_nil!.params.first.type).should eq("Box(Int32)")
+      wrapper.not_nil!.params.size.should eq(2)
+      wrapper.not_nil!.params[1].type.should eq(Adamas::HIR::TypeRef::INT32)
+      wrapper.not_nil!.return_type.should eq(Adamas::HIR::TypeRef::BOOL)
+
+      equality_call = wrapper.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.find { |call| call.method_name.includes?("#==") }
+      equality_call.should_not be_nil
+      equality_call.not_nil!.method_name.should eq("Box(Int32)#==$Int32")
+      equality_call.not_nil!.type.should eq(Adamas::HIR::TypeRef::BOOL)
     end
 
     it "does not synthesize a generic wrapper for an Object virtual target" do
