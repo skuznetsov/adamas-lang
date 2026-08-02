@@ -11263,16 +11263,70 @@ Evidence:
 Boundary: this closes only the demonstrated synthetic-main enum-ledger gap.
 It does not claim B4-F closure, a fanout reduction, a full fresh stage2, the
 <=180-second admission gate, or produced-stage semantic smoke. Review also
-found that `lower_main` leaves `@arena` on the last top-level arena after normal
-completion. That context leak is not the cause of this enum-owner defect and
-is deliberately excluded from this atomic change. The existing main lowering
-also lacks exception-safe restoration; successful normal completion is the
-only cleanup contract claimed here.
+found at this checkpoint that `lower_main` left `@arena` on the last top-level
+arena after normal completion. That context leak was not the cause of this
+enum-owner defect and was deliberately excluded from this atomic change; it is
+addressed separately in Session 36. The existing main lowering also lacks
+exception-safe restoration; successful normal completion is the only cleanup
+contract claimed here.
 
 Next legal work: give the `lower_main` arena restoration gap its own source
 reproducer and falsifier before changing cleanup structure. Keep the enum
 ledger lifecycle fixed; do not broaden this patch into generic main-state
 cleanup without evidence for each restored field.
+
+### Session 36: synthetic-main caller-arena restoration (2026-08-02)
+
+`lower_main` saved its caller arena for deferred initializer subphases, but the
+top-level expression loop then switched `@arena` for every packed source and
+left the converter on the final expression's arena. That state was not an
+intentional main owner: the CLI's registration passes can leave any source as
+the caller arena, while demand scanning uses the explicit `@main_arenas` table.
+Later public lowering still prefers the current arena whenever an `ExprId`
+index fits it, so equal indices from different sources could select the wrong
+AST body.
+
+The falsifier constructs two structurally aligned arenas whose same-named
+function returns `11` in the caller arena and `22` in the foreign arena. It
+lowers a packed top-level expression from the foreign arena and then lowers the
+caller function without manually resetting converter state. With final arena
+restoration ablated, the resulting HIR lacks `11` because the function body is
+read from the foreign arena. Restoring the saved caller arena makes `11`
+present and rejects `22`.
+
+The production change is one normal-path assignment beside the existing
+enum-map and owner restoration. It adds no arena registry, search heuristic,
+source recovery, fallback, or generalized cleanup wrapper.
+
+Evidence:
+
+- the final focused `lower_def` falsifier is RED with the single restoration
+  line ablated and GREEN when restored; the targeted
+  `regression_tests/lower_main_arena_restore_spec.sh` safe wrapper is also
+  GREEN;
+- the full HIR suite passes 378 examples with no failures/errors and two
+  existing pending examples;
+- the fresh source-matched compiler (lowering source SHA-256
+  `33a7805ea5425462476dec5256d11e730b377d96da10149d3c286a3b74940e74`,
+  binary SHA-256
+  `e97f4b2d7ec852f2f472d9c3f3133bcdee9eb388e71cfa342caab85626e4ac99`)
+  still passes the function/top-level enum-owner durable oracle;
+- the fresh `queue@iter2` census remains exactly 2052 unique missing targets,
+  12854 functions, and `Hash#==` 55. `Object#===` is absent and the enum
+  families remain `NodeKind#===` 78, `Token::Kind#===` 47, and `DWARF::AT#===`
+  12. The gate exits 0 after about 101 seconds. Internal RSS/FD telemetry is
+  unknown because sandboxed `ps` probes remain unavailable; live samples saw
+  roughly one compiler core and at most 1.2% process memory.
+
+Boundary: this closes caller-arena restoration only after successful
+`lower_main`. It does not add exception-safe cleanup and makes no B4-F,
+full-stage, timing-admission, or produced-stage claim.
+
+Next legal work: first determine whether any supported caller rescues a failed
+`lower_main` and reuses the same converter. Add `ensure` cleanup only with a
+reentrant failure reproducer; otherwise keep exception-unwind state outside
+the successful lowering contract and return to the remaining B4-F demand
+families.
 
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 

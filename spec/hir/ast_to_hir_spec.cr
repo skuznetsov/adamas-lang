@@ -4240,6 +4240,47 @@ describe Adamas::HIR::AstToHir do
     end
   end
 
+  describe "synthetic main arena ownership" do
+    it "restores the caller arena before later function lowering" do
+      owner_source = <<-CRYSTAL
+        def arena_owner_probe : Int32
+          11
+        end
+        0
+      CRYSTAL
+      foreign_source = <<-CRYSTAL
+        def arena_owner_probe : Int32
+          22
+        end
+        true
+      CRYSTAL
+      owner_arena, owner_exprs = parse(owner_source)
+      foreign_arena, foreign_exprs = parse(foreign_source)
+      converter = Adamas::HIR::AstToHir.new(
+        owner_arena,
+        main_arenas: [owner_arena, foreign_arena] of Adamas::Compiler::Frontend::ArenaLike,
+      )
+      converter.no_prelude = true
+
+      owner_def = owner_exprs.compact_map do |expr_id|
+        owner_arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode)
+      end.first
+      foreign_main_expr = foreign_exprs.find do |expr_id|
+        !foreign_arena[expr_id].is_a?(Adamas::Compiler::Frontend::DefNode)
+      end.not_nil!
+      foreign_main_ref = (1_u64 << 32) | foreign_main_expr.index.to_u64
+      converter.lower_main([foreign_main_ref])
+
+      function = converter.lower_def(owner_def)
+      literals = function.blocks.flat_map(&.instructions)
+        .compact_map(&.as?(Adamas::HIR::Literal))
+        .map(&.value)
+
+      literals.includes?(11_i64).should be_true
+      literals.includes?(22_i64).should be_false
+    end
+  end
+
   describe "synthetic stdio puts receiver typing" do
     it "keeps bare puts on the concrete deferred STDOUT type" do
       converter = lower_program_with_main(<<-CRYSTAL)

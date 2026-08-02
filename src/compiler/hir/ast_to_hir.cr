@@ -62436,6 +62436,7 @@ module Adamas::HIR
       STDERR.puts "[LOWER_MAIN_FRONTIER] before_owner_restore" if lower_main_frontier
       retain_function_enum_value_types(func.name)
       @enum_value_types = old_main_enum_value_types
+      @arena = old_arena
       @current_class = old_main_class
       @current_namespace_override = old_main_namespace
       STDERR.puts "[LOWER_MAIN_FRONTIER] owner_restore_done" if lower_main_frontier
