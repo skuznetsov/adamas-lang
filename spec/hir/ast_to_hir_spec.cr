@@ -10361,6 +10361,363 @@ describe Adamas::HIR::AstToHir do
       int_field.not_nil!.field_offset.should_not eq(string_field.not_nil!.field_offset)
     end
 
+    it "preserves instance-dependent returns for a concrete generic receiver union" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class LayoutBox(T)
+          getter payload : T
+
+          def initialize(@payload : T)
+          end
+
+          def tagged_payload(_tag : Int32) : T
+            @payload
+          end
+
+          def untyped_payload(_tag) : T
+            @payload
+          end
+        end
+
+        def choose_box(flag : Bool) : LayoutBox(Int32) | LayoutBox(String)
+          flag ? LayoutBox(Int32).new(7) : LayoutBox(String).new("x")
+        end
+
+        def erased_payload(value : LayoutBox(Int32) | LayoutBox(String))
+          value.payload
+        end
+
+        def erased_tagged_payload(value : LayoutBox(Int32) | LayoutBox(String))
+          value.tagged_payload(0)
+        end
+
+        def erased_untyped_payload(value : LayoutBox(Int32) | LayoutBox(String))
+          value.untyped_payload(0)
+        end
+
+        def erased_nilable_payload(value : LayoutBox(Nil) | LayoutBox(String))
+          value.payload
+        end
+
+        erased_payload(choose_box(true))
+        erased_tagged_payload(choose_box(false))
+        erased_untyped_payload(choose_box(true))
+        erased_nilable_payload(LayoutBox(Nil).new(nil))
+      CRYSTAL
+      converter.flush_pending_functions
+
+      caller = converter.module.functions.find { |function| function.name.starts_with?("erased_payload$") }
+      caller.should_not be_nil
+      converter.__test_get_type_name_from_ref(caller.not_nil!.return_type).should eq("Int32 | String")
+
+      payload_call = caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.find { |call| call.method_name.ends_with?("#payload") }
+      payload_call.should_not be_nil
+      payload_call.not_nil!.virtual.should be_true
+      converter.__test_get_type_name_from_ref(payload_call.not_nil!.type).should eq("Int32 | String")
+
+      int_payload = converter.module.function_by_name("LayoutBox(Int32)#payload")
+      string_payload = converter.module.function_by_name("LayoutBox(String)#payload")
+      nil_payload = converter.module.function_by_name("LayoutBox(Nil)#payload")
+      int_payload.should_not be_nil
+      string_payload.should_not be_nil
+      nil_payload.should_not be_nil
+      converter.__test_get_type_name_from_ref(int_payload.not_nil!.return_type).should eq("Int32")
+      converter.__test_get_type_name_from_ref(string_payload.not_nil!.return_type).should eq("String")
+      converter.__test_get_type_name_from_ref(nil_payload.not_nil!.return_type).should eq("Nil")
+      converter.module.has_function_with_body?("LayoutBox(Int32)#payload").should be_true
+      converter.module.has_function_with_body?("LayoutBox(String)#payload").should be_true
+      converter.module.has_function_with_body?("LayoutBox(Nil)#payload").should be_true
+
+      tagged_caller = converter.module.functions.find { |function| function.name.starts_with?("erased_tagged_payload$") }
+      tagged_caller.should_not be_nil
+      converter.__test_get_type_name_from_ref(tagged_caller.not_nil!.return_type).should eq("Int32 | String")
+
+      tagged_payload_call = tagged_caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.find { |call| call.method_name.includes?("#tagged_payload") }
+      tagged_payload_call.should_not be_nil
+      tagged_payload_call.not_nil!.virtual.should be_true
+      converter.__test_get_type_name_from_ref(tagged_payload_call.not_nil!.type).should eq("Int32 | String")
+
+      untyped_caller = converter.module.functions.find { |function| function.name.starts_with?("erased_untyped_payload$") }
+      untyped_caller.should_not be_nil
+      converter.__test_get_type_name_from_ref(untyped_caller.not_nil!.return_type).should eq("Int32 | String")
+
+      untyped_payload_call = untyped_caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.find { |call| call.method_name.includes?("#untyped_payload") }
+      untyped_payload_call.should_not be_nil
+      untyped_payload_call.not_nil!.virtual.should be_true
+      converter.__test_get_type_name_from_ref(untyped_payload_call.not_nil!.type).should eq("Int32 | String")
+
+      nilable_caller = converter.module.functions.find { |function| function.name.starts_with?("erased_nilable_payload$") }
+      nilable_caller.should_not be_nil
+      converter.__test_get_type_name_from_ref(nilable_caller.not_nil!.return_type).should eq("Nil | String")
+
+      nilable_payload_call = nilable_caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.find { |call| call.method_name.ends_with?("#payload") }
+      nilable_payload_call.should_not be_nil
+      converter.__test_get_type_name_from_ref(nilable_payload_call.not_nil!.type).should eq("Nil | String")
+    end
+
+    it "rejects heterogeneous returns outside the registered reference-generic corridor" do
+      expect_raises(Adamas::HIR::LoweringError, /heterogeneous returns for unsupported concrete generic receiver union/) do
+        lower_program_with_main(<<-CRYSTAL)
+          class LeftBox(T)
+            getter payload : T
+
+            def initialize(@payload : T)
+            end
+          end
+
+          class RightBox(T)
+            getter payload : T
+
+            def initialize(@payload : T)
+            end
+          end
+
+          def erased_payload(value : LeftBox(Int32) | RightBox(String))
+            value.payload
+          end
+
+          erased_payload(LeftBox(Int32).new(7))
+        CRYSTAL
+      end
+
+      expect_raises(Adamas::HIR::LoweringError, /heterogeneous returns for unsupported concrete generic receiver union/) do
+        lower_program_with_main(<<-CRYSTAL)
+          struct ValueBox(T)
+            def initialize(@payload : T)
+            end
+
+            def tagged_payload(_tag : Int32) : T
+              @payload
+            end
+          end
+
+          def erased_payload(value : ValueBox(Int32) | ValueBox(String))
+            value.tagged_payload(0)
+          end
+
+          erased_payload(ValueBox(Int32).new(7))
+        CRYSTAL
+      end
+    end
+
+    it "preserves valid nil returns for a registered reference-generic union" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class LogBox(T)
+          def log
+          end
+        end
+
+        def erased_log(value : LogBox(Int32) | LogBox(String))
+          value.log
+        end
+
+        erased_log(LogBox(Int32).new)
+      CRYSTAL
+      converter.flush_pending_functions
+
+      caller = converter.module.functions.find { |function| function.name.starts_with?("erased_log$") }
+      caller.should_not be_nil
+      log_call = caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.find { |call| call.method_name.ends_with?("#log") }
+      log_call.should_not be_nil
+      log_call.not_nil!.virtual.should be_true
+      log_call.not_nil!.type.should eq(Adamas::HIR::TypeRef::NIL)
+    end
+
+    it "preserves instance-dependent returns for builtin reference-generic unions" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class Array(T)
+          getter payload : T
+
+          def initialize(@payload : T)
+          end
+        end
+
+        def erased_payload(value : Array(Int32) | Array(String))
+          value.payload
+        end
+
+        erased_payload(Array(Int32).new(7))
+        erased_payload(Array(String).new("x"))
+      CRYSTAL
+      converter.flush_pending_functions
+
+      caller = converter.module.functions.find { |function| function.name.starts_with?("erased_payload$") }
+      caller.should_not be_nil
+      converter.__test_get_type_name_from_ref(caller.not_nil!.return_type).should eq("Int32 | String")
+
+      payload_call = caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.find { |call| call.method_name.ends_with?("#payload") }
+      payload_call.should_not be_nil
+      payload_call.not_nil!.virtual.should be_true
+      converter.__test_get_type_name_from_ref(payload_call.not_nil!.type).should eq("Int32 | String")
+    end
+
+    it "rejects explicit arguments without one shared concrete generic union formal ABI" do
+      expect_raises(Adamas::HIR::LoweringError, /incompatible explicit arguments for concrete generic receiver union/) do
+        lower_program_with_main(<<-CRYSTAL)
+          class ParamBox(T)
+            def take(value : T) : Int32
+              1
+            end
+          end
+
+          def choose_box(flag : Bool) : ParamBox(Int32) | ParamBox(String)
+            flag ? ParamBox(Int32).new : ParamBox(String).new
+          end
+
+          def erased_take(value : ParamBox(Int32) | ParamBox(String))
+            value.take(1)
+          end
+
+          erased_take(choose_box(false))
+        CRYSTAL
+      end
+
+      expect_raises(Adamas::HIR::LoweringError, /incompatible explicit arguments for concrete generic receiver union/) do
+        lower_program_with_main(<<-CRYSTAL)
+          class NilableParamBox(T)
+            def take(value : T) : Int32
+              1
+            end
+          end
+
+          def choose_nilable_box(flag : Bool) : NilableParamBox(Int32 | Nil) | NilableParamBox(String | Nil)
+            flag ? NilableParamBox(Int32 | Nil).new : NilableParamBox(String | Nil).new
+          end
+
+          def erased_nilable_take(value : NilableParamBox(Int32 | Nil) | NilableParamBox(String | Nil))
+            value.take(nil)
+          end
+
+          NilableParamBox(Int32 | Nil).new.take(nil)
+          NilableParamBox(String | Nil).new.take(nil)
+          erased_nilable_take(choose_nilable_box(false))
+        CRYSTAL
+      end
+
+      expect_raises(Adamas::HIR::LoweringError, /incompatible explicit arguments for concrete generic receiver union/) do
+        lower_program_with_main(<<-CRYSTAL)
+          class NumericParamBox(T)
+            def take(value : T) : Int32
+              1
+            end
+          end
+
+          def choose_numeric_box(flag : Bool) : NumericParamBox(Int32) | NumericParamBox(UInt32)
+            flag ? NumericParamBox(Int32).new : NumericParamBox(UInt32).new
+          end
+
+          def erased_numeric_take(value : NumericParamBox(Int32) | NumericParamBox(UInt32))
+            value.take(1)
+          end
+
+          erased_numeric_take(choose_numeric_box(false))
+        CRYSTAL
+      end
+
+      expect_raises(Adamas::HIR::LoweringError, /incompatible explicit arguments for concrete generic receiver union/) do
+        lower_program_with_main(<<-CRYSTAL)
+          class OverlapParamBox(T)
+            def take(value : T) : Int32
+              1
+            end
+          end
+
+          def choose_overlap_box(flag : Bool) : OverlapParamBox(Int32 | Int64) | OverlapParamBox(Int32 | UInt32)
+            flag ? OverlapParamBox(Int32 | Int64).new : OverlapParamBox(Int32 | UInt32).new
+          end
+
+          def erased_overlap_take(value : OverlapParamBox(Int32 | Int64) | OverlapParamBox(Int32 | UInt32))
+            value.take(1)
+          end
+
+          erased_overlap_take(choose_overlap_box(false))
+        CRYSTAL
+      end
+    end
+
+    it "rejects unproven call shapes for concrete generic receiver unions" do
+      error_pattern = /unproven call shape for concrete generic receiver union/
+
+      expect_raises(Adamas::HIR::LoweringError, error_pattern) do
+        lower_program_with_main(<<-CRYSTAL)
+          class NamedShapeBox(T)
+            def initialize(@payload : T)
+            end
+
+            def fetch(tag : Int32 = 0) : T
+              @payload
+            end
+          end
+
+          def erased_fetch(value : NamedShapeBox(Int32) | NamedShapeBox(String))
+            value.fetch(tag: 0)
+          end
+
+          erased_fetch(NamedShapeBox(Int32).new(1))
+        CRYSTAL
+      end
+
+      previous_inline_yield = ENV["ADAMAS_DISABLE_INLINE_YIELD"]?
+      ENV["ADAMAS_DISABLE_INLINE_YIELD"] = "1"
+      begin
+        expect_raises(Adamas::HIR::LoweringError, error_pattern) do
+          lower_program_with_main(<<-CRYSTAL)
+            class BlockShapeBox(T)
+              def initialize(@payload : T)
+              end
+
+              def fetch(&) : T
+                yield
+                @payload
+              end
+            end
+
+            def erased_fetch(value : BlockShapeBox(Int32) | BlockShapeBox(String))
+              value.fetch { nil }
+            end
+
+            erased_fetch(BlockShapeBox(Int32).new(1))
+          CRYSTAL
+        end
+      ensure
+        if previous_inline_yield
+          ENV["ADAMAS_DISABLE_INLINE_YIELD"] = previous_inline_yield
+        else
+          ENV.delete("ADAMAS_DISABLE_INLINE_YIELD")
+        end
+      end
+
+      expect_raises(Adamas::HIR::LoweringError, error_pattern) do
+        lower_program_with_main(<<-CRYSTAL)
+          class SplatShapeBox(T)
+            def initialize(@payload : T)
+            end
+
+            def fetch(tag : Int32) : T
+              @payload
+            end
+          end
+
+          def erased_fetch(value : SplatShapeBox(Int32) | SplatShapeBox(String))
+            value.fetch(*{0})
+          end
+
+          erased_fetch(SplatShapeBox(Int32).new(1))
+        CRYSTAL
+      end
+    end
+
     it "classifies value and reference owners from HIR descriptors" do
       converter = Adamas::HIR::AstToHir.new(Adamas::Compiler::Frontend::AstArena.new)
       module_ = converter.module

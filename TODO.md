@@ -1,8 +1,10 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-08-02 (bare reference-generic instance dispatch is verified for
-direct erased receivers; unsupported bare-generic runtime return unions now
-fail closed; the unconsumed cross-arena lowering bridge is rejected;
+Updated: 2026-08-02 (bare reference-generic instance dispatch is runtime-
+verified for direct erased receivers; registered runtime-reference instance
+unions preserve their callsite return ABI in HIR without mutating the anchored
+function ABI, while unsupported bare-template return annotations fail closed;
+the unconsumed cross-arena lowering bridge is rejected;
 T9 focused HIR-to-MIR-to-LLVM continuity and source-bound full-compiler HIR
 continuity are green through exact-target body lowering, while full-source
 MIR/LLVM continuity remains blocked by B4-F and the historical full-G9 symptom
@@ -10,22 +12,45 @@ is stale and unreproduced. Exact guarded method
 declaration shapes replace in place; local keyed decisions reject replaced
 same-arena method objects; T1 and B4-F remain red).
 
-BARE REFERENCE-GENERIC INSTANCE DISPATCH VERIFIED; UNSUPPORTED RUNTIME UNION
-COMPOSITION FAILS CLOSED. A bare generic receiver now records an erased
-virtual-call shape without
-materializing a layout-bearing template body. Concrete reference instances are
+BARE REFERENCE-GENERIC INSTANCE DISPATCH RUNTIME-VERIFIED; REGISTERED
+RUNTIME-REFERENCE RETURN UNIONS HIR-VERIFIED AND MIR-GUARDED; UNSUPPORTED
+BARE-TEMPLATE COMPOSITION FAILS CLOSED. A bare generic receiver now records an
+erased virtual-call shape without materializing a layout-bearing template body.
+Concrete reference instances are
 registered only after layout alignment, replay the shape independently of the
 source inheritance graph, and form the MIR type-id candidate family. Admission
-fails closed unless every registered instance has a body and all candidate
-return/explicit-argument ABIs agree. Layout-distinct `LayoutBox(Int32/String)`
+fails closed unless every registered instance has a body and the active
+dispatch corridor proves its return and explicit-argument contracts.
+Layout-distinct `LayoutBox(Int32/String)`
 has structural HIR-offset and MIR-type-id coverage; the true erased `Hash#size`
-runtime path emits a five-case dispatcher and returns `1`. A demanded explicit
-return annotation containing a bare generic template, including nullable `T?`
+runtime path emits a five-case dispatcher and returns `1`. Instance-dependent
+returns from an all-concrete receiver union specializing one registered
+runtime-reference generic template now preserve the union of every target
+return at the HIR callsite, including `Nil`, through non-block ordinary calls
+that are positional and non-splat, plus zero-argument member access. The
+admitted storage kinds are reference
+classes, heap `Array`, and heap `Hash`; `StaticArray` and generic structs remain
+outside the corridor. Every explicit positional argument must resolve against
+every concrete owner, and the canonical owner-specialized formal ABI must be
+identical across all targets before the corridor is admitted; only truly
+untyped formals derive that ABI from the shared call type. Emitted named, block,
+and splat call shapes fail closed until their full per-target ABI is certified.
+The concrete dispatch-name
+anchor keeps its own function ABI. The `LayoutBox(Int32/String)` bare-receiver
+runtime oracle returns `OK`. The all-concrete typed-union corridor is verified
+structurally at HIR and guarded against downstream MIR ABI mutation; it does not
+yet have a separate runtime oracle.
+Heterogeneous returns in mixed-template, unregistered-instance, and
+generic-struct unions, plus unresolved return sets, are rejected rather than
+inheriting the first target's ABI. Mixed generic/non-generic unions and
+homogeneous unsupported unions retain their existing lowering path. A demanded
+explicit return annotation containing a
+bare generic template, including nullable `T?`
 syntax, now fails closed with the original Crystal diagnostic instead of
 building an incomplete runtime union dispatcher. Bare generic parameter
 restrictions with concrete callsite specializations remain admitted, and an
 uncalled definition retains original Crystal's lazy validation behavior. HIR is
-**382/0** with two existing pending examples, and MIR is **37/0**. Generic
+**388/0** with two existing pending examples, and MIR is **37/0**. Generic
 structs remain static, and bare generic struct return unions fail closed by the
 same original-Crystal storage rule. This is a compatibility guard, not runtime
 support for bare-generic union composition; B4-F remains red.

@@ -8809,6 +8809,7 @@ module Adamas::HIR
       arg_types : Array(TypeRef),
       has_block_call : Bool,
       has_splat : Bool,
+      include_nil : Bool = false,
     ) : TypeRef
       owners = [parent_name] + collect_subclasses_cached(parent_name)
       candidates = [] of TypeRef
@@ -8835,7 +8836,7 @@ module Adamas::HIR
           end
         end
 
-        next if candidate == TypeRef::VOID || candidate == TypeRef::NIL
+        next if candidate == TypeRef::VOID || (!include_nil && candidate == TypeRef::NIL)
         candidates << candidate
       end
 
@@ -8850,6 +8851,182 @@ module Adamas::HIR
 
       union_name = unique_candidates.map { |t| generic_param_type_name_from_ref(t) }.uniq.join(" | ")
       create_union_type(union_name)
+    end
+
+    # Union method lookup keeps one concrete owner as the dispatch-name anchor,
+    # but runtime dispatch can reach every concrete generic instance in the
+    # union. Preserve the complete return ABI at the callsite without changing
+    # the anchored concrete function's registered return type.
+    private def explicit_param_abi_for_generic_union_target(
+      target_name : String,
+      target_def : Adamas::Compiler::Frontend::DefNode,
+      owner_name : String,
+      arg_types : Array(TypeRef),
+    ) : Array(TypeRef)?
+      # Compatibility with one shared argument does not prove that distinct
+      # typed formals share an ABI. Compare their canonical owner-specialized
+      # annotations before callsite narrowing; only truly untyped formals take
+      # the shared call type.
+      formal_types = [] of TypeRef
+      function_param_infos(target_name, target_def).each do |param|
+        next if param.is_block || named_only_separator?(param)
+        return nil if param.is_splat || param.is_double_splat
+        break if formal_types.size >= arg_types.size
+
+        declared_type_name = param.type_annotation
+        call_type = arg_types[formal_types.size]
+        return nil if call_type == TypeRef::VOID
+
+        formal_type = if declared_type_name && !declared_type_name.empty? && declared_type_name != "_"
+                        resolved = annotation_type_ref(declared_type_name, owner_name)
+                        return nil if resolved == TypeRef::VOID
+                        resolved
+                      else
+                        # An untyped formal receives the shared callsite ABI.
+                        call_type
+                      end
+        formal_types << formal_type
+      end
+
+      formal_types.size == arg_types.size ? formal_types : nil
+    end
+
+    private def infer_virtual_return_type_from_registered_generic_union_targets(
+      union_name : String,
+      method_name : String,
+      arg_types : Array(TypeRef),
+      has_block_call : Bool,
+      has_splat : Bool,
+      call_has_named_args : Bool = false,
+    ) : TypeRef
+      variants = split_union_type_name(union_name)
+      return TypeRef::VOID if variants.size < 2
+
+      resolved_variants = variants.map { |variant| resolve_type_alias_chain(variant) }
+      all_concrete_generic = resolved_variants.all? do |variant|
+        strip_generic_args(variant) != variant
+      end
+      return TypeRef::VOID unless all_concrete_generic
+
+      shared_template : String? = nil
+      admitted = true
+      resolved_variants.each_with_index do |resolved_variant, index|
+        variant = variants[index]
+        template_name = strip_generic_args(resolved_variant)
+        if template_name == resolved_variant
+          admitted = false
+          next
+        end
+
+        if expected_template = shared_template
+          admitted = false unless template_name == expected_template
+        else
+          shared_template = template_name
+        end
+
+        variant_ref = type_ref_for_name(resolved_variant)
+        variant_desc = @module.get_type_descriptor(variant_ref)
+        reference_instance = if variant_desc
+                               case variant_desc.kind
+                               when TypeKind::Class
+                                 true
+                               when TypeKind::Array
+                                 resolved_variant.starts_with?("Array(")
+                               when TypeKind::Hash
+                                 resolved_variant.starts_with?("Hash(")
+                               else
+                                 false
+                               end
+                             else
+                               false
+                             end
+        admitted = false unless reference_instance
+
+        instances = @module.generic_instances[template_name]?
+        admitted = false unless instances &&
+                                (instances.includes?(resolved_variant) || instances.includes?(variant))
+      end
+
+      if admitted && (has_block_call || has_splat || call_has_named_args)
+        raise LoweringError.new(
+          "cannot safely lower unproven call shape for concrete generic receiver union #{union_name}##{method_name}"
+        )
+      end
+
+      if admitted && !arg_types.empty?
+        shared_param_abi : Array(TypeRef)? = nil
+        incompatible_explicit_args = false
+        resolved_variants.each do |resolved_variant|
+          owner_base = resolve_method_with_inheritance(resolved_variant, method_name) ||
+                       "#{resolved_variant}##{method_name}"
+          target = lookup_function_def_for_call(
+            owner_base,
+            arg_types.size,
+            has_block_call,
+            arg_types,
+            has_splat,
+          )
+          unless target
+            incompatible_explicit_args = true
+            break
+          end
+
+          param_abi = explicit_param_abi_for_generic_union_target(
+            target[0],
+            target[1],
+            resolved_variant,
+            arg_types,
+          )
+          unless param_abi
+            incompatible_explicit_args = true
+            break
+          end
+
+          if expected_abi = shared_param_abi
+            if param_abi != expected_abi
+              incompatible_explicit_args = true
+              break
+            end
+          else
+            shared_param_abi = param_abi
+          end
+        end
+
+        if incompatible_explicit_args
+          raise LoweringError.new(
+            "cannot safely lower incompatible explicit arguments for concrete generic receiver union #{union_name}##{method_name}"
+          )
+        end
+      end
+
+      candidates = [] of TypeRef
+      resolved_variants.each do |resolved_variant|
+        candidate = infer_virtual_return_type_from_class_targets(
+          resolved_variant,
+          method_name,
+          arg_types,
+          has_block_call,
+          has_splat,
+          include_nil: true,
+        )
+        if candidate == TypeRef::VOID
+          raise LoweringError.new(
+            "cannot safely lower unresolved returns for concrete generic receiver union #{union_name}##{method_name}"
+          )
+        end
+        candidates << candidate
+      end
+
+      unless admitted
+        if candidates.uniq.size > 1
+          raise LoweringError.new(
+            "cannot safely lower heterogeneous returns for unsupported concrete generic receiver union #{union_name}##{method_name}"
+          )
+        end
+        return TypeRef::VOID
+      end
+
+      union_type_for_value_set(candidates) || TypeRef::VOID
     end
 
     # Compute a fast hash of arg types for virtual dispatch dedup keys.
@@ -46499,6 +46676,21 @@ module Adamas::HIR
                   STDERR.puts "[L13_REPAIR] shape_rekey base=#{resolved_base} corrected=#{corrected_name} br=#{br_name} shaped=#{shaped}"
                 end
                 corrected_name = shaped unless shaped.empty?
+              end
+            end
+
+            if virtual_union_repair && receiver_desc
+              inferred_union_return = infer_virtual_return_type_from_registered_generic_union_targets(
+                receiver_desc.name,
+                method_name,
+                arg_types,
+                has_block_call,
+                receiver_repair_target_has_splat?(method_name_text),
+                !named_call_shape.nil?,
+              )
+              if inferred_union_return != TypeRef::VOID
+                preserve_receiver_call_type = true
+                preserved_receiver_return_type = inferred_union_return
               end
             end
 
@@ -93080,6 +93272,23 @@ module Adamas::HIR
         return_type = specialize_type_with_receiver_map(return_type, ctx.type_of(receiver_id))
       end
 
+      if receiver_id && call_virtual
+        receiver_type = ctx.type_of(receiver_id)
+        if receiver_desc = @module.get_type_descriptor(receiver_type)
+          if receiver_desc.kind == TypeKind::Union
+            inferred_union_return = infer_virtual_return_type_from_registered_generic_union_targets(
+              receiver_desc.name,
+              method_name,
+              arg_types,
+              has_block_call,
+              has_splat,
+              has_named_args,
+            )
+            return_type = inferred_union_return unless inferred_union_return == TypeRef::VOID
+          end
+        end
+      end
+
       # Coerce arguments to union types if needed
       # This handles cases like passing Int32 to a parameter of type Int32 | Nil
       if debug_env_filter_match?("DEBUG_CALL_TRACE", method_name, base_method_name, mangled_method_name)
@@ -106881,6 +107090,20 @@ module Adamas::HIR
         if builtin_conversion_receiver
           if inferred_conversion = conversion_method_return_type(member_name)
             return_type = inferred_conversion
+          end
+        end
+      end
+      if call_virtual
+        if receiver_desc = @module.get_type_descriptor(ctx.type_of(object_id))
+          if receiver_desc.kind == TypeKind::Union
+            inferred_union_return = infer_virtual_return_type_from_registered_generic_union_targets(
+              receiver_desc.name,
+              member_name,
+              arg_types,
+              false,
+              false,
+            )
+            return_type = inferred_union_return unless inferred_union_return == TypeRef::VOID
           end
         end
       end
