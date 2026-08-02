@@ -300,10 +300,9 @@ describe Semantic::TypeInferenceEngine do
       second_analyzer.collect_symbols
       second_names = second_analyzer.resolve_names
       second_owner = shared_context.symbol_table.lookup("T1SharedContext").as(Semantic::ClassSymbol)
-      second_method = second_owner.scope.lookup("route").as(Semantic::OverloadSetSymbol).overloads.find do |candidate|
-        def_node = second_program.ast_arena[candidate.node_id].as(Frontend::DefNode)
-        def_node.params_storage.same?(candidate.params)
-      end.not_nil!
+      second_method = second_owner.scope.lookup("route").as(Semantic::MethodSymbol)
+      second_def = second_program.ast_arena[second_method.node_id].as(Frontend::DefNode)
+      second_def.params_storage.same?(second_method.params).should be_true
       second_engine = Semantic::TypeInferenceEngine.new(
         second_program,
         second_names.identifier_symbols,

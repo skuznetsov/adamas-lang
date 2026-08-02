@@ -666,6 +666,51 @@ describe Semantic::SymbolCollector do
     collector.diagnostics.none? { |diag| diag.code == "E2003" }.should be_true
   end
 
+  it "replaces the same guarded method declaration shape while retaining true overloads" do
+    source = <<-CR
+      class Router
+        def route(value : Int32) : String
+          "old"
+        end
+      end
+
+      class Router
+        def route(value : String) : Bool
+          true
+        end
+
+        def route(value : Int32) : Int32
+          value
+        end
+      end
+
+      class SingleRouter
+        def route(value : Int32) : String
+          "old"
+        end
+
+        def route(value : Int32) : Int32
+          value
+        end
+      end
+    CR
+
+    program = Frontend::Parser.new(Frontend::Lexer.new(source)).parse_program
+    context = Semantic::Context.new(Semantic::SymbolTable.new)
+    collector = Semantic::SymbolCollector.new(program, context)
+    collector.collect
+
+    collector.diagnostics.should be_empty
+
+    router = context.symbol_table.lookup("Router").should be_a(Semantic::ClassSymbol)
+    methods = router.as(Semantic::ClassSymbol).scope.lookup("route").should be_a(Semantic::OverloadSetSymbol)
+    methods.as(Semantic::OverloadSetSymbol).overloads.map(&.return_annotation).should eq(["Int32", "Bool"])
+
+    single_router = context.symbol_table.lookup("SingleRouter").should be_a(Semantic::ClassSymbol)
+    single_method = single_router.as(Semantic::ClassSymbol).scope.lookup("route").should be_a(Semantic::MethodSymbol)
+    single_method.as(Semantic::MethodSymbol).return_annotation.should eq("Int32")
+  end
+
   it "collects uppercase assignment constants in class scopes" do
     source = <<-CR
       module Adamas::HIR

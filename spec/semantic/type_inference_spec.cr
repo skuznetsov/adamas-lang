@@ -516,6 +516,39 @@ describe Semantic::TypeInferenceEngine do
   end
 
   describe "Phase 4B: Method Overload Resolution" do
+    it "selects the latest guarded declaration shape without disturbing true overloads" do
+      source = <<-CRYSTAL
+        class Router
+          def route(value : Int32) : String
+            "old"
+          end
+        end
+
+        class Router
+          def route(value : String) : Bool
+            true
+          end
+
+          def route(value : Int32) : Int32
+            value
+          end
+        end
+
+        router = Router.new
+        router.route(1)
+        router.route("x")
+      CRYSTAL
+
+      program, analyzer, engine = infer_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+
+      engine.context.get_type(program.roots[-2]).to_s.should eq("Int32")
+      engine.context.get_type(program.roots[-1]).to_s.should eq("Bool")
+    end
+
     it "selects correct overload by parameter count" do
       source = <<-CRYSTAL
         class Calc

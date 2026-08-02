@@ -2071,16 +2071,45 @@ module Adamas
         private def handle_method_redefinition(name : String, new_symbol : MethodSymbol, existing : Symbol, table : SymbolTable)
           case existing
           when MethodSymbol
-            # Phase 4B: Create OverloadSet for multiple methods with same name
-            overload_set = OverloadSetSymbol.new(name, existing.node_id, [existing, new_symbol])
-            table.redefine(name, overload_set)
+            if same_guarded_method_declaration_shape?(existing, new_symbol)
+              new_symbol.merge_declaration_origins_from(existing)
+              table.redefine(name, new_symbol)
+            else
+              # Phase 4B: Create OverloadSet for multiple methods with same name
+              overload_set = OverloadSetSymbol.new(name, existing.node_id, [existing, new_symbol])
+              table.redefine(name, overload_set)
+            end
           when OverloadSetSymbol
-            # Phase 4B: Add to existing overload set
-            existing.add_overload(new_symbol)
+            if index = existing.overloads.index { |overload| same_guarded_method_declaration_shape?(overload, new_symbol) }
+              new_symbol.merge_declaration_origins_from(existing.overloads[index])
+              existing.overloads[index] = new_symbol
+              existing.node_id = existing.overloads.first.node_id
+            else
+              # Phase 4B: Add to existing overload set
+              existing.add_overload(new_symbol)
+            end
           when ClassSymbol, MacroSymbol, VariableSymbol
             emit_incompatible_redefinition(name, new_symbol, existing)
           else
             emit_incompatible_redefinition(name, new_symbol, existing)
+          end
+        end
+
+        # This is intentionally a syntax-level guard, not Crystal's full
+        # restriction ordering. Unmatched shapes remain overloads.
+        private def same_guarded_method_declaration_shape?(left : MethodSymbol, right : MethodSymbol) : Bool
+          return false unless left.is_class_method? == right.is_class_method?
+          return false unless left.params.size == right.params.size
+
+          left.params.each_with_index.all? do |left_param, index|
+            right_param = right.params[index]
+            left_param.name == right_param.name &&
+              left_param.external_name == right_param.external_name &&
+              left_param.type_annotation == right_param.type_annotation &&
+              !!left_param.default_value == !!right_param.default_value &&
+              left_param.is_splat == right_param.is_splat &&
+              left_param.is_double_splat == right_param.is_double_splat &&
+              left_param.is_block == right_param.is_block
           end
         end
 
