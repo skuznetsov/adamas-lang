@@ -53,7 +53,10 @@ Document contract (hard rules):
   body inference. Selected Def payload plus receiver visibility/owner
   provenance fail closed for independent roots while canonical re-export
   remains valid. No `ResolutionId`, producer stream, aggregate-to-original arena
-  handoff, downstream join, or lowering authority is admitted.
+  handoff, downstream join, or lowering authority is admitted. A current
+  compiler-consumer inventory found no semantic object flow from the aggregate
+  prepass into per-file HIR, so cross-arena `MethodSymbol` admission is rejected
+  rather than scaffolded; LSP symbol merging is a separate bounded context.
 - **B5 (s2 self-build -> s3): BLOCKED BY B4-F / HISTORICAL LOCATOR ONLY.** The
   historical first bad stop was
   `ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_BODY_LOWERED` inside the
@@ -229,10 +232,13 @@ canonical symbol re-export into a file-local table remains valid. Same-arena
 class reopenings preserve one receiver identity across distinct selected Defs;
 recollecting a shared symbol-table context from a distinct arena rejects stale
 receiver and method symbols while admitting the replacement symbol.
-Cross-arena admission for declarations retained from another per-file Analyzer
-and same-arena stale-`MethodSymbol` admission/duplicate-signature redefinition
-ordering remain unresolved. This does not authorize a producer stream, create
-a cross-arena consumer, or make T1 green.
+Same-arena stale-`MethodSymbol` admission and exact duplicate-signature
+redefinition ordering are guarded. Cross-arena `MethodSymbol` admission for
+compiler lowering is rejected at the current boundary: the aggregate semantic
+prepass has no semantic-object handoff to `AstToHir`, and the existing unit
+offsets are only a structurally validated node map. LSP per-file symbol merging
+belongs to a separate bounded context. This does not authorize a producer
+stream, create a cross-arena consumer, or make T1 green.
 
 The T1 guard is **availability/current-red only**: it can show whether the
 current source/configuration emitted a row or exposed the current failing
@@ -1489,12 +1495,15 @@ Exit falsifiers:
 Keep this phase behavior-neutral and follow the canonical five-step slice in
 `docs/specs/07-compiler-decomposition-and-semantic-replacement.md` section
 13.3. Ownership/`NameId` and the exact r1-r5 local typed decision are complete.
-Next prove a bounded aggregate-to-original callsite/arena handoff to one named
-downstream compiler consumer; only then mint `ResolutionId` and stream the
-producer record. Keep boundedness diagnostic until a guard hard-caps it and
-the external join pending until downstream `resolution_id` enrichment exists.
-Its first DoD is identity continuity with zero HIR/MIR/LLVM delta, not queue
-reduction or a speed claim.
+The current consumer inventory refutes an immediate cross-arena handoff: no
+semantic `MethodSymbol`, `DefIdentity`, `DefInstanceKey`, or
+`LocalCallResolution` reaches per-file HIR. Pause this phase before minting
+`ResolutionId`. Resume only when one named compiler consumer exists in the same
+coherent slice; then prove its bounded aggregate-to-original callsite mapping
+before streaming a producer record. Keep boundedness diagnostic until a guard
+hard-caps it and the external join pending until downstream `resolution_id`
+enrichment exists. Its first DoD remains identity continuity with zero
+HIR/MIR/LLVM delta, not queue reduction or a speed claim.
 
 ### Phase 4: Seal NameResolution and TypeIdentity
 

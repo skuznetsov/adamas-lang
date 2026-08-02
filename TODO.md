@@ -1,9 +1,9 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-08-01 (exact guarded method declaration shapes replace in place;
-local keyed decisions reject replaced same-arena method objects; selected
-semantic Def ownership and reparse structure are fail-closed; T1 and B4-F
-remain red).
+Updated: 2026-08-01 (the unconsumed cross-arena lowering bridge is rejected;
+T9 is the next active lowering falsifier; exact guarded method declaration
+shapes replace in place; local keyed decisions reject replaced same-arena
+method objects; T1 and B4-F remain red).
 
 T1 OWNERSHIP/NAME-ID SUBSTRATE VERIFIED; CALL RESOLUTION CONTINUITY REMAINS
 OPEN. `SemanticIdentityRegistry` is now the compile-session owner for canonical
@@ -61,18 +61,23 @@ and the corresponding Adamas collector/inference groups pass 33 and 283
 examples. This is an exact declaration-shape fail-closed guard, not Crystal's
 full restriction ordering: renamed parameters, changed default presence,
 semantic restriction equivalence, and the `previous_def` chain remain open.
-Cross-arena admission for declarations retained from another per-file Analyzer,
-scope/return/type-parameter metadata, in-place shared parameter payload
-mutation, non-`self` explicit receivers, and generic/union/container types
-remain outside this narrow guard. This is not the general `CallResolution`, a
-`ResolutionId`,
-T1 telemetry, downstream continuity, or new selection authority. The proposed
-stream-only producer is rejected for now: the external T1 guard is not a live
-compiler consumer, semantic analysis owns an aggregate reparse arena, and HIR
-later consumes the original per-file arenas. Do not add `ResolutionId`, an
-ordinal call token, or another bridge until a bounded callsite/arena ownership
-falsifier names a genuine downstream consumer. The HIR compatibility path now
-exposes only
+Cross-arena `MethodSymbol` admission for compiler lowering is rejected at this
+boundary. The live compiler inventory found no semantic object flow from the
+aggregate reparse Analyzer into `AstToHir`: the semantic prepass consumes its
+local result, while HIR independently lowers the original per-file arenas. The
+existing `CompileShadowAggregate` unit offsets prove a structural node mapping
+after `original_unit_structure_error`, but a map is not a downstream consumer.
+LSP symbol-table merging is a separate bounded context and does not authorize a
+compiler-lowering bridge. Scope/return/type-parameter metadata, in-place shared
+parameter payload mutation, non-`self` explicit receivers, and
+generic/union/container types remain outside this narrow guard. This is not the
+general `CallResolution`, a `ResolutionId`, T1 telemetry, downstream continuity,
+or new selection authority. Phase 3a therefore pauses before `ResolutionId`;
+do not add an ordinal call token or another bridge until a genuine compiler
+consumer exists in the same coherent slice. The next active lowering frontier
+is the existing T9 union/static generic materialization falsifier, which already
+has live HIR/materialization consumers. The HIR compatibility path now exposes
+only
 `SelectedCallTarget {symbol_name, def_node}`; the unused `CallShape`,
 `ResolutionBinding`, string-round-trip `MethodInstanceKey`, and their unconsumed
 assertion paths were removed rather than promoted into semantic authority.

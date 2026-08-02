@@ -1354,3 +1354,32 @@ inherited/include false-reject and fresh-replacement false-accept mechanisms
 were incorrect. Do not count the `VULNERABLE` label as verification evidence.
 **Cost saved:** small independent source-routing check; local tests and source
 ownership remain authoritative.
+
+### Session 53 — 2026-08-01 — Aggregate-to-per-file consumer audit
+
+**Task:** read-only inventory of the aggregate semantic reparse to original
+per-file HIR boundary, with an explicit request to separate compiler lowering
+from LSP and to reject any new owner or adapter without a live consumer.
+**Brief size:** bounded prompt naming `CompileShadowAggregate`, semantic
+`MethodSymbol`/`DefIdentity`/`DefInstanceKey`/`LocalCallResolution`, HIR, LSP,
+and the required admit/handoff/reject verdict; no edits.
+**Latency:** about 20 seconds, exit 0.
+**Output quality:** useful for source routing. Grok independently found that the
+CLI semantic prepass consumes the aggregate Analyzer result locally while HIR
+continues on the original per-file arenas, and found no semantic object handed
+to `AstToHir`. It recommended rejecting the cross-arena bridge. Its claim that
+the tree was clean at `ae741456` was stale and wrong (`179c2d19` was current),
+and it described LSP too broadly as a shadow-aggregate consumer; local
+inspection instead found separate per-program Analyzers with merged dependency
+symbol tables.
+**Adversary check:** direct inspection of `run_semantic_compile_prepass`, the HIR
+setup, all `local_call_resolution` producers/consumers, and LSP context merging
+confirmed the compiler conclusion while keeping the LSP boundary separate.
+`CompileShadowAggregate#original_unit_structure_error` proves a deterministic
+unit-offset mapping for parser-owned nodes, but that map is not a lowering
+consumer and does not justify `ResolutionId` or foreign-symbol admission.
+**Verdict:** useful corroboration for the reject/pivot decision, with stale HEAD
+and LSP framing discarded. Local source inventory and safe-run focused specs
+remain authoritative.
+**Cost saved:** small cross-file consumer search; no implementation decision was
+delegated.

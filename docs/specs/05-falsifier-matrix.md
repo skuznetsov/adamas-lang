@@ -121,14 +121,14 @@ compile-path switch.
 STABLE6 telemetry remains an adversarial diagnostic, not a release certificate.
 The local parity verdict is **ROBUST** only for the simple bounded checks; the
 whole-system verdict is **BROKEN for admission** because runtime-OFF changes
-the self-host source/workload and failure class. The next safe route is not
-another large in-process callsite owner or new `AstToHir` ivars: reuse the
-existing materialization ledger and semantic `DefIdentity`/`DefInstanceKey`,
-add only a minimal bounded producer record if necessary, serialize it as
-telemetry rather than authority, and perform the composite join/census
-externally/offline with a bounded streaming analyzer. Join actual semantic
-instance/body creation, queue growth, wall time, and RSS before choosing the
-smallest behavior change. T1 remains missing and B4-F remains red/open.
+the self-host source/workload and failure class. A current compiler-consumer
+inventory found no semantic object flow from the aggregate prepass into
+per-file HIR, so a cross-arena `MethodSymbol` admission, new in-process
+callsite owner, or new `AstToHir` ivar is rejected at this boundary. Existing
+unit offsets are a structural map, not a consumer. T1 pauses before
+`ResolutionId`; the next active lowering route is T9's executable union/static
+generic materialization falsifier with live HIR/materialization consumers.
+T1 remains missing and B4-F remains red/open.
 The separate full-prelude/union audit remains intentionally red/noisy (about
 2673 registered, 2568 agree, 404 mismatch, 1 stale, 199 untracked required,
 225 unjoined, 1 ambiguous, and 11377 calls); its similar plain run is not
