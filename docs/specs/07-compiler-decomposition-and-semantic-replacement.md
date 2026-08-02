@@ -100,7 +100,7 @@ keeps source revisions, generated artifacts, and the dirty worktree distinct.
 | 2026-07-14 fresh run | `SEMANTIC SPLIT / RED` | Roughly 711 seconds; no-prelude was green while the plain/full-prelude smoke was red. |
 | G7 snapshot | `REFUTED AS RELEASE CANDIDATE` | Produced `s2` after 1962.79 seconds; both semantic smoke modes were red. |
 | G8 snapshot | `REFUTED AS RELEASE CANDIDATE` | Produced `s2` after 1791.78 seconds; both semantic smoke modes were red. |
-| G9 snapshot | `DIAGNOSTIC CANDIDATE ONLY` | Produced `s2` after 1768.73 seconds; both semantic smoke modes were red. Its retained HIR/MIR/LLVM artifacts may localize typed materialization divergence, but cannot certify current source. |
+| G9 snapshot | `DIAGNOSTIC CANDIDATE ONLY` | Produced `s2` after 1768.73 seconds; both semantic smoke modes were red. Its HIR/MIR/LLVM artifacts were not retained in the current checkout, so only the revision-scoped report remains and cannot certify current source. |
 | `91ebe332` Slice 1A | `T0 COMPLETED / GUARD-ONLY` | Stage1 passes; fresh `s1 -> s2` reaches the same 900-second timeout as the clean control. HIR provenance ON/OFF is byte-identical, but no `ResolutionId`/materialization consumer is present. |
 | R0 sealed current-source snapshot | `COMPLETED / NON-PROMOTING` | Base `c216b9ef...`, tree `1efb635...`, exactly seven tracked compiler/spec paths, patch SHA-256 `d7ad2cac...`; snapshot diff-check passes. Manifest: `/private/tmp/adamas_r0_current_c216_manifest.md`. |
 | Host preflight and stage1 | `GREEN` | Host spawn green; host build 14.13s; plain smoke `42` in 20.29s; exact no-prelude markers in 0.65s; `cv2_s1` SHA-256 `dfe3c0e8...`. |
@@ -189,15 +189,27 @@ later serialization of that identity; equal display families do not require
 equal instances.
 
 The minimal probe preserves both call arguments through HIR, MIR, and LLVM, so
-it does not reproduce argument loss. The full G9 `s2` LLVM artifact instead
-contains a union `<<` path that calls zero-argument `push$AstArena()` and a
-zero-argument unreachable stub. That makes late HIR materialization or a
-missing selected target a high-confidence hypothesis for zero-argument body
-creation, but it is not yet proven. G9 is therefore retained only as a
-diagnostic candidate. T9 permits the lawful concrete and union instances and
-requires one reducer to join selected definition/instance, coercion and value
-type, receiver/value arity, materialized body, and emitted symbol before any
-fix or promotion.
+it does not reproduce argument loss. Historical G9 `s2` LLVM was reported to
+contain a union `<<` path that called zero-argument `push$AstArena()` and a
+zero-argument unreachable stub. The artifact is not retained and the symptom
+has not been reproduced from current source. Late HIR materialization or a
+missing selected target is therefore a hypothesis for the historical body,
+not a proven current defect. G9 is retained only as a diagnostic candidate. T9
+permits the lawful concrete and union instances and requires one reducer to
+join selected definition/instance, coercion and value type, receiver/value
+arity, materialized body, and emitted symbol before any fix or promotion.
+
+A bounded reachability audit with the provided, non-provenance-bound stage1
+binary reached an intentional `CLI#compile` body-lowered gate in about 71
+seconds. Separate exact `push$AstArena` and broader parent `<<$AstArena`
+pending-target probes timed out at 180 seconds without reaching their gates. A
+broad `push` filter did reach `Array(UInt64)#push$UInt64` in about 54 seconds,
+so the filter path itself is live. These observations do not prove exact-target
+absence, completed HIR, or LLVM parity: the phase gate exits via `_exit(0)`,
+the historical B5 locator was a different `CLI#run$IO_IO` edge, and the stage1
+binary has no source-bound build receipt. The evidence expires on any stage1
+or compiler-source change; refresh it with a bound build receipt and the exact
+target-to-HIR/MIR/LLVM join.
 
 ### 2.5 STABLE6 — refuted in-process prototype / not admitted
 
@@ -737,7 +749,7 @@ retire existing B4/B5, name-resolution, materialization, or layout rows.
 |---|---|---|
 | `ResolutionId` preserves typed identity continuity. | Direct versus alias-derived generic calls, named arguments, block calls, absolute `::Hash`, and two distinct declarations with the same display spelling. | Any collision, remint, or owner loss stops the slice. |
 | `MethodInstanceKey` is injective for body/materialization demand. | Same declaration with different receiver/arg/block/named-arg types; same rendered name with different `DefIdentity`. | A key collision or mutable-key change rejects cache promotion. |
-| Lawful concrete and union generic instances preserve identity and body continuity through materialization. | [Reducer](../../regression_tests/union_static_generic_materialization_guard.cr) and [guard](../../regression_tests/union_static_generic_materialization_guard.sh) compare concrete `main_arenas << map_arena`, explicit `.as(ArenaLike)`, and true union flow; they join selected instance, coercion/value type, receiver/value arity, HIR body, and optional full-stage LLVM symbol/stub shape. | Concrete flow may select the `AstArena` instance; explicit and true union flow may select union/reduced-union instances. Any owner/key discontinuity, lost receiver/value argument, unmatched body/symbol, or orphan zero-argument call/stub fails T9. Focused HIR mode is green; the optional full-G9 zero-argument call/unreachable-body artifact remains measured red, so full materialization/emission continuity is unsatisfied. |
+| Lawful concrete and union generic instances preserve identity and body continuity through materialization. | [Reducer](../../regression_tests/union_static_generic_materialization_guard.cr) and [guard](../../regression_tests/union_static_generic_materialization_guard.sh) compare concrete `main_arenas << map_arena`, explicit `.as(ArenaLike)`, and true union flow; they join selected instance, coercion/value type, receiver/value arity, HIR body, and optional full-stage LLVM symbol/stub shape. | Concrete flow may select the `AstArena` instance; explicit and true union flow may select union/reduced-union instances. Any owner/key discontinuity, lost receiver/value argument, unmatched body/symbol, or orphan zero-argument call/stub fails T9. Focused HIR mode is green; the historical full-G9 zero-argument artifact is stale and unreproduced, so fresh full materialization/emission continuity remains unsatisfied. |
 | No semantic string keys remain on the candidate route. | Source-shape scan plus runtime ledger for mangled-name cache/owner decisions and late string rewrites. | Any semantic branch driven by a string remains guard-only. |
 | Arena identity is preserved. | Block, macro, inline, reparsed, and current-arena `ExprId` reducers with equal numeric indices. | Index-only fallback or stale dereference fails closed. |
 | No legacy queue is required. | `ADAMAS_SEMANTIC_ASSERT_NO_LEGACY_QUEUE=1` on hello, generic, macro, block, recursive, and stage2/3 reducers. | Any legacy queue/safety-net execution blocks promotion. |
@@ -859,9 +871,10 @@ The upstream audit admits the distinct concrete and union instances. Focused
 HIR continuity is now green: no-callsite `<<`/`>>` inference cannot seed a
 signature from an unknown receiver's right operand, and receiver-layout
 fallback preserves a concrete typed callsite only when it exactly re-serializes
-to the selected symbol. The remaining defect is the zero-arg call/stub in full
-G9 LLVM. It stays a late-materialization/missing-target hypothesis until the
-full route joins selected `Def`/`DefInstanceKey`, coercion/value type,
+to the selected symbol. The remaining current obligation is fresh exact-target
+reach plus full post-lowering HIR/MIR/LLVM continuity. The historical zero-arg
+call/stub stays an unreproduced late-materialization/missing-target hypothesis
+until the full route joins selected `Def`/`DefInstanceKey`, coercion/value type,
 receiver/value arity, materialized body, and emitted symbol for all three
 lawful flows.
 

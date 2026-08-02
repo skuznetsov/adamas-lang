@@ -96,17 +96,27 @@ reduced-union instances. At the original Crystal oracle boundary, instance
 authority is `DefInstanceKey(def.object_id, actual typed args, block/named)`;
 that `object_id` detail is not Adamas authority. Adamas requires `DefIdentity`
 plus actual typed args, block, and named arguments; the mangled name is later
-serialization. The minimal HIR/MIR/LLVM probe preserves two
-arguments. Full G9
-`s2` LLVM instead contains a union `<<` path calling zero-argument
-`push$AstArena()` plus a zero-argument unreachable stub. Late HIR
-materialization or a missing selected target is therefore a high-confidence
-hypothesis for the malformed body, not yet a proven creation mechanism. T9's
-focused HIR mode is now green: unknown-left `<<`/`>>` body inference fails
-closed, and receiver-layout fallback preserves a concrete typed callsite only
-when it exactly re-serializes to the selected symbol. The full-G9 zero-argument
-call/unreachable-body artifact remains `MEASURED_RED`; focused HIR success is
-not full symbol continuity.
+serialization. The minimal HIR/MIR/LLVM probe preserves two arguments.
+Historical G9 `s2` LLVM was reported to contain a union `<<` path calling
+zero-argument `push$AstArena()` plus a zero-argument unreachable stub. That
+artifact is not retained in the current checkout, and no fresh current-source
+reproduction has been obtained. Late HIR materialization or a missing selected
+target therefore remains a hypothesis for the historical malformed body, not
+a proven current creation mechanism. T9's focused HIR mode is now green:
+unknown-left `<<`/`>>` body inference fails closed, and receiver-layout fallback
+preserves a concrete typed callsite only when it exactly re-serializes to the
+selected symbol. Focused HIR success is not full symbol continuity.
+
+A bounded audit with the provided, non-provenance-bound stage1 binary reached
+the intentional `CLI#compile` body-lowered gate in about 71 seconds. The exact
+`push$AstArena` pending target and a broader `<<$AstArena` parent target did not
+reach their gates before separate 180-second safe-run timeouts. A broad `push`
+gate matched `Array(UInt64)#push$UInt64` in about 54 seconds, confirming that
+the filter path is active. The gate's `_exit(0)` is phase evidence rather than
+compile success; the timeouts do not prove target absence; the historical B5
+locator at `CLI#run$IO_IO` is a different boundary. This diagnostic evidence
+expires when the stage1 binary or compiler source changes. Refresh requires a
+source-bound stage1 receipt plus exact target-to-HIR/MIR/LLVM continuity.
 
 ### 0.2 Authority-edge state table
 
@@ -259,9 +269,9 @@ consumed as a behavior fix); `MaterializationAttemptResult` terminal-status
 owner type (paper-only); vertical `MethodBodyLoweringContext` /
 `SemanticStateScope` slice.
 The static-union insertion target/materialization edge is also residual: T9's
-focused HIR join is green, but the full-G9 route must still join the selected
-target to the materialized body and emitted call before an owner record can be
-marked consumed.
+focused HIR join is green, but a fresh full-G9 route must still reach and join
+the selected target to the materialized body and emitted call before an owner
+record can be marked consumed.
 
 ## 1. Admitted surface
 
@@ -1625,8 +1635,9 @@ future architecture work:
   [reducer](../regression_tests/union_static_generic_materialization_guard.cr)
   and [guard](../regression_tests/union_static_generic_materialization_guard.sh)
   now pass in focused HIR mode for the concrete, explicit-cast, and true-union
-  corridors. Optional full-G9 mode still classifies the orphan zero-argument
-  call/stub as `MEASURED_RED`.
+  corridors. A historical full-G9 artifact classified an orphan zero-argument
+  call/stub as `MEASURED_RED`; that artifact is stale and has not been
+  reproduced from current source.
 - dead-code deletion smoke - targeted reducer set plus `s2b`/`s3b` frontier
   comparison for removed paths in compiler hot code.
 

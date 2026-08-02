@@ -1,9 +1,10 @@
 # Adamas Bootstrap TODO
 
 Updated: 2026-08-01 (the unconsumed cross-arena lowering bridge is rejected;
-T9 focused HIR continuity is green and the full-G9 artifact remains red; exact
-guarded method declaration shapes replace in place; local keyed decisions
-reject replaced same-arena method objects; T1 and B4-F remain red).
+T9 focused HIR continuity is green while the historical full-G9 report and
+symptom are stale and unreproduced; no artifact is retained. Exact guarded
+method declaration shapes replace in place; local keyed decisions reject
+replaced same-arena method objects; T1 and B4-F remain red).
 
 T1 OWNERSHIP/NAME-ID SUBSTRATE VERIFIED; CALL RESOLUTION CONTINUITY REMAINS
 OPEN. `SemanticIdentityRegistry` is now the compile-session owner for canonical
@@ -84,9 +85,10 @@ M4i6f tuple-layout repair remain intact. Evidence: host build, focused T9 HIR
 guard, union/nilable Array runtime storage, late generic union stride, tuple
 Array/Pointer runtime guards, and the HIR suite (372 examples, 0
 failures/errors, 2 existing pending). This closes only the focused HIR
-discontinuities. The next active T9 frontier is the full-G9 zero-argument
-call/unreachable-body artifact; T1 and B4-F remain red. The HIR compatibility
-path now exposes only
+discontinuities. The next active T9 frontier is fresh exact-target reach plus
+post-lowering HIR/MIR/LLVM continuity; the historical zero-argument symptom is
+not current evidence. T1 and B4-F remain red. The HIR compatibility path now
+exposes only
 `SelectedCallTarget {symbol_name, def_node}`; the unused `CallShape`,
 `ResolutionBinding`, string-round-trip `MethodInstanceKey`, and their unconsumed
 assertion paths were removed rather than promoted into semantic authority.
@@ -403,9 +405,20 @@ returns `Array`, and concrete `AstArena` reaches the selected concrete
 specialization without premature union wrapping. Historical full-G9 LLVM
 evidence additionally contained one zero-argument call and one zero-argument
 unreachable definition for that `push` target; it is stale until reproduced
-from the current commit. The attempted STABLE6 in-process callsite-owner
-prototype is now refuted and is not an admitted route. Do not add another large
-owner or new `AstToHir` ivars. The next safe route reuses the existing
+from the current commit. A bounded reachability audit with the provided,
+non-provenance-bound stage1 binary reached the intentional `CLI#compile`
+body-lowered gate in about 71 seconds, but neither the exact `push$AstArena`
+target nor its `<<$AstArena` parent reached their pending-target gates within
+180 seconds. A broad `push` gate did match `Array(UInt64)#push$UInt64` in about
+54 seconds, so the filter mechanism itself is live. These are
+phase/reachability diagnostics only: the intentional gate uses `_exit(0)`, the
+timeouts do not prove target absence, and no current full-G9 HIR/MIR/LLVM
+continuity artifact or proof exists. This evidence decays when the stage1
+binary or compiler sources change and must then be reproduced with a
+source-bound build receipt.
+The attempted STABLE6 in-process callsite-owner prototype is now refuted and
+is not an admitted route. Do not add another large owner or new `AstToHir`
+ivars. The next safe route reuses the existing
 materialization ledger and semantic `DefIdentity`/`DefInstanceKey`; before any
 producer record, prove a bounded callsite/arena handoff to one downstream
 compiler consumer. External telemetry alone is insufficient authority.
