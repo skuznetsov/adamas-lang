@@ -393,17 +393,17 @@ regression delta is admitted. Stats-on versus uninstrumented timing is also
 diagnostic-only. The current classification is a high-confidence hypothesis
 of string-keyed replay/materialization amplification, not causal proof.
 
-The first typed materialization falsifier is RED on current `bin/adamas` and
-historical G9 stage1. Original Crystal lawfully specializes
+The first typed materialization falsifier was RED before `b562b680` on the
+focused compiler and historical G9 stage1. Original Crystal lawfully specializes
 `Array(ArenaLike)#push` by the actual expression type, so concrete
 `push$AstArena` is not itself a bug. The real invariant is continuity from the
 selected `Def`/typed instance through coercion, receiver/value arity, body, and
-emitted symbol. The focused HIR guard finds two violations: the explicit-union
-append is declared with the union return type while returning `Array`, and the
-concrete append wraps `AstArena` into the union before calling the
-`AstArena`-parameter specialization. The retained full-G9 LLVM additionally
-contains one zero-argument call and one zero-argument unreachable definition
-for that `push` target. The attempted STABLE6 in-process callsite-owner
+emitted symbol. The focused HIR guard is now green: the explicit-union append
+returns `Array`, and concrete `AstArena` reaches the selected concrete
+specialization without premature union wrapping. Historical full-G9 LLVM
+evidence additionally contained one zero-argument call and one zero-argument
+unreachable definition for that `push` target; it is stale until reproduced
+from the current commit. The attempted STABLE6 in-process callsite-owner
 prototype is now refuted and is not an admitted route. Do not add another large
 owner or new `AstToHir` ivars. The next safe route reuses the existing
 materialization ledger and semantic `DefIdentity`/`DefInstanceKey`; before any
