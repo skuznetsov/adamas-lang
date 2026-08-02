@@ -1,7 +1,8 @@
 # Adamas Bootstrap TODO
 
 Updated: 2026-08-02 (bare reference-generic instance dispatch is verified for
-direct erased receivers; the unconsumed cross-arena lowering bridge is rejected;
+direct erased receivers; unsupported bare-generic runtime return unions now
+fail closed; the unconsumed cross-arena lowering bridge is rejected;
 T9 focused HIR-to-MIR-to-LLVM continuity and source-bound full-compiler HIR
 continuity are green through exact-target body lowering, while full-source
 MIR/LLVM continuity remains blocked by B4-F and the historical full-G9 symptom
@@ -9,18 +10,25 @@ is stale and unreproduced. Exact guarded method
 declaration shapes replace in place; local keyed decisions reject replaced
 same-arena method objects; T1 and B4-F remain red).
 
-BARE REFERENCE-GENERIC INSTANCE DISPATCH VERIFIED; UNION COMPOSITION REMAINS
-OPEN. A bare generic receiver now records an erased virtual-call shape without
+BARE REFERENCE-GENERIC INSTANCE DISPATCH VERIFIED; UNSUPPORTED RUNTIME UNION
+COMPOSITION FAILS CLOSED. A bare generic receiver now records an erased
+virtual-call shape without
 materializing a layout-bearing template body. Concrete reference instances are
 registered only after layout alignment, replay the shape independently of the
 source inheritance graph, and form the MIR type-id candidate family. Admission
 fails closed unless every registered instance has a body and all candidate
 return/explicit-argument ABIs agree. Layout-distinct `LayoutBox(Int32/String)`
 has structural HIR-offset and MIR-type-id coverage; the true erased `Hash#size`
-runtime path emits a five-case dispatcher and returns `1`. HIR is **379/0** with
-two existing pending examples, and MIR is **37/0**. Generic structs remain static. A union
-variant whose member is itself a bare generic template is not covered by this
-slice and remains a separate dispatch-composition frontier; B4-F remains red.
+runtime path emits a five-case dispatcher and returns `1`. A demanded explicit
+return annotation containing a bare generic template, including nullable `T?`
+syntax, now fails closed with the original Crystal diagnostic instead of
+building an incomplete runtime union dispatcher. Bare generic parameter
+restrictions with concrete callsite specializations remain admitted, and an
+uncalled definition retains original Crystal's lazy validation behavior. HIR is
+**382/0** with two existing pending examples, and MIR is **37/0**. Generic
+structs remain static, and bare generic struct return unions fail closed by the
+same original-Crystal storage rule. This is a compatibility guard, not runtime
+support for bare-generic union composition; B4-F remains red.
 
 T1 OWNERSHIP/NAME-ID SUBSTRATE VERIFIED; CALL RESOLUTION CONTINUITY REMAINS
 OPEN. `SemanticIdentityRegistry` is now the compile-session owner for canonical

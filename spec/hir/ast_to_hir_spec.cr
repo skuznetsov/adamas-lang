@@ -10251,6 +10251,69 @@ describe Adamas::HIR::AstToHir do
   end
 
   describe "missing concrete virtual target repair" do
+    it "accepts a bare generic union restriction for concrete callsites" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class LayoutBox(T)
+          getter size : Int32
+
+          def initialize(@size : Int32)
+          end
+        end
+
+        def union_size(value : LayoutBox | String) : Int32
+          value.size
+        end
+
+        union_size(LayoutBox(Int32).new(11))
+        union_size("xy")
+      CRYSTAL
+
+      call_names = converter.module.functions.select { |func| func.name.includes?("union_size") }
+        .flat_map(&.blocks)
+        .flat_map(&.instructions)
+        .compact_map(&.as?(Adamas::HIR::Call))
+        .map(&.method_name)
+      call_names.should contain("LayoutBox | String#size")
+    end
+
+    it "rejects a runtime return union containing a bare generic template" do
+      expect_raises(Adamas::HIR::LoweringError, /can't use LayoutBox\(T\) in unions yet/) do
+        lower_program_with_main(<<-CRYSTAL)
+          class LayoutBox(T)
+            getter size : Int32
+
+            def initialize(@size : Int32)
+            end
+          end
+
+          def dynamic_value(flag : Bool) : LayoutBox | String
+            flag ? LayoutBox(Int32).new(11) : "xy"
+          end
+
+          dynamic_value(true)
+        CRYSTAL
+      end
+    end
+
+    it "rejects a nullable runtime return containing a bare generic template" do
+      expect_raises(Adamas::HIR::LoweringError, /can't use LayoutBox\(T\) in unions yet/) do
+        lower_program_with_main(<<-CRYSTAL)
+          class LayoutBox(T)
+            getter size : Int32
+
+            def initialize(@size : Int32)
+            end
+          end
+
+          def dynamic_value(flag : Bool) : LayoutBox?
+            flag ? LayoutBox(Int32).new(11) : nil
+          end
+
+          dynamic_value(true)
+        CRYSTAL
+      end
+    end
+
     it "dispatches a bare generic receiver across layout-distinct instances" do
       converter = lower_program_with_main(<<-CRYSTAL)
         class LayoutBox(T)

@@ -15103,6 +15103,45 @@ module Adamas::HIR
       @generic_templates.has_key?(base)
     end
 
+    private def unsupported_bare_generic_union_variant(
+      type_name : String,
+      owner_name : String? = nil,
+    ) : String?
+      normalized = normalize_declared_type_name(type_name, owner_name)
+      variants = if normalized.ends_with?('?')
+                   [normalized.byte_slice(0, normalized.bytesize - 1).strip, "Nil"]
+                 else
+                   split_union_type_name(normalized)
+                 end
+      return nil if variants.size < 2
+
+      variants.each do |variant|
+        candidate = variant.strip
+        next if candidate.empty? || candidate.includes?('(')
+        candidate = strip_absolute_name_prefix(candidate) if candidate.starts_with?("::")
+        candidate = resolve_type_alias_chain(candidate)
+        template = @generic_templates[candidate]?
+        next unless template
+
+        return "#{candidate}(#{template.type_params.join(", ")})"
+      end
+
+      nil
+    end
+
+    private def validate_runtime_return_union_annotation!(
+      type_name : String,
+      node : Adamas::Compiler::Frontend::DefNode,
+      owner_name : String? = nil,
+    ) : Nil
+      return unless variant = unsupported_bare_generic_union_variant(type_name, owner_name)
+
+      raise LoweringError.new(
+        "can't use #{variant} in unions yet, use a more specific type",
+        node,
+      )
+    end
+
     private def update_typeof_local(name : String, type_ref : TypeRef) : Nil
       return unless locals = @current_typeof_locals
       locals[name] = type_ref
@@ -38496,6 +38535,9 @@ module Adamas::HIR
         text = safe_slice_to_string(return_slice).try(&.strip)
         text unless text.nil? || text.empty?
       end
+      if explicit_return_type_name = readable_explicit_return_type_name
+        validate_runtime_return_union_annotation!(explicit_return_type_name, node, signature_owner)
+      end
       return_type = TypeRef::VOID
       if extra_type_params.empty?
         return_type = if is_initialize_method
@@ -61827,6 +61869,7 @@ module Adamas::HIR
         with_type_param_map(extra_type_params) do
           if rt = node.return_type
             rt_string = safe_slice_to_string(rt) || ""
+            validate_runtime_return_union_annotation!(rt_string, node, @current_class)
             return_type = lower_def_resolve_type_annotation(rt_string)
           elsif base_name.ends_with?('?')
             return_type = TypeRef::BOOL
