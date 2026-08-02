@@ -2122,6 +2122,11 @@ module Adamas::HIR
     getter extern_globals : Array(ExternGlobal)
     getter method_effects : Hash(String, MethodEffectSummary)
     getter class_parents : Hash(String, String?)
+    # Materialized instances of a generic class template. This is dispatch
+    # membership, not source inheritance: LayoutBox(Int32) can share the same
+    # real superclass as LayoutBox(String) while both remain runtime targets of
+    # a call whose static receiver is the bare LayoutBox template.
+    getter generic_instances : Hash(String, Array(String))
     getter module_includers : Hash(String, Array(String))
     getter virtual_dispatch_target_functions : Set(String)
     getter materialization_keepalive_functions : Set(String)
@@ -2162,6 +2167,7 @@ module Adamas::HIR
       @extern_globals_by_lib_and_name = {} of Tuple(String, String) => ExternGlobal
       @method_effects = {} of String => MethodEffectSummary
       @class_parents = {} of String => String?
+      @generic_instances = {} of String => Array(String)
       @module_includers = {} of String => Array(String)
       @virtual_dispatch_target_functions = Set(String).new
       @materialization_keepalive_functions = Set(String).new
@@ -2199,6 +2205,7 @@ module Adamas::HIR
       @extern_globals_by_lib_and_name = {} of Tuple(String, String) => ExternGlobal
       @method_effects = {} of String => MethodEffectSummary
       @class_parents = {} of String => String?
+      @generic_instances = {} of String => Array(String)
       @module_includers = {} of String => Array(String)
       @materialization_keepalive_functions = Set(String).new
       @materialization_transaction_ids_by_call_symbol = {} of String => String
@@ -2264,6 +2271,26 @@ module Adamas::HIR
 
     def register_class_parent(name : String, parent : String?) : Nil
       @class_parents[name] = parent
+    end
+
+    def register_generic_instance(template_name : String, instance_name : String) : Bool
+      return false if template_name.empty? || instance_name.empty?
+      return false if template_name == instance_name
+
+      instances = @generic_instances[template_name]? || begin
+        created = [] of String
+        @generic_instances[template_name] = created
+        created
+      end
+      return false if instances.includes?(instance_name)
+
+      instances << instance_name
+      true
+    end
+
+    def register_generic_dispatch_template(template_name : String) : Nil
+      return if template_name.empty?
+      @generic_instances[template_name] ||= [] of String
     end
 
     def mark_virtual_dispatch_target_function(name : String) : Nil

@@ -8262,6 +8262,13 @@ module Adamas::HIR
       @classes_with_subclasses.includes?(class_name)
     end
 
+    private def bare_reference_generic_template?(class_name : String) : Bool
+      return false if class_name.includes?('(')
+
+      template = @generic_templates[class_name]?
+      !!(template && !template.is_struct)
+    end
+
     private def record_class_parent(child_name : String, parent_name : String?) : Nil
       return unless parent_name
       @classes_with_subclasses.add(parent_name)
@@ -8463,6 +8470,14 @@ module Adamas::HIR
           end
           lower_virtual_targets_for_child(child_name, parent_name)
         end
+        # Generic instance membership is a dispatch relation, not source
+        # inheritance. Replay it explicitly without contaminating layout,
+        # lookup, or RTA consumers of the class hierarchy.
+        if instances = @module.generic_instances[parent_name]?
+          instances.each do |instance_name|
+            lower_virtual_targets_for_child(instance_name, parent_name)
+          end
+        end
       end
     end
 
@@ -8523,6 +8538,11 @@ module Adamas::HIR
       has_block_call : Bool,
       has_splat : Bool,
     ) : Nil
+      # A bare reference-generic template has no concrete layout. Its target
+      # shape is replayed for registered instances; a template body could embed
+      # an arbitrary instance field offset.
+      return if bare_reference_generic_template?(owner)
+
       base_name = "#{owner}##{method_name}"
       candidate = mangle_function_name(base_name, arg_types, has_block_call)
 
@@ -31846,6 +31866,7 @@ module Adamas::HIR
               bootstrap_trace_puts "[CLASS_FRONTIER] generic_after_constants #{class_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
             end
             bootstrap_trace_puts "[CLASS_FRONTIER] generic_before_return #{class_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
+            @module.register_generic_dispatch_template(class_name) unless is_struct
             generic_template_registered = true
           end
         end
@@ -34286,6 +34307,22 @@ module Adamas::HIR
     end
 
     # Monomorphize a generic class: create specialized version with concrete types
+    private def register_generic_instance_dispatch(
+      template : GenericClassTemplate,
+      base_name : String,
+      specialized_name : String,
+    ) : Nil
+      # Value generic instances do not carry an object type-id header, so they
+      # cannot participate in class vdispatch. Their concrete calls stay static.
+      return if template.is_struct
+      return unless @module.register_generic_instance(base_name, specialized_name)
+
+      # The erased call may have been lowered before this instantiation existed.
+      # Replay exactly the shapes recorded for the bare template after the full
+      # concrete ClassInfo and method/accessor registry are available.
+      lower_virtual_targets_for_child(specialized_name, base_name)
+    end
+
     private def monomorphize_generic_class(
       base_name : String,
       type_args : Array(String),
@@ -34438,6 +34475,10 @@ module Adamas::HIR
       # Align ivars for this newly monomorphized class (align_all_class_ivars
       # may have already run before this monomorphization happened).
       align_class_ivars(specialized_name)
+
+      # Publish the instance to erased generic dispatch only after layout is
+      # stable, then replay target shapes recorded before monomorphization.
+      register_generic_instance_dispatch(template, base_name, specialized_name)
 
       if mono_start && env_has?("DEBUG_MONO")
         elapsed_ms = (Time.instant - mono_start).total_milliseconds
@@ -63858,6 +63899,21 @@ module Adamas::HIR
       name.bytesize <= limit ? name : "#{name[0, limit]}..."
     end
 
+    private def bare_generic_virtual_dispatch_call?(
+      call : Call,
+      value_types : Hash(ValueId, TypeRef),
+    ) : Bool
+      return false unless call.virtual && call.has_receiver?
+
+      receiver_type = value_types[call.receiver_value]? || return false
+      receiver_desc = @module.get_type_descriptor(receiver_type) || return false
+      return false unless receiver_desc.kind == TypeKind::Class
+      receiver_name = receiver_desc.name
+      return false if receiver_name.includes?('(')
+      template = @generic_templates[receiver_name]? || return false
+      !template.is_struct
+    end
+
     # Lower any missing call targets that already appear in the HIR module.
     # This is a safety net for late-resolved overloads (defaults, implicit generics).
     private def lower_missing_call_targets
@@ -64034,6 +64090,10 @@ module Adamas::HIR
                 function_demands << name
               end
               next if @module.has_function_with_body?(name)
+              # A bare generic virtual call intentionally has no concrete root
+              # body. MIR validates the registered instance family and rejects
+              # empty, incomplete, or ABI-incompatible candidate sets.
+              next if bare_generic_virtual_dispatch_call?(inst, value_types)
               if debug_env_filter_match?("DEBUG_MISSING_TARGET", name)
                 STDERR.puts "[MISSING_TARGET] seen name=#{name} func=#{func.name} body=#{@module.has_function_with_body?(name)} state=#{function_state(name)}"
               end
@@ -74222,6 +74282,7 @@ module Adamas::HIR
       if left_desc = @module.get_type_descriptor(left_type)
         if left_desc.kind == TypeKind::Class
           call_virtual = class_has_subclasses?(left_desc.name) ||
+                         bare_reference_generic_template?(left_desc.name) ||
                          abstract_def?(call_target_name) ||
                          abstract_def?(primary_mangled_name) ||
                          abstract_def?(base_method_name)
@@ -81489,6 +81550,13 @@ module Adamas::HIR
       # Parse name once at the start - reuse for all lookups
       name_parts = parse_method_name(name)
       base_name = name_parts.base
+      # A bare reference-generic owner is an erased dispatch signature, not a
+      # concrete layout. Never lower a template method/accessor body under that
+      # symbol; recorded virtual shapes are replayed for concrete instances.
+      if name_parts.is_instance && bare_reference_generic_template?(name_parts.owner)
+        STDERR.puts "[LOWER_FUNC_TRACE] early=bare_generic_dispatch_signature name=#{name}" if debug_lower_func
+        return
+      end
       primitive_template_map : Hash(String, String)? = nil
       debug_hook("function.lookup.start", name)
       if env_get("DEBUG_TRACE_FUNC") && name.includes?("trace")
@@ -92200,6 +92268,7 @@ module Adamas::HIR
           end
           if !call_virtual && type_desc.kind == TypeKind::Class
             call_virtual = class_has_subclasses?(type_desc.name) ||
+                           bare_reference_generic_template?(type_desc.name) ||
                            abstract_def?(mangled_method_name) ||
                            (mangled_method_name != primary_mangled_name && abstract_def?(primary_mangled_name))
           end
@@ -104385,7 +104454,8 @@ module Adamas::HIR
           call_virtual = true
         end
         if !call_virtual && type_desc.kind == TypeKind::Class
-          call_virtual = class_has_subclasses?(type_desc.name)
+          call_virtual = class_has_subclasses?(type_desc.name) ||
+                         bare_reference_generic_template?(type_desc.name)
         end
       end
 
@@ -106514,7 +106584,9 @@ module Adamas::HIR
         end
         if !call_virtual && type_desc.kind == TypeKind::Class
           abstract_base = base_method_name ? abstract_def?(base_method_name) : false
-          call_virtual = class_has_subclasses?(type_desc.name) || abstract_base
+          call_virtual = class_has_subclasses?(type_desc.name) ||
+                         bare_reference_generic_template?(type_desc.name) ||
+                         abstract_base
         end
       end
       if !call_virtual && base_method_name

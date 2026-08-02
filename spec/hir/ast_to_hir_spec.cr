@@ -10251,6 +10251,53 @@ describe Adamas::HIR::AstToHir do
   end
 
   describe "missing concrete virtual target repair" do
+    it "dispatches a bare generic receiver across layout-distinct instances" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class LayoutBox(T)
+          getter payload : T
+          getter size : Int32
+
+          def initialize(@payload : T, @size : Int32)
+          end
+        end
+
+        def erased_size(value : LayoutBox) : Int32
+          value.size
+        end
+
+        erased_size(LayoutBox(Int32).new(1, 11))
+        erased_size(LayoutBox(String).new("x", 22))
+      CRYSTAL
+      converter.flush_pending_functions
+
+      caller = converter.module.function_by_name("erased_size$LayoutBox")
+      caller.should_not be_nil
+      size_call = caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.find { |call| call.method_name == "LayoutBox#size" }
+      size_call.should_not be_nil
+      size_call.not_nil!.virtual.should be_true
+      size_call.not_nil!.type.should eq(Adamas::HIR::TypeRef::INT32)
+
+      converter.module.has_function_with_body?("LayoutBox#size").should be_false
+      int_getter = converter.module.function_by_name("LayoutBox(Int32)#size")
+      string_getter = converter.module.function_by_name("LayoutBox(String)#size")
+      int_getter.should_not be_nil
+      string_getter.should_not be_nil
+      converter.module.has_function_with_body?("LayoutBox(Int32)#size").should be_true
+      converter.module.has_function_with_body?("LayoutBox(String)#size").should be_true
+
+      int_field = int_getter.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::FieldGet)
+      end.find { |field| field.field_name == "@size" }
+      string_field = string_getter.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::FieldGet)
+      end.find { |field| field.field_name == "@size" }
+      int_field.should_not be_nil
+      string_field.should_not be_nil
+      int_field.not_nil!.field_offset.should_not eq(string_field.not_nil!.field_offset)
+    end
+
     it "classifies value and reference owners from HIR descriptors" do
       converter = Adamas::HIR::AstToHir.new(Adamas::Compiler::Frontend::AstArena.new)
       module_ = converter.module

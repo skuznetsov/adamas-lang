@@ -315,6 +315,110 @@ describe Adamas::MIR::HIRToMIRLowering do
   end
 
   describe "virtual method family resolution" do
+    it "includes every registered bare generic instance with a unanimous ABI" do
+      hir_mod = Adamas::HIR::Module.new("bare_generic_virtual_dispatch")
+      box_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Class,
+        "LayoutBox"
+      ))
+      int_box_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Class,
+        "LayoutBox(Int32)"
+      ))
+      string_box_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Class,
+        "LayoutBox(String)"
+      ))
+      hir_mod.register_generic_dispatch_template("LayoutBox")
+      hir_mod.register_generic_instance("LayoutBox", "LayoutBox(Int32)")
+      hir_mod.register_generic_instance("LayoutBox", "LayoutBox(String)")
+
+      int_getter = hir_mod.create_function("LayoutBox(Int32)#size", Adamas::HIR::TypeRef::INT32)
+      int_getter.add_param("self", int_box_ref)
+      int_getter_block = int_getter.get_block(int_getter.entry_block)
+      int_size = Adamas::HIR::Literal.new(int_getter.next_value_id, Adamas::HIR::TypeRef::INT32, 11_i64)
+      int_getter_block.add(int_size)
+      int_getter_block.terminator = Adamas::HIR::Return.new(int_size.id)
+      string_getter = hir_mod.create_function("LayoutBox(String)#size", Adamas::HIR::TypeRef::INT32)
+      string_getter.add_param("self", string_box_ref)
+      string_getter_block = string_getter.get_block(string_getter.entry_block)
+      string_size = Adamas::HIR::Literal.new(string_getter.next_value_id, Adamas::HIR::TypeRef::INT32, 22_i64)
+      string_getter_block.add(string_size)
+      string_getter_block.terminator = Adamas::HIR::Return.new(string_size.id)
+
+      lowering = Adamas::MIR::HIRToMIRLowering.new(hir_mod)
+      lowering.prepare
+      int_mir_type = lowering.mir_module.type_registry.create_type(
+        Adamas::MIR::TypeKind::Reference,
+        "LayoutBox(Int32)",
+        8_u64,
+        8_u32
+      )
+      string_mir_type = lowering.mir_module.type_registry.create_type(
+        Adamas::MIR::TypeKind::Reference,
+        "LayoutBox(String)",
+        8_u64,
+        8_u32
+      )
+
+      box_desc = hir_mod.get_type_descriptor(box_ref).not_nil!
+      ids = lowering.__test_virtual_dispatch_candidate_type_ids(box_desc, box_ref, "size", 0)
+      ids.should contain(int_mir_type.id.to_i32)
+      ids.should contain(string_mir_type.id.to_i32)
+      ids.size.should eq(2)
+    end
+
+    it "rejects a bare generic dispatch with instance-dependent return ABI" do
+      hir_mod = Adamas::HIR::Module.new("bare_generic_virtual_dispatch_abi_guard")
+      box_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Class,
+        "LayoutBox"
+      ))
+      int_box_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Class,
+        "LayoutBox(Int32)"
+      ))
+      string_box_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Class,
+        "LayoutBox(String)"
+      ))
+      hir_mod.register_generic_dispatch_template("LayoutBox")
+      hir_mod.register_generic_instance("LayoutBox", "LayoutBox(Int32)")
+      hir_mod.register_generic_instance("LayoutBox", "LayoutBox(String)")
+
+      int_getter = hir_mod.create_function("LayoutBox(Int32)#payload", Adamas::HIR::TypeRef::INT32)
+      int_getter.add_param("self", int_box_ref)
+      int_getter_block = int_getter.get_block(int_getter.entry_block)
+      int_payload = Adamas::HIR::Literal.new(int_getter.next_value_id, Adamas::HIR::TypeRef::INT32, 1_i64)
+      int_getter_block.add(int_payload)
+      int_getter_block.terminator = Adamas::HIR::Return.new(int_payload.id)
+      string_getter = hir_mod.create_function("LayoutBox(String)#payload", Adamas::HIR::TypeRef::STRING)
+      string_getter.add_param("self", string_box_ref)
+      string_getter_block = string_getter.get_block(string_getter.entry_block)
+      string_payload = Adamas::HIR::Literal.new(string_getter.next_value_id, Adamas::HIR::TypeRef::STRING, "x")
+      string_getter_block.add(string_payload)
+      string_getter_block.terminator = Adamas::HIR::Return.new(string_payload.id)
+
+      lowering = Adamas::MIR::HIRToMIRLowering.new(hir_mod)
+      lowering.prepare
+      lowering.mir_module.type_registry.create_type(
+        Adamas::MIR::TypeKind::Reference,
+        "LayoutBox(Int32)",
+        8_u64,
+        8_u32
+      )
+      lowering.mir_module.type_registry.create_type(
+        Adamas::MIR::TypeKind::Reference,
+        "LayoutBox(String)",
+        8_u64,
+        8_u32
+      )
+
+      box_desc = hir_mod.get_type_descriptor(box_ref).not_nil!
+      ids = lowering.__test_virtual_dispatch_candidate_type_ids(box_desc, box_ref, "payload", 0)
+      ids.should be_empty
+    end
+
     it "resolves a typed call through a unique arity alias" do
       hir_mod = Adamas::HIR::Module.new("virtual_method_family")
       func = hir_mod.create_function("IO::FileDescriptor#write$arity1", Adamas::HIR::TypeRef::VOID)

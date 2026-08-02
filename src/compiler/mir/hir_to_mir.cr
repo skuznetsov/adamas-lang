@@ -7563,6 +7563,14 @@ module Adamas
 
         old_candidates = virtual_dispatch_candidates(recv_desc, recv_type, method_suffix, call.args.size)
 
+        if old_candidates.empty? && recv_desc.kind == HIR::TypeKind::Class &&
+           @hir_module.generic_instances.has_key?(recv_desc.name)
+          raise "Bare generic dispatch #{call.method_name} has no complete ABI-compatible instance family"
+        end
+
+        bare_generic_class_dispatch = recv_desc.kind == HIR::TypeKind::Class &&
+                                      @hir_module.generic_instances.has_key?(recv_desc.name)
+
         # When receiver is a Generic-kind type wrapping a union (e.g., Union(*Nil | Int32)),
         # the union descriptor might be at a different ref. Try to find it by name matching.
         generic_union_ref = nil.as(TypeRef?)
@@ -7684,7 +7692,7 @@ module Adamas
         if kind.class?
           if is_union_type
             return nil unless is_allref
-          else
+          elsif !bare_generic_class_dispatch
             recv_mir_type = @mir_module.type_registry.get(recv_mir)
             return nil unless Adamas::MIR.runtime_header_backed_type?(recv_mir_type)
           end
@@ -7742,7 +7750,11 @@ module Adamas
         # For Generic-wrapped unions, use the union descriptor's ref as the receiver param type.
         # This ensures the LLVM type mapper produces a union struct type, making
         # UnionTypeIdGet and UnionUnwrap work correctly.
-        recv_param_type = generic_union_ref || convert_type(recv_type)
+        recv_param_type = if bare_generic_class_dispatch
+                            TypeRef::POINTER
+                          else
+                            generic_union_ref || convert_type(recv_type)
+                          end
         dispatch_func.add_param("recv", recv_param_type)
         param_values << 0_u32
 
@@ -7835,6 +7847,9 @@ module Adamas
         result = [] of String
         seen = ::Set(String).new
         queue = @class_children[base]?.dup || [] of String
+        if instances = @hir_module.generic_instances[base]?
+          instances.each { |instance| queue << instance }
+        end
         until queue.empty?
           name = queue.shift
           next if seen.includes?(name)
@@ -7843,9 +7858,55 @@ module Adamas
           if children = @class_children[name]?
             children.each { |child| queue << child }
           end
+          if instances = @hir_module.generic_instances[name]?
+            instances.each { |instance| queue << instance }
+          end
         end
         @subclass_cache[base] = result
         result
+      end
+
+      private def bare_generic_dispatch_contract_valid?(
+        base : String,
+        candidates : ::Array(VDispatchCandidate),
+        arg_count : Int32,
+      ) : Bool
+        instances = @hir_module.generic_instances[base]? || return true
+        return false if instances.empty? || candidates.empty?
+
+        expected_return = nil.as(TypeRef?)
+        expected_args = nil.as(::Array(TypeRef)?)
+        admitted_type_ids = ::Set(Int32).new
+
+        candidates.each do |candidate|
+          func = candidate.func || return false
+          return false unless @hir_module.has_function_with_body?(func.name)
+          return false unless func.params.size == arg_count + 1
+
+          explicit_args = [] of TypeRef
+          idx = 1
+          while idx < func.params.size
+            explicit_args << func.params[idx].type
+            idx += 1
+          end
+
+          if expected = expected_return
+            return false unless expected == func.return_type
+            return false unless expected_args == explicit_args
+          else
+            expected_return = func.return_type
+            expected_args = explicit_args
+          end
+          admitted_type_ids.add(candidate.type_id)
+        end
+
+        instances.each do |instance_name|
+          mir_type = @mir_module.type_registry.get_by_name(instance_name) || return false
+          return false unless Adamas::MIR.runtime_header_backed_type?(mir_type)
+          return false unless admitted_type_ids.includes?(mir_type.id.to_i32)
+        end
+
+        true
       end
 
       private def module_includers_for(module_name : String) : ::Array(String)
@@ -8008,7 +8069,14 @@ module Adamas
           end
         elsif recv_desc.kind == HIR::TypeKind::Class
           base = recv_desc.name
-          all_classes = [base] + subclasses_for(base)
+          # Bare generic templates have no concrete runtime layout. Their
+          # registered instances are traversed through subclasses_for; ordinary
+          # class dispatch retains the source-level root candidate.
+          all_classes = if @hir_module.generic_instances.has_key?(base)
+                          subclasses_for(base)
+                        else
+                          [base] + subclasses_for(base)
+                        end
           # Track classes that had no MIR function found — we'll fill them in
           # with the nearest parent's implementation in a second pass.
           missing_classes = [] of {String, Adamas::MIR::Type}
@@ -8093,6 +8161,10 @@ module Adamas
                 )
               end
             end
+          end
+          if @hir_module.generic_instances.has_key?(base) &&
+             !bare_generic_dispatch_contract_valid?(base, candidates, arg_count)
+            return [] of VDispatchCandidate
           end
         elsif recv_desc.kind == HIR::TypeKind::Module || recv_desc.kind == HIR::TypeKind::Generic
           seen = ::Set(String).new
