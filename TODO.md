@@ -1,8 +1,9 @@
 # Adamas Bootstrap TODO
 
 Updated: 2026-08-01 (exact guarded method declaration shapes replace in place;
-selected semantic Def ownership and reparse structure are fail-closed; T1 and
-B4-F remain red).
+local keyed decisions reject replaced same-arena method objects; selected
+semantic Def ownership and reparse structure are fail-closed; T1 and B4-F
+remain red).
 
 T1 OWNERSHIP/NAME-ID SUBSTRATE VERIFIED; CALL RESOLUTION CONTINUITY REMAINS
 OPEN. `SemanticIdentityRegistry` is now the compile-session owner for canonical
@@ -44,7 +45,13 @@ distinct, and a same-shaped symbol from an independent Analyzer/root table is
 rejected. Same-arena class reopenings retain one receiver identity across
 distinct method definitions; after a shared context is recollected, stale
 receiver and method symbols from the prior arena fail closed while the
-replacement symbol remains valid. Reopened methods whose class/instance kind,
+replacement symbol remains valid. The local keyed producer and consumer now
+also require the exact `MethodSymbol` object to remain current in its declaring
+scope. Recollecting the same `Program` leaves the replaced object's AST
+`DefIdentity` valid, but no longer mints or consumes a key for that object; the
+replacement remains admitted, and the focused identity group passes 19
+examples, including current inherited and included-module controls. Reopened
+methods whose class/instance kind,
 parameter names, external names, type annotations, default presence, and
 splat/double-splat/block markers match exactly now replace the previous method
 in its existing overload slot. The latest return annotation is selected while
@@ -54,9 +61,7 @@ and the corresponding Adamas collector/inference groups pass 33 and 283
 examples. This is an exact declaration-shape fail-closed guard, not Crystal's
 full restriction ordering: renamed parameters, changed default presence,
 semantic restriction equivalence, and the `previous_def` chain remain open.
-Cross-arena
-admission for declarations retained from another per-file Analyzer,
-same-arena stale-`MethodSymbol` admission,
+Cross-arena admission for declarations retained from another per-file Analyzer,
 scope/return/type-parameter metadata, in-place shared parameter payload
 mutation, non-`self` explicit receivers, and generic/union/container types
 remain outside this narrow guard. This is not the general `CallResolution`, a

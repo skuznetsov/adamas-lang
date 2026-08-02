@@ -1327,3 +1327,30 @@ Evidence caution: the sidecar only read and searched files; despite wording
 that the tests "pass", it did not execute them. Treat the verdict as a useful
 control-flow audit, not verification. The independent isolated RED/GREEN run
 remains authoritative.
+
+### Session 52 — 2026-08-01 — Same-arena method-membership audit
+
+**Task:** read-only adversarial review of the local typed-call producer and
+consumer guards that reject a replaced `MethodSymbol` after recollecting the
+same `Program` and AST arena.
+**Brief size:** bounded prompt naming `current_declaring_scope_method?`,
+inherited/included/class/macro paths, `previous_def`, the focused spec, and a
+required concise verdict; no edits and no test claims.
+**Latency:** about 19 seconds, exit 0.
+**Output quality:** mixed. Grok correctly confirmed that the membership checks
+sit at both the typed-key producer and consumer boundaries and that the current
+`previous_def` path does not use them. It returned `VULNERABLE`, but its two
+main objections were refuted by direct source semantics: for a parser-collected
+inherited or included method, `method.scope.parent` is its declaring class or
+module table, where the method is a direct local; and a fresh replacement
+object cannot satisfy identity-based `same?` against the stale object.
+**Adversary check:** the independent Luna audit traced collector scope creation
+and found the bounded patch `ROBUST`; local RED evidence showed both stale key
+production and consumption before the patch, while the current focused and
+broader safe-run suites pass after it. Synthetic parentless methods merely
+decline the local keyed optimization and retain the legacy path.
+**Verdict:** useful for boundary-placement confirmation, but the reported
+inherited/include false-reject and fresh-replacement false-accept mechanisms
+were incorrect. Do not count the `VULNERABLE` label as verification evidence.
+**Cost saved:** small independent source-routing check; local tests and source
+ownership remain authoritative.

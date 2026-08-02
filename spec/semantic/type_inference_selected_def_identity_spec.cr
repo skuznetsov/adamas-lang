@@ -329,6 +329,107 @@ describe Semantic::TypeInferenceEngine do
       ).should_not be_nil
     end
 
+    it "rejects a replaced method symbol after the same arena is recollected" do
+      source = <<-CRYSTAL
+        class T1SameArena
+          def route(value : Int32) : Int32
+            value
+          end
+        end
+
+        T1SameArena.new.route(1)
+      CRYSTAL
+
+      program = Frontend::Parser.new(Frontend::Lexer.new(source)).parse_program
+      analyzer = Semantic::Analyzer.new(program)
+      analyzer.collect_symbols
+      first_names = analyzer.resolve_names
+      first_owner = analyzer.global_context.symbol_table.lookup("T1SameArena").as(Semantic::ClassSymbol)
+      first_method = first_owner.scope.lookup("route").as(Semantic::MethodSymbol)
+      arg_types = [Semantic::PrimitiveType.new("Int32")] of Semantic::Type
+      first_engine = analyzer.infer_types(first_names.identifier_symbols)
+      first_key = first_engine.__test_local_method_instance_key(
+        first_method,
+        Semantic::InstanceType.new(first_owner),
+        arg_types,
+      ).not_nil!
+
+      analyzer.collect_symbols
+      name_result = analyzer.resolve_names
+      second_owner = analyzer.global_context.symbol_table.lookup("T1SameArena").as(Semantic::ClassSymbol)
+      second_method = second_owner.scope.lookup("route").as(Semantic::MethodSymbol)
+      engine = analyzer.infer_types(name_result.identifier_symbols)
+      call_id = program.roots.last
+      call_node = program.ast_arena[call_id].as(Frontend::CallNode)
+
+      first_owner.should_not be(second_owner)
+      first_method.should_not be(second_method)
+      engine.__test_validated_selected_def_identity(first_method).should_not be_nil
+      {
+        key: engine.__test_local_method_instance_key(
+          first_method,
+          Semantic::InstanceType.new(second_owner),
+          arg_types,
+        ),
+        consumer_accepts: engine.__test_local_call_resolution_matches_with_key(
+          first_method,
+          first_key,
+          Semantic::InstanceType.new(second_owner),
+          arg_types,
+          call_node,
+        ),
+      }.should eq({key: nil, consumer_accepts: false})
+      engine.__test_local_method_instance_key(
+        second_method,
+        Semantic::InstanceType.new(second_owner),
+        arg_types,
+      ).should_not be_nil
+    end
+
+    it "accepts current inherited and included methods from their declaring scopes" do
+      source = <<-CRYSTAL
+        module T1IncludedRoute
+          def included_route(value : String) : Int32
+            value.size
+          end
+        end
+
+        class T1ParentRoute
+          def inherited_route(value : Int32) : Int32
+            value
+          end
+        end
+
+        class T1ChildRoute < T1ParentRoute
+          include T1IncludedRoute
+        end
+      CRYSTAL
+
+      program = Frontend::Parser.new(Frontend::Lexer.new(source)).parse_program
+      analyzer = Semantic::Analyzer.new(program)
+      analyzer.collect_symbols
+      name_result = analyzer.resolve_names
+      engine = analyzer.infer_types(name_result.identifier_symbols)
+      table = analyzer.global_context.symbol_table
+      included_owner = table.lookup("T1IncludedRoute").as(Semantic::ModuleSymbol)
+      parent_owner = table.lookup("T1ParentRoute").as(Semantic::ClassSymbol)
+      child_owner = table.lookup("T1ChildRoute").as(Semantic::ClassSymbol)
+      included_method = included_owner.scope.lookup("included_route").as(Semantic::MethodSymbol)
+      inherited_method = parent_owner.scope.lookup("inherited_route").as(Semantic::MethodSymbol)
+      receiver_type = Semantic::InstanceType.new(child_owner)
+
+      engine.__test_local_method_instance_key(
+        inherited_method,
+        receiver_type,
+        [Semantic::PrimitiveType.new("Int32")] of Semantic::Type,
+      ).should_not be_nil
+      engine.__test_local_method_instance_key(
+        included_method,
+        receiver_type,
+        [Semantic::PrimitiveType.new("String")] of Semantic::Type,
+      ).should_not be_nil
+    end
+
     it "keeps same-named nested receiver declarations distinct" do
       source = <<-CRYSTAL
         module LeftOwner

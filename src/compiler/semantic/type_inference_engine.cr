@@ -7417,6 +7417,7 @@ module Adamas
             return nil
           end
 
+          return nil unless current_declaring_scope_method?(method)
           def_identity = validated_selected_def_identity(method)
           return nil unless def_identity
           receiver_type_id = local_resolution_type_id(receiver_type)
@@ -7587,6 +7588,7 @@ module Adamas
         ) : Bool
           method_type_parameters = resolution.method.type_parameters
           return false if method_type_parameters && !method_type_parameters.empty?
+          return false unless current_declaring_scope_method?(resolution.method)
 
           key = resolution.method_instance_key
           selected_identity = validated_selected_def_identity(resolution.method)
@@ -7632,6 +7634,22 @@ module Adamas
           end
 
           true
+        end
+
+        # DefIdentity proves the AST payload; a local typed decision additionally
+        # requires the exact MethodSymbol to remain current in its declaring scope.
+        private def current_declaring_scope_method?(method : MethodSymbol) : Bool
+          declaring_scope = method.scope.parent
+          return false unless declaring_scope
+
+          case current = declaring_scope.lookup_local(method.name)
+          when MethodSymbol
+            current.same?(method)
+          when OverloadSetSymbol
+            current.overloads.any? { |overload| overload.same?(method) }
+          else
+            false
+          end
         end
 
         private def infer_selected_explicit_receiver_method_result(
