@@ -199,17 +199,15 @@ permits the lawful concrete and union instances and requires one reducer to
 join selected definition/instance, coercion and value type, receiver/value
 arity, materialized body, and emitted symbol before any fix or promotion.
 
-A bounded reachability audit with the provided, non-provenance-bound stage1
-binary reached an intentional `CLI#compile` body-lowered gate in about 71
-seconds. Separate exact `push$AstArena` and broader parent `<<$AstArena`
-pending-target probes timed out at 180 seconds without reaching their gates. A
-broad `push` filter did reach `Array(UInt64)#push$UInt64` in about 54 seconds,
-so the filter path itself is live. These observations do not prove exact-target
-absence, completed HIR, or LLVM parity: the phase gate exits via `_exit(0)`,
-the historical B5 locator was a different `CLI#run$IO_IO` edge, and the stage1
-binary has no source-bound build receipt. The evidence expires on any stage1
-or compiler-source change; refresh it with a bound build receipt and the exact
-target-to-HIR/MIR/LLVM join.
+A source-bound stage1 from `6772e562` exposed `exact_lookup` rewriting requested
+concrete `push$AstArena` to the union target/body. The bounded correction keeps
+the requested symbol only when its parsed base and actual typed arguments
+exactly re-serialize to it. Candidate `4d6c37ac...` preserves concrete
+requested/target/materialized names through body lowering; the scoped receipt
+and baseline exclusion are in `docs/compiler_architecture_sdd.md` section 0.
+Because the gate exits via `_exit(0)`, this closes only current exact-target HIR
+continuity. Current HIR-to-MIR-to-LLVM emitted-symbol continuity remains open;
+the historical zero-argument artifact remains stale and unreproduced.
 
 ### 2.5 STABLE6 — refuted in-process prototype / not admitted
 
@@ -749,7 +747,7 @@ retire existing B4/B5, name-resolution, materialization, or layout rows.
 |---|---|---|
 | `ResolutionId` preserves typed identity continuity. | Direct versus alias-derived generic calls, named arguments, block calls, absolute `::Hash`, and two distinct declarations with the same display spelling. | Any collision, remint, or owner loss stops the slice. |
 | `MethodInstanceKey` is injective for body/materialization demand. | Same declaration with different receiver/arg/block/named-arg types; same rendered name with different `DefIdentity`. | A key collision or mutable-key change rejects cache promotion. |
-| Lawful concrete and union generic instances preserve identity and body continuity through materialization. | [Reducer](../../regression_tests/union_static_generic_materialization_guard.cr) and [guard](../../regression_tests/union_static_generic_materialization_guard.sh) compare concrete `main_arenas << map_arena`, explicit `.as(ArenaLike)`, and true union flow; they join selected instance, coercion/value type, receiver/value arity, HIR body, and optional full-stage LLVM symbol/stub shape. | Concrete flow may select the `AstArena` instance; explicit and true union flow may select union/reduced-union instances. Any owner/key discontinuity, lost receiver/value argument, unmatched body/symbol, or orphan zero-argument call/stub fails T9. Focused HIR mode is green; the historical full-G9 zero-argument artifact is stale and unreproduced, so fresh full materialization/emission continuity remains unsatisfied. |
+| Lawful concrete and union generic instances preserve identity and body continuity through materialization. | [Reducer](../../regression_tests/union_static_generic_materialization_guard.cr) and [guard](../../regression_tests/union_static_generic_materialization_guard.sh) compare concrete `main_arenas << map_arena`, explicit `.as(ArenaLike)`, and true union flow; they join selected instance, coercion/value type, receiver/value arity, HIR body, and optional full-stage LLVM symbol/stub shape. | Concrete flow may select the `AstArena` instance; explicit and true union flow may select union/reduced-union instances. Any owner/key discontinuity, lost receiver/value argument, unmatched body/symbol, or orphan zero-argument call/stub fails T9. Focused HIR and source-bound full-compiler HIR are green through exact child body lowering. Current MIR/LLVM emission continuity remains unsatisfied; the historical full-G9 zero-argument artifact is stale and unreproduced. |
 | No semantic string keys remain on the candidate route. | Source-shape scan plus runtime ledger for mangled-name cache/owner decisions and late string rewrites. | Any semantic branch driven by a string remains guard-only. |
 | Arena identity is preserved. | Block, macro, inline, reparsed, and current-arena `ExprId` reducers with equal numeric indices. | Index-only fallback or stale dereference fails closed. |
 | No legacy queue is required. | `ADAMAS_SEMANTIC_ASSERT_NO_LEGACY_QUEUE=1` on hello, generic, macro, block, recursive, and stage2/3 reducers. | Any legacy queue/safety-net execution blocks promotion. |
@@ -869,13 +867,13 @@ declaration fixed-point parity is demonstrated.
 T9 is a prerequisite for promoting this slice on the union-container path.
 The upstream audit admits the distinct concrete and union instances. Focused
 HIR continuity is now green: no-callsite `<<`/`>>` inference cannot seed a
-signature from an unknown receiver's right operand, and receiver-layout
-fallback preserves a concrete typed callsite only when it exactly re-serializes
-to the selected symbol. The remaining current obligation is fresh exact-target
-reach plus full post-lowering HIR/MIR/LLVM continuity. The historical zero-arg
-call/stub stays an unreproduced late-materialization/missing-target hypothesis
-until the full route joins selected `Def`/`DefInstanceKey`, coercion/value type,
-receiver/value arity, materialized body, and emitted symbol for all three
+signature from an unknown receiver's right operand, and exact full-compiler
+lookup preserves a requested typed callsite only when its base and actual types
+re-serialize to the same symbol. The remaining current obligation is
+HIR-to-MIR-to-LLVM emitted-symbol continuity. The historical zero-arg call/stub
+stays an unreproduced hypothesis until the full route joins selected
+`Def`/`DefInstanceKey`, coercion/value type, receiver/value arity, materialized
+body, and emitted symbol for all three
 lawful flows.
 
 ## 14. Stop, dirty-worktree, and rollback rules

@@ -194,6 +194,26 @@ class Adamas::HIR::AstToHir
     prefer_inferred_union_type?(current_name, inferred_name)
   end
 
+  def __test_method_name_codec_exact_callsite_name?(
+    requested_name : String,
+    base_name : String,
+    arg_type_names : Array(String),
+    has_block : Bool = false,
+  ) : Bool
+    arg_types = arg_type_names.map do |type_name|
+      type_ref = type_ref_for_name(type_name)
+      type_ref = create_union_type(type_name) if type_ref == Adamas::HIR::TypeRef::VOID && type_name.includes?('|')
+      raise "test type not found: #{type_name}" if type_ref == Adamas::HIR::TypeRef::VOID
+      type_ref
+    end
+    method_name_codec_exact_callsite_name?(
+      requested_name,
+      base_name,
+      arg_types,
+      has_block,
+    )
+  end
+
 end
 
 private def parse_receiver_repair_source(
@@ -1607,6 +1627,77 @@ describe "receiver-bound class-literal repair" do
     converter.__test_receiver_repair_call_arg_matches_param?(
       "String",
       "CanonicalAstArena | CanonicalPageArena | CanonicalVirtualArena",
+    ).should be_false
+  end
+
+  it "preserves only an exact typed callsite name across union-definition lookup" do
+    converter, _ = parse_receiver_repair_source(<<-CRYSTAL)
+      class CodecAstArena
+      end
+
+      class CodecPageArena
+      end
+
+      class CodecVirtualArena
+      end
+
+      alias CodecArenaLike = CodecAstArena | CodecPageArena | CodecVirtualArena
+
+      class CodecArenaSink(T)
+        def push(value : T)
+          value
+        end
+      end
+
+      CodecArenaSink(CodecArenaLike).new.push(CodecAstArena.new)
+    CRYSTAL
+
+    base_name = "CodecArenaSink(CodecAstArena | CodecPageArena | CodecVirtualArena)#push"
+    concrete_name = "#{base_name}$CodecAstArena"
+    union_name = "#{base_name}$CodecAstArena | CodecPageArena | CodecVirtualArena"
+
+    converter.__test_method_name_codec_exact_callsite_name?(
+      concrete_name,
+      base_name,
+      ["CodecAstArena"],
+    ).should be_true
+    converter.__test_method_name_codec_exact_callsite_name?(
+      concrete_name,
+      base_name,
+      ["CodecAstArena | CodecPageArena | CodecVirtualArena"],
+    ).should be_false
+    converter.__test_method_name_codec_exact_callsite_name?(
+      union_name,
+      base_name,
+      ["CodecAstArena | CodecPageArena | CodecVirtualArena"],
+    ).should be_true
+    converter.__test_method_name_codec_exact_callsite_name?(
+      base_name,
+      base_name,
+      [] of String,
+    ).should be_false
+    converter.__test_method_name_codec_exact_callsite_name?(
+      concrete_name,
+      "#{base_name}$stale",
+      ["CodecAstArena"],
+    ).should be_false
+
+    block_name = "#{base_name}$CodecAstArena_block"
+    converter.__test_method_name_codec_exact_callsite_name?(
+      block_name,
+      base_name,
+      ["CodecAstArena"],
+      true,
+    ).should be_true
+    converter.__test_method_name_codec_exact_callsite_name?(
+      block_name,
+      base_name,
+      ["CodecAstArena"],
+    ).should be_false
+    converter.__test_method_name_codec_exact_callsite_name?(
+      "#{base_name}$CodecAstArena_splat",
+      base_name,
+      ["CodecAstArena"],
     ).should be_false
   end
 

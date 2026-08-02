@@ -81,6 +81,7 @@ Current evidence is deliberately revision-scoped:
 | Host preflight and stage1 | Host spawn green; host build 14.13s; plain smoke `42` in 20.29s; exact no-prelude markers in 0.65s; `cv2_s1` SHA-256 `dfe3c0e8...` | Host-infrastructure blocker refuted; stage1 corridor green. |
 | Fresh current-source B4-F | Stage2 timeout exit 143, stage wall 182.54s, externally sampled peak RSS 1361.03 MiB; outer chain exit 1 at 219.32s; no `cv2_s2` | Compiler-side performance red. Stage2 semantic smokes unavailable, not red/green. |
 | Sealed-current stats-on localization | Only `ADAMAS_PHASE_STATS=1` on sealed `cv2_s1`, safe-run timeout 180s/memory 12288 MB: wall 182.60s, exit 143, no `cv2_s2`; peak RSS unavailable. Completed `process_pending` 218 -> 591 (+373) in 555.2ms and `emit_tracked_sigs` 591 -> 604 (+13) in 235.0ms; open `lower_missing.initial` grew 604 -> 1535 -> 7422 -> 19238 -> 28234 before timeout. Log SHA-256 `1cc025cc...`. | Revalidates/evolves the historical 2026-04-29 locator. No completion/timing/top-prefix for the open phase; definitions differ from the old observation, and stats-on/uninstrumented timing is diagnostic-only. |
+| T9 source-bound exact-target HIR | Stage1 from `6772e562` exposed concrete-request -> union-target canonicalization at `exact_lookup`; candidate SHA-256 `4d6c37ac...` preserves concrete requested/target/materialized `push$AstArena` through `instance_class_info_lower_method` at about 117 seconds. Focused T9 guard, 43 focused examples, 617 other fast HIR examples (2 existing pending), and union-value runtime storage pass. | Current exact-target HIR lookup/body continuity green. Phase-gate `_exit(0)` is not compile success; MIR/LLVM/emitted-symbol continuity and the historical full-G9 symptom remain open. |
 | T0 same-source A/B | Not completed on the sealed snapshot | R0 promotion remains blocked independently of B4-F. |
 
 The old `B4 GREEN` wording is therefore split into B4-H and B4-F rather than
@@ -102,21 +103,25 @@ zero-argument `push$AstArena()` plus a zero-argument unreachable stub. That
 artifact is not retained in the current checkout, and no fresh current-source
 reproduction has been obtained. Late HIR materialization or a missing selected
 target therefore remains a hypothesis for the historical malformed body, not
-a proven current creation mechanism. T9's focused HIR mode is now green:
+a proven current creation mechanism. T9's focused HIR mode is green:
 unknown-left `<<`/`>>` body inference fails closed, and receiver-layout fallback
 preserves a concrete typed callsite only when it exactly re-serializes to the
-selected symbol. Focused HIR success is not full symbol continuity.
-
-A bounded audit with the provided, non-provenance-bound stage1 binary reached
-the intentional `CLI#compile` body-lowered gate in about 71 seconds. The exact
-`push$AstArena` pending target and a broader `<<$AstArena` parent target did not
-reach their gates before separate 180-second safe-run timeouts. A broad `push`
-gate matched `Array(UInt64)#push$UInt64` in about 54 seconds, confirming that
-the filter path is active. The gate's `_exit(0)` is phase evidence rather than
-compile success; the timeouts do not prove target absence; the historical B5
-locator at `CLI#run$IO_IO` is a different boundary. This diagnostic evidence
-expires when the stage1 binary or compiler source changes. Refresh requires a
-source-bound stage1 receipt plus exact target-to-HIR/MIR/LLVM continuity.
+selected symbol. A source-bound stage1 from `6772e562` then reached the exact
+full-compiler child and exposed a current HIR mechanism: `exact_lookup` changed
+requested concrete `push$AstArena` into the union target/body. The bounded
+correction keeps the requested name only when the parsed base and actual typed
+arguments exactly re-serialize to that name; concrete-request plus union-actual,
+base mismatch, block mismatch, and splat forms fail closed. Candidate SHA-256
+`4d6c37ac...` reached the post-body gate in about 117 seconds with concrete
+requested, target, and materialized names and producer
+`instance_class_info_lower_method`. The focused T9 guard, 43 focused examples,
+617 other fast HIR examples with two existing pending cases, and the union-value
+runtime storage guard pass. The omitted `as_question_try_spec` RED is identical
+on clean `6772e562`; generated-runtime integration was not part of this bounded
+run. The intentional gate's `_exit(0)` proves HIR phase continuity, not compile
+success or MIR/LLVM emission. Current HIR-to-MIR-to-LLVM symbol continuity
+remains the next T9 falsifier, and the historical zero-argument symptom remains
+stale until a current emitted artifact reproduces it.
 
 ### 0.2 Authority-edge state table
 
@@ -1635,9 +1640,12 @@ future architecture work:
   [reducer](../regression_tests/union_static_generic_materialization_guard.cr)
   and [guard](../regression_tests/union_static_generic_materialization_guard.sh)
   now pass in focused HIR mode for the concrete, explicit-cast, and true-union
-  corridors. A historical full-G9 artifact classified an orphan zero-argument
-  call/stub as `MEASURED_RED`; that artifact is stale and has not been
-  reproduced from current source.
+  corridors. A source-bound full-compiler HIR gate now also preserves the exact
+  concrete `push$AstArena` request through body lowering after preventing
+  `exact_lookup` from canonicalizing it to the union symbol. Current MIR/LLVM
+  continuity is still open. A historical full-G9 artifact classified an orphan
+  zero-argument call/stub as `MEASURED_RED`; that artifact is stale and has not
+  been reproduced from current source.
 - dead-code deletion smoke - targeted reducer set plus `s2b`/`s3b` frontier
   comparison for removed paths in compiler hot code.
 

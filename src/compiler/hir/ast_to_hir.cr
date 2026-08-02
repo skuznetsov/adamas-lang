@@ -3696,6 +3696,22 @@ module Adamas::HIR
       end
     end
 
+    private def method_name_codec_exact_callsite_name?(
+      requested_name : String,
+      base_name : String,
+      exact_arg_types : Array(TypeRef),
+      lookup_expect_block : Bool,
+    ) : Bool
+      return false if requested_name.empty? || base_name.empty?
+      return false if exact_arg_types.empty? || exact_arg_types.any? { |type| type == TypeRef::VOID }
+
+      requested_parts = parse_method_name_uncached(requested_name)
+      return false unless method_name_codec_concrete_type_suffix?(requested_parts)
+      return false unless requested_parts.base == base_name
+
+      mangle_function_name(base_name, exact_arg_types, lookup_expect_block) == requested_name
+    end
+
     private def method_name_codec_exact_lookup_owner_keep_requested_name?(
       requested_name : String,
       resolved_entry_name : String,
@@ -3709,6 +3725,12 @@ module Adamas::HIR
       requested_has_concrete_type = method_name_codec_concrete_type_suffix?(requested_parts)
       resolved_has_arity_wildcard = method_name_codec_arity_wildcard_suffix?(resolved_parts.suffix)
       return true if requested_has_concrete_type && resolved_has_arity_wildcard
+      return true if method_name_codec_exact_callsite_name?(
+                       requested_name,
+                       base_name,
+                       exact_arg_types,
+                       lookup_expect_block
+                     )
       return true if preserve_requested_value_owner_specialization?(requested_name, resolved_entry_name)
 
       if requested_parts.suffix
@@ -3728,6 +3750,13 @@ module Adamas::HIR
       legacy_requested_concrete = requested_name.includes?('$') && !requested_name.includes?("$arity")
       legacy_resolved_arity = resolved_entry_name.includes?("$arity")
       legacy_result = if legacy_requested_concrete && legacy_resolved_arity
+                        true
+                      elsif method_name_codec_exact_callsite_name?(
+                              requested_name,
+                              base_name,
+                              exact_arg_types,
+                              lookup_expect_block
+                            )
                         true
                       elsif preserve_requested_value_owner_specialization?(requested_name, resolved_entry_name)
                         true
