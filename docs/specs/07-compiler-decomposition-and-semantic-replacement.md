@@ -747,7 +747,7 @@ retire existing B4/B5, name-resolution, materialization, or layout rows.
 |---|---|---|
 | `ResolutionId` preserves typed identity continuity. | Direct versus alias-derived generic calls, named arguments, block calls, absolute `::Hash`, and two distinct declarations with the same display spelling. | Any collision, remint, or owner loss stops the slice. |
 | `MethodInstanceKey` is injective for body/materialization demand. | Same declaration with different receiver/arg/block/named-arg types; same rendered name with different `DefIdentity`. | A key collision or mutable-key change rejects cache promotion. |
-| Lawful concrete and union generic instances preserve identity and body continuity through materialization. | [Reducer](../../regression_tests/union_static_generic_materialization_guard.cr) and [guard](../../regression_tests/union_static_generic_materialization_guard.sh) compare concrete `main_arenas << map_arena`, explicit `.as(ArenaLike)`, and true union flow; they join selected instance, coercion/value type, receiver/value arity, HIR body, and optional full-stage LLVM symbol/stub shape. | Concrete flow may select the `AstArena` instance; explicit and true union flow may select union/reduced-union instances. Any owner/key discontinuity, lost receiver/value argument, unmatched body/symbol, or orphan zero-argument call/stub fails T9. Focused HIR and source-bound full-compiler HIR are green through exact child body lowering. Current MIR/LLVM emission continuity remains unsatisfied; the historical full-G9 zero-argument artifact is stale and unreproduced. |
+| Lawful concrete and union generic instances preserve identity and body continuity through materialization. | [Reducer](../../regression_tests/union_static_generic_materialization_guard.cr), [HIR guard](../../regression_tests/union_static_generic_materialization_guard.sh), and typed [MIR/LLVM ABI spec](../../spec/mir/union_static_generic_materialization_abi_spec.cr) compare concrete `main_arenas << map_arena`, explicit `.as(ArenaLike)`, and true union flow. They join selected HIR body, coercion/value type, exact MIR FunctionId, receiver/value `TypeRef`s and operands, `ret self` body, and exact LLVM `<< -> push` call/definition. Artifact-classifier mode remains available for a retained full-source LLVM artifact. | Concrete flow may select the `AstArena` instance; explicit and true union flow may select union/reduced-union instances. Any owner/key discontinuity, lost receiver/value argument, mismatched body/symbol, duplicate/malformed definition, or orphan zero-argument call/stub fails T9. The focused HIR/MIR/LLVM corridor and source-bound full-compiler HIR are green; a wrong concrete/union MIR `TypeRef` expectation is RED. Full-source MIR/LLVM emission remains open behind B4-F, and the historical full-G9 zero-argument artifact is stale and unreproduced. |
 | No semantic string keys remain on the candidate route. | Source-shape scan plus runtime ledger for mangled-name cache/owner decisions and late string rewrites. | Any semantic branch driven by a string remains guard-only. |
 | Arena identity is preserved. | Block, macro, inline, reparsed, and current-arena `ExprId` reducers with equal numeric indices. | Index-only fallback or stale dereference fails closed. |
 | No legacy queue is required. | `ADAMAS_SEMANTIC_ASSERT_NO_LEGACY_QUEUE=1` on hello, generic, macro, block, recursive, and stage2/3 reducers. | Any legacy queue/safety-net execution blocks promotion. |
@@ -866,12 +866,15 @@ declaration fixed-point parity is demonstrated.
 
 T9 is a prerequisite for promoting this slice on the union-container path.
 The upstream audit admits the distinct concrete and union instances. Focused
-HIR continuity is now green: no-callsite `<<`/`>>` inference cannot seed a
+HIR/MIR/LLVM continuity is now green: no-callsite `<<`/`>>` inference cannot seed a
 signature from an unknown receiver's right operand, and exact full-compiler
 lookup preserves a requested typed callsite only when its base and actual types
-re-serialize to the same symbol. The remaining current obligation is
-HIR-to-MIR-to-LLVM emitted-symbol continuity. The historical zero-arg call/stub
-stays an unreproduced hypothesis until the full route joins selected
+re-serialize to the same symbol. The focused typed ABI spec preserves exact
+concrete/union MIR FunctionIds, `TypeRef`s, operands, `ret self` bodies, and
+matching two-argument LLVM `<< -> push` symbols. The remaining current
+obligation is full-source MIR-to-LLVM emitted-symbol continuity after B4-F
+reachability. The historical zero-arg
+call/stub stays an unreproduced hypothesis until that full route joins selected
 `Def`/`DefInstanceKey`, coercion/value type, receiver/value arity, materialized
 body, and emitted symbol for all three
 lawful flows.

@@ -1,9 +1,10 @@
 # Adamas Bootstrap TODO
 
 Updated: 2026-08-01 (the unconsumed cross-arena lowering bridge is rejected;
-T9 focused and source-bound full-compiler HIR continuity are green through
-exact-target body lowering, while current MIR/LLVM continuity remains open and
-the historical full-G9 symptom is stale and unreproduced. Exact guarded method
+T9 focused HIR-to-MIR-to-LLVM continuity and source-bound full-compiler HIR
+continuity are green through exact-target body lowering, while full-source
+MIR/LLVM continuity remains blocked by B4-F and the historical full-G9 symptom
+is stale and unreproduced. Exact guarded method
 declaration shapes replace in place; local keyed decisions reject replaced
 same-arena method objects; T1 and B4-F remain red).
 
@@ -83,15 +84,19 @@ function signature from the right operand. Receiver-layout fallback now
 preserves a concrete typed callsite specialization only when it exactly
 re-serializes to the already selected symbol; union fallback and the existing
 M4i6f tuple-layout repair remain intact. Evidence: host build, focused T9 HIR
-guard, union/nilable Array runtime storage, late generic union stride, tuple
-Array/Pointer runtime guards, and the HIR suite (372 examples, 0
-failures/errors, 2 existing pending). A source-bound full-compiler probe now
+guard plus typed MIR/LLVM ABI spec, union/nilable Array runtime storage, late
+generic union stride, tuple Array/Pointer runtime guards, and the HIR suite (372
+examples, 0 failures/errors, 2 existing pending). A source-bound full-compiler probe now
 also reaches and lowers the exact concrete `Array(ArenaLike)#push$AstArena`
-body without canonicalizing it to the union symbol. This closes the current HIR
-lookup/materialization discontinuity only. The next active T9 frontier is
-current HIR-to-MIR-to-LLVM emitted-symbol continuity; the historical
-zero-argument symptom is not current evidence. T1 and B4-F remain red. The HIR
-compatibility path now
+body without canonicalizing it to the union symbol. The focused reducer's typed
+ABI spec now also preserves exact concrete and union `append -> << -> push`
+FunctionIds, receiver/value types and operands, `ret self` MIR bodies, and exact
+two-argument LLVM `<< -> push` calls/definitions. A wrong concrete/union MIR
+`TypeRef` expectation is RED. This closes the local downstream corridor, not the
+full-source route. The next active T9 frontier is
+full-source MIR-to-LLVM emitted-symbol continuity after B4-F reachability; the
+historical zero-argument symptom is not current evidence. T1 and B4-F remain
+red. The HIR compatibility path now
 exposes only
 `SelectedCallTarget {symbol_name, def_node}`; the unused `CallShape`,
 `ResolutionBinding`, string-round-trip `MethodInstanceKey`, and their unconsumed
@@ -414,15 +419,19 @@ HIR defect: `exact_lookup` rewrote requested concrete `push$AstArena` to the
 union target/body. The bounded exact-reserialization rule and base guard keep
 stale/shape-mismatched requests fail-closed. Candidate `4d6c37ac...` preserves
 concrete requested/target/materialized names through
-`instance_class_info_lower_method`; focused T9, 43 focused examples, 617 other
-fast HIR examples (2 existing pending), and union-value runtime storage pass.
+`instance_class_info_lower_method`; focused T9 HIR plus typed MIR/LLVM ABI, 43
+focused examples, 617 other fast HIR examples (2 existing pending), and
+union-value runtime storage pass.
 See `docs/compiler_architecture_sdd.md` section 0 for the scoped receipt and
-baseline exclusion. This is HIR evidence only, not compile success or a current
-MIR/LLVM/full-G9 certificate, and expires when source or candidate changes.
+baseline exclusion. The full-source receipt is HIR evidence only; the focused
+reducer separately certifies the current HIR/MIR/LLVM corridor. Neither is
+compile success or a current full-G9 certificate, and both expire when source
+or candidate changes.
 The attempted STABLE6 in-process callsite-owner prototype is now refuted and
 is not an admitted route. Do not add another large owner or new `AstToHir`
-ivars. The next safe route follows this exact concrete symbol through current
-MIR and LLVM emission and compares it with the lawful union control. External
+ivars. The next safe route follows this exact concrete symbol through
+full-source MIR and LLVM emission once B4-F reachability allows it; the focused
+concrete/union control already guards the generic downstream corridor. External
 telemetry alone is insufficient authority.
 Join actual semantic-instance/body creation, queue growth, wall time, and RSS
 before choosing the smallest behavior change. The external analyzer must be
