@@ -737,7 +737,7 @@ retire existing B4/B5, name-resolution, materialization, or layout rows.
 |---|---|---|
 | `ResolutionId` preserves typed identity continuity. | Direct versus alias-derived generic calls, named arguments, block calls, absolute `::Hash`, and two distinct declarations with the same display spelling. | Any collision, remint, or owner loss stops the slice. |
 | `MethodInstanceKey` is injective for body/materialization demand. | Same declaration with different receiver/arg/block/named-arg types; same rendered name with different `DefIdentity`. | A key collision or mutable-key change rejects cache promotion. |
-| Lawful concrete and union generic instances preserve identity and body continuity through materialization. | [Reducer](../../regression_tests/union_static_generic_materialization_guard.cr) and [guard](../../regression_tests/union_static_generic_materialization_guard.sh) compare concrete `main_arenas << map_arena`, explicit `.as(ArenaLike)`, and true union flow; they join selected instance, coercion/value type, receiver/value arity, HIR body, and optional full-stage LLVM symbol/stub shape. | Concrete flow may select the `AstArena` instance; explicit and true union flow may select union/reduced-union instances. Any owner/key discontinuity, lost receiver/value argument, unmatched body/symbol, or orphan zero-argument call/stub fails T9. Current focused HIR and full-G9 artifact modes are both measured red, so T9 is falsifiable but unsatisfied. |
+| Lawful concrete and union generic instances preserve identity and body continuity through materialization. | [Reducer](../../regression_tests/union_static_generic_materialization_guard.cr) and [guard](../../regression_tests/union_static_generic_materialization_guard.sh) compare concrete `main_arenas << map_arena`, explicit `.as(ArenaLike)`, and true union flow; they join selected instance, coercion/value type, receiver/value arity, HIR body, and optional full-stage LLVM symbol/stub shape. | Concrete flow may select the `AstArena` instance; explicit and true union flow may select union/reduced-union instances. Any owner/key discontinuity, lost receiver/value argument, unmatched body/symbol, or orphan zero-argument call/stub fails T9. Focused HIR mode is green; the optional full-G9 zero-argument call/unreachable-body artifact remains measured red, so full materialization/emission continuity is unsatisfied. |
 | No semantic string keys remain on the candidate route. | Source-shape scan plus runtime ledger for mangled-name cache/owner decisions and late string rewrites. | Any semantic branch driven by a string remains guard-only. |
 | Arena identity is preserved. | Block, macro, inline, reparsed, and current-arena `ExprId` reducers with equal numeric indices. | Index-only fallback or stale dereference fails closed. |
 | No legacy queue is required. | `ADAMAS_SEMANTIC_ASSERT_NO_LEGACY_QUEUE=1` on hello, generic, macro, block, recursive, and stage2/3 reducers. | Any legacy queue/safety-net execution blocks promotion. |
@@ -855,11 +855,15 @@ or rewrite authorization. The demand-driven body cache remains later until
 declaration fixed-point parity is demonstrated.
 
 T9 is a prerequisite for promoting this slice on the union-container path.
-The upstream audit admits the distinct concrete and union instances. The
-remaining defect is continuity: the zero-arg call/stub in full G9 LLVM must
-remain a late-materialization/missing-target hypothesis until one reducer joins
-selected `Def`/`DefInstanceKey`, coercion/value type, receiver/value arity,
-materialized body, and emitted symbol for all three lawful flows.
+The upstream audit admits the distinct concrete and union instances. Focused
+HIR continuity is now green: no-callsite `<<`/`>>` inference cannot seed a
+signature from an unknown receiver's right operand, and receiver-layout
+fallback preserves a concrete typed callsite only when it exactly re-serializes
+to the selected symbol. The remaining defect is the zero-arg call/stub in full
+G9 LLVM. It stays a late-materialization/missing-target hypothesis until the
+full route joins selected `Def`/`DefInstanceKey`, coercion/value type,
+receiver/value arity, materialized body, and emitted symbol for all three
+lawful flows.
 
 ## 14. Stop, dirty-worktree, and rollback rules
 

@@ -24520,11 +24520,15 @@ module Adamas::HIR
         end
         left_type = infer_type_from_expr(expr_node.left, self_type_name)
         right_type = infer_type_from_expr(expr_node.right, self_type_name)
+        # Both integer shifts and shovel-style method calls return the left
+        # operand type. If that type is not known during eager body inference,
+        # fail closed instead of leaking the right operand type into the
+        # function's registered return contract.
+        if op == "<<" || op == ">>"
+          return left_type if left_type && left_type != TypeRef::VOID
+          return nil
+        end
         if left_type && right_type
-          if op == "<<" || op == ">>"
-            # Shift operations keep the left operand type.
-            return left_type
-          end
           integer_op = op == "+" || op == "-" || op == "*" || op == "&" || op == "|" ||
                        op == "^" || op == "<<" || op == ">>"
           if integer_op
@@ -72287,7 +72291,13 @@ module Adamas::HIR
         if first_arg = coerced_args.first?
           right_id = first_arg
         end
-        right_id = coerce_arg_to_container_element_type(ctx, right_id, left_type)
+        right_id = coerce_arg_to_container_element_type(
+          ctx,
+          right_id,
+          left_type,
+          call_target_name,
+          right_type,
+        )
         call = Call.with_receiver(ctx.next_id, left_type, left_id, call_target_name, [right_id])
         ctx.emit(call)
         ctx.register_type(call.id, left_type)
@@ -92787,7 +92797,13 @@ module Adamas::HIR
       coerced_args = coerce_args_to_param_types(ctx, args, mangled_method_name)
       if receiver_id && args.size == 1 && container_write_method?(base_method_name, method_name, mangled_method_name)
         if arg_id = coerced_args.first?
-          coerced = coerce_arg_to_container_element_type(ctx, arg_id, ctx.type_of(receiver_id.not_nil!))
+          coerced = coerce_arg_to_container_element_type(
+            ctx,
+            arg_id,
+            ctx.type_of(receiver_id.not_nil!),
+            mangled_method_name,
+            arg_types.first? || TypeRef::VOID,
+          )
           coerced_args = coerced == arg_id ? coerced_args : ([coerced] of ValueId)
         end
       end
@@ -94988,6 +95004,8 @@ module Adamas::HIR
       ctx : LoweringContext,
       arg_id : ValueId,
       container_type : TypeRef,
+      selected_method_name : String,
+      selected_arg_type : TypeRef,
     ) : ValueId
       target_type = container_element_type(container_type)
       return arg_id unless target_type
@@ -94995,6 +95013,18 @@ module Adamas::HIR
 
       arg_type = ctx.type_of(arg_id)
       return arg_id if arg_type == TypeRef::VOID || arg_type == target_type
+
+      # Preserve a concrete exact specialization. Receiver-layout coercion is
+      # only a fallback (notably for the M4i6f tuple repair) and must not replace
+      # the typed callsite shape that produced the selected emitted symbol.
+      if is_union_or_nilable_type?(target_type) &&
+         selected_arg_type != TypeRef::VOID &&
+         selected_arg_type == arg_type &&
+         !is_union_or_nilable_type?(selected_arg_type)
+        selected_base = strip_type_suffix(selected_method_name)
+        expected_name = mangle_function_name(selected_base, [selected_arg_type])
+        return arg_id if expected_name == selected_method_name
+      end
 
       coerce_value_to_type(ctx, arg_id, target_type)
     end

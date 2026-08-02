@@ -1383,3 +1383,22 @@ and LSP framing discarded. Local source inventory and safe-run focused specs
 remain authoritative.
 **Cost saved:** small cross-file consumer search; no implementation decision was
 delegated.
+
+### Session 54 — 2026-08-01 — T9 selected-call/coercion audit
+
+**Task:** read-only audit of the focused union/static generic materialization
+RED, restricted to the first wrong return-inference and argument-coercion
+decisions in `ast_to_hir.cr`; no edits.
+**Brief size:** bounded prompt naming the reducer, the explicit-cast signature
+mismatch, the premature concrete-to-union conversion, and three competing
+hypotheses.
+**Latency:** failed immediately with `RuntimeError: Permission denied`.
+**Output quality:** no signal. No Grok claim was produced or used.
+**Adversary check:** local debug traces and an independent Luna source audit
+instead localized unknown-left `<<` inference leaking the right operand into
+the registered return contract, plus receiver-container coercion replacing the
+already selected concrete call contract. The focused guard, union/nilable
+runtime storage, late generic union stride, tuple-layout guards, host build, and
+broad HIR suite pass after the minimal fixes.
+**Verdict:** failed/no-signal interaction. Do not count this run as evidence.
+**Cost saved:** none.

@@ -1,9 +1,9 @@
 # Adamas Bootstrap TODO
 
 Updated: 2026-08-01 (the unconsumed cross-arena lowering bridge is rejected;
-T9 is the next active lowering falsifier; exact guarded method declaration
-shapes replace in place; local keyed decisions reject replaced same-arena
-method objects; T1 and B4-F remain red).
+T9 focused HIR continuity is green and the full-G9 artifact remains red; exact
+guarded method declaration shapes replace in place; local keyed decisions
+reject replaced same-arena method objects; T1 and B4-F remain red).
 
 T1 OWNERSHIP/NAME-ID SUBSTRATE VERIFIED; CALL RESOLUTION CONTINUITY REMAINS
 OPEN. `SemanticIdentityRegistry` is now the compile-session owner for canonical
@@ -74,10 +74,19 @@ generic/union/container types remain outside this narrow guard. This is not the
 general `CallResolution`, a `ResolutionId`, T1 telemetry, downstream continuity,
 or new selection authority. Phase 3a therefore pauses before `ResolutionId`;
 do not add an ordinal call token or another bridge until a genuine compiler
-consumer exists in the same coherent slice. The next active lowering frontier
-is the existing T9 union/static generic materialization falsifier, which already
-has live HIR/materialization consumers. The HIR compatibility path now exposes
-only
+consumer exists in the same coherent slice. The focused T9 union/static generic
+materialization guard now passes. Eager return inference fails closed for
+`<<`/`>>` when the left operand type is unavailable instead of seeding a
+function signature from the right operand. Receiver-layout fallback now
+preserves a concrete typed callsite specialization only when it exactly
+re-serializes to the already selected symbol; union fallback and the existing
+M4i6f tuple-layout repair remain intact. Evidence: host build, focused T9 HIR
+guard, union/nilable Array runtime storage, late generic union stride, tuple
+Array/Pointer runtime guards, and the HIR suite (372 examples, 0
+failures/errors, 2 existing pending). This closes only the focused HIR
+discontinuities. The next active T9 frontier is the full-G9 zero-argument
+call/unreachable-body artifact; T1 and B4-F remain red. The HIR compatibility
+path now exposes only
 `SelectedCallTarget {symbol_name, def_node}`; the unused `CallShape`,
 `ResolutionBinding`, string-round-trip `MethodInstanceKey`, and their unconsumed
 assertion paths were removed rather than promoted into semantic authority.

@@ -101,9 +101,12 @@ arguments. Full G9
 `s2` LLVM instead contains a union `<<` path calling zero-argument
 `push$AstArena()` plus a zero-argument unreachable stub. Late HIR
 materialization or a missing selected target is therefore a high-confidence
-hypothesis for the malformed body, not yet a proven creation mechanism; T9 is
-the current-red selected-Def/instance/coercion/arity/body/symbol continuity
-falsifier.
+hypothesis for the malformed body, not yet a proven creation mechanism. T9's
+focused HIR mode is now green: unknown-left `<<`/`>>` body inference fails
+closed, and receiver-layout fallback preserves a concrete typed callsite only
+when it exactly re-serializes to the selected symbol. The full-G9 zero-argument
+call/unreachable-body artifact remains `MEASURED_RED`; focused HIR success is
+not full symbol continuity.
 
 ### 0.2 Authority-edge state table
 
@@ -255,9 +258,10 @@ family); `output-file-owned-by-cli` and `tail-stub-from-mutable-sets`
 consumed as a behavior fix); `MaterializationAttemptResult` terminal-status
 owner type (paper-only); vertical `MethodBodyLoweringContext` /
 `SemanticStateScope` slice.
-The static-union insertion target/materialization edge is also residual: T9
-must join selected HIR target to materialized body and emitted call before an
-owner record can be marked consumed.
+The static-union insertion target/materialization edge is also residual: T9's
+focused HIR join is green, but the full-G9 route must still join the selected
+target to the materialized body and emitted call before an owner record can be
+marked consumed.
 
 ## 1. Admitted surface
 
@@ -1620,9 +1624,9 @@ future architecture work:
   and true-union flows. The
   [reducer](../regression_tests/union_static_generic_materialization_guard.cr)
   and [guard](../regression_tests/union_static_generic_materialization_guard.sh)
-  are current-red: focused HIR reports signature/conversion discontinuities,
-  and optional full-G9 mode classifies the orphan zero-argument call/stub as
-  `MEASURED_RED`.
+  now pass in focused HIR mode for the concrete, explicit-cast, and true-union
+  corridors. Optional full-G9 mode still classifies the orphan zero-argument
+  call/stub as `MEASURED_RED`.
 - dead-code deletion smoke - targeted reducer set plus `s2b`/`s3b` frontier
   comparison for removed paths in compiler hot code.
 
