@@ -310,10 +310,21 @@ semantic zeroes and improves the full B4-F corridor.
   not yet attribute those useful calls to the three-name helper, so a
   helper-wide guard is not admitted either. The diagnostic is default-off and
   records no persistent state.
+- **Local exact-name dedup:** the three-name return-type helper now skips only
+  alternatives whose spelling is exactly equal to an earlier argument in the
+  same invocation. It allocates no set, stores no cross-call state, and leaves
+  alias/canonical resolution unchanged. At the source-matched iteration-1
+  boundary, HIR shape remains exact (`missing=1962`, `pending=0`,
+  `funcs=28647`) and unique forced names remain 5,801, while admitted calls
+  fall from 9,409 to 8,990. The 419 removed admissions are 4.45% of the
+  baseline force corridor. Observed wall time moves from approximately 146 to
+  143 seconds, but a single three-second delta is orientation only, not a
+  stable performance certificate.
 - **Adversary verdict:** robust for the bounded two-axis provenance aggregate,
-  vulnerable for any causal interpretation of overlapping target counts, and
-  broken for stable-source, queued-target, or Pending-only skipping as a
-  current production optimization.
+  robust for the local exact-name dedup at the sampled boundary, vulnerable
+  for any causal interpretation of overlapping target counts or the observed
+  wall-time delta, and broken for stable-source, queued-target, or Pending-only
+  skipping as a current production optimization.
 - **Next local track:** correlate no-effect NotStarted requests with the
   existing materialization identity ledger to separate canonical-body reuse
   from missing-definition and other early-return outcomes. Evaluate only a

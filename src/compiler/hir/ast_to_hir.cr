@@ -81830,10 +81830,14 @@ module Adamas::HIR
         forced = true if !name.empty? && !@module.has_function_with_body?(name) && force_lower_function_for_return_type(name)
       end
       if name = name2
-        forced = true if !name.empty? && !@module.has_function_with_body?(name) && force_lower_function_for_return_type(name)
+        if name != name1
+          forced = true if !name.empty? && !@module.has_function_with_body?(name) && force_lower_function_for_return_type(name)
+        end
       end
       if name = name3
-        forced = true if !name.empty? && !@module.has_function_with_body?(name) && force_lower_function_for_return_type(name)
+        if name != name1 && name != name2
+          forced = true if !name.empty? && !@module.has_function_with_body?(name) && force_lower_function_for_return_type(name)
+        end
       end
       forced
     end

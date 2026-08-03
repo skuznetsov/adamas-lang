@@ -11817,6 +11817,38 @@ another early return. The only currently proven semantic optimization is exact
 duplicate name elimination inside one helper invocation; its material impact is
 not yet measured.
 
+### Session 47: local force-helper exact-name dedup (2026-08-03)
+
+The three-name return-type helper now skips only a name whose spelling is
+exactly equal to an earlier argument in the same helper invocation. The change
+uses two local string comparisons: it adds no `Set`, cache, registry, callsite
+parameter, or state transition. A duplicate invocation cannot observe any
+intervening action; the first identical call either leaves the same rejection
+conditions in place or performs the only lowering work and contributes the
+helper's `forced` result.
+
+The focused exact-shadow group passes 17 examples. Four adversary surfaces run
+individually because their top-level test aliases conflict in one Crystal test
+binary: yield inlining integration, block destructuring inference, multiple
+assignment union inference, and inline-yield HIR all pass (five examples total).
+A fresh current-source stage 1 builds safely in approximately 16 seconds.
+
+The source-matched iteration-1 process gate preserves the complete observed
+boundary: `missing=1962`, `pending=0`, `funcs=28647`, and 5,801 unique forced
+names. Total force admissions fall from 9,409 to 8,990, proving that 419 exact
+duplicate alternatives, 4.45% of the baseline force corridor, were removed.
+The gate exits 0 after approximately 143 seconds versus the prior approximately
+146-second non-outcome-logging baseline. That three-second observation is
+directionally consistent but remains inside single-run noise; the admission
+count reduction, not wall time, is the strong local certificate.
+
+Boundary: the local exact-name dedup is ROBUST at the sampled iteration-1
+boundary and suitable for an atomic commit. It is not B4-F closure and does not
+authorize a broader alias, Pending-only, or forced-name cache. The remaining
+measured corridor is 8,990 admissions, including 5,312 baseline NotStarted
+no-effect outcomes whose exact early-return categories still need bounded
+classification before another semantic precheck.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
