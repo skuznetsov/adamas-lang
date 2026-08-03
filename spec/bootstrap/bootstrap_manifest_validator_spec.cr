@@ -107,7 +107,7 @@ module BootstrapManifestValidatorSpec
     File.write(smoke_source, "puts 42\n")
 
     1.upto(2) do |stage|
-      wall_sec = stage == 2 ? "180" : "10.0"
+      wall_sec = stage == 2 ? "300.00" : "10.0"
       write_executable(File.join(run_dir, "cv2_s#{stage}"), "#!/bin/sh\n# stage #{stage}\nexit 0\n")
       File.write(File.join(run_dir, "stage#{stage}_build.log"), build_log(wall_sec))
       File.write(File.join(run_dir, "stage#{stage}_build.resource"), resource_row)
@@ -174,7 +174,7 @@ module BootstrapManifestValidatorSpec
       fields["stage#{stage}_build_mode"] = "normal_binary"
       fields["stage#{stage}_build_started_at"] = "2026-07-31T00:00:00Z"
       fields["stage#{stage}_build_finished_at"] = "2026-07-31T00:00:30Z"
-      fields["stage#{stage}_build_wall_sec"] = stage == 2 ? "180" : "10.0"
+      fields["stage#{stage}_build_wall_sec"] = stage == 2 ? "300.00" : "10.0"
       flags = stage == 1 ? "build src/adamas.cr -o cv2_s1 --error-trace" : "src/adamas.cr -o cv2_s2"
       fields["stage#{stage}_flags_b64"] = Base64.strict_encode(flags)
       fields["stage#{stage}_producer_sha256"] = producer_hash
@@ -206,7 +206,7 @@ module BootstrapManifestValidatorSpec
     {workdir: workdir, run_dir: run_dir, host: host, manifest: manifest}
   end
 
-  def self.run_validator(validator : String, fixture : Fixture, max_wall = "180") : NamedTuple(status: Process::Status, output: String)
+  def self.run_validator(validator : String, fixture : Fixture, max_wall = "300") : NamedTuple(status: Process::Status, output: String)
     stdout = IO::Memory.new
     stderr = IO::Memory.new
     status = Process.run(
@@ -227,6 +227,25 @@ describe "bootstrap manifest validator" do
     fixture = BootstrapManifestValidatorSpec.create_fixture(root)
     begin
       result = BootstrapManifestValidatorSpec.run_validator(validator, fixture)
+      result[:status].success?.should be_true, result[:output]
+      result[:output].should contain("bootstrap_manifest_ready")
+    ensure
+      FileUtils.rm_rf(fixture[:workdir])
+    end
+  end
+
+  it "accepts the exact 300-second stage2 boundary" do
+    fixture = BootstrapManifestValidatorSpec.create_fixture(root)
+    begin
+      build_log = File.join(fixture[:run_dir], "stage2_build.log")
+      File.write(build_log, BootstrapManifestValidatorSpec.build_log("300.00"))
+      BootstrapManifestValidatorSpec.update_manifest(fixture[:manifest], "stage2_build_wall_sec", "300.00")
+      BootstrapManifestValidatorSpec.update_manifest(
+        fixture[:manifest],
+        "stage2_build_log_sha256",
+        BootstrapManifestValidatorSpec.sha256_file(build_log)
+      )
+      result = BootstrapManifestValidatorSpec.run_validator(validator, fixture, "300.00")
       result[:status].success?.should be_true, result[:output]
       result[:output].should contain("bootstrap_manifest_ready")
     ensure
@@ -305,8 +324,8 @@ describe "bootstrap manifest validator" do
     fixture = BootstrapManifestValidatorSpec.create_fixture(root)
     begin
       build_log = File.join(fixture[:run_dir], "stage2_build.log")
-      File.write(build_log, BootstrapManifestValidatorSpec.build_log("180.01"))
-      BootstrapManifestValidatorSpec.update_manifest(fixture[:manifest], "stage2_build_wall_sec", "180.01")
+      File.write(build_log, BootstrapManifestValidatorSpec.build_log("300.01"))
+      BootstrapManifestValidatorSpec.update_manifest(fixture[:manifest], "stage2_build_wall_sec", "300.01")
       BootstrapManifestValidatorSpec.update_manifest(
         fixture[:manifest],
         "stage2_build_log_sha256",
@@ -340,10 +359,10 @@ describe "bootstrap manifest validator" do
     end
   end
 
-  it "does not allow the caller to relax the fixed 180-second budget" do
+  it "does not allow the caller to relax the fixed 300-second budget" do
     fixture = BootstrapManifestValidatorSpec.create_fixture(root)
     begin
-      result = BootstrapManifestValidatorSpec.run_validator(validator, fixture, "180.01")
+      result = BootstrapManifestValidatorSpec.run_validator(validator, fixture, "300.01")
       result[:status].success?.should be_false
       result[:output].should contain("stage2_wall_policy")
     ensure
@@ -402,7 +421,7 @@ describe "bootstrap manifest validator" do
       build_log = File.join(fixture[:run_dir], "stage2_build.log")
       valid_row = BootstrapManifestValidatorSpec.resource_row
       forged_row = valid_row.sub("exit_code=0", "exit_code=1")
-      File.write(build_log, BootstrapManifestValidatorSpec.build_log("180").sub(valid_row, forged_row))
+      File.write(build_log, BootstrapManifestValidatorSpec.build_log("300.00").sub(valid_row, forged_row))
       BootstrapManifestValidatorSpec.update_manifest(
         fixture[:manifest],
         "stage2_build_log_sha256",

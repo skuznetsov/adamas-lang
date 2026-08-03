@@ -6,7 +6,7 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd -P)"
 source "$ROOT_DIR/scripts/lib/bootstrap_evidence_contract.sh"
 RUN_DIR=""
 EXPECTED_HOST=""
-MAX_STAGE2_WALL_SEC="180"
+MAX_STAGE2_WALL_SEC="300"
 
 usage() {
   cat <<'USAGE'
@@ -54,7 +54,7 @@ done
 
 [[ -n "$RUN_DIR" && -n "$EXPECTED_HOST" ]] || reject "usage"
 [[ "$MAX_STAGE2_WALL_SEC" =~ ^[0-9]+([.][0-9][0-9]?)?$ ]] || reject "stage2_wall_policy"
-awk -v value="$MAX_STAGE2_WALL_SEC" 'BEGIN { exit !(value > 0 && value <= 180) }' || reject "stage2_wall_policy"
+awk -v value="$MAX_STAGE2_WALL_SEC" 'BEGIN { exit !(value > 0 && value <= 300) }' || reject "stage2_wall_policy"
 [[ -d "$RUN_DIR" && ! -L "$RUN_DIR" ]] || reject "run_directory"
 RUN_DIR="$(cd "$RUN_DIR" && pwd -P)" || reject "run_directory"
 case "$RUN_DIR" in

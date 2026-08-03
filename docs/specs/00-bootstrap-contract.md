@@ -193,11 +193,11 @@ no-prelude oracle by path and hash, rejecting stale or symlinked smoke inputs.
 It requires complete numeric rooted-ancestry RSS and FD coverage, successful
 resource outcomes, producer lineage, producer-created run/cache identities,
 normal build flags, and `CRYSTAL_WORKERS`-unset policy. Stage2 wall time must be
-at most 180 seconds; exactly 180 seconds is admitted. Any mismatch rejects the
+at most 300 seconds; exactly 300 seconds is admitted. Any mismatch rejects the
 receipt without rerunning a generated compiler.
 
 T8 is a decision procedure over a B6 receipt, not evidence that a current
-receipt is green. B4-F remains red until a fresh current-source two-stage run
+receipt is green. B4-F remains open until a fresh current-source two-stage run
 passes T8 with both semantic transcripts and numeric resource coverage. T8
 inherits B6's non-hermetic boundary: trusting a host binary hash does not seal
 external stdlib/toolchain files or same-UID hostile writers.

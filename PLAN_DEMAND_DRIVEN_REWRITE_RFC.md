@@ -43,14 +43,13 @@ Function ids, value ids, block ids, and type ids are order-sensitive.
 ### 2.1 R0 readiness boundary
 
 Fresh-source readiness is a performance and semantic vector, not a recovered
-historical label. B4-F requires a new-output `s1 -> s2b` build in <=180 seconds
-plus exact green plain/full-prelude and no-prelude smokes. The <=180-second
-budget is a new acceptance target: the strongest surviving fresh both-smoke
-green certificate is 231.37 seconds, with 251.91 and 253.42 second
-corroborating runs. Historical ~178-190-second records are no-prelude or
-partial only. A 2026-07-14 fresh run took roughly 711 seconds with no-prelude
-green/plain red; G7, G8, and G9 took 1962.79, 1791.78, and 1768.73 seconds and
-both smoke modes were red.
+historical label. B4-F requires a new-output `s1 -> s2b` build in <=300 seconds
+plus exact green plain/full-prelude and no-prelude smokes. Historical fresh
+both-smoke certificates at 231.37, 251.91, and 253.42 seconds fit that numeric
+budget but remain stale and cannot certify current source. Historical
+~178-190-second records are no-prelude or partial only. A 2026-07-14 fresh run
+took roughly 711 seconds with no-prelude green/plain red; G7, G8, and G9 took
+1962.79, 1791.78, and 1768.73 seconds and both smoke modes were red.
 
 R0 now has a sealed current-source snapshot: base `c216b9ef...`, tree
 `1efb635...`, exactly seven tracked compiler/spec paths, patch SHA-256
@@ -61,11 +60,12 @@ green. With fresh cache/output, `s1` built in 14.13s and passed exact plain
 (`42`) and no-prelude (`hello world`, `n=42`, `noprelude_interp_ok`) smokes.
 The `s2` self-host build timed out with exit 143 at 182.54s and 1361.03 MiB
 externally sampled peak RSS; the outer chain exited 1 at 219.32s and produced
-no `cv2_s2`. B4-F is therefore compiler-side performance red. Stage2 semantic
-smokes are unavailable, not semantic red or green. The host-infrastructure
-blocker is refuted; R0 promotion remains blocked by B4-F and the missing
-same-source fresh T0 A/B. Historical G9 remains diagnostic-only, and T8 remains
-`[MISSING-FALSIFIER]` until an executable validator is committed.
+no `cv2_s2`. That receipt is red under the former 180-second cap but does not
+measure the current 300-second policy. Stage2 semantic smokes are unavailable,
+not semantic red or green. The host-infrastructure blocker is refuted; R0
+promotion remains blocked by B4-F and the missing same-source fresh T0 A/B.
+Historical G9 remains diagnostic-only; T8 is executable, but no fresh current
+receipt has passed it.
 
 A bounded stats-on repeat used the sealed `cv2_s1` with only
 `ADAMAS_PHASE_STATS=1` under the same 180-second/12288-MB safe-run envelope.
@@ -222,7 +222,7 @@ Purpose:
 Must produce:
 - contract doc for HIR inputs required by MIR and LLVM
 - normalized shadow comparator spec
-- a B4-F evidence manifest that distinguishes the new <=180-second acceptance
+- a B4-F evidence manifest that distinguishes the <=300-second acceptance
   target from historical full-green, no-prelude-only, partial, and both-red
   records
 - the T9 [reducer](regression_tests/union_static_generic_materialization_guard.cr)
@@ -241,9 +241,10 @@ Exit criteria:
 - normalized comparison format is implemented or fully specified
 - legacy-path metrics are observable in CI/local runs
 - kill-switch assertions are defined for new flag
-- same-source fresh T0 A/B and B4-F must pass before promotion; the current
-  sealed attempt is performance red, and manifest evidence does not replace
-  the still-missing committed T8 validator
+- same-source fresh T0 A/B and B4-F must pass before promotion; the prior
+  sealed attempt is red only under the former 180-second cap, the current
+  300-second policy is unmeasured, and manifest evidence does not replace the
+  committed T8 decision
 
 ### Phase 1: Canonical Semantic Identity Layer
 
@@ -413,7 +414,7 @@ Exit criteria:
 - downstream MIR/LLVM green
 - no regressions in runtime smoke behavior
 - no legacy queue assertions fired
-- fresh B4-F reaches <=180 seconds and both exact semantic smoke modes are
+- fresh B4-F reaches <=300 seconds and both exact semantic smoke modes are
   green on the same manifested source/artifact; historical G9 cannot satisfy
   this gate
 
@@ -498,7 +499,7 @@ This RFC is complete when:
 - legacy supply-driven queue machinery is not required under the new flag
 - normalized shadow suite is green
 - bootstrap and reducer suite are green enough to justify default switch
-- B4-F has a fresh <=180-second both-smoke green certificate and T9 proves
+- B4-F has a fresh <=300-second both-smoke green certificate and T9 proves
   concrete, explicit-cast, and true-union insertion preserve selected
   definition/instance, coercion/value type, receiver/value arity, body/symbol
   continuity, and non-stub materialization

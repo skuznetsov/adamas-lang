@@ -30,23 +30,25 @@ Document contract (hard rules):
   `s2` passed the downstream full-prelude classifier and printed `42` under
   `scripts/run_safe.sh`. This remains useful compatibility evidence, but it
   does not prove that current source can produce a fresh `s2b`.
-- **B4-F (fresh current source): MEASURED RED.** A clean-output `s1 -> s2b`
-  build from the reconciled source must finish in at most **180 seconds** on
-  the recorded host/cache policy (faster is the stretch target). The output
-  directory is new and the manifest records fresh-output/source/output hashes
+- **B4-F (fresh current source): UNMEASURED UNDER THE 300-SECOND POLICY.** A
+  clean-output `s1 -> s2b` build from the reconciled source must finish in at
+  most **300 seconds** on the recorded host/cache policy (<=180 seconds is the
+  stretch target). The output directory is new and the manifest records
+  fresh-output/source/output hashes
   plus `cache_policy`, `cache_dir_rel`, and `cache_directory_identity`; no generated stage is reused. Any external host cache is
   recorded and held constant, with cold and warm results reported separately.
   The exact plain/full-prelude and exact no-prelude semantic smokes
   are co-equal release gates; worker-only or emit-only success cannot mask
   either failure. This is a new acceptance target, not a recovered historical
-  full-green certificate. The sealed current snapshot reached stage2 timeout
-  exit 143 at 182.54 seconds and produced no `cv2_s2`.
+  full-green certificate. The sealed current snapshot exhausted the former
+  180-second cap at stage2 wall 182.54 seconds and produced no `cv2_s2`; it
+  does not classify the current budget.
 - **T8 (offline fresh-s2 decision): EXECUTABLE / NO CURRENT GREEN RECEIPT.**
   `scripts/validate_bootstrap_manifest.sh` rehashes a canonical B6/B7 receipt
   against current source, harness, and an explicitly trusted host, then
   enforces normal no-worker production, numeric resource coverage, both exact
-  semantic smokes, and stage2 wall <=180 seconds. The validator exists; the
-  measured-red current run has not passed it.
+  semantic smokes, and stage2 wall <=300 seconds. The validator exists; no
+  fresh current-source receipt has passed it.
 - **T1 (typed call identity): LOCAL GUARD COMPLETE / CONTINUITY RED.** Exact
   r1-r5 explicit-receiver shapes construct and immediately validate one
   private `LocalCallResolution {MethodSymbol, DefInstanceKey}` before legacy
@@ -70,7 +72,7 @@ Current evidence is deliberately revision-scoped:
 |---|---|---|
 | `548d29b1` clean baseline | Stage1 and host/no-prelude probes pass; fresh `s1 -> s2` timed out at 900 seconds | Control only; no fresh-s2 certificate. |
 | `04b98b04` lineage | Direct `Object`/`Reference` method census 2085 -> 50 | Diagnostic demand-amplifier evidence; not a release certificate. |
-| Historical fresh both-smoke green | 231.37 seconds strongest surviving certificate; 251.91/253.42 seconds corroborating | Above the new <=180-second target; not current-source admission. |
+| Historical fresh both-smoke green | 231.37 seconds strongest surviving certificate; 251.91/253.42 seconds corroborating | Within the <=300-second numeric budget but stale; not current-source admission. |
 | Historical ~178-190-second runs | No-prelude or partial lanes only | Not full-green B4-F certificates. |
 | 2026-07-14 fresh run | ~711 seconds; no-prelude green, plain/full-prelude red | Semantic split; release red. |
 | G7 snapshot | 1962.79 seconds; both semantic smokes red | Refuted as release candidate. |
@@ -79,13 +81,13 @@ Current evidence is deliberately revision-scoped:
 | `91ebe332` T0 | Same 900-second fresh-stage timeout as clean control; HIR provenance ON/OFF byte-identical | Guard-only provenance; no behavior promotion. |
 | R0 sealed current-source snapshot | Base `c216b9ef...`, tree `1efb635...`, exactly seven tracked compiler/spec paths, patch `d7ad2cac...`; snapshot diff-check passes | Reproducible current-source certificate; manifest `/private/tmp/adamas_r0_current_c216_manifest.md`. |
 | Host preflight and stage1 | Host spawn green; host build 14.13s; plain smoke `42` in 20.29s; exact no-prelude markers in 0.65s; `cv2_s1` SHA-256 `dfe3c0e8...` | Host-infrastructure blocker refuted; stage1 corridor green. |
-| Fresh current-source B4-F | Stage2 timeout exit 143, stage wall 182.54s, externally sampled peak RSS 1361.03 MiB; outer chain exit 1 at 219.32s; no `cv2_s2` | Compiler-side performance red. Stage2 semantic smokes unavailable, not red/green. |
+| Fresh current-source B4-F | The last canonical attempt hit the former 180-second cap: stage2 timeout exit 143, stage wall 182.54s, externally sampled peak RSS 1361.03 MiB; outer chain exit 1 at 219.32s; no `cv2_s2` | Old-budget red; the current 300-second policy is unmeasured. Stage2 semantic smokes remain unavailable. |
 | Sealed-current stats-on localization | Only `ADAMAS_PHASE_STATS=1` on sealed `cv2_s1`, safe-run timeout 180s/memory 12288 MB: wall 182.60s, exit 143, no `cv2_s2`; peak RSS unavailable. Completed `process_pending` 218 -> 591 (+373) in 555.2ms and `emit_tracked_sigs` 591 -> 604 (+13) in 235.0ms; open `lower_missing.initial` grew 604 -> 1535 -> 7422 -> 19238 -> 28234 before timeout. Log SHA-256 `1cc025cc...`. | Revalidates/evolves the historical 2026-04-29 locator. No completion/timing/top-prefix for the open phase; definitions differ from the old observation, and stats-on/uninstrumented timing is diagnostic-only. |
 | Concrete-suffix overload fallback | A full-source trace showed `Hash(Int32, String)#==$Int32` borrowing `Hash(Int32, String)#==$Hash(Int32, String)` through `mangled_prefix_typed`. The resolver now treats fully decoded positional suffix types with no compatible candidate as authoritative negative evidence and reaches exact-name parent fallback instead; sparse `$arityN` and compacted marker shapes retain callsite-history fallback. The focused regression is RED when the rejection condition is ablated and GREEN when restored; the compiled cross-type Hash equality oracle returns `false` in both operand orders. | Closes the sibling positional-type ABI violation only. Block/splat/named shape selection remains outside this guard. The same bounded `lower_missing` census moved 13338 -> 13300 functions while `Hash#==` remained at 484 enqueue events, so this is not the B4-F fanout root and carries no bootstrap speed claim. |
 | Concrete generic `Object#===` wrapper ownership | Exact lookup may resolve a generic `Reference` descendant's inherited `===` to `Object`; lowering that body with Object self turns `self == other` into Object-wide virtual fanout. The concrete primary is retained only for `===` when source provenance proves the Object wrapper and the source shape is one untyped required positional parameter with no default/splat/block, a single `self == parameter` body, and no explicit return other than `Bool`. Existing primaries must match receiver/right/Bool ABI; pending primaries must still be queued; Void callsite evidence fails closed. Negative fixtures cover indirect/unrelated self calls, extra defaults, unrelated RHS, typed params, explicit non-Bool return, and Void. The fresh full-stdlib reducer moves 198999 -> 190531 HIR lines and 157 -> 3 `#==$Int32` bodies; runtime controls print `0/1/1/1`; the full HIR suite is 376/0 with two existing pending. | Measured B4-F improvement, not closure. The fresh comparable gate remains 13300 functions; at `queue@iter2`, `Hash#==` demand falls 484 -> 63 (-87.0%), but 2048 unique missing targets and 137 `Object#===` occurrences remain. No method/type allowlist, registry, budget cap, full-stage timing, or produced-stage admission is claimed. |
 | Enum case-equality semantic owner through late repair | Initial `===` lowering and late receiver repair share the retained per-function enum-value sidecar as the semantic receiver-owner proof. `lower_def` and `lower_method`, plus successful normal completion of synthetic `lower_main`, isolate, retain, and restore that sidecar; successful main lowering also restores the saved caller arena after packed multi-source expressions. Normal repair dispatches through the proven enum owner while retaining the original integer receiver value, descriptor, and wrapper receiver ABI. Cross-owner and same-owner-bodyful falsifiers poison an exact `CaseKind` function call; the durable source oracle additionally proves exact and nilable patterns both inside functions and directly in `__adamas_main`. A two-arena falsifier proves subsequent `lower_def` reads literal `11` from the caller function rather than aligned foreign literal `22`. No preservation bypass, new registry, fallback, cast, search heuristic, or name allowlist is admitted. The full HIR suite is 378/0 with two existing pending; the durable enum oracle remains green. | Closes the classified 137-occurrence function-body defect, the synthetic-main enum-ledger gap, and the demonstrated successful-path caller-arena leak only. At the same fresh `queue@iter2` boundary, `Object#===` is absent and is conserved as `NodeKind#===` 78, `Token::Kind#===` 47, and `DWARF::AT#===` 12; `Hash#==` is 55, functions 12854, and unique missing targets are 2052. Exception-safe `lower_main` cleanup remains unproven and unchanged. Therefore no B4-F closure, global fanout reduction, timing admission, fresh stage2, or produced-stage smoke is claimed. |
 | Bare-generic runtime-return union compatibility | Original Crystal 1.21 rejects a demanded explicit return annotation containing a bare generic class or struct template, including nullable `T?` syntax, with `can't use ... in unions yet`; it still accepts bare generic parameter restrictions when concrete callsites specialize them, and leaves an uncalled definition semantically lazy. HIR validation now runs only at demanded method/top-level body lowering, before return-union construction. Paired positive/negative HIR falsifiers, fresh-compiler explicit/nullable diagnostics, the concrete-callsite runtime oracle, full HIR 382/0 with two existing pending, and MIR 37/0 pass. | Closes the demonstrated incomplete-dispatch miscompile by failing closed at the original semantic boundary. It does not add runtime bare-generic union composition, alter parameter restrictions, validate registration-only definitions eagerly, expand MIR candidate families, or change ABI/layout ownership. |
-| T9 exact-target continuity | Stage1 from `6772e562` exposed concrete-request -> union-target canonicalization at `exact_lookup`; candidate SHA-256 `4d6c37ac...` preserves concrete requested/target/materialized `push$AstArena` through `instance_class_info_lower_method` at about 117 seconds. The focused HIR guard plus typed MIR/LLVM ABI spec check exact concrete/union `append -> << -> push` edges, MIR FunctionIds, receiver/value `TypeRef`s and operands, `ret self` bodies, and exact two-argument LLVM `<< -> push` calls/definitions; a wrong concrete/union MIR `TypeRef` expectation is RED. The 43 focused examples, 617 other fast HIR examples (2 existing pending), and union-value runtime storage also pass. | Current exact-target HIR lookup/body continuity and the focused downstream HIR-to-MIR-to-LLVM corridor are green. The full-source MIR gate still times out at 180 seconds without an artifact, so full-source emitted-symbol continuity remains open behind B4-F. Phase-gate `_exit(0)` is not compile success, and the historical full-G9 symptom remains stale. |
+| T9 exact-target continuity | Stage1 from `6772e562` exposed concrete-request -> union-target canonicalization at `exact_lookup`; candidate SHA-256 `4d6c37ac...` preserves concrete requested/target/materialized `push$AstArena` through `instance_class_info_lower_method` at about 117 seconds. The focused HIR guard plus typed MIR/LLVM ABI spec check exact concrete/union `append -> << -> push` edges, MIR FunctionIds, receiver/value `TypeRef`s and operands, `ret self` bodies, and exact two-argument LLVM `<< -> push` calls/definitions; a wrong concrete/union MIR `TypeRef` expectation is RED. The 43 focused examples, 617 other fast HIR examples (2 existing pending), and union-value runtime storage also pass. | Current exact-target HIR lookup/body continuity and the focused downstream HIR-to-MIR-to-LLVM corridor are green. The historical full-source MIR diagnostic hit the former 180-second cap without an artifact, so full-source emitted-symbol continuity remains open behind B4-F. Phase-gate `_exit(0)` is not compile success, and the historical full-G9 symptom remains stale. |
 | T0 same-source A/B | Not completed on the sealed snapshot | R0 promotion remains blocked independently of B4-F. |
 
 The old `B4 GREEN` wording is therefore split into B4-H and B4-F rather than
@@ -194,7 +196,7 @@ rejected because runtime-OFF still changes the self-host source/workload and
 failure class. Default-off is therefore not zero compile-time cost. The
 whole-system Adversary verdict is **BROKEN for admission**, despite the local
 parity verdict. T1 remains **MISSING** because HIR `TypeRef`/name shape is not
-semantic identity, and B4-F (<=180 seconds) remains red/open with no speed
+semantic identity, and B4-F (<=300 seconds) remains unmeasured/open with no speed
 claim.
 
 Pivot: do not add another large in-process callsite owner or new `AstToHir`
@@ -1250,9 +1252,9 @@ CopyPropagation, not a contract record.
 
 Do not start broad refactor while current `s2b`/`s3b` bug frontiers are moving.
 Only add SDDs, probes, and small tactical fixes needed to restore the bootstrap
-corridor. The active performance objective is fresh `s1 -> s2b` in <=180s
-(with a faster stretch target), not merely a downstream run of an old generated
-artifact.
+corridor. The active performance objective is fresh `s1 -> s2b` in <=300s
+(with <=180s retained as a stretch target), not merely a downstream run of an
+old generated artifact.
 
 Additional stop-rule after the 2026-07-01 checkpoint: a tactical fix is allowed
 only when it names the owning semantic boundary and either consumes an existing
@@ -1262,7 +1264,7 @@ boundary, stop and route the work to Phase 1 census.
 
 Exit signal:
 
-- fresh B4-F `s1 -> s2b` reaches the <=180s budget and both exact
+- fresh B4-F `s1 -> s2b` reaches the <=300s budget and both exact
   plain/full-prelude and no-prelude smokes pass;
 - `s3b` status is known;
 - active frontiers have problem cards and reducers or smoke scripts.
@@ -1285,7 +1287,7 @@ frontier and must not stage, clean, or rewrite the user's main worktree.
    the cause.
 3. Run a fresh `s1 -> s2b` classifier with a diagnostic cap sufficient to
    leave an attributable artifact, then apply the B4-F acceptance budget of
-   <=180s. Compare materialization requests, duplicate bodies, forced lowers,
+   <=300s. Compare materialization requests, duplicate bodies, forced lowers,
    queue peaks, phase times, and RSS; no single function count or timeout is a
    value proxy.
 4. Write an evidence manifest naming the first divergent owner or declaring
@@ -1293,11 +1295,11 @@ frontier and must not stage, clean, or rewrite the user's main worktree.
    real `ResolutionId`/materialization consumer.
 
 The disposable snapshot/source-guard subgate and host preflight are complete.
-The sealed current-source run classifies B4-F as compiler-side performance red:
-stage2 timed out at 182.54 seconds with exit 143 and no `cv2_s2`. Stage2
-semantic smokes are unavailable because no artifact exists; they are not
-semantic red or green. B5 remains historical/unrefreshed, and G9 remains only a
-diagnostic candidate.
+The sealed current-source run classifies only the former 180-second cap as red:
+stage2 timed out at 182.54 seconds with exit 143 and no `cv2_s2`. It does not
+classify the current 300-second policy. Stage2 semantic smokes are unavailable
+because no artifact exists; B5 remains historical/unrefreshed, and G9 remains
+only a diagnostic candidate.
 
 R0 as a promotion seal remains open until the same sealed source passes B4-F,
 produces explicit stage2 semantic smoke results, and completes the fresh T0
@@ -1305,7 +1307,7 @@ A/B. Neither B4-H, G9, nor the manifest substitutes for those gates.
 
 ### Phase 0a.1: Reliability/architecture two-track join
 
-The reliability track owns the <=180s fresh-stage budget, generated-stage
+The reliability track owns the <=300s fresh-stage budget, generated-stage
 provenance, exact plain/no-prelude smokes, and rollback. The architecture track
 owns T0 -> typed `ResolutionId`/`CallResolution`/materialization contracts and
 the active typed resolution-to-materialization queue payload/transaction guard

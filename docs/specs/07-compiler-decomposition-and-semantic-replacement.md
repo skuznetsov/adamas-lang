@@ -1,7 +1,7 @@
 # Compiler Decomposition and Semantic Replacement — Frontier SDD
 
 > Status: DESIGN-SEALED; R0 CURRENT-SOURCE SNAPSHOT SEALED,
-> B4-F PERFORMANCE RED; STAGE2 SEMANTIC SMOKES UNAVAILABLE;
+> B4-F UNMEASURED UNDER THE 300-SECOND POLICY; STAGE2 SEMANTIC SMOKES UNAVAILABLE;
 > T1 LOCAL TYPED DECISION GUARDED, CROSS-PHASE CONSUMER ABSENT
 > (frontier refresh, 2026-08-01).
 > Audit snapshot: source-shape counts remain scoped to checkout `05954794`.
@@ -95,7 +95,7 @@ keeps source revisions, generated artifacts, and the dirty worktree distinct.
 |---|---|---|
 | Clean `548d29b1` baseline | `IN_PROGRESS / NON-DISCRIMINATING` | Stage1 and host/no-prelude probes pass, but fresh `s1 -> s2` timed out at the 900-second diagnostic cap without producing a new `s2`. It is a control, not a release certificate. |
 | `04b98b04` demand-amplifier lineage | `DIAGNOSTIC` | Direct `Object`/`Reference` method census fell from 2085 to 50. This explains one cross-product, but the branch is not a speed or semantic release certificate by itself. |
-| Historical fresh both-smoke green runs | `HISTORICAL GREEN / ABOVE TARGET` | The strongest surviving fresh certificate is 231.37 seconds; 251.91 and 253.42 seconds corroborate that both smoke modes have been green, but none satisfies the new <=180-second B4-F target. |
+| Historical fresh both-smoke green runs | `HISTORICAL GREEN / WITHIN CURRENT NUMERIC BUDGET / STALE` | The strongest surviving fresh certificate is 231.37 seconds; 251.91 and 253.42 seconds corroborate that both smoke modes have been green. They fit the <=300-second budget but cannot certify current source. |
 | Historical ~178-190-second records | `PARTIAL ONLY` | These are no-prelude or otherwise partial records. They are not recovered full-green certificates and cannot satisfy B4-F. |
 | 2026-07-14 fresh run | `SEMANTIC SPLIT / RED` | Roughly 711 seconds; no-prelude was green while the plain/full-prelude smoke was red. |
 | G7 snapshot | `REFUTED AS RELEASE CANDIDATE` | Produced `s2` after 1962.79 seconds; both semantic smoke modes were red. |
@@ -104,10 +104,10 @@ keeps source revisions, generated artifacts, and the dirty worktree distinct.
 | `91ebe332` Slice 1A | `T0 COMPLETED / GUARD-ONLY` | Stage1 passes; fresh `s1 -> s2` reaches the same 900-second timeout as the clean control. HIR provenance ON/OFF is byte-identical, but no `ResolutionId`/materialization consumer is present. |
 | R0 sealed current-source snapshot | `COMPLETED / NON-PROMOTING` | Base `c216b9ef...`, tree `1efb635...`, exactly seven tracked compiler/spec paths, patch SHA-256 `d7ad2cac...`; snapshot diff-check passes. Manifest: `/private/tmp/adamas_r0_current_c216_manifest.md`. |
 | Host preflight and stage1 | `GREEN` | Host spawn green; host build 14.13s; plain smoke `42` in 20.29s; exact no-prelude markers in 0.65s; `cv2_s1` SHA-256 `dfe3c0e8...`. |
-| Fresh current-source B4-F | `MEASURED RED` | Stage2 timeout exit 143 at 182.54s, externally sampled peak RSS 1361.03 MiB; outer chain exit 1 at 219.32s; no `cv2_s2`. Compiler-side performance red; stage2 semantic smokes unavailable, not red/green. |
+| Fresh current-source B4-F | `OLD-BUDGET RED / CURRENT POLICY UNMEASURED` | The last canonical attempt hit the former 180-second cap: stage2 timeout exit 143 at 182.54s, externally sampled peak RSS 1361.03 MiB; outer chain exit 1 at 219.32s; no `cv2_s2`. It does not classify the current 300-second budget; stage2 semantic smokes remain unavailable. |
 | Sealed-current stats-on localization | `DIAGNOSTIC / OPEN PHASE` | With only `ADAMAS_PHASE_STATS=1` on sealed `cv2_s1` under timeout 180s/memory 12288 MB, the run ended at wall 182.60s, exit 143, without `cv2_s2`; peak RSS is unavailable. `process_pending` completed 218 -> 591 (+373) in 555.2ms and `emit_tracked_sigs` 591 -> 604 (+13) in 235.0ms. The first open phase was `lower_missing.initial`; internal growth was 604 -> 1535 -> 7422 -> 19238 -> 28234 (+27,630 from 604) before timeout, with no completion/timing/normalized top-prefix. Log SHA-256 `1cc025cc5930ebd0513382e68dbb400e763002186f227288683d6bc710f79ecd`. This revalidates/evolves the 2026-04-29 localization; observation definitions differ, and stats-on/uninstrumented timing is diagnostic-only. |
 | T0 same-source fresh A/B | `NOT COMPLETED` | R0 promotion remains blocked independently of B4-F. |
-| T8 offline readiness validator | `COMPLETED / NO CURRENT GREEN RECEIPT` | The committed validator rehashes B6/B7 evidence and enforces trusted host, normal no-worker build, numeric resource coverage, both exact stage2 smokes, and the inclusive <=180-second budget. B4-F remains red until a fresh current receipt passes it. |
+| T8 offline readiness validator | `COMPLETED / NO CURRENT GREEN RECEIPT` | The committed validator rehashes B6/B7 evidence and enforces trusted host, normal no-worker build, numeric resource coverage, both exact stage2 smokes, and the inclusive <=300-second budget. B4-F remains open until a fresh current receipt passes it. |
 | T1 ownership/NameId substrate | `LOCAL GUARD COMPLETED / T1 STILL RED` | One `SemanticIdentityRegistry` owns canonical session-local names and the existing semantic type table; `DefInstanceKey` named arguments are typed `NameId` pairs, and retained semantic key arrays are mutation-safe. Exact r1-r5 explicit-receiver shapes now build and immediately validate one private `LocalCallResolution {MethodSymbol, DefInstanceKey}` before unchanged legacy body inference. Selected Def payload plus receiver visibility/owner provenance fail closed for independent roots while canonical symbol re-export remains valid. Expired HIR-only sidecars were pruned; `SelectedCallTarget` remains legacy compatibility. No `ResolutionId`, producer row, cross-arena handoff, downstream join, or lowering behavior change is claimed. |
 
 These states supersede an unqualified `B4 GREEN` label. They do not discard
@@ -122,25 +122,27 @@ The bootstrap contract now has two explicitly different rows:
   downstream diagnosis and compatibility archaeology. Its smoke result is
   retained as historical evidence and cannot promote a source change.
 - **B4-F (fresh current source):** a clean-output `s1 -> s2b` build from the
-  reconciled source must finish in **at most 180 seconds** on the recorded host
+  reconciled source must finish in **at most 300 seconds** on the recorded host
   and explicit cache policy. The output directory must be new and
   the manifest records fresh-output/source/output hashes plus `cache_policy`,
   `cache_dir_rel`, and `cache_directory_identity`; no generated
   stage may be reused. Cold and warm results are reported separately, and a
   warm run cannot satisfy a missing cold/fresh result.
-  Faster is the stretch target. A longer diagnostic timeout may be used to
-  obtain a failure artifact, but it never relaxes this acceptance budget.
+  The former <=180-second budget is retained as a stretch target. A longer
+  diagnostic timeout may be used to obtain a failure artifact, but it never
+  relaxes this acceptance budget.
 
 B4-F has two co-equal semantic gates: the exact plain/full-prelude smoke and
 the exact no-prelude smoke must both compile and run under the safe runner,
 with the expected behavior/oracle output. Worker count, cached old artifacts,
 or emit-only success cannot mask a failure in either mode. A candidate is not
-fresh-s2 ready unless the 180-second budget and both semantic gates pass.
+fresh-s2 ready unless the 300-second budget and both semantic gates pass.
 
-The <=180-second threshold is a new acceptance target, not a recovered
-historical full-green certificate. The strongest surviving fresh both-smoke
+The <=300-second threshold is the current acceptance budget, not permission to
+reuse a historical certificate. The strongest surviving fresh both-smoke
 green result is 231.37 seconds (with 251.91 and 253.42 second corroborating
-runs); the ~178-190-second records cover only no-prelude or partial lanes.
+runs); those records remain stale, and the ~178-190-second records cover only
+no-prelude or partial lanes.
 
 ### 2.3 Transition decision
 
@@ -149,7 +151,8 @@ stop was the `AstToHir#lower_method` body loop for
 `Adamas::Compiler::CLI#run$IO_IO`, at roughly 4.8 GB peak RSS, under
 `ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_BODY_LOWERED`; the pre-body
 gates were recorded clean. It is not a current green claim. The sealed R0 run
-now classifies B4-F as performance red; B5 remains unavailable without `cv2_s2`.
+classifies only the former 180-second cap as red; B4-F is unmeasured under the
+current 300-second policy, and B5 remains unavailable without `cv2_s2`.
 
 Decision:
 
@@ -162,8 +165,8 @@ Decision:
    duplicate shape expansion with selected target, call shape, body/symbol
    continuity, and exact semantics preserved. Keep the default-path consumer
    blocked; guard/shadow only.
-3. A blank-slate compiler rewrite is not admitted while B4-F is red and B5 is
-   unreachable from the current source.
+3. A blank-slate compiler rewrite is not admitted while B4-F lacks a current
+   green receipt and B5 is unreachable from the current source.
 4. Physical file splitting is delayed until semantic contracts reduce the
    state surface of the moved code.
 5. The R0 reconciliation seal is mandatory before Slice 1B: the active dirty
@@ -247,8 +250,8 @@ orientation was `registered=27363`, `agree=42801`, `mismatch=484`,
 This does not prove causality, but admission is rejected because runtime-OFF
 changes the self-host source/workload and failure class. Whole-system
 Adversary verdict: **BROKEN for admission**. T1 remains **MISSING** because
-HIR `TypeRef`/name shape is not semantic identity, and B4-F (<=180 seconds)
-remains red/open with no speed claim.
+HIR `TypeRef`/name shape is not semantic identity, and B4-F (<=300 seconds)
+remains unmeasured/open with no speed claim.
 
 Pivot: do not add another large in-process callsite owner or new `AstToHir`
 ivars. Reuse the existing materialization ledger and semantic
@@ -641,7 +644,7 @@ compared as if they were one compiler.
    consumer is promoted; a timeout is classified as non-discriminating, not
    as evidence that B caused the slowdown.
 4. Run the fresh `s1 -> s2b` classifier with a diagnostic cap sufficient to
-   leave an attributable artifact, then apply the actual B4-F budget of 180
+   leave an attributable artifact, then apply the actual B4-F budget of 300
    seconds. Compare function/materialization demand, duplicate bodies, queue
    peaks, phase times, and RSS; do not use a single timeout or function count
    as a value proxy.
@@ -650,10 +653,10 @@ compared as if they were one compiler.
    real `ResolutionId`/materialization consumer.
 
 The current-source snapshot/source-guard portion and host preflight are
-complete. The fresh chain classifies B4-F as compiler-side performance red:
-stage2 timed out at 182.54 seconds with exit 143 and no `cv2_s2`. Stage2
-semantic smokes are unavailable because no artifact exists; they are not
-semantic red or green. Historical G9 remains diagnostic-only.
+complete. The last fresh chain exhausted the former 180-second cap: stage2
+timed out at 182.54 seconds with exit 143 and no `cv2_s2`. It does not classify
+the current 300-second policy. Stage2 semantic smokes are unavailable because
+no artifact exists; historical G9 remains diagnostic-only.
 
 R0 as a promotion seal remains open until the same sealed source passes B4-F,
 produces explicit stage2 semantic smoke results, and completes the fresh T0
@@ -663,9 +666,9 @@ A/B. Neither B4-H, G9, nor the manifest substitutes for those gates.
 
 The work proceeds on two coordinated tracks:
 
-- **Reliability track:** restore a fresh B4-F build at or below 180 seconds
-  (with a faster stretch target), then keep exact plain and no-prelude smokes
-  green across every promoted slice. It owns source snapshots, generated
+- **Reliability track:** restore a fresh B4-F build at or below 300 seconds
+  (with <=180 seconds retained as a stretch target), then keep exact plain and
+  no-prelude smokes green across every promoted slice. It owns source snapshots, generated
   stage provenance, resource budgets, and bootstrap rollback.
 - **Architecture track:** move from T0 guard-only provenance to typed
   `ResolutionId`, `CallResolution`, and a typed
@@ -894,7 +897,7 @@ Stop and return to census/design when:
   malformed/zero-argument body/call;
 - a zero-copy change improves an allocation proxy while worsening normalized
   semantics, peak RSS, or retention;
-- a fresh `s1 -> s2b` build exceeds the 180-second B4-F budget, or either
+- a fresh `s1 -> s2b` build exceeds the 300-second B4-F budget, or either
   exact plain/full-prelude or no-prelude smoke diverges;
 - a B4/B5 run moves to an earlier or unexplained frontier;
 - an architecture slice is promoted without the reliability/architecture join

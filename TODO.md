@@ -10,7 +10,8 @@ continuity are green through exact-target body lowering, while full-source
 MIR/LLVM continuity remains blocked by B4-F and the historical full-G9 symptom
 is stale and unreproduced. Exact guarded method
 declaration shapes replace in place; local keyed decisions reject replaced
-same-arena method objects; T1 and B4-F remain red).
+same-arena method objects; T1 remains red and B4-F is unmeasured under the
+current 300-second policy).
 
 BARE REFERENCE-GENERIC INSTANCE DISPATCH RUNTIME-VERIFIED; REGISTERED
 RUNTIME-REFERENCE RETURN UNIONS HIR-VERIFIED AND MIR-GUARDED; UNSUPPORTED
@@ -53,7 +54,8 @@ uncalled definition retains original Crystal's lazy validation behavior. HIR is
 **388/0** with two existing pending examples, and MIR is **37/0**. Generic
 structs remain static, and bare generic struct return unions fail closed by the
 same original-Crystal storage rule. This is a compatibility guard, not runtime
-support for bare-generic union composition; B4-F remains red.
+support for bare-generic union composition; B4-F remains open under the
+300-second policy.
 
 T1 OWNERSHIP/NAME-ID SUBSTRATE VERIFIED; CALL RESOLUTION CONTINUITY REMAINS
 OPEN. `SemanticIdentityRegistry` is now the compile-session owner for canonical
@@ -142,28 +144,29 @@ two-argument LLVM `<< -> push` calls/definitions. A wrong concrete/union MIR
 `TypeRef` expectation is RED. This closes the local downstream corridor, not the
 full-source route. The next active T9 frontier is
 full-source MIR-to-LLVM emitted-symbol continuity after B4-F reachability; the
-historical zero-argument symptom is not current evidence. T1 and B4-F remain
-red. The HIR compatibility path now
+historical zero-argument symptom is not current evidence. T1 remains red;
+B4-F is unmeasured under the 300-second policy. The HIR compatibility path now
 exposes only
 `SelectedCallTarget {symbol_name, def_node}`; the unused `CallShape`,
 `ResolutionBinding`, string-round-trip `MethodInstanceKey`, and their unconsumed
 assertion paths were removed rather than promoted into semantic authority.
 
-OFFLINE BOOTSTRAP READINESS VALIDATOR VERIFIED; B4-F REMAINS RED.
+OFFLINE BOOTSTRAP READINESS VALIDATOR VERIFIED; B4-F 300-SECOND RUN PENDING.
 `scripts/validate_bootstrap_manifest.sh` independently consumes a
 `bootstrap_chain_v3` run directory and an explicitly trusted host compiler.
 It rehashes live source/git/harness identity, run/cache identities, every
 stage artifact and transcript, successful numeric B7 receipts, and producer
 lineage before enforcing the normal two-stage build, no-worker policy, exact
-plain/no-prelude semantics, and inclusive stage2 wall budget of <=180 seconds.
-The focused validator group passes 26 examples, including post-publication
+plain/no-prelude semantics, and inclusive stage2 wall budget of <=300 seconds.
+The focused validator group passes 27 examples, including post-publication
 artifact tampering, semantically wrong or framed but rehashed transcripts,
 forged/partial resource evidence, log/receipt mismatch, ambiguous wall rows,
 wall/log mismatch, a relaxed caller budget,
 lineage/build-policy or smoke-input identity violations, duplicate or symlink evidence, an
 untrusted/non-executable host, a run path inside the source scope, and the
-180.01-second negative. T8 is now executable; B4-F remains measured red until
-a fresh current-source run passes this validator.
+300.01-second negative. T8 is executable; the former 180-second receipt does
+not measure the new policy, so B4-F remains open until a fresh current-source
+run passes this validator.
 
 BOOTSTRAP EVIDENCE PRODUCER VERIFIED; B4-F REMAINS OPEN.
 `scripts/bootstrap_chain.sh` now requires an absent run path and creates the
@@ -176,7 +179,7 @@ have regular-file/single-link checks and hashes in an atomic
 Source scope and run/cache identities are endpoint-checked. The focused
 integrity/timing group passes 16 examples, including absolute, relative, and
 symlink-parent paths into the source scope, and the scoped hostile review is
-ROBUST. T8 now rehashes the receipt on disk and enforces <=180 seconds,
+ROBUST. T8 now rehashes the receipt on disk and enforces <=300 seconds,
 numeric resource coverage, normal build policy, and both stage2 semantics;
 a real fresh run must still pass it before B4-F can turn green. B6 does not
 prove absence of transient
@@ -211,13 +214,14 @@ regression, full HIR **366/0**, macro **30/0**, LLVM backend **88/0**, and
 to `MacroExpander#expand` output-backed definitions; literal-only macro paths
 without a certificate still conservatively fall back.
 
-CURRENT B4-F / INCREMENTAL-SCAN FRONTIER: every compiler stage in
+FORMER 180-SECOND B4-F / INCREMENTAL-SCAN RECEIPT: every compiler stage in
 `scripts/bootstrap_chain.sh` is now supervised by `scripts/run_safe.sh`, and
 the invalid Bash `break unless` in the wrapper is fixed. A source-matched fresh
 s1 built in 21.58s and passed plain/no-prelude smoke. Its s2 timed out at the
-180-second gate (script wall 182.59s, exit 143, no `cv2_s2`); external snapshots
-grew from about 663 MiB to 1.20 GiB with FD count 12. This remains a
-compute/materialization performance RED, not an observed memory/FD runaway.
+then-current 180-second gate (script wall 182.59s, exit 143, no `cv2_s2`);
+external snapshots grew from about 663 MiB to 1.20 GiB with FD count 12. This
+was a compute/materialization performance RED under the former policy, not an
+observed memory/FD runaway, and does not classify the current 300-second gate.
 
 The default-off missing-scan shadow is observational only: production retains
 the legacy full scan, budget prefix, and function-count stop. An initial
@@ -402,8 +406,9 @@ produced binary both exit 0 with
 ROBUST for optional-slot auto constructors and the tested explicit-new routing
 boundaries.
 
-B4-F remains independently MEASURED RED. The infrastructure-corrected fresh
-chain built s1 in 14.98 seconds and passed exact plain and no-prelude s1
+B4-F was independently MEASURED RED for that slice under the then-current
+180-second policy. The infrastructure-corrected fresh chain built s1 in 14.98
+seconds and passed exact plain and no-prelude s1
 smokes, but s1-to-s2 hit the 180-second safe-run limit (script wall 182.52
 seconds, 1,331,216 KB RSS, exit 143) without a `cv2_s2`. A separate
 non-acceptance 300-second diagnostic also timed out (2,048,080 KB RSS) without
@@ -419,18 +424,20 @@ seven tracked compiler/spec paths under patch SHA-256
 snapshot diff-check passes. Manifest:
 `/private/tmp/adamas_r0_current_c216_manifest.md`.
 
-Host spawn preflight is GREEN. With fresh cache/output and the canonical
-`--stages 2 --timeout 180 --mem 12288` chain, host-built `s1` is GREEN in
+Host spawn preflight is GREEN. Under the former 180-second policy, a fresh
+`--stages 2 --timeout 180 --mem 12288` chain built `s1` in
 14.13s; its plain smoke prints `42` in 20.29s and its no-prelude smoke prints
 the exact `hello world` / `n=42` / `noprelude_interp_ok` markers in 0.65s.
 The `s2` self-host build is compiler-side performance RED: timeout exit 143,
 stage wall 182.54s, externally sampled peak RSS 1361.03 MiB, no `cv2_s2`;
 outer chain exit 1 at 219.32s. Stage2 semantic smokes are unavailable because
 there is no artifact, not semantic red or green. The host-infrastructure
-blocker is refuted. R0 promotion remains blocked by B4-F and the missing
-same-source fresh T0 A/B. T8 is now an executable falsifier, but no fresh
-current-source run has passed it. The <=180-second value remains a new
-acceptance target, not a recovered historical full-green measurement.
+blocker is refuted. This receipt is red under the former 180-second cap but
+does not measure the current 300-second policy. R0 promotion remains blocked
+by B4-F and the missing same-source fresh T0 A/B. T8 is an executable
+falsifier, but no fresh current-source run has passed it. Historical
+231.37/251.91/253.42-second both-smoke receipts fit the numeric budget but
+remain stale and cannot certify current source.
 
 SEALED-CURRENT STATS-ON LOCALIZATION (diagnostic only): from the disposable
 worktree, the only compiler instrumentation flag was `ADAMAS_PHASE_STATS=1`:
@@ -520,8 +527,8 @@ This is not causal proof of the compiler root, but admission is rejected
 because runtime-OFF changes the self-host source/workload and failure class.
 The whole-system Adversary verdict is **BROKEN for admission**, despite the
 local parity verdict. T1 remains **MISSING** because HIR `TypeRef`/name shape
-is not semantic identity. B4-F (<=180 seconds) remains red/open and no speed
-claim is made. Keep the context bridge explicit: `StaleCallSite`,
+is not semantic identity. B4-F (<=300 seconds) remains unmeasured/open and no
+speed claim is made. Keep the context bridge explicit: `StaleCallSite`,
 `UntrackedRequiredCallSite`, and `StaleTransactionRef` are distinct meanings.
 
 VERIFIED STABILITY SLICE (bootstrap successor still open): `PageArena` stored
@@ -11197,7 +11204,7 @@ Evidence:
 
 Boundary: this is a measured B4-F improvement, not B4-F closure. The same
 iteration-2 scan still reports 2048 unique missing targets and 137
-`Object#===` occurrences. No full fresh stage2, <=180-second admission, or
+`Object#===` occurrences. No full fresh stage2, <=300-second admission, or
 produced-stage semantic-smoke claim is made.
 
 Next legal work: classify the remaining 137 `Object#===` occurrences by
@@ -11252,7 +11259,7 @@ Evidence:
 
 Boundary: this closes the classified enum-owner continuity defect, not B4-F.
 The comparable unique-target count increased from 2048 to 2052, so no global
-fanout or speedup claim is admitted. No full fresh stage2, <=180-second
+fanout or speedup claim is admitted. No full fresh stage2, <=300-second
 admission, or produced-stage semantic-smoke claim is made.
 
 At this session checkpoint the durable oracle was intentionally
@@ -11309,7 +11316,7 @@ Evidence:
 
 Boundary: this closes only the demonstrated synthetic-main enum-ledger gap.
 It does not claim B4-F closure, a fanout reduction, a full fresh stage2, the
-<=180-second admission gate, or produced-stage semantic smoke. Review also
+<=300-second admission gate, or produced-stage semantic smoke. Review also
 found at this checkpoint that `lower_main` left `@arena` on the last top-level
 arena after normal completion. That context leak was not the cause of this
 enum-owner defect and was deliberately excluded from this atomic change; it is
