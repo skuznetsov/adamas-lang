@@ -12022,6 +12022,36 @@ lowering for newly seen targets, not the skipped prefix checks. The next probe
 must profile that useful owner-lowering subtree before another production
 shortcut is proposed.
 
+### Session 53: missing-call provenance locates the early virtual-target amplifier (2026-08-03)
+
+A default-off full-scan shadow now classifies bodyless HIR call occurrences by
+caller origin and call/receiver shape. It records only the first iteration in
+which a target name appeared, derives current caller markers from existing HIR
+module state, and emits bounded samples with function, block, call, receiver,
+target, and caller identities. It does not alter call rewriting, admission,
+deduplication, RTA, queues, or lowering. Every summary declares
+`authority=full_scan` and `promotion=forbidden`.
+
+At the source-matched iteration-1 scan, the authoritative raw demand count
+remains 7,740 before deduplication, with `funcs=10324` and force `1714/1306`;
+the established queue boundary remains 1,962 unique targets. The `Array`
+filter, which matches target, caller, or receiver text, observes 1,439 related
+bodyless occurrences. Of these, 656 direct calls (45.6%) originate in functions
+already marked as virtual-dispatch targets, while only 58 (4.0%) originate in
+functions first seen as missing in the previous iteration. The largest class
+is 517 exact-receiver direct calls from virtual-target bodies. Bounded samples
+include `IncludedModuleRef#hash` and `CallsiteArgs#hash` forwarding into exact
+`Array(... )#hash$Crystal::Hasher` targets.
+
+This refutes the previous missing queue as the dominant early amplifier and
+moves the frontier to virtual-target reachability before iteration 0. It does
+not prove those virtual targets are unreachable: an active bodyful caller token
+is weaker than entry-root reachability, but a genuinely reachable virtual body
+must retain its outgoing exact calls. Name-family, live-type, allocation-only,
+virtual-target, or caller-origin production filters therefore remain BROKEN.
+The next legal falsifier must trace the admitting virtual shape back through
+its caller tokens to an entry-reachable root, without changing replay or demand.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

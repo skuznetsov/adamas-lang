@@ -383,17 +383,32 @@ semantic zeroes and improves the full B4-F corridor.
   across iterations 0 and 1. This certificate decays if a target bucket gains
   removal, replacement, or reordering; that mutation must invalidate the pair
   cursor.
+- **Missing-call provenance shadow:** the default-off authoritative scan now
+  partitions filtered bodyless occurrences by first-missing caller generation,
+  existing virtual-target/keepalive/exact-called markers, and direct/virtual
+  receiver shape. It stores first-seen target iteration only while enabled and
+  emits bounded identities; queue, RTA, replay, and lowering remain unchanged.
+  At iteration 1, the `Array` target/caller/receiver filter observes 1,439
+  occurrences. Virtual-target bodies supply 656 direct occurrences (45.6%),
+  including 517 exact-receiver calls, while prior-iteration missing callers
+  supply only 58 (4.0%). The authoritative scan remains 7,740 raw occurrences,
+  `funcs=10324`, and force `1714/1306`, preserving the established 1,962-target
+  unique queue boundary. This refutes previous-queue regeneration as the main
+  early amplifier and locates virtual-target reachability as the next question;
+  it does not certify any virtual target as unreachable.
 - **Adversary verdict:** robust for the bounded two-axis provenance aggregate,
-  robust for the local exact-name dedup, position/shape attribution, and the
-  snapshot/cost-based falsification at the sampled boundary, vulnerable for any
-  causal interpretation of live-type scan cost or the observed wall-time delta,
-  and broken for stable-source, queued-target, Pending-only,
-  unconditional late-slot, bare-name, or settled-earlier-candidate skipping as
-  a current production optimization.
-- **Next local track:** profile useful virtual-target owner lowering for newly
-  appended targets and the dominant root-lowering functions. Do not cache an
-  entire class replay, change the RTA interval, add a permanent forced-name or
-  live-type cache, create another demand registry, or promote availability
-  replay. Bodyless completed state can be reopened and the measured replay
-  mismatch is a direct safety falsifier. Public mutable aliases remain a
-  rejected boundary.
+  robust for the missing-call provenance partition, local exact-name dedup,
+  position/shape attribution, and the snapshot/cost-based falsification at the
+  sampled boundary; vulnerable for causal interpretation of live-type scan
+  cost, virtual-target reachability, or the observed wall-time delta; and broken
+  for stable-source, queued-target, virtual-target, Pending-only, unconditional
+  late-slot, bare-name, or settled-earlier-candidate skipping as a current
+  production optimization.
+- **Next local track:** trace the dominant virtual-target bodies to the virtual
+  shape and caller tokens that admitted them, then test whether that chain is
+  entry-reachable. Do not cache an entire class replay, change the RTA interval,
+  add a permanent forced-name or live-type cache, create another demand
+  registry, or promote availability replay. Bodyful caller existence alone is
+  not a reachability certificate. Bodyless completed state can be reopened and
+  the measured replay mismatch is a direct safety falsifier. Public mutable
+  aliases remain a rejected boundary.

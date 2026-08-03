@@ -64658,6 +64658,12 @@ module Adamas::HIR
       debug_missing_top = env_get("DEBUG_MISSING_TOP").try(&.to_i?) || 20
       trace_flush_enter = env_has?("ADAMAS_TRACE_FLUSH_ENTER")
       phase_stats = env_has?("ADAMAS_PHASE_STATS")
+      provenance_shadow_filter = env_get("ADAMAS_MISSING_PROVENANCE_SHADOW")
+      provenance_shadow_limit = env_get("ADAMAS_MISSING_PROVENANCE_SHADOW_LIMIT").try(&.to_i?) || 24
+      provenance_shadow_limit = 0 if provenance_shadow_limit < 0
+      provenance_shadow_limit = 100 if provenance_shadow_limit > 100
+      provenance_first_missing_iteration =
+        provenance_shadow_filter ? Hash(String, Int32).new : nil
       incremental_falsifier = env_has?("ADAMAS_MISSING_INCREMENTAL_FALSIFIER")
       incremental_cached_segments = incremental_falsifier ? Hash(UInt64, Array(String)).new : nil
       incremental_cached_available_segments = incremental_falsifier ? Hash(UInt64, Array(String)).new : nil
@@ -64719,6 +64725,10 @@ module Adamas::HIR
         end
         missing_summary = Hash(String, Int32).new(0) if debug_missing_summary
         missing_samples = Hash(String, Array(String)).new if debug_missing_samples
+        provenance_shadow_counts =
+          provenance_shadow_filter ? Hash(String, Int32).new(0) : nil
+        provenance_shadow_samples =
+          provenance_shadow_filter ? [] of String : nil
         func_trace_idx = 0
         @module.functions.each do |func|
           incremental_function_identity = 0_u64
@@ -64829,6 +64839,48 @@ module Adamas::HIR
                 STDERR.puts "[MISSING_TARGET] seen name=#{name} func=#{func.name} body=#{@module.has_function_with_body?(name)} state=#{function_state(name)}"
               end
               arg_types = inst.args.map { |arg_id| value_types[arg_id]? || TypeRef::VOID }
+              if first_iterations = provenance_first_missing_iteration
+                shadow_counts = provenance_shadow_counts.not_nil!
+                receiver_name = "none"
+                if inst.has_receiver?
+                  if receiver_type = value_types[inst.receiver_value]?
+                    receiver_name = @module.get_type_descriptor(receiver_type).try(&.name) || "unknown"
+                  else
+                    receiver_name = "unknown"
+                  end
+                end
+                shadow_filter = provenance_shadow_filter.not_nil!
+                if shadow_filter == "1" || name.includes?(shadow_filter) ||
+                   func.name.includes?(shadow_filter) || receiver_name.includes?(shadow_filter)
+                  caller_origin = if func.name == "__adamas_main"
+                                    "root"
+                                  elsif first_iteration = first_iterations[func.name]?
+                                    first_iteration < iteration ? "prior_missing" : "same_iteration_missing"
+                                  else
+                                    "preexisting"
+                                  end
+                  caller_origin += "+virtual_target" if @module.virtual_dispatch_target_functions.includes?(func.name)
+                  caller_origin += "+keepalive" if @module.materialization_keepalive_functions.includes?(func.name)
+                  caller_origin += "+exact_called" if @rta_called_methods.includes?(func.name)
+                  call_kind = if inst.virtual
+                                "virtual_receiver"
+                              elsif !inst.has_receiver?
+                                "direct_no_receiver"
+                              elsif receiver_name.includes?('(')
+                                "direct_exact_receiver"
+                              else
+                                "direct_receiver"
+                              end
+                  category = "origin=#{caller_origin},call=#{call_kind}"
+                  shadow_counts[category] += 1
+                  if samples = provenance_shadow_samples
+                    if samples.size < provenance_shadow_limit
+                      samples << "#{category} func_id=#{func.id} block_id=#{block.id} call_id=#{inst.id} receiver=#{missing_incremental_sample_token(receiver_name)} target=#{missing_incremental_sample_token(name)} caller=#{missing_incremental_sample_token(func.name)}"
+                    end
+                  end
+                end
+                first_iterations[name] ||= iteration
+              end
               remember_callsite_arg_types(name, arg_types, nil, nil, !!inst.block)
               # A call instruction already emitted into HIR is concrete demand:
               # leaving it filtered here produces LLVM abort stubs. The queued
@@ -64898,6 +64950,19 @@ module Adamas::HIR
           if current_available_segments = incremental_current_available_segments
             current_available_segments[incremental_function_identity] =
               incremental_function_available_demands.not_nil!
+          end
+        end
+        if shadow_counts = provenance_shadow_counts
+          total = 0
+          shadow_counts.each_value { |count| total += count }
+          STDERR.puts "[MISSING_PROVENANCE_SHADOW] iter=#{iteration} filter=#{provenance_shadow_filter} occurrences=#{total} categories=#{shadow_counts.size} authority=full_scan promotion=forbidden"
+          shadow_counts.to_a
+            .sort_by { |entry| -entry[1] }
+            .each do |category, count|
+              STDERR.puts "[MISSING_PROVENANCE_SHADOW_COUNT] iter=#{iteration} count=#{count} #{category}"
+            end
+          provenance_shadow_samples.not_nil!.each do |sample|
+            STDERR.puts "[MISSING_PROVENANCE_SHADOW_SAMPLE] iter=#{iteration} #{sample}"
           end
         end
         stop_after_missing_phase("scan", "ADAMAS_STOP_AFTER_HIR_MISSING_SCAN", iteration, missing.size)
