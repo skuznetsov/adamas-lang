@@ -6129,6 +6129,10 @@ module Adamas::HIR
     # instantiations (Array(Int32), Array(String)) retain distinct child keys
     # so concrete-owner lowering is preserved.
     @virtual_target_replay_attempted : Set({String, String, String, UInt64, UInt8}) = Set({String, String, String, UInt64, UInt8}).new
+    # Virtual-target buckets are append-only. Once a concrete child has scanned
+    # a parent bucket, subsequent replays need to visit only its new suffix.
+    # Keep the attempted-key Set above as the recursion and repair guard.
+    @virtual_target_replay_cursors : Hash({String, String}, Int32) = {} of {String, String} => Int32
     # Instrumentation (DEBUG_VIRTUAL_TARGET_REPLAY_STATS) — increments gated
     # on the boolean below, which is set once from the env var in
     # flush_pending_functions. The dedup Set above is always-on (functional
@@ -8507,7 +8511,14 @@ module Adamas::HIR
         STDERR.puts "[VIRTUAL_TARGET] lower child=#{child_name} parent=#{parent_name} targets=#{targets.size} current=#{current}"
       end
 
-      targets.each do |target|
+      cursor_key = {child_name, parent_name}
+      target_idx = @virtual_target_replay_cursors[cursor_key]? || 0
+      # Avoid a stale out-of-range cursor if a future cleanup truncates a bucket.
+      # Any non-append mutation must also invalidate this cursor explicitly.
+      target_idx = 0 if target_idx > targets.size
+      while target_idx < targets.size
+        target = targets.unsafe_fetch(target_idx)
+        target_idx += 1
         @vtr_stats_owner_attempts &+= 1 if @debug_virtual_target_replay_stats
         ah = arg_types_hash(target.arg_types)
         flags = 0_u8
@@ -8521,6 +8532,7 @@ module Adamas::HIR
         @virtual_target_replay_attempted << key
         lower_virtual_target_owner(child_name, target.method_name, target.arg_types, target.has_block, target.has_splat)
       end
+      @virtual_target_replay_cursors[cursor_key] = target_idx
     end
 
     private def lower_required_virtual_target_function(name : String, exact_demand : Bool = false) : Nil

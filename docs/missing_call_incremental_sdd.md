@@ -368,6 +368,21 @@ semantic zeroes and improves the full B4-F corridor.
   0.82 seconds, and monomorphized traversal for only 66 ms. The scan is already
   incremental by function index, so this is a cost certificate, not proof of
   redundant work.
+- **Virtual-target replay prefix cursor:** a system sample attributes 1,575 of
+  1,947 sampled new-function scan frames to live-type virtual-target replay,
+  with 734 continuing into real owner lowering. A whole-class replay frontier
+  keyed by ancestor names and target counts is rejected because it changed the
+  exact gate to `missing=1966`, `funcs=28709`, and force `9017/5819`.
+  Resolver/materialization state can change without changing those coordinates.
+  The admitted move records only the consumed prefix of each append-only
+  `(child, parent)` target bucket and leaves replay, owner lookup, attempted-key
+  dedup, and repair active. The 48-example virtual-target family and root replay
+  regression pass; the source-matched gate preserves `missing=1962`,
+  `pending=0`, `funcs=28647`, and force `8990/5801`. Sampled
+  `periodic_functions` time falls from approximately 25.70 to 24.69 seconds
+  across iterations 0 and 1. This certificate decays if a target bucket gains
+  removal, replacement, or reordering; that mutation must invalidate the pair
+  cursor.
 - **Adversary verdict:** robust for the bounded two-axis provenance aggregate,
   robust for the local exact-name dedup, position/shape attribution, and the
   snapshot/cost-based falsification at the sampled boundary, vulnerable for any
@@ -375,11 +390,10 @@ semantic zeroes and improves the full B4-F corridor.
   and broken for stable-source, queued-target, Pending-only,
   unconditional late-slot, bare-name, or settled-earlier-candidate skipping as
   a current production optimization.
-- **Next local track:** separate linear visitation of newly emitted HIR
-  instructions from repeated virtual-target replay inside
-  `scan_new_functions_for_live_types`. Use the existing replay counters before
-  proposing a version/frontier contract. Do not change the RTA interval, add a
-  permanent forced-name/live-type cache, another demand registry, or promote
-  availability replay. Bodyless completed state can be reopened and the
-  measured replay mismatch is a direct safety falsifier. Public mutable aliases
-  remain a rejected boundary.
+- **Next local track:** profile useful virtual-target owner lowering for newly
+  appended targets and the dominant root-lowering functions. Do not cache an
+  entire class replay, change the RTA interval, add a permanent forced-name or
+  live-type cache, create another demand registry, or promote availability
+  replay. Bodyless completed state can be reopened and the measured replay
+  mismatch is a direct safety falsifier. Public mutable aliases remain a
+  rejected boundary.

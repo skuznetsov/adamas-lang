@@ -1,6 +1,6 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-08-02 (bare reference-generic instance dispatch is runtime-
+Updated: 2026-08-03 (bare reference-generic instance dispatch is runtime-
 verified for direct erased receivers; registered runtime-reference and
 same-template concrete generic-struct unions preserve their callsite return ABI
 without mutating the anchored function ABI, while unsupported bare-template
@@ -11986,6 +11986,41 @@ seconds are not yet a redundancy certificate. The next falsifier must separate
 linear instruction visitation from repeated virtual-target replay. Do not
 change the RTA interval or add a live-type/replay cache without proving the
 same reachability and replay contract.
+
+### Session 52: append-only virtual-target cursors remove replayed prefixes (2026-08-03)
+
+A 30-second system sample placed 1,575 of 1,947 sampled
+`scan_new_functions_for_live_types` frames inside live-type virtual-target
+replay. Of those, 734 continued into real owner lowering, so the scan is not a
+pure duplicate walk. The first proposed optimization cached an entire class
+replay by ordered ancestor names and target counts. It saved approximately four
+seconds but changed the iteration-1 boundary to `missing=1966`, `funcs=28709`,
+and force `9017/5819`; that route is rejected. Resolver and materialization
+availability can change while the hierarchy and target counts remain stable.
+
+The accepted move is narrower. Each `(child, parent)` pair now remembers only
+the already-scanned prefix of its append-only virtual-target bucket. New targets
+remain visible as a suffix, late hierarchy edges begin with a fresh pair, and
+the existing attempted-key set continues to guard recursion and repair. This
+does not suppress class replay, method lookup, or a previously permitted retry;
+it only avoids re-hashing target keys that the existing set would reject.
+
+The 48-example virtual-target family and the root replay regression pass through
+the safe runner, and a fresh stage 1 builds successfully. The source-matched
+iteration-1 gate returns to the exact baseline boundary (`missing=1962`,
+`pending=0`, `funcs=28647`, force `8990/5801`). Across iterations 0 and 1,
+`periodic_functions` falls from approximately 25.70 to 24.69 seconds and total
+pending processing from approximately 94.18 to 92.18 seconds. The stopped run
+exits 0 after approximately 147 seconds; the small wall-time delta remains
+orientation, not a stable benchmark.
+
+Boundary: the cursor is ROBUST under the current append-only target-registry
+invariant. Its certificate becomes stale if target buckets gain removal,
+replacement, or reordering; such a mutation must invalidate the pair cursor.
+The remaining dominant cost is useful root lowering plus virtual-target owner
+lowering for newly seen targets, not the skipped prefix checks. The next probe
+must profile that useful owner-lowering subtree before another production
+shortcut is proposed.
 
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
