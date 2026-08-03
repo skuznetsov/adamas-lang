@@ -283,12 +283,26 @@ semantic zeroes and improves the full B4-F corridor.
   refutes stable-source rescanning and immediate target retry as the dominant
   sampled cost; it does not prove that changed-source work is intrinsically
   necessary or identify its origin.
+- **Force-lowering staged telemetry:** two source-matched CPU samples during
+  missing iteration 1 place 312/373 and 364/414 main-thread samples in pending
+  function processing. The later sample places 318/414 samples in
+  `lower_method`, including a 105-sample synchronous
+  `force_pending_call_targets_for_return_type` subtree and a nested 92-sample
+  force-lowering subtree. Exact process gates report 1,860 admitted force
+  calls over 1,306 names after iteration 0 and 9,409 calls over 5,801 names
+  after iteration 1. The warm delta is therefore 7,549 admissions but only
+  4,495 newly observed exact names; 3,054 admissions are to an already observed
+  name or repeat a new name within the interval. This is an amplification
+  certificate, not a redundant-body certificate: the force helper reports an
+  admitted invocation even when the lowering implementation later returns
+  without materializing a body.
 - **Adversary verdict:** robust for the bounded two-axis provenance aggregate,
   vulnerable for any causal interpretation of overlapping target counts, and
   broken for stable-source or queued-target skipping as a current production
   optimization.
-- **Next local track:** classify which existing demand-producing corridor
-  creates the new-or-changed-source fan-out before changing production
-  semantics. Do not add another demand registry or promote availability replay;
-  its measured mismatch is a direct safety falsifier. Public mutable aliases
-  remain a rejected boundary.
+- **Next local track:** distinguish materialized bodies from early-return and
+  alias-resolution outcomes inside the existing return-type force corridor
+  before changing production semantics. Do not add a permanent forced-name
+  cache, another demand registry, or promote availability replay; bodyless
+  completed state can be reopened and the measured replay mismatch is a direct
+  safety falsifier. Public mutable aliases remain a rejected boundary.

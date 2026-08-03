@@ -65204,6 +65204,7 @@ module Adamas::HIR
         end
         log_missing_phase_status("stop_after_#{phase}", "taken", iteration, missing_count)
         STDERR.puts "[MISSING_GATE] stop_after=#{phase} env=#{env_key} iter=#{iteration} missing=#{missing_count} pending=#{@pending_function_queue.size} funcs=#{@module.function_count}"
+        STDERR.puts "[FORCE_LOWER_GATE] total=#{@phase0_forced_lower_count} unique=#{@phase0_forced_lower_names.size}"
         LibC._exit(0)
       else
         log_missing_phase_status("stop_after_#{phase}", "not_taken", iteration, missing_count)

@@ -11740,6 +11740,46 @@ probe is a bounded classification of the existing demand-producing corridors
 behind new-or-changed-source fan-out. Do not add a cache, target allowlist, or
 new provenance registry before that measurement.
 
+### Session 45: return-type force-lowering amplification boundary (2026-08-03)
+
+Two independent CPU samples during source-matched missing iteration 1 move the
+cost boundary from demand discovery to function materialization. The first
+sample places 312 of 373 main-thread samples in pending function processing
+and 279 in `lower_method`. The later sample places 364 of 414 samples in
+pending processing and 318 in `lower_method`; a synchronous
+`force_pending_call_targets_for_return_type` subtree accounts for 105 samples,
+and 92 of those descend through another force-lower into nested method
+lowering. This is real single-core body work, not scan/uniquing overhead or a
+process/RSS leak. Monitored runs retained one compiler process at approximately
+one core with no compiler fan-out.
+
+The existing Phase 0 force counters are now included in the default-off
+missing process gate. A fresh stage 1 builds safely in approximately 16
+seconds. Its source-matched iteration-0 process gate exits 0 after
+approximately 89 seconds with 10,324 HIR functions, 1,860 admitted force calls,
+and 1,306 exact names. The iteration-1 gate exits 0 after approximately 146
+seconds with 28,647 functions, 9,409 calls, and 5,801 names. The warm delta is
+7,549 admitted calls but only 4,495 newly observed exact names: at least 3,054
+admissions, approximately 40.5% of the interval, target a previously observed
+name or repeat a new exact name inside the interval.
+
+The focused exact-shadow group remains green with 17 examples. Independent
+source inspection finds robust body-emission fences at request, canonical,
+materialization, method, and worklist boundaries, but vulnerable efficiency
+ownership: return-type forcing deliberately resets lowering depth and bypasses
+the queue, while the stale queue entry remains for safe indexed traversal.
+The force helper returns success after an admitted implementation call even if
+that implementation takes an early exit, so `total - unique` is only an upper
+bound on removable work and not a redundant-body count.
+
+Boundary: B4-F remains RED and no speedup is claimed. A global forced-name
+cache or conversion of synchronous force-lowering into ordinary queueing is
+rejected: bodyless completed state can be reopened, aliases can converge only
+after lookup, and callers require the return type synchronously. The next legal
+falsifier must classify materialized, canonical-alias, and early-return outcomes
+within the measured force corridor. Only then may a local exact-name dedup or
+precheck be evaluated against wall time and semantic gates.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
