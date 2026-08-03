@@ -5,7 +5,12 @@ require "../../src/compiler/hir/ast_to_hir"
 require "../../src/compiler/mir/hir_to_mir"
 
 private HEADER_PROC_GENERIC_STRUCT_UNION_SOURCE = <<-CRYSTAL
-  record DispatchHandler, tag : Int32
+  struct DispatchHandler
+    getter tag : Int32
+
+    def initialize(@tag : Int32)
+    end
+  end
 
   struct DispatchBox(T)
     getter payload : T

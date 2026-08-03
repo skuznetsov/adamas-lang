@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runtime oracle for a generic struct receiver union whose concrete getter
-# returns either a runtime-header-backed record or a raw Proc pointer.
+# returns either a heap-backed struct or a raw Proc pointer.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -29,7 +29,13 @@ lib LibC
   fun printf(format : UInt8*, ...) : Int32
 end
 
-record HandlerProbe, value : Int32, block : Proc(Int32, Int32)
+struct HandlerProbe
+  getter value : Int32
+  getter block : Proc(Int32, Int32)
+
+  def initialize(@value : Int32, @block : Proc(Int32, Int32))
+  end
+end
 
 struct EntryProbe(V)
   getter value : V
@@ -88,4 +94,4 @@ if [[ "$GOT" != "OK" ]]; then
   exit 1
 fi
 
-echo "PASS: explicit branch wraps preserve header-backed records and raw Proc values"
+echo "PASS: explicit branch wraps preserve heap-backed structs and raw Proc values"

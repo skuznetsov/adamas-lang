@@ -10503,7 +10503,12 @@ describe Adamas::HIR::AstToHir do
 
     it "wraps concrete branch returns for a heterogeneous generic struct union" do
       converter = lower_program_with_main(<<-CRYSTAL)
-        record DispatchHandler, tag : Int32
+        struct DispatchHandler
+          getter tag : Int32
+
+          def initialize(@tag : Int32)
+          end
+        end
 
         struct DispatchBox(T)
           getter payload : T
@@ -10533,6 +10538,17 @@ describe Adamas::HIR::AstToHir do
       payload_calls.size.should eq(2)
       payload_calls.map { |call| converter.__test_get_type_name_from_ref(call.type) }.sort
         .should eq(["DispatchHandler", "Proc"])
+      handler_call = payload_calls.find do |call|
+        converter.__test_get_type_name_from_ref(call.type) == "DispatchHandler"
+      end
+      handler_call.should_not be_nil
+      converter.module.get_type_descriptor(handler_call.not_nil!.type).not_nil!.kind
+        .should eq(Adamas::HIR::TypeKind::Struct)
+      handler_info = converter.class_info.values.find do |info|
+        info.type_ref == handler_call.not_nil!.type
+      end
+      handler_info.should_not be_nil
+      handler_info.not_nil!.is_struct.should be_true
 
       wraps = instructions.compact_map(&.as?(Adamas::HIR::UnionWrap))
       wraps_by_value = wraps.to_h { |wrap| {wrap.value, wrap} }
@@ -10569,6 +10585,50 @@ describe Adamas::HIR::AstToHir do
           end
 
           erased_payload(ValueBox(Int32).new(7))
+        CRYSTAL
+      end
+    end
+
+    it "rejects scalar and Proc returns from a same-template generic struct union" do
+      expect_raises(Adamas::HIR::LoweringError, /heterogeneous returns for unsupported concrete generic receiver union/) do
+        lower_program_with_main(<<-CRYSTAL)
+          struct ScalarProcBox(T)
+            getter payload : T
+
+            def initialize(@payload : T)
+            end
+          end
+
+          def erased_payload(value : ScalarProcBox(Int32) | ScalarProcBox(Proc(Int32, Nil)))
+            value.payload
+          end
+
+          erased_payload(ScalarProcBox(Int32).new(7))
+        CRYSTAL
+      end
+    end
+
+    it "rejects C struct and Proc returns from a same-template generic struct union" do
+      expect_raises(Adamas::HIR::LoweringError, /heterogeneous returns for unsupported concrete generic receiver union/) do
+        lower_program_with_main(<<-CRYSTAL)
+          lib ForeignTypes
+            struct Pair
+              value : Int32
+            end
+          end
+
+          struct ForeignProcBox(T)
+            getter payload : T
+
+            def initialize(@payload : T)
+            end
+          end
+
+          def erased_payload(value : ForeignProcBox(ForeignTypes::Pair) | ForeignProcBox(Proc(Int32, Nil)))
+            value.payload
+          end
+
+          erased_payload(ForeignProcBox(ForeignTypes::Pair).new(ForeignTypes::Pair.new))
         CRYSTAL
       end
     end

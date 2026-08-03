@@ -9037,7 +9037,7 @@ module Adamas::HIR
       if admitted && tagged_generic_struct_corridor
         admitted = false unless joined_return &&
                                       (tagged_generic_struct_return_carrier_compatible?(candidates, joined_return) ||
-                                       direct_header_proc_return_wrap_compatible?(candidates, joined_return))
+                                       direct_heap_aggregate_proc_return_wrap_compatible?(candidates, joined_return))
       end
 
       unless admitted
@@ -9052,53 +9052,59 @@ module Adamas::HIR
       joined_return || TypeRef::VOID
     end
 
-    # A direct header-backed Class | Proc result cannot share one raw pointer
-    # tag: both lower to pointer-shaped values, but only the class arm has a
-    # runtime object header. Admit this one heterogeneous shape only when every
-    # concrete return maps to one authoritative sidecar member. The inline
-    # dispatcher must then keep the concrete call ABI and emit an explicit
-    # UnionWrap before its phi.
-    private def direct_header_proc_return_wrap_compatible?(
+    # A direct heap-backed aggregate | Proc result cannot share one implicit
+    # pointer tag: V2 pointer-carries both classes and non-tuple structs, while
+    # a raw Proc has no object header. Admit this one heterogeneous shape only
+    # when every concrete return maps to one authoritative sidecar member. The
+    # inline dispatcher must then keep the concrete call ABI and emit an
+    # explicit UnionWrap before its phi.
+    private def direct_heap_aggregate_proc_return_wrap_compatible?(
       candidates : Array(TypeRef),
       joined_return : TypeRef,
     ) : Bool
-      return false unless direct_header_proc_union_return_shape?(joined_return)
       return false unless candidates.uniq.size == 2
+      ensure_union_descriptor_for_type_ref(joined_return)
+      union_descriptor = union_descriptor_from_sidecar(joined_return)
+      return false unless union_descriptor && union_descriptor.variants.size == 2
 
-      candidates.all? do |candidate|
-        candidate != TypeRef::VOID && candidate != TypeRef::NIL &&
-          !is_union_type?(candidate) &&
-          exact_or_canonical_proc_union_member_variant_id(joined_return, candidate) >= 0
-      end
-    end
-
-    private def direct_header_proc_union_return_shape?(type_ref : TypeRef) : Bool
-      variant_names = split_union_type_name(get_type_name_from_ref(type_ref))
-      return false unless variant_names.size == 2
-
-      saw_header = false
+      saw_aggregate = false
       saw_proc = false
-      variant_names.each do |variant_name|
-        resolved_name = resolve_type_alias_chain(variant_name)
-        exact = type_ref_for_name(resolved_name)
-        exact_descriptor = @module.get_type_descriptor(exact)
-        proc_like = exact_descriptor.try(&.kind) == TypeKind::Proc ||
-                    resolved_name == "Proc" || resolved_name.starts_with?("Proc(")
-        header_like = exact_descriptor.try(&.kind) == TypeKind::Class && !proc_like
-        if proc_like
+      variant_ids = [] of Int32
+      candidates.each do |candidate|
+        return false if candidate == TypeRef::VOID || candidate == TypeRef::NIL ||
+                        is_union_type?(candidate)
+        descriptor = @module.get_type_descriptor(candidate)
+        return false unless descriptor
+
+        case descriptor.kind
+        when TypeKind::Proc
+          return false if saw_proc
           saw_proc = true
-        elsif header_like
-          saw_header = true
+        when TypeKind::Class
+          return false if saw_aggregate
+          aggregate_info = @class_info_by_type_id[candidate.id]?
+          return false unless aggregate_info && !aggregate_info.is_struct
+          saw_aggregate = true
+        when TypeKind::Struct
+          return false if saw_aggregate
+          aggregate_info = @class_info_by_type_id[candidate.id]?
+          return false unless aggregate_info && aggregate_info.is_struct &&
+                              !@lib_structs.includes?(aggregate_info.name)
+          saw_aggregate = true
         else
           return false
         end
+
+        variant_id = exact_or_canonical_proc_union_member_variant_id(joined_return, candidate)
+        return false if variant_id < 0 || variant_ids.includes?(variant_id)
+        variant_ids << variant_id
       end
-      saw_header && saw_proc
+      saw_aggregate && saw_proc && variant_ids.size == 2
     end
 
-    # Keep the explicit Class | Proc wrapping corridor scoped to the concrete
-    # generic-struct receiver family that admitted the joined return. Other
-    # union receivers retain their established dispatcher behavior.
+    # Keep the explicit aggregate | Proc wrapping corridor scoped to the
+    # concrete generic-struct receiver family that admitted the joined return.
+    # Other union receivers retain their established dispatcher behavior.
     private def registered_same_template_generic_struct_union_receiver?(
       receiver_desc : TypeDescriptor,
     ) : Bool
@@ -61141,9 +61147,10 @@ module Adamas::HIR
 
     # A Proc signature may be erased to the canonical MIR `Proc` carrier while
     # the HIR branch still references its typed Proc descriptor. Keep that
-    # representation bridge local to the Class | Proc dispatch corridor: exact
-    # TypeRef identity remains primary, and the fallback accepts exactly one
-    # Proc-shaped variant from the authoritative sidecar. Ambiguity fails closed.
+    # representation bridge local to the aggregate | Proc dispatch corridor:
+    # exact TypeRef identity remains primary, and the fallback accepts exactly
+    # one Proc-shaped variant from the authoritative sidecar. Ambiguity fails
+    # closed.
     private def exact_or_canonical_proc_union_member_variant_id(
       union_type : TypeRef,
       value_type : TypeRef,
@@ -94638,17 +94645,13 @@ module Adamas::HIR
       return nil if vms.size < 2
 
       explicit_branch_return_types : Array(TypeRef)? = nil
-      if registered_same_template_generic_struct_union_receiver?(recv_desc) &&
-         direct_header_proc_union_return_shape?(dispatch_return_type)
+      if registered_same_template_generic_struct_union_receiver?(recv_desc)
         concrete_returns = vms.map do |vmn, vmr, _|
           concrete_union_dispatch_return_type(vmn, vmr, mb)
         end
-        unless direct_header_proc_return_wrap_compatible?(concrete_returns, dispatch_return_type)
-          raise LoweringError.new(
-            "cannot safely wrap concrete returns for union receiver dispatch #{recv_desc.name}##{mb}"
-          )
+        if direct_heap_aggregate_proc_return_wrap_compatible?(concrete_returns, dispatch_return_type)
+          explicit_branch_return_types = concrete_returns
         end
-        explicit_branch_return_types = concrete_returns
       end
 
       pb = ctx.save_locals
