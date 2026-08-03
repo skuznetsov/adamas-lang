@@ -340,16 +340,30 @@ semantic zeroes and improves the full B4-F corridor.
   and no-effect `NotStarted` populations share both the late position and bare
   name shape; neither is a legal skip predicate. The diagnostic carries only
   the current call argument and records no history.
+- **Earlier-candidate semantic snapshots:** admitted slot-3 candidates now
+  record their callsite class plus diagnostic snapshots of the two earlier
+  helper alternatives. At the unchanged iteration-1 boundary, 4,783
+  `NotStarted` slot-3 calls have no visible effect while 158 materialize a
+  requested or other body. An earlier exact candidate in `Completed` state
+  with a body and a settled return is the largest no-effect population, but
+  the identical observational class also contains 22 useful materializations.
+  Completed union, nil, unresolved, and void observations likewise overlap
+  useful outcomes. These snapshots are attribution only: state, body presence,
+  and return categories do not certify canonical identity or required alias,
+  wrapper, inherited-redirect, ABI, keepalive, or inline-yield side effects.
 - **Adversary verdict:** robust for the bounded two-axis provenance aggregate,
-  robust for the local exact-name dedup and position/shape attribution at the
-  sampled boundary, vulnerable for any causal interpretation of overlapping
-  target counts or the observed wall-time delta, and broken for stable-source,
-  queued-target, Pending-only, unconditional late-slot, or bare-name skipping
-  as a current production optimization.
-- **Next local track:** classify the 158 useful slot-3 `NotStarted` outcomes
-  against the earlier exact candidate's materialized body and resolved return
-  type. Falsify the narrowest local precheck before implementing it. Do not add
-  a permanent forced-name cache, another demand registry, or promote
-  availability replay. Bodyless completed state can be reopened and the
-  measured replay mismatch is a direct safety falsifier. Public mutable aliases
-  remain a rejected boundary.
+  robust for the local exact-name dedup, position/shape attribution, and the
+  snapshot-based falsification at the sampled boundary, vulnerable for any
+  causal interpretation of overlapping target counts or the observed wall-time
+  delta, and broken for stable-source, queued-target, Pending-only,
+  unconditional late-slot, bare-name, or settled-earlier-candidate skipping as
+  a current production optimization.
+- **Next local track:** move inside `lower_function_if_needed_impl` and map the
+  existing canonical/materialized-body fence reached by the 4,783 no-effect
+  calls. Consider an earlier exit only if it reuses that exact established
+  identity contract and preserves every intervening callsite, wrapper, ABI,
+  keepalive, inherited-redirect, alias, and inline-yield effect. Do not add a
+  permanent forced-name cache, another demand registry, or promote availability
+  replay. Bodyless completed state can be reopened and the measured replay
+  mismatch is a direct safety falsifier. Public mutable aliases remain a
+  rejected boundary.

@@ -11916,6 +11916,39 @@ candidate and its return-type resolution. Only a predicate that separates
 those outcomes may become a local precheck; global caches, family allowlists,
 and state-only guards remain forbidden.
 
+### Session 50: settled return snapshots refute the narrow state guard (2026-08-03)
+
+The default-off force outcome event now records the semantic callsite class and,
+for admitted slot-3 candidates, diagnostic snapshots of the two earlier helper
+alternatives. Each snapshot joins current lowering state, requested-body
+availability, module return type, exact and base return caches, and explicit
+return annotation. Return values are reported only as observational categories
+(`void`, `nil`, `pointer`, `union`, `unresolved`, or `settled`); they are not a
+new authority or production decision. The focused exact-shadow group passes 17
+examples, and a fresh source-matched stage 1 builds safely in approximately 16
+seconds.
+
+At the unchanged iteration-1 boundary (`missing=1962`, `pending=0`,
+`funcs=28647`), slot-3 `NotStarted` outcomes split into 4,783 no-effect calls
+and 158 visible materializations. All no-effect calls and 154 of the useful
+calls originate in ordinary `lower_call`; `member_access` contributes the
+remaining four useful requested bodies. The dominant no-effect snapshot has an
+earlier exact candidate in `Completed` state with a body and a settled return,
+but the same snapshot still contains 22 useful visible materializations. A
+second large no-effect population has an earlier completed union-return body;
+that population also contains useful requested-body and alias materialization.
+
+Boundary: the proposed guard "earlier exact body plus settled return implies
+late base is redundant" is BROKEN. Its inputs are mutable observations and do
+not prove canonical target identity, refreshed return authority, inherited
+redirect behavior, wrapper/alias side effects, or context-sensitive inline-yield
+lowering. The diagnostic remains useful as an attribution falsifier, but no
+production branch may depend on it. The next local track moves inside
+`lower_function_if_needed_impl`: locate the existing exact canonical or
+materialized-body fence reached by the 4,783 no-effect calls and determine
+whether that same established contract can be raised earlier without skipping
+required callsite, wrapper, ABI, keepalive, or alias effects.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

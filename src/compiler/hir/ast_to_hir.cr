@@ -81824,19 +81824,60 @@ module Adamas::HIR
       nil
     end
 
-    private def force_pending_call_targets_for_return_type(name1 : String?, name2 : String? = nil, name3 : String? = nil) : Bool
+    private def force_return_type_category(type_ref : TypeRef?) : String
+      return "missing" unless type_ref
+      return "void" if type_ref == TypeRef::VOID
+      return "nil" if type_ref == TypeRef::NIL
+      return "pointer" if type_ref == TypeRef::POINTER
+      return "union" if is_union_type?(type_ref)
+      return "unresolved" if unresolved_generic_return_type?(type_ref)
+      "settled"
+    end
+
+    # Diagnostic-only tuple: state:body:module-return:exact-cache:base-cache:annotated.
+    private def force_candidate_snapshot(name : String?) : String
+      return "no_name" unless name
+      return "unreadable" unless v2_string_readable?(name)
+      base_name = strip_type_suffix(name)
+      state = function_state(name)
+      body = @module.has_function_with_body?(name) ? 1 : 0
+      module_type = force_return_type_category(@module.function_by_name(name).try(&.return_type))
+      cached_type = force_return_type_category(@function_types[name]?)
+      base_type = force_return_type_category(@function_base_return_types[base_name]?)
+      def_node = @function_defs[name]? || @function_defs[base_name]?
+      annotated = def_node.try(&.return_type) ? 1 : 0
+      "#{state}:#{body}:#{module_type}:#{cached_type}:#{base_type}:#{annotated}"
+    end
+
+    private def force_pending_call_targets_for_return_type(
+      name1 : String?,
+      name2 : String? = nil,
+      name3 : String? = nil,
+      context : String = "unknown",
+    ) : Bool
       forced = false
       if name = name1
-        forced = true if !name.empty? && !@module.has_function_with_body?(name) && force_lower_function_for_return_type(name, pending_call_target_slot: 1)
+        forced = true if !name.empty? && !@module.has_function_with_body?(name) && force_lower_function_for_return_type(name, pending_call_target_slot: 1, pending_call_target_context: context)
       end
       if name = name2
         if name != name1
-          forced = true if !name.empty? && !@module.has_function_with_body?(name) && force_lower_function_for_return_type(name, pending_call_target_slot: 2)
+          forced = true if !name.empty? && !@module.has_function_with_body?(name) && force_lower_function_for_return_type(name, pending_call_target_slot: 2, pending_call_target_context: context)
         end
       end
       if name = name3
         if name != name1 && name != name2
-          forced = true if !name.empty? && !@module.has_function_with_body?(name) && force_lower_function_for_return_type(name, pending_call_target_slot: 3)
+          if !name.empty? && !@module.has_function_with_body?(name)
+            debug_outcome = env_has?("DEBUG_FORCE_LOWER_OUTCOME")
+            prior1 = debug_outcome ? force_candidate_snapshot(name1) : "off"
+            prior2 = debug_outcome ? force_candidate_snapshot(name2) : "off"
+            forced = true if force_lower_function_for_return_type(
+              name,
+              pending_call_target_slot: 3,
+              pending_call_target_context: context,
+              pending_call_target_prior1: prior1,
+              pending_call_target_prior2: prior2,
+            )
+          end
         end
       end
       forced
@@ -81863,6 +81904,9 @@ module Adamas::HIR
       name : String,
       bypass_inline_yield : Bool = false,
       pending_call_target_slot : Int32 = 0,
+      pending_call_target_context : String = "direct",
+      pending_call_target_prior1 : String = "not_applicable",
+      pending_call_target_prior2 : String = "not_applicable",
     ) : Bool
       return false unless v2_string_readable?(name)
       return false if name.empty?
@@ -81905,6 +81949,8 @@ module Adamas::HIR
 
       debug_outcome = env_has?("DEBUG_FORCE_LOWER_OUTCOME")
       outcome_state_before = function_state(name) if debug_outcome
+      outcome_type_before = force_return_type_category(@function_types[name]?) if debug_outcome
+      outcome_base_type_before = force_return_type_category(@function_base_return_types[name]?) if debug_outcome
 
       # Phase 0 metric: count forced lowers
       @phase0_forced_lower_count += 1
@@ -81950,7 +81996,7 @@ module Adamas::HIR
           functions_added = @module.function_count - functions_before.not_nil!
           requested_body = @module.has_function_with_body?(name) ? 1 : 0
           source = pending_call_target_slot > 0 ? "pending_helper" : "direct"
-          STDERR.puts "[FORCE_LOWER_OUTCOME] source=#{source} slot=#{pending_call_target_slot} depth=#{@force_lower_return_type_depth} added=#{functions_added} requested_body=#{requested_body} state_before=#{outcome_state_before.not_nil!} state_after=#{function_state(name)} name=#{name}"
+          STDERR.puts "[FORCE_LOWER_OUTCOME] source=#{source} context=#{pending_call_target_context} slot=#{pending_call_target_slot} depth=#{@force_lower_return_type_depth} added=#{functions_added} requested_body=#{requested_body} state_before=#{outcome_state_before.not_nil!} state_after=#{function_state(name)} type_before=#{outcome_type_before.not_nil!} base_type_before=#{outcome_base_type_before.not_nil!} prior1=#{pending_call_target_prior1} prior2=#{pending_call_target_prior2} name=#{name}"
         end
       ensure
         if need_iy_reset
@@ -85318,7 +85364,7 @@ module Adamas::HIR
       lower_function_if_needed(target_name)
       return_type = get_function_return_type(target_name)
       if return_type == TypeRef::VOID &&
-         force_pending_call_targets_for_return_type(target_name)
+         force_pending_call_targets_for_return_type(target_name, context: "top_level_bare")
         refreshed = get_function_return_type(target_name)
         return_type = refreshed unless refreshed == TypeRef::VOID
       end
@@ -93617,7 +93663,7 @@ module Adamas::HIR
       # pre-lowering return type in the cache. If the target is still pending,
       # force it now before we freeze the call instruction type.
       if (return_type == TypeRef::VOID || is_union_type?(return_type) || unresolved_generic_return_type?(return_type)) &&
-         force_pending_call_targets_for_return_type(primary_mangled_name, mangled_method_name, base_method_name)
+         force_pending_call_targets_for_return_type(primary_mangled_name, mangled_method_name, base_method_name, context: "lower_call")
         refreshed = get_function_return_type(mangled_method_name, return_def_arg_count, selected_return_def)
         if refreshed == TypeRef::VOID && mangled_method_name != base_method_name
           refreshed = get_function_return_type(base_method_name, return_def_arg_count)
@@ -104523,7 +104569,7 @@ module Adamas::HIR
           base_name = strip_type_suffix(probe_value.method_name)
           lower_function_if_needed(probe_value.method_name)
           if candidate == TypeRef::VOID || candidate == TypeRef::POINTER
-            force_pending_call_targets_for_return_type(probe_value.method_name, base_name)
+            force_pending_call_targets_for_return_type(probe_value.method_name, base_name, context: "repair_call")
             force_lower_function_for_return_type(probe_value.method_name)
             force_lower_function_for_return_type(base_name) unless base_name == probe_value.method_name
           end
@@ -107748,7 +107794,7 @@ module Adamas::HIR
       end
 
       if (return_type == TypeRef::VOID || is_union_type?(return_type) || unresolved_generic_return_type?(return_type)) &&
-         force_pending_call_targets_for_return_type(actual_name, primary_name, base_method_name)
+         force_pending_call_targets_for_return_type(actual_name, primary_name, base_method_name, context: "member_access")
         refreshed = get_function_return_type(actual_name)
         if refreshed == TypeRef::VOID && actual_name != primary_name
           refreshed = get_function_return_type(primary_name)
