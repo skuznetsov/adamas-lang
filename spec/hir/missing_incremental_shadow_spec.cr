@@ -50,6 +50,17 @@ class Adamas::HIR::AstToHir
     }
   end
 
+  def __test_exact_shadow_target_certificate_names(
+    demands : Array(String),
+    queued_names : Array(String),
+  ) : Array(String)
+    queued = Set(String).new(queued_names.size)
+    queued_names.each { |queued_name| queued.add(queued_name) }
+    missing_incremental_queue_snapshot_target_certificates(demands, queued)
+      .keys
+      .sort
+  end
+
   def __test_exact_shadow_set_target_state(
     name : String,
     state : String,
@@ -378,6 +389,82 @@ class Adamas::HIR::AstToHir
       compare,
     }
   end
+
+  def __test_exact_shadow_demand_provenance
+    stable_source = @module.create_function(
+      "Owner#stable_provenance_source",
+      Adamas::HIR::TypeRef::VOID,
+    )
+    changed_source = @module.create_function(
+      "Owner#changed_provenance_source",
+      Adamas::HIR::TypeRef::VOID,
+    )
+    scan_invalidated_source = @module.create_function(
+      "Owner#scan_invalidated_provenance_source",
+      Adamas::HIR::TypeRef::VOID,
+    )
+    previous = {
+      stable_source.id.to_u64           => missing_incremental_revision_certificate(stable_source),
+      changed_source.id.to_u64          => missing_incremental_revision_certificate(changed_source),
+      scan_invalidated_source.id.to_u64 => missing_incremental_revision_certificate(scan_invalidated_source),
+    }
+
+    changed_source.get_block(changed_source.entry_block).add(
+      Adamas::HIR::Literal.new(
+        changed_source.next_value_id,
+        Adamas::HIR::TypeRef::INT32,
+        1_i64,
+      )
+    )
+    new_source = @module.create_function(
+      "Owner#new_provenance_source",
+      Adamas::HIR::TypeRef::VOID,
+    )
+    before_scan = {
+      stable_source.id.to_u64           => missing_incremental_revision_certificate(stable_source),
+      changed_source.id.to_u64          => missing_incremental_revision_certificate(changed_source),
+      scan_invalidated_source.id.to_u64 => missing_incremental_revision_certificate(scan_invalidated_source),
+      new_source.id.to_u64              => missing_incremental_revision_certificate(new_source),
+    }
+
+    scan_invalidated_source.get_block(scan_invalidated_source.entry_block).add(
+      Adamas::HIR::Literal.new(
+        scan_invalidated_source.next_value_id,
+        Adamas::HIR::TypeRef::INT32,
+        2_i64,
+      )
+    )
+    after_scan = {
+      stable_source.id.to_u64           => missing_incremental_revision_certificate(stable_source),
+      changed_source.id.to_u64          => missing_incremental_revision_certificate(changed_source),
+      scan_invalidated_source.id.to_u64 => missing_incremental_revision_certificate(scan_invalidated_source),
+      new_source.id.to_u64              => missing_incremental_revision_certificate(new_source),
+    }
+    current_available = {
+      stable_source.id.to_u64           => ["stable_prior", "mixed_prior", "stable_new_only"],
+      changed_source.id.to_u64          => ["changed_prior", "mixed_prior"],
+      scan_invalidated_source.id.to_u64 => ["scan_prior"],
+      new_source.id.to_u64              => ["new_only"],
+    }
+    queued_names = Set{
+      "stable_prior",
+      "mixed_prior",
+      "changed_prior",
+      "scan_prior",
+    }
+    previous_targets = missing_incremental_target_certificates(
+      queued_names.to_a,
+      queued_names,
+    )
+
+    missing_incremental_demand_provenance(
+      previous,
+      before_scan,
+      after_scan,
+      current_available,
+      previous_targets,
+    )
+  end
 end
 
 private def parse_exact_shadow_source(code : String) : {Adamas::Compiler::Frontend::ArenaLike, Array(Adamas::Compiler::Frontend::ExprId)}
@@ -531,6 +618,8 @@ describe "missing-call exact incremental shadow" do
       .should eq([target_name])
     converter.__test_exact_shadow_target_certificate(target_name, [] of String)
       .should eq({true, "NotStarted", false})
+    converter.__test_exact_shadow_target_certificate(target_name, [target_name])
+      .should eq({true, "NotStarted", true})
 
     first_id = target.id
     converter.module.remove_function(target_name).should be_true
@@ -546,6 +635,15 @@ describe "missing-call exact incremental shadow" do
     converter.__test_exact_shadow_set_target_state(target_name, "in_progress")
     converter.__test_exact_shadow_target_certificate(target_name, [target_name])
       .should eq({false, "InProgress", true})
+  end
+
+  it "retains queued bodyless targets that were not emitted by the prior scan" do
+    converter = exact_shadow_converter
+
+    converter.__test_exact_shadow_target_certificate_names(
+      ["demanded"],
+      ["queued_elsewhere"],
+    ).should eq(["demanded", "queued_elsewhere"])
   end
 
   it "selects the exact legacy bounded and unlimited prefixes" do
@@ -807,6 +905,30 @@ describe "missing-call exact incremental shadow" do
       "Owner#new",
       true,
     ).should eq({1, 0, 1, 0})
+  end
+
+  it "attributes unique missing targets to source revision and prior queue state" do
+    converter = exact_shadow_converter
+
+    converter.__test_exact_shadow_demand_provenance.should eq({
+      occurrences:                                        7,
+      stable_occurrences:                                 4,
+      new_or_changed_occurrences:                         3,
+      scan_invalidated_occurrences:                       1,
+      prior_queued_bodyless_occurrences:                  5,
+      stable_prior_queued_bodyless_occurrences:           3,
+      new_or_changed_prior_queued_bodyless_occurrences:   2,
+      scan_invalidated_prior_queued_bodyless_occurrences: 1,
+      targets:                                            6,
+      stable_targets:                                     4,
+      new_or_changed_targets:                             3,
+      scan_invalidated_targets:                           1,
+      stable_and_new_or_changed_targets:                  1,
+      prior_queued_bodyless_targets:                      4,
+      stable_prior_queued_bodyless_targets:               3,
+      new_or_changed_prior_queued_bodyless_targets:       2,
+      scan_invalidated_prior_queued_bodyless_targets:     1,
+    })
   end
 
   it "separates raw stability from later same-scan union accessor materialization" do

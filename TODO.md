@@ -11701,6 +11701,45 @@ function identity/revision with prior target body/queue state before changing
 production semantics. Do not add another demand registry, method-family
 allowlist, scan cache, or recursive root-demand rule from function count alone.
 
+### Session 44: source-provenance aggregate refutes immediate retry as the dominant cost (2026-08-03)
+
+The default-off exact-shadow diagnostic now correlates occurrence-admitted,
+bodyless demand with existing per-function HIR body/demand revisions and the
+immediately prior post-enqueue target snapshot. It adds no persistent demand
+registry and does not change production queueing, resolution, or lowering.
+Stable versus new-or-changed source input is one axis; invalidation during the
+current scan is reported independently. Unique-target categories intentionally
+overlap when multiple source classes demand the same target and therefore are
+not a causal partition.
+
+A fresh current-source stage 1 builds safely in approximately 16 seconds. Its
+source-matched iteration-2 gate exits 0 after approximately 144 seconds with
+the authoritative full and exact-shadow demand vectors equal at every sampled
+iteration. Warm iteration 1 has 7,740 admitted occurrences and 1,962 unique
+targets: 42 occurrences and 17 targets have stable source input, while 17
+targets were bodyless in the immediately prior queue snapshot. Warm iteration
+2 has 8,067 admitted occurrences and 2,630 unique targets: 225 occurrences and
+66 targets have stable source input, while 65 targets came from the immediately
+prior queue. Thus stable-source occurrences are approximately 0.5% and 2.8%,
+and immediately repeated targets approximately 0.9% and 2.5%, at the two
+sampled warm boundaries. The pre-scan availability replay simultaneously
+reports 24 model mismatches at iteration 2, so target-state reuse remains an
+explicit safety falsifier rather than an optimization route.
+
+The focused exact-shadow group passes 17 examples under `run_safe`. The full
+HIR suite produces 668 passing examples, two pending examples, and one known
+baseline failure in `as_question_try_spec.cr`: the exact example fails
+identically with the pre-change Session 42 stage 1 and the current stage 1
+(`"truetrue\\n\\n"` instead of `"true\\ntrue\\n"`). No matching compiler or
+spec process remains after the probes.
+
+Boundary: B4-F remains RED and no speedup is claimed. Immediate target retry
+and stable-source rescanning are refuted as dominant sampled costs; simply
+skipping either is both low-yield and insufficiently certified. The next legal
+probe is a bounded classification of the existing demand-producing corridors
+behind new-or-changed-source fan-out. Do not add a cache, target allowlist, or
+new provenance registry before that measurement.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

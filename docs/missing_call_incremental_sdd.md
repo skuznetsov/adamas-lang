@@ -47,6 +47,13 @@ demand and emit an LLVM abort stub.
   compare them with the raw identities observed on entry to the authoritative
   scan. Its scope is occurrence identity/order only; every row states
   `authority=full_scan` and `promotion=forbidden`.
+- A default-off provenance aggregate may correlate occurrence-admitted,
+  bodyless demand with the prior and current per-function HIR body/demand
+  revisions and the immediately prior post-enqueue target snapshot. It may
+  distinguish stable from new-or-changed source input and report scan-window
+  invalidation as an orthogonal coordinate. Target classes may overlap when
+  different source classes demand the same target; the aggregate is not a
+  per-target causal partition.
 - Any missing, wrapped, inconsistent, or unqualified revision fails closed to
   rescan.
 - Revision coordinates remain a vector. They are not folded into one readiness
@@ -70,6 +77,9 @@ demand and emit an LLVM abort stub.
 - Exact pre-canonical occurrence identity/order does not certify canonical
   target identity, resolver purity, argument/block ABI, target availability, or
   semantic parity. It cannot authorize replay or a skipped scan.
+- Stable-source or immediately requeued-target counts do not bound the cost of
+  resolving or lowering new demand. A small count cannot authorize a skip, and
+  a large count would still require a complete availability certificate.
 - A sufficient replay transcript would need pre-canonical occurrence identity,
   side-effect position, ordered function/block/instruction domain, resolver
   metadata epochs, target-state transitions, RTA/worklist state, and budget
@@ -245,7 +255,7 @@ semantic zeroes and improves the full B4-F corridor.
   regression.
 - **Falsifiers:** F1-F8.
 - **Boundary:** default-off guard-only; no production scan skip.
-- **Observed focused gate:** the exact-shadow group passes 15 examples; the
+- **Observed focused gate:** the exact-shadow group passes 17 examples; the
   integrated same-scan accessor/union regression and ownership census pass.
 - **Source-matched telemetry:** iterations 1-3 observed 603, 1539, and 7471
   raw-local stable segments with zero raw-local false reuse, while 198, 345,
@@ -262,12 +272,23 @@ semantic zeroes and improves the full B4-F corridor.
   equality is therefore not semantic replay evidence. The diagnostic exited 0
   at the requested boundary after about 105 seconds, before processing
   iteration 3, and is not a B4-F or speed certificate.
-- **Adversary verdict:** robust for the bounded observational guard, vulnerable
-  for the diagnostic implementation, and broken for bounded canonical
-  availability replay as production authority.
-- **Next local track:** use the immutable identity/order boundary to classify a
-  read-only occurrence transcript of canonicalization side effects, then
-  falsify whether any resolver family is actually pure. Do not replay even a
-  matching occurrence until argument/block ABI, definition/type/class/include/
-  enum/RTA metadata, target-state transitions, and budget order are bounded.
-  Public mutable aliases remain a rejected boundary.
+- **Source-provenance staged telemetry:** a source-matched stop after iteration
+  2 observed 7,740 and 8,067 admitted bodyless occurrences at warm iterations
+  1 and 2. Only 42 and 225 occurrences came from source functions whose HIR
+  body/demand input was stable across the immediately prior iteration; 17 and
+  66 of 1,962 and 2,630 unique targets had at least one such source. The
+  immediately prior queue contributed only 17 and 65 bodyless targets. The
+  authoritative full and exact-shadow demand vectors still matched, while the
+  pre-scan availability replay had 24 model mismatches at iteration 2. This
+  refutes stable-source rescanning and immediate target retry as the dominant
+  sampled cost; it does not prove that changed-source work is intrinsically
+  necessary or identify its origin.
+- **Adversary verdict:** robust for the bounded two-axis provenance aggregate,
+  vulnerable for any causal interpretation of overlapping target counts, and
+  broken for stable-source or queued-target skipping as a current production
+  optimization.
+- **Next local track:** classify which existing demand-producing corridor
+  creates the new-or-changed-source fan-out before changing production
+  semantics. Do not add another demand registry or promote availability replay;
+  its measured mismatch is a direct safety falsifier. Public mutable aliases
+  remain a rejected boundary.

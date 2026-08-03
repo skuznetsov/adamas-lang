@@ -64362,6 +64362,115 @@ module Adamas::HIR
       {observed, model_mismatch, stable, false_reuse}
     end
 
+    # Attribute occurrence-admitted, bodyless demands without retaining a
+    # second source-to-target ledger. Counts intentionally overlap when the
+    # same target is demanded by more than one source class.
+    private def missing_incremental_demand_provenance(
+      previous : Hash(UInt64, MissingIncrementalRevisionCertificate),
+      before_scan : Hash(UInt64, MissingIncrementalRevisionCertificate),
+      after_scan : Hash(UInt64, MissingIncrementalRevisionCertificate),
+      current_available : Hash(UInt64, Array(String)),
+      previous_targets : Hash(String, MissingIncrementalTargetCertificate),
+    )
+      target_masks = Hash(String, UInt8).new(0_u8)
+      occurrences = 0
+      stable_occurrences = 0
+      new_or_changed_occurrences = 0
+      scan_invalidated_occurrences = 0
+      prior_queued_bodyless_occurrences = 0
+      stable_prior_queued_bodyless_occurrences = 0
+      new_or_changed_prior_queued_bodyless_occurrences = 0
+      scan_invalidated_prior_queued_bodyless_occurrences = 0
+
+      current_available.each do |function_identity, segment|
+        before_certificate = before_scan[function_identity]?
+        previous_certificate = previous[function_identity]?
+        after_certificate = after_scan[function_identity]?
+        previous_stable = if before_certificate && previous_certificate
+                            previous_certificate.raw_input_equal?(before_certificate)
+                          else
+                            false
+                          end
+        scan_stable = if before_certificate && after_certificate
+                        before_certificate.raw_input_equal?(after_certificate)
+                      else
+                        false
+                      end
+        stable_source = previous_stable
+        new_or_changed_source = !previous_stable
+        scan_invalidated_source = !scan_stable
+        source_mask = 0_u8
+        source_mask |= 1_u8 if stable_source
+        source_mask |= 2_u8 if new_or_changed_source
+        source_mask |= 4_u8 if scan_invalidated_source
+
+        segment.each do |name|
+          occurrences += 1
+          stable_occurrences += 1 if stable_source
+          new_or_changed_occurrences += 1 if new_or_changed_source
+          scan_invalidated_occurrences += 1 if scan_invalidated_source
+          previous_target = previous_targets[name]?
+          prior_queued_bodyless = !!previous_target &&
+                                  previous_target.queued &&
+                                  !previous_target.body_present
+          if prior_queued_bodyless
+            prior_queued_bodyless_occurrences += 1
+            stable_prior_queued_bodyless_occurrences += 1 if stable_source
+            new_or_changed_prior_queued_bodyless_occurrences += 1 if new_or_changed_source
+            scan_invalidated_prior_queued_bodyless_occurrences += 1 if scan_invalidated_source
+          end
+          target_mask = source_mask
+          target_mask |= 8_u8 if prior_queued_bodyless
+          target_masks[name] |= target_mask
+        end
+      end
+
+      stable_targets = 0
+      new_or_changed_targets = 0
+      scan_invalidated_targets = 0
+      stable_and_new_or_changed_targets = 0
+      prior_queued_bodyless_targets = 0
+      stable_prior_queued_bodyless_targets = 0
+      new_or_changed_prior_queued_bodyless_targets = 0
+      scan_invalidated_prior_queued_bodyless_targets = 0
+      target_masks.each_value do |mask|
+        stable = (mask & 1_u8) != 0
+        new_or_changed = (mask & 2_u8) != 0
+        scan_invalidated = (mask & 4_u8) != 0
+        prior_queued_bodyless = (mask & 8_u8) != 0
+        stable_targets += 1 if stable
+        new_or_changed_targets += 1 if new_or_changed
+        scan_invalidated_targets += 1 if scan_invalidated
+        stable_and_new_or_changed_targets += 1 if stable && new_or_changed
+        if prior_queued_bodyless
+          prior_queued_bodyless_targets += 1
+          stable_prior_queued_bodyless_targets += 1 if stable
+          new_or_changed_prior_queued_bodyless_targets += 1 if new_or_changed
+          scan_invalidated_prior_queued_bodyless_targets += 1 if scan_invalidated
+        end
+      end
+
+      {
+        occurrences:                                        occurrences,
+        stable_occurrences:                                 stable_occurrences,
+        new_or_changed_occurrences:                         new_or_changed_occurrences,
+        scan_invalidated_occurrences:                       scan_invalidated_occurrences,
+        prior_queued_bodyless_occurrences:                  prior_queued_bodyless_occurrences,
+        stable_prior_queued_bodyless_occurrences:           stable_prior_queued_bodyless_occurrences,
+        new_or_changed_prior_queued_bodyless_occurrences:   new_or_changed_prior_queued_bodyless_occurrences,
+        scan_invalidated_prior_queued_bodyless_occurrences: scan_invalidated_prior_queued_bodyless_occurrences,
+        targets:                                            target_masks.size,
+        stable_targets:                                     stable_targets,
+        new_or_changed_targets:                             new_or_changed_targets,
+        scan_invalidated_targets:                           scan_invalidated_targets,
+        stable_and_new_or_changed_targets:                  stable_and_new_or_changed_targets,
+        prior_queued_bodyless_targets:                      prior_queued_bodyless_targets,
+        stable_prior_queued_bodyless_targets:               stable_prior_queued_bodyless_targets,
+        new_or_changed_prior_queued_bodyless_targets:       new_or_changed_prior_queued_bodyless_targets,
+        scan_invalidated_prior_queued_bodyless_targets:     scan_invalidated_prior_queued_bodyless_targets,
+      }
+    end
+
     private def missing_incremental_replace_revision_certificates(
       previous : Hash(UInt64, MissingIncrementalRevisionCertificate),
       current : Hash(UInt64, MissingIncrementalRevisionCertificate),
@@ -64438,6 +64547,17 @@ module Adamas::HIR
       certificates = Hash(String, MissingIncrementalTargetCertificate).new
       demands.each do |name|
         certificates[name] = missing_incremental_target_certificate(name, queued_names)
+      end
+      certificates
+    end
+
+    private def missing_incremental_queue_snapshot_target_certificates(
+      demands : Array(String),
+      queued_names : Set(String),
+    ) : Hash(String, MissingIncrementalTargetCertificate)
+      certificates = missing_incremental_target_certificates(demands, queued_names)
+      queued_names.each do |name|
+        certificates[name] ||= missing_incremental_target_certificate(name, queued_names)
       end
       certificates
     end
@@ -64845,6 +64965,13 @@ module Adamas::HIR
             availability_replay_stable
           incremental_availability_replay_false_reuse_count +=
             availability_replay_false_reuse
+          demand_provenance = missing_incremental_demand_provenance(
+            incremental_previous_revision_certificates.not_nil!,
+            incremental_before_scan_revision_certificates.not_nil!,
+            incremental_after_scan_revision_certificates,
+            incremental_current_available_segments.not_nil!,
+            incremental_previous_target_certificates.not_nil!,
+          )
           shadow_segments, changed_segments =
             missing_incremental_refresh_segments(
               incremental_cached_segments.not_nil!,
@@ -64910,6 +65037,7 @@ module Adamas::HIR
           end
           if matches || incremental_mismatch_count <= 3
             STDERR.puts "[MISSING_INCREMENTAL] iter=#{iteration} funcs=#{@module.functions.size} tracked_segments=#{incremental_cached_segments.not_nil!.size} changed_segments=#{changed_segments} changed_available_segments=#{changed_available_segments} revision_candidates=#{revision_candidates} revision_stable=#{revision_stable} revision_scan_invalidated=#{revision_scan_invalidated} revision_false_reuse=#{revision_false_reuse} raw_local_observed=#{raw_local_observed} raw_local_stable=#{raw_local_stable} raw_local_scan_invalidated=#{raw_local_scan_invalidated} raw_local_false_reuse=#{raw_local_false_reuse} raw_local_available_mismatch=#{raw_local_available_mismatch} raw_local_scope=per_function_raw raw_local_authority=full_scan raw_local_promotion=forbidden availability_replay_observed=#{availability_replay_observed} availability_replay_model_mismatch=#{availability_replay_model_mismatch} availability_replay_stable=#{availability_replay_stable} availability_replay_false_reuse=#{availability_replay_false_reuse} availability_replay_scope=pre_scan_target_snapshot availability_replay_authority=full_scan availability_replay_promotion=forbidden precanonical_indexed=#{precanonical_index.size} precanonical_observed=#{precanonical_observed.size} precanonical_match=#{precanonical_matches ? 1 : 0} precanonical_scope=occurrence_identity_order precanonical_authority=full_scan precanonical_promotion=forbidden target_invalidations=#{target_invalidations} post_enqueue_queue_changed=#{post_enqueue_queue_changed ? 1 : 0} previous_post_enqueue_queue_size=#{previous_post_enqueue_queue_size} queue_size=#{@pending_function_queue.size} full_raw=#{full_raw.size} shadow_raw=#{shadow_raw.size} full=#{full_available.size} shadow=#{shadow_available.size} full_selected=#{full_selected.size} shadow_selected=#{shadow_selected.size} full_more=#{full_has_more ? 1 : 0} shadow_more=#{shadow_has_more ? 1 : 0} match=#{matches ? 1 : 0} mismatches=#{incremental_mismatch_count} sample=#{sample}"
+            STDERR.puts "[MISSING_PROVENANCE] iter=#{iteration} history=#{incremental_has_previous_iteration ? 1 : 0} occurrences=#{demand_provenance[:occurrences]} stable_occurrences=#{demand_provenance[:stable_occurrences]} new_or_changed_occurrences=#{demand_provenance[:new_or_changed_occurrences]} scan_invalidated_occurrences=#{demand_provenance[:scan_invalidated_occurrences]} prior_queued_bodyless_occurrences=#{demand_provenance[:prior_queued_bodyless_occurrences]} stable_prior_queued_bodyless_occurrences=#{demand_provenance[:stable_prior_queued_bodyless_occurrences]} new_or_changed_prior_queued_bodyless_occurrences=#{demand_provenance[:new_or_changed_prior_queued_bodyless_occurrences]} scan_invalidated_prior_queued_bodyless_occurrences=#{demand_provenance[:scan_invalidated_prior_queued_bodyless_occurrences]} targets=#{demand_provenance[:targets]} stable_targets=#{demand_provenance[:stable_targets]} new_or_changed_targets=#{demand_provenance[:new_or_changed_targets]} scan_invalidated_targets=#{demand_provenance[:scan_invalidated_targets]} stable_and_new_or_changed_targets=#{demand_provenance[:stable_and_new_or_changed_targets]} prior_queued_bodyless_targets=#{demand_provenance[:prior_queued_bodyless_targets]} stable_prior_queued_bodyless_targets=#{demand_provenance[:stable_prior_queued_bodyless_targets]} new_or_changed_prior_queued_bodyless_targets=#{demand_provenance[:new_or_changed_prior_queued_bodyless_targets]} scan_invalidated_prior_queued_bodyless_targets=#{demand_provenance[:scan_invalidated_prior_queued_bodyless_targets]} source_scope=hir_body_demand_revision current_scope=occurrence_admitted_bodyless authority=full_scan promotion=forbidden"
           end
           missing_incremental_replace_revision_certificates(
             incremental_previous_revision_certificates.not_nil!,
@@ -65027,7 +65155,7 @@ module Adamas::HIR
           previous_queue.concat(@pending_function_queue)
           queued_names = Set(String).new(@pending_function_queue.size)
           @pending_function_queue.each { |name| queued_names.add(name) }
-          queued_certificates = missing_incremental_target_certificates(
+          queued_certificates = missing_incremental_queue_snapshot_target_certificates(
             incremental_full_demands.not_nil!,
             queued_names,
           )
