@@ -4730,6 +4730,13 @@ module Adamas::HIR
             new_types = true if mark_live_type("String")
           when Adamas::HIR::Call
             mname = inst.method_name
+            # Calls emitted directly by the synthetic main are reachable roots,
+            # not speculative callees discovered while lowering another body.
+            # Record only concrete targets here; virtual fan-out keeps using the
+            # receiver-aware method-part contract below.
+            if func.name == "__adamas_main" && !inst.virtual && has_method_separator?(mname)
+              @rta_called_methods << mname
+            end
             # RTA scans observe already-emitted HIR. Treat them as live-type and
             # virtual-receiver discovery, not as a demand to recursively lower
             # every direct callee during this pending pass. Truly demanded direct

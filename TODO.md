@@ -11598,6 +11598,54 @@ missing budget and process gates to distinguish target materialization from
 later fanout. Do not add a method-family allowlist, another demand registry, or
 a scan cache without a new measured falsifier.
 
+### Session 42: synthetic-main exact demand boundary (2026-08-03)
+
+The first bounded materialization ladder identified
+`Adamas::Compiler::CLI#run$IO_IO` as the first target that expands the HIR
+frontier: admitting it adds approximately 85 functions. Static inspection then
+corrected an earlier call-shape assumption. The zero-argument `cli.run` source
+expression is lowered through the `MemberAccess` corridor, not the normal
+`lower_call` corridor, so a trial that marked every emitted non-virtual normal
+call did not cover this root. Although its focused and full HIR specs were
+green, a source-matched 180-second probe still deferred `CLI#run` and did not
+reach the missing-start gate. That broad trial was reverted.
+
+The retained contract is narrower: an already-emitted concrete call is exact
+RTA demand only when it belongs directly to the synthetic `__adamas_main`
+function. Virtual calls retain the receiver-aware method-part contract, and
+calls found inside ordinary lowered bodies remain structural observations
+rather than recursive exact demand. The change reuses the existing initial HIR
+scan and adds no pass, cache, registry, or method-family allowlist.
+
+Evidence:
+
+- the focused root-demand regression was red before the change because
+  `RootDemandRunner#run` was visible in `__adamas_main` but absent from the exact
+  RTA demand set. It is now green, while the adjacent speculative
+  `Array(Point)#inspect$IO` control remains neither queued nor exact demand;
+- the full HIR suite passes under `run_safe`: 411 examples, zero failures, zero
+  errors, and the two pre-existing pending examples;
+- a fresh current-source stage 1 builds under `run_safe` in approximately 18
+  seconds. Its source-matched stop-before-missing probe exits naturally after
+  approximately 57 seconds: `CLI#run$IO_IO` is lowered through the direct
+  lookup instead of deferred, the gate observes 983 HIR functions, and no
+  pending item remains at the gate. The +82 functions relative to the 901
+  baseline agree with the independently measured approximately +85 target
+  corridor;
+- the complete 300-second stage2 attempt remains RED. One compiler process
+  stayed active at roughly one core, observed memory rose smoothly to about
+  2.8 percent of the host near 272 seconds, and `run_safe` stopped it at the
+  timeout without producing `cv2_s2`. No concurrent compiler fanout was
+  observed. `Adamas::Compiler::CLI#run_check$String_Adamas::Compiler::CLI::Options_IO_IO`
+  was still deferred during the bounded probe.
+
+Boundary: this is a root-reachability correction, not B4-F closure. The claim
+that admitting the synthetic-main exact call alone is sufficient for B4-F is
+refuted. B4-F remains RED because stage 2 did not build within 300 seconds. The
+next legal action is a bounded phase localization after missing-start. Do not
+add recursive exact-demand provenance, another helper corridor, or an
+optimization until that probe identifies the late cost boundary.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

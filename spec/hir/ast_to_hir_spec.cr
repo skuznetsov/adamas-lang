@@ -8693,6 +8693,33 @@ describe Adamas::HIR::AstToHir do
     end
   end
 
+  describe "lazy RTA root demand" do
+    it "records direct calls emitted by the synthetic main as exact demand" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class RootDemandRunner
+          def run : Int32
+            7
+          end
+        end
+
+        def consume_root_demand(value : Int32) : Int32
+          value
+        end
+
+        consume_root_demand(RootDemandRunner.new.run)
+      CRYSTAL
+
+      main = converter.module.function_by_name("__adamas_main")
+      main.should_not be_nil
+      hir_text(main.not_nil!).should contain("RootDemandRunner#run")
+
+      converter.__test_process_pending_lower_functions
+
+      converter.__test_rta_called_method?("RootDemandRunner#run").should be_true
+      converter.__test_rta_called_method?("Array(Point)#inspect$IO").should be_false
+    end
+  end
+
   describe "named arg block overload resolution" do
     it "keeps named arg names when selecting block overloads" do
       converter = lower_program_with_main(<<-CRYSTAL)
