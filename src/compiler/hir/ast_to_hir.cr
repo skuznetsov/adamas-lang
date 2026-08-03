@@ -64645,6 +64645,7 @@ module Adamas::HIR
       debug_missing_samples = env_get("DEBUG_MISSING_SAMPLES")
       debug_missing_top = env_get("DEBUG_MISSING_TOP").try(&.to_i?) || 20
       trace_flush_enter = env_has?("ADAMAS_TRACE_FLUSH_ENTER")
+      phase_stats = env_has?("ADAMAS_PHASE_STATS")
       incremental_falsifier = env_has?("ADAMAS_MISSING_INCREMENTAL_FALSIFIER")
       incremental_cached_segments = incremental_falsifier ? Hash(UInt64, Array(String)).new : nil
       incremental_cached_available_segments = incremental_falsifier ? Hash(UInt64, Array(String)).new : nil
@@ -64671,6 +64672,7 @@ module Adamas::HIR
       stop_after_missing_phase("start", "ADAMAS_STOP_AFTER_HIR_MISSING_START", iteration, 0)
 
       while iteration < max_iterations
+        iteration_started_at = Time.instant if phase_stats
         STDERR.puts "[MISSING_TRACE] iter=#{iteration} funcs=#{@module.functions.size}" if trace_flush_enter
         missing = [] of String
         incremental_full_demands = incremental_falsifier ? [] of String : nil
@@ -64888,6 +64890,7 @@ module Adamas::HIR
         end
         stop_after_missing_phase("scan", "ADAMAS_STOP_AFTER_HIR_MISSING_SCAN", iteration, missing.size)
         missing.uniq!
+        scan_done_at = Time.instant if phase_stats
         stop_after_missing_phase("uniq", "ADAMAS_STOP_AFTER_HIR_MISSING_UNIQ", iteration, missing.size)
         if incremental_falsifier
           precanonical_index = incremental_precanonical_index.not_nil!
@@ -65052,6 +65055,12 @@ module Adamas::HIR
           )
         end
         if missing.empty?
+          if phase_stats
+            terminal_at = Time.instant
+            scan_ms = (scan_done_at.not_nil! - iteration_started_at.not_nil!).total_milliseconds
+            total_ms = (terminal_at - iteration_started_at.not_nil!).total_milliseconds
+            STDERR.puts "[PHASE_STATS] lower_missing.iter=#{iteration} scan=#{scan_ms.round(1)}ms queue=0.0ms process=0.0ms total=#{total_ms.round(1)}ms missing=0 funcs=#{@module.function_count}"
+          end
           if incremental_falsifier
             exact_verdict =
               incremental_mismatch_count == 0 ? "observed_match" : "inconclusive"
@@ -65166,8 +65175,17 @@ module Adamas::HIR
           end
         end
         stop_after_missing_phase("queue", "ADAMAS_STOP_AFTER_HIR_MISSING_QUEUE", iteration, missing.size)
+        queue_done_at = Time.instant if phase_stats
         with_pending_process_context("missing_initial", iteration, missing.size) do
           process_pending_lower_functions
+        end
+        if phase_stats
+          process_done_at = Time.instant
+          scan_ms = (scan_done_at.not_nil! - iteration_started_at.not_nil!).total_milliseconds
+          queue_ms = (queue_done_at.not_nil! - scan_done_at.not_nil!).total_milliseconds
+          process_ms = (process_done_at - queue_done_at.not_nil!).total_milliseconds
+          total_ms = (process_done_at - iteration_started_at.not_nil!).total_milliseconds
+          STDERR.puts "[PHASE_STATS] lower_missing.iter=#{iteration} scan=#{scan_ms.round(1)}ms queue=#{queue_ms.round(1)}ms process=#{process_ms.round(1)}ms total=#{total_ms.round(1)}ms missing=#{missing.size} funcs=#{@module.function_count}"
         end
         stop_after_missing_phase("process", "ADAMAS_STOP_AFTER_HIR_MISSING_PROCESS", iteration, missing.size)
         missing.each do |name|
@@ -65483,6 +65501,17 @@ module Adamas::HIR
         mono_before = @monomorphized.size
         funcs_before = @module.function_count
         idx = 0
+        pass_started_at = Time.instant if phase_stats
+        pass_lower_ms = 0.0
+        pass_periodic_rta_ms = 0.0
+        pass_periodic_function_scan_ms = 0.0
+        pass_periodic_monomorphized_scan_ms = 0.0
+        pass_periodic_type_scan_ms = 0.0
+        pass_periodic_undefer_ms = 0.0
+        pass_end_rta_ms = 0.0
+        pass_periodic_rta_count = 0
+        pass_max_lower_ms = 0.0
+        pass_max_lower_name = ""
         stop_after_pending_phase("pass_start", "ADAMAS_STOP_AFTER_HIR_PENDING_PASS_START", pass, idx, nil, "queue=#{@pending_function_queue.size}")
 
         while idx < @pending_function_queue.size
@@ -65575,7 +65604,16 @@ module Adamas::HIR
           if progress_log && (pass_lowered % 100 == 0 || pass_lowered < 10)
             STDERR.puts "[LOWER] p#{pass} ##{pass_lowered} idx=#{idx}/#{@pending_function_queue.size} name=#{name[0, 80]}"
           end
+          lower_started_at = Time.instant if phase_stats
           lower_function_if_needed(name)
+          if phase_stats
+            lower_ms = (Time.instant - lower_started_at.not_nil!).total_milliseconds
+            pass_lower_ms += lower_ms
+            if lower_ms > pass_max_lower_ms
+              pass_max_lower_ms = lower_ms
+              pass_max_lower_name = name
+            end
+          end
           stop_after_pending_phase("first_lower_done", "ADAMAS_STOP_AFTER_HIR_PENDING_FIRST_LOWER_DONE", pass, idx, name, "lowered=#{pass_lowered + 1}")
           pass_lowered += 1
           total_lowered += 1
@@ -65583,7 +65621,11 @@ module Adamas::HIR
           # Periodic RTA scan: discover new live types from recently lowered
           # functions and undefer previously deferred functions.
           if lazy_rta && pass_lowered % rta_interval == 0
+            periodic_rta_started_at = Time.instant if phase_stats
+            rta_step_started_at = Time.instant if phase_stats
             scan_new_functions_for_live_types
+            pass_periodic_function_scan_ms += (Time.instant - rta_step_started_at.not_nil!).total_milliseconds if phase_stats
+            rta_step_started_at = Time.instant if phase_stats
             if @monomorphized.size > mono_before
               @monomorphized.each do |mname|
                 mbase = strip_generics_simple(mname)
@@ -65592,9 +65634,18 @@ module Adamas::HIR
                 end
               end
             end
+            pass_periodic_monomorphized_scan_ms += (Time.instant - rta_step_started_at.not_nil!).total_milliseconds if phase_stats
+            rta_step_started_at = Time.instant if phase_stats
             scan_new_type_descriptors_for_live_types
+            pass_periodic_type_scan_ms += (Time.instant - rta_step_started_at.not_nil!).total_milliseconds if phase_stats
+            rta_step_started_at = Time.instant if phase_stats
             undeferred = undefer_rta_functions
+            pass_periodic_undefer_ms += (Time.instant - rta_step_started_at.not_nil!).total_milliseconds if phase_stats
             rta_undeferred_total += undeferred
+            if phase_stats
+              pass_periodic_rta_ms += (Time.instant - periodic_rta_started_at.not_nil!).total_milliseconds
+              pass_periodic_rta_count += 1
+            end
             # Undeferred functions were appended to @pending_function_queue,
             # so they'll be picked up as idx advances.
           end
@@ -65606,6 +65657,7 @@ module Adamas::HIR
 
         # End-of-pass RTA scan
         if lazy_rta
+          end_rta_started_at = Time.instant if phase_stats
           scan_new_functions_for_live_types
           if @monomorphized.size > mono_before
             @monomorphized.each do |mname|
@@ -65618,9 +65670,15 @@ module Adamas::HIR
           scan_new_type_descriptors_for_live_types
           undeferred = undefer_rta_functions
           rta_undeferred_total += undeferred
+          pass_end_rta_ms = (Time.instant - end_rta_started_at.not_nil!).total_milliseconds if phase_stats
           if progress_log
             STDERR.puts "[LAZY_RTA] pass=#{pass} live_types=#{@live_types.size} called_methods=#{@rta_called_methods.size} undeferred=#{undeferred} remaining_deferred=#{@rta_deferred_functions.size}"
           end
+        end
+        if phase_stats
+          pass_total_ms = (Time.instant - pass_started_at.not_nil!).total_milliseconds
+          pass_residual_ms = pass_total_ms - pass_lower_ms - pass_periodic_rta_ms - pass_end_rta_ms
+          STDERR.puts "[PHASE_STATS] process_pending.pass=#{pass} context=#{@pending_process_context || "none"} total=#{pass_total_ms.round(1)}ms lower=#{pass_lower_ms.round(1)}ms periodic_rta=#{pass_periodic_rta_ms.round(1)}ms/#{pass_periodic_rta_count} periodic_functions=#{pass_periodic_function_scan_ms.round(1)}ms periodic_monomorphized=#{pass_periodic_monomorphized_scan_ms.round(1)}ms periodic_types=#{pass_periodic_type_scan_ms.round(1)}ms periodic_undefer=#{pass_periodic_undefer_ms.round(1)}ms end_rta=#{pass_end_rta_ms.round(1)}ms residual=#{pass_residual_ms.round(1)}ms max_lower=#{pass_max_lower_ms.round(1)}ms max_name=#{pass_max_lower_name} lowered=#{pass_lowered} deferred=#{pass_deferred} visited=#{idx}"
         end
         stop_after_pending_phase("pass_end", "ADAMAS_STOP_AFTER_HIR_PENDING_PASS_END", pass, idx, nil, "lowered=#{pass_lowered},deferred=#{pass_deferred},undeferred=#{rta_undeferred_total}")
 
@@ -81951,6 +82009,7 @@ module Adamas::HIR
       outcome_state_before = function_state(name) if debug_outcome
       outcome_type_before = force_return_type_category(@function_types[name]?) if debug_outcome
       outcome_base_type_before = force_return_type_category(@function_base_return_types[name]?) if debug_outcome
+      outcome_started = Time.instant if debug_outcome
 
       # Phase 0 metric: count forced lowers
       @phase0_forced_lower_count += 1
@@ -81996,7 +82055,8 @@ module Adamas::HIR
           functions_added = @module.function_count - functions_before.not_nil!
           requested_body = @module.has_function_with_body?(name) ? 1 : 0
           source = pending_call_target_slot > 0 ? "pending_helper" : "direct"
-          STDERR.puts "[FORCE_LOWER_OUTCOME] source=#{source} context=#{pending_call_target_context} slot=#{pending_call_target_slot} depth=#{@force_lower_return_type_depth} added=#{functions_added} requested_body=#{requested_body} state_before=#{outcome_state_before.not_nil!} state_after=#{function_state(name)} type_before=#{outcome_type_before.not_nil!} base_type_before=#{outcome_base_type_before.not_nil!} prior1=#{pending_call_target_prior1} prior2=#{pending_call_target_prior2} name=#{name}"
+          elapsed_ms = (Time.instant - outcome_started.not_nil!).total_milliseconds
+          STDERR.puts "[FORCE_LOWER_OUTCOME] source=#{source} context=#{pending_call_target_context} slot=#{pending_call_target_slot} depth=#{@force_lower_return_type_depth} elapsed_ms=#{elapsed_ms.round(3)} added=#{functions_added} requested_body=#{requested_body} state_before=#{outcome_state_before.not_nil!} state_after=#{function_state(name)} type_before=#{outcome_type_before.not_nil!} base_type_before=#{outcome_base_type_before.not_nil!} prior1=#{pending_call_target_prior1} prior2=#{pending_call_target_prior2} name=#{name}"
         end
       ensure
         if need_iy_reset

@@ -11949,6 +11949,44 @@ materialized-body fence reached by the 4,783 no-effect calls and determine
 whether that same established contract can be raised earlier without skipping
 required callsite, wrapper, ABI, keepalive, or alias effects.
 
+### Session 51: elapsed phase attribution moves the frontier to live-type scanning (2026-08-03)
+
+Default-off telemetry now times force-lowering outcomes, each missing-call
+scan/queue/process segment, and each `process_pending_lower_functions` pass.
+The pending-pass row separates root lowering from periodic/end RTA work and
+then partitions periodic RTA into new-function, monomorphized, type-descriptor,
+and undefer scans. It stores no persistent history and takes timestamps only
+when `ADAMAS_PHASE_STATS` or the existing force outcome diagnostic is enabled.
+The focused exact-shadow group passes 17 examples, and a fresh source-matched
+stage 1 builds safely in approximately 18 seconds.
+
+At the unchanged iteration-1 boundary (`missing=1962`, `pending=0`,
+`funcs=28647`, force `total=8990`, `unique=5801`), the missing-call HIR scan and
+queue take only 186.2 ms and 2.6 ms. Pending processing takes 59.53 seconds:
+47.78 seconds in root lowering, 11.53 seconds in periodic RTA, 18.7 ms in the
+end scan, and 194.1 ms residual. Iteration 0 adds another 33.40 seconds of
+pending processing, split into 16.91 seconds lowering and 16.43 seconds
+periodic RTA. Across both iterations, periodic RTA consumes approximately
+27.96 seconds; `scan_new_functions_for_live_types` accounts for 25.26 seconds,
+type descriptors 1.81 seconds, undefer 0.82 seconds, and repeated
+monomorphized traversal only 66 ms.
+
+The existing slow-method tracer independently locates the largest root lower:
+`Adamas::Compiler::CLI#compile...` takes 10.88 seconds in iteration 0, while
+iteration 1 peaks at `AstToHir#register_constant...` at 2.09 seconds. The
+force-outcome timer also refutes the tempting high-count fast path: all root
+force calls total approximately 22.36 seconds, but the 2,516 no-effect
+NotStarted slot-3 calls with the dominant request-state class cost only
+132.6 ms (0.59% of root force time). Count is not a useful cost proxy here.
+
+Boundary: repeated whole-HIR scanning, a monomorphized rescan, undefer filtering,
+and a state/slot force guard are all refuted as the primary sampled constraint.
+The new-function live-type scan is incremental by function index, so its 25.26
+seconds are not yet a redundancy certificate. The next falsifier must separate
+linear instruction visitation from repeated virtual-target replay. Do not
+change the RTA interval or add a live-type/replay cache without proving the
+same reachability and replay contract.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

@@ -351,19 +351,35 @@ semantic zeroes and improves the full B4-F corridor.
   useful outcomes. These snapshots are attribution only: state, body presence,
   and return categories do not certify canonical identity or required alias,
   wrapper, inherited-redirect, ABI, keepalive, or inline-yield side effects.
+- **Elapsed force-cost attribution:** source-matched iteration-1 telemetry puts
+  4,807 root force admissions at approximately 22.36 seconds. The dominant
+  no-effect NotStarted slot-3 request-state class contributes 2,516 calls but
+  only 132.6 ms (0.59% of root force time). The useful Pending lowering class
+  contributes approximately 20.53 seconds. This refutes using outcome count as
+  the optimization objective and moves the cost frontier outside no-effect
+  force aliases.
+- **Pending-phase attribution:** at the unchanged iteration-1 boundary, the
+  missing HIR scan/queue take 186.2/2.6 ms while pending processing takes 59.53
+  seconds: 47.78 seconds root lowering, 11.53 seconds periodic RTA, 18.7 ms end
+  RTA, and 194.1 ms residual. Iteration 0 pending processing takes 33.40 seconds:
+  16.91 seconds root lowering and 16.43 seconds periodic RTA. Across both
+  iterations, `scan_new_functions_for_live_types` accounts for 25.26 of 27.96
+  periodic-RTA seconds; type descriptors account for 1.81 seconds, undefer for
+  0.82 seconds, and monomorphized traversal for only 66 ms. The scan is already
+  incremental by function index, so this is a cost certificate, not proof of
+  redundant work.
 - **Adversary verdict:** robust for the bounded two-axis provenance aggregate,
   robust for the local exact-name dedup, position/shape attribution, and the
-  snapshot-based falsification at the sampled boundary, vulnerable for any
-  causal interpretation of overlapping target counts or the observed wall-time
-  delta, and broken for stable-source, queued-target, Pending-only,
+  snapshot/cost-based falsification at the sampled boundary, vulnerable for any
+  causal interpretation of live-type scan cost or the observed wall-time delta,
+  and broken for stable-source, queued-target, Pending-only,
   unconditional late-slot, bare-name, or settled-earlier-candidate skipping as
   a current production optimization.
-- **Next local track:** move inside `lower_function_if_needed_impl` and map the
-  existing canonical/materialized-body fence reached by the 4,783 no-effect
-  calls. Consider an earlier exit only if it reuses that exact established
-  identity contract and preserves every intervening callsite, wrapper, ABI,
-  keepalive, inherited-redirect, alias, and inline-yield effect. Do not add a
-  permanent forced-name cache, another demand registry, or promote availability
-  replay. Bodyless completed state can be reopened and the measured replay
-  mismatch is a direct safety falsifier. Public mutable aliases remain a
-  rejected boundary.
+- **Next local track:** separate linear visitation of newly emitted HIR
+  instructions from repeated virtual-target replay inside
+  `scan_new_functions_for_live_types`. Use the existing replay counters before
+  proposing a version/frontier contract. Do not change the RTA interval, add a
+  permanent forced-name/live-type cache, another demand registry, or promote
+  availability replay. Bodyless completed state can be reopened and the
+  measured replay mismatch is a direct safety falsifier. Public mutable aliases
+  remain a rejected boundary.
