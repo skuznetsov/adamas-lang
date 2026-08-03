@@ -81895,6 +81895,9 @@ module Adamas::HIR
         STDERR.puts "[FORCE_LOWER_CHAIN] depth=#{@force_lower_return_type_depth} name=#{name}"
       end
 
+      debug_outcome = env_has?("DEBUG_FORCE_LOWER_OUTCOME")
+      outcome_state_before = function_state(name) if debug_outcome
+
       # Phase 0 metric: count forced lowers
       @phase0_forced_lower_count += 1
       @phase0_forced_lower_names << name
@@ -81914,6 +81917,7 @@ module Adamas::HIR
       saved_depth = @lowering_depth
       @lowering_depth = 0
       @force_lower_return_type_depth += 1
+      functions_before = @module.function_count if debug_outcome
 
       need_iy_reset = bypass_inline_yield && in_inline_yield
       if need_iy_reset
@@ -81934,6 +81938,11 @@ module Adamas::HIR
 
       begin
         lower_function_if_needed_impl(name)
+        if debug_outcome
+          functions_added = @module.function_count - functions_before.not_nil!
+          requested_body = @module.has_function_with_body?(name) ? 1 : 0
+          STDERR.puts "[FORCE_LOWER_OUTCOME] depth=#{@force_lower_return_type_depth} added=#{functions_added} requested_body=#{requested_body} state_before=#{outcome_state_before.not_nil!} state_after=#{function_state(name)} name=#{name}"
+        end
       ensure
         if need_iy_reset
           @inline_yield_function_depth = saved_iy_fn.not_nil!

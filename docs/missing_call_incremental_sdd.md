@@ -296,13 +296,29 @@ semantic zeroes and improves the full B4-F corridor.
   certificate, not a redundant-body certificate: the force helper reports an
   admitted invocation even when the lowering implementation later returns
   without materializing a body.
+- **Force-lowering outcome telemetry:** a source-matched iteration-1 gate
+  partitions all 9,409 admitted calls by request state and visible result.
+  Pending requests account for 3,930 calls: 3,624 materialize the requested
+  body and 306 have no visible body/function-count effect. NotStarted requests
+  account for 5,479 calls: 152 materialize the requested body, 15 materialize
+  another symbol, and 5,312 have no visible effect. The dominant no-effect
+  names are bare method-family aliases such as `Crystal::Hasher#reference`
+  (262 calls), while the useful specialization
+  `Crystal::Hasher#reference$Reference` is first admitted through Pending.
+  This refutes a global Pending-only guard: 167 admitted NotStarted calls still
+  produce visible materialization across the combined force callsites. It does
+  not yet attribute those useful calls to the three-name helper, so a
+  helper-wide guard is not admitted either. The diagnostic is default-off and
+  records no persistent state.
 - **Adversary verdict:** robust for the bounded two-axis provenance aggregate,
   vulnerable for any causal interpretation of overlapping target counts, and
-  broken for stable-source or queued-target skipping as a current production
-  optimization.
-- **Next local track:** distinguish materialized bodies from early-return and
-  alias-resolution outcomes inside the existing return-type force corridor
-  before changing production semantics. Do not add a permanent forced-name
-  cache, another demand registry, or promote availability replay; bodyless
-  completed state can be reopened and the measured replay mismatch is a direct
-  safety falsifier. Public mutable aliases remain a rejected boundary.
+  broken for stable-source, queued-target, or Pending-only skipping as a
+  current production optimization.
+- **Next local track:** correlate no-effect NotStarted requests with the
+  existing materialization identity ledger to separate canonical-body reuse
+  from missing-definition and other early-return outcomes. Evaluate only a
+  local exact-name dedup or an already-settled canonical certificate; do not
+  add a permanent forced-name cache, another demand registry, or promote
+  availability replay. Bodyless completed state can be reopened and the
+  measured replay mismatch is a direct safety falsifier. Public mutable
+  aliases remain a rejected boundary.

@@ -11780,6 +11780,43 @@ falsifier must classify materialized, canonical-alias, and early-return outcomes
 within the measured force corridor. Only then may a local exact-name dedup or
 precheck be evaluated against wall time and semantic gates.
 
+### Session 46: NotStarted force-lowering is mostly noise but not safely skippable (2026-08-03)
+
+A default-off streaming outcome diagnostic now records request state before
+force-lowering, state after it, requested-body availability, and HIR function
+count growth. It introduces no cache, registry, queue mutation, or production
+branch. The focused exact-shadow group remains green with 17 examples, and a
+fresh current-source stage 1 builds safely in approximately 17 seconds.
+
+The source-matched iteration-1 process gate exits 0 within the 240-second and
+4096-MiB safe-runner bounds with the unchanged boundary totals of 28,647 HIR
+functions, 9,409 force admissions, and 5,801 unique exact names. Of 3,930
+Pending admissions, 3,624 materialize the requested body and 306 have no
+visible body/function-count effect. Of 5,479 NotStarted admissions, 152
+materialize the requested body, 15 materialize another symbol, and 5,312 have
+no visible effect. Therefore approximately 97% of admitted NotStarted calls
+are no-effect in this trace, but 167 still produce visible materialization.
+
+The largest no-effect request is the bare alias
+`Crystal::Hasher#reference` at 262 calls. A focused trace shows the concrete
+`Crystal::Hasher#reference$Reference` specialization entering through Pending,
+resolving by exact lookup, and materializing normally. Later bare-alias requests
+remain NotStarted, resolve to the same family, and stop at the existing
+materialized-body fence. This identifies repeated canonical lookup as a real
+CPU-amplification corridor without proving that every no-effect NotStarted
+request has the same cause.
+
+Boundary: a global Pending-only guard is BROKEN because useful NotStarted
+materialization exists. The aggregate combines all force callsites, so it does
+not prove whether the three-name helper itself needs those 167 productive
+admissions; a helper-wide guard is therefore not admitted. A global forced-name
+cache is still rejected for reopening and alias/callsite reasons. The next legal
+probe must reuse the existing materialization identity ledger to classify the
+5,312 no-effect NotStarted outcomes as canonical-body reuse, lookup miss, or
+another early return. The only currently proven semantic optimization is exact
+duplicate name elimination inside one helper invocation; its material impact is
+not yet measured.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
