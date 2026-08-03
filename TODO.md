@@ -11849,6 +11849,39 @@ measured corridor is 8,990 admissions, including 5,312 baseline NotStarted
 no-effect outcomes whose exact early-return categories still need bounded
 classification before another semantic precheck.
 
+### Session 48: force-origin attribution rejects helper-wide Pending-only skipping (2026-08-03)
+
+The default-off force outcome row now carries a two-valued origin:
+`pending_helper` for calls admitted by the three-name return-type helper and
+`direct` for every other callsite. This is a call argument only; it adds no
+mutable context, event id, cache, registry, or production decision. The focused
+exact-shadow group remains green with 17 examples, and a fresh source-matched
+stage 1 builds safely in approximately 16 seconds.
+
+At the unchanged iteration-1 boundary (`missing=1962`, `pending=0`,
+`funcs=28647`, 8,990 force admissions, 5,801 unique names), the helper accounts
+for 3,836 Pending calls: 3,555 materialize the requested body and 281 have no
+visible effect. It also accounts for 4,987 NotStarted calls: 147 materialize
+the requested body, 11 materialize another symbol, and 4,829 have no visible
+effect. Direct callsites account for only 94 Pending calls (69 requested bodies,
+25 no-effect) and 73 NotStarted calls (5 requested bodies, 4 other-symbol
+materializations, 64 no-effect).
+
+This attribution changes the safety conclusion. The earlier combined aggregate
+already rejected a global Pending-only guard; the new rows prove that a
+helper-wide Pending-only guard is also BROKEN because 158 useful NotStarted
+helper admissions exist. At the same time, the 4,829 no-effect NotStarted
+helper calls are now the dominant measured optimization corridor. Its largest
+members remain bare family names such as `Crystal::Hasher#reference` (262),
+`Parser#emit_unexpected` (176), and typed `Hash#[]?` bases (157 and 114).
+
+Boundary: origin attribution is ROBUST, but it does not distinguish the
+helper's primary, mangled, and base positions or prove that every bare name is
+an already-settled alias. The next legal falsifier is a position/shape
+partition, followed only if warranted by a guard requiring an earlier exact
+body plus a settled non-generic return type. A cache, family allowlist, or
+unconditional base skip remains forbidden.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

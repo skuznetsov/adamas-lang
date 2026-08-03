@@ -320,16 +320,25 @@ semantic zeroes and improves the full B4-F corridor.
   baseline force corridor. Observed wall time moves from approximately 146 to
   143 seconds, but a single three-second delta is orientation only, not a
   stable performance certificate.
+- **Force-origin attribution:** the existing default-off outcome event now
+  distinguishes the three-name helper from direct force callsites. After local
+  exact-name dedup, the helper contributes 3,836 Pending admissions (3,555
+  requested bodies, 281 no-effect) and 4,987 NotStarted admissions (147
+  requested bodies, 11 other-symbol materializations, 4,829 no-effect). Direct
+  callsites contribute 94 Pending admissions (69 requested bodies, 25
+  no-effect) and 73 NotStarted admissions (5 requested bodies, 4 other-symbol
+  materializations, 64 no-effect). This directly refutes a helper-wide
+  Pending-only guard while locating 4,829 no-effect NotStarted admissions in
+  that helper. The origin bit is diagnostic only and stores no history.
 - **Adversary verdict:** robust for the bounded two-axis provenance aggregate,
   robust for the local exact-name dedup at the sampled boundary, vulnerable
   for any causal interpretation of overlapping target counts or the observed
   wall-time delta, and broken for stable-source, queued-target, or Pending-only
   skipping as a current production optimization.
 - **Next local track:** correlate no-effect NotStarted requests with the
-  existing materialization identity ledger to separate canonical-body reuse
-  from missing-definition and other early-return outcomes. Evaluate only a
-  local exact-name dedup or an already-settled canonical certificate; do not
-  add a permanent forced-name cache, another demand registry, or promote
-  availability replay. Bodyless completed state can be reopened and the
-  measured replay mismatch is a direct safety falsifier. Public mutable
-  aliases remain a rejected boundary.
+  helper alternative position and requested-name shape. Determine whether a
+  late bare/base alternative can be skipped only when an earlier exact symbol
+  has a settled body and return type. Do not add a permanent forced-name cache,
+  another demand registry, or promote availability replay. Bodyless completed
+  state can be reopened and the measured replay mismatch is a direct safety
+  falsifier. Public mutable aliases remain a rejected boundary.

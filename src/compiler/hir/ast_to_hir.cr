@@ -81827,16 +81827,16 @@ module Adamas::HIR
     private def force_pending_call_targets_for_return_type(name1 : String?, name2 : String? = nil, name3 : String? = nil) : Bool
       forced = false
       if name = name1
-        forced = true if !name.empty? && !@module.has_function_with_body?(name) && force_lower_function_for_return_type(name)
+        forced = true if !name.empty? && !@module.has_function_with_body?(name) && force_lower_function_for_return_type(name, from_pending_call_targets: true)
       end
       if name = name2
         if name != name1
-          forced = true if !name.empty? && !@module.has_function_with_body?(name) && force_lower_function_for_return_type(name)
+          forced = true if !name.empty? && !@module.has_function_with_body?(name) && force_lower_function_for_return_type(name, from_pending_call_targets: true)
         end
       end
       if name = name3
         if name != name1 && name != name2
-          forced = true if !name.empty? && !@module.has_function_with_body?(name) && force_lower_function_for_return_type(name)
+          forced = true if !name.empty? && !@module.has_function_with_body?(name) && force_lower_function_for_return_type(name, from_pending_call_targets: true)
         end
       end
       forced
@@ -81859,7 +81859,11 @@ module Adamas::HIR
     # subtree. Without that guard, a nested force_lower would see
     # in_inline_yield=false (because the parent reset the state) and could
     # recurse through a yield-bearing callee unchecked.
-    private def force_lower_function_for_return_type(name : String, bypass_inline_yield : Bool = false) : Bool
+    private def force_lower_function_for_return_type(
+      name : String,
+      bypass_inline_yield : Bool = false,
+      from_pending_call_targets : Bool = false,
+    ) : Bool
       return false unless v2_string_readable?(name)
       return false if name.empty?
       return false if @suppress_force_lower_return_type_depth > 0
@@ -81945,7 +81949,8 @@ module Adamas::HIR
         if debug_outcome
           functions_added = @module.function_count - functions_before.not_nil!
           requested_body = @module.has_function_with_body?(name) ? 1 : 0
-          STDERR.puts "[FORCE_LOWER_OUTCOME] depth=#{@force_lower_return_type_depth} added=#{functions_added} requested_body=#{requested_body} state_before=#{outcome_state_before.not_nil!} state_after=#{function_state(name)} name=#{name}"
+          source = from_pending_call_targets ? "pending_helper" : "direct"
+          STDERR.puts "[FORCE_LOWER_OUTCOME] source=#{source} depth=#{@force_lower_return_type_depth} added=#{functions_added} requested_body=#{requested_body} state_before=#{outcome_state_before.not_nil!} state_after=#{function_state(name)} name=#{name}"
         end
       ensure
         if need_iy_reset
