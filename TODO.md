@@ -11882,6 +11882,40 @@ partition, followed only if warranted by a guard requiring an earlier exact
 body plus a settled non-generic return type. A cache, family allowlist, or
 unconditional base skip remains forbidden.
 
+### Session 49: helper position and shape do not form a safe skip boundary (2026-08-03)
+
+The default-off force outcome row now records helper alternative position as
+`slot=1`, `slot=2`, or `slot=3`; direct callsites retain `slot=0`. This replaces
+the previous origin boolean with an integer call argument and derives the same
+origin label from it. It adds no persistent state, event identity, cache,
+registry, queue mutation, or production branch. The focused exact-shadow group
+passes 17 examples, and a fresh current-source stage 1 builds safely in
+approximately 17 seconds.
+
+At the source-matched iteration-1 boundary, all 4,987 helper `NotStarted`
+admissions have bare names. Slot 3 accounts for 4,941 of them: 147 materialize
+the requested body, 11 materialize another symbol, and 4,783 have no visible
+effect. Slots 1 and 2 account for the remaining 46 and have no visible effect
+in this trace. Slot 3 also has 71 Pending admissions, including 16 requested
+bodies. Therefore the dominant 4,783-call no-effect corridor and all 158 useful
+`NotStarted` helper admissions occupy the same late bare-name position.
+
+The positional split also preserves useful earlier work: slot 1 contributes
+3,759 Pending calls (3,533 requested bodies), and slot 2 contributes six
+Pending requested bodies. Shape is not a discriminator because useful and
+no-effect slot-3 requests are both bare. The bounded diagnostic exits 0 after
+approximately 143 seconds with one compiler process at approximately one core
+and no fan-out; memory grows within the safe-runner bound rather than showing a
+runaway resource leak.
+
+Boundary: unconditional slot-3 skipping is BROKEN, and a bare-name guard is
+equally unsupported. Position and shape are robust diagnostic attribution but
+not semantic authority. The next legal falsifier must classify the 158 useful
+slot-3 `NotStarted` outcomes against the already-materialized earlier exact
+candidate and its return-type resolution. Only a predicate that separates
+those outcomes may become a local precheck; global caches, family allowlists,
+and state-only guards remain forbidden.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

@@ -81827,16 +81827,16 @@ module Adamas::HIR
     private def force_pending_call_targets_for_return_type(name1 : String?, name2 : String? = nil, name3 : String? = nil) : Bool
       forced = false
       if name = name1
-        forced = true if !name.empty? && !@module.has_function_with_body?(name) && force_lower_function_for_return_type(name, from_pending_call_targets: true)
+        forced = true if !name.empty? && !@module.has_function_with_body?(name) && force_lower_function_for_return_type(name, pending_call_target_slot: 1)
       end
       if name = name2
         if name != name1
-          forced = true if !name.empty? && !@module.has_function_with_body?(name) && force_lower_function_for_return_type(name, from_pending_call_targets: true)
+          forced = true if !name.empty? && !@module.has_function_with_body?(name) && force_lower_function_for_return_type(name, pending_call_target_slot: 2)
         end
       end
       if name = name3
         if name != name1 && name != name2
-          forced = true if !name.empty? && !@module.has_function_with_body?(name) && force_lower_function_for_return_type(name, from_pending_call_targets: true)
+          forced = true if !name.empty? && !@module.has_function_with_body?(name) && force_lower_function_for_return_type(name, pending_call_target_slot: 3)
         end
       end
       forced
@@ -81862,7 +81862,7 @@ module Adamas::HIR
     private def force_lower_function_for_return_type(
       name : String,
       bypass_inline_yield : Bool = false,
-      from_pending_call_targets : Bool = false,
+      pending_call_target_slot : Int32 = 0,
     ) : Bool
       return false unless v2_string_readable?(name)
       return false if name.empty?
@@ -81949,8 +81949,8 @@ module Adamas::HIR
         if debug_outcome
           functions_added = @module.function_count - functions_before.not_nil!
           requested_body = @module.has_function_with_body?(name) ? 1 : 0
-          source = from_pending_call_targets ? "pending_helper" : "direct"
-          STDERR.puts "[FORCE_LOWER_OUTCOME] source=#{source} depth=#{@force_lower_return_type_depth} added=#{functions_added} requested_body=#{requested_body} state_before=#{outcome_state_before.not_nil!} state_after=#{function_state(name)} name=#{name}"
+          source = pending_call_target_slot > 0 ? "pending_helper" : "direct"
+          STDERR.puts "[FORCE_LOWER_OUTCOME] source=#{source} slot=#{pending_call_target_slot} depth=#{@force_lower_return_type_depth} added=#{functions_added} requested_body=#{requested_body} state_before=#{outcome_state_before.not_nil!} state_after=#{function_state(name)} name=#{name}"
         end
       ensure
         if need_iy_reset

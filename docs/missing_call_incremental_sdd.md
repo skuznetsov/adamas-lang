@@ -330,15 +330,26 @@ semantic zeroes and improves the full B4-F corridor.
   materializations, 64 no-effect). This directly refutes a helper-wide
   Pending-only guard while locating 4,829 no-effect NotStarted admissions in
   that helper. The origin bit is diagnostic only and stores no history.
+- **Helper position/shape attribution:** the outcome event now identifies
+  helper alternatives as slots 1-3 while direct callsites retain slot 0. At
+  the source-matched iteration-1 boundary, all 4,987 helper `NotStarted`
+  admissions are bare. Slot 3 contains 4,941: 147 requested-body
+  materializations, 11 other-symbol materializations, and 4,783 no-effect
+  outcomes. The other two slots contain 46 no-effect admissions. Slot 3 also
+  contains 71 Pending calls, including 16 requested bodies. Thus the useful
+  and no-effect `NotStarted` populations share both the late position and bare
+  name shape; neither is a legal skip predicate. The diagnostic carries only
+  the current call argument and records no history.
 - **Adversary verdict:** robust for the bounded two-axis provenance aggregate,
-  robust for the local exact-name dedup at the sampled boundary, vulnerable
-  for any causal interpretation of overlapping target counts or the observed
-  wall-time delta, and broken for stable-source, queued-target, or Pending-only
-  skipping as a current production optimization.
-- **Next local track:** correlate no-effect NotStarted requests with the
-  helper alternative position and requested-name shape. Determine whether a
-  late bare/base alternative can be skipped only when an earlier exact symbol
-  has a settled body and return type. Do not add a permanent forced-name cache,
-  another demand registry, or promote availability replay. Bodyless completed
-  state can be reopened and the measured replay mismatch is a direct safety
-  falsifier. Public mutable aliases remain a rejected boundary.
+  robust for the local exact-name dedup and position/shape attribution at the
+  sampled boundary, vulnerable for any causal interpretation of overlapping
+  target counts or the observed wall-time delta, and broken for stable-source,
+  queued-target, Pending-only, unconditional late-slot, or bare-name skipping
+  as a current production optimization.
+- **Next local track:** classify the 158 useful slot-3 `NotStarted` outcomes
+  against the earlier exact candidate's materialized body and resolved return
+  type. Falsify the narrowest local precheck before implementing it. Do not add
+  a permanent forced-name cache, another demand registry, or promote
+  availability replay. Bodyless completed state can be reopened and the
+  measured replay mismatch is a direct safety falsifier. Public mutable aliases
+  remain a rejected boundary.
