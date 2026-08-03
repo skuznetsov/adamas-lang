@@ -992,6 +992,13 @@ module Adamas::HIR
       MacroGenerated
     end
 
+    private record RetainedSourceProvenanceCacheEntry,
+      source_start : UInt64,
+      source_size : Int32,
+      mapped_extra_count : Int32,
+      arena_extra_count : Int32,
+      foreign : Bool
+
     # Zero-copy method name parsing - single pass extracts all parts.
     # Parses: "Owner#method$TypeSuffix" or "Owner.method$TypeSuffix"
     # Returns struct with owner, method, suffix, separator - all as byte slices sharing original buffer.
@@ -6221,6 +6228,10 @@ module Adamas::HIR
     @stdlib_root : String?
     # Extra source snippets (macro expansion/reparse) to keep slices alive.
     @extra_sources_by_arena : Hash(UInt64, Array(String))
+    # Parameter token slices and retained source lists are stable between
+    # append events.  Cache exact containment results at that revision so the
+    # same slice does not repeatedly scan every parser-retained buffer.
+    @retained_source_provenance_cache : Hash({UInt64, UInt64, Int32}, RetainedSourceProvenanceCacheEntry)
     # DefNode identities whose parameter slices came from macro-generated text.
     @macro_generated_parameter_def_ids : Set(UInt64)
     # Exact generated source buffer that produced each macro-expanded DefNode.
@@ -6570,6 +6581,7 @@ module Adamas::HIR
       @paths_by_arena = paths_by_arena || {} of UInt64 => String
       @stdlib_root = stdlib_root
       @extra_sources_by_arena = {} of UInt64 => Array(String)
+      @retained_source_provenance_cache = {} of {UInt64, UInt64, Int32} => RetainedSourceProvenanceCacheEntry
       @macro_generated_parameter_def_ids = Set(UInt64).new
       @macro_generated_parameter_sources = {} of {UInt64, UInt64} => String
       @link_libraries = link_libraries || [] of String
@@ -6814,6 +6826,7 @@ module Adamas::HIR
       end
       @paths_by_arena = paths_by_arena
       @extra_sources_by_arena = {} of UInt64 => Array(String)
+      @retained_source_provenance_cache = {} of {UInt64, UInt64, Int32} => RetainedSourceProvenanceCacheEntry
       @macro_generated_parameter_def_ids = Set(UInt64).new
       @macro_generated_parameter_sources = {} of {UInt64, UInt64} => String
     end
@@ -6983,25 +6996,62 @@ module Adamas::HIR
       slice : Slice(UInt8),
       arena : Adamas::Compiler::Frontend::ArenaLike,
     ) : Bool
+      arena_key = arena.object_id.to_u64
+      slice_start = slice.to_unsafe.address
+      slice_size = slice.size
       source = source_for_arena(arena)
       return false unless source
-      return false if slice_points_into_source?(slice, source)
 
-      if extras = extra_sources_for_arena(arena)
-        extras.each do |retained|
+      mapped_extras = extra_sources_for_arena(arena)
+      arena_extras = arena.extra_sources
+      mapped_extra_count = mapped_extras.try(&.size) || 0
+      arena_extra_count = arena_extras.size
+      source_start = source.to_unsafe.address
+      source_size = source.bytesize
+      cache_key = {arena_key, slice_start, slice_size}
+      if cached = @retained_source_provenance_cache[cache_key]?
+        if cached.source_start == source_start &&
+           cached.source_size == source_size &&
+           cached.mapped_extra_count == mapped_extra_count &&
+           cached.arena_extra_count == arena_extra_count
+          return cached.foreign
+        end
+      end
+
+      foreign = false
+      primary = slice_points_into_source?(slice, source)
+      if !primary && mapped_extras
+        mapped_extras.each do |retained|
           same_storage = retained.bytesize == source.bytesize &&
                          retained.to_unsafe.address == source.to_unsafe.address
           next if same_storage
-          return true if slice_points_into_source?(slice, retained)
+          if slice_points_into_source?(slice, retained)
+            foreign = true
+            break
+          end
         end
       end
-      arena.extra_sources.each do |retained|
-        same_storage = retained.bytesize == source.bytesize &&
-                       retained.to_unsafe.address == source.to_unsafe.address
-        next if same_storage
-        return true if slice_points_into_source?(slice, retained)
+
+      unless foreign || primary
+        arena_extras.each do |retained|
+          same_storage = retained.bytesize == source.bytesize &&
+                         retained.to_unsafe.address == source.to_unsafe.address
+          next if same_storage
+          if slice_points_into_source?(slice, retained)
+            foreign = true
+            break
+          end
+        end
       end
-      false
+
+      @retained_source_provenance_cache[cache_key] = RetainedSourceProvenanceCacheEntry.new(
+        source_start,
+        source_size,
+        mapped_extra_count,
+        arena_extra_count,
+        foreign,
+      )
+      foreign
     end
 
     private def with_debug_callsite(label : String?, &)

@@ -408,19 +408,35 @@ semantic zeroes and improves the full B4-F corridor.
   after lazy RTA starts is a required rendezvous. The transition-only guard
   misses that target and is rejected. The 49-example virtual-target family
   passes after restoring unconditional lazy-RTA replay.
+- **Retained-source provenance cache:** a late CPU sample and opt-in counters
+  locate a concrete linear leak below owner lowering: 98,872 exact provenance
+  queries over only 1,233 distinct arena/slice keys perform approximately 485.7
+  million retained-buffer checks. The admitted cache stores only the exact
+  containment result and reuses it while the primary source storage/size and
+  both retained-source list lengths are unchanged. Direct append,
+  converter-side append, and same-size primary-source replacement regressions
+  prove that stale entries are rescanned. On identical source, the bounded
+  `missing_initial` pass-items gate improves from 88.65 to 72.95 seconds while
+  preserving `demand=170`, `pending=6218`, `funcs=10372`, `lowered=1972`, and
+  `deferred=3551`. The full HIR lowering spec passes 414 examples with zero
+  failures and two pending. This certificate relies on the observed repository
+  contract that `extra_sources` mutations append; destructive same-length
+  mutation must invalidate the cache.
 - **Adversary verdict:** robust for the bounded two-axis provenance aggregate,
   robust for the missing-call provenance partition, local exact-name dedup,
-  position/shape attribution, and the snapshot/cost-based falsification at the
-  sampled boundary; vulnerable for causal interpretation of live-type scan
-  cost, virtual-target reachability, or the observed wall-time delta; and broken
-  for stable-source, queued-target, virtual-target, Pending-only, unconditional
-  late-slot, bare-name, settled-earlier-candidate, or live-transition-only
-  replay skipping as a current production optimization.
-- **Next local track:** trace the dominant virtual-target bodies to the virtual
-  shape and caller tokens that admitted them, then test whether that chain is
-  entry-reachable. Do not cache an entire class replay, change the RTA interval,
-  add a permanent forced-name or live-type cache, create another demand
-  registry, or promote availability replay. Bodyful caller existence alone is
-  not a reachability certificate. Bodyless completed state can be reopened and
-  the measured replay mismatch is a direct safety falsifier. Public mutable
-  aliases remain a rejected boundary.
+  retained-source cache under append-only mutation, position/shape attribution,
+  and the snapshot/cost-based falsification at the sampled boundary; vulnerable
+  for destructive same-length source-list mutation, causal interpretation of
+  live-type scan cost, or virtual-target reachability; and broken for
+  stable-source, queued-target, virtual-target, Pending-only, unconditional
+  late-slot, bare-name, settled-earlier-candidate, or live-transition-only replay
+  skipping as a current production optimization.
+- **Next local track:** run the fresh B4-F capability gate under the 300-second
+  admission limit. If it remains outside the budget, resume below useful
+  virtual-target owner lowering without changing broad-target rendezvous. Do
+  not cache an entire class replay, change the RTA interval, add a permanent
+  forced-name or live-type cache, create another demand registry, or promote
+  availability replay. Bodyful caller existence alone is not a reachability
+  certificate. Bodyless completed state can be reopened and the measured
+  replay mismatch is a direct safety falsifier. Public mutable aliases remain
+  a rejected boundary.

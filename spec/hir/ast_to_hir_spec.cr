@@ -325,6 +325,20 @@ class Adamas::HIR::AstToHir
     store_extra_source(arena, text)
   end
 
+  def __test_parameter_slice_from_foreign_retained_source?(
+    slice : Slice(UInt8),
+    arena : Adamas::Compiler::Frontend::ArenaLike,
+  ) : Bool
+    parameter_slice_from_foreign_retained_source?(slice, arena)
+  end
+
+  def __test_set_source_for_arena(
+    arena : Adamas::Compiler::Frontend::ArenaLike,
+    source : String,
+  ) : String
+    set_source_for_arena(arena, source)
+  end
+
   def __test_parameter_type_annotation_from_source(
     param : Adamas::Compiler::Frontend::Parameter,
     arena : Adamas::Compiler::Frontend::ArenaLike,
@@ -3968,6 +3982,45 @@ describe Adamas::HIR::AstToHir do
       ).should contain(
         "RetainedOnlyInitializer#initialize$Int32_block"
       )
+    end
+
+    it "rechecks cached retained-source provenance after sources are appended" do
+      source = "def source(value : Int32)\nend\n"
+      foreign_source = "def generated(other : String)\nend\n"
+      mapped_source = "def mapped(flag : Bool)\nend\n"
+      arena, _ = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+
+      slice = foreign_source.to_slice
+      converter.__test_parameter_slice_from_foreign_retained_source?(slice, arena).should be_false
+
+      arena.retain_source(foreign_source)
+      converter.__test_parameter_slice_from_foreign_retained_source?(slice, arena).should be_true
+
+      mapped_slice = mapped_source.to_slice
+      converter.__test_parameter_slice_from_foreign_retained_source?(mapped_slice, arena).should be_false
+
+      converter.__test_store_extra_source(arena, mapped_source)
+      converter.__test_parameter_slice_from_foreign_retained_source?(mapped_slice, arena).should be_true
+    end
+
+    it "rechecks cached retained-source provenance after same-size source replacement" do
+      source = "def source(value : Int32)\nend\n"
+      replacement = String.new(source.to_slice)
+      arena, _ = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+
+      slice = source.to_slice
+      converter.__test_parameter_slice_from_foreign_retained_source?(slice, arena).should be_false
+
+      converter.__test_set_source_for_arena(arena, replacement)
+      converter.__test_parameter_slice_from_foreign_retained_source?(slice, arena).should be_true
     end
 
     it "binds a forwarded Proc constructor wrapper to the macro block initializer" do

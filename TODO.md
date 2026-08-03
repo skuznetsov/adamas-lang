@@ -12077,6 +12077,39 @@ approximately the same 33 seconds in missing processing. The next performance
 move must preserve deferred broad-target rendezvous and work below the live-type
 observation boundary rather than suppressing repeated observations globally.
 
+### Session 55: retained-source provenance cache removes a linear lowering leak (2026-08-03)
+
+A late CPU sample moved the dominant concrete leaf below virtual-target owner
+lowering into `parameter_slice_from_foreign_retained_source?`. Opt-in counters
+then observed 98,872 calls over only 1,233 distinct `(arena, slice address,
+slice size)` keys. The old path performed approximately 485.7 million scans of
+the arena's retained source buffers, or roughly 4,900 checks per call. The
+checks are semantically required, but repeating the same exact containment
+query against unchanged source lists is not.
+
+The accepted move caches the exact Boolean result for a slice and validates it
+against the registered source storage/size plus both retained-source list
+lengths. All repository `ArenaLike#retain_source` implementations append, and
+the converter's mapped list is also append-only. A source replacement or an
+append therefore forces the original exact scan; there is no content heuristic,
+reachability filter, or lowering suppression. Focused regressions cover direct
+arena append, converter-side append, and same-size primary source replacement.
+
+On identical instrumented source and the same `missing_initial` pass-items
+gate, an uninstrumented A/B improved from 88.65 to 72.95 seconds while exactly
+preserving `demand=170`, `pending=6218`, `funcs=10372`, `lowered=1972`, and
+`deferred=3551`. A clean candidate binary repeated the bounded gate in 73.40
+seconds. The complete HIR lowering spec passes 414 examples with zero failures
+and two pre-existing pending examples, and the host compiler builds cleanly.
+
+Boundary: the cache is ROBUST for the repository's observed append-only
+retained-source mutation paths. Its certificate becomes stale if a caller
+destructively replaces or removes an `extra_sources` element without changing
+the list length; such a mutation must either be forbidden at the API boundary
+or invalidate the cache explicitly. The next capability check is a fresh B4-F
+run under the 300-second admission limit; this local speed certificate alone is
+not bootstrap closure.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
