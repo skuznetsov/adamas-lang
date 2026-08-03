@@ -1302,6 +1302,14 @@ class Adamas::HIR::AstToHir
     mark_live_type(name)
   end
 
+  def __test_set_lazy_rta_active(value : Bool) : Nil
+    @lazy_rta_active = value
+  end
+
+  def __test_record_virtual_target(parent_name : String, method_name : String, arg_types : Array(Adamas::HIR::TypeRef)) : Nil
+    record_virtual_target(parent_name, method_name, arg_types, false, false)
+  end
+
   def __test_collect_subclasses_cached(parent_name : String) : Array(String)
     collect_subclasses_cached(parent_name)
   end
@@ -12048,6 +12056,46 @@ describe Adamas::HIR::AstToHir do
       object_target.should_not be_nil
       converter.module.has_function_with_body?(object_target.not_nil!.name).should be_true
       converter.module.functions.any? { |func| func.name.starts_with?("Box(Int32)#to_s") }.should be_false
+    end
+
+    it "replays a broad target when an already-live child enters lazy RTA" do
+      source = <<-CRYSTAL
+        class Object
+          def probe(value : Int32) : Int32
+            value
+          end
+        end
+
+        class Child < Object
+          def probe(value : Int32) : Int32
+            value + 1
+          end
+        end
+
+      CRYSTAL
+
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+      converter.arena = arena
+      class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+      class_nodes.each { |node| converter.register_class(node) }
+
+      # Broad roots defer replay outside lazy RTA. The later observation of an
+      # already-live child is therefore a required rendezvous with that target.
+      converter.__test_mark_live_type("Child")
+      converter.__test_record_virtual_target("Object", "probe", [Adamas::HIR::TypeRef::INT32])
+      converter.module.functions.any? do |func|
+        func.name.starts_with?("Child#probe$") && converter.module.has_function_with_body?(func.name)
+      end.should be_false
+
+      converter.__test_set_lazy_rta_active(true)
+      converter.__test_mark_live_type("Child")
+
+      target = converter.module.functions.find { |func| func.name.starts_with?("Child#probe$") }
+      target.should_not be_nil
+      converter.module.has_function_with_body?(target.not_nil!.name).should be_true
+    ensure
+      converter.try(&.__test_set_lazy_rta_active(false))
     end
 
     it "does not repair a concrete value owner admitted under an Object virtual demand" do

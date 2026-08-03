@@ -12052,6 +12052,31 @@ virtual-target, or caller-origin production filters therefore remain BROKEN.
 The next legal falsifier must trace the admitting virtual shape back through
 its caller tokens to an entry-reachable root, without changing replay or demand.
 
+### Session 54: already-live types are a required broad-target rendezvous (2026-08-03)
+
+The first attempted shortcut replayed virtual targets only when
+`mark_live_type` inserted a new live type. A bounded first-pass probe appeared
+promising: missing-call processing fell from approximately 33.13 to 31.29
+seconds and periodic function scanning from approximately 14.83 to 12.87
+seconds. However, the same probe changed the HIR boundary from 10,324 to 9,737
+functions and force admission from `1714/1306` to `2068/1271`, so the change
+was not eligible as a pure replay deduplication.
+
+A focused regression supplies the missing contract. `Object` and `Reference`
+virtual targets recorded outside lazy RTA intentionally defer broad descendant
+replay. When lazy RTA later observes a child that was already marked live, that
+duplicate observation is the rendezvous that materializes the deferred target.
+The transition-only guard misses the concrete body and is therefore BROKEN.
+The production change was removed; the new regression remains, and the full
+49-example virtual-target family passes through `scripts/run_safe.sh`.
+
+An early AST-demand filter is independently refuted: despite reducing the AST
+definition population from 96,277 to 23,633, it preserves the first-pass
+boundary at `funcs=10324`, `missing=170`, and force `1714/1306` while taking
+approximately the same 33 seconds in missing processing. The next performance
+move must preserve deferred broad-target rendezvous and work below the live-type
+observation boundary rather than suppressing repeated observations globally.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

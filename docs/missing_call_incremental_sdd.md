@@ -396,14 +396,26 @@ semantic zeroes and improves the full B4-F corridor.
   unique queue boundary. This refutes previous-queue regeneration as the main
   early amplifier and locates virtual-target reachability as the next question;
   it does not certify any virtual target as unreachable.
+- **Live-transition-only replay falsifier:** filtering the initial AST to
+  entry-demanded definitions reduces the parsed definition population from
+  96,277 to 23,633 but leaves the first missing-call boundary effectively
+  unchanged (`funcs=10324`, `missing=170`, force `1714/1306`), so early AST
+  registration is not the sampled amplifier. Replaying a registered class
+  only when `mark_live_type` inserts a new live type reduces first-pass work,
+  but it also changes the function and force boundaries. A focused regression
+  explains the mismatch: `Object` and `Reference` targets recorded outside
+  lazy RTA intentionally defer broad replay, so observing an already-live child
+  after lazy RTA starts is a required rendezvous. The transition-only guard
+  misses that target and is rejected. The 49-example virtual-target family
+  passes after restoring unconditional lazy-RTA replay.
 - **Adversary verdict:** robust for the bounded two-axis provenance aggregate,
   robust for the missing-call provenance partition, local exact-name dedup,
   position/shape attribution, and the snapshot/cost-based falsification at the
   sampled boundary; vulnerable for causal interpretation of live-type scan
   cost, virtual-target reachability, or the observed wall-time delta; and broken
   for stable-source, queued-target, virtual-target, Pending-only, unconditional
-  late-slot, bare-name, or settled-earlier-candidate skipping as a current
-  production optimization.
+  late-slot, bare-name, settled-earlier-candidate, or live-transition-only
+  replay skipping as a current production optimization.
 - **Next local track:** trace the dominant virtual-target bodies to the virtual
   shape and caller tokens that admitted them, then test whether that chain is
   entry-reachable. Do not cache an entire class replay, change the RTA interval,
