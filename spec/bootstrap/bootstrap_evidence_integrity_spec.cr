@@ -82,7 +82,13 @@ module BootstrapEvidenceIntegritySpec
           fi
           ;;
         */test_no_prelude_interpolation.cr)
-          printf '#!/bin/sh\nprintf "noprelude_interp_ok\\n"\n' > "$out"
+          if [ "$mode" = "smoke-noprelude-reordered" ]; then
+            printf '#!/bin/sh\nprintf "n=42\\nhello world\\nnoprelude_interp_ok\\n"\n' > "$out"
+          elif [ "$mode" = "smoke-noprelude-extra" ]; then
+            printf '#!/bin/sh\nprintf "hello world\\nn=42\\nnoprelude_interp_ok\\nextra\\n"\n' > "$out"
+          else
+            printf '#!/bin/sh\nprintf "hello world\\nn=42\\nnoprelude_interp_ok\\n"\n' > "$out"
+          fi
           chmod +x "$out"
           if [ "$mode" = "mutate-producer" ]; then printf '# mutation\n' >> "$0"; fi
           ;;
@@ -320,6 +326,24 @@ describe "bootstrap evidence integrity" do
 
   it "rejects extra or blank stdout, target stderr, and control-header spoofing" do
     {"smoke-extra", "smoke-blank", "smoke-stderr", "smoke-header-spoof"}.each do |mode|
+      workdir = File.join(Dir.tempdir, "adamas_bootstrap_evidence_#{mode}_#{Process.pid}_#{Random.rand(1_000_000)}")
+      outdir = File.join(workdir, "out")
+      fake = File.join(workdir, "fake-compiler")
+      FileUtils.mkdir_p(workdir)
+      begin
+        BootstrapEvidenceIntegritySpec.write_fake_compiler(fake)
+        result = BootstrapEvidenceIntegritySpec.run_chain(chain_script, workdir, outdir, fake, mode, stages: 1)
+
+        result[:status].success?.should be_false, mode
+        result[:output].should contain("smoke runtime transcript mismatch"), mode
+      ensure
+        FileUtils.rm_rf(workdir)
+      end
+    end
+  end
+
+  it "rejects reordered or extra no-prelude stdout" do
+    {"smoke-noprelude-reordered", "smoke-noprelude-extra"}.each do |mode|
       workdir = File.join(Dir.tempdir, "adamas_bootstrap_evidence_#{mode}_#{Process.pid}_#{Random.rand(1_000_000)}")
       outdir = File.join(workdir, "out")
       fake = File.join(workdir, "fake-compiler")

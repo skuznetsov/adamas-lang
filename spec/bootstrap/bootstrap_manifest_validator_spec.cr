@@ -116,7 +116,10 @@ module BootstrapManifestValidatorSpec
       File.write(File.join(run_dir, "stage#{stage}_smoke_plain.log"), "plain compile stage #{stage}\n")
       File.write(File.join(run_dir, "stage#{stage}_smoke_noprelude.log"), "noprelude compile stage #{stage}\n")
       File.write(File.join(run_dir, "stage#{stage}_smoke_plain.runtime.log"), runtime_log("42"))
-      File.write(File.join(run_dir, "stage#{stage}_smoke_noprelude.runtime.log"), runtime_log("noprelude_interp_ok"))
+      File.write(
+        File.join(run_dir, "stage#{stage}_smoke_noprelude.runtime.log"),
+        runtime_log("hello world\nn=42\nnoprelude_interp_ok")
+      )
     end
 
     source_status = capture("git", ["-C", root, "status", "--porcelain=v1", "--untracked-files=all", "--", "src"])
@@ -273,6 +276,24 @@ describe "bootstrap manifest validator" do
       BootstrapManifestValidatorSpec.update_manifest(
         fixture[:manifest],
         "stage2_smoke_plain_log_sha256",
+        BootstrapManifestValidatorSpec.sha256_file(log)
+      )
+      result = BootstrapManifestValidatorSpec.run_validator(validator, fixture)
+      result[:status].success?.should be_false
+      result[:output].should contain("smoke_transcript")
+    ensure
+      FileUtils.rm_rf(fixture[:workdir])
+    end
+  end
+
+  it "rejects reordered no-prelude output even when its manifest hash is updated" do
+    fixture = BootstrapManifestValidatorSpec.create_fixture(root)
+    begin
+      log = File.join(fixture[:run_dir], "stage2_smoke_noprelude.runtime.log")
+      File.write(log, BootstrapManifestValidatorSpec.runtime_log("n=42\nhello world\nnoprelude_interp_ok"))
+      BootstrapManifestValidatorSpec.update_manifest(
+        fixture[:manifest],
+        "stage2_smoke_noprelude_log_sha256",
         BootstrapManifestValidatorSpec.sha256_file(log)
       )
       result = BootstrapManifestValidatorSpec.run_validator(validator, fixture)

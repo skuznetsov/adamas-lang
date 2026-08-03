@@ -61,7 +61,7 @@ describe "bootstrap chain timing" do
             printf '#!/bin/sh\nprintf "plain-ran\\n" >> "#{plain_marker}"\nprintf "42\\n"\n' > "$out"
             ;;
           */test_no_prelude_interpolation.cr)
-            printf '#!/bin/sh\nprintf "no-prelude-ran\\n" >> "#{no_prelude_marker}"\nprintf "noprelude_interp_ok\\n"\n' > "$out"
+            printf '#!/bin/sh\nprintf "no-prelude-ran\\n" >> "#{no_prelude_marker}"\nprintf "hello world\\nn=42\\nnoprelude_interp_ok\\n"\n' > "$out"
             ;;
           *)
             exit 3

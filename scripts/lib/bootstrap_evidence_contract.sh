@@ -112,10 +112,27 @@ bootstrap_exact_smoke_transcript() {
   while IFS= read -r line || [[ -n "$line" ]]; do
     lines[${#lines[@]}]="$line"
   done < "$runtime_log"
-  [[ "${#lines[@]}" -eq 5 ]] &&
-    [[ "${lines[0]}" == "=== STDOUT ===" ]] &&
-    [[ "${lines[1]}" == "$marker" ]] &&
-    [[ "${lines[2]}" == "=== STDERR ===" ]] &&
-    [[ "${lines[3]}" =~ $BOOTSTRAP_EXIT_ZERO_ROW_RE ]] &&
-    bootstrap_exact_success_resource_row "${lines[4]}"
+  case "$marker" in
+    42)
+      [[ "${#lines[@]}" -eq 5 ]] &&
+        [[ "${lines[0]}" == "=== STDOUT ===" ]] &&
+        [[ "${lines[1]}" == "42" ]] &&
+        [[ "${lines[2]}" == "=== STDERR ===" ]] &&
+        [[ "${lines[3]}" =~ $BOOTSTRAP_EXIT_ZERO_ROW_RE ]] &&
+        bootstrap_exact_success_resource_row "${lines[4]}"
+      ;;
+    noprelude_interp_ok)
+      [[ "${#lines[@]}" -eq 7 ]] &&
+        [[ "${lines[0]}" == "=== STDOUT ===" ]] &&
+        [[ "${lines[1]}" == "hello world" ]] &&
+        [[ "${lines[2]}" == "n=42" ]] &&
+        [[ "${lines[3]}" == "noprelude_interp_ok" ]] &&
+        [[ "${lines[4]}" == "=== STDERR ===" ]] &&
+        [[ "${lines[5]}" =~ $BOOTSTRAP_EXIT_ZERO_ROW_RE ]] &&
+        bootstrap_exact_success_resource_row "${lines[6]}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
