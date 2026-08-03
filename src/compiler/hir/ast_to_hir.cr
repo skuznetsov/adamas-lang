@@ -25739,19 +25739,27 @@ module Adamas::HIR
            slice_eq?(target.name, name)
           if expr_mentions_identifier?(expr_node.value, name)
             # Avoid recursive inference from self-referential assignments (e.g. a = a + 1).
-          elsif inferred = infer_type_from_expr(expr_node.value, self_type_name)
-            if env_get("DEBUG_INFER_LOCAL") && name == (safe_slice_to_string(target.name) || "")
-              scope = "#{@current_class || ""}##{@current_method || ""}"
-              expr_kind = node_for_expr(expr_node.value).class.name.split("::").last
-              STDERR.puts "[INFER_LOCAL] scope=#{scope} name=#{name} expr=#{expr_kind} type=#{get_type_name_from_ref(inferred)}"
-            end
-            output << inferred if inferred != TypeRef::VOID
-          elsif value_node = node_for_expr(expr_node.value)
+          else
+            value_node = node_for_expr(expr_node.value)
+            inferred = nil.as(TypeRef?)
             if value_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
               value_name = (safe_slice_to_string(value_node.name) || "")
-              if inferred = infer_local_type_from_body(body, value_name, self_type_name, visited)
-                output << inferred if inferred != TypeRef::VOID
+              inferred = infer_local_type_from_body(body, value_name, self_type_name, visited)
+              if inferred.nil? && !collect_assigned_vars(body).includes?(value_name)
+                # The identifier comes from the surrounding scope. Body-local
+                # dependencies must never fall back to stale ambient type state.
+                inferred = infer_type_from_expr(expr_node.value, self_type_name)
               end
+            else
+              inferred = infer_type_from_expr(expr_node.value, self_type_name)
+            end
+            if inferred
+              if env_get("DEBUG_INFER_LOCAL") && name == (safe_slice_to_string(target.name) || "")
+                scope = "#{@current_class || ""}##{@current_method || ""}"
+                expr_kind = value_node.class.name.split("::").last
+                STDERR.puts "[INFER_LOCAL] scope=#{scope} name=#{name} expr=#{expr_kind} type=#{get_type_name_from_ref(inferred)}"
+              end
+              output << inferred if inferred != TypeRef::VOID
             end
           end
         end

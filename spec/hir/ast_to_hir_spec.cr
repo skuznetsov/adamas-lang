@@ -4793,6 +4793,32 @@ describe Adamas::HIR::AstToHir do
       after.should eq("Int32")
     end
 
+    it "prefers a body-local dependency over a stale ambient local type" do
+      arena, roots = parse("dependency = 1_i64\nx = dependency")
+      converter = Adamas::HIR::AstToHir.new(arena)
+
+      before, after = converter.__test_local_inference_after_dependency_update(
+        roots,
+        "x",
+        "dependency",
+      )
+      before.should eq("Int64")
+      after.should eq("Int64")
+    end
+
+    it "fails closed for a cyclic body-local dependency with a stale ambient type" do
+      arena, roots = parse("dependency = x\nx = dependency")
+      converter = Adamas::HIR::AstToHir.new(arena)
+
+      before, after = converter.__test_local_inference_after_dependency_update(
+        roots,
+        "x",
+        "dependency",
+      )
+      before.should be_nil
+      after.should be_nil
+    end
+
     it "lowers class variable read" do
       func = lower_function("def foo; @@count; end")
       text = hir_text(func)
