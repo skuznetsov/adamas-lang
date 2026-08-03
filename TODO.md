@@ -1,17 +1,19 @@
 # Adamas Bootstrap TODO
 
 Updated: 2026-08-02 (bare reference-generic instance dispatch is runtime-
-verified for direct erased receivers; registered runtime-reference instance
-unions preserve their callsite return ABI in HIR without mutating the anchored
-function ABI, while unsupported bare-template return annotations fail closed;
+verified for direct erased receivers; registered runtime-reference and
+same-template concrete generic-struct unions preserve their callsite return ABI
+without mutating the anchored function ABI, while unsupported bare-template
+return annotations fail closed;
 the unconsumed cross-arena lowering bridge is rejected;
 T9 focused HIR-to-MIR-to-LLVM continuity and source-bound full-compiler HIR
 continuity are green through exact-target body lowering, while full-source
 MIR/LLVM continuity remains blocked by B4-F and the historical full-G9 symptom
 is stale and unreproduced. Exact guarded method
 declaration shapes replace in place; local keyed decisions reject replaced
-same-arena method objects; T1 remains red and B4-F is unmeasured under the
-current 300-second policy).
+same-arena method objects; T1 remains red. The latest 300-second B4-F run is
+measured RED at the 61.18-second concrete `Hash::Entry` heterogeneous getter
+return guard; the current Class/Proc repair still requires a fresh B4-F run).
 
 BARE REFERENCE-GENERIC INSTANCE DISPATCH RUNTIME-VERIFIED; REGISTERED
 RUNTIME-REFERENCE RETURN UNIONS HIR-VERIFIED AND MIR-GUARDED; UNSUPPORTED
@@ -53,9 +55,12 @@ restrictions with concrete callsite specializations remain admitted, and an
 uncalled definition retains original Crystal's lazy validation behavior. HIR is
 **388/0** with two existing pending examples, and MIR is **37/0**. Generic
 structs remain static, and bare generic struct return unions fail closed by the
-same original-Crystal storage rule. This is a compatibility guard, not runtime
-support for bare-generic union composition; B4-F remains open under the
-300-second policy.
+same original-Crystal storage rule. A separate all-concrete, same-template
+generic-struct receiver corridor now preserves tagged nullable returns and
+explicitly wraps the exact branch ABI for a two-arm header-backed Class/Proc
+return; it does not admit a bare generic template or mixed-template receiver.
+This is a compatibility guard, not runtime support for bare-generic union
+composition; B4-F remains open under the 300-second policy.
 
 T1 OWNERSHIP/NAME-ID SUBSTRATE VERIFIED; CALL RESOLUTION CONTINUITY REMAINS
 OPEN. `SemanticIdentityRegistry` is now the compile-session owner for canonical
@@ -145,13 +150,14 @@ two-argument LLVM `<< -> push` calls/definitions. A wrong concrete/union MIR
 full-source route. The next active T9 frontier is
 full-source MIR-to-LLVM emitted-symbol continuity after B4-F reachability; the
 historical zero-argument symptom is not current evidence. T1 remains red;
-B4-F is unmeasured under the 300-second policy. The HIR compatibility path now
+B4-F is measured RED at the concrete generic-struct getter-return frontier
+under the 300-second policy. The HIR compatibility path now
 exposes only
 `SelectedCallTarget {symbol_name, def_node}`; the unused `CallShape`,
 `ResolutionBinding`, string-round-trip `MethodInstanceKey`, and their unconsumed
 assertion paths were removed rather than promoted into semantic authority.
 
-OFFLINE BOOTSTRAP READINESS VALIDATOR VERIFIED; B4-F 300-SECOND RUN PENDING.
+OFFLINE BOOTSTRAP READINESS VALIDATOR VERIFIED; LATEST B4-F MEASURED RED.
 `scripts/validate_bootstrap_manifest.sh` independently consumes a
 `bootstrap_chain_v3` run directory and an explicitly trusted host compiler.
 It rehashes live source/git/harness identity, run/cache identities, every
@@ -164,9 +170,12 @@ forged/partial resource evidence, log/receipt mismatch, ambiguous wall rows,
 wall/log mismatch, a relaxed caller budget,
 lineage/build-policy or smoke-input identity violations, duplicate or symlink evidence, an
 untrusted/non-executable host, a run path inside the source scope, and the
-300.01-second negative. T8 is executable; the former 180-second receipt does
-not measure the new policy, so B4-F remains open until a fresh current-source
-run passes this validator.
+300.01-second negative. T8 is executable. Under the current policy, fresh s1
+built in 19.60 seconds; s2 stopped semantically after 61.18 seconds at
+`Hash::Entry(String, OptionParser::Handler) |
+Hash::Entry(String, Proc(Signal, Nil))#value`, not at the time limit. That run
+measures B4-F RED and identifies the next lowering contract; the current repair
+must produce a new clean run before B4-F can turn green.
 
 BOOTSTRAP EVIDENCE PRODUCER VERIFIED; B4-F REMAINS OPEN.
 `scripts/bootstrap_chain.sh` now requires an absent run path and creates the
@@ -11384,6 +11393,56 @@ Next legal work: first determine whether any supported caller rescues a failed
 reentrant failure reproducer; otherwise keep exception-unwind state outside
 the successful lowering contract and return to the remaining B4-F demand
 families.
+
+### Session 37: explicit Class/Proc wraps for concrete generic-struct dispatch (2026-08-02)
+
+The first B4-F run under the 300-second policy did not approach the time gate:
+s1 built in 19.60 seconds and s2 stopped after 61.18 seconds while lowering
+`Hash::Entry(String, OptionParser::Handler) |
+Hash::Entry(String, Proc(Signal, Nil))#value`. The existing inline union
+dispatcher typed each concrete getter call as the joined return. That is not a
+legal ABI substitution for a runtime-header-backed class and a raw Proc
+pointer: both are pointer-shaped, but only the class arm carries an object
+header from which an implicit tag can be read.
+
+The repair is restricted to an all-concrete, monomorphized union of one
+registered generic struct template. A two-arm header-backed Class/Proc return
+is admitted only after both concrete dispatch targets exist with resolved
+return ABIs and both returns map to authoritative union-sidecar variants. Each
+branch call retains its concrete callee return type, then an explicit
+`UnionWrap` supplies the joined carrier and discriminator before the phi. No
+broad overload fallback, legacy descriptor Hash read, mixed-template receiver,
+bare generic template, or arbitrary heterogeneous return is admitted.
+
+Typed Proc HIR descriptors and the canonical MIR `Proc` sidecar carrier can
+have different TypeRefs. The bridge first requires exact TypeRef identity and
+otherwise accepts exactly one Proc-shaped variant from the same append-only
+sidecar; zero or multiple Proc candidates fail closed. This narrow
+representation bridge is not a general name-based union matcher.
+
+Evidence:
+
+- focused HIR and HIR-to-MIR structural specs pass. The MIR contract proves two
+  distinct concrete call ABIs equal their callee returns, two sidecar-backed
+  discriminators, one and only one canonical Proc bridge, explicit wraps that
+  consume the calls, and a joined phi whose incoming values are those wraps;
+- a fresh current-source compiler builds under `run_safe` with peak RSS
+  4,918,208 KiB;
+- the runtime oracle returns `OK` after both a captured Handler value and a
+  captured raw Proc escape their construction scopes through the generic
+  getter union. The adjacent nullable/tagged `Hash::Entry` runtime oracle also
+  remains green;
+- the broad HIR+MIR run reaches 988 examples: 987 pass, two are pending, and
+  the sole failure is the already documented pre-existing
+  `as_question_try_spec.cr` output-formatting mismatch. Peak RSS is 5,138,688
+  KiB and all observed heavy processes exit naturally.
+
+Boundary: this closes the classified Class/Proc branch-call ABI gap, not a
+general heterogeneous generic-struct return framework or a full ARC proof.
+B4-F remains RED until a clean source commit passes a fresh two-stage run and
+the offline <=300-second manifest validator. The next legal action is that
+monitored run; classify its first semantic successor instead of broadening this
+corridor pre-emptively.
 
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 

@@ -9036,7 +9036,8 @@ module Adamas::HIR
       joined_return = union_type_for_value_set(candidates)
       if admitted && tagged_generic_struct_corridor
         admitted = false unless joined_return &&
-                                      tagged_generic_struct_return_carrier_compatible?(candidates, joined_return)
+                                      (tagged_generic_struct_return_carrier_compatible?(candidates, joined_return) ||
+                                       direct_header_proc_return_wrap_compatible?(candidates, joined_return))
       end
 
       unless admitted
@@ -9049,6 +9050,84 @@ module Adamas::HIR
       end
 
       joined_return || TypeRef::VOID
+    end
+
+    # A direct header-backed Class | Proc result cannot share one raw pointer
+    # tag: both lower to pointer-shaped values, but only the class arm has a
+    # runtime object header. Admit this one heterogeneous shape only when every
+    # concrete return maps to one authoritative sidecar member. The inline
+    # dispatcher must then keep the concrete call ABI and emit an explicit
+    # UnionWrap before its phi.
+    private def direct_header_proc_return_wrap_compatible?(
+      candidates : Array(TypeRef),
+      joined_return : TypeRef,
+    ) : Bool
+      return false unless direct_header_proc_union_return_shape?(joined_return)
+      return false unless candidates.uniq.size == 2
+
+      candidates.all? do |candidate|
+        candidate != TypeRef::VOID && candidate != TypeRef::NIL &&
+          !is_union_type?(candidate) &&
+          exact_or_canonical_proc_union_member_variant_id(joined_return, candidate) >= 0
+      end
+    end
+
+    private def direct_header_proc_union_return_shape?(type_ref : TypeRef) : Bool
+      variant_names = split_union_type_name(get_type_name_from_ref(type_ref))
+      return false unless variant_names.size == 2
+
+      saw_header = false
+      saw_proc = false
+      variant_names.each do |variant_name|
+        resolved_name = resolve_type_alias_chain(variant_name)
+        exact = type_ref_for_name(resolved_name)
+        exact_descriptor = @module.get_type_descriptor(exact)
+        proc_like = exact_descriptor.try(&.kind) == TypeKind::Proc ||
+                    resolved_name == "Proc" || resolved_name.starts_with?("Proc(")
+        header_like = exact_descriptor.try(&.kind) == TypeKind::Class && !proc_like
+        if proc_like
+          saw_proc = true
+        elsif header_like
+          saw_header = true
+        else
+          return false
+        end
+      end
+      saw_header && saw_proc
+    end
+
+    # Keep the explicit Class | Proc wrapping corridor scoped to the concrete
+    # generic-struct receiver family that admitted the joined return. Other
+    # union receivers retain their established dispatcher behavior.
+    private def registered_same_template_generic_struct_union_receiver?(
+      receiver_desc : TypeDescriptor,
+    ) : Bool
+      return false unless receiver_desc.kind == TypeKind::Union
+
+      variants = split_union_type_name(receiver_desc.name)
+      return false if variants.size < 2
+
+      shared_template : String? = nil
+      variants.all? do |variant|
+        resolved_variant = resolve_type_alias_chain(variant)
+        template_name = strip_generic_args(resolved_variant)
+        next false if template_name == resolved_variant
+
+        if expected_template = shared_template
+          next false unless template_name == expected_template
+        else
+          shared_template = template_name
+        end
+
+        template = @generic_templates[template_name]?
+        variant_ref = type_ref_for_name(resolved_variant)
+        variant_desc = @module.get_type_descriptor(variant_ref)
+        instance_name = @class_info.has_key?(resolved_variant) ? resolved_variant : variant
+        info = @class_info[instance_name]?
+        !!(template && template.is_struct &&
+           variant_desc.try(&.kind) == TypeKind::Struct &&
+           info && info.is_struct && @monomorphized.includes?(instance_name))
+      end
     end
 
     # Inline tagged-union dispatch currently types each concrete branch call as
@@ -61060,6 +61139,38 @@ module Adamas::HIR
       -1
     end
 
+    # A Proc signature may be erased to the canonical MIR `Proc` carrier while
+    # the HIR branch still references its typed Proc descriptor. Keep that
+    # representation bridge local to the Class | Proc dispatch corridor: exact
+    # TypeRef identity remains primary, and the fallback accepts exactly one
+    # Proc-shaped variant from the authoritative sidecar. Ambiguity fails closed.
+    private def exact_or_canonical_proc_union_member_variant_id(
+      union_type : TypeRef,
+      value_type : TypeRef,
+    ) : Int32
+      exact_variant_id = strict_union_member_variant_id(union_type, value_type)
+      return exact_variant_id if exact_variant_id >= 0
+
+      value_name = resolve_type_alias_chain(get_type_name_from_ref(value_type))
+      value_descriptor = @module.get_type_descriptor(value_type)
+      value_is_proc = value_descriptor.try(&.kind) == TypeKind::Proc ||
+                      value_name == "Proc" || value_name.starts_with?("Proc(")
+      return -1 unless value_is_proc
+
+      ensure_union_descriptor_for_type_ref(union_type)
+      descriptor = union_descriptor_from_sidecar(union_type)
+      return -1 unless descriptor
+
+      matched_variant_id = -1
+      descriptor.variants.each do |variant|
+        variant_name = resolve_type_alias_chain(variant.full_name)
+        next unless variant_name == "Proc" || variant_name.starts_with?("Proc(")
+        return -1 if matched_variant_id >= 0
+        matched_variant_id = variant.type_id
+      end
+      matched_variant_id
+    end
+
     # Get variant type_id for a value being assigned to union
     # Returns the declared variant.type_id of the matching variant, or -1 if not found.
     # IMPORTANT: variant array index is not guaranteed to match runtime type_id.
@@ -94525,6 +94636,21 @@ module Adamas::HIR
         vms << {vm, vr, vid}
       end
       return nil if vms.size < 2
+
+      explicit_branch_return_types : Array(TypeRef)? = nil
+      if registered_same_template_generic_struct_union_receiver?(recv_desc) &&
+         direct_header_proc_union_return_shape?(dispatch_return_type)
+        concrete_returns = vms.map do |vmn, vmr, _|
+          concrete_union_dispatch_return_type(vmn, vmr, mb)
+        end
+        unless direct_header_proc_return_wrap_compatible?(concrete_returns, dispatch_return_type)
+          raise LoweringError.new(
+            "cannot safely wrap concrete returns for union receiver dispatch #{recv_desc.name}##{mb}"
+          )
+        end
+        explicit_branch_return_types = concrete_returns
+      end
+
       pb = ctx.save_locals
       merge = ctx.create_block
       inc = [] of {BlockId, ValueId}
@@ -94534,7 +94660,8 @@ module Adamas::HIR
           uw = UnionUnwrap.new(ctx.next_id, vmr, receiver_id, vmvid, false)
           ctx.emit(uw); ctx.register_type(uw.id, vmr)
           pi = primitive_intrinsic_for_dispatch(vmr, mb)
-          variant_return_type = tuple_static_array_return_type(vmr, mb) ||
+          variant_return_type = explicit_branch_return_types.try(&.[idx]) ||
+                                tuple_static_array_return_type(vmr, mb) ||
                                 static_array_slice_return_type(vmr, mb) || dispatch_return_type
           c = if pi
                 Call.without_receiver(ctx.next_id, pi[1], pi[0], [uw.id] + args)
@@ -94542,7 +94669,14 @@ module Adamas::HIR
                 Call.with_receiver(ctx.next_id, variant_return_type, uw.id, vmn, args)
               end
           ctx.emit(c); ctx.register_type(c.id, variant_return_type)
-          inc << {ctx.current_block, c.id}
+          branch_result = wrap_union_dispatch_branch_result(
+            ctx,
+            c.id,
+            variant_return_type,
+            dispatch_return_type,
+            !!explicit_branch_return_types,
+          )
+          inc << {ctx.current_block, branch_result}
           ctx.terminate(Jump.new(merge))
         else
           uis = UnionIs.new(ctx.next_id, receiver_id, vmvid, recv_type)
@@ -94553,7 +94687,8 @@ module Adamas::HIR
           uw = UnionUnwrap.new(ctx.next_id, vmr, receiver_id, vmvid, false)
           ctx.emit(uw); ctx.register_type(uw.id, vmr)
           pi2 = primitive_intrinsic_for_dispatch(vmr, mb)
-          variant_return_type = tuple_static_array_return_type(vmr, mb) ||
+          variant_return_type = explicit_branch_return_types.try(&.[idx]) ||
+                                tuple_static_array_return_type(vmr, mb) ||
                                 static_array_slice_return_type(vmr, mb) || dispatch_return_type
           c = if pi2
                 Call.without_receiver(ctx.next_id, pi2[1], pi2[0], [uw.id] + args)
@@ -94561,7 +94696,14 @@ module Adamas::HIR
                 Call.with_receiver(ctx.next_id, variant_return_type, uw.id, vmn, args)
               end
           ctx.emit(c); ctx.register_type(c.id, variant_return_type)
-          inc << {ctx.current_block, c.id}
+          branch_result = wrap_union_dispatch_branch_result(
+            ctx,
+            c.id,
+            variant_return_type,
+            dispatch_return_type,
+            !!explicit_branch_return_types,
+          )
+          inc << {ctx.current_block, branch_result}
           ctx.terminate(Jump.new(merge))
           ctx.current_block = nb; ctx.restore_locals(pb)
         end
@@ -94570,6 +94712,53 @@ module Adamas::HIR
       phi = Phi.new(ctx.next_id, dispatch_return_type, inc)
       ctx.emit(phi); ctx.register_type(phi.id, dispatch_return_type)
       phi.id
+    end
+
+    # Resolve the exact branch ABI from the already materialized dispatch
+    # target. Do not fall back through broad overload lookup here: an absent or
+    # unresolved target must reject the safety corridor before CFG emission.
+    private def concrete_union_dispatch_return_type(
+      function_name : String,
+      receiver_type : TypeRef,
+      method_name : String,
+    ) : TypeRef
+      if tuple_type = tuple_static_array_return_type(receiver_type, method_name)
+        return tuple_type
+      end
+      if slice_type = static_array_slice_return_type(receiver_type, method_name)
+        return slice_type
+      end
+      if intrinsic = primitive_intrinsic_for_dispatch(receiver_type, method_name)
+        return intrinsic[1]
+      end
+
+      function = @module.function_by_name(function_name)
+      return TypeRef::VOID unless function
+      function.return_type
+    end
+
+    private def wrap_union_dispatch_branch_result(
+      ctx : LoweringContext,
+      value_id : ValueId,
+      value_type : TypeRef,
+      target_type : TypeRef,
+      required : Bool,
+    ) : ValueId
+      return value_id if value_type == target_type
+      return value_id unless required
+
+      variant_id = exact_or_canonical_proc_union_member_variant_id(target_type, value_type)
+      if variant_id < 0
+        raise LoweringError.new(
+          "cannot safely embed #{get_type_name_from_ref(value_type)} into " +
+          get_type_name_from_ref(target_type)
+        )
+      end
+
+      wrap = UnionWrap.new(ctx.next_id, target_type, value_id, variant_id)
+      ctx.emit(wrap)
+      ctx.register_type(wrap.id, target_type)
+      wrap.id
     end
 
     # Returns {intrinsic_name, return_type} for known primitive intrinsics,

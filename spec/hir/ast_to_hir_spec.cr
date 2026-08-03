@@ -10501,6 +10501,57 @@ describe Adamas::HIR::AstToHir do
       converter.__test_get_type_name_from_ref(string_value.not_nil!.return_type).should eq("String")
     end
 
+    it "wraps concrete branch returns for a heterogeneous generic struct union" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        record DispatchHandler, tag : Int32
+
+        struct DispatchBox(T)
+          getter payload : T
+
+          def initialize(@payload : T)
+          end
+        end
+
+        def dispatched_payload(value : DispatchBox(DispatchHandler) | DispatchBox(Proc(Int32, Nil)))
+          value.payload
+        end
+
+        dispatched_payload(DispatchBox(DispatchHandler).new(DispatchHandler.new(7)))
+      CRYSTAL
+      converter.flush_pending_functions
+
+      caller = converter.module.functions.find { |function| function.name.starts_with?("dispatched_payload$") }
+      caller.should_not be_nil
+      caller = caller.not_nil!
+      result_type_name = converter.__test_get_type_name_from_ref(caller.return_type)
+      result_type_name.should contain("DispatchHandler")
+      result_type_name.should contain("Proc")
+
+      instructions = caller.blocks.flat_map(&.instructions)
+      payload_calls = instructions.compact_map(&.as?(Adamas::HIR::Call))
+        .select { |call| call.method_name.ends_with?("#payload") }
+      payload_calls.size.should eq(2)
+      payload_calls.map { |call| converter.__test_get_type_name_from_ref(call.type) }.sort
+        .should eq(["DispatchHandler", "Proc"])
+
+      wraps = instructions.compact_map(&.as?(Adamas::HIR::UnionWrap))
+      wraps_by_value = wraps.to_h { |wrap| {wrap.value, wrap} }
+      payload_calls.each do |call|
+        wrap = wraps_by_value[call.id]?
+        wrap.should_not be_nil
+        wrap = wrap.not_nil!
+        wrap.type.should eq(caller.return_type)
+        wrap.variant_type_id.should be >= 0
+      end
+
+      result_phi = instructions.compact_map(&.as?(Adamas::HIR::Phi))
+        .find { |phi| phi.type == caller.return_type }
+      result_phi.should_not be_nil
+      result_phi.not_nil!.incoming.each do |(_, value_id)|
+        wraps.any? { |wrap| wrap.id == value_id }.should be_true
+      end
+    end
+
     it "rejects incompatible return carriers for a same-template generic struct union" do
       expect_raises(Adamas::HIR::LoweringError, /heterogeneous returns for unsupported concrete generic receiver union/) do
         lower_program_with_main(<<-CRYSTAL)
