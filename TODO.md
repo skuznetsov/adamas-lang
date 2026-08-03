@@ -11,9 +11,10 @@ continuity are green through exact-target body lowering, while full-source
 MIR/LLVM continuity remains blocked by B4-F and the historical full-G9 symptom
 is stale and unreproduced. Exact guarded method
 declaration shapes replace in place; local keyed decisions reject replaced
-same-arena method objects; T1 remains red. The latest 300-second B4-F run is
-measured RED at the 61.18-second concrete `Hash::Entry` heterogeneous getter
-return guard; the current Class/Proc repair still requires a fresh B4-F run).
+same-arena method objects; T1 remains red. The latest clean 300-second B4-F run
+is measured RED after 293.99 seconds at the next unresolved-return guard for
+`Pointer(Void) | Tuple(String, Adamas::Compiler::Semantic::Type)#hash`; the
+preceding `Hash::Entry` aggregate/Proc getter-return frontier is closed).
 
 BARE REFERENCE-GENERIC INSTANCE DISPATCH RUNTIME-VERIFIED; REGISTERED
 RUNTIME-REFERENCE RETURN UNIONS HIR-VERIFIED AND MIR-GUARDED; UNSUPPORTED
@@ -57,7 +58,7 @@ uncalled definition retains original Crystal's lazy validation behavior. HIR is
 structs remain static, and bare generic struct return unions fail closed by the
 same original-Crystal storage rule. A separate all-concrete, same-template
 generic-struct receiver corridor now preserves tagged nullable returns and
-explicitly wraps the exact branch ABI for a two-arm header-backed Class/Proc
+explicitly wraps the exact branch ABI for a two-arm heap-backed aggregate/Proc
 return; it does not admit a bare generic template or mixed-template receiver.
 This is a compatibility guard, not runtime support for bare-generic union
 composition; B4-F remains open under the 300-second policy.
@@ -11394,21 +11395,22 @@ reentrant failure reproducer; otherwise keep exception-unwind state outside
 the successful lowering contract and return to the remaining B4-F demand
 families.
 
-### Session 37: explicit Class/Proc wraps for concrete generic-struct dispatch (2026-08-02)
+### Session 37: explicit aggregate/Proc wraps for concrete generic-struct dispatch (2026-08-02)
 
 The first B4-F run under the 300-second policy did not approach the time gate:
 s1 built in 19.60 seconds and s2 stopped after 61.18 seconds while lowering
 `Hash::Entry(String, OptionParser::Handler) |
 Hash::Entry(String, Proc(Signal, Nil))#value`. The existing inline union
 dispatcher typed each concrete getter call as the joined return. That is not a
-legal ABI substitution for a runtime-header-backed class and a raw Proc
-pointer: both are pointer-shaped, but only the class arm carries an object
-header from which an implicit tag can be read.
+legal ABI substitution for V2's heap-backed aggregate carrier and a raw Proc
+pointer: both are pointer-shaped, but only the aggregate arm has the registered
+layout needed for an explicit sidecar-backed wrap.
 
 The repair is restricted to an all-concrete, monomorphized union of one
-registered generic struct template. A two-arm header-backed Class/Proc return
+registered generic struct template. A two-arm heap-backed aggregate/Proc return
 is admitted only after both concrete dispatch targets exist with resolved
-return ABIs and both returns map to authoritative union-sidecar variants. Each
+return ABIs, the aggregate has exact non-lib `ClassInfo`, and both returns map
+to distinct authoritative union-sidecar variants. Each
 branch call retains its concrete callee return type, then an explicit
 `UnionWrap` supplies the joined carrier and discriminator before the phi. No
 broad overload fallback, legacy descriptor Hash read, mixed-template receiver,
@@ -11432,17 +11434,37 @@ Evidence:
   captured raw Proc escape their construction scopes through the generic
   getter union. The adjacent nullable/tagged `Hash::Entry` runtime oracle also
   remains green;
-- the broad HIR+MIR run reaches 988 examples: 987 pass, two are pending, and
-  the sole failure is the already documented pre-existing
-  `as_question_try_spec.cr` output-formatting mismatch. Peak RSS is 5,138,688
-  KiB and all observed heavy processes exit naturally.
+- the focused HIR+MIR suite reaches 734 examples with zero failures and two
+  pending. Negative cases reject scalar/Proc and C-struct/Proc lookalikes. All
+  observed heavy processes exit naturally.
 
-Boundary: this closes the classified Class/Proc branch-call ABI gap, not a
+Boundary: this closes the classified aggregate/Proc branch-call ABI gap, not a
 general heterogeneous generic-struct return framework or a full ARC proof.
 B4-F remains RED until a clean source commit passes a fresh two-stage run and
-the offline <=300-second manifest validator. The next legal action is that
-monitored run; classify its first semantic successor instead of broadening this
-corridor pre-emptively.
+the offline <=300-second manifest validator.
+
+### Session 38: 300-second B4-F reaches mixed generic hash return inference (2026-08-02)
+
+Clean commit `55271bc7` moved the fresh two-stage bootstrap beyond the
+`Hash::Entry(String, OptionParser::Handler) |
+Hash::Entry(String, Proc(Signal, Nil))#value` guard. Stage 1 built in 17.17
+seconds and passed both plain and no-prelude smokes. Produced stage 2 then
+exited naturally after 293.99 seconds, inside the inclusive 300-second policy,
+with the next fail-closed diagnostic:
+
+`cannot safely lower unresolved returns for concrete generic receiver union
+Pointer(Void) | Tuple(String, Adamas::Compiler::Semantic::Type)#hash`
+
+Observed stage2 RSS grew smoothly from about 390 MiB to about 2.1 GiB; CPU
+stayed active at roughly one to two compiler cores. There was no timeout,
+memory breach, or unattended runaway. The manifest preserves a clean source
+identity at `55271bc7`; B4-F is still RED because stage2 did not build.
+
+Boundary: the 293.99-second result satisfies only the timing coordinate. It
+does not admit unresolved or mixed-template returns. The next legal action is
+to prove the concrete zero-argument `hash` return ABI for both variants with a
+focused falsifier, then change only the missing materialization contract; a
+name-based or general `hash` fallback remains forbidden.
 
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
