@@ -11569,6 +11569,35 @@ bodies with an explicit return annotation that contradicts the body remain a
 separate type-checking frontier: the source-authority guard does not validate
 general user annotations and must not be expanded to hide that defect.
 
+### Session 41: first missing-sweep cost boundary (2026-08-03)
+
+A source-matched bounded profile against
+`adamas_b4f_hash_authority_20260802_5/cv2_s1` refutes the remaining Session 39
+paired-equality hypothesis. The first missing sweep observes 696 raw missing
+call occurrences and 149 unique concrete targets at 901 HIR functions. The
+only equality matches are the exact targets `String#==$String`,
+`Adamas::HIR::TypeRef#==$Adamas::HIR::TypeRef`, and
+`Slice(UInt8)#==$Slice(UInt8)`, each with one occurrence; no paired bare
+equality target is queued.
+
+The dominant debug bucket is `IO#<<` with 252 occurrences, but this is an
+observation count rather than a queue count. The summary intentionally strips
+generic owner arguments and call suffixes, and `missing.uniq!` runs before the
+149 targets enter the pending queue. A stop immediately before the first
+missing scan and a stop after scan, uniquing, and queueing both exit after
+approximately 60 seconds under the same 180-second / 4096-MiB safe-runner
+limits. The scan and deduplication corridor therefore does not explain the
+300-second B4-F timeout. The line-buffering wrapper only preserved existing
+stop-gate diagnostics inside the rooted `run_safe` process tree; no compiler
+behavior or telemetry was changed.
+
+Boundary: B4-F remains RED. The exact/bare equality route and missing-census
+optimization are refuted for this source snapshot. The next legal probe is a
+bounded first-iteration pending-materialization measurement, using the existing
+missing budget and process gates to distinguish target materialization from
+later fanout. Do not add a method-family allowlist, another demand registry, or
+a scan cache without a new measured falsifier.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
