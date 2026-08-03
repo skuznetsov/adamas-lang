@@ -8910,6 +8910,7 @@ module Adamas::HIR
 
       shared_template : String? = nil
       admitted = true
+      tagged_generic_struct_corridor = true
       resolved_variants.each_with_index do |resolved_variant, index|
         variant = variants[index]
         template_name = strip_generic_args(resolved_variant)
@@ -8926,25 +8927,40 @@ module Adamas::HIR
 
         variant_ref = type_ref_for_name(resolved_variant)
         variant_desc = @module.get_type_descriptor(variant_ref)
-        reference_instance = if variant_desc
-                               case variant_desc.kind
-                               when TypeKind::Class
-                                 true
-                               when TypeKind::Array
-                                 resolved_variant.starts_with?("Array(")
-                               when TypeKind::Hash
-                                 resolved_variant.starts_with?("Hash(")
-                               else
-                                 false
-                               end
-                             else
-                               false
-                             end
-        admitted = false unless reference_instance
+        variant_is_struct = variant_desc.try(&.kind) == TypeKind::Struct
+        tagged_generic_struct_corridor = false unless variant_is_struct
+        dispatchable_instance = if variant_desc
+                                  case variant_desc.kind
+                                  when TypeKind::Class, TypeKind::Struct
+                                    true
+                                  when TypeKind::Array
+                                    resolved_variant.starts_with?("Array(")
+                                  when TypeKind::Hash
+                                    resolved_variant.starts_with?("Hash(")
+                                  else
+                                    false
+                                  end
+                                else
+                                  false
+                                end
+        admitted = false unless dispatchable_instance
 
-        instances = @module.generic_instances[template_name]?
-        admitted = false unless instances &&
-                                (instances.includes?(resolved_variant) || instances.includes?(variant))
+        registered_instance = if variant_is_struct
+                                # Generic structs intentionally stay out of
+                                # class-vdispatch membership. Their tagged-union
+                                # corridor is proven by a concrete monomorphized
+                                # value layout instead.
+                                template = @generic_templates[template_name]?
+                                instance_name = @class_info.has_key?(resolved_variant) ? resolved_variant : variant
+                                info = @class_info[instance_name]?
+                                !!(template && template.is_struct && info && info.is_struct &&
+                                   @monomorphized.includes?(instance_name))
+                              else
+                                instances = @module.generic_instances[template_name]?
+                                !!(instances &&
+                                   (instances.includes?(resolved_variant) || instances.includes?(variant)))
+                              end
+        admitted = false unless registered_instance
       end
 
       if admitted && (has_block_call || has_splat || call_has_named_args)
@@ -9017,6 +9033,12 @@ module Adamas::HIR
         candidates << candidate
       end
 
+      joined_return = union_type_for_value_set(candidates)
+      if admitted && tagged_generic_struct_corridor
+        admitted = false unless joined_return &&
+                                      tagged_generic_struct_return_carrier_compatible?(candidates, joined_return)
+      end
+
       unless admitted
         if candidates.uniq.size > 1
           raise LoweringError.new(
@@ -9026,7 +9048,61 @@ module Adamas::HIR
         return TypeRef::VOID
       end
 
-      union_type_for_value_set(candidates) || TypeRef::VOID
+      joined_return || TypeRef::VOID
+    end
+
+    # Inline tagged-union dispatch currently types each concrete branch call as
+    # the joined result without inserting an explicit UnionWrap. That is only
+    # representation-preserving when every concrete result already uses the
+    # same carrier. Equal returns are trivially safe. Heterogeneous returns are
+    # limited to Nil plus one runtime-header variant because the backend's
+    # ptr-to-union bridge currently distinguishes only null from non-null.
+    private def tagged_generic_struct_return_carrier_compatible?(
+      candidates : Array(TypeRef),
+      joined_return : TypeRef,
+    ) : Bool
+      return true if candidates.all? { |candidate| candidate == joined_return }
+
+      joined_variants = Set(TypeRef).new
+      return false unless collect_runtime_header_return_variants(joined_return, joined_variants)
+      return false unless joined_variants.size == 1
+
+      candidates.all? do |candidate|
+        candidate_variants = Set(TypeRef).new
+        collect_runtime_header_return_variants(candidate, candidate_variants) &&
+          candidate_variants.all? { |variant| joined_variants.includes?(variant) }
+      end
+    end
+
+    private def collect_runtime_header_return_variants(
+      type_ref : TypeRef,
+      variants : Set(TypeRef),
+    ) : Bool
+      return true if type_ref == TypeRef::NIL
+      if type_ref == TypeRef::STRING
+        variants << type_ref
+        return true
+      end
+
+      descriptor = @module.get_type_descriptor(type_ref)
+      return false unless descriptor
+      case descriptor.kind
+      when TypeKind::Class, TypeKind::Array, TypeKind::Hash
+        variants << type_ref
+        true
+      when TypeKind::Union
+        return false unless ensure_union_descriptor_for_type_ref(type_ref)
+        union_descriptor = union_descriptor_from_sidecar(type_ref)
+        return false unless union_descriptor
+        union_descriptor.variants.all? do |variant|
+          next true if variant.full_name == "Nil" || variant.full_name == "Void"
+          exact = exact_hir_type_ref_for_union_variant(variant)
+          exact != TypeRef::VOID && exact != type_ref &&
+            collect_runtime_header_return_variants(exact, variants)
+        end
+      else
+        false
+      end
     end
 
     # Compute a fast hash of arg types for virtual dispatch dedup keys.

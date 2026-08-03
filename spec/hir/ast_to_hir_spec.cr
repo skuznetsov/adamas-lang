@@ -10462,7 +10462,92 @@ describe Adamas::HIR::AstToHir do
       converter.__test_get_type_name_from_ref(nilable_payload_call.not_nil!.type).should eq("Nil | String")
     end
 
-    it "rejects heterogeneous returns outside the registered reference-generic corridor" do
+    it "preserves instance-dependent returns for a tagged concrete generic struct union" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        struct EntryLike(K, V)
+          getter value : V
+
+          def initialize(@key : K, @value : V)
+          end
+        end
+
+        def entry_value(entry : EntryLike(String, Nil | String) | EntryLike(String, Nil) | EntryLike(String, String))
+          entry.value
+        end
+
+        entry_value(EntryLike(String, String).new("key", "value"))
+      CRYSTAL
+      converter.flush_pending_functions
+
+      caller = converter.module.functions.find { |function| function.name.starts_with?("entry_value$") }
+      caller.should_not be_nil
+      converter.__test_get_type_name_from_ref(caller.not_nil!.return_type).should eq("Nil | String")
+
+      value_call = caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.find { |call| call.method_name.ends_with?("#value") }
+      value_call.should_not be_nil
+      value_call.not_nil!.virtual.should be_false
+      converter.__test_get_type_name_from_ref(value_call.not_nil!.type).should eq("Nil | String")
+
+      mixed_value = converter.module.function_by_name("EntryLike(String, Nil | String)#value")
+      nil_value = converter.module.function_by_name("EntryLike(String, Nil)#value")
+      string_value = converter.module.function_by_name("EntryLike(String, String)#value")
+      mixed_value.should_not be_nil
+      nil_value.should_not be_nil
+      string_value.should_not be_nil
+      converter.__test_get_type_name_from_ref(mixed_value.not_nil!.return_type).should eq("Nil | String")
+      converter.__test_get_type_name_from_ref(nil_value.not_nil!.return_type).should eq("Nil")
+      converter.__test_get_type_name_from_ref(string_value.not_nil!.return_type).should eq("String")
+    end
+
+    it "rejects incompatible return carriers for a same-template generic struct union" do
+      expect_raises(Adamas::HIR::LoweringError, /heterogeneous returns for unsupported concrete generic receiver union/) do
+        lower_program_with_main(<<-CRYSTAL)
+          struct ValueBox(T)
+            def initialize(@payload : T)
+            end
+
+            def tagged_payload(_tag : Int32) : T
+              @payload
+            end
+          end
+
+          def erased_payload(value : ValueBox(Int32) | ValueBox(String))
+            value.tagged_payload(0)
+          end
+
+          erased_payload(ValueBox(Int32).new(7))
+        CRYSTAL
+      end
+    end
+
+    it "rejects multiple non-nil header variants for a generic struct return union" do
+      expect_raises(Adamas::HIR::LoweringError, /heterogeneous returns for unsupported concrete generic receiver union/) do
+        lower_program_with_main(<<-CRYSTAL)
+          class LeftRef
+          end
+
+          class RightRef
+          end
+
+          struct PolyBox(T)
+            getter payload : T
+
+            def initialize(@payload : T)
+            end
+          end
+
+          def erased_payload(value : PolyBox(Nil) | PolyBox(LeftRef) | PolyBox(RightRef))
+            value.payload
+          end
+
+          erased_payload(PolyBox(LeftRef).new(LeftRef.new))
+        CRYSTAL
+      end
+    end
+
+    it "rejects heterogeneous returns outside the registered generic dispatch corridor" do
       expect_raises(Adamas::HIR::LoweringError, /heterogeneous returns for unsupported concrete generic receiver union/) do
         lower_program_with_main(<<-CRYSTAL)
           class LeftBox(T)
@@ -10489,7 +10574,7 @@ describe Adamas::HIR::AstToHir do
 
       expect_raises(Adamas::HIR::LoweringError, /heterogeneous returns for unsupported concrete generic receiver union/) do
         lower_program_with_main(<<-CRYSTAL)
-          struct ValueBox(T)
+          struct LeftValueBox(T)
             def initialize(@payload : T)
             end
 
@@ -10498,11 +10583,20 @@ describe Adamas::HIR::AstToHir do
             end
           end
 
-          def erased_payload(value : ValueBox(Int32) | ValueBox(String))
+          struct RightValueBox(T)
+            def initialize(@payload : T)
+            end
+
+            def tagged_payload(_tag : Int32) : T
+              @payload
+            end
+          end
+
+          def erased_payload(value : LeftValueBox(Int32) | RightValueBox(String))
             value.tagged_payload(0)
           end
 
-          erased_payload(ValueBox(Int32).new(7))
+          erased_payload(LeftValueBox(Int32).new(7))
         CRYSTAL
       end
     end
