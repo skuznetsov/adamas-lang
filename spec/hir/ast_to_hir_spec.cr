@@ -488,6 +488,10 @@ class Adamas::HIR::AstToHir
     get_function_return_type(name)
   end
 
+  def __test_get_function_return_type_for_call(name : String, arg_count : Int32) : Adamas::HIR::TypeRef
+    get_function_return_type(name, arg_count)
+  end
+
   def __test_enum_return_name_for(name : String) : String?
     enum_return_name_for(name)
   end
@@ -10460,6 +10464,141 @@ describe Adamas::HIR::AstToHir do
       end.find { |call| call.method_name.ends_with?("#payload") }
       nilable_payload_call.should_not be_nil
       converter.__test_get_type_name_from_ref(nilable_payload_call.not_nil!.type).should eq("Nil | String")
+    end
+
+    it "preserves the inherited zero-argument hash ABI for mixed generic value unions" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        module Crystal
+          struct Hasher
+          end
+        end
+
+        class Object
+          def hash(hasher : Crystal::Hasher) : Crystal::Hasher
+            hasher
+          end
+
+          def hash
+            0_u64
+          end
+        end
+
+        def erased_hash(value : Pointer(Void) | Tuple(String, Int32))
+          value.hash
+        end
+
+        erased_hash(Pointer(Void).null)
+      CRYSTAL
+      converter.flush_pending_functions
+
+      caller = converter.module.functions.find { |function| function.name.starts_with?("erased_hash$") }
+      caller.should_not be_nil
+      converter.__test_get_type_name_from_ref(caller.not_nil!.return_type).should eq("UInt64")
+
+      hash_calls = caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.select { |call| call.method_name.includes?("#hash") }
+      hash_calls.should_not be_empty
+      hash_calls.each do |call|
+        converter.__test_get_type_name_from_ref(call.type).should eq("UInt64")
+      end
+      protocol_return = converter.__test_get_function_return_type_for_call(
+        "Pointer(Void)#hash$Crystal::Hasher",
+        1,
+      )
+      converter.__test_get_type_name_from_ref(protocol_return).should eq("Crystal::Hasher")
+      pointer_template_return = converter.__test_get_function_return_type_for_call("Pointer#hash", 0)
+      converter.__test_get_type_name_from_ref(pointer_template_return).should eq("UInt64")
+    end
+
+    it "preserves an explicit zero-argument Pointer hash override" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        struct Pointer(T)
+          def hash : String
+            "pointer"
+          end
+        end
+
+        def pointer_hash(value : Pointer(Void))
+          value.hash
+        end
+
+        pointer_hash(Pointer(Void).null)
+      CRYSTAL
+      converter.flush_pending_functions
+
+      caller = converter.module.functions.find { |function| function.name.starts_with?("pointer_hash$") }
+      caller.should_not be_nil
+      converter.__test_get_type_name_from_ref(caller.not_nil!.return_type).should eq("String")
+    end
+
+    it "rejects custom zero-argument hash overrides that disagree with built-in union branches" do
+      expect_raises(
+        Adamas::HIR::LoweringError,
+        /heterogeneous hash returns/,
+      ) do
+        converter = lower_program_with_main(<<-CRYSTAL)
+          module Crystal
+            struct Hasher
+            end
+          end
+
+          class Object
+            def hash : UInt64
+              0_u64
+            end
+          end
+
+          class CustomHash
+            def hash : String
+              "custom"
+            end
+          end
+
+          def erased_hash(value : CustomHash | Pointer(Void) | Tuple(String, Int32))
+            value.hash
+          end
+
+          erased_hash(Pointer(Void).null)
+        CRYSTAL
+        converter.flush_pending_functions
+      end
+    end
+
+    it "rejects typed hash protocol branches with different return ABIs" do
+      expect_raises(
+        Adamas::HIR::LoweringError,
+        /heterogeneous hash returns/,
+      ) do
+        converter = lower_program_with_main(<<-CRYSTAL)
+          module Crystal
+            struct Hasher
+            end
+          end
+
+          class Object
+            def hash(hasher : Crystal::Hasher) : Crystal::Hasher
+              hasher
+            end
+          end
+
+          class CustomHash
+            def hash(hasher : Crystal::Hasher) : String
+              "custom"
+            end
+          end
+
+          def append_hash(
+            value : CustomHash | Pointer(Void) | Tuple(String, Int32),
+            hasher : Crystal::Hasher,
+          )
+            value.hash(hasher)
+          end
+
+          append_hash(Pointer(Void).null, Crystal::Hasher.new)
+        CRYSTAL
+        converter.flush_pending_functions
+      end
     end
 
     it "preserves instance-dependent returns for a tagged concrete generic struct union" do

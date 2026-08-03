@@ -8816,20 +8816,24 @@ module Adamas::HIR
 
       owners.each do |owner|
         owner_base = "#{owner}##{method_name}"
-        resolved_name = if resolved = lookup_function_def_for_call(owner_base, arg_types.size, has_block_call, arg_types, has_splat)
-                          resolved[0]
-                        else
-                          mangle_function_name(owner_base, arg_types, has_block_call)
-                        end
+        resolved = lookup_function_def_for_call(owner_base, arg_types.size, has_block_call, arg_types, has_splat)
+        resolved_name = resolved ? resolved[0] : mangle_function_name(owner_base, arg_types, has_block_call)
+        selected_def = resolved.try { |entry| entry[1] }
 
-        candidate = get_function_return_type(resolved_name)
+        candidate = get_function_return_type(resolved_name, arg_types.size, selected_def)
         if candidate == TypeRef::VOID && resolved_name != owner_base
-          candidate = get_function_return_type(owner_base)
+          candidate = get_function_return_type(owner_base, arg_types.size)
         end
 
         if candidate == TypeRef::VOID || candidate == TypeRef::NIL
           owner_ref = type_ref_for_name(owner)
-          if inferred = resolve_return_type_from_def(resolved_name, owner_base, owner_ref == TypeRef::VOID ? nil : owner_ref)
+          if inferred = resolve_return_type_from_def(
+               resolved_name,
+               owner_base,
+               owner_ref == TypeRef::VOID ? nil : owner_ref,
+               arg_types.size,
+               selected_def,
+             )
             if inferred != TypeRef::VOID && inferred != TypeRef::NIL
               candidate = inferred
             end
@@ -53265,6 +53269,42 @@ module Adamas::HIR
       name.includes?("Crystal::Hasher") || name.includes?("Crystal$CCHasher")
     end
 
+    private def built_in_value_hash_owner?(name : String) : Bool
+      owner = normalize_method_owner_name(name)
+      owner == "Pointer" || owner.starts_with?("Pointer(") ||
+        owner == "Tuple" || owner.starts_with?("Tuple(")
+    end
+
+    private def built_in_zero_argument_hash_return_contract(
+      name : String,
+      call_arg_count : Int32?,
+    ) : TypeRef?
+      return nil unless call_arg_count == 0
+
+      base_name = strip_type_suffix(name)
+      parts = parse_method_name_compact(base_name)
+      return nil unless parts.separator == '#' && parts.method == "hash" &&
+                        built_in_value_hash_owner?(parts.owner)
+
+      if known_type = @function_types[name]?
+        return TypeRef::UINT64 if known_type == TypeRef::UINT64
+        return nil unless known_type == TypeRef::VOID
+      end
+      if function = @module.function_by_name(name)
+        return nil unless function.return_type == TypeRef::VOID
+      end
+      explicit_owner_overload = function_def_overloads(base_name).any? do |candidate_name|
+        if def_node = @function_defs[candidate_name]?
+          return_def_accepts_positional?(def_node, 0)
+        else
+          false
+        end
+      end
+      return nil if explicit_owner_overload
+
+      TypeRef::UINT64
+    end
+
     private def get_function_return_type(
       name : String,
       call_arg_count : Int32? = nil,
@@ -53292,6 +53332,13 @@ module Adamas::HIR
           set_function_type_entry(name, hasher_ref)
           return hasher_ref
         end
+      end
+      # Pointer(T) and Tuple(...) can exist without a complete @class_info
+      # ancestor chain. Their inherited zero-argument Object#hash ABI is UInt64,
+      # while their specialized hash(hasher) overload remains covered above.
+      if built_in_hash_return = built_in_zero_argument_hash_return_contract(name, call_arg_count)
+        set_function_type_entry(name, built_in_hash_return)
+        return built_in_hash_return
       end
       defer_specialized_body_inference = name.includes?('$') &&
                                          name != base_name &&
@@ -94639,15 +94686,57 @@ module Adamas::HIR
             vm = effective_mangled_method_name
           end
         end
-        lower_function_if_needed(vm)
+        exact_inherited_hash_demand = false
+        # A cached zero-argument return contract does not prove that the owner
+        # has a matching body. Pointer(T), in particular, may expose only
+        # hash(hasher); use the caller's arity-resolved inherited target instead
+        # of materializing that overload under the bare hash symbol.
+        if mb == "hash" && arg_types.empty? && built_in_value_hash_owner?(vn)
+          owner_has_zero_argument_hash = function_def_overloads(vb).any? do |candidate_name|
+            if candidate_def = @function_defs[candidate_name]?
+              return_def_accepts_positional?(candidate_def, 0)
+            else
+              false
+            end
+          end
+          unless owner_has_zero_argument_hash
+            vm = resolve_ancestor_overload(vn, mb, 0, false) ||
+                 resolve_untyped_overload("Object##{mb}", 0, false) ||
+                 effective_mangled_method_name
+            exact_inherited_hash_demand = true
+          end
+        end
+        if exact_inherited_hash_demand
+          lower_required_virtual_target_function(vm, exact_demand: true)
+          force_lower_function_for_return_type(vm) unless @module.has_function_with_body?(vm)
+        else
+          lower_function_if_needed(vm)
+        end
         vms << {vm, vr, vid}
       end
       return nil if vms.size < 2
 
+      # Hash return shortcuts supply only preliminary callsite certificates;
+      # they must not erase a valid custom override. The selected concrete
+      # branches are authoritative for the inline dispatch ABI: require one
+      # unanimous known return and use it for the phi.
+      if mb == "hash" && !has_block_call && variants.any? { |variant| built_in_value_hash_owner?(variant) }
+        concrete_returns = vms.map do |vmn, vmr, _|
+          concrete_union_dispatch_return_type(vmn, vmr, mb, arg_types.size)
+        end
+        if concrete_returns.any? { |candidate| candidate == TypeRef::VOID } ||
+           concrete_returns.uniq.size != 1
+          raise LoweringError.new(
+            "cannot safely lower heterogeneous hash returns for union #{recv_desc.name}"
+          )
+        end
+        dispatch_return_type = concrete_returns.first
+      end
+
       explicit_branch_return_types : Array(TypeRef)? = nil
       if registered_same_template_generic_struct_union_receiver?(recv_desc)
         concrete_returns = vms.map do |vmn, vmr, _|
-          concrete_union_dispatch_return_type(vmn, vmr, mb)
+          concrete_union_dispatch_return_type(vmn, vmr, mb, arg_types.size)
         end
         if direct_heap_aggregate_proc_return_wrap_compatible?(concrete_returns, dispatch_return_type)
           explicit_branch_return_types = concrete_returns
@@ -94724,6 +94813,7 @@ module Adamas::HIR
       function_name : String,
       receiver_type : TypeRef,
       method_name : String,
+      call_arg_count : Int32,
     ) : TypeRef
       if tuple_type = tuple_static_array_return_type(receiver_type, method_name)
         return tuple_type
@@ -94736,8 +94826,11 @@ module Adamas::HIR
       end
 
       function = @module.function_by_name(function_name)
-      return TypeRef::VOID unless function
-      function.return_type
+      if function
+        return function.return_type unless function.return_type == TypeRef::VOID
+      end
+
+      built_in_zero_argument_hash_return_contract(function_name, call_arg_count) || TypeRef::VOID
     end
 
     private def wrap_union_dispatch_branch_result(
