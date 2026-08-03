@@ -11679,15 +11679,27 @@ reached. The safe-runner receipt reports timeout exit 143, but resource maxima
 remain unavailable in this sandbox receipt and must not be inferred from that
 absence.
 
+The existing exact queue trace permits a narrower target-level comparison
+without compiler changes or a retained raw log. A streaming adjacent-iteration
+set intersection reaches the iteration-4 queue gate after approximately 236
+seconds with 50,479 HIR functions. Iterations 1 through 4 respectively contain
+17 overlapping / 1,945 new, 65 / 2,565, 160 / 1,947, and 268 / 1,515 unique
+target names relative to the immediately preceding queue. Adjacent-name
+overlap, a rediscovery candidate rather than a causal classification, grows but
+remains the minority through iteration 4. At the target-name set level, 1,515
+iteration-4 names are outside the iteration-3 queue; this is not a runtime or
+frontier estimate. The relation does not identify whether an overlapping name
+came from a stable or newly materialized source body and is not a
+source-provenance certificate.
+
 Boundary: B4-F remains RED, but the old first-target and first-pass cost
 hypotheses are refuted within the sampled ladder. The measured frontier is the
 observed sequence of recursive demand waves inside `missing_initial`; whether
-one target dominates later expansion and whether the demands are necessary
-transitive discoveries or repeated/stale rediscovery remain open. The next
-legal falsifier must separate those cases using the existing per-iteration
-demand/certificate diagnostics before changing production semantics. Do not
-add another demand registry, method-family allowlist, scan cache, or recursive
-root-demand rule from function count alone.
+one target dominates later expansion and which source bodies create the new
+target edges remain open. The next legal falsifier must correlate source
+function identity/revision with prior target body/queue state before changing
+production semantics. Do not add another demand registry, method-family
+allowlist, scan cache, or recursive root-demand rule from function count alone.
 
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
