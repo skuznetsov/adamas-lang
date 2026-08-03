@@ -11646,6 +11646,49 @@ next legal action is a bounded phase localization after missing-start. Do not
 add recursive exact-demand provenance, another helper corridor, or an
 optimization until that probe identifies the late cost boundary.
 
+### Session 43: recursive missing-materialization boundary (2026-08-03)
+
+Source-matched gates on the fresh Session 42 stage 1 localize the remaining
+300-second B4-F cost inside the recursive `missing_initial` fixed point, not in
+the first 32-target materialization ladder. A bounded first-pass ladder, which
+includes the complete initial scan, finishes in approximately 56--58 seconds
+throughout: budget 1 leaves 983 HIR functions, budget 8 leaves 990, budget 16
+leaves 1014, and budget 32 leaves 1774. The 760-function jump from budget 16 to
+32 does not materially change sampled first-pass wall time; it does not prove
+that function count is irrelevant to later recursive cost.
+
+The unbounded first missing pass has 170 unique demands and reaches its
+context-scoped pending-done gate after approximately 87 seconds with
+`pending=0`, 10,324 HIR functions, 1,967 lowered items, and 3,537 deferred
+items. Iteration 1 then scans 7,740 raw occurrences and uniquifies them to
+1,962 exact demands. Its scan and uniq gates both exit at approximately the
+same 87-second cumulative elapsed time as the iteration-0 pending-done gate;
+its pending process finishes at approximately 143 seconds cumulative with
+`pending=0` and 28,647 HIR functions. Iteration 2 has 2,630 unique demands and
+finishes at approximately 193 seconds cumulative with `pending=0` and 39,106
+HIR functions.
+
+A direct stop after the complete `missing_initial` flush does not fire within
+the 300-second / 4096-MiB safe-runner limit. The preserved summaries show
+unique-demand waves of 170, 1,962, 2,630, 2,107, and 1,783 for iterations 0
+through 4. Reaching the iteration-4 summary proves that iteration 3 completed;
+the timeout therefore falls after iteration 4 uniquing and before iteration 4
+pending processing completes, without yet separating its queue and process
+subphases. The `ADAMAS_STOP_AFTER_HIR_FLUSH_MISSING_INITIAL` gate is not
+reached. The safe-runner receipt reports timeout exit 143, but resource maxima
+remain unavailable in this sandbox receipt and must not be inferred from that
+absence.
+
+Boundary: B4-F remains RED, but the old first-target and first-pass cost
+hypotheses are refuted within the sampled ladder. The measured frontier is the
+observed sequence of recursive demand waves inside `missing_initial`; whether
+one target dominates later expansion and whether the demands are necessary
+transitive discoveries or repeated/stale rediscovery remain open. The next
+legal falsifier must separate those cases using the existing per-iteration
+demand/certificate diagnostics before changing production semantics. Do not
+add another demand registry, method-family allowlist, scan cache, or recursive
+root-demand rule from function count alone.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
