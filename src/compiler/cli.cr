@@ -1916,6 +1916,7 @@ module Adamas
         hir_converter.bootstrap_bind_main_arenas(main_arenas)
         hir_converter.bootstrap_bind_link_libraries(link_libs)
         hir_converter.bootstrap_reset_constructor_tail
+        hir_converter.bootstrap_bind_stdlib_root(File.expand_path(stdlib_path))
         bootstrap_trace_puts "[S2_HIR_SETUP] phase=converter_bound"; STDERR.flush
         stage2_debug("[STAGE2_DEBUG] hir converter created", err_io)
         log_generated_stage_memory_phase(

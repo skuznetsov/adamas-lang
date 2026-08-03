@@ -415,6 +415,20 @@ class Adamas::HIR::AstToHir
     )
   end
 
+  def __test_concrete_union_dispatch_return_type(
+    function_name : String,
+    receiver_name : String,
+    method_name : String,
+    call_arg_count : Int32,
+  ) : Adamas::HIR::TypeRef
+    concrete_union_dispatch_return_type(
+      function_name,
+      type_ref_for_name(receiver_name),
+      method_name,
+      call_arg_count,
+    )
+  end
+
   def __test_set_lazy_module_methods(value : Bool) : Nil
     @lazy_module_methods = value
   end
@@ -490,6 +504,18 @@ class Adamas::HIR::AstToHir
 
   def __test_get_function_return_type_for_call(name : String, arg_count : Int32) : Adamas::HIR::TypeRef
     get_function_return_type(name, arg_count)
+  end
+
+  def __test_canonical_typed_hash_return_contract(
+    name : String,
+    receiver_name : String,
+  ) : Adamas::HIR::TypeRef?
+    canonical_typed_hash_return_contract(
+      name,
+      strip_type_suffix(name),
+      1,
+      type_ref_for_name(receiver_name),
+    )
   end
 
   def __test_enum_return_name_for(name : String) : String?
@@ -2072,13 +2098,25 @@ private def lower_program(code : String) : Adamas::HIR::AstToHir
   converter
 end
 
-private def lower_program_with_main(code : String, source_backed : Bool = false) : Adamas::HIR::AstToHir
+private def lower_program_with_main(
+  code : String,
+  source_backed : Bool = false,
+  source_path : String? = nil,
+  stdlib_root : String? = nil,
+) : Adamas::HIR::AstToHir
   arena, exprs = parse(code)
-  converter = if source_backed
-                Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => code})
-              else
-                Adamas::HIR::AstToHir.new(arena)
-              end
+  sources_by_arena = if source_backed || source_path
+                       {arena.object_id.to_u64 => code}
+                     end
+  paths_by_arena = if path = source_path
+                     {arena.object_id.to_u64 => path}
+                   end
+  converter = Adamas::HIR::AstToHir.new(
+    arena,
+    sources_by_arena: sources_by_arena,
+    paths_by_arena: paths_by_arena,
+    stdlib_root: stdlib_root,
+  )
   converter.arena = arena
 
   enum_nodes = [] of Adamas::Compiler::Frontend::EnumNode
@@ -2574,10 +2612,22 @@ private def lower_source_backed_program_with_empty_initialize_params(code : Stri
   converter
 end
 
-private def lower_program_with_sources(code : String) : Adamas::HIR::AstToHir
+private def lower_program_with_sources(
+  code : String,
+  source_path : String? = nil,
+  stdlib_root : String? = nil,
+) : Adamas::HIR::AstToHir
   arena, exprs = parse(code)
   sources_by_arena = {arena.object_id.to_u64 => code}
-  converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: sources_by_arena)
+  paths_by_arena = if path = source_path
+                     {arena.object_id.to_u64 => path}
+                   end
+  converter = Adamas::HIR::AstToHir.new(
+    arena,
+    sources_by_arena: sources_by_arena,
+    paths_by_arena: paths_by_arena,
+    stdlib_root: stdlib_root,
+  )
   converter.arena = arena
 
   module_nodes = [] of Adamas::Compiler::Frontend::ModuleNode
@@ -2603,8 +2653,8 @@ private def lower_program_with_sources(code : String) : Adamas::HIR::AstToHir
   end
 
   module_nodes.each { |node| converter.register_module(node) }
-  class_nodes.each { |node| converter.register_class(node) }
   macro_nodes.each { |node| converter.register_macro(node) }
+  class_nodes.each { |node| converter.register_class(node) }
   def_nodes.each { |node| converter.register_function(node) }
 
   module_nodes.each { |node| converter.lower_module(node) }
@@ -10467,7 +10517,7 @@ describe Adamas::HIR::AstToHir do
     end
 
     it "preserves the inherited zero-argument hash ABI for mixed generic value unions" do
-      converter = lower_program_with_main(<<-CRYSTAL)
+      converter = lower_program_with_main(<<-CRYSTAL, source_path: "/tmp/inherited_pointer_hash.cr", stdlib_root: File.expand_path("src/stdlib"))
         module Crystal
           struct Hasher
           end
@@ -10509,6 +10559,420 @@ describe Adamas::HIR::AstToHir do
       converter.__test_get_type_name_from_ref(protocol_return).should eq("Crystal::Hasher")
       pointer_template_return = converter.__test_get_function_return_type_for_call("Pointer#hash", 0)
       converter.__test_get_type_name_from_ref(pointer_template_return).should eq("UInt64")
+    end
+
+    it "preserves the typed hash protocol ABI for nilable Tuple unions" do
+      source = <<-CRYSTAL
+        module Crystal
+          struct Hasher
+            def nil
+              self
+            end
+          end
+        end
+
+        struct Nil
+          def hash(hasher)
+            hasher.nil
+          end
+        end
+
+        struct Tuple
+          def hash(hasher)
+            hasher
+          end
+        end
+
+        def append_hash(
+          value : Nil | Tuple(String, Int32),
+          hasher : Crystal::Hasher,
+        )
+          value.hash(hasher)
+        end
+
+        append_hash(nil, Crystal::Hasher.new)
+      CRYSTAL
+      converter = lower_program_with_main(
+        source,
+        source_path: File.expand_path("src/stdlib/hash_contract_spec.cr"),
+        stdlib_root: File.expand_path("src/stdlib"),
+      )
+      converter.flush_pending_functions
+
+      caller = converter.module.functions.find { |function| function.name.starts_with?("append_hash$") }
+      caller.should_not be_nil
+      caller_name = caller.not_nil!.name
+      tuple_target = "Tuple(String, Int32)#hash$Crystal::Hasher"
+      converter.module.remove_function(caller_name).should be_true
+      converter.module.remove_function(tuple_target).should be_true
+      converter.__test_reset_lowering_state(caller_name)
+      converter.__test_reset_lowering_state(tuple_target)
+
+      # Re-lower the caller with the concrete Tuple protocol target absent.
+      # This reproduces the nested exact-demand path used by stage2 instead of
+      # accepting a body that eager fixture setup happened to materialize.
+      converter.__test_lower_function_if_needed(caller_name)
+      caller = converter.module.function_by_name(caller_name)
+      caller.should_not be_nil
+      converter.__test_get_type_name_from_ref(caller.not_nil!.return_type).should eq("Crystal::Hasher")
+
+      hash_calls = caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.select { |call| call.method_name.includes?("#hash") }
+      hash_calls.should_not be_empty
+      hash_calls.each do |call|
+        converter.__test_get_type_name_from_ref(call.type).should eq("Crystal::Hasher")
+      end
+      converter.module.has_function_with_body?(tuple_target).should be_false
+      converter.flush_pending_functions
+      converter.module.has_function_with_body?(tuple_target).should be_true
+    end
+
+    it "preserves stdlib typed hash returns across mixed Bool and Tuple unions" do
+      source = <<-CRYSTAL
+        module Crystal
+          struct Hasher
+            def bool(value)
+              self
+            end
+          end
+        end
+
+        struct Bool
+          def hash(hasher)
+            hasher.bool(self)
+          end
+        end
+
+        struct Tuple
+          def hash(hasher)
+            hasher
+          end
+        end
+
+        def append_hash(
+          value : Bool | Tuple(String, Int32),
+          hasher : Crystal::Hasher,
+        )
+          value.hash(hasher)
+        end
+
+        append_hash(false, Crystal::Hasher.new)
+      CRYSTAL
+      converter = lower_program_with_main(
+        source,
+        source_path: File.expand_path("src/stdlib/hash_contract_spec.cr"),
+        stdlib_root: File.expand_path("src/stdlib"),
+      )
+      converter.flush_pending_functions
+
+      caller = converter.module.functions.find { |function| function.name.starts_with?("append_hash$") }
+      caller.should_not be_nil
+      converter.__test_get_type_name_from_ref(caller.not_nil!.return_type).should eq("Crystal::Hasher")
+
+      hash_calls = caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.select { |call| call.method_name.includes?("#hash") }
+      hash_calls.size.should eq(2)
+      hash_calls.each do |call|
+        call.method_name.ends_with?("$Crystal::Hasher").should be_true
+        converter.__test_get_type_name_from_ref(call.type).should eq("Crystal::Hasher")
+      end
+    end
+
+    it "preserves recursive stdlib typed hash protocol returns before body inference" do
+      source = <<-CRYSTAL
+        module Crystal
+          struct Hasher
+            def bool(value)
+              value.hash(self)
+            end
+          end
+        end
+
+        struct Bool
+          def hash(hasher)
+            hasher.bool(self)
+          end
+        end
+      CRYSTAL
+      converter = lower_program_with_main(
+        source,
+        source_path: File.expand_path("src/stdlib/bool.cr"),
+        stdlib_root: File.expand_path("src/stdlib"),
+      )
+
+      contract = converter.__test_canonical_typed_hash_return_contract(
+        "Bool#hash$Crystal::Hasher",
+        "Bool",
+      )
+      contract.should_not be_nil
+      converter.__test_get_type_name_from_ref(contract.not_nil!).should eq("Crystal::Hasher")
+
+      return_type = converter.__test_get_function_return_type_for_call(
+        "Bool#hash$Crystal::Hasher",
+        1,
+      )
+      converter.__test_get_type_name_from_ref(return_type).should eq("Crystal::Hasher")
+
+      external = lower_program_with_main(
+        <<-CRYSTAL,
+          module Crystal
+            struct Hasher
+            end
+          end
+
+          struct Bool
+            def hash(hasher : Crystal::Hasher)
+              "external"
+            end
+          end
+        CRYSTAL
+        source_path: File.expand_path("src/stdlib_evil/bool.cr"),
+        stdlib_root: File.expand_path("src/stdlib"),
+      )
+      external.__test_canonical_typed_hash_return_contract(
+        "Bool#hash$Crystal::Hasher",
+        "Bool",
+      ).should be_nil
+      external_return = external.__test_get_function_return_type_for_call(
+        "Bool#hash$Crystal::Hasher",
+        1,
+      )
+      external.__test_get_type_name_from_ref(external_return).should eq("String")
+    end
+
+    it "does not certify a macro-generated typed hash by macro source path" do
+      stdlib_root = File.expand_path("src/stdlib")
+      converter = lower_program_with_sources(
+        <<-CRYSTAL,
+          module Crystal
+            struct Hasher
+            end
+          end
+
+          macro define_bad_hash
+            def hash(hasher)
+              "bad"
+            end
+          end
+
+          class ExternalHash
+            define_bad_hash()
+          end
+        CRYSTAL
+        source_path: File.join(stdlib_root, "object.cr"),
+        stdlib_root: stdlib_root,
+      )
+
+      target = "ExternalHash#hash$Crystal::Hasher"
+      converter.__test_canonical_typed_hash_return_contract(
+        target,
+        "ExternalHash",
+      ).should be_nil
+      return_type = converter.__test_get_function_return_type_for_call(target, 1)
+      converter.__test_get_type_name_from_ref(return_type).should eq("String")
+    end
+
+    it "does not certify a generated source snapshot by inherited stdlib path" do
+      stdlib_root = File.expand_path("src/stdlib")
+      source_path = File.join(stdlib_root, "object.cr")
+      origin_arena, _ = parse(File.read(source_path))
+      generated_source = <<-CRYSTAL
+        module Crystal
+          struct Hasher
+          end
+        end
+
+        class ExternalHash
+          def hash(hasher)
+            "bad"
+          end
+        end
+      CRYSTAL
+
+      converter = lower_program_with_sources(
+        generated_source,
+        source_path: source_path,
+        stdlib_root: stdlib_root,
+      )
+      converter.bootstrap_bind_main_arenas([origin_arena])
+
+      target = "ExternalHash#hash$Crystal::Hasher"
+      converter.__test_canonical_typed_hash_return_contract(
+        target,
+        "ExternalHash",
+      ).should be_nil
+      return_type = converter.__test_get_function_return_type_for_call(target, 1)
+      converter.__test_get_type_name_from_ref(return_type).should eq("String")
+    end
+
+    it "keeps a materialized Tuple hash override authoritative" do
+      expect_raises(
+        Adamas::HIR::LoweringError,
+        /heterogeneous hash returns/,
+      ) do
+        converter = lower_program_with_main(<<-CRYSTAL)
+          module Crystal
+            struct Hasher
+            end
+          end
+
+          struct Nil
+            def hash(hasher : Crystal::Hasher) : Crystal::Hasher
+              hasher
+            end
+          end
+
+          struct Tuple
+            def hash(hasher : Crystal::Hasher) : String
+              "custom"
+            end
+          end
+
+          def append_hash(
+            value : Nil | Tuple(String, Int32),
+            hasher : Crystal::Hasher,
+          )
+            value.hash(hasher)
+          end
+
+          append_hash(nil, Crystal::Hasher.new)
+        CRYSTAL
+        converter.flush_pending_functions
+      end
+    end
+
+    it "rejects a bodyless explicit Tuple hash ABI conflict" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_path: "/tmp/typed_hash_override.cr", stdlib_root: File.expand_path("src/stdlib"))
+        module Crystal
+          struct Hasher
+          end
+        end
+
+        struct Tuple
+          def hash(hasher : Crystal::Hasher) : String
+            "custom"
+          end
+        end
+      CRYSTAL
+
+      target = "Tuple(String, Int32)#hash$Crystal::Hasher"
+      contract_return = converter.__test_concrete_union_dispatch_return_type(
+        target,
+        "Tuple(String, Int32)",
+        "hash",
+        1,
+      )
+      contract_return.should eq(Adamas::HIR::TypeRef::VOID)
+    end
+
+    it "does not certify a bodyless unannotated Tuple hash override" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_path: "/tmp/bodyless_hash_override.cr", stdlib_root: File.expand_path("src/stdlib"))
+        module Crystal
+          struct Hasher
+          end
+        end
+
+        struct Tuple
+          def hash(hasher : Crystal::Hasher)
+            "custom"
+          end
+        end
+      CRYSTAL
+
+      target = "Tuple(String, Int32)#hash$Crystal::Hasher"
+      contract_return = converter.__test_concrete_union_dispatch_return_type(
+        target,
+        "Tuple(String, Int32)",
+        "hash",
+        1,
+      )
+      contract_return.should eq(Adamas::HIR::TypeRef::VOID)
+
+      resolved_return = converter.__test_get_function_return_type_for_call(target, 1)
+      resolved_return.should eq(Adamas::HIR::TypeRef::STRING)
+    end
+
+    it "does not bypass a concrete Tuple hash(hasher) override" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_path: "/tmp/typed_hash_override.cr", stdlib_root: File.expand_path("src/stdlib"))
+        module Crystal
+          struct Hasher
+          end
+        end
+
+        struct Tuple
+          def hash(hasher : Crystal::Hasher) : String
+            "custom"
+          end
+        end
+
+        def custom_tuple_hash(
+          value : Tuple(String, Int32),
+          hasher : Crystal::Hasher,
+        )
+          value.hash(hasher)
+        end
+
+        custom_tuple_hash({"value", 1}, Crystal::Hasher.new)
+      CRYSTAL
+      converter.flush_pending_functions
+
+      caller = converter.module.functions.find do |function|
+        function.name.starts_with?("custom_tuple_hash$")
+      end
+      caller.should_not be_nil
+      converter.__test_get_type_name_from_ref(caller.not_nil!.return_type).should eq("String")
+    end
+
+    it "does not bypass a concrete zero-argument Tuple hash override" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_path: "/tmp/zero_hash_override.cr", stdlib_root: File.expand_path("src/stdlib"))
+        struct Tuple
+          def hash : String
+            "custom"
+          end
+        end
+
+        def custom_tuple_hash(value : Tuple(String, Int32))
+          value.hash
+        end
+
+        custom_tuple_hash({"value", 1})
+      CRYSTAL
+      converter.flush_pending_functions
+
+      caller = converter.module.functions.find do |function|
+        function.name.starts_with?("custom_tuple_hash$")
+      end
+      caller.should_not be_nil
+      converter.__test_get_type_name_from_ref(caller.not_nil!.return_type).should eq("String")
+    end
+
+    it "does not certify an external typed Pointer hash override" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_path: "/tmp/pointer_hash_override.cr", stdlib_root: File.expand_path("src/stdlib"))
+        module Crystal
+          struct Hasher
+          end
+        end
+
+        struct Pointer(T)
+          def hash(hasher : Crystal::Hasher) : String
+            "pointer"
+          end
+        end
+      CRYSTAL
+
+      target = "Pointer(Void)#hash$Crystal::Hasher"
+      contract_return = converter.__test_concrete_union_dispatch_return_type(
+        target,
+        "Pointer(Void)",
+        "hash",
+        1,
+      )
+      contract_return.should eq(Adamas::HIR::TypeRef::VOID)
+
+      resolved_return = converter.__test_get_function_return_type_for_call(target, 1)
+      converter.__test_get_type_name_from_ref(resolved_return).should eq("String")
     end
 
     it "preserves an explicit zero-argument Pointer hash override" do
@@ -11343,6 +11807,8 @@ describe Adamas::HIR::AstToHir do
       case_equality_call.should_not be_nil
       case_equality_call.not_nil!.method_name.should eq("Box(Int32)#===$Int32")
       converter.__test_pending_function?("Box(Int32)#===$Int32").should be_true
+      converter.__test_pending_function?("Object#===$Int32").should be_false
+      converter.module.has_function_with_body?("Object#===$Int32").should be_false
 
       converter.lower_def(def_nodes[1])
       unknown_caller = converter.module.functions.find { |func| func.name.starts_with?("compare_unknown$") }
@@ -13543,6 +14009,38 @@ describe Adamas::HIR::AstToHir do
   end
 
   describe "block-dependent query return inference" do
+    it "does not enqueue the bare alias after admitting an exact untyped-parameter target" do
+      source = <<-CRYSTAL
+        class LookupBox
+          def find_entry(key)
+            key
+          end
+
+          def fetch(key : String)
+            find_entry(key)
+          end
+        end
+      CRYSTAL
+
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+      converter.arena = arena
+      class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+      class_nodes.each { |node| converter.register_class(node) }
+
+      converter.__test_lower_function_if_needed("LookupBox#fetch$String")
+
+      fetch = converter.module.function_by_name("LookupBox#fetch$String")
+      fetch.should_not be_nil
+      find_entry_call = fetch.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.find { |call| call.method_name.includes?("#find_entry") }
+      find_entry_call.should_not be_nil
+      find_entry_call.not_nil!.method_name.should eq("LookupBox#find_entry$String")
+      converter.__test_pending_function?("LookupBox#find_entry$String").should be_true
+      converter.__test_pending_function?("LookupBox#find_entry").should be_false
+    end
+
     it "keeps block-return-dependent query calls typed from the block instead of Bool" do
       previous = ENV["ADAMAS_DISABLE_INLINE_YIELD"]?
       ENV["ADAMAS_DISABLE_INLINE_YIELD"] = "1"

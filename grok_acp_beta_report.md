@@ -91,6 +91,24 @@ Grok only with a forced "answer first, tools second" prompt or switch to the
 proposed Grok 4.1 Fast structured wrapper.
 **Cost saved:** none.
 
+### Session 55 — 2026-08-03 — top-level MacroLiteral provenance guard audit
+
+**Task:** read-only adversarial audit of the CLI top-level MacroIf/MacroLiteral
+arena provenance gap. The proposed guard rejects stdlib authority unless the
+selected function arena is already present in the existing `@main_arenas` set;
+the prompt included a HIR ABI differential and runtime witness. No edits were
+requested from Grok.
+**Latency:** failed immediately with `RuntimeError: Permission denied` during
+`session/new`.
+**Output quality:** no signal. No Grok claim was produced or used.
+**Adversary check:** local CLI collection traces, HIR differential, and a safe
+runtime fixture independently establish that a generated arena inherits the
+stdlib path while remaining outside `@main_arenas`; the proposed membership
+guard is therefore the smallest existing-state fail-closed correction. Local
+evidence remains authoritative.
+**Verdict:** failed/no-signal interaction; do not count as external evidence.
+**Cost saved:** none.
+
 ### Session 2026-05-01 — Errno.value= generated-stage2 crash audit
 **Context:** Crystal V2 `codegen` branch. Generated `cv2_s2` builds and passes
 no-prelude smoke, but full-prelude plain smoke fails under `scripts/run_safe.sh`

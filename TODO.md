@@ -11,10 +11,12 @@ continuity are green through exact-target body lowering, while full-source
 MIR/LLVM continuity remains blocked by B4-F and the historical full-G9 symptom
 is stale and unreproduced. Exact guarded method
 declaration shapes replace in place; local keyed decisions reject replaced
-same-arena method objects; T1 remains red. The latest clean 300-second B4-F run
-is measured RED after 293.99 seconds at the next unresolved-return guard for
-`Pointer(Void) | Tuple(String, Adamas::Compiler::Semantic::Type)#hash`; the
-preceding `Hash::Entry` aggregate/Proc getter-return frontier is closed).
+same-arena method objects; T1 remains red. Source-authoritative typed-hash
+contracts now carry the fresh bootstrap through both stage1 smokes. The latest
+clean 300-second B4-F run is still measured RED: stage2 remained active until
+the 302.83-second safe-runner stop and emitted no `cv2_s2`; the preceding mixed
+Pointer/Tuple hash-return and recursive Bool-hash inference frontiers are
+closed).
 
 BARE REFERENCE-GENERIC INSTANCE DISPATCH RUNTIME-VERIFIED; REGISTERED
 RUNTIME-REFERENCE RETURN UNIONS HIR-VERIFIED AND MIR-GUARDED; UNSUPPORTED
@@ -11465,6 +11467,107 @@ does not admit unresolved or mixed-template returns. The next legal action is
 to prove the concrete zero-argument `hash` return ABI for both variants with a
 focused falsifier, then change only the missing materialization contract; a
 name-based or general `hash` fallback remains forbidden.
+
+### Session 39: exact typed hash ABI and duplicate bare-demand boundary (2026-08-02)
+
+Nested concrete union dispatch now preserves the requested typed `hash`
+symbol for built-in `Nil`, `Pointer`, and `Tuple` receivers. A missing body can
+use the `Crystal::Hasher -> Crystal::Hasher` protocol only for the exact
+receiver-bound, one-argument typed symbol. A materialized body remains
+authoritative, and an explicit conflicting return annotation fails closed.
+This is not a name-based contract for arbitrary `hash` methods.
+
+Two adjacent demand amplifiers were narrowed without a global queue policy:
+
+- runtime `===` dispatch no longer also requests the inherited `Object#===`
+  body when the concrete primary target is the emitted call;
+- after a concrete callsite has admitted the exact typed target of a method
+  with an untyped regular parameter, the early fallback does not also queue
+  its bare alias. Blocks, splats, named arguments, unknown argument types,
+  missing definitions, annotated-only parameters, and unadmitted targets keep
+  the previous fallback behavior.
+
+Evidence:
+
+- the focused regressions reconstruct a missing concrete Tuple hash body,
+  reject materialized and bodyless explicit ABI conflicts, prove that the
+  concrete case-equality target does not enqueue `Object#===$Int32`, and prove
+  that `LookupBox#find_entry$String` does not also enqueue
+  `LookupBox#find_entry`;
+- the full HIR suite passes under `run_safe`: 408 examples, zero failures,
+  zero errors, and the two pre-existing pending examples;
+- a fresh two-stage B4-F run built stage 1 in 16.23 seconds and passed both
+  smokes. Stage 2 remained active until the 300-second safe-runner limit and
+  stopped after 302.66 seconds. Observed RSS was about 2.06 GiB at 283 seconds,
+  with one compiler process and no surviving process after timeout;
+- the comparable first-threshold pending census moved from queue 2168 with
+  `Hash#find_entry` dominant to queue 2051 with `Pointer#==`, `Array#==`, and
+  `Hash#==` dominant. This is evidence that the classified duplicate-demand
+  route moved; it is not proof of a global fanout or runtime improvement.
+
+Boundary: B4-F remains RED because stage 2 did not build within 300 seconds.
+The next legal probe is the paired exact/bare `==` demand emitted below
+case-equality dispatch. Do not broaden the exact-target guard or add a family
+allowlist until that enqueue site and its emitted-call contract are proven.
+
+### Session 40: source-authoritative recursive typed-hash contract (2026-08-02)
+
+The first fresh run after the Session 39 demand narrowing built stage 1 but
+failed its plain full-prelude smoke after 13.06 seconds. Recursive return
+inference had cached `Bool#hash(Crystal::Hasher)` as `Bool`: the helper calls
+`Int#hash(self)`, the local `hasher` consequently narrowed to `Bool`, and the
+following Iconv hash call became the invalid bodyless target
+`Object#hash$Bool`. The receiver-repair guard detected this corruption; it was
+not the cause.
+
+The repair admits the exact one-argument typed hash ABI before recursive body
+inference only when the currently selected `DefNode`, its recorded arena, and
+its source path are all authoritative under the CLI-pinned stdlib root. A
+reopened external definition, a sibling path such as `stdlib_evil`, a
+materialized body, an incompatible explicit return, a zero-argument hash, or a
+non-exact mangled symbol remains outside the shortcut. Pointer keeps its
+separate inherited fallback only while no owner-specific overload exists.
+Replacing a same-key definition now also replaces its arena provenance, so a
+new `DefNode` cannot inherit the previous source certificate.
+
+Evidence:
+
+- the focused recursive Bool/Hasher falsifier was red before the repair and is
+  now green. Its external sibling-path control retains the inferred `String`
+  return and receives no canonical typed-hash certificate. An adversarial
+  `Bool | Tuple(String, Int32)` union first exposed two narrower legacy
+  owner-filters; routing both branch selection and return inference through the
+  same canonical contract changed that falsifier from a heterogeneous-return
+  error to two exact `Crystal::Hasher` branch ABIs;
+- a macro-generated parameter definition under the stdlib path receives no
+  canonical certificate and retains its inferred `String` return. A second
+  CLI falsifier exposed an unmarked top-level `MacroIf`/`MacroLiteral` arena
+  inheriting the stdlib path: before the main-arena provenance guard its caller
+  and virtual call returned `Crystal::Hasher` while the selected body returned
+  `String`; afterwards all three return `String`. A positive generated body
+  that actually returns its hasher remains `Crystal::Hasher`;
+- the focused hash-contract group passes 15 examples with zero failures, and
+  the full HIR suite passes under `run_safe`: 410 examples, zero failures, zero
+  errors, and two pre-existing pending examples;
+- fresh run `adamas_b4f_hash_authority_20260802_5` on the final source snapshot
+  built stage 1 in 17.22 seconds and passed both the plain and no-prelude
+  smokes. Stage 2 remained active until the 300-second limit and stopped after
+  302.83 seconds without producing `cv2_s2`; user CPU time was 323.00 seconds.
+  Live samples observed roughly one compiler core for most of the run and
+  about 2.03 GiB RSS at 270 seconds, below the 4 GiB cap. The safe-runner
+  receipt could not recover RSS/FD counters in this sandbox. No compiler or
+  harness process survived the timeout;
+- the offline validator rejects the preserved manifest at the expected
+  `manifest_status` boundary rather than accepting a partial stage2 run.
+
+Boundary: the source-authority guard is a correctness repair, not a B4-F
+closure or a performance claim. B4-F remains RED because stage2 did not finish
+within 300 seconds. The next legal work is to measure the remaining stage2
+lowering demand/cost frontier; no additional method-family allowlist is
+admitted without a new exact failing target and its contract. Materialized
+bodies with an explicit return annotation that contradicts the body remain a
+separate type-checking frontier: the source-authority guard does not validate
+general user annotations and must not be expanded to hide that defect.
 
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 

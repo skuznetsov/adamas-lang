@@ -5186,6 +5186,7 @@ module Adamas::HIR
           end
         end
         @function_defs[name] = def_node # missing-revision-owner
+        set_function_def_arena(name, @arena) if record_current_arena
         set_function_visibility(name, def_node.visibility)
         if env_has?("DEBUG_SET_FDEF_STEPS")
           if filter = env_get("DEBUG_SET_FDEF")
@@ -6204,6 +6205,9 @@ module Adamas::HIR
     @line_counts_by_arena : Hash(UInt64, Int32)
     # Source path per arena (used for diagnostics).
     @paths_by_arena : Hash(UInt64, String)
+    # Resolved standard-library root. A source path is trusted as a protocol
+    # authority only when it is contained by this CLI-provided root.
+    @stdlib_root : String?
     # Extra source snippets (macro expansion/reparse) to keep slices alive.
     @extra_sources_by_arena : Hash(UInt64, Array(String))
     # DefNode identities whose parameter slices came from macro-generated text.
@@ -6244,6 +6248,7 @@ module Adamas::HIR
       main_arenas : Array(Adamas::Compiler::Frontend::ArenaLike)? = nil,
       hir_module : Adamas::HIR::Module? = nil,
       link_libraries : Array(String)? = nil,
+      stdlib_root : String? = nil,
     )
       # V2 BOOTSTRAP: ENV access crashes V2-compiled binaries (module constant
       # initialization issue). Use hardcoded default to avoid crash in constructor.
@@ -6552,6 +6557,7 @@ module Adamas::HIR
       @main_arenas << @arena if @main_arenas.empty?
       @line_counts_by_arena = {} of UInt64 => Int32
       @paths_by_arena = paths_by_arena || {} of UInt64 => String
+      @stdlib_root = stdlib_root
       @extra_sources_by_arena = {} of UInt64 => Array(String)
       @macro_generated_parameter_def_ids = Set(UInt64).new
       @macro_generated_parameter_sources = {} of {UInt64, UInt64} => String
@@ -6799,6 +6805,10 @@ module Adamas::HIR
       @extra_sources_by_arena = {} of UInt64 => Array(String)
       @macro_generated_parameter_def_ids = Set(UInt64).new
       @macro_generated_parameter_sources = {} of {UInt64, UInt64} => String
+    end
+
+    def bootstrap_bind_stdlib_root(stdlib_root : String) : Nil
+      @stdlib_root = stdlib_root
     end
 
     def bootstrap_bind_main_arenas(
@@ -53275,6 +53285,118 @@ module Adamas::HIR
         owner == "Tuple" || owner.starts_with?("Tuple(")
     end
 
+    private def registered_owner_hash_overload_accepts_positional?(
+      base_name : String,
+      call_arg_count : Int32,
+    ) : Bool
+      function_def_overloads(base_name).any? do |candidate_name|
+        if def_node = @function_defs[candidate_name]?
+          return_def_accepts_positional?(def_node, call_arg_count)
+        else
+          false
+        end
+      end
+    end
+
+    private def stdlib_definition_authoritative?(
+      name : String,
+      base_name : String,
+      def_node : Adamas::Compiler::Frontend::DefNode,
+    ) : Bool
+      return false if @macro_generated_parameter_def_ids.includes?(def_node.object_id.to_u64)
+
+      root = @stdlib_root
+      return false unless root
+
+      arena : Adamas::Compiler::Frontend::ArenaLike? = nil
+      if current = @function_defs[name]?
+        arena = @function_def_arenas[name]? if current.object_id == def_node.object_id
+      end
+      if arena.nil?
+        if current = @function_defs[base_name]?
+          arena = @function_def_arenas[base_name]? if current.object_id == def_node.object_id
+        end
+      end
+      if arena.nil?
+        @function_defs.each do |candidate_name, candidate_def|
+          next unless candidate_def.object_id == def_node.object_id
+          if candidate_arena = @function_def_arenas[candidate_name]?
+            arena = candidate_arena
+            break
+          end
+        end
+      end
+      return false unless arena
+      return false unless arena_fits_def?(arena, def_node)
+      return false unless @main_arenas.any? { |candidate| candidate.object_id == arena.object_id }
+      path = source_path_for(arena)
+      return false unless path
+      return true if path == root
+
+      prefix = root.ends_with?(File::SEPARATOR.to_s) ? root : root + File::SEPARATOR
+      path.starts_with?(prefix)
+    end
+
+    # The typed hash protocol is authoritative only for the currently selected
+    # stdlib definition. The early contract breaks recursive return inference
+    # inside Hasher helpers without granting authority to external reopenings.
+    # Pointer has no concrete stdlib implementation of its own, so its inherited
+    # contract is admitted only while no owner-specific overload replaces it.
+    private def canonical_typed_hash_return_contract(
+      name : String,
+      base_name : String,
+      call_arg_count : Int32?,
+      receiver_type : TypeRef? = nil,
+      selected_def : Adamas::Compiler::Frontend::DefNode? = nil,
+    ) : TypeRef?
+      return nil if call_arg_count && call_arg_count != 1
+      return nil unless hash_protocol_typed_name?(name, base_name)
+
+      hasher_ref = type_ref_for_name("Crystal::Hasher")
+      return nil if hasher_ref == TypeRef::VOID
+      return nil unless method_name_codec_exact_callsite_name?(
+        name,
+        base_name,
+        [hasher_ref],
+        false,
+      )
+
+      parts = parse_method_name_compact(base_name)
+      return nil unless parts.separator == '#' && parts.method == "hash"
+      target_owner = normalize_method_owner_name(parts.owner)
+      if receiver = receiver_type
+        receiver_name = normalize_method_owner_name(get_type_name_from_ref(receiver))
+        return nil unless receiver_name == target_owner
+      end
+
+      pointer_owner = target_owner == "Pointer" || target_owner.starts_with?("Pointer(")
+      pointer_override = pointer_owner &&
+                         registered_owner_hash_overload_accepts_positional?(base_name, 1)
+      def_node = selected_def || lookup_function_def_for_return(name, base_name, 1)
+      if def_node
+        declared_return : TypeRef? = nil
+        if def_node.return_type
+          declared_return = resolve_return_type_from_def(
+            name,
+            base_name,
+            receiver_type,
+            1,
+            def_node,
+          )
+          return nil unless declared_return == hasher_ref
+        end
+        return hasher_ref if stdlib_definition_authoritative?(name, base_name, def_node)
+        return hasher_ref if pointer_owner && !pointer_override && declared_return == hasher_ref
+        return nil
+      end
+
+      if pointer_owner
+        return nil if pointer_override
+        return hasher_ref
+      end
+      nil
+    end
+
     private def built_in_zero_argument_hash_return_contract(
       name : String,
       call_arg_count : Int32?,
@@ -53293,14 +53415,7 @@ module Adamas::HIR
       if function = @module.function_by_name(name)
         return nil unless function.return_type == TypeRef::VOID
       end
-      explicit_owner_overload = function_def_overloads(base_name).any? do |candidate_name|
-        if def_node = @function_defs[candidate_name]?
-          return_def_accepts_positional?(def_node, 0)
-        else
-          false
-        end
-      end
-      return nil if explicit_owner_overload
+      return nil if registered_owner_hash_overload_accepts_positional?(base_name, 0)
 
       TypeRef::UINT64
     end
@@ -53320,22 +53435,21 @@ module Adamas::HIR
         )
         return backend_return
       end
-      # M4d (return-type fix): a typed hash(hasher) overload returns Crystal::Hasher,
-      # NOT the bare 0-arg #hash UInt64. Without this, the typed name falls back to
-      # the bare #hash base-return cache (UInt64), so Object#hash's
-      # `hash(hasher).result` dispatches `.result` to UInt64#result (stub). Scoped to
-      # method "hash" + a Crystal::Hasher suffix; leaves the bare #hash (UInt64)
-      # untouched. Does not pollute @function_base_return_types[base_name].
-      if hash_protocol_typed_name?(name, base_name)
-        hasher_ref = type_ref_for_name("Crystal::Hasher")
-        if hasher_ref != TypeRef::VOID
-          set_function_type_entry(name, hasher_ref)
-          return hasher_ref
+      unless @module.has_function_with_body?(name)
+        if hash_return = canonical_typed_hash_return_contract(
+             name,
+             base_name,
+             call_arg_count,
+             selected_def: selected_def,
+           )
+          set_function_type_entry(name, hash_return)
+          return hash_return
         end
       end
       # Pointer(T) and Tuple(...) can exist without a complete @class_info
       # ancestor chain. Their inherited zero-argument Object#hash ABI is UInt64,
-      # while their specialized hash(hasher) overload remains covered above.
+      # while their specialized hash(hasher) overload is covered by the exact
+      # protocol contract above.
       if built_in_hash_return = built_in_zero_argument_hash_return_contract(name, call_arg_count)
         set_function_type_entry(name, built_in_hash_return)
         return built_in_hash_return
@@ -74740,15 +74854,15 @@ module Adamas::HIR
         end
       end
       lower_function_if_needed(primary_mangled_name)
-      if method_name != primary_mangled_name
-        lower_function_if_needed(method_name)
-      end
       use_primary_case_equality = op == "===" && runtime_case_equality_primary?(
         primary_mangled_name,
         method_name,
         left_type,
         right_type,
       )
+      if method_name != primary_mangled_name && !use_primary_case_equality
+        lower_function_if_needed(method_name)
+      end
       call_target_name = if use_primary_case_equality
                            primary_mangled_name
                          else
@@ -85073,6 +85187,32 @@ module Adamas::HIR
       call.id
     end
 
+    # An untyped regular parameter is specialized from the concrete callsite.
+    # Once that exact symbol is admitted, also queueing its bare family alias
+    # only duplicates work; keep the alias fallback for every ambiguous shape.
+    private def exact_untyped_callsite_target_admitted?(
+      target_name : String,
+      base_name : String,
+      arg_types : Array(TypeRef),
+      has_block : Bool,
+      has_splat : Bool,
+      has_named_args : Bool,
+      selected_def : Adamas::Compiler::Frontend::DefNode?,
+    ) : Bool
+      return false unless selected_def
+      return false if has_block || has_splat || has_named_args
+      return false unless method_name_codec_exact_callsite_name?(
+        target_name,
+        base_name,
+        arg_types,
+        has_block,
+      )
+      return false unless def_has_untyped_regular_param?(selected_def)
+
+      state = function_state(target_name)
+      @module.has_function_with_body?(target_name) || state.pending? || state.in_progress?
+    end
+
     private def lower_call(ctx : LoweringContext, node : Adamas::Compiler::Frontend::CallNode) : ValueId
       trace_lower_call_arena_phase(ctx, node, "entry")
       trace_lower_call_arena_expr(ctx, node, "entry.callee", node.callee, @arena, "lower_call.current")
@@ -90915,7 +91055,17 @@ module Adamas::HIR
         STDERR.puts "[CALL_TARGET_EARLY] caller=#{ctx.function.name} method=#{method_name} base=#{base_method_name} mangled=#{mangled_method_name} recv=#{recv_name} block_expr=#{block_expr_flag} block_pass=#{block_pass_flag} args=#{args.size}"
       end
       lower_function_if_needed(mangled_method_name)
-      if mangled_method_name != base_method_name &&
+      exact_callsite_target_admitted = exact_untyped_callsite_target_admitted?(
+        mangled_method_name,
+        base_method_name,
+        arg_types,
+        has_block_call,
+        has_splat,
+        has_named_args,
+        selected_call_entry_def,
+      )
+      if !exact_callsite_target_admitted &&
+         mangled_method_name != base_method_name &&
          (@function_defs.has_key?(base_method_name) ||
          @module.has_function?(base_method_name) ||
          @function_types.has_key?(base_method_name))
@@ -94654,6 +94804,7 @@ module Adamas::HIR
         next if vid < 0
         vb = "#{vn}##{mb}"
         vm = mangle_function_name(vb, arg_types, has_block_call)
+        requested_vm = vm
         unless @function_types.has_key?(vm) || @function_defs.has_key?(vm) || @module.has_function?(vm)
           if res = resolve_untyped_overload(vb, arg_types.size, has_block_call)
             vm = res
@@ -94706,6 +94857,9 @@ module Adamas::HIR
             exact_inherited_hash_demand = true
           end
         end
+        exact_typed_hash_target = arg_types.size == 1 &&
+                                  hash_protocol_typed_name?(requested_vm, vb)
+        vm = requested_vm if exact_typed_hash_target
         if exact_inherited_hash_demand
           lower_required_virtual_target_function(vm, exact_demand: true)
           force_lower_function_for_return_type(vm) unless @module.has_function_with_body?(vm)
@@ -94827,10 +94981,42 @@ module Adamas::HIR
 
       function = @module.function_by_name(function_name)
       if function
-        return function.return_type unless function.return_type == TypeRef::VOID
+        return function.return_type if @module.has_function_with_body?(function_name)
       end
 
-      built_in_zero_argument_hash_return_contract(function_name, call_arg_count) || TypeRef::VOID
+      typed_hash_dispatch_return_contract(
+        function_name,
+        receiver_type,
+        method_name,
+        call_arg_count,
+      ) || built_in_zero_argument_hash_return_contract(function_name, call_arg_count) || TypeRef::VOID
+    end
+
+    # Keep union dispatch on the same authority path as ordinary return lookup
+    # and Tuple intrinsics; receiver matching here is an additional guard, not
+    # an independent protocol certificate.
+    private def typed_hash_dispatch_return_contract(
+      function_name : String,
+      receiver_type : TypeRef,
+      method_name : String,
+      call_arg_count : Int32,
+    ) : TypeRef?
+      return nil unless method_name == "hash" && call_arg_count == 1
+
+      base_name = strip_type_suffix(function_name)
+      return nil unless hash_protocol_typed_name?(function_name, base_name)
+
+      parts = parse_method_name_compact(base_name)
+      return nil unless parts.separator == '#' && parts.method == "hash"
+      receiver_name = normalize_method_owner_name(get_type_name_from_ref(receiver_type))
+      target_owner = normalize_method_owner_name(parts.owner)
+      return nil unless receiver_name == target_owner
+      canonical_typed_hash_return_contract(
+        function_name,
+        base_name,
+        call_arg_count,
+        receiver_type,
+      )
     end
 
     private def wrap_union_dispatch_branch_result(
@@ -112023,6 +112209,22 @@ module Adamas::HIR
       phi.id
     end
 
+    private def tuple_hash_protocol_intrinsic_admitted?(tuple_type : TypeRef) : Bool
+      return false unless concrete_tuple_element_types(tuple_type)
+
+      owner = get_type_name_from_ref(tuple_type)
+      base_name = "#{owner}#hash"
+      hasher_ref = type_ref_for_name("Crystal::Hasher")
+      return false if hasher_ref == TypeRef::VOID
+      target_name = mangle_function_name(base_name, [hasher_ref])
+      canonical_typed_hash_return_contract(
+        target_name,
+        base_name,
+        1,
+        tuple_type,
+      ) == hasher_ref
+    end
+
     private def lower_tuple_hash_with_hasher_intrinsic(
       ctx : LoweringContext,
       tuple_id : ValueId,
@@ -112032,6 +112234,7 @@ module Adamas::HIR
       return nil if is_union_or_nilable_type?(tuple_type)
       elems = concrete_tuple_element_types(tuple_type)
       return nil unless elems
+      return nil unless tuple_hash_protocol_intrinsic_admitted?(tuple_type)
 
       current_hasher = hasher_id
       idx = 0
@@ -112058,6 +112261,10 @@ module Adamas::HIR
       tuple_type : TypeRef,
     ) : ValueId?
       return nil unless concrete_tuple_element_types(tuple_type)
+      return nil unless tuple_hash_protocol_intrinsic_admitted?(tuple_type)
+
+      owner = get_type_name_from_ref(tuple_type)
+      return nil if registered_owner_hash_overload_accepts_positional?("#{owner}#hash", 0)
 
       hasher_type = type_ref_for_name("Crystal::Hasher")
       hasher_type = TypeRef::POINTER if hasher_type == TypeRef::VOID
