@@ -18,6 +18,93 @@ private def run_safe_resource_fields(line : String) : Hash(String, String)
   fields
 end
 
+private def run_safe_exit_fence_case(runner : String, target_exits : Bool) : NamedTuple(
+  status: Process::Status,
+  output: String,
+  fields: Hash(String, String),
+)
+  suffix = "#{Process.pid}_#{Random.rand(1_000_000)}"
+  fake_bin = File.join(Dir.tempdir, "adamas_run_safe_metrics_exit_fence_#{suffix}")
+  resource_file = File.join(Dir.tempdir, "adamas_run_safe_resource_exit_fence_#{suffix}.txt")
+  omit_marker = File.join(Dir.tempdir, "adamas_run_safe_exit_fence_#{suffix}")
+  lsof_counter = File.join(Dir.tempdir, "adamas_run_safe_exit_fence_lsof_#{suffix}")
+  stdout = IO::Memory.new
+  stderr = IO::Memory.new
+
+  FileUtils.mkdir_p(fake_bin)
+  File.write(File.join(fake_bin, "ps"), <<-'SH')
+    #!/bin/sh
+    root="${RUN_SAFE_TARGET_PID:-${RUN_SAFE_SUPERVISOR_PID:?}}"
+    supervisor="${RUN_SAFE_SUPERVISOR_PID:?}"
+    printf '%s 1 %s 10\n' "$supervisor" "$supervisor"
+    if [ "$root" != "$supervisor" ]; then
+      if [ -e "${FAKE_OMIT_MARKER:?}" ]; then
+        if [ "${FAKE_TARGET_EXITS:?}" = "yes" ]; then
+          ticks=0
+          while kill -0 "$root" 2>/dev/null && [ "$ticks" -lt 50 ]; do
+            sleep 0.01
+            ticks=$((ticks + 1))
+          done
+          if kill -0 "$root" 2>/dev/null; then exit 4; fi
+        else
+          rm -f "${FAKE_OMIT_MARKER:?}"
+        fi
+      else
+        printf '%s %s %s 20\n' "$root" "$supervisor" "$root"
+      fi
+    fi
+  SH
+  File.write(File.join(fake_bin, "lsof"), <<-'SH')
+    #!/bin/sh
+    pids=""
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = "-p" ]; then pids="$2"; shift; fi
+      shift
+    done
+    old_ifs="$IFS"
+    IFS=,
+    for pid in $pids; do printf 'p%s\nf0\nf1\n' "$pid"; done
+    IFS="$old_ifs"
+    case ",$pids," in
+      *,"${RUN_SAFE_TARGET_PID:-missing}",*)
+        count="$(cat "${FAKE_LSOF_COUNTER:?}" 2>/dev/null || printf '0')"
+        count=$((count + 1))
+        printf '%s\n' "$count" >"${FAKE_LSOF_COUNTER:?}"
+        if [ "$count" -eq 2 ]; then : >"${FAKE_OMIT_MARKER:?}"; fi
+        ;;
+    esac
+  SH
+  %w[ps lsof].each { |tool| File.chmod(File.join(fake_bin, tool), 0o755) }
+
+  begin
+    target = if target_exits
+               "while [ ! -e #{Process.quote(omit_marker)} ]; do sleep 0.01; done"
+             else
+               "sleep 2"
+             end
+    status = Process.run(
+      runner,
+      ["/bin/sh", "3", "64", "-c", target],
+      env: {
+        "PATH" => "#{fake_bin}:/usr/bin:/bin",
+        "FAKE_OMIT_MARKER" => omit_marker,
+        "FAKE_LSOF_COUNTER" => lsof_counter,
+        "FAKE_TARGET_EXITS" => target_exits ? "yes" : "no",
+        "RUN_SAFE_RESOURCE_FILE" => resource_file,
+      },
+      output: stdout,
+      error: stderr
+    )
+    output = "#{stdout}#{stderr}"
+    {status: status, output: output, fields: run_safe_resource_fields(run_safe_resource_line(resource_file))}
+  ensure
+    File.delete(omit_marker) if File.exists?(omit_marker)
+    File.delete(lsof_counter) if File.exists?(lsof_counter)
+    File.delete(resource_file) if File.exists?(resource_file)
+    FileUtils.rm_rf(fake_bin)
+  end
+end
+
 describe "run_safe resource metrics" do
   it "emits an aggregate process-tree resource line on success" do
     root = File.expand_path("../..", __DIR__)
@@ -103,6 +190,41 @@ describe "run_safe resource metrics" do
       File.delete(resource_file) if File.exists?(resource_file)
       FileUtils.rm_rf(fake_bin)
     end
+  end
+
+  it "preserves completed samples when the target exits during the next FD fence" do
+    root = File.expand_path("../..", __DIR__)
+    runner = File.join(root, "scripts", "run_safe.sh")
+    result = run_safe_exit_fence_case(runner, target_exits: true)
+    fields = result[:fields]
+
+    result[:status].success?.should be_true, result[:output]
+    fields["tree_coverage"].should eq("all_scheduled_snapshots"), result[:output]
+    fields["fd_tree_coverage"].should eq("all_stable_pairs"), result[:output]
+    fields["max_rss_kb"].to_i.should be > 0
+    fields["max_fd"].to_i.should be > 0
+    fields["tree_samples"].should eq("1"), result[:output]
+    fields["rss_samples"].should eq("1"), result[:output]
+    fields["fd_samples"].should eq("1"), result[:output]
+    fields["fd_topology_stable_samples"].should eq("1"), result[:output]
+    fields["fd_topology_unstable_samples"].should eq("0"), result[:output]
+  end
+
+  it "fails FD evidence closed when a rootless snapshot omits a live target" do
+    root = File.expand_path("../..", __DIR__)
+    runner = File.join(root, "scripts", "run_safe.sh")
+    result = run_safe_exit_fence_case(runner, target_exits: false)
+    fields = result[:fields]
+
+    result[:status].success?.should be_true, result[:output]
+    fields["tree_coverage"].should eq("all_scheduled_snapshots"), result[:output]
+    fields["fd_tree_coverage"].should eq("unknown"), result[:output]
+    fields["max_fd"].should eq("unknown"), result[:output]
+    fields["fd_available"].should eq("unknown"), result[:output]
+    fields["tree_samples"].to_i.should be > 0
+    fields["fd_samples"].to_i.should be < fields["tree_samples"].to_i
+    fields["fd_topology_stable_samples"].to_i.should be > 0
+    fields["fd_topology_unstable_samples"].to_i.should be > 0
   end
 
   it "reports unknown measurements when ps and lsof cannot be used" do

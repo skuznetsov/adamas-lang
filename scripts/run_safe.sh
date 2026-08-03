@@ -131,12 +131,10 @@ prepare_resource_evidence_file() {
 }
 
 validate_ps_table() {
-  printf '%s\n' "$1" | awk -v root="$2" '
+  printf '%s\n' "$1" | awk '
     NF != 4 { exit 1 }
     $1 !~ /^[0-9]+$/ || $2 !~ /^[0-9]+$/ || $3 !~ /^[0-9]+$/ || $4 !~ /^[0-9]+$/ { exit 1 }
     seen[$1]++ > 0 { exit 1 }
-    $1 == root { found_root=1 }
-    END { if (!found_root) exit 1 }
   '
 }
 
@@ -146,7 +144,10 @@ capture_tree_snapshot() {
   bounded_capture ps -axo pid=,ppid=,pgid=,rss= || return 1
   ps_table="$CAPTURE_OUTPUT"
   [ -n "$ps_table" ] || return 1
-  validate_ps_table "$ps_table" "$PID" || return 1
+  validate_ps_table "$ps_table" || return 1
+  # A syntactically valid `ps -axo` response without the supervised root is a
+  # distinct candidate exit boundary, not a malformed probe.
+  printf '%s\n' "$ps_table" | awk -v root="$PID" '$1 == root { found=1 } END { exit(found ? 0 : 1) }' || return 3
   tree_rows=$(printf '%s\n' "$ps_table" | awk -v root="$PID" '
     {
       pid[NR] = $1
@@ -249,14 +250,29 @@ sample_resources() {
 
   CURRENT_RSS_KB=""
   CURRENT_FD_COUNT=""
-  TREE_SAMPLES=$((TREE_SAMPLES + 1))
   local before_signature=""
   local before_pids=""
   local before_pid_count=0
   local before_rss=""
   local fd_count=""
+  local snapshot_rc=0
 
-  if [ "$PS_SNAPSHOT_AVAILABLE" != "yes" ] || ! capture_tree_snapshot; then
+  if [ "$PS_SNAPSHOT_AVAILABLE" != "yes" ]; then
+    TREE_SAMPLES=$((TREE_SAMPLES + 1))
+    FD_TOPOLOGY_UNSTABLE_SAMPLES=$((FD_TOPOLOGY_UNSTABLE_SAMPLES + 1))
+    return 0
+  fi
+  capture_tree_snapshot
+  snapshot_rc=$?
+  if [ "$snapshot_rc" -eq 3 ]; then
+    if kill -0 "$PID" 2>/dev/null; then
+      TREE_SAMPLES=$((TREE_SAMPLES + 1))
+      FD_TOPOLOGY_UNSTABLE_SAMPLES=$((FD_TOPOLOGY_UNSTABLE_SAMPLES + 1))
+    fi
+    return 0
+  fi
+  if [ "$snapshot_rc" -ne 0 ]; then
+    TREE_SAMPLES=$((TREE_SAMPLES + 1))
     FD_TOPOLOGY_UNSTABLE_SAMPLES=$((FD_TOPOLOGY_UNSTABLE_SAMPLES + 1))
     return 0
   fi
@@ -265,6 +281,20 @@ sample_resources() {
   before_pid_count="$SNAPSHOT_PID_COUNT"
   before_rss="$SNAPSHOT_RSS_KB"
   CURRENT_RSS_KB="$before_rss"
+  if [ "$FD_AVAILABLE" = "yes" ]; then
+    fd_count=$(fd_count_for_pids "$before_pids" 2>/dev/null || true)
+  fi
+  capture_tree_snapshot
+  snapshot_rc=$?
+  if [ "$snapshot_rc" -eq 3 ]; then
+    if kill -0 "$PID" 2>/dev/null; then
+      snapshot_rc=1
+    else
+      return 0
+    fi
+  fi
+
+  TREE_SAMPLES=$((TREE_SAMPLES + 1))
   RSS_SAMPLES=$((RSS_SAMPLES + 1))
   if [ -z "$MAX_RSS_KB" ] || [ "$before_rss" -gt "$MAX_RSS_KB" ]; then
     MAX_RSS_KB="$before_rss"
@@ -272,10 +302,7 @@ sample_resources() {
   if [ "$before_pid_count" -gt "$MAX_TREE_PIDS" ]; then
     MAX_TREE_PIDS="$before_pid_count"
   fi
-  if [ "$FD_AVAILABLE" = "yes" ]; then
-    fd_count=$(fd_count_for_pids "$before_pids" 2>/dev/null || true)
-  fi
-  if ! capture_tree_snapshot || [ "$SNAPSHOT_SIGNATURE" != "$before_signature" ]; then
+  if [ "$snapshot_rc" -ne 0 ] || [ "$SNAPSHOT_SIGNATURE" != "$before_signature" ]; then
     FD_TOPOLOGY_UNSTABLE_SAMPLES=$((FD_TOPOLOGY_UNSTABLE_SAMPLES + 1))
     return 0
   fi

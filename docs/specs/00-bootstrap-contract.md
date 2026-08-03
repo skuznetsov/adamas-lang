@@ -244,6 +244,14 @@ coverage, or a failed observation must produce `unknown` for the affected
 metric; a partial-PID or empty probe must never be serialized as a tree-wide
 numeric zero.
 
+A sampling transaction that reaches a syntactically valid second `ps -axo`
+response without the supervised root is aborted only when an independent
+liveness check confirms that the root exited. It contributes no point or pair
+to the published counters, so an incomplete natural-exit fence cannot
+invalidate earlier completed samples. If the root is still live, or the fence
+is malformed or failed, the observation remains unstable and fails FD evidence
+closed.
+
 The row records the outcome, reason, exit code, per-metric sample counts,
 coverage, observation mode, and maximum observed ancestry width. It is sampled
 evidence over the visible rooted ancestry, not a hermetic resource proof:

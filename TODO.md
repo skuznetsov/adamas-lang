@@ -194,8 +194,11 @@ FDs additionally require full PID coverage and stable paired topology.
 Malformed/unavailable `ps`, empty/malformed/partial `lsof`, and FD topology
 fence failure/churn fail the affected metric closed to `unknown`. Malformed
 bounds, pre-existing evidence paths, publication races, and target marker
-spoofing have negative guards. The focused resource/process-tree group passes
-17 examples, including timeout, TERM-ignoring parent, nested
+spoofing have negative guards. A liveness-confirmed natural-exit fence now
+aborts only its incomplete sample transaction instead of invalidating earlier
+stable pairs, while a rootless snapshot of a live target fails closed. The
+focused resource/process-tree group passes 19 examples, including timeout,
+TERM-ignoring parent, nested
 supervisor, and successful-parent descendant cleanup. This is the scoped B7
 evidence owner consumed by the B6 manifest and T8 validator; it does not make
 B4-F green and does not prove between-sample peaks, detached/reparented process
