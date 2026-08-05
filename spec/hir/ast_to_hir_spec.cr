@@ -512,6 +512,27 @@ class Adamas::HIR::AstToHir
     lower_receiver_repair_targets(exact_targets, fallback_requests)
   end
 
+  def __test_receiver_repair_strict_target_expected(
+    exact_target : String,
+    fallback_base : String,
+    owner : String,
+    arg_types : Array(Adamas::HIR::TypeRef),
+  ) : Bool
+    receiver_repair_strict_target_expected?(ReceiverRepairFallback.new(
+      exact_target,
+      fallback_base,
+      owner,
+      arg_types,
+      false,
+      false,
+      false,
+      "",
+      UInt32::MAX,
+      false,
+      nil,
+    ))
+  end
+
   def __test_get_function_return_type(name : String) : Adamas::HIR::TypeRef
     get_function_return_type(name)
   end
@@ -1853,6 +1874,30 @@ describe "block shorthand parameter identity" do
 end
 
 describe "assignment expression type preservation" do
+  it "preserves a typed hash's named-tuple value shape in class-variable storage" do
+    converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+      class TypedNamedTupleCache
+        @@entries = {} of String => NamedTuple(name: String, count: Int32)
+
+        def self.entries
+          @@entries
+        end
+      end
+
+      TypedNamedTupleCache.entries
+    CRYSTAL
+
+    reader = converter.module.functions.find { |function| function.name.starts_with?("TypedNamedTupleCache.entries") }
+    reader.should_not be_nil
+    class_var_get = reader.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+      instruction.as?(Adamas::HIR::ClassVarGet)
+    end.find { |instruction| instruction.var_name == "entries" }
+    class_var_get.should_not be_nil
+    converter.__test_get_type_name_from_ref(class_var_get.not_nil!.type).should eq(
+      "Hash(String, NamedTuple(name: String, count: Int32))"
+    )
+  end
+
   it "keeps a lazy-initialized class variable non-nil for the following index call" do
     converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
       class LazyRegistry
@@ -3182,6 +3227,188 @@ describe Adamas::HIR::AstToHir do
       end
       converter.module.has_function_with_body?(exact).should be_false
       converter.module.has_function_with_body?(fallback).should be_true
+    end
+
+    it "fails closed when a registered generic setter cannot materialize its exact ABI" do
+      expect_raises(Exception, /receiver repair left bodyless target GenericSetter.*#\[\]=\$String_NamedTuple/) do
+        converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+          class GenericSetter(T)
+            def []=(key : String, value : T) : T
+              value
+            end
+          end
+
+          class BareNamedTupleSetterProbe
+            @@entries = GenericSetter(NamedTuple(name: String, count: Int32)).new
+
+            def self.entry : NamedTuple
+              {name: "probe", count: 1}
+            end
+
+            def self.store
+              @@entries["probe"] = entry
+            end
+          end
+
+          BareNamedTupleSetterProbe.store
+        CRYSTAL
+        converter.__test_repair_receiver_bound_call_targets
+      end
+    end
+
+    it "does not demand an incompatible sibling overload from a shared fallback base" do
+      source = <<-CRYSTAL
+        class ReceiverOverloads
+          def target(value : Int32) : Int32
+            value
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+      end.each { |node| converter.register_class(node) }
+
+      converter.__test_receiver_repair_strict_target_expected(
+        "ReceiverOverloads#target$String",
+        "ReceiverOverloads#target",
+        "ReceiverOverloads",
+        [Adamas::HIR::TypeRef::STRING],
+      ).should be_false
+    end
+
+    it "does not demand a generic template with incompatible owner bindings" do
+      source = <<-CRYSTAL
+        class GenericReceiver(T)
+          def target(value : T) : T
+            value
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+      end.each { |node| converter.register_class(node) }
+
+      converter.__test_receiver_repair_strict_target_expected(
+        "GenericReceiver(String)#target$Bool",
+        "GenericReceiver(String)#target",
+        "GenericReceiver(String)",
+        [Adamas::HIR::TypeRef::BOOL],
+      ).should be_false
+    end
+
+    it "does not treat a bare generic argument as a shaped union" do
+      source = <<-CRYSTAL
+        class GenericReceiver(T)
+          def target(value : T) : T
+            value
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+      end.each { |node| converter.register_class(node) }
+
+      owner = "GenericReceiver(Array(Int32) | String)"
+      converter.__test_receiver_repair_strict_target_expected(
+        "#{owner}#target$Array",
+        "#{owner}#target",
+        owner,
+        [converter.__test_type_ref_for_name("Array")],
+      ).should be_false
+    end
+
+    it "does not mix generic owner bindings across receiver-repair inputs" do
+      source = <<-CRYSTAL
+        class GenericReceiver(T)
+          def target(value : T) : T
+            value
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+      end.each { |node| converter.register_class(node) }
+
+      converter.__test_receiver_repair_strict_target_expected(
+        "GenericReceiver(String)#target$Int32",
+        "GenericReceiver(String)#target",
+        "GenericReceiver(Int32)",
+        [Adamas::HIR::TypeRef::INT32],
+      ).should be_false
+    end
+
+    it "does not mix an exact target with a sibling generic owner" do
+      source = <<-CRYSTAL
+        class GenericReceiver(T)
+          def target(value : T) : T
+            value
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+      end.each { |node| converter.register_class(node) }
+
+      converter.__test_receiver_repair_strict_target_expected(
+        "GenericReceiver(Int32)#target$String",
+        "GenericReceiver(String)#target",
+        "GenericReceiver(String)",
+        [Adamas::HIR::TypeRef::STRING],
+      ).should be_false
+    end
+
+    it "does not demand an abstract generic template body" do
+      source = <<-CRYSTAL
+        abstract class AbstractGenericReceiver(T)
+          abstract def target(value : T) : T
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+      end.each { |node| converter.register_class(node) }
+
+      converter.__test_receiver_repair_strict_target_expected(
+        "AbstractGenericReceiver(String)#target$String",
+        "AbstractGenericReceiver(String)#target",
+        "AbstractGenericReceiver(String)",
+        [Adamas::HIR::TypeRef::STRING],
+      ).should be_false
     end
 
     it "materializes both direct overload shapes that share one fallback base" do
@@ -11564,6 +11791,327 @@ describe Adamas::HIR::AstToHir do
           end
 
           erased_overlap_take(choose_overlap_box(false))
+        CRYSTAL
+      end
+    end
+
+    it "accepts a shared explicit ABI from a transitively included module" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        module SharedExplicitAbi(T)
+          def accept(value : T) : String
+            "generic"
+          end
+        end
+
+        module ForwardSharedExplicitAbi(T)
+          include SharedExplicitAbi(T)
+
+          def accept(value : String) : String
+            value
+          end
+        end
+
+        class SharedExplicitAbiBox(T)
+          include ForwardSharedExplicitAbi(T)
+        end
+
+        def choose_shared_explicit_abi_box(flag : Bool) : SharedExplicitAbiBox(Int32) | SharedExplicitAbiBox(String)
+          flag ? SharedExplicitAbiBox(Int32).new : SharedExplicitAbiBox(String).new
+        end
+
+        def use_shared_explicit_abi(value : SharedExplicitAbiBox(Int32) | SharedExplicitAbiBox(String))
+          value.accept("ok")
+        end
+
+        use_shared_explicit_abi(choose_shared_explicit_abi_box(false))
+      CRYSTAL
+      converter.flush_pending_functions
+
+      caller = converter.module.functions.find { |function| function.name.starts_with?("use_shared_explicit_abi$") }
+      caller.should_not be_nil
+      call = caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.find { |instruction| instruction.method_name.includes?("#accept") }
+      call.should_not be_nil
+      call.not_nil!.virtual.should be_true
+      call.not_nil!.type.should eq(Adamas::HIR::TypeRef::STRING)
+    end
+
+    it "specializes included-module explicit ABIs for each generic union variant" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        module SharedMappedExplicitAbi(T)
+          def accept(value : T) : String
+            value
+          end
+        end
+
+        class SharedMappedExplicitAbiBox(Tag, Value)
+          include SharedMappedExplicitAbi(Value)
+        end
+
+        def choose_shared_mapped_explicit_abi_box(flag : Bool) : SharedMappedExplicitAbiBox(Int32, String) | SharedMappedExplicitAbiBox(Bool, String)
+          flag ? SharedMappedExplicitAbiBox(Int32, String).new : SharedMappedExplicitAbiBox(Bool, String).new
+        end
+
+        def use_shared_mapped_explicit_abi(value : SharedMappedExplicitAbiBox(Int32, String) | SharedMappedExplicitAbiBox(Bool, String))
+          value.accept("ok")
+        end
+
+        use_shared_mapped_explicit_abi(choose_shared_mapped_explicit_abi_box(false))
+      CRYSTAL
+      converter.flush_pending_functions
+
+      caller = converter.module.functions.find { |function| function.name.starts_with?("use_shared_mapped_explicit_abi$") }
+      caller.should_not be_nil
+      call = caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.find { |instruction| instruction.method_name.includes?("#accept") }
+      call.should_not be_nil
+      call.not_nil!.virtual.should be_true
+      call.not_nil!.type.should eq(Adamas::HIR::TypeRef::STRING)
+    end
+
+    it "rejects incompatible included-module explicit ABIs for generic union variants" do
+      expect_raises(Adamas::HIR::LoweringError, /incompatible explicit arguments for concrete generic receiver union/) do
+        lower_program_with_main(<<-CRYSTAL, source_backed: true)
+          module IncompatibleMappedExplicitAbi(T)
+            def accept(value : T) : String
+              value.to_s
+            end
+          end
+
+          class IncompatibleMappedExplicitAbiBox(T)
+            include IncompatibleMappedExplicitAbi(T)
+          end
+
+          def choose_incompatible_mapped_explicit_abi_box(flag : Bool) : IncompatibleMappedExplicitAbiBox(Int32) | IncompatibleMappedExplicitAbiBox(String)
+            flag ? IncompatibleMappedExplicitAbiBox(Int32).new : IncompatibleMappedExplicitAbiBox(String).new
+          end
+
+          def use_incompatible_mapped_explicit_abi(value : IncompatibleMappedExplicitAbiBox(Int32) | IncompatibleMappedExplicitAbiBox(String))
+            value.accept(1)
+          end
+
+          use_incompatible_mapped_explicit_abi(choose_incompatible_mapped_explicit_abi_box(false))
+        CRYSTAL
+      end
+    end
+
+    it "keeps compatible included-module explicit ABIs for concrete generic receivers" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        module CompatibleConcreteMappedExplicitAbi(T)
+          def accept(value : T) : String
+            value.to_s
+          end
+        end
+
+        class CompatibleConcreteMappedExplicitAbiBox(T)
+          include CompatibleConcreteMappedExplicitAbi(T)
+        end
+
+        CompatibleConcreteMappedExplicitAbiBox(String).new.accept("ok")
+      CRYSTAL
+
+      main = converter.module.function_by_name("__adamas_main")
+      main.should_not be_nil
+      hir_text(main.not_nil!).should contain("CompatibleConcreteMappedExplicitAbiBox(String)#accept$String")
+    end
+
+    it "selects a compatible overload from the authoritative included module" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        module OverloadedConcreteExplicitAbi(T)
+          def accept(value : String) : String
+            value
+          end
+
+          def accept(value : Int32) : String
+            value.to_s
+          end
+        end
+
+        class OverloadedConcreteExplicitAbiBox(T)
+          include OverloadedConcreteExplicitAbi(T)
+        end
+
+        OverloadedConcreteExplicitAbiBox(String).new.accept(1)
+      CRYSTAL
+
+      main = converter.module.function_by_name("__adamas_main")
+      main.should_not be_nil
+      hir_text(main.not_nil!).should contain("OverloadedConcreteExplicitAbiBox(String)#accept$Int32")
+    end
+
+    it "scores authoritative included-module overloads before comparing union ABIs" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        module ScoredUnionExplicitAbi(T)
+          def accept(value : T) : String
+            value.to_s
+          end
+
+          def accept(value : Int32) : String
+            value.to_s
+          end
+        end
+
+        class ScoredUnionExplicitAbiBox(T)
+          include ScoredUnionExplicitAbi(T)
+        end
+
+        def choose_scored_union_explicit_abi_box(flag : Bool) : ScoredUnionExplicitAbiBox(UInt32) | ScoredUnionExplicitAbiBox(Int32)
+          flag ? ScoredUnionExplicitAbiBox(UInt32).new : ScoredUnionExplicitAbiBox(Int32).new
+        end
+
+        def use_scored_union_explicit_abi(value : ScoredUnionExplicitAbiBox(UInt32) | ScoredUnionExplicitAbiBox(Int32))
+          value.accept(1)
+        end
+
+        use_scored_union_explicit_abi(choose_scored_union_explicit_abi_box(false))
+      CRYSTAL
+      converter.flush_pending_functions
+
+      caller = converter.module.functions.find { |function| function.name.starts_with?("use_scored_union_explicit_abi$") }
+      caller.should_not be_nil
+      call = caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.find { |instruction| instruction.method_name.includes?("#accept") }
+      call.should_not be_nil
+      call.not_nil!.virtual.should be_true
+      call.not_nil!.type.should eq(Adamas::HIR::TypeRef::STRING)
+    end
+
+    it "prefers a direct concrete generic declaration over an included module" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        module ShadowedConcreteExplicitAbi(T)
+          def accept(value : T) : String
+            value.to_s
+          end
+        end
+
+        class DirectConcreteExplicitAbiBox(T)
+          include ShadowedConcreteExplicitAbi(T)
+
+          def accept(value : Int32) : String
+            value.to_s
+          end
+        end
+
+        DirectConcreteExplicitAbiBox(String).new.accept(1)
+      CRYSTAL
+
+      main = converter.module.function_by_name("__adamas_main")
+      main.should_not be_nil
+      hir_text(main.not_nil!).should contain("DirectConcreteExplicitAbiBox(String)#accept$Int32")
+    end
+
+    it "does not treat included-module defaults as explicit call arguments" do
+      lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        module DefaultedConcreteExplicitAbi(T)
+          def accept(value : T = "default") : String
+            value.to_s
+          end
+        end
+
+        class DefaultedConcreteExplicitAbiBox(T)
+          include DefaultedConcreteExplicitAbi(T)
+        end
+
+        DefaultedConcreteExplicitAbiBox(String).new.accept
+      CRYSTAL
+    end
+
+    it "rejects incompatible included-module explicit ABIs for concrete generic receivers" do
+      expect_raises(Adamas::HIR::LoweringError, /incompatible explicit arguments for concrete generic receiver/) do
+        lower_program_with_main(<<-CRYSTAL, source_backed: true)
+          module ConcreteMappedExplicitAbi(T)
+            def accept(value : T) : String
+              value.to_s
+            end
+          end
+
+          class ConcreteMappedExplicitAbiBox(T)
+            include ConcreteMappedExplicitAbi(T)
+          end
+
+          ConcreteMappedExplicitAbiBox(String).new.accept(1)
+        CRYSTAL
+      end
+    end
+
+    it "does not authorize an included-module origin with a later compatible signature" do
+      expect_raises(Adamas::HIR::LoweringError, /incompatible explicit arguments for concrete generic receiver/) do
+        lower_program_with_main(<<-CRYSTAL, source_backed: true)
+          module LaterCompatibleExplicitAbi
+            def accept(value : Int32) : String
+              value.to_s
+            end
+          end
+
+          module FirstIncompatibleExplicitAbi(T)
+            include LaterCompatibleExplicitAbi
+
+            def accept(value : T) : String
+              value.to_s
+            end
+          end
+
+          class OriginOrderedExplicitAbiBox(T)
+            include FirstIncompatibleExplicitAbi(T)
+          end
+
+          OriginOrderedExplicitAbiBox(String).new.accept(1)
+        CRYSTAL
+      end
+    end
+
+    it "accepts compatible normalized included-module call shapes for concrete generic receivers" do
+      lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        module CompatibleNormalizedConcreteExplicitAbi(T)
+          def accept(value : T) : String
+            value.to_s
+          end
+        end
+
+        class CompatibleNormalizedConcreteExplicitAbiBox(T)
+          include CompatibleNormalizedConcreteExplicitAbi(T)
+        end
+
+        CompatibleNormalizedConcreteExplicitAbiBox(String).new.accept(value: "named")
+        CompatibleNormalizedConcreteExplicitAbiBox(String).new.accept(*{"splat"})
+      CRYSTAL
+    end
+
+    it "rejects incompatible normalized included-module call shapes for concrete generic receivers" do
+      error_pattern = /incompatible explicit arguments for concrete generic receiver/
+
+      expect_raises(Adamas::HIR::LoweringError, error_pattern) do
+        lower_program_with_main(<<-CRYSTAL, source_backed: true)
+          module NamedConcreteMappedExplicitAbi(T)
+            def accept(value : T) : String
+              value.to_s
+            end
+          end
+
+          class NamedConcreteMappedExplicitAbiBox(T)
+            include NamedConcreteMappedExplicitAbi(T)
+          end
+
+          NamedConcreteMappedExplicitAbiBox(String).new.accept(value: 1)
+        CRYSTAL
+      end
+
+      expect_raises(Adamas::HIR::LoweringError, error_pattern) do
+        lower_program_with_main(<<-CRYSTAL, source_backed: true)
+          module SplatConcreteMappedExplicitAbi(T)
+            def accept(value : T) : String
+              value.to_s
+            end
+          end
+
+          class SplatConcreteMappedExplicitAbiBox(T)
+            include SplatConcreteMappedExplicitAbi(T)
+          end
+
+          SplatConcreteMappedExplicitAbiBox(String).new.accept(*{1})
         CRYSTAL
       end
     end

@@ -1,22 +1,16 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-08-03 (bare reference-generic instance dispatch is runtime-
-verified for direct erased receivers; registered runtime-reference and
-same-template concrete generic-struct unions preserve their callsite return ABI
-without mutating the anchored function ABI, while unsupported bare-template
-return annotations fail closed;
-the unconsumed cross-arena lowering bridge is rejected;
-T9 focused HIR-to-MIR-to-LLVM continuity and source-bound full-compiler HIR
-continuity are green through exact-target body lowering, while full-source
-MIR/LLVM continuity remains blocked by B4-F and the historical full-G9 symptom
-is stale and unreproduced. Exact guarded method
-declaration shapes replace in place; local keyed decisions reject replaced
-same-arena method objects; T1 remains red. Source-authoritative typed-hash
-contracts now carry the fresh bootstrap through both stage1 smokes. The latest
-clean 300-second B4-F run is still measured RED: stage2 remained active until
-the 302.83-second safe-runner stop and emitted no `cv2_s2`; the preceding mixed
-Pointer/Tuple hash-return and recursive Bool-hash inference frontiers are
-closed).
+Updated: 2026-08-05 (generic included-module calls now preserve authoritative
+origin, parameter provenance, owner specialization, and normalized explicit
+argument ABI; registered generic receiver repair fails closed across sibling,
+union, owner, and abstract-template mismatches. Typed `Hash` class-variable
+inference preserves shaped `NamedTuple` values. The latest fresh B4-F run
+passes both stage1 smokes and advances beyond the former
+`Hash(String, NamedTuple)#[]=` frontier, but stage2 remains RED after 365.63
+seconds at the named-argument
+`TypeInferenceEngine#resolve_method_annotation_type(...)` exact-target repair;
+the <=300-second validator rejects the run. T1 and full-source MIR/LLVM
+continuity remain open.)
 
 BARE REFERENCE-GENERIC INSTANCE DISPATCH RUNTIME-VERIFIED; REGISTERED
 RUNTIME-REFERENCE RETURN UNIONS HIR-VERIFIED AND MIR-GUARDED; UNSUPPORTED
@@ -12109,6 +12103,48 @@ the list length; such a mutation must either be forbidden at the API boundary
 or invalidate the cache explicitly. The next capability check is a fresh B4-F
 run under the 300-second admission limit; this local speed certificate alone is
 not bootstrap closure.
+
+### Session 56: generic-source ABI guard advances B4-F to named arguments (2026-08-05)
+
+Concrete generic receiver calls can reach HIR lowering before a synthetic
+owner-specific function has been registered. The old fallback could therefore
+select an included-module body without preserving its declaring arena, module
+type-parameter bindings, or overload origin. It also compared arguments after
+default insertion, so normalized call shapes could be mistaken for explicit
+source arguments. The accepted guard records the pre-default explicit count,
+recovers the authoritative included-module origin in dispatch order, rebuilds
+parameter metadata from that origin's arena and retained-source provenance,
+specializes module parameters for each concrete owner, and compares the exact
+explicit ABI. Direct class declarations retain precedence, and a later
+compatible module overload cannot authorize an earlier incompatible origin.
+
+Receiver repair now treats a registered generic template as a fail-closed
+source certificate only when request, fallback, and exact-target owners agree,
+the template has a body, owner parameters specialize exactly, and positional
+argument types are compatible. Sibling overloads, shaped unions, mismatched
+owner bindings, named/block/splat calls, and abstract templates are rejected by
+this narrow source matcher. Separately, typed `Hash` class-variable inference
+no longer erases `NamedTuple(name: Type, ...)` to bare `NamedTuple`.
+
+Evidence: the host compiler builds; the HIR lowering suite passes 436 examples
+with zero failures/errors and two pre-existing pending examples. A bare
+`Hash(String, NamedTuple(...))#[]=` reducer now stops at its exact bodyless ABI,
+while the shaped reducer compiles and prints `1` through `scripts/run_safe.sh`.
+A fresh bootstrap builds stage1 in 19.11 seconds and passes both smokes. Stage2
+then fails naturally after 365.63 seconds at
+`TypeInferenceEngine#resolve_method_annotation_type$String_PrimitiveType_SymbolTable_Bool`:
+the resolved body has nullable union parameters and the call carries named
+arguments. The readiness validator rejects the manifest, so B4-F remains RED
+both functionally and against the <=300-second budget.
+
+Boundary: this is a coherent generic-source ABI checkpoint, not lowering
+closure. Hostile review classifies the broader receiver-repair proof as
+VULNERABLE rather than BROKEN: bare generic families beyond the exercised
+`NamedTuple` case and cross-arena generic-template parameter recovery still
+lack dedicated falsifiers. Do not generalize or add another provenance layer
+without a concrete reducer. The next active frontier is the normalized
+named/default argument contract for the exact `resolve_method_annotation_type`
+target; it should be reduced independently before changing receiver repair.
 
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 

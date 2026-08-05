@@ -8945,13 +8945,31 @@ module Adamas::HIR
       target_def : Adamas::Compiler::Frontend::DefNode,
       owner_name : String,
       arg_types : Array(TypeRef),
+      included_module_param_map : Hash(String, String)? = nil,
+      included_module_param_names : Array(String)? = nil,
+      included_module_arena : Adamas::Compiler::Frontend::ArenaLike? = nil,
     ) : Array(TypeRef)?
       # Compatibility with one shared argument does not prove that distinct
       # typed formals share an ABI. Compare their canonical owner-specialized
       # annotations before callsite narrowing; only truly untyped formals take
       # the shared call type.
       formal_types = [] of TypeRef
-      function_param_infos(target_name, target_def).each do |param|
+      param_infos = if module_arena = included_module_arena
+                      with_arena(module_arena) do
+                        if params = target_def.params
+                          build_param_infos_from_params(
+                            params,
+                            module_arena,
+                            parameter_provenance_for_def(target_def, module_arena),
+                          )
+                        else
+                          [] of DefParamInfo
+                        end
+                      end
+                    else
+                      function_param_infos(target_name, target_def)
+                    end
+      param_infos.each do |param|
         next if param.is_block || named_only_separator?(param)
         return nil if param.is_splat || param.is_double_splat
         break if formal_types.size >= arg_types.size
@@ -8961,7 +8979,17 @@ module Adamas::HIR
         return nil if call_type == TypeRef::VOID
 
         formal_type = if declared_type_name && !declared_type_name.empty? && declared_type_name != "_"
-                        resolved = annotation_type_ref(declared_type_name, owner_name)
+                        specialized_type_name = if param_map = included_module_param_map
+                                                  substitute_type_params(declared_type_name, param_map)
+                                                else
+                                                  declared_type_name
+                                                end
+                        if param_names = included_module_param_names
+                          param_names.each do |param_name|
+                            return nil if type_name_includes_param?(specialized_type_name, param_name)
+                          end
+                        end
+                        resolved = annotation_type_ref(specialized_type_name, owner_name)
                         return nil if resolved == TypeRef::VOID
                         resolved
                       else
@@ -9056,6 +9084,9 @@ module Adamas::HIR
         shared_param_abi : Array(TypeRef)? = nil
         incompatible_explicit_args = false
         resolved_variants.each do |resolved_variant|
+          included_module_param_map : Hash(String, String)? = nil
+          included_module_param_names : Array(String)? = nil
+          included_module_arena : Adamas::Compiler::Frontend::ArenaLike? = nil
           owner_base = resolve_method_with_inheritance(resolved_variant, method_name) ||
                        "#{resolved_variant}##{method_name}"
           target = lookup_function_def_for_call(
@@ -9065,6 +9096,26 @@ module Adamas::HIR
             arg_types,
             has_splat,
           )
+          # Inherited module lookup intentionally returns a synthetic concrete
+          # owner name for later specialization. Recover the authoritative
+          # module DefNode when that synthetic name has not been registered yet.
+          unless target
+            if found = find_included_module_def_for_owner(
+                 resolved_variant,
+                 method_name,
+                 arg_types,
+                 has_block_call,
+               )
+              target = {owner_base, found[0]}
+              included_module_param_map = included_module_type_param_map(resolved_variant, found[2]) ||
+                                          {} of String => String
+              included_module_param_names = declared_module_type_param_names(found[2])
+              included_module_arena = found[1]
+            end
+          end
+          if target && included_module_param_map.nil?
+            included_module_param_map = function_type_param_map_for(target[0])
+          end
           unless target
             incompatible_explicit_args = true
             break
@@ -9075,6 +9126,9 @@ module Adamas::HIR
             target[1],
             resolved_variant,
             arg_types,
+            included_module_param_map,
+            included_module_param_names,
+            included_module_arena,
           )
           unless param_abi
             incompatible_explicit_args = true
@@ -19512,9 +19566,30 @@ module Adamas::HIR
       return true if names && names.includes?(method_name)
 
       owner_base = strip_generic_args(owner)
-      return false if owner_base == owner
-      base_names = @direct_instance_method_names_by_owner[owner_base]?
-      !!(base_names && base_names.includes?(method_name))
+      if owner_base != owner
+        base_names = @direct_instance_method_names_by_owner[owner_base]?
+        return true if base_names && base_names.includes?(method_name)
+      end
+
+      # A concrete generic owner can reach call lowering before its direct
+      # method-name side table has been populated. In that state, the template
+      # AST is still authoritative: do not let an included-module ABI guard
+      # reject a call that dispatches to a direct class declaration.
+      template = @generic_templates[owner_base]?
+      return false unless template
+
+      templates = [template]
+      if reopenings = @generic_reopenings[owner_base]?
+        templates.concat(reopenings)
+      end
+      templates.any? do |candidate|
+        body = candidate.node.body
+        next false unless body
+        collect_defined_instance_method_full_names(candidate.name, body, candidate.arena).any? do |full_name|
+          parts = parse_method_name_compact(strip_type_suffix(full_name))
+          parts.separator == '#' && parts.method == method_name
+        end
+      end
     end
 
     private def collect_defined_class_method_full_names(
@@ -43711,13 +43786,14 @@ module Adamas::HIR
     private def build_param_infos_from_params(
       params : Array(Adamas::Compiler::Frontend::Parameter),
       arena : Adamas::Compiler::Frontend::ArenaLike,
+      parameter_provenance : ParameterSliceProvenance? = nil,
     ) : Array(DefParamInfo)
       infos = [] of DefParamInfo
       each_param(params) do |param|
         infos << DefParamInfo.new(
-          parameter_name_string(param, arena, false),
+          parameter_name_string(param, arena, false, parameter_provenance),
           (external = param.external_name) ? safe_slice_to_string(external) : nil,
-          parameter_type_annotation_string(param, arena, false),
+          parameter_type_annotation_string(param, arena, false, parameter_provenance),
           param.default_value,
           param.is_splat,
           param.is_double_splat,
@@ -44665,6 +44741,145 @@ module Adamas::HIR
       end
 
       false
+    end
+
+    # Recover the authoritative included-module body in the same order as
+    # instance-method resolution: direct class declarations first, then that
+    # class's included modules, then the parent class. Keep this lookup untyped;
+    # compatibility must be checked against this exact origin so a later module
+    # cannot accidentally authorize materializing an earlier module's body.
+    private def find_included_module_def_origin_for_owner(
+      owner : String,
+      method_name : String,
+      arg_count : Int32,
+      has_block_call : Bool,
+    ) : Tuple(Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike, String)?
+      current = owner
+      visited = Set(String).new
+
+      while !current.empty? && !visited.includes?(current)
+        visited << current
+        return nil if owner_directly_declares_instance_method?(current, method_name)
+
+        current_base = strip_generic_args(current)
+        included = [] of String
+        if direct = @class_included_modules[current]?
+          direct.each { |module_name| push_unique_module_name(included, module_name) }
+        end
+        if current_base != current
+          if base_modules = @class_included_modules[current_base]?
+            base_modules.each { |module_name| push_unique_module_name(included, module_name) }
+          end
+        end
+
+        included.each do |module_name|
+          module_visited = Set(String).new
+          if found = find_module_def_recursive_with_owner(
+               strip_generic_args(module_name),
+               method_name,
+               arg_count,
+               module_visited,
+               nil,
+               has_block_call,
+             )
+            return found
+          end
+        end
+
+        parent = @class_info[current]?.try(&.parent_name) ||
+                 @module.class_parents[current]? ||
+                 (current_base != current ? (@class_info[current_base]?.try(&.parent_name) || @module.class_parents[current_base]?) : nil)
+        break unless parent
+        current = parent
+      end
+
+      nil
+    end
+
+    private def find_compatible_included_module_def_for_origin(
+      owner : String,
+      method_name : String,
+      found : Tuple(Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike, String),
+      arg_types : Array(TypeRef),
+      has_block_call : Bool,
+    ) : Tuple(Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike, String)?
+      module_owner = found[2]
+      param_names = declared_module_type_param_names(module_owner)
+      param_map = included_module_type_param_map(owner, module_owner)
+      return nil if !param_names.empty? && param_map.nil?
+
+      check = ->{
+        find_module_def_recursive_with_owner(
+          module_owner,
+          method_name,
+          arg_types.size,
+          Set(String).new,
+          arg_types,
+          has_block_call,
+          true,
+        )
+      }
+
+      compatible = if map = param_map
+                     with_type_param_map(map) { check.call }
+                   else
+                     check.call
+                   end
+      return nil unless compatible
+      compatible[2] == strip_generic_args(module_owner) ? compatible : nil
+    end
+
+    private def included_module_def_compatible_for_owner?(
+      owner : String,
+      method_name : String,
+      found : Tuple(Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike, String),
+      arg_types : Array(TypeRef),
+      has_block_call : Bool,
+    ) : Bool?
+      module_owner = found[2]
+      param_names = declared_module_type_param_names(module_owner)
+      param_map = included_module_type_param_map(owner, module_owner)
+      return nil if !param_names.empty? && param_map.nil?
+
+      !find_compatible_included_module_def_for_origin(
+        owner,
+        method_name,
+        found,
+        arg_types,
+        has_block_call,
+      ).nil?
+    end
+
+    private def find_included_module_def_for_owner(
+      owner : String,
+      method_name : String,
+      arg_types : Array(TypeRef),
+      has_block_call : Bool,
+    ) : Tuple(Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike, String)?
+      return nil if owner.empty?
+      return nil if arg_types.empty? || arg_types.all? { |t| t == TypeRef::VOID }
+
+      found = find_included_module_def_origin_for_owner(owner, method_name, arg_types.size, has_block_call)
+      return nil unless found
+      find_compatible_included_module_def_for_origin(owner, method_name, found, arg_types, has_block_call)
+    end
+
+    private def declared_module_type_param_names(module_owner : String) : Array(String)
+      ensure_module_defs_stripped_lookup
+      lookup_name = module_owner
+      unless @module_defs.has_key?(lookup_name)
+        lookup_name = module_defs_stripped_lookup(module_owner) || module_owner
+      end
+      definitions = @module_defs[lookup_name]?
+      return [] of String unless definitions
+
+      names = [] of String
+      definitions.each do |module_node, _|
+        module_type_param_names(module_node).each do |name|
+          names << name unless names.includes?(name)
+        end
+      end
+      names
     end
 
     private def resolve_nilable_function_type_overload(
@@ -45790,7 +46005,113 @@ module Adamas::HIR
           @function_types.has_key?(name) ||
           @class_accessor_entries.has_key?(name) ||
           !@module.primitive_for(name).nil?
-      end || backend_synthesizes_receiver_target?(request)
+      end ||
+        receiver_repair_registered_source_available?(request) ||
+        backend_synthesizes_receiver_target?(request)
+    end
+
+    private def receiver_repair_registered_source_available?(
+      request : ReceiverRepairFallback,
+    ) : Bool
+      parts = parse_method_name_compact(request.fallback_base)
+      method_name = parts.method
+      return false unless method_name
+      owner_info = split_generic_base_and_args(parts.owner)
+      unless owner_info
+        return !lookup_function_def_for_call(
+          request.fallback_base,
+          request.arg_types.size,
+          request.has_block,
+          request.arg_types,
+          request.has_splat,
+          request.has_named_args,
+          request.named_arg_names,
+        ).nil?
+      end
+      fallback_owner = normalize_method_owner_name(parts.owner)
+      return false unless normalize_method_owner_name(request.owner) == fallback_owner
+      exact_owner = parse_method_name_compact(request.exact_target).owner
+      return false unless normalize_method_owner_name(exact_owner) == fallback_owner
+      return false if request.has_block || request.has_splat || request.has_named_args
+
+      if template = @generic_templates[owner_info.base]?
+        if found = find_method_in_generic_template(
+          template,
+          method_name.not_nil!,
+          request.arg_types.size,
+          request.has_block,
+        )
+          return true if receiver_repair_generic_template_matches_request?(
+            template,
+            found[0],
+            request,
+          )
+        end
+      end
+      if reopenings = @generic_reopenings[owner_info.base]?
+        reopenings.each do |template|
+          found = find_method_in_generic_template(
+            template,
+            method_name.not_nil!,
+            request.arg_types.size,
+            request.has_block,
+          )
+          next unless found
+          return true if receiver_repair_generic_template_matches_request?(
+            template,
+            found[0],
+            request,
+          )
+        end
+      end
+      false
+    end
+
+    private def receiver_repair_generic_template_matches_request?(
+      template : GenericClassTemplate,
+      def_node : Adamas::Compiler::Frontend::DefNode,
+      request : ReceiverRepairFallback,
+    ) : Bool
+      return false unless def_node.body
+      owner_info = split_generic_base_and_args(request.owner)
+      return false unless owner_info && owner_info.base == template.name
+      owner_args = split_generic_type_args(owner_info.args)
+      return false unless owner_args.size == template.type_params.size
+
+      type_params = {} of String => String
+      template.type_params.each_with_index do |param_name, index|
+        type_params[param_name] = normalize_tuple_literal_type_name(
+          owner_args.unsafe_fetch(index).strip,
+        )
+      end
+
+      positional_params = [] of DefParamInfo
+      function_param_infos(def_node).each do |param|
+        next if param.is_block
+        return false if named_only_separator?(param)
+        return false if param.is_splat || param.is_double_splat
+        positional_params << param
+      end
+      return false if request.arg_types.size > positional_params.size
+
+      request.arg_types.each_with_index do |arg_type, index|
+        declared_name = positional_params.unsafe_fetch(index).type_annotation
+        return false unless declared_name && !declared_name.empty?
+        specialized_name = substitute_type_params(declared_name.not_nil!, type_params)
+        target_type = annotation_type_ref(specialized_name, request.owner)
+        return false if target_type == TypeRef::VOID
+        next if receiver_param_coercion_compatible?(arg_type, target_type)
+
+        arg_name = get_type_name_from_ref(arg_type)
+        target_name = get_type_name_from_ref(target_type)
+        target_generic = split_generic_base_and_args(target_name)
+        bare_generic_shape = !arg_name.includes?('(') &&
+                             KNOWN_GENERIC_TYPES.includes?(arg_name) &&
+                             !target_generic.nil? &&
+                             target_generic.not_nil!.base == arg_name
+        return false unless bare_generic_shape
+      end
+      true
     end
 
     private def backend_synthesizes_receiver_target?(request : ReceiverRepairFallback) : Bool
@@ -47273,8 +47594,9 @@ module Adamas::HIR
       def_node : Adamas::Compiler::Frontend::DefNode,
       arg_types : Array(TypeRef),
       context : String? = nil,
+      param_infos : Array(DefParamInfo)? = nil,
     ) : Bool
-      params = function_param_infos(def_node)
+      params = param_infos || function_param_infos(def_node)
       return true if params.empty?
 
       min_args = 0
@@ -47599,8 +47921,9 @@ module Adamas::HIR
       def_node : Adamas::Compiler::Frontend::DefNode,
       arg_types : Array(TypeRef),
       context : String? = nil,
+      param_infos : Array(DefParamInfo)? = nil,
     ) : Int32
-      params = function_param_infos(def_node)
+      params = param_infos || function_param_infos(def_node)
       return 0 if params.empty?
 
       score = 0
@@ -61177,7 +61500,6 @@ module Adamas::HIR
           if value_type
             key_name = normalize_declared_type_name((safe_slice_to_string(key_type) || ""))
             value_name = normalize_declared_type_name((safe_slice_to_string(value_type) || ""))
-            value_name = "NamedTuple" if value_name.starts_with?("NamedTuple")
             return type_ref_for_name("Hash(#{key_name}, #{value_name})")
           end
         end
@@ -81610,6 +81932,7 @@ module Adamas::HIR
       visited : Set(String),
       call_arg_types : Array(TypeRef)? = nil,
       expects_block : Bool? = nil,
+      prefer_best_typed : Bool = false,
     ) : Tuple(Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike, String)?
       ensure_module_def_lookup_cache
       ensure_module_defs_stripped_lookup
@@ -81633,6 +81956,9 @@ module Adamas::HIR
       end
       return nil unless mod_defs
 
+      best_direct : Tuple(Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike, String)? = nil
+      best_direct_score = Int32::MIN
+
       mod_defs.each do |mod_node, mod_arena|
         with_arena(mod_arena) do
           body = mod_node.body
@@ -81646,12 +81972,13 @@ module Adamas::HIR
               next if member.is_abstract
               member_name = (safe_slice_to_string(member.name) || "")
               next unless member_name == method_base
+              effective_member = source_recovered_def_for(member, mod_arena) || member
 
               actual_param_count = 0
               required_param_count = 0
               member_has_block = false
               has_splat_param = false
-              if params = member.params
+              if params = effective_member.params
                 each_param(params) do |param|
                   if param.is_block
                     member_has_block = true
@@ -81670,10 +81997,10 @@ module Adamas::HIR
 
               unless expects_block.nil?
                 if expects_block
-                  next unless member_has_block || def_contains_yield?(member, mod_arena)
+                  next unless member_has_block || def_contains_yield?(effective_member, mod_arena)
                 else
                   next if member_has_block
-                  next if def_contains_yield?(member, mod_arena)
+                  next if def_contains_yield?(effective_member, mod_arena)
                 end
               end
 
@@ -81684,15 +82011,49 @@ module Adamas::HIR
                                 (has_splat_param || expected_param_count <= actual_param_count)
                             end
               if arity_match
+                live_params : Array(DefParamInfo)? = nil
                 if call_arg_types
-                  next unless params_compatible_with_args?(member, call_arg_types, module_name)
+                  live_params = if params = effective_member.params
+                                  build_param_infos_from_params(
+                                    params,
+                                    mod_arena,
+                                    parameter_provenance_for_def(effective_member, mod_arena),
+                                  )
+                                else
+                                  [] of DefParamInfo
+                                end
+                  next unless params_compatible_with_args?(
+                    effective_member,
+                    call_arg_types,
+                    strip_generic_args(module_name),
+                    live_params,
+                  )
                 end
-                return {member, mod_arena, strip_generic_args(module_name)}
+                candidate = {effective_member, mod_arena, strip_generic_args(module_name)}
+                if call_arg_types && prefer_best_typed
+                  score = params_match_score(
+                    effective_member,
+                    call_arg_types,
+                    strip_generic_args(module_name),
+                    live_params,
+                  )
+                  score += 2 if actual_param_count == call_arg_types.size
+                  score += 1 if required_param_count == call_arg_types.size
+                  score -= 1 if has_splat_param
+                  if score > best_direct_score
+                    best_direct = candidate
+                    best_direct_score = score
+                  end
+                else
+                  return candidate
+                end
               end
             end
           end
         end
       end
+
+      return best_direct if best_direct
 
       mod_defs.each do |mod_node, mod_arena|
         with_arena(mod_arena) do
@@ -88358,6 +88719,7 @@ module Adamas::HIR
       if debug_env_filter_match?("DEBUG_CALL_TRACE", method_name, method_name, full_method_name || "")
         STDERR.puts "[CALL_TRACE] stage=after_args method=#{method_name} args=#{args.size} receiver=#{!!receiver_id} full=#{full_method_name || ""}"
       end
+      abi_guard_explicit_arg_count = args.size
       args, has_named_args, default_arg_entry_name = apply_default_args(ctx, args, method_name, arg_binding_full_method_name, has_block_call, has_named_args, receiver_id)
       has_named_args = false if constructor_arg_binding_name
       if debug_env_filter_match?("DEBUG_CALL_TRACE", method_name, method_name, full_method_name || "")
@@ -90016,6 +90378,37 @@ module Adamas::HIR
         has_named: has_named_args,
         named_names: canonical_named_arg_names(call_named_arg_names),
       ) : nil
+      if receiver_id &&
+         abi_guard_explicit_arg_count > 0 &&
+         !ctx.type_literal?(receiver_id)
+        receiver_name = normalize_method_owner_name(get_type_name_from_ref(ctx.type_of(receiver_id)))
+        if owner_info = generic_owner_info(receiver_name)
+          if concrete_type_args?(owner_info.args)
+            explicit_arg_types = arg_types[0, abi_guard_explicit_arg_count]
+            if explicit_arg_types.any? { |type_ref| type_ref != TypeRef::VOID }
+              if included_origin = find_included_module_def_origin_for_owner(
+                   receiver_name,
+                   method_name,
+                   explicit_arg_types.size,
+                   has_block_call,
+                 )
+                if included_module_def_compatible_for_owner?(
+                     receiver_name,
+                     method_name,
+                     included_origin,
+                     explicit_arg_types,
+                     has_block_call,
+                   ) == false
+                  raise LoweringError.new(
+                    "cannot safely lower incompatible explicit arguments for concrete generic receiver #{receiver_name}##{method_name}",
+                    node,
+                  )
+                end
+              end
+            end
+          end
+        end
+      end
       if selected_target = (m3e_input ? resolve_call_target(m3e_input) : nil)
         resolved_by_lookup = true
         entry_name = selected_target.symbol_name
