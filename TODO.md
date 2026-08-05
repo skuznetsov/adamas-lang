@@ -12282,6 +12282,41 @@ latest evidence remains the Session 59 run, RED after 335.65 seconds at
 `AstToHir#lower_module_method$String_DefNode?_Nil_Nil_Nil_String` and above the
 300-second admission budget. The active bootstrap frontier is unchanged.
 
+### Session 61: forced module lowering consumes its proven definition (2026-08-05)
+
+The stage2 target encoded the defect directly:
+`force_lower_module_method_by_name` looked up a nullable `DefNode?`, proved a
+non-null `resolved_func_def` with `|| return`, and then passed the original
+nullable binding into the non-null `lower_module_method` contract. A general
+`|| return` narrowing defect was refuted by a focused parameter reducer; an
+optional `Hash#[]?` version stopped earlier at its own unresolved body and was
+discarded as the wrong corridor. No global narrowing rule or receiver-repair
+fallback was added.
+
+The accepted change passes the already proven `resolved_func_def`. The new
+`scripts/forced_module_method_provenance_source_shape_guard.sh` was RED before
+the patch with `source_shape=optional_module_def_leaked`, one proof binding,
+zero proven consumers, and one optional consumer. Strict mode is now GREEN
+with `source_shape=proven_module_def_consumed`, one proven consumer, and zero
+optional consumers. The full HIR lowering suite passes 438 examples with zero
+failures/errors and two pre-existing pending examples.
+
+A fresh bootstrap built stage1 in 16.19 seconds and passed both smokes. Stage2
+advanced beyond the former nullable `lower_module_method` target and exited
+naturally after 333.15 seconds at `Nil#includes?$String`, called from
+`AstToHir#env_filter_match_texts?$String_String_Nil_Nil | String_Nil | String`.
+External monitoring observed one compiler process, about one core, and a
+smooth rise to approximately 2.31 GiB RSS without fanout or survivors. The
+offline readiness validator rejects the manifest with `manifest_status`, so
+B4-F remains RED functionally and against the <=300-second admission budget.
+
+Boundary: this closes one local provenance leak and is ROBUST against
+reintroducing the optional call edge. It does not prove that forced module
+lowering always materializes a body, relax the `DefNode` ABI, or repair the new
+nil-receiver frontier. The next step must trace why `env_filter_match_texts?`
+lowers `text3.includes?(value)` under a nil receiver despite its explicit
+nil guard; do not add a general `Nil#includes?` fallback.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

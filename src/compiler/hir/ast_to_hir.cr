@@ -66000,7 +66000,7 @@ module Adamas::HIR
         clear_function_state(name)
       end
       with_arena(func_arena || @arena) do
-        lower_module_method(owner, func_def, nil, nil, nil, name)
+        lower_module_method(owner, resolved_func_def, nil, nil, nil, name)
       end
     end
 
