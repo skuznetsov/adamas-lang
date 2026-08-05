@@ -61987,6 +61987,8 @@ module Adamas::HIR
     # proves the descendant type, narrowing must unwrap that unique carrier
     # before casting it. Keep this separate from direct-member matching: the
     # carrier match alone is not sufficient to satisfy the type test.
+    # Multiple ancestor arms make that proof ambiguous, so fail closed here
+    # before branch-local lowering can re-admit a broad union member call.
     private def get_union_descendant_carrier_variant_for_type_check(
       union_type : TypeRef,
       check_type : TypeRef,
@@ -62005,7 +62007,11 @@ module Adamas::HIR
           next unless statically_is_a_type?(check_type, carrier_type) == true
 
           match = {variant.type_id, carrier_type}
-          return nil if candidate && candidate != match
+          if candidate && candidate != match
+            raise LoweringError.new(
+              "ambiguous descendant carriers for #{get_type_name_from_ref(check_type)} in union #{get_type_name_from_ref(union_type)}"
+            )
+          end
           candidate = match
         end
         return candidate
@@ -62020,7 +62026,11 @@ module Adamas::HIR
             next unless statically_is_a_type?(check_type, carrier_type) == true
 
             match = {idx, carrier_type}
-            return nil if candidate && candidate != match
+            if candidate && candidate != match
+              raise LoweringError.new(
+                "ambiguous descendant carriers for #{get_type_name_from_ref(check_type)} in union #{get_type_name_from_ref(union_type)}"
+              )
+            end
             candidate = match
           end
         end

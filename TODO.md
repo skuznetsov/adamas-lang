@@ -8,10 +8,11 @@ fresh B4-F run passes both stage1 smokes and advances beyond the former
 `AstToHir#infer_type_from_expr$Pointer_String` frontier, but stage2 remains RED
 after 335.65 seconds at
 `AstToHir#lower_module_method$String_DefNode?_Nil_Nil_Nil_String`; the
-<=300-second validator rejects the run. A pre-existing broad union-member
-fallback can still admit a bodyless call when class arms overlap, so that
-guardrail is the next lowering slice. T1 and full-source MIR/LLVM continuity
-remain open.)
+<=300-second validator rejects the run. Overlapping ancestor carriers now stop
+at the branch-narrowing boundary before the pre-existing broad union-member
+fallback can admit a bodyless call. Original Crystal accepts that shape, so
+redundant class-arm canonicalization remains a separate compatibility gap. T1
+and full-source MIR/LLVM continuity remain open.)
 
 BARE REFERENCE-GENERIC INSTANCE DISPATCH RUNTIME-VERIFIED; REGISTERED
 RUNTIME-REFERENCE RETURN UNIONS HIR-VERIFIED AND MIR-GUARDED; UNSUPPORTED
@@ -12248,6 +12249,38 @@ ambiguous carrier, but the generic broad fallback can still admit a bodyless
 unresolved descendant-only member access fail closed, or first prove a sound
 canonicalization rule for redundant class arms; it must not select an arbitrary
 carrier or suppress valid shared/Object methods.
+
+### Session 60: overlapping case carriers fail closed at the proof boundary (2026-08-05)
+
+The hostile reducer used `Base | Mid | Nil`, with `Child < Mid < Base`, then
+accessed a child-only getter under `when Child`. The unique-carrier helper
+correctly refused to choose between both ancestor arms, but lowering continued
+with the broad receiver and produced a bodyless `union#value` call that trapped
+at runtime. Original Crystal compiles and runs the same reducer, so rejection
+is a safety checkpoint rather than compatibility closure.
+
+An initial global rule that raised whenever `resolve_union_method_call` returned
+`nil` was refuted and removed. It intercepted valid later contracts including
+nilable `try`, generic-union dispatch, and tagged-union indexing, and it replaced
+their stronger diagnostics. The accepted guard instead raises only when the
+descendant-carrier proof observes a second distinct ancestor arm. It neither
+selects an arbitrary carrier nor changes the resolver for unrelated unions.
+
+Evidence: the new falsifier was RED before the guard because lowering raised
+nothing. With the localized guard, the full HIR lowering suite passes 438
+examples with zero failures/errors and two pre-existing pending examples. A
+fresh compiler rejects the hostile reducer with `ambiguous descendant carriers
+for AmbChild in union Nil | AmbBase | AmbMid`, while the unique-carrier runtime
+regression still reaches `case_descendant_union_narrowing_ok`; compiler,
+reducer, and runtime executions all used `scripts/run_safe.sh`.
+
+Boundary: the localized fail-closed guard is ROBUST for preventing the observed
+bodyless-call crash. Compatibility remains VULNERABLE because no proof-backed
+canonicalization currently collapses redundant all-reference class arms as
+original Crystal does. B4-F was not rerun for this negative-only guard; its
+latest evidence remains the Session 59 run, RED after 335.65 seconds at
+`AstToHir#lower_module_method$String_DefNode?_Nil_Nil_Nil_String` and above the
+300-second admission budget. The active bootstrap frontier is unchanged.
 
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 

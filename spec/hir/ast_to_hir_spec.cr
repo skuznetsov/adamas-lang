@@ -5398,6 +5398,43 @@ describe Adamas::HIR::AstToHir do
       hir_text(either).should_not contain("cast")
     end
 
+    it "fails closed when overlapping union carriers cannot prove branch narrowing" do
+      expect_raises(Adamas::HIR::LoweringError, /ambiguous descendant carriers for AmbiguousChild in union Nil \| AmbiguousBase \| AmbiguousMid/) do
+        lower_program(<<-CRYSTAL)
+          struct AmbiguousExprId
+            getter index : Int32
+
+            def initialize(@index : Int32)
+            end
+          end
+
+          abstract class AmbiguousBase
+          end
+
+          class AmbiguousMid < AmbiguousBase
+          end
+
+          class AmbiguousChild < AmbiguousMid
+            getter value : AmbiguousExprId
+
+            def initialize(@value : AmbiguousExprId)
+            end
+          end
+
+          class AmbiguousProbe
+            def inspect_node(node : AmbiguousBase | AmbiguousMid | Nil) : Int32?
+              case node
+              when AmbiguousChild
+                node.value.index
+              else
+                nil
+              end
+            end
+          end
+          CRYSTAL
+      end
+    end
+
     it "distinguishes a cached method result from a local initialized by another call" do
       arena = Adamas::Compiler::Frontend::AstArena.new
       converter = Adamas::HIR::AstToHir.new(arena)
