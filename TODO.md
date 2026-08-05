@@ -12466,6 +12466,52 @@ or snapshot contract before promotion. B4-F has not yet been rerun for this
 slice; the latest bootstrap evidence remains Session 64's RED target and
 above-budget runtime.
 
+### Session 66: materialized-block includes narrowing follows closure cells (2026-08-05)
+
+A fresh bootstrap at `ef7328c2` built stage1 in 16.12 seconds, passed both
+smokes, and then repeated the same `Nil#includes?$String` target after 328.10
+seconds in `__crystal_block_proc_2938`. External samples observed one compiler
+process, about one core, no fanout, and roughly 2.14 GiB peak RSS; the
+`run_safe` manifest could not certify RSS/FD because its process-tree sampling
+reported `max_tree_pids=0`. No compiler process survived. The offline validator
+rejected the failed manifest, so B4-F remained RED functionally and against the
+<=300-second admission budget.
+
+The 13-second full-CLI reducer separated this path from the already repaired
+boxed-local carrier. In the produced materialized block, `callee_locals` had no
+ordinary local owner: `lower_identifier` read it through the exact
+`@closure_ref_cells` ClassVar cell. The previous owner-keyed one-shot override
+therefore never registered, even though the direct-Identifier LHS, direct
+`includes?` RHS, and nilable LHS payload all matched. The host-level
+`lower_program` reducer stayed green because it did not exercise this deferred
+closure-cell representation.
+
+The accepted follow-up keeps the same single outstanding proof and adds one
+typed carrier identity: either the existing boxed local owner or the exact
+closure `(class, cell)` pair used by `lower_identifier`. The direct receiver
+read consumes the unwrapped LHS payload before arguments lower; closure-cell
+assignment paths invalidate an unconsumed matching proof; scoped cleanup still
+prevents normal fallthrough escape. No additional expression shape or member
+method becomes eligible.
+
+Evidence: `captured_includes_next_if_hir_repro.sh` is RED against the old
+stage1 compiler after about 12 seconds with `Nil#includes?$String`, and GREEN
+against the repaired host-built compiler after about 15 seconds. The oracle
+finds the exact materialized proc, ties its read and argument-side write to the
+same closure cell, and proves `classvar_get -> union_unwrap -> receiver copy ->
+classvar_set -> Set(String)#includes?$String` ordering while rejecting any Nil
+receiver. The compiler build succeeds, and the full HIR lowering suite passes
+443 examples with zero failures/errors and two pre-existing pending examples.
+All compiler/test-binary execution used `scripts/run_safe.sh`.
+
+Boundary: the exact boxed-local and closure-cell one-read corridors are ROBUST
+under the measured normal-success source shape. The generalized contract
+remains VULNERABLE and deliberately unclaimed: complex LHS/RHS shapes, other
+member methods, name-shadowing across converter-global closure maps, failures
+during narrowing setup, and snapshot persistence are outside this slice. A
+fresh B4-F has not yet been run on this follow-up, so bootstrap readiness
+remains RED.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

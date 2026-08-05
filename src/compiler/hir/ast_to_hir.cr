@@ -59,7 +59,7 @@ module Adamas::HIR
     @locals_snapshots : Array(Hash(String, ValueId))
     @debug_local_snapshots : Array(Hash(String, ValueId))
     @boxed_locals : Hash(String, BoxedLocal)
-    @boxed_local_narrowing : {String, ValueId, ValueId}?
+    @scoped_receiver_narrowing : ScopedReceiverNarrowing?
     @boxed_locals_snapshots : Array(Hash(String, BoxedLocal))
     @entry_box_required_locals : Set(String)
 
@@ -100,6 +100,17 @@ module Adamas::HIR
       box_ptr : ValueId,
       payload_type : TypeRef,
       owner_local : ValueId? = nil
+
+    # A truthy short-circuit LHS can lend its unwrapped payload to one exact
+    # direct receiver read on the RHS. The carrier is either an owner-bound
+    # boxed local or the closure cell used by a materialized block. Keeping one
+    # slot prevents this narrow proof from becoming general capture flow state.
+    alias ScopedReceiverCarrier = ValueId | {String, String}
+
+    record ScopedReceiverNarrowing,
+      name : String,
+      value_id : ValueId,
+      carrier : ScopedReceiverCarrier
 
     # Function-scope predeclaration set for P1 boxed captures.
     #
@@ -159,7 +170,7 @@ module Adamas::HIR
       @dot_class_literals = Set(ValueId).new
       @as_question_results = Set(ValueId).new
       @boxed_locals = {} of String => BoxedLocal
-      @boxed_local_narrowing = nil
+      @scoped_receiver_narrowing = nil
       @boxed_locals_snapshots = [] of Hash(String, BoxedLocal)
       @entry_box_required_locals = Set(String).new
       @trace_shovel_types_enabled =
@@ -435,32 +446,80 @@ module Adamas::HIR
 
     def discard_boxed_local(name : String) : Nil
       @boxed_locals.delete(name)
-      if narrowing = @boxed_local_narrowing
-        @boxed_local_narrowing = nil if narrowing[0] == name
+      if narrowing = @scoped_receiver_narrowing
+        if narrowing.name == name && narrowing.carrier.is_a?(ValueId)
+          @scoped_receiver_narrowing = nil
+        end
       end
     end
 
     def take_boxed_local_narrowing(name : String, owner_local : ValueId) : ValueId?
-      return nil unless narrowing = @boxed_local_narrowing
-      return nil unless narrowing[0] == name && narrowing[1] == owner_local
+      return nil unless narrowing = @scoped_receiver_narrowing
+      return nil unless narrowing.name == name && narrowing.carrier == owner_local
 
-      @boxed_local_narrowing = nil
-      narrowing[2]
+      @scoped_receiver_narrowing = nil
+      narrowing.value_id
     end
 
-    def register_boxed_local_narrowing(name : String, owner_local : ValueId, value_id : ValueId) : Bool
-      return false if @boxed_local_narrowing
+    def register_boxed_local_narrowing(
+      name : String,
+      owner_local : ValueId,
+      value_id : ValueId,
+    ) : ScopedReceiverNarrowing?
+      return nil if @scoped_receiver_narrowing
 
-      @boxed_local_narrowing = {name, owner_local, value_id}
-      true
+      narrowing = ScopedReceiverNarrowing.new(name, value_id, owner_local)
+      @scoped_receiver_narrowing = narrowing
+      narrowing
     end
 
     def discard_boxed_local_narrowing(name : String, owner_local : ValueId) : Nil
-      if narrowing = @boxed_local_narrowing
-        if narrowing[0] == name && narrowing[1] == owner_local
-          @boxed_local_narrowing = nil
+      if narrowing = @scoped_receiver_narrowing
+        if narrowing.name == name && narrowing.carrier == owner_local
+          @scoped_receiver_narrowing = nil
         end
       end
+    end
+
+    def take_closure_cell_narrowing(
+      name : String,
+      cell_class : String,
+      cell_name : String,
+    ) : ValueId?
+      return nil unless narrowing = @scoped_receiver_narrowing
+      return nil unless narrowing.name == name && narrowing.carrier == {cell_class, cell_name}
+
+      @scoped_receiver_narrowing = nil
+      narrowing.value_id
+    end
+
+    def register_closure_cell_narrowing(
+      name : String,
+      cell_class : String,
+      cell_name : String,
+      value_id : ValueId,
+    ) : ScopedReceiverNarrowing?
+      return nil if @scoped_receiver_narrowing
+
+      narrowing = ScopedReceiverNarrowing.new(name, value_id, {cell_class, cell_name})
+      @scoped_receiver_narrowing = narrowing
+      narrowing
+    end
+
+    def discard_closure_cell_narrowing(
+      name : String,
+      cell_class : String,
+      cell_name : String,
+    ) : Nil
+      if narrowing = @scoped_receiver_narrowing
+        if narrowing.name == name && narrowing.carrier == {cell_class, cell_name}
+          @scoped_receiver_narrowing = nil
+        end
+      end
+    end
+
+    def discard_scoped_receiver_narrowing(expected : ScopedReceiverNarrowing) : Nil
+      @scoped_receiver_narrowing = nil if @scoped_receiver_narrowing == expected
     end
 
     def lookup_boxed_local_for_local(name : String, local_id : ValueId) : BoxedLocal?
@@ -71814,11 +71873,7 @@ module Adamas::HIR
 
         if prefer_closure_cell
           if ref_cell = @closure_ref_cells[name]?
-            cell_class, cell_name, cell_type = ref_cell
-            get = ClassVarGet.new(ctx.next_id, cell_type, cell_class, cell_name)
-            ctx.emit(get)
-            ctx.register_type(get.id, cell_type)
-            return get.id
+            return lower_closure_ref_cell_identifier(ctx, name, ref_cell)
           end
         end
 
@@ -71838,11 +71893,7 @@ module Adamas::HIR
       else
         # Non-local identifier: captured values are resolved through closure cells.
         if ref_cell = @closure_ref_cells[name]?
-          cell_class, cell_name, cell_type = ref_cell
-          get = ClassVarGet.new(ctx.next_id, cell_type, cell_class, cell_name)
-          ctx.emit(get)
-          ctx.register_type(get.id, cell_type)
-          return get.id
+          return lower_closure_ref_cell_identifier(ctx, name, ref_cell)
         end
 
         # Local not found - try inline caller locals for block bodies
@@ -72143,6 +72194,25 @@ module Adamas::HIR
       ctx.register_debug_local(name, local.id)
       ctx.register_local(name, local.id)
       local.id
+    end
+
+    private def lower_closure_ref_cell_identifier(
+      ctx : LoweringContext,
+      name : String,
+      ref_cell : {String, String, TypeRef},
+    ) : ValueId
+      cell_class, cell_name, cell_type = ref_cell
+      if narrowed_id = ctx.take_closure_cell_narrowing(name, cell_class, cell_name)
+        copy = Copy.new(ctx.next_id, ctx.type_of(narrowed_id), narrowed_id)
+        ctx.emit(copy)
+        ctx.propagate_runtime_type_identity(narrowed_id, copy.id)
+        return copy.id
+      end
+
+      get = ClassVarGet.new(ctx.next_id, cell_type, cell_class, cell_name)
+      ctx.emit(get)
+      ctx.register_type(get.id, cell_type)
+      get.id
     end
 
     private def lower_instance_var(ctx : LoweringContext, node : Adamas::Compiler::Frontend::InstanceVarNode) : ValueId
@@ -74121,7 +74191,7 @@ module Adamas::HIR
       falsy_targets = falsy_narrowing_targets(node.left)
       left_id = lower_expr(ctx, node.left)
       left_type = ctx.type_of(left_id)
-      boxed_source = direct_boxed_truthy_source(node.left, left_id)
+      capture_source = direct_capture_truthy_source(node.left, left_id)
 
       cond_id = lower_truthy_check(ctx, left_id, left_type)
       static_left = static_truthy_value(ctx, cond_id)
@@ -74133,7 +74203,7 @@ module Adamas::HIR
             return unwrap_non_nil_to_block(ctx, ctx.current_block, left_id, then_type)
           else
             rhs_value = nil.as(ValueId?)
-            with_scoped_condition_narrowing(ctx, falsy_targets, node.right, boxed_source) do
+            with_scoped_condition_narrowing(ctx, falsy_targets, node.right, capture_source) do
               rhs_value = lower_expr(ctx, node.right)
             end
             return rhs_value.not_nil!
@@ -74141,7 +74211,7 @@ module Adamas::HIR
         else
           if static_left
             rhs_value = nil.as(ValueId?)
-            with_scoped_condition_narrowing(ctx, truthy_targets, node.right, boxed_source) do
+            with_scoped_condition_narrowing(ctx, truthy_targets, node.right, capture_source) do
               rhs_value = lower_expr(ctx, node.right)
             end
             return rhs_value.not_nil!
@@ -74166,7 +74236,7 @@ module Adamas::HIR
                      left_id
                    else
                      rhs_value = nil.as(ValueId?)
-                     with_scoped_condition_narrowing(ctx, truthy_targets, node.right, boxed_source) do
+                     with_scoped_condition_narrowing(ctx, truthy_targets, node.right, capture_source) do
                        rhs_value = lower_expr(ctx, node.right)
                      end
                      rhs_value.not_nil!
@@ -74195,7 +74265,7 @@ module Adamas::HIR
       ctx.restore_locals(pre_branch_locals)
       else_value = if op_str == "||"
                      rhs_value = nil.as(ValueId?)
-                     with_scoped_condition_narrowing(ctx, falsy_targets, node.right, boxed_source) do
+                     with_scoped_condition_narrowing(ctx, falsy_targets, node.right, capture_source) do
                        rhs_value = lower_expr(ctx, node.right)
                      end
                      rhs_value.not_nil!
@@ -74405,7 +74475,7 @@ module Adamas::HIR
       ctx : LoweringContext,
       targets : Array(String),
       rhs_expr : ExprId,
-      boxed_source : {String, ValueId}?,
+      capture_source : {String, ValueId}?,
       &
     )
       if targets.empty?
@@ -74418,30 +74488,33 @@ module Adamas::HIR
           prev[name] = v
         end
       end
-      boxed_narrowing = apply_scoped_truthy_narrowing(ctx, targets, rhs_expr, boxed_source)
+      scoped_narrowing = apply_scoped_truthy_narrowing(ctx, targets, rhs_expr, capture_source)
       narrowed = {} of String => ValueId
       targets.each do |name|
         if v = ctx.lookup_local(name)
           narrowed[name] = v
         end
       end
-      yield
-      # Restore each target to its pre-narrowing binding, but only if the RHS lowering
-      # did not rebind it to a different id (preserve genuine RHS reassignments and
-      # RHS-created locals; do not clobber).
-      targets.each do |name|
-        pv = prev[name]?
-        nv = narrowed[name]?
-        next unless pv && nv
-        next if pv == nv # narrowing was a no-op; nothing to restore
-        if ctx.lookup_local(name) == nv
-          ctx.register_local(name, pv)
+      begin
+        yield
+      ensure
+        # Restore each target to its pre-narrowing binding, but only if the RHS lowering
+        # did not rebind it to a different id (preserve genuine RHS reassignments and
+        # RHS-created locals; do not clobber).
+        targets.each do |name|
+          pv = prev[name]?
+          nv = narrowed[name]?
+          next unless pv && nv
+          next if pv == nv # narrowing was a no-op; nothing to restore
+          if ctx.lookup_local(name) == nv
+            ctx.register_local(name, pv)
+          end
         end
-      end
-      # The exact boxed contract has one direct receiver, so at most one slot can
-      # be outstanding. A successful receiver read or assignment already clears it.
-      if narrowing = boxed_narrowing
-        ctx.discard_boxed_local_narrowing(narrowing[0], narrowing[1])
+        # The exact capture contract has one direct receiver, so at most one slot can
+        # be outstanding. A successful receiver read or assignment already clears it.
+        if narrowing = scoped_narrowing
+          ctx.discard_scoped_receiver_narrowing(narrowing)
+        end
       end
     end
 
@@ -74482,7 +74555,7 @@ module Adamas::HIR
       left_id = lower_expr(ctx, node.left)
       left_type = ctx.type_of(left_id)
       left_cond = lower_truthy_check(ctx, left_id, left_type)
-      boxed_source = direct_boxed_truthy_source(node.left, left_id)
+      capture_source = direct_capture_truthy_source(node.left, left_id)
 
       rhs_block = ctx.create_block
       static_left = static_truthy_value(ctx, left_cond)
@@ -74492,7 +74565,7 @@ module Adamas::HIR
           if static_left
             ctx.terminate(Jump.new(rhs_block))
             ctx.current_block = rhs_block
-            with_scoped_condition_narrowing(ctx, truthy_targets, node.right, boxed_source) do
+            with_scoped_condition_narrowing(ctx, truthy_targets, node.right, capture_source) do
               lower_condition_branch(ctx, node.right, then_block, else_block)
             end
           else
@@ -74504,7 +74577,7 @@ module Adamas::HIR
           else
             ctx.terminate(Jump.new(rhs_block))
             ctx.current_block = rhs_block
-            with_scoped_condition_narrowing(ctx, falsy_targets, node.right, boxed_source) do
+            with_scoped_condition_narrowing(ctx, falsy_targets, node.right, capture_source) do
               lower_condition_branch(ctx, node.right, then_block, else_block)
             end
           end
@@ -74514,13 +74587,13 @@ module Adamas::HIR
       if op_str == "&&"
         ctx.terminate(Branch.new(left_cond, rhs_block, else_block))
         ctx.current_block = rhs_block
-        with_scoped_condition_narrowing(ctx, truthy_targets, node.right, boxed_source) do
+        with_scoped_condition_narrowing(ctx, truthy_targets, node.right, capture_source) do
           lower_condition_branch(ctx, node.right, then_block, else_block)
         end
       else
         ctx.terminate(Branch.new(left_cond, then_block, rhs_block))
         ctx.current_block = rhs_block
-        with_scoped_condition_narrowing(ctx, falsy_targets, node.right, boxed_source) do
+        with_scoped_condition_narrowing(ctx, falsy_targets, node.right, capture_source) do
           lower_condition_branch(ctx, node.right, then_block, else_block)
         end
       end
@@ -74849,11 +74922,11 @@ module Adamas::HIR
       end
     end
 
-    private def direct_boxed_truthy_source(expr_id : ExprId, value_id : ValueId) : {String, ValueId}?
+    private def direct_capture_truthy_source(expr_id : ExprId, value_id : ValueId) : {String, ValueId}?
       node = @arena[expr_id]
       case node
       when Adamas::Compiler::Frontend::GroupingNode
-        direct_boxed_truthy_source(node.expression, value_id)
+        direct_capture_truthy_source(node.expression, value_id)
       when Adamas::Compiler::Frontend::IdentifierNode
         {identifier_name_text(node), value_id}
       else
@@ -74865,32 +74938,47 @@ module Adamas::HIR
       ctx : LoweringContext,
       targets : Array(String),
       rhs_expr : ExprId,
-      boxed_source : {String, ValueId}?,
-    ) : {String, ValueId}?
+      capture_source : {String, ValueId}?,
+    ) : LoweringContext::ScopedReceiverNarrowing?
       return nil if targets.empty?
 
       direct_receiver = direct_includes_receiver_name(rhs_expr)
-      boxed_narrowing : {String, ValueId}? = nil
-      if direct_receiver && boxed_source &&
-         direct_receiver == boxed_source[0] && targets.includes?(direct_receiver)
+      scoped_narrowing = nil.as(LoweringContext::ScopedReceiverNarrowing?)
+      if direct_receiver && capture_source &&
+         direct_receiver == capture_source[0] && targets.includes?(direct_receiver)
         name = direct_receiver
-        if (local_id = ctx.lookup_local(name)) && ctx.lookup_boxed_local_for_local(name, local_id)
+        local_id = ctx.lookup_local(name)
+        box_info = local_id ? ctx.lookup_boxed_local_for_local(name, local_id) : nil
+        ref_cell = @closure_ref_cells[name]?
+        uses_closure_cell = local_id.nil? || @closure_ref_prefer_cell.includes?(name)
+
+        if box_info || (uses_closure_cell && ref_cell)
           # Captures can be mutated through aliases, and several other member
           # paths read their receiver twice. Only lend the proven LHS payload to
           # this single-read call; the receiver read consumes it before args lower.
-          payload_id = boxed_source[1]
+          payload_id = capture_source[1]
           payload_type = ctx.type_of(payload_id)
           if is_union_or_nilable_type?(payload_type)
             unwrapped = lower_not_nil_intrinsic(ctx, payload_id, payload_type)
-            if unwrapped != payload_id && ctx.register_boxed_local_narrowing(name, local_id, unwrapped)
-              boxed_narrowing = {name, local_id}
+            if unwrapped != payload_id
+              if box_info && local_id
+                scoped_narrowing = ctx.register_boxed_local_narrowing(name, local_id, unwrapped)
+              elsif ref_cell
+                cell_class, cell_name, _ = ref_cell
+                scoped_narrowing = ctx.register_closure_cell_narrowing(
+                  name,
+                  cell_class,
+                  cell_name,
+                  unwrapped,
+                )
+              end
             end
           end
         end
       end
 
       apply_truthy_narrowing(ctx, targets, skip_boxed: true)
-      boxed_narrowing
+      scoped_narrowing
     end
 
     private def apply_truthy_narrowing(
@@ -108815,6 +108903,7 @@ module Adamas::HIR
         # Check if this variable is stored in a closure cell (by-reference capture)
         if ref_cell = @closure_ref_cells[name]?
           cell_class, cell_name, cell_type = ref_cell
+          ctx.discard_closure_cell_narrowing(name, cell_class, cell_name)
           set = ClassVarSet.new(ctx.next_id, cell_type, cell_class, cell_name, value_id)
           ctx.emit(set)
           ctx.register_type(set.id, cell_type)
@@ -109953,6 +110042,7 @@ module Adamas::HIR
         end
         if ref_cell = @closure_ref_cells[name]?
           cell_class, cell_name, cell_type = ref_cell
+          ctx.discard_closure_cell_narrowing(name, cell_class, cell_name)
           set = ClassVarSet.new(ctx.next_id, cell_type, cell_class, cell_name, value_id)
           ctx.emit(set)
           ctx.register_type(set.id, cell_type)
