@@ -12427,6 +12427,45 @@ reduce why `__crystal_block_proc_2938` specializes an `includes?` receiver to
 Nil; do not add a generic `Nil#includes?` fallback or assume it is the already
 fixed static-Not pattern without tracing the block's provenance.
 
+### Session 65: captured includes receivers consume proven LHS payloads (2026-08-05)
+
+The produced-stage diagnostic localized `__crystal_block_proc_2938` to
+`snapshot_active_inline_caller_locals`. Its captured `callee_locals` retained
+the semantic type `Nil | Set(String)`, but closure materialization stored the
+Box pointer in ordinary locals and the payload type only in boxed-local
+metadata. Consequently `callee_locals && callee_locals.includes?(name)` checked
+one payload, then the RHS identifier read saw only the Box owner and dispatched
+the union receiver to `Nil#includes?$String`.
+
+Two broader repairs were rejected before closure. Adding boxed flow state to
+the general truthy-narrowing path could leak a non-dominating `UnionUnwrap`
+through unrelated `if`/`while` branches. Limiting that state to any direct
+member receiver still overclaimed safety because several intrinsic probes such
+as `join`, `sort`, and `count` can read a receiver and then fall through to a
+second generic read. The accepted contract is deliberately exact: only a
+direct-Identifier LHS and a direct `includes?` CallNode RHS may lend the
+already-observed LHS payload. The receiver read consumes that owner-keyed
+override once, before arguments lower; assignment paths invalidate any
+unconsumed entry, and scoped cleanup prevents escape.
+
+Evidence: the first proc reducer was RED with only the broad
+`Nil | Set(String)#includes?$String` target and no concrete Set target. The
+accepted implementation passes Proc, materialized-block, and condition-context
+reducers. A fourth adversary regression assigns `nil` to the capture inside the
+`includes?` argument, requires the call to retain the concrete Set receiver,
+rejects a Nil receiver, orders the consumed receiver before the argument's
+PointerStore and the call after it, and proves that the later capture read
+reloads from the Box. The full HIR lowering suite passes 443 examples with zero
+failures/errors and two pre-existing pending examples; every test binary ran
+through `scripts/run_safe.sh`.
+
+Boundary: this is ROBUST for the reached single-read `includes?` corridor. It
+does not claim general boxed-local flow typing, `is_a?` narrowing, complex RHS
+receivers, or other member methods. Those paths require their own single-read
+or snapshot contract before promotion. B4-F has not yet been rerun for this
+slice; the latest bootstrap evidence remains Session 64's RED target and
+above-budget runtime.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

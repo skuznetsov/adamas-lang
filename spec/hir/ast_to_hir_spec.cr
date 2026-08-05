@@ -6161,6 +6161,102 @@ describe Adamas::HIR::AstToHir do
       text.should contain("__crystal_proc_")
     end
 
+    it "narrows a nilable capture across a proc short-circuit" do
+      _func, converter = lower_function_with_converter(<<-CRYSTAL)
+        def probe(values : Set(String)?)
+          predicate = ->(name : String) { values && values.includes?(name) }
+          predicate.call("x")
+        end
+      CRYSTAL
+
+      proc_func = converter.module.functions.find(&.name.starts_with?("__crystal_proc_"))
+      proc_func.should_not be_nil
+      call_names = proc_func.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call).try(&.method_name)
+      end
+
+      call_names.should contain("Set(String)#includes?$String")
+      call_names.none? { |name| name.starts_with?("Nil#includes?$") }.should be_true
+    end
+
+    it "narrows a nilable capture across a materialized block short-circuit" do
+      converter = lower_program(<<-CRYSTAL)
+        def invoke(&block : String -> Bool)
+          block.call("x")
+        end
+
+        def probe(values : Set(String)?)
+          invoke { |name| values && values.includes?(name) }
+        end
+      CRYSTAL
+
+      proc_func = converter.module.functions.find(&.name.starts_with?("__crystal_block_proc_"))
+      proc_func.should_not be_nil
+      call_names = proc_func.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call).try(&.method_name)
+      end
+
+      call_names.should contain("Set(String)#includes?$String")
+      call_names.none? { |name| name.starts_with?("Nil#includes?$") }.should be_true
+    end
+
+    it "narrows a nilable capture across a short-circuit condition" do
+      _func, converter = lower_function_with_converter(<<-CRYSTAL)
+        def probe(values : Set(String)?)
+          predicate = ->(name : String) do
+            if values && values.includes?(name)
+              true
+            else
+              false
+            end
+          end
+          predicate.call("x")
+        end
+      CRYSTAL
+
+      proc_func = converter.module.functions.find(&.name.starts_with?("__crystal_proc_"))
+      proc_func.should_not be_nil
+      call_names = proc_func.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call).try(&.method_name)
+      end
+
+      call_names.should contain("Set(String)#includes?$String")
+      call_names.none? { |name| name.starts_with?("Nil#includes?$") }.should be_true
+    end
+
+    it "consumes a boxed receiver narrowing before lowering mutating call arguments" do
+      _func, converter = lower_function_with_converter(<<-CRYSTAL)
+        def probe(values : Set(String)?)
+          reader = -> do
+            values && values.includes?(begin
+              values = nil
+              "x"
+            end)
+            values
+          end
+          reader.call
+        end
+      CRYSTAL
+
+      proc_func = converter.module.functions.find(&.name.starts_with?("__crystal_proc_"))
+      proc_func.should_not be_nil
+      instructions = proc_func.not_nil!.blocks.flat_map(&.instructions)
+      calls = instructions.compact_map(&.as?(Adamas::HIR::Call))
+      includes_call = calls.find { |call| call.method_name == "Set(String)#includes?$String" }
+      includes_call.should_not be_nil
+      calls.none? { |call| call.method_name.starts_with?("Nil#includes?$") }.should be_true
+
+      store = instructions.compact_map(&.as?(Adamas::HIR::PointerStore)).first?
+      store.should_not be_nil
+      receiver = instructions.find { |instruction| instruction.id == includes_call.not_nil!.receiver_value }
+      receiver.not_nil!.should be_a(Adamas::HIR::Copy)
+      receiver.not_nil!.id.should be < store.not_nil!.id
+      store.not_nil!.id.should be < includes_call.not_nil!.id
+      instructions.compact_map(&.as?(Adamas::HIR::PointerLoad)).any? do |load|
+        load.pointer == store.not_nil!.pointer && load.id > store.not_nil!.id
+      end.should be_true
+    end
+
     it "lowers block argument" do
       func = lower_function("def foo; each { |x| x }; end")
       text = hir_text(func)
