@@ -11780,11 +11780,14 @@ module Adamas::HIR
           end
         end
       when Adamas::Compiler::Frontend::GetterNode
-        register_accessors_in_class(member, class_name, ivars, offset_ref)
+        expanded_getter = member.unsafe_as(Adamas::Compiler::Frontend::GetterNode)
+        register_accessors_in_class(expanded_getter, class_name, ivars, offset_ref)
       when Adamas::Compiler::Frontend::SetterNode
-        register_accessors_in_class(member, class_name, ivars, offset_ref)
+        expanded_setter = member.unsafe_as(Adamas::Compiler::Frontend::SetterNode)
+        register_accessors_in_class(expanded_setter, class_name, ivars, offset_ref)
       when Adamas::Compiler::Frontend::PropertyNode
-        register_accessors_in_class(member, class_name, ivars, offset_ref)
+        expanded_property = member.unsafe_as(Adamas::Compiler::Frontend::PropertyNode)
+        register_accessors_in_class(expanded_property, class_name, ivars, offset_ref)
       when Adamas::Compiler::Frontend::ClassVarDeclNode
         register_expanded_class_var_decl(class_name, expr_id, member)
       when Adamas::Compiler::Frontend::TypeDeclarationNode
@@ -12001,10 +12004,16 @@ module Adamas::HIR
           unless expanded
             if accessor_id = materialize_accessor_macro_call(member)
               accessor = @arena[accessor_id]
-              if accessor.is_a?(Adamas::Compiler::Frontend::GetterNode) ||
-                 accessor.is_a?(Adamas::Compiler::Frontend::SetterNode) ||
-                 accessor.is_a?(Adamas::Compiler::Frontend::PropertyNode)
-                register_accessors_in_class(accessor, class_name, ivars, offset_ref)
+              case accessor
+              when Adamas::Compiler::Frontend::GetterNode
+                paired_getter = accessor.unsafe_as(Adamas::Compiler::Frontend::GetterNode)
+                register_accessors_in_class(paired_getter, class_name, ivars, offset_ref)
+              when Adamas::Compiler::Frontend::SetterNode
+                paired_setter = accessor.unsafe_as(Adamas::Compiler::Frontend::SetterNode)
+                register_accessors_in_class(paired_setter, class_name, ivars, offset_ref)
+              when Adamas::Compiler::Frontend::PropertyNode
+                paired_property = accessor.unsafe_as(Adamas::Compiler::Frontend::PropertyNode)
+                register_accessors_in_class(paired_property, class_name, ivars, offset_ref)
               end
             elsif accessor_macro_call?(member)
               raise "unsupported nested accessor macro output in #{class_name}: #{method_name}"

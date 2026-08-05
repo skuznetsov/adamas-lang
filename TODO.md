@@ -12388,6 +12388,45 @@ without new evidence. The next atomic slice must reduce the expansion caller's
 `register_accessors_in_class` or cast the node before proving its concrete
 variant and arena provenance.
 
+### Session 64: expansion accessors consume branch-proven variants (2026-08-05)
+
+`register_class_members_from_expansion` recovered a broad `Frontend::Node`
+before dispatching on its concrete accessor variant, then passed the broad
+binding to the strict `register_accessors_in_class` union contract. The first
+repair made the three direct `case member` arms consume local, branch-proven
+`GetterNode`, `SetterNode`, and `PropertyNode` bindings. A fresh bootstrap
+repeated the same target, falsifying completeness and exposing a fourth broad
+edge after `materialize_accessor_macro_call` and a compound `is_a?` guard.
+
+The final repair keeps the callee contract strict and converts that compound
+guard into the same three-way concrete dispatch. The materializer creates only
+those three node classes in the current arena, and each explicit `unsafe_as`
+is immediately dominated by its matching type arm. The source-shape guard now
+covers all six calls in the exact helper: six proof bindings, six concrete
+consumers, six total consumers, and zero raw `member` or `accessor` consumers.
+It remains deliberately scoped to this helper and does not claim global alias
+or multiline-flow analysis.
+
+Evidence: `scripts/expansion_accessor_provenance_source_shape_guard.sh` is
+GREEN in strict mode, `git diff --check` passes, and the full HIR lowering suite
+passes 439 examples with zero failures/errors and two pre-existing pending
+examples. A second fresh bootstrap built stage1 in 16.68 seconds and passed
+both smokes. Stage2 cleared the former broad accessor target and failed
+naturally after 330.28 seconds at `Nil#includes?$String`, called from
+`__crystal_block_proc_2938`. Repeated observation showed one compiler process,
+about one core, no compiler fanout, and at most about 3.2 percent host memory;
+exact RSS and FD metrics were unavailable in this sandbox and are therefore not
+claimed. No bootstrap processes survived. The offline validator rejects the
+manifest with `manifest_status`, so B4-F remains RED functionally and against
+the <=300-second admission budget.
+
+Boundary: the two caller-side accessor provenance repairs are ROBUST for the
+reached helper and preserve arena identity. The guard is a source-shape
+falsifier, not a produced-stage or global proof. The next atomic slice must
+reduce why `__crystal_block_proc_2938` specializes an `includes?` receiver to
+Nil; do not add a generic `Nil#includes?` fallback or assume it is the already
+fixed static-Not pattern without tracing the block's provenance.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
