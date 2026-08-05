@@ -5339,6 +5339,65 @@ describe Adamas::HIR::AstToHir do
       hir_text(func).should contain("local \"byte\"")
     end
 
+    it "keeps a case type refinement on a member-access receiver" do
+      converter = lower_program(<<-CRYSTAL)
+        struct CaseExprId
+          getter index : Int32
+
+          def initialize(@index : Int32)
+          end
+        end
+
+        abstract class CaseNodeBase
+        end
+
+        class CaseAssignNode < CaseNodeBase
+          getter value : CaseExprId
+
+          def initialize(@value : CaseExprId)
+          end
+        end
+
+        class CaseOtherNode < CaseNodeBase
+        end
+
+        class CaseProbe
+          def consume(expr_id : CaseExprId) : Int32
+            expr_id.index
+          end
+
+          def inspect_node(node : CaseNodeBase?) : Int32?
+            case node
+            when CaseAssignNode
+              consume(node.value)
+            else
+              nil
+            end
+          end
+
+          def inspect_either(node : CaseNodeBase?) : CaseNodeBase?
+            case node
+            when CaseAssignNode, CaseOtherNode
+              node
+            else
+              nil
+            end
+          end
+        end
+        CRYSTAL
+      func = converter.module.functions.find { |candidate| candidate.name.starts_with?("CaseProbe#inspect_node") }.not_nil!
+      calls = func.blocks.flat_map(&.instructions).compact_map(&.as?(Adamas::HIR::Call))
+
+      calls.any? { |call| call.method_name.starts_with?("CaseAssignNode#value") }.should be_true
+      calls.any? { |call| call.method_name.starts_with?("Nil | CaseNodeBase#value") }.should be_false
+      calls.any? { |call| call.method_name.starts_with?("CaseProbe#consume$CaseExprId") }.should be_true
+      hir_text(func).should contain("union_unwrap")
+      hir_text(func).should contain("is_a")
+
+      either = converter.module.functions.find { |candidate| candidate.name.starts_with?("CaseProbe#inspect_either") }.not_nil!
+      hir_text(either).should_not contain("cast")
+    end
+
     it "distinguishes a cached method result from a local initialized by another call" do
       arena = Adamas::Compiler::Frontend::AstArena.new
       converter = Adamas::HIR::AstToHir.new(arena)

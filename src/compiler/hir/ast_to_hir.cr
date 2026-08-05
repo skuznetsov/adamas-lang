@@ -61982,6 +61982,53 @@ module Adamas::HIR
       nil
     end
 
+    # A class union can store a subclass behind an ancestor arm, for example
+    # `Node?` stores `AssignNode` in its `Node` arm. After the branch condition
+    # proves the descendant type, narrowing must unwrap that unique carrier
+    # before casting it. Keep this separate from direct-member matching: the
+    # carrier match alone is not sufficient to satisfy the type test.
+    private def get_union_descendant_carrier_variant_for_type_check(
+      union_type : TypeRef,
+      check_type : TypeRef,
+    ) : {Int32, TypeRef}?
+      check_desc = @module.get_type_descriptor(check_type)
+      return nil unless check_desc && check_desc.kind == TypeKind::Class
+
+      candidate : {Int32, TypeRef}? = nil
+      ensure_union_descriptor_for_type_ref(union_type)
+      mir_union_ref = hir_to_mir_type_ref(union_type)
+      if descriptor = @union_descriptors[mir_union_ref]?
+        descriptor.variants.each do |variant|
+          carrier_type = mir_to_hir_type_ref(variant.type_ref)
+          carrier_desc = @module.get_type_descriptor(carrier_type)
+          next unless carrier_desc && carrier_desc.kind == TypeKind::Class
+          next unless statically_is_a_type?(check_type, carrier_type) == true
+
+          match = {variant.type_id, carrier_type}
+          return nil if candidate && candidate != match
+          candidate = match
+        end
+        return candidate
+      end
+
+      if type_desc = @module.get_type_descriptor(union_type)
+        if type_desc.kind == TypeKind::Union
+          split_union_type_name(type_desc.name).each_with_index do |variant_name, idx|
+            carrier_type = type_ref_for_name(variant_name)
+            carrier_desc = @module.get_type_descriptor(carrier_type)
+            next unless carrier_desc && carrier_desc.kind == TypeKind::Class
+            next unless statically_is_a_type?(check_type, carrier_type) == true
+
+            match = {idx, carrier_type}
+            return nil if candidate && candidate != match
+            candidate = match
+          end
+        end
+      end
+
+      candidate
+    end
+
     private def pointer_like_union_variant_id(union_type : TypeRef) : Int32?
       mir_union_ref = hir_to_mir_type_ref(union_type)
       descriptor = @union_descriptors[mir_union_ref]?
@@ -74768,6 +74815,17 @@ module Adamas::HIR
             ctx.register_local(name, unwrap.id)
             target_idx += 1
             next
+          elsif carrier = get_union_descendant_carrier_variant_for_type_check(local_type, target_type)
+            variant_id, carrier_type = carrier
+            unwrap = UnionUnwrap.new(ctx.next_id, carrier_type, local_id, variant_id, false)
+            ctx.emit(unwrap)
+            ctx.register_type(unwrap.id, carrier_type)
+            cast = Cast.new(ctx.next_id, target_type, unwrap.id, target_type, safe: false)
+            ctx.emit(cast)
+            ctx.register_type(cast.id, target_type)
+            ctx.register_local(name, cast.id)
+            target_idx += 1
+            next
           end
         end
 
@@ -79345,6 +79403,7 @@ module Adamas::HIR
           subj_local_id = ctx.lookup_local(svn)
           subj_type = subj_local_id ? ctx.type_of(subj_local_id) : nil
           subj_is_union = subj_type && is_union_type?(subj_type)
+          single_condition = when_branch.conditions.size == 1
           if subj_type
             when_branch.conditions.each do |cond_expr|
               cond_node = @arena[cond_expr]
@@ -79363,7 +79422,10 @@ module Adamas::HIR
                                 else
                                   true
                                 end
-                if should_narrow
+                if subj_is_union && !should_narrow
+                  should_narrow = !get_union_descendant_carrier_variant_for_type_check(subj_type, target_ref).nil?
+                end
+                if single_condition && should_narrow
                   apply_is_a_narrowing(ctx, [IsANarrowingTarget.new(svn, target_ref)])
                 end
                 if target_ref == TypeRef::NIL
@@ -79422,7 +79484,7 @@ module Adamas::HIR
                               else
                                 nil
                               end
-                if narrow_type
+                if single_condition && narrow_type
                   apply_is_a_narrowing(ctx, [IsANarrowingTarget.new(svn, narrow_type)])
                 end
               end

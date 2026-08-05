@@ -1,16 +1,17 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-08-05 (generic included-module calls now preserve authoritative
-origin, parameter provenance, owner specialization, and normalized explicit
-argument ABI; registered generic receiver repair fails closed across sibling,
-union, owner, and abstract-template mismatches. Typed `Hash` class-variable
-inference preserves shaped `NamedTuple` values. The latest fresh B4-F run
-passes both stage1 smokes and advances beyond the former
-`Hash(String, NamedTuple)#[]=` frontier, but stage2 remains RED after 365.63
-seconds at the named-argument
-`TypeInferenceEngine#resolve_method_annotation_type(...)` exact-target repair;
-the <=300-second validator rejects the run. T1 and full-source MIR/LLVM
-continuity remain open.)
+Updated: 2026-08-05 (`case` refinement now preserves a concrete descendant
+receiver when a nullable class union has one authoritative ancestor carrier;
+multi-condition branches do not narrow, and the descendant shortcut rejects
+overlapping carriers. The latest
+fresh B4-F run passes both stage1 smokes and advances beyond the former
+`AstToHir#infer_type_from_expr$Pointer_String` frontier, but stage2 remains RED
+after 335.65 seconds at
+`AstToHir#lower_module_method$String_DefNode?_Nil_Nil_Nil_String`; the
+<=300-second validator rejects the run. A pre-existing broad union-member
+fallback can still admit a bodyless call when class arms overlap, so that
+guardrail is the next lowering slice. T1 and full-source MIR/LLVM continuity
+remain open.)
 
 BARE REFERENCE-GENERIC INSTANCE DISPATCH RUNTIME-VERIFIED; REGISTERED
 RUNTIME-REFERENCE RETURN UNIONS HIR-VERIFIED AND MIR-GUARDED; UNSUPPORTED
@@ -12209,6 +12210,44 @@ variant execution. It does not authorize `Void -> ExprId`, and the guard
 correctly rejects that new frontier. The next step must trace why the first
 call argument lost its `ExprId` type, starting with value-type registration and
 arena lifetime/provenance rather than widening receiver-repair compatibility.
+
+### Session 59: unique descendant carriers preserve case refinement (2026-08-05)
+
+The apparent `Void -> ExprId` request was downstream damage rather than missing
+argument provenance. In `case expr_node; when AssignNode`, the branch receiver
+kept its declared `Nil | Node` type because branch narrowing recognized only a
+direct union member. Member access then resolved a broad `Nil | Node#value`
+call instead of the concrete `AssignNode#value` getter.
+
+For a single-condition type branch, lowering now accepts one narrower class
+behind exactly one authoritative ancestor arm. The branch still tests the
+descendant directly; only after that proof does it unwrap the unique ancestor
+carrier and cast the raw reference to the descendant. Direct-member narrowing
+is unchanged. Multi-condition branches do not apply sequential branch-local
+narrowing, and two matching ancestor carriers reject the descendant shortcut.
+A temporary `UnionIs(ancestor) && IsA(descendant)` condition was refuted by the
+runtime regression and removed rather than retained as defensive complexity.
+
+Evidence: the focused HIR example passes, and the full HIR lowering suite
+passes 437 examples with zero failures/errors and two pre-existing pending
+examples. The combined runtime regression reaches
+`case_descendant_union_narrowing_ok`, and the exact original assignment-tail
+reducer compiles and runs, all through `scripts/run_safe.sh`. A fresh bootstrap
+builds stage1 in 16.69 seconds and passes both smokes. Stage2 advances beyond
+the former `infer_type_from_expr$Pointer_String` request and fails naturally
+after 335.65 seconds at
+`AstToHir#lower_module_method$String_DefNode?_Nil_Nil_Nil_String`. The
+readiness validator rejects the manifest, so B4-F remains RED functionally and
+against the <=300-second budget.
+
+Boundary: the unique-carrier branch contract is locally ROBUST. The surrounding
+union-member resolver is still BROKEN for an adjacent overlapping-arm shape:
+`Base | Mid | Nil`, followed by `when Child`, correctly refuses to choose an
+ambiguous carrier, but the generic broad fallback can still admit a bodyless
+`union#value` call that fails at runtime. The next atomic slice must make this
+unresolved descendant-only member access fail closed, or first prove a sound
+canonicalization rule for redundant class arms; it must not select an arbitrary
+carrier or suppress valid shared/Object methods.
 
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
