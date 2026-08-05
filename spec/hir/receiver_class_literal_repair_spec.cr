@@ -1833,6 +1833,89 @@ describe "receiver-bound class-literal repair" do
     ).should be_false
   end
 
+  it "rekeys a named union of child classes to a nullable parent parameter" do
+    converter, functions = parse_receiver_repair_source(<<-CRYSTAL)
+      abstract class NullableUnionRepairValue
+      end
+
+      class NullableUnionRepairChild < NullableUnionRepairValue
+      end
+
+      class NullableUnionRepairSibling < NullableUnionRepairValue
+      end
+
+      class NullableUnionRepairUnrelated
+      end
+
+      class NullableUnionRepairSink
+        def store(
+          value : NullableUnionRepairValue?,
+          *,
+          enabled : Bool? = nil,
+        ) : String
+          enabled.nil? ? "nil" : "ok"
+        end
+
+        def pass(
+          value : NullableUnionRepairChild | NullableUnionRepairValue | NullableUnionRepairSibling,
+        ) : String
+          store(value, enabled: false)
+        end
+
+        def reject(
+          value : NullableUnionRepairChild | NullableUnionRepairUnrelated,
+        ) : Nil
+          nil
+        end
+      end
+    CRYSTAL
+
+    caller = functions.find do |candidate|
+      candidate.name.starts_with?("NullableUnionRepairSink#pass$")
+    end
+    caller.should_not be_nil
+    call = caller.not_nil!.blocks.flat_map(&.instructions)
+      .compact_map { |instruction| instruction.as?(Adamas::HIR::Call) }
+      .find { |instruction| instruction.method_name.starts_with?("NullableUnionRepairSink#store") }
+    call.should_not be_nil
+    stale_name = call.not_nil!.method_name
+    canonical = functions.find do |candidate|
+      candidate.name.starts_with?("NullableUnionRepairSink#store$") &&
+        candidate.name.includes?("Nil | NullableUnionRepairValue") &&
+        candidate.blocks.any? { |block| !block.instructions.empty? }
+    end
+    canonical.should_not be_nil
+    canonical_name = canonical.not_nil!.name
+    converter.module.has_function_with_body?(canonical_name).should be_true
+
+    value_param = caller.not_nil!.params.find { |param| param.name == "value" }
+    value_param.should_not be_nil
+    arg_type_name = converter.module.get_type_descriptor(value_param.not_nil!.type)
+      .not_nil!.name
+    arg_type_name.should contain("NullableUnionRepairChild")
+    arg_type_name.should contain("NullableUnionRepairValue")
+    arg_type_name.should contain("NullableUnionRepairSibling")
+
+    rekeyed = converter.__test_rekey_receiver_repair_request_to_canonical_body(
+      stale_name,
+      "NullableUnionRepairSink#store",
+      "NullableUnionRepairSink",
+      [arg_type_name, "Bool"],
+      caller.not_nil!.name,
+    )
+
+    rekeyed.should be_true
+    call.not_nil!.method_name.should eq(canonical_name)
+    converter.__test_receiver_repair_call_arg_matches_param?(
+      arg_type_name,
+      "NullableUnionRepairValue?",
+    ).should be_true
+    converter.__test_receiver_repair_call_arg_matches_param?(
+      "NullableUnionRepairChild | NullableUnionRepairUnrelated",
+      "NullableUnionRepairValue?",
+    ).should be_false
+  end
+
   it "preserves named-only call shape while rekeying a narrowed nullable parameter" do
     converter, functions = parse_receiver_repair_source(<<-CRYSTAL)
       class NamedOnlyRepairSink

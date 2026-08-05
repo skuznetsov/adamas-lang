@@ -12177,6 +12177,39 @@ VULNERABLE. The next reducer must prove whether every non-nil argument-union
 arm is the parameter arm itself or a class descendant, while keeping multi-arm
 parameter unions and unproven discriminator mappings fail-closed.
 
+### Session 58: descendant-union containment exposes lost ExprId typing (2026-08-05)
+
+The next receiver-repair request carried the source union
+`PrimitiveType | Type | UnionType` into nullable `Type`. The accepted extension
+keeps the target contract unchanged: the authoritative parameter descriptor
+must still contain exactly one non-nil class arm. If the source is a union,
+every non-nil authoritative source arm must be that class itself or pass the
+existing class-only inheritance proof. A single unrelated arm rejects the
+entire request; multi-arm parameter unions remain fail-closed.
+
+Evidence: the focused receiver-repair family passes 45 examples, including an
+unrelated source-union negative control. The full HIR lowering suite passes 436
+examples with zero failures/errors and two pre-existing pending examples. An
+old compiler rejects the exact named/default reducer at
+`Base | Child | Sibling -> Base?`; a fresh compiler accepts it, and the produced
+binary exercises all three runtime variants and prints `okokok` through
+`scripts/run_safe.sh`.
+
+A fresh bootstrap builds stage1 in 16.17 seconds and passes both smokes. Stage2
+advances past the previous `resolve_method_annotation_type` union request and
+fails naturally after 331.03 seconds at
+`AstToHir#infer_type_from_expr$Pointer_String`: the request records `Void,
+String`, while the canonical body expects `ExprId, Nil | String`. The readiness
+validator rejects the manifest, so B4-F remains RED functionally and against
+the <=300-second admission limit.
+
+Boundary: descendant-union containment is locally ROBUST for a nullable
+single-class-arm target, backed by all-reference pointer ABI and runtime
+variant execution. It does not authorize `Void -> ExprId`, and the guard
+correctly rejects that new frontier. The next step must trace why the first
+call argument lost its `ExprId` type, starting with value-type registration and
+arena lifetime/provenance rather than widening receiver-repair compatibility.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

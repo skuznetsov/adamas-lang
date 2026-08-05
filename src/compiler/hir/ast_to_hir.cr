@@ -46170,7 +46170,27 @@ module Adamas::HIR
       end
       return false unless parent_type
 
-      receiver_repair_class_upcast?(arg_type, parent_type.not_nil!)
+      parent_type = parent_type.not_nil!
+      parent_desc = @module.get_type_descriptor(parent_type)
+      return false unless parent_desc && parent_desc.kind == TypeKind::Class
+      return true if receiver_repair_type_identity_matches?(arg_type, parent_type)
+      return true if receiver_repair_class_upcast?(arg_type, parent_type)
+
+      arg_desc = @module.get_type_descriptor(arg_type)
+      return false unless arg_desc && arg_desc.kind == TypeKind::Union
+      return false unless ensure_union_descriptor_for_type_ref(arg_type)
+      arg_descriptor = union_descriptor_from_sidecar(arg_type)
+      return false unless arg_descriptor
+
+      saw_non_nil = false
+      arg_descriptor.variants.each do |variant|
+        variant_type = mir_to_hir_type_ref(variant.type_ref)
+        next if variant_type == TypeRef::NIL || variant_type == TypeRef::VOID
+        saw_non_nil = true
+        next if receiver_repair_type_identity_matches?(variant_type, parent_type)
+        return false unless receiver_repair_class_upcast?(variant_type, parent_type)
+      end
+      saw_non_nil
     end
 
     private def receiver_repair_class_upcast?(
@@ -46258,6 +46278,8 @@ module Adamas::HIR
       # remaining parameters must match the HIR values exactly, admit them as
       # direct members of a canonical union parameter, or prove a class-only
       # child-to-parent upcast either directly or into a nullable class arm.
+      # A source union is legal only when every non-nil arm passes that same
+      # identity-or-inheritance proof.
       # Multi-arm unions remain fail-closed because their subclass discriminator
       # mapping is a separate MIR/LLVM contract.
       # HIR-to-MIR lower_call always routes resolved direct calls through
