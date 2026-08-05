@@ -12146,6 +12146,37 @@ without a concrete reducer. The next active frontier is the normalized
 named/default argument contract for the exact `resolve_method_annotation_type`
 target; it should be reduced independently before changing receiver repair.
 
+### Session 57: nullable class upcasts advance B4-F to union containment (2026-08-05)
+
+The named/default shape was only the trigger for the next receiver-repair
+failure. A focused reducer showed that a concrete child-class argument could
+not rekey to an existing nullable parent-class body: `RepairChild` was rejected
+against `Nil | RepairBase`. Receiver repair now admits that conversion only
+when the authoritative union descriptor contains exactly one non-nil arm and
+the existing class-only inheritance check proves the child-to-parent relation.
+Unrelated classes, reverse inheritance, structs, modules, numeric conversions,
+and multi-arm unions remain fail-closed. This avoids treating HIR union
+admission as proof of the separate MIR/LLVM discriminator contract.
+
+Evidence: the focused receiver-repair family passes 44 examples, including
+negative controls for unrelated, reverse, and multi-arm cases. The full HIR
+lowering suite passes 436 examples with zero failures/errors and two
+pre-existing pending examples. A fresh compiler builds cleanly, compiles the
+reducer, and the produced binary prints `ok` through `scripts/run_safe.sh`.
+
+A fresh bootstrap builds stage1 in 16.65 seconds and passes both smokes. Stage2
+then advances past the former singleton `PrimitiveType` request and fails
+naturally after 337.58 seconds with the argument union
+`PrimitiveType | Type | UnionType` against nullable `Type`. The readiness
+validator rejects the manifest, so B4-F remains RED functionally and against
+the <=300-second admission limit.
+
+Boundary: the nullable single-class-arm conversion is locally ROBUST, not a
+general union coercion framework. The broader lowering frontier remains
+VULNERABLE. The next reducer must prove whether every non-nil argument-union
+arm is the parameter arm itself or a class descendant, while keeping multi-arm
+parameter unions and unproven discriminator mappings fail-closed.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

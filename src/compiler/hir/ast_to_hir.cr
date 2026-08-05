@@ -46147,7 +46147,30 @@ module Adamas::HIR
     ) : Bool
       receiver_repair_type_identity_matches?(param_type, arg_type) ||
         exact_union_call_type_subset?(arg_type, param_type) ||
+        receiver_repair_nullable_class_upcast?(arg_type, param_type) ||
         receiver_repair_class_upcast?(arg_type, param_type)
+    end
+
+    private def receiver_repair_nullable_class_upcast?(
+      arg_type : TypeRef,
+      union_type : TypeRef,
+    ) : Bool
+      union_desc = @module.get_type_descriptor(union_type)
+      return false unless union_desc && union_desc.kind == TypeKind::Union
+      return false unless ensure_union_descriptor_for_type_ref(union_type)
+      descriptor = union_descriptor_from_sidecar(union_type)
+      return false unless descriptor
+
+      parent_type = nil.as(TypeRef?)
+      descriptor.variants.each do |variant|
+        variant_type = mir_to_hir_type_ref(variant.type_ref)
+        next if variant_type == TypeRef::NIL || variant_type == TypeRef::VOID
+        return false if parent_type
+        parent_type = variant_type
+      end
+      return false unless parent_type
+
+      receiver_repair_class_upcast?(arg_type, parent_type.not_nil!)
     end
 
     private def receiver_repair_class_upcast?(
@@ -46234,10 +46257,13 @@ module Adamas::HIR
       # Direct instance-call ABI: the target's first parameter is self and the
       # remaining parameters must match the HIR values exactly, admit them as
       # direct members of a canonical union parameter, or prove a class-only
-      # child-to-parent upcast. HIR-to-MIR lower_call always routes resolved
-      # direct calls through coerce_call_args, which performs concrete-to-union
-      # wrapping; class values already share the pointer ABI. Structs, modules,
-      # numeric conversions, and unrelated reference types remain fail-closed.
+      # child-to-parent upcast either directly or into a nullable class arm.
+      # Multi-arm unions remain fail-closed because their subclass discriminator
+      # mapping is a separate MIR/LLVM contract.
+      # HIR-to-MIR lower_call always routes resolved direct calls through
+      # coerce_call_args, which performs concrete-to-union wrapping; class
+      # values already share the pointer ABI. Structs, modules, numeric
+      # conversions, and unrelated reference types remain fail-closed.
       unless canonical.params.size == request.arg_types.size + 1
         return reject_receiver_repair_canonical_rekey(
           request,
