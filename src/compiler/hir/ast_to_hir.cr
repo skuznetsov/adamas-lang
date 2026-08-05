@@ -30989,10 +30989,10 @@ module Adamas::HIR
                 end
               end
               @current_class = old_class
-              return_type ||= TypeRef::VOID
+              resolved_return_type = return_type || TypeRef::VOID
               contains_yield = false
               if env_get("DEBUG_WUINT128") && full_name.includes?("Dragonbox::WUInt")
-                ret_name = get_type_name_from_ref(return_type)
+                ret_name = get_type_name_from_ref(resolved_return_type)
                 STDERR.puts "[DEBUG_WUINT128] register return method=#{method_name} return=#{ret_name}"
                 if params = effective_member.params
                   param_index = 0
@@ -31023,11 +31023,11 @@ module Adamas::HIR
                 full_method_name,
                 effective_member,
                 !explicit_return_type_name.nil?,
-                return_type,
+                resolved_return_type,
               )
               register_function_type(
                 full_method_name,
-                return_type,
+                resolved_return_type,
                 replace_explicit_return,
               )
               bootstrap_trace_puts "[CLASS_FRONTIER] nested_module_def_after_register_type #{full_method_name}" if trace_nested_float_def

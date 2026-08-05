@@ -12351,6 +12351,43 @@ the nested-module path passes a nullable type provenance into the non-null
 `register_function_type` contract; do not relax that contract globally before
 the caller is understood.
 
+### Session 63: nested-module registration consumes proven return types (2026-08-05)
+
+The new stage2 target was a caller-side flow-typing leak, not evidence that a
+source annotation resolved to Nil. `register_nested_module_in_current_arena`
+initialized `return_type` as `TypeRef?`, assigned it inside a namespace block,
+then used `return_type ||= TypeRef::VOID` and passed the same optional binding
+to strict `TypeRef` consumers. The generated compiler could therefore demand
+`register_function_type$String_Nil_Bool` even though the runtime fallback was
+already semantically correct.
+
+The new source-shape falsifier reported
+`optional_nested_return_type_leaked` before the patch and failed strict mode.
+The accepted change creates one `resolved_return_type = return_type ||
+TypeRef::VOID` proof binding and passes it to both the explicit-return contract
+and function-type registration. Strict mode now reports one proof binding, two
+proven consumers, and zero optional consumers. No callee contract or Nil/VOID
+semantics were relaxed.
+
+Evidence: `scripts/nested_module_return_type_provenance_source_shape_guard.sh`
+is GREEN in strict mode, and the full HIR lowering suite passes 439 examples
+with zero failures/errors and two pre-existing pending examples. A fresh
+bootstrap built stage1 in 17.39 seconds and passed both smokes. Stage2 cleared
+the old nullable target and exited naturally after 335.92 seconds at
+`AstToHir#register_accessors_in_class$Adamas::Compiler::Frontend::Node_String_Array(Adamas::HIR::IVarInfo)_Pointer(Int32)`,
+called from `register_class_members_from_expansion`. Resource evidence stayed
+bounded at 2300.06 MiB peak RSS, 11 FDs, and one process; no process survived.
+The offline validator rejects the manifest with `manifest_status`, so B4-F
+remains RED functionally and against the <=300-second admission budget.
+
+Boundary: the exact nested-module provenance repair is ROBUST. Similar optional
+`return_type ||= TypeRef::VOID` bindings remain in two other registration
+helpers, but changing them without a reached target would broaden this slice
+without new evidence. The next atomic slice must reduce the expansion caller's
+`Node` argument against the stricter accessor helper contract; do not widen
+`register_accessors_in_class` or cast the node before proving its concrete
+variant and arena provenance.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
