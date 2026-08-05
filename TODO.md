@@ -12317,6 +12317,40 @@ nil-receiver frontier. The next step must trace why `env_filter_match_texts?`
 lowers `text3.includes?(value)` under a nil receiver despite its explicit
 nil guard; do not add a general `Nil#includes?` fallback.
 
+### Session 62: static Not evaluation prunes Nil-only guarded calls (2026-08-05)
+
+The exact reducer specialized one `String?` parameter to `Nil` and then lowered
+`!text.nil? && text.includes?(token)` inside a longer OR chain. `Nil#nil?`
+already lowered to the Boolean literal `true`, but `lower_unary` preserved the
+logical Not instruction and `static_truthy_value` did not inspect it. The
+short-circuit path therefore treated the known-false left side as unknown and
+materialized an unreachable bodyless `Nil#includes?$String` call.
+
+An initial direct fold in `lower_unary` was refuted and removed because it
+broke the existing HIR-shape contract that represents logical Not explicitly.
+The accepted change is narrower: the static evaluator recursively interprets
+only known `UnaryOperation(Not)` chains. The strengthened regression checks all
+matching Nil-specialized bodies, rejects any `Nil#includes?` call, and also
+requires the reachable String intrinsic so it cannot pass by pruning the whole
+expression.
+
+Evidence: the full HIR lowering suite passes 439 examples with zero
+failures/errors and two pre-existing pending examples. A fresh bootstrap built
+stage1 in 17.16 seconds and passed both smokes. Stage2 advanced beyond the old
+Nil receiver, remained a single process without fanout, rose smoothly to about
+2.24 GiB RSS, and exited naturally after 337.36 seconds at
+`AstToHir#register_function_type$String_Nil_Bool`, called from
+`register_nested_module_in_current_arena`. No bootstrap processes survived.
+The offline validator rejects the manifest, so B4-F remains RED functionally
+and against the <=300-second admission budget.
+
+Boundary: the local short-circuit repair is ROBUST for statically known literal
+and Not chains; it does not widen receiver repair or invent Nil fallbacks.
+Dynamic union conditions remain dynamic. The next atomic slice must reduce why
+the nested-module path passes a nullable type provenance into the non-null
+`register_function_type` contract; do not relax that contract globally before
+the caller is understood.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

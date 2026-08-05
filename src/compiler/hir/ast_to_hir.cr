@@ -74477,6 +74477,9 @@ module Adamas::HIR
           if value.type == TypeRef::BOOL
             return value.int_value != 0
           end
+        elsif value.is_a?(UnaryOperation) && value.op == UnaryOp::Not
+          operand_truthy = static_truthy_value(ctx, value.operand)
+          return operand_truthy.nil? ? nil : !operand_truthy
         end
       end
 

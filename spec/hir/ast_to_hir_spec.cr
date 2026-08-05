@@ -7581,6 +7581,51 @@ describe Adamas::HIR::AstToHir do
         call.method_name.includes?("consume") || call.method_name.starts_with?("Nil#to_i")
       end.should be_true
     end
+
+    it "does not lower includes? for a statically Nil optional parameter in an OR chain" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class NilIncludesGuardProbe
+          private def maybe_text(flag : Bool) : String?
+            flag ? "candidate" : nil
+          end
+
+          private def match_texts?(
+            token : String,
+            text1 : String? = nil,
+            text2 : String? = nil,
+            text3 : String? = nil,
+            text4 : String? = nil,
+          ) : Bool
+            (!text1.nil? && text1.includes?(token)) ||
+              (!text2.nil? && text2.includes?(token)) ||
+              (!text3.nil? && text3.includes?(token)) ||
+              (!text4.nil? && text4.includes?(token))
+          end
+
+          def run(flag : Bool) : Bool
+            match_texts?("needle", "first", nil, maybe_text(flag), maybe_text(!flag))
+          end
+        end
+
+        NilIncludesGuardProbe.new.run(true)
+      CRYSTAL
+      converter.flush_pending_functions
+
+      targets = converter.module.functions.select do |function|
+        function.name.starts_with?("NilIncludesGuardProbe#match_texts?$") &&
+          function.name.includes?("_Nil_")
+      end
+      targets.empty?.should be_false
+      instructions = targets.flat_map(&.blocks).flat_map(&.instructions)
+      call_names = instructions.compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call).try(&.method_name)
+      end
+      call_names.none? { |name| name.starts_with?("Nil#includes?$") }.should be_true
+      extern_names = instructions.compact_map do |instruction|
+        instruction.as?(Adamas::HIR::ExternCall).try(&.extern_name)
+      end
+      extern_names.should contain("__adamas_string_includes_string")
+    end
   end
 
   describe "block parameter types" do
