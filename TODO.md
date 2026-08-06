@@ -12512,6 +12512,47 @@ during narrowing setup, and snapshot persistence are outside this slice. A
 fresh B4-F has not yet been run on this follow-up, so bootstrap readiness
 remains RED.
 
+### Session 67: static unless branches do not materialize unreachable tails (2026-08-05)
+
+A fresh bootstrap at `02a7d5d0` built stage1 in 16.17 seconds and passed both
+smokes. Stage2 cleared the captured `Nil#includes?$String` target and failed
+naturally after about 319 seconds at `Nil#any?$block`, requested from
+`literal_sensitive_call_arguments?$Nil`. The manifest remained RED and above
+the 300-second admission budget; the resource sampler again could not certify
+RSS or FD counts, but no bootstrap process survived.
+
+The 13-second reducer proved that parameter provenance was already exact: a
+call made only with `nil` bound the optional `Array(Int32?)?` parameter as Nil.
+The defect was control-flow reachability. Unlike `lower_if`, `lower_unless`
+always materialized both branches, so `return false unless values` retained a
+synthetic fallthrough through the impossible truthy branch and lowered the
+following `values.any?` against Nil.
+
+The repair reuses the existing static `is_a?`/Nil condition evaluators and the
+single-branch merge helper before constructing the dynamic unless CFG. A true
+condition lowers only the optional else branch with truthy/is-a narrowing; a
+false condition lowers only the unless body with falsy/is-a-else narrowing.
+No parameter type, receiver fallback, or general demand rule changed.
+
+Evidence: `nil_specialized_unless_tail_hir_repro.sh` is RED against the old
+stage1 compiler with `Nil#any?$block` and GREEN against the repaired compiler.
+Its HIR oracle requires the Nil specialization to contain neither an `any?`
+call nor the inlined array traversal. A second Nil specialization exercises the
+static-true path, rejects its impossible `includes?` body, and retains the
+reachable else value. A live Array control must retain either the call or its
+`array_size`/`index_get`/comparison work. The compiler build succeeds, and the
+full HIR lowering suite passes 443 examples with zero failures/errors and two
+pre-existing pending examples. All produced compiler and test-binary execution
+used `scripts/run_safe.sh`.
+
+Boundary: the pre-CFG static unless corridor is ROBUST for the measured exact
+Nil static-false and static-true paths. Static is-a selection reuses the
+existing `lower_if` evaluator and narrowing helpers but has no dedicated
+Session 67 reducer. Dynamic conditions, short-circuit unless conditions, and
+values that become constant only after expression lowering remain on the
+established dynamic path. A fresh B4-F has not yet been run on this repair, so
+bootstrap readiness remains RED.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

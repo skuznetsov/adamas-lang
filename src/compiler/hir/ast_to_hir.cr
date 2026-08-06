@@ -77074,6 +77074,34 @@ module Adamas::HIR
       falsy_targets = falsy_narrowing_targets(node.condition)
       is_a_targets = is_a_narrowing_targets(node.condition)
 
+      static_cond = static_is_a_condition_value(ctx, node.condition)
+      static_cond = static_nil_condition_value(ctx, node.condition) if static_cond.nil?
+      unless static_cond.nil?
+        pre_branch_locals = ctx.save_locals
+        pre_inline_caller_locals = @inline_caller_locals_stack.map(&.dup)
+        ctx.push_scope(ScopeKind::Block)
+
+        if static_cond
+          apply_truthy_narrowing(ctx, truthy_targets)
+          apply_is_a_narrowing(ctx, is_a_targets)
+          return lower_static_if_branch(ctx, pre_branch_locals, pre_inline_caller_locals) do
+            if else_branch = node.else_branch
+              lower_body(ctx, else_branch)
+            else
+              nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+              ctx.emit(nil_lit)
+              nil_lit.id
+            end
+          end
+        end
+
+        apply_truthy_narrowing(ctx, falsy_targets)
+        apply_is_a_else_narrowing(ctx, is_a_targets)
+        return lower_static_if_branch(ctx, pre_branch_locals, pre_inline_caller_locals) do
+          lower_body(ctx, node.then_branch)
+        end
+      end
+
       then_block = ctx.create_block
       else_block = ctx.create_block
       merge_block = ctx.create_block
