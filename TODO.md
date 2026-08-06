@@ -13529,6 +13529,112 @@ measured global potential descent. Return to an independently measured lowering
 root; if specialization collapse is revisited, first count bodies by canonical
 method family and distinguish required call shapes from redundant variants.
 
+### Session 95: source-proven nullable reuse removes a recursive specialization cycle (2026-08-06)
+
+The Session 94 result was too broad: specialization is required in general, but
+the exact one-parameter, non-generic `T?` case already has a legal call-boundary
+transport. The caller can wrap an exact `T` value into the declared `Nil | T`
+ABI and call the declared body. The new reuse predicate is deliberately limited
+to that shape: one required positional parameter, no default, named-only,
+splat, double-splat, block, external-name, or unresolved generic annotation,
+and an exact canonical two-variant nullable union. The mutually recursive
+reducer now materializes only `outer$Nil | String` and
+`inner$Nil | String`; the redundant `$String` and `$Nil` bodies are absent.
+
+The first implementation exposed a second producer. Union-argument dispatch
+used speculative `lower_function_if_needed` calls while discovering concrete
+targets and then treated the resulting function maps as proof that explicit
+variant overloads existed. A single union-parameter declaration could therefore
+self-certify `$Nil` and `$String` variants and create a recursive trampoline
+cycle. The replacement separates source discovery from body materialization:
+typed lookup records each variant's source `DefNode`, distinct concrete dispatch
+is allowed only when two source definitions are proven different (with arena
+path identity guarding equal spans), and bodies are lowered only after that
+gate. Registered primitives and the existing initialize-backed nullable
+allocator corridor remain explicit exceptions.
+
+Hostile falsifiers changed the patch twice. Removing speculative lowering first
+broke lazy overloads with default arguments. A clean detached `HEAD` compiler
+passed the runtime oracle while that draft failed its `String` branch, proving
+patch causality. Lookup-only source discovery restored the wrapper targets. The
+next draft compared variants with a selected union source, but the resolver
+correctly has no single selected overload for `Nil | Slice(UInt8)`; the existing
+HIR guard failed. Pairwise comparison of concrete variant sources is both
+simpler and sufficient: distinct explicit overloads differ, while derived
+specializations of one declaration share a source.
+
+A final macro-generated overload falsifier then exposed an equal-span collision:
+separate `Nil` and `String` expansions of one macro template were classified as
+one declaration, so both nullable branches called the `Nil` body and produced
+20 instead of the clean-`HEAD` result 30. The existing exact expansion-source
+map now distinguishes only pairs whose macro provenance and saved sources are
+both present. Missing or contradictory provenance still fails closed to avoid
+self-recursive dispatch. A generated runtime fixture covers both the distinct
+macro overloads and a single macro-generated `String?` declaration, guarding
+the opposite failure mode.
+
+Fresh evidence after the final pivot:
+
+- `receiver_class_literal_repair_spec`: 52 examples, 0 failures;
+- `ast_to_hir_spec`: 457 examples, 0 failures, 2 pre-existing pending;
+- focused generated-runtime macro integration: 1 example, 0 failures;
+- fresh host build of `src/adamas.cr` succeeded;
+- explicit, defaulted, mixed-source, and named-only `Nil`/`String` runtime
+  oracles compiled with a fresh Adamas binary and exited 0 through
+  `scripts/run_safe.sh`;
+- a splat-overload runtime oracle now also compiles and exits 0 with the final
+  Adamas binary;
+- an empty-splat runtime oracle covers both nullable branches and exits 0 with
+  the final Adamas binary;
+- the guarded runtime compiles completed in approximately 22-26 seconds with
+  exit/timeout enforcement; the macOS sampler reported RSS/FD unavailable, so
+  this run is not claimed as a memory-bound certificate.
+
+The final hostile review proposed that named/splat call-shape metadata might be
+lost at the union-dispatch lookup seam. The named-only structural and runtime
+falsifiers both passed without a production change, so threading that metadata
+unconditionally would have been speculative complexity. The splat structural
+falsifier initially also found both concrete targets, but a stronger ABI check
+and runtime oracle exposed a real defect: the dispatcher passed the expanded
+`Int32` directly to functions whose lowered splat parameter was
+`Tuple(Int32)`, producing a SIGSEGV at address `0x7`. The dispatcher now reuses
+the existing splat packer after each concrete union unwrap, and only when the
+original call used splat syntax and the main path did not already pack it. This
+keeps already-packed, named-only, defaulted, and ordinary calls outside the new
+path.
+
+The empty-splat adversary then found a separate boundary defect. `*Tuple.new`
+initially lowered as a `Void` constructor call, and after recognizing the empty
+literal the packer still emitted a bodyless `_splat` target. Empty tuple syntax
+is now erased before expansion, the packer inserts exactly one `Tuple()` at the
+declared splat slot, and receiver repair may rekey only a non-named `_splat`
+call to the identical packed-argument symbol after that canonical body exists
+and all existing owner, parameter, return, and callsite checks pass. Two broader
+fallback changes were removed after the same runtime oracle passed without
+them.
+
+The older `Path` runtime oracle remains contaminated by an independent String
+aliasing symptom (`/tmp/tmp` despite structurally correct HIR), so it is not
+claimed as runtime evidence for this change. B4-F remains RED until a fresh
+guarded 300-second bootstrap run measures the recomputed global boundary.
+Equal source spans without independently recorded arena paths also fail closed
+as the same definition. Macro-generated pairs with exact recorded expansion
+sources are distinguished; multi-file definitions or macro reparses with
+missing or contradictory provenance remain a conservative false-negative risk,
+not permission to restore speculative materialization. A hostile scalar-splat
+overload collision remains separately open: current and clean `HEAD` both pick
+the explicit tuple overload (20) while upstream Crystal picks the splat overload
+(10), so it is a baseline defect rather than evidence against this patch.
+
+LTP/WBA status is provisional. The local trigger is an exact concrete call into
+one declared `T?` body; the transport is exact union wrapping; the boundary
+invariant is declared nullable ABI plus source-proven distinct overload
+preservation; the local potential is the number of materialized bodies in the
+recursive family. Recompute safety is supported by the focused and full HIR
+suites plus the explicit, defaulted, mixed-source, named-only, and splat runtime
+oracles. There is no promotion until B4-F shows global wall-time and memory
+descent without a capability regression.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

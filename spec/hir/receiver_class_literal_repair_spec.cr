@@ -148,12 +148,17 @@ class Adamas::HIR::AstToHir
     remove_hir_function(name)
   end
 
+  def __test_lower_function_if_needed(name : String) : Nil
+    lower_function_if_needed(name)
+  end
+
   def __test_rekey_receiver_repair_request_to_canonical_body(
     exact_target : String,
     fallback_base : String,
     owner : String,
     arg_type_names : Array(String),
     caller : String,
+    has_splat : Bool = false,
   ) : Bool
     call_id = UInt32::MAX
     if caller_function = @module.function_by_name(caller)
@@ -173,7 +178,7 @@ class Adamas::HIR::AstToHir
       owner,
       arg_type_names.map { |name| type_ref_for_name(name) },
       false,
-      false,
+      has_splat,
       false,
       caller,
       call_id,
@@ -2534,4 +2539,234 @@ describe "receiver-bound class-literal repair" do
     ).should be_true
   end
 
+  it "reuses a declared nullable body for exact non-generic calls" do
+    _, functions = parse_receiver_repair_source(<<-CRYSTAL)
+      class NullableRecursiveIdentity
+        def outer(value : String?) : Nil
+          inner(value)
+        end
+
+        def inner(value : String?) : Nil
+          if value
+            outer(value)
+          end
+        end
+
+        def run(value : String) : Nil
+          outer(value)
+        end
+      end
+    CRYSTAL
+
+    materialized = {} of String => Array(String)
+    ["outer", "inner"].each do |method_name|
+      materialized[method_name] = functions.select do |function|
+        function.name.starts_with?("NullableRecursiveIdentity##{method_name}$") &&
+          function.blocks.any? { |block| !block.instructions.empty? }
+      end.map(&.name).sort
+    end
+
+    materialized.should eq({
+      "outer" => ["NullableRecursiveIdentity#outer$Nil | String"],
+      "inner" => ["NullableRecursiveIdentity#inner$Nil | String"],
+    })
+  end
+
+  it "keeps union dispatch for distinct explicit overloads" do
+    _, functions = parse_receiver_repair_source(<<-CRYSTAL)
+      class ExplicitNullableDispatch
+        def choose(value : Nil) : Int32
+          1
+        end
+
+        def choose(value : String) : Int32
+          2
+        end
+
+        def run(value : String?) : Int32
+          choose(value)
+        end
+      end
+    CRYSTAL
+
+    run = functions.find do |function|
+      function.name == "ExplicitNullableDispatch#run$Nil | String"
+    end
+    run.should_not be_nil
+
+    instructions = run.not_nil!.blocks.flat_map(&.instructions)
+    instructions.count { |instruction| instruction.is_a?(Adamas::HIR::UnionIs) }.should eq(1)
+    targets = instructions.compact_map do |instruction|
+      instruction.as?(Adamas::HIR::Call).try(&.method_name)
+    end.select { |name| name.starts_with?("ExplicitNullableDispatch#choose$") }.sort
+    targets.should eq([
+      "ExplicitNullableDispatch#choose$Nil",
+      "ExplicitNullableDispatch#choose$String",
+    ])
+  end
+
+  it "keeps lazy union dispatch for distinct defaulted overloads" do
+    _, functions = parse_receiver_repair_source(<<-CRYSTAL)
+      class DefaultedNullableDispatch
+        def choose(value : Nil, bonus : Int32 = 1) : Int32
+          10 + bonus
+        end
+
+        def choose(value : String, bonus : Int32 = 2) : Int32
+          20 + bonus
+        end
+
+        def run(value : String?) : Int32
+          choose(value)
+        end
+      end
+    CRYSTAL
+
+    run = functions.find do |function|
+      function.name == "DefaultedNullableDispatch#run$Nil | String"
+    end
+    run.should_not be_nil
+
+    instructions = run.not_nil!.blocks.flat_map(&.instructions)
+    instructions.count { |instruction| instruction.is_a?(Adamas::HIR::UnionIs) }.should eq(1)
+    targets = instructions.compact_map do |instruction|
+      instruction.as?(Adamas::HIR::Call).try(&.method_name)
+    end.select { |name| name.starts_with?("DefaultedNullableDispatch#choose$") }.sort
+    targets.should eq([
+      "DefaultedNullableDispatch#choose$Nil",
+      "DefaultedNullableDispatch#choose$String",
+    ])
+  end
+
+  it "keeps union dispatch for distinct named-only overloads" do
+    _, functions = parse_receiver_repair_source(<<-CRYSTAL)
+      class NamedNullableDispatch
+        def choose(value : Nil, *, bonus : Int32 = 1) : Int32
+          10 + bonus
+        end
+
+        def choose(value : String, *, bonus : Int32 = 2) : Int32
+          20 + bonus
+        end
+
+        def run(value : String?) : Int32
+          choose(value, bonus: 7)
+        end
+      end
+    CRYSTAL
+
+    run = functions.find do |function|
+      function.name == "NamedNullableDispatch#run$Nil | String"
+    end
+    run.should_not be_nil
+
+    instructions = run.not_nil!.blocks.flat_map(&.instructions)
+    instructions.count { |instruction| instruction.is_a?(Adamas::HIR::UnionIs) }.should eq(1)
+    targets = instructions.compact_map do |instruction|
+      instruction.as?(Adamas::HIR::Call).try(&.method_name)
+    end.select { |name| name.starts_with?("NamedNullableDispatch#choose$") }.sort
+    targets.should eq([
+      "NamedNullableDispatch#choose$Nil_Int32",
+      "NamedNullableDispatch#choose$String_Int32",
+    ])
+  end
+
+  it "keeps union dispatch for distinct splat overloads" do
+    _, functions = parse_receiver_repair_source(<<-CRYSTAL)
+      class SplatNullableDispatch
+        def choose(value : Nil, *bonus : Int32) : Int32
+          10 + bonus[0]
+        end
+
+        def choose(value : String, *bonus : Int32) : Int32
+          20 + bonus[0]
+        end
+
+        def run(value : String?) : Int32
+          choose(value, *{7})
+        end
+      end
+    CRYSTAL
+
+    run = functions.find do |function|
+      function.name == "SplatNullableDispatch#run$Nil | String"
+    end
+    run.should_not be_nil
+
+    instructions = run.not_nil!.blocks.flat_map(&.instructions)
+    instructions.count { |instruction| instruction.is_a?(Adamas::HIR::UnionIs) }.should eq(1)
+    target_calls = instructions.compact_map(&.as?(Adamas::HIR::Call)).select do |call|
+      call.method_name.starts_with?("SplatNullableDispatch#choose$")
+    end
+    targets = target_calls.map(&.method_name).sort
+    targets.size.should eq(2)
+    targets.any? { |name| name.starts_with?("SplatNullableDispatch#choose$Nil_") }.should be_true
+    targets.any? { |name| name.starts_with?("SplatNullableDispatch#choose$String_") }.should be_true
+    targets.none? { |name| name.includes?("Nil | String") }.should be_true
+    tuple_allocations = instructions.compact_map(&.as?(Adamas::HIR::Allocate)).map(&.id)
+    target_calls.all? { |call| tuple_allocations.includes?(call.args.last) }.should be_true
+  end
+
+  it "does not repack an empty tuple at a union-dispatched splat slot" do
+    converter, functions = parse_receiver_repair_source(<<-CRYSTAL)
+      class EmptySplatNullableDispatch
+        def choose(value : Nil, *bonus : Int32) : Int32
+          10 + bonus.size
+        end
+
+        def choose(value : String, *bonus : Int32) : Int32
+          20 + bonus.size
+        end
+
+        def run(value : String?) : Int32
+          choose(value, *Tuple.new)
+        end
+
+        def probe : Int32
+          run(nil)
+        end
+      end
+    CRYSTAL
+
+    run = functions.find do |function|
+      function.name == "EmptySplatNullableDispatch#run$Nil | String"
+    end
+    run.should_not be_nil
+
+    instructions = run.not_nil!.blocks.flat_map(&.instructions)
+    target_calls = instructions.compact_map(&.as?(Adamas::HIR::Call)).select do |call|
+      call.method_name.starts_with?("EmptySplatNullableDispatch#choose$")
+    end
+    target_calls.size.should eq(2)
+    splat_types = target_calls.map do |call|
+      splat_arg = instructions.find { |instruction| instruction.id == call.args.last }
+      splat_arg.should_not be_nil
+      converter.__test_type_name(splat_arg.not_nil!.type)
+    end
+    splat_types.should eq(["Tuple()", "Tuple()"])
+
+    exact_run = converter.module.functions.find do |function|
+      function.name == "EmptySplatNullableDispatch#run$Nil"
+    end
+    exact_run.should_not be_nil
+    repaired_call = exact_run.not_nil!.blocks.flat_map(&.instructions)
+      .compact_map(&.as?(Adamas::HIR::Call))
+      .find { |call| call.method_name.starts_with?("EmptySplatNullableDispatch#choose$") }
+    repaired_call.should_not be_nil
+    canonical_target = repaired_call.not_nil!.method_name.rchop("_splat")
+    converter.__test_lower_function_if_needed(canonical_target)
+    converter.module.has_function_with_body?(canonical_target).should be_true
+    converter.__test_rekey_receiver_repair_request_to_canonical_body(
+      repaired_call.not_nil!.method_name,
+      "EmptySplatNullableDispatch#choose",
+      "EmptySplatNullableDispatch",
+      ["Nil", "Tuple()"],
+      exact_run.not_nil!.name,
+      has_splat: true,
+    ).should be_true
+    repaired_call.not_nil!.method_name.should eq(
+      "EmptySplatNullableDispatch#choose$Nil_Tuple()",
+    )
+    converter.module.has_function_with_body?(repaired_call.not_nil!.method_name).should be_true
+  end
 end

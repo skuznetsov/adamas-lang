@@ -44410,6 +44410,14 @@ module Adamas::HIR
       )
       formatting_corridor_transport = false
       unless needs_callsite_specialization
+        return nil if reuse_declared_nullable_body_for_exact_call?(
+                        base_method_name,
+                        resolved_name,
+                        def_node,
+                        arg_types,
+                        has_block_call,
+                      )
+
         call_index = 0
         function_param_infos(def_node).each do |param|
           next if param.is_block || named_only_separator?(param)
@@ -44441,6 +44449,51 @@ module Adamas::HIR
       return nil if callsite == resolved_name
 
       callsite
+    end
+
+    # A concrete argument can use an already-selected `T?` body: exact target
+    # coercion wraps it into the declared union ABI. Keep this deliberately
+    # narrower than general union specialization, which also carries generic
+    # substitution and local-inference shape contracts.
+    private def reuse_declared_nullable_body_for_exact_call?(
+      base_method_name : String,
+      resolved_name : String,
+      def_node : Adamas::Compiler::Frontend::DefNode,
+      arg_types : Array(TypeRef),
+      has_block_call : Bool,
+    ) : Bool
+      return false if has_block_call || arg_types.size != 1
+      return false if method_owner(base_method_name).includes?('(')
+
+      stats = function_param_stats(resolved_name, def_node)
+      return false unless stats.param_count == 1 && stats.required == 1
+      return false if stats.has_block || stats.has_splat || stats.has_double_splat || stats.has_named_only
+
+      params = function_param_infos(resolved_name, def_node)
+      return false unless params.size == 1
+      param = params.first
+      return false if param.is_block || param.is_splat || param.is_double_splat
+      return false if param.default_value || param.external_name || named_only_separator?(param)
+
+      annotation_name = param.type_annotation.try(&.strip)
+      return false unless annotation_name && annotation_name.ends_with?('?')
+      inner_name = annotation_name[0, annotation_name.bytesize - 1].strip
+      return false if inner_name.empty? || unresolved_type_param_annotation?(inner_name)
+
+      param_type = type_ref_for_name(annotation_name)
+      return false if param_type == TypeRef::VOID
+      param_desc = @module.get_type_descriptor(param_type)
+      return false unless param_desc && param_desc.kind == TypeKind::Union
+
+      variants = split_union_type_name(param_desc.name).map(&.strip)
+      return false unless variants.size == 2 && variants.includes?("Nil")
+      non_nil_name = variants.find { |name| name != "Nil" }
+      call_type = arg_types.first
+      return false unless non_nil_name && get_type_name_from_ref(call_type) == non_nil_name
+      return false unless exact_union_call_type_subset?(call_type, param_type)
+
+      declared_name = mangle_function_name(base_method_name, [param_type], false)
+      resolved_name == declared_name
     end
 
     private def prefer_callsite_over_arity(
@@ -46340,27 +46393,36 @@ module Adamas::HIR
     private def rekey_receiver_repair_request_to_canonical_body(
       request : ReceiverRepairFallback,
     ) : Bool
-      if request.virtual || request.has_block || request.has_splat
+      if request.virtual || request.has_block || (request.has_splat && request.has_named_args)
         return reject_receiver_repair_canonical_rekey(request, "unsupported_call_shape")
       end
       if request.caller.empty?
         return reject_receiver_repair_canonical_rekey(request, "missing_caller")
       end
 
-      resolved = lookup_function_def_for_call(
-        request.fallback_base,
-        request.arg_types.size,
-        false,
-        request.arg_types,
-        false,
-        request.has_named_args,
-        request.named_arg_names,
-      )
-      unless resolved
-        return reject_receiver_repair_canonical_rekey(request, "lookup_miss")
-      end
-
-      canonical_name = resolved[0]
+      canonical_name = if request.has_splat
+                         unless request.exact_target.ends_with?("_splat")
+                           return reject_receiver_repair_canonical_rekey(
+                             request,
+                             "packed_splat_suffix_missing",
+                           )
+                         end
+                         request.exact_target.rchop("_splat")
+                       else
+                         resolved = lookup_function_def_for_call(
+                           request.fallback_base,
+                           request.arg_types.size,
+                           false,
+                           request.arg_types,
+                           false,
+                           request.has_named_args,
+                           request.named_arg_names,
+                         )
+                         unless resolved
+                           return reject_receiver_repair_canonical_rekey(request, "lookup_miss")
+                         end
+                         resolved[0]
+                       end
       if canonical_name == request.exact_target
         return reject_receiver_repair_canonical_rekey(request, "same_symbol")
       end
@@ -95199,7 +95261,8 @@ module Adamas::HIR
       # Applies to instance and class method calls (the latter have nil receiver).
       if !call_virtual && block_id.nil?
         if uad = try_emit_union_arg_dispatch(ctx, receiver_id, base_method_name,
-             mangled_method_name, args, arg_types, return_type, has_block_call)
+             mangled_method_name, args, arg_types, return_type, has_block_call,
+             has_splat, splat_packed, has_named_args)
           return uad
         end
         if cad = try_emit_class_arg_overload_dispatch(ctx, receiver_id, base_method_name,
@@ -95586,11 +95649,64 @@ module Adamas::HIR
       type_name == "Proc" || type_name.starts_with?("Proc(")
     end
 
+    # Specializations of one declaration retain the same DefNode. Macro
+    # re-parses can replace that object, so equal spans are accepted only when
+    # their recorded expansion sources do not prove distinct declarations and
+    # their source arenas are not known to belong to different files.
+    private def same_union_dispatch_source_def?(
+      selected_name : String,
+      selected_def : Adamas::Compiler::Frontend::DefNode,
+      variant_name : String,
+      variant_def : Adamas::Compiler::Frontend::DefNode,
+    ) : Bool
+      return true if selected_def.same?(variant_def)
+      return false unless same_def_node?(selected_def, variant_def)
+
+      selected_arena = @function_def_arenas[selected_name]? ||
+                       @function_def_arenas[strip_type_suffix(selected_name)]?
+      variant_arena = @function_def_arenas[variant_name]? ||
+                      @function_def_arenas[strip_type_suffix(variant_name)]?
+
+      selected_def_id = selected_def.object_id.to_u64
+      variant_def_id = variant_def.object_id.to_u64
+      selected_macro_generated = @macro_generated_parameter_def_ids.includes?(selected_def_id)
+      variant_macro_generated = @macro_generated_parameter_def_ids.includes?(variant_def_id)
+      # A marker mismatch is contradictory provenance, not proof that the
+      # equal-span definitions are distinct. Keep the dispatch guard fail-closed.
+      return true if selected_macro_generated != variant_macro_generated
+      if selected_macro_generated
+        # Separate invocations of one macro template retain equal spans, but
+        # their expanded definitions (for example Nil and String overloads)
+        # differ. Missing expansion evidence remains fail-closed: suppressing
+        # dispatch is safer than synthesizing mutually recursive trampolines.
+        return true unless selected_arena && variant_arena
+        selected_source = @macro_generated_parameter_sources[{
+          arena_map_key(selected_arena),
+          selected_def_id,
+        }]?
+        variant_source = @macro_generated_parameter_sources[{
+          arena_map_key(variant_arena),
+          variant_def_id,
+        }]?
+        return true unless selected_source && variant_source
+        return selected_source == variant_source
+      end
+
+      return true unless selected_arena && variant_arena
+      return true if arena_map_key(selected_arena) == arena_map_key(variant_arena)
+
+      selected_path = path_for_arena(selected_arena)
+      variant_path = path_for_arena(variant_arena)
+      return true unless selected_path && variant_path
+      selected_path == variant_path
+    end
+
     # Union arg dispatch: when an arg is union with distinct typed overloads
     private def try_emit_union_arg_dispatch(
       ctx : LoweringContext, receiver_id : ValueId?, base_method_name : String,
       mangled_method_name : String?, args : Array(ValueId), arg_types : Array(TypeRef),
-      return_type : TypeRef, has_block_call : Bool,
+      return_type : TypeRef, has_block_call : Bool, call_has_splat : Bool,
+      call_splat_packed : Bool, call_has_named_args : Bool,
     ) : ValueId?
       ui = -1
       ut = TypeRef::VOID
@@ -95642,6 +95758,9 @@ module Adamas::HIR
       end
 
       vo_drop = [] of Bool
+      variant_source_defs = [] of {String, Adamas::Compiler::Frontend::DefNode}
+      has_distinct_source_variant = false
+      has_primitive_variant = false
       # A nilable `.new` call can bind the union-shaped allocator before any
       # concrete allocator overload has been demanded. Materialize each
       # initialize-backed variant from the registered class layout before
@@ -95659,6 +95778,8 @@ module Adamas::HIR
         vat = arg_types.dup
         vat[ui] = vr
         vm = mangle_function_name(bfm, vat, has_block_call)
+        variant_source_name = vm
+        variant_source_def = @function_defs[vm]?
         drop_for_this = false
         if synthetic_nilable_allocator
           owner = method_owner_from_name(bfm)
@@ -95667,17 +95788,23 @@ module Adamas::HIR
           end
         end
         unless @function_types.has_key?(vm) || @function_defs.has_key?(vm) || @module.has_function?(vm)
-          if res = resolve_untyped_overload(bfm, arg_types.size, has_block_call)
+          if resolved_variant = lookup_function_def_for_call(
+               bfm,
+               vat.size,
+               has_block_call,
+               vat,
+               false,
+             )
+            variant_source_name, variant_source_def = resolved_variant
+            rb = strip_type_suffix(variant_source_name)
+            vm = mangle_function_name(rb, vat, has_block_call)
+          elsif res = resolve_untyped_overload(bfm, arg_types.size, has_block_call)
             rb = strip_type_suffix(res)
             am = mangle_function_name(rb, vat, has_block_call)
             if @function_types.has_key?(am) || @function_defs.has_key?(am) || @module.has_function?(am)
               vm = am
-            else
-              lower_function_if_needed(am)
-              vm = am if @module.has_function?(am)
             end
           end
-          lower_function_if_needed(vm)
         end
 
         # Fallback: if the variant target is not yet known, but a non-splat
@@ -95689,16 +95816,27 @@ module Adamas::HIR
           if drop_trailing_empty_tuple
             vat_no_splat = vat[0, vat.size - 1]
             vm_no_splat = mangle_function_name(bfm, vat_no_splat, has_block_call)
-            unless @function_types.has_key?(vm_no_splat) || @function_defs.has_key?(vm_no_splat) || @module.has_function?(vm_no_splat)
-              lower_function_if_needed(vm_no_splat)
-            end
-            if @function_types.has_key?(vm_no_splat) || @function_defs.has_key?(vm_no_splat) || @module.has_function?(vm_no_splat)
+            if @function_types.has_key?(vm_no_splat) ||
+               @function_defs.has_key?(vm_no_splat) ||
+               @module.has_function?(vm_no_splat)
               vm = vm_no_splat
               drop_for_this = true
             end
           end
         end
 
+        if variant_source_def
+          has_distinct_source_variant ||= variant_source_defs.any? do |known_name, known_def|
+            !same_union_dispatch_source_def?(
+              known_name,
+              known_def,
+              variant_source_name,
+              variant_source_def,
+            )
+          end
+          variant_source_defs << {variant_source_name, variant_source_def}
+        end
+        has_primitive_variant ||= !@module.primitive_for(vm).nil?
         vo << {vm, vr, vid}
         vo_drop << drop_for_this
       end
@@ -95708,10 +95846,10 @@ module Adamas::HIR
       # own explicit definition (they're all derived from the same union-param
       # base def), dispatching creates trampolines that call each other.
       # In that case, call the union function directly.
-      has_explicit_variant = vo.any? do |vm, _, _|
-        @function_defs.has_key?(vm) || @function_types.has_key?(vm) ||
-          (synthetic_nilable_allocator && @module.has_function_with_body?(vm))
-      end
+      has_explicit_variant = has_distinct_source_variant || has_primitive_variant ||
+                             (synthetic_nilable_allocator && vo.any? do |vm, _, _|
+                               @module.has_function_with_body?(vm)
+                             end)
       unless has_explicit_variant
         return nil
       end
@@ -95748,6 +95886,19 @@ module Adamas::HIR
                   end
       ta = args.dup; ta[ui] = first_arg
       ta = ta[0, ta.size - 1] if f_drop && ta.size > 1
+      if call_has_splat && !call_splat_packed
+        packed = pack_splat_args_for_call(
+          ctx,
+          ta,
+          method_short_from_name(fm) || bfm,
+          fm,
+          has_block_call,
+          call_has_named_args,
+          receiver_id,
+          true,
+        )
+        ta = packed[0]
+      end
       c1 = if recv = receiver_id
              Call.with_receiver(ctx.next_id, return_type, recv, fm, ta)
            else
@@ -95767,6 +95918,19 @@ module Adamas::HIR
                    end
       ea = args.dup; ea[ui] = second_arg
       ea = ea[0, ea.size - 1] if s_drop && ea.size > 1
+      if call_has_splat && !call_splat_packed
+        packed = pack_splat_args_for_call(
+          ctx,
+          ea,
+          method_short_from_name(sm) || bfm,
+          sm,
+          has_block_call,
+          call_has_named_args,
+          receiver_id,
+          true,
+        )
+        ea = packed[0]
+      end
       c2 = if recv = receiver_id
              Call.with_receiver(ctx.next_id, return_type, recv, sm, ea)
            else
@@ -96626,6 +96790,23 @@ module Adamas::HIR
             end
             @arena = call_arena
             inner_node = @arena[arg_node.expr]
+            empty_tuple_constructor = case inner_node
+                                      when Adamas::Compiler::Frontend::MemberAccessNode
+                                        member_access_name_text(inner_node) == "new" &&
+                                          stringify_type_expr(inner_node.object) == "Tuple"
+                                      when Adamas::Compiler::Frontend::CallNode
+                                        if inner_node.args.empty? && !inner_node.has_block? && inner_node.named_args.nil?
+                                          empty_tuple_callee = @arena[inner_node.callee]
+                                          empty_tuple_callee.is_a?(Adamas::Compiler::Frontend::MemberAccessNode) &&
+                                            member_access_name_text(empty_tuple_callee) == "new" &&
+                                            stringify_type_expr(empty_tuple_callee.object) == "Tuple"
+                                        else
+                                          false
+                                        end
+                                      else
+                                        false
+                                      end
+            next if empty_tuple_constructor
             if inner_node.is_a?(Adamas::Compiler::Frontend::ArrayLiteralNode)
               # Expand array elements as individual arguments
               inner_node.elements.each do |elem_id|
@@ -96793,6 +96974,12 @@ module Adamas::HIR
       end
 
       return {args, false} unless splat_index
+      if call_has_splat && !call_has_named_args &&
+         trailing_positional_count == 0 && args.size == splat_index
+        packed_args = args.dup
+        packed_args << allocate_empty_tuple(ctx)
+        return {packed_args, true}
+      end
       return {args, false} if args.size <= splat_index
       # Need at least enough args to cover the trailing positionals after splat.
       return {args, false} if args.size < splat_index + trailing_positional_count
