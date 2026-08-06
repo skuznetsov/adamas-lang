@@ -6224,6 +6224,541 @@ describe Adamas::HIR::AstToHir do
       call_names.none? { |name| name.starts_with?("Nil#includes?$") }.should be_true
     end
 
+    it "narrows the first captured argument inside a truthy branch" do
+      converter = lower_program(<<-CRYSTAL)
+        class CaptureIfProbe
+          def consume(value : UInt32) : UInt32
+            value
+          end
+
+          def probe(value : UInt32?) : UInt32
+            reader = -> do
+              if value
+                consume(value)
+              else
+                0_u32
+              end
+            end
+            reader.call
+          end
+        end
+      CRYSTAL
+
+      proc_func = converter.module.functions.find do |candidate|
+        candidate.name.starts_with?("__crystal_proc_") &&
+          candidate.blocks.flat_map(&.instructions).any? do |instruction|
+            instruction.as?(Adamas::HIR::Call).try(&.method_name.starts_with?("CaptureIfProbe#consume$"))
+          end
+      end
+      proc_func.should_not be_nil
+
+      consume_calls = proc_func.not_nil!.blocks.flat_map(&.instructions).compact_map(&.as?(Adamas::HIR::Call)).select do |call|
+        call.method_name.starts_with?("CaptureIfProbe#consume$")
+      end
+      consume_calls.size.should eq(1)
+      consume_calls.first.method_name.should eq("CaptureIfProbe#consume$UInt32")
+
+      argument_id = consume_calls.first.args.first
+      argument = proc_func.not_nil!.params.find { |param| param.id == argument_id } ||
+                 proc_func.not_nil!.blocks.flat_map(&.instructions).find { |instruction| instruction.id == argument_id }
+      argument.should_not be_nil
+      converter.__test_get_type_name_from_ref(argument.not_nil!.type).should eq("UInt32")
+    end
+
+    it "narrows a boxed captured local inside a direct truthy branch" do
+      converter = lower_program(<<-CRYSTAL)
+        class BoxedCaptureIfProbe
+          def consume(value : UInt32) : UInt32
+            value
+          end
+
+          def probe(value : UInt32?) : UInt32
+            writer = -> do
+              value = nil
+            end
+            if value
+              consume(value)
+            else
+              0_u32
+            end
+          end
+        end
+      CRYSTAL
+
+      probe_func = converter.module.functions.find do |candidate|
+        candidate.name.starts_with?("BoxedCaptureIfProbe#probe$")
+      end
+      probe_func.should_not be_nil
+
+      consume_calls = probe_func.not_nil!.blocks.flat_map(&.instructions).compact_map(&.as?(Adamas::HIR::Call)).select do |call|
+        call.method_name.starts_with?("BoxedCaptureIfProbe#consume$")
+      end
+      consume_calls.should_not be_empty
+      consume_calls.all? do |call|
+        call.method_name == "BoxedCaptureIfProbe#consume$UInt32"
+      end.should be_true
+    end
+
+    it "renews a captured truthy narrowing through a nested direct condition" do
+      converter = lower_program(<<-CRYSTAL)
+        class NestedCaptureIfProbe
+          def consume(value : UInt32) : UInt32
+            value
+          end
+
+          def probe(value : UInt32?) : UInt32
+            reader = -> do
+              if value
+                if value
+                  consume(value)
+                else
+                  0_u32
+                end
+              else
+                0_u32
+              end
+            end
+            reader.call
+          end
+        end
+      CRYSTAL
+
+      proc_func = converter.module.functions.find do |candidate|
+        candidate.name.starts_with?("__crystal_proc_") &&
+          candidate.blocks.flat_map(&.instructions).any? do |instruction|
+            instruction.as?(Adamas::HIR::Call).try(&.method_name.starts_with?("NestedCaptureIfProbe#consume$"))
+          end
+      end
+      proc_func.should_not be_nil
+
+      consume_calls = proc_func.not_nil!.blocks.flat_map(&.instructions).compact_map(&.as?(Adamas::HIR::Call)).select do |call|
+        call.method_name.starts_with?("NestedCaptureIfProbe#consume$")
+      end
+      consume_calls.size.should eq(1)
+      consume_calls.first.method_name.should eq("NestedCaptureIfProbe#consume$UInt32")
+    end
+
+    it "narrows independent nested captured conditions" do
+      converter = lower_program(<<-CRYSTAL)
+        class NestedCaptureNamesProbe
+          def consume(value : UInt32) : UInt32
+            value
+          end
+
+          def probe(value : UInt32?, other : UInt32?) : UInt32
+            reader = -> do
+              if value
+                if other
+                  consume(other)
+                else
+                  0_u32
+                end
+              else
+                0_u32
+              end
+            end
+            reader.call
+          end
+        end
+      CRYSTAL
+
+      proc_func = converter.module.functions.find do |candidate|
+        candidate.name.starts_with?("__crystal_proc_") &&
+          candidate.blocks.flat_map(&.instructions).any? do |instruction|
+            instruction.as?(Adamas::HIR::Call).try(&.method_name.starts_with?("NestedCaptureNamesProbe#consume$"))
+          end
+      end
+      proc_func.should_not be_nil
+
+      consume_calls = proc_func.not_nil!.blocks.flat_map(&.instructions).compact_map(&.as?(Adamas::HIR::Call)).select do |call|
+        call.method_name.starts_with?("NestedCaptureNamesProbe#consume$")
+      end
+      consume_calls.should_not be_empty
+      consume_calls.all? do |call|
+        call.method_name == "NestedCaptureNamesProbe#consume$UInt32"
+      end.should be_true
+    end
+
+    it "reloads a captured truthy value after an aliasing call" do
+      converter = lower_program(<<-CRYSTAL)
+        class CaptureIfAliasMutationProbe
+          def consume(value : UInt32) : UInt32
+            value
+          end
+
+          def probe(value : UInt32?) : UInt32
+            writer = -> do
+              value = nil
+            end
+            reader = -> do
+              if value
+                writer.call
+                if value
+                  consume(value)
+                else
+                  0_u32
+                end
+              else
+                0_u32
+              end
+            end
+            reader.call
+          end
+        end
+      CRYSTAL
+
+      proc_func = converter.module.functions.find do |candidate|
+        candidate.name.starts_with?("__crystal_proc_") &&
+          candidate.blocks.flat_map(&.instructions).any? do |instruction|
+            instruction.as?(Adamas::HIR::Call).try(&.method_name.starts_with?("CaptureIfAliasMutationProbe#consume$"))
+          end
+      end
+      proc_func.should_not be_nil
+
+      instructions = proc_func.not_nil!.blocks.flat_map(&.instructions)
+      writer_call = instructions.compact_map(&.as?(Adamas::HIR::Call)).find do |call|
+        call.method_name.starts_with?("Proc") && call.method_name.includes?("#call")
+      end
+      writer_call.should_not be_nil
+
+      loads = instructions.compact_map(&.as?(Adamas::HIR::PointerLoad))
+      loads.any? do |condition_load|
+        condition_load.id < writer_call.not_nil!.id && loads.any? do |reload|
+          reload.pointer == condition_load.pointer && reload.id > writer_call.not_nil!.id
+        end
+      end.should be_true
+    end
+
+    it "keeps a captured truthy narrowing across an unrelated field write" do
+      converter = lower_program(<<-CRYSTAL)
+        class CaptureIfUnrelatedFieldWriteProbe
+          @other : Int32 = 0
+
+          def consume(value : UInt32) : UInt32
+            value
+          end
+
+          def probe(value : UInt32?) : UInt32
+            reader = -> do
+              if value
+                @other = 1
+                consume(value)
+              else
+                0_u32
+              end
+            end
+            reader.call
+          end
+        end
+      CRYSTAL
+
+      proc_func = converter.module.functions.find do |candidate|
+        candidate.name.starts_with?("__crystal_proc_") &&
+          candidate.blocks.flat_map(&.instructions).any? do |instruction|
+            instruction.as?(Adamas::HIR::Call).try(&.method_name.starts_with?("CaptureIfUnrelatedFieldWriteProbe#consume$"))
+          end
+      end
+      proc_func.should_not be_nil
+
+      consume_calls = proc_func.not_nil!.blocks.flat_map(&.instructions).compact_map(&.as?(Adamas::HIR::Call)).select do |call|
+        call.method_name.starts_with?("CaptureIfUnrelatedFieldWriteProbe#consume$")
+      end
+      consume_calls.should_not be_empty
+      consume_calls.all? do |call|
+        call.method_name == "CaptureIfUnrelatedFieldWriteProbe#consume$UInt32"
+      end.should be_true
+    end
+
+    it "does not apply an outer capture proof to a same-name block parameter" do
+      converter = lower_program(<<-CRYSTAL)
+        class CaptureIfShadowProbe
+          def consume(value : UInt32) : UInt32
+            value
+          end
+
+          def probe(value : UInt32?) : UInt32
+            reader = -> do
+              if value
+                [1_u32].each do |value|
+                  if value
+                    consume(value)
+                  end
+                end
+                0_u32
+              else
+                0_u32
+              end
+            end
+            reader.call
+          end
+        end
+      CRYSTAL
+
+      consume_calls = converter.module.functions.flat_map(&.blocks).flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.select do |call|
+        call.method_name.starts_with?("CaptureIfShadowProbe#consume$")
+      end
+      consume_calls.size.should eq(1)
+      consume_calls.first.method_name.should eq("CaptureIfShadowProbe#consume$UInt32")
+    end
+
+    it "reads a raw block parameter that shadows a closure cell" do
+      converter = lower_program(<<-CRYSTAL)
+        class CaptureIfRawShadowProbe
+          def consume(value : UInt32) : UInt32
+            value
+          end
+
+          def each_once(&block : UInt32 ->)
+            yield 1_u32
+          end
+
+          def probe(value : UInt32?) : UInt32
+            each_once do
+              value = nil
+            end
+            each_once do |value|
+              if value
+                consume(value)
+              else
+                0_u32
+              end
+            end
+            0_u32
+          end
+        end
+      CRYSTAL
+
+      proc_func = converter.module.functions.find do |candidate|
+        candidate.name.starts_with?("__crystal_block_proc_") &&
+          candidate.params.any? { |param| param.name == "value" } &&
+          candidate.blocks.flat_map(&.instructions).any? do |instruction|
+            instruction.as?(Adamas::HIR::Call).try(&.method_name.starts_with?("CaptureIfRawShadowProbe#consume$"))
+          end
+      end
+      proc_func.should_not be_nil
+
+      parameter = proc_func.not_nil!.params.find { |param| param.name == "value" }
+      parameter.should_not be_nil
+      instructions = proc_func.not_nil!.blocks.flat_map(&.instructions)
+      consume_call = instructions.compact_map(&.as?(Adamas::HIR::Call)).find do |call|
+        call.method_name.starts_with?("CaptureIfRawShadowProbe#consume$")
+      end
+      consume_call.should_not be_nil
+
+      source_id = consume_call.not_nil!.args.first
+      reaches_parameter = false
+      reaches_closure_cell = false
+      visited = Set(Adamas::HIR::ValueId).new
+      loop do
+        if source_id == parameter.not_nil!.id
+          reaches_parameter = true
+          break
+        end
+        break unless visited.add?(source_id)
+        source = instructions.find { |instruction| instruction.id == source_id }
+        break unless source
+        case source
+        when Adamas::HIR::Copy
+          source_id = source.source
+        when Adamas::HIR::UnionUnwrap
+          source_id = source.union_value
+        when Adamas::HIR::ClassVarGet
+          reaches_closure_cell = source.class_name == "__closure" &&
+                                 source.var_name.starts_with?("__closure_cell_")
+          break
+        else
+          break
+        end
+      end
+
+      reaches_parameter.should be_true
+      reaches_closure_cell.should be_false
+    end
+
+    it "reads an inline block parameter that shadows a closure cell" do
+      converter = lower_program(<<-CRYSTAL)
+        class CaptureIfInlineRawShadowProbe
+          def consume(value : UInt32) : UInt32
+            value
+          end
+
+          def each_once(&block : UInt32 ->)
+            yield 1_u32
+          end
+
+          def probe(value : UInt32?) : UInt32
+            each_once do
+              value = nil
+            end
+            each_once do
+              [1_u32].each do |value|
+                if value
+                  consume(value)
+                else
+                  0_u32
+                end
+              end
+            end
+            0_u32
+          end
+        end
+      CRYSTAL
+
+      proc_func = converter.module.functions.find do |candidate|
+        candidate.name.starts_with?("__crystal_block_proc_") &&
+          candidate.params.none? { |param| param.name == "value" } &&
+          candidate.blocks.flat_map(&.instructions).any? do |instruction|
+            instruction.as?(Adamas::HIR::Call).try(&.method_name.starts_with?("CaptureIfInlineRawShadowProbe#consume$"))
+          end
+      end
+      proc_func.should_not be_nil
+
+      instructions = proc_func.not_nil!.blocks.flat_map(&.instructions)
+      consume_call = instructions.compact_map(&.as?(Adamas::HIR::Call)).find do |call|
+        call.method_name.starts_with?("CaptureIfInlineRawShadowProbe#consume$")
+      end
+      consume_call.should_not be_nil
+
+      source_id = consume_call.not_nil!.args.first
+      reaches_yielded_value = false
+      reaches_closure_cell = false
+      visited = Set(Adamas::HIR::ValueId).new
+      loop do
+        break unless visited.add?(source_id)
+        source = instructions.find { |instruction| instruction.id == source_id }
+        break unless source
+        case source
+        when Adamas::HIR::Copy
+          source_id = source.source
+        when Adamas::HIR::UnionUnwrap
+          source_id = source.union_value
+        when Adamas::HIR::Literal
+          reaches_yielded_value = source.type == Adamas::HIR::TypeRef::UINT32
+          break
+        when Adamas::HIR::IndexGet
+          reaches_yielded_value = source.type == Adamas::HIR::TypeRef::UINT32
+          break
+        when Adamas::HIR::ClassVarGet
+          reaches_closure_cell = source.class_name == "__closure" &&
+                                 source.var_name.starts_with?("__closure_cell_")
+          break
+        else
+          break
+        end
+      end
+
+      reaches_yielded_value.should be_true
+      reaches_closure_cell.should be_false
+    end
+
+    it "does not write an inline block parameter through a same-name closure cell" do
+      converter = lower_program(<<-CRYSTAL)
+        class CaptureIfInlineWriteShadowProbe
+          def consume(value : UInt32) : UInt32
+            value
+          end
+
+          def each_once(&block : UInt32 ->)
+            yield 1_u32
+          end
+
+          def probe(value : UInt32?) : UInt32
+            each_once do
+              value = nil
+            end
+            each_once do
+              [1_u32].each do |value|
+                value = 2_u32
+                consume(value)
+              end
+            end
+            0_u32
+          end
+        end
+      CRYSTAL
+
+      proc_func = converter.module.functions.find do |candidate|
+        candidate.name.starts_with?("__crystal_block_proc_") &&
+          candidate.blocks.flat_map(&.instructions).any? do |instruction|
+            instruction.as?(Adamas::HIR::Call).try(&.method_name.starts_with?("CaptureIfInlineWriteShadowProbe#consume$"))
+          end
+      end
+      proc_func.should_not be_nil
+
+      instructions = proc_func.not_nil!.blocks.flat_map(&.instructions)
+      consume_call = instructions.compact_map(&.as?(Adamas::HIR::Call)).find do |call|
+        call.method_name.starts_with?("CaptureIfInlineWriteShadowProbe#consume$")
+      end
+      consume_call.should_not be_nil
+      consume_call.not_nil!.method_name.should eq("CaptureIfInlineWriteShadowProbe#consume$UInt32")
+      instructions.compact_map(&.as?(Adamas::HIR::ClassVarSet)).none? do |write|
+        write.class_name == "__closure" && write.var_name.starts_with?("__closure_cell_")
+      end.should be_true
+    end
+
+    it "consumes a truthy branch capture narrowing after one direct read" do
+      converter = lower_program(<<-CRYSTAL)
+        class CaptureIfSingleUseProbe
+          def probe(value : UInt32?) : UInt32?
+            reader = -> do
+              if value
+                first = value
+                value
+              else
+                nil
+              end
+            end
+            reader.call
+          end
+        end
+      CRYSTAL
+
+      proc_func = converter.module.functions.find(&.name.starts_with?("__crystal_proc_"))
+      proc_func.should_not be_nil
+      instructions = proc_func.not_nil!.blocks.flat_map(&.instructions)
+      loads = instructions.compact_map(&.as?(Adamas::HIR::PointerLoad))
+      condition_unwrap = instructions.compact_map(&.as?(Adamas::HIR::UnionUnwrap)).find do |unwrap|
+        loads.any? { |load| load.id == unwrap.union_value }
+      end
+      condition_unwrap.should_not be_nil
+
+      condition_load = loads.find { |load| load.id == condition_unwrap.not_nil!.union_value }
+      condition_load.should_not be_nil
+      loads.any? do |load|
+        load.pointer == condition_load.not_nil!.pointer && load.id > condition_unwrap.not_nil!.id
+      end.should be_true
+    end
+
+    it "invalidates a truthy branch capture narrowing before assignment" do
+      converter = lower_program(<<-CRYSTAL)
+        class CaptureIfMutationProbe
+          def probe(value : UInt32?) : UInt32?
+            reader = -> do
+              if value
+                value = nil
+                value
+              else
+                nil
+              end
+            end
+            reader.call
+          end
+        end
+      CRYSTAL
+
+      proc_func = converter.module.functions.find(&.name.starts_with?("__crystal_proc_"))
+      proc_func.should_not be_nil
+      instructions = proc_func.not_nil!.blocks.flat_map(&.instructions)
+      store = instructions.compact_map(&.as?(Adamas::HIR::PointerStore)).first?
+      store.should_not be_nil
+
+      instructions.compact_map(&.as?(Adamas::HIR::PointerLoad)).any? do |load|
+        load.pointer == store.not_nil!.pointer && load.id > store.not_nil!.id
+      end.should be_true
+    end
+
     it "consumes a boxed receiver narrowing before lowering mutating call arguments" do
       _func, converter = lower_function_with_converter(<<-CRYSTAL)
         def probe(values : Set(String)?)

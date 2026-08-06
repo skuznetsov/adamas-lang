@@ -1,18 +1,11 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-08-05 (`case` refinement now preserves a concrete descendant
-receiver when a nullable class union has one authoritative ancestor carrier;
-multi-condition branches do not narrow, and the descendant shortcut rejects
-overlapping carriers. The latest
-fresh B4-F run passes both stage1 smokes and advances beyond the former
-`AstToHir#infer_type_from_expr$Pointer_String` frontier, but stage2 remains RED
-after 335.65 seconds at
-`AstToHir#lower_module_method$String_DefNode?_Nil_Nil_Nil_String`; the
-<=300-second validator rejects the run. Overlapping ancestor carriers now stop
-at the branch-narrowing boundary before the pre-existing broad union-member
-fallback can admit a bodyless call. Original Crystal accepts that shape, so
-redundant class-arm canonicalization remains a separate compatibility gap. T1
-and full-source MIR/LLVM continuity remain open.)
+Updated: 2026-08-05 (captured truthy conditions now preserve exact box/cell
+owner and block-parameter lexical provenance without introducing general
+capture flow state. A fresh B4-F run passes both stage1 smokes, but stage2 hits
+the 300-second cap at 302.71 seconds with no bodyless target; the <=300-second
+admission therefore remains RED. T1 and full-source MIR/LLVM continuity remain
+open.)
 
 BARE REFERENCE-GENERIC INSTANCE DISPATCH RUNTIME-VERIFIED; REGISTERED
 RUNTIME-REFERENCE RETURN UNIONS HIR-VERIFIED AND MIR-GUARDED; UNSUPPORTED
@@ -12597,6 +12590,57 @@ ROBUST under the measured nullable-module and union cases. It does not permit
 guessing among overloads or widen receiver inheritance globally. The next
 atomic slice should reduce the new `register_local$String_Nil` frontier rather
 than generalize this repair further.
+
+### Session 69: captured truthy conditions preserve binding provenance (2026-08-05)
+
+The `LoweringContext#register_local$String_Nil` target did not originate from
+an actually Nil truthy branch. A captured optional value was stored through a
+box or closure-cell carrier; the direct condition unwrapped its payload, but a
+later strict call re-read the carrier or the converter-global outer closure
+mapping and demanded a Nil specialization. A same-name block parameter could
+also inherit that outer mapping even though it introduced a new lexical
+binding.
+
+The repair records a one-read proof keyed by the exact source name and carrier:
+either a boxed-local owner `ValueId` or a `{cell class, cell name}` pair. A
+small name-keyed map allows independent nested direct conditions; it is not a
+general captured-local flow table. Calls, external calls, yields, closure-cell
+writes, pointer stores/reallocation, and indexed/array-size writes invalidate
+the proof before an aliased carrier may change. A raw `FieldSet` does not: the
+unrelated field write cannot mutate a box or closure cell, and preserving the
+proof across that instruction has a dedicated regression. Environment boxes
+now retain their `FieldGet` owner identity. Explicit block-parameter provenance
+travels with the existing locals snapshots and lexical scopes so a shadowing
+parameter neither reads nor writes an outer box/cell. One separate save/restore
+remains only around the special inline-yield caller-scope switch; a redundant
+general snapshot was removed.
+
+Evidence: the original runtime reducer compiles with a fresh host compiler and
+both its truthy and Nil paths exit zero under `scripts/run_safe.sh`. The focused
+AST-to-HIR aggregate passes 455 examples with zero failures/errors and two
+pending examples. The full HIR aggregate reaches 716 examples with one known
+baseline `as?`/`try` formatting failure, zero errors, and two pending examples.
+Independent Luna adversary review classifies the local contract as ROBUST. A
+fresh B4-F builds stage1 in 16.69 seconds and passes both smokes. Stage2 remains
+one compiler process without observed fanout, but reaches the 300-second cap;
+the script exits after 302.71 seconds without a bodyless target, so the run is
+not admissible and does not prove the later bootstrap route.
+
+Adversarial coverage requires an aliasing call to force a reload, preserves a
+proof across an unrelated raw field write, separates two nested captured names,
+and proves that detached and inline same-name block parameters do not read or
+write the captured cell. A proposed missing-yield-argument route was rejected
+because original Crystal rejects that program. Short-circuit conditions that
+cross an arbitrary call remain conservatively over-invalidated and can retain
+dead Nil HIR demand, although the measured end-to-end compile and runtime match
+original Crystal. This is a quality/performance residual, not authority to
+weaken the call barrier.
+
+Boundary: exact direct captured-truthy and block-parameter ownership is ROBUST
+for the measured carriers and invalidation cases. B4-F remains RED solely on
+the evidence available before the cap; the timeout can hide a later functional
+frontier. The next slice should profile or otherwise localize stage2 time while
+retaining the 300-second admission limit, not widen lowering speculatively.
 
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 

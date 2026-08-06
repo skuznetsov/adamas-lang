@@ -59,9 +59,11 @@ module Adamas::HIR
     @locals_snapshots : Array(Hash(String, ValueId))
     @debug_local_snapshots : Array(Hash(String, ValueId))
     @boxed_locals : Hash(String, BoxedLocal)
-    @scoped_receiver_narrowing : ScopedReceiverNarrowing?
+    @scoped_receiver_narrowings : Hash(String, ScopedReceiverNarrowing)
     @boxed_locals_snapshots : Array(Hash(String, BoxedLocal))
     @entry_box_required_locals : Set(String)
+    @block_parameter_bindings : Hash(String, ValueId)
+    @block_parameter_binding_snapshots : Array(Hash(String, ValueId))
 
     # Type cache
     @type_cache : Hash(String, TypeRef)
@@ -93,18 +95,19 @@ module Adamas::HIR
     # binding that created the box. This preserves a box for a
     # still-visible parent local after inline scope restore, while
     # preventing a later same-name block parameter from reading the stale
-    # box. Env-bound entries use `owner_local: nil`; entry-required
-    # parent captures are accepted by name because their boxes dominate
-    # the function body.
+    # box. Env-bound entries are owned by their materialized FieldGet;
+    # entry-required parent captures are accepted by name because their
+    # boxes dominate the function body.
     record BoxedLocal,
       box_ptr : ValueId,
       payload_type : TypeRef,
       owner_local : ValueId? = nil
 
-    # A truthy short-circuit LHS can lend its unwrapped payload to one exact
-    # direct receiver read on the RHS. The carrier is either an owner-bound
-    # boxed local or the closure cell used by a materialized block. Keeping one
-    # slot prevents this narrow proof from becoming general capture flow state.
+    # A truthy condition can lend its unwrapped payload to one exact direct read
+    # of that captured name. The carrier is either an owner-bound boxed local or
+    # the closure cell used by a materialized block. Proofs remain name-scoped
+    # and single-use; the small map only lets independent nested conditions
+    # coexist instead of one capture suppressing another capture's proof.
     alias ScopedReceiverCarrier = ValueId | {String, String}
 
     record ScopedReceiverNarrowing,
@@ -144,7 +147,8 @@ module Adamas::HIR
     record LocalsSnapshot,
       locals : Hash(String, ValueId),
       boxed_locals : Hash(String, BoxedLocal),
-      debug_locals : Hash(String, ValueId)
+      debug_locals : Hash(String, ValueId),
+      block_parameter_bindings : Hash(String, ValueId)
 
     # Debug gates: env lookups hoisted to ctor so per-value emit paths avoid
     # ENV.has_key? / ENV[]? on every instruction (was a hot path — see
@@ -170,9 +174,11 @@ module Adamas::HIR
       @dot_class_literals = Set(ValueId).new
       @as_question_results = Set(ValueId).new
       @boxed_locals = {} of String => BoxedLocal
-      @scoped_receiver_narrowing = nil
+      @scoped_receiver_narrowings = {} of String => ScopedReceiverNarrowing
       @boxed_locals_snapshots = [] of Hash(String, BoxedLocal)
       @entry_box_required_locals = Set(String).new
+      @block_parameter_bindings = {} of String => ValueId
+      @block_parameter_binding_snapshots = [] of Hash(String, ValueId)
       @trace_shovel_types_enabled =
         ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_SHOVEL_TYPES") &&
           @function.name == "Adamas::HIR::Function#add_param$String_Adamas::HIR::TypeRef"
@@ -228,6 +234,7 @@ module Adamas::HIR
       @locals_snapshots << @locals.dup
       @debug_local_snapshots << @debug_local_ids.dup
       @boxed_locals_snapshots << @boxed_locals.dup
+      @block_parameter_binding_snapshots << @block_parameter_bindings.dup
       scope_id = @function.create_scope(kind, current_scope)
       unless kind == ScopeKind::Function
         if loc = @current_source_location
@@ -267,6 +274,9 @@ module Adamas::HIR
         @debug_local_ids = debug_snapshot
       end
       @boxed_locals_snapshots.pop?
+      if block_parameter_snapshot = @block_parameter_binding_snapshots.pop?
+        @block_parameter_bindings = block_parameter_snapshot
+      end
       if self_id = @locals["self"]?
         @self_id = self_id
       else
@@ -301,6 +311,7 @@ module Adamas::HIR
       @value_types[value.id] = value.type # Track type for inference
       @values[value.id] = value
       @value_blocks[value.id] = @current_block
+      invalidate_scoped_receiver_narrowing_after(value)
       if location = @current_source_location
         if @function.value_location(value.id).nil?
           @function.record_value_location(value.id, location)
@@ -326,6 +337,7 @@ module Adamas::HIR
       @value_types[value.id] = value.type
       @values[value.id] = value
       @value_blocks[value.id] = block_id
+      invalidate_scoped_receiver_narrowing_after(value)
       if location = @current_source_location
         if @function.value_location(value.id).nil?
           @function.record_value_location(value.id, location)
@@ -339,6 +351,20 @@ module Adamas::HIR
         STDERR.puts "[TYPE_LITERAL] id=#{value.id} type=#{value.type.id}" if @debug_type_literal_enabled
       end
       value
+    end
+
+    # A scoped capture proof is valid only until the first operation that can
+    # run user code or mutate aliased storage. Call arguments are emitted before
+    # the Call itself, so a matching direct argument can still consume the
+    # proof; any later read must reload the box/cell and prove truthiness again.
+    # Keep this conservative rather than trying to classify pure calls.
+    private def invalidate_scoped_receiver_narrowing_after(value : Value) : Nil
+      if value.is_a?(Call) || value.is_a?(ExternCall) || value.is_a?(Yield) ||
+         value.is_a?(ClassVarSet) ||
+         value.is_a?(PointerStore) || value.is_a?(PointerRealloc) ||
+         value.is_a?(IndexSet) || value.is_a?(ArraySetSize)
+        @scoped_receiver_narrowings.clear
+      end
     end
 
     # Look up the type of a value by ID
@@ -391,6 +417,9 @@ module Adamas::HIR
     # Register local variable
     def register_local(name : String, value_id : ValueId)
       @locals[name] = value_id
+      if @block_parameter_bindings.has_key?(name)
+        @block_parameter_bindings[name] = value_id
+      end
       @function.get_scope(current_scope).add_local(value_id)
       @self_id = value_id if name == "self"
       unless @value_blocks.has_key?(value_id)
@@ -446,18 +475,18 @@ module Adamas::HIR
 
     def discard_boxed_local(name : String) : Nil
       @boxed_locals.delete(name)
-      if narrowing = @scoped_receiver_narrowing
+      if narrowing = @scoped_receiver_narrowings[name]?
         if narrowing.name == name && narrowing.carrier.is_a?(ValueId)
-          @scoped_receiver_narrowing = nil
+          @scoped_receiver_narrowings.delete(name)
         end
       end
     end
 
     def take_boxed_local_narrowing(name : String, owner_local : ValueId) : ValueId?
-      return nil unless narrowing = @scoped_receiver_narrowing
+      return nil unless narrowing = @scoped_receiver_narrowings[name]?
       return nil unless narrowing.name == name && narrowing.carrier == owner_local
 
-      @scoped_receiver_narrowing = nil
+      @scoped_receiver_narrowings.delete(name)
       narrowing.value_id
     end
 
@@ -466,17 +495,15 @@ module Adamas::HIR
       owner_local : ValueId,
       value_id : ValueId,
     ) : ScopedReceiverNarrowing?
-      return nil if @scoped_receiver_narrowing
-
       narrowing = ScopedReceiverNarrowing.new(name, value_id, owner_local)
-      @scoped_receiver_narrowing = narrowing
+      @scoped_receiver_narrowings[name] = narrowing
       narrowing
     end
 
     def discard_boxed_local_narrowing(name : String, owner_local : ValueId) : Nil
-      if narrowing = @scoped_receiver_narrowing
+      if narrowing = @scoped_receiver_narrowings[name]?
         if narrowing.name == name && narrowing.carrier == owner_local
-          @scoped_receiver_narrowing = nil
+          @scoped_receiver_narrowings.delete(name)
         end
       end
     end
@@ -486,10 +513,10 @@ module Adamas::HIR
       cell_class : String,
       cell_name : String,
     ) : ValueId?
-      return nil unless narrowing = @scoped_receiver_narrowing
+      return nil unless narrowing = @scoped_receiver_narrowings[name]?
       return nil unless narrowing.name == name && narrowing.carrier == {cell_class, cell_name}
 
-      @scoped_receiver_narrowing = nil
+      @scoped_receiver_narrowings.delete(name)
       narrowing.value_id
     end
 
@@ -499,10 +526,8 @@ module Adamas::HIR
       cell_name : String,
       value_id : ValueId,
     ) : ScopedReceiverNarrowing?
-      return nil if @scoped_receiver_narrowing
-
       narrowing = ScopedReceiverNarrowing.new(name, value_id, {cell_class, cell_name})
-      @scoped_receiver_narrowing = narrowing
+      @scoped_receiver_narrowings[name] = narrowing
       narrowing
     end
 
@@ -511,23 +536,44 @@ module Adamas::HIR
       cell_class : String,
       cell_name : String,
     ) : Nil
-      if narrowing = @scoped_receiver_narrowing
+      if narrowing = @scoped_receiver_narrowings[name]?
         if narrowing.name == name && narrowing.carrier == {cell_class, cell_name}
-          @scoped_receiver_narrowing = nil
+          @scoped_receiver_narrowings.delete(name)
         end
       end
     end
 
     def discard_scoped_receiver_narrowing(expected : ScopedReceiverNarrowing) : Nil
-      @scoped_receiver_narrowing = nil if @scoped_receiver_narrowing == expected
+      if @scoped_receiver_narrowings[expected.name]? == expected
+        @scoped_receiver_narrowings.delete(expected.name)
+      end
     end
 
     def lookup_boxed_local_for_local(name : String, local_id : ValueId) : BoxedLocal?
       return nil unless boxed = @boxed_locals[name]?
-      return boxed if boxed.owner_local.nil?
       return boxed if boxed.owner_local == local_id
+      # Detached block parameters are new lexical bindings. A name-only entry
+      # box or env box belongs to the captured outer local, not to this binding.
+      return nil if block_parameter_binding?(name, local_id)
+      return boxed if boxed.owner_local.nil?
       return boxed if entry_box_required?(name)
       nil
+    end
+
+    def mark_block_parameter_binding(name : String, local_id : ValueId) : Nil
+      @block_parameter_bindings[name] = local_id
+    end
+
+    def block_parameter_binding?(name : String, local_id : ValueId) : Bool
+      @block_parameter_bindings[name]? == local_id
+    end
+
+    def save_block_parameter_bindings : Hash(String, ValueId)
+      @block_parameter_bindings.dup
+    end
+
+    def restore_block_parameter_bindings(saved : Hash(String, ValueId)) : Nil
+      @block_parameter_bindings = saved.dup
     end
 
     def local_boxed?(name : String) : Bool
@@ -551,15 +597,21 @@ module Adamas::HIR
 
     # Save current locals state (for branching).
     #
-    # Returns a `LocalsSnapshot` carrying `@locals`, `@boxed_locals`, and
-    # `@debug_local_ids`. `restore_locals(snap)` restores `@locals` and
-    # `@debug_local_ids` from the snapshot; `@boxed_locals` is left
+    # Returns a `LocalsSnapshot` carrying `@locals`, `@boxed_locals`,
+    # `@debug_local_ids`, and block-parameter binding provenance.
+    # `restore_locals(snap)` restores every branch-local component except
+    # `@boxed_locals`, which is left
     # untouched and validated at lookup time via owner matching (see
     # I14-owner-aware at `BoxedLocal` definition).
     #
     # Plan: docs/closure_env_abi_p1_plan.md §5.1.1.b (I14).
     def save_locals : LocalsSnapshot
-      LocalsSnapshot.new(@locals.dup, @boxed_locals.dup, @debug_local_ids.dup)
+      LocalsSnapshot.new(
+        @locals.dup,
+        @boxed_locals.dup,
+        @debug_local_ids.dup,
+        @block_parameter_bindings.dup,
+      )
     end
 
     # Restore locals state from a `LocalsSnapshot` (primary path).
@@ -571,6 +623,7 @@ module Adamas::HIR
     def restore_locals(saved : LocalsSnapshot)
       @locals = saved.locals.dup
       @debug_local_ids = saved.debug_locals.dup
+      @block_parameter_bindings = saved.block_parameter_bindings.dup
       refresh_self_id
     end
 
@@ -71903,11 +71956,15 @@ module Adamas::HIR
         return lit.id
       end
 
+      local_id = ctx.lookup_local(name)
       prefer_closure_cell = @closure_ref_prefer_cell.includes?(name)
+      if local_id && ctx.block_parameter_binding?(name, local_id)
+        prefer_closure_cell = false
+      end
 
       # Check local variables first, unless this name is explicitly marked as
       # by-ref capture and must be read via closure cell.
-      if local_id = ctx.lookup_local(name)
+      if local_id
         # P1: boxed locals are read via PointerLoad through the box ptr.
         # Lookup is owner-aware so same-name locals in later lexical scopes
         # do not read a stale box.
@@ -74563,8 +74620,8 @@ module Adamas::HIR
             ctx.register_local(name, pv)
           end
         end
-        # The exact capture contract has one direct receiver, so at most one slot can
-        # be outstanding. A successful receiver read or assignment already clears it.
+        # This condition lends one direct receiver proof for its captured name.
+        # A successful receiver read or assignment already consumes that proof.
         if narrowing = scoped_narrowing
           ctx.discard_scoped_receiver_narrowing(narrowing)
         end
@@ -74987,6 +75044,64 @@ module Adamas::HIR
       end
     end
 
+    private def register_direct_capture_truthy_narrowing(
+      ctx : LoweringContext,
+      targets : Array(String),
+      capture_source : {String, ValueId}?,
+    ) : LoweringContext::ScopedReceiverNarrowing?
+      return nil unless capture_source
+
+      name = capture_source[0]
+      return nil unless targets.includes?(name)
+
+      local_id = ctx.lookup_local(name)
+      box_info = local_id ? ctx.lookup_boxed_local_for_local(name, local_id) : nil
+      ref_cell = @closure_ref_cells[name]?
+      prefers_closure_cell = @closure_ref_prefer_cell.includes?(name) &&
+                             !(local_id && ctx.block_parameter_binding?(name, local_id))
+      uses_closure_cell = local_id.nil? || prefers_closure_cell
+      return nil unless box_info || (uses_closure_cell && ref_cell)
+
+      payload_id = capture_source[1]
+      payload_type = ctx.type_of(payload_id)
+      narrowed = if is_union_or_nilable_type?(payload_type)
+                   unwrapped = lower_not_nil_intrinsic(ctx, payload_id, payload_type)
+                   return nil if unwrapped == payload_id
+                   unwrapped
+                 else
+                   # A nested direct condition can consume the enclosing
+                   # one-read proof. Its already-concrete condition payload is
+                   # the fresh branch proof; pass it forward without reloading
+                   # the mutable capture or restoring the older proof.
+                   return nil if payload_type == TypeRef::NIL || payload_type == TypeRef::VOID
+                   payload_id
+                 end
+
+      # Captures can be mutated through aliases. Lend the branch-proven payload
+      # to exactly one direct read; lower_identifier consumes the slot, while an
+      # assignment invalidates it before writing through the box or closure cell.
+      if box_info && local_id
+        ctx.register_boxed_local_narrowing(name, local_id, narrowed)
+      elsif ref_cell
+        cell_class, cell_name, _ = ref_cell
+        ctx.register_closure_cell_narrowing(name, cell_class, cell_name, narrowed)
+      end
+    end
+
+    private def lower_body_with_direct_capture_truthy_narrowing(
+      ctx : LoweringContext,
+      body : Array(ExprId),
+      targets : Array(String),
+      capture_source : {String, ValueId}?,
+    ) : ValueId
+      narrowing = register_direct_capture_truthy_narrowing(ctx, targets, capture_source)
+      begin
+        lower_body(ctx, body)
+      ensure
+        ctx.discard_scoped_receiver_narrowing(narrowing) if narrowing
+      end
+    end
+
     private def apply_scoped_truthy_narrowing(
       ctx : LoweringContext,
       targets : Array(String),
@@ -74999,35 +75114,7 @@ module Adamas::HIR
       scoped_narrowing = nil.as(LoweringContext::ScopedReceiverNarrowing?)
       if direct_receiver && capture_source &&
          direct_receiver == capture_source[0] && targets.includes?(direct_receiver)
-        name = direct_receiver
-        local_id = ctx.lookup_local(name)
-        box_info = local_id ? ctx.lookup_boxed_local_for_local(name, local_id) : nil
-        ref_cell = @closure_ref_cells[name]?
-        uses_closure_cell = local_id.nil? || @closure_ref_prefer_cell.includes?(name)
-
-        if box_info || (uses_closure_cell && ref_cell)
-          # Captures can be mutated through aliases, and several other member
-          # paths read their receiver twice. Only lend the proven LHS payload to
-          # this single-read call; the receiver read consumes it before args lower.
-          payload_id = capture_source[1]
-          payload_type = ctx.type_of(payload_id)
-          if is_union_or_nilable_type?(payload_type)
-            unwrapped = lower_not_nil_intrinsic(ctx, payload_id, payload_type)
-            if unwrapped != payload_id
-              if box_info && local_id
-                scoped_narrowing = ctx.register_boxed_local_narrowing(name, local_id, unwrapped)
-              elsif ref_cell
-                cell_class, cell_name, _ = ref_cell
-                scoped_narrowing = ctx.register_closure_cell_narrowing(
-                  name,
-                  cell_class,
-                  cell_name,
-                  unwrapped,
-                )
-              end
-            end
-          end
-        end
+        scoped_narrowing = register_direct_capture_truthy_narrowing(ctx, targets, capture_source)
       end
 
       apply_truthy_narrowing(ctx, targets, skip_boxed: true)
@@ -76207,6 +76294,7 @@ module Adamas::HIR
       # Each test that fails jumps to the next test block (or final else block)
       elsifs = node.elsifs
       has_elsifs = elsifs && !elsifs.empty?
+      then_capture_source = nil.as({String, ValueId}?)
 
       # Create blocks for the chain
       then_block = ctx.create_block
@@ -76227,6 +76315,7 @@ module Adamas::HIR
       else
         STDERR.puts "[NILABLE_BRANCH] lower_if before condition expr" if env_has?("ADAMAS_TRACE_NILABLE_BRANCH_REPRO")
         cond_id = lower_expr(ctx, node.condition)
+        then_capture_source = direct_capture_truthy_source(node.condition, cond_id)
         cond_type = ctx.type_of(cond_id)
         if env_has?("ADAMAS_TRACE_NILABLE_BRANCH_REPRO")
           STDERR.puts "[NILABLE_BRANCH] lower_if cond=#{cond_id} type=#{get_type_name_from_ref(cond_type)}(#{cond_type.id})"
@@ -76247,7 +76336,12 @@ module Adamas::HIR
             apply_truthy_narrowing(ctx, truthy_targets)
             apply_is_a_narrowing(ctx, is_a_targets)
             return lower_static_if_branch(ctx, pre_branch_locals, pre_inline_caller_locals) do
-              lower_body(ctx, node.then_body)
+              lower_body_with_direct_capture_truthy_narrowing(
+                ctx,
+                node.then_body,
+                truthy_targets,
+                then_capture_source,
+              )
             end
           end
 
@@ -76296,7 +76390,12 @@ module Adamas::HIR
             apply_truthy_narrowing(ctx, truthy_targets)
             apply_is_a_narrowing(ctx, is_a_targets)
             return lower_static_if_branch(ctx, pre_branch_locals, pre_inline_caller_locals) do
-              lower_body(ctx, node.then_body)
+              lower_body_with_direct_capture_truthy_narrowing(
+                ctx,
+                node.then_body,
+                truthy_targets,
+                then_capture_source,
+              )
             end
           end
 
@@ -76337,7 +76436,12 @@ module Adamas::HIR
       ctx.push_scope(ScopeKind::Block)
       apply_truthy_narrowing(ctx, truthy_targets)
       apply_is_a_narrowing(ctx, is_a_targets)
-      then_value = lower_body(ctx, node.then_body)
+      then_value = lower_body_with_direct_capture_truthy_narrowing(
+        ctx,
+        node.then_body,
+        truthy_targets,
+        then_capture_source,
+      )
       then_exit_block = ctx.current_block
       then_locals = ctx.save_locals.locals
       then_inline_locals = @inline_caller_locals_stack.map(&.dup)
@@ -76385,12 +76489,14 @@ module Adamas::HIR
           elsif_truthy_targets = truthy_narrowing_targets(elsif_branch.condition)
           elsif_falsy_targets = falsy_narrowing_targets(elsif_branch.condition)
           elsif_is_a_targets = is_a_narrowing_targets(elsif_branch.condition)
+          elsif_capture_source = nil.as({String, ValueId}?)
           elsif_cond_node = @arena[elsif_branch.condition]
           if elsif_cond_node.is_a?(Adamas::Compiler::Frontend::BinaryNode) &&
              (elsif_cond_node.operator_string == "&&" || elsif_cond_node.operator_string == "||")
             lower_short_circuit_condition(ctx, elsif_cond_node, elsif_body_block, next_test_block)
           else
             elsif_cond_id = lower_expr(ctx, elsif_branch.condition)
+            elsif_capture_source = direct_capture_truthy_source(elsif_branch.condition, elsif_cond_id)
             elsif_cond_type = ctx.type_of(elsif_cond_id)
             elsif_cond_bool = lower_truthy_check(ctx, elsif_cond_id, elsif_cond_type)
             ctx.terminate(Branch.new(elsif_cond_bool, elsif_body_block, next_test_block))
@@ -76402,7 +76508,12 @@ module Adamas::HIR
           apply_truthy_narrowing(ctx, accumulated_falsy_targets)
           apply_truthy_narrowing(ctx, elsif_truthy_targets)
           apply_is_a_narrowing(ctx, elsif_is_a_targets)
-          elsif_value = lower_body(ctx, elsif_branch.body)
+          elsif_value = lower_body_with_direct_capture_truthy_narrowing(
+            ctx,
+            elsif_branch.body,
+            elsif_truthy_targets,
+            elsif_capture_source,
+          )
           elsif_exit_block = ctx.current_block
           elsif_locals = ctx.save_locals.locals
           elsif_inline_locals = @inline_caller_locals_stack.map(&.dup)
@@ -96487,6 +96598,7 @@ module Adamas::HIR
                          end
             hir_param = callback_func.add_param(name, param_type)
             callback_ctx.register_local(name, hir_param.id)
+            callback_ctx.mark_block_parameter_binding(name, hir_param.id)
             callback_ctx.register_type(hir_param.id, param_type)
           end
         end
@@ -99364,6 +99476,19 @@ module Adamas::HIR
       parameter_name_string(param, block_arena) || fallback
     end
 
+    # Specialized block intrinsics lower their bodies inline and bypass the
+    # ordinary block/proc parameter corridor. Record both the local value and
+    # its lexical provenance so a same-name captured outer local cannot lend
+    # this binding its box or closure cell.
+    private def register_inline_block_parameter(
+      ctx : LoweringContext,
+      name : String,
+      value_id : ValueId,
+    ) : Nil
+      ctx.register_local(name, value_id)
+      ctx.mark_block_parameter_binding(name, value_id)
+    end
+
     # Intrinsic: n.times { |i| body }
     # Expands to: i = 0; while i < n { body; i += 1 }
     # Uses phi nodes for loop variable AND mutable external variables
@@ -99441,8 +99566,7 @@ module Adamas::HIR
           incr_phi_nodes[var_name] = Phi.new(ctx.next_id, phi.type)
         end
 
-        # Register counter for use in body
-        ctx.register_local(param_name, counter_phi.id)
+        # Register counter type before the body binding is installed.
         ctx.register_type(counter_phi.id, TypeRef::INT32)
 
         # Compare: i < n
@@ -99453,6 +99577,7 @@ module Adamas::HIR
         # Body block
         ctx.current_block = body_block
         ctx.push_scope(ScopeKind::Block)
+        register_inline_block_parameter(ctx, param_name, counter_phi.id)
 
         # Lower block body
         pushed_inline = false
@@ -99618,7 +99743,6 @@ module Adamas::HIR
         incr_phi_nodes[var_name] = Phi.new(ctx.next_id, phi.type)
       end
 
-      ctx.register_local(param_name, iter_phi.id)
       ctx.register_type(iter_phi.id, iter_type)
 
       cmp_op = method_name == "upto" ? BinaryOp::Le : BinaryOp::Ge
@@ -99630,6 +99754,7 @@ module Adamas::HIR
 
       ctx.current_block = body_block
       ctx.push_scope(ScopeKind::Block)
+      register_inline_block_parameter(ctx, param_name, iter_phi.id)
       pushed_inline = false
       if !inline_vars.empty?
         @inline_loop_vars_stack << inline_vars
@@ -99801,7 +99926,6 @@ module Adamas::HIR
         incr_phi_nodes[var_name] = Phi.new(ctx.next_id, phi.type)
       end
 
-      ctx.register_local(param_name, counter_phi.id)
       ctx.register_type(counter_phi.id, TypeRef::INT32)
 
       # Compare: i <= end (inclusive) or i < end (exclusive)
@@ -99813,6 +99937,7 @@ module Adamas::HIR
       # Body block
       ctx.current_block = body_block
       ctx.push_scope(ScopeKind::Block)
+      register_inline_block_parameter(ctx, param_name, counter_phi.id)
       pushed_inline = false
       if !inline_vars.empty?
         @inline_loop_vars_stack << inline_vars
@@ -100014,15 +100139,15 @@ module Adamas::HIR
               elem_extract = IndexGet.new(ctx.next_id, elem_type, index_get.id, idx_lit.id)
               ctx.emit(elem_extract)
               ctx.register_type(elem_extract.id, elem_type)
-              ctx.register_local(name, elem_extract.id)
+              register_inline_block_parameter(ctx, name, elem_extract.id)
             end
           end
         else
           # Single parameter - bind whole element
-          ctx.register_local(param_name, index_get.id)
+          register_inline_block_parameter(ctx, param_name, index_get.id)
         end
       else
-        ctx.register_local(param_name, index_get.id)
+        register_inline_block_parameter(ctx, param_name, index_get.id)
       end
 
       pushed_inline = false
@@ -100227,15 +100352,15 @@ module Adamas::HIR
               elem_extract = IndexGet.new(ctx.next_id, elem_type, index_get.id, idx_lit.id)
               ctx.emit(elem_extract)
               ctx.register_type(elem_extract.id, elem_type)
-              ctx.register_local(name, elem_extract.id)
+              register_inline_block_parameter(ctx, name, elem_extract.id)
             end
           end
         else
           # Single parameter - bind whole element
-          ctx.register_local(param_name, index_get.id)
+          register_inline_block_parameter(ctx, param_name, index_get.id)
         end
       else
-        ctx.register_local(param_name, index_get.id)
+        register_inline_block_parameter(ctx, param_name, index_get.id)
       end
 
       pushed_inline = false
@@ -100676,11 +100801,11 @@ module Adamas::HIR
 
       if params = block.params
         if params.size >= 2
-          ctx.register_local(key_param, key_val.id)
-          ctx.register_local(val_param, val_val.id)
+          register_inline_block_parameter(ctx, key_param, key_val.id)
+          register_inline_block_parameter(ctx, val_param, val_val.id)
         elsif params.size == 1
           # Single param gets the key (or ideally a tuple, but key is more useful)
-          ctx.register_local(key_param, key_val.id)
+          register_inline_block_parameter(ctx, key_param, key_val.id)
         end
       end
 
@@ -101027,7 +101152,7 @@ module Adamas::HIR
       index_get = IndexGet.new(ctx.next_id, element_type, array_id, index_phi.id)
       ctx.emit(index_get)
       ctx.register_type(index_get.id, element_type)
-      ctx.register_local(elem_param_name, index_get.id)
+      register_inline_block_parameter(ctx, elem_param_name, index_get.id)
 
       # Tuple destructuring: extract fields from the element and register each as a local
       # Same pattern as lower_array_each_dynamic (line 54611+)
@@ -101039,12 +101164,12 @@ module Adamas::HIR
           elem_extract = IndexGet.new(ctx.next_id, elem_type, index_get.id, idx_lit.id)
           ctx.emit(elem_extract)
           ctx.register_type(elem_extract.id, elem_type)
-          ctx.register_local(name, elem_extract.id)
+          register_inline_block_parameter(ctx, name, elem_extract.id)
         end
       end
 
       # Register index parameter with INT32 type
-      ctx.register_local(index_param_name, index_phi.id)
+      register_inline_block_parameter(ctx, index_param_name, index_phi.id)
       ctx.register_type(index_phi.id, TypeRef::INT32)
 
       # Separate phi per loop-carried var, materialized in the increment block.
@@ -101206,13 +101331,13 @@ module Adamas::HIR
               elem_extract = IndexGet.new(ctx.next_id, elem_type, element_id, idx_lit.id)
               ctx.emit(elem_extract)
               ctx.register_type(elem_extract.id, elem_type)
-              ctx.register_local(name, elem_extract.id)
+              register_inline_block_parameter(ctx, name, elem_extract.id)
             end
           end
           return
         end
       end
-      ctx.register_local(fallback_name, element_id)
+      register_inline_block_parameter(ctx, fallback_name, element_id)
     end
 
     # Specialized Array#map lowerers inline a block body without going through
@@ -101561,10 +101686,10 @@ module Adamas::HIR
       if destruct_count = elem_destruct_count
         bind_array_block_element_params(ctx, block, index_get.id, element_type, elem_param_name, destruct_count)
       else
-        ctx.register_local(elem_param_name, index_get.id)
+        register_inline_block_parameter(ctx, elem_param_name, index_get.id)
       end
 
-      ctx.register_local(index_param_name, index_phi.id)
+      register_inline_block_parameter(ctx, index_param_name, index_phi.id)
       ctx.register_type(index_phi.id, TypeRef::INT32)
 
       result_value = lower_array_map_block_body(ctx, block)
@@ -102740,13 +102865,13 @@ module Adamas::HIR
             elem_extract = IndexGet.new(ctx.next_id, elem_type, index_get.id, idx_lit.id)
             ctx.emit(elem_extract)
             ctx.register_type(elem_extract.id, elem_type)
-            ctx.register_local(name, elem_extract.id)
+            register_inline_block_parameter(ctx, name, elem_extract.id)
           end
         else
-          ctx.register_local(param_name, index_get.id)
+          register_inline_block_parameter(ctx, param_name, index_get.id)
         end
       else
-        ctx.register_local(param_name, index_get.id)
+        register_inline_block_parameter(ctx, param_name, index_get.id)
       end
 
       predicate_exit_block = ctx.create_block
@@ -102889,13 +103014,13 @@ module Adamas::HIR
             elem_extract = IndexGet.new(ctx.next_id, elem_type, index_get.id, idx_lit.id)
             ctx.emit(elem_extract)
             ctx.register_type(elem_extract.id, elem_type)
-            ctx.register_local(name, elem_extract.id)
+            register_inline_block_parameter(ctx, name, elem_extract.id)
           end
         else
-          ctx.register_local(param_name, index_get.id)
+          register_inline_block_parameter(ctx, param_name, index_get.id)
         end
       else
-        ctx.register_local(param_name, index_get.id)
+        register_inline_block_parameter(ctx, param_name, index_get.id)
       end
 
       predicate_exit_block = ctx.create_block
@@ -103129,8 +103254,8 @@ module Adamas::HIR
       ctx.register_type(curr_elem.id, element_type)
 
       # Register block parameters
-      ctx.register_local(acc_name, acc_phi.id)
-      ctx.register_local(elem_name, curr_elem.id)
+      register_inline_block_parameter(ctx, acc_name, acc_phi.id)
+      register_inline_block_parameter(ctx, elem_name, curr_elem.id)
 
       # Lower block body - result becomes new accumulator
       new_acc = lower_body(ctx, block.body)
@@ -103233,7 +103358,7 @@ module Adamas::HIR
       char_val = ExternCall.new(ctx.next_id, TypeRef::CHAR, "__adamas_string_byte_at", [string_id, index_phi.id])
       ctx.emit(char_val)
       ctx.register_type(char_val.id, TypeRef::CHAR)
-      ctx.register_local(param_name, char_val.id)
+      register_inline_block_parameter(ctx, param_name, char_val.id)
 
       pushed_inline = false
       if !inline_vars.empty?
@@ -103634,7 +103759,7 @@ module Adamas::HIR
       ctx.push_scope(ScopeKind::Block)
 
       # Register the block parameter "io" as the builder instance
-      ctx.register_local(io_name, builder_call.id)
+      register_inline_block_parameter(ctx, io_name, builder_call.id)
       ctx.register_type(builder_call.id, builder_type)
       update_typeof_local(io_name, builder_type)
       update_typeof_local_name(io_name, "String::Builder")
@@ -103675,7 +103800,7 @@ module Adamas::HIR
                        else
                          "_block_param_#{i}"
                        end
-          ctx.register_local(param_name, receiver_id)
+          register_inline_block_parameter(ctx, param_name, receiver_id)
           ctx.register_type(receiver_id, ctx.type_of(receiver_id))
         end
       end
@@ -103717,7 +103842,7 @@ module Adamas::HIR
                          else
                            "_block_param_#{i}"
                          end
-            ctx.register_local(param_name, receiver_id)
+            register_inline_block_parameter(ctx, param_name, receiver_id)
             ctx.register_type(receiver_id, ctx.type_of(receiver_id))
           end
         end
@@ -103777,7 +103902,7 @@ module Adamas::HIR
                        else
                          "_block_param_#{i}"
                        end
-          ctx.register_local(param_name, param_value)
+          register_inline_block_parameter(ctx, param_name, param_value)
           ctx.register_type(param_value, ctx.type_of(param_value))
         end
       end
@@ -103828,7 +103953,7 @@ module Adamas::HIR
                        else
                          "_block_param_#{i}"
                        end
-          ctx.register_local(param_name, param_value)
+          register_inline_block_parameter(ctx, param_name, param_value)
           ctx.register_type(param_value, ctx.type_of(param_value))
         end
       end
@@ -105219,6 +105344,7 @@ module Adamas::HIR
                        end
 
                        # Bind block parameters to yield arguments (in caller scope).
+                       saved_block_parameter_bindings = ctx.save_block_parameter_bindings
                        param_names.each_with_index do |param_name, idx|
                          next unless idx < yield_args.size
                          arg_id = yield_args[idx]
@@ -105244,6 +105370,7 @@ module Adamas::HIR
                            ctx.register_local(param_name, arg_id)
                            ctx.register_type(arg_id, ctx.type_of(arg_id))
                          end
+                         ctx.mark_block_parameter_binding(param_name, arg_id)
                        end
 
                        body_result = begin
@@ -105326,6 +105453,7 @@ module Adamas::HIR
                            end
                          end
                        end
+                       ctx.restore_block_parameter_bindings(saved_block_parameter_bindings)
 
                        if env_get("DEBUG_INLINE_YIELD_RESULT")
                          arg_names = yield_args.map { |arg_id| get_type_name_from_ref(ctx.type_of(arg_id)) }.join(",")
@@ -108981,14 +109109,17 @@ module Adamas::HIR
           end
           ctx.discard_boxed_local(name)
         end
-        # Check if this variable is stored in a closure cell (by-reference capture)
-        if ref_cell = @closure_ref_cells[name]?
-          cell_class, cell_name, cell_type = ref_cell
-          ctx.discard_closure_cell_narrowing(name, cell_class, cell_name)
-          set = ClassVarSet.new(ctx.next_id, cell_type, cell_class, cell_name, value_id)
-          ctx.emit(set)
-          ctx.register_type(set.id, cell_type)
-          return set.id
+        # A same-name block parameter is a new lexical binding; it must not
+        # write through the outer capture cell even when that cell is mutable.
+        unless current_local && ctx.block_parameter_binding?(name, current_local)
+          if ref_cell = @closure_ref_cells[name]?
+            cell_class, cell_name, cell_type = ref_cell
+            ctx.discard_closure_cell_narrowing(name, cell_class, cell_name)
+            set = ClassVarSet.new(ctx.next_id, cell_type, cell_class, cell_name, value_id)
+            ctx.emit(set)
+            ctx.register_type(set.id, cell_type)
+            return set.id
+          end
         end
         if debug_name = env_get("DEBUG_ASSIGN_VAR")
           if debug_name == name
@@ -110121,13 +110252,15 @@ module Adamas::HIR
           end
           ctx.discard_boxed_local(name)
         end
-        if ref_cell = @closure_ref_cells[name]?
-          cell_class, cell_name, cell_type = ref_cell
-          ctx.discard_closure_cell_narrowing(name, cell_class, cell_name)
-          set = ClassVarSet.new(ctx.next_id, cell_type, cell_class, cell_name, value_id)
-          ctx.emit(set)
-          ctx.register_type(set.id, cell_type)
-          return set.id
+        unless current_local && ctx.block_parameter_binding?(name, current_local)
+          if ref_cell = @closure_ref_cells[name]?
+            cell_class, cell_name, cell_type = ref_cell
+            ctx.discard_closure_cell_narrowing(name, cell_class, cell_name)
+            set = ClassVarSet.new(ctx.next_id, cell_type, cell_class, cell_name, value_id)
+            ctx.emit(set)
+            ctx.register_type(set.id, cell_type)
+            return set.id
+          end
         end
         if debug_name = env_get("DEBUG_ASSIGN_VAR")
           if debug_name == name
@@ -110769,6 +110902,7 @@ module Adamas::HIR
             param_val = Parameter.new(ctx.next_id, param_type, idx, name)
             ctx.emit(param_val)
             ctx.register_local(name, param_val.id)
+            ctx.mark_block_parameter_binding(name, param_val.id)
             ctx.register_type(param_val.id, param_type)
             update_typeof_local(name, param_type)
             if ta = param.type_annotation
@@ -111925,7 +112059,7 @@ module Adamas::HIR
         proc_ctx.register_type(get.id, cap.env_slot_type)
         proc_ctx.register_local(cap.name, get.id)
         if cap.boxed
-          proc_ctx.register_boxed_local(cap.name, get.id, cap.payload_type)
+          proc_ctx.register_boxed_local(cap.name, get.id, cap.payload_type, get.id)
         end
       end
     end
@@ -112176,6 +112310,7 @@ module Adamas::HIR
             param_type = effective_param_types[idx]? || TypeRef::VOID
             hir_param = proc_func.add_param(name, param_type)
             proc_ctx.register_local(name, hir_param.id)
+            proc_ctx.mark_block_parameter_binding(name, hir_param.id)
             proc_ctx.register_type(hir_param.id, param_type)
             update_typeof_local(name, param_type)
             if ta = param.type_annotation
@@ -112618,6 +112753,7 @@ module Adamas::HIR
             proc_ctx.emit(elem_extract)
             proc_ctx.register_type(elem_extract.id, elem_type)
             proc_ctx.register_local(name, elem_extract.id)
+            proc_ctx.mark_block_parameter_binding(name, elem_extract.id)
             update_typeof_local(name, elem_type)
             if elem_type != TypeRef::VOID
               update_typeof_local_name(name, get_type_name_from_ref(elem_type))
@@ -112633,6 +112769,7 @@ module Adamas::HIR
               name = (safe_slice_to_string(pname) || "")
               hir_param = proc_func.add_param(name, param_type)
               proc_ctx.register_local(name, hir_param.id)
+              proc_ctx.mark_block_parameter_binding(name, hir_param.id)
               proc_ctx.register_type(hir_param.id, param_type)
               update_typeof_local(name, param_type)
               if ta = param.type_annotation
@@ -112654,6 +112791,7 @@ module Adamas::HIR
               param_type = effective_param_types[idx]? || TypeRef::VOID
               hir_param = proc_func.add_param(name, param_type)
               proc_ctx.register_local(name, hir_param.id)
+              proc_ctx.mark_block_parameter_binding(name, hir_param.id)
               proc_ctx.register_type(hir_param.id, param_type)
               update_typeof_local(name, param_type)
               if ta = param.type_annotation
