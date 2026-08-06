@@ -206,6 +206,13 @@ class Adamas::HIR::AstToHir
     {parts.owner, parts.method, parts.separator, parts.base}
   end
 
+  def __test_method_index_call_candidates_for_separator(
+    candidates : Array(String),
+    separator : Char,
+  ) : Array(String)
+    method_index_call_candidates_for_separator(candidates, separator)
+  end
+
   def __test_collect_assigned_vars(body : Array(Adamas::Compiler::Frontend::ExprId)) : Array(String)
     collect_assigned_vars(body)
   end
@@ -2777,6 +2784,32 @@ private def hir_text(func : Adamas::HIR::Function) : String
 end
 
 describe Adamas::HIR::AstToHir do
+  describe "method-index separator contract" do
+    it "prefers exact separators and keeps only class-to-instance fallback" do
+      converter = lower_program_with_main("1")
+      instance_only = ["Owner#probe$arity0"]
+      class_only = ["Owner.probe$arity0"]
+      mixed = [instance_only.first, class_only.first]
+
+      converter.__test_method_index_call_candidates_for_separator(instance_only, '#')
+        .same?(instance_only).should be_true
+      converter.__test_method_index_call_candidates_for_separator(class_only, '.')
+        .same?(class_only).should be_true
+
+      converter.__test_method_index_call_candidates_for_separator(mixed, '#')
+        .should eq(instance_only)
+      converter.__test_method_index_call_candidates_for_separator(mixed, '.')
+        .should eq(class_only)
+
+      # `extend self` can expose an instance registration to a class-form call.
+      converter.__test_method_index_call_candidates_for_separator(instance_only, '.')
+        .same?(instance_only).should be_true
+      # The reverse would let Child.foo mask Parent#foo for a Child#foo call.
+      converter.__test_method_index_call_candidates_for_separator(class_only, '#')
+        .should be_empty
+    end
+  end
+
   describe "method-resolution cache identity" do
     it "separates positional and named self-call shapes" do
       converter = lower_program_with_main("1")

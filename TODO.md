@@ -12901,6 +12901,41 @@ by the observed distribution. The broad hash-shortcut route is closed; B4-F
 remains RED. The next falsifier should measure the shape and frequency of the
 method-index separator filters before considering a structural index change.
 
+### Session 78: restore the directed method-index separator fallback (2026-08-06)
+
+The separator-filter follow-up rejected a structural third index before
+implementation. The existing method index has eight strict consumers spanning
+function-definition presence, splat metadata, parent discovery, and call
+resolution. Adding separator to its key would duplicate ordering, registration,
+cache, and invalidation obligations, while Session 76 already showed no global
+descent from removing the compact parse at the hottest filter. Independent Luna
+review rated that redesign VULNERABLE without phase-aligned end-to-end evidence.
+
+The audit instead exposed a correctness regression introduced when method-index
+lookups became separator-strict: a class-form call could no longer use a sole
+instance-form registration retained by an `extend self` path. Restoring the old
+unfiltered candidate list globally would also restore the unsafe reverse case,
+where a class-form `Child.foo` candidate can mask a valid inherited
+`Parent#foo` for an instance-form `Child#foo` call. A focused separator matrix
+was RED on exactly the missing class-to-instance fallback: 457 examples, one
+failure, zero errors, and two pre-existing pending examples.
+
+The repair keeps `method_index_candidates_for_separator` strict for presence,
+splat, and parent-index queries. A call-resolution-only wrapper preserves exact
+separator matches and falls back to the original candidate list only for a
+class-form request with no class-form registration. `resolve_call_tuple` is the
+only consumer of that directed fallback; the reverse instance-to-class case
+remains empty so parent lookup can proceed. No cache, index, or mutable state was
+added.
+
+The focused AST-to-HIR suite is GREEN at 457 examples, zero failures/errors,
+and two pre-existing pending examples. The host compiler also builds under
+`run_safe` in approximately 16 seconds, and no matching process survived. The
+scoped separator-selection contract and its single call-resolution wiring are
+VERIFIED with a ROBUST adversary verdict. This is a correctness guard, not a
+performance claim: the structural-index route remains rejected and B4-F stays
+RED.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

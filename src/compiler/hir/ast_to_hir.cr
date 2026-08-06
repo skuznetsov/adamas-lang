@@ -1640,6 +1640,17 @@ module Adamas::HIR
       matching.size == candidates.size ? candidates : matching
     end
 
+    private def method_index_call_candidates_for_separator(
+      candidates : Array(String),
+      separator : Char,
+    ) : Array(String)
+      matching = method_index_candidates_for_separator(candidates, separator)
+      # `extend self` paths can retain only an instance-form registration for
+      # a class-form request. Preserve that historical call-resolution fallback
+      # without exposing it to strict presence, splat, or parent-index queries.
+      matching.empty? && separator == '.' ? candidates : matching
+    end
+
     private def strip_generic_receiver_from_method_path(method_name : String) : String
       bytesize = method_name.bytesize
       ptr = method_name.to_unsafe
@@ -97783,7 +97794,7 @@ module Adamas::HIR
               if dbg_slice_lookup
                 STDERR.puts "[SLICE_LOOKUP_FN]   method_index[#{base_owner}][#{parts.method}] = #{candidates.join(", ")}"
               end
-              overload_keys = method_index_candidates_for_separator(
+              overload_keys = method_index_call_candidates_for_separator(
                 candidates,
                 parts.separator.not_nil!,
               )
