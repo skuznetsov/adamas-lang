@@ -8669,6 +8669,7 @@ module Adamas::HIR
       arg_types : Array(TypeRef),
       has_block_call : Bool,
       has_splat : Bool,
+      exact_owner_required : Bool = false,
     ) : Nil
       # A bare reference-generic template has no concrete layout. Its target
       # shape is replayed for registered instances; a template body could embed
@@ -8690,13 +8691,20 @@ module Adamas::HIR
         resolved_name = resolved[0]
         resolved_owner = method_owner(strip_type_suffix(resolved_name))
         preserve_requested_owner =
-          preserve_requested_value_owner_specialization?(candidate, resolved_name) ||
+          exact_owner_required ||
+            preserve_requested_value_owner_specialization?(candidate, resolved_name) ||
             preserve_requested_value_owner_specialization?(base_name, resolved_name)
-        inherited_generic_wrapper_reusable =
-          inherited_generic_wrapper_reusable?(owner, resolved_owner, resolved_name)
+        inherited_wrapper_reusable = repair_resolved_body_available?(
+          owner,
+          base_name,
+          candidate,
+          arg_types,
+          has_block_call,
+          has_splat,
+        )
         if preserve_requested_owner ||
            (!resolved_owner.empty? && strip_generic_args(resolved_owner) != strip_generic_args(owner) &&
-           !inherited_generic_wrapper_reusable)
+           !inherited_wrapper_reusable)
           lower_required_virtual_target_function(resolved_name, exact_demand: true)
           resolved_base = strip_type_suffix(resolved_name)
           lower_required_virtual_target_function(resolved_base, exact_demand: true) unless resolved_name == resolved_base
@@ -8711,32 +8719,6 @@ module Adamas::HIR
         lower_required_virtual_target_function(candidate)
         lower_required_virtual_target_function(base_name) unless candidate == base_name
       end
-    end
-
-    # A concrete generic receiver can share an inherited non-generic body when
-    # the body is already materialized and no generic source binding needs to
-    # be substituted.  In that case MIR's runtime type-id dispatch resolves the
-    # receiver through the class ancestor chain, so prelowering the concrete
-    # owner would only synthesize a redundant wrapper.  Keep this gate narrow:
-    # value/struct owners and generic module/template implementations still
-    # follow the preservation path above.
-    private def inherited_generic_wrapper_reusable?(
-      requested_owner : String,
-      resolved_owner : String,
-      resolved_name : String,
-    ) : Bool
-      return false if requested_owner.empty? || resolved_owner.empty?
-      return false if strip_generic_args(requested_owner) == strip_generic_args(resolved_owner)
-
-      requested_info = generic_owner_info(requested_owner)
-      return false unless requested_info && concrete_type_args?(requested_info.args)
-
-      resolved_base = strip_type_suffix(resolved_name)
-      resolved_has_body = @module.has_function_with_body?(resolved_name)
-      resolved_has_body ||= resolved_base != resolved_name && @module.has_function_with_body?(resolved_base)
-      return false unless resolved_has_body
-
-      !generic_source_owner_requires_specialization?(requested_owner, resolved_owner, resolved_name)
     end
 
     # Final repair runs after the initial virtual-target replay and must not
@@ -55364,7 +55346,14 @@ module Adamas::HIR
       saved_depth = @lowering_depth
       @lowering_depth = 0
       begin
-        lower_virtual_target_owner(type_desc.name, method_name, arg_types, false, false)
+        lower_virtual_target_owner(
+          type_desc.name,
+          method_name,
+          arg_types,
+          false,
+          false,
+          exact_owner_required: true,
+        )
       ensure
         @lowering_depth = saved_depth
       end

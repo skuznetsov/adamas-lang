@@ -13692,6 +13692,76 @@ direct materialization family using existing ledgers and reducers. No cache,
 epoch, or broad lowering abstraction is justified until that family is shown to
 dominate and an exact boundary-preserving reuse rule is available.
 
+### Session 97: shared inherited-body proof removes virtual replay fanout (2026-08-06)
+
+The next materialization-family probe found that ordinary direct calls already
+canonicalize inherited `Reference#hash(Crystal::Hasher)` bodies, while initial
+virtual-target replay emitted concrete inherited wrappers and their downstream
+`Crystal::Hasher#reference$Concrete` specializations without direct HIR
+callsites. This disagreed with both MIR class dispatch, which maps concrete type
+ids through a shared ancestor implementation, and final missing-target repair,
+which already treats a structurally compatible live ancestor body as sufficient.
+
+The initial replay path now uses the existing
+`repair_resolved_body_available?` proof instead of a second generic-only helper.
+The proof remains fail-closed on a materialized resolved body, actual
+inheritance or module inclusion, generic-source specialization, and value-owner
+preservation. A hostile review rejected an intermediate `Reference#hash`
+method-name allowlist as an unjustified special case. The full HIR spec then
+exposed the one context that carries a stronger contract: synthetic deferred
+stdio requires an exact concrete receiver target. That caller now passes an
+explicit `exact_owner_required` flag instead of encoding `STDOUT` or `puts` in
+the general reuse rule.
+
+Verification:
+
+- the focused inherited-`Reference` regression proves that replay retains the
+  ancestor call and does not emit `Child#hash` or
+  `Crystal::Hasher#reference$Child`;
+- all 19 specs selected by `--example inherited` pass, including generic-owner,
+  self-redispatch, pending-body, and final-repair cases;
+- `spec/hir/ast_to_hir_spec.cr` passes 458 examples with 0 failures and the two
+  pre-existing pending module-receiver examples;
+- a fresh host compiler built successfully under `run_safe.sh` in about 18
+  seconds;
+- the full-prelude hash reducer compiled successfully under the fresh host and
+  reduced `Crystal::Hasher#reference$Concrete` definitions from 15 to 2,
+  inherited `#hash$Crystal::Hasher` definitions from 73 to 60, and HIR size from
+  7,460,783 to 7,070,319 bytes;
+- the bounded first-iteration missing-process gate stopped cleanly in about 143
+  seconds with `missing=1674`, `pending=0`, `funcs=23951`, `force_total=8410`,
+  and `force_unique=5560`.
+
+Against the clean Session 96 source receipt, the recomputed gate deltas are
+`-274` missing targets (14.1 percent), `-4361` functions (15.4 percent), `-493`
+force requests (5.5 percent), and `-255` unique forced names (4.4 percent). The
+old gate's wall time was invalidated by an overlapping diagnostic, so this does
+not claim a causal wall-time delta. The current 143-second receipt only proves
+that this HIR boundary is inside the 210- and 300-second caps; it is not a full
+B4-F result. `run_safe.sh` still reports unavailable numeric RSS and FD fields,
+so the run is not a B7 resource certificate.
+
+Mini-Quadrum synthesis:
+
+- **Cassandra:** broad ancestor reuse risked deleting exact synthetic dispatch
+  targets; the full-file gate found that counterexample before promotion.
+- **Daedalus:** the rejected method-family allowlist was replaced by one shared
+  structural proof plus an explicit caller-owned exactness contract.
+- **Maieutic:** an inherited body is reusable only when the resolved body lives,
+  the owner relation is real, specialization guards permit it, and the caller
+  has not requested an exact owner.
+- **Adversary:** the initial/final replay alignment is ROBUST for the exercised
+  HIR contract and shows recomputed global descent. B4-F remains RED until a
+  fresh committed source passes the complete two-stage chain within 300
+  seconds.
+
+LTP/WBA status: the local move removes a replayed inherited wrapper only across
+the existing class-dispatch corridor; the boundary invariant is exact-owner and
+specialization preservation. The small reducer and the recomputed self-host
+gate both decrease the lexicographic tuple of inherited wrappers, downstream
+specializations, total functions, and remaining demands. Promotion beyond this
+scope still requires the fresh complete B4-F certificate.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

@@ -13138,6 +13138,56 @@ describe Adamas::HIR::AstToHir do
       converter.module.functions.any? { |func| func.name.starts_with?("Box(Int32)#run$") }.should be_false
     end
 
+    it "does not synthesize an inherited Reference wrapper when the ancestor body is reusable" do
+      source = <<-CRYSTAL
+        module Crystal
+          struct Hasher
+            def reference(value)
+              self
+            end
+          end
+        end
+
+        class Reference
+          def hash(hasher)
+            hasher.reference(self)
+          end
+        end
+
+        class Child < Reference
+        end
+
+        def invoke(value : Reference, hasher : Crystal::Hasher)
+          value.hash(hasher)
+        end
+      CRYSTAL
+
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+      converter.arena = arena
+      class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+      def_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode) }
+      class_nodes.each { |node| converter.register_class(node) }
+      def_nodes.each { |node| converter.register_function(node) }
+      converter.lower_def(def_nodes.first)
+      converter.__test_mark_live_type("Child")
+      converter.__test_replay_virtual_targets_for_registered_class("Child")
+
+      parent_target = converter.module.functions.find { |func| func.name.starts_with?("Reference#hash$") }
+      parent_target.should_not be_nil
+      converter.module.has_function_with_body?(parent_target.not_nil!.name).should be_true
+      parent_reference_call = parent_target.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.find { |call| call.method_name.starts_with?("Crystal::Hasher#reference") }
+      parent_reference_call.should_not be_nil
+      parent_reference_call.not_nil!.method_name.should_not contain("$Child")
+
+      # MIR resolves the concrete type id through the Reference ancestor. A
+      # second body would only specialize the untyped helper on Child.
+      converter.module.functions.any? { |func| func.name.starts_with?("Child#hash$") }.should be_false
+      converter.module.functions.any? { |func| func.name.starts_with?("Crystal::Hasher#reference$Child") }.should be_false
+    end
+
     it "retains an exact runtime generic owner for an inherited Object wrapper" do
       source = <<-CRYSTAL
         class Object
@@ -13775,6 +13825,9 @@ describe Adamas::HIR::AstToHir do
       end.should be_true
 
       parent_target = converter.module.functions.find { |func| func.name.starts_with?("Parent#run$") }
+      # Materialize the redundant wrapper explicitly: initial replay now uses
+      # the same ancestor-body proof as final repair and omits it by default.
+      converter.__test_lower_function_if_needed("Child#run$Int32")
       child_target = converter.module.functions.find { |func| func.name.starts_with?("Child#run$") }
       parent_target.should_not be_nil
       child_target.should_not be_nil
@@ -13872,6 +13925,9 @@ describe Adamas::HIR::AstToHir do
       CRYSTAL
 
       parent_target = converter.module.functions.find { |func| func.name.starts_with?("Parent#run$") }
+      # This test removes both implementations to exercise restoration, so
+      # create the otherwise redundant child wrapper as explicit setup.
+      converter.__test_lower_function_if_needed("Child#run$Int32")
       child_target = converter.module.functions.find { |func| func.name.starts_with?("Child#run$") }
       parent_target.should_not be_nil
       child_target.should_not be_nil
@@ -13922,6 +13978,10 @@ describe Adamas::HIR::AstToHir do
       end.should be_true
 
       parent_target = converter.module.functions.find { |func| func.name.starts_with?("Parent#run$") }
+      # Initial replay omits inherited wrappers whose ancestor body is already
+      # sufficient. Create them explicitly before simulating stale removals.
+      converter.__test_lower_function_if_needed("ChildA#run$Int32")
+      converter.__test_lower_function_if_needed("ChildB#run$Int32")
       child_a_target = converter.module.functions.find { |func| func.name.starts_with?("ChildA#run$") }
       child_b_target = converter.module.functions.find { |func| func.name.starts_with?("ChildB#run$") }
       parent_target.should_not be_nil
