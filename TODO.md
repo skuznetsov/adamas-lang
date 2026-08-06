@@ -12843,6 +12843,38 @@ VERIFIED for the measured source, parser matrix, and sampled call trees. B4-F
 remains RED, and the other byte scanners stay out of scope until their own
 call-count and end-to-end evidence justify a separate slice.
 
+### Session 76: reject a duplicate separator-only method-name scanner (2026-08-06)
+
+The Session 75 samples attributed most remaining compact-parser work to
+`method_index_candidates_for_separator`, which needs only the separator of each
+candidate. The smallest candidate change replaced the full compact parse with
+an allocation-free byte scan. It preserved the existing raw/readability guards,
+late-`#` precedence, first-dot selection, and first-`$` stop rule. A focused
+matrix also preserved mixed instance/class filtering and the original Array
+identity when every candidate matched. The host compiler and AST-to-HIR spec
+binary built under `run_safe`; all 457 examples passed with zero failures/errors
+and two pre-existing pending examples. Independent Luna review rated the
+behavioral contract ROBUST but left the performance claim unproven.
+
+The phase-aligned 100-second profile rejected promotion. The old parser and its
+`byte_slice?` leaves disappeared below the separator filter in all three
+samples, but the new scanner itself became a top-of-stack hotspot. Its leaf
+counts were 23, 154, and 200, versus 38, 110, and 63 combined parser plus
+`byte_slice?` leaves in the baseline samples. Main-thread sample totals were
+nearly identical (550/744/739 versus 544/746/740), while measured footprints
+were higher at all three checkpoints: 671.6 MiB, 841.4 MiB, and approximately
+1.0 GiB versus 608.7 MiB, 733.7 MiB, and 953.4 MiB. Both runs remained in the
+same lazy `lower_main` boundary and timed out; no matching process survived.
+The samples do not prove a causal regression, but they do prove the required
+global descent was absent.
+
+The candidate production and test changes were therefore removed before
+commit. Duplicating the compact-name grammar would add another maintenance
+surface without measured value. This separator-only route is closed unless a
+new implementation first demonstrates a phase-aligned throughput or memory
+win. B4-F remains RED; the next slice must move to a different measured
+lowering cost instead of continuing parser micro-rewrites.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
