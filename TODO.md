@@ -12674,10 +12674,38 @@ the deletion ROBUST for the current configuration where the cache was disabled.
 
 Boundary: behavior-neutral complexity removal is VERIFIED for the measured
 build and AST-to-HIR contract. Runtime speedup is unproven: the no-cache sample
-was in a different lowering phase and cannot support a timing claim. B4-F was
-not rerun on this cleanup and remains RED. The next signal is one fresh,
-monitored 300-second B4-F; if it still times out, profile the active contextual
-type-resolution path rather than restoring the rejected lookup cache.
+was in a different lowering phase and cannot support a timing claim. The fresh
+B4-F and profile follow-up are recorded in Session 71; neither supports
+restoring the rejected lookup cache.
+
+### Session 71: fresh B4-F refutes contextual type resolution as the primary bottleneck (2026-08-05)
+
+A fresh monitored two-stage bootstrap after the cache-shell deletion built
+stage1 in 16.69 seconds and passed both plain and no-prelude smokes. Stage2
+remained one observed compiler process without fanout, but `run_safe` killed it
+at the 300-second limit; the bootstrap command exited after 302.65 seconds with
+code 143. The last trace remained in lazy `lower_main` setup with 19 top-level
+expressions and reported no bodyless target. Observed RSS plateaued around
+2.02 GiB late in the run, but `run_safe` could not obtain authoritative RSS or
+FD samples on this host. No compiler process survived the timeout, and the
+offline readiness validator correctly rejected the manifest with
+`manifest_status`.
+
+A separate 150-second stage2-shaped diagnostic run also ended at its bound
+without a bodyless target or surviving process. A ten-second macOS sample taken
+around 65 seconds refutes contextual type resolution as the primary current
+target: `resolve_type_name_in_context` occupied about 5.5% of sampled stacks
+inclusively and about 0.07% as leaf work. In contrast, string hashing,
+call-target/name parsing, and repeated environment lookup were visible across
+the recursive lowering stack; `env_get`/`BootstrapEnv#get?` reached about 4.6%
+leaf time through `getenv`/`__findenv_locked`.
+
+Boundary: B4-F remains RED functionally and against the <=300-second admission
+budget. The profile does not justify a contextual type cache, and eliminating
+all measured environment lookup would still have a low single-digit theoretical
+ceiling. The next slice is to identify the exact hot environment keys and prove
+the narrowest stable-read contract before changing code; broader caching remains
+rejected unless a new falsifier demonstrates a material benefit.
 
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
