@@ -13291,6 +13291,45 @@ replay suppression. Further performance work must return to the stable direct
 `lower_function_if_needed -> lower_method` corridor and find a larger measured
 constraint; another replay bookkeeping micro-optimization is not justified.
 
+### Session 88: slow roots distribute lowering cost across compiler phases (2026-08-06)
+
+The existing default-off materialization timer was run with a predeclared
+500 ms threshold through the source-matched iteration-1 process gate. It
+reported 20 slow rows. Their observed elapsed totals were spread across HIR
+lowering (`ast_to_hir.cr`), the compiler CLI, and MIR-to-LLVM lowering rather
+than a single replay or resolver family. The largest rows were
+`Compiler::CLI#compile` at approximately 8.96 seconds,
+`AstToHir#register_constant` and its two record helpers at approximately
+2.20--2.26 seconds each, and `LLVMIRGenerator#emit_block` at approximately
+1.77 seconds. All reported rows had zero timed children in this work-queue
+schedule, but their wall times still include scheduler, GC, and diagnostic
+effects and are not CPU-share measurements.
+
+A second diagnostic-only run enabled the timer's existing resolve/infer
+breakdown. The same slow-root shape remained, while every reported row had
+zero calls and zero elapsed time in those two specifically instrumented
+helpers. That rejects `resolve_method_call` or `infer_type_from_expr` as the
+measured internal explanation for these particular slow rows. It does not
+exclude uninstrumented resolution, early lookup/queue work before the timer,
+or aggregate cost from sub-threshold materializations. The stats flag also
+emitted periodic method-count summaries and added clocks, so its approximately
+151-second wall time is not benchmark evidence.
+
+Both safe runs reached the exact current boundary: 1,951 missing functions,
+28,455 total functions, and a normal exit at the iteration-1 process gate. The
+clean threshold run reported approximately 149 seconds. Continuous monitoring
+observed one compiler process and RSS below the 4 GiB guard. No production
+instrumentation or compiler behavior changed.
+
+Boundary: B4-F remains RED. The timer begins after early materialization
+fences and does not identify caller, pending context, or iteration; these rows
+mean only "slow materializations observed through the iteration-1 gate." They
+cannot authorize a cache, establish exclusive CPU cost, or be summed into a
+global speedup claim. The next smallest falsifier is the existing targeted
+slow-expression tracer on the largest `Compiler::CLI#compile` row. It should
+separate one oversized AST expression from several expensive body operations
+before any refactor is considered.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
