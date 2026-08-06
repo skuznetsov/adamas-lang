@@ -1629,6 +1629,21 @@ describe "compact method-name parsing" do
     converter.__test_parse_method_name_compact("Owner.build$String").should eq(
       {"Owner", "build", '.', "Owner.build"}
     )
+    converter.__test_parse_method_name_compact("Outer.Inner#call$Int32").should eq(
+      {"Outer.Inner", "call", '#', "Outer.Inner#call"}
+    )
+    converter.__test_parse_method_name_compact("Outer#Inner#call").should eq(
+      {"Outer#Inner", "call", '#', "Outer#Inner#call"}
+    )
+    converter.__test_parse_method_name_compact("Owner#method.other$T").should eq(
+      {"Owner", "method.other", '#', "Owner#method.other"}
+    )
+    converter.__test_parse_method_name_compact("Owner.one.two$T").should eq(
+      {"Owner", "one.two", '.', "Owner.one.two"}
+    )
+    converter.__test_parse_method_name_compact("Owner$T#method").should eq(
+      {"Owner$T#method", nil, nil, "Owner"}
+    )
     converter.__test_parse_method_name_compact("call$Int32").should eq(
       {"call$Int32", nil, nil, "call"}
     )

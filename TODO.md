@@ -12810,6 +12810,39 @@ certificate. The remaining compact parse in the block fallback and the
 missing-target helper require suffix/readability or rewrite invalidation
 contracts and stay out of scope until call-count evidence justifies them.
 
+### Session 75: remove generic pattern dispatch from the compact parser (2026-08-06)
+
+The cache-OFF profile showed `Int32@Object#===<UInt8>` directly below
+`parse_method_name_compact` in 164, 284, and 177 call-tree branches across the
+45-, 70-, and 95-second samples. The attribution is deliberately local: the
+same generic leaf also occurs under union and accessor scans, so the compact
+parser is one contributor rather than the complete source.
+
+The compact byte loop now compares its `UInt8` input directly with typed `#`,
+`.`, and `$` byte constants. No other parser, caller, cache, or API changed.
+The focused matrix preserves late-`#` precedence over an earlier dot, repeated
+separators, dots after `#`, the first-dot rule, and the first-`$` stop rule.
+The host compiler and AST-to-HIR spec binary build under `run_safe`; all 456
+examples pass with zero failures/errors and two pre-existing pending examples.
+Independent Luna review rates the typed comparison as behaviorally equivalent
+for the `UInt8` domain.
+
+A fresh guarded 100-second stage2-shaped run produced samples at the same
+45/70/95-second offsets and remained one process in lazy `lower_main`. In all
+three post-change samples, `Int32@Object#===<UInt8>` had zero direct
+`parse_method_name_compact` parents; the remaining generic leaf appeared in
+8/9/8 other branches. Sample footprints were 608.7 MiB, 733.7 MiB, and
+953.4 MiB, compared with 732.7 MiB, 829.5 MiB, and 1.0 GiB in the prior run.
+The sample durations differ and the earlier A/B already showed substantial
+run-to-run variance, so these footprint values do not establish a global
+memory or wall-time improvement. The process timed out at 100 seconds and no
+matching process survived.
+
+Boundary: removal of the compact parser's generic pattern-dispatch leaf is
+VERIFIED for the measured source, parser matrix, and sampled call trees. B4-F
+remains RED, and the other byte scanners stay out of scope until their own
+call-count and end-to-end evidence justify a separate slice.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

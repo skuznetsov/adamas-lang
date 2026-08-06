@@ -1389,16 +1389,15 @@ module Adamas::HIR
       i = 0
       while i < name.bytesize
         byte = name.to_unsafe[i]
-        case byte
-        when '#'.ord
+        if byte == '#'.ord.to_u8
           sep_idx = i
           sep_char = '#'
-        when '.'.ord
+        elsif byte == '.'.ord.to_u8
           if sep_idx.nil?
             sep_idx = i
             sep_char = '.'
           end
-        when '$'.ord
+        elsif byte == '$'.ord.to_u8
           dollar_idx = i
           break
         end
