@@ -13438,6 +13438,55 @@ specialization start/skip counts. No LTP/WBA move is promotable: no legal local
 transformation, boundary invariant, recompute-safety proof, dual frame, or
 measured global descent exists yet.
 
+### Session 93: constant-record lowering enters an inclusive inference-materialization corridor (2026-08-06)
+
+The next independently measured Session 88 root was traced with the existing
+body-expression diagnostics, filtered to `record_constant_definition`. The
+filter matched both overloads without changing production behavior. It bound a
+two-expression forwarding body and a 23-expression implementation body to
+their AST identities and source snippets. Because the diagnostic label omits
+the overload suffix, repeated body dumps can represent distinct materialized
+signatures and are not same-key repeat evidence.
+
+The slow rows form a structurally nested corridor rather than additive costs.
+The trace contained a forwarding call at 2,264.7 ms, top-level implementation
+index 17 (`inferred = begin ...`) at 2,024.7 ms, and its nested expression
+`infer_type_from_expr(value_id, owner_name) || TypeRef::VOID` at 2,017.4 ms.
+The earlier literal-fold branch took 140.5 ms, including a 136.8 ms nested
+literal expression. These timers surround `lower_expr` while the compiler is
+materializing the helper code; they are not runtime measurements of constant
+registration. The source nesting proves that these interval classes overlap and
+must not be summed; the base-name-only log has no call IDs, so exact one-to-one
+invocation attribution remains unproven.
+
+This mapping agrees with, but is not an arithmetic recomposition of, the
+separate Session 88 method-time run. That run observed approximately 2.02
+seconds for the `String` specialization of `infer_type_from_expr`, followed by
+approximately 1.04 and 0.94 seconds for `infer_type_from_expr_inner` with
+`String` and `Nil | String` respectively. The inner helper is one large type
+case, so another full-run body trace would mostly relabel the already-known two
+specializations and is rejected as low-information recursive profiling.
+
+The safe run reached the exact iteration-1 boundary: 1,951 missing functions,
+zero pending functions, 28,455 total functions, and 8,985 forced requests over
+5,829 unique names. It exited normally after approximately 150 seconds (153.55
+seconds including wrapper overhead). Periodic monitoring observed one compiler
+process and sampled RSS of approximately 1.01 GiB at 115 seconds, below the
+4 GiB guard; the built-in resource row still reported RSS and FD metrics as
+unknown. No production code or compiler behavior changed.
+
+Boundary: B4-F remains RED. The source/AST binding and nested-materialization
+interpretation are ROBUST for this guarded run. Exclusive attribution to type
+inference behavior is VULNERABLE because this is code materialization, not
+execution, and diagnostics perturb wall time. Any early return, overload merge,
+or name-only cache is BROKEN without preserving constant maps, forward-alias
+and `offsetof` queues, deferred runtime initialization, arena restoration, and
+reopened-definition behavior. The next smallest falsifier is a no-prelude
+identity reducer for a method declared with `String?` but called through both
+`String` and nullable paths. It must first prove whether the two observed inner
+signatures are necessary semantic specializations or avoidable identity drift;
+no broad canonicalization is authorized yet.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
