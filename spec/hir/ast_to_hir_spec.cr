@@ -201,6 +201,11 @@ class Adamas::HIR::AstToHir
     strip_type_suffix(name)
   end
 
+  def __test_parse_method_name_compact(name : String) : {String, String?, Char?, String}
+    parts = parse_method_name_compact(name)
+    {parts.owner, parts.method, parts.separator, parts.base}
+  end
+
   def __test_collect_assigned_vars(body : Array(Adamas::Compiler::Frontend::ExprId)) : Array(String)
     collect_assigned_vars(body)
   end
@@ -1611,6 +1616,25 @@ describe "specialized function-name suffix stripping" do
 
     converter.__test_strip_type_suffix("Enumerable#sum$Array_Int32").should eq("Enumerable#sum")
     converter.__test_strip_type_suffix("Enumerable#sum").should eq("Enumerable#sum")
+  end
+end
+
+describe "compact method-name parsing" do
+  it "preserves owner, method, separator, and unspecialized base" do
+    converter = Adamas::HIR::AstToHir.new(Adamas::Compiler::Frontend::AstArena.new)
+
+    converter.__test_parse_method_name_compact("Outer::Owner#call$Int32").should eq(
+      {"Outer::Owner", "call", '#', "Outer::Owner#call"}
+    )
+    converter.__test_parse_method_name_compact("Owner.build$String").should eq(
+      {"Owner", "build", '.', "Owner.build"}
+    )
+    converter.__test_parse_method_name_compact("call$Int32").should eq(
+      {"call$Int32", nil, nil, "call"}
+    )
+    converter.__test_parse_method_name_compact("call").should eq(
+      {"call", nil, nil, "call"}
+    )
   end
 end
 

@@ -12707,6 +12707,58 @@ ceiling. The next slice is to identify the exact hot environment keys and prove
 the narrowest stable-read contract before changing code; broader caching remains
 rejected unless a new falsifier demonstrates a material benefit.
 
+### Session 72: remove the unsafe compact method-name identity cache (2026-08-05)
+
+The next profile candidate was the compact method-name cache, not a broader
+lowering cache. It keyed parsed results only by `String#object_id`, stored no
+source String or content witness, and returned a hit before
+`v2_string_readable?`. Original Crystal defines reference `object_id` as the
+object address, while shorter `String#byte_slice` results are independent
+strings. For specialized names containing `$`, the cached owner, method, and
+base therefore need not keep the input alive; address reuse could return stale
+parts for a different String and bypass the byte-read guard. The 65,536-entry
+clear threshold bounded storage but did not establish an identity or lifetime
+contract.
+
+The repair deletes the compact Hash, last-entry state, constructor setup, and
+both lookup/store branches. The existing single-pass parser remains unchanged
+apart from returning its value directly. A source comment records why an
+`object_id` cache is not admissible, and a focused parser matrix now covers
+instance, class, suffix-only, and unqualified names. No replacement cache or
+new abstraction was added.
+
+A same-source 100-second A/B compared a cache-ON compiler built from exact
+parent `b2408735` with the cache-OFF candidate. Both compiled the same current
+`src/adamas.cr`, produced three five-second samples at approximately 45, 70,
+and 95 seconds, reached the same lazy `lower_main` trace, and timed out. Cache
+OFF reduced measured peak RSS from 1,093,760 KiB to 1,069,632 KiB. Its maximum
+FD count was 12 versus 11. The compact Hash leaf frames disappeared, but direct
+parser, byte-slice, and GC work increased. This establishes a smaller state and
+memory footprint; it does not establish a wall-time speedup.
+
+Evidence: the host compiler and focused spec binary build. The AST-to-HIR
+aggregate passes 456 examples with zero failures/errors and two pre-existing
+pending examples under `scripts/run_safe.sh`. Independent Luna review found no
+compact-cache references or identity-dependent consumers and rated the scoped
+deletion ROBUST. The direct cache-OFF stage2 capability run remained one
+compiler process and was killed by the 300-second guard with 2,015,280 KiB peak
+RSS and 12 FDs; its last trace was still lazy `lower_main`, with no bodyless
+target. No process survived.
+
+The canonical two-stage wrapper did not reach this stage2 check: with working
+process-tree accounting, host Crystal exceeded the common 4,096-MiB limit in
+stage1 (4,565,472 KiB sampled RSS) and was killed. This is a newly visible
+harness/admission-boundary failure, not evidence against the compact-cache
+change. B4-F remains RED and no bootstrap or speedup claim is admitted.
+
+Boundary: compact parser semantics and removal of its unsafe identity state are
+VERIFIED for the measured build and parser/call-lowering suite. The separate
+full `parse_method_name` cache remains object-id keyed and is explicitly outside
+this slice. Replacing either cache requires a retained or content-validated
+source witness plus a phase-aligned performance certificate; the next B4-F
+slice should return to the remaining lowering cost rather than add cache
+guardrail complexity speculatively.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

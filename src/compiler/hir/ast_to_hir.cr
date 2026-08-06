@@ -1371,21 +1371,12 @@ module Adamas::HIR
       true
     end
 
+    # Do not cache by object_id: it is an address, and parsed slices need not
+    # retain the source String.
     private def parse_method_name_compact(name : String) : MethodNamePartsCompact
       raw = pointerof(name).as(UInt64*).value
       if raw == 0_u64 || raw < 4096_u64 || raw > 0x0000_7FFF_FFFF_FFFF_u64
         return MethodNamePartsCompact.new("", nil, nil, "")
-      end
-      name_id = name.object_id
-      if name_id == @method_name_compact_last_id
-        if last = @method_name_compact_last
-          return last
-        end
-      end
-      if cached = @method_name_compact_cache[name_id]?
-        @method_name_compact_last_id = name_id
-        @method_name_compact_last = cached
-        return cached
       end
       # V2 safety: validate string bytes are accessible
       unless v2_string_readable?(name)
@@ -1436,16 +1427,7 @@ module Adamas::HIR
                end
       end
 
-      parts = MethodNamePartsCompact.new(owner, method, sep_char, base)
-      @method_name_compact_cache[name_id] = parts
-      @method_name_compact_cache_size += 1
-      if @method_name_compact_cache_size > @method_name_compact_cache_limit
-        @method_name_compact_cache.clear
-        @method_name_compact_cache_size = 0
-      end
-      @method_name_compact_last_id = name_id
-      @method_name_compact_last = parts
-      parts
+      MethodNamePartsCompact.new(owner, method, sep_char, base)
     end
 
     @[AlwaysInline]
@@ -2179,12 +2161,6 @@ module Adamas::HIR
     @resolved_type_name_last_entry_name_id : UInt64 = 0
     @resolved_type_name_last_entry_value : String? = nil
     @resolved_type_name_last_entry_epoch : Int32 = 0
-    # Lightweight owner/method cache used in def lookup (avoids parse_method_name).
-    @method_name_compact_cache : Hash(UInt64, MethodNamePartsCompact) = {} of UInt64 => MethodNamePartsCompact
-    @method_name_compact_cache_size : Int32 = 0
-    @method_name_compact_cache_limit : Int32 = 65536
-    @method_name_compact_last_id : UInt64 = 0
-    @method_name_compact_last : MethodNamePartsCompact? = nil
     # Recursion guard for substitute_type_params_in_type_name.
     @substitute_type_params_stack : Set(String) = Set(String).new
     @substitute_type_params_depth : Int32 = 0
@@ -6552,10 +6528,6 @@ module Adamas::HIR
       @method_name_parts_cache_size = 0
       @method_name_parts_last_id = 0_u64
       @method_name_parts_last = nil
-      @method_name_compact_cache = Hash(UInt64, MethodNamePartsCompact).new(initial_capacity: 32768)
-      @method_name_compact_cache_size = 0
-      @method_name_compact_last_id = 0_u64
-      @method_name_compact_last = nil
       @array_type_for_element_cache = {} of TypeRef => TypeRef
       @array_type_for_element_nil_cache = Set(TypeRef).new
       @hash_type_for_entry_cache = {} of {TypeRef, TypeRef} => HashTypeInfo
@@ -6741,12 +6713,6 @@ module Adamas::HIR
       @resolved_type_name_last_entry_name_id = 0_u64
       @resolved_type_name_last_entry_value = nil.as(String?)
       @resolved_type_name_last_entry_epoch = 0
-      # Method name compact caches
-      @method_name_compact_cache = {} of UInt64 => MethodNamePartsCompact
-      @method_name_compact_cache_size = 0
-      @method_name_compact_cache_limit = 65536
-      @method_name_compact_last_id = 0_u64
-      @method_name_compact_last = nil.as(MethodNamePartsCompact?)
       # Substitute type params
       @substitute_type_params_stack = Set(String).new
       @substitute_type_params_depth = 0
