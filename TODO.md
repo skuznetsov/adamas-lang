@@ -1,12 +1,11 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-08-06 (the first self-host materialization iteration after exact
-declared-nullable body reuse observes 143 fewer functions and 82 fewer force
-requests than the previous recorded receipt; this is not a causal timing A/B.
-A fresh clean-HEAD B4-F diagnostic passes both stage1 smokes, but stage2 exceeds
-the 330-second cap at 332.85 seconds without producing `cv2_s2`; the <=300-second
-admission therefore remains RED. T1 and full-source MIR/LLVM continuity remain
-open.)
+Updated: 2026-08-06 (shared inherited-body reuse reduces the first self-host
+missing-process boundary by 274 missing targets and 4,361 functions. A fresh
+clean-`03875097` B4-F run builds stage1 in 16.61 seconds and passes both stage1
+smokes, but stage2 reaches the 300-second compiler cap without producing
+`cv2_s2`; wrapper wall time is 302.69 seconds. Admission therefore remains RED.
+T1 and full-source MIR/LLVM continuity remain open.)
 
 BARE REFERENCE-GENERIC INSTANCE DISPATCH RUNTIME-VERIFIED; REGISTERED
 RUNTIME-REFERENCE RETURN UNIONS HIR-VERIFIED AND MIR-GUARDED; UNSUPPORTED
@@ -13761,6 +13760,51 @@ specialization preservation. The small reducer and the recomputed self-host
 gate both decrease the lexicographic tuple of inherited wrappers, downstream
 specializations, total functions, and remaining demands. Promotion beyond this
 scope still requires the fresh complete B4-F certificate.
+
+### Session 98: clean 300-second B4-F remains red after global descent (2026-08-06)
+
+The committed Session 97 source at `03875097` was measured through the canonical
+two-stage producer in
+`/private/tmp/adamas_b4f_03875097_s97_run`. The manifest records identical
+start/end source hashes, a clean tracked git status and diff, and exact producer
+lineage. Stage1 built in 16.61 seconds and passed both the plain and no-prelude
+smokes. Stage2 remained a single compiler process but reached the 300-second
+`run_safe.sh` compiler cap without producing `cv2_s2`; it exited 143 with a
+302.69-second wrapper wall time. The canonical validator rejects the receipt as
+`manifest_status`, so B4-F remains RED.
+
+External process snapshots at approximately 60, 144, and 279 seconds observed
+one active compiler using about one core and growing from roughly 1.1 to 2.9
+percent of host memory. No compiler process survived the timeout. These
+snapshots refute a duplicated-worker or obvious runaway-process explanation,
+but they are not B7 evidence: the versioned `run_safe_resource_v1` row still
+reports numeric RSS and FD coverage as unavailable.
+
+The Session 96 wrapper stopped at 332.85 seconds under a 330-second diagnostic
+cap; the current wrapper stops at 302.69 seconds under the admission cap. These
+runs have different source and timeout boundaries, and neither produced a
+stage2 artifact, so their 30.16-second numerical difference is not a causal
+speedup measurement and does not bound the remaining compile time. The
+recomputed first-iteration count reduction remains real, but it is insufficient
+to certify end-to-end completion.
+
+Mini-Quadrum synthesis:
+
+- **Cassandra:** lower initial materialization did not guarantee completion
+  inside 300 seconds; the complete chain falsified that promotion condition.
+- **Daedalus:** another identical B4-F retry would be verification theater.
+  Attribute the post-iteration tail by phase before selecting another family.
+- **Maieutic:** the observed one-process profile rules out worker multiplication,
+  but neither process memory percentage nor function counts identify the active
+  end-to-end constraint.
+- **Adversary:** the Session 97 local contract remains ROBUST and its global
+  potential descends, while B4-F readiness remains BROKEN/RED. The next probe
+  must be bounded, diagnostic-only, and must not relax the 300-second policy.
+
+Next: reuse this committed stage1 producer for phase attribution under the same
+300-second safety boundary. Do not promote diagnostic flags into the canonical
+chain, and do not add another lowering abstraction until the new trace names a
+dominant post-iteration cost or repeated materialization family.
 
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
