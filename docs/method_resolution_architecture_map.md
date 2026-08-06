@@ -824,10 +824,12 @@ does not cover the lazy-lowering path that produces the crash.
   resolve-only fix hits a symbol-collision wall (the 0-arg `Object#hash` monomorph
   wants the bare slot the untyped method took). M4 and M5 must land together to be
   meaningful.
-- **The string is load-bearing in caches**: `function_lookup_cache`,
-  `method_inheritance_cache`, `method_index`, `pending_arg_types` are all keyed by
-  strings. `MethodInstanceKey` must serialize stably (M1) before any cache can key
-  on it; do NOT change cache keys before M2 proves serialization parity.
+- **The string is load-bearing in active indexes/caches**:
+  `method_inheritance_cache`, `method_index`, and `pending_arg_types` are keyed by
+  strings. The compile-time-disabled `function_lookup_cache` machinery was
+  removed on 2026-08-05 and is not part of the live contract. `MethodInstanceKey`
+  must serialize stably (M1) before any active cache can key on it; do NOT change
+  cache keys before M2 proves serialization parity.
 - **Untyped-param methods are pervasive in stdlib** (`to_s(io)`, `hash(hasher)`,
   `<=>`, custom `==`): any identity-scheme shift is high blast radius and must run
   full regression + a re-bootstrap, not just the reducers.

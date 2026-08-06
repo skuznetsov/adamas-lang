@@ -1219,59 +1219,6 @@ module Adamas::HIR
       end
     end
 
-    private struct FunctionLookupKey
-      getter func_name : String
-      getter arg_count : Int32
-      getter args_hash : UInt64
-      getter has_block : Bool
-      getter has_args : Bool
-      getter has_splat : Bool
-      getter has_named : Bool
-      getter unknown_args : Bool
-
-      def initialize(@func_name : String, @arg_count : Int32, @args_hash : UInt64, @has_block : Bool, @has_args : Bool, @has_splat : Bool, @has_named : Bool, @unknown_args : Bool)
-      end
-
-      def hash : UInt64
-        h = @func_name.hash
-        h &+= @arg_count.to_u64 &* 31_u64
-        h &+= @args_hash &* 131_u64
-        h &+= (@has_block ? 7_u64 : 0_u64)
-        h &+= (@has_args ? 17_u64 : 0_u64)
-        h &+= (@has_splat ? 23_u64 : 0_u64)
-        h &+= (@has_named ? 29_u64 : 0_u64)
-        h &+= (@unknown_args ? 37_u64 : 0_u64)
-        h
-      end
-
-      def ==(other : FunctionLookupKey) : Bool
-        @func_name == other.func_name &&
-          @arg_count == other.arg_count &&
-          @args_hash == other.args_hash &&
-          @has_block == other.has_block &&
-          @has_args == other.has_args &&
-          @has_splat == other.has_splat &&
-          @has_named == other.has_named &&
-          @unknown_args == other.unknown_args
-      end
-    end
-
-    private struct FunctionLookupEntry
-      getter result : Tuple(String, Adamas::Compiler::Frontend::DefNode)?
-      getter base_epoch : Int32
-
-      def initialize(@result : Tuple(String, Adamas::Compiler::Frontend::DefNode)?, @base_epoch : Int32)
-      end
-    end
-
-    # Produced-stage Adamas cannot yet safely retain nullable value tuples that
-    # contain references across resolver calls. Both the one-entry fast path and
-    # the Hash-backed lookup cache stored Tuple(String, DefNode) values; a later
-    # cache hit could read a null-like DefNode and crash before overload
-    # selection returned. Keep resolution uncached until the cache carrier is a
-    # reference/scalar representation with an explicit produced-stage contract.
-    FUNCTION_LOOKUP_RESULT_CACHE_ENABLED = false
-
     # Parse method name in single pass - O(n) instead of O(3n) for three separate splits
     @[AlwaysInline]
     private def parse_method_name(name : String) : MethodNameParts
@@ -2288,19 +2235,6 @@ module Adamas::HIR
     @yield_owner_compat_cache : Hash(String, Hash(String, Bool)) = {} of String => Hash(String, Bool)
     @yield_owner_compat_cache_class_info_version : Int32 = -1
     @yield_owner_compat_cache_module_version : Int32 = -1
-    # Cache function def lookup by callsite shape.
-    @function_lookup_cache : Hash(FunctionLookupKey, FunctionLookupEntry) = Hash(FunctionLookupKey, FunctionLookupEntry).new(initial_capacity: 16384)
-    @function_lookup_cache_size : Int32 = 0
-    @function_lookup_last_name_id : UInt64 = 0
-    @function_lookup_last_arg_count : Int32 = -1
-    @function_lookup_last_args_hash : UInt64 = 0
-    @function_lookup_last_flags : UInt8 = 0_u8
-    @function_lookup_last_result = nil.as(Tuple(String, Adamas::Compiler::Frontend::DefNode)?)
-    @function_lookup_last_result_valid : Bool = false
-    @function_lookup_last_base_epoch : Int32 = 0
-    @function_lookup_args_hash_owner : UInt64 = 0
-    @function_lookup_args_hash_value : UInt64 = 0
-    @function_lookup_base_epoch : Hash(String, Int32) = {} of String => Int32
     # Cache allocator-related method names by class to reduce string churn in
     # generate_allocator / generate_allocator_overload hot paths.
     @allocator_new_name_cache : Hash(String, String) = {} of String => String
@@ -5320,7 +5254,6 @@ module Adamas::HIR
           end
         end
         base_name = strip_type_suffix(name)
-        @function_lookup_base_epoch[base_name] = (@function_lookup_base_epoch[base_name]? || 0) + 1
         if parts = parse_method_name_compact(base_name)
           if method_name = parts.method
             if fanout_keys = @module_virtual_fanout_keys_by_method[method_name]?
@@ -5331,7 +5264,6 @@ module Adamas::HIR
             end
           end
         end
-        @function_lookup_last_result_valid = false
         if env_has?("DEBUG_SET_FDEF_STEPS")
           if filter = env_get("DEBUG_SET_FDEF")
             if name.includes?(filter)
@@ -5491,9 +5423,6 @@ module Adamas::HIR
     )
       set_function_def_entry(full_name, def_node)
       set_function_def_arena(full_name, arena)
-      base_name = strip_type_suffix(full_name)
-      @function_lookup_base_epoch[base_name] = (@function_lookup_base_epoch[base_name]? || 0) + 1
-      @function_lookup_last_result_valid = false
 
       # Update method index: base_owner → method_name → [full_names]
       parts = parse_method_name_compact(full_name)
@@ -6756,18 +6685,6 @@ module Adamas::HIR
       @lazy_enum_candidate_files = {} of String => Array(String)
       # Explicit initialization for ivars with inline defaults (V2 may not handle
       # inline default initialization syntax correctly in stage2).
-      @function_lookup_cache = Hash(FunctionLookupKey, FunctionLookupEntry).new(initial_capacity: 16384)
-      @function_lookup_cache_size = 0
-      @function_lookup_last_name_id = 0_u64
-      @function_lookup_last_arg_count = -1
-      @function_lookup_last_args_hash = 0_u64
-      @function_lookup_last_flags = 0_u8
-      @function_lookup_last_result = nil.as(Tuple(String, Adamas::Compiler::Frontend::DefNode)?)
-      @function_lookup_last_result_valid = false
-      @function_lookup_last_base_epoch = 0
-      @function_lookup_args_hash_owner = 0_u64
-      @function_lookup_args_hash_value = 0_u64
-      @function_lookup_base_epoch = {} of String => Int32
       # --- Begin: explicit init for ALL remaining inline-default ivars ---
       # V2 stage2 does not initialize inline-default ivars; they stay null/garbage.
       # Function def processing caches
@@ -97872,90 +97789,11 @@ module Adamas::HIR
         end
       end
       unknown_args = arg_types && arg_types.all? { |t| t == TypeRef::VOID }
-      if @function_lookup_cache_size != @function_defs.size
-        @function_lookup_cache_size = @function_defs.size
-      end
-      args_hash = 0_u64
-      if arg_types
-        owner = arg_types.object_id
-        if named_arg_names.nil? && @function_lookup_args_hash_owner == owner
-          args_hash = @function_lookup_args_hash_value
-        else
-          arg_types.each do |arg_type|
-            args_hash = (args_hash &* 131_u64) &+ arg_type.id.to_u64
-          end
-          if named_arg_names.nil?
-            @function_lookup_args_hash_owner = owner
-            @function_lookup_args_hash_value = args_hash
-          end
-        end
-      end
-      args_hash = (args_hash &* 131_u64) &+ named_arg_names_hash(named_arg_names)
-      flags = 0_u8
-      flags |= 1_u8 if has_block
-      flags |= 2_u8 if arg_types
-      flags |= 4_u8 if call_has_splat
-      flags |= 8_u8 if call_has_named_args
-      flags |= 16_u8 if unknown_args
-      name_id = func_name.object_id
       base_name = strip_type_suffix(func_name)
-      base_epoch = @function_lookup_base_epoch[base_name]? || 0
-      if FUNCTION_LOOKUP_RESULT_CACHE_ENABLED &&
-         @function_lookup_last_result_valid &&
-         @function_lookup_last_name_id == name_id &&
-         @function_lookup_last_arg_count == arg_count &&
-         @function_lookup_last_args_hash == args_hash &&
-         @function_lookup_last_flags == flags &&
-         @function_lookup_last_base_epoch == base_epoch
-        if dbg_slice_lookup
-          r = @function_lookup_last_result
-          STDERR.puts "[SLICE_LOOKUP_FN]   FAST_PATH hit name_id=#{name_id} → #{r ? r[0] : "nil"}"
-        end
-        return @function_lookup_last_result
-      end
-      function_lookup_cache_key = FunctionLookupKey.new(
-        func_name,
-        arg_count,
-        args_hash,
-        has_block,
-        !arg_types.nil?,
-        call_has_splat,
-        call_has_named_args,
-        !!unknown_args
-      )
-      if FUNCTION_LOOKUP_RESULT_CACHE_ENABLED
-        if entry = @function_lookup_cache[function_lookup_cache_key]?
-          if entry.base_epoch == base_epoch
-            result = entry.result
-            if dbg_slice_lookup
-              STDERR.puts "[SLICE_LOOKUP_FN]   CACHE hit key=#{func_name} → #{result ? result[0] : "nil"}"
-            end
-            @function_lookup_last_name_id = name_id
-            @function_lookup_last_arg_count = arg_count
-            @function_lookup_last_args_hash = args_hash
-            @function_lookup_last_flags = flags
-            @function_lookup_last_base_epoch = base_epoch
-            @function_lookup_last_result = result
-            @function_lookup_last_result_valid = true
-            return result
-          end
-        end
-      end
       if func_name.includes?('$')
         if func_def = @function_defs[func_name]?
-          result = {func_name, func_def}
           if debug_call_lookup
             STDERR.puts "[CALL_LOOKUP_DIRECT_HIT] func=#{func_name}"
-          end
-          if FUNCTION_LOOKUP_RESULT_CACHE_ENABLED
-            @function_lookup_cache[function_lookup_cache_key] = FunctionLookupEntry.new(result, base_epoch)
-            @function_lookup_last_name_id = name_id
-            @function_lookup_last_arg_count = arg_count
-            @function_lookup_last_args_hash = args_hash
-            @function_lookup_last_flags = flags
-            @function_lookup_last_base_epoch = base_epoch
-            @function_lookup_last_result = result
-            @function_lookup_last_result_valid = true
           end
           return {func_name, func_def}
         end
@@ -98331,16 +98169,6 @@ module Adamas::HIR
                    call_has_named_args,
                    named_arg_names
                  )
-                if FUNCTION_LOOKUP_RESULT_CACHE_ENABLED
-                  @function_lookup_cache[function_lookup_cache_key] = FunctionLookupEntry.new(inherited_entry, base_epoch)
-                  @function_lookup_last_name_id = name_id
-                  @function_lookup_last_arg_count = arg_count
-                  @function_lookup_last_args_hash = args_hash
-                  @function_lookup_last_flags = flags
-                  @function_lookup_last_base_epoch = base_epoch
-                  @function_lookup_last_result = inherited_entry
-                  @function_lookup_last_result_valid = true
-                end
                 return inherited_entry
               end
             end
@@ -98363,16 +98191,6 @@ module Adamas::HIR
             if trailing_is_proc
               block_arg_types = call_arg_types[0, arg_count - 1]
               if block_entry = lookup_function_def_for_call(func_name, arg_count - 1, true, block_arg_types, false, call_has_named_args, named_arg_names)
-                if FUNCTION_LOOKUP_RESULT_CACHE_ENABLED
-                  @function_lookup_cache[function_lookup_cache_key] = FunctionLookupEntry.new(block_entry, base_epoch)
-                  @function_lookup_last_name_id = name_id
-                  @function_lookup_last_arg_count = arg_count
-                  @function_lookup_last_args_hash = args_hash
-                  @function_lookup_last_flags = flags
-                  @function_lookup_last_base_epoch = base_epoch
-                  @function_lookup_last_result = block_entry
-                  @function_lookup_last_result_valid = true
-                end
                 return block_entry
               end
             end
@@ -98388,28 +98206,8 @@ module Adamas::HIR
           block_receiver_base = method_owner(base)
           block_receiver_base = block_receiver_base ? strip_generic_args(block_receiver_base) : nil
           if block_entry = lookup_block_function_def_for_call(base, arg_count, arg_types, block_receiver_base)
-            if FUNCTION_LOOKUP_RESULT_CACHE_ENABLED
-              @function_lookup_cache[function_lookup_cache_key] = FunctionLookupEntry.new(block_entry, base_epoch)
-              @function_lookup_last_name_id = name_id
-              @function_lookup_last_arg_count = arg_count
-              @function_lookup_last_args_hash = args_hash
-              @function_lookup_last_flags = flags
-              @function_lookup_last_base_epoch = base_epoch
-              @function_lookup_last_result = block_entry
-              @function_lookup_last_result_valid = true
-            end
             return block_entry
           end
-        end
-        if FUNCTION_LOOKUP_RESULT_CACHE_ENABLED
-          @function_lookup_cache[function_lookup_cache_key] = FunctionLookupEntry.new(nil, base_epoch)
-          @function_lookup_last_name_id = name_id
-          @function_lookup_last_arg_count = arg_count
-          @function_lookup_last_args_hash = args_hash
-          @function_lookup_last_flags = flags
-          @function_lookup_last_base_epoch = base_epoch
-          @function_lookup_last_result = nil
-          @function_lookup_last_result_valid = true
         end
         STDERR.puts "[CALL_LOOKUP_MISS] func=#{func_name}" if debug_call_lookup
         return nil
@@ -98431,16 +98229,6 @@ module Adamas::HIR
       end
       if debug_call_lookup
         STDERR.puts "[CALL_LOOKUP_SELECTED] func=#{func_name} best=#{best_name} score=#{best_score} param_count=#{best_param_count}"
-      end
-      if FUNCTION_LOOKUP_RESULT_CACHE_ENABLED
-        @function_lookup_cache[function_lookup_cache_key] = FunctionLookupEntry.new(result, base_epoch)
-        @function_lookup_last_name_id = name_id
-        @function_lookup_last_arg_count = arg_count
-        @function_lookup_last_args_hash = args_hash
-        @function_lookup_last_flags = flags
-        @function_lookup_last_base_epoch = base_epoch
-        @function_lookup_last_result = result
-        @function_lookup_last_result_valid = true
       end
       result
     end

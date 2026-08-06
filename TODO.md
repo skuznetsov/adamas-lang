@@ -12642,6 +12642,43 @@ the evidence available before the cap; the timeout can hide a later functional
 frontier. The next slice should profile or otherwise localize stage2 time while
 retaining the 300-second admission limit, not widen lowering speculatively.
 
+### Session 70: reject lookup-cache complexity and delete its disabled shell (2026-08-05)
+
+A profile-driven attempt to reactivate the HIR function-lookup result cache was
+rejected. The experiment added positive-only entries, function-definition
+revision checks, exact lowering-context identity, argument-shape ownership, and
+test-only mutation/context guardrails. Those guardrails passed 458 AST-to-HIR
+examples, but a bounded stage2-shaped compile still timed out at 110 seconds.
+Its 80-second sample spent about 20.2% of sampled stacks in
+`resolve_call_tuple`, versus about 18.4% in the comparable pre-experiment
+sample, with cache-key hashing prominent. Observed RSS was also higher, although
+the samples were not phase-aligned enough to claim a causal memory regression.
+The additional contracts erased the earlier apparent cache benefit, so the
+reactivation route was discarded rather than generalized.
+
+The smaller move removes the entire compile-time-disabled cache shell:
+`FunctionLookupKey`, `FunctionLookupEntry`, cache and last-entry fields,
+argument-hash owner reuse, its base epoch, invalidation writes, and unreachable
+resolver branches. This is a 212-line deletion from `ast_to_hir.cr`; it does not
+replace the cache with another abstraction. `@function_def_revision` remains
+intact and still feeds `MissingIncrementalRevisionCertificate`.
+
+Evidence: the fresh host compiler builds. The focused AST-to-HIR aggregate
+passes 455 examples with zero failures/errors and two pre-existing pending
+examples. A full HIR aggregate reached 488 examples with only the known
+`as?`/`try` output-formatting failure, zero errors, and two pending examples
+before its 180-second `run_safe` cap; this is partial fallback evidence, not a
+green full-suite claim. No process survived the timeout. Independent Luna audit
+found no remaining code references or result-affecting side effects and rated
+the deletion ROBUST for the current configuration where the cache was disabled.
+
+Boundary: behavior-neutral complexity removal is VERIFIED for the measured
+build and AST-to-HIR contract. Runtime speedup is unproven: the no-cache sample
+was in a different lowering phase and cannot support a timing claim. B4-F was
+not rerun on this cleanup and remains RED. The next signal is one fresh,
+monitored 300-second B4-F; if it still times out, profile the active contextual
+type-resolution path rather than restoring the rejected lookup cache.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
