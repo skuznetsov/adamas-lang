@@ -13487,6 +13487,48 @@ identity reducer for a method declared with `String?` but called through both
 signatures are necessary semantic specializations or avoidable identity drift;
 no broad canonicalization is authorized yet.
 
+### Session 94: nullable-recursion reducer rejects union-only body identity (2026-08-06)
+
+A no-prelude reducer declared mutually recursive `outer(value : String?)` and
+`inner(value : String?)` methods, refined `value` with `if value`, and entered
+the pair through `run(value : String)`. A fresh focused HIR spec build and safe
+run materialized these non-empty bodies:
+
+- `outer$Nil | String` and `outer$String`;
+- `inner$Nil | String`, `inner$Nil`, and `inner$String`.
+
+The focused run failed the deliberately stronger union-only assertion in
+13.39 ms and stayed within the safe wrapper. One earlier invocation used a
+stale spec binary; it was discarded, the host spec was rebuilt, and only the
+fresh result above is evidence.
+
+The implementation supplies a direct counterexample to the proposed identity
+collapse. `refine_param_type_from_call` intentionally narrows a union-annotated
+parameter to a concrete call-site variant so its monomorphized body matches the
+signature suffix. Dollar-suffixed overrides are classified as specialized
+runtime parameter types, and the materialization transaction carries that
+override into `lower_method`. The reducer therefore observes deliberate
+call-site specializations, not proven accidental same-symbol duplication.
+
+This does not prove that every specialized body is globally necessary. A
+union-only design might still be possible with explicit call remapping,
+coercion or wrapper contracts, but that is a broad materialization and ABI
+policy change. It would require negative cases for overloads, generics, named
+and default arguments, blocks, flow refinement, and recursive calls, followed
+by a guarded whole-bootstrap descent measurement. Encoding union-only identity
+as a regression test would prematurely freeze an unproved policy, so the
+temporary falsifier was removed and production code was left unchanged.
+
+Boundary: B4-F remains RED. The materialized signature set and the rejection of
+the narrow identity-drift hypothesis are ROBUST for this reducer. The claim
+that current specialization is performance-optimal is VULNERABLE, and any
+canonicalization patch is BROKEN without a replacement call-boundary contract.
+No LTP/WBA move is promotable: the proposed local rewrite lacks a legal
+transport corridor, boundary invariant, recompute-safety proof, dual frame, and
+measured global potential descent. Return to an independently measured lowering
+root; if specialization collapse is revisited, first count bodies by canonical
+method family and distinguish required call shapes from redundant variants.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
