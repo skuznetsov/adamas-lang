@@ -97753,13 +97753,15 @@ module Adamas::HIR
         end
       end
 
-      # For concrete generic owners (e.g. Pointer(S)#clear), make sure the owner
-      # is monomorphized before overload search. Otherwise method-index lookup can
-      # fall back to an unrelated concrete instance (e.g. Pointer(Int32)#clear).
+      method_parts = nil.as(MethodNamePartsCompact?)
       if func_name.includes?('#') || func_name.includes?('.')
-        parts_for_generic = parse_method_name_compact(func_name)
-        if parts_for_generic.separator && parts_for_generic.owner.includes?('(')
-          if info = generic_owner_info(parts_for_generic.owner)
+        method_parts = parse_method_name_compact(func_name)
+
+        # For concrete generic owners (e.g. Pointer(S)#clear), make sure the owner
+        # is monomorphized before overload search. Otherwise method-index lookup can
+        # fall back to an unrelated concrete instance (e.g. Pointer(Int32)#clear).
+        if method_parts.separator && method_parts.owner.includes?('(')
+          if info = generic_owner_info(method_parts.owner)
             if !@monomorphized.includes?(info.owner) &&
                concrete_type_args?(info.args) &&
                !@suppress_monomorphization
@@ -97770,8 +97772,7 @@ module Adamas::HIR
       end
 
       overload_keys = [] of String
-      if func_name.includes?('#') || func_name.includes?('.')
-        parts = parse_method_name_compact(func_name)
+      if parts = method_parts
         if parts.separator && parts.method
           ensure_method_index_built
           base_owner = method_index_owner_key(parts.owner)
@@ -98109,8 +98110,7 @@ module Adamas::HIR
       end
 
       unless best && best_name
-        if func_name.includes?('#') || func_name.includes?('.')
-          parts = parse_method_name_compact(func_name)
+        if parts = method_parts
           if parts.separator && (inherited_method = parts.method) && parts.owner.includes?('(')
             inherited_lookup = resolve_method_with_inheritance(parts.owner, inherited_method)
             if inherited_lookup && inherited_lookup != func_name && inherited_lookup != base_name

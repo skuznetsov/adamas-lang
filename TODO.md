@@ -12782,6 +12782,34 @@ cost already visible in the cache-ON samples and has no promotion evidence.
 The compact-parser cache branch is closed; the next profile slice must target a
 different lowering cost rather than rebuild the deleted cache in another form.
 
+### Session 74: share compact method parts inside call resolution (2026-08-06)
+
+`resolve_call_tuple` parsed the same immutable `func_name` up to three times:
+before generic-owner monomorphization, before method-index lookup, and again in
+the no-match generic-inheritance fallback. The local input is assigned once and
+never rewritten. One nullable `MethodNamePartsCompact` now carries the first
+parse across those consumers. This adds no cache, object-identity assumption,
+invalidation rule, or cross-function API.
+
+The host compiler and AST-to-HIR spec binary build under `run_safe`. The
+aggregate passes 456 examples with zero failures/errors and two pre-existing
+pending examples. A Luna adversary audit confirmed the same-input contract and
+identified a stale-parts counterexample in the adjacent missing-target rewrite;
+that more complicated propagation was deliberately left unchanged.
+
+Three phase-aligned 100-second profiles all remained in lazy `lower_main` and
+timed out with one process. The exact cache-OFF baseline peaked at 1,069,632 KiB.
+An intermediate one-reuse build peaked at 992,176 KiB, while the final two-reuse
+build peaked at 1,070,720 KiB. Per-sample footprints and stack counts varied in
+both directions. The spread refutes a stable RSS or wall-time claim from this
+slice; B4-F remains RED.
+
+Boundary: the local duplicate-removal contract is VERIFIED, but it is only a
+behavior-neutral lowering simplification. It is not a global speedup
+certificate. The remaining compact parse in the block fallback and the
+missing-target helper require suffix/readability or rewrite invalidation
+contracts and stay out of scope until call-count evidence justifies them.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
