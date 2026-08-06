@@ -13004,6 +13004,46 @@ bucket by existing resolver route without retaining input, result, DefNode, or
 arena identity. Any candidate elimination must preserve symbol and selected-def
 provenance and then demonstrate phase-aligned global descent.
 
+### Session 81: isolate suffix-only call-resolution changes (2026-08-06)
+
+The changed-symbol bucket still mixed specialization selection with owner,
+separator, and method rewrites. A default-off wrapper-only probe now parses the
+requested and selected names after the resolver timer stops and partitions each
+change into three exhaustive syntactic relations: equal compact bases with a
+different specialization suffix, equal non-nil compact method text with a
+different base, or other. The second relation is deliberately broad: owner,
+separator, and/or suffix may also differ. It is not an owner-only resolver route.
+
+The direct eager-pending `examples/hello.cr` probe classified 357 of 360 changed
+symbols as suffix-only, three as same-method/base-changed, and zero as other. In
+the fresh self-host missing-initial gate, iteration 0 measured 13,589.5 ms over
+111,953 changed-symbol resolutions: 10,168.1 ms/79,308 suffix-only,
+3,421.4 ms/32,645 same-method/base-changed, and zero other. Iteration 1 measured
+33,547.1 ms over 226,224 changes: 30,714.1 ms/186,423 suffix-only,
+2,833.0 ms/39,801 same-method/base-changed, and zero other. Suffix-only changes
+therefore account for 91.6% of changed-symbol inclusive time, 82.4% of its calls,
+and 74.5% of all measured resolver time at the iteration-1 boundary.
+
+Zero `other` means only that the compact method text stayed stable under these
+observed changed-symbol resolutions; it does not prove one internal resolver
+route or one selected `DefNode`. The two compact parses occur after the captured
+resolver interval, so they do not inflate `call_resolution`, but they do add
+default-off diagnostic work to the pending-pass total and residual. All resolver
+timings remain inclusive because recursive lookup calls are also measured.
+
+The semantic boundary remained 1,951 missing functions, 28,454 total functions,
+and 8,985/5,829 force requests/admits. The gate stopped normally in about
+151 seconds. Three external samples observed one compiler process, between one
+and 1.56 cores, and RSS rising from about 429 MiB to 1,071 MiB; the in-script
+process-tree aggregation remained unavailable.
+
+Boundary: B4-F remains RED. The next falsifier should stay inside the dominant
+suffix-only relation and count fixed facts already present at normal selection:
+whether it came from the final overload scorer and whether the candidate set was
+single or wide. Do not retain inputs/results or add a cache. A legal elimination
+still needs selected-symbol and `DefNode` provenance plus a mutation/revision
+contract, then an aligned wall-time and boundary-parity result.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
