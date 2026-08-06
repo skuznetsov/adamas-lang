@@ -13091,6 +13091,55 @@ at most one aggregate scorer-stage timer with an explicit overhead baseline.
 Any elimination still requires selected-symbol/`DefNode` provenance, mutation
 or revision authority, and aligned recomputed wall-time descent.
 
+### Session 83: external sample pivots from final scoring to RTA replay (2026-08-06)
+
+A fresh missing-initial gate ran without the default-off phase statistics and
+was sampled externally for 20 seconds, beginning roughly 57 seconds after the
+compiler process started. Analysis was restricted to the active `DEFAULT-0`
+thread; the sampler report also contained idle runtime and system threads that
+would make whole-report aggregation misleading. All 7,718 active samples were
+inside `lower_missing_call_targets` and its pending-lowering loop.
+
+The two dominant pending-loop branches were 4,981 samples (64.54% of the
+active-thread sample) at `scan_new_functions_for_live_types` and 2,418
+(31.33%) at `lower_function_if_needed`; together they covered 95.87% of the
+window. Other pending-loop instruction offsets accounted for the remaining
+319 samples, including type-descriptor scans and RTA undefer work. These are
+sampled stack-branch shares, not elapsed-CPU shares. Within the new-function
+scan branch, the inclusive chain reached `scan_hir_function_for_live_types`
+for 3,046 samples, `mark_live_type` for 3,037, registered-class virtual-target
+replay for 3,028, and child virtual-target lowering for 3,001. These nested
+counts identify a hot corridor in this observation window; they are not
+independent costs.
+
+Across the recursively counted stack totals, `resolve_call_target` appeared
+1,011 times, `resolve_call_input` 853 times, separator candidate discovery 680
+times, and separator call-candidate discovery 650 times. These inclusive
+recursive counts cannot be converted into CPU percentages. Compact method
+parsing contributed 884 top-of-stack samples across several instruction
+offsets, but this sample cannot attribute all of those leaves to one caller or
+prove that parsing is globally dominant. The previous suffix-only final-scorer
+hypothesis is therefore not the dominant explanation in this window.
+Resolution remains a plausible nested contributor, while lazy-RTA scanning,
+virtual replay, and lowering scheduling form the stronger observed parent
+corridor.
+
+The guarded gate stopped normally at iteration 1 in about 150 seconds with
+1,951 missing functions, 28,455 total functions, and 8,985/5,829 force
+requests/admits. Monitoring observed one compiler process and RSS below the
+4 GiB guard. The raw sampler report remains a temporary diagnostic rather than
+a repository artifact.
+
+Boundary: B4-F remains RED. One mid-run window cannot establish whole-run
+dominance or authorize a replay shortcut: live classes may acquire new virtual
+targets after their first liveness event, and the existing replay cursor makes
+later calls incremental rather than automatically redundant. The next
+falsifier should externally sample early, middle, and late windows in one
+guarded gate, with no new compiler instrumentation. Only a temporally stable
+hot corridor justifies designing a revision or dirty-generation contract, and
+any such move still needs boundary parity plus recomputed wall-time and memory
+descent.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
