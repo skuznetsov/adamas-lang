@@ -2219,8 +2219,6 @@ module Adamas::HIR
     @split_union_last_input : String? = nil
     @split_union_last_output : Array(String)? = nil
 
-    # Cached positive ENV lookups — avoid storing nil unions in hot hash paths.
-    @env_cache : Hash(String, String) = {} of String => String
     # Cache block function def lookup by callsite shape.
     @block_lookup_cache : Hash(BlockLookupKey, Tuple(String, Adamas::Compiler::Frontend::DefNode)?) = {} of BlockLookupKey => Tuple(String, Adamas::Compiler::Frontend::DefNode)?
     @block_lookup_cache_size : Int32 = 0
@@ -5843,9 +5841,6 @@ module Adamas::HIR
     # Init at ctor from BootstrapEnv; guard hot-path debug prints.
     @trace_shovel_types_ast_enabled : Bool
     @debug_bypass_generic_split_cache : Bool
-    # Negative env cache: avoid repeated getenv for keys that are unset.
-    # Paired with @env_cache (which only stores set values).
-    @env_missing_cache : Set(String)
     # Optional lowering timing stack (only used when DEBUG_LOWER_METHOD_TIME is set).
     @lower_method_time_stack : Array(LowerMethodTiming)
     @lower_method_stats_stack : Array(LowerMethodStats)
@@ -6389,10 +6384,6 @@ module Adamas::HIR
       @infer_local_type_nil_cache = Set({UInt64, String, String?, UInt64, Int32}).new
       @infer_local_type_stack = Set({UInt64, String, String?}).new
       @infer_local_type_cache_scope = nil
-      # Self-hosted stage2 can miss inline-default ivar initialization. Ensure
-      # the ENV cache exists before the first env_has?/env_get call below.
-      @env_cache = {} of String => String
-      @env_missing_cache = Set(String).new
       @debug_infer_guard_enabled = env_has?("DEBUG_INFER_GUARD")
       @trace_shovel_types_ast_enabled = env_has?("ADAMAS_TRACE_SHOVEL_TYPES")
       @debug_bypass_generic_split_cache = env_has?("ADAMAS_DEBUG_BYPASS_GENERIC_SPLIT_CACHE")
@@ -6785,9 +6776,6 @@ module Adamas::HIR
       @split_union_type_cache_limit = 20000
       @split_union_last_input = nil.as(String?)
       @split_union_last_output = nil.as(Array(String)?)
-      # Env cache
-      @env_cache = {} of String => String
-      @env_missing_cache = Set(String).new
       # Block lookup caches
       @block_lookup_cache = {} of BlockLookupKey => Tuple(String, Adamas::Compiler::Frontend::DefNode)?
       @block_lookup_cache_size = 0
@@ -7123,8 +7111,8 @@ module Adamas::HIR
       end
     end
 
-    # Cached ENV lookup — avoids repeated C library getenv() calls.
-    # ENV values never change during compilation, so caching is safe.
+    # Keep this lookup live: selected lowering controls may change while an
+    # AstToHir instance is active (for example, bounded missing-target probes).
     @[AlwaysInline]
     private def env_get(key : String) : String?
       # V2 BOOTSTRAP: ENV module constant access crashes V2-compiled binaries.
