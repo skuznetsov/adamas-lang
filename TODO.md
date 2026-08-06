@@ -12875,6 +12875,32 @@ new implementation first demonstrates a phase-aligned throughput or memory
 win. B4-F remains RED; the next slice must move to a different measured
 lowering cost instead of continuing parser micro-rewrites.
 
+### Session 77: reject a broad String-hash lowering shortcut (2026-08-06)
+
+The Session 75 call-tree samples contain 292 observed
+`String@Object#hash:UInt64` branches. Every direct parent is a typed Hash
+`key_hash` path except one composite-key hash, but no single map or lowering
+caller dominates. The largest exact lowering context accounts for 26/292
+branches (8.9%). Grouped by nearest `AstToHir` frame, type/name resolution is
+158/292, registration/state is 60/292, call/lookup is 33/292, enum/metadata is
+14/292, and the remaining 27/292 are other contexts. These are inclusive
+sampled stacks, not exclusive CPU or wall-time attribution.
+
+The hot keys belong to mutable, context-sensitive registries including nested
+type names, function definitions and overloads, type-parameter maps, type
+caches, and class metadata. Crystal's Hash already uses a linear path for very
+small tables. A compiler-local side cache would hash or retain the same String
+keys, while an identity-keyed cache would repeat the lifetime/identity defect
+removed in Session 72. A Hash/String primitive special case is also outside the
+lowering contract and has prior corruption evidence for typed Hash paths.
+
+Independent Luna attribution reached the same conclusion: String hashing is a
+real adjacent cost but diffuse required infrastructure, not one dominant
+lowering caller. No production change or dedicated runtime probe is justified
+by the observed distribution. The broad hash-shortcut route is closed; B4-F
+remains RED. The next falsifier should measure the shape and frequency of the
+method-index separator filters before considering a structural index change.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
