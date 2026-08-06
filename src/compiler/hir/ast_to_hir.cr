@@ -2391,6 +2391,12 @@ module Adamas::HIR
     @lookup_branch_time_ns : Hash(String, Int64) = Hash(String, Int64).new(0i64)
     @lookup_total_count : Int32 = 0
     @lookup_total_time_ns : Int64 = 0i64
+    # PHASE_STATS-only inclusive timing for legacy call resolution. The active
+    # flag is refreshed at each worklist entry so the hot resolver does not
+    # poll ENV.
+    @call_resolution_profile_active : Bool = false
+    @call_resolution_profile_count : Int64 = 0_i64
+    @call_resolution_profile_time_ns : Int64 = 0_i64
 
     # Lazy RTA: types known to be instantiated during lowering
     @live_types : Set(String) = Set(String).new
@@ -6797,6 +6803,9 @@ module Adamas::HIR
       @lookup_branch_time_ns = Hash(String, Int64).new(0_i64)
       @lookup_total_count = 0
       @lookup_total_time_ns = 0_i64
+      @call_resolution_profile_active = false
+      @call_resolution_profile_count = 0_i64
+      @call_resolution_profile_time_ns = 0_i64
       # RTA / live types
       @live_types = Set(String).new
       @live_types_initialized = false
@@ -66092,6 +66101,7 @@ module Adamas::HIR
     # Each iteration may add more functions to the queue, so we loop until empty.
     private def process_pending_lower_functions
       phase_stats = env_has?("ADAMAS_PHASE_STATS")
+      @call_resolution_profile_active = phase_stats
       progress_log = phase_stats || env_has?("ADAMAS_LOWER_PROGRESS")
       lazy_rta_log = env_has?("ADAMAS_LAZY_RTA_LOG")
       stop_after_pending_phase("enter", "ADAMAS_STOP_AFTER_HIR_PENDING_ENTER", -1, -1)
@@ -66147,6 +66157,8 @@ module Adamas::HIR
         funcs_before = @module.function_count
         idx = 0
         pass_started_at = Time.instant if phase_stats
+        pass_call_resolution_count_before = @call_resolution_profile_count
+        pass_call_resolution_time_before = @call_resolution_profile_time_ns
         pass_lower_ms = 0.0
         pass_periodic_rta_ms = 0.0
         pass_periodic_function_scan_ms = 0.0
@@ -66323,7 +66335,9 @@ module Adamas::HIR
         if phase_stats
           pass_total_ms = (Time.instant - pass_started_at.not_nil!).total_milliseconds
           pass_residual_ms = pass_total_ms - pass_lower_ms - pass_periodic_rta_ms - pass_end_rta_ms
-          STDERR.puts "[PHASE_STATS] process_pending.pass=#{pass} context=#{@pending_process_context || "none"} total=#{pass_total_ms.round(1)}ms lower=#{pass_lower_ms.round(1)}ms periodic_rta=#{pass_periodic_rta_ms.round(1)}ms/#{pass_periodic_rta_count} periodic_functions=#{pass_periodic_function_scan_ms.round(1)}ms periodic_monomorphized=#{pass_periodic_monomorphized_scan_ms.round(1)}ms periodic_types=#{pass_periodic_type_scan_ms.round(1)}ms periodic_undefer=#{pass_periodic_undefer_ms.round(1)}ms end_rta=#{pass_end_rta_ms.round(1)}ms residual=#{pass_residual_ms.round(1)}ms max_lower=#{pass_max_lower_ms.round(1)}ms max_name=#{pass_max_lower_name} lowered=#{pass_lowered} deferred=#{pass_deferred} visited=#{idx}"
+          pass_call_resolution_count = @call_resolution_profile_count - pass_call_resolution_count_before
+          pass_call_resolution_ms = (@call_resolution_profile_time_ns - pass_call_resolution_time_before) / 1_000_000.0
+          STDERR.puts "[PHASE_STATS] process_pending.pass=#{pass} context=#{@pending_process_context || "none"} total=#{pass_total_ms.round(1)}ms lower=#{pass_lower_ms.round(1)}ms call_resolution=#{pass_call_resolution_ms.round(1)}ms/#{pass_call_resolution_count} periodic_rta=#{pass_periodic_rta_ms.round(1)}ms/#{pass_periodic_rta_count} periodic_functions=#{pass_periodic_function_scan_ms.round(1)}ms periodic_monomorphized=#{pass_periodic_monomorphized_scan_ms.round(1)}ms periodic_types=#{pass_periodic_type_scan_ms.round(1)}ms periodic_undefer=#{pass_periodic_undefer_ms.round(1)}ms end_rta=#{pass_end_rta_ms.round(1)}ms residual=#{pass_residual_ms.round(1)}ms max_lower=#{pass_max_lower_ms.round(1)}ms max_name=#{pass_max_lower_name} lowered=#{pass_lowered} deferred=#{pass_deferred} visited=#{idx}"
         end
         stop_after_pending_phase("pass_end", "ADAMAS_STOP_AFTER_HIR_PENDING_PASS_END", pass, idx, nil, "lowered=#{pass_lowered},deferred=#{pass_deferred},undeferred=#{rta_undeferred_total}")
 
@@ -97712,7 +97726,14 @@ module Adamas::HIR
     # Keep the legacy resolver's selected symbol and DefNode together. This is a
     # behavior-neutral compatibility result, not semantic CallResolution identity.
     private def resolve_call_target(input : CallResolutionInput) : SelectedCallTarget?
+      profile = @call_resolution_profile_active
+      started_at = Time.instant if profile
       t = resolve_call_tuple(input)
+      if profile
+        @call_resolution_profile_count += 1_i64
+        @call_resolution_profile_time_ns +=
+          (Time.instant - started_at.not_nil!).total_nanoseconds.to_i64
+      end
       return nil unless t
       SelectedCallTarget.new(t[0], t[1])
     end

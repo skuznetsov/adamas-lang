@@ -12936,6 +12936,38 @@ VERIFIED with a ROBUST adversary verdict. This is a correctness guard, not a
 performance claim: the structural-index route remains rejected and B4-F stays
 RED.
 
+### Session 79: localize the remaining lowering corridor in call resolution (2026-08-06)
+
+The missing-initial phase ledger showed that scanning and queue admission were
+not the remaining constraint: at the iteration-1 boundary they consumed about
+166 ms and 2 ms, respectively, while `process_pending` consumed 75.2 seconds.
+The next smallest falsifier therefore adds default-off inclusive timing around
+`resolve_call_tuple`. The enable flag is refreshed once per pending-worklist
+entry, including the direct `lower_main` path, so normal resolver calls do not
+poll the environment or retain resolution results.
+
+A guarded eager-pending `examples/hello.cr` run exercised the direct
+`lower_main` entry and emitted 22.4 ms across 576 call resolutions, proving the
+counter path is live there. In the fresh self-host missing-initial gate,
+iteration 0 measured 18,436.3 ms across 170,175 calls; iteration 1 measured
+41,333.6 ms across 343,643 calls. The semantic frontier remained unchanged at
+1,951 missing functions, 28,454 total functions, and 8,985/5,829 force
+requests/admits. The run completed the iteration-1 stop in about 149 seconds
+with one observed compiler process.
+
+These timings are inclusive. Resolution can also be invoked from RTA and
+materialization work, so its time overlaps the existing phase fields and must
+not be added to `lower` or used as an exact lowering percentage. The clock
+calls also contribute measurement overhead, although the bounded wall-time was
+not visibly worse than the immediately preceding run. This evidence identifies
+a dominant corridor; it does not prove repeated immutable inputs or authorize
+a result cache.
+
+Boundary: B4-F remains RED. The next falsifier should partition existing
+resolution routes with fixed counters and no stored results, then test whether
+one route is both dominant and legally eliminable. No new lookup state or
+invalidation contract is justified before that route evidence exists.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
