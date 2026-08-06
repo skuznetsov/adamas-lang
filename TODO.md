@@ -13330,6 +13330,45 @@ slow-expression tracer on the largest `Compiler::CLI#compile` row. It should
 separate one oversized AST expression from several expensive body operations
 before any refactor is considered.
 
+### Session 89: AstToHir construction dominates the largest slow root (2026-08-06)
+
+The existing default-off slow-expression tracer was restricted to
+`Adamas::Compiler::CLI#compile` and run through the source-matched iteration-1
+process gate. It reported 26 nested body rows plus the outer materialization.
+The outer `CLI#compile` body took approximately 9.04 seconds. A single
+assignment at `src/compiler/cli.cr:1911`,
+`hir_converter = HIR::AstToHir.new(first_arena, input_file)`, accounted for
+approximately 5.16 seconds of observed elapsed time. The other reported body
+operations were each at or below approximately 464 ms. The next largest rows
+included construction of `LLVMIRGenerator` at approximately 464 ms,
+`HIRToMIRLowering` at approximately 384 ms, and a constant-literal loop at
+approximately 329 ms.
+
+`lower_assign` lowers the right-hand expression before updating the local, so
+the dominant row attributes elapsed lowering time to the `AstToHir.new` call
+path. It does not show that the runtime constructor executes for five seconds,
+identify the responsible `lower_call` phase, or establish exclusive CPU cost.
+Nested wall timers may overlap and include scheduler, GC, and diagnostic
+effects. The target filter and slow threshold are default-off diagnostics, not
+benchmark instrumentation.
+
+The safe run exited normally at the exact current boundary: 1,951 missing
+functions and 28,455 total functions. It took approximately 149 seconds
+(approximately 153 seconds including wrapper overhead). Continuous monitoring
+observed one compiler process, with RSS rising to approximately 1.12 GiB and
+remaining below the 4 GiB guard. No production code or compiler behavior
+changed.
+
+Boundary: B4-F remains RED. The hotspot observation is ROBUST for this guarded
+run, while any optimization or cache claim is VULNERABLE because the expensive
+phase inside `lower_call` is still unknown. The next smallest falsifier is a
+run with the same existing body tracer narrowed to the canonical
+`Adamas::Compiler::HIR::AstToHir#initialize` method name, after confirming that
+name from emitted lowering state. This can separate constructor-body expressions
+without new production instrumentation; allocator statistics are counts rather
+than timing. No LTP/WBA move is promotable without a legal transformation,
+boundary invariant, recompute-safety proof, and measured global descent.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
