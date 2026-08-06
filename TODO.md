@@ -13363,11 +13363,80 @@ Boundary: B4-F remains RED. The hotspot observation is ROBUST for this guarded
 run, while any optimization or cache claim is VULNERABLE because the expensive
 phase inside `lower_call` is still unknown. The next smallest falsifier is a
 run with the same existing body tracer narrowed to the canonical
-`Adamas::Compiler::HIR::AstToHir#initialize` method name, after confirming that
-name from emitted lowering state. This can separate constructor-body expressions
+`Adamas::HIR::AstToHir#initialize` method name, after confirming that name from
+emitted lowering state. This can separate constructor-body expressions
 without new production instrumentation; allocator statistics are counts rather
 than timing. No LTP/WBA move is promotable without a legal transformation,
 boundary invariant, recompute-safety proof, and measured global descent.
+
+### Sessions 90-92: observed constructor slow rows are distributed (2026-08-06)
+
+The first constructor-filtered run was intended to use the lexical-looking but
+incorrect `Adamas::Compiler::HIR::AstToHir#initialize` owner and emitted no
+slow rows.
+That was not a negative constructor result. The source declares
+`module Adamas::HIR`, and both the produced binary's symbols and the corrected
+tracer use `Adamas::HIR::AstToHir#initialize`. This is a bounded-context name
+failure: the frontend node types live under `Adamas::Compiler::Frontend`, but
+the lowering class does not. This is sufficient to explain an exact-filter
+mismatch, but the first log did not persist its environment, so it is not an
+exclusive causal proof of the empty trace. Session 89's next-step spelling is
+corrected above.
+
+A separate run sampled the reused produced host compiler at a 5 ms interval.
+The sample file identifies that host artifact but does not encode the session
+gate or source revision, so it is supporting path evidence rather than a
+session-specific boundary certificate. In one inclusive main-thread branch,
+719 samples reached
+`lower_call`; 572 continued through `generate_allocator` and
+`lower_allocator_initializer_body`; 571 entered a nested `lower_method`; and
+310 reached `lower_hash_literal` plus `hash_type_for_entry_types`. Of those,
+298 continued through `type_ref_for_name_inner` and 246 through
+`monomorphize_generic_class`. This establishes a real synchronous corridor by
+which lowering an allocator call can materialize a nested initializer and a
+generic hash type. The sample counts are nested, not additive, and are neither
+exclusive CPU time nor proof that this one branch explains the complete
+Session 89 assignment timer.
+
+The corrected slow-expression run reported 12 constructor-body expressions at
+or above 50 ms: indices 57, 89, 115, 118, 140, 146, 148, 253, 298, 308, 346,
+and 364. Their observed timers sum to exactly 1,903.6 ms; the largest single
+row was 238.1 ms. This rejects a single multi-second top-level expression in
+that thresholded run, but the sum excludes sub-threshold expressions, method
+setup, and outer materialization; it is neither total nor exclusive constructor
+cost. The indices are AST body positions. Because slow-only mode deliberately
+omitted snippets, a source-line counter cannot identify those expressions; an
+attempted static line mapping disagreed with the AST body cardinality and was
+rejected rather than promoted as evidence.
+
+The candidate generic corridor already has the relevant duplicate guards.
+`hash_type_for_entry_types` caches by `{TypeRef, TypeRef}`, and
+`monomorphize_generic_class` returns for names already in `@monomorphized` and
+marks a new name before recursive processing. The sampler does not distinguish
+necessary first specialization from redundant attempts. Adding another cache,
+skip, or constructor-specific fast path is therefore unjustified. The existing
+`DEBUG_MONO_SOURCES` counter also counts successful first specializations only,
+so it cannot by itself falsify repeat overhead.
+
+All three safe runs reached the same iteration-1 boundary: 1,951 missing
+functions, zero pending functions, 28,455 total functions, and 8,985 forced
+requests over 5,829 unique names. The two constructor-filtered runs exited at
+approximately 149 seconds (approximately 153 seconds including wrapper
+overhead); the sampled run exited at approximately 150 seconds (153.48 seconds
+including wrapper overhead). Continuous monitoring observed one compiler
+process and peak sampled RSS of approximately 1.13 GiB, below the 4 GiB guard.
+No production code or compiler behavior changed.
+
+Boundary: B4-F remains RED. The corrected distributed slow-row observation is
+ROBUST for this guarded run. Attribution of all constructor cost to generic
+setup and session-specific use of the sampler remain VULNERABLE, and a
+cache/skip optimization claim is BROKEN without repeat evidence. Extending this
+branch now would overfit one thresholded trace; move to the next independently
+measured root instead. If this corridor is revisited, the first required probes
+are exact AST-index-to-span binding and same-key cache hit/miss plus guarded
+specialization start/skip counts. No LTP/WBA move is promotable: no legal local
+transformation, boundary invariant, recompute-safety proof, dual frame, or
+measured global descent exists yet.
 
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
