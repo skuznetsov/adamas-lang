@@ -13190,6 +13190,40 @@ child, owner-attempt, skipped-owner, and unique-key counts. This adds no new
 mutable state. A high traversal-to-new-owner ratio may justify a narrower
 elimination probe; otherwise reject replay bookkeeping as the next target.
 
+### Session 85: replay counters isolate exhausted traversal (2026-08-06)
+
+The existing default-off virtual-target replay counters were exposed
+temporarily at the missing-process gate without adding functional state. One
+guarded iteration-1 run recorded 961 new virtual-target shapes, 147,832
+registered-class replay calls, 505,307 child/parent replay calls, 21,114 owner
+attempts, 23 attempted-key dedup skips, 21,170 unique attempted keys, and 377
+parent buckets. The temporary gate print was removed after the measurement.
+
+The aggregate counters prove a narrow asymmetry. At most 21,114 child calls
+could have entered the target loop, so at least 484,193 of 505,307 child calls
+(95.82%) performed no target-loop iteration. The attempted-key dedup skip rate
+was only about 0.11% of owner attempts, so the large repeat volume is not
+duplicate owner lowering: the append-only cursor already prevents that. The
+remaining candidate is repeated ancestor and child/cursor traversal after the
+relevant buckets are exhausted. These aggregates do not attribute that work to
+one callsite, quantify its CPU cost, or prove that eliminating it improves the
+whole gate.
+
+The same run stopped normally in about 149 seconds with 1,951 missing
+functions, 28,455 total functions, and 8,985/5,829 force requests/admits.
+Monitoring observed one compiler process, roughly 0.4--1.1 GiB RSS, and no
+remaining process after exit. The source tree returned to its pre-probe state.
+
+Boundary: B4-F remains RED. A cache or unconditional replay suppression is not
+authorized: targets can be appended after a class first becomes live, and a
+late hierarchy or generic-instance registration has its own replay obligation.
+The next count-only falsifier should measure repeated replay of the same class
+while the global append-only target revision is unchanged. Only a high
+same-revision hit rate, together with explicit direct replay at hierarchy and
+generic-instance registration boundaries, can justify testing a minimal
+revision guard. Promotion still requires boundary parity and recomputed
+wall-time and memory descent.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
