@@ -13224,6 +13224,44 @@ generic-instance registration boundaries, can justify testing a minimal
 revision guard. Promotion still requires boundary parity and recomputed
 wall-time and memory descent.
 
+### Session 86: same-revision opportunity does not authorize class replay suppression (2026-08-06)
+
+A temporary default-off count-only probe observed the exact `mark_live_type`
+replay callsite against the number of uniquely appended virtual-target shapes.
+At the iteration-1 gate, 134,855 registered-class replays came from live-type
+observations; 124,071 (92.00%) repeated the same class while that debug-only
+append count was unchanged. The probe saw 1,404 distinct replayed classes. The
+aggregate replay, child, owner-attempt, dedup-skip, unique-key, parent, and
+record counts remained within the previous diagnostic run's tiny count drift:
+147,852, 505,375, 21,114, 23, 21,170, 377, and 961. The temporary revision hash,
+counters, and gate print were removed after measurement.
+
+This is a strong opportunity count but not a safety certificate. The debug
+append count does not represent late hierarchy edges, generic-instance
+registration, live-owner transitions, or resolver/materialization availability.
+The existing class-info version also does not cover those events. More
+importantly, Session 52 already rejected a whole-class replay cache with stable
+ancestor/target counts because it changed the lowering boundary, and Session 54
+rejected transition-only live replay because an already-live observation can be
+the rendezvous for an Object/Reference target whose broad fan-out was deferred.
+A per-class epoch would reintroduce the same missing-obligation class under a
+different name.
+
+The guarded run stopped normally in about 151 seconds with exact boundary
+parity: 1,951 missing functions, 28,455 total functions, and 8,985/5,829 force
+requests/admits. One compiler process stayed below the 4 GiB guard and left no
+descendants. The wall-time difference is diagnostic noise, not a performance
+claim.
+
+Boundary: B4-F remains RED. Reject a per-class target revision, transition-only
+guard, or whole-replay cache. Preserve every replay rendezvous and the existing
+append-only `(child,parent)` cursor contract. The next legal move is smaller:
+when that cursor already equals its bucket size, return before rewriting the
+same cursor value. This cannot suppress an appended suffix, a new pair, class
+replay, method lookup, or a retry. It is promotable only if focused virtual-
+target tests, exact B4-F boundary parity, and aligned global wall/memory evidence
+show descent; otherwise remove it as a non-constraint micro-optimization.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
