@@ -2403,6 +2403,9 @@ module Adamas::HIR
     @call_resolution_profile_suffix_only_time_ns : Int64 = 0_i64
     @call_resolution_profile_same_method_base_changed_count : Int64 = 0_i64
     @call_resolution_profile_same_method_base_changed_time_ns : Int64 = 0_i64
+    @call_resolution_profile_normal_scorer_suffix_single_count : Int64 = 0_i64
+    @call_resolution_profile_normal_scorer_suffix_wide_count : Int64 = 0_i64
+    @call_resolution_profile_normal_scorer_suffix_key_total : Int64 = 0_i64
     @call_resolution_profile_miss_count : Int64 = 0_i64
     @call_resolution_profile_miss_time_ns : Int64 = 0_i64
 
@@ -6820,6 +6823,9 @@ module Adamas::HIR
       @call_resolution_profile_suffix_only_time_ns = 0_i64
       @call_resolution_profile_same_method_base_changed_count = 0_i64
       @call_resolution_profile_same_method_base_changed_time_ns = 0_i64
+      @call_resolution_profile_normal_scorer_suffix_single_count = 0_i64
+      @call_resolution_profile_normal_scorer_suffix_wide_count = 0_i64
+      @call_resolution_profile_normal_scorer_suffix_key_total = 0_i64
       @call_resolution_profile_miss_count = 0_i64
       @call_resolution_profile_miss_time_ns = 0_i64
       # RTA / live types
@@ -66181,6 +66187,9 @@ module Adamas::HIR
         pass_call_suffix_only_time_before = @call_resolution_profile_suffix_only_time_ns
         pass_call_same_method_base_changed_count_before = @call_resolution_profile_same_method_base_changed_count
         pass_call_same_method_base_changed_time_before = @call_resolution_profile_same_method_base_changed_time_ns
+        pass_call_normal_scorer_suffix_single_count_before = @call_resolution_profile_normal_scorer_suffix_single_count
+        pass_call_normal_scorer_suffix_wide_count_before = @call_resolution_profile_normal_scorer_suffix_wide_count
+        pass_call_normal_scorer_suffix_key_total_before = @call_resolution_profile_normal_scorer_suffix_key_total
         pass_call_miss_count_before = @call_resolution_profile_miss_count
         pass_call_miss_time_before = @call_resolution_profile_miss_time_ns
         pass_lower_ms = 0.0
@@ -66367,13 +66376,17 @@ module Adamas::HIR
           pass_call_suffix_only_time_ns = @call_resolution_profile_suffix_only_time_ns - pass_call_suffix_only_time_before
           pass_call_same_method_base_changed_count = @call_resolution_profile_same_method_base_changed_count - pass_call_same_method_base_changed_count_before
           pass_call_same_method_base_changed_time_ns = @call_resolution_profile_same_method_base_changed_time_ns - pass_call_same_method_base_changed_time_before
+          pass_call_normal_scorer_suffix_single_count = @call_resolution_profile_normal_scorer_suffix_single_count - pass_call_normal_scorer_suffix_single_count_before
+          pass_call_normal_scorer_suffix_wide_count = @call_resolution_profile_normal_scorer_suffix_wide_count - pass_call_normal_scorer_suffix_wide_count_before
+          pass_call_normal_scorer_suffix_key_total = @call_resolution_profile_normal_scorer_suffix_key_total - pass_call_normal_scorer_suffix_key_total_before
           pass_call_miss_count = @call_resolution_profile_miss_count - pass_call_miss_count_before
           pass_call_miss_time_ns = @call_resolution_profile_miss_time_ns - pass_call_miss_time_before
           pass_call_symbol_same_count = pass_call_resolution_count - pass_call_symbol_changed_count - pass_call_miss_count
           pass_call_symbol_same_time_ns = pass_call_resolution_time_ns - pass_call_symbol_changed_time_ns - pass_call_miss_time_ns
           pass_call_change_other_count = pass_call_symbol_changed_count - pass_call_suffix_only_count - pass_call_same_method_base_changed_count
           pass_call_change_other_time_ns = pass_call_symbol_changed_time_ns - pass_call_suffix_only_time_ns - pass_call_same_method_base_changed_time_ns
-          STDERR.puts "[PHASE_STATS] process_pending.pass=#{pass} context=#{@pending_process_context || "none"} total=#{pass_total_ms.round(1)}ms lower=#{pass_lower_ms.round(1)}ms call_resolution=#{(pass_call_resolution_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_resolution_count} call_symbol_same=#{(pass_call_symbol_same_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_symbol_same_count} call_symbol_changed=#{(pass_call_symbol_changed_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_symbol_changed_count} call_change_suffix_only=#{(pass_call_suffix_only_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_suffix_only_count} call_change_same_method_base=#{(pass_call_same_method_base_changed_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_same_method_base_changed_count} call_change_other=#{(pass_call_change_other_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_change_other_count} call_miss=#{(pass_call_miss_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_miss_count} periodic_rta=#{pass_periodic_rta_ms.round(1)}ms/#{pass_periodic_rta_count} periodic_functions=#{pass_periodic_function_scan_ms.round(1)}ms periodic_monomorphized=#{pass_periodic_monomorphized_scan_ms.round(1)}ms periodic_types=#{pass_periodic_type_scan_ms.round(1)}ms periodic_undefer=#{pass_periodic_undefer_ms.round(1)}ms end_rta=#{pass_end_rta_ms.round(1)}ms residual=#{pass_residual_ms.round(1)}ms max_lower=#{pass_max_lower_ms.round(1)}ms max_name=#{pass_max_lower_name} lowered=#{pass_lowered} deferred=#{pass_deferred} visited=#{idx}"
+          pass_call_normal_scorer_suffix_count = pass_call_normal_scorer_suffix_single_count + pass_call_normal_scorer_suffix_wide_count
+          STDERR.puts "[PHASE_STATS] process_pending.pass=#{pass} context=#{@pending_process_context || "none"} total=#{pass_total_ms.round(1)}ms lower=#{pass_lower_ms.round(1)}ms call_resolution=#{(pass_call_resolution_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_resolution_count} call_symbol_same=#{(pass_call_symbol_same_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_symbol_same_count} call_symbol_changed=#{(pass_call_symbol_changed_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_symbol_changed_count} call_change_suffix_only=#{(pass_call_suffix_only_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_suffix_only_count} call_change_same_method_base=#{(pass_call_same_method_base_changed_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_same_method_base_changed_count} call_change_other=#{(pass_call_change_other_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_change_other_count} call_suffix_normal_scorer=#{pass_call_normal_scorer_suffix_count} call_suffix_normal_scorer_single=#{pass_call_normal_scorer_suffix_single_count} call_suffix_normal_scorer_wide=#{pass_call_normal_scorer_suffix_wide_count} call_suffix_normal_scorer_keys=#{pass_call_normal_scorer_suffix_key_total} call_miss=#{(pass_call_miss_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_miss_count} periodic_rta=#{pass_periodic_rta_ms.round(1)}ms/#{pass_periodic_rta_count} periodic_functions=#{pass_periodic_function_scan_ms.round(1)}ms periodic_monomorphized=#{pass_periodic_monomorphized_scan_ms.round(1)}ms periodic_types=#{pass_periodic_type_scan_ms.round(1)}ms periodic_undefer=#{pass_periodic_undefer_ms.round(1)}ms end_rta=#{pass_end_rta_ms.round(1)}ms residual=#{pass_residual_ms.round(1)}ms max_lower=#{pass_max_lower_ms.round(1)}ms max_name=#{pass_max_lower_name} lowered=#{pass_lowered} deferred=#{pass_deferred} visited=#{idx}"
         end
         stop_after_pending_phase("pass_end", "ADAMAS_STOP_AFTER_HIR_PENDING_PASS_END", pass, idx, nil, "lowered=#{pass_lowered},deferred=#{pass_deferred},undeferred=#{rta_undeferred_total}")
 
@@ -98271,6 +98284,19 @@ module Adamas::HIR
       end
       if debug_call_lookup
         STDERR.puts "[CALL_LOOKUP_SELECTED] func=#{func_name} best=#{best_name} score=#{best_score} param_count=#{best_param_count}"
+      end
+      if @call_resolution_profile_active && best_name != func_name &&
+         base_name == strip_type_suffix(best_name)
+        # This is the final filtered overload-key worklist, not the number of
+        # distinct or compatible candidates. Recursive callers are separate
+        # frames: this is a frame-level subset of wrapper suffix-only outcomes
+        # (count <= wrapper count), not a one-to-one route classification.
+        if overload_keys.size == 1
+          @call_resolution_profile_normal_scorer_suffix_single_count += 1_i64
+        else
+          @call_resolution_profile_normal_scorer_suffix_wide_count += 1_i64
+        end
+        @call_resolution_profile_normal_scorer_suffix_key_total += overload_keys.size.to_i64
       end
       result
     end

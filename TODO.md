@@ -13044,6 +13044,53 @@ single or wide. Do not retain inputs/results or add a cache. A legal elimination
 still needs selected-symbol and `DefNode` provenance plus a mutation/revision
 contract, then an aligned wall-time and boundary-parity result.
 
+### Session 82: bound suffix-only normal-scorer width (2026-08-06)
+
+The suffix-only relation did not identify whether resolution reached the final
+normal overload scorer or returned through a recursive/fallback frame. A
+default-off count-only probe now records a frame-level subset at the successful
+normal-scorer return: one final raw overload key, more than one key, and the raw
+key total. The two width buckets are disjoint and exhaustive for the recorded
+subset. They are not a route enum, and the raw worklist may contain skipped or
+duplicate entries; it is not a distinct compatible-candidate count.
+
+The direct eager-pending probe attributed 355 of 357 suffix-only wrapper
+outcomes to normal-scorer frames, with 52 single-key and 303 wide-key frames over
+735 raw keys. In the fresh self-host missing-initial gate, iteration 0 recorded
+79,288 of 79,297 suffix-only outcomes, split into 40,681 single and 38,607 wide
+frames over 126,826 raw keys. Iteration 1 recorded 186,413 of 186,423 outcomes,
+split into 94,926 single and 91,487 wide frames over 324,466 raw keys. Thus the
+normal-scorer subset covered 99.995% of iteration-1 suffix-only calls, but its
+average final worklist was only 1.74 raw keys; even the wide bucket averaged
+about 2.51 keys.
+
+This falsifies large final raw-key worklists as the dominant explanation for the
+observed suffix-only event count at this boundary. It does not rule out index or
+candidate-discovery fan-out before the final filter, per-key compatibility cost,
+or resolver-time dominance. The suffix classifier at the normal-scorer return
+runs inside the wrapper timer and may allocate a base slice, while recursive
+frames prevent a one-to-one route/time join. Treat the existing timings from
+this diagnostic run as biased and the normal-scorer ratio as a count-only
+lower-bound coverage result.
+
+The gate stopped normally in about 151 seconds. Missing functions remained
+1,951 and force requests/admits remained 8,985/5,829. The compiler source
+revision changed to include this probe, and the resulting total-function count
+was 28,455, one above Session 81. Cross-revision exact function-count parity is
+therefore not an oracle; record the drift only, not as semantic evidence.
+External samples observed one compiler process at roughly 1.08--1.14 cores and
+RSS rising from about 427 MiB to 1,054 MiB, with no additional compiler process;
+in-script aggregation was again unavailable.
+
+Boundary: B4-F remains RED. Do not add another per-call timer layer or a cache.
+The next falsifier should change observation level and externally sample the
+produced compiler during the same missing-initial gate, separating candidate
+discovery/index work from compatibility and scoring helpers without perturbing
+every resolution. If symbols or sampling authority make that inconclusive, add
+at most one aggregate scorer-stage timer with an explicit overhead baseline.
+Any elimination still requires selected-symbol/`DefNode` provenance, mutation
+or revision authority, and aligned recomputed wall-time descent.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
