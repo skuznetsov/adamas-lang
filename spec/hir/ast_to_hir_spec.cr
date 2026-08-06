@@ -1245,7 +1245,7 @@ class Adamas::HIR::AstToHir
   ) : Bool
     def_node = @function_defs[name]?
     return false unless def_node
-    allocator_initializer_direct_shape_compatible?(
+    function_def_accepts_call_shape?(
       name,
       def_node,
       callsite_types,

@@ -35956,20 +35956,19 @@ module Adamas::HIR
       found
     end
 
-    # Validate an exact typed symbol before using it as an allocator target.
+    # Validate a registered DefNode before using it for a concrete call shape.
     # Registration can leave a typed key pointing at a stale or differently
-    # shaped DefNode after nested lowering. Keep this check to call shape (and
-    # ordinary type compatibility when metadata is readable); a miss returns
-    # to the normal resolver and then to the unique arity fallback.
-    private def allocator_initializer_direct_shape_compatible?(
-      init_name : String,
-      init_def : Adamas::Compiler::Frontend::DefNode,
+    # shaped definition after nested lowering. Keep this check to call shape
+    # and ordinary type compatibility; callers choose their own fallback.
+    private def function_def_accepts_call_shape?(
+      function_name : String,
+      function_def : Adamas::Compiler::Frontend::DefNode,
       callsite_types : Array(TypeRef),
       call_has_block : Bool,
       call_has_named_args : Bool,
       call_named_arg_names : Array(String)?,
     ) : Bool
-      stats = function_param_stats(init_name, init_def)
+      stats = function_param_stats(function_name, function_def)
       return false if call_has_block ? !stats.has_block : stats.has_block
       param_count, required, has_splat, has_double_splat, skip =
         effective_arity_stats_for_call(stats, call_has_named_args)
@@ -35985,10 +35984,14 @@ module Adamas::HIR
                              else
                                arg_count
                              end
-      return false unless named_args_compatible_with_def?(init_def, call_named_arg_names, positional_arg_count)
+      return false unless named_args_compatible_with_def?(function_def, call_named_arg_names, positional_arg_count)
 
       unless callsite_types.empty? || callsite_types.all? { |t| t == TypeRef::VOID }
-        return false unless params_compatible_with_args?(init_def, callsite_types, function_context_from_name(init_name))
+        return false unless params_compatible_with_args?(
+                              function_def,
+                              callsite_types,
+                              function_context_from_name(function_name),
+                            )
       end
       true
     end
@@ -36060,7 +36063,7 @@ module Adamas::HIR
         # and named calls may still use the alias directly.
         init_is_bare_alias = allocator_initializer_base_request?(init_name, init_base_name)
         init_is_named_only = allocator_def_has_named_only?(init_def)
-        direct_shape_compatible = allocator_initializer_direct_shape_compatible?(
+        direct_shape_compatible = function_def_accepts_call_shape?(
           init_name,
           init_def,
           callsite_types,
@@ -46025,6 +46028,47 @@ module Adamas::HIR
       @named_call_shapes_by_function[function_name]?.try(&.[value_id]?)
     end
 
+    private def register_receiver_repair_source_shape?(
+      target_name : String,
+      base_name : String,
+      arg_types : Array(TypeRef),
+    ) : Bool
+      candidate_names = [base_name]
+      candidate_names.concat(function_def_overloads(
+        base_name,
+        strip_generic_receiver_for_lookup(base_name),
+      ))
+      matches = [] of Tuple(
+        Adamas::Compiler::Frontend::DefNode,
+        Adamas::Compiler::Frontend::ArenaLike,
+      )
+      seen_definitions = Set(UInt64).new
+      candidate_names.each do |candidate_name|
+        definition = @function_defs[candidate_name]?
+        next unless definition
+        definition_id = definition.object_id.to_u64
+        next if seen_definitions.includes?(definition_id)
+        next unless function_def_accepts_call_shape?(
+                      candidate_name,
+                      definition,
+                      arg_types,
+                      false,
+                      false,
+                      nil,
+                    )
+        seen_definitions << definition_id
+        arena = @function_def_arenas[candidate_name]? ||
+                resolve_arena_for_def(definition, @arena)
+        next unless arena_fits_def?(arena, definition)
+        matches << {definition, arena}
+      end
+
+      return false unless matches.size == 1
+      definition, arena = matches.first
+      register_function_def(target_name, definition, arena)
+      true
+    end
+
     private def record_receiver_repair_target(
       exact_targets : Set(String),
       fallback_requests : Array(ReceiverRepairFallback),
@@ -47052,23 +47096,31 @@ module Adamas::HIR
                                        function_state(current_shape_target).in_progress? ||
                                        function_state(current_shape_target).completed?)
                 # An arity-only target is a registration placeholder, not an
-                # ABI contract. Once every call argument is concrete, a source
-                # definition for the same base is sufficient to materialize
-                # the typed shape even when that shape has not been observed
-                # before. This is the inherited `String::Builder -> IO#<<(obj
-                # : _)` stage2 path: retaining `IO#<<$arity1` leaves a
-                # declaration-only symbol although `IO#<<$String` can be
-                # lowered from the registered base definition.
-                current_shape_materializable = current_shape_target != method_name_text &&
-                                               method_name_text.includes?("$arity") &&
-                                               !has_block_call &&
-                                               !receiver_repair_target_has_splat?(method_name_text) &&
-                                               !arg_types.empty? &&
-                                               arg_types.all? { |arg_type| arg_type != TypeRef::VOID } &&
-                                               !function_def_overloads(
-                                                 base_name,
-                                                 strip_generic_receiver_for_lookup(base_name),
-                                               ).empty?
+                # ABI contract. Once every call argument is concrete, a unique
+                # compatible source definition can materialize the typed shape
+                # even when that shape has not been observed before. This also
+                # repairs stale concrete suffixes without guessing among
+                # overloads.
+                current_shape_materializable = false
+                if current_shape_target != method_name_text &&
+                   !has_block_call &&
+                   !receiver_repair_target_has_splat?(method_name_text) &&
+                   named_call_shape.nil? &&
+                   !arg_types.empty? &&
+                   arg_types.all? { |arg_type| arg_type != TypeRef::VOID }
+                  current_shape_materializable = if method_name_text.includes?("$arity")
+                                                   !function_def_overloads(
+                                                     base_name,
+                                                     strip_generic_receiver_for_lookup(base_name),
+                                                   ).empty?
+                                                 else
+                                                   register_receiver_repair_source_shape?(
+                                                     current_shape_target,
+                                                     base_name,
+                                                     arg_types,
+                                                   )
+                                                 end
+                end
                 if env_has?("DEBUG_CALL_REPAIR")
                   STDERR.puts(
                     "[CALL_REPAIR] same_owner_shape old=#{method_name_text} current=#{current_shape_target} " \
@@ -47877,7 +47929,8 @@ module Adamas::HIR
             next
           end
           param_resolved_name = resolved_name
-          if module_like_type_name?(resolved_name) || collection_module_type_name?(resolved_name)
+          if !resolved_name.ends_with?('?') &&
+             (module_like_type_name?(resolved_name) || collection_module_type_name?(resolved_name))
             return false if primitive_type?(arg_type)
             # Concrete collections (Tuple/Array/Slice/StaticArray) match
             # any Enumerable/Indexable/Iterable param. For other types,

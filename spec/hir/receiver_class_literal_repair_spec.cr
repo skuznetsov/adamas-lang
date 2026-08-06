@@ -43,6 +43,38 @@ class Adamas::HIR::AstToHir
     @function_lowering_states.delete(name)
   end
 
+  def __test_receiver_repair_overloads(base_name : String) : Array(String)
+    function_def_overloads(base_name).dup
+  end
+
+  def __test_function_def_accepts_receiver_shape?(
+    function_name : String,
+    arg_type_names : Array(String),
+  ) : Bool
+    definition = @function_defs[function_name]?
+    return false unless definition
+    function_def_accepts_call_shape?(
+      function_name,
+      definition,
+      arg_type_names.map { |name| type_ref_for_name(name) },
+      false,
+      false,
+      nil,
+    )
+  end
+
+  def __test_register_receiver_repair_source_shape?(
+    target_name : String,
+    base_name : String,
+    arg_type_names : Array(String),
+  ) : Bool
+    register_receiver_repair_source_shape?(
+      target_name,
+      base_name,
+      arg_type_names.map { |name| type_ref_for_name(name) },
+    )
+  end
+
   def __test_set_receiver_function_return_type(
     name : String,
     type_name : String,
@@ -1569,6 +1601,115 @@ describe "receiver-bound class-literal repair" do
       .find { |instruction| instruction.id == stale.id }
     repaired.should_not be_nil
     repaired.not_nil!.method_name.should eq(correct_name)
+    converter.module.has_function_with_body?(repaired.not_nil!.method_name).should be_true
+  end
+
+  it "materializes an unseen concrete shape from a compatible union definition" do
+    converter, functions = parse_receiver_repair_source(<<-CRYSTAL)
+      module CompatibleRepairEnumerable(T)
+      end
+
+      class CompatibleRepairArgs
+        include CompatibleRepairEnumerable(String)
+      end
+
+      class CompatibleRepairIO
+      end
+
+      class CompatibleRepairMemory < CompatibleRepairIO
+      end
+
+      class CompatibleRepairRedirect
+      end
+
+      class CompatibleRepairSink
+        alias Stdio = CompatibleRepairIO | CompatibleRepairRedirect
+
+        def store(
+          args : CompatibleRepairEnumerable(String)?,
+          value : Stdio,
+        )
+          value
+        end
+
+
+        def ambiguous_store(value : CompatibleRepairIO)
+          value
+        end
+
+        def ambiguous_store(value : Stdio)
+          value
+        end
+      end
+
+      def store_compatible_memory(
+        sink : CompatibleRepairSink,
+        args : CompatibleRepairArgs,
+        value : CompatibleRepairMemory,
+      )
+        sink.store(args, value)
+      end
+    CRYSTAL
+
+    caller = functions.find do |candidate|
+      candidate.name.starts_with?("store_compatible_memory$")
+    end
+    caller.should_not be_nil
+    original = caller.not_nil!.blocks.flat_map(&.instructions)
+      .compact_map { |instruction| instruction.as?(Adamas::HIR::Call) }
+      .find { |instruction| instruction.method_name.starts_with?("CompatibleRepairSink#store$") }
+    original.should_not be_nil
+    base_name = "CompatibleRepairSink#store"
+    current_name = original.not_nil!.method_name
+    source_name = converter.__test_receiver_repair_overloads(base_name).find do |name|
+      name.includes?("CompatibleRepairEnumerable(String)") &&
+        name.includes?("CompatibleRepairIO | CompatibleRepairRedirect")
+    end
+    source_name.should_not be_nil
+    converter.__test_function_def_accepts_receiver_shape?(
+      source_name.not_nil!,
+      ["Nil", "CompatibleRepairMemory"],
+    ).should be_true
+    converter.__test_function_def_accepts_receiver_shape?(
+      source_name.not_nil!,
+      ["CompatibleRepairArgs", "CompatibleRepairMemory"],
+    ).should be_true
+
+    ambiguous_base = "CompatibleRepairSink#ambiguous_store"
+    ambiguous_target = "#{ambiguous_base}$CompatibleRepairMemory"
+    converter.__test_register_receiver_repair_source_shape?(
+      ambiguous_target,
+      ambiguous_base,
+      ["CompatibleRepairMemory"],
+    ).should be_false
+    converter.module.has_function?(ambiguous_target).should be_false
+    converter.__test_forget_receiver_function_shape(
+      current_name,
+      base_name,
+    )
+
+    call_block = caller.not_nil!.blocks.find do |candidate|
+      candidate.instructions.includes?(original.not_nil!)
+    end
+    call_block.should_not be_nil
+    call_index = call_block.not_nil!.instructions.index(original.not_nil!).not_nil!
+    stale = Adamas::HIR::Call.with_receiver_virtual(
+      original.not_nil!.id,
+      original.not_nil!.type,
+      original.not_nil!.receiver_value,
+      "#{base_name}$Nil_CompatibleRepairRedirect",
+      original.not_nil!.args,
+      false,
+    )
+    call_block.not_nil!.instructions[call_index] = stale
+
+    converter.__test_repair_receiver_bound_call_targets
+
+    repaired = caller.not_nil!.blocks.flat_map(&.instructions)
+      .compact_map { |instruction| instruction.as?(Adamas::HIR::Call) }
+      .find { |instruction| instruction.id == stale.id }
+    repaired.should_not be_nil
+    repaired.not_nil!.method_name.should eq(current_name)
     converter.module.has_function_with_body?(repaired.not_nil!.method_name).should be_true
   end
 

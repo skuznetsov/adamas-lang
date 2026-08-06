@@ -12553,6 +12553,51 @@ values that become constant only after expression lowering remain on the
 established dynamic path. A fresh B4-F has not yet been run on this repair, so
 bootstrap readiness remains RED.
 
+### Session 68: receiver repair materializes one compatible source shape (2026-08-05)
+
+The next fresh bootstrap cleared the static-unless frontier and exposed a
+bodyless concrete `Process#initialize` demand whose registered source used both
+`Enumerable(String)?` and an `IO | Process::Redirect` parameter. Same-owner
+repair previously materialized only `$arity` placeholders; it could not re-key
+a stale concrete suffix from an already registered compatible definition.
+The first broader hierarchy hypothesis was falsified: fresh source metadata
+already contained the concrete `IO::Memory -> IO` parent edge.
+
+The exact incompatibility was earlier in parameter matching. A nullable generic
+module annotation such as `Enumerable(String)?` was classified as a direct
+collection-module constraint before its `Nil | Enumerable(String)` union could
+be materialized, so the otherwise compatible definition was rejected. The
+repair now lets nullable module annotations follow the existing union path and
+reuses the allocator's call-shape validator under a general name. A concrete
+receiver demand may register only one compatible source `DefNode`, with its
+exact arena; ambiguity fails closed. Block, splat, named, unknown-argument, and
+existing `$arity` behavior remain outside or unchanged.
+
+Evidence: the focused receiver-repair regression was RED at the nullable
+parameter check before the guard and is GREEN with 46 examples. It covers both
+`Nil` and a concrete module-including argument, union-compatible child values,
+end-to-end stale-target repair, and the negative case where two compatible
+overloads must not register a target. The full HIR lowering suite passes 443
+examples with zero failures/errors and two pre-existing pending examples. The
+host compiler builds, and the exact Process reducer advances past its former
+initializer frontier to an independent bare-generic `Hash#size` demand. All
+test and produced-compiler binaries ran through `scripts/run_safe.sh`.
+
+A fresh B4-F built stage1 in 16.71 seconds, passed both smokes, cleared the
+Process initializer target, and failed naturally after 332.88 seconds at
+`Adamas::HIR::LoweringContext#register_local$String_Nil`. External sampling
+observed one compiler process, about one core, no fanout, and roughly 2.15 GiB
+RSS; `run_safe` could not certify RSS or FD metrics, so those remain
+observational only. No bootstrap process survived. The manifest validator
+rejects the run, and the stage2 wall time exceeds the 300-second admission
+budget, so B4-F remains RED.
+
+Boundary: the unique compatible, positional, concrete same-owner corridor is
+ROBUST under the measured nullable-module and union cases. It does not permit
+guessing among overloads or widen receiver inheritance globally. The next
+atomic slice should reduce the new `register_local$String_Nil` frontier rather
+than generalize this repair further.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
