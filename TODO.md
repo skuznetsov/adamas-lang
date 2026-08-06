@@ -13140,6 +13140,56 @@ hot corridor justifies designing a revision or dirty-generation contract, and
 any such move still needs boundary parity plus recomputed wall-time and memory
 descent.
 
+### Session 84: multi-window sampling rejects stable RTA dominance (2026-08-06)
+
+One guarded missing-initial run was externally sampled in three 10-second
+windows against the same compiler process. The windows began approximately
+21.6, 79.0, and 135.4 seconds after process launch and contained 3,853, 3,857,
+and 3,838 active-main-thread samples. Physical footprint at the corresponding
+snapshots was about 494 MiB, 842 MiB, and 1.1 GiB. The early window was not a
+B4-F window: all active samples were under `fixup_inherited_ivars` and
+`align_all_class_ivars`, predominantly resolving explicit ivar annotations.
+It contains no `lower_missing_call_targets` branch and cannot support a B4-F
+hotspot claim.
+
+The middle and late windows were fully inside `lower_missing_call_targets`.
+At the pending-loop direct-child level, the middle window split into 2,014
+samples (52.22%) in `lower_function_if_needed`, 1,824 (47.29%) in
+`scan_new_functions_for_live_types`, 18 (0.47%) in the type-descriptor scan,
+and one residual sample. In the late window, the same level split into 3,506
+samples (91.35%) in `lower_function_if_needed`, 186 (4.85%) in the new-function
+scan, 82 (2.14%) in the type-descriptor scan, 56 (1.46%) in RTA undefer work,
+and eight residual samples. These are inclusive sampled stack-branch shares,
+not elapsed-CPU measurements.
+
+The middle new-function branch was also productive rather than a certificate
+of pure scan overhead: 1,196 samples reached HIR scanning and `mark_live_type`,
+1,196 reached registered-class replay, and 1,195 reached child virtual-target
+lowering. The corresponding late chain was only 94 samples. Conversely, the
+direct lowering corridor remained present and grew across both B4-F windows:
+`lower_function_if_needed` reached its implementation for 1,978 middle and
+3,243 late samples, then `lower_method` for 1,961 and 3,177. Recursive resolver
+and parser counts remain nested observations and are not percentages. Compact
+parser leaves occupied about 10.0% and 14.1% of the two windows, but Session 76
+already replaced the hottest separator filter with an allocation-free scanner
+without recomputed wall-time or memory descent, so that local route remains
+closed.
+
+The gate stopped normally in about 150 seconds with the unchanged 1,951 missing
+functions, 28,455 total functions, and 8,985/5,829 force requests/admits.
+Monitoring observed one compiler process below the 4 GiB guard, and the process
+tree was clean after exit. The raw sampler reports remain temporary diagnostics.
+
+Boundary: B4-F remains RED. The claim that RTA scan/replay is a temporally
+stable dominant bottleneck is rejected; the stable parent is the pending
+lowering cascade, while its direct branch mix changes substantially over time.
+Do not add a replay cache, dirty bit, or generation contract from this evidence.
+The smallest next falsifier is to expose the already existing default-off
+virtual-target replay counters at the missing-process gate and compare replay,
+child, owner-attempt, skipped-owner, and unique-key counts. This adds no new
+mutable state. A high traversal-to-new-owner ratio may justify a narrower
+elimination probe; otherwise reject replay bookkeeping as the next target.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
