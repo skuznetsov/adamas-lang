@@ -1,9 +1,10 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-08-05 (captured truthy conditions now preserve exact box/cell
-owner and block-parameter lexical provenance without introducing general
-capture flow state. A fresh B4-F run passes both stage1 smokes, but stage2 hits
-the 300-second cap at 302.71 seconds with no bodyless target; the <=300-second
+Updated: 2026-08-06 (the first self-host materialization iteration after exact
+declared-nullable body reuse observes 143 fewer functions and 82 fewer force
+requests than the previous recorded receipt; this is not a causal timing A/B.
+A fresh clean-HEAD B4-F diagnostic passes both stage1 smokes, but stage2 exceeds
+the 330-second cap at 332.85 seconds without producing `cv2_s2`; the <=300-second
 admission therefore remains RED. T1 and full-source MIR/LLVM continuity remain
 open.)
 
@@ -13634,6 +13635,62 @@ recursive family. Recompute safety is supported by the focused and full HIR
 suites plus the explicit, defaulted, mixed-source, named-only, and splat runtime
 oracles. There is no promotion until B4-F shows global wall-time and memory
 descent without a capability regression.
+
+### Session 96: lower self-host materialization counts but B4-F remains red (2026-08-06)
+
+A fresh guarded B4-F diagnostic started from clean `02a13d87` in
+`/private/tmp/adamas_b4f_02a13d87.ErYEbC/run`. Stage1 built in 21.70 seconds and
+passed both the plain and no-prelude smokes. Stage2 remained a single compiler
+process, used approximately one CPU core, and reached the diagnostic 330-second
+cap without producing `cv2_s2`; the guarded command reported 332.85 seconds
+wall time and exit 143. The final lowering trace reached lazy `lower_main` after
+class-variable, constant, and deferred-function processing. The canonical
+validator rejected the receipt because the manifest status is failed, so the
+300-second B4-F admission remains RED.
+
+The closest historical receipt is not a causal A/B. The older
+`/private/tmp/adamas_b4f_s69_nullable_receiver` run from `982ee499` reached
+332.88 seconds before a now-fixed bodyless `LoweringContext#register_local`
+error. Other nearby stage2 receipts range from approximately 302.65 to 337.60
+seconds across different revisions and source states. The 0.03-second numerical
+match therefore argues against declaring a fresh timing regression, but it does
+not prove that `02a13d87` accelerated the global bootstrap.
+
+The canonical first-iteration missing-process gate records a scoped
+self-host observation. On the current source it stopped cleanly with
+`missing=1948`, `pending=0`, `funcs=28312`, `force_total=8903`, and
+`force_unique=5815`. The previous recorded receipt was `missing=1951`,
+`funcs=28455`, `force_total=8985`, and `force_unique=5829`, so the observed
+deltas are -3 missing items, -143 functions, -82 force requests, and -14 unique
+forced names at this boundary. They are not a matched same-revision A/B and do
+not by themselves prove a performance improvement. An overlapping read-only
+diagnostic made the gate's wall time unusable, so the wall-time receipt is
+excluded from causal and performance comparison. All overlapping processes
+were stopped and a final process-tree check found no surviving Adamas probes.
+
+The macOS process snapshots observed one stage2 process at approximately one
+CPU core and less than 2.6 percent host memory. `run_safe.sh` again recorded
+numeric RSS and FD fields as unavailable, so those snapshots do not establish
+memory or FD safety and are not a B7 resource certificate.
+
+Mini-Quadrum synthesis:
+
+- **Cassandra:** the lower iteration-1 counts did not overcome the distributed
+  whole-compiler lowering cost inside the admission budget; causality and the
+  timing contribution remain open.
+- **Daedalus:** another full B4-F retry or an `ArenaLike` patch based on a
+  timeout-edge trace would be verification theater. Return to measured direct
+  `lower_function_if_needed -> lower_method` materialization roots.
+- **Maieutic:** lower function counts need not imply proportional wall-time
+  descent; only the current iteration counts are directly certified.
+- **Adversary:** the nullable reuse patch remains ROBUST within its focused
+  structural/runtime contract, but B4-F admission is BROKEN/RED and the LTP/WBA
+  promotion remains provisional.
+
+The next discriminating step is a bounded attribution of the next repeated
+direct materialization family using existing ledgers and reducers. No cache,
+epoch, or broad lowering abstraction is justified until that family is shown to
+dominate and an exact boundary-preserving reuse rule is available.
 
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
