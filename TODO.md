@@ -12968,6 +12968,42 @@ resolution routes with fixed counters and no stored results, then test whether
 one route is both dominant and legally eliminable. No new lookup state or
 invalidation contract is justified before that route evidence exists.
 
+### Session 80: partition call resolution by syntactic symbol outcome (2026-08-06)
+
+The aggregate Session 79 timer could not distinguish an already named result
+from a rewritten symbol or a miss. The next probe leaves `resolve_call_tuple`
+untouched and partitions its wrapper result into three exhaustive syntactic
+outcomes: returned symbol equal to the requested String, returned symbol
+changed, or nil. It stores only fixed default-off counters and inclusive
+timings; the equal-symbol bucket is derived from the total minus the other two.
+
+A direct eager-pending `examples/hello.cr` run proved all three fields live. In
+the fresh self-host missing-initial gate, iteration 0 measured 18,607.3 ms over
+170,211 resolutions: 459.2 ms/34,517 symbol-equal, 13,515.7 ms/111,925
+symbol-changed, and 4,632.5 ms/23,769 misses. Iteration 1 measured 40,982.4 ms
+over 343,643 resolutions: 3,307.5 ms/67,678 symbol-equal, 33,404.9 ms/226,224
+symbol-changed, and 4,270.0 ms/49,741 misses. The changed-symbol bucket is
+therefore 81.5% of measured inclusive resolution time and 65.8% of calls at the
+iteration-1 boundary.
+
+The comparison is intentionally syntactic. Equal serialized symbols can still
+select different overload nodes after expensive search, and a changed symbol
+does not identify whether suffix normalization, owner remapping, inheritance,
+or block fallback was responsible. Nested resolution also makes these times
+inclusive rather than exclusive. The buckets may guide a narrower route
+falsifier, but they neither establish redundant work nor authorize memoization.
+
+The semantic boundary remained 1,951 missing functions, 28,454 total
+functions, and 8,985/5,829 force requests/admits; the guarded run again stopped
+in about 149 seconds. External checks observed one compiler process at each
+sample and RSS below 1.1 GiB, although this run's in-script process-tree resource
+aggregation remained unavailable.
+
+Boundary: B4-F remains RED. The next probe should partition the changed-symbol
+bucket by existing resolver route without retaining input, result, DefNode, or
+arena identity. Any candidate elimination must preserve symbol and selected-def
+provenance and then demonstrate phase-aligned global descent.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

@@ -2397,6 +2397,10 @@ module Adamas::HIR
     @call_resolution_profile_active : Bool = false
     @call_resolution_profile_count : Int64 = 0_i64
     @call_resolution_profile_time_ns : Int64 = 0_i64
+    @call_resolution_profile_symbol_changed_count : Int64 = 0_i64
+    @call_resolution_profile_symbol_changed_time_ns : Int64 = 0_i64
+    @call_resolution_profile_miss_count : Int64 = 0_i64
+    @call_resolution_profile_miss_time_ns : Int64 = 0_i64
 
     # Lazy RTA: types known to be instantiated during lowering
     @live_types : Set(String) = Set(String).new
@@ -6806,6 +6810,10 @@ module Adamas::HIR
       @call_resolution_profile_active = false
       @call_resolution_profile_count = 0_i64
       @call_resolution_profile_time_ns = 0_i64
+      @call_resolution_profile_symbol_changed_count = 0_i64
+      @call_resolution_profile_symbol_changed_time_ns = 0_i64
+      @call_resolution_profile_miss_count = 0_i64
+      @call_resolution_profile_miss_time_ns = 0_i64
       # RTA / live types
       @live_types = Set(String).new
       @live_types_initialized = false
@@ -66159,6 +66167,10 @@ module Adamas::HIR
         pass_started_at = Time.instant if phase_stats
         pass_call_resolution_count_before = @call_resolution_profile_count
         pass_call_resolution_time_before = @call_resolution_profile_time_ns
+        pass_call_symbol_changed_count_before = @call_resolution_profile_symbol_changed_count
+        pass_call_symbol_changed_time_before = @call_resolution_profile_symbol_changed_time_ns
+        pass_call_miss_count_before = @call_resolution_profile_miss_count
+        pass_call_miss_time_before = @call_resolution_profile_miss_time_ns
         pass_lower_ms = 0.0
         pass_periodic_rta_ms = 0.0
         pass_periodic_function_scan_ms = 0.0
@@ -66336,8 +66348,14 @@ module Adamas::HIR
           pass_total_ms = (Time.instant - pass_started_at.not_nil!).total_milliseconds
           pass_residual_ms = pass_total_ms - pass_lower_ms - pass_periodic_rta_ms - pass_end_rta_ms
           pass_call_resolution_count = @call_resolution_profile_count - pass_call_resolution_count_before
-          pass_call_resolution_ms = (@call_resolution_profile_time_ns - pass_call_resolution_time_before) / 1_000_000.0
-          STDERR.puts "[PHASE_STATS] process_pending.pass=#{pass} context=#{@pending_process_context || "none"} total=#{pass_total_ms.round(1)}ms lower=#{pass_lower_ms.round(1)}ms call_resolution=#{pass_call_resolution_ms.round(1)}ms/#{pass_call_resolution_count} periodic_rta=#{pass_periodic_rta_ms.round(1)}ms/#{pass_periodic_rta_count} periodic_functions=#{pass_periodic_function_scan_ms.round(1)}ms periodic_monomorphized=#{pass_periodic_monomorphized_scan_ms.round(1)}ms periodic_types=#{pass_periodic_type_scan_ms.round(1)}ms periodic_undefer=#{pass_periodic_undefer_ms.round(1)}ms end_rta=#{pass_end_rta_ms.round(1)}ms residual=#{pass_residual_ms.round(1)}ms max_lower=#{pass_max_lower_ms.round(1)}ms max_name=#{pass_max_lower_name} lowered=#{pass_lowered} deferred=#{pass_deferred} visited=#{idx}"
+          pass_call_resolution_time_ns = @call_resolution_profile_time_ns - pass_call_resolution_time_before
+          pass_call_symbol_changed_count = @call_resolution_profile_symbol_changed_count - pass_call_symbol_changed_count_before
+          pass_call_symbol_changed_time_ns = @call_resolution_profile_symbol_changed_time_ns - pass_call_symbol_changed_time_before
+          pass_call_miss_count = @call_resolution_profile_miss_count - pass_call_miss_count_before
+          pass_call_miss_time_ns = @call_resolution_profile_miss_time_ns - pass_call_miss_time_before
+          pass_call_symbol_same_count = pass_call_resolution_count - pass_call_symbol_changed_count - pass_call_miss_count
+          pass_call_symbol_same_time_ns = pass_call_resolution_time_ns - pass_call_symbol_changed_time_ns - pass_call_miss_time_ns
+          STDERR.puts "[PHASE_STATS] process_pending.pass=#{pass} context=#{@pending_process_context || "none"} total=#{pass_total_ms.round(1)}ms lower=#{pass_lower_ms.round(1)}ms call_resolution=#{(pass_call_resolution_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_resolution_count} call_symbol_same=#{(pass_call_symbol_same_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_symbol_same_count} call_symbol_changed=#{(pass_call_symbol_changed_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_symbol_changed_count} call_miss=#{(pass_call_miss_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_miss_count} periodic_rta=#{pass_periodic_rta_ms.round(1)}ms/#{pass_periodic_rta_count} periodic_functions=#{pass_periodic_function_scan_ms.round(1)}ms periodic_monomorphized=#{pass_periodic_monomorphized_scan_ms.round(1)}ms periodic_types=#{pass_periodic_type_scan_ms.round(1)}ms periodic_undefer=#{pass_periodic_undefer_ms.round(1)}ms end_rta=#{pass_end_rta_ms.round(1)}ms residual=#{pass_residual_ms.round(1)}ms max_lower=#{pass_max_lower_ms.round(1)}ms max_name=#{pass_max_lower_name} lowered=#{pass_lowered} deferred=#{pass_deferred} visited=#{idx}"
         end
         stop_after_pending_phase("pass_end", "ADAMAS_STOP_AFTER_HIR_PENDING_PASS_END", pass, idx, nil, "lowered=#{pass_lowered},deferred=#{pass_deferred},undeferred=#{rta_undeferred_total}")
 
@@ -97730,9 +97748,18 @@ module Adamas::HIR
       started_at = Time.instant if profile
       t = resolve_call_tuple(input)
       if profile
+        elapsed_ns = (Time.instant - started_at.not_nil!).total_nanoseconds.to_i64
         @call_resolution_profile_count += 1_i64
-        @call_resolution_profile_time_ns +=
-          (Time.instant - started_at.not_nil!).total_nanoseconds.to_i64
+        @call_resolution_profile_time_ns += elapsed_ns
+        if t
+          if t[0] != input.func_name
+            @call_resolution_profile_symbol_changed_count += 1_i64
+            @call_resolution_profile_symbol_changed_time_ns += elapsed_ns
+          end
+        else
+          @call_resolution_profile_miss_count += 1_i64
+          @call_resolution_profile_miss_time_ns += elapsed_ns
+        end
       end
       return nil unless t
       SelectedCallTarget.new(t[0], t[1])
