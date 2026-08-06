@@ -8618,6 +8618,7 @@ module Adamas::HIR
       # Avoid a stale out-of-range cursor if a future cleanup truncates a bucket.
       # Any non-append mutation must also invalidate this cursor explicitly.
       target_idx = 0 if target_idx > targets.size
+      return if target_idx == targets.size
       while target_idx < targets.size
         target = targets.unsafe_fetch(target_idx)
         target_idx += 1

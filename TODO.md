@@ -13262,6 +13262,35 @@ replay, method lookup, or a retry. It is promotable only if focused virtual-
 target tests, exact B4-F boundary parity, and aligned global wall/memory evidence
 show descent; otherwise remove it as a non-constraint micro-optimization.
 
+### Session 87: exhausted cursors avoid redundant hash writes (2026-08-06)
+
+`lower_virtual_targets_for_child` now returns when its existing append-only
+cursor already equals the current target-bucket size. The stale-cursor reset
+still runs first, and every absent cursor or appended suffix retains the
+unchanged lowering loop. Class replay, ancestor traversal, late hierarchy and
+generic-instance pairs, broad-target rendezvous, owner lookup, attempted-key
+repair state, and debug child-call counts are not suppressed. The change adds
+one branch and no state, cache, helper, revision, or invalidation contract.
+
+The focused missing-concrete-virtual-target family passes 59 examples with no
+failures, errors, or pending cases, including the already-live broad-root
+rendezvous. A fresh guarded host build succeeds in about 16 seconds. Two
+source-matched iteration-1 gates stop with exact boundary parity: 1,951 missing
+functions, 28,455 total functions, and 8,985/5,829 force requests/admits. They
+report approximately 149 and 148 seconds versus two preceding approximately
+150-second no-phase-stat baseline runs. Manual monitoring observed one compiler
+process and RSS below the 4 GiB guard; the built-in resource row still reports
+RSS/FD metrics as unknown.
+
+Boundary: B4-F remains RED. The one-to-two-second wall direction is consistent
+but too small and coarsely measured for a strong speedup claim. The correctness
+certificate is ROBUST under the existing append-only bucket invariant and
+becomes stale if a future mutation removes, replaces, or reorders targets
+without resetting its `(child,parent)` cursor. Do not broaden this into class
+replay suppression. Further performance work must return to the stable direct
+`lower_function_if_needed -> lower_method` corridor and find a larger measured
+constraint; another replay bookkeeping micro-optimization is not justified.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
