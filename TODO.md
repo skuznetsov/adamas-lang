@@ -12759,6 +12759,29 @@ source witness plus a phase-aligned performance certificate; the next B4-F
 slice should return to the remaining lowering cost rather than add cache
 guardrail complexity speculatively.
 
+### Session 73: reject compact-parser one-entry reuse by measured identity locality (2026-08-05)
+
+The cache-OFF profile moved visible work into `parse_method_name_compact`,
+shorter String slices, and GC, so the narrowest possible follow-up was a safe
+one-entry cache retaining the exact source String and comparing it with
+`same?`. Before implementing it, a temporary counter-only probe measured total
+valid parser calls and consecutive calls with the same String identity. It did
+not return cached results or change parser output.
+
+The 80-second guarded stage2-shaped run reached 21,750,000 calls and only
+736,495 consecutive identity matches, approximately 3.39%. The early rate was
+also unstable: 152,145 matches at one million calls (15.21%) decayed as the
+main lowering phase progressed. One-entry reuse therefore has a hard observed
+ceiling below the predeclared 20% promotion threshold, before accounting for
+its branch, retained reference, fields, and invalidation surface.
+
+The diagnostic fields and writes were removed immediately; no production code
+or uncommitted tracked diff remains. This refutes only consecutive identity
+reuse. A non-consecutive content cache would reintroduce hashing and retention
+cost already visible in the cache-ON samples and has no promotion evidence.
+The compact-parser cache branch is closed; the next profile slice must target a
+different lowering cost rather than rebuild the deleted cache in another form.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
