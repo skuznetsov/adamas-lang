@@ -13851,6 +13851,31 @@ gate is an early proxy, not a complete B4-F certificate, and the separate
 layout-fallback edge still materializes a broad generic graph. Next: isolate
 that layout edge with a value-layout necessity falsifier before changing it.
 
+### Session 101: keep reference ivar layout refresh nominal (2026-08-29)
+
+The final ivar source-authority retry was a second hidden generic-demand edge:
+re-resolving a reference annotation during `fixup_inherited_ivars` materialized
+its entire generic class even though the layout only needs the nominal pointer
+type. The retry now suppresses generic materialization while preserving the
+existing storage-sizing boundary, where concrete value structs must still be
+materialized to determine their size and alignment.
+
+The focused falsifier proves both sides of the contract: `Array(Int32)` remains
+nominal after the final layout refresh, while `Pair(Int64)` is materialized and
+has its expected 16-byte value layout. Both focused examples pass, and the
+generated `Array#find` reference-element runtime example passes. The core HIR
+run passed 716 of 717 examples; its sole `as?` output-order failure reproduces
+unchanged on clean `9e1ea7da` and is therefore tracked as a pre-existing defect,
+not widened into this slice.
+
+On the fixed historical self-host source, the bounded early gate preserved
+`missing=171` and `pending=171` while reducing materialized functions from 976
+to 847. Two runs reached that same frontier in approximately 25 and 24 seconds,
+versus approximately 39 seconds before this change. Adversary verdict: ROBUST
+for the final ivar annotation boundary. This remains an early proxy rather than
+a complete B4-F certificate; the next step is a canonical per-instance demand
+ledger before changing the broader queue architecture.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

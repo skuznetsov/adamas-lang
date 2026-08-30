@@ -21407,9 +21407,12 @@ module Adamas::HIR
       if declared_name
         # The first annotation lookup may have cached a VOID or a class-shaped
         # placeholder before a sibling alias was registered. Force this
-        # source-authority retry at the final layout boundary.
+        # source-authority retry at the final layout boundary. Resolve only the
+        # nominal type here; storage sizing below materializes value structs.
         @annotation_type_ref_cache.delete(annotation_type_ref_cache_key(declared_name, owner_name))
-        refreshed = resolve_explicit_ivar_annotation_type(declared_name, owner_name)
+        refreshed = without_generic_materialization do
+          resolve_explicit_ivar_annotation_type(declared_name, owner_name)
+        end
         return canonical_ivar_storage_type_ref(refreshed, owner_name, ivar.name) if refreshed != TypeRef::VOID
       end
 
@@ -21670,18 +21673,24 @@ module Adamas::HIR
       resolved
     end
 
+    private def without_generic_materialization(&) : TypeRef
+      old_suppress = @suppress_monomorphization
+      @suppress_monomorphization = true
+      begin
+        yield
+      ensure
+        @suppress_monomorphization = old_suppress
+      end
+    end
+
     # Signature collection needs the nominal TypeRef for overload identity, but
     # it must not materialize a generic class before any call or layout demands it.
     private def signature_annotation_type_ref(
       type_name : String,
       owner_name : String?,
     ) : TypeRef
-      old_suppress = @suppress_monomorphization
-      @suppress_monomorphization = true
-      begin
+      without_generic_materialization do
         annotation_type_ref(type_name, owner_name)
-      ensure
-        @suppress_monomorphization = old_suppress
       end
     end
 
