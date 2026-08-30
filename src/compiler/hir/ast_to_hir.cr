@@ -34062,9 +34062,8 @@ module Adamas::HIR
             member = unwrap_visibility_member_in_arena(@arena[expr_id], @arena)
             next unless member.is_a?(Adamas::Compiler::Frontend::DefNode)
             has_ivar_param = def_header_has_instance_var_param?(member, @arena)
-            next if has_ivar_param == false
             # Scan parameters for ivar shortcuts: def foo(@field : Type)
-            if params = member.params
+            if has_ivar_param != false && (params = member.params)
               parameter_provenance = parameter_provenance_for_def(member, @arena)
               source_ivar_params = ivar_param_entries_for_def(
                 member,

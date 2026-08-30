@@ -7628,6 +7628,30 @@ describe Adamas::HIR::AstToHir do
     end
   end
 
+  describe "registration-time implicit ivar discovery" do
+    it "scans ordinary method bodies without reading their parameter storage" do
+      code = <<-CRYSTAL
+        class BodyAssignedIvar
+          def initialize
+            @value = 7
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(code)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => code},
+      )
+      class_node = exprs.compact_map { |id| arena[id].as?(Adamas::Compiler::Frontend::ClassNode) }.first
+
+      converter.register_class(class_node)
+
+      value = converter.class_info["BodyAssignedIvar"].ivars.find { |ivar| ivar.name == "@value" }
+      value.should_not be_nil
+      value.not_nil!.type.should eq(Adamas::HIR::TypeRef::INT32)
+    end
+  end
+
   describe "generic block return types" do
     it "substitutes block return type params in call return types" do
       code = <<-CRYSTAL

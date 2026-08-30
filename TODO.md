@@ -14082,6 +14082,28 @@ Residual risk remains at consumers that may have historically interpreted
 `true` as "attempted" rather than "made useful progress"; retain their exact
 fallback paths before widening or deleting them.
 
+### Session 109: decouple method-body ivar discovery from parameter provenance (2026-08-30)
+
+The concrete-class registration pass used a source-provenance guard to avoid
+reading potentially corrupt `Parameter` storage, but an early `next` also
+skipped the independent method-body ivar scan for every ordinary definition
+whose source header had no `@ivar` parameter. Registration could therefore
+miss a literal assignment such as `@value = 7` until the initializer body was
+lowered, reopening layout work at allocator generation time.
+
+The parameter read remains source-gated, while body discovery now runs for all
+ordinary method definitions. A registration-only regression proves that an
+`Int32` field assigned in an ordinary initializer is present before any body is
+lowered. The existing no-prelude source-scan guard remains green, and the full
+`ast_to_hir` suite passes 463 examples with zero failures and two pending.
+
+Adversary verdict: ROBUST for the accidental control-flow coupling and its
+parameter-corruption boundary. This does not justify removing allocator
+pre-lowering: a bounded layout-delta probe still found one `AstToHir` field
+that registration did not materialize. Next: compare and consolidate the two
+existing ivar-body scanners, add a nested-control-flow falsifier, and require a
+zero layout delta before introducing any allocator fast path.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
