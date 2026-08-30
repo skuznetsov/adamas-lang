@@ -7777,6 +7777,74 @@ describe Adamas::HIR::AstToHir do
       value.should_not be_nil
       value.not_nil!.type.should eq(Adamas::HIR::TypeRef::INT32)
     end
+
+    it "preserves numeric literal suffixes in array element types" do
+      code = <<-CRYSTAL
+        class SuffixedArrayAssignedIvar
+          def initialize
+            @values = [0_u8]
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(code)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => code},
+      )
+      class_node = exprs.compact_map { |id| arena[id].as?(Adamas::Compiler::Frontend::ClassNode) }.first
+
+      converter.register_class(class_node)
+
+      values = converter.class_info["SuffixedArrayAssignedIvar"].ivars.find { |ivar| ivar.name == "@values" }
+      values.should_not be_nil
+      descriptor = converter.module.get_type_descriptor(values.not_nil!.type)
+      descriptor.should_not be_nil
+      descriptor.not_nil!.name.should eq("Array(UInt8)")
+    end
+
+    it "normalizes rooted generic constructor types" do
+      code = <<-CRYSTAL
+        class RootedGenericAssignedIvar
+          def initialize
+            @values = ::Array(UInt32).new
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(code)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => code},
+      )
+      class_node = exprs.compact_map { |id| arena[id].as?(Adamas::Compiler::Frontend::ClassNode) }.first
+
+      converter.register_class(class_node)
+
+      values = converter.class_info["RootedGenericAssignedIvar"].ivars.find { |ivar| ivar.name == "@values" }
+      values.should_not be_nil
+      descriptor = converter.module.get_type_descriptor(values.not_nil!.type)
+      descriptor.should_not be_nil
+      descriptor.not_nil!.name.should eq("Array(UInt32)")
+    end
+
+    it "does not treat rooted runtime calls as generic type names" do
+      code = <<-CRYSTAL
+        class RootedRuntimeCallAssignedIvar
+          def initialize
+            @value = ::factory(UInt32).new
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(code)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => code},
+      )
+      class_node = exprs.compact_map { |id| arena[id].as?(Adamas::Compiler::Frontend::ClassNode) }.first
+
+      converter.register_class(class_node)
+
+      converter.class_info["RootedRuntimeCallAssignedIvar"].ivars.none? { |ivar| ivar.name == "@value" }.should be_true
+    end
   end
 
   describe "generic block return types" do

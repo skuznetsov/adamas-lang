@@ -14126,6 +14126,35 @@ contract. This is not yet authority to skip initializer pre-lowering: the next
 slice must measure a global allocator layout-delta certificate and keep the
 fallback unless all admitted initializer shapes are registration-complete.
 
+### Session 111: preserve literal and rooted generic ivar types (2026-08-30)
+
+A default-off allocator probe compared class layouts immediately before and
+after initializer pre-lowering during a bounded full-source HIR run. Before the
+300-second boundary it observed 994 pre-lowers across 993 classes and eight
+layout changes. This falsifies removing the fallback: registration is still not
+complete for every initializer shape.
+
+Three of those changes use two narrow parser forms that need no semantic call
+resolution. Numeric literal suffixes in array literals were being collapsed to
+`Int32`, and rooted generic constructors such as `::Set(UInt32).new` were parsed
+as a call-shaped type expression that the detached scanner did not recognize.
+Registration now reuses the canonical numeric-literal classifier and accepts
+only rooted, uppercase generic call shapes. A negative fixture proves that a
+lowercase rooted runtime call is not fabricated into a type.
+
+The registration contract passes 9 examples with zero failures. The complete
+`ast_to_hir` suite passes 471 examples with zero failures and two pending, a
+fresh compiler build succeeds, and the no-prelude parameter-provenance guard
+remains green. The temporary allocator telemetry was removed from production
+code after measurement.
+
+Adversary verdict: ROBUST for literal suffix preservation, rooted generic type
+recovery, and the runtime-call exclusion. This does not prove a zero global
+layout delta after the patch. Initializer pre-lowering remains intentional.
+Next: classify the five residual class deltas across parameter, member-return,
+and arbitrary call-return shapes, and prefer a typed initializer/layout identity
+contract over duplicating semantic call resolution inside the detached scanner.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

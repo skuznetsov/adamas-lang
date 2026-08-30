@@ -61410,13 +61410,7 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::StringNode, Adamas::Compiler::Frontend::StringInterpolationNode
         "String"
       when Adamas::Compiler::Frontend::NumberNode
-        # Check if it's a float (has decimal point or exponent)
-        num_str = (safe_slice_to_string(node.value) || "")
-        if num_str.includes?('.') || num_str.includes?('e') || num_str.includes?('E')
-          "Float64"
-        else
-          "Int32"
-        end
+        number_literal_type_name((safe_slice_to_string(node.value) || ""))
       when Adamas::Compiler::Frontend::BoolNode
         "Bool"
       when Adamas::Compiler::Frontend::CharNode
@@ -61858,12 +61852,8 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::StringNode, Adamas::Compiler::Frontend::StringInterpolationNode
         return TypeRef::STRING
       when Adamas::Compiler::Frontend::NumberNode
-        num_str = (safe_slice_to_string(value_node.value) || "")
-        if num_str.includes?('.') || num_str.includes?('e') || num_str.includes?('E')
-          return TypeRef::FLOAT64
-        else
-          return TypeRef::INT32
-        end
+        literal_type = number_literal_type_name((safe_slice_to_string(value_node.value) || "")) || "Int32"
+        return type_ref_for_name(literal_type)
       when Adamas::Compiler::Frontend::BoolNode
         return TypeRef::BOOL
       when Adamas::Compiler::Frontend::CharNode
@@ -62002,6 +61992,26 @@ module Adamas::HIR
         else
           member_name
         end
+      when Adamas::Compiler::Frontend::CallNode
+        # A rooted generic type expression such as `::Array(UInt32)` is parsed
+        # as a call whose callee is a root PathNode. Accept that narrow shape
+        # when it is consumed as a constructor receiver; lowercase runtime
+        # calls must not become fabricated type names.
+        callee_node = node_for_expr(node.callee, @arena)
+        return nil unless callee_node.is_a?(Adamas::Compiler::Frontend::PathNode)
+        return nil unless callee_node.left.nil?
+        base_name = extract_type_name_from_node(callee_node)
+        return nil unless base_name
+        terminal_name = base_name.split("::").last
+        return nil if terminal_name.empty? || !terminal_name[0].uppercase?
+        arg_names = node.args.map do |arg_id|
+          arg_node = node_for_expr(arg_id, @arena)
+          return nil unless arg_node
+          arg_name = extract_type_name_from_node(arg_node)
+          return nil unless arg_name
+          arg_name
+        end
+        "#{base_name}(#{arg_names.join(", ")})"
       when Adamas::Compiler::Frontend::BinaryNode
         # Type-union pattern in case/in: `B | C | D` parses as a left-associated
         # BinaryNode with operator `|`. Recover the union type name so
