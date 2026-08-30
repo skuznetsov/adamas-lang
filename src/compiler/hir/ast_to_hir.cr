@@ -83182,6 +83182,12 @@ module Adamas::HIR
       "#{state}:#{body}:#{module_type}:#{cached_type}:#{base_type}:#{annotated}"
     end
 
+    private def useful_force_return_type_change?(before : TypeRef?, after : TypeRef?) : Bool
+      return false unless after
+      return false if after == TypeRef::VOID || unresolved_generic_return_type?(after)
+      after != before
+    end
+
     private def force_pending_call_targets_for_return_type(
       name1 : String?,
       name2 : String? = nil,
@@ -83218,7 +83224,7 @@ module Adamas::HIR
 
     # Force-lower a function immediately even if we're inside lowering.
     # Used when we need the return type of a callee that was deferred.
-    # Returns true if the function was lowered, false if it couldn't be.
+    # Returns true only when the requested body or return evidence advances.
     #
     # `bypass_inline_yield` allows force-lowering from inline-yield contexts,
     # but only when the callee is provably yield-free (no &-param, no implicit
@@ -83281,10 +83287,15 @@ module Adamas::HIR
       end
 
       debug_outcome = env_has?("DEBUG_FORCE_LOWER_OUTCOME")
+      base_name = strip_type_suffix(name)
       outcome_state_before = function_state(name) if debug_outcome
       outcome_type_before = force_return_type_category(@function_types[name]?) if debug_outcome
-      outcome_base_type_before = force_return_type_category(@function_base_return_types[name]?) if debug_outcome
+      outcome_base_type_before = force_return_type_category(@function_base_return_types[base_name]?) if debug_outcome
       outcome_started = Time.instant if debug_outcome
+      requested_body_before = @module.has_function_with_body?(name)
+      module_return_before = @module.function_by_name(name).try(&.return_type)
+      function_return_before = @function_types[name]?
+      base_return_before = @function_base_return_types[base_name]?
 
       # Phase 0 metric: count forced lowers
       @phase0_forced_lower_count += 1
@@ -83326,12 +83337,16 @@ module Adamas::HIR
 
       begin
         lower_function_if_needed_impl(name)
+        made_progress = (!requested_body_before && @module.has_function_with_body?(name)) ||
+                        useful_force_return_type_change?(module_return_before, @module.function_by_name(name).try(&.return_type)) ||
+                        useful_force_return_type_change?(function_return_before, @function_types[name]?) ||
+                        (name == base_name && useful_force_return_type_change?(base_return_before, @function_base_return_types[base_name]?))
         if debug_outcome
           functions_added = @module.function_count - functions_before.not_nil!
           requested_body = @module.has_function_with_body?(name) ? 1 : 0
           source = pending_call_target_slot > 0 ? "pending_helper" : "direct"
           elapsed_ms = (Time.instant - outcome_started.not_nil!).total_milliseconds
-          STDERR.puts "[FORCE_LOWER_OUTCOME] source=#{source} context=#{pending_call_target_context} slot=#{pending_call_target_slot} depth=#{@force_lower_return_type_depth} elapsed_ms=#{elapsed_ms.round(3)} added=#{functions_added} requested_body=#{requested_body} state_before=#{outcome_state_before.not_nil!} state_after=#{function_state(name)} type_before=#{outcome_type_before.not_nil!} base_type_before=#{outcome_base_type_before.not_nil!} prior1=#{pending_call_target_prior1} prior2=#{pending_call_target_prior2} name=#{name}"
+          STDERR.puts "[FORCE_LOWER_OUTCOME] source=#{source} context=#{pending_call_target_context} slot=#{pending_call_target_slot} depth=#{@force_lower_return_type_depth} elapsed_ms=#{elapsed_ms.round(3)} progress=#{made_progress ? 1 : 0} added=#{functions_added} requested_body=#{requested_body} state_before=#{outcome_state_before.not_nil!} state_after=#{function_state(name)} type_before=#{outcome_type_before.not_nil!} type_after=#{force_return_type_category(@function_types[name]?)} base_type_before=#{outcome_base_type_before.not_nil!} base_type_after=#{force_return_type_category(@function_base_return_types[base_name]?)} prior1=#{pending_call_target_prior1} prior2=#{pending_call_target_prior2} name=#{name}"
         end
       ensure
         if need_iy_reset
@@ -83347,7 +83362,7 @@ module Adamas::HIR
         @force_lower_return_type_depth -= 1
       end
 
-      true
+      made_progress
     end
 
     # Returns true if the function is provably yield-free: no explicit &-param

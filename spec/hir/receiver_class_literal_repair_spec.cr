@@ -152,6 +152,14 @@ class Adamas::HIR::AstToHir
     lower_function_if_needed(name)
   end
 
+  def __test_force_lower_function_for_return_type(name : String) : Bool
+    force_lower_function_for_return_type(name)
+  end
+
+  def __test_reset_function_lowering_state(name : String) : Nil
+    clear_function_state(name)
+  end
+
   def __test_rekey_receiver_repair_request_to_canonical_body(
     exact_target : String,
     fallback_base : String,
@@ -2676,6 +2684,22 @@ describe "receiver-bound class-literal repair" do
       .map(&.strip)
       .sort
       .should eq(["Int32", "String"])
+    converter.__test_force_lower_function_for_return_type(
+      "ForceIdentityDefaultedOverload#choose"
+    ).should be_false
+
+    selected_name = "ForceIdentityDefaultedOverload#choose$Bool_Int32"
+    converter.__test_remove_hir_function(selected_name).should be_true
+    converter.__test_reset_function_lowering_state("ForceIdentityDefaultedOverload#choose")
+    converter.__test_reset_function_lowering_state(selected_name)
+    converter.__test_force_lower_function_for_return_type(
+      "ForceIdentityDefaultedOverload#choose"
+    ).should be_false
+    converter.module.has_function_with_body?(selected_name).should be_false
+
+    converter.__test_reset_function_lowering_state(selected_name)
+    converter.__test_force_lower_function_for_return_type(selected_name).should be_true
+    converter.module.has_function_with_body?(selected_name).should be_true
   end
 
   it "keeps union dispatch for distinct named-only overloads" do

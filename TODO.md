@@ -14044,6 +14044,35 @@ diagnostic evidence only, not bootstrap or performance closure. Next: add a
 local failing contract probe requiring a successful force result to correspond
 to useful return/body materialization before changing force-result semantics.
 
+### Session 108: return progress only from forced return lowering (2026-08-30)
+
+`force_lower_function_for_return_type` previously returned `true` whenever it
+reached `lower_function_if_needed_impl`, even when that call emitted no HIR body
+and discovered no return type. Callers therefore treated an attempted base-name
+alias lookup as useful progress and could skip exact fallback work or refresh
+unchanged return-type state.
+
+The Boolean now reports a deliberately narrow contract: the requested symbol
+must acquire a body or its exact/module return-type evidence must change to a
+concrete non-void type. Base return evidence counts only when the requested
+symbol is itself the base name. A revision or representative-return change in
+an overload sibling is explicitly not success for an exact demand. This reuses
+existing HIR indexes; it adds no result enum, queue, cache, registry, family
+scan, or selection authority. A focused defaulted-overload regression proves
+both directions on the same family: the base alias returns `false` and leaves
+the removed typed body absent, while forcing the exact `Bool, Int32` overload
+returns `true`, restores its body, and logs `progress=1`.
+
+The receiver suite passes 53 examples with zero failures. The complete
+`ast_to_hir` suite passes 462 examples with zero failures and two pending
+examples. Mini-Quadrum verdict: the highest-risk failures were turning the
+result into an always-false guard or accepting sibling-family activity as exact
+progress; the positive exact rematerialization control and bounded consumer
+review reject both. The contract is not yet a bootstrap performance claim.
+Residual risk remains at consumers that may have historically interpreted
+`true` as "attempted" rather than "made useful progress"; retain their exact
+fallback paths before widening or deleting them.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
