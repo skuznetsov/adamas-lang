@@ -5687,6 +5687,48 @@ describe Adamas::HIR::AstToHir do
       )
     end
 
+    it "does not treat a known nominal type as a same-suffix enum" do
+      converter = lower_program(<<-CRYSTAL)
+        module EnumSuffixOwner
+          enum Options
+            Enabled
+          end
+        end
+
+        module ValueSuffixOwner
+          struct Options
+          end
+        end
+
+        class SuffixIdentitySink
+          def add(value : EnumSuffixOwner::Options)
+          end
+
+          def add(value : ValueSuffixOwner::Options)
+          end
+        end
+
+        def preserve_suffix_identity(
+          sink : SuffixIdentitySink,
+          value : ValueSuffixOwner::Options,
+        )
+          sink.add(value)
+        end
+      CRYSTAL
+
+      function = converter.module.functions.find do |candidate|
+        candidate.name.starts_with?("preserve_suffix_identity$")
+      end
+      function.should_not be_nil
+      add_call = function.not_nil!.blocks.flat_map(&.instructions)
+        .compact_map { |instruction| instruction.as?(Adamas::HIR::Call) }
+        .find { |call| call.method_name.starts_with?("SuffixIdentitySink#add") }
+      add_call.should_not be_nil
+      add_call.not_nil!.method_name.should eq(
+        "SuffixIdentitySink#add$ValueSuffixOwner::Options",
+      )
+    end
+
     it "does not propagate enum identity from an unrelated mixed-union arm" do
       converter = lower_program(<<-CRYSTAL)
         enum MixedUnionSignal

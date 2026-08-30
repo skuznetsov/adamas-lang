@@ -10006,6 +10006,13 @@ module Adamas::HIR
 
     private def resolve_enum_name(name : String) : String?
       if cached = @resolved_enum_name_cache[name]?
+        # A suffix match can predate deferred nominal registration. Recheck
+        # only non-exact cache hits so a later class/module remains authoritative.
+        if cached != name && (@class_info.has_key?(name) || @module_defs.has_key?(name))
+          @resolved_enum_name_cache.delete(name)
+          @resolved_enum_name_negative_cache << name
+          return nil
+        end
         return cached
       end
       return nil if @resolved_enum_name_negative_cache.includes?(name)
@@ -10017,6 +10024,13 @@ module Adamas::HIR
       if enum_info.has_key?(name)
         @resolved_enum_name_cache[name] = name
         return name
+      end
+      # An exact registered nominal owner is authoritative. Do not reinterpret
+      # it as an unrelated enum merely because both names end in the same
+      # namespace component (for example CLI::Options vs Regex::Options).
+      if @class_info.has_key?(name) || @module_defs.has_key?(name)
+        @resolved_enum_name_negative_cache << name
+        return nil
       end
       short_name = last_namespace_component(name)
       if short_name != name && enum_info.has_key?(short_name)
@@ -10324,16 +10338,38 @@ module Adamas::HIR
         next unless value_id
 
         raw_type = ctx.type_of(value_id)
-        enum_ref = type_ref_for_name(enum_name)
-        next if enum_ref == TypeRef::VOID
-        base_type = @enum_base_types.try(&.[enum_name]?)
-        compatible = raw_type == enum_ref ||
-                     (!!base_type && raw_type == base_type) ||
-                     enum_metadata_target_compatible?(raw_type, enum_name)
-        next unless compatible
+        next unless enum_identity_compatible_with_type?(raw_type, enum_name)
 
         (@enum_value_types ||= {} of ValueId => String)[value_id] = enum_name
       end
+    end
+
+    private def enum_identity_compatible_with_type?(
+      value_type : TypeRef,
+      enum_name : String,
+    ) : Bool
+      enum_ref = type_ref_for_name(enum_name)
+      return false if enum_ref == TypeRef::VOID
+      return true if value_type == enum_ref
+      return true if @enum_base_types.try(&.[enum_name]?) == value_type
+
+      enum_metadata_target_compatible?(value_type, enum_name)
+    end
+
+    private def call_argument_enum_names(
+      ctx : LoweringContext,
+      args : Array(ValueId),
+    ) : Array(String?)?
+      enum_map = @enum_value_types
+      return nil unless enum_map
+
+      names = args.map do |arg_id|
+        enum_name = enum_map[arg_id]?
+        if enum_name && enum_identity_compatible_with_type?(ctx.type_of(arg_id), enum_name)
+          enum_name
+        end
+      end
+      names.any? ? names : nil
     end
 
     private def track_common_enum_merge(
@@ -89353,11 +89389,7 @@ module Adamas::HIR
 
       prepack_arg_types = args.map { |arg_id| ctx.type_of(arg_id) }
       prepack_arg_literals = args.map { |arg_id| ctx.type_literal?(arg_id) }
-      prepack_arg_enum_names = nil
-      if enum_map = @enum_value_types
-        names = args.map { |arg_id| enum_map[arg_id]? }
-        prepack_arg_enum_names = names if names.any?
-      end
+      prepack_arg_enum_names = call_argument_enum_names(ctx, args)
 
       # Tuple#to_static_array has an intentionally open stdlib return type;
       # lower the concrete zero-argument call before overload materialization
@@ -90340,9 +90372,8 @@ module Adamas::HIR
       callsite_arg_enum_names = nil
       if use_prepack_callsite_types
         callsite_arg_enum_names = prepack_arg_enum_names.try(&.dup)
-      elsif enum_map = @enum_value_types
-        names = args.map { |arg_id| enum_map[arg_id]? }
-        callsite_arg_enum_names = names if names.any?
+      else
+        callsite_arg_enum_names = call_argument_enum_names(ctx, args)
       end
       if use_prepack_callsite_types && args.size > prepack_arg_types.size
         extra_ids = args[prepack_arg_types.size..-1] || [] of ValueId
@@ -90350,8 +90381,18 @@ module Adamas::HIR
           callsite_arg_types << ctx.type_of(arg_id)
           callsite_arg_literals << ctx.type_literal?(arg_id)
         end
-        if callsite_arg_enum_names && (enum_map = @enum_value_types)
-          extra_ids.each { |arg_id| callsite_arg_enum_names << enum_map[arg_id]? }
+        extra_enum_names = call_argument_enum_names(ctx, extra_ids)
+        if callsite_arg_enum_names
+          if extra_enum_names
+            callsite_arg_enum_names.concat(extra_enum_names)
+          else
+            extra_ids.size.times do
+              callsite_arg_enum_names << nil
+            end
+          end
+        elsif extra_enum_names
+          callsite_arg_enum_names = Array(String?).new(prepack_arg_types.size, nil)
+          callsite_arg_enum_names.concat(extra_enum_names)
         end
       end
       if callsite_arg_enum_names
@@ -91073,11 +91114,7 @@ module Adamas::HIR
           unless entry_stats_for_callsite.has_splat || entry_stats_for_callsite.has_double_splat
             callsite_arg_types = arg_types.dup
             callsite_arg_literals = arg_literals.dup
-            callsite_arg_enum_names = nil
-            if enum_map = @enum_value_types
-              names = args.map { |arg_id| enum_map[arg_id]? }
-              callsite_arg_enum_names = names if names.any?
-            end
+            callsite_arg_enum_names = call_argument_enum_names(ctx, args)
           end
         end
         if env_has?("DEBUG_SLICE_EACH") && method_name == "each" && (lookup_name.includes?("Slice") || entry_name.includes?("Flags"))
