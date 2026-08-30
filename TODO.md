@@ -14155,6 +14155,32 @@ Next: classify the five residual class deltas across parameter, member-return,
 and arbitrary call-return shapes, and prefer a typed initializer/layout identity
 contract over duplicating semantic call resolution inside the detached scanner.
 
+### Session 112: use typed parameters for direct ivar discovery (2026-08-30)
+
+One residual allocator layout delta assigned an explicitly typed method
+parameter directly to an ivar. The detached registration scanner had no local
+typing environment, so `@type_info = type_info` remained unknown until
+initializer lowering. Registration now derives parameter facts from the exact
+effective `DefNode`, including source-recovered parameters, and rebuilds
+`DefParamInfo` through the existing provenance-aware parameter readers. It
+does not add a cache, registry, overload lookup, or new semantic authority.
+
+The contract is deliberately narrow: only a direct top-level assignment can
+consume an explicit parameter annotation. A preceding local reassignment
+invalidates that parameter fact, and nested control flow remains fail-closed
+until a real lexical flow model exists. Regressions cover the positive path,
+local reassignment, and nested refinement exclusion. The focused registration
+contract passes 12 examples with zero failures; the complete `ast_to_hir`
+suite passes 474 examples with zero failures and two pending, a fresh compiler
+build succeeds, and the no-prelude parameter-corruption guard remains green.
+
+Adversary verdict: ROBUST for direct typed-parameter assignments and the
+provenance/shadowing boundary. The prior global layout-delta probe has not been
+rerun, so this closes only the locally proven parameter shape. Initializer
+pre-lowering remains intentional. Next: keep member and arbitrary call returns
+out of the detached scanner and bind their typed initializer target and layout
+facts to one concrete class identity.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

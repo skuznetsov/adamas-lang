@@ -7845,6 +7845,71 @@ describe Adamas::HIR::AstToHir do
 
       converter.class_info["RootedRuntimeCallAssignedIvar"].ivars.none? { |ivar| ivar.name == "@value" }.should be_true
     end
+
+    it "uses typed method parameters for assigned ivar types" do
+      code = <<-CRYSTAL
+        class ParameterAssignedIvar
+          def initialize(value : String)
+            @value = value
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(code)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => code},
+      )
+      class_node = exprs.compact_map { |id| arena[id].as?(Adamas::Compiler::Frontend::ClassNode) }.first
+
+      converter.register_class(class_node)
+
+      value = converter.class_info["ParameterAssignedIvar"].ivars.find { |ivar| ivar.name == "@value" }
+      value.should_not be_nil
+      value.not_nil!.type.should eq(Adamas::HIR::TypeRef::STRING)
+    end
+
+    it "does not reuse a parameter type after local reassignment" do
+      code = <<-CRYSTAL
+        class ReassignedParameterIvar
+          def initialize(value : String)
+            value = 1
+            @value = value
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(code)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => code},
+      )
+      class_node = exprs.compact_map { |id| arena[id].as?(Adamas::Compiler::Frontend::ClassNode) }.first
+
+      converter.register_class(class_node)
+
+      converter.class_info["ReassignedParameterIvar"].ivars.none? { |ivar| ivar.name == "@value" }.should be_true
+    end
+
+    it "does not guess parameter refinement inside nested control flow" do
+      code = <<-CRYSTAL
+        class RefinedParameterIvar
+          def initialize(value : String | Int32)
+            if value.is_a?(String)
+              @value = value
+            end
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(code)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => code},
+      )
+      class_node = exprs.compact_map { |id| arena[id].as?(Adamas::Compiler::Frontend::ClassNode) }.first
+
+      converter.register_class(class_node)
+
+      converter.class_info["RefinedParameterIvar"].ivars.none? { |ivar| ivar.name == "@value" }.should be_true
+    end
   end
 
   describe "generic block return types" do

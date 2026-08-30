@@ -34121,7 +34121,8 @@ module Adamas::HIR
               end
             end
             next unless (body = member.body)
-            discovered = discover_implicit_ivars_in_body(body, @arena, class_name)
+            parameter_infos = registration_parameter_infos_for_def(member, @arena)
+            discovered = discover_implicit_ivars_in_body(body, @arena, class_name, parameter_infos)
             discovered.each do |ivar_name, ivar_type|
               unless ivars.any? { |iv| iv.name == ivar_name }
                 if env_get("DEBUG_IVAR_REG")
@@ -61650,35 +61651,79 @@ module Adamas::HIR
       body : Array(Adamas::Compiler::Frontend::ExprId),
       arena : Adamas::Compiler::Frontend::ArenaLike,
       class_name : String,
+      parameter_infos : Array(DefParamInfo),
     ) : Array({String, TypeRef})
-      discover_implicit_ivars_in_body_in_arena(body, arena, class_name)
+      discover_implicit_ivars_in_body_in_arena(body, arena, class_name, parameter_infos)
     end
 
     private def discover_implicit_ivars_in_body(
       body : Array(Adamas::Compiler::Frontend::ExprId),
       arena : Adamas::Compiler::Frontend::ArenaLike?,
       class_name : String,
+      parameter_infos : Array(DefParamInfo),
     ) : Array({String, TypeRef})
       return [] of {String, TypeRef} unless arena
       arena = arena.as(Adamas::Compiler::Frontend::ArenaLike)
-      discover_implicit_ivars_in_body_in_arena(body, arena, class_name)
+      discover_implicit_ivars_in_body_in_arena(body, arena, class_name, parameter_infos)
     end
 
     private def discover_implicit_ivars_in_body_in_arena(
       body : Array(Adamas::Compiler::Frontend::ExprId),
       arena : Adamas::Compiler::Frontend::ArenaLike,
       class_name : String,
+      parameter_infos : Array(DefParamInfo),
     ) : Array({String, TypeRef})
       result = [] of {String, TypeRef}
       seen = Set(String).new
-      scan_nodes_for_ivars(body, arena, class_name, result, seen, 0)
+      shadowed_parameters = Set(String).new
+      scan_nodes_for_ivars(body, arena, class_name, parameter_infos, shadowed_parameters, result, seen, 0)
       result
+    end
+
+    private def registration_parameter_infos_for_def(
+      node : Adamas::Compiler::Frontend::DefNode,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Array(DefParamInfo)
+      effective = source_recovered_def_for(node, arena) || node
+      params = effective.params
+      return [] of DefParamInfo unless params
+
+      build_param_infos_from_params(
+        params,
+        arena,
+        parameter_provenance_for_def(effective, arena),
+      )
+    end
+
+    private def registration_parameter_type_for_identifier(
+      node : Adamas::Compiler::Frontend::IdentifierNode,
+      parameter_infos : Array(DefParamInfo),
+      shadowed_parameters : Set(String),
+      class_name : String,
+    ) : TypeRef?
+      identifier = (safe_slice_to_string(node.name) || "")
+      return nil if identifier.empty?
+      return nil if shadowed_parameters.includes?(identifier)
+
+      parameter_infos.each do |param|
+        next if named_only_separator?(param)
+        next if param.is_splat || param.is_double_splat || param.is_block
+        param_name = param.name
+        next unless param_name == identifier
+        type_name = param.type_annotation
+        next unless type_name
+        param_type = annotation_type_ref(type_name, class_name)
+        return param_type unless param_type == TypeRef::VOID
+      end
+      nil
     end
 
     private def scan_nodes_for_ivars(
       exprs : Array(Adamas::Compiler::Frontend::ExprId),
       arena : Adamas::Compiler::Frontend::ArenaLike,
       class_name : String,
+      parameter_infos : Array(DefParamInfo),
+      shadowed_parameters : Set(String),
       result : Array({String, TypeRef}),
       seen : Set(String),
       depth : Int32,
@@ -61697,51 +61742,63 @@ module Adamas::HIR
             unless seen.includes?(ivar_name)
               value_node = node_for_expr(node.value, arena)
               next unless value_node
-              ivar_type = infer_type_from_class_ivar_assign(value_node)
+              # Parameter annotations are authoritative only for a direct
+              # method-body assignment. Nested control flow needs lexical
+              # shadowing and type-refinement facts that this detached scanner
+              # deliberately does not reconstruct.
+              ivar_type = if depth == 0 && value_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
+                            registration_parameter_type_for_identifier(value_node, parameter_infos, shadowed_parameters, class_name) ||
+                              infer_type_from_class_ivar_assign(value_node)
+                          else
+                            infer_type_from_class_ivar_assign(value_node)
+                          end
               unless ivar_type == TypeRef::VOID
                 seen << ivar_name
                 result << {ivar_name, ivar_type}
               end
             end
+          elsif target.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
+            local_name = (safe_slice_to_string(target.name) || "")
+            shadowed_parameters << local_name unless local_name.empty?
           end
           # Recurse into value
-          scan_nodes_for_ivars([node.value], arena, class_name, result, seen, depth + 1)
+          scan_nodes_for_ivars([node.value], arena, class_name, parameter_infos, shadowed_parameters, result, seen, depth + 1)
         when Adamas::Compiler::Frontend::CallNode
           # Look for extern calls with `out @ivar` args
           scan_call_for_out_ivars(node, arena, class_name, result, seen)
           # Recurse into args
-          scan_nodes_for_ivars(node.args.to_a, arena, class_name, result, seen, depth + 1)
+          scan_nodes_for_ivars(node.args.to_a, arena, class_name, parameter_infos, shadowed_parameters, result, seen, depth + 1)
           # Recurse into callee
-          scan_nodes_for_ivars([node.callee], arena, class_name, result, seen, depth + 1)
+          scan_nodes_for_ivars([node.callee], arena, class_name, parameter_infos, shadowed_parameters, result, seen, depth + 1)
         when Adamas::Compiler::Frontend::IfNode
-          scan_nodes_for_ivars([node.condition], arena, class_name, result, seen, depth + 1)
+          scan_nodes_for_ivars([node.condition], arena, class_name, parameter_infos, shadowed_parameters, result, seen, depth + 1)
           if then_body = node.then_body
-            scan_nodes_for_ivars(then_body, arena, class_name, result, seen, depth + 1)
+            scan_nodes_for_ivars(then_body, arena, class_name, parameter_infos, shadowed_parameters, result, seen, depth + 1)
           end
           if else_body = node.else_body
-            scan_nodes_for_ivars(else_body, arena, class_name, result, seen, depth + 1)
+            scan_nodes_for_ivars(else_body, arena, class_name, parameter_infos, shadowed_parameters, result, seen, depth + 1)
           end
         when Adamas::Compiler::Frontend::UnlessNode
-          scan_nodes_for_ivars([node.condition], arena, class_name, result, seen, depth + 1)
-          scan_nodes_for_ivars(node.then_branch, arena, class_name, result, seen, depth + 1)
+          scan_nodes_for_ivars([node.condition], arena, class_name, parameter_infos, shadowed_parameters, result, seen, depth + 1)
+          scan_nodes_for_ivars(node.then_branch, arena, class_name, parameter_infos, shadowed_parameters, result, seen, depth + 1)
           if else_branch = node.else_branch
-            scan_nodes_for_ivars(else_branch, arena, class_name, result, seen, depth + 1)
+            scan_nodes_for_ivars(else_branch, arena, class_name, parameter_infos, shadowed_parameters, result, seen, depth + 1)
           end
         when Adamas::Compiler::Frontend::BeginNode
-          scan_nodes_for_ivars(node.body, arena, class_name, result, seen, depth + 1)
+          scan_nodes_for_ivars(node.body, arena, class_name, parameter_infos, shadowed_parameters, result, seen, depth + 1)
           if rescue_clauses = node.rescue_clauses
             rescue_clauses.each do |clause|
-              scan_nodes_for_ivars(clause.body, arena, class_name, result, seen, depth + 1)
+              scan_nodes_for_ivars(clause.body, arena, class_name, parameter_infos, shadowed_parameters, result, seen, depth + 1)
             end
           end
           if else_body = node.else_body
-            scan_nodes_for_ivars(else_body, arena, class_name, result, seen, depth + 1)
+            scan_nodes_for_ivars(else_body, arena, class_name, parameter_infos, shadowed_parameters, result, seen, depth + 1)
           end
           if ensure_body = node.ensure_body
-            scan_nodes_for_ivars(ensure_body, arena, class_name, result, seen, depth + 1)
+            scan_nodes_for_ivars(ensure_body, arena, class_name, parameter_infos, shadowed_parameters, result, seen, depth + 1)
           end
         when Adamas::Compiler::Frontend::AsNode, Adamas::Compiler::Frontend::AsQuestionNode
-          scan_nodes_for_ivars([node.expression], arena, class_name, result, seen, depth + 1)
+          scan_nodes_for_ivars([node.expression], arena, class_name, parameter_infos, shadowed_parameters, result, seen, depth + 1)
         end
       end
     end
