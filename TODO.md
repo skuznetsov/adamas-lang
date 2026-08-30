@@ -13806,6 +13806,27 @@ Next: reuse this committed stage1 producer for phase attribution under the same
 chain, and do not add another lowering abstraction until the new trace names a
 dominant post-iteration cost or repeated materialization family.
 
+### Session 99: skip scoring a sole compatible call target (2026-08-29)
+
+The late-materialization profile localized useful work in call resolution, not
+in missing-demand scans: iteration 0 spent 23.61 seconds processing pending
+functions while its scan and queue took only 26.3 milliseconds. When lookup has
+one overload key, the resolver now performs every existing arity, block, named,
+splat, owner-monomorphization, and typed-compatibility check, then selects that
+compatible target without computing comparative scores or tie-breaks.
+
+The bounded self-host gate preserved the exact frontier (`172 -> 1674` missing
+demands and `991 -> 7356` functions) while reducing the unprofiled iteration-0
+materialization pass from 26.44 to 23.61 seconds (10.7%). The profiled replay
+independently preserved all call-resolution counters and reduced resolver time
+from 14.31 to 13.18 seconds. `spec/hir/ast_to_hir_spec.cr` passes with 458
+examples, 0 failures, 0 errors, and 2 pre-existing pending examples.
+
+Adversary verdict: ROBUST for the compatible single-candidate corridor. Debug
+lookup modes bypass the shortcut so their score diagnostics remain intact.
+B4-F remains RED until a fresh complete 300-second bootstrap produces stage2;
+this local timing result is not that certificate.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

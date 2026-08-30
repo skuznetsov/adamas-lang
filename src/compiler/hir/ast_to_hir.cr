@@ -98282,6 +98282,10 @@ module Adamas::HIR
       best_param_count = Int32::MAX
       best_score = Int32::MIN
       best_exact = false # Bug 1: whether `best` is a strictly type-exact positional match
+      single_candidate_fast_path = overload_keys.size == 1 &&
+                                   !debug_call_lookup &&
+                                   !debug_merge_sort_lookup &&
+                                   !debug_join_lookup
       prefer_untyped = false
       positional_arg_count = if call_has_named_args && named_arg_names
                                count = arg_count - named_arg_names.not_nil!.size
@@ -98357,6 +98361,12 @@ module Adamas::HIR
         if arg_types && !unknown_args
           func_context = function_context_for_lookup_candidate(func_name, name)
           compatible = params_compatible_with_args?(def_node, arg_types, func_context)
+          if compatible && single_candidate_fast_path
+            best = def_node
+            best_name = name
+            best_param_count = param_count
+            break
+          end
           if compatible
             score = params_match_score(def_node, arg_types, func_context)
             score += class_method_owner_match_bonus(func_name, name, arg_types)
