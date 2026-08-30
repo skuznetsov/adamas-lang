@@ -65308,7 +65308,7 @@ module Adamas::HIR
       debug_missing_samples = env_get("DEBUG_MISSING_SAMPLES")
       debug_missing_top = env_get("DEBUG_MISSING_TOP").try(&.to_i?) || 20
       trace_flush_enter = env_has?("ADAMAS_TRACE_FLUSH_ENTER")
-      phase_stats = env_has?("ADAMAS_PHASE_STATS")
+      phase_stats = env_has?("ADAMAS_PHASE_STATS") || env_has?("ADAMAS_MISSING_PHASE_STATS")
       provenance_shadow_filter = env_get("ADAMAS_MISSING_PROVENANCE_SHADOW")
       provenance_shadow_limit = env_get("ADAMAS_MISSING_PROVENANCE_SHADOW_LIMIT").try(&.to_i?) || 24
       provenance_shadow_limit = 0 if provenance_shadow_limit < 0
@@ -65848,19 +65848,54 @@ module Adamas::HIR
         end
 
         if summary = missing_summary
+          target_counts = Hash(String, Int32).new(0)
+          registered_defs = Hash(String, Set(UInt64)).new
+          source_defs = Hash(String, Set(String)).new
+          unmapped_counts = Hash(String, Int32).new(0)
+          missing.each do |name|
+            parts = parse_method_name_compact(name)
+            owner = parts.owner
+            method = parts.method || name
+            key = "#{strip_generic_args(owner)}##{method}"
+            target_counts[key] += 1
+
+            base = parts.base
+            if def_node = @function_defs[name]? || @function_defs[base]?
+              def_set = registered_defs[key]? || begin
+                set = Set(UInt64).new
+                registered_defs[key] = set
+                set
+              end
+              def_set << def_node.object_id.to_u64
+
+              source_set = source_defs[key]? || begin
+                set = Set(String).new
+                source_defs[key] = set
+                set
+              end
+              arena = @function_def_arenas[name]? || @function_def_arenas[base]?
+              path = arena.try { |value| source_path_for(value) } || "?"
+              span = def_node.span
+              source_set << "#{path}:#{span.start_offset}:#{span.end_offset}"
+            else
+              unmapped_counts[key] += 1
+            end
+          end
+
           STDERR.puts "[MISSING_SUMMARY] iter=#{iteration} unique=#{missing.size} top=#{debug_missing_top}"
           summary.to_a
             .sort_by { |entry| -entry[1] }
             .first(debug_missing_top)
             .each do |entry|
               key, count = entry
-              STDERR.puts "  #{key}: #{count}"
+              STDERR.puts "  #{key}: #{count} targets=#{target_counts[key]? || 0} registered_defs=#{registered_defs[key]?.try(&.size) || 0} source_defs=#{source_defs[key]?.try(&.size) || 0} unmapped=#{unmapped_counts[key]? || 0}"
               if samples = missing_samples
                 if bucket = samples[key]?
                   bucket.each { |sample| STDERR.puts "    - #{sample}" }
                 end
               end
             end
+          STDERR.flush
         end
 
         if budget > 0 && missing.size > budget
@@ -65902,8 +65937,15 @@ module Adamas::HIR
             previous_certificates[name] = certificate
           end
         end
-        stop_after_missing_phase("queue", "ADAMAS_STOP_AFTER_HIR_MISSING_QUEUE", iteration, missing.size)
         queue_done_at = Time.instant if phase_stats
+        if phase_stats
+          scan_ms = (scan_done_at.not_nil! - iteration_started_at.not_nil!).total_milliseconds
+          queue_ms = (queue_done_at.not_nil! - scan_done_at.not_nil!).total_milliseconds
+          total_ms = (queue_done_at.not_nil! - iteration_started_at.not_nil!).total_milliseconds
+          STDERR.puts "[PHASE_STATS] lower_missing.iter=#{iteration}.pre_process scan=#{scan_ms.round(1)}ms queue=#{queue_ms.round(1)}ms process=pending total=#{total_ms.round(1)}ms missing=#{missing.size} funcs=#{@module.function_count}"
+          STDERR.flush
+        end
+        stop_after_missing_phase("queue", "ADAMAS_STOP_AFTER_HIR_MISSING_QUEUE", iteration, missing.size)
         with_pending_process_context("missing_initial", iteration, missing.size) do
           process_pending_lower_functions
         end
