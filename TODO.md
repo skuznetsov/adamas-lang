@@ -14181,6 +14181,42 @@ pre-lowering remains intentional. Next: keep member and arbitrary call returns
 out of the detached scanner and bind their typed initializer target and layout
 facts to one concrete class identity.
 
+### Session 113: traverse elsif during registration-time ivar discovery (2026-08-30)
+
+Two bounded audits rejected both an evidence-free allocator identity layer and
+a scanner-backed shortcut around initializer pre-lowering. Existing overload,
+generic, and stale-body allocator regressions still pass, while `HIR::Call`
+cannot observe structural `DefIdentity`; adding a new registry or target field
+therefore has no current failing behavior to repair. A useful pre-lower skip
+would need exhaustive AST coverage, type joins, exact body provenance, and
+staleness tracking. A small whitelist would save too little work to justify
+that contract.
+
+A temporary default-off probe, removed after measurement, reran the global
+layout comparison at the current frontier. The bounded 300-second full-source
+HIR run reached 1,127 initializer pre-lowers and found five layout changes:
+`SymbolCollector`, `NameResolver`, and `TypeInferenceEngine` recover member
+return fields; `Dir` and `Crystal::System::Process` recover arbitrary call
+returns. The process field appeared after the previous 994-pre-lower boundary,
+so the older four-class residual map was incomplete. These shapes remain the
+authoritative reason to keep initializer pre-lowering and semantic call
+resolution out of the detached registration scanner.
+
+The same audit exposed one narrow structural bug: the parser stores `elsif`
+branches separately on `IfNode`, but the registration scanner visited only the
+primary condition, then body, and else body. A registration-only regression
+first failed because an `@late = 1` assignment in an `elsif` body was absent.
+The scanner now traverses each `elsif` condition and body without adding type
+inference, caches, or resolution authority.
+
+The focused registration contract passes 13 examples with zero failures. The
+complete `ast_to_hir` suite passes 475 examples with zero failures and two
+pending, a fresh compiler build succeeds, and the no-prelude parameter
+provenance guard remains green. Adversary verdict: ROBUST for the lost `elsif`
+edge, VULNERABLE as a global scanner-completeness claim. Initializer pre-lowering
+remains intentional. Next: stop widening the detached scanner without a live
+structural red and pivot to measured lowering worklist/fixed-point cost.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

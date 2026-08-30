@@ -7750,6 +7750,32 @@ describe Adamas::HIR::AstToHir do
       ivars.map(&.name).should contain("@ensure_value")
     end
 
+    it "scans elsif branches before lowering the body" do
+      code = <<-CRYSTAL
+        class ElsifAssignedIvar
+          def initialize(flag : Bool)
+            if flag
+              0
+            elsif flag
+              @late = 1
+            end
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(code)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => code},
+      )
+      class_node = exprs.compact_map { |id| arena[id].as?(Adamas::Compiler::Frontend::ClassNode) }.first
+
+      converter.register_class(class_node)
+
+      late = converter.class_info["ElsifAssignedIvar"].ivars.find { |ivar| ivar.name == "@late" }
+      late.should_not be_nil
+      late.not_nil!.type.should eq(Adamas::HIR::TypeRef::INT32)
+    end
+
     it "preserves extern out parameter discovery while scanning method bodies" do
       code = <<-CRYSTAL
         lib RegistrationProbe

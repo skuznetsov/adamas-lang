@@ -61775,6 +61775,12 @@ module Adamas::HIR
           if then_body = node.then_body
             scan_nodes_for_ivars(then_body, arena, class_name, parameter_infos, shadowed_parameters, result, seen, depth + 1)
           end
+          if elsifs = node.elsifs
+            elsifs.each do |branch|
+              scan_nodes_for_ivars([branch.condition], arena, class_name, parameter_infos, shadowed_parameters, result, seen, depth + 1)
+              scan_nodes_for_ivars(branch.body, arena, class_name, parameter_infos, shadowed_parameters, result, seen, depth + 1)
+            end
+          end
           if else_body = node.else_body
             scan_nodes_for_ivars(else_body, arena, class_name, parameter_infos, shadowed_parameters, result, seen, depth + 1)
           end
