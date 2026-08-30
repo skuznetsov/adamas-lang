@@ -13827,6 +13827,30 @@ lookup modes bypass the shortcut so their score diagnostics remain intact.
 B4-F remains RED until a fresh complete 300-second bootstrap produces stage2;
 this local timing result is not that certificate.
 
+### Session 100: keep signature registration nominal and demand-free (2026-08-29)
+
+A fixed historical-source matrix localized the first bootstrap regression to
+lowering policy rather than source growth. The adjacent checkpoint increased
+early generic materialization from 66 to 791 types; stack provenance separated
+eager function-signature annotations from the independent layout-fallback
+fixpoint. Global signature registration now resolves the same nominal `TypeRef`
+for overload identity while suppressing only the generic class materialization
+side effect. Call, layout, and explicit monomorphization paths are unchanged.
+
+The focused falsifier was RED because registering an unused
+`consume(Box(Int32))` signature created `Box(Int32)` immediately. It is GREEN
+while still preserving the typed mangled function name. The existing HIR suite
+plus the new contract passes 459 examples with zero failures. On the fixed old
+self-host source, the bounded first missing-queue gate moved from the prior
+current-lowering receipt of `missing=172`, `funcs=991`, and 43.26 seconds to
+`missing=171`, `funcs=976`, and 39.16 seconds; a repeat completed in 38.49
+seconds with the same frontier.
+
+Adversary verdict: ROBUST for top-level function signature collection. The
+gate is an early proxy, not a complete B4-F certificate, and the separate
+layout-fallback edge still materializes a broad generic graph. Next: isolate
+that layout edge with a value-layout necessity falsifier before changing it.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

@@ -21670,6 +21670,21 @@ module Adamas::HIR
       resolved
     end
 
+    # Signature collection needs the nominal TypeRef for overload identity, but
+    # it must not materialize a generic class before any call or layout demands it.
+    private def signature_annotation_type_ref(
+      type_name : String,
+      owner_name : String?,
+    ) : TypeRef
+      old_suppress = @suppress_monomorphization
+      @suppress_monomorphization = true
+      begin
+        annotation_type_ref(type_name, owner_name)
+      ensure
+        @suppress_monomorphization = old_suppress
+      end
+    end
+
     private def resolve_explicit_ivar_annotation_type(type_name : String, owner_name : String) : TypeRef
       resolved = annotation_type_ref(type_name, owner_name)
       return resolved unless resolved == TypeRef::VOID
@@ -49865,7 +49880,7 @@ module Adamas::HIR
           STDERR.puts "[FASTFLOAT_PASS2] phase=param_before_type idx=#{param_idx}" if trace_fastfloat_pass2
           param_type = if ta_s = parameter_type_annotation_string(param, @arena, false)
                          STDERR.puts "[FASTFLOAT_PASS2] phase=param_type_text idx=#{param_idx} text=#{ta_s} owner=#{signature_owner || "(nil)"}" if trace_fastfloat_pass2
-                         annotation_type_ref(ta_s, signature_owner)
+                         signature_annotation_type_ref(ta_s, signature_owner)
                        elsif param.is_double_splat
                          type_ref_for_name("NamedTuple")
                        else
@@ -49901,7 +49916,7 @@ module Adamas::HIR
       STDERR.puts "[FASTFLOAT_PASS2] phase=before_return_type" if trace_fastfloat_pass2
       return_type = if (rt = node.return_type) && (rt_s = safe_slice_to_string(rt))
                       STDERR.puts "[FASTFLOAT_PASS2] phase=return_type_text text=#{rt_s} owner=#{signature_owner || "(nil)"}" if trace_fastfloat_pass2
-                      annotation_type_ref(rt_s, signature_owner)
+                      signature_annotation_type_ref(rt_s, signature_owner)
                     else
                       TypeRef::VOID
                     end
