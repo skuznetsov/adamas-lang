@@ -119,7 +119,7 @@ class Adamas::HIR::AstToHir
   end
 
   def __test_exact_shadow_enqueue_owned(name : String) : Nil
-    enqueue_pending_function(name)
+    enqueue_pending_function(name, "exact_shadow_spec")
   end
 
   def __test_exact_shadow_set_function_type(
@@ -745,6 +745,68 @@ describe "missing-call exact incremental shadow" do
         ENV.delete("ADAMAS_MISSING_INCREMENTAL_FALSIFIER")
       end
     end
+  end
+
+  it "rescans when an existing function gains a body without growing the function set" do
+    source = <<-CRYSTAL
+      def materializer
+        late_target
+      end
+
+      def late_target
+        1
+      end
+    CRYSTAL
+    arena, roots = parse_exact_shadow_source(source)
+    converter = Adamas::HIR::AstToHir.new(
+      arena,
+      sources_by_arena: {arena.object_id.to_u64 => source},
+    )
+    converter.arena = arena
+
+    roots.each do |expr_id|
+      if def_node = arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode)
+        converter.register_function(def_node)
+      end
+    end
+    materializer_name =
+      converter.__test_exact_shadow_function_def_names("materializer").first?
+    late_name =
+      converter.__test_exact_shadow_function_def_names("late_target").first?
+    raise "No registered materializer target" unless materializer_name
+    raise "No registered late target" unless late_name
+
+    materializer = converter.module.create_function(
+      materializer_name,
+      Adamas::HIR::TypeRef::INT32,
+    )
+    converter.module.create_function(late_name, Adamas::HIR::TypeRef::INT32)
+    driver = converter.module.create_function(
+      "__test_missing_in_place_driver",
+      Adamas::HIR::TypeRef::VOID,
+    )
+    driver.get_block(driver.entry_block).add(
+      Adamas::HIR::Call.without_receiver(
+        driver.next_value_id,
+        Adamas::HIR::TypeRef::INT32,
+        materializer_name,
+        [] of Adamas::HIR::ValueId,
+      )
+    )
+    converter.__test_exact_shadow_set_target_state(late_name, "pending")
+    initial_count = converter.module.function_count
+    revision_before =
+      converter.__test_exact_shadow_revision_certificate(materializer)
+
+    converter.__test_exact_shadow_lower_missing_with_budget(0)
+
+    converter.module.function_count.should eq(initial_count)
+    converter.module.has_function_with_body?(materializer_name).should be_true
+    converter.module.has_function_with_body?(late_name).should be_true
+    revision_after =
+      converter.__test_exact_shadow_revision_certificate(materializer)
+    revision_after[1].should be > revision_before[1]
+    revision_after[6].should be > revision_before[6]
   end
 
   it "invalidates the revision certificate at every mutation owner" do

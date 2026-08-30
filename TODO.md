@@ -14217,6 +14217,30 @@ edge, VULNERABLE as a global scanner-completeness claim. Initializer pre-lowerin
 remains intentional. Next: stop widening the detached scanner without a live
 structural red and pivot to measured lowering worklist/fixed-point cost.
 
+### Session 114: rescan missing calls after in-place HIR changes (2026-08-30)
+
+The missing-call fixed-point loop stopped when the raw number of HIR functions
+did not grow. That is not a stability certificate: lowering can fill an
+existing body in place and introduce a nested demand without adding a function.
+A no-bootstrap regression first reproduced the failure: the materializer body
+was filled, the function count stayed constant, and the nested target remained
+bodyless after the sweep.
+
+Each complete iteration now snapshots the existing module function-set and HIR
+body revisions and stops only when both remain unchanged. Queue revision is
+intentionally excluded because re-enqueueing an unresolved target is not HIR
+progress and must not keep the loop alive. The change adds no registry, cache,
+result enum, or incremental scan authority; the full scan, order, budget prefix,
+and queue remain authoritative.
+
+The focused red is green, the exact-shadow suite passes 18 examples, the
+two-order same-scan accessor regression passes, the complete `ast_to_hir` suite
+passes 475 examples with zero failures and two pending, and a fresh compiler
+build succeeds. Adversary verdict: ROBUST for in-place function/body/demand HIR
+mutations owned by these revisions. Definition/type-only progress without a HIR
+shape change is outside this claim, the existing budget-prefix behavior is
+unchanged, and B4-F remains measured-red.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

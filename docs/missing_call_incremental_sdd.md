@@ -8,8 +8,10 @@ ordered raw and occurrence-admitted demand segments, but it still discovers
 segment changes by performing that full scan. Per-function raw-local telemetry
 now separates stable HIR demand input from global availability context and is
 explicitly non-authoritative. A pre-scan target-state replay model is also
-measured and explicitly refuted by occurrence-order side effects. B4-F remains
-measured-red.
+measured and explicitly refuted by occurrence-order side effects. Fixed-point
+termination now requires stable owned function-set and HIR-body revisions
+across a complete iteration; raw function count is not a stability
+certificate. B4-F remains measured-red.
 
 Bounded context:
 
@@ -27,8 +29,9 @@ demand and emit an LLVM abort stub.
 
 ## 1. Admitted surface
 
-- The legacy full scan, exact first-seen ordering, budget prefix, work queue,
-  and function-count stop remain production authority.
+- The legacy full scan, exact first-seen ordering, budget prefix, and work queue
+  remain production authority. The loop stops only when owned function-set and
+  HIR-body revisions are both unchanged across a complete iteration.
 - Monotonic in-memory revisions may describe observed HIR/function-definition/
   lowering-state/queue mutations.
 - A default-off shadow may report whether a revision certificate *would* reuse
@@ -63,7 +66,8 @@ demand and emit an LLVM abort stub.
 
 - No revision certificate may skip a production scan in this slice.
 - Raw function count, function-array length, object address, wall time, or a
-  probabilistic fingerprint is not an invalidation certificate.
+  probabilistic fingerprint is neither an invalidation nor a fixed-point
+  certificate.
 - An end-of-scan body/state snapshot cannot replace occurrence-time admission.
 - Queue membership alone cannot decide availability.
 - A body/state/queue revision does not certify function-definition lookup,
@@ -154,6 +158,10 @@ changed exact segment.
     a resolver. Any added, removed, reordered, replaced, or renamed occurrence
     rejects that observation window. Equality proves traversal identity/order
     only; all semantic coordinates remain outside the certificate.
+15. **Fixed-point stability.** A function can gain a body in place without
+    changing the function count. Termination requires stable owned function-set
+    and HIR-body revisions across a complete iteration. Queue churn alone is
+    not progress and cannot keep the loop alive.
 
 ## 5. Execution order
 
@@ -205,6 +213,10 @@ changed exact segment.
   live calls canonicalize to the same getter name. Owned rewrite/insertion must
   leave the old snapshot unchanged, change demand revision, and make a fresh
   index differ.
+- **F9 — in-place body materialization:** lowering an existing bodyless function
+  can add a nested demand without changing the function set. The changed HIR
+  body revision must force another full scan, and that scan must materialize the
+  nested target.
 
 ## 7. Stop rules
 
@@ -253,9 +265,9 @@ semantic zeroes and improves the full B4-F corridor.
   `missing_incremental_shadow_spec.cr`,
   `missing_revision_ledger_spec.cr`, and the two-order same-scan accessor
   regression.
-- **Falsifiers:** F1-F8.
+- **Falsifiers:** F1-F9.
 - **Boundary:** default-off guard-only; no production scan skip.
-- **Observed focused gate:** the exact-shadow group passes 17 examples; the
+- **Observed focused gate:** the exact-shadow group passes 18 examples; the
   integrated same-scan accessor/union regression and ownership census pass.
 - **Source-matched telemetry:** iterations 1-3 observed 603, 1539, and 7471
   raw-local stable segments with zero raw-local false reuse, while 198, 345,

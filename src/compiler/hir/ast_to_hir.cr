@@ -65629,6 +65629,8 @@ module Adamas::HIR
       stop_after_missing_phase("start", "ADAMAS_STOP_AFTER_HIR_MISSING_START", iteration, 0)
 
       while iteration < max_iterations
+        iteration_function_set_revision = @module.function_set_revision
+        iteration_hir_body_revision = @module.hir_body_revision
         iteration_started_at = Time.instant if phase_stats
         STDERR.puts "[MISSING_TRACE] iter=#{iteration} funcs=#{@module.functions.size}" if trace_flush_enter
         missing = [] of String
@@ -66190,7 +66192,6 @@ module Adamas::HIR
           missing = missing.first(budget)
         end
 
-        before = @module.functions.size
         missing.each do |name|
           next if @module.has_function_with_body?(name)
           next if function_state(name).in_progress?
@@ -66260,9 +66261,10 @@ module Adamas::HIR
         end
         stop_after_missing_phase("force_modules", "ADAMAS_STOP_AFTER_HIR_MISSING_FORCE_MODULES", iteration, missing.size)
         iteration += 1
-        if @module.functions.size == before
+        if @module.function_set_revision == iteration_function_set_revision &&
+           @module.hir_body_revision == iteration_hir_body_revision
           if incremental_falsifier
-            STDERR.puts "[MISSING_INCREMENTAL_TERMINAL] iter=#{iteration - 1} reason=legacy_function_count_stop hir_shape_stable=unknown mismatches=#{incremental_mismatch_count} revision_stable=#{incremental_revision_stable_count} revision_scan_invalidated=#{incremental_revision_scan_invalidated_count} revision_false_reuse=#{incremental_revision_false_reuse_count} raw_local_stable=#{incremental_raw_local_stable_count} raw_local_scan_invalidated=#{incremental_raw_local_scan_invalidated_count} raw_local_false_reuse=#{incremental_raw_local_false_reuse_count} raw_local_available_mismatch=#{incremental_raw_local_available_mismatch_count} raw_local_scope=per_function_raw raw_local_authority=full_scan raw_local_promotion=forbidden availability_replay_model_mismatch=#{incremental_availability_replay_model_mismatch_count} availability_replay_stable=#{incremental_availability_replay_stable_count} availability_replay_false_reuse=#{incremental_availability_replay_false_reuse_count} availability_replay_scope=pre_scan_target_snapshot availability_replay_authority=full_scan availability_replay_promotion=forbidden precanonical_mismatches=#{incremental_precanonical_mismatch_count} precanonical_scope=occurrence_identity_order precanonical_authority=full_scan precanonical_promotion=forbidden exact_verdict=#{incremental_mismatch_count == 0 ? "observed_match" : "inconclusive"} revision_verdict=inconclusive raw_local_verdict=inconclusive availability_replay_verdict=inconclusive precanonical_verdict=inconclusive verdict=inconclusive"
+            STDERR.puts "[MISSING_INCREMENTAL_TERMINAL] iter=#{iteration - 1} reason=stable_hir_shape hir_shape_stable=1 mismatches=#{incremental_mismatch_count} revision_stable=#{incremental_revision_stable_count} revision_scan_invalidated=#{incremental_revision_scan_invalidated_count} revision_false_reuse=#{incremental_revision_false_reuse_count} raw_local_stable=#{incremental_raw_local_stable_count} raw_local_scan_invalidated=#{incremental_raw_local_scan_invalidated_count} raw_local_false_reuse=#{incremental_raw_local_false_reuse_count} raw_local_available_mismatch=#{incremental_raw_local_available_mismatch_count} raw_local_scope=per_function_raw raw_local_authority=full_scan raw_local_promotion=forbidden availability_replay_model_mismatch=#{incremental_availability_replay_model_mismatch_count} availability_replay_stable=#{incremental_availability_replay_stable_count} availability_replay_false_reuse=#{incremental_availability_replay_false_reuse_count} availability_replay_scope=pre_scan_target_snapshot availability_replay_authority=full_scan availability_replay_promotion=forbidden precanonical_mismatches=#{incremental_precanonical_mismatch_count} precanonical_scope=occurrence_identity_order precanonical_authority=full_scan precanonical_promotion=forbidden exact_verdict=#{incremental_mismatch_count == 0 ? "observed_match" : "inconclusive"} revision_verdict=inconclusive raw_local_verdict=inconclusive availability_replay_verdict=inconclusive precanonical_verdict=inconclusive verdict=inconclusive"
             incremental_terminal_emitted = true
           end
           break
