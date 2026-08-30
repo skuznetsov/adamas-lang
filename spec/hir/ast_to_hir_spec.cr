@@ -463,6 +463,25 @@ class Adamas::HIR::AstToHir
     process_pending_lower_functions
   end
 
+  def __test_record_lowering_demand(
+    name : String,
+    source : String,
+    arg_types : Array(Adamas::HIR::TypeRef),
+    arg_literals : Array(Bool)? = nil,
+    enum_names : Array(String?)? = nil,
+  ) : Nil
+    remember_callsite_arg_types(name, arg_types, arg_literals, enum_names)
+    enqueue_pending_function(name, source)
+  end
+
+  def __test_lowering_demand_ledger_events : Array(String)
+    @lowering_demand_ledger_events.try(&.dup) || [] of String
+  end
+
+  def __test_lowering_demand_ledger_full? : Bool
+    @lowering_demand_ledger_full
+  end
+
   def __test_repair_receiver_bound_call_targets : Nil
     repair_receiver_bound_call_targets
   end
@@ -2784,6 +2803,101 @@ private def hir_text(func : Adamas::HIR::Function) : String
 end
 
 describe Adamas::HIR::AstToHir do
+  describe "lowering demand ledger" do
+    it "records raw demand across queue sources without collapsing shape" do
+      previous_filter = ENV["ADAMAS_HIR_DEMAND_LEDGER"]?
+      previous_limit = ENV["ADAMAS_HIR_DEMAND_LEDGER_LIMIT"]?
+      ENV["ADAMAS_HIR_DEMAND_LEDGER"] = "LedgerOwner#probe"
+      ENV["ADAMAS_HIR_DEMAND_LEDGER_LIMIT"] = "4"
+
+      begin
+        converter = lower_program(<<-CRYSTAL)
+          class LedgerOwner
+            def probe(value : Int32)
+              value
+            end
+          end
+          CRYSTAL
+        demand_name = converter.__test_function_def_names("LedgerOwner#probe").first
+
+        converter.__test_record_lowering_demand(
+          demand_name,
+          "missing_scan",
+          [Adamas::HIR::TypeRef::INT32],
+        )
+        converter.__test_record_lowering_demand(
+          demand_name,
+          "layout_invalidate",
+          [Adamas::HIR::TypeRef::INT32],
+        )
+        converter.__test_record_lowering_demand(
+          demand_name,
+          "missing_scan",
+          [Adamas::HIR::TypeRef::INT32],
+          [true],
+          ["LedgerKind"] of String?,
+        )
+        converter.__test_record_lowering_demand(
+          demand_name,
+          "missing_scan",
+          [Adamas::HIR::TypeRef::INT32],
+          [true],
+          ["OtherKind"] of String?,
+        )
+        converter.__test_record_lowering_demand(
+          demand_name,
+          "rta_undefer",
+          [Adamas::HIR::TypeRef::INT32],
+        )
+
+        events = converter.__test_lowering_demand_ledger_events
+        events.size.should eq(4)
+        converter.__test_lowering_demand_ledger_full?.should be_true
+        events.first.should contain("source=missing_scan")
+        events.first.should contain("def_node=")
+        events.first.should contain("def_arena=")
+        events.first.should contain("selected_def_source=exact")
+        events.first.should contain("arg_types=4")
+        events[1].should contain("source=layout_invalidate")
+        events[1].should contain("body=")
+        events[1].should contain("def_rev=")
+        events[1].should contain("state_rev=")
+        events[1].should contain("queue_rev=")
+        events[2].should contain("literals=1")
+        events[2].should contain("enum_names=LedgerKind")
+        events[3].should contain("enum_names=OtherKind")
+      ensure
+        if previous_filter
+          ENV["ADAMAS_HIR_DEMAND_LEDGER"] = previous_filter
+        else
+          ENV.delete("ADAMAS_HIR_DEMAND_LEDGER")
+        end
+        if previous_limit
+          ENV["ADAMAS_HIR_DEMAND_LEDGER_LIMIT"] = previous_limit
+        else
+          ENV.delete("ADAMAS_HIR_DEMAND_LEDGER_LIMIT")
+        end
+      end
+    end
+
+    it "does no ledger work when the filter is absent" do
+      previous_filter = ENV["ADAMAS_HIR_DEMAND_LEDGER"]?
+      ENV.delete("ADAMAS_HIR_DEMAND_LEDGER")
+
+      begin
+        converter = Adamas::HIR::AstToHir.new(Adamas::Compiler::Frontend::AstArena.new)
+        converter.__test_record_lowering_demand(
+          "LedgerOwner#probe$Int32",
+          "missing_scan",
+          [Adamas::HIR::TypeRef::INT32],
+        )
+        converter.__test_lowering_demand_ledger_events.should be_empty
+      ensure
+        ENV["ADAMAS_HIR_DEMAND_LEDGER"] = previous_filter if previous_filter
+      end
+    end
+  end
+
   describe "method-index separator contract" do
     it "prefers exact separators and keeps only class-to-instance fallback" do
       converter = lower_program_with_main("1")

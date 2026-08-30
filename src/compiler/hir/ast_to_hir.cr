@@ -5059,7 +5059,7 @@ module Adamas::HIR
         if should_undefer
           @rta_deferred_set.delete(name)
           maybe_log_pending_explosion(name, "rta_undefer")
-          enqueue_pending_function(name)
+          enqueue_pending_function(name, "rta_undefer")
           count += 1
           true
         else
@@ -5122,6 +5122,15 @@ module Adamas::HIR
     # Return types will be inferred lazily when the method is actually called.
     @defer_body_return_inference : Bool = false
 
+    # Default-off, filtered raw evidence for repeated lowering demand. The ledger
+    # observes the existing queue boundary; it must never become an authority
+    # for selection, grouping, or materialization.
+    @lowering_demand_ledger_filter : String?
+    @lowering_demand_ledger_limit : Int32
+    @lowering_demand_ledger_events : Array(String)?
+    @lowering_demand_ledger_bytes : Int32
+    @lowering_demand_ledger_full : Bool
+
     # Helper: get function state (defaults to NotStarted)
     private def function_state(name : String) : FunctionLoweringState
       @function_lowering_states[name]? || FunctionLoweringState::NotStarted
@@ -5150,10 +5159,115 @@ module Adamas::HIR
       @function_type_revision = @function_type_revision &+ 1_u64
     end
 
-    private def enqueue_pending_function(name : String) : Nil
+    private def enqueue_pending_function(name : String, source : String) : Nil
       @pending_function_queue << name # missing-revision-owner
       @pending_function_queue_revision =
         @pending_function_queue_revision &+ 1_u64
+      if @lowering_demand_ledger_filter
+        record_lowering_demand_ledger(name, source)
+      end
+    end
+
+    private def record_lowering_demand_ledger(name : String, source : String) : Nil
+      filter = @lowering_demand_ledger_filter
+      return unless filter
+      return unless name.includes?(filter)
+      return if @lowering_demand_ledger_full
+
+      events = @lowering_demand_ledger_events
+      return unless events
+      if events.size >= @lowering_demand_ledger_limit
+        @lowering_demand_ledger_full = true
+        STDERR.puts "[HIR_DEMAND_LEDGER] truncated=1 reason=event_limit events=#{events.size} bytes=#{@lowering_demand_ledger_bytes}"
+        return
+      end
+
+      base_name = strip_type_suffix(name)
+      selected_def_name, selected_def_source = if @function_defs.has_key?(name)
+                                                 {name, "exact"}
+                                               elsif @function_defs.has_key?(base_name)
+                                                 {base_name, "base"}
+                                               else
+                                                 {"", "unknown"}
+                                               end
+      def_node = selected_def_name.empty? ? nil : @function_defs[selected_def_name]?
+      def_arena = selected_def_name.empty? ? nil : @function_def_arenas[selected_def_name]?
+      def_node_id = def_node ? def_node.object_id.to_s : "unknown"
+      def_arena_id = def_arena ? def_arena.object_id.to_s : "unknown"
+
+      owner_name = has_method_separator?(base_name) ? method_owner_from_name(base_name) : ""
+      owner_type = owner_name.empty? ? nil : @class_info[owner_name]?.try(&.type_ref)
+      owner_type_text = owner_type ? owner_type.id.to_s : (owner_name.empty? ? "none" : "unknown")
+
+      callsite = @pending_arg_types[name]? || @pending_arg_types[base_name]?
+      arg_types_text = if callsite
+                         callsite.types.map(&.id).join(',')
+                       else
+                         "unknown"
+                       end
+      block_text = callsite ? (callsite.has_block ? "1" : "0") : "unknown"
+      named_text = if callsite
+                     if callsite.has_named_args
+                       names = callsite.named_arg_names
+                       names ? names.join(',') : "present"
+                     else
+                       "none"
+                     end
+                   else
+                     "unknown"
+                   end
+      literals_text = if callsite
+                        if literals = callsite.literals
+                          literals.map { |flag| flag ? '1' : '0' }.join(',')
+                        else
+                          "none"
+                        end
+                      else
+                        "unknown"
+                      end
+      enum_names_text = if callsite
+                          if enum_names = callsite.enum_names
+                            enum_names.map { |enum_name| enum_name || "-" }.join(',')
+                          else
+                            "none"
+                          end
+                        else
+                          "unknown"
+                        end
+
+      body_present = @module.has_function_with_body?(name) ||
+                     (base_name != name && @module.has_function_with_body?(base_name))
+      state_name = @function_lowering_states.has_key?(name) ? name : base_name
+      event = String.build do |io|
+        io << "[HIR_DEMAND_LEDGER]"
+        io << " source=" << ledger_token(source)
+        io << " name=" << ledger_token(name)
+        io << " base=" << ledger_token(base_name)
+        io << " selected_def=" << (selected_def_name.empty? ? "unknown" : ledger_token(selected_def_name))
+        io << " selected_def_source=" << selected_def_source
+        io << " def_node=" << def_node_id
+        io << " def_arena=" << def_arena_id
+        io << " owner_type=" << owner_type_text
+        io << " arg_types=" << arg_types_text
+        io << " block=" << block_text
+        io << " named=" << ledger_token(named_text)
+        io << " literals=" << literals_text
+        io << " enum_names=" << ledger_token(enum_names_text)
+        io << " state=" << function_lowering_state_label(state_name)
+        io << " body=" << (body_present ? 1 : 0)
+        io << " def_rev=" << @function_def_revision
+        io << " type_rev=" << @function_type_revision
+        io << " state_rev=" << @function_lowering_state_revision
+        io << " queue_rev=" << @pending_function_queue_revision
+      end
+      if @lowering_demand_ledger_bytes + event.bytesize > 1_048_576
+        @lowering_demand_ledger_full = true
+        STDERR.puts "[HIR_DEMAND_LEDGER] truncated=1 reason=byte_limit events=#{events.size} bytes=#{@lowering_demand_ledger_bytes}"
+        return
+      end
+      @lowering_demand_ledger_bytes += event.bytesize
+      events << event
+      STDERR.puts event
     end
 
     private def clear_pending_function_queue : Nil
@@ -6802,6 +6916,20 @@ module Adamas::HIR
       @pending_function_queue = [] of String
       @pending_function_queue_revision = 0_u64
       @pending_queue_remove_set = Set(String).new
+      ledger_filter = env_get("ADAMAS_HIR_DEMAND_LEDGER")
+      @lowering_demand_ledger_filter = if ledger_filter && !ledger_filter.empty?
+                                         ledger_filter
+                                       end
+      ledger_limit = env_nonnegative_int32("ADAMAS_HIR_DEMAND_LEDGER_LIMIT")
+      ledger_limit = 256 if ledger_limit < 0
+      ledger_limit = 4096 if ledger_limit > 4096
+      @lowering_demand_ledger_limit = ledger_limit
+      @lowering_demand_ledger_events = nil.as(Array(String)?)
+      @lowering_demand_ledger_bytes = 0
+      @lowering_demand_ledger_full = false
+      if @lowering_demand_ledger_filter && ledger_limit > 0
+        @lowering_demand_ledger_events = [] of String
+      end
       @pending_source_counts = {} of String => Int32
       @pending_source_samples = {} of String => Array(String)
       @pending_source_next_report = 0
@@ -34740,7 +34868,7 @@ module Adamas::HIR
         # worklist already ignores functions whose body/state has settled.
         if requeue_exact_demand
           set_function_state(name, FunctionLoweringState::Pending)
-          enqueue_pending_function(name)
+          enqueue_pending_function(name, "layout_invalidate")
         end
         delete_yield_function(name)
         @yield_return_functions.delete(name)
@@ -65968,7 +66096,7 @@ module Adamas::HIR
           # records the demand. process_pending_lower_functions deduplicates
           # via its `processed` Set, so a duplicate enqueue is benign.
           set_function_state(name, FunctionLoweringState::Pending)
-          enqueue_pending_function(name)
+          enqueue_pending_function(name, "missing_scan")
         end
         if incremental_falsifier
           previous_queue = incremental_previous_queue.not_nil!
@@ -83361,7 +83489,7 @@ module Adamas::HIR
           unless function_state(name).pending?
             set_function_state(name, FunctionLoweringState::Pending)
             maybe_log_pending_explosion(name, "defer")
-            enqueue_pending_function(name)
+            enqueue_pending_function(name, "nested_defer_bare")
             STDERR.puts "[LOWER_FUNC_TRACE] queued_bare name=#{name} queue=#{@pending_function_queue.size}" if debug_lower_func
           end
           STDERR.puts "[LOWER_FUNC_TRACE] early=inside_lowering_bare name=#{name} state=#{function_state(name)}" if debug_lower_func
@@ -83406,7 +83534,7 @@ module Adamas::HIR
         unless function_state(name).pending?
           set_function_state(name, FunctionLoweringState::Pending)
           maybe_log_pending_explosion(name, "defer")
-          enqueue_pending_function(name)
+          enqueue_pending_function(name, "nested_defer_method")
           STDERR.puts "[LOWER_FUNC_TRACE] queued name=#{name} queue=#{@pending_function_queue.size}" if debug_lower_func
           # Keep AST reachability filter aligned for deferred functions.
           if @ast_filter_active
