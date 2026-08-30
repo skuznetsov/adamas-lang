@@ -24,6 +24,19 @@ class Adamas::HIR::AstToHir
     get_type_name_from_ref(type)
   end
 
+  def __test_clear_signature_param_caches : Nil
+    @function_param_infos.clear
+    @function_param_infos_by_def_id.clear
+  end
+
+  def __test_template_method_matches_suffix?(
+    def_node : Adamas::Compiler::Frontend::DefNode,
+    def_arena : Adamas::Compiler::Frontend::ArenaLike,
+    suffix : String,
+  ) : Bool
+    template_method_matches_suffix?(def_node, def_arena, suffix)
+  end
+
   def __test_clear_nominal_type_cache : Nil
     @type_cache.clear
     @type_cache_keys_by_component.clear
@@ -162,6 +175,68 @@ describe "function signature registration" do
     converter.__test_demand_signature_type("Leaf(Int32)")
     converter.__test_signature_monomorphized?("Leaf(Int32)").should be_true
     function.not_nil!.return_type.should eq(converter.class_info["Leaf(Int32)"].type_ref)
+  end
+
+  it "uses the template arena when suffix metadata has only spans" do
+    reopening_source = <<-CRYSTAL
+      class Box(T)
+        def pick(value : String) : String
+          value
+        end
+      end
+    CRYSTAL
+    trap_source = <<-CRYSTAL
+      class Box(T)
+        def pick(value : Object) : Object
+          value
+        end
+      end
+    CRYSTAL
+
+    results = [reopening_source, trap_source].map do |source|
+      parser = Adamas::Compiler::Frontend::Parser.new(
+        Adamas::Compiler::Frontend::Lexer.new(source)
+      )
+      parser.parse_program
+    end
+
+    reopening_class = results[0].roots.compact_map do |expr_id|
+      results[0].arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+    end.first
+    reopening_def = reopening_class.body.not_nil!.compact_map do |expr_id|
+      results[0].arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode)
+    end.first
+    original_param = reopening_def.params.not_nil!.first
+    reopening_def.params.not_nil![0] = Adamas::Compiler::Frontend::Parameter.new(
+      original_param.name,
+      original_param.external_name,
+      nil,
+      original_param.default_value,
+      original_param.span,
+      original_param.name_span,
+      original_param.external_name_span,
+      original_param.type_span,
+      original_param.default_span,
+      original_param.is_splat,
+      original_param.is_double_splat,
+      original_param.is_block,
+      original_param.is_instance_var,
+    )
+
+    converter = Adamas::HIR::AstToHir.new(results[1].arena)
+    converter.__test_clear_signature_param_caches
+    converter.__test_template_method_matches_suffix?(
+      reopening_def,
+      results[0].arena,
+      "String",
+    ).should be_true
+
+    converter.__test_clear_signature_param_caches
+    converter.__test_template_method_matches_suffix?(
+      reopening_def,
+      results[1].arena,
+      "String",
+    ).should be_false
   end
 
   it "keeps reference ivar annotations nominal during final layout" do

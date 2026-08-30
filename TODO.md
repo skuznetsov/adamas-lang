@@ -13996,6 +13996,28 @@ time. Next: use the existing bounded phase evidence to falsify exact selected
 Def identity loss in return-type forcing before changing queue architecture or
 running another complete 300-second bootstrap.
 
+### Session 106: preserve template arena provenance in signature recovery (2026-08-30)
+
+Generic template and reopening fallback already carried the owning arena, but
+suffix matching and target mangling discarded it when rebuilding parameter
+metadata. If a self-hosted `DefNode` retained only source spans, the fallback
+could read those offsets from the converter's current arena and silently select
+or reject the wrong same-arity overload.
+
+Parameter-info reconstruction now accepts the known definition arena at those
+two boundaries. The existing Def-identity cache and registration paths remain
+unchanged; no new registry, cache key, or lowering authority was introduced. A
+span-only regression uses equal-offset `String` and `Object` sources to prove
+that the arena changes the result. The focused contract passes 4 examples with
+zero failures; the complete `ast_to_hir` suite remains at 462 examples, zero
+failures, and two pending examples.
+
+Adversary verdict: ROBUST for cache-miss reconstruction at the two explicit
+template-arena consumers. This closes an overload-selection guardrail, not the
+bootstrap performance frontier. Next: correlate the exact selected `DefNode`
+with the target re-resolved by return-type forcing before changing its identity
+contract.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

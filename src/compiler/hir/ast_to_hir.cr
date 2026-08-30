@@ -43941,6 +43941,13 @@ module Adamas::HIR
     end
 
     private def function_param_infos(def_node : Adamas::Compiler::Frontend::DefNode) : Array(DefParamInfo)
+      function_param_infos(def_node, @arena)
+    end
+
+    private def function_param_infos(
+      def_node : Adamas::Compiler::Frontend::DefNode,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Array(DefParamInfo)
       def_id = def_node.object_id.to_u64
       if infos = @function_param_infos_by_def_id[def_id]?
         return infos
@@ -43955,7 +43962,7 @@ module Adamas::HIR
         end
         STDERR.puts "[PARAM_INFO_DEF_MISS] def_id=#{def_id} same_keys=#{same_keys.join(",")} cache_keys=#{same_cache.join(",")}"
       end
-      infos = build_param_infos(def_node)
+      infos = build_param_infos(def_node, arena)
       @function_param_infos_by_def_id[def_id] = infos
       infos
     end
@@ -44039,14 +44046,17 @@ module Adamas::HIR
       @function_param_stats[name] = build_param_stats_from_infos(infos)
     end
 
-    private def build_param_infos(def_node : Adamas::Compiler::Frontend::DefNode) : Array(DefParamInfo)
+    private def build_param_infos(
+      def_node : Adamas::Compiler::Frontend::DefNode,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Array(DefParamInfo)
       infos = [] of DefParamInfo
       if params = def_node.params
         each_param(params) do |param|
           infos << DefParamInfo.new(
             (name = param.name) ? safe_slice_to_string(name) : nil,
             (external = param.external_name) ? safe_slice_to_string(external) : nil,
-            parameter_type_annotation_string(param),
+            parameter_type_annotation_string(param, arena),
             param.default_value,
             param.is_splat,
             param.is_double_splat,
@@ -82278,7 +82288,7 @@ module Adamas::HIR
 
       param_types = [] of TypeRef
       has_block = false
-      function_param_infos(def_node).each do |param|
+      function_param_infos(def_node, def_arena).each do |param|
         next if named_only_separator?(param)
         if param.is_block
           has_block = true
@@ -82316,7 +82326,7 @@ module Adamas::HIR
       suffix_types = parse_types_from_suffix(stripped)
       return true if suffix_types.empty?
 
-      params = function_param_infos(def_node)
+      params = function_param_infos(def_node, def_arena)
       return true if params.empty?
 
       regular_params = [] of DefParamInfo
