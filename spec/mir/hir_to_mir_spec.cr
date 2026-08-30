@@ -73,6 +73,59 @@ class Adamas::MIR::HIRToMIRLowering
 end
 
 describe Adamas::MIR::HIRToMIRLowering do
+  describe "static method family resolution" do
+    it "fails closed instead of choosing an overload by insertion order" do
+      outcomes = [
+        ["IdentityProbe#pick$Int32", "IdentityProbe#pick$String"],
+        ["IdentityProbe#pick$String", "IdentityProbe#pick$Int32"],
+      ].map do |target_order|
+        hir_mod = Adamas::HIR::Module.new("ambiguous_static_method_family")
+
+        target_order.each_with_index do |target_name, index|
+          target = hir_mod.create_function(target_name, Adamas::HIR::TypeRef::INT32)
+          target_block = target.get_block(target.entry_block)
+          value = Adamas::HIR::Literal.new(
+            target.next_value_id,
+            Adamas::HIR::TypeRef::INT32,
+            index.to_i64
+          )
+          target_block.add(value)
+          target_block.terminator = Adamas::HIR::Return.new(value.id)
+        end
+
+        caller = hir_mod.create_function("identity_probe_caller", Adamas::HIR::TypeRef::INT32)
+        caller_block = caller.get_block(caller.entry_block)
+        call = Adamas::HIR::Call.without_receiver(
+          caller.next_value_id,
+          Adamas::HIR::TypeRef::INT32,
+          "IdentityProbe#pick$Bool",
+          [] of Adamas::HIR::ValueId
+        )
+        caller_block.add(call)
+        caller_block.terminator = Adamas::HIR::Return.new(call.id)
+
+        begin
+          mir_mod = Adamas::MIR::HIRToMIRLowering.new(hir_mod).lower
+          mir_caller = mir_mod.functions.find { |function| function.name == caller.name }.not_nil!
+          mir_call = mir_caller.blocks
+            .flat_map(&.instructions)
+            .find(&.is_a?(Adamas::MIR::Call))
+            .not_nil!
+            .as(Adamas::MIR::Call)
+          callee = mir_mod.functions.find { |function| function.id == mir_call.callee }.not_nil!
+          "resolved: #{callee.name}"
+        rescue ex
+          ex.message || ex.class.name
+        end
+      end
+
+      outcomes.should eq([
+        "Ambiguous MIR call target IdentityProbe#pick$Bool: candidates IdentityProbe#pick$Int32, IdentityProbe#pick$String",
+        "Ambiguous MIR call target IdentityProbe#pick$Bool: candidates IdentityProbe#pick$Int32, IdentityProbe#pick$String",
+      ])
+    end
+  end
+
   describe "materialized Proc yield ABI" do
     it "recovers the concrete callback return from a Nil|Proc union" do
       hir_mod = Adamas::HIR::Module.new("proc_yield_callback_return")

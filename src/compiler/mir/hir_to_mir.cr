@@ -6858,8 +6858,17 @@ module Adamas
                 func = all_overloads.find { |f| f.name == arity_name }
               end
 
-              # Fall back to first overload if no suffix/arity match
-              func = all_overloads.first? unless func
+              # A sole family member is an unambiguous legacy fallback. With
+              # multiple members, choosing the first one makes call identity
+              # depend on HIR insertion order and can bind the wrong overload.
+              unless func
+                if all_overloads.size == 1
+                  func = all_overloads.first
+                elsif all_overloads.size > 1
+                  candidate_names = all_overloads.map(&.name).sort.join(", ")
+                  raise "Ambiguous MIR call target #{method_name_str}: candidates #{candidate_names}"
+                end
+              end
             else
               # O(1) lookup via pre-computed index (legacy fallback)
               func = @function_by_base_name[base_name]?

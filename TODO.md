@@ -7,6 +7,15 @@ smokes, but stage2 reaches the 300-second compiler cap without producing
 `cv2_s2`; wrapper wall time is 302.69 seconds. Admission therefore remains RED.
 T1 and full-source MIR/LLVM continuity remain open.)
 
+2026-08-30 STATIC MIR OVERLOAD AMBIGUITY FAILS CLOSED. Qualified calls still
+prefer exact suffix and owner-correct arity targets, and a sole legacy candidate
+remains admitted. If multiple family members remain unmatched, HIR-to-MIR now
+raises one insertion-order-independent diagnostic instead of selecting the
+first registered overload. The order-adversarial MIR regression is green in
+both target orders; the full MIR file is 38/0 and the source-backed typed
+generic/static MIR ABI control is 1/0. This is a guard-only boundary, not proof
+that semantic `DefNode` identity survives into HIR; B4-F remains open.
+
 BARE REFERENCE-GENERIC INSTANCE DISPATCH RUNTIME-VERIFIED; REGISTERED
 RUNTIME-REFERENCE RETURN UNIONS HIR-VERIFIED AND MIR-GUARDED; UNSUPPORTED
 BARE-TEMPLATE COMPOSITION FAILS CLOSED. A bare generic receiver now records an
