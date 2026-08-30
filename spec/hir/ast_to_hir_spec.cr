@@ -16778,6 +16778,168 @@ describe Adamas::HIR::AstToHir do
     end
   end
 
+  describe "NoReturn call demand" do
+    it "does not materialize a call whose argument is proven NoReturn" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        struct NoReturnArgumentProbe
+          def accept(value : Int32, later : Int32)
+            value + later
+          end
+        end
+
+        def no_return_argument_stop : NoReturn
+          raise "stop"
+        end
+
+        def no_return_argument_receiver
+          NoReturnArgumentProbe.new
+        end
+
+        def no_return_argument_after
+          1
+        end
+
+        def no_return_argument_later
+          2
+        end
+
+        def no_return_argument_run
+          no_return_argument_receiver.accept(no_return_argument_stop, no_return_argument_later)
+          no_return_argument_after
+        end
+
+        no_return_argument_run
+      CRYSTAL
+
+      run = converter.module.function_by_name("no_return_argument_run")
+      run.should_not be_nil
+      run_calls = run.not_nil!.blocks.flat_map(&.instructions)
+        .compact_map(&.as?(Adamas::HIR::Call))
+      accept_calls = run_calls.select { |call| call.method_name.includes?("#accept") }
+
+      run_calls.any? { |call| call.method_name == "no_return_argument_receiver" }.should be_true
+      run_calls.any? { |call| call.method_name == "no_return_argument_stop" }.should be_true
+      accept_calls.should be_empty
+      run_calls.any? { |call| call.method_name == "no_return_argument_later" }.should be_false
+      run_calls.any? { |call| call.method_name == "no_return_argument_after" }.should be_false
+      converter.module.functions.any? do |function|
+        function.name.starts_with?("NoReturnArgumentProbe#accept$NoReturn")
+      end.should be_false
+    end
+
+    it "stops before an operator after assigning a NoReturn call" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        struct NoReturnOffsetProbe(T)
+          def +(offset : Int32)
+            self
+          end
+        end
+
+        def no_return_offset_stop : NoReturn
+          raise "stop"
+        end
+
+        def no_return_offset_after
+          1
+        end
+
+        def no_return_offset_run
+          value = NoReturnOffsetProbe(Int32).new
+          offset = no_return_offset_stop
+          value += offset
+          no_return_offset_after
+        end
+
+        no_return_offset_run
+      CRYSTAL
+
+      run = converter.module.function_by_name("no_return_offset_run")
+      run.should_not be_nil
+      run_calls = run.not_nil!.blocks.flat_map(&.instructions)
+        .compact_map(&.as?(Adamas::HIR::Call))
+
+      run_calls.any? { |call| call.method_name == "no_return_offset_stop" }.should be_true
+      run_calls.any? { |call| call.method_name.includes?("NoReturnOffsetProbe(Int32)#+") }.should be_false
+      run_calls.any? { |call| call.method_name == "no_return_offset_after" }.should be_false
+      converter.module.functions.any? do |function|
+        function.name.starts_with?("NoReturnOffsetProbe(Int32)#+$NoReturn")
+      end.should be_false
+    end
+
+    it "does not treat a live overload as NoReturn from a sibling annotation" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        def no_return_overloaded(value : Int32) : NoReturn
+          raise "stop"
+        end
+
+        def no_return_overloaded(value : String)
+          7
+        end
+
+        def no_return_overload_sink(value : Int32)
+          value
+        end
+
+        def no_return_overload_after
+          1
+        end
+
+        def no_return_overload_run
+          no_return_overload_sink(no_return_overloaded("ok"))
+          no_return_overload_after
+        end
+
+        no_return_overload_run
+      CRYSTAL
+
+      run = converter.module.function_by_name("no_return_overload_run")
+      run.should_not be_nil
+      run_calls = run.not_nil!.blocks.flat_map(&.instructions)
+        .compact_map(&.as?(Adamas::HIR::Call))
+
+      run_calls.any? { |call| call.method_name == "no_return_overloaded$String" }.should be_true
+      run_calls.any? { |call| call.method_name == "no_return_overload_sink$Int32" }.should be_true
+      run_calls.any? { |call| call.method_name == "no_return_overload_after" }.should be_true
+    end
+
+    it "does not terminate a virtual call from the base NoReturn annotation" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        class NoReturnVirtualBase
+          def probe(value : Int32) : NoReturn
+            raise "base stop"
+          end
+        end
+
+        class NoReturnVirtualFlow < NoReturnVirtualBase
+          def probe(value : Int32)
+            value
+          end
+        end
+
+        def no_return_virtual_after
+          1
+        end
+
+        def no_return_virtual_run(base : NoReturnVirtualBase)
+          base.probe(1)
+          no_return_virtual_after
+        end
+
+        no_return_virtual_run(NoReturnVirtualFlow.new)
+      CRYSTAL
+
+      run = converter.module.function_by_name("no_return_virtual_run$NoReturnVirtualBase")
+      run.should_not be_nil
+      run_calls = run.not_nil!.blocks.flat_map(&.instructions)
+        .compact_map(&.as?(Adamas::HIR::Call))
+
+      probe = run_calls.find { |call| call.method_name.includes?("#probe") }
+      probe.should_not be_nil
+      probe.not_nil!.virtual.should be_true
+      run_calls.any? { |call| call.method_name == "no_return_virtual_after" }.should be_true
+    end
+  end
+
   describe "abstract binary operator dispatch" do
     it "does not borrow a typed equality overload from a sibling callsite" do
       source = <<-CRYSTAL

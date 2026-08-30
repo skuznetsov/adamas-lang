@@ -24069,6 +24069,13 @@ module Adamas::HIR
       end
     end
 
+    private def def_declared_noreturn?(def_node : Adamas::Compiler::Frontend::DefNode) : Bool
+      return_type = def_node.return_type
+      return false unless return_type
+
+      normalize_declared_type_name(safe_slice_to_string(return_type) || "") == "NoReturn"
+    end
+
     private def infer_type_from_expr(expr_id : ExprId, self_type_name : String?) : TypeRef?
       stats = env_get("DEBUG_LOWER_METHOD_STATS") ? @lower_method_stats_stack.last? : nil
       stats_start = stats ? Time.instant : nil
@@ -72650,6 +72657,16 @@ module Adamas::HIR
         call_args, _, _ = apply_default_args(ctx, [] of ValueId, name, name, false, false, nil)
         arg_types = call_args.map { |arg_id| ctx.type_of(arg_id) }
         full_name = mangle_function_name(name, arg_types)
+        selected_entry = lookup_function_def_for_call(
+          name,
+          call_args.size,
+          false,
+          arg_types,
+        )
+        selected_def = selected_entry.try { |entry| entry[1] }
+        if selected_def.nil? && full_name != name
+          selected_def = @function_defs[full_name]?
+        end
         return_type = @function_types[full_name]? || @function_types[name]? || TypeRef::VOID
         if filter = env_get("DEBUG_IDENT_RESOLVE")
           if filter == "1" || filter == name
@@ -72658,14 +72675,19 @@ module Adamas::HIR
         end
         lower_function_if_needed(full_name)
         if return_type == TypeRef::VOID
-          return_type = get_function_return_type(full_name)
+          return_type = get_function_return_type(full_name, call_args.size, selected_def)
           if return_type == TypeRef::VOID && full_name != name
-            return_type = get_function_return_type(name)
+            return_type = get_function_return_type(name, call_args.size, selected_def)
           end
         end
         call = Call.without_receiver(ctx.next_id, return_type, full_name, call_args)
         ctx.emit(call)
         ctx.register_type(call.id, return_type)
+        # VOID is also used for unresolved calls. Only the exact selected Def's
+        # explicit NoReturn annotation proves that this continuation is dead.
+        if selected_def && def_declared_noreturn?(selected_def)
+          @control_flow_dead_blocks.add({ctx.function.id, ctx.current_block})
+        end
         if function_returns_type_literal?(full_name, name)
           ctx.mark_type_literal(call.id)
         end
@@ -86860,15 +86882,31 @@ module Adamas::HIR
       end
 
       base_name = strip_type_suffix(target_name)
+      # This fast path already carries an exact source-backed target symbol.
+      # Preserve its DefNode so an explicit NoReturn contract can terminate the
+      # caller without consulting an equal-arity sibling overload.
+      selected_entry = lookup_function_def_for_call(
+        target_name,
+        args.size,
+        has_block_call,
+        arg_types,
+        false,
+        has_named_args,
+        named_arg_names,
+      )
+      selected_def = selected_entry.try { |entry| entry[1] }
+      if selected_def.nil? && strip_type_suffix(target_name) != target_name
+        selected_def = @function_defs[target_name]?
+      end
       lower_function_if_needed(target_name)
-      return_type = get_function_return_type(target_name)
+      return_type = get_function_return_type(target_name, args.size, selected_def)
       if return_type == TypeRef::VOID &&
          force_pending_call_targets_for_return_type(target_name, context: "top_level_bare")
         refreshed = get_function_return_type(target_name)
         return_type = refreshed unless refreshed == TypeRef::VOID
       end
       if return_type == TypeRef::VOID
-        if inferred = resolve_return_type_from_def(target_name, base_name, nil)
+        if inferred = resolve_return_type_from_def(target_name, base_name, nil, args.size, selected_def)
           return_type = inferred unless inferred == TypeRef::VOID || inferred == TypeRef::NIL
         end
       end
@@ -86878,6 +86916,9 @@ module Adamas::HIR
       call.configure_without_receiver(target_name, coerced_args)
       ctx.emit(call)
       ctx.register_type(call.id, return_type)
+      if selected_def && def_declared_noreturn?(selected_def)
+        @control_flow_dead_blocks.add({ctx.function.id, ctx.current_block})
+      end
       if function_returns_type_literal?(target_name, base_name)
         ctx.mark_type_literal(call.id)
       end
@@ -89606,6 +89647,13 @@ module Adamas::HIR
         end
       end
 
+      # A receiver call that is exactly resolved to an explicit NoReturn Def
+      # already killed this continuation. Do not evaluate arguments or resolve
+      # an outer target from its non-flowing value.
+      if receiver_id && control_flow_dead_block?(ctx, ctx.current_block)
+        return receiver_id.not_nil!
+      end
+
       # Handle named arguments by reordering them to match parameter positions
       # Also expand splat arguments (*array -> individual elements)
       has_named_args = !node.named_args.nil?
@@ -89661,6 +89709,14 @@ module Adamas::HIR
       end
       if debug_env_filter_match?("DEBUG_CALL_TRACE", method_name, method_name, full_method_name || "")
         STDERR.puts "[CALL_TRACE] stage=after_args method=#{method_name} args=#{args.size} receiver=#{!!receiver_id} full=#{full_method_name || ""}"
+      end
+      # Positional arguments are evaluated left-to-right. If one selected call
+      # is explicitly NoReturn, its value cannot participate in outer target
+      # resolution and later arguments must not be evaluated.
+      if control_flow_dead_block?(ctx, ctx.current_block)
+        if terminal_arg = args.last?
+          return terminal_arg
+        end
       end
       abi_guard_explicit_arg_count = args.size
       args, has_named_args, default_arg_entry_name = apply_default_args(ctx, args, method_name, arg_binding_full_method_name, has_block_call, has_named_args, receiver_id)
@@ -95986,6 +96042,16 @@ module Adamas::HIR
       end
       ctx.emit(call)
       ctx.register_type(call.id, return_type)
+      # TypeRef::VOID also represents unresolved calls, so it cannot prove
+      # bottom by itself. Only the exact structured-resolver Def with an
+      # explicit NoReturn annotation makes the current continuation dead.
+      unless call_virtual
+        if selected_def = selected_call_entry_def
+          if def_declared_noreturn?(selected_def)
+            @control_flow_dead_blocks.add({ctx.function.id, ctx.current_block})
+          end
+        end
+      end
       if function_returns_type_literal?(mangled_method_name, base_method_name)
         ctx.mark_type_literal(call.id)
       end
@@ -99323,6 +99389,18 @@ module Adamas::HIR
       lower_args_with_expected_types_impl(ctx, positional_args, method_name, full_method_name, has_block_call, call_arena)
     end
 
+    private def lower_positional_args_until_dead(
+      ctx : LoweringContext,
+      positional_args : Array(ExprId),
+    ) : Array(ValueId)
+      result = [] of ValueId
+      positional_args.each do |arg_expr|
+        result << lower_expr(ctx, arg_expr)
+        break if control_flow_dead_block?(ctx, ctx.current_block)
+      end
+      result
+    end
+
     private def lower_args_with_expected_types_impl(
       ctx : LoweringContext,
       positional_args : Array(ExprId),
@@ -99380,12 +99458,12 @@ module Adamas::HIR
       # by exact mangled name, so passing through the unmangled args here is
       # safe — only the symbol literals will get converted to enum integers.
       if arg_types.any? { |t| t == TypeRef::VOID } && !func_name.starts_with?("Atomic::Ops.")
-        return positional_args.map { |arg| lower_expr(ctx, arg) }
+        return lower_positional_args_until_dead(ctx, positional_args)
       end
       func_entry = lookup_function_def_for_call(func_name, positional_args.size, has_block_call, arg_types)
       func_def = func_entry ? func_entry[1] : nil
       func_context = func_entry ? function_context_from_name(func_entry[0]) : nil
-      return positional_args.map { |arg| lower_expr(ctx, arg) } if !func_def
+      return lower_positional_args_until_dead(ctx, positional_args) if !func_def
 
       param_types = [] of TypeRef
       param_type_names = [] of String?
@@ -99444,6 +99522,7 @@ module Adamas::HIR
             end
           end
           @arena = call_arena
+          break if control_flow_dead_block?(ctx, ctx.current_block)
         end
       ensure
         @arena = old_arena
@@ -114492,6 +114571,8 @@ module Adamas::HIR
     # not emit calls from it, or we can end up monomorphizing "dead" generic
     # instantiations and triggering spurious missing symbols at link time.
     private def should_stop_sequential_lowering?(ctx : LoweringContext) : Bool
+      return true if control_flow_dead_block?(ctx, ctx.current_block)
+
       block = ctx.get_block(ctx.current_block)
       term = block.terminator
 
