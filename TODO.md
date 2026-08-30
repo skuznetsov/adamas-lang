@@ -13876,6 +13876,35 @@ for the final ivar annotation boundary. This remains an early proxy rather than
 a complete B4-F certificate; the next step is a canonical per-instance demand
 ledger before changing the broader queue architecture.
 
+### Session 102: give nested class registration one owner (2026-08-29)
+
+The per-instance demand ledger refuted duplicate exact materializations as the
+dominant early cost: all 448 observed transactions had distinct transaction and
+body identities, and generic specialization accounted for approximately one
+second. Phase timing instead localized about 15 seconds to module registration,
+with the reopened `Adamas::HIR::AstToHir` module dominating. Its nested classes
+were fully registered once by the early nested-type pass and then registered
+again by module PASS 2, repeating class body scans and runtime initializer
+bookkeeping. Original Crystal likewise installs class and def declarations once
+during top-level semantic traversal and types a `DefInstanceKey` body on demand.
+
+Module PASS 2 now leaves nested class ownership with the earlier nested-type
+pass. The focused falsifier was RED because one `register_module` call recorded
+the same nested deferred classvar initializer twice; it is GREEN with one
+record. The complete `ast_to_hir` spec passes 459 examples with zero failures.
+The broad HIR run passes 728 of 729 active examples; the sole `as?` output-order
+failure is the pre-existing defect already reproduced on clean `9e1ea7da`.
+
+On the fixed historical self-host source, the bounded early gate preserves
+`missing=171`, `pending=171`, `funcs=847`, and force-lower `138/125`, while its
+wall time falls from approximately 24-25 seconds to approximately 20 seconds.
+The deferred classvar rows fall from 184 to 159 while retaining the same 73
+unique logical keys; deferred constant rows fall from 163 to 162 while retaining
+the same 158 unique logical keys. Adversary verdict: ROBUST for ownership of
+source nested-class registration. This is a measured simplification and early
+bootstrap improvement, not a complete B4-F certificate. Next: run one fresh
+300-second B4-F because this slice supplies a new global-descent falsifier.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

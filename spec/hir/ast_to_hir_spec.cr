@@ -14887,6 +14887,25 @@ describe Adamas::HIR::AstToHir do
       first_idx.not_nil!.should be < deep_idx.not_nil!
     end
 
+    it "registers a nested class deferred classvar initializer once" do
+      arena, exprs = parse(<<-CRYSTAL)
+        module RuntimeInitOwner
+          class Nested
+            @@STATE = build_state
+          end
+        end
+      CRYSTAL
+      converter = Adamas::HIR::AstToHir.new(arena)
+      converter.arena = arena
+      module_expr = exprs.find { |expr_id| arena[expr_id].is_a?(Adamas::Compiler::Frontend::ModuleNode) }
+      module_expr.should_not be_nil
+      module_node = arena[module_expr.not_nil!].as(Adamas::Compiler::Frontend::ModuleNode)
+
+      converter.register_module(module_node)
+
+      converter.__test_deferred_classvar_init_names.count("STATE").should eq(1)
+    end
+
     it "keeps typed super dispatch flags out of parsed callsite arg types" do
       converter = lower_program_with_main(<<-CRYSTAL)
         class Exception

@@ -26672,7 +26672,8 @@ module Adamas::HIR
             end
           end
         end
-        # PASS 2: Register functions and classes (now that aliases and enums are available)
+        # PASS 2: Register functions and runtime module members.
+        # Nested types were fully registered by the earlier nested-type pass.
         old_class = @current_class
         @current_class = module_name
         begin
@@ -26820,21 +26821,9 @@ module Adamas::HIR
                 register_class_accessor_entry(module_name, spec, :setter, member.visibility)
               end
             when Adamas::Compiler::Frontend::ClassNode
-              class_name = class_name_from_node(member) || ""
-              full_class_name = qualified_nested_type_name(module_name, class_name)
-              if full_class_name == module_name
-                if registered_self_class
-                  bootstrap_trace_puts "[CLASS_FRONTIER] module_skip_duplicate_self_class #{full_class_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
-                  next
-                end
-                registered_self_class = true
-              end
-              if debug_env_filter_match?("DEBUG_NESTED_CLASS", full_class_name)
-                STDERR.puts "[DEBUG_NESTED_CLASS] Registering nested class: #{full_class_name}"
-              end
-              bootstrap_trace_puts "[CLASS_FRONTIER] module_before_nested_class_register #{module_name} -> #{full_class_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
-              register_class_with_name(member, full_class_name)
-              bootstrap_trace_puts "[CLASS_FRONTIER] module_after_nested_class_register #{module_name} -> #{full_class_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
+              # The earlier nested-type pass owns full class registration.
+              # Re-registering here duplicates body scans and runtime initializers.
+              next
             when Adamas::Compiler::Frontend::EnumNode
               # Already registered in PASS 1.5 - skip
             when Adamas::Compiler::Frontend::AliasNode
