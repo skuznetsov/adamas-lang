@@ -124,6 +124,58 @@ describe Adamas::MIR::HIRToMIRLowering do
         "Ambiguous MIR call target IdentityProbe#pick$Bool: candidates IdentityProbe#pick$Int32, IdentityProbe#pick$String",
       ])
     end
+
+    it "preserves the backend-owned stdio constructor target" do
+      hir_mod = Adamas::HIR::Module.new("backend_owned_stdio_constructor")
+
+      ["IO::FileDescriptor.new", "IO::FileDescriptor.new$Int32_Bool_Bool"].each do |target_name|
+        target = hir_mod.create_function(target_name, Adamas::HIR::TypeRef::POINTER)
+        target.add_param("handle", Adamas::HIR::TypeRef::INT32)
+        target.add_param("close_on_finalize", Adamas::HIR::TypeRef::BOOL)
+        target.set_param_default_literal(1, "true")
+        target.add_param("blocking", Adamas::HIR::TypeRef::NIL)
+        target.set_param_default_literal(2, "nil")
+        target_block = target.get_block(target.entry_block)
+        value = Adamas::HIR::Literal.new(
+          target.next_value_id,
+          Adamas::HIR::TypeRef::POINTER,
+          nil
+        )
+        target_block.add(value)
+        target_block.terminator = Adamas::HIR::Return.new(value.id)
+      end
+
+      caller = hir_mod.create_function("stdio_constructor_caller", Adamas::HIR::TypeRef::POINTER)
+      caller_block = caller.get_block(caller.entry_block)
+      handle = Adamas::HIR::Literal.new(
+        caller.next_value_id,
+        Adamas::HIR::TypeRef::INT32,
+        1_i64
+      )
+      caller_block.add(handle)
+      call = Adamas::HIR::Call.without_receiver(
+        caller.next_value_id,
+        Adamas::HIR::TypeRef::POINTER,
+        "IO::FileDescriptor.new$Int32",
+        [handle.id]
+      )
+      caller_block.add(call)
+      caller_block.terminator = Adamas::HIR::Return.new(call.id)
+
+      mir_mod = Adamas::MIR::HIRToMIRLowering.new(hir_mod).lower
+      mir_caller = mir_mod.functions.find { |function| function.name == caller.name }.not_nil!
+      extern_call = mir_caller.blocks
+        .flat_map(&.instructions)
+        .find(&.is_a?(Adamas::MIR::ExternCall))
+        .not_nil!
+        .as(Adamas::MIR::ExternCall)
+
+      extern_call.extern_name.should eq("IO::FileDescriptor.new$Int32")
+      mir_caller.blocks
+        .flat_map(&.instructions)
+        .any?(&.is_a?(Adamas::MIR::Call))
+        .should be_false
+    end
   end
 
   describe "materialized Proc yield ABI" do

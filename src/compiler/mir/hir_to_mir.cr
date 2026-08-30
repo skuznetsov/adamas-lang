@@ -6830,8 +6830,13 @@ module Adamas
           if debug_virtual && call.virtual
             STDERR.puts "[VIRTUAL_CALL] unresolved method=#{method_name_str} base=#{base_method_name} func=#{@current_lowering_func_name}"
           end
+          # The bootstrap stdio constructor is emitted directly by the LLVM
+          # backend. Keep its exact symbol unresolved here instead of retargeting
+          # it to a source-level constructor family with a different ABI.
+          if method_name_str == "IO::FileDescriptor.new$Int32"
+            # Fall through to the exact extern call below.
           # Only apply fuzzy matching for qualified method names (containing . or #)
-          if method_name_str.includes?('.') || method_name_str.includes?('#')
+          elsif method_name_str.includes?('.') || method_name_str.includes?('#')
             # Extract base name (before $ type suffix) without allocating
             dollar_idx = method_name_str.index('$')
             base_name = dollar_idx ? method_name_str[0, dollar_idx] : method_name_str

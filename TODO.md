@@ -16,6 +16,14 @@ both target orders; the full MIR file is 38/0 and the source-backed typed
 generic/static MIR ABI control is 1/0. This is a guard-only boundary, not proof
 that semantic `DefNode` identity survives into HIR; B4-F remains open.
 
+2026-08-30 BACKEND-OWNED STDIO CONSTRUCTOR STAYS EXACT. The fail-closed family
+guard exposed `IO::FileDescriptor.new$Int32` during the fresh B4-F stage1
+full-prelude smoke. That symbol is an intentional LLVM-backend boundary, so MIR
+now leaves it unresolved instead of retargeting it to a source constructor with
+a different ABI. The full MIR file is 39/0, and the full-prelude smoke advances
+to the next fail-closed boundary at `Crystal::Hasher.reduce_num$Number`. This is
+a scoped correctness checkpoint; stage2 was not reached and B4-F remains RED.
+
 BARE REFERENCE-GENERIC INSTANCE DISPATCH RUNTIME-VERIFIED; REGISTERED
 RUNTIME-REFERENCE RETURN UNIONS HIR-VERIFIED AND MIR-GUARDED; UNSUPPORTED
 BARE-TEMPLATE COMPOSITION FAILS CLOSED. A bare generic receiver now records an
