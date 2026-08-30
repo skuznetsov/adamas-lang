@@ -8830,9 +8830,15 @@ module Adamas::HIR
           has_block_call,
           has_splat,
         )
-        if preserve_requested_owner ||
-           (!resolved_owner.empty? && strip_generic_args(resolved_owner) != strip_generic_args(owner) &&
-           !inherited_wrapper_reusable)
+        if preserve_requested_owner
+          # The resolved Def is semantic authority for materializing the
+          # requested concrete value/generic owner; its ancestor-owned symbol
+          # is not an additional runtime target. Lowering both creates a
+          # parent-typed executable body whose internal static redispatch has
+          # already lost the concrete `self` identity.
+          lower_required_virtual_target_function(candidate, exact_demand: exact_owner_required)
+        elsif !resolved_owner.empty? && strip_generic_args(resolved_owner) != strip_generic_args(owner) &&
+              !inherited_wrapper_reusable
           lower_required_virtual_target_function(resolved_name, exact_demand: true)
           resolved_base = strip_type_suffix(resolved_name)
           lower_required_virtual_target_function(resolved_base, exact_demand: true) unless resolved_name == resolved_base
@@ -15959,17 +15965,55 @@ module Adamas::HIR
     end
 
     private def exact_call_type_required_for_annotation_name?(annotation_name : String, call_name : String) : Bool
-      case strip_generic_args(annotation_name)
+      annotation_base = strip_generic_args(annotation_name)
+      case annotation_base
       when "Number"
-        numeric_primitive_class_name?(call_name) || call_name == "Int" || call_name == "Float"
+        return numeric_primitive_class_name?(call_name) || call_name == "Int" || call_name == "Float"
       when "Int"
-        call_type_name_matches_primitive_owner?(call_name, "Int")
+        return call_type_name_matches_primitive_owner?(call_name, "Int")
       when "Float"
-        call_type_name_matches_primitive_owner?(call_name, "Float")
+        return call_type_name_matches_primitive_owner?(call_name, "Float")
       when "Int::Primitive", "Int::Signed", "Int::Unsigned"
-        call_type_name_matches_primitive_owner?(call_name, "Int")
-      else
-        false
+        return call_type_name_matches_primitive_owner?(call_name, "Int")
+      end
+
+      # A restricted value parameter still gets a typed body for the concrete
+      # call-site subtype. Reusing the declared parent body loses static
+      # redispatch inside wrappers (for example `hasher.number(self)`) and can
+      # later leave MIR with only an ambiguous overload family. Reference
+      # subtypes keep their shared pointer ABI; specialize only value owners.
+      return false if call_name == annotation_base
+
+      inherited_value_dispatch_needs_origin?(call_name) &&
+        inherits_from?(call_name, annotation_base)
+    end
+
+    private def defer_eager_value_dispatch_template?(
+      owner_node : Adamas::Compiler::Frontend::ClassNode,
+      owner_info : ClassInfo,
+      node : Adamas::Compiler::Frontend::DefNode,
+    ) : Bool
+      # Value owners with descendants are source templates for inherited
+      # concrete instances. Lowering an instance body during the class sweep
+      # binds `self` to the parent and can leak that parent into a later static
+      # redispatch. Keep actual parent-typed calls legal: the registered source
+      # definition can still be materialized explicitly on demand.
+      if owner_info.is_struct &&
+         !def_receiver_is_self_from_node(node, @arena) &&
+         (owner_node.is_abstract || class_has_subclasses?(owner_info.name))
+        return true
+      end
+
+      function_param_infos(node).any? do |param|
+        next false if param.is_block || param.is_splat || param.is_double_splat || named_only_separator?(param)
+        annotation_name = param.type_annotation
+        next false unless annotation_name
+
+        resolved_name = resolve_type_alias_chain(resolve_type_name_in_context(annotation_name))
+        next false if resolved_name.includes?('|')
+
+        inherited_value_dispatch_needs_origin?(resolved_name) &&
+          class_has_subclasses?(resolved_name)
       end
     end
 
@@ -35611,7 +35655,11 @@ module Adamas::HIR
               call_arg_types = callsite_args ? callsite_args.types : nil
               call_arg_literals = callsite_args ? callsite_args.literals : nil
               call_arg_enum_names = callsite_args ? callsite_args.enum_names : nil
-              lower_method(class_name, class_info, member, call_arg_types, call_arg_literals, call_arg_enum_names)
+              if defer_eager_value_dispatch_template?(node, class_info, member)
+                clear_pending_effect_annotations
+              else
+                lower_method(class_name, class_info, member, call_arg_types, call_arg_literals, call_arg_enum_names)
+              end
               add_defined_instance_methods_from_expr(class_name, defined_full_names, expr_id)
             when Adamas::Compiler::Frontend::GetterNode
               # Generate synthetic getter methods

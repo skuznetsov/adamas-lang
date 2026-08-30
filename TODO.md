@@ -14249,6 +14249,45 @@ mutations owned by these revisions. Definition/type-only progress without a HIR
 shape change is outside this claim, the existing budget-prefix behavior is
 unchanged, and B4-F remains measured-red.
 
+### Session 115: preserve concrete value-template dispatch identity (2026-08-30)
+
+Inherited value methods were resolved from the correct parent `DefNode`, but
+two later steps still erased the concrete call-site identity. Restricted value
+parameters reused their declared parent type inside typed wrapper bodies, and
+virtual-target replay materialized both the requested concrete candidate and
+the resolved parent-owned source symbol. The latter created an executable
+`Number#hash` body whose internal static redispatch emitted
+`Crystal::Hasher.reduce_num$Number`; MIR correctly rejected that lossy family
+name as ambiguous instead of choosing an overload by insertion order.
+
+The focused no-bootstrap regression uses a non-abstract value base with two
+concrete descendants and overloaded terminal reducers. It proves concrete
+`self`, concrete wrapper and reducer symbols, absence of a parent-owned body
+after concrete virtual replay, and a positive control that an explicit
+parent-typed demand still materializes the registered source definition. The
+implementation specializes restricted value subtypes, defers descendant value
+instance bodies during the eager class sweep, and lets concrete-owner replay
+use the resolved source `DefNode` without declaring its parent symbol as an
+additional runtime target. No target registry, family fallback, name allowlist,
+or MIR ambiguity relaxation was added.
+
+The focused regression is RED on both the eager parent redispatch and the
+double-materialized replay route, then GREEN after the corresponding guards.
+The complete `ast_to_hir` suite passes 476 examples with zero failures or
+errors and two existing pending examples. A fresh bounded stage1 chain at
+`/private/tmp/adamas_value_template_demand_20260830d` built the host stage in
+19.17 seconds and kept no-prelude green. Its plain/full-prelude first failure
+moved from `Crystal::Hasher.reduce_num$Number` to
+`Slice(UInt8)#+$NoReturn` (candidate family `Int32`, `Int32 | NoReturn`, and
+`UInt32`) after 17.61 seconds. This is a consumed frontier movement, not B4-F
+closure: no stage2 artifact or full-prelude semantic smoke is green yet.
+
+NEXT: build the smallest source-backed falsifier for the `NoReturn` argument
+provenance entering `Slice(UInt8)#+`. Determine whether the bottom type comes
+from a genuinely unreachable expression, a stale union join, or another lossy
+call target before changing production code. Do not weaken MIR's ambiguity
+failure or select a family member by order.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

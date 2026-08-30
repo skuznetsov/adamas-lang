@@ -16671,6 +16671,111 @@ describe Adamas::HIR::AstToHir do
         ["Left | Right"],
       ).should eq(["Left | Right"])
     end
+
+    it "preserves a concrete inherited value type through a restricted wrapper" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        struct NumericDispatchBase
+          def hash(hasher : NumericDispatchHasher) : Int32
+            hasher.number(self)
+          end
+        end
+
+        struct NumericDispatchLeaf < NumericDispatchBase
+        end
+
+        struct NumericDispatchOther < NumericDispatchBase
+        end
+
+        class NumericDispatchHasher
+          def self.reduce(value : NumericDispatchLeaf) : Int32
+            1
+          end
+
+          def self.reduce(value : NumericDispatchOther) : Int32
+            2
+          end
+
+          def number(value : NumericDispatchBase) : Int32
+            NumericDispatchHasher.reduce(value)
+          end
+        end
+
+        NumericDispatchLeaf.new.hash(NumericDispatchHasher.new)
+        NumericDispatchOther.new.hash(NumericDispatchHasher.new)
+      CRYSTAL
+      converter.flush_pending_functions
+
+      ["NumericDispatchLeaf", "NumericDispatchOther"].each do |value_type|
+        hash_function = converter.module.function_by_name(
+          "#{value_type}#hash$NumericDispatchHasher"
+        )
+        hash_function.should_not be_nil
+        self_param = hash_function.not_nil!.params.first
+        converter.__test_get_type_name_from_ref(self_param.type).should eq(value_type)
+
+        number_call = hash_function.not_nil!.blocks.flat_map(&.instructions)
+          .compact_map(&.as?(Adamas::HIR::Call))
+          .find { |call| call.method_name.includes?("#number") }
+        number_call.should_not be_nil
+        number_call.not_nil!.args.first.should eq(self_param.id)
+        number_call.not_nil!.method_name.should eq(
+          "NumericDispatchHasher#number$#{value_type}"
+        )
+
+        number_function = converter.module.function_by_name(number_call.not_nil!.method_name)
+        number_function.should_not be_nil
+        reduce_call = number_function.not_nil!.blocks.flat_map(&.instructions)
+          .compact_map(&.as?(Adamas::HIR::Call))
+          .find { |call| call.method_name.includes?(".reduce") }
+        reduce_call.should_not be_nil
+        reduce_call.not_nil!.method_name.should eq(
+          "NumericDispatchHasher.reduce$#{value_type}"
+        )
+      end
+
+      leaked_base_redispatches = converter.module.functions.flat_map(&.blocks)
+        .flat_map(&.instructions)
+        .compact_map(&.as?(Adamas::HIR::Call))
+        .select do |call|
+          call.method_name == "NumericDispatchHasher.reduce$NumericDispatchBase"
+      end
+      leaked_base_redispatches.should be_empty
+
+      base_hash_name = "NumericDispatchBase#hash$NumericDispatchHasher"
+      converter.module.functions.any? do |function|
+        function.name.starts_with?("NumericDispatchBase#hash") &&
+          converter.module.has_function_with_body?(function.name)
+      end.should be_false
+
+      # Replaying the inherited source definition for concrete value owners
+      # must materialize only those concrete candidates. The source Def remains
+      # semantic authority, but its parent-owned symbol is not an extra runtime
+      # target unless a parent-typed call explicitly demands it.
+      converter.__test_record_virtual_target(
+        "NumericDispatchBase",
+        "hash",
+        [converter.__test_type_ref_for_name("NumericDispatchHasher")],
+      )
+      converter.__test_replay_virtual_targets_for_registered_class("NumericDispatchLeaf")
+      converter.__test_replay_virtual_targets_for_registered_class("NumericDispatchOther")
+      converter.module.functions.any? do |function|
+        function.name.starts_with?("NumericDispatchBase#hash") &&
+          converter.module.has_function_with_body?(function.name)
+      end.should be_false
+
+      # Deferral must not ban a real parent-typed demand. The registered source
+      # template remains available and is materialized only when requested.
+      converter.__test_lower_function_if_needed(base_hash_name)
+      base_hash = converter.module.function_by_name(base_hash_name)
+      base_hash.should_not be_nil
+      base_number_call = base_hash.not_nil!.blocks.flat_map(&.instructions)
+        .compact_map(&.as?(Adamas::HIR::Call))
+        .find { |call| call.method_name.includes?("#number") }
+      base_number_call.should_not be_nil
+      base_number_call.not_nil!.method_name.should eq(
+        "NumericDispatchHasher#number$NumericDispatchBase"
+      )
+    end
   end
 
   describe "abstract binary operator dispatch" do
