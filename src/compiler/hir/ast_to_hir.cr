@@ -12,6 +12,7 @@ require "../layout_probe"
 require "../frontend/ast"
 require "../frontend/dispatch"
 require "../semantic/identity/dry_run_tracker"
+require "../semantic/types/type_context"
 require "../mir/mir"
 require "../../runtime"
 require "../semantic/macro_expander"
@@ -6400,6 +6401,12 @@ module Adamas::HIR
     @sources_by_arena : Hash(UInt64, String)
     # Stable arena order for packed main_expr refs (arena_index -> arena).
     @main_arenas : Array(Adamas::Compiler::Frontend::ArenaLike)
+    # Bounded K0 corridor: exact semantic call targets are accepted only from
+    # the same parser arena that HIR is currently lowering. Unsupported calls
+    # continue through the legacy resolver; a present but invalid target fails
+    # closed instead of becoming a second authority.
+    @semantic_call_target_arena_id : UInt64?
+    @semantic_call_target_context : Adamas::Compiler::Semantic::TypeContext?
     # Cached line counts per arena source (used for span validation).
     @line_counts_by_arena : Hash(UInt64, Int32)
     # Source path per arena (used for diagnostics).
@@ -6461,6 +6468,8 @@ module Adamas::HIR
       function_type_aux_capacity = 4096 if function_type_aux_capacity < 4096
       function_type_processed_capacity = function_type_capacity * 2
       @module = hir_module || Adamas::HIR::Module.new(module_name)
+      @semantic_call_target_arena_id = nil
+      @semantic_call_target_context = nil
       @function_types = Hash(String, TypeRef).new(initial_capacity: function_type_capacity)
       @function_explicit_return_defs =
         Hash(String, Adamas::Compiler::Frontend::DefNode).new(initial_capacity: function_type_aux_capacity)
@@ -6993,6 +7002,17 @@ module Adamas::HIR
     ) : Nil
       @arena = arena
       @module = hir_module
+    end
+
+    # Bind semantic analysis output without widening the bootstrap-sensitive
+    # constructor. The arena id is the authority boundary: ExprId alone is not
+    # meaningful across independently parsed programs.
+    def bind_semantic_call_targets(
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+      context : Adamas::Compiler::Semantic::TypeContext,
+    ) : Nil
+      @semantic_call_target_arena_id = arena.object_id.to_u64
+      @semantic_call_target_context = context
     end
 
     def bootstrap_bind_source_maps(
@@ -66950,7 +66970,7 @@ module Adamas::HIR
         previous_location = ctx.current_source_location
         ctx.current_source_location = source_location_for_node(@arena, node)
         result = begin
-          lower_node(ctx, node)
+          lower_node(ctx, node, expr_id)
         ensure
           ctx.current_source_location = previous_location
         end
@@ -66961,7 +66981,7 @@ module Adamas::HIR
           previous_location = ctx.current_source_location
           ctx.current_source_location = source_location_for_node(@arena, node)
           result = begin
-            lower_node(ctx, node)
+            lower_node(ctx, node, expr_id)
           ensure
             ctx.current_source_location = previous_location
           end
@@ -66971,7 +66991,7 @@ module Adamas::HIR
     end
 
     # Lower an AST node to HIR
-    def lower_node(ctx : LoweringContext, node : AstNode) : ValueId
+    def lower_node(ctx : LoweringContext, node : AstNode, expr_id : ExprId? = nil) : ValueId
       maybe_log_lower_histo(node)
       kind = Adamas::Compiler::Frontend.node_kind(node)
       if !@pending_def_annotations.empty? &&
@@ -66985,7 +67005,7 @@ module Adamas::HIR
       # the concrete payload with unsafe_as for hot lowering paths.
       case kind
       when Adamas::Compiler::Frontend::NodeKind::Call
-        return lower_call(ctx, node.unsafe_as(Adamas::Compiler::Frontend::CallNode))
+        return lower_call(ctx, node.unsafe_as(Adamas::Compiler::Frontend::CallNode), expr_id)
       when Adamas::Compiler::Frontend::NodeKind::Assign
         return lower_assign(ctx, node.unsafe_as(Adamas::Compiler::Frontend::AssignNode))
       when Adamas::Compiler::Frontend::NodeKind::Identifier
@@ -67141,7 +67161,7 @@ module Adamas::HIR
         # ═══════════════════════════════════════════════════════════════════
 
       when Adamas::Compiler::Frontend::CallNode
-        lower_call(ctx, node)
+        lower_call(ctx, node, expr_id)
       when Adamas::Compiler::Frontend::IndexNode
         lower_index(ctx, node)
       when Adamas::Compiler::Frontend::MemberAccessNode
@@ -86953,7 +86973,11 @@ module Adamas::HIR
       @module.has_function_with_body?(target_name) || state.pending? || state.in_progress?
     end
 
-    private def lower_call(ctx : LoweringContext, node : Adamas::Compiler::Frontend::CallNode) : ValueId
+    private def lower_call(
+      ctx : LoweringContext,
+      node : Adamas::Compiler::Frontend::CallNode,
+      expr_id : ExprId? = nil,
+    ) : ValueId
       trace_lower_call_arena_phase(ctx, node, "entry")
       trace_lower_call_arena_expr(ctx, node, "entry.callee", node.callee, @arena, "lower_call.current")
 
@@ -91414,7 +91438,10 @@ module Adamas::HIR
           end
         end
       end
-      if selected_target = (m3e_input ? resolve_call_target(m3e_input) : nil)
+      semantic_target = semantic_call_target(expr_id, lookup_name)
+      selected_target = semantic_target
+      selected_target ||= (m3e_input ? resolve_call_target(m3e_input) : nil)
+      if selected_target
         resolved_by_lookup = true
         entry_name = selected_target.symbol_name
         entry_def = selected_target.def_node
@@ -91432,7 +91459,8 @@ module Adamas::HIR
         # Avoid self-recursive overload capture when another compatible overload exists.
         # This can happen in wrapper-style overloads (instance and class methods),
         # where selecting the current overload again can later be mis-lowered.
-        if !has_splat &&
+        if !semantic_target &&
+           !has_splat &&
            entry_name == ctx.function.name
           alt_entry = lookup_alternative_non_recursive_overload_for_call(
             lookup_name,
@@ -95976,6 +96004,18 @@ module Adamas::HIR
           end
         end
       end
+      if semantic_target
+        emitted_def = @function_defs[emit_method_name]?
+        emitted_def ||= @function_defs[strip_type_suffix(emit_method_name)]?
+        entry_matches = entry_def.try(&.same?(semantic_target.def_node)) || false
+        emitted_matches = emitted_def.try(&.same?(semantic_target.def_node)) || false
+        unless entry_matches && emitted_matches
+          raise LoweringError.new(
+            "semantic call target changed before HIR emission: expected #{semantic_target.symbol_name}, got #{emit_method_name}",
+            node,
+          )
+        end
+      end
       if filter = env_get("ADAMAS_TRACE_CALL_EMIT")
         if emit_method_name.includes?(filter)
           recv_t = receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "nil"
@@ -98490,6 +98530,40 @@ module Adamas::HIR
       end
       return nil unless t
       SelectedCallTarget.new(t[0], t[1])
+    end
+
+    private def semantic_call_target(
+      expr_id : ExprId?,
+      lookup_name : String,
+    ) : SelectedCallTarget?
+      return nil unless expr_id
+      context = @semantic_call_target_context
+      return nil unless context
+
+      arena_id = @arena.object_id.to_u64
+      return nil unless @semantic_call_target_arena_id == arena_id
+      target = context.get_call_target(expr_id)
+      return nil unless target
+
+      identity = target.def_identity
+      unless identity.arena_id == arena_id
+        raise LoweringError.new("semantic call target belongs to a different AST arena")
+      end
+      target_index = identity.expr_index
+      if target_index < 0 || target_index >= @arena.size
+        raise LoweringError.new("semantic call target is outside its owning AST arena")
+      end
+      def_node = @arena[ExprId.new(target_index)].as?(Adamas::Compiler::Frontend::DefNode)
+      unless def_node
+        raise LoweringError.new("semantic call target does not identify a method definition")
+      end
+
+      base_name = strip_type_suffix(lookup_name)
+      symbol_name = registered_name_for_logical_def(base_name, def_node, lookup_name)
+      unless symbol_name
+        raise LoweringError.new("semantic call target has no registered HIR serialization for #{base_name}")
+      end
+      SelectedCallTarget.new(symbol_name, def_node)
     end
 
     # Legacy {name, def} adapter for callers not yet moved to SelectedCallTarget.

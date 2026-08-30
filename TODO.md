@@ -24,6 +24,23 @@ a different ABI. The full MIR file is 39/0, and the full-prelude smoke advances
 to the next fail-closed boundary at `Crystal::Hasher.reduce_num$Number`. This is
 a scoped correctness checkpoint; stage2 was not reached and B4-F remains RED.
 
+2026-08-30 SAME-ARENA SEMANTIC CALL TARGETS REACH HIR. For admitted explicit-
+receiver calls, `TypeContext` now retains the exact selected `DefInstanceKey` as
+lazy analysis output. `AstToHir` can bind that context only to its owning parser
+arena, recover the selected `DefNode`, and serialize the already-selected target
+without running the primary legacy overload scorer. Semantic authority also
+disables the legacy self-recursion guess, and the normal call-emission chokepoint
+fails closed if the selected entry or emitted callee no longer maps to that exact
+`DefNode`.
+No target registry, `ResolutionId`, mutable `HIR::Call` certificate, or
+constructor widening was added. This is a bounded K0 corridor for ordinary
+positional calls, not proof for block, intrinsic, union, index, or other early-
+return lowering: the CLI still discards its shadow semantic
+analysis before lowering, and generic receiver keys remain deliberately
+unadmitted. Therefore B4-F behavior and readiness are unchanged. Next: preserve
+the original parser arenas through the CLI semantic pass before considering
+generic widening or removing any legacy fallback.
+
 BARE REFERENCE-GENERIC INSTANCE DISPATCH RUNTIME-VERIFIED; REGISTERED
 RUNTIME-REFERENCE RETURN UNIONS HIR-VERIFIED AND MIR-GUARDED; UNSUPPORTED
 BARE-TEMPLATE COMPOSITION FAILS CLOSED. A bare generic receiver now records an
@@ -71,8 +88,8 @@ return; it does not admit a bare generic template or mixed-template receiver.
 This is a compatibility guard, not runtime support for bare-generic union
 composition; B4-F remains open under the 300-second policy.
 
-T1 OWNERSHIP/NAME-ID SUBSTRATE VERIFIED; CALL RESOLUTION CONTINUITY REMAINS
-OPEN. `SemanticIdentityRegistry` is now the compile-session owner for canonical
+T1 OWNERSHIP/NAME-ID SUBSTRATE VERIFIED; SAME-ARENA CALL CONTINUITY IS BOUNDED.
+`SemanticIdentityRegistry` is now the compile-session owner for canonical
 `NameId` values and the existing semantic type table. `DefInstanceKey` named
 arguments use ordered `{NameId, SemanticTypeId}` components, and both it and
 `SemanticTypeKey` own their dynamic key arrays without exposing mutable retained

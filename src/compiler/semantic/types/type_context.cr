@@ -2,6 +2,7 @@ require "./type"
 require "./primitive_type"
 require "./class_type"
 require "./union_type"
+require "../identity/def_instance_key"
 
 module Adamas
   module Compiler
@@ -18,6 +19,7 @@ module Adamas
         # Maps ExprId → inferred Type
         # Populated by type inference engine (future work)
         getter expression_types : Hash(ExprId, Type)
+        @call_targets : Hash(ExprId, DefInstanceKey)?
 
         # Built-in primitive types
         getter int8_type : PrimitiveType
@@ -42,6 +44,7 @@ module Adamas
 
         def initialize
           @expression_types = {} of ExprId => Type
+          @call_targets = nil
 
           # Initialize built-in primitive types
           @int8_type = PrimitiveType.new("Int8")
@@ -75,6 +78,22 @@ module Adamas
         # Returns nil if type not yet inferred
         def get_type(expr_id : ExprId) : Type?
           @expression_types[expr_id]?
+        end
+
+        # Exact semantic target selected for a call expression. This is analysis
+        # output beside expression_types, not a lowering cache: consumers may
+        # serialize the selected DefInstanceKey but must not re-resolve it.
+        def set_call_target(expr_id : ExprId, target : DefInstanceKey) : Nil
+          targets = @call_targets ||= {} of ExprId => DefInstanceKey
+          targets[expr_id] = target
+        end
+
+        def get_call_target(expr_id : ExprId) : DefInstanceKey?
+          @call_targets.try(&.[expr_id]?)
+        end
+
+        def clear_call_target(expr_id : ExprId) : Nil
+          @call_targets.try(&.delete(expr_id))
         end
 
         # Helper: Create a union type from constituent types

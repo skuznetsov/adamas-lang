@@ -6849,6 +6849,7 @@ module Adamas
 
         private def infer_call(node : Frontend::CallNode, expr_id : ExprId) : Type
           guard_watchdog!
+          @context.clear_call_target(expr_id)
 
           # NOTE: Block inference is deferred for methods that need special handling
           # (like `try` on union types) where the block parameter type depends on receiver
@@ -7575,6 +7576,7 @@ module Adamas
             return @unknown_type
           end
 
+          @context.set_call_target(expr_id, resolution.method_instance_key)
           infer_selected_explicit_receiver_method_result(resolution.method, receiver_type, arg_types, node)
         end
 

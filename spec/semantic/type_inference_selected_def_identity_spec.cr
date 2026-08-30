@@ -166,6 +166,38 @@ describe Semantic::TypeInferenceEngine do
       r1.arg_types.should eq(r3.arg_types)
     end
 
+    it "publishes the selected explicit-receiver target as analysis output" do
+      source = <<-CRYSTAL
+        class T1PublishedTarget
+          def route(value : String) : Int32
+            1
+          end
+
+          def route(value : Int32) : Int32
+            2
+          end
+        end
+
+        T1PublishedTarget.new.route(1)
+      CRYSTAL
+
+      program = Frontend::Parser.new(Frontend::Lexer.new(source)).parse_program
+      analyzer = Semantic::Analyzer.new(program)
+      analyzer.collect_symbols
+      name_result = analyzer.resolve_names
+      engine = analyzer.infer_types(name_result.identifier_symbols)
+      owner = analyzer.global_context.symbol_table.lookup("T1PublishedTarget").as(Semantic::ClassSymbol)
+      method = route_method_with_arg(owner, "Int32")
+      call_id = program.roots.last
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      target = engine.context.get_call_target(call_id).not_nil!
+      target.def_identity.should eq(engine.__test_validated_selected_def_identity(method))
+      target.arg_types.should eq([analyzer.identity_registry.types.primitive("Int32")])
+    end
+
     it "rejects a same-shaped receiver symbol owned by another analyzer" do
       _program, analyzer, engine = build_selected_def_identity_fixture
       _foreign_program, foreign_analyzer, _foreign_engine = build_selected_def_identity_fixture
@@ -706,6 +738,7 @@ describe Semantic::TypeInferenceEngine do
       ).should be_nil
       engine.diagnostics.should be_empty
       engine.context.get_type(call_id).to_s.should eq("Int32")
+      engine.context.get_call_target(call_id).should be_nil
     end
 
     it "does not classify a pre-separator parameter as named-only" do

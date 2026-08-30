@@ -2,6 +2,7 @@ require "../spec_helper"
 require "../../src/compiler/hir/ast_to_hir"
 require "../../src/compiler/frontend/parser"
 require "../../src/compiler/frontend/lexer"
+require "../../src/compiler/semantic/analyzer"
 
 # Layout-compatible proxy for the self-host failure mode where an arena node
 # keeps its InstanceVarDecl payload and tag but loses concrete subclass RTTI.
@@ -180,6 +181,15 @@ end
 
 # Test-only access to private parsing helpers (keeps production API small).
 class Adamas::HIR::AstToHir
+  def __test_begin_call_resolution_profile : Nil
+    @call_resolution_profile_count = 0_i64
+    @call_resolution_profile_active = true
+  end
+
+  def __test_call_resolution_profile_count : Int64
+    @call_resolution_profile_count
+  end
+
   def __test_resolve_signature_short_name(name : String, candidates : Set(String)) : String?
     @short_type_index[name] = candidates
     resolve_class_name_in_signature_context(name)
@@ -2235,6 +2245,8 @@ private def lower_program_with_main(
   source_backed : Bool = false,
   source_path : String? = nil,
   stdlib_root : String? = nil,
+  semantic_call_targets : Bool = false,
+  profile_call_resolution : Bool = false,
 ) : Adamas::HIR::AstToHir
   arena, exprs = parse(code)
   sources_by_arena = if source_backed || source_path
@@ -2250,6 +2262,20 @@ private def lower_program_with_main(
     stdlib_root: stdlib_root,
   )
   converter.arena = arena
+
+  if semantic_call_targets
+    program = Adamas::Compiler::Frontend::Program.new(arena, exprs)
+    analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
+    analyzer.collect_symbols
+    name_result = analyzer.resolve_names
+    engine = analyzer.infer_types(name_result.identifier_symbols)
+    unless analyzer.semantic_diagnostics.empty? &&
+           analyzer.name_resolver_diagnostics.empty? &&
+           engine.diagnostics.empty?
+      raise "semantic call-target fixture failed analysis"
+    end
+    converter.bind_semantic_call_targets(arena, engine.context)
+  end
 
   enum_nodes = [] of Adamas::Compiler::Frontend::EnumNode
   module_nodes = [] of Adamas::Compiler::Frontend::ModuleNode
@@ -2286,6 +2312,7 @@ private def lower_program_with_main(
   class_nodes.each { |node| converter.lower_class(node) }
   def_nodes.each { |node| converter.lower_def(node) }
 
+  converter.__test_begin_call_resolution_profile if profile_call_resolution
   converter.lower_main(main_exprs) if main_exprs.size > 0
 
   converter
@@ -13249,6 +13276,60 @@ describe Adamas::HIR::AstToHir do
       main = converter.module.function_by_name("__adamas_main")
       main.should_not be_nil
       hir_text(main.not_nil!).should contain("OverloadedConcreteExplicitAbiBox(String)#accept$Int32")
+    end
+
+    it "consumes a semantic overload target before legacy HIR scoring" do
+      source = <<-CRYSTAL
+        class SemanticRoute
+          def route(value : String) : Int32
+            1
+          end
+
+          def route(value : Int32) : Int32
+            2
+          end
+        end
+
+        SemanticRoute.new.route(1)
+      CRYSTAL
+
+      legacy = lower_program_with_main(source, profile_call_resolution: true)
+      semantic = lower_program_with_main(
+        source,
+        semantic_call_targets: true,
+        profile_call_resolution: true,
+      )
+
+      legacy.__test_call_resolution_profile_count.should eq(
+        semantic.__test_call_resolution_profile_count + 1
+      )
+      main = semantic.module.function_by_name("__adamas_main")
+      main.should_not be_nil
+      hir_text(main.not_nil!).should contain("SemanticRoute#route$Int32")
+    end
+
+    it "does not replace an exact semantic recursive target with a sibling overload" do
+      # Without the semantic-authority guard this keeps the same emitted name
+      # while silently replacing the selected DefNode with the untyped sibling.
+      converter = lower_program_with_main(<<-CRYSTAL, semantic_call_targets: true)
+        class SemanticRecursiveRoute
+          def route(value) : String
+            "wrong"
+          end
+
+          def route(value : Int32)
+            self.route(value)
+          end
+        end
+
+        SemanticRecursiveRoute.new.route(1)
+      CRYSTAL
+
+      recursive = converter.module.function_by_name("SemanticRecursiveRoute#route$Int32")
+      recursive.should_not be_nil
+      text = hir_text(recursive.not_nil!)
+      text.should contain("SemanticRecursiveRoute#route$Int32")
+      text.should_not contain("wrong")
     end
 
     it "scores authoritative included-module overloads before comparing union ABIs" do
