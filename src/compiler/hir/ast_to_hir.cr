@@ -61701,11 +61701,13 @@ module Adamas::HIR
           if target.is_a?(Adamas::Compiler::Frontend::InstanceVarNode)
             ivar_name = (safe_slice_to_string(target.name) || "")
             unless seen.includes?(ivar_name)
-              seen << ivar_name
               value_node = node_for_expr(node.value, arena)
               next unless value_node
               ivar_type = infer_type_from_class_ivar_assign(value_node)
-              result << {ivar_name, ivar_type} unless ivar_type == TypeRef::VOID
+              unless ivar_type == TypeRef::VOID
+                seen << ivar_name
+                result << {ivar_name, ivar_type}
+              end
             end
           end
           # Recurse into value
@@ -61731,6 +61733,21 @@ module Adamas::HIR
           if else_branch = node.else_branch
             scan_nodes_for_ivars(else_branch, arena, class_name, result, seen, depth + 1)
           end
+        when Adamas::Compiler::Frontend::BeginNode
+          scan_nodes_for_ivars(node.body, arena, class_name, result, seen, depth + 1)
+          if rescue_clauses = node.rescue_clauses
+            rescue_clauses.each do |clause|
+              scan_nodes_for_ivars(clause.body, arena, class_name, result, seen, depth + 1)
+            end
+          end
+          if else_body = node.else_body
+            scan_nodes_for_ivars(else_body, arena, class_name, result, seen, depth + 1)
+          end
+          if ensure_body = node.ensure_body
+            scan_nodes_for_ivars(ensure_body, arena, class_name, result, seen, depth + 1)
+          end
+        when Adamas::Compiler::Frontend::AsNode, Adamas::Compiler::Frontend::AsQuestionNode
+          scan_nodes_for_ivars([node.expression], arena, class_name, result, seen, depth + 1)
         end
       end
     end
@@ -61853,6 +61870,14 @@ module Adamas::HIR
         return TypeRef::CHAR
       when Adamas::Compiler::Frontend::NilNode
         return TypeRef::VOID
+      when Adamas::Compiler::Frontend::AsNode
+        target_name = normalize_declared_type_name((safe_slice_to_string(value_node.target_type) || ""))
+        return type_ref_for_name(target_name)
+      when Adamas::Compiler::Frontend::AsQuestionNode
+        target_name = normalize_declared_type_name((safe_slice_to_string(value_node.target_type) || ""))
+        # HIR keeps the concrete cast target as the carrier and records possible
+        # null separately on the lowered value via `mark_as_question_result`.
+        return type_ref_for_name(target_name)
       when Adamas::Compiler::Frontend::ArrayLiteralNode
         trace_array_of = if current_class = @current_class
                            debug_env_filter_match?("ADAMAS_TRACE_ARRAY_OF_TYPE", current_class)

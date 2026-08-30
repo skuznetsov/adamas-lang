@@ -7650,6 +7650,133 @@ describe Adamas::HIR::AstToHir do
       value.should_not be_nil
       value.not_nil!.type.should eq(Adamas::HIR::TypeRef::INT32)
     end
+
+    it "infers an explicit cast before lowering the assigning body" do
+      code = <<-CRYSTAL
+        class CastAssignedIvar
+          def initialize
+            @context = nil.as(String?)
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(code)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => code},
+      )
+      class_node = exprs.compact_map { |id| arena[id].as?(Adamas::Compiler::Frontend::ClassNode) }.first
+
+      converter.register_class(class_node)
+
+      context = converter.class_info["CastAssignedIvar"].ivars.find { |ivar| ivar.name == "@context" }
+      context.should_not be_nil
+      context.not_nil!.type.should eq(converter.__test_type_ref_for_name("String?"))
+    end
+
+    it "keeps a question cast on its HIR target carrier before lowering the body" do
+      code = <<-CRYSTAL
+        class QuestionCastAssignedIvar
+          def initialize(value : Object)
+            @context = value.as?(String)
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(code)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => code},
+      )
+      class_node = exprs.compact_map { |id| arena[id].as?(Adamas::Compiler::Frontend::ClassNode) }.first
+
+      converter.register_class(class_node)
+
+      context = converter.class_info["QuestionCastAssignedIvar"].ivars.find { |ivar| ivar.name == "@context" }
+      context.should_not be_nil
+      context.not_nil!.type.should eq(Adamas::HIR::TypeRef::STRING)
+    end
+
+    it "keeps looking after an assignment whose type is not known at registration" do
+      code = <<-CRYSTAL
+        class DeferredAssignedIvar
+          def initialize(value)
+            @value = value
+            @value = 7
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(code)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => code},
+      )
+      class_node = exprs.compact_map { |id| arena[id].as?(Adamas::Compiler::Frontend::ClassNode) }.first
+
+      converter.register_class(class_node)
+
+      value = converter.class_info["DeferredAssignedIvar"].ivars.find { |ivar| ivar.name == "@value" }
+      value.should_not be_nil
+      value.not_nil!.type.should eq(Adamas::HIR::TypeRef::INT32)
+    end
+
+    it "scans every branch of a begin expression before lowering the body" do
+      code = <<-CRYSTAL
+        class BeginAssignedIvars
+          def initialize
+            begin
+              @body_value = 1
+            rescue
+              @rescue_value = true
+            else
+              @else_value = 'e'
+            ensure
+              @ensure_value = "done"
+            end
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(code)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => code},
+      )
+      class_node = exprs.compact_map { |id| arena[id].as?(Adamas::Compiler::Frontend::ClassNode) }.first
+
+      converter.register_class(class_node)
+
+      ivars = converter.class_info["BeginAssignedIvars"].ivars
+      ivars.map(&.name).should contain("@body_value")
+      ivars.map(&.name).should contain("@rescue_value")
+      ivars.map(&.name).should contain("@else_value")
+      ivars.map(&.name).should contain("@ensure_value")
+    end
+
+    it "preserves extern out parameter discovery while scanning method bodies" do
+      code = <<-CRYSTAL
+        lib RegistrationProbe
+          fun fill(value : Int32*) : Int32
+        end
+
+        class OutAssignedIvar
+          def initialize
+            RegistrationProbe.fill(out @value)
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(code)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => code},
+      )
+      lib_node = exprs.compact_map { |id| arena[id].as?(Adamas::Compiler::Frontend::LibNode) }.first
+      class_node = exprs.compact_map { |id| arena[id].as?(Adamas::Compiler::Frontend::ClassNode) }.first
+
+      converter.register_lib(lib_node)
+      converter.register_class(class_node)
+
+      value = converter.class_info["OutAssignedIvar"].ivars.find { |ivar| ivar.name == "@value" }
+      value.should_not be_nil
+      value.not_nil!.type.should eq(Adamas::HIR::TypeRef::INT32)
+    end
   end
 
   describe "generic block return types" do

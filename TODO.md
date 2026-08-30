@@ -14104,6 +14104,28 @@ that registration did not materialize. Next: compare and consolidate the two
 existing ivar-body scanners, add a nested-control-flow falsifier, and require a
 zero layout delta before introducing any allocator fast path.
 
+### Session 110: close registration-time ivar scanner coverage gaps (2026-08-30)
+
+The registration-time body scanner and the initializer-lowering scanner have
+different contracts: the former uses an explicit detached arena and returns
+layout facts while preserving extern `out @ivar` discovery; the latter depends
+on ambient lowering state and mutates ivar/getter metadata. A direct merge was
+therefore rejected. The detached scanner now traverses every `begin`, `rescue`,
+`else`, and `ensure` branch, follows explicit casts while preserving the HIR
+`as?` target-carrier contract, and does not mark an ivar as seen until it has
+inferred a concrete type.
+
+Registration-only regressions cover all four `begin` regions, `as`, `as?`, a
+later concrete assignment after an initially unknown value, and the retained
+extern-out path. The focused contract passes 6 examples with zero failures;
+the complete `ast_to_hir` suite passes 468 examples with zero failures and two
+pending, and the no-prelude parameter-corruption guard remains green.
+
+Adversary verdict: ROBUST for these scanner gaps and the preserved detached
+contract. This is not yet authority to skip initializer pre-lowering: the next
+slice must measure a global allocator layout-delta certificate and keep the
+fallback unless all admitted initializer shapes are registration-complete.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
