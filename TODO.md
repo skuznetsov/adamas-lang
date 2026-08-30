@@ -13969,6 +13969,33 @@ under a shorter supervised cap to partition post-`lower_main` time between
 pending materialization and missing-target scans before changing queue or
 generic-resolution contracts.
 
+### Session 105: preserve generic declarations while deferring bodies (2026-08-30)
+
+The attempted broad shortcut that skipped concrete generic instance methods
+was rejected: it removed declaration metadata required by yield, wrapper, and
+generic dispatch paths and caused nine regressions in the complete
+`ast_to_hir` suite. The existing `@suppress_monomorphization` boundary already
+provides the simpler contract: register nominal method signatures, but defer
+HIR bodies and generic classes referenced only by those signatures until an
+explicit demand arrives.
+
+The remaining focused bug was lookup precision. A top-level generic such as
+`Leaf(T)` could be rebound to the current owner namespace, and the generic
+template fallback selected the first same-arity overload before checking the
+requested suffix. Top-level generic templates are now an explicit name
+authority, and suffix compatibility participates in template and reopening
+candidate selection. The focused contract covers top-level and nested generic
+return types, three same-arity overloads, a generic reopening, deferred bodies,
+and later explicit materialization. It passes 3 examples with zero failures;
+the complete `ast_to_hir` suite matches its clean baseline with 462 examples,
+zero failures, and two pending examples.
+
+Adversary verdict: ROBUST for this HIR declaration/materialization boundary.
+This is a correctness and guardrail slice, not evidence of lower B4-F wall
+time. Next: use the existing bounded phase evidence to falsify exact selected
+Def identity loss in return-type forcing before changing queue architecture or
+running another complete 300-second bootstrap.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

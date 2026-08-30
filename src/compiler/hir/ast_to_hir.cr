@@ -57055,7 +57055,9 @@ module Adamas::HIR
 
       # Prefer top-level types over short_type_index module matches.
       # e.g., "Time" should resolve to top-level "Time" struct, not "Crystal::System::Time" module.
-      if safe_set_includes?(@top_level_type_names, name) || @top_level_class_kinds.has_key?(name)
+      if safe_set_includes?(@top_level_type_names, name) ||
+         @top_level_class_kinds.has_key?(name) ||
+         @generic_templates.has_key?(name)
         return name
       end
 
@@ -57130,7 +57132,9 @@ module Adamas::HIR
         return shortest
       end
 
-      return name if safe_set_includes?(@top_level_type_names, name) || @top_level_class_kinds.has_key?(name)
+      return name if safe_set_includes?(@top_level_type_names, name) ||
+                     @top_level_class_kinds.has_key?(name) ||
+                     @generic_templates.has_key?(name)
       nil
     end
 
@@ -82072,6 +82076,7 @@ module Adamas::HIR
       method_name : String,
       expected_arg_count : Int32? = nil,
       expect_block : Bool = false,
+      suffix : String? = nil,
     ) : Tuple(Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike)?
       body = template.node.body
       return nil unless body
@@ -82087,6 +82092,9 @@ module Adamas::HIR
         when Adamas::Compiler::Frontend::DefNode
           def_name = (mn = member.name) ? (safe_slice_to_string(mn) || "") : ""
           if def_name == method_name
+            if exact_suffix = suffix
+              next unless template_method_matches_suffix?(member, template.arena, exact_suffix)
+            end
             if expected = expected_arg_count
               regular_param_count = 0
               required_param_count = 0
@@ -84178,15 +84186,13 @@ module Adamas::HIR
                 # Fallback: search the generic template's body for the method
                 if !func_def
                   if template = @generic_templates[info.base]?
-                    found_in_template = find_method_in_generic_template(template, method_part, lookup_expected_param_count, lookup_expect_block)
-                    if found_in_template && name_parts.suffix
-                      # Verify the template method's param type annotations are compatible
-                      # with the suffix types. Without this, Array#[]?(Range) could be
-                      # selected for a call with $Int32 suffix, when the correct overload
-                      # is Indexable#[]?(Int32) from a deferred module lookup.
-                      found_in_template = nil unless template_method_matches_suffix?(
-                                                       found_in_template[0], found_in_template[1], name_parts.suffix.not_nil!)
-                    end
+                    found_in_template = find_method_in_generic_template(
+                      template,
+                      method_part,
+                      lookup_expected_param_count,
+                      lookup_expect_block,
+                      name_parts.suffix,
+                    )
                     if found_in_template
                       func_def = found_in_template[0]
                       arena = found_in_template[1]
@@ -84203,11 +84209,13 @@ module Adamas::HIR
                     if !func_def
                       if reopenings = @generic_reopenings[info.base]?
                         reopenings.each do |reopen_template|
-                          found_in_reopen = find_method_in_generic_template(reopen_template, method_part, lookup_expected_param_count, lookup_expect_block)
-                          if found_in_reopen && name_parts.suffix
-                            found_in_reopen = nil unless template_method_matches_suffix?(
-                                                           found_in_reopen[0], found_in_reopen[1], name_parts.suffix.not_nil!)
-                          end
+                          found_in_reopen = find_method_in_generic_template(
+                            reopen_template,
+                            method_part,
+                            lookup_expected_param_count,
+                            lookup_expect_block,
+                            name_parts.suffix,
+                          )
                           if found_in_reopen
                             func_def = found_in_reopen[0]
                             arena = found_in_reopen[1]
