@@ -13905,6 +13905,26 @@ source nested-class registration. This is a measured simplification and early
 bootstrap improvement, not a complete B4-F certificate. Next: run one fresh
 300-second B4-F because this slice supplies a new global-descent falsifier.
 
+### Session 103: fresh 300-second B4-F remains red after registration descent (2026-08-29)
+
+The committed Session 102 source at `04229f57` was measured through the
+canonical two-stage producer in `/private/tmp/adamas_b4f_04229f57`. The
+manifest records matching start/end source hashes and an empty tracked source
+status and diff. Stage1 built in 17.18 seconds and passed both plain and
+no-prelude smokes. Stage2 reached the 300-second `run_safe.sh` compiler cap,
+exited 143 after 302.89 seconds of wrapper wall time, and did not produce
+`cv2_s2`; B4-F therefore remains RED.
+
+The preserved stage2 trace completes deferred classvar and constant processing
+and reaches `lower_main` expression lowering, but does not finish the self-host
+build. This falsifies the claim that removing duplicate source nested-class
+registration is sufficient for end-to-end admission, without refuting its
+focused correctness contract or measured early-gate descent. Resource evidence
+still reports numeric RSS and FD coverage as unavailable, so it supports the
+timeout and process-tree cleanup claim only. Next: reuse this exact committed
+`cv2_s1` for bounded HIR stop-gate attribution; do not repeat the complete B4-F
+until a new local probe decreases the remaining post-`lower_main` boundary.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
