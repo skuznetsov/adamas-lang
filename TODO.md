@@ -13925,6 +13925,50 @@ timeout and process-tree cleanup claim only. Next: reuse this exact committed
 `cv2_s1` for bounded HIR stop-gate attribution; do not repeat the complete B4-F
 until a new local probe decreases the remaining post-`lower_main` boundary.
 
+### Session 104: raw demand trace refutes CLI callsite-shape churn (2026-08-30)
+
+The default-off queue-boundary ledger from `cded2aca` was exercised in one
+diagnostic-only current-source `s1 -> s2` compile under the 300-second compiler
+cap. The run in `/private/tmp/adamas_b4f_ledger_cded2aca` timed out with exit
+143 and produced no `cv2_s2`. It is not a canonical B4-F receipt because the
+instrumentation environment is intentionally rejected by the admission
+manifest.
+
+The filter covering `Adamas::Compiler::CLI#compile` produced four rows without
+truncation: one `nested_defer_method` and one later `missing_scan` row for each
+of `CLI#compile` and `CLI#compile_llvm_ir`. Each pair preserved the exact
+requested name, DefNode, arena, owner TypeRef, argument TypeRefs, block shape,
+and named-argument shape. The only observed representation change was
+`literals=0,...` to `literals=none`; both normalize to no literal parameters in
+all three method-lowering consumers. `enum_names` remained absent. This
+refutes both broad repeated demand in this filtered family and semantic
+callsite-shape churn as the explanation for its reopenings. No merge policy or
+new callsite authority is justified by this trace.
+
+The supervised process tree contained one compiler plus the `run_safe.sh`
+wrapper and watchdog. Manual snapshots observed smooth RSS growth below the
+4096 MiB cap and no worker fanout, but the versioned resource row still reports
+numeric RSS and FD coverage as unavailable; it is not B7 evidence.
+
+Mini-Quadrum synthesis:
+
+- **Cassandra:** mutable latest-callsite metadata looked like a provenance leak,
+  but preserving it blindly could make a representational distinction into a
+  new semantic authority.
+- **Daedalus:** a focused RED probe confirmed the overwrite, then source-level
+  consumer inspection showed that this run's all-false and absent literal
+  arrays have identical lowering semantics; the proposed merge was rejected.
+- **Maieutic:** repeated exact names do not prove duplicate materialization when
+  definition, type, state, and queue revisions advance between observations.
+- **Adversary:** the trace is ROBUST only for the filtered CLI family and its
+  observed metadata. B4-F remains BROKEN/RED, and another complete retry would
+  add no information.
+
+Next: use the committed current producer with existing `ADAMAS_PHASE_STATS`
+under a shorter supervised cap to partition post-`lower_main` time between
+pending materialization and missing-target scans before changing queue or
+generic-resolution contracts.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
