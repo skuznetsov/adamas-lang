@@ -83147,6 +83147,26 @@ module Adamas::HIR
       "settled"
     end
 
+    # Debug-only rendering of a registered syntactic identity. Keep diagnostics
+    # on the same arena + ExprId shape used by semantic instance keys without
+    # resolving arenas, warming semantic caches, or comparing DefNode objects.
+    private def debug_structural_def_identity(
+      def_node : Adamas::Compiler::Frontend::DefNode,
+      arena : Adamas::Compiler::Frontend::ArenaLike?,
+    ) : String
+      return "unresolved" unless arena
+      i = 0
+      while i < arena.size
+        candidate = arena[Adamas::Compiler::Frontend::ExprId.new(i)]
+        if candidate.is_a?(Adamas::Compiler::Frontend::DefNode) &&
+           def_matches_phase0_body_infer_identity?(candidate, def_node)
+          return Adamas::Compiler::Semantic::DefIdentity.new(arena.object_id.to_u64, i).to_s
+        end
+        i += 1
+      end
+      "unresolved"
+    end
+
     # Diagnostic-only tuple: state:body:module-return:exact-cache:base-cache:annotated.
     private def force_candidate_snapshot(name : String?) : String
       return "no_name" unless name
@@ -85139,7 +85159,9 @@ module Adamas::HIR
         end
         debug_hook("function.lookup.hit", data)
         if debug_env_filter_match?("DEBUG_CALL_LOOKUP", name, target_name)
-          STDERR.puts "[LOWER_FUNC_TARGET] requested=#{name} target=#{target_name} branch=#{lookup_branch || "unknown"}"
+          resolved_arena = arena || @function_def_arenas[target_name]? || @function_def_arenas[name]?
+          resolved_identity = debug_structural_def_identity(func_def, resolved_arena)
+          STDERR.puts "[LOWER_FUNC_TARGET] requested=#{name} target=#{target_name} branch=#{lookup_branch || "unknown"} resolved_def=#{resolved_identity}"
         end
         if env_get("DEBUG_HASH_DELETE_LOWER") && name.includes?("Hash(String, Int32)#delete$String")
           stats = function_param_stats(target_name, func_def.not_nil!)
@@ -91119,6 +91141,7 @@ module Adamas::HIR
       end
       resolved_by_lookup = false
       selected_call_entry_def : Adamas::Compiler::Frontend::DefNode? = nil
+      selected_call_entry_name : String? = nil
       # Preserve the authoritative structured-resolver selection for the
       # inline-yield corridor.  The legacy block lookup below intentionally
       # accepts a source arity plus already-normalized argument types; replaying
@@ -91339,9 +91362,13 @@ module Adamas::HIR
         end
         if debug_env_filter_match?("DEBUG_CALL_LOOKUP", ctx.function.name, lookup_name, entry_name, mangled_method_name)
           stats = function_param_stats(entry_name, entry_def)
-          STDERR.puts "[CALL_LOWER_HIT] caller=#{ctx.function.name} lookup=#{lookup_name} entry=#{entry_name} mangled=#{mangled_method_name} base=#{base_method_name} required=#{stats.required} param_count=#{stats.param_count} block_def=#{stats.has_block ? 1 : 0}"
+          selected_arena = @function_def_arenas[entry_name]? ||
+                           @function_def_arenas[strip_type_suffix(entry_name)]?
+          selected_identity = debug_structural_def_identity(entry_def, selected_arena)
+          STDERR.puts "[CALL_LOWER_HIT] caller=#{ctx.function.name} lookup=#{lookup_name} entry=#{entry_name} mangled=#{mangled_method_name} base=#{base_method_name} selected_def=#{selected_identity} required=#{stats.required} param_count=#{stats.param_count} block_def=#{stats.has_block ? 1 : 0}"
         end
         selected_call_entry_def = entry_def
+        selected_call_entry_name = entry_name
         selected_block_entry = {entry_name, entry_def} if has_block_call
       elsif debug_env_filter_match?("DEBUG_CALL_LOOKUP", ctx.function.name, lookup_name, base_method_name)
         overloads = function_def_overloads(lookup_name)
@@ -95010,7 +95037,21 @@ module Adamas::HIR
       # Lazy lowering can defer the callee body while still leaving an early
       # pre-lowering return type in the cache. If the target is still pending,
       # force it now before we freeze the call instruction type.
-      if (return_type == TypeRef::VOID || is_union_type?(return_type) || unresolved_generic_return_type?(return_type)) &&
+      force_return_type_needed = return_type == TypeRef::VOID ||
+                                 is_union_type?(return_type) ||
+                                 unresolved_generic_return_type?(return_type)
+      if force_return_type_needed && debug_env_filter_match?("DEBUG_CALL_LOOKUP", ctx.function.name, primary_mangled_name, mangled_method_name, base_method_name)
+        selected_identity = if def_node = selected_return_def
+                              selected_arena = selected_call_entry_name.try { |entry_name| @function_def_arenas[entry_name]? }
+                              debug_structural_def_identity(def_node, selected_arena)
+                            else
+                              "none"
+                            end
+        named_shape = canonical_named_arg_names(call_named_arg_names).try(&.join(",")) || "-"
+        named_shape = "-" if named_shape.empty?
+        STDERR.puts "[CALL_FORCE_IDENTITY] caller=#{ctx.function.name} method=#{method_name} selected_symbol=#{selected_call_entry_name || "none"} selected_def=#{selected_identity} requested1=#{primary_mangled_name} requested2=#{mangled_method_name} requested3=#{base_method_name} args=#{args.size} block=#{has_block_call ? 1 : 0} named=#{named_shape} splat=#{has_splat ? 1 : 0}"
+      end
+      if force_return_type_needed &&
          force_pending_call_targets_for_return_type(primary_mangled_name, mangled_method_name, base_method_name, context: "lower_call")
         refreshed = get_function_return_type(mangled_method_name, return_def_arg_count, selected_return_def)
         if refreshed == TypeRef::VOID && mangled_method_name != base_method_name

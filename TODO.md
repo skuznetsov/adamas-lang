@@ -14018,6 +14018,32 @@ bootstrap performance frontier. Next: correlate the exact selected `DefNode`
 with the target re-resolved by return-type forcing before changing its identity
 contract.
 
+### Session 107: correlate exact Def identity through return forcing (2026-08-30)
+
+Return-type forcing accepted only rendered symbol aliases, so an overload or
+generic failure could not be classified as either exact-definition drift or a
+no-op force result. Existing default-off call-lookup diagnostics now render the
+same structural `DefIdentity` used by semantic instance keys at selection and
+materialization boundaries. No registry, cache key, production lookup, or
+lowering decision changed.
+
+A focused defaulted-overload fixture forces a body-inferred `Int32 | String`
+return. Its trace preserves the same `(arena, ExprId)` from the selected
+`ForceIdentityDefaultedOverload#choose$Bool_Int32` definition through the
+typed materialization lookup. The final base-name alias nevertheless reports a
+successful force path with `added=0` and `requested_body=0`; this separates a
+result-contract problem from exact-definition loss in this fixture. The
+existing inherited zero-argument `hash` versus `hash(hasher)` ABI control also
+passes, so no transient exact-Def bridge is justified by current evidence.
+
+The focused receiver suite passes 53 examples with zero failures. The complete
+`ast_to_hir` suite passes 462 examples with zero failures and two pending
+examples. Adversary verdict: ROBUST for the default-off correlator and the two
+observed overload/arity shapes, VULNERABLE as a global identity claim. This is
+diagnostic evidence only, not bootstrap or performance closure. Next: add a
+local failing contract probe requiring a successful force result to correspond
+to useful return/body materialization before changing force-result semantics.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

@@ -2638,6 +2638,46 @@ describe "receiver-bound class-literal repair" do
     ])
   end
 
+  it "keeps the selected defaulted overload while forcing a body-inferred union return" do
+    converter, functions = parse_receiver_repair_source(<<-CRYSTAL)
+      class ForceIdentityDefaultedOverload
+        def choose(value : Bool, bonus : Int32 = 1)
+          value ? bonus : "no"
+        end
+
+        def choose(value : String, bonus : Int32 = 2)
+          value.empty? ? bonus : value
+        end
+
+        def run(value : Bool)
+          choose(value)
+        end
+      end
+    CRYSTAL
+
+    run = functions.find do |function|
+      function.name == "ForceIdentityDefaultedOverload#run$Bool"
+    end
+    run.should_not be_nil
+
+    call = run.not_nil!.blocks.flat_map(&.instructions)
+      .compact_map { |instruction| instruction.as?(Adamas::HIR::Call) }
+      .find { |instruction| instruction.method_name.starts_with?("ForceIdentityDefaultedOverload#choose$") }
+    call.should_not be_nil
+    call.not_nil!.method_name.should eq("ForceIdentityDefaultedOverload#choose$Bool_Int32")
+
+    selected = functions.find do |function|
+      function.name == "ForceIdentityDefaultedOverload#choose$Bool_Int32"
+    end
+    selected.should_not be_nil
+    run.not_nil!.return_type.should eq(selected.not_nil!.return_type)
+    converter.__test_type_name(run.not_nil!.return_type)
+      .split('|')
+      .map(&.strip)
+      .sort
+      .should eq(["Int32", "String"])
+  end
+
   it "keeps union dispatch for distinct named-only overloads" do
     _, functions = parse_receiver_repair_source(<<-CRYSTAL)
       class NamedNullableDispatch
