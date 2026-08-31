@@ -190,6 +190,55 @@ class Adamas::HIR::AstToHir
     @call_resolution_profile_count
   end
 
+  def __test_reset_call_resolution_memo : Nil
+    @call_resolution_memo.clear
+    @call_resolution_memo_enabled = true
+    @call_resolution_memo_hits = 0_i64
+    @call_resolution_memo_misses = 0_i64
+    @call_resolution_memo_store_skips = 0_i64
+  end
+
+  def __test_call_resolution_memo_stats
+    {
+      entries:     @call_resolution_memo.size,
+      hits:        @call_resolution_memo_hits,
+      misses:      @call_resolution_memo_misses,
+      store_skips: @call_resolution_memo_store_skips,
+    }
+  end
+
+  def __test_resolve_call_memo(
+    name : String,
+    arg_types : Array(Adamas::HIR::TypeRef),
+    type_params : Hash(String, String)? = nil,
+  ) : {String?, UInt64?}
+    old_type_params = @type_param_map
+    @type_param_map = type_params if type_params
+    begin
+      target = resolve_call_target(CallResolutionInput.new(
+        func_name: name,
+        arg_count: arg_types.size,
+        arg_types: arg_types,
+        has_block: false,
+        has_splat: false,
+        has_named: false,
+        named_names: nil,
+      ))
+      {target.try(&.symbol_name), target.try { |selected| selected.def_node.object_id.to_u64 }}
+    ensure
+      @type_param_map = old_type_params
+    end
+  end
+
+  def __test_reregister_function_def(name : String) : Nil
+    def_node = @function_defs[name]? || raise "missing function def fixture: #{name}"
+    set_function_def_entry(name, def_node, record_current_arena: false)
+  end
+
+  def __test_record_module_inclusion(module_name : String, class_name : String) : Nil
+    record_module_inclusion(module_name, class_name)
+  end
+
   def __test_resolve_signature_short_name(name : String, candidates : Set(String)) : String?
     @short_type_index[name] = candidates
     resolve_class_name_in_signature_context(name)
@@ -2948,6 +2997,116 @@ describe Adamas::HIR::AstToHir do
       # The reverse would let Child.foo mask Parent#foo for a Child#foo call.
       converter.__test_method_index_call_candidates_for_separator(class_only, '#')
         .should be_empty
+    end
+  end
+
+  describe "exact call-resolution memo" do
+    it "reuses the exact selected overload and DefNode" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        class CallMemoBox
+          def choose(value : Int32) : Int32
+            10
+          end
+
+          def choose(value : String) : Int32
+            20
+          end
+        end
+
+        CallMemoBox.new.choose(1)
+        CRYSTAL
+      converter.__test_reset_call_resolution_memo
+      int32 = converter.__test_type_ref_for_name("Int32")
+
+      first = converter.__test_resolve_call_memo("CallMemoBox#choose", [int32])
+      second = converter.__test_resolve_call_memo("CallMemoBox#choose", [int32])
+
+      first[0].should eq("CallMemoBox#choose$Int32")
+      first[1].should_not be_nil
+      second.should eq(first)
+      converter.__test_call_resolution_memo_stats.should eq({
+        entries:     1,
+        hits:        1_i64,
+        misses:      1_i64,
+        store_skips: 0_i64,
+      })
+
+      converter.__test_reregister_function_def(first[0].not_nil!)
+      converter.__test_resolve_call_memo("CallMemoBox#choose", [int32]).should eq(first)
+      converter.__test_call_resolution_memo_stats[:hits].should eq(1)
+      converter.__test_call_resolution_memo_stats[:misses].should eq(2)
+    end
+
+    it "does not reuse a miss across generic contexts" do
+      converter = lower_program_with_main("1")
+      converter.__test_reset_call_resolution_memo
+      no_args = [] of Adamas::HIR::TypeRef
+      int_context = {"T" => "Int32"}
+      string_context = {"T" => "String"}
+
+      converter.__test_resolve_call_memo("GenericCallMemo#probe", no_args, int_context).should eq({nil, nil})
+      converter.__test_resolve_call_memo("GenericCallMemo#probe", no_args, int_context).should eq({nil, nil})
+      converter.__test_call_resolution_memo_stats[:hits].should eq(1)
+      converter.__test_call_resolution_memo_stats[:misses].should eq(1)
+
+      converter.__test_resolve_call_memo("GenericCallMemo#probe", no_args, string_context).should eq({nil, nil})
+      converter.__test_call_resolution_memo_stats[:hits].should eq(1)
+      converter.__test_call_resolution_memo_stats[:misses].should eq(2)
+
+      converter.__test_record_class_include_instantiation(
+        "GenericCallMemoHost",
+        "GenericCallMemoFeature(Int32)",
+      )
+      converter.__test_resolve_call_memo("GenericCallMemo#probe", no_args, string_context).should eq({nil, nil})
+      converter.__test_call_resolution_memo_stats[:hits].should eq(1)
+      converter.__test_call_resolution_memo_stats[:misses].should eq(3)
+    end
+
+    it "invalidates a cached miss when a module becomes authoritative for the receiver" do
+      source = <<-CRYSTAL
+        module LateCallMemoFeature
+          def probe : Int32
+            7
+          end
+        end
+
+        class LateCallMemoHost
+        end
+
+        class LateCallMemoHost
+          include LateCallMemoFeature
+        end
+        CRYSTAL
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      module_node = exprs.compact_map { |id| arena[id].as?(Adamas::Compiler::Frontend::ModuleNode) }.first
+      class_nodes = exprs.compact_map { |id| arena[id].as?(Adamas::Compiler::Frontend::ClassNode) }
+      converter.register_module(module_node)
+      converter.register_class(class_nodes.first)
+      converter.__test_reset_call_resolution_memo
+      no_args = [] of Adamas::HIR::TypeRef
+
+      converter.__test_resolve_call_memo("LateCallMemoHost#probe", no_args).should eq({nil, nil})
+      converter.__test_resolve_call_memo("LateCallMemoHost#probe", no_args).should eq({nil, nil})
+      converter.__test_call_resolution_memo_stats[:hits].should eq(1)
+      converter.__test_call_resolution_memo_stats[:misses].should eq(1)
+
+      converter.__test_record_module_inclusion("LateCallMemoFeature", "LateCallMemoHost")
+      converter.__test_resolve_call_memo("LateCallMemoHost#probe", no_args).should eq({nil, nil})
+      converter.__test_call_resolution_memo_stats[:hits].should eq(1)
+      converter.__test_call_resolution_memo_stats[:misses].should eq(2)
+
+      converter.register_class(class_nodes.last)
+      resolved = converter.__test_resolve_call_memo("LateCallMemoHost#probe", no_args)
+
+      resolved[0].should eq("LateCallMemoHost#probe")
+      resolved[1].should_not be_nil
+      converter.__test_call_resolution_memo_stats[:hits].should eq(1)
+      converter.__test_call_resolution_memo_stats[:misses].should eq(3)
     end
   end
 

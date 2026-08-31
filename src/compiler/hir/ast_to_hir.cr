@@ -963,6 +963,132 @@ module Adamas::HIR
       end
     end
 
+    # Exact, revision-scoped memo key for the legacy call resolver. The memo is
+    # only an acceleration: every UInt64 bucket hit is validated field-by-field,
+    # and any resolver-side authority mutation prevents the result from being
+    # stored.
+    private struct CallResolutionMemoKey
+      getter func_name : String
+      getter arg_count : Int32
+      getter arg_types : Array(TypeRef)?
+      getter has_block : Bool
+      getter has_splat : Bool
+      getter has_named : Bool
+      getter named_names : Array(String)?
+      getter current_class : String?
+      getter current_method : String?
+      getter current_namespace : String?
+      getter current_method_is_class : Bool
+      getter suppress_monomorphization : Bool
+      getter arena : Adamas::Compiler::Frontend::ArenaLike
+      getter type_params : Array(Tuple(String, String))
+      getter function_def_revision : UInt64
+      getter function_type_revision : UInt64
+      getter lowering_state_revision : UInt64
+      getter pending_queue_revision : UInt64
+      getter class_info_version : Int32
+      getter module_includers_version : Int32
+      getter module_defs_cache_version : Int32
+      getter authority_revision : UInt64
+      getter function_set_revision : UInt64
+      getter hir_body_revision : UInt64
+      getter monomorphized_size : Int32
+
+      def initialize(
+        input : CallResolutionInput,
+        @current_class : String?,
+        @current_method : String?,
+        @current_namespace : String?,
+        @current_method_is_class : Bool,
+        @suppress_monomorphization : Bool,
+        @arena : Adamas::Compiler::Frontend::ArenaLike,
+        type_param_map : Hash(String, String),
+        @function_def_revision : UInt64,
+        @function_type_revision : UInt64,
+        @lowering_state_revision : UInt64,
+        @pending_queue_revision : UInt64,
+        @class_info_version : Int32,
+        @module_includers_version : Int32,
+        @module_defs_cache_version : Int32,
+        @authority_revision : UInt64,
+        @function_set_revision : UInt64,
+        @hir_body_revision : UInt64,
+        @monomorphized_size : Int32,
+      )
+        @func_name = input.func_name
+        @arg_count = input.arg_count
+        @arg_types = input.arg_types.try(&.dup)
+        @has_block = input.has_block
+        @has_splat = input.has_splat
+        @has_named = input.has_named
+        @named_names = input.named_names.try(&.dup)
+        @type_params = [] of Tuple(String, String)
+        type_param_map.each do |name, value|
+          @type_params << {name, value}
+        end
+      end
+
+      def matches?(
+        input : CallResolutionInput,
+        current_class : String?,
+        current_method : String?,
+        current_namespace : String?,
+        current_method_is_class : Bool,
+        suppress_monomorphization : Bool,
+        arena : Adamas::Compiler::Frontend::ArenaLike,
+        type_param_map : Hash(String, String),
+        function_def_revision : UInt64,
+        function_type_revision : UInt64,
+        lowering_state_revision : UInt64,
+        pending_queue_revision : UInt64,
+        class_info_version : Int32,
+        module_includers_version : Int32,
+        module_defs_cache_version : Int32,
+        authority_revision : UInt64,
+        function_set_revision : UInt64,
+        hir_body_revision : UInt64,
+        monomorphized_size : Int32,
+      ) : Bool
+        return false unless @func_name == input.func_name
+        return false unless @arg_count == input.arg_count
+        return false unless @arg_types == input.arg_types
+        return false unless @has_block == input.has_block
+        return false unless @has_splat == input.has_splat
+        return false unless @has_named == input.has_named
+        return false unless @named_names == input.named_names
+        return false unless @current_class == current_class
+        return false unless @current_method == current_method
+        return false unless @current_namespace == current_namespace
+        return false unless @current_method_is_class == current_method_is_class
+        return false unless @suppress_monomorphization == suppress_monomorphization
+        return false unless @arena.same?(arena)
+        return false unless @function_def_revision == function_def_revision
+        return false unless @function_type_revision == function_type_revision
+        return false unless @lowering_state_revision == lowering_state_revision
+        return false unless @pending_queue_revision == pending_queue_revision
+        return false unless @class_info_version == class_info_version
+        return false unless @module_includers_version == module_includers_version
+        return false unless @module_defs_cache_version == module_defs_cache_version
+        return false unless @authority_revision == authority_revision
+        return false unless @function_set_revision == function_set_revision
+        return false unless @hir_body_revision == hir_body_revision
+        return false unless @monomorphized_size == monomorphized_size
+        return false unless @type_params.size == type_param_map.size
+        @type_params.all? do |name, value|
+          type_param_map[name]? == value
+        end
+      end
+    end
+
+    private struct CallResolutionMemoEntry
+      getter key : CallResolutionMemoKey
+      getter symbol_name : String?
+      getter def_node : Adamas::Compiler::Frontend::DefNode?
+
+      def initialize(@key, @symbol_name, @def_node)
+      end
+    end
+
     private alias BlockLoweringKey = {FunctionId, UInt64, UInt64}
 
     # Durable shape-specialization record for per-shape block materialization
@@ -2409,6 +2535,14 @@ module Adamas::HIR
     @call_resolution_profile_normal_scorer_suffix_key_total : Int64 = 0_i64
     @call_resolution_profile_miss_count : Int64 = 0_i64
     @call_resolution_profile_miss_time_ns : Int64 = 0_i64
+    # Exact-input legacy resolver memo. UInt64 is only a bucket selector; the
+    # stored key is validated structurally before its selected DefNode is reused.
+    @call_resolution_memo : Hash(UInt64, CallResolutionMemoEntry) = {} of UInt64 => CallResolutionMemoEntry
+    @call_resolution_memo_enabled : Bool = true
+    @call_resolution_memo_hits : Int64 = 0_i64
+    @call_resolution_memo_misses : Int64 = 0_i64
+    @call_resolution_memo_store_skips : Int64 = 0_i64
+    @call_resolution_authority_revision : UInt64 = 0_u64
 
     # Lazy RTA: types known to be instantiated during lowering
     @live_types : Set(String) = Set(String).new
@@ -5406,6 +5540,8 @@ module Adamas::HIR
           end
         end
       elsif !is_new
+        @call_resolution_authority_revision =
+          @call_resolution_authority_revision &+ 1_u64
         @function_defs[name] = def_node # missing-revision-owner
         set_function_visibility(name, def_node.visibility)
         seed_function_param_caches(name, def_node)
@@ -6965,6 +7101,12 @@ module Adamas::HIR
       @call_resolution_profile_normal_scorer_suffix_key_total = 0_i64
       @call_resolution_profile_miss_count = 0_i64
       @call_resolution_profile_miss_time_ns = 0_i64
+      @call_resolution_memo = Hash(UInt64, CallResolutionMemoEntry).new(initial_capacity: 8192)
+      @call_resolution_memo_enabled = !env_has?("ADAMAS_DISABLE_CALL_RESOLUTION_MEMO")
+      @call_resolution_memo_hits = 0_i64
+      @call_resolution_memo_misses = 0_i64
+      @call_resolution_memo_store_skips = 0_i64
+      @call_resolution_authority_revision = 0_u64
       # RTA / live types
       @live_types = Set(String).new
       @live_types_initialized = false
@@ -12651,7 +12793,11 @@ module Adamas::HIR
         end
       end
       register_reopened_nested_type_name(alias_name)
+      alias_changed = @type_aliases[alias_name]? != target_name
       @type_aliases[alias_name] = target_name
+      if alias_changed
+        @call_resolution_authority_revision = @call_resolution_authority_revision &+ 1_u64
+      end
       STDERR.puts "[ALIAS_ROOT] phase=register_type_alias.stored" if env_has?("ADAMAS_TRACE_ALIAS_ROOT")
       index_type_alias_suffix(alias_name)
       STDERR.puts "[ALIAS_ROOT] phase=register_type_alias.indexed_suffix" if env_has?("ADAMAS_TRACE_ALIAS_ROOT")
@@ -17146,6 +17292,7 @@ module Adamas::HIR
         return
       end
       @function_def_arenas[name] = arena
+      @call_resolution_authority_revision = @call_resolution_authority_revision &+ 1_u64
       arena_is_new_candidate = !@unique_def_arenas.has_key?(arena.object_id)
       if arena_is_new_candidate
         # Resolve caches depend on the candidate arena set; invalidate when
@@ -58942,6 +59089,8 @@ module Adamas::HIR
                     strip_generic_args(instantiation)
       @module_include_shape_versions[module_base] =
         (@module_include_shape_versions[module_base]? || 0) + 1
+      @call_resolution_authority_revision =
+        @call_resolution_authority_revision &+ 1_u64
     end
 
     private def receiver_type_param_map_cache_get(type_id : Int32) : Hash(String, String)?
@@ -66583,6 +66732,10 @@ module Adamas::HIR
     private def process_pending_lower_functions
       phase_stats = env_has?("ADAMAS_PHASE_STATS")
       @call_resolution_profile_active = phase_stats
+      @call_resolution_memo_enabled = !env_has?("ADAMAS_DISABLE_CALL_RESOLUTION_MEMO")
+      unless @call_resolution_memo_enabled
+        @call_resolution_memo.clear
+      end
       progress_log = phase_stats || env_has?("ADAMAS_LOWER_PROGRESS")
       lazy_rta_log = env_has?("ADAMAS_LAZY_RTA_LOG")
       stop_after_pending_phase("enter", "ADAMAS_STOP_AFTER_HIR_PENDING_ENTER", -1, -1)
@@ -66846,6 +66999,9 @@ module Adamas::HIR
           pass_call_change_other_time_ns = pass_call_symbol_changed_time_ns - pass_call_suffix_only_time_ns - pass_call_same_method_base_changed_time_ns
           pass_call_normal_scorer_suffix_count = pass_call_normal_scorer_suffix_single_count + pass_call_normal_scorer_suffix_wide_count
           STDERR.puts "[PHASE_STATS] process_pending.pass=#{pass} context=#{@pending_process_context || "none"} total=#{pass_total_ms.round(1)}ms lower=#{pass_lower_ms.round(1)}ms call_resolution=#{(pass_call_resolution_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_resolution_count} call_symbol_same=#{(pass_call_symbol_same_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_symbol_same_count} call_symbol_changed=#{(pass_call_symbol_changed_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_symbol_changed_count} call_change_suffix_only=#{(pass_call_suffix_only_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_suffix_only_count} call_change_same_method_base=#{(pass_call_same_method_base_changed_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_same_method_base_changed_count} call_change_other=#{(pass_call_change_other_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_change_other_count} call_suffix_normal_scorer=#{pass_call_normal_scorer_suffix_count} call_suffix_normal_scorer_single=#{pass_call_normal_scorer_suffix_single_count} call_suffix_normal_scorer_wide=#{pass_call_normal_scorer_suffix_wide_count} call_suffix_normal_scorer_keys=#{pass_call_normal_scorer_suffix_key_total} call_miss=#{(pass_call_miss_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_miss_count} periodic_rta=#{pass_periodic_rta_ms.round(1)}ms/#{pass_periodic_rta_count} periodic_functions=#{pass_periodic_function_scan_ms.round(1)}ms periodic_monomorphized=#{pass_periodic_monomorphized_scan_ms.round(1)}ms periodic_types=#{pass_periodic_type_scan_ms.round(1)}ms periodic_undefer=#{pass_periodic_undefer_ms.round(1)}ms end_rta=#{pass_end_rta_ms.round(1)}ms residual=#{pass_residual_ms.round(1)}ms max_lower=#{pass_max_lower_ms.round(1)}ms max_name=#{pass_max_lower_name} lowered=#{pass_lowered} deferred=#{pass_deferred} visited=#{idx}"
+        end
+        if phase_stats
+          STDERR.puts "[CALL_RESOLUTION_MEMO] pass=#{pass} enabled=#{@call_resolution_memo_enabled ? 1 : 0} entries=#{@call_resolution_memo.size} hits=#{@call_resolution_memo_hits} misses=#{@call_resolution_memo_misses} store_skips=#{@call_resolution_memo_store_skips}"
         end
         stop_after_pending_phase("pass_end", "ADAMAS_STOP_AFTER_HIR_PENDING_PASS_END", pass, idx, nil, "lowered=#{pass_lowered},deferred=#{pass_deferred},undeferred=#{rta_undeferred_total}")
 
@@ -98496,14 +98652,171 @@ module Adamas::HIR
       ))
     end
 
+    private def call_resolution_memo_mix(hash : UInt64, value : UInt64) : UInt64
+      (hash ^ value) &* 1_099_511_628_211_u64
+    end
+
+    private def call_resolution_memo_mix_string(hash : UInt64, value : String?) : UInt64
+      unless text = value
+        return call_resolution_memo_mix(hash, UInt64::MAX)
+      end
+
+      result = call_resolution_memo_mix(hash, text.bytesize.to_u64)
+      ptr = text.to_unsafe
+      i = 0
+      while i < text.bytesize
+        result = call_resolution_memo_mix(result, ptr[i].to_u64)
+        i += 1
+      end
+      result
+    end
+
+    private def call_resolution_memo_fingerprint(input : CallResolutionInput) : UInt64
+      hash = 1_469_598_103_934_665_603_u64
+      hash = call_resolution_memo_mix(hash, @function_def_revision)
+      hash = call_resolution_memo_mix(hash, @function_type_revision)
+      hash = call_resolution_memo_mix(hash, @function_lowering_state_revision)
+      hash = call_resolution_memo_mix(hash, @pending_function_queue_revision)
+      hash = call_resolution_memo_mix(hash, @class_info_version.to_u64)
+      hash = call_resolution_memo_mix(hash, @module_includers_version.to_u64)
+      hash = call_resolution_memo_mix(hash, @module_defs_cache_version.to_u64)
+      hash = call_resolution_memo_mix(hash, @call_resolution_authority_revision)
+      hash = call_resolution_memo_mix(hash, @module.function_set_revision)
+      hash = call_resolution_memo_mix(hash, @module.hir_body_revision)
+      hash = call_resolution_memo_mix(hash, @monomorphized.size.to_u64)
+      hash = call_resolution_memo_mix(hash, @arena.object_id.to_u64)
+      hash = call_resolution_memo_mix(hash, @current_method_is_class ? 1_u64 : 0_u64)
+      hash = call_resolution_memo_mix(hash, @suppress_monomorphization ? 1_u64 : 0_u64)
+      hash = call_resolution_memo_mix_string(hash, @current_class)
+      hash = call_resolution_memo_mix_string(hash, @current_method)
+      hash = call_resolution_memo_mix_string(hash, @current_namespace_override)
+
+      type_param_hash = 0_u64
+      @type_param_map.each do |name, value|
+        pair_hash = call_resolution_memo_mix_string(1_469_598_103_934_665_603_u64, name)
+        pair_hash = call_resolution_memo_mix_string(pair_hash, value)
+        type_param_hash ^= pair_hash
+      end
+      hash = call_resolution_memo_mix(hash, @type_param_map.size.to_u64)
+      hash = call_resolution_memo_mix(hash, type_param_hash)
+
+      hash = call_resolution_memo_mix_string(hash, input.func_name)
+      hash = call_resolution_memo_mix(hash, input.arg_count.to_u64)
+      hash = call_resolution_memo_mix(hash, input.has_block ? 1_u64 : 0_u64)
+      hash = call_resolution_memo_mix(hash, input.has_splat ? 1_u64 : 0_u64)
+      hash = call_resolution_memo_mix(hash, input.has_named ? 1_u64 : 0_u64)
+      if arg_types = input.arg_types
+        hash = call_resolution_memo_mix(hash, arg_types.size.to_u64)
+        arg_types.each do |arg_type|
+          hash = call_resolution_memo_mix(hash, arg_type.id.to_u64)
+        end
+      else
+        hash = call_resolution_memo_mix(hash, UInt64::MAX)
+      end
+      if named_names = input.named_names
+        hash = call_resolution_memo_mix(hash, named_names.size.to_u64)
+        named_names.each do |name|
+          hash = call_resolution_memo_mix_string(hash, name)
+        end
+      else
+        hash = call_resolution_memo_mix(hash, UInt64::MAX - 1_u64)
+      end
+      hash
+    end
+
+    private def call_resolution_memo_key(input : CallResolutionInput) : CallResolutionMemoKey
+      CallResolutionMemoKey.new(
+        input,
+        @current_class,
+        @current_method,
+        @current_namespace_override,
+        @current_method_is_class,
+        @suppress_monomorphization,
+        @arena,
+        @type_param_map,
+        @function_def_revision,
+        @function_type_revision,
+        @function_lowering_state_revision,
+        @pending_function_queue_revision,
+        @class_info_version,
+        @module_includers_version,
+        @module_defs_cache_version,
+        @call_resolution_authority_revision,
+        @module.function_set_revision,
+        @module.hir_body_revision,
+        @monomorphized.size,
+      )
+    end
+
+    private def call_resolution_memo_key_matches?(
+      key : CallResolutionMemoKey,
+      input : CallResolutionInput,
+    ) : Bool
+      key.matches?(
+        input,
+        @current_class,
+        @current_method,
+        @current_namespace_override,
+        @current_method_is_class,
+        @suppress_monomorphization,
+        @arena,
+        @type_param_map,
+        @function_def_revision,
+        @function_type_revision,
+        @function_lowering_state_revision,
+        @pending_function_queue_revision,
+        @class_info_version,
+        @module_includers_version,
+        @module_defs_cache_version,
+        @call_resolution_authority_revision,
+        @module.function_set_revision,
+        @module.hir_body_revision,
+        @monomorphized.size,
+      )
+    end
+
     # Keep the legacy resolver's selected symbol and DefNode together. This is a
     # behavior-neutral compatibility result, not semantic CallResolution identity.
     private def resolve_call_target(input : CallResolutionInput) : SelectedCallTarget?
       profile = @call_resolution_profile_active
       started_at = Time.instant if profile
-      t = resolve_call_tuple(input)
+      memo_fingerprint = call_resolution_memo_fingerprint(input) if @call_resolution_memo_enabled
+      memo_entry = memo_fingerprint ? @call_resolution_memo[memo_fingerprint]? : nil
+      memo_hit = memo_entry && call_resolution_memo_key_matches?(memo_entry.key, input)
+
+      t = if memo_hit && memo_entry
+            @call_resolution_memo_hits += 1_i64
+            if def_node = memo_entry.def_node
+              {memo_entry.symbol_name.not_nil!, def_node}
+            else
+              nil
+            end
+          else
+            @call_resolution_memo_misses += 1_i64 if @call_resolution_memo_enabled
+            memo_key = call_resolution_memo_key(input) if @call_resolution_memo_enabled
+            resolved = resolve_call_tuple(input)
+            if memo_fingerprint && memo_key
+              if call_resolution_memo_key_matches?(memo_key, input)
+                if @call_resolution_memo.size >= 8192 && !@call_resolution_memo.has_key?(memo_fingerprint)
+                  @call_resolution_memo.clear
+                end
+                @call_resolution_memo[memo_fingerprint] = CallResolutionMemoEntry.new(
+                  memo_key,
+                  resolved.try(&.[0]),
+                  resolved.try(&.[1]),
+                )
+              else
+                @call_resolution_memo_store_skips += 1_i64
+              end
+            end
+            resolved
+          end
+      elapsed_ns = if profile
+                     (Time.instant - started_at.not_nil!).total_nanoseconds.to_i64
+                   else
+                     0_i64
+                   end
       if profile
-        elapsed_ns = (Time.instant - started_at.not_nil!).total_nanoseconds.to_i64
         @call_resolution_profile_count += 1_i64
         @call_resolution_profile_time_ns += elapsed_ns
         if t
