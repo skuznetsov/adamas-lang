@@ -27,21 +27,23 @@ a scoped correctness checkpoint; stage2 was not reached and B4-F remains RED.
 2026-08-30 SINGLE-UNIT PRODUCTION LOWERING PRESERVES SAME-ARENA SEMANTIC CALL
 TARGETS. For admitted source-backed explicit-receiver calls, `TypeContext`
 retains the exact selected `DefInstanceKey` as lazy analysis output. When
-compilation has exactly one parsed unit and that unit is active, the semantic
-prepass analyzes its original parser arena and binds the context directly into
-`AstToHir`; no reparse, node map, or cross-arena identity translation is
-involved. The normal call-emission
+compilation has exactly one active unit, the semantic prepass analyzes its
+original parser arena and binds the context directly into `AstToHir`; parsed
+`skip_file` units no longer force a pointless reparse, and no node map or
+cross-arena identity translation is involved. The normal call-emission
 chokepoint still fails closed if the selected entry or emitted callee no longer
-maps to the selected `DefNode`. Multi-unit compilation deliberately retains the
-existing shadow aggregate and does not hand its identities to HIR.
+maps to the selected `DefNode`. Compilation with multiple active units
+deliberately retains the existing shadow aggregate and does not hand its
+identities to HIR.
 No target registry, `ResolutionId`, mutable `HIR::Call` certificate, constructor
 widening, or generic receiver admission was added. The combined semantic CLI
-suite passes 60 examples, including positive single-unit and negative
-second-parsed-unit handoff contracts, and the host compiler builds. This closes
-a production same-arena continuity seam, but full-prelude bootstrap remains multi-unit;
-therefore B4-F performance and readiness are unchanged. Next: measure and
-remove the reparse boundary at the multi-unit aggregate without weakening arena
-authority or widening legacy fallback.
+suite passes 61 examples, including a two-file recursive-overload case whose
+only extra parsed unit is inactive and a multi-active fail-closed control, and
+the host compiler builds. This closes a
+production same-arena continuity seam, but full-prelude bootstrap has multiple
+active units; therefore B4-F performance and readiness are unchanged. Next:
+measure and remove the reparse boundary at the multi-active aggregate without
+weakening arena authority or widening legacy fallback.
 
 BARE REFERENCE-GENERIC INSTANCE DISPATCH RUNTIME-VERIFIED; REGISTERED
 RUNTIME-REFERENCE RETURN UNIONS HIR-VERIFIED AND MIR-GUARDED; UNSUPPORTED

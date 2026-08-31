@@ -166,18 +166,63 @@ describe Adamas::Compiler::CLI do
     end
   end
 
-  it "does not hand semantic targets when another parsed unit is inactive" do
+  it "hands semantic targets when every additional parsed unit is inactive" do
     with_temp_shadow_project({
       "main.cr" => [
         %(require "./inactive"),
         "class SemanticCliMultiRoute",
+        "def route(value) : String",
+        %("wrong"),
+        "end",
         "def route(value : Int32)",
-        "value",
+        "self.route(value)",
         "end",
         "end",
         "SemanticCliMultiRoute.new.route(1)",
       ].join('\n'),
       "inactive.cr" => "{% skip_file %}\n",
+    }) do |dir|
+      main_path = File.join(dir, "main.cr")
+      output_path = File.join(dir, "main")
+      hir_path = "#{output_path}.hir"
+      out_io = IO::Memory.new
+      err_io = IO::Memory.new
+      status = 1
+
+      with_semantic_compile_env do
+        cli = Adamas::Compiler::CLI.new([
+          main_path,
+          "--no-prelude",
+          "--stats",
+          "--verbose",
+          "--emit", "hir",
+          "--no-link",
+          "-o", output_path,
+        ])
+        status = cli.run(out_io: out_io, err_io: err_io)
+      end
+
+      status.should eq(0), err_io.to_s
+      out_io.to_s.should contain("Semantic call targets: same-arena")
+      hir = File.read(hir_path)
+      hir.should contain("SemanticCliMultiRoute#route$Int32")
+      hir.should_not contain(%("wrong"))
+    end
+  end
+
+  it "does not hand semantic targets across multiple active arenas" do
+    with_temp_shadow_project({
+      "main.cr" => [
+        %(require "./active"),
+        "SemanticCliActiveDependency.new.value",
+      ].join('\n'),
+      "active.cr" => [
+        "class SemanticCliActiveDependency",
+        "def value",
+        "1",
+        "end",
+        "end",
+      ].join('\n'),
     }) do |dir|
       main_path = File.join(dir, "main.cr")
       output_path = File.join(dir, "main")

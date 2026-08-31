@@ -7564,7 +7564,7 @@ module Adamas
         err_io : IO,
       ) : SemanticCompilePrepassResult
         active_units = active_semantic_units(units)
-        same_arena_handoff = units.size == 1 && active_units.size == 1
+        same_arena_handoff = active_units.size == 1
         aggregate = if same_arena_handoff
                       unit = active_units.unsafe_fetch(0)
                       Semantic::CompileShadowAggregate.from_parsed_unit(
