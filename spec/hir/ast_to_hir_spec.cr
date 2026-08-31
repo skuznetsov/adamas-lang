@@ -7933,6 +7933,36 @@ describe Adamas::HIR::AstToHir do
   end
 
   describe "registration-time implicit ivar discovery" do
+    it "preserves a class-scope default discovered after an ivar already exists" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class LateDefaultToken
+        end
+
+        class ReopenedInlineDefault
+          @cache : LateDefaultToken
+        end
+
+        class ReopenedInlineDefault
+          @cache = LateDefaultToken.new
+
+          def initialize
+          end
+        end
+
+        ReopenedInlineDefault.new
+      CRYSTAL
+
+      cache = converter.class_info["ReopenedInlineDefault"].ivars.find { |ivar| ivar.name == "@cache" }
+      cache.should_not be_nil
+      cache.not_nil!.default_expr_id.should_not be_nil
+
+      allocator = converter.module.function_by_name("ReopenedInlineDefault.new")
+      allocator.should_not be_nil
+      calls = allocator.not_nil!.blocks.flat_map(&.instructions)
+        .compact_map { |instruction| instruction.as?(Adamas::HIR::Call) }
+      calls.count { |call| call.method_name == "LateDefaultToken.new" }.should eq(1)
+    end
+
     it "preserves signed class-scope defaults through allocator lowering" do
       converter = lower_program_with_main(<<-CRYSTAL)
         class InlineDefaultState

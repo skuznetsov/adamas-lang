@@ -7,6 +7,21 @@ smokes, but stage2 reaches the 300-second compiler cap without producing
 `cv2_s2`; wrapper wall time is 302.69 seconds. Admission therefore remains RED.
 T1 and full-source MIR/LLVM continuity remain open.)
 
+2026-08-31 SINGLE LATE INLINE DEFAULT METADATA CONTINUITY VERIFIED; ORDERED
+MULTIPLE INITIALIZERS REMAIN OPEN. A non-trivial class-scope assignment now
+fills missing default metadata when an earlier declaration or registration pass
+already established the ivar layout. The focused regression, all 15 neighboring
+registration-time ivar examples, and the full HIR file (489/0, two pre-existing
+pending examples) are green. A bounded self-host metadata probe increased the
+recognized `AstToHir` defaults from 168 to 171 and restored all three late
+`@lazy_enum_*` defaults without changing the measured missing-process frontier
+(`missing=162`, `funcs=4854`). This is a metadata-continuity fix, not a bootstrap
+speed claim. `ClassInfo` still retains only one default expression: the
+no-prelude two-initializer adversary emits only the first call, while original
+Crystal executes class-scope initializers in source order. Removing the explicit
+constructor workarounds therefore remains forbidden until ordered initializer
+semantics are represented and verified separately.
+
 2026-08-30 STATIC MIR OVERLOAD AMBIGUITY FAILS CLOSED. Qualified calls still
 prefer exact suffix and owner-correct arity targets, and a sole legacy candidate
 remains admitted. If multiple family members remain unmatched, HIR-to-MIR now

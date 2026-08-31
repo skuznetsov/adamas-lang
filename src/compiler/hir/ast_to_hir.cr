@@ -34090,17 +34090,20 @@ module Adamas::HIR
                 if env_has?("DEBUG_IVAR_REG")
                   STDERR.puts "[IVAR_REG] #{class_name}##{ivar_name} inferred type=#{ivar_type.id}"
                 end
-                unless ivars.any? { |iv| iv.name == ivar_name }
-                  # Store the default value expression for later evaluation in the allocator
-                  default_expr = member.value
-                  # Skip trivial defaults that generate_allocator already handles (literal 0, nil)
-                  needs_expr = !is_trivial_default(value_node)
-                  offset = align_offset(offset, type_alignment(ivar_type, is_c_struct))
-                  ivars << IVarInfo.new(ivar_name, ivar_type, offset,
-                    default_expr_id: needs_expr ? default_expr : nil,
-                    default_arena: needs_expr ? @arena : nil)
-                  offset += field_storage_size(ivar_type, is_c_struct)
-                end
+                # Store non-trivial defaults even when an earlier declaration or
+                # registration pass already established the ivar layout.
+                default_expr = member.value
+                needs_expr = !is_trivial_default(value_node)
+                offset = register_or_refine_accessor_ivar(
+                  ivars,
+                  ivar_name,
+                  ivar_type,
+                  offset,
+                  needs_expr ? default_expr : nil,
+                  needs_expr ? @arena : nil,
+                  is_struct,
+                  is_c_struct
+                )
               elsif target_node.is_a?(Adamas::Compiler::Frontend::ClassVarNode)
                 raw_name = (safe_slice_to_string(target_node.name) || "")
                 cvar_name = raw_name.lstrip('@')
