@@ -38,12 +38,14 @@ identities to HIR.
 No target registry, `ResolutionId`, mutable `HIR::Call` certificate, constructor
 widening, or generic receiver admission was added. The combined semantic CLI
 suite passes 61 examples, including a two-file recursive-overload case whose
-only extra parsed unit is inactive and a multi-active fail-closed control, and
-the host compiler builds. This closes a
-production same-arena continuity seam, but full-prelude bootstrap has multiple
-active units; therefore B4-F performance and readiness are unchanged. Next:
-measure and remove the reparse boundary at the multi-active aggregate without
-weakening arena authority or widening legacy fallback.
+only extra parsed unit is inactive and a multi-active class-reopening control
+that preserves the typed recursive HIR body while semantic target handoff stays
+disabled, and the host compiler builds. This closes a production same-arena
+continuity seam. The semantic compile prepass remains opt-in, while the
+canonical bootstrap control rejects every `ADAMAS_*` setting; therefore this
+corridor does not participate in B4-F and cannot explain its current runtime.
+Next: return to the measured late B4-F missing-target wave with a new bounded
+falsifier before another full bootstrap run.
 
 BARE REFERENCE-GENERIC INSTANCE DISPATCH RUNTIME-VERIFIED; REGISTERED
 RUNTIME-REFERENCE RETURN UNIONS HIR-VERIFIED AND MIR-GUARDED; UNSUPPORTED

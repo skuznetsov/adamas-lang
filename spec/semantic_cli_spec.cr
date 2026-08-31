@@ -210,22 +210,28 @@ describe Adamas::Compiler::CLI do
     end
   end
 
-  it "does not hand semantic targets across multiple active arenas" do
+  it "keeps the typed recursive overload body across multiple active arenas" do
     with_temp_shadow_project({
       "main.cr" => [
         %(require "./active"),
-        "SemanticCliActiveDependency.new.value",
+        "class SemanticCliSplitRoute",
+        "def route(value) : String",
+        %("wrong"),
+        "end",
+        "end",
+        "SemanticCliSplitRoute.new.route(1)",
       ].join('\n'),
       "active.cr" => [
-        "class SemanticCliActiveDependency",
-        "def value",
-        "1",
+        "class SemanticCliSplitRoute",
+        "def route(value : Int32)",
+        "self.route(value)",
         "end",
         "end",
       ].join('\n'),
     }) do |dir|
       main_path = File.join(dir, "main.cr")
       output_path = File.join(dir, "main")
+      hir_path = "#{output_path}.hir"
       out_io = IO::Memory.new
       err_io = IO::Memory.new
       status = 1
@@ -245,6 +251,16 @@ describe Adamas::Compiler::CLI do
 
       status.should eq(0), err_io.to_s
       out_io.to_s.should_not contain("Semantic call targets: same-arena")
+      hir = File.read(hir_path)
+      function_start = hir.index("func @SemanticCliSplitRoute#route$Int32")
+      function_start.should_not be_nil
+      function_end = hir.index("\nfunc @", function_start.not_nil! + 1)
+      function_text = hir.byte_slice(
+        function_start.not_nil!,
+        (function_end || hir.bytesize) - function_start.not_nil!,
+      )
+      function_text.should contain(".SemanticCliSplitRoute#route$Int32(")
+      function_text.should_not contain(%("wrong"))
     end
   end
 
