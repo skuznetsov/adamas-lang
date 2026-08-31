@@ -1078,6 +1078,46 @@ class Adamas::HIR::AstToHir
     }
   end
 
+  def __test_unproductive_fanout_retry_fixed_point(
+    method_name : String,
+    state_after_retry : String? = nil,
+  ) : {Int32, Bool}
+    fanout_key = "fixed-point-fanout\u{1f}#{method_name}"
+    pending_target = "NeverMaterialized##{method_name}$Int32"
+    @module_virtual_fanout_pending_targets[fanout_key] = {
+      pending_target => ModuleVirtualFanoutPendingTarget.new(
+        pending_target,
+        "NeverMaterialized",
+        method_name,
+        [Adamas::HIR::TypeRef::INT32],
+        false,
+        false,
+      ),
+    }
+
+    snapshot = final_missing_fixed_point_snapshot
+    attempts = repair_module_virtual_fanout_pending_targets
+    case state_after_retry
+    when "pending"
+      set_function_state(pending_target, FunctionLoweringState::Pending)
+    when "cycle"
+      set_function_state(pending_target, FunctionLoweringState::Pending)
+      clear_function_state(pending_target)
+    end
+    {
+      attempts,
+      final_missing_fixed_point_reached?(snapshot),
+    }
+  end
+
+  def __test_final_missing_fixed_point_snapshot
+    final_missing_fixed_point_snapshot
+  end
+
+  def __test_final_missing_fixed_point_reached?(snapshot) : Bool
+    final_missing_fixed_point_reached?(snapshot)
+  end
+
   def __test_terminal_fanout_preserves_concrete_bodyless_target(
     def_name : String,
     method_name : String,
@@ -3316,6 +3356,43 @@ describe Adamas::HIR::AstToHir do
 
       converter.__test_terminal_fanout_discard_invalidates_result("probe")
         .should eq({1, 0, false, false, true})
+    end
+
+    it "stops final missing retries after semantic lowering state reaches a fixed point" do
+      converter = lower_program_with_main("1")
+
+      converter.__test_unproductive_fanout_retry_fixed_point("probe")
+        .should eq({1, true})
+
+      state_converter = lower_program_with_main("1")
+      state_converter.__test_unproductive_fanout_retry_fixed_point("state_probe", "pending")
+        .should eq({1, false})
+
+      churn_converter = lower_program_with_main("1")
+      churn_converter.__test_unproductive_fanout_retry_fixed_point("churn_probe", "cycle")
+        .should eq({1, true})
+
+      snapshot = converter.__test_final_missing_fixed_point_snapshot
+      converter.module.create_function(
+        "fixed_point_revision_probe",
+        Adamas::HIR::TypeRef::VOID,
+      )
+      converter.__test_final_missing_fixed_point_reached?(snapshot).should be_false
+
+      snapshot = converter.__test_final_missing_fixed_point_snapshot
+      converter.__test_record_lowering_demand(
+        "queued_fixed_point_probe",
+        "spec",
+        [] of Adamas::HIR::TypeRef,
+      )
+      converter.__test_final_missing_fixed_point_reached?(snapshot).should be_false
+
+      snapshot = converter.__test_final_missing_fixed_point_snapshot
+      converter.__test_record_class_include_instantiation(
+        "FixedPointOwner",
+        "FixedPointModule(Int32)",
+      )
+      converter.__test_final_missing_fixed_point_reached?(snapshot).should be_false
     end
 
     it "keeps a concrete bodyless target visible as a fail-closed obligation" do

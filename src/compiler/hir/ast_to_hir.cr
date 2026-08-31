@@ -59042,6 +59042,37 @@ module Adamas::HIR
       attempted
     end
 
+    private def final_missing_fixed_point_snapshot
+      # Compare semantic state, not mutation counters: retrying unresolved
+      # targets can churn queue/state revisions while restoring the same queue
+      # contents and target states.
+      fanout_targets = [] of {String, String, FunctionLoweringState}
+      @module_virtual_fanout_pending_targets.each do |fanout_key, targets|
+        targets.each_key do |target_name|
+          fanout_targets << {fanout_key, target_name, function_state(target_name)}
+        end
+      end
+
+      {
+        function_def_revision:      @function_def_revision,
+        function_type_revision:     @function_type_revision,
+        class_info_version:         @class_info_version,
+        module_includers_version:   @module_includers_version,
+        module_defs_cache_version:  @module_defs_cache_version,
+        authority_revision:         @call_resolution_authority_revision,
+        function_set_revision:      @module.function_set_revision,
+        hir_body_revision:          @module.hir_body_revision,
+        monomorphized_size:         @monomorphized.size,
+        pending_queue:               @pending_function_queue.dup,
+        pending_fanout_targets:      fanout_targets,
+      }
+    end
+
+    private def final_missing_fixed_point_reached?(snapshot) : Bool
+      @pending_function_queue.empty? &&
+        final_missing_fixed_point_snapshot == snapshot
+    end
+
     private def discard_terminal_module_virtual_fanout_pending_targets : {Int32, Int32}
       discarded = 0
       unresolved_concrete = 0
@@ -64587,6 +64618,7 @@ module Adamas::HIR
       loop do
         before_final_missing = @module.function_count
         before_final_missing_bodies = hir_function_body_count
+        before_final_missing_snapshot = final_missing_fixed_point_snapshot
         lower_missing_call_targets
         stop_after_flush_phase("final_missing_lower_missing", "ADAMAS_STOP_AFTER_HIR_FINAL_MISSING_LOWER_MISSING")
         repair_missing_concrete_virtual_targets
@@ -64614,11 +64646,7 @@ module Adamas::HIR
         if phase_stats
           STDERR.puts "[PHASE_STATS] final_missing_pass=#{final_missing_passes} funcs=#{before_final_missing}->#{@module.function_count} bodies_before=#{before_final_missing_bodies} fanout_attempts=#{fanout_repair_attempts}"
         end
-        after_final_missing_bodies = hir_function_body_count
-        break if (@module.function_count == before_final_missing &&
-                 after_final_missing_bodies == before_final_missing_bodies &&
-                 @pending_function_queue.empty? &&
-                 fanout_repair_attempts == 0) ||
+        break if final_missing_fixed_point_reached?(before_final_missing_snapshot) ||
                  final_missing_passes >= 4
       end
       discarded_fanout_targets, unresolved_fanout_targets =
