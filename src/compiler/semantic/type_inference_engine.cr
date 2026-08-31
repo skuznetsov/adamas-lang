@@ -1695,7 +1695,7 @@ module Adamas
           return false unless module_type
           return false unless method.scope.owner_module == module_type.symbol
 
-          def_node = @arena[method.node_id].as?(Frontend::DefNode)
+          def_node = @arena[method.node_id]?.as?(Frontend::DefNode)
           def_node.nil? || def_node.body.try(&.empty?) != false
         end
 
@@ -1723,7 +1723,7 @@ module Adamas
           return nil unless module_type
           return nil unless method.scope.owner_module == module_type.symbol
 
-          def_node = @arena[method.node_id].as?(Frontend::DefNode)
+          def_node = @arena[method.node_id]?.as?(Frontend::DefNode)
           return nil if def_node.try { |node| body = node.body; body && !body.empty? }
 
           results = [] of Type
@@ -3153,7 +3153,7 @@ module Adamas
           return nil if method.is_class_method?
           return nil unless method_assigns_instance_var?(method, clean_name)
 
-          def_node = @arena[method.node_id]
+          def_node = @arena[method.node_id]?
           return nil unless def_node.is_a?(Frontend::DefNode)
           body = def_node.body
           return nil unless body
@@ -3246,7 +3246,7 @@ module Adamas
         end
 
         private def method_assigns_instance_var?(method : MethodSymbol, clean_name : String) : Bool
-          def_node = @arena[method.node_id]
+          def_node = @arena[method.node_id]?
           return false unless def_node.is_a?(Frontend::DefNode)
           body = def_node.body
           return false unless body
@@ -12804,7 +12804,7 @@ module Adamas
           end
 
           # Get the method's DefNode to access its body
-          def_node = @arena[method.node_id]
+          def_node = @arena[method.node_id]?
           unless def_node.is_a?(Frontend::DefNode)
             puts "  ERROR: def_node is not DefNode!" if ENV["DEBUG"]?
             debug_hook("infer.method_body.error", "method=#{method.name} error=not_def_node")
