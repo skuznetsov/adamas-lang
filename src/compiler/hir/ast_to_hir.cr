@@ -98137,9 +98137,17 @@ module Adamas::HIR
         source_tuple = source_desc.kind == TypeKind::Tuple || source_desc.name.starts_with?("Tuple(")
         target_tuple = target_desc.kind == TypeKind::Tuple || target_desc.name.starts_with?("Tuple(")
         if source_tuple && target_tuple && source_desc.type_params.size == target_desc.type_params.size
-          return source_desc.type_params.each_with_index.all? do |source_elem, index|
-            receiver_param_coercion_compatible?(source_elem, target_desc.type_params.unsafe_fetch(index))
+          # Keep this bootstrap-hot recursive check closure-free. The stdlib
+          # iterator chain currently loses its WithIndexIterator specialization
+          # while the compiler lowers itself.
+          index = 0
+          while index < source_desc.type_params.size
+            source_elem = source_desc.type_params.unsafe_fetch(index)
+            target_elem = target_desc.type_params.unsafe_fetch(index)
+            return false unless receiver_param_coercion_compatible?(source_elem, target_elem)
+            index += 1
           end
+          return true
         end
       end
 

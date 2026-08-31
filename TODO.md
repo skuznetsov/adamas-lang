@@ -14413,6 +14413,36 @@ failed closed after 260.34 seconds at the next bodyless demand,
 slice must reduce that exact block-call receiver shape before changing generic
 Enumerable materialization or adding another fallback.
 
+### Session 119: keep tuple receiver coercion closure-free (2026-08-31)
+
+The bootstrap failure was caused by the compiler's own recursive tuple
+compatibility check using `each_with_index.all?`. During self-hosted lowering,
+that stdlib chain lost its outer `Iterator::WithIndexIterator` specialization
+and demanded the malformed bodyless target `TypeRef, Int32#all?$block`. A
+custom no-prelude generic/include reducer remained green, which refuted a broad
+generic tuple-resolution failure and bounded the production change to the hot
+compiler call site.
+
+The check now uses an indexed `while` loop with the same size guard,
+short-circuit behavior, and empty-tuple result. It adds no cache, registry,
+identity layer, fallback, or Enumerable materialization rule. The compiler
+build succeeds, the no-prelude reducer remains green, and the complete
+`ast_to_hir` suite passes 496 examples with zero failures or errors and two
+existing pending examples.
+
+A fresh two-stage B4-F run at
+`/private/tmp/adamas_receiver_tuple_loop_b4f_20260831a` built stage1 in 20.70
+seconds and passed both smokes. Stage2 cleared the former
+`TypeRef, Int32#all?$block` frontier and failed closed after 291.25 seconds at
+the next bodyless receiver-repair target, `Number#to_s$IO`, from
+`IO#<<$Char | Number | String`. B4-F therefore remains RED, but the previous
+frontier is consumed. Adversary boundary: an ordinary full-prelude
+`Array#each_with_index.all?` reducer still reproduces the malformed iterator
+owner, so this slice is ROBUST only as a bootstrap-hot-path repair and is not a
+general Iterator fix. Next: build a small source-backed `Number#to_s(IO)`
+falsifier and determine why the resolved `Object#to_s$IO` body is not
+materialized before changing receiver repair.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
