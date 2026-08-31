@@ -14339,6 +14339,29 @@ this removes one repeated-resolution cost but does not bound later
 materialization fanout. Next: profile the remaining `CLI#compile` lowering cost
 before widening cache authority or adding any identity layer.
 
+### Session 117: preserve signed class-scope defaults through layout (2026-08-31)
+
+A proposed cleanup of duplicated `AstToHir` constructor defaults was rejected
+by a no-prelude runtime falsifier: `@negative = -7` was registered as `Void`, so
+LLVM stored and loaded a null pointer even though HIR still carried the `-7`
+payload. The root was earlier and smaller than allocator materialization:
+registration-time type-name inference did not recognize unary minus.
+
+The inference boundary now preserves the operand type only for unary minus and
+keeps logical negation as `Bool`; other unary forms such as proc and pointer
+operators remain outside this shortcut. No allocator fold, registry, cache, or
+new identity layer was added. The focused HIR regression checks `Int32`, `Int8`,
+and `Float64` layout carriers, while a safe no-prelude runtime script checks the
+actual signed defaults end to end.
+
+The complete HIR suite passes 488 examples with zero failures or errors and two
+existing pending examples. A fresh compiler build succeeds, and
+`class_scope_signed_ivar_defaults_no_prelude.sh` reports green under
+`run_safe.sh`. Adversary verdict: ROBUST for class-scope unary-minus defaults.
+The duplicated constructor initialization remains intentionally unchanged
+until generated-stage2 default and lazy-enum behavior has an equivalent
+certificate; B4-F remains RED at the 300-second cap.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

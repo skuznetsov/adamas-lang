@@ -61659,6 +61659,11 @@ module Adamas::HIR
         "String"
       when Adamas::Compiler::Frontend::NumberNode
         number_literal_type_name((safe_slice_to_string(node.value) || ""))
+      when Adamas::Compiler::Frontend::UnaryNode
+        return "Bool" if unary_operator_matches?(node, '!')
+        return nil unless unary_operator_matches?(node, '-')
+        operand = node_for_expr(node.operand, @arena)
+        operand ? infer_type_name_from_node(operand) : nil
       when Adamas::Compiler::Frontend::BoolNode
         "Bool"
       when Adamas::Compiler::Frontend::CharNode

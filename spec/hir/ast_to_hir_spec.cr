@@ -7933,6 +7933,47 @@ describe Adamas::HIR::AstToHir do
   end
 
   describe "registration-time implicit ivar discovery" do
+    it "preserves signed class-scope defaults through allocator lowering" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class InlineDefaultState
+          @regular = -7
+          @small = -7_i8
+          @ratio = -1.5
+
+          def initialize
+          end
+        end
+
+        InlineDefaultState.new
+      CRYSTAL
+
+      class_info = converter.class_info["InlineDefaultState"]
+      regular = class_info.ivars.find { |ivar| ivar.name == "@regular" }
+      small = class_info.ivars.find { |ivar| ivar.name == "@small" }
+      ratio = class_info.ivars.find { |ivar| ivar.name == "@ratio" }
+      regular.should_not be_nil
+      small.should_not be_nil
+      ratio.should_not be_nil
+      regular.not_nil!.default_expr_id.should_not be_nil
+      small.not_nil!.default_expr_id.should_not be_nil
+      ratio.not_nil!.default_expr_id.should_not be_nil
+      regular.not_nil!.type.should eq(Adamas::HIR::TypeRef::INT32)
+      small.not_nil!.type.should eq(Adamas::HIR::TypeRef::INT8)
+      ratio.not_nil!.type.should eq(Adamas::HIR::TypeRef::FLOAT64)
+
+      allocator = converter.module.function_by_name("InlineDefaultState.new")
+      allocator.should_not be_nil
+      instructions = allocator.not_nil!.blocks.flat_map(&.instructions)
+      regular_store = instructions.compact_map { |instruction| instruction.as?(Adamas::HIR::FieldSet) }
+        .find { |field| field.field_name == "@regular" }
+      small_store = instructions.compact_map { |instruction| instruction.as?(Adamas::HIR::FieldSet) }
+        .find { |field| field.field_name == "@small" }
+      regular_store.should_not be_nil
+      small_store.should_not be_nil
+      regular_store.not_nil!.type.should eq(Adamas::HIR::TypeRef::INT32)
+      small_store.not_nil!.type.should eq(Adamas::HIR::TypeRef::INT8)
+    end
+
     it "scans ordinary method bodies without reading their parameter storage" do
       code = <<-CRYSTAL
         class BodyAssignedIvar
