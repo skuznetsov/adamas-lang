@@ -5934,10 +5934,23 @@ describe Adamas::HIR::AstToHir do
               accept_first(member, owner, values, offset)
             end
           end
+
+          def inspect_concrete(
+            member : CaseMultiFirst,
+            owner : String,
+            values : Array(Int32),
+            offset : Pointer(Int32),
+          ) : Nil
+            case member
+            when CaseMultiFirst, CaseMultiSecond
+              accept_first(member, owner, values, offset)
+            end
+          end
         end
 
         offset = 0
         CaseMultiProbe.new.inspect("owner", Array(Int32).new, pointerof(offset))
+        CaseMultiProbe.new.inspect_concrete(CaseMultiFirst.new, "owner", Array(Int32).new, pointerof(offset))
         CRYSTAL
       func = converter.module.functions.find { |candidate| candidate.name.starts_with?("CaseMultiProbe#inspect") }.not_nil!
       calls = func.blocks.flat_map(&.instructions).compact_map(&.as?(Adamas::HIR::Call))
@@ -5948,6 +5961,11 @@ describe Adamas::HIR::AstToHir do
       ])
       accept_first_calls = calls.select { |call| call.method_name.starts_with?("CaseMultiProbe#accept_first$") }
       accept_first_calls.map(&.method_name).should eq([
+        "CaseMultiProbe#accept_first$CaseMultiFirst_String_Array(Int32)_Pointer(Int32)",
+      ])
+      concrete_func = converter.module.functions.find { |candidate| candidate.name.starts_with?("CaseMultiProbe#inspect_concrete$") }.not_nil!
+      concrete_calls = concrete_func.blocks.flat_map(&.instructions).compact_map(&.as?(Adamas::HIR::Call))
+      concrete_calls.select { |call| call.method_name.starts_with?("CaseMultiProbe#accept_first$") }.map(&.method_name).should eq([
         "CaseMultiProbe#accept_first$CaseMultiFirst_String_Array(Int32)_Pointer(Int32)",
       ])
     end

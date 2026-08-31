@@ -75842,11 +75842,13 @@ module Adamas::HIR
         return
       end
 
+      source_type = ctx.type_of(local_id)
+      return if unique_targets.any? { |target| statically_is_a_type?(source_type, target) == true }
+
       union_name = unique_targets.map { |type_ref| generic_param_type_name_from_ref(type_ref) }.join(" | ")
       target_type = create_union_type(union_name)
       return if target_type == TypeRef::VOID
 
-      source_type = ctx.type_of(local_id)
       return if source_type == target_type
       return unless all_ref_union_type_ref?(target_type)
 

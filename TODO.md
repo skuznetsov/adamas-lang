@@ -14399,9 +14399,11 @@ with `Frontend::Node` instead of the branch-proven accessor union.
 Multi-condition branches now create one typed `Copy` only when every condition
 is a type check, the target is an all-reference union, and the source satisfies
 the existing runtime-header reference contract. Mixed value/type cases and
-tagged or value unions remain unchanged. The focused red, the no-prelude HIR
-guard, all 20 `case` examples, and the complete HIR suite (496 examples, zero
-failures/errors, two existing pending) are green.
+tagged or value unions remain unchanged. Duplicate type conditions reuse the
+single-type narrowing path, and a subject already narrower than any admitted
+arm is never widened to the whole condition set. The focused reds, the
+no-prelude HIR guard, all 20 `case` examples, and the complete HIR suite (496
+examples, zero failures/errors, two existing pending) are green.
 
 A fresh two-stage chain built stage1 in 17.77 seconds and passed both smokes.
 Stage2 cleared the former `register_accessors_in_class$Node_...` target and
