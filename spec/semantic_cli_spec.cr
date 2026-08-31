@@ -124,6 +124,85 @@ describe Adamas::Compiler::CLI do
     end
   end
 
+  it "hands same-arena semantic overload targets to production HIR lowering" do
+    with_temp_shadow_project({
+      "main.cr" => [
+        "class SemanticCliRoute",
+        "def route(value) : String",
+        %("wrong"),
+        "end",
+        "def route(value : Int32)",
+        "self.route(value)",
+        "end",
+        "end",
+        "SemanticCliRoute.new.route(1)",
+      ].join('\n'),
+    }) do |dir|
+      main_path = File.join(dir, "main.cr")
+      output_path = File.join(dir, "main")
+      hir_path = "#{output_path}.hir"
+      out_io = IO::Memory.new
+      err_io = IO::Memory.new
+      status = 1
+
+      with_semantic_compile_env do
+        cli = Adamas::Compiler::CLI.new([
+          main_path,
+          "--no-prelude",
+          "--stats",
+          "--verbose",
+          "--emit", "hir",
+          "--no-link",
+          "-o", output_path,
+        ])
+        status = cli.run(out_io: out_io, err_io: err_io)
+      end
+
+      status.should eq(0), err_io.to_s
+      out_io.to_s.should contain("Semantic call targets: same-arena")
+      hir = File.read(hir_path)
+      hir.should contain("SemanticCliRoute#route$Int32")
+      hir.should_not contain(%("wrong"))
+    end
+  end
+
+  it "does not hand semantic targets when another parsed unit is inactive" do
+    with_temp_shadow_project({
+      "main.cr" => [
+        %(require "./inactive"),
+        "class SemanticCliMultiRoute",
+        "def route(value : Int32)",
+        "value",
+        "end",
+        "end",
+        "SemanticCliMultiRoute.new.route(1)",
+      ].join('\n'),
+      "inactive.cr" => "{% skip_file %}\n",
+    }) do |dir|
+      main_path = File.join(dir, "main.cr")
+      output_path = File.join(dir, "main")
+      out_io = IO::Memory.new
+      err_io = IO::Memory.new
+      status = 1
+
+      with_semantic_compile_env do
+        cli = Adamas::Compiler::CLI.new([
+          main_path,
+          "--no-prelude",
+          "--stats",
+          "--verbose",
+          "--emit", "hir",
+          "--no-link",
+          "-o", output_path,
+        ])
+        status = cli.run(out_io: out_io, err_io: err_io)
+      end
+
+      status.should eq(0), err_io.to_s
+      out_io.to_s.should_not contain("Semantic call targets: same-arena")
+    end
+  end
+
   it "fails compile early on semantic compile prepass resolution errors" do
     with_temp_shadow_project({
       "main.cr" => "missing + 1\n",

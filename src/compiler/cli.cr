@@ -241,6 +241,16 @@ module Adamas
         end
       end
 
+      private alias SemanticCallTargetHandoff = NamedTuple(
+        arena: Frontend::AstArena,
+        context: Semantic::TypeContext,
+      )
+
+      private alias SemanticCompilePrepassResult = NamedTuple(
+        status: Int32?,
+        call_target: SemanticCallTargetHandoff?,
+      )
+
       private class SemanticShadowUnitSummary
         getter path : String
         getter roots_count : Int32
@@ -1703,14 +1713,17 @@ module Adamas
         end
 
         semantic_compile_active = semantic_compile_enabled?
+        semantic_call_target : SemanticCallTargetHandoff? = nil
         log_codepath_branch("cli.semantic", "semantic_compile_prepass", semantic_compile_active, "CLI")
         if semantic_compile_active
           semantic_compile_start = Time.instant
-          if status = run_semantic_compile_prepass(all_arenas, options, out_io, err_io)
+          semantic_prepass = run_semantic_compile_prepass(all_arenas, options, out_io, err_io)
+          if status = semantic_prepass[:status]
             timings["semantic_compile_prepass"] = (Time.instant - semantic_compile_start).total_milliseconds if options.stats
             emit_timings(options, out_io, timings, total_start)
             return status
           end
+          semantic_call_target = semantic_prepass[:call_target]
           timings["semantic_compile_prepass"] = (Time.instant - semantic_compile_start).total_milliseconds if options.stats
           log_generated_stage_memory_phase(
             "cli.semantic_compile_done",
@@ -1914,6 +1927,10 @@ module Adamas
         hir_converter.bootstrap_bind_core_state(first_arena, hir_mod)
         hir_converter.bootstrap_bind_source_maps(sources_by_arena, paths_by_arena)
         hir_converter.bootstrap_bind_main_arenas(main_arenas)
+        if call_target = semantic_call_target
+          hir_converter.bind_semantic_call_targets(call_target[:arena], call_target[:context])
+          log(options, out_io, "  Semantic call targets: same-arena") if options.verbose || options.stats
+        end
         hir_converter.bootstrap_bind_link_libraries(link_libs)
         hir_converter.bootstrap_reset_constructor_tail
         hir_converter.bootstrap_bind_stdlib_root(File.expand_path(stdlib_path))
@@ -7545,9 +7562,21 @@ module Adamas
         options : Options,
         out_io : IO,
         err_io : IO,
-      ) : Int32?
+      ) : SemanticCompilePrepassResult
         active_units = active_semantic_units(units)
-        aggregate = build_semantic_shadow_aggregate(active_units)
+        same_arena_handoff = units.size == 1 && active_units.size == 1
+        aggregate = if same_arena_handoff
+                      unit = active_units.unsafe_fetch(0)
+                      Semantic::CompileShadowAggregate.from_parsed_unit(
+                        unit.arena,
+                        unit.roots,
+                        unit.path,
+                        unit.source,
+                        unit.parse_diagnostics,
+                      )
+                    else
+                      build_semantic_shadow_aggregate(active_units)
+                    end
         active_units.each_with_index do |unit, unit_index|
           if structure_error = aggregate.original_unit_structure_error(
                unit_index.to_i32,
@@ -7555,9 +7584,9 @@ module Adamas
                unit.source,
                unit.arena,
                unit.roots,
-             )
+            )
             err_io.puts "error: semantic compile reparse structure mismatch: #{structure_error}"
-            return 1
+            return {status: 1, call_target: nil}
           end
         end
         analyzer = Semantic::Analyzer.new(aggregate.program)
@@ -7592,7 +7621,7 @@ module Adamas
             out_io
           )
           err_io.puts "\nerror: #{strict_message}"
-          return 1
+          return {status: 1, call_target: nil}
         end
 
         analyzer.collect_symbols(
@@ -7623,7 +7652,7 @@ module Adamas
             out_io
           )
           err_io.puts "\nerror: compilation failed due to semantic compile prepass errors"
-          return 1
+          return {status: 1, call_target: nil}
         end
 
         resolve_result = analyzer.resolve_names(defer_method_body_receiverless_candidates: true)
@@ -7649,10 +7678,10 @@ module Adamas
             out_io
           )
           err_io.puts "\nerror: compilation failed due to semantic compile prepass errors"
-          return 1
+          return {status: 1, call_target: nil}
         end
 
-        analyzer.infer_types(resolve_result.identifier_symbols)
+        type_engine = analyzer.infer_types(resolve_result.identifier_symbols)
         type_diagnostics = analyzer.type_inference_diagnostics.dup
         type_diagnostics.each do |diagnostic|
           err_io.puts aggregate.format_shadow_diagnostic(diagnostic, sources_by_path)
@@ -7677,10 +7706,23 @@ module Adamas
 
         if analyzer.type_inference_errors?
           err_io.puts "\nerror: compilation failed due to semantic compile prepass errors"
-          return 1
+          return {status: 1, call_target: nil}
         end
 
-        nil
+        if same_arena_handoff
+          unit = active_units.unsafe_fetch(0)
+          if aggregate.program.arena.object_id == unit.arena.object_id
+            return {
+              status: nil,
+              call_target: {
+                arena: unit.arena,
+                context: type_engine.context,
+              },
+            }
+          end
+        end
+
+        {status: nil, call_target: nil}
       end
 
       private def count_local_symbols(table : Semantic::SymbolTable) : Int32

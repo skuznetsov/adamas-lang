@@ -128,6 +128,37 @@ module Adamas
           )
         end
 
+        # Preserve the production parser arena when semantic analysis and its
+        # immediate consumer can share one unit. ExprId is then authoritative
+        # without a cross-arena translation table.
+        def self.from_parsed_unit(
+          arena : Frontend::AstArena,
+          roots : Array(Frontend::ExprId),
+          path : String,
+          source : String,
+          parse_diagnostics : Array(Frontend::Diagnostic),
+        ) : self
+          unit_index_by_node = Array(Int32).new(arena.size, -1)
+          node_count = assign_unit_nodes(arena, roots, 0_i32, unit_index_by_node)
+          unit_summary = UnitSummary.new(
+            unit_index: 0_i32,
+            path: path,
+            source: source,
+            roots: roots,
+            node_offset: 0_i32,
+            allocated_node_count: arena.size,
+            node_count: node_count,
+            parse_diagnostic_count: parse_diagnostics.size,
+          )
+
+          new(
+            Frontend::Program.new(arena, roots),
+            [unit_summary],
+            unit_index_by_node,
+            parse_diagnostics.dup,
+          )
+        end
+
         def initialize(
           @program : Frontend::Program,
           @unit_summaries : Array(UnitSummary),
