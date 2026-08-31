@@ -839,6 +839,31 @@ describe Semantic::TypeInferenceEngine do
       engine.__test_validated_selected_def_identity(wrong_receiver_kind).should be_nil
     end
 
+    it "does not confuse a synthetic builtin with definition zero" do
+      source = <<-CRYSTAL
+        class Hash(K, V)
+          def initialize
+          end
+
+          def fetch(key : K)
+            yield
+          end
+        end
+
+        Hash(String, Int32).new.fetch("x") { 1 }
+      CRYSTAL
+
+      program = Frontend::Parser.new(Frontend::Lexer.new(source)).parse_program
+      program.ast_arena[Frontend::ExprId.new(0)].should be_a(Frontend::DefNode)
+      analyzer = Semantic::Analyzer.new(program)
+      analyzer.collect_symbols
+      name_result = analyzer.resolve_names
+      engine = analyzer.infer_types(name_result.identifier_symbols)
+
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Int32")
+    end
+
     it "fails the live call path closed for a detached selected definition" do
       source = <<-CRYSTAL
         class T1Detached

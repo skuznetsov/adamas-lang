@@ -9021,7 +9021,7 @@ module Adamas
         # Phase 103C: Universal methods available on all types (Object methods)
         private def get_universal_methods(receiver_type : Type, method_name : String) : Array(MethodSymbol)
           methods = [] of MethodSymbol
-          dummy_node_id = ExprId.new(0)
+          dummy_node_id = ExprId.new(-1)
           dummy_scope = SymbolTable.new(nil)
 
           case method_name
@@ -9088,7 +9088,7 @@ module Adamas
 
         private def get_builtin_class_methods(type_name : String, method_name : String) : Array(MethodSymbol)
           methods = [] of MethodSymbol
-          dummy_node_id = ExprId.new(0)
+          dummy_node_id = ExprId.new(-1)
           dummy_scope = SymbolTable.new(nil)
 
           if primitive_type_for(type_name) || is_type_name?(type_name)
@@ -9164,7 +9164,7 @@ module Adamas
           return methods unless signature
 
           base_name, type_args = signature
-          dummy_node_id = ExprId.new(0)
+          dummy_node_id = ExprId.new(-1)
           dummy_scope = SymbolTable.new(nil)
 
           case base_name
@@ -10082,7 +10082,7 @@ module Adamas
           methods = [] of MethodSymbol
 
           # Dummy values for built-in methods (no AST node)
-          dummy_node_id = ExprId.new(0)
+          dummy_node_id = ExprId.new(-1)
           dummy_scope = SymbolTable.new(nil)
 
           if appender_element_type = pointer_appender_element_type_name(type_name)
@@ -10622,7 +10622,7 @@ module Adamas
           methods = [] of MethodSymbol
 
           # Dummy values for built-in methods
-          dummy_node_id = ExprId.new(0)
+          dummy_node_id = ExprId.new(-1)
           dummy_scope = SymbolTable.new(nil)
 
           element_type_name = array_type.element_type.to_s
@@ -11075,7 +11075,7 @@ module Adamas
 
         private def get_deque_builtin_methods(element_type : Type, method_name : String) : Array(MethodSymbol)
           methods = [] of MethodSymbol
-          dummy_node_id = ExprId.new(0)
+          dummy_node_id = ExprId.new(-1)
           dummy_scope = SymbolTable.new(nil)
           element_type_name = element_type.to_s
           deque_type_name = "Deque(#{element_type_name})"
@@ -11146,7 +11146,7 @@ module Adamas
 
         private def get_pointer_builtin_methods(pointer_type : PointerType, method_name : String) : Array(MethodSymbol)
           methods = [] of MethodSymbol
-          dummy_node_id = ExprId.new(0)
+          dummy_node_id = ExprId.new(-1)
           dummy_scope = SymbolTable.new(nil)
           element_type_name = pointer_type.element_type.to_s
 
@@ -11251,7 +11251,7 @@ module Adamas
         # Phase 103C: Built-in methods for Hash(K, V)
         private def get_hash_builtin_methods(hash_type : HashType, method_name : String) : Array(MethodSymbol)
           methods = [] of MethodSymbol
-          dummy_node_id = ExprId.new(0)
+          dummy_node_id = ExprId.new(-1)
           dummy_scope = SymbolTable.new(nil)
 
           key_type_name = hash_type.key_type.to_s
@@ -11314,7 +11314,7 @@ module Adamas
         private def get_proc_builtin_methods(proc_type : ProcType, method_name : String) : Array(MethodSymbol)
           methods = [] of MethodSymbol
 
-          dummy_node_id = ExprId.new(0)
+          dummy_node_id = ExprId.new(-1)
           dummy_scope = SymbolTable.new(nil)
 
           case method_name
@@ -11350,7 +11350,7 @@ module Adamas
         private def get_enum_builtin_methods(enum_type : EnumType, method_name : String) : Array(MethodSymbol)
           methods = [] of MethodSymbol
 
-          dummy_node_id = ExprId.new(0)
+          dummy_node_id = ExprId.new(-1)
           dummy_scope = SymbolTable.new(nil)
           enum_name = enum_type.symbol.name
           base_type = enum_type.symbol.base_type
