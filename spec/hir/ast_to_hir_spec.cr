@@ -5888,6 +5888,70 @@ describe Adamas::HIR::AstToHir do
       hir_text(either).should_not contain("cast")
     end
 
+    it "narrows multi-type case branches before resolving optional-parameter calls" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        abstract class CaseMultiBase
+        end
+
+        class CaseMultiFirst < CaseMultiBase
+        end
+
+        class CaseMultiSecond < CaseMultiBase
+        end
+
+        class CaseMultiThird < CaseMultiBase
+        end
+
+        class CaseMultiProbe
+          def source : CaseMultiBase
+            CaseMultiFirst.new
+          end
+
+          def accept(
+            member : CaseMultiFirst | CaseMultiSecond | CaseMultiThird,
+            owner : String,
+            values : Array(Int32)?,
+            offset : Pointer(Int32)?,
+          ) : Nil
+          end
+
+          def accept_first(
+            member : CaseMultiFirst,
+            owner : String,
+            values : Array(Int32)?,
+            offset : Pointer(Int32)?,
+          ) : Nil
+          end
+
+          def inspect(owner : String, values : Array(Int32), offset : Pointer(Int32)) : Nil
+            member = source
+            case member
+            when CaseMultiFirst, CaseMultiSecond, CaseMultiThird
+              accept(member, owner, values, offset)
+            end
+            case member
+            when CaseMultiFirst, CaseMultiFirst
+              accept_first(member, owner, values, offset)
+            end
+          end
+        end
+
+        offset = 0
+        CaseMultiProbe.new.inspect("owner", Array(Int32).new, pointerof(offset))
+        CRYSTAL
+      func = converter.module.functions.find { |candidate| candidate.name.starts_with?("CaseMultiProbe#inspect") }.not_nil!
+      calls = func.blocks.flat_map(&.instructions).compact_map(&.as?(Adamas::HIR::Call))
+      accept_calls = calls.select { |call| call.method_name.starts_with?("CaseMultiProbe#accept$") }
+
+      accept_calls.map(&.method_name).should eq([
+        "CaseMultiProbe#accept$CaseMultiFirst | CaseMultiSecond | CaseMultiThird_String_Array(Int32)_Pointer(Int32)",
+      ])
+      accept_first_calls = calls.select { |call| call.method_name.starts_with?("CaseMultiProbe#accept_first$") }
+      accept_first_calls.map(&.method_name).should eq([
+        "CaseMultiProbe#accept_first$CaseMultiFirst_String_Array(Int32)_Pointer(Int32)",
+      ])
+    end
+
     it "fails closed when overlapping union carriers cannot prove branch narrowing" do
       expect_raises(Adamas::HIR::LoweringError, /ambiguous descendant carriers for AmbiguousChild in union Nil \| AmbiguousBase \| AmbiguousMid/) do
         lower_program(<<-CRYSTAL)

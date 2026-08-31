@@ -14389,6 +14389,28 @@ The duplicated constructor initialization remains intentionally unchanged
 until generated-stage2 default and lazy-enum behavior has an equivalent
 certificate; B4-F remains RED at the 300-second cap.
 
+### Session 118: preserve multi-type case narrowing through optional calls (2026-08-31)
+
+A no-prelude reducer showed that `case member; when A, B, C` retained the
+subject's broad base-class type when resolving a call whose later parameters
+were optional. The generated compiler therefore demanded a bodyless overload
+with `Frontend::Node` instead of the branch-proven accessor union.
+
+Multi-condition branches now create one typed `Copy` only when every condition
+is a type check, the target is an all-reference union, and the source satisfies
+the existing runtime-header reference contract. Mixed value/type cases and
+tagged or value unions remain unchanged. The focused red, the no-prelude HIR
+guard, all 20 `case` examples, and the complete HIR suite (496 examples, zero
+failures/errors, two existing pending) are green.
+
+A fresh two-stage chain built stage1 in 17.77 seconds and passed both smokes.
+Stage2 cleared the former `register_accessors_in_class$Node_...` target and
+failed closed after 260.34 seconds at the next bodyless demand,
+`TypeRef, Int32#all?$block`, from
+`AstToHir#receiver_param_coercion_compatible?`. B4-F remains RED; the next
+slice must reduce that exact block-call receiver shape before changing generic
+Enumerable materialization or adding another fallback.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

@@ -75822,6 +75822,43 @@ module Adamas::HIR
       end
     end
 
+    # A `when A, B, C` branch proves that a reference-typed subject belongs to
+    # the exact union of those admitted classes. All-reference unions share the
+    # subject's raw pointer representation, so narrowing needs only a typed copy;
+    # tagged/value unions remain unchanged until they have an explicit remap.
+    private def apply_case_type_set_narrowing(
+      ctx : LoweringContext,
+      name : String,
+      target_types : Array(TypeRef),
+    ) : Nil
+      return if target_types.size < 2
+
+      local_id = ctx.lookup_local(name)
+      return unless local_id
+
+      unique_targets = target_types.uniq
+      if unique_targets.size == 1
+        apply_is_a_narrowing(ctx, [IsANarrowingTarget.new(name, unique_targets.first)])
+        return
+      end
+
+      union_name = unique_targets.map { |type_ref| generic_param_type_name_from_ref(type_ref) }.join(" | ")
+      target_type = create_union_type(union_name)
+      return if target_type == TypeRef::VOID
+
+      source_type = ctx.type_of(local_id)
+      return if source_type == target_type
+      return unless all_ref_union_type_ref?(target_type)
+
+      source_variants = Set(TypeRef).new
+      return unless collect_runtime_header_return_variants(source_type, source_variants)
+
+      copy = Copy.new(ctx.next_id, target_type, local_id)
+      ctx.emit(copy)
+      ctx.register_type(copy.id, target_type)
+      ctx.register_local(name, copy.id)
+    end
+
     # Inverse of apply_is_a_narrowing for the else branch of `if x.is_a?(T)`.
     # When `x` was a union and `T` is one variant, the else branch narrows
     # `x` to `union - T`. Conservatively narrows only when a single variant
@@ -80421,6 +80458,8 @@ module Adamas::HIR
           subj_type = subj_local_id ? ctx.type_of(subj_local_id) : nil
           subj_is_union = subj_type && is_union_type?(subj_type)
           single_condition = when_branch.conditions.size == 1
+          type_set_targets = [] of TypeRef
+          all_conditions_are_type_checks = true
           if subj_type
             when_branch.conditions.each do |cond_expr|
               cond_node = @arena[cond_expr]
@@ -80445,10 +80484,16 @@ module Adamas::HIR
                 if single_condition && should_narrow
                   apply_is_a_narrowing(ctx, [IsANarrowingTarget.new(svn, target_ref)])
                 end
+                if should_narrow && target_ref != TypeRef::VOID
+                  type_set_targets << target_ref
+                else
+                  all_conditions_are_type_checks = false
+                end
                 if target_ref == TypeRef::NIL
                   nil_was_checked = true
                 end
               elsif subj_is_union
+                all_conditions_are_type_checks = false
                 # Value-based narrowing: for union subjects with literal conditions,
                 # narrow the subject to the value's type. Also handles .nil? predicate.
                 # E.g., `case pos when 0` narrows pos (Int32?) to Int32 inside the body.
@@ -80504,7 +80549,13 @@ module Adamas::HIR
                 if single_condition && narrow_type
                   apply_is_a_narrowing(ctx, [IsANarrowingTarget.new(svn, narrow_type)])
                 end
+              else
+                all_conditions_are_type_checks = false
               end
+            end
+            if !single_condition && all_conditions_are_type_checks &&
+               type_set_targets.size == when_branch.conditions.size
+              apply_case_type_set_narrowing(ctx, svn, type_set_targets)
             end
           end
         end
