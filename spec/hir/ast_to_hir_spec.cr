@@ -7407,6 +7407,138 @@ describe Adamas::HIR::AstToHir do
       text.should contain("allocate")
     end
 
+    it "matches named-tuple equality operands by key instead of storage order" do
+      func, converter = lower_function_with_converter(<<-CRYSTAL)
+        def foo
+          left = {a: 1, b: 2_i64}
+          right = {b: 2_i64, a: 1}
+          left == right
+        end
+      CRYSTAL
+
+      instructions = func.blocks.flat_map(&.instructions)
+      instructions.compact_map { |instruction| instruction.as?(Adamas::HIR::Call) }
+        .none? { |call| call.method_name.includes?("NamedTuple(") && call.method_name.includes?("#==") }
+        .should be_true
+
+      named_tuple_allocations = instructions.compact_map do |instruction|
+        allocation = instruction.as?(Adamas::HIR::Allocate)
+        next unless allocation
+        descriptor = converter.module.get_type_descriptor(allocation.type)
+        allocation if descriptor && descriptor.kind == Adamas::HIR::TypeKind::NamedTuple
+      end
+      named_tuple_allocations.size.should eq(2)
+
+      literal_indices = instructions.compact_map { |instruction| instruction.as?(Adamas::HIR::Literal) }
+        .to_h { |literal| {literal.id, literal.int_value.to_i32} }
+      value_types = instructions.compact_map { |instruction| instruction.as?(Adamas::HIR::Value) }
+        .to_h { |value| {value.id, value.type} }
+      left_indices = instructions.compact_map { |instruction| instruction.as?(Adamas::HIR::IndexGet) }
+        .select { |get| value_types[get.object]? == named_tuple_allocations[0].type }
+        .map { |get| literal_indices[get.index] }
+      right_indices = instructions.compact_map { |instruction| instruction.as?(Adamas::HIR::IndexGet) }
+        .select { |get| value_types[get.object]? == named_tuple_allocations[1].type }
+        .map { |get| literal_indices[get.index] }
+
+      left_indices.should eq([0, 1])
+      right_indices.should eq([1, 0])
+    end
+
+    it "rejects named-tuple equality when key sets differ" do
+      func = lower_function(<<-CRYSTAL)
+        def foo
+          left = {a: 1}
+          right = {b: 1}
+          left == right
+        end
+      CRYSTAL
+
+      text = hir_text(func)
+      text.should contain("literal false")
+      text.should_not contain("call NamedTuple(")
+    end
+
+    it "rejects named-tuple equality when one side has extra keys" do
+      func = lower_function(<<-CRYSTAL)
+        def foo
+          left = {a: 1}
+          right = {a: 1, b: 2}
+          left == right
+        end
+      CRYSTAL
+
+      text = hir_text(func)
+      text.should contain("literal false")
+      text.should_not contain("index_get")
+      text.should_not contain("call NamedTuple(")
+    end
+
+    it "short-circuits structural tuple equality before later element calls" do
+      func = lower_function(<<-CRYSTAL)
+        class EqualityProbe
+          def ==(other : EqualityProbe) : Bool
+            true
+          end
+        end
+
+        def foo(left : Tuple(Int32, EqualityProbe), right : Tuple(Int32, EqualityProbe))
+          left == right
+        end
+      CRYSTAL
+
+      equality_call_block = func.blocks.find do |block|
+        block.instructions.any? do |instruction|
+          call = instruction.as?(Adamas::HIR::Call)
+          call && call.method_name.includes?("EqualityProbe#==")
+        end
+      end
+      equality_call_block.should_not be_nil
+
+      first_comparison_branch = func.blocks.find do |block|
+        branch = block.terminator.as?(Adamas::HIR::Branch)
+        branch && branch.then_block == equality_call_block.not_nil!.id
+      end
+      first_comparison_branch.should_not be_nil
+    end
+
+    it "preserves element case equality for Tuple#===" do
+      func = lower_function(<<-CRYSTAL)
+        class CaseEqualityProbe
+          def ==(other : CaseEqualityProbe) : Bool
+            false
+          end
+
+          def ===(other : CaseEqualityProbe) : Bool
+            true
+          end
+        end
+
+        def foo(left : Tuple(CaseEqualityProbe), right : Tuple(CaseEqualityProbe))
+          left === right
+        end
+      CRYSTAL
+
+      calls = func.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end
+      calls.any? { |call| call.method_name.includes?("CaseEqualityProbe#===") }.should be_true
+      calls.none? { |call| call.method_name.includes?("CaseEqualityProbe#==$") }.should be_true
+    end
+
+    it "rejects equality between tuple and named-tuple structural carriers" do
+      func = lower_function(<<-CRYSTAL)
+        def foo
+          left = {a: 1}
+          right = {1}
+          left == right
+        end
+      CRYSTAL
+
+      text = hir_text(func)
+      text.should contain("literal false")
+      text.should_not contain("call NamedTuple(")
+    end
+
     it "lowers range" do
       func = lower_function("def foo; 1..10; end")
       text = hir_text(func)

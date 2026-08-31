@@ -114248,6 +114248,26 @@ module Adamas::HIR
       desc.type_params.reject { |type| type == TypeRef::VOID }
     end
 
+    private def concrete_named_tuple_entries(named_tuple_type : TypeRef) : Array({String, Int32, TypeRef})?
+      desc = @module.get_type_descriptor(named_tuple_type)
+      return nil unless desc
+      return nil unless desc.kind == TypeKind::NamedTuple || desc.name.starts_with?("NamedTuple(")
+      return nil if desc.type_params.any? { |type| type == TypeRef::VOID }
+
+      info = split_generic_base_and_args(desc.name)
+      return nil unless info && info.base == "NamedTuple"
+      raw_entries = split_generic_type_args(info.args)
+      return nil unless raw_entries.size == desc.type_params.size
+
+      entries = [] of {String, Int32, TypeRef}
+      raw_entries.each_with_index do |raw_entry, index|
+        parsed = split_named_tuple_entry(raw_entry)
+        return nil unless parsed
+        entries << {parsed[0], index.to_i32, desc.type_params.unsafe_fetch(index)}
+      end
+      entries
+    end
+
     # Lower the concrete, zero-argument Tuple#to_static_array operation without
     # materializing the shared open-return `Tuple#to_static_array` body.  That
     # body has no stable symbol identity for a variadic Tuple and therefore
@@ -114323,22 +114343,55 @@ module Adamas::HIR
       return nil unless op == "==" || op == "!=" || op == "==="
       return nil if is_union_or_nilable_type?(left_type) || is_union_or_nilable_type?(right_type)
 
-      left_elems = concrete_tuple_element_types(left_type)
-      right_elems = concrete_tuple_element_types(right_type)
-      return nil unless left_elems && right_elems
+      left_elems = [] of TypeRef
+      right_elems = [] of TypeRef
+      right_indices = [] of Int32
 
-      if left_elems.size != right_elems.size
-        eq = emit_bool_literal(ctx, false)
-        if op == "!="
-          neg = UnaryOperation.new(ctx.next_id, TypeRef::BOOL, UnaryOp::Not, eq)
-          ctx.emit(neg)
-          ctx.register_type(neg.id, TypeRef::BOOL)
-          return neg.id
+      left_named = concrete_named_tuple_entries(left_type)
+      right_named = concrete_named_tuple_entries(right_type)
+      if left_named || right_named
+        unless left_named && right_named
+          left_tuple = concrete_tuple_element_types(left_type)
+          right_tuple = concrete_tuple_element_types(right_type)
+          if (left_named && right_tuple) || (right_named && left_tuple)
+            return emit_static_equality_result(ctx, false, op)
+          end
+          return nil
         end
-        return eq
+        return emit_static_equality_result(ctx, false, op) unless left_named.size == right_named.size
+
+        right_by_key = {} of String => {Int32, TypeRef}
+        right_named.each do |entry|
+          right_by_key[entry[0]] = {entry[1], entry[2]}
+        end
+        left_named.each do |entry|
+          match = right_by_key[entry[0]]?
+          return emit_static_equality_result(ctx, false, op) unless match
+          left_elems << entry[2]
+          right_elems << match[1]
+          right_indices << match[0]
+        end
+      else
+        concrete_left = concrete_tuple_element_types(left_type)
+        concrete_right = concrete_tuple_element_types(right_type)
+        return nil unless concrete_left && concrete_right
+        left_elems = concrete_left
+        right_elems = concrete_right
+        right_elems.size.times { |index| right_indices << index.to_i32 }
       end
 
-      result_id = emit_bool_literal(ctx, true)
+      if left_elems.size != right_elems.size
+        return emit_static_equality_result(ctx, false, op)
+      end
+      return emit_static_equality_result(ctx, true, op) if left_elems.empty?
+      # Tuple defines element-wise `===`; NamedTuple inherits Object#===, which delegates to `==`.
+      element_case_equality = op == "===" && left_named.nil?
+
+      pre_branch_locals = ctx.save_locals
+      false_block = ctx.create_block
+      true_block = ctx.create_block
+      merge_block = ctx.create_block
+
       idx = 0
       while idx < left_elems.size
         idx_lit = Literal.new(ctx.next_id, TypeRef::INT32, idx.to_i64)
@@ -114350,26 +114403,74 @@ module Adamas::HIR
         left_elem = IndexGet.new(ctx.next_id, left_elem_type, left_id, idx_lit.id)
         ctx.emit(left_elem)
         ctx.register_type(left_elem.id, left_elem_type)
-        right_elem = IndexGet.new(ctx.next_id, right_elem_type, right_id, idx_lit.id)
+
+        right_index = right_indices.unsafe_fetch(idx)
+        right_idx_lit = if right_index == idx
+                          idx_lit
+                        else
+                          lit = Literal.new(ctx.next_id, TypeRef::INT32, right_index.to_i64)
+                          ctx.emit(lit)
+                          ctx.register_type(lit.id, TypeRef::INT32)
+                          lit
+                        end
+        right_elem = IndexGet.new(ctx.next_id, right_elem_type, right_id, right_idx_lit.id)
         ctx.emit(right_elem)
         ctx.register_type(right_elem.id, right_elem_type)
 
-        elem_eq = lower_value_equality_intrinsic(ctx, left_elem.id, right_elem.id)
-        combined = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::And, result_id, elem_eq)
-        ctx.emit(combined)
-        ctx.register_type(combined.id, TypeRef::BOOL)
-        result_id = combined.id
+        elem_eq = if element_case_equality
+                    emit_binary_call(ctx, left_elem.id, "===", right_elem.id)
+                  else
+                    lower_value_equality_intrinsic(ctx, left_elem.id, right_elem.id)
+                  end
         idx += 1
+
+        if idx == left_elems.size
+          ctx.terminate(Branch.new(elem_eq, true_block, false_block))
+        else
+          next_block = ctx.create_block
+          ctx.terminate(Branch.new(elem_eq, next_block, false_block))
+          ctx.current_block = next_block
+          ctx.restore_locals(pre_branch_locals)
+        end
       end
 
+      ctx.current_block = false_block
+      ctx.restore_locals(pre_branch_locals)
+      false_id = emit_bool_literal(ctx, false)
+      false_exit = ctx.current_block
+      ctx.terminate(Jump.new(merge_block))
+
+      ctx.current_block = true_block
+      ctx.restore_locals(pre_branch_locals)
+      true_id = emit_bool_literal(ctx, true)
+      true_exit = ctx.current_block
+      ctx.terminate(Jump.new(merge_block))
+
+      ctx.current_block = merge_block
+      result = Phi.new(ctx.next_id, TypeRef::BOOL)
+      result.add_incoming(false_exit, false_id)
+      result.add_incoming(true_exit, true_id)
+      ctx.emit(result)
+      ctx.register_type(result.id, TypeRef::BOOL)
+
       if op == "!="
-        neg = UnaryOperation.new(ctx.next_id, TypeRef::BOOL, UnaryOp::Not, result_id)
+        neg = UnaryOperation.new(ctx.next_id, TypeRef::BOOL, UnaryOp::Not, result.id)
         ctx.emit(neg)
         ctx.register_type(neg.id, TypeRef::BOOL)
         return neg.id
       end
 
-      result_id
+      result.id
+    end
+
+    private def emit_static_equality_result(ctx : LoweringContext, equal : Bool, op : String) : ValueId
+      result_id = emit_bool_literal(ctx, equal)
+      return result_id unless op == "!="
+
+      neg = UnaryOperation.new(ctx.next_id, TypeRef::BOOL, UnaryOp::Not, result_id)
+      ctx.emit(neg)
+      ctx.register_type(neg.id, TypeRef::BOOL)
+      neg.id
     end
 
     private def lower_value_equality_intrinsic(ctx : LoweringContext, left_id : ValueId, right_id : ValueId) : ValueId

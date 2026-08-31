@@ -7,6 +7,18 @@ smokes, but stage2 reaches the 300-second compiler cap without producing
 `cv2_s2`; wrapper wall time is 302.69 seconds. Admission therefore remains RED.
 T1 and full-source MIR/LLVM continuity remain open.)
 
+2026-08-31 NAMED-TUPLE EQUALITY LOWERED STRUCTURALLY WITH SHORT-CIRCUIT
+CONTROL FLOW. Concrete `NamedTuple` operands now match fields by key instead of
+materializing a bodyless generic `NamedTuple#==`; unequal key sets and
+Tuple/NamedTuple carrier mismatches return a static result. Tuple and
+NamedTuple element comparisons now branch after each field, so a later custom
+`==` is not evaluated after an earlier mismatch. The original-Crystal behavior
+oracle, two no-prelude reducers, and the full HIR file (495/0, two pre-existing
+pending examples) are green. The bounded generated-stage2 diagnostic run that
+first exercised the structural NamedTuple mapping advanced past the former
+bodyless equality target to `register_accessors_in_class$Node_...`, but did not
+complete; B4-F remains RED and that concrete narrowing frontier is next.
+
 2026-08-31 SINGLE LATE INLINE DEFAULT METADATA CONTINUITY VERIFIED; ORDERED
 MULTIPLE INITIALIZERS REMAIN OPEN. A non-trivial class-scope assignment now
 fills missing default metadata when an earlier declaration or registration pass
