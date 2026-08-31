@@ -235,6 +235,16 @@ class Adamas::HIR::AstToHir
     set_function_def_entry(name, def_node, record_current_arena: false)
   end
 
+  def __test_perturb_unrelated_lowering_work(name : String) : Nil
+    set_function_state(name, FunctionLoweringState::Pending)
+    enqueue_pending_function(name, "call_resolution_memo_spec")
+  end
+
+  def __test_perturb_unrelated_hir_work(name : String) : Nil
+    function = @module.create_function(name, Adamas::HIR::TypeRef::NIL)
+    function.create_block(function.get_block(function.entry_block).scope)
+  end
+
   def __test_record_module_inclusion(module_name : String, class_name : String) : Nil
     record_module_inclusion(module_name, class_name)
   end
@@ -3075,9 +3085,19 @@ describe Adamas::HIR::AstToHir do
         store_skips: 0_i64,
       })
 
+      converter.__test_perturb_unrelated_lowering_work("__call_resolution_memo_noise")
+      converter.__test_resolve_call_memo("CallMemoBox#choose", [int32]).should eq(first)
+      converter.__test_call_resolution_memo_stats[:hits].should eq(2)
+      converter.__test_call_resolution_memo_stats[:misses].should eq(1)
+
+      converter.__test_perturb_unrelated_hir_work("__call_resolution_memo_hir_noise")
+      converter.__test_resolve_call_memo("CallMemoBox#choose", [int32]).should eq(first)
+      converter.__test_call_resolution_memo_stats[:hits].should eq(3)
+      converter.__test_call_resolution_memo_stats[:misses].should eq(1)
+
       converter.__test_reregister_function_def(first[0].not_nil!)
       converter.__test_resolve_call_memo("CallMemoBox#choose", [int32]).should eq(first)
-      converter.__test_call_resolution_memo_stats[:hits].should eq(1)
+      converter.__test_call_resolution_memo_stats[:hits].should eq(3)
       converter.__test_call_resolution_memo_stats[:misses].should eq(2)
     end
 

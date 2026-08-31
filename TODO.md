@@ -14311,6 +14311,34 @@ from a genuinely unreachable expression, a stale union join, or another lossy
 call target before changing production code. Do not weaken MIR's ambiguity
 failure or select a family member by order.
 
+### Session 116: keep call resolution memo across unrelated lowering work (2026-08-31)
+
+The call-resolution memo treated pending-function state, queue changes, and
+unrelated HIR function/body mutations as candidate-authority changes. During
+bootstrap materialization those volatile revisions forced repeated resolution
+of the same semantic definitions even though `resolve_call_tuple` does not read
+any of them.
+
+The memo key now retains only the existing resolver authorities: definition
+and type revisions, class/module authority, aliases/includes, arena and context,
+type parameters, and monomorphization shape. No registry, cache, revision, or
+fallback was added. A no-bootstrap regression proves that unrelated lowering
+and HIR work reuse the exact selected overload and `DefNode`, while definition
+and module-authority changes still invalidate the entry.
+
+The complete HIR suite passes 487 examples with zero failures and two pending,
+and the no-prelude interpolation smoke prints `noprelude_interp_ok`. In a
+same-source bounded missing-demand A/B, iteration 0 preserved the exact
+`162 -> 4854 -> 976` boundary while wall time fell from 28.03 to 26.77 seconds,
+resolver time from 5.93 to 4.39 seconds, and cumulative memo misses from 78,037
+to 37,370.
+
+Adversary verdict: ROBUST for memo reuse across non-authority work and for this
+bounded performance claim. B4-F remains RED at the 300-second admission cap;
+this removes one repeated-resolution cost but does not bound later
+materialization fanout. Next: profile the remaining `CLI#compile` lowering cost
+before widening cache authority or adding any identity layer.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

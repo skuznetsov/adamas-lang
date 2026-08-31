@@ -984,14 +984,10 @@ module Adamas::HIR
       getter type_params : Array(Tuple(String, String))
       getter function_def_revision : UInt64
       getter function_type_revision : UInt64
-      getter lowering_state_revision : UInt64
-      getter pending_queue_revision : UInt64
       getter class_info_version : Int32
       getter module_includers_version : Int32
       getter module_defs_cache_version : Int32
       getter authority_revision : UInt64
-      getter function_set_revision : UInt64
-      getter hir_body_revision : UInt64
       getter monomorphized_size : Int32
 
       def initialize(
@@ -1005,14 +1001,10 @@ module Adamas::HIR
         type_param_map : Hash(String, String),
         @function_def_revision : UInt64,
         @function_type_revision : UInt64,
-        @lowering_state_revision : UInt64,
-        @pending_queue_revision : UInt64,
         @class_info_version : Int32,
         @module_includers_version : Int32,
         @module_defs_cache_version : Int32,
         @authority_revision : UInt64,
-        @function_set_revision : UInt64,
-        @hir_body_revision : UInt64,
         @monomorphized_size : Int32,
       )
         @func_name = input.func_name
@@ -1039,14 +1031,10 @@ module Adamas::HIR
         type_param_map : Hash(String, String),
         function_def_revision : UInt64,
         function_type_revision : UInt64,
-        lowering_state_revision : UInt64,
-        pending_queue_revision : UInt64,
         class_info_version : Int32,
         module_includers_version : Int32,
         module_defs_cache_version : Int32,
         authority_revision : UInt64,
-        function_set_revision : UInt64,
-        hir_body_revision : UInt64,
         monomorphized_size : Int32,
       ) : Bool
         return false unless @func_name == input.func_name
@@ -1064,14 +1052,10 @@ module Adamas::HIR
         return false unless @arena.same?(arena)
         return false unless @function_def_revision == function_def_revision
         return false unless @function_type_revision == function_type_revision
-        return false unless @lowering_state_revision == lowering_state_revision
-        return false unless @pending_queue_revision == pending_queue_revision
         return false unless @class_info_version == class_info_version
         return false unless @module_includers_version == module_includers_version
         return false unless @module_defs_cache_version == module_defs_cache_version
         return false unless @authority_revision == authority_revision
-        return false unless @function_set_revision == function_set_revision
-        return false unless @hir_body_revision == hir_body_revision
         return false unless @monomorphized_size == monomorphized_size
         return false unless @type_params.size == type_param_map.size
         @type_params.all? do |name, value|
@@ -98710,14 +98694,10 @@ module Adamas::HIR
       hash = 1_469_598_103_934_665_603_u64
       hash = call_resolution_memo_mix(hash, @function_def_revision)
       hash = call_resolution_memo_mix(hash, @function_type_revision)
-      hash = call_resolution_memo_mix(hash, @function_lowering_state_revision)
-      hash = call_resolution_memo_mix(hash, @pending_function_queue_revision)
       hash = call_resolution_memo_mix(hash, @class_info_version.to_u64)
       hash = call_resolution_memo_mix(hash, @module_includers_version.to_u64)
       hash = call_resolution_memo_mix(hash, @module_defs_cache_version.to_u64)
       hash = call_resolution_memo_mix(hash, @call_resolution_authority_revision)
-      hash = call_resolution_memo_mix(hash, @module.function_set_revision)
-      hash = call_resolution_memo_mix(hash, @module.hir_body_revision)
       hash = call_resolution_memo_mix(hash, @monomorphized.size.to_u64)
       hash = call_resolution_memo_mix(hash, @arena.object_id.to_u64)
       hash = call_resolution_memo_mix(hash, @current_method_is_class ? 1_u64 : 0_u64)
@@ -98771,14 +98751,10 @@ module Adamas::HIR
         @type_param_map,
         @function_def_revision,
         @function_type_revision,
-        @function_lowering_state_revision,
-        @pending_function_queue_revision,
         @class_info_version,
         @module_includers_version,
         @module_defs_cache_version,
         @call_resolution_authority_revision,
-        @module.function_set_revision,
-        @module.hir_body_revision,
         @monomorphized.size,
       )
     end
@@ -98798,14 +98774,10 @@ module Adamas::HIR
         @type_param_map,
         @function_def_revision,
         @function_type_revision,
-        @function_lowering_state_revision,
-        @pending_function_queue_revision,
         @class_info_version,
         @module_includers_version,
         @module_defs_cache_version,
         @call_resolution_authority_revision,
-        @module.function_set_revision,
-        @module.hir_body_revision,
         @monomorphized.size,
       )
     end
