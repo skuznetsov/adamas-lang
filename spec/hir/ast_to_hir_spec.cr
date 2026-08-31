@@ -1118,6 +1118,10 @@ class Adamas::HIR::AstToHir
     final_missing_fixed_point_reached?(snapshot)
   end
 
+  def __test_final_missing_should_stop?(snapshot, pass_count : Int32) : Bool
+    final_missing_should_stop?(snapshot, pass_count)
+  end
+
   def __test_terminal_fanout_preserves_concrete_bodyless_target(
     def_name : String,
     method_name : String,
@@ -3393,6 +3397,23 @@ describe Adamas::HIR::AstToHir do
         "FixedPointModule(Int32)",
       )
       converter.__test_final_missing_fixed_point_reached?(snapshot).should be_false
+    end
+
+    it "fails closed when final missing lowering exceeds its pass budget" do
+      converter = lower_program_with_main("1")
+
+      stable_snapshot = converter.__test_final_missing_fixed_point_snapshot
+      converter.__test_final_missing_should_stop?(stable_snapshot, 4).should be_true
+
+      changed_snapshot = converter.__test_final_missing_fixed_point_snapshot
+      converter.module.create_function(
+        "final_missing_budget_probe",
+        Adamas::HIR::TypeRef::VOID,
+      )
+      converter.__test_final_missing_should_stop?(changed_snapshot, 3).should be_false
+      expect_raises(Exception, /final missing lowering did not converge after 4 passes/) do
+        converter.__test_final_missing_should_stop?(changed_snapshot, 4)
+      end
     end
 
     it "keeps a concrete bodyless target visible as a fail-closed obligation" do

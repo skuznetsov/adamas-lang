@@ -59073,6 +59073,14 @@ module Adamas::HIR
         final_missing_fixed_point_snapshot == snapshot
     end
 
+    private def final_missing_should_stop?(snapshot, pass_count : Int32) : Bool
+      return true if final_missing_fixed_point_reached?(snapshot)
+      if pass_count >= 4
+        raise "final missing lowering did not converge after #{pass_count} passes"
+      end
+      false
+    end
+
     private def discard_terminal_module_virtual_fanout_pending_targets : {Int32, Int32}
       discarded = 0
       unresolved_concrete = 0
@@ -64646,8 +64654,7 @@ module Adamas::HIR
         if phase_stats
           STDERR.puts "[PHASE_STATS] final_missing_pass=#{final_missing_passes} funcs=#{before_final_missing}->#{@module.function_count} bodies_before=#{before_final_missing_bodies} fanout_attempts=#{fanout_repair_attempts}"
         end
-        break if final_missing_fixed_point_reached?(before_final_missing_snapshot) ||
-                 final_missing_passes >= 4
+        break if final_missing_should_stop?(before_final_missing_snapshot, final_missing_passes)
       end
       discarded_fanout_targets, unresolved_fanout_targets =
         discard_terminal_module_virtual_fanout_pending_targets
