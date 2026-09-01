@@ -83691,7 +83691,7 @@ module Adamas::HIR
     private def lower_function_if_needed(name : String, trace_site_line : Int32 = __LINE__) : Nil
       return unless v2_string_readable?(name)
 
-      lower_function_if_needed_impl(name, trace_site_line)
+      lower_function_if_needed_profiled(name, trace_site_line)
     end
 
     private def lower_function_if_needed(name : String?, trace_site_line : Int32 = __LINE__) : Nil
@@ -83900,7 +83900,7 @@ module Adamas::HIR
       end
 
       begin
-        lower_function_if_needed_impl(name, __LINE__)
+        lower_function_if_needed_profiled(name, __LINE__)
         made_progress = (!requested_body_before && @module.has_function_with_body?(name)) ||
                         useful_force_return_type_change?(module_return_before, @module.function_by_name(name).try(&.return_type)) ||
                         useful_force_return_type_change?(function_return_before, @function_types[name]?) ||
@@ -83988,6 +83988,41 @@ module Adamas::HIR
             end
           end
         end
+    end
+
+    @[AlwaysInline]
+    private def lowering_request_profile_state(name : String) : LoweringBinaryTrace::RequestProfileState
+      state = function_state(name)
+      return LoweringBinaryTrace::RequestProfileState::InProgress if state.in_progress?
+      return LoweringBinaryTrace::RequestProfileState::HasBody if @module.has_function_with_body?(name)
+      return LoweringBinaryTrace::RequestProfileState::Completed if state.completed?
+      return LoweringBinaryTrace::RequestProfileState::Pending if state.pending?
+      LoweringBinaryTrace::RequestProfileState::Other
+    end
+
+    @[AlwaysInline]
+    private def lower_function_if_needed_profiled(name : String, trace_site_line : Int32) : Nil
+      if trace = @lowering_binary_trace
+        if trace.request_profile?
+          before_state = lowering_request_profile_state(name)
+          started_ticks = Crystal::System::Time.ticks
+          lower_function_if_needed_impl(name, trace_site_line)
+          finished_ticks = Crystal::System::Time.ticks
+          after_state = lowering_request_profile_state(name)
+          duration_ns = finished_ticks >= started_ticks ? finished_ticks - started_ticks : 0_u64
+          trace.record_request_profile_at(
+            trace_site_line,
+            before_state,
+            after_state,
+            duration_ns,
+            @lowering_depth,
+            finished_ticks,
+          )
+          return
+        end
+      end
+
+      lower_function_if_needed_impl(name, trace_site_line)
     end
 
     private def lower_function_if_needed_impl(name : String, trace_site_line : Int32) : Nil

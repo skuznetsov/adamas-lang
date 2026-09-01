@@ -7,6 +7,7 @@ private record ParsedLoweringTraceEvent,
   delta_ns : UInt64,
   event_id : UInt16,
   depth : UInt16,
+  value : UInt64,
   caller : String?,
   symbol : String
 
@@ -204,6 +205,7 @@ private def parse_lowering_binary_trace(path : String) : ParsedLoweringTrace
             delta_ns,
             event_id,
             depth,
+            symbol_id,
             caller,
             symbol,
           )
@@ -253,11 +255,27 @@ describe Adamas::HIR::LoweringBinaryTrace do
         depth: 0,
         ticks: 1_013_u64,
       )
+      first.record_request_profile_at(
+        4_242,
+        Adamas::HIR::LoweringBinaryTrace::RequestProfileState::HasBody,
+        Adamas::HIR::LoweringBinaryTrace::RequestProfileState::HasBody,
+        12_345_u64,
+        depth: 0,
+        ticks: 1_014_u64,
+      )
+      first.record_request_profile_at(
+        4_243,
+        Adamas::HIR::LoweringBinaryTrace::RequestProfileState::Other,
+        Adamas::HIR::LoweringBinaryTrace::RequestProfileState::Pending,
+        (Adamas::HIR::LoweringBinaryTrace::MAX_PROFILE_DURATION_US + 1_u64) * 1_000_u64,
+        depth: 0,
+        ticks: 1_015_u64,
+      )
       first.record_symbol_at(
         Adamas::HIR::LoweringBinaryTrace::Event::MaterializeDone,
         "Cycle#step$Int32",
         depth: 1,
-        ticks: 1_014_u64,
+        ticks: 1_016_u64,
       )
       first.close
 
@@ -290,6 +308,8 @@ describe Adamas::HIR::LoweringBinaryTrace do
         "Cycle#step$Int32",
         "Cycle#work$String",
         "Cycle#site$Bool",
+        "",
+        "",
         "Cycle#step$Int32",
         "Other#work",
       ])
@@ -300,10 +320,23 @@ describe Adamas::HIR::LoweringBinaryTrace do
         "<site:src/compiler/hir/ast_to_hir.cr:4242>",
         nil,
         nil,
+        nil,
+        nil,
       ])
-      parsed.events.map(&.delta_ns).should eq([5_u64, 10_u64, 12_u64, 13_u64, 14_u64, 4_u64])
-      parsed.events.map(&.sequence).should eq([1_u32, 2_u32, 3_u32, 4_u32, 5_u32, 1_u32])
-      parsed.events.map(&.depth).should eq([1_u16, 2_u16, 2_u16, 0_u16, 1_u16, 0_u16])
+      profiles = parsed.events.select { |event| event.event_id == Adamas::HIR::LoweringBinaryTrace::Event::LowerRequestProfile.value }
+      profiles.size.should eq(2)
+      profile = profiles[0]
+      profile.should_not be_nil
+      (profile.value & 0xffff_ffff_u64).should eq(4_242_u64)
+      ((profile.value >> 32) & 0x00ff_ffff_u64).should eq(12_u64)
+      (profile.value >> 56).should eq(0x22_u64)
+      saturated_profile = profiles[1]
+      (saturated_profile.value & 0xffff_ffff_u64).should eq(4_243_u64)
+      ((saturated_profile.value >> 32) & 0x00ff_ffff_u64).should eq(Adamas::HIR::LoweringBinaryTrace::MAX_PROFILE_DURATION_US)
+      (saturated_profile.value >> 56).should eq(0x40_u64)
+      parsed.events.map(&.delta_ns).should eq([5_u64, 10_u64, 12_u64, 13_u64, 14_u64, 15_u64, 16_u64, 4_u64])
+      parsed.events.map(&.sequence).should eq([1_u32, 2_u32, 3_u32, 4_u32, 5_u32, 6_u32, 7_u32, 1_u32])
+      parsed.events.map(&.depth).should eq([1_u16, 2_u16, 2_u16, 0_u16, 0_u16, 0_u16, 1_u16, 0_u16])
     ensure
       File.delete(path) if File.exists?(path)
     end

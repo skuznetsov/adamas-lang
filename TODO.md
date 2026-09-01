@@ -14569,6 +14569,42 @@ redundant. The next falsifier is to classify the exit state and measured cost
 at those two sites before removing or suppressing either request. B4-F remains
 RED at the 300-second admission cap.
 
+### Session 123: coarse request profiling rejects duplicate-call suppression (2026-09-01)
+
+The binary lowering trace now has an additional default-off request profiler,
+enabled only by `ADAMAS_HIR_BINARY_TRACE_REQUEST_PROFILE`. Each completion uses
+the existing fixed 24-byte event record and packs the static source line, a
+saturated microsecond duration, and coarse before/after lowering states. The
+disabled route calls the original implementation directly. The analyzer pairs
+nested requests in LIFO order, reports per-site and per-target aggregates, and
+labels saturated totals as lower bounds instead of exact durations.
+
+A no-prelude recursion probe distinguishes actual materialization
+(`Other -> HasBody`), recursive protection (`InProgress -> InProgress`), and
+deferral (`Other -> Pending`), while profile-on and profile-off HIR hashes are
+identical. A bounded first
+missing wave completed in about 47 seconds with 61,326 request/profile pairs,
+zero unmatched profiles, 140,295 events, and the unchanged frontier of 162
+missing targets, zero pending targets, and 4,803 functions. One 16.78-second
+sample saturated, and the analyzer now exposes it as a lower bound.
+
+At current-source lines 93300 and 95655, the repeated `HasBody -> HasBody`
+requests cost 20.55 ms for 8,457 calls and 19.13 ms for 8,459 calls,
+respectively. The complete later-site encoded duration is about 53 ms, not a
+material part of the 26.44-second pending-processing phase. More importantly,
+the later site performed seven `Other -> Pending` transitions, so unconditional
+suppression would violate the lazy exact-name demand contract. Request
+durations are inclusive and profiling adds timestamp/state probes, so their
+sums are attribution evidence rather than compiler CPU accounting.
+
+Adversary verdict: ROBUST for rejecting these two duplicate request calls as
+the primary slowdown and BROKEN for removing the later call. The coarse states
+do not identify an exact early-return reason, source lines are revision-local,
+and this bounded wave is not a B4-F speed certificate. Preserve both calls;
+the next falsifier should measure the resolver and return-type work surrounding
+them rather than add suppression, a cache, or another broad registry. B4-F
+remains RED at the 300-second admission cap.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

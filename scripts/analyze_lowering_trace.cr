@@ -44,6 +44,14 @@ module Adamas::Tools
     requests : Int32,
     materializations : Int32
 
+  private record RequestProfileSample,
+    site_line : UInt32,
+    target : String,
+    before_state : TraceFormat::RequestProfileState,
+    after_state : TraceFormat::RequestProfileState,
+    duration_us : UInt64,
+    saturated : Bool
+
   private class TraceRun
     getter index : Int32
     getter pid : UInt32
@@ -243,6 +251,12 @@ module Adamas::Tools
       active_pass : TraceEvent? = nil
       pass_requests = 0
       pass_materializations = 0
+      request_profile_enabled = run.events.any? do |event|
+        event.event_id == TraceFormat::Event::LowerRequestProfile.value
+      end
+      active_profile_requests = [] of TraceEvent
+      request_profiles = [] of RequestProfileSample
+      unmatched_request_profiles = 0
       run.events.each do |event|
         event_counts[event_name(event.event_id)] += 1
         if symbol = event.symbol
@@ -261,6 +275,35 @@ module Adamas::Tools
         if active_pass
           pass_requests += 1 if lower_request_event?(event.event_id)
           pass_materializations += 1 if event.event_id == TraceFormat::Event::MaterializeStart.value
+        end
+
+        if request_profile_enabled && lower_request_event?(event.event_id)
+          active_profile_requests << event
+        elsif event.event_id == TraceFormat::Event::LowerRequestProfile.value
+          if request = active_profile_requests.pop?
+            transition = (event.value >> 56).to_u8
+            before_state = TraceFormat::RequestProfileState.from_value?(transition & 0x0f_u8)
+            after_state = TraceFormat::RequestProfileState.from_value?(transition >> 4)
+            duration_us = (event.value >> 32) & 0x00ff_ffff_u64
+            if target = request.symbol
+              if before_state && after_state
+                request_profiles << RequestProfileSample.new(
+                  (event.value & 0xffff_ffff_u64).to_u32,
+                  target,
+                  before_state,
+                  after_state,
+                  duration_us,
+                  duration_us == TraceFormat::MAX_PROFILE_DURATION_US,
+                )
+              else
+                unmatched_request_profiles += 1
+              end
+            else
+              unmatched_request_profiles += 1
+            end
+          else
+            unmatched_request_profiles += 1
+          end
         end
 
         case event.event_id
@@ -342,6 +385,7 @@ module Adamas::Tools
         end
       end
       unmatched_materializations += active_materializations.size
+      unmatched_request_profiles += active_profile_requests.size if request_profile_enabled
       puts "  event_counts:"
       event_counts.to_a.sort_by(&.[0]).each do |name, count|
         puts "    #{count.to_s.rjust(8)}  #{name}"
@@ -388,6 +432,51 @@ module Adamas::Tools
         puts "    #{count.to_s.rjust(8)}  #{caller} -> #{callee}"
       end
 
+      profile_site_totals = Hash(Tuple(UInt32, TraceFormat::RequestProfileState, TraceFormat::RequestProfileState), Tuple(Int32, UInt64, UInt64, Int32)).new
+      profile_totals = Hash(Tuple(UInt32, String, TraceFormat::RequestProfileState, TraceFormat::RequestProfileState), Tuple(Int32, UInt64, UInt64, Int32)).new
+      request_profiles.each do |sample|
+        site_key = {sample.site_line, sample.before_state, sample.after_state}
+        site_count, site_total_us, site_max_us, site_saturated = profile_site_totals[site_key]? || {0, 0_u64, 0_u64, 0}
+        profile_site_totals[site_key] = {
+          site_count + 1,
+          site_total_us &+ sample.duration_us,
+          sample.duration_us > site_max_us ? sample.duration_us : site_max_us,
+          site_saturated + (sample.saturated ? 1 : 0),
+        }
+
+        key = {sample.site_line, sample.target, sample.before_state, sample.after_state}
+        count, total_us, max_us, saturated = profile_totals[key]? || {0, 0_u64, 0_u64, 0}
+        profile_totals[key] = {
+          count + 1,
+          total_us &+ sample.duration_us,
+          sample.duration_us > max_us ? sample.duration_us : max_us,
+          saturated + (sample.saturated ? 1 : 0),
+        }
+      end
+      profile_sites = profile_site_totals.to_a.sort_by do |key, totals|
+        {-totals[1].to_i128, -totals[0], key[0]}
+      end.first(top)
+      puts "  request_profile_sites:"
+      profile_sites.each do |key, totals|
+        site_line, before_state, after_state = key
+        count, total_us, max_us, saturated = totals
+        mean_us = count > 0 ? total_us // count.to_u64 : 0_u64
+        bound_suffix = saturated > 0 ? "_min" : ""
+        puts "    total_ms#{bound_suffix}=#{format_ms(total_us * 1_000_u64).rjust(12)} count=#{count.to_s.rjust(8)} mean_us#{bound_suffix}=#{mean_us.to_s.rjust(8)} max_us#{bound_suffix}=#{max_us.to_s.rjust(8)} saturated=#{saturated.to_s.rjust(4)} state=#{before_state}->#{after_state} site=src/compiler/hir/ast_to_hir.cr:#{site_line}"
+      end
+
+      profiles = profile_totals.to_a.sort_by do |key, totals|
+        {-totals[1].to_i128, -totals[0], key[0], key[1]}
+      end.first(top)
+      puts "  request_profiles: unmatched=#{unmatched_request_profiles}"
+      profiles.each do |key, totals|
+        site_line, target, before_state, after_state = key
+        count, total_us, max_us, saturated = totals
+        mean_us = count > 0 ? total_us // count.to_u64 : 0_u64
+        bound_suffix = saturated > 0 ? "_min" : ""
+        puts "    total_ms#{bound_suffix}=#{format_ms(total_us * 1_000_u64).rjust(12)} count=#{count.to_s.rjust(8)} mean_us#{bound_suffix}=#{mean_us.to_s.rjust(8)} max_us#{bound_suffix}=#{max_us.to_s.rjust(8)} saturated=#{saturated.to_s.rjust(4)} state=#{before_state}->#{after_state} site=src/compiler/hir/ast_to_hir.cr:#{site_line} target=#{target}"
+      end
+
       longest = materializations.sort_by do |sample|
         {-sample.duration_ns.to_i128, sample.symbol, sample.start_sequence}
       end.first(top)
@@ -422,6 +511,14 @@ module Adamas::Tools
 
     private def numeric_value(event : TraceEvent) : String
       case event.event_id
+      when TraceFormat::Event::LowerRequestProfile.value
+        site_line = (event.value & 0xffff_ffff_u64).to_u32
+        duration_us = (event.value >> 32) & 0x00ff_ffff_u64
+        transition = (event.value >> 56).to_u8
+        before_state = TraceFormat::RequestProfileState.from_value?(transition & 0x0f_u8)
+        after_state = TraceFormat::RequestProfileState.from_value?(transition >> 4)
+        saturated = duration_us == TraceFormat::MAX_PROFILE_DURATION_US ? ",saturated=1" : ""
+        "site=#{site_line},duration_us=#{duration_us}#{saturated},state=#{before_state || "unknown"}->#{after_state || "unknown"}"
       when TraceFormat::Event::PassDone.value
         pass = (event.value & 0xffff_ffff_u64).to_u32
         lowered = (event.value >> 32).to_u32

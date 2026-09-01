@@ -5,38 +5,48 @@ module Adamas::HIR
   # The hot path writes fixed 24-byte records into a preallocated buffer.
   # Completed chunks remain readable when the final chunk is interrupted.
   class LoweringBinaryTrace
-    CHUNK_MAGIC        = 0x4352_5441_u32 # "ATRC" in little-endian byte order
-    CHUNK_FOOTER_MAGIC = 0x444E_4541_u32 # "AEND" in little-endian byte order
-    FORMAT_VERSION     =           1_u16
-    CHUNK_RUN          =           1_u16
-    CHUNK_SYMBOLS      =           2_u16
-    CHUNK_EVENTS       =           3_u16
-    CHUNK_SUMMARY      =           4_u16
-    CHUNK_HEADER_BYTES =              24
-    CHUNK_FOOTER_BYTES =              24
-    EVENT_RECORD_BYTES =              24
+    CHUNK_MAGIC             = 0x4352_5441_u32 # "ATRC" in little-endian byte order
+    CHUNK_FOOTER_MAGIC      = 0x444E_4541_u32 # "AEND" in little-endian byte order
+    FORMAT_VERSION          =           1_u16
+    CHUNK_RUN               =           1_u16
+    CHUNK_SYMBOLS           =           2_u16
+    CHUNK_EVENTS            =           3_u16
+    CHUNK_SUMMARY           =           4_u16
+    CHUNK_HEADER_BYTES      =              24
+    CHUNK_FOOTER_BYTES      =              24
+    EVENT_RECORD_BYTES      =              24
+    MAX_PROFILE_DURATION_US = 0x00ff_ffff_u64
 
     DEFAULT_CAPACITY_RECORDS  =       1_048_576
     MAX_CAPACITY_RECORDS      =       8_388_608
     DEFAULT_FLUSH_INTERVAL_NS = 250_000_000_u64
 
     enum Event : UInt16
-      ProcessStart     =  1
-      PassStart        =  2
-      QueueEnqueue     =  3
-      QueueVisit       =  4
-      LowerRequest     =  5
-      MaterializeStart =  6
-      MaterializeDone  =  7
-      PassDone         =  8
-      ProcessDone      =  9
-      MissingStart     = 10
-      MissingIterStart = 11
-      MissingScanDone  = 12
-      MissingIterDone  = 13
-      MissingDone      = 14
-      LowerRequestEdge = 15
-      LowerRequestSite = 16
+      ProcessStart        =  1
+      PassStart           =  2
+      QueueEnqueue        =  3
+      QueueVisit          =  4
+      LowerRequest        =  5
+      MaterializeStart    =  6
+      MaterializeDone     =  7
+      PassDone            =  8
+      ProcessDone         =  9
+      MissingStart        = 10
+      MissingIterStart    = 11
+      MissingScanDone     = 12
+      MissingIterDone     = 13
+      MissingDone         = 14
+      LowerRequestEdge    = 15
+      LowerRequestSite    = 16
+      LowerRequestProfile = 17
+    end
+
+    enum RequestProfileState : UInt8
+      Other      = 0
+      InProgress = 1
+      HasBody    = 2
+      Completed  = 3
+      Pending    = 4
     end
 
     getter dropped_events : UInt64
@@ -82,7 +92,13 @@ module Adamas::HIR
         1,
         60_000,
       )
-      new(path, capacity_records: capacity, flush_interval_ns: flush_ms.to_u64 * 1_000_000_u64)
+      request_profile = !Adamas::Compiler::BootstrapEnv.get?("ADAMAS_HIR_BINARY_TRACE_REQUEST_PROFILE").nil?
+      new(
+        path,
+        capacity_records: capacity,
+        flush_interval_ns: flush_ms.to_u64 * 1_000_000_u64,
+        request_profile: request_profile,
+      )
     end
 
     private def self.parse_bounded_env_int(
@@ -105,6 +121,7 @@ module Adamas::HIR
       capacity_records : Int32 = DEFAULT_CAPACITY_RECORDS,
       @flush_interval_ns : UInt64 = DEFAULT_FLUSH_INTERVAL_NS,
       @start_ticks : UInt64 = Crystal::System::Time.ticks,
+      @request_profile : Bool = false,
     )
       capacity_records = 1_024 if capacity_records < 1_024
       capacity_records = MAX_CAPACITY_RECORDS if capacity_records > MAX_CAPACITY_RECORDS
@@ -141,6 +158,10 @@ module Adamas::HIR
 
     def active? : Bool
       @active
+    end
+
+    def request_profile? : Bool
+      @active && @request_profile
     end
 
     def record(event : Event, value : UInt64 = 0_u64, depth : Int32 = 0) : Nil
@@ -242,6 +263,28 @@ module Adamas::HIR
 
       site = site_line.to_u64 | (target_id << 32)
       record_at(Event::LowerRequestSite, site, depth: depth, ticks: ticks)
+    end
+
+    # Optional request profiling shares the fixed UInt64 payload between a
+    # static callsite, a saturated microsecond duration, and before/after
+    # lowering states. It is emitted only when the caller enables profiling.
+    def record_request_profile_at(
+      site_line : Int32,
+      before_state : RequestProfileState,
+      after_state : RequestProfileState,
+      duration_ns : UInt64,
+      depth : Int32 = 0,
+      ticks : UInt64 = Crystal::System::Time.ticks,
+    ) : Nil
+      return unless @active
+
+      duration_us = duration_ns // 1_000_u64
+      duration_us = MAX_PROFILE_DURATION_US if duration_us > MAX_PROFILE_DURATION_US
+      transition = before_state.value.to_u64 | (after_state.value.to_u64 << 4)
+      value = site_line.to_u32.to_u64 |
+              (duration_us << 32) |
+              (transition << 56)
+      record_at(Event::LowerRequestProfile, value, depth: depth, ticks: ticks)
     end
 
     def record_at(
