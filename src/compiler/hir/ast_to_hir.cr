@@ -740,6 +740,8 @@ module Adamas::HIR
     end
   end
 
+  # Debug-only timing state stays a value type. Mutations must be written back
+  # to the owning stack explicitly because Array#last? returns a struct copy.
   private struct LowerMethodStats
     property resolve_ms : Float64
     property resolve_calls : Int32
@@ -24309,9 +24311,39 @@ module Adamas::HIR
       normalize_declared_type_name(safe_slice_to_string(return_type) || "") == "NoReturn"
     end
 
+    @[AlwaysInline]
+    private def active_lower_method_stats_index : Int32?
+      size = @lower_method_stats_stack.size
+      size == 0 ? nil : size - 1
+    end
+
+    @[AlwaysInline]
+    private def record_lower_method_infer_stats(stats_index : Int32?, stats_start : Time::Instant?) : Nil
+      return unless stats_index
+      return unless stats_start
+      return if stats_index < 0 || stats_index >= @lower_method_stats_stack.size
+
+      stats = @lower_method_stats_stack.unsafe_fetch(stats_index)
+      stats.infer_ms += (Time.instant - stats_start).total_milliseconds
+      stats.infer_calls += 1
+      @lower_method_stats_stack[stats_index] = stats
+    end
+
+    @[AlwaysInline]
+    private def record_lower_method_resolve_stats(stats_index : Int32?, stats_start : Time::Instant?) : Nil
+      return unless stats_index
+      return unless stats_start
+      return if stats_index < 0 || stats_index >= @lower_method_stats_stack.size
+
+      stats = @lower_method_stats_stack.unsafe_fetch(stats_index)
+      stats.resolve_ms += (Time.instant - stats_start).total_milliseconds
+      stats.resolve_calls += 1
+      @lower_method_stats_stack[stats_index] = stats
+    end
+
     private def infer_type_from_expr(expr_id : ExprId, self_type_name : String?) : TypeRef?
-      stats = env_get("DEBUG_LOWER_METHOD_STATS") ? @lower_method_stats_stack.last? : nil
-      stats_start = stats ? Time.instant : nil
+      stats_index = active_lower_method_stats_index
+      stats_start = stats_index ? Time.instant : nil
       if env_get("DEBUG_INFER_CRASH")
         STDERR.puts "[INFER_CALL] expr=#{expr_id.index} current=#{@arena.class}:#{@arena.size}"
       end
@@ -24341,10 +24373,7 @@ module Adamas::HIR
       if cached = @infer_type_cache[key]?
         cached_version, cached_type = cached
         if cached_version == @infer_type_cache_version
-          if stats && stats_start
-            stats.infer_ms += (Time.instant - stats_start).total_milliseconds
-            stats.infer_calls += 1
-          end
+          record_lower_method_infer_stats(stats_index, stats_start)
           @arena = old_arena
           return cached_type
         end
@@ -24354,19 +24383,13 @@ module Adamas::HIR
           record_infer_guard_hit(expr_id)
         end
         @infer_type_guarded[key] = @infer_type_cache_version
-        if stats && stats_start
-          stats.infer_ms += (Time.instant - stats_start).total_milliseconds
-          stats.infer_calls += 1
-        end
+        record_lower_method_infer_stats(stats_index, stats_start)
         @arena = old_arena
         return nil
       end
       if guarded_version = @infer_type_guarded[key]?
         if guarded_version == @infer_type_cache_version
-          if stats && stats_start
-            stats.infer_ms += (Time.instant - stats_start).total_milliseconds
-            stats.infer_calls += 1
-          end
+          record_lower_method_infer_stats(stats_index, stats_start)
           @arena = old_arena
           return nil
         end
@@ -24377,10 +24400,7 @@ module Adamas::HIR
         if result
           @infer_type_cache[key] = {@infer_type_cache_version, result}
         end
-        if stats && stats_start
-          stats.infer_ms += (Time.instant - stats_start).total_milliseconds
-          stats.infer_calls += 1
-        end
+        record_lower_method_infer_stats(stats_index, stats_start)
         result
       ensure
         @infer_expr_stack.delete(key)
@@ -39949,6 +39969,16 @@ module Adamas::HIR
             @type_param_map = body_merged_type_param_map
             @subst_cache_gen &+= 1
           end
+          body_phase_match = debug_env_filter_match?(
+            "DEBUG_LOWER_METHOD_BODY_PHASES",
+            method_name,
+            base_name,
+            full_name,
+          )
+          body_phase_start = body_phase_match ? Time.instant : nil
+          if body_phase_start
+            @lower_method_stats_stack << LowerMethodStats.new
+          end
           begin
             progress_filter = env_get("DEBUG_LOWER_PROGRESS")
             progress_match = false
@@ -40156,6 +40186,15 @@ module Adamas::HIR
               "last_value=#{last_value || 0_u32}"
             )
           ensure
+            if body_phase_start
+              elapsed_ms = (Time.instant - body_phase_start).total_milliseconds
+              stats = @lower_method_stats_stack.pop?
+              if stats
+                STDERR.puts "[LOWER_METHOD_BODY_PHASES] method=#{base_name} total=#{elapsed_ms.round(1)}ms resolve=#{stats.resolve_ms.round(1)}ms/#{stats.resolve_calls} infer=#{stats.infer_ms.round(1)}ms/#{stats.infer_calls} body=#{body.size}"
+              else
+                STDERR.puts "[LOWER_METHOD_BODY_PHASES] method=#{base_name} total=#{elapsed_ms.round(1)}ms stats=missing body=#{body.size}"
+              end
+            end
             if body_type_param_map_changed
               @type_param_map = body_old_type_param_map
               @subst_cache_gen &+= 1
@@ -43281,9 +43320,10 @@ module Adamas::HIR
       call_has_splat : Bool = false,
       call_named_arg_names : Array(String)? = nil,
     ) : String
-      stats = env_get("DEBUG_LOWER_METHOD_STATS") ? @lower_method_stats_stack.last? : nil
-      stats_start = stats ? Time.instant : nil
-      receiver_type = ctx.type_of(receiver_id)
+      stats_index = active_lower_method_stats_index
+      stats_start = stats_index ? Time.instant : nil
+      begin
+        receiver_type = ctx.type_of(receiver_id)
       receiver_is_type_literal = ctx.type_literal?(receiver_id)
       type_desc = @module.get_type_descriptor(receiver_type)
       # Guard enum-based receiver specialization against stale tags that no longer
@@ -43803,12 +43843,10 @@ module Adamas::HIR
 
       # Fallback to mangled name
       debug_hook("method.resolve", "base=#{base_method_name} resolved=#{mangled_name} reason=fallback")
-      resolved = cache_method_resolution(cache_key, mangled_name)
-      if stats && stats_start
-        stats.resolve_ms += (Time.instant - stats_start).total_milliseconds
-        stats.resolve_calls += 1
+        cache_method_resolution(cache_key, mangled_name)
+      ensure
+        record_lower_method_resolve_stats(stats_index, stats_start)
       end
-      resolved
     end
 
     # Resolve a single overload when argument types are unknown (all VOID).

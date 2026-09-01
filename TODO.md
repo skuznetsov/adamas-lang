@@ -14605,6 +14605,42 @@ the next falsifier should measure the resolver and return-type work surrounding
 them rather than add suppression, a cache, or another broad registry. B4-F
 remains RED at the 300-second admission cap.
 
+### Session 124: scope direct lower-method body phase diagnostics (2026-09-01)
+
+The existing `DEBUG_LOWER_METHOD_TIME` route did not cover initializer bodies
+materialized directly through allocator lowering, and its nested phase counters
+were silently ineffective: `LowerMethodStats` is a value type, so mutating the
+result of `Array#last?` changed only a copy. Resolver timing also missed every
+successful early return and measured only the final mangled-name fallback.
+
+The diagnostic path now explicitly writes updated value-type counters back to
+their stack slot and records resolver time in an `ensure`. A separate
+`DEBUG_LOWER_METHOD_BODY_PHASES` filter scopes one compact aggregate to the
+selected method body, including direct allocator-to-`lower_method` entry. It
+adds no production cache, registry, call identity, or per-event text stream.
+
+A no-prelude constructor probe completed safely with and without the filter;
+both emitted the exact HIR SHA-256
+`c1b549c519e0c7cb62f53ca3a2e41e243fe750726a5402d1f8b3dae273973d23`.
+The filtered run reported one `Probe#initialize` body, proving the previously
+unobserved direct route is covered. A host compiler build also succeeds.
+
+On the bounded first missing wave, the current-source probe reported
+`AstToHir#initialize` at 8,045.0 ms with 0.6 ms across 40 ordinary method
+resolutions and 6.0 ms across 871 ordinary inference calls; a second
+materialization was 476.7 ms. The frontier remained 162 missing targets, zero
+pending targets, and 4,803 functions. Another bounded project process was
+resident during this sample, so absolute wall time is noisy, but the phase
+separation is too large to attribute this body to these two counters.
+
+Adversary verdict: ROBUST for rejecting ordinary `resolve_method_call` and
+`infer_type_from_expr` as the primary cost inside this initializer, but
+VULNERABLE as a claim about generic work. Allocator generation and generic
+class monomorphization bypass these counters. Next: use a filter-scoped
+aggregate to distinguish allocator/monomorphization work from residual local
+expression lowering; do not add another broad logger or suppress constructor
+state initialization without a semantic falsifier. B4-F remains RED.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
