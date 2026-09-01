@@ -14641,6 +14641,18 @@ aggregate to distinguish allocator/monomorphization work from residual local
 expression lowering; do not add another broad logger or suppress constructor
 state initialization without a semantic falsifier. B4-F remains RED.
 
+The follow-up adversary found two additional value-counter gaps before the
+next profiler was built. Inference timing did not cover invalid-expression
+early returns or exceptions, and the legacy nested materialization timer also
+mutated a copied `LowerMethodTiming` parent. Inference accounting now uses one
+outer `ensure`, and child time is explicitly written back to its stack slot.
+The emitted fields are named `body_loop_total`, `inclusive_resolve`, and
+`inclusive_infer`: nested work is deliberately retained because it contributes
+to the selected body's wall time. A proposed sentinel stack was rejected for
+this inclusive metric because it would subtract child phase counters while
+leaving child time in the denominator. The rebuilt compiler passes the same
+safe no-prelude on/off oracle with the unchanged HIR hash above.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

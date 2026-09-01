@@ -24344,12 +24344,13 @@ module Adamas::HIR
     private def infer_type_from_expr(expr_id : ExprId, self_type_name : String?) : TypeRef?
       stats_index = active_lower_method_stats_index
       stats_start = stats_index ? Time.instant : nil
-      if env_get("DEBUG_INFER_CRASH")
-        STDERR.puts "[INFER_CALL] expr=#{expr_id.index} current=#{@arena.class}:#{@arena.size}"
-      end
-      arena = arena_for_expr?(expr_id)
-      return nil unless arena
-      return nil if expr_id.index >= arena.size
+      begin
+        if env_get("DEBUG_INFER_CRASH")
+          STDERR.puts "[INFER_CALL] expr=#{expr_id.index} current=#{@arena.class}:#{@arena.size}"
+        end
+        arena = arena_for_expr?(expr_id)
+        return nil unless arena
+        return nil if expr_id.index >= arena.size
 
       if @current_class && @current_method
         scope = "#{@current_class}##{@current_method}"
@@ -24373,7 +24374,6 @@ module Adamas::HIR
       if cached = @infer_type_cache[key]?
         cached_version, cached_type = cached
         if cached_version == @infer_type_cache_version
-          record_lower_method_infer_stats(stats_index, stats_start)
           @arena = old_arena
           return cached_type
         end
@@ -24383,13 +24383,11 @@ module Adamas::HIR
           record_infer_guard_hit(expr_id)
         end
         @infer_type_guarded[key] = @infer_type_cache_version
-        record_lower_method_infer_stats(stats_index, stats_start)
         @arena = old_arena
         return nil
       end
       if guarded_version = @infer_type_guarded[key]?
         if guarded_version == @infer_type_cache_version
-          record_lower_method_infer_stats(stats_index, stats_start)
           @arena = old_arena
           return nil
         end
@@ -24400,11 +24398,13 @@ module Adamas::HIR
         if result
           @infer_type_cache[key] = {@infer_type_cache_version, result}
         end
-        record_lower_method_infer_stats(stats_index, stats_start)
         result
       ensure
         @infer_expr_stack.delete(key)
         @arena = old_arena
+      end
+      ensure
+        record_lower_method_infer_stats(stats_index, stats_start)
       end
     end
 
@@ -39977,6 +39977,8 @@ module Adamas::HIR
           )
           body_phase_start = body_phase_match ? Time.instant : nil
           if body_phase_start
+            # These counters are intentionally inclusive: nested lowering work
+            # is part of the selected body's observed wall time.
             @lower_method_stats_stack << LowerMethodStats.new
           end
           begin
@@ -40190,9 +40192,9 @@ module Adamas::HIR
               elapsed_ms = (Time.instant - body_phase_start).total_milliseconds
               stats = @lower_method_stats_stack.pop?
               if stats
-                STDERR.puts "[LOWER_METHOD_BODY_PHASES] method=#{base_name} total=#{elapsed_ms.round(1)}ms resolve=#{stats.resolve_ms.round(1)}ms/#{stats.resolve_calls} infer=#{stats.infer_ms.round(1)}ms/#{stats.infer_calls} body=#{body.size}"
+                STDERR.puts "[LOWER_METHOD_BODY_PHASES] method=#{base_name} body_loop_total=#{elapsed_ms.round(1)}ms inclusive_resolve=#{stats.resolve_ms.round(1)}ms/#{stats.resolve_calls} inclusive_infer=#{stats.infer_ms.round(1)}ms/#{stats.infer_calls} body=#{body.size}"
               else
-                STDERR.puts "[LOWER_METHOD_BODY_PHASES] method=#{base_name} total=#{elapsed_ms.round(1)}ms stats=missing body=#{body.size}"
+                STDERR.puts "[LOWER_METHOD_BODY_PHASES] method=#{base_name} body_loop_total=#{elapsed_ms.round(1)}ms stats=missing body=#{body.size}"
               end
             end
             if body_type_param_map_changed
@@ -86978,8 +86980,11 @@ module Adamas::HIR
           child_ms = entry ? entry.child_ms : 0.0
           self_ms = elapsed_ms - child_ms
           self_ms = 0.0 if self_ms < 0.0
-          if parent = @lower_method_time_stack.last?
+          parent_index = @lower_method_time_stack.size - 1
+          if parent_index >= 0
+            parent = @lower_method_time_stack.unsafe_fetch(parent_index)
             parent.child_ms += elapsed_ms
+            @lower_method_time_stack[parent_index] = parent
           end
           should_log = time_match
           if slow_threshold
