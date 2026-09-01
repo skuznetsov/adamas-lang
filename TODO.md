@@ -14653,6 +14653,19 @@ this inclusive metric because it would subtract child phase counters while
 leaving child time in the denominator. The rebuilt compiler passes the same
 safe no-prelude on/off oracle with the unchanged HIR hash above.
 
+The next falsifier added only an inclusive allocator interval and call count,
+with a depth guard so recursive allocator entry cannot double-count elapsed
+time. A no-prelude `Outer#initialize` that constructs `Child.new` changed from
+an unclassified 0.5 ms body to 0.2 ms across two allocator calls; profile-on
+and profile-off HIR hashes are identical. In the bounded first missing wave,
+the large `AstToHir#initialize` body took 7,152.8 ms, of which allocator entry
+accounted for 706.4 ms across 97 calls. A second 411.9 ms materialization spent
+286.1 ms across 89 allocator calls. The frontier again remained 162 missing,
+zero pending, and 4,803 functions. Allocator generation therefore explains
+the smaller materialization but not the primary roughly seven-second body.
+Next: measure depth-guarded generic-class monomorphization in the same aggregate
+before attributing the residual to local expression lowering.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

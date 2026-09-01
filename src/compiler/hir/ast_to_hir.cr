@@ -747,12 +747,18 @@ module Adamas::HIR
     property resolve_calls : Int32
     property infer_ms : Float64
     property infer_calls : Int32
+    property allocator_ms : Float64
+    property allocator_calls : Int32
+    property allocator_depth : Int32
 
     def initialize
       @resolve_ms = 0.0
       @resolve_calls = 0
       @infer_ms = 0.0
       @infer_calls = 0
+      @allocator_ms = 0.0
+      @allocator_calls = 0
+      @allocator_depth = 0
     end
   end
 
@@ -24341,6 +24347,32 @@ module Adamas::HIR
       @lower_method_stats_stack[stats_index] = stats
     end
 
+    @[AlwaysInline]
+    private def begin_lower_method_allocator_stats : {Int32?, Time::Instant?}
+      stats_index = active_lower_method_stats_index
+      return {nil, nil} unless stats_index
+
+      stats = @lower_method_stats_stack.unsafe_fetch(stats_index)
+      outermost = stats.allocator_depth == 0
+      stats.allocator_depth += 1
+      stats.allocator_calls += 1
+      @lower_method_stats_stack[stats_index] = stats
+      {stats_index, outermost ? Time.instant : nil}
+    end
+
+    @[AlwaysInline]
+    private def finish_lower_method_allocator_stats(stats_index : Int32?, stats_start : Time::Instant?) : Nil
+      return unless stats_index
+      return if stats_index < 0 || stats_index >= @lower_method_stats_stack.size
+
+      stats = @lower_method_stats_stack.unsafe_fetch(stats_index)
+      stats.allocator_depth -= 1 if stats.allocator_depth > 0
+      if stats_start
+        stats.allocator_ms += (Time.instant - stats_start).total_milliseconds
+      end
+      @lower_method_stats_stack[stats_index] = stats
+    end
+
     private def infer_type_from_expr(expr_id : ExprId, self_type_name : String?) : TypeRef?
       stats_index = active_lower_method_stats_index
       stats_start = stats_index ? Time.instant : nil
@@ -36717,15 +36749,17 @@ module Adamas::HIR
       call_has_block : Bool = false,
       call_named_arg_names : Array(String)? = nil,
     )
-      if env_get("DEBUG_ALLOC_STATS")
-        @allocator_debug_total += 1
-        @allocator_debug_counts[class_name] = (@allocator_debug_counts[class_name]? || 0) + 1
-        if (@allocator_debug_total % 50) == 0
-          top = @allocator_debug_counts.to_a.sort_by(&.[1]).last(10).reverse
-          summary = top.map { |(name, count)| "#{name}=#{count}" }.join(", ")
-          STDERR.puts "[ALLOC_STATS] total=#{@allocator_debug_total} top=#{summary}"
+      allocator_stats_index, allocator_stats_start = begin_lower_method_allocator_stats
+      begin
+        if env_get("DEBUG_ALLOC_STATS")
+          @allocator_debug_total += 1
+          @allocator_debug_counts[class_name] = (@allocator_debug_counts[class_name]? || 0) + 1
+          if (@allocator_debug_total % 50) == 0
+            top = @allocator_debug_counts.to_a.sort_by(&.[1]).last(10).reverse
+            summary = top.map { |(name, count)| "#{name}=#{count}" }.join(", ")
+            STDERR.puts "[ALLOC_STATS] total=#{@allocator_debug_total} top=#{summary}"
+          end
         end
-      end
 
       # Debug disabled for performance
       # if class_name.includes?("Slice(UInt8)")
@@ -37290,6 +37324,9 @@ module Adamas::HIR
       set_function_state(func_name, FunctionLoweringState::Completed)
 
       generate_allocator_overload(class_name, class_info, call_arg_types, call_has_named_args, call_has_block, call_named_arg_names)
+      ensure
+        finish_lower_method_allocator_stats(allocator_stats_index, allocator_stats_start)
+      end
     end
 
     private def generate_allocator_overload(
@@ -40192,7 +40229,7 @@ module Adamas::HIR
               elapsed_ms = (Time.instant - body_phase_start).total_milliseconds
               stats = @lower_method_stats_stack.pop?
               if stats
-                STDERR.puts "[LOWER_METHOD_BODY_PHASES] method=#{base_name} body_loop_total=#{elapsed_ms.round(1)}ms inclusive_resolve=#{stats.resolve_ms.round(1)}ms/#{stats.resolve_calls} inclusive_infer=#{stats.infer_ms.round(1)}ms/#{stats.infer_calls} body=#{body.size}"
+                STDERR.puts "[LOWER_METHOD_BODY_PHASES] method=#{base_name} body_loop_total=#{elapsed_ms.round(1)}ms inclusive_allocator=#{stats.allocator_ms.round(1)}ms/#{stats.allocator_calls} inclusive_resolve=#{stats.resolve_ms.round(1)}ms/#{stats.resolve_calls} inclusive_infer=#{stats.infer_ms.round(1)}ms/#{stats.infer_calls} body=#{body.size}"
               else
                 STDERR.puts "[LOWER_METHOD_BODY_PHASES] method=#{base_name} body_loop_total=#{elapsed_ms.round(1)}ms stats=missing body=#{body.size}"
               end
