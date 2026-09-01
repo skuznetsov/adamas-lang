@@ -7,6 +7,7 @@ private record ParsedLoweringTraceEvent,
   delta_ns : UInt64,
   event_id : UInt16,
   depth : UInt16,
+  caller : String?,
   symbol : String
 
 private record ParsedLoweringTrace,
@@ -186,13 +187,22 @@ private def parse_lowering_binary_trace(path : String) : ParsedLoweringTrace
           event_id = ((packed >> 32) & 0xffff_u64).to_u16
           depth = ((packed >> 48) & 0xffff_u64).to_u16
           sequence.should eq((first_sequence + index).to_u32)
+          caller = nil.as(String?)
+          symbol = ""
+          if event_id == Adamas::HIR::LoweringBinaryTrace::Event::LowerRequestEdge.value
+            caller = symbols[symbol_id & 0xffff_ffff_u64]?
+            symbol = symbols[symbol_id >> 32]? || ""
+          else
+            symbol = symbols[symbol_id]? || ""
+          end
           events << ParsedLoweringTraceEvent.new(
             run_index,
             sequence,
             delta_ns,
             event_id,
             depth,
-            symbols[symbol_id]? || "",
+            caller,
+            symbol,
           )
         end
       end
@@ -227,6 +237,12 @@ describe Adamas::HIR::LoweringBinaryTrace do
         "Cycle#step$Int32",
         depth: 2,
         ticks: 1_010_u64,
+      )
+      first.record_request_at(
+        "Cycle#step$Int32",
+        "Cycle#work$String",
+        depth: 2,
+        ticks: 1_012_u64,
       )
       first.record_symbol_at(
         Adamas::HIR::LoweringBinaryTrace::Event::MaterializeDone,
@@ -263,12 +279,20 @@ describe Adamas::HIR::LoweringBinaryTrace do
       parsed.events.map(&.symbol).should eq([
         "Cycle#step$Int32",
         "Cycle#step$Int32",
+        "Cycle#work$String",
         "Cycle#step$Int32",
         "Other#work",
       ])
-      parsed.events.map(&.delta_ns).should eq([5_u64, 10_u64, 13_u64, 4_u64])
-      parsed.events.map(&.sequence).should eq([1_u32, 2_u32, 3_u32, 1_u32])
-      parsed.events.map(&.depth).should eq([1_u16, 2_u16, 1_u16, 0_u16])
+      parsed.events.map(&.caller).should eq([
+        nil,
+        nil,
+        "Cycle#step$Int32",
+        nil,
+        nil,
+      ])
+      parsed.events.map(&.delta_ns).should eq([5_u64, 10_u64, 12_u64, 13_u64, 4_u64])
+      parsed.events.map(&.sequence).should eq([1_u32, 2_u32, 3_u32, 4_u32, 1_u32])
+      parsed.events.map(&.depth).should eq([1_u16, 2_u16, 2_u16, 1_u16, 0_u16])
     ensure
       File.delete(path) if File.exists?(path)
     end

@@ -17,6 +17,7 @@ module Adamas::Tools
     event_id : UInt16,
     depth : UInt16,
     value : UInt64,
+    caller : String?,
     symbol : String?
 
   private record MaterializationSample,
@@ -193,8 +194,15 @@ module Adamas::Tools
         raise IndexError.new unless sequence == expected
         event_id = ((packed >> 32) & 0xffff_u64).to_u16
         depth = ((packed >> 48) & 0xffff_u64).to_u16
-        symbol = symbol_event?(event_id) ? symbols[value]? : nil
-        run.events << TraceEvent.new(sequence, delta_ns, event_id, depth, value, symbol)
+        caller = nil.as(String?)
+        symbol = nil.as(String?)
+        if event_id == TraceFormat::Event::LowerRequestEdge.value
+          caller = symbols[value & 0xffff_ffff_u64]?
+          symbol = symbols[value >> 32]?
+        elsif symbol_event?(event_id)
+          symbol = symbols[value]?
+        end
+        run.events << TraceEvent.new(sequence, delta_ns, event_id, depth, value, caller, symbol)
       end
     end
 
@@ -244,11 +252,11 @@ module Adamas::Tools
         end
 
         if active_process
-          process_requests += 1 if event.event_id == TraceFormat::Event::LowerRequest.value
+          process_requests += 1 if lower_request_event?(event.event_id)
           process_materializations += 1 if event.event_id == TraceFormat::Event::MaterializeStart.value
         end
         if active_pass
-          pass_requests += 1 if event.event_id == TraceFormat::Event::LowerRequest.value
+          pass_requests += 1 if lower_request_event?(event.event_id)
           pass_materializations += 1 if event.event_id == TraceFormat::Event::MaterializeStart.value
         end
 
@@ -287,9 +295,12 @@ module Adamas::Tools
             )
           end
           active_pass = nil
-        when TraceFormat::Event::LowerRequest.value
+        when TraceFormat::Event::LowerRequest.value,
+             TraceFormat::Event::LowerRequestEdge.value
           if callee = event.symbol
-            caller = active_materializations.last?.try(&.event.symbol) || "<root/phase>"
+            caller = event.caller ||
+                     active_materializations.last?.try(&.event.symbol) ||
+                     "<root/phase>"
             request_edges[{caller, callee}] += 1
           end
         when TraceFormat::Event::MaterializeStart.value
@@ -339,7 +350,8 @@ module Adamas::Tools
         total = counts.values.sum
         enqueue = counts[TraceFormat::Event::QueueEnqueue.value]
         visit = counts[TraceFormat::Event::QueueVisit.value]
-        request = counts[TraceFormat::Event::LowerRequest.value]
+        request = counts[TraceFormat::Event::LowerRequest.value] +
+                  counts[TraceFormat::Event::LowerRequestEdge.value]
         start = counts[TraceFormat::Event::MaterializeStart.value]
         done = counts[TraceFormat::Event::MaterializeDone.value]
         puts "    #{total.to_s.rjust(8)} q=#{enqueue} v=#{visit} req=#{request} mat=#{start}/#{done}  #{name}"
@@ -398,7 +410,8 @@ module Adamas::Tools
       puts "  tail:"
       run.events.last(tail).each do |event|
         target = event.symbol || numeric_value(event)
-        puts "    seq=#{event.sequence} delta_ms=#{format_ms(event.delta_ns)} depth=#{event.depth} event=#{event_name(event.event_id)} value=#{target}"
+        edge = event.caller ? " caller=#{event.caller}" : ""
+        puts "    seq=#{event.sequence} delta_ms=#{format_ms(event.delta_ns)} depth=#{event.depth} event=#{event_name(event.event_id)} value=#{target}#{edge}"
       end
     end
 
@@ -437,6 +450,11 @@ module Adamas::Tools
     private def symbol_event?(event_id : UInt16) : Bool
       event_id >= TraceFormat::Event::QueueEnqueue.value &&
         event_id <= TraceFormat::Event::MaterializeDone.value
+    end
+
+    private def lower_request_event?(event_id : UInt16) : Bool
+      event_id == TraceFormat::Event::LowerRequest.value ||
+        event_id == TraceFormat::Event::LowerRequestEdge.value
     end
 
     private def read_header_at(io : File, offset : Int64, file_size : Int64) : ChunkHeader?

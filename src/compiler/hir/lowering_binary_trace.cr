@@ -35,6 +35,7 @@ module Adamas::HIR
       MissingScanDone  = 12
       MissingIterDone  = 13
       MissingDone      = 14
+      LowerRequestEdge = 15
     end
 
     getter dropped_events : UInt64
@@ -56,6 +57,8 @@ module Adamas::HIR
     @symbol_ids : Hash(String, UInt64)
     @symbols : Array(String)
     @symbols_flushed : Int32
+    @materialization_stack : Array(String)
+    @context_symbols : Hash(Tuple(String?, String?, Bool), String)
     @chunk_header : Bytes
     @chunk_footer : Bytes
     @fd : Int32
@@ -116,6 +119,8 @@ module Adamas::HIR
       @symbol_ids = Hash(String, UInt64).new(initial_capacity: 4_096)
       @symbols = [] of String
       @symbols_flushed = 0
+      @materialization_stack = [] of String
+      @context_symbols = Hash(Tuple(String?, String?, Bool), String).new
       @chunk_header = Bytes.new(CHUNK_HEADER_BYTES, 0_u8)
       @chunk_footer = Bytes.new(CHUNK_FOOTER_BYTES, 0_u8)
       @fd = -1
@@ -145,6 +150,37 @@ module Adamas::HIR
       record_symbol_at(event, symbol, depth: depth, ticks: Crystal::System::Time.ticks)
     end
 
+    def record_request(
+      target : String,
+      current_class : String?,
+      current_method : String?,
+      current_method_is_class : Bool,
+      depth : Int32 = 0,
+    ) : Nil
+      unless @active
+        record_symbol(Event::LowerRequest, target, depth)
+        return
+      end
+
+      caller = @materialization_stack.last? ||
+               context_symbol(current_class, current_method, current_method_is_class)
+      if caller
+        record_request_at(caller, target, depth: depth)
+      else
+        record_symbol(Event::LowerRequest, target, depth)
+      end
+    end
+
+    def materialization_start(symbol : String, depth : Int32 = 0) : Nil
+      record_symbol(Event::MaterializeStart, symbol, depth)
+      @materialization_stack << symbol if @active
+    end
+
+    def materialization_done(symbol : String, depth : Int32 = 0) : Nil
+      @materialization_stack.pop?
+      record_symbol(Event::MaterializeDone, symbol, depth)
+    end
+
     # Explicit timestamps keep format and interval behavior directly testable
     # without sleeps or a bootstrap run.
     def record_symbol_at(
@@ -155,6 +191,30 @@ module Adamas::HIR
     ) : Nil
       return unless @active
       record_at(event, intern_symbol(symbol), depth: depth, ticks: ticks)
+    end
+
+    # A request edge still occupies one fixed 24-byte event record. Symbol ids
+    # are packed as two UInt32 values inside the existing UInt64 value field.
+    def record_request_at(
+      caller : String,
+      target : String,
+      depth : Int32 = 0,
+      ticks : UInt64 = Crystal::System::Time.ticks,
+    ) : Nil
+      unless @active
+        record_at(Event::LowerRequestEdge, depth: depth, ticks: ticks)
+        return
+      end
+
+      caller_id = intern_symbol(caller)
+      target_id = intern_symbol(target)
+      if caller_id > UInt32::MAX || target_id > UInt32::MAX
+        record_at(Event::LowerRequest, target_id, depth: depth, ticks: ticks)
+        return
+      end
+
+      edge = caller_id | (target_id << 32)
+      record_at(Event::LowerRequestEdge, edge, depth: depth, ticks: ticks)
     end
 
     def record_at(
@@ -235,6 +295,28 @@ module Adamas::HIR
       @symbol_ids[symbol] = symbol_id
       @symbols << symbol
       symbol_id
+    end
+
+    private def context_symbol(
+      current_class : String?,
+      current_method : String?,
+      current_method_is_class : Bool,
+    ) : String?
+      return nil unless current_method
+
+      key = {current_class, current_method, current_method_is_class}
+      if existing = @context_symbols[key]?
+        return existing
+      end
+
+      context = if current_class && !current_class.empty?
+                  separator = current_method_is_class ? "." : "#"
+                  "<context:#{current_class}#{separator}#{current_method}>"
+                else
+                  "<context:#{current_method}>"
+                end
+      @context_symbols[key] = context
+      context
     end
 
     private def flush_at(ticks : UInt64) : Nil

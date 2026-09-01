@@ -5302,6 +5302,19 @@ module Adamas::HIR
     end
 
     @[AlwaysInline]
+    private def record_lowering_trace_request(name : String) : Nil
+      if trace = @lowering_binary_trace
+        trace.record_request(
+          name,
+          @current_class,
+          @current_method,
+          @current_method_is_class,
+          @lowering_depth,
+        )
+      end
+    end
+
+    @[AlwaysInline]
     private def record_lowering_trace_value(
       event : LoweringBinaryTrace::Event,
       value : UInt64,
@@ -83979,7 +83992,7 @@ module Adamas::HIR
     private def lower_function_if_needed_impl(name : String) : Nil
       return unless v2_string_readable?(name)
       return if name.empty?
-      record_lowering_trace_symbol(LoweringBinaryTrace::Event::LowerRequest, name)
+      record_lowering_trace_request(name)
       return if synthetic_numeric_conversion_lower_target?(name)
       return if backend_owned_runtime_intrinsic_call?(name)
       if pending_target_gate_enabled?
@@ -86406,11 +86419,7 @@ module Adamas::HIR
       # Re-parse resolved target name once for use in the rest of this function
       resolved_parts = parse_method_name(target_name)
       set_function_state(materialized_name, FunctionLoweringState::InProgress)
-      record_lowering_trace_symbol(
-        LoweringBinaryTrace::Event::MaterializeStart,
-        materialized_name,
-        @lowering_depth + 1,
-      )
+      @lowering_binary_trace.try(&.materialization_start(materialized_name, @lowering_depth + 1))
       materialization_function_count_before = @module.functions.size
       materialization_producer_path = "not_entered"
 
@@ -86887,11 +86896,7 @@ module Adamas::HIR
           clear_function_state(materialized_name)
         end
         log_materialization_completion_ledger(name, target_name, materialized_name, materialization_function_count_before, materialization_producer_path)
-        record_lowering_trace_symbol(
-          LoweringBinaryTrace::Event::MaterializeDone,
-          materialized_name,
-          @lowering_depth + 1,
-        )
+        @lowering_binary_trace.try(&.materialization_done(materialized_name, @lowering_depth + 1))
         debug_hook("function.lower.done", "name=#{materialized_name}")
         if start_time
           elapsed_ms = (Time.instant - start_time).total_milliseconds

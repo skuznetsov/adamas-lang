@@ -30,8 +30,16 @@ materializations refute a global rematerialization-loop explanation; even the
 The largest unresolved root/phase demands are 8,714 requests for one
 `RyuPrintf.put` specialization, 1,238 for one `Dragonbox.put` specialization,
 and 1,018 for another `RyuPrintf.put` specialization. Their exact root producer
-is the next falsifier. No full bootstrap timing, behavior fix, or B4-F admission
-claim is made yet.
+is the next falsifier. Request-edge events now pack caller and target symbol ids
+into the existing 24-byte record. A source-matched bounded wave preserved all
+78,969 events and classified 44,186 requests with an explicit materialization
+caller, while 17,140 requests still had no active materialization or semantic
+method context. The three largest families all remain in that root group, so
+widening the semantic stack is rejected: the next KISS discriminator is a
+compact static request-site/reason id for root requests. The fifth process was
+26.158 seconds versus the previous 25.942-second observation, within a single
+diagnostic-run comparison and not a performance claim. No full bootstrap
+timing, behavior fix, or B4-F admission claim is made yet.
 
 2026-08-31 NAMED-TUPLE EQUALITY LOWERED STRUCTURALLY WITH SHORT-CIRCUIT
 CONTROL FLOW. Concrete `NamedTuple` operands now match fields by key instead of
