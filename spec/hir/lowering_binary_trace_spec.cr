@@ -196,6 +196,11 @@ private def parse_lowering_binary_trace(path : String) : ParsedLoweringTrace
           elsif event_id == Adamas::HIR::LoweringBinaryTrace::Event::LowerRequestSite.value
             caller = "<site:src/compiler/hir/ast_to_hir.cr:#{symbol_id & 0xffff_ffff_u64}>"
             symbol = symbols[symbol_id >> 32]? || ""
+          elsif event_id == Adamas::HIR::LoweringBinaryTrace::Event::ConcreteRegisterStart.value ||
+                event_id == Adamas::HIR::LoweringBinaryTrace::Event::ConcreteRegisterPoint.value ||
+                event_id == Adamas::HIR::LoweringBinaryTrace::Event::ConcreteRegisterDone.value
+            caller = symbols[symbol_id & 0xffff_ffff_u64]?
+            symbol = symbols[symbol_id >> 32]? || ""
           else
             symbol = symbols[symbol_id]? || ""
           end
@@ -271,11 +276,32 @@ describe Adamas::HIR::LoweringBinaryTrace do
         depth: 0,
         ticks: 1_015_u64,
       )
+      first.record_site_symbol_at(
+        Adamas::HIR::LoweringBinaryTrace::Event::ConcreteRegisterStart,
+        "Adamas::HIR::AstToHir#register_concrete_class:33182",
+        "Hash(String, Int32)",
+        depth: 3,
+        ticks: 1_016_u64,
+      )
+      first.record_site_symbol_at(
+        Adamas::HIR::LoweringBinaryTrace::Event::ConcreteRegisterPoint,
+        "Adamas::HIR::AstToHir#register_concrete_class:33386",
+        "Hash(String, Int32)",
+        depth: 3,
+        ticks: 1_017_u64,
+      )
+      first.record_site_symbol_at(
+        Adamas::HIR::LoweringBinaryTrace::Event::ConcreteRegisterDone,
+        "Adamas::HIR::AstToHir#register_concrete_class:34669",
+        "Hash(String, Int32)",
+        depth: 3,
+        ticks: 1_018_u64,
+      )
       first.record_symbol_at(
         Adamas::HIR::LoweringBinaryTrace::Event::MaterializeDone,
         "Cycle#step$Int32",
         depth: 1,
-        ticks: 1_016_u64,
+        ticks: 1_019_u64,
       )
       first.close
 
@@ -310,6 +336,9 @@ describe Adamas::HIR::LoweringBinaryTrace do
         "Cycle#site$Bool",
         "",
         "",
+        "Hash(String, Int32)",
+        "Hash(String, Int32)",
+        "Hash(String, Int32)",
         "Cycle#step$Int32",
         "Other#work",
       ])
@@ -320,6 +349,9 @@ describe Adamas::HIR::LoweringBinaryTrace do
         "<site:src/compiler/hir/ast_to_hir.cr:4242>",
         nil,
         nil,
+        "Adamas::HIR::AstToHir#register_concrete_class:33182",
+        "Adamas::HIR::AstToHir#register_concrete_class:33386",
+        "Adamas::HIR::AstToHir#register_concrete_class:34669",
         nil,
         nil,
       ])
@@ -334,9 +366,9 @@ describe Adamas::HIR::LoweringBinaryTrace do
       (saturated_profile.value & 0xffff_ffff_u64).should eq(4_243_u64)
       ((saturated_profile.value >> 32) & 0x00ff_ffff_u64).should eq(Adamas::HIR::LoweringBinaryTrace::MAX_PROFILE_DURATION_US)
       (saturated_profile.value >> 56).should eq(0x40_u64)
-      parsed.events.map(&.delta_ns).should eq([5_u64, 10_u64, 12_u64, 13_u64, 14_u64, 15_u64, 16_u64, 4_u64])
-      parsed.events.map(&.sequence).should eq([1_u32, 2_u32, 3_u32, 4_u32, 5_u32, 6_u32, 7_u32, 1_u32])
-      parsed.events.map(&.depth).should eq([1_u16, 2_u16, 2_u16, 0_u16, 0_u16, 0_u16, 1_u16, 0_u16])
+      parsed.events.map(&.delta_ns).should eq([5_u64, 10_u64, 12_u64, 13_u64, 14_u64, 15_u64, 16_u64, 17_u64, 18_u64, 19_u64, 4_u64])
+      parsed.events.map(&.sequence).should eq([1_u32, 2_u32, 3_u32, 4_u32, 5_u32, 6_u32, 7_u32, 8_u32, 9_u32, 10_u32, 1_u32])
+      parsed.events.map(&.depth).should eq([1_u16, 2_u16, 2_u16, 0_u16, 0_u16, 0_u16, 3_u16, 3_u16, 3_u16, 1_u16, 0_u16])
     ensure
       File.delete(path) if File.exists?(path)
     end

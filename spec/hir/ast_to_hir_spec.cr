@@ -1292,6 +1292,10 @@ class Adamas::HIR::AstToHir
     monomorphize_generic_class(base_name, type_args, specialized_name)
   end
 
+  def __test_generic_reopening_count(base_name : String) : Int32
+    @generic_reopenings[base_name]?.try(&.size) || 0
+  end
+
   def __test_union_type_for_values(
     left_type : Adamas::HIR::TypeRef,
     right_type : Adamas::HIR::TypeRef,
@@ -4002,6 +4006,40 @@ describe Adamas::HIR::AstToHir do
       converter.__test_get_type_name_from_ref(
         converter.module.function_by_name(exact_name).not_nil!.return_type
       ).should eq("Int32")
+    end
+
+    it "does not turn a nested generic declaration into a reopening per parent specialization" do
+      source = <<-CRYSTAL
+        class NestedGenericOwner(T)
+          struct Entry(U)
+            def initialize(@value : U)
+            end
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+      end.each { |node| converter.register_class(node) }
+
+      converter.__test_generic_reopening_count("NestedGenericOwner::Entry").should eq(0)
+      converter.__test_monomorphize_generic_class(
+        "NestedGenericOwner",
+        ["Int32"],
+        "NestedGenericOwner(Int32)",
+      )
+      converter.__test_monomorphize_generic_class(
+        "NestedGenericOwner",
+        ["String"],
+        "NestedGenericOwner(String)",
+      )
+
+      converter.__test_generic_reopening_count("NestedGenericOwner::Entry").should eq(0)
     end
   end
 

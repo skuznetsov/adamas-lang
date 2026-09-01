@@ -14708,6 +14708,48 @@ separate repeated template-body scans from include expansion and ivar/layout
 work. Do not add a production cache until one subphase and its semantic
 invariant are falsifier-backed. B4-F remains RED.
 
+#### Session 125: remove quadratic nested-generic reopening replay
+
+The compact binary trace now pairs a macro-generated static callsite id with
+the dynamic concrete class symbol in the existing fixed 24-byte event record.
+The analyzer reconstructs nested registration scopes, subtracts child time,
+reports exact-symbol repeats and registration phases, and fails closed on
+sequence gaps, backward timestamps, unmatched scopes, or invalid intervals.
+Tracing remains disabled by default and adds only a nil check at each admitted
+checkpoint.
+
+The first bounded missing wave showed 16,984 `Hash::Entry` registrations for
+only 182 exact concrete symbols. The cause was not generic demand itself:
+specializing each concrete parent replayed its already registered nested
+generic declaration through `register_class_with_name`, which appended the
+same AST node to `@generic_reopenings`. Each later nested specialization then
+replayed the growing duplicate list, producing quadratic work.
+
+`register_concrete_class` now skips only that redundant registration when the
+parent is specialized and the nested generic template is already known. Real
+source reopenings are still collected during original template registration;
+non-generic nested declarations retain the old path. A focused regression was
+red before the guard (`2` synthetic reopenings after two parent
+specializations) and is green with zero.
+
+A no-prelude eight-specialization A/B probe reduced nested `Entry`
+registrations from 44 to 8 while preserving the emitted HIR SHA-256
+`49db0d86c1313d381d29b37f81602058d236e3875f09828fd9c0590a4c89a81a`.
+In the bounded first missing wave, pending processing fell from 23,670.290 ms
+to 15,596.882 ms (34.1%), total registration events fell from 19,920 to 2,973,
+and `Hash::Entry` fell from 16,984 registrations to 202 while retaining the
+same 182 unique exact symbols. The frontier remained 162 missing, zero pending,
+and 4,808 functions. The completed trace chunks had zero unmatched scopes and
+zero invalid intervals.
+
+Adversary verdict: ROBUST for the bounded O(N^2) reopening fix because the red
+fixture isolates the duplicate state mutation, the no-prelude A/B preserves
+HIR, and the full-wave semantic frontier is unchanged. VULNERABLE as B4-F
+closure: the full bootstrap gate has not passed and the remaining `Hash`,
+`Array`, and `Pointer` duplicate counts may represent legitimate reopenings.
+Next: inspect the exact remaining two-per-specialization paths before changing
+any policy. B4-F remains RED.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

@@ -5348,6 +5348,20 @@ module Adamas::HIR
       end
     end
 
+    # Each expansion embeds its enclosing method and source line as one static
+    # symbol. Runtime records then carry only two UInt32 symbol ids: this site
+    # and the dynamic concrete class being registered.
+    private macro trace_concrete_registration(event, subject)
+      if trace = @lowering_binary_trace
+        trace.record_site_symbol_at(
+          {{event}},
+          {{ "#{@def.name}:#{@caller.first.line_number}" }},
+          {{subject}},
+          depth: @lowering_depth,
+        )
+      end
+    end
+
     def finish_lowering_binary_trace : Nil
       if trace = @lowering_binary_trace
         trace.close
@@ -33179,6 +33193,7 @@ module Adamas::HIR
       class_name : String,
       is_struct : Bool,
     )
+      trace_concrete_registration LoweringBinaryTrace::Event::ConcreteRegisterStart, class_name
       bootstrap_trace_puts "[CLASS_FRONTIER] concrete_enter #{class_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
       trace_concrete_phase = debug_env_filter_match?(
         "DEBUG_REG_CONCRETE_PHASE",
@@ -33341,7 +33356,15 @@ module Adamas::HIR
             full_nested_name = qualified_nested_type_name(nested_prefix, nested_name)
             nested_type_params = member.type_params
             nested_type_param_count = nested_type_params ? nested_type_params.size : 0
-            register_class_with_name(member, full_nested_name)
+            # The generic template pass already registered this exact nested
+            # declaration and its real source reopenings. Re-registering it for
+            # every concrete parent specialization appends the same AST node to
+            # @generic_reopenings and turns nested monomorphization into O(N^2).
+            nested_generic_template_known = nested_type_param_count > 0 &&
+                                            @generic_templates.has_key?(full_nested_name)
+            unless specialized_class && nested_generic_template_known
+              register_class_with_name(member, full_nested_name)
+            end
             # When parent has active type substitutions and nested type is generic,
             # also monomorphize the nested type with the substituted type args.
             # E.g., Hash(String, Int32)::Entry(K, V) -> Hash::Entry(String, Int32)
@@ -33383,6 +33406,7 @@ module Adamas::HIR
             register_macro(member, nested_prefix)
           end
         end
+        trace_concrete_registration LoweringBinaryTrace::Event::ConcreteRegisterPoint, class_name
         STDERR.puts "[REG_CONCRETE_PHASE] class=#{class_name} phase=after_pass0" if trace_concrete_phase
         bootstrap_trace_puts "[CLASS_FRONTIER] concrete_after_pass0 #{class_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
         if mono_debug && pass0_start
@@ -33454,6 +33478,7 @@ module Adamas::HIR
 
         begin
           body_start = Time.instant if mono_debug
+          trace_concrete_registration LoweringBinaryTrace::Event::ConcreteRegisterPoint, class_name
           STDERR.puts "[REG_CONCRETE_PHASE] class=#{class_name} phase=before_body_loop" if trace_concrete_phase
           bootstrap_trace_puts "[CLASS_FRONTIER] concrete_before_body_loop #{class_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
           if env_has?("DEBUG_REG_CLASS") && class_name.ends_with?("AstToHir")
@@ -34355,6 +34380,7 @@ module Adamas::HIR
             elapsed = (Time.instant - body_start).total_milliseconds
             STDERR.puts "[MONO] #{class_name} body scan #{elapsed.round(1)}ms"
           end
+          trace_concrete_registration LoweringBinaryTrace::Event::ConcreteRegisterPoint, class_name
           STDERR.puts "[REG_CONCRETE_PHASE] class=#{class_name} phase=after_body_scan" if trace_concrete_phase
           bootstrap_trace_puts "[CLASS_FRONTIER] concrete_after_body_scan #{class_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
 
@@ -34456,6 +34482,7 @@ module Adamas::HIR
               set_function_def_arena(base_name, @arena)
             end
           end
+          trace_concrete_registration LoweringBinaryTrace::Event::ConcreteRegisterPoint, class_name
           STDERR.puts "[REG_CONCRETE_PHASE] class=#{class_name} phase=after_untyped_reassert" if trace_concrete_phase
           if mono_debug && include_start
             elapsed = (Time.instant - include_start).total_milliseconds
@@ -34542,6 +34569,7 @@ module Adamas::HIR
               end
             end
           end
+          trace_concrete_registration LoweringBinaryTrace::Event::ConcreteRegisterPoint, class_name
           STDERR.puts "[REG_CONCRETE_PHASE] class=#{class_name} phase=after_implicit_ivar_scan ivars=#{ivars.size} offset=#{offset}" if trace_concrete_phase
           bootstrap_trace_puts "[CLASS_FRONTIER] concrete_after_implicit_ivars #{class_name} ivars=#{ivars.size}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
         ensure
@@ -34589,6 +34617,7 @@ module Adamas::HIR
         STDERR.puts "[CLASS_PARENT] class=#{class_name} parent=#{parent_name || "nil"}"
       end
       @module.register_class_parent(class_name, parent_name)
+      trace_concrete_registration LoweringBinaryTrace::Event::ConcreteRegisterPoint, class_name
       class_info_filter = env_get("DEBUG_CLASS_INFO_FILTER")
       should_dump_class_info =
         if class_info_filter
@@ -34666,6 +34695,7 @@ module Adamas::HIR
           end
         end
       end
+      trace_concrete_registration LoweringBinaryTrace::Event::ConcreteRegisterDone, class_name
     end
 
     # In lazy monomorphization mode, avoid eager nested fanout unless parent layout

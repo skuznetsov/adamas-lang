@@ -39,6 +39,9 @@ module Adamas::HIR
       LowerRequestEdge    = 15
       LowerRequestSite    = 16
       LowerRequestProfile = 17
+      ConcreteRegisterStart = 18
+      ConcreteRegisterPoint = 19
+      ConcreteRegisterDone  = 20
     end
 
     enum RequestProfileState : UInt8
@@ -263,6 +266,29 @@ module Adamas::HIR
 
       site = site_line.to_u64 | (target_id << 32)
       record_at(Event::LowerRequestSite, site, depth: depth, ticks: ticks)
+    end
+
+    # Static caller sites and dynamic subjects share one fixed event record.
+    # Both strings are interned once per run; the hot event payload contains
+    # only their UInt32 symbol ids.
+    def record_site_symbol_at(
+      event : Event,
+      site : String,
+      symbol : String,
+      depth : Int32 = 0,
+      ticks : UInt64 = Crystal::System::Time.ticks,
+    ) : Nil
+      return unless @active
+
+      site_id = intern_symbol(site)
+      symbol_id = intern_symbol(symbol)
+      if site_id > UInt32::MAX || symbol_id > UInt32::MAX
+        @dropped_events &+= 1_u64
+        return
+      end
+
+      value = site_id | (symbol_id << 32)
+      record_at(event, value, depth: depth, ticks: ticks)
     end
 
     # Optional request profiling shares the fixed UInt64 payload between a

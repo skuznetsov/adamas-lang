@@ -36,6 +36,22 @@ module Adamas::Tools
     end
   end
 
+  private class ActiveConcreteRegistration
+    getter symbol : String
+    getter started : TraceEvent
+    property last_marker : TraceEvent
+    property child_ns : UInt64
+    property self_ns : UInt64
+    property invalid : Bool
+
+    def initialize(@symbol : String, @started : TraceEvent)
+      @last_marker = @started
+      @child_ns = 0_u64
+      @self_ns = 0_u64
+      @invalid = false
+    end
+  end
+
   private record PhaseSample,
     index : UInt64,
     duration_ns : UInt64,
@@ -200,6 +216,11 @@ module Adamas::Tools
         sequence = (packed & 0xffff_ffff_u64).to_u32
         expected = (header.first_sequence + index).to_u32
         raise IndexError.new unless sequence == expected
+        if previous = run.events.last?
+          raise IndexError.new unless sequence == previous.sequence &+ 1_u32
+        else
+          raise IndexError.new unless sequence == 1_u32
+        end
         event_id = ((packed >> 32) & 0xffff_u64).to_u16
         depth = ((packed >> 48) & 0xffff_u64).to_u16
         caller = nil.as(String?)
@@ -209,6 +230,9 @@ module Adamas::Tools
           symbol = symbols[value >> 32]?
         elsif event_id == TraceFormat::Event::LowerRequestSite.value
           caller = "<site:src/compiler/hir/ast_to_hir.cr:#{value & 0xffff_ffff_u64}>"
+          symbol = symbols[value >> 32]?
+        elsif concrete_registration_event?(event_id)
+          caller = symbols[value & 0xffff_ffff_u64]?
           symbol = symbols[value >> 32]?
         elsif symbol_event?(event_id)
           symbol = symbols[value]?
@@ -242,6 +266,12 @@ module Adamas::Tools
       active_materializations = [] of ActiveMaterialization
       materializations = [] of MaterializationSample
       unmatched_materializations = 0
+      active_concrete_registrations = [] of ActiveConcreteRegistration
+      concrete_registration_totals = Hash(String, Tuple(Int32, UInt64, UInt64)).new
+      concrete_symbol_totals = Hash(String, Tuple(Int32, UInt64, UInt64)).new
+      concrete_phase_totals = Hash(Tuple(String, String), Tuple(Int32, UInt64, UInt64, UInt64)).new
+      unmatched_concrete_registrations = 0
+      invalid_concrete_intervals = 0
       processes = [] of PhaseSample
       passes = [] of PhaseSample
       phase_events = [] of TraceEvent
@@ -259,7 +289,9 @@ module Adamas::Tools
       unmatched_request_profiles = 0
       run.events.each do |event|
         event_counts[event_name(event.event_id)] += 1
-        if symbol = event.symbol
+        if (symbol = event.symbol) && !concrete_registration_event?(event.event_id)
+          # Concrete registration has its own family and phase reports below;
+          # including every checkpoint here would hide lowering hot symbols.
           per_event = symbol_counts[symbol]? || begin
             created = Hash(UInt16, Int32).new(0)
             symbol_counts[symbol] = created
@@ -376,6 +408,64 @@ module Adamas::Tools
           else
             unmatched_materializations += 1
           end
+        when TraceFormat::Event::ConcreteRegisterStart.value
+          if symbol = event.symbol
+            if event.caller
+              active_concrete_registrations << ActiveConcreteRegistration.new(symbol, event)
+            else
+              unmatched_concrete_registrations += 1
+            end
+          else
+            unmatched_concrete_registrations += 1
+          end
+        when TraceFormat::Event::ConcreteRegisterPoint.value
+          if active = active_concrete_registrations.last?
+            if event.symbol == active.symbol && event.caller
+              if !active.invalid && !record_concrete_phase(active, event, concrete_phase_totals)
+                invalid_concrete_intervals += 1
+              end
+            else
+              active.invalid = true
+              unmatched_concrete_registrations += 1
+            end
+          else
+            unmatched_concrete_registrations += 1
+          end
+        when TraceFormat::Event::ConcreteRegisterDone.value
+          if active = active_concrete_registrations.last?
+            if event.symbol == active.symbol && event.caller
+              if !active.invalid && !record_concrete_phase(active, event, concrete_phase_totals)
+                invalid_concrete_intervals += 1
+              end
+              active_concrete_registrations.pop
+              if !active.invalid && (duration_ns = elapsed_ns(active.started, event))
+                accumulate_concrete_registration(
+                  concrete_registration_totals,
+                  generic_family(active.symbol),
+                  duration_ns,
+                  active.self_ns,
+                )
+                accumulate_concrete_registration(
+                  concrete_symbol_totals,
+                  active.symbol,
+                  duration_ns,
+                  active.self_ns,
+                )
+                if parent = active_concrete_registrations.last?
+                  parent.child_ns &+= duration_ns
+                end
+              elsif parent = active_concrete_registrations.last?
+                # An invalid child interval makes the parent's self-time
+                # unknowable as well; never turn corrupt timing into a hot path.
+                parent.invalid = true
+              end
+            else
+              active.invalid = true
+              unmatched_concrete_registrations += 1
+            end
+          else
+            unmatched_concrete_registrations += 1
+          end
         when TraceFormat::Event::MissingStart.value,
              TraceFormat::Event::MissingIterStart.value,
              TraceFormat::Event::MissingScanDone.value,
@@ -385,6 +475,7 @@ module Adamas::Tools
         end
       end
       unmatched_materializations += active_materializations.size
+      unmatched_concrete_registrations += active_concrete_registrations.size
       unmatched_request_profiles += active_profile_requests.size if request_profile_enabled
       puts "  event_counts:"
       event_counts.to_a.sort_by(&.[0]).each do |name, count|
@@ -422,6 +513,41 @@ module Adamas::Tools
       repeated.each do |name, totals|
         count, total_ns, self_ns = totals
         puts "    #{count.to_s.rjust(8)} total_ms=#{format_ms(total_ns)} self_ms=#{format_ms(self_ns)}  #{name}"
+      end
+
+      concrete_families = concrete_registration_totals.to_a.sort_by do |family, totals|
+        {-totals[2].to_i128, -totals[1].to_i128, family}
+      end.first(top)
+      concrete_unique_symbols = Hash(String, Int32).new(0)
+      concrete_symbol_totals.each_key do |symbol|
+        concrete_unique_symbols[generic_family(symbol)] += 1
+      end
+      puts "  concrete_registration_families: unmatched=#{unmatched_concrete_registrations} invalid_intervals=#{invalid_concrete_intervals}"
+      concrete_families.each do |family, totals|
+        count, total_ns, self_ns = totals
+        unique = concrete_unique_symbols[family]
+        puts "    self_ms=#{format_ms(self_ns).rjust(12)} total_ms=#{format_ms(total_ns).rjust(12)} count=#{count.to_s.rjust(8)} unique=#{unique.to_s.rjust(6)}  #{family}"
+      end
+
+      repeated_concrete_symbols = concrete_symbol_totals.compact_map do |symbol, totals|
+        totals[0] > 1 ? {symbol, totals} : nil
+      end.sort_by do |symbol, totals|
+        {-totals[2].to_i128, -totals[0], symbol}
+      end.first(top)
+      puts "  repeated_concrete_registrations:"
+      repeated_concrete_symbols.each do |symbol, totals|
+        count, total_ns, self_ns = totals
+        puts "    self_ms=#{format_ms(self_ns).rjust(12)} total_ms=#{format_ms(total_ns).rjust(12)} count=#{count.to_s.rjust(8)}  #{symbol}"
+      end
+
+      concrete_phases = concrete_phase_totals.to_a.sort_by do |key, totals|
+        {-totals[2].to_i128, -totals[1].to_i128, key[0], key[1]}
+      end.first(top)
+      puts "  concrete_registration_phases:"
+      concrete_phases.each do |key, totals|
+        family, site = key
+        count, total_ns, self_ns, max_self_ns = totals
+        puts "    self_ms=#{format_ms(self_ns).rjust(12)} total_ms=#{format_ms(total_ns).rjust(12)} max_self_ms=#{format_ms(max_self_ns).rjust(12)} count=#{count.to_s.rjust(8)} family=#{family} site=#{site}"
       end
 
       edges = request_edges.to_a.sort_by do |(caller, callee), count|
@@ -549,9 +675,70 @@ module Adamas::Tools
       end
     end
 
+    private def record_concrete_phase(
+      active : ActiveConcreteRegistration,
+      marker : TraceEvent,
+      totals : Hash(Tuple(String, String), Tuple(Int32, UInt64, UInt64, UInt64)),
+    ) : Bool
+      unless duration_ns = elapsed_ns(active.last_marker, marker)
+        active.invalid = true
+        active.last_marker = marker
+        active.child_ns = 0_u64
+        return false
+      end
+      self_ns = duration_ns >= active.child_ns ? duration_ns - active.child_ns : 0_u64
+      family = generic_family(active.symbol)
+      site = active.last_marker.caller || "<unknown-site>"
+      key = {family, site}
+      count, total_ns, accumulated_self_ns, max_self_ns = totals[key]? || {0, 0_u64, 0_u64, 0_u64}
+      totals[key] = {
+        count + 1,
+        total_ns &+ duration_ns,
+        accumulated_self_ns &+ self_ns,
+        self_ns > max_self_ns ? self_ns : max_self_ns,
+      }
+      active.self_ns &+= self_ns
+      active.last_marker = marker
+      active.child_ns = 0_u64
+      true
+    end
+
+    private def accumulate_concrete_registration(
+      totals : Hash(String, Tuple(Int32, UInt64, UInt64)),
+      key : String,
+      duration_ns : UInt64,
+      self_ns : UInt64,
+    ) : Nil
+      count, accumulated_duration_ns, accumulated_self_ns = totals[key]? || {0, 0_u64, 0_u64}
+      totals[key] = {
+        count + 1,
+        accumulated_duration_ns &+ duration_ns,
+        accumulated_self_ns &+ self_ns,
+      }
+    end
+
+    private def elapsed_ns(started : TraceEvent, finished : TraceEvent) : UInt64?
+      return nil if finished.delta_ns < started.delta_ns
+      finished.delta_ns - started.delta_ns
+    end
+
+    private def generic_family(symbol : String) : String
+      if generic_start = symbol.index('(')
+        symbol.byte_slice(0, generic_start)
+      else
+        symbol
+      end
+    end
+
     private def symbol_event?(event_id : UInt16) : Bool
       event_id >= TraceFormat::Event::QueueEnqueue.value &&
         event_id <= TraceFormat::Event::MaterializeDone.value
+    end
+
+    private def concrete_registration_event?(event_id : UInt16) : Bool
+      event_id == TraceFormat::Event::ConcreteRegisterStart.value ||
+        event_id == TraceFormat::Event::ConcreteRegisterPoint.value ||
+        event_id == TraceFormat::Event::ConcreteRegisterDone.value
     end
 
     private def lower_request_event?(event_id : UInt16) : Bool
