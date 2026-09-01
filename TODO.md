@@ -14666,6 +14666,21 @@ the smaller materialization but not the primary roughly seven-second body.
 Next: measure depth-guarded generic-class monomorphization in the same aggregate
 before attributing the residual to local expression lowering.
 
+The monomorphization discriminator separately counts entries and newly admitted
+specializations, again timing only outermost intervals to avoid recursive
+double-counting. A no-prelude generic constructor reported three entries, one
+new specialization, 0.2 ms of monomorphization, and an identical profile-on/off
+HIR hash. In the bounded first missing wave, the primary 7,228.1 ms body spent
+6,761.1 ms inside monomorphization: 304 entries and 245 newly admitted concrete
+classes. Its allocator interval was 691.4 ms and overlaps monomorphization, so
+the phase values must not be added. The secondary 432.2 ms body reported 249.5
+ms across 13 entries and six new specializations, with 304.5 ms of overlapping
+allocator work. The frontier again remained 162 missing, zero pending, and
+4,803 functions. This localizes the primary cost to real generic-class
+materialization rather than ordinary resolver, inference, or duplicate request
+guards. Next: rank the 245 new specializations by base-family count and
+non-overlapping self time before changing monomorphization policy or caches.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

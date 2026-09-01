@@ -750,6 +750,10 @@ module Adamas::HIR
     property allocator_ms : Float64
     property allocator_calls : Int32
     property allocator_depth : Int32
+    property monomorphize_ms : Float64
+    property monomorphize_calls : Int32
+    property monomorphize_new : Int32
+    property monomorphize_depth : Int32
 
     def initialize
       @resolve_ms = 0.0
@@ -759,6 +763,10 @@ module Adamas::HIR
       @allocator_ms = 0.0
       @allocator_calls = 0
       @allocator_depth = 0
+      @monomorphize_ms = 0.0
+      @monomorphize_calls = 0
+      @monomorphize_new = 0
+      @monomorphize_depth = 0
     end
   end
 
@@ -24373,6 +24381,42 @@ module Adamas::HIR
       @lower_method_stats_stack[stats_index] = stats
     end
 
+    @[AlwaysInline]
+    private def begin_lower_method_monomorphize_stats : {Int32?, Time::Instant?}
+      stats_index = active_lower_method_stats_index
+      return {nil, nil} unless stats_index
+
+      stats = @lower_method_stats_stack.unsafe_fetch(stats_index)
+      outermost = stats.monomorphize_depth == 0
+      stats.monomorphize_depth += 1
+      stats.monomorphize_calls += 1
+      @lower_method_stats_stack[stats_index] = stats
+      {stats_index, outermost ? Time.instant : nil}
+    end
+
+    @[AlwaysInline]
+    private def record_lower_method_monomorphize_new(stats_index : Int32?) : Nil
+      return unless stats_index
+      return if stats_index < 0 || stats_index >= @lower_method_stats_stack.size
+
+      stats = @lower_method_stats_stack.unsafe_fetch(stats_index)
+      stats.monomorphize_new += 1
+      @lower_method_stats_stack[stats_index] = stats
+    end
+
+    @[AlwaysInline]
+    private def finish_lower_method_monomorphize_stats(stats_index : Int32?, stats_start : Time::Instant?) : Nil
+      return unless stats_index
+      return if stats_index < 0 || stats_index >= @lower_method_stats_stack.size
+
+      stats = @lower_method_stats_stack.unsafe_fetch(stats_index)
+      stats.monomorphize_depth -= 1 if stats.monomorphize_depth > 0
+      if stats_start
+        stats.monomorphize_ms += (Time.instant - stats_start).total_milliseconds
+      end
+      @lower_method_stats_stack[stats_index] = stats
+    end
+
     private def infer_type_from_expr(expr_id : ExprId, self_type_name : String?) : TypeRef?
       stats_index = active_lower_method_stats_index
       stats_start = stats_index ? Time.instant : nil
@@ -35433,8 +35477,10 @@ module Adamas::HIR
       specialized_name : String,
       drain_pending : Bool = true,
     )
-      base_name = resolve_generic_template_base(base_name)
-      template = @generic_templates[base_name]?
+      monomorphize_stats_index, monomorphize_stats_start = begin_lower_method_monomorphize_stats
+      begin
+        base_name = resolve_generic_template_base(base_name)
+        template = @generic_templates[base_name]?
       return unless template
 
       # Expanding union args into per-variant specializations is useful in eager
@@ -35474,6 +35520,7 @@ module Adamas::HIR
       # Mark as monomorphized BEFORE processing to prevent infinite recursion
       # (e.g., Array(String) method calls something that creates Array(String) again)
       @monomorphized.add(specialized_name)
+      record_lower_method_monomorphize_new(monomorphize_stats_index)
       debug_hook("mono.start", "base=#{base_name} name=#{specialized_name} args=#{type_args}")
       if env_get("DEBUG_MONO_SOURCES")
         @mono_source_counts[base_name] = (@mono_source_counts[base_name]? || 0) + 1
@@ -35649,6 +35696,9 @@ module Adamas::HIR
       @subst_cache_gen &+= 1
       @current_class = old_class
       @monomorphized.add(specialized_name)
+      ensure
+        finish_lower_method_monomorphize_stats(monomorphize_stats_index, monomorphize_stats_start)
+      end
     end
 
     # Monomorphize a generic module (e.g., Impl(Float32, ImplInfo_Float32))
@@ -40229,7 +40279,7 @@ module Adamas::HIR
               elapsed_ms = (Time.instant - body_phase_start).total_milliseconds
               stats = @lower_method_stats_stack.pop?
               if stats
-                STDERR.puts "[LOWER_METHOD_BODY_PHASES] method=#{base_name} body_loop_total=#{elapsed_ms.round(1)}ms inclusive_allocator=#{stats.allocator_ms.round(1)}ms/#{stats.allocator_calls} inclusive_resolve=#{stats.resolve_ms.round(1)}ms/#{stats.resolve_calls} inclusive_infer=#{stats.infer_ms.round(1)}ms/#{stats.infer_calls} body=#{body.size}"
+                STDERR.puts "[LOWER_METHOD_BODY_PHASES] method=#{base_name} body_loop_total=#{elapsed_ms.round(1)}ms inclusive_allocator=#{stats.allocator_ms.round(1)}ms/#{stats.allocator_calls} inclusive_monomorphize=#{stats.monomorphize_ms.round(1)}ms/#{stats.monomorphize_calls}/#{stats.monomorphize_new}new inclusive_resolve=#{stats.resolve_ms.round(1)}ms/#{stats.resolve_calls} inclusive_infer=#{stats.infer_ms.round(1)}ms/#{stats.infer_calls} body=#{body.size}"
               else
                 STDERR.puts "[LOWER_METHOD_BODY_PHASES] method=#{base_name} body_loop_total=#{elapsed_ms.round(1)}ms stats=missing body=#{body.size}"
               end
