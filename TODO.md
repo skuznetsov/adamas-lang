@@ -14750,6 +14750,39 @@ closure: the full bootstrap gate has not passed and the remaining `Hash`,
 Next: inspect the exact remaining two-per-specialization paths before changing
 any policy. B4-F remains RED.
 
+#### Session 126: fuse exact-key defined-method scans
+
+The remaining two registrations per `Hash`, `Array`, and `Pointer`
+specialization are legitimate source reopenings, not duplicate template nodes:
+the primary stdlib bodies are paired with separate `llvm_backend.cr`,
+`primitives.cr`, or type-specific fragments. Suppressing them would drop real
+definitions, so that route is rejected.
+
+Compact phase markers instead isolated a simpler duplicate traversal. Concrete
+class registration scanned the same `{owner, body, arena, module-defs-version}`
+once for instance methods and again for class methods. Both collectors now
+share one exact-key scan and cache entry while retaining separate result Sets,
+concrete-owner type resolution, defensive copies, and the same versioned
+invalidation. No cross-specialization cache or new semantic registry was added.
+Only one new trace boundary remains; four temporary discriminator points were
+removed after they stopped changing the next decision.
+
+The focused scan-cache spec passes four examples, including ordinary and class
+accessors, caller-copy mutation, distinct body/arena identity, and versioned
+rescan. A no-prelude generic instance/class-method A/B produced byte-identical
+HIR with SHA-256
+`ec5cd49aded9cb72287ae6128601536a58af088fddc84222967a37f703d94896`.
+With the same five-point diagnostic build used for the before/after comparison,
+the bounded first missing-wave process fell from 17,433.5 ms to 16,948.6 ms;
+the frontier remained 162 missing, zero pending, and 4,808 functions.
+
+Adversary verdict: ROBUST for removing the exact duplicate scan because the
+cache authority is unchanged, accessor asymmetry is regression-tested, and the
+no-prelude HIR is identical. VULNERABLE as a production wall-time or B4-F
+closure claim: these are trace-on bounded runs and no fresh complete bootstrap
+has passed. The next measured target is the still-dominant concrete body loop,
+not legitimate source reopenings or a wider generic cache. B4-F remains RED.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

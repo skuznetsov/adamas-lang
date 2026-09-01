@@ -1207,7 +1207,7 @@ class Adamas::HIR::AstToHir
 
   def __test_defined_instance_method_scan_cache_body_count(class_name : String) : Int32
     body_ids = Set(UInt64).new
-    @defined_instance_method_full_names_cache.each_key do |key|
+    @defined_method_full_names_cache.each_key do |key|
       body_ids << key[1] if key[0] == class_name
     end
     body_ids.size
@@ -1219,7 +1219,7 @@ class Adamas::HIR::AstToHir
   ) : Int32
     body_id = body.object_id
     count = 0
-    @defined_instance_method_full_names_cache.each_key do |key|
+    @defined_method_full_names_cache.each_key do |key|
       count += 1 if key[0] == class_name && key[1] == body_id
     end
     count
@@ -1711,6 +1711,9 @@ describe "defined method scan caches" do
 
         def self.bar
         end
+
+        getter local_value : Int32
+        class_getter shared_value : Int32
       end
     CRYSTAL
     class_id = roots.find { |expr_id| arena[expr_id].is_a?(Adamas::Compiler::Frontend::ClassNode) }
@@ -1723,12 +1726,19 @@ describe "defined method scan caches" do
     class_names = converter.__test_collect_defined_class_method_full_names("ScanTarget", body, arena)
     instance_names.should contain("ScanTarget#foo")
     instance_names.should_not contain("ScanTarget.bar")
+    instance_names.should contain("ScanTarget#local_value")
+    instance_names.should contain("ScanTarget#shared_value")
     class_names.should contain("ScanTarget.bar")
     class_names.should_not contain("ScanTarget#foo")
+    class_names.should contain("ScanTarget.shared_value")
+    class_names.should_not contain("ScanTarget.local_value")
 
     instance_names << "mutated caller copy"
+    class_names << "mutated class caller copy"
     cached_names = converter.__test_collect_defined_instance_method_full_names("ScanTarget", body, arena)
     cached_names.should_not contain("mutated caller copy")
+    converter.__test_collect_defined_class_method_full_names("ScanTarget", body, arena)
+      .should_not contain("mutated class caller copy")
 
     new_name = "after_bump"
     arena.retain_source(new_name)

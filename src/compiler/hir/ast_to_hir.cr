@@ -6234,8 +6234,7 @@ module Adamas::HIR
     @module_defs_suffix_lookup : Hash(String, String)
     @instance_method_names_cache : Hash(String, Array(String))
     @instance_method_names_cache_version : Int32
-    @defined_instance_method_full_names_cache : Hash({String, UInt64, UInt64, Int32}, Set(String))
-    @defined_class_method_full_names_cache : Hash({String, UInt64, UInt64, Int32}, Set(String))
+    @defined_method_full_names_cache : Hash({String, UInt64, UInt64, Int32}, {Set(String), Set(String)})
 
     # Type aliases (alias_name -> target_type_name)
     @type_aliases : Hash(String, String)
@@ -6833,8 +6832,7 @@ module Adamas::HIR
       @module_defs_suffix_lookup = {} of String => String
       @instance_method_names_cache = {} of String => Array(String)
       @instance_method_names_cache_version = 0
-      @defined_instance_method_full_names_cache = {} of {String, UInt64, UInt64, Int32} => Set(String)
-      @defined_class_method_full_names_cache = {} of {String, UInt64, UInt64, Int32} => Set(String)
+      @defined_method_full_names_cache = {} of {String, UInt64, UInt64, Int32} => {Set(String), Set(String)}
       @type_aliases = {} of String => String
       @resolved_type_alias_cache = Hash(String, String).new(initial_capacity: 4096)
       @type_alias_keys_by_suffix = {} of String => Array(String)
@@ -19904,14 +19902,14 @@ module Adamas::HIR
     # Keep the complete scan identity in one exact key so a cache hit is O(1)
     # without rebuilding String tokens or traversing nested Hashes. The LLVM
     # backend rejects a generic Tuple#hash target whose receiver TypeRef does not
-    # match this concrete tuple layout. A hit still copies the Set so callers
-    # cannot mutate the cached collection. The object-id lifetime contract is:
+    # match this concrete tuple layout. A hit still copies both Sets so callers
+    # cannot mutate the cached collections. The object-id lifetime contract is:
     # bodies and arenas must stay live until the module-defs version advances.
-    private def collect_defined_instance_method_full_names(
+    private def collect_defined_method_full_names(
       class_name : String,
       body : Array(ExprId),
       arena : Adamas::Compiler::Frontend::ArenaLike?,
-    ) : Set(String)
+    ) : {Set(String), Set(String)}
       scan_arena = (arena || @arena).as(Adamas::Compiler::Frontend::ArenaLike)
       cache_key = {
         class_name,
@@ -19919,11 +19917,12 @@ module Adamas::HIR
         arena_map_key(scan_arena),
         @module_defs_cache_version,
       }
-      if cached = @defined_instance_method_full_names_cache[cache_key]?
-        return cached.dup
+      if cached = @defined_method_full_names_cache[cache_key]?
+        return {cached[0].dup, cached[1].dup}
       end
 
-      defined = Set(String).new
+      instance_defined = Set(String).new
+      class_defined = Set(String).new
       type_cache = {} of String => TypeRef
       resolved_type_cache = {} of String => String
       old_class = @current_class
@@ -19948,10 +19947,10 @@ module Adamas::HIR
             case member
             when Adamas::Compiler::Frontend::DefNode
               next if member.is_abstract
-              next if def_receiver_is_self_from_node(member, scan_arena)
 
               method_name = def_method_name_from_node(member, scan_arena) || ""
-              base_name = "#{class_name}##{method_name}"
+              is_class_method = def_receiver_is_self_from_node(member, scan_arena)
+              base_name = is_class_method ? "#{class_name}.#{method_name}" : "#{class_name}##{method_name}"
 
               param_types = [] of TypeRef
               has_block = false
@@ -19986,12 +19985,13 @@ module Adamas::HIR
               end
 
               full_name = function_full_name_for_def(base_name, param_types, member.params, has_block)
-              defined << full_name
-              if env_get("DEBUG_DEFINED_METHODS") && class_name.starts_with?("Tuple") && method_name == "hash"
+              target = is_class_method ? class_defined : instance_defined
+              target << full_name
+              if !is_class_method && env_get("DEBUG_DEFINED_METHODS") && class_name.starts_with?("Tuple") && method_name == "hash"
                 STDERR.puts "[DEFINED_METHOD] class=#{class_name} full=#{full_name}"
               end
               # Untyped params may get an arity suffix later if a base name collision occurs.
-              if param_types.any? { |t| t == TypeRef::VOID }
+              if !is_class_method && param_types.any? { |t| t == TypeRef::VOID }
                 param_count = 0
                 if params = member.params
                   each_param(params) do |param|
@@ -19999,14 +19999,17 @@ module Adamas::HIR
                     param_count += 1
                   end
                 end
-                defined << "#{base_name}$arity#{param_count}" if param_count > 0
+                instance_defined << "#{base_name}$arity#{param_count}" if param_count > 0
               end
             when Adamas::Compiler::Frontend::GetterNode
               member.specs.each do |spec|
                 accessor_name = accessor_method_name(spec)
                 base_name = "#{class_name}##{accessor_name}"
                 full_name = mangle_function_name(base_name, [] of TypeRef)
-                defined << full_name
+                instance_defined << full_name
+                if member.is_class?
+                  class_defined << mangle_function_name("#{class_name}.#{accessor_name}", [] of TypeRef)
+                end
               end
             when Adamas::Compiler::Frontend::SetterNode
               member.specs.each do |spec|
@@ -20018,7 +20021,10 @@ module Adamas::HIR
                                TypeRef::VOID
                              end
                 full_name = mangle_function_name(base_name, [param_type])
-                defined << full_name
+                instance_defined << full_name
+                if member.is_class?
+                  class_defined << mangle_function_name("#{class_name}.#{accessor_name}=", [param_type])
+                end
               end
             when Adamas::Compiler::Frontend::PropertyNode
               member.specs.each do |spec|
@@ -20033,8 +20039,12 @@ module Adamas::HIR
                                TypeRef::VOID
                              end
                 setter_full = mangle_function_name(setter_base, [param_type])
-                defined << getter_full
-                defined << setter_full
+                instance_defined << getter_full
+                instance_defined << setter_full
+                if member.is_class?
+                  class_defined << mangle_function_name("#{class_name}.#{getter_name}", [] of TypeRef)
+                  class_defined << mangle_function_name("#{class_name}.#{setter_name}=", [param_type])
+                end
               end
             end
           end
@@ -20046,8 +20056,16 @@ module Adamas::HIR
         @current_typeof_local_names = old_typeof_locals
         @signature_scan_mode = old_signature_scan
       end
-      @defined_instance_method_full_names_cache[cache_key] = defined.dup
-      defined
+      @defined_method_full_names_cache[cache_key] = {instance_defined.dup, class_defined.dup}
+      {instance_defined, class_defined}
+    end
+
+    private def collect_defined_instance_method_full_names(
+      class_name : String,
+      body : Array(ExprId),
+      arena : Adamas::Compiler::Frontend::ArenaLike?,
+    ) : Set(String)
+      collect_defined_method_full_names(class_name, body, arena)[0]
     end
 
     private def record_direct_instance_method_names(
@@ -20109,129 +20127,7 @@ module Adamas::HIR
       body : Array(ExprId),
       arena : Adamas::Compiler::Frontend::ArenaLike?,
     ) : Set(String)
-      scan_arena = (arena || @arena).as(Adamas::Compiler::Frontend::ArenaLike)
-      cache_key = {
-        class_name,
-        body.object_id,
-        arena_map_key(scan_arena),
-        @module_defs_cache_version,
-      }
-      if cached = @defined_class_method_full_names_cache[cache_key]?
-        return cached.dup
-      end
-
-      defined = Set(String).new
-      type_cache = {} of String => TypeRef
-      resolved_type_cache = {} of String => String
-      old_class = @current_class
-      old_namespace_override = @current_namespace_override
-      old_type_name_cache = @type_name_exists_cache
-      old_typeof_locals = @current_typeof_local_names
-      old_signature_scan = @signature_scan_mode
-      @current_class = class_name
-      @current_namespace_override = nil
-      @type_name_exists_cache = {} of String => TypeNameExistsCacheEntry
-      @current_typeof_local_names = nil
-      @signature_scan_mode = true
-      begin
-        with_arena(scan_arena) do
-          body.each do |expr_id|
-            member = unwrap_visibility_member_in_arena(scan_arena[expr_id], scan_arena)
-            if member.is_a?(Adamas::Compiler::Frontend::DefNode)
-              if recovered = source_recovered_def_for(member, scan_arena)
-                member = recovered
-              end
-            end
-            case member
-            when Adamas::Compiler::Frontend::DefNode
-              next if member.is_abstract
-              next unless def_receiver_is_self_from_node(member, scan_arena)
-
-              method_name = def_method_name_from_node(member, scan_arena) || ""
-              base_name = "#{class_name}.#{method_name}"
-
-              param_types = [] of TypeRef
-              has_block = false
-              if params = member.params
-                each_param(params) do |param|
-                  next if named_only_separator?(param)
-                  if param.is_block
-                    has_block = true
-                    next
-                  end
-                  if ta = param.type_annotation
-                    type_name = (safe_slice_to_string(ta) || "")
-                    if resolved_name = resolved_type_cache[type_name]?
-                      param_types << (type_cache[resolved_name]? || begin
-                        resolved_ref = fast_param_type_ref(resolved_name)
-                        type_cache[resolved_name] = resolved_ref
-                        resolved_ref
-                      end)
-                    else
-                      resolved_name = fast_resolve_type_name_for_signature(type_name)
-                      resolved_type_cache[type_name] = resolved_name
-                      param_types << (type_cache[resolved_name]? || begin
-                        resolved_ref = fast_param_type_ref(resolved_name)
-                        type_cache[resolved_name] = resolved_ref
-                        resolved_ref
-                      end)
-                    end
-                  else
-                    param_types << TypeRef::VOID
-                  end
-                end
-              end
-
-              full_name = function_full_name_for_def(base_name, param_types, member.params, has_block)
-              defined << full_name
-            when Adamas::Compiler::Frontend::GetterNode
-              next unless member.is_class?
-              member.specs.each do |spec|
-                accessor_name = accessor_method_name(spec)
-                base_name = "#{class_name}.#{accessor_name}"
-                full_name = mangle_function_name(base_name, [] of TypeRef)
-                defined << full_name
-              end
-            when Adamas::Compiler::Frontend::SetterNode
-              next unless member.is_class?
-              member.specs.each do |spec|
-                accessor_name = accessor_storage_name(spec)
-                base_name = "#{class_name}.#{accessor_name}="
-                param_type = if ta = accessor_type_annotation_text(spec)
-                               type_ref_for_name(ta)
-                             else
-                               TypeRef::VOID
-                             end
-                full_name = mangle_function_name(base_name, [param_type])
-                defined << full_name
-              end
-            when Adamas::Compiler::Frontend::PropertyNode
-              next unless member.is_class?
-              member.specs.each do |spec|
-                getter_name = accessor_method_name(spec)
-                getter_base = "#{class_name}.#{getter_name}"
-                defined << mangle_function_name(getter_base, [] of TypeRef)
-
-                setter_name = "#{class_name}.#{accessor_storage_name(spec)}="
-                setter_type = if ta = accessor_type_annotation_text(spec)
-                                type_ref_for_name(ta)
-                              else
-                                TypeRef::VOID
-                              end
-                defined << mangle_function_name(setter_name, [setter_type])
-              end
-            end
-          end
-        end
-      ensure
-        @current_class = old_class
-        @current_namespace_override = old_namespace_override
-        @type_name_exists_cache = old_type_name_cache
-        @current_typeof_local_names = old_typeof_locals
-        @signature_scan_mode = old_signature_scan
-      end
-      @defined_class_method_full_names_cache[cache_key] = defined.dup
-      defined
+      collect_defined_method_full_names(class_name, body, arena)[1]
     end
 
     private def add_defined_instance_methods_from_expr(
@@ -26780,8 +26676,7 @@ module Adamas::HIR
 
     @[AlwaysInline]
     private def clear_defined_method_scan_caches : Nil
-      @defined_instance_method_full_names_cache.clear
-      @defined_class_method_full_names_cache.clear
+      @defined_method_full_names_cache.clear
     end
 
     @[AlwaysInline]
@@ -33458,22 +33353,22 @@ module Adamas::HIR
         @class_info[class_name] = provisional_info
         @class_info_by_type_id[type_ref.id] = provisional_info
         bump_class_info_version
+        trace_concrete_registration LoweringBinaryTrace::Event::ConcreteRegisterPoint, class_name
         STDERR.puts "[REG_CONCRETE_PHASE] class=#{class_name} phase=after_provisional_info" if trace_concrete_phase
 
         defined_start = Time.instant if mono_debug
         if env_has?("DEBUG_TYPE_RESOLVE") && class_name == "IO"
-          STDERR.puts "[DEBUG_IO] About to collect_defined_instance_method_full_names for IO"
+          STDERR.puts "[DEBUG_IO] About to collect_defined_method_full_names for IO"
           STDERR.puts "[DEBUG_IO]   enum_info Seek keys: #{@enum_info.try(&.keys.select { |k| k.includes?("Seek") }) || "nil"}"
         end
-        defined_instance_method_full_names = collect_defined_instance_method_full_names(class_name, class_body, @arena)
+        defined_instance_method_full_names, defined_class_method_full_names = collect_defined_method_full_names(class_name, class_body, @arena)
         record_direct_instance_method_names(class_name, defined_instance_method_full_names)
         STDERR.puts "[REG_CONCRETE_PHASE] class=#{class_name} phase=after_defined_instance_scan" if trace_concrete_phase
-        defined_class_method_full_names = collect_defined_class_method_full_names(class_name, class_body, @arena)
         STDERR.puts "[REG_CONCRETE_PHASE] class=#{class_name} phase=after_defined_class_scan" if trace_concrete_phase
         bootstrap_trace_puts "[CLASS_FRONTIER] concrete_after_defined_scan #{class_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
         if mono_debug && defined_start
           elapsed = (Time.instant - defined_start).total_milliseconds
-          STDERR.puts "[MONO] #{class_name} collect_defined_instance_methods #{elapsed.round(1)}ms"
+          STDERR.puts "[MONO] #{class_name} collect_defined_methods #{elapsed.round(1)}ms"
         end
 
         begin
