@@ -33626,6 +33626,12 @@ module Adamas::HIR
                           else
                             "#{class_name}##{method_name}"
                           end
+              method_trace_subject = if @lowering_binary_trace
+                                       "method:#{base_name}"
+                                     else
+                                       base_name
+                                     end
+              trace_concrete_registration LoweringBinaryTrace::Event::ConcreteRegisterStart, method_trace_subject
               STDERR.puts "[REG_METHOD_PHASE] class=#{class_name} method=#{method_name} phase=base_name base=#{base_name}" if trace_method_phase
               # Resolve arena once for this member and reuse it for both
               # return inference and yield detection to keep registration
@@ -33649,6 +33655,7 @@ module Adamas::HIR
               STDERR.puts "[REG_METHOD_PHASE] class=#{class_name} method=#{method_name} phase=before_return_field" if trace_method_phase
               explicit_return_type_name = explicit_return_type_for_registration(member, member_arena)
               STDERR.puts "[REG_METHOD_PHASE] class=#{class_name} method=#{method_name} phase=after_return_field present=#{explicit_return_type_name ? 1 : 0}" if trace_method_phase
+              contains_yield : Bool? = nil
               query_has_block_or_yield = false
               if params = member.params
                 each_param(params) do |param|
@@ -33660,7 +33667,8 @@ module Adamas::HIR
                 end
               end
               unless query_has_block_or_yield
-                query_has_block_or_yield = def_contains_yield?(member, member_arena)
+                contains_yield = def_contains_yield?(member, member_arena)
+                query_has_block_or_yield = contains_yield.not_nil!
               end
               return_type = if method_name == "initialize"
                               TypeRef::VOID
@@ -33707,6 +33715,7 @@ module Adamas::HIR
                 end
               end
               STDERR.puts "[REG_METHOD_PHASE] class=#{class_name} method=#{method_name} phase=after_return_type" if trace_method_phase
+              trace_concrete_registration LoweringBinaryTrace::Event::ConcreteRegisterPoint, method_trace_subject
               # Collect parameter types for mangling
               method_param_types = [] of TypeRef
               has_block = false
@@ -33772,17 +33781,16 @@ module Adamas::HIR
                 STDERR.puts "[REG_METHOD_PHASE] class=#{class_name} method=#{method_name} phase=forced_no_block" if trace_method_phase
               end
               STDERR.puts "[REG_METHOD_PHASE] class=#{class_name} method=#{method_name} phase=after_params count=#{method_param_types.size} has_block=#{has_block ? 1 : 0}" if trace_method_phase
-              contains_yield = if has_block
-                                 def_contains_yield?(member, member_arena)
-                               else
-                                 has_block = def_contains_yield?(member, member_arena)
-                               end
-              STDERR.puts "[REG_METHOD_PHASE] class=#{class_name} method=#{method_name} phase=after_yield contains=#{contains_yield ? 1 : 0} has_block=#{has_block ? 1 : 0}" if trace_method_phase
+              contains_yield = def_contains_yield?(member, member_arena) if contains_yield.nil?
+              contains_yield_value = contains_yield.not_nil!
+              has_block = true if contains_yield_value
+              STDERR.puts "[REG_METHOD_PHASE] class=#{class_name} method=#{method_name} phase=after_yield contains=#{contains_yield_value ? 1 : 0} has_block=#{has_block ? 1 : 0}" if trace_method_phase
               full_name = if has_params
                             function_full_name_for_def(base_name, method_param_types, params_storage, has_block)
                           else
                             function_full_name_for_def(base_name, method_param_types, nil, has_block)
                           end
+              trace_concrete_registration LoweringBinaryTrace::Event::ConcreteRegisterPoint, method_trace_subject
               STDERR.puts "[REG_METHOD_PHASE] class=#{class_name} method=#{method_name} phase=after_full_name full=#{full_name}" if trace_method_phase
               alias_full_name = nil
               alias_base = nil
@@ -33904,7 +33912,7 @@ module Adamas::HIR
               # Track yield-functions for inline expansion.
               # Note: MIR lowering removes yield-containing functions (inline-only), so we must inline
               # them at call sites. We key by both base and mangled names so resolution can find them.
-              if contains_yield
+              if contains_yield_value
                 add_yield_function(full_name)
                 debug_hook("yield.register", full_name)
                 if !has_block && !@function_defs.has_key?(base_name)
@@ -33925,6 +33933,7 @@ module Adamas::HIR
                 end
               end
               STDERR.puts "[REG_METHOD_PHASE] class=#{class_name} method=#{method_name} phase=after_yield_registration" if trace_method_phase
+              trace_concrete_registration LoweringBinaryTrace::Event::ConcreteRegisterPoint, method_trace_subject
               # Capture initialize parameters for new()
               # Also extract ivars from shorthand: def initialize(@value : T)
               # Use init_capture.source (not init_params.empty?) to track whether we've
@@ -33991,6 +34000,7 @@ module Adamas::HIR
                   infer_ivars_from_body(body, ivars, pointerof(offset))
                 end
               end
+              trace_concrete_registration LoweringBinaryTrace::Event::ConcreteRegisterDone, method_trace_subject
               STDERR.puts "[REG_METHOD_PHASE] class=#{class_name} method=#{method_name} phase=def_case_exit" if trace_method_phase
             when Adamas::Compiler::Frontend::MacroIfNode
               process_macro_if_in_class(member, class_name, ivars, pointerof(offset), init_capture)

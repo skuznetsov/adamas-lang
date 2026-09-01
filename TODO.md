@@ -41,6 +41,23 @@ compact static request-site/reason id for root requests. The fifth process was
 diagnostic-run comparison and not a performance claim. No full bootstrap
 timing, behavior fix, or B4-F admission claim is made yet.
 
+2026-09-01 METHOD REGISTRATION TRACE REMOVED ONE LOCAL DUPLICATE YIELD SCAN.
+Method-level concrete-registration intervals localized about 1.417 seconds of
+the bounded source-lowering wave to two registrations of
+`Adamas::HIR::AstToHir#lower_call`. Each registration asked
+`def_contains_yield?` twice with the same `DefNode` and resolved arena, while
+the cache still repeated the expensive arena validation. Registration now
+reuses that result locally without skipping the second class-registration
+pass or weakening the cross-arena cache key. In a source-matched bounded A/B,
+`lower_call` registration self time fell from about 1.417 seconds to 0.636
+seconds; the frontier stayed at 162 missing targets, zero pending targets, and
+842 functions. A no-prelude explicit-block/yield probe produced byte-identical
+HIR before and after the change, and the full AstToHir spec is green at 503
+examples, zero failures, and two pre-existing pending examples. This is a
+bounded diagnostic improvement, not a full-bootstrap timing or B4-F admission
+claim. The remaining duplicate class traversal is intentionally not skipped:
+its fixpoint/recovery side effects still need a stronger identity proof.
+
 2026-08-31 NAMED-TUPLE EQUALITY LOWERED STRUCTURALLY WITH SHORT-CIRCUIT
 CONTROL FLOW. Concrete `NamedTuple` operands now match fields by key instead of
 materializing a bodyless generic `NamedTuple#==`; unequal key sets and

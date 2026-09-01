@@ -27,6 +27,13 @@ module Adamas::Tools
     depth : UInt16,
     start_sequence : UInt32
 
+  private record ConcretePhaseSample,
+    symbol : String,
+    site : String,
+    duration_ns : UInt64,
+    self_ns : UInt64,
+    start_sequence : UInt32
+
   private class ActiveMaterialization
     getter event : TraceEvent
     property child_ns : UInt64
@@ -270,6 +277,7 @@ module Adamas::Tools
       concrete_registration_totals = Hash(String, Tuple(Int32, UInt64, UInt64)).new
       concrete_symbol_totals = Hash(String, Tuple(Int32, UInt64, UInt64)).new
       concrete_phase_totals = Hash(Tuple(String, String), Tuple(Int32, UInt64, UInt64, UInt64)).new
+      concrete_phase_samples = [] of ConcretePhaseSample
       unmatched_concrete_registrations = 0
       invalid_concrete_intervals = 0
       processes = [] of PhaseSample
@@ -421,7 +429,7 @@ module Adamas::Tools
         when TraceFormat::Event::ConcreteRegisterPoint.value
           if active = active_concrete_registrations.last?
             if event.symbol == active.symbol && event.caller
-              if !active.invalid && !record_concrete_phase(active, event, concrete_phase_totals)
+              if !active.invalid && !record_concrete_phase(active, event, concrete_phase_totals, concrete_phase_samples)
                 invalid_concrete_intervals += 1
               end
             else
@@ -434,7 +442,7 @@ module Adamas::Tools
         when TraceFormat::Event::ConcreteRegisterDone.value
           if active = active_concrete_registrations.last?
             if event.symbol == active.symbol && event.caller
-              if !active.invalid && !record_concrete_phase(active, event, concrete_phase_totals)
+              if !active.invalid && !record_concrete_phase(active, event, concrete_phase_totals, concrete_phase_samples)
                 invalid_concrete_intervals += 1
               end
               active_concrete_registrations.pop
@@ -548,6 +556,10 @@ module Adamas::Tools
         family, site = key
         count, total_ns, self_ns, max_self_ns = totals
         puts "    self_ms=#{format_ms(self_ns).rjust(12)} total_ms=#{format_ms(total_ns).rjust(12)} max_self_ms=#{format_ms(max_self_ns).rjust(12)} count=#{count.to_s.rjust(8)} family=#{family} site=#{site}"
+      end
+      puts "  longest_concrete_registration_phases:"
+      concrete_phase_samples.sort_by { |sample| {-sample.self_ns.to_i128, sample.symbol, sample.site} }.first(top).each do |sample|
+        puts "    self_ms=#{format_ms(sample.self_ns).rjust(12)} total_ms=#{format_ms(sample.duration_ns).rjust(12)} seq=#{sample.start_sequence} symbol=#{sample.symbol} site=#{sample.site}"
       end
 
       edges = request_edges.to_a.sort_by do |(caller, callee), count|
@@ -679,6 +691,7 @@ module Adamas::Tools
       active : ActiveConcreteRegistration,
       marker : TraceEvent,
       totals : Hash(Tuple(String, String), Tuple(Int32, UInt64, UInt64, UInt64)),
+      samples : Array(ConcretePhaseSample),
     ) : Bool
       unless duration_ns = elapsed_ns(active.last_marker, marker)
         active.invalid = true
@@ -697,6 +710,13 @@ module Adamas::Tools
         accumulated_self_ns &+ self_ns,
         self_ns > max_self_ns ? self_ns : max_self_ns,
       }
+      samples << ConcretePhaseSample.new(
+        active.symbol,
+        site,
+        duration_ns,
+        self_ns,
+        active.last_marker.sequence,
+      )
       active.self_ns &+= self_ns
       active.last_marker = marker
       active.child_ns = 0_u64
