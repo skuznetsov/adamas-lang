@@ -1,11 +1,25 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-08-06 (shared inherited-body reuse reduces the first self-host
+Updated: 2026-09-01 (shared inherited-body reuse reduces the first self-host
 missing-process boundary by 274 missing targets and 4,361 functions. A fresh
 clean-`03875097` B4-F run builds stage1 in 16.61 seconds and passes both stage1
 smokes, but stage2 reaches the 300-second compiler cap without producing
 `cv2_s2`; wrapper wall time is 302.69 seconds. Admission therefore remains RED.
 T1 and full-source MIR/LLVM continuity remain open.)
+
+2026-09-01 APPEND-ONLY LOWERING TRACE AVAILABLE; B4-F MEASUREMENT STILL OPEN.
+`ADAMAS_HIR_BINARY_TRACE=<path>` now records fixed 24-byte events for pending
+queue visits, lowering requests/materialization, passes, and missing-target scan
+iterations in a preallocated default 24 MiB buffer. Event-triggered interval
+flushes append framed chunks, diagnostic `_exit` gates flush explicitly, and
+the reader can skip an interrupted tail to a later valid run. The default
+interval is 250 ms (`ADAMAS_HIR_BINARY_TRACE_FLUSH_MS`) and capacity is
+configurable with `ADAMAS_HIR_BINARY_TRACE_CAPACITY`. Use
+`crystal run scripts/analyze_lowering_trace.cr -- <trace>` for hot-symbol counts
+and an ordered tail. A no-prelude trace-on/off probe produced byte-identical HIR;
+the standalone append/recovery spec is green. No full bootstrap timing or B4-F
+claim is made yet; the next step is one bounded missing-wave trace before
+changing lowering behavior.
 
 2026-08-31 NAMED-TUPLE EQUALITY LOWERED STRUCTURALLY WITH SHORT-CIRCUIT
 CONTROL FLOW. Concrete `NamedTuple` operands now match fields by key instead of

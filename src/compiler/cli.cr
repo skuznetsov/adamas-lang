@@ -2840,6 +2840,10 @@ module Adamas
           log_codepath_status("cli.metrics", "identity_dry_run", "not_taken", "CLI")
         end
 
+        # The lowering trace is append-only and already flushed by interval;
+        # close it at the end of HIR so normal runs also receive a summary chunk.
+        hir_converter.finish_lowering_binary_trace
+
         if options.stats
           hir_details = [] of String
           if options.verbose

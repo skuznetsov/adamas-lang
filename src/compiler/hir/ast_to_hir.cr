@@ -7,6 +7,7 @@
 
 require "./hir"
 require "./debug_hooks"
+require "./lowering_binary_trace"
 require "./memory_strategy"
 require "../layout_probe"
 require "../frontend/ast"
@@ -5249,6 +5250,7 @@ module Adamas::HIR
     @lowering_demand_ledger_events : Array(String)?
     @lowering_demand_ledger_bytes : Int32
     @lowering_demand_ledger_full : Bool
+    @lowering_binary_trace : LoweringBinaryTrace?
 
     # Helper: get function state (defaults to NotStarted)
     private def function_state(name : String) : FunctionLoweringState
@@ -5282,9 +5284,43 @@ module Adamas::HIR
       @pending_function_queue << name # missing-revision-owner
       @pending_function_queue_revision =
         @pending_function_queue_revision &+ 1_u64
+      record_lowering_trace_symbol(LoweringBinaryTrace::Event::QueueEnqueue, name)
       if @lowering_demand_ledger_filter
         record_lowering_demand_ledger(name, source)
       end
+    end
+
+    @[AlwaysInline]
+    private def record_lowering_trace_symbol(
+      event : LoweringBinaryTrace::Event,
+      name : String,
+      depth : Int32 = @lowering_depth,
+    ) : Nil
+      if trace = @lowering_binary_trace
+        trace.record_symbol(event, name, depth)
+      end
+    end
+
+    @[AlwaysInline]
+    private def record_lowering_trace_value(
+      event : LoweringBinaryTrace::Event,
+      value : UInt64,
+      depth : Int32 = @lowering_depth,
+    ) : Nil
+      if trace = @lowering_binary_trace
+        trace.record(event, value, depth)
+      end
+    end
+
+    def finish_lowering_binary_trace : Nil
+      if trace = @lowering_binary_trace
+        trace.close
+        @lowering_binary_trace = nil
+      end
+    end
+
+    private def flush_lowering_binary_trace : Nil
+      @lowering_binary_trace.try(&.flush)
     end
 
     private def record_lowering_demand_ledger(name : String, source : String) : Nil
@@ -7058,6 +7094,7 @@ module Adamas::HIR
       @lowering_demand_ledger_events = nil.as(Array(String)?)
       @lowering_demand_ledger_bytes = 0
       @lowering_demand_ledger_full = false
+      @lowering_binary_trace = LoweringBinaryTrace.from_env
       if @lowering_demand_ledger_filter && ledger_limit > 0
         @lowering_demand_ledger_events = [] of String
       end
@@ -46963,6 +47000,7 @@ module Adamas::HIR
           STDERR.puts "[L13_REPAIR] lower_target phase=exact name=#{name} has_body=#{@module.has_function_with_body?(name) ? 1 : 0}"
         end
         if env_has?("ADAMAS_STOP_BEFORE_HIR_RECEIVER_CALL_TARGET_LOWER")
+          flush_lowering_binary_trace
           LibC._exit(0)
         end
         lower_function_if_needed(name)
@@ -47067,10 +47105,12 @@ module Adamas::HIR
 
       @module.functions.each do |func|
         if scan_limit >= 0 && function_index >= scan_limit
+          flush_lowering_binary_trace
           LibC._exit(0)
         end
         if scan_name_index >= 0 && function_index == scan_name_index
           LibC.write(2, func.name.to_unsafe, func.name.bytesize)
+          flush_lowering_binary_trace
           LibC._exit(0)
         end
         function_index += 1
@@ -47963,7 +48003,10 @@ module Adamas::HIR
         end
       end
 
-      LibC._exit(0) if scan_limit >= 0
+      if scan_limit >= 0
+        flush_lowering_binary_trace
+        LibC._exit(0)
+      end
 
       lower_receiver_repair_targets(targets_to_lower, fallback_requests)
 
@@ -65090,6 +65133,7 @@ module Adamas::HIR
 
       if env_has?("ADAMAS_STOP_AFTER_HIR_FINAL_MISSING_VIRTUAL_REPAIR_COLLECT")
         STDERR.puts "[VIRTUAL_REPAIR_COLLECT] targets=#{target_shapes} active=#{active_shapes} requests=#{requests.size} historical_only=#{historical_only} resolved_body_skips=#{resolved_body_skips} unresolved_requests=#{unresolved_requests} root_requests=#{root_requests} child_requests=#{child_requests} direct_decl_requests=#{direct_decl_requests} included_module_requests=#{included_module_requests} inherited_or_unresolved_requests=#{inherited_or_unresolved_requests} not_started=#{not_started} pending=#{pending} in_progress=#{in_progress} completed=#{completed} lookup_nil=#{lookup_nil} resolved_missing_body=#{resolved_missing_body} unique_resolved_missing=#{unique_resolved_missing.size} resolved_body_preserve=#{resolved_body_preserve} resolved_body_nonancestor=#{resolved_body_nonancestor} resolved_same_owner=#{resolved_same_owner} resolved_ancestor_owner=#{resolved_ancestor_owner} resolved_other_owner=#{resolved_other_owner}"
+        flush_lowering_binary_trace
         LibC._exit(0)
       end
 
@@ -65117,6 +65161,7 @@ module Adamas::HIR
           probe_index += 1
         end
         STDERR.puts "[VIRTUAL_REPAIR_EXEC_PROBE] AGGREGATE executed=#{probe_index} limit=#{probe_limit} total=#{requests.size} elapsed_ms=#{probe_elapsed_ms.round(1)} body_count_delta=#{probe_body_delta} function_count_delta=#{probe_function_delta}"
+        flush_lowering_binary_trace
         LibC._exit(0)
       end
 
@@ -65127,6 +65172,7 @@ module Adamas::HIR
       if env_has?(env_key)
         log_flush_phase_status("stop_after_#{phase}", "taken")
         STDERR.puts "[FLUSH_GATE] stop_after=#{phase} env=#{env_key} pending=#{@pending_function_queue.size} funcs=#{@module.function_count}"
+        flush_lowering_binary_trace
         LibC._exit(0)
       else
         log_flush_phase_status("stop_after_#{phase}", "not_taken")
@@ -65868,6 +65914,10 @@ module Adamas::HIR
     # Lower any missing call targets that already appear in the HIR module.
     # This is a safety net for late-resolved overloads (defaults, implicit generics).
     private def lower_missing_call_targets
+      record_lowering_trace_value(
+        LoweringBinaryTrace::Event::MissingStart,
+        @module.function_count.to_u64,
+      )
       max_iterations = 20
       budget = env_get("ADAMAS_MISSING_BUDGET").try(&.to_i?) || 0
       iteration = 0
@@ -65912,6 +65962,12 @@ module Adamas::HIR
       stop_after_missing_phase("start", "ADAMAS_STOP_AFTER_HIR_MISSING_START", iteration, 0)
 
       while iteration < max_iterations
+        iteration_trace_value = iteration.to_u32.to_u64 |
+                                (@module.function_count.to_u64 << 32)
+        record_lowering_trace_value(
+          LoweringBinaryTrace::Event::MissingIterStart,
+          iteration_trace_value,
+        )
         iteration_function_set_revision = @module.function_set_revision
         iteration_hir_body_revision = @module.hir_body_revision
         iteration_started_at = Time.instant if phase_stats
@@ -66191,6 +66247,11 @@ module Adamas::HIR
         end
         stop_after_missing_phase("scan", "ADAMAS_STOP_AFTER_HIR_MISSING_SCAN", iteration, missing.size)
         missing.uniq!
+        scan_trace_value = iteration.to_u32.to_u64 | (missing.size.to_u64 << 32)
+        record_lowering_trace_value(
+          LoweringBinaryTrace::Event::MissingScanDone,
+          scan_trace_value,
+        )
         scan_done_at = Time.instant if phase_stats
         stop_after_missing_phase("uniq", "ADAMAS_STOP_AFTER_HIR_MISSING_UNIQ", iteration, missing.size)
         if incremental_falsifier
@@ -66417,6 +66478,12 @@ module Adamas::HIR
           stop_after_missing_phase("queue", "ADAMAS_STOP_AFTER_HIR_MISSING_QUEUE", iteration, 0)
           stop_after_missing_phase("process", "ADAMAS_STOP_AFTER_HIR_MISSING_PROCESS", iteration, 0)
           stop_after_missing_phase("force_modules", "ADAMAS_STOP_AFTER_HIR_MISSING_FORCE_MODULES", iteration, 0)
+          iteration_done_trace_value = iteration.to_u32.to_u64 |
+                                       (@module.function_count.to_u64 << 32)
+          record_lowering_trace_value(
+            LoweringBinaryTrace::Event::MissingIterDone,
+            iteration_done_trace_value,
+          )
           break
         end
 
@@ -66543,6 +66610,12 @@ module Adamas::HIR
           end
         end
         stop_after_missing_phase("force_modules", "ADAMAS_STOP_AFTER_HIR_MISSING_FORCE_MODULES", iteration, missing.size)
+        iteration_done_trace_value = iteration.to_u32.to_u64 |
+                                     (@module.function_count.to_u64 << 32)
+        record_lowering_trace_value(
+          LoweringBinaryTrace::Event::MissingIterDone,
+          iteration_done_trace_value,
+        )
         iteration += 1
         if @module.function_set_revision == iteration_function_set_revision &&
            @module.hir_body_revision == iteration_hir_body_revision
@@ -66553,6 +66626,12 @@ module Adamas::HIR
           break
         end
       end
+      missing_done_trace_value = iteration.to_u32.to_u64 |
+                                 (@module.function_count.to_u64 << 32)
+      record_lowering_trace_value(
+        LoweringBinaryTrace::Event::MissingDone,
+        missing_done_trace_value,
+      )
       if incremental_falsifier && !incremental_terminal_emitted
         STDERR.puts "[MISSING_INCREMENTAL_TERMINAL] iter=#{iteration} reason=max_iterations hir_shape_stable=unknown mismatches=#{incremental_mismatch_count} revision_stable=#{incremental_revision_stable_count} revision_scan_invalidated=#{incremental_revision_scan_invalidated_count} revision_false_reuse=#{incremental_revision_false_reuse_count} raw_local_stable=#{incremental_raw_local_stable_count} raw_local_scan_invalidated=#{incremental_raw_local_scan_invalidated_count} raw_local_false_reuse=#{incremental_raw_local_false_reuse_count} raw_local_available_mismatch=#{incremental_raw_local_available_mismatch_count} raw_local_scope=per_function_raw raw_local_authority=full_scan raw_local_promotion=forbidden availability_replay_model_mismatch=#{incremental_availability_replay_model_mismatch_count} availability_replay_stable=#{incremental_availability_replay_stable_count} availability_replay_false_reuse=#{incremental_availability_replay_false_reuse_count} availability_replay_scope=pre_scan_target_snapshot availability_replay_authority=full_scan availability_replay_promotion=forbidden precanonical_mismatches=#{incremental_precanonical_mismatch_count} precanonical_scope=occurrence_identity_order precanonical_authority=full_scan precanonical_promotion=forbidden exact_verdict=#{incremental_mismatch_count == 0 ? "observed_match" : "inconclusive"} revision_verdict=inconclusive raw_local_verdict=inconclusive availability_replay_verdict=inconclusive precanonical_verdict=inconclusive verdict=inconclusive"
       end
@@ -66566,6 +66645,7 @@ module Adamas::HIR
         log_missing_phase_status("stop_after_#{phase}", "taken", iteration, missing_count)
         STDERR.puts "[MISSING_GATE] stop_after=#{phase} env=#{env_key} iter=#{iteration} missing=#{missing_count} pending=#{@pending_function_queue.size} funcs=#{@module.function_count}"
         STDERR.puts "[FORCE_LOWER_GATE] total=#{@phase0_forced_lower_count} unique=#{@phase0_forced_lower_names.size}"
+        flush_lowering_binary_trace
         LibC._exit(0)
       else
         log_missing_phase_status("stop_after_#{phase}", "not_taken", iteration, missing_count)
@@ -66611,6 +66691,7 @@ module Adamas::HIR
       if env_has?(env_key)
         log_pending_phase_status("stop_after_#{phase}", "taken", pass, idx, name, note)
         STDERR.puts "[PENDING_GATE] stop_after=#{phase} env=#{env_key} ctx=#{@pending_process_context || "none"} iter=#{@pending_process_iteration} demand=#{@pending_process_demand_count} pass=#{pass} idx=#{idx} pending=#{@pending_function_queue.size} funcs=#{@module.function_count} name=#{name || ""} note=#{note}"
+        flush_lowering_binary_trace
         LibC._exit(0)
       else
         log_pending_phase_status("stop_after_#{phase}", "not_taken", pass, idx, name, note)
@@ -66650,6 +66731,7 @@ module Adamas::HIR
       if env_has?(env_key)
         log_pending_target_status(path, "taken", requested_name, target_name, full_name, note)
         STDERR.puts "[PENDING_TARGET_GATE] stop_after=#{phase} env=#{env_key} ctx=#{@pending_process_context || "none"} iter=#{@pending_process_iteration} demand=#{@pending_process_demand_count} pending=#{@pending_function_queue.size} funcs=#{@module.function_count} requested=#{requested_name || ""} target=#{target_name || ""} full=#{full_name || ""} note=#{note}"
+        flush_lowering_binary_trace
         LibC._exit(0)
       else
         log_pending_target_status(path, "not_taken", requested_name, target_name, full_name, note)
@@ -66687,6 +66769,7 @@ module Adamas::HIR
       if env_has?(env_key)
         log_pending_target_lower_method_status(path, "taken", class_name, method_name, base_name, full_name, override_name, note)
         STDERR.puts "[PENDING_TARGET_LOWER_METHOD_GATE] stop_after=#{phase} env=#{env_key} ctx=#{@pending_process_context || "none"} iter=#{@pending_process_iteration} demand=#{@pending_process_demand_count} pending=#{@pending_function_queue.size} funcs=#{@module.function_count} class=#{class_name} method=#{method_name} base=#{base_name} full=#{full_name} override=#{override_name} note=#{note}"
+        flush_lowering_binary_trace
         LibC._exit(0)
       else
         log_pending_target_lower_method_status(path, "not_taken", class_name, method_name, base_name, full_name, override_name, note)
@@ -66789,6 +66872,10 @@ module Adamas::HIR
     # This breaks the recursive stack overflow by processing functions iteratively.
     # Each iteration may add more functions to the queue, so we loop until empty.
     private def process_pending_lower_functions
+      record_lowering_trace_value(
+        LoweringBinaryTrace::Event::ProcessStart,
+        @pending_function_queue.size.to_u64,
+      )
       phase_stats = env_has?("ADAMAS_PHASE_STATS")
       @call_resolution_profile_active = phase_stats
       @call_resolution_memo_enabled = !env_has?("ADAMAS_DISABLE_CALL_RESOLUTION_MEMO")
@@ -66844,6 +66931,7 @@ module Adamas::HIR
       @lowering_depth = 0
 
       while pass < max_passes
+        record_lowering_trace_value(LoweringBinaryTrace::Event::PassStart, pass.to_u64)
         pass_lowered = 0
         pass_deferred = 0
         mono_before = @monomorphized.size
@@ -66882,6 +66970,7 @@ module Adamas::HIR
 
           name = @pending_function_queue[idx]
           idx += 1
+          record_lowering_trace_symbol(LoweringBinaryTrace::Event::QueueVisit, name)
           stop_after_pending_phase("first_item", "ADAMAS_STOP_AFTER_HIR_PENDING_FIRST_ITEM", pass, idx, name)
 
           # Block shape specialization (variant 1, consumer #1): a recorded shape
@@ -67063,6 +67152,8 @@ module Adamas::HIR
           STDERR.puts "[CALL_RESOLUTION_MEMO] pass=#{pass} enabled=#{@call_resolution_memo_enabled ? 1 : 0} entries=#{@call_resolution_memo.size} hits=#{@call_resolution_memo_hits} misses=#{@call_resolution_memo_misses} store_skips=#{@call_resolution_memo_store_skips}"
         end
         stop_after_pending_phase("pass_end", "ADAMAS_STOP_AFTER_HIR_PENDING_PASS_END", pass, idx, nil, "lowered=#{pass_lowered},deferred=#{pass_deferred},undeferred=#{rta_undeferred_total}")
+        pass_trace_value = pass.to_u32.to_u64 | (pass_lowered.to_u64 << 32)
+        record_lowering_trace_value(LoweringBinaryTrace::Event::PassDone, pass_trace_value)
 
         total_deferred += pass_deferred
         if progress_log
@@ -67109,6 +67200,8 @@ module Adamas::HIR
         STDERR.puts "[WARNING] process_pending_lower_functions: #{@pending_function_queue.size} functions remaining after #{pass} passes"
       end
       stop_after_pending_phase("done", "ADAMAS_STOP_AFTER_HIR_PENDING_DONE", pass, -1, nil, "total_lowered=#{total_lowered},total_deferred=#{total_deferred}")
+      record_lowering_trace_value(LoweringBinaryTrace::Event::ProcessDone, total_lowered.to_u64)
+      @lowering_binary_trace.try(&.flush)
     end
 
     private def hir_function_body_count : Int32
@@ -83886,6 +83979,7 @@ module Adamas::HIR
     private def lower_function_if_needed_impl(name : String) : Nil
       return unless v2_string_readable?(name)
       return if name.empty?
+      record_lowering_trace_symbol(LoweringBinaryTrace::Event::LowerRequest, name)
       return if synthetic_numeric_conversion_lower_target?(name)
       return if backend_owned_runtime_intrinsic_call?(name)
       if pending_target_gate_enabled?
@@ -86312,6 +86406,11 @@ module Adamas::HIR
       # Re-parse resolved target name once for use in the rest of this function
       resolved_parts = parse_method_name(target_name)
       set_function_state(materialized_name, FunctionLoweringState::InProgress)
+      record_lowering_trace_symbol(
+        LoweringBinaryTrace::Event::MaterializeStart,
+        materialized_name,
+        @lowering_depth + 1,
+      )
       materialization_function_count_before = @module.functions.size
       materialization_producer_path = "not_entered"
 
@@ -86788,6 +86887,11 @@ module Adamas::HIR
           clear_function_state(materialized_name)
         end
         log_materialization_completion_ledger(name, target_name, materialized_name, materialization_function_count_before, materialization_producer_path)
+        record_lowering_trace_symbol(
+          LoweringBinaryTrace::Event::MaterializeDone,
+          materialized_name,
+          @lowering_depth + 1,
+        )
         debug_hook("function.lower.done", "name=#{materialized_name}")
         if start_time
           elapsed_ms = (Time.instant - start_time).total_milliseconds
