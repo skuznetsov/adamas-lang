@@ -22,26 +22,28 @@ module Adamas::HIR
     DEFAULT_FLUSH_INTERVAL_NS = 250_000_000_u64
 
     enum Event : UInt16
-      ProcessStart        =  1
-      PassStart           =  2
-      QueueEnqueue        =  3
-      QueueVisit          =  4
-      LowerRequest        =  5
-      MaterializeStart    =  6
-      MaterializeDone     =  7
-      PassDone            =  8
-      ProcessDone         =  9
-      MissingStart        = 10
-      MissingIterStart    = 11
-      MissingScanDone     = 12
-      MissingIterDone     = 13
-      MissingDone         = 14
-      LowerRequestEdge    = 15
-      LowerRequestSite    = 16
-      LowerRequestProfile = 17
+      ProcessStart          =  1
+      PassStart             =  2
+      QueueEnqueue          =  3
+      QueueVisit            =  4
+      LowerRequest          =  5
+      MaterializeStart      =  6
+      MaterializeDone       =  7
+      PassDone              =  8
+      ProcessDone           =  9
+      MissingStart          = 10
+      MissingIterStart      = 11
+      MissingScanDone       = 12
+      MissingIterDone       = 13
+      MissingDone           = 14
+      LowerRequestEdge      = 15
+      LowerRequestSite      = 16
+      LowerRequestProfile   = 17
       ConcreteRegisterStart = 18
       ConcreteRegisterPoint = 19
       ConcreteRegisterDone  = 20
+      NestedRegisterStart   = 21
+      NestedRegisterDone    = 22
     end
 
     enum RequestProfileState : UInt8

@@ -59,6 +59,23 @@ module Adamas::Tools
     end
   end
 
+  private class ActiveNestedRegistration
+    getter symbol : String
+    getter started : TraceEvent
+    getter parent_symbol : String
+    getter parent_phase : String
+    property child_ns : UInt64
+
+    def initialize(
+      @symbol : String,
+      @started : TraceEvent,
+      @parent_symbol : String,
+      @parent_phase : String,
+    )
+      @child_ns = 0_u64
+    end
+  end
+
   private record PhaseSample,
     index : UInt64,
     duration_ns : UInt64,
@@ -238,7 +255,7 @@ module Adamas::Tools
         elsif event_id == TraceFormat::Event::LowerRequestSite.value
           caller = "<site:src/compiler/hir/ast_to_hir.cr:#{value & 0xffff_ffff_u64}>"
           symbol = symbols[value >> 32]?
-        elsif concrete_registration_event?(event_id)
+        elsif site_symbol_event?(event_id)
           caller = symbols[value & 0xffff_ffff_u64]?
           symbol = symbols[value >> 32]?
         elsif symbol_event?(event_id)
@@ -280,6 +297,9 @@ module Adamas::Tools
       concrete_phase_samples = [] of ConcretePhaseSample
       unmatched_concrete_registrations = 0
       invalid_concrete_intervals = 0
+      active_nested_registrations = [] of ActiveNestedRegistration
+      nested_registration_totals = Hash(Tuple(String, String, String), Tuple(Int32, UInt64, UInt64, UInt64)).new
+      unmatched_nested_registrations = 0
       processes = [] of PhaseSample
       passes = [] of PhaseSample
       phase_events = [] of TraceEvent
@@ -297,7 +317,7 @@ module Adamas::Tools
       unmatched_request_profiles = 0
       run.events.each do |event|
         event_counts[event_name(event.event_id)] += 1
-        if (symbol = event.symbol) && !concrete_registration_event?(event.event_id)
+        if (symbol = event.symbol) && !site_symbol_event?(event.event_id)
           # Concrete registration has its own family and phase reports below;
           # including every checkpoint here would hide lowering hot symbols.
           per_event = symbol_counts[symbol]? || begin
@@ -474,6 +494,51 @@ module Adamas::Tools
           else
             unmatched_concrete_registrations += 1
           end
+        when TraceFormat::Event::NestedRegisterStart.value
+          if symbol = event.symbol
+            if event.caller
+              parent = active_concrete_registrations.last?
+              active_nested_registrations << ActiveNestedRegistration.new(
+                symbol,
+                event,
+                parent.try(&.symbol) || "<root>",
+                parent.try(&.last_marker.caller) || "<outside-concrete-phase>",
+              )
+            else
+              unmatched_nested_registrations += 1
+            end
+          else
+            unmatched_nested_registrations += 1
+          end
+        when TraceFormat::Event::NestedRegisterDone.value
+          if active = active_nested_registrations.pop?
+            if event.symbol == active.symbol && event.caller
+              if duration_ns = elapsed_ns(active.started, event)
+                self_ns = duration_ns >= active.child_ns ? duration_ns - active.child_ns : 0_u64
+                key = {
+                  generic_family(active.parent_symbol),
+                  active.parent_phase,
+                  generic_family(active.symbol),
+                }
+                count, total_ns, accumulated_self_ns, max_ns = nested_registration_totals[key]? || {0, 0_u64, 0_u64, 0_u64}
+                nested_registration_totals[key] = {
+                  count + 1,
+                  total_ns &+ duration_ns,
+                  accumulated_self_ns &+ self_ns,
+                  duration_ns > max_ns ? duration_ns : max_ns,
+                }
+                if parent = active_nested_registrations.last?
+                  parent.child_ns &+= duration_ns
+                end
+              else
+                unmatched_nested_registrations += 1
+              end
+            else
+              unmatched_nested_registrations += 1
+            end
+          else
+            unmatched_nested_registrations += 1
+          end
         when TraceFormat::Event::MissingStart.value,
              TraceFormat::Event::MissingIterStart.value,
              TraceFormat::Event::MissingScanDone.value,
@@ -484,6 +549,7 @@ module Adamas::Tools
       end
       unmatched_materializations += active_materializations.size
       unmatched_concrete_registrations += active_concrete_registrations.size
+      unmatched_nested_registrations += active_nested_registrations.size
       unmatched_request_profiles += active_profile_requests.size if request_profile_enabled
       puts "  event_counts:"
       event_counts.to_a.sort_by(&.[0]).each do |name, count|
@@ -560,6 +626,16 @@ module Adamas::Tools
       puts "  longest_concrete_registration_phases:"
       concrete_phase_samples.sort_by { |sample| {-sample.self_ns.to_i128, sample.symbol, sample.site} }.first(top).each do |sample|
         puts "    self_ms=#{format_ms(sample.self_ns).rjust(12)} total_ms=#{format_ms(sample.duration_ns).rjust(12)} seq=#{sample.start_sequence} symbol=#{sample.symbol} site=#{sample.site}"
+      end
+
+      nested_registrations = nested_registration_totals.to_a.sort_by do |key, totals|
+        {-totals[2].to_i128, -totals[1].to_i128, key[0], key[1], key[2]}
+      end.first(top)
+      puts "  nested_registration_edges: unmatched=#{unmatched_nested_registrations}"
+      nested_registrations.each do |key, totals|
+        parent, phase, child = key
+        count, total_ns, self_ns, max_ns = totals
+        puts "    self_ms=#{format_ms(self_ns).rjust(12)} total_ms=#{format_ms(total_ns).rjust(12)} max_ms=#{format_ms(max_ns).rjust(12)} count=#{count.to_s.rjust(8)} parent=#{parent} phase=#{phase} child=#{child}"
       end
 
       edges = request_edges.to_a.sort_by do |(caller, callee), count|
@@ -759,6 +835,15 @@ module Adamas::Tools
       event_id == TraceFormat::Event::ConcreteRegisterStart.value ||
         event_id == TraceFormat::Event::ConcreteRegisterPoint.value ||
         event_id == TraceFormat::Event::ConcreteRegisterDone.value
+    end
+
+    private def nested_registration_event?(event_id : UInt16) : Bool
+      event_id == TraceFormat::Event::NestedRegisterStart.value ||
+        event_id == TraceFormat::Event::NestedRegisterDone.value
+    end
+
+    private def site_symbol_event?(event_id : UInt16) : Bool
+      concrete_registration_event?(event_id) || nested_registration_event?(event_id)
     end
 
     private def lower_request_event?(event_id : UInt16) : Bool

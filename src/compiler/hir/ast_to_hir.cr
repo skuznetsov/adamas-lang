@@ -5362,6 +5362,20 @@ module Adamas::HIR
       end
     end
 
+    # Keep nested declaration profiling out of the default path. When the
+    # binary trace is enabled, each expansion records its static callsite and
+    # dynamic qualified declaration name without formatting a log line.
+    private macro trace_nested_registration(event, subject)
+      if trace = @lowering_binary_trace
+        trace.record_site_symbol_at(
+          {{event}},
+          {{ "#{@def.name}:#{@caller.first.line_number}" }},
+          {{subject}},
+          depth: @lowering_depth,
+        )
+      end
+    end
+
     def finish_lowering_binary_trace : Nil
       if trace = @lowering_binary_trace
         trace.close
@@ -33258,7 +33272,9 @@ module Adamas::HIR
             nested_generic_template_known = nested_type_param_count > 0 &&
                                             @generic_templates.has_key?(full_nested_name)
             unless specialized_class && nested_generic_template_known
+              trace_nested_registration LoweringBinaryTrace::Event::NestedRegisterStart, full_nested_name
               register_class_with_name(member, full_nested_name)
+              trace_nested_registration LoweringBinaryTrace::Event::NestedRegisterDone, full_nested_name
             end
             # When parent has active type substitutions and nested type is generic,
             # also monomorphize the nested type with the substituted type args.
@@ -33290,15 +33306,23 @@ module Adamas::HIR
             member = member.unsafe_as(Adamas::Compiler::Frontend::EnumNode)
             enum_name = enum_name_from_node(member) || ""
             full_enum_name = qualified_nested_type_name(nested_prefix, enum_name)
+            trace_nested_registration LoweringBinaryTrace::Event::NestedRegisterStart, full_enum_name
             register_enum_with_name(member, full_enum_name)
+            trace_nested_registration LoweringBinaryTrace::Event::NestedRegisterDone, full_enum_name
           when Adamas::Compiler::Frontend::NodeKind::Module
             member = member.unsafe_as(Adamas::Compiler::Frontend::ModuleNode)
             nested_name = module_name_from_node(member) || ""
             full_nested_name = qualified_nested_type_name(nested_prefix, nested_name)
+            trace_nested_registration LoweringBinaryTrace::Event::NestedRegisterStart, full_nested_name
             register_nested_module(member, full_nested_name)
+            trace_nested_registration LoweringBinaryTrace::Event::NestedRegisterDone, full_nested_name
           when Adamas::Compiler::Frontend::NodeKind::MacroDef
             member = member.unsafe_as(Adamas::Compiler::Frontend::MacroDefNode)
+            macro_name = safe_slice_to_string(member.name) || ""
+            full_macro_name = qualified_nested_type_name(nested_prefix, macro_name)
+            trace_nested_registration LoweringBinaryTrace::Event::NestedRegisterStart, full_macro_name
             register_macro(member, nested_prefix)
+            trace_nested_registration LoweringBinaryTrace::Event::NestedRegisterDone, full_macro_name
           end
         end
         trace_concrete_registration LoweringBinaryTrace::Event::ConcreteRegisterPoint, class_name
