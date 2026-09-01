@@ -19,6 +19,30 @@ module Adamas::Tools
     value : UInt64,
     symbol : String?
 
+  private record MaterializationSample,
+    symbol : String,
+    duration_ns : UInt64,
+    self_ns : UInt64,
+    depth : UInt16,
+    start_sequence : UInt32
+
+  private class ActiveMaterialization
+    getter event : TraceEvent
+    property child_ns : UInt64
+
+    def initialize(@event : TraceEvent)
+      @child_ns = 0_u64
+    end
+  end
+
+  private record PhaseSample,
+    index : UInt64,
+    duration_ns : UInt64,
+    initial : UInt64,
+    result : UInt64,
+    requests : Int32,
+    materializations : Int32
+
   private class TraceRun
     getter index : Int32
     getter pid : UInt32
@@ -195,6 +219,19 @@ module Adamas::Tools
 
       event_counts = Hash(String, Int32).new(0)
       symbol_counts = Hash(String, Hash(UInt16, Int32)).new
+      request_edges = Hash(Tuple(String, String), Int32).new(0)
+      active_materializations = [] of ActiveMaterialization
+      materializations = [] of MaterializationSample
+      unmatched_materializations = 0
+      processes = [] of PhaseSample
+      passes = [] of PhaseSample
+      phase_events = [] of TraceEvent
+      active_process : TraceEvent? = nil
+      process_requests = 0
+      process_materializations = 0
+      active_pass : TraceEvent? = nil
+      pass_requests = 0
+      pass_materializations = 0
       run.events.each do |event|
         event_counts[event_name(event.event_id)] += 1
         if symbol = event.symbol
@@ -205,7 +242,91 @@ module Adamas::Tools
           end
           per_event[event.event_id] += 1
         end
+
+        if active_process
+          process_requests += 1 if event.event_id == TraceFormat::Event::LowerRequest.value
+          process_materializations += 1 if event.event_id == TraceFormat::Event::MaterializeStart.value
+        end
+        if active_pass
+          pass_requests += 1 if event.event_id == TraceFormat::Event::LowerRequest.value
+          pass_materializations += 1 if event.event_id == TraceFormat::Event::MaterializeStart.value
+        end
+
+        case event.event_id
+        when TraceFormat::Event::ProcessStart.value
+          active_process = event
+          process_requests = 0
+          process_materializations = 0
+        when TraceFormat::Event::ProcessDone.value
+          if started = active_process
+            processes << PhaseSample.new(
+              processes.size.to_u64,
+              event.delta_ns - started.delta_ns,
+              started.value,
+              event.value,
+              process_requests,
+              process_materializations,
+            )
+          end
+          active_process = nil
+        when TraceFormat::Event::PassStart.value
+          active_pass = event
+          pass_requests = 0
+          pass_materializations = 0
+        when TraceFormat::Event::PassDone.value
+          if started = active_pass
+            pass_index = event.value & 0xffff_ffff_u64
+            lowered = event.value >> 32
+            passes << PhaseSample.new(
+              pass_index,
+              event.delta_ns - started.delta_ns,
+              started.value,
+              lowered,
+              pass_requests,
+              pass_materializations,
+            )
+          end
+          active_pass = nil
+        when TraceFormat::Event::LowerRequest.value
+          if callee = event.symbol
+            caller = active_materializations.last?.try(&.event.symbol) || "<root/phase>"
+            request_edges[{caller, callee}] += 1
+          end
+        when TraceFormat::Event::MaterializeStart.value
+          active_materializations << ActiveMaterialization.new(event)
+        when TraceFormat::Event::MaterializeDone.value
+          if active = active_materializations.pop?
+            started = active.event
+            if symbol = event.symbol
+              if symbol == started.symbol
+                duration_ns = event.delta_ns - started.delta_ns
+                self_ns = duration_ns >= active.child_ns ? duration_ns - active.child_ns : 0_u64
+                materializations << MaterializationSample.new(
+                  symbol,
+                  duration_ns,
+                  self_ns,
+                  event.depth,
+                  started.sequence,
+                )
+                if parent = active_materializations.last?
+                  parent.child_ns &+= duration_ns
+                end
+              else
+                unmatched_materializations += 1
+              end
+            end
+          else
+            unmatched_materializations += 1
+          end
+        when TraceFormat::Event::MissingStart.value,
+             TraceFormat::Event::MissingIterStart.value,
+             TraceFormat::Event::MissingScanDone.value,
+             TraceFormat::Event::MissingIterDone.value,
+             TraceFormat::Event::MissingDone.value
+          phase_events << event
+        end
       end
+      unmatched_materializations += active_materializations.size
       puts "  event_counts:"
       event_counts.to_a.sort_by(&.[0]).each do |name, count|
         puts "    #{count.to_s.rjust(8)}  #{name}"
@@ -222,6 +343,55 @@ module Adamas::Tools
         start = counts[TraceFormat::Event::MaterializeStart.value]
         done = counts[TraceFormat::Event::MaterializeDone.value]
         puts "    #{total.to_s.rjust(8)} q=#{enqueue} v=#{visit} req=#{request} mat=#{start}/#{done}  #{name}"
+      end
+
+      materialization_totals = Hash(String, Tuple(Int32, UInt64, UInt64)).new
+      materializations.each do |sample|
+        count, total_ns, self_ns = materialization_totals[sample.symbol]? || {0, 0_u64, 0_u64}
+        materialization_totals[sample.symbol] = {
+          count + 1,
+          total_ns &+ sample.duration_ns,
+          self_ns &+ sample.self_ns,
+        }
+      end
+      repeated = materialization_totals.compact_map do |name, totals|
+        totals[0] > 1 ? {name, totals} : nil
+      end.sort_by { |name, totals| {-totals[0], name} }.first(top)
+      puts "  repeated_materializations:"
+      repeated.each do |name, totals|
+        count, total_ns, self_ns = totals
+        puts "    #{count.to_s.rjust(8)} total_ms=#{format_ms(total_ns)} self_ms=#{format_ms(self_ns)}  #{name}"
+      end
+
+      edges = request_edges.to_a.sort_by do |(caller, callee), count|
+        {-count, caller, callee}
+      end.first(top)
+      puts "  hot_request_edges:"
+      edges.each do |(caller, callee), count|
+        puts "    #{count.to_s.rjust(8)}  #{caller} -> #{callee}"
+      end
+
+      longest = materializations.sort_by do |sample|
+        {-sample.duration_ns.to_i128, sample.symbol, sample.start_sequence}
+      end.first(top)
+      puts "  longest_materializations: unmatched=#{unmatched_materializations}"
+      longest.each do |sample|
+        puts "    total_ms=#{format_ms(sample.duration_ns).rjust(12)} self_ms=#{format_ms(sample.self_ns).rjust(12)} depth=#{sample.depth} seq=#{sample.start_sequence}  #{sample.symbol}"
+      end
+
+      puts "  processes:"
+      processes.each do |sample|
+        puts "    index=#{sample.index} duration_ms=#{format_ms(sample.duration_ns)} pending=#{sample.initial} lowered=#{sample.result} requests=#{sample.requests} materializations=#{sample.materializations}"
+      end
+
+      puts "  passes:"
+      passes.each do |sample|
+        puts "    index=#{sample.index} duration_ms=#{format_ms(sample.duration_ns)} lowered=#{sample.result} requests=#{sample.requests} materializations=#{sample.materializations}"
+      end
+
+      puts "  missing_phases:"
+      phase_events.each do |event|
+        puts "    seq=#{event.sequence} delta_ms=#{format_ms(event.delta_ns)} event=#{event_name(event.event_id)} value=#{numeric_value(event)}"
       end
 
       return if tail <= 0

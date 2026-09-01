@@ -7,7 +7,7 @@ smokes, but stage2 reaches the 300-second compiler cap without producing
 `cv2_s2`; wrapper wall time is 302.69 seconds. Admission therefore remains RED.
 T1 and full-source MIR/LLVM continuity remain open.)
 
-2026-09-01 APPEND-ONLY LOWERING TRACE AVAILABLE; B4-F MEASUREMENT STILL OPEN.
+2026-09-01 APPEND-ONLY LOWERING TRACE AVAILABLE; FIRST BOUNDED WAVE LOCALIZED.
 `ADAMAS_HIR_BINARY_TRACE=<path>` now records fixed 24-byte events for pending
 queue visits, lowering requests/materialization, passes, and missing-target scan
 iterations in a preallocated default 24 MiB buffer. Event-triggered interval
@@ -16,10 +16,22 @@ the reader can skip an interrupted tail to a later valid run. The default
 interval is 250 ms (`ADAMAS_HIR_BINARY_TRACE_FLUSH_MS`) and capacity is
 configurable with `ADAMAS_HIR_BINARY_TRACE_CAPACITY`. Use
 `crystal run scripts/analyze_lowering_trace.cr -- <trace>` for hot-symbol counts
-and an ordered tail. A no-prelude trace-on/off probe produced byte-identical HIR;
-the standalone append/recovery spec is green. No full bootstrap timing or B4-F
-claim is made yet; the next step is one bounded missing-wave trace before
-changing lowering behavior.
+and an ordered tail. The analyzer also reconstructs balanced caller-to-request
+edges, inclusive/self materialization time, repeated materialization cost, and
+pending/missing phase windows. A no-prelude trace-on/off probe produced
+byte-identical HIR; the standalone append/recovery spec is green. At exact HEAD
+`52e9c567`, a safely bounded first missing wave completed in about 47 seconds
+with 78,969 trace events. Its fifth pending process accounts for 25.942 seconds,
+42,446 requests, and 2,949 materializations. The enclosing
+`Adamas::Compiler::CLI#compile` materialization accounts for 18.486 seconds
+inclusive and 17.361 seconds self. The 61,326 requests versus 3,464 balanced
+materializations refute a global rematerialization-loop explanation; even the
+45 repeated `Hash(String, Float64)#[]?` materializations cost only 1.154 ms.
+The largest unresolved root/phase demands are 8,714 requests for one
+`RyuPrintf.put` specialization, 1,238 for one `Dragonbox.put` specialization,
+and 1,018 for another `RyuPrintf.put` specialization. Their exact root producer
+is the next falsifier. No full bootstrap timing, behavior fix, or B4-F admission
+claim is made yet.
 
 2026-08-31 NAMED-TUPLE EQUALITY LOWERED STRUCTURALLY WITH SHORT-CIRCUIT
 CONTROL FLOW. Concrete `NamedTuple` operands now match fields by key instead of
