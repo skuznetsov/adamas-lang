@@ -14681,6 +14681,33 @@ materialization rather than ordinary resolver, inference, or duplicate request
 guards. Next: rank the 245 new specializations by base-family count and
 non-overlapping self time before changing monomorphization policy or caches.
 
+The family ranking keeps only two in-memory maps and a nested elapsed-time
+stack while the method filter is active, then emits one top-eight summary.
+Nested monomorphization time is subtracted from each newly created family's
+self time; the enclosing inclusive monomorphization and allocator intervals
+remain overlapping diagnostics. A no-prelude `Box(Int32)` constructor reported
+`Box:0.2ms/1new`, and profile-on/off HIR remained byte-identical with SHA-256
+`552408be60052786d59c2e758d1d283092c09b735b3c9735462bc826c2273e21`.
+
+In the bounded first missing wave, the primary body took 7,030.2 ms and spent
+6,592.8 ms inside 304 monomorphization entries with 245 newly admitted classes.
+The non-overlapping family self-time ranking was
+`Hash::Entry:3525.2ms/92new`, `Hash:2205.1ms/93new`,
+`Array:712.2ms/34new`, `Pointer:123.0ms/23new`, and
+`Set:24.2ms/3new`. `Hash` plus `Hash::Entry` therefore account for about 87%
+of the measured new-specialization self time. The secondary materialization
+showed the same shape at smaller scale. The frontier remained 162 missing,
+zero pending, and 4,808 functions.
+
+Adversary verdict: ROBUST for selecting `Hash` and `Hash::Entry` as the next
+profiling target, but VULNERABLE as a root-cause or speedup claim. Family self
+time includes all non-nested work inside `register_concrete_class`, and the
+diagnostic adds timestamps while enabled. Next: use compact static site ids and
+in-memory counters only at the existing registration subphase boundaries to
+separate repeated template-body scans from include expansion and ivar/layout
+work. Do not add a production cache until one subphase and its semantic
+invariant are falsifier-backed. B4-F remains RED.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
