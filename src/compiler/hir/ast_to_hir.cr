@@ -90011,7 +90011,17 @@ module Adamas::HIR
         end
       end
       abi_guard_explicit_arg_count = args.size
-      args, has_named_args, default_arg_entry_name = apply_default_args(ctx, args, method_name, arg_binding_full_method_name, has_block_call, has_named_args, receiver_id)
+      # Positional auto-allocators are already synthesized as default-argument
+      # wrappers around `#initialize`. Expanding their defaults at this callsite
+      # would materialize an unused full-shape `.new` overload and then split its
+      # union arguments into concrete initializer bodies. Keep the source call
+      # shape and let the allocator wrapper evaluate each default exactly once.
+      args, has_named_args, default_arg_entry_name = if constructor_arg_binding_name &&
+                                                        !has_named_args && !has_splat && !has_block_call
+                                                       {args, has_named_args, nil}
+                                                     else
+                                                       apply_default_args(ctx, args, method_name, arg_binding_full_method_name, has_block_call, has_named_args, receiver_id)
+                                                     end
       has_named_args = false if constructor_arg_binding_name
       if debug_env_filter_match?("DEBUG_CALL_TRACE", method_name, method_name, full_method_name || "")
         STDERR.puts "[CALL_TRACE] stage=after_defaults method=#{method_name} args=#{args.size} receiver=#{!!receiver_id} full=#{full_method_name || ""}"

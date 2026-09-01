@@ -14490,6 +14490,31 @@ predicate and produced no stage2 artifact. Next: commit this bounded
 correctness slice, then run one fresh guarded 300-second B4-F to measure the
 next actual frontier; do not infer bootstrap closure from the small repros.
 
+### Session 121: keep positional constructor defaults in allocator wrappers (2026-08-31)
+
+Positional auto-allocator calls expanded omitted initializer defaults twice:
+once at the source call site and again inside the generated `.new` wrapper.
+The post-expansion call shape materialized an unused full-arity allocator and
+split a declared nilable tail into concrete initializer bodies. A source-backed
+single-call regression reproduced the fanout from one canonical initializer to
+additional `Nil` and `Int32` bodies.
+
+`lower_call` now preserves the source argument shape for positional,
+non-splat, non-block auto-allocator calls. The synthesized allocator wrapper
+remains the sole owner of default evaluation. Named, splat, block, and explicit
+class-level `new` routes retain their existing argument expansion and overload
+selection. The regression also proves that the caller keeps `new$Int32`, while
+the wrapper calls the declared `initialize$Int32_String_Nil | Int32` ABI.
+
+The complete `ast_to_hir` suite passes 502 examples with zero failures or
+errors and two existing pending examples. In a bounded first missing wave, the
+previous five timed `AstToHir#initialize` materializations disappeared, but
+`CLI#compile` still takes 16.7-17.3 seconds and the wave remains about 42
+seconds. This is therefore ROBUST for the ordinary positional allocator route
+and VULNERABLE as a global bootstrap-speed claim. Type-returning and pending
+repair entry points still need their own source-shape falsifier before any
+shared provenance mechanism is justified; B4-F remains RED.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

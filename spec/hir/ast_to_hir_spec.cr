@@ -6551,6 +6551,49 @@ describe Adamas::HIR::AstToHir do
       call.not_nil!.as(Adamas::HIR::Call).args.size.should eq(2)
     end
 
+    it "does not rematerialize expanded defaults as concrete allocator shapes" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        class CanonicalDefaultInitializer
+          def initialize(
+            @value : Int32,
+            @label : String = "default",
+            @optional : Int32? = nil,
+          )
+            @marker = 7
+          end
+        end
+
+        CanonicalDefaultInitializer.new(1)
+      CRYSTAL
+
+      converter.__test_process_pending_lower_functions
+      initializers = converter.module.functions.select do |function|
+        function.name.starts_with?("CanonicalDefaultInitializer#initialize$") &&
+          !function.blocks.empty?
+      end
+      canonical_name = "CanonicalDefaultInitializer#initialize$Int32_String_Nil | Int32"
+
+      initializers.map(&.name).should eq([canonical_name])
+      initializers.first.params.size.should eq(4)
+      converter.__test_get_type_name_from_ref(initializers.first.params[3].type).should eq("Nil | Int32")
+
+      main_allocator_calls = converter.module.function_by_name("__adamas_main").not_nil!
+        .blocks
+        .flat_map(&.instructions)
+        .compact_map(&.as?(Adamas::HIR::Call))
+        .select { |call| call.method_name.starts_with?("CanonicalDefaultInitializer.new$") }
+      main_allocator_calls.map(&.method_name).should eq(["CanonicalDefaultInitializer.new$Int32"])
+
+      allocator_calls = converter.module.functions
+        .select { |function| function.name.starts_with?("CanonicalDefaultInitializer.new$") }
+        .flat_map(&.blocks)
+        .flat_map(&.instructions)
+        .compact_map(&.as?(Adamas::HIR::Call))
+        .select { |call| call.method_name.starts_with?("CanonicalDefaultInitializer#initialize$") }
+      allocator_calls.should_not be_empty
+      allocator_calls.map(&.method_name).uniq.should eq([canonical_name])
+    end
+
     it "binds default params before inline yield lowering" do
       code = <<-CRYSTAL
         def each_with_index_like(offset = 0)
