@@ -36,6 +36,7 @@ module Adamas::HIR
       MissingIterDone  = 13
       MissingDone      = 14
       LowerRequestEdge = 15
+      LowerRequestSite = 16
     end
 
     getter dropped_events : UInt64
@@ -156,6 +157,7 @@ module Adamas::HIR
       current_method : String?,
       current_method_is_class : Bool,
       depth : Int32 = 0,
+      site_line : Int32 = 0,
     ) : Nil
       unless @active
         record_symbol(Event::LowerRequest, target, depth)
@@ -166,6 +168,8 @@ module Adamas::HIR
                context_symbol(current_class, current_method, current_method_is_class)
       if caller
         record_request_at(caller, target, depth: depth)
+      elsif site_line > 0
+        record_request_site_at(target, site_line, depth: depth)
       else
         record_symbol(Event::LowerRequest, target, depth)
       end
@@ -215,6 +219,29 @@ module Adamas::HIR
 
       edge = caller_id | (target_id << 32)
       record_at(Event::LowerRequestEdge, edge, depth: depth, ticks: ticks)
+    end
+
+    # Root requests use their compile-time AstToHir callsite line as the low
+    # UInt32. This avoids interning a caller string for every static callsite.
+    def record_request_site_at(
+      target : String,
+      site_line : Int32,
+      depth : Int32 = 0,
+      ticks : UInt64 = Crystal::System::Time.ticks,
+    ) : Nil
+      unless @active
+        record_at(Event::LowerRequestSite, depth: depth, ticks: ticks)
+        return
+      end
+
+      target_id = intern_symbol(target)
+      if site_line <= 0 || target_id > UInt32::MAX
+        record_at(Event::LowerRequest, target_id, depth: depth, ticks: ticks)
+        return
+      end
+
+      site = site_line.to_u64 | (target_id << 32)
+      record_at(Event::LowerRequestSite, site, depth: depth, ticks: ticks)
     end
 
     def record_at(

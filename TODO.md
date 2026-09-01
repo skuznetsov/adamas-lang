@@ -14549,6 +14549,26 @@ and VULNERABLE as a global bootstrap-speed claim. Type-returning and pending
 repair entry points still need their own source-shape falsifier before any
 shared provenance mechanism is justified; B4-F remains RED.
 
+### Session 122: attribute root lowering requests to static callsites (2026-09-01)
+
+The fixed-width binary lowering trace now preserves the compile-time
+`AstToHir` line for root requests that have no semantic caller. The existing
+`lower_function_if_needed` wrapper captures `__LINE__` as a default argument,
+so all callsites are attributed without per-call edits, macro expansion, path
+strings, or a wider event record. The line and target symbol id share the
+existing 64-bit payload; older traces remain readable.
+
+A bounded first-missing-wave trace contains 78,969 events: 44,186 semantic
+request edges and 17,140 static-site requests, with no remaining target-only
+root requests. The three hottest generic families split exactly between two
+call sites: 4,357 plus 4,357 requests for the Ryu tuple family, 619 plus 619 for
+Dragonbox, and 509 plus 509 for Ryu `UInt64`, at current-source lines 93266 and
+95621. This localizes a repeated demand corridor but does not yet prove that
+both requests perform comparable work or that either is semantically
+redundant. The next falsifier is to classify the exit state and measured cost
+at those two sites before removing or suppressing either request. B4-F remains
+RED at the 300-second admission cap.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

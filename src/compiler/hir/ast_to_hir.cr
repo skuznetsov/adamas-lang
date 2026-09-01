@@ -5302,7 +5302,7 @@ module Adamas::HIR
     end
 
     @[AlwaysInline]
-    private def record_lowering_trace_request(name : String) : Nil
+    private def record_lowering_trace_request(name : String, site_line : Int32) : Nil
       if trace = @lowering_binary_trace
         trace.record_request(
           name,
@@ -5310,6 +5310,7 @@ module Adamas::HIR
           @current_method,
           @current_method_is_class,
           @lowering_depth,
+          site_line,
         )
       end
     end
@@ -83687,13 +83688,13 @@ module Adamas::HIR
       @arena = old_arena
     end
 
-    private def lower_function_if_needed(name : String) : Nil
+    private def lower_function_if_needed(name : String, trace_site_line : Int32 = __LINE__) : Nil
       return unless v2_string_readable?(name)
 
-      lower_function_if_needed_impl(name)
+      lower_function_if_needed_impl(name, trace_site_line)
     end
 
-    private def lower_function_if_needed(name : String?) : Nil
+    private def lower_function_if_needed(name : String?, trace_site_line : Int32 = __LINE__) : Nil
       # Optional call targets are resolution probes. Do not unwrap String? here:
       # produced stage2 can carry nil payloads through this overload and the
       # concrete String overload is used for required targets.
@@ -83899,7 +83900,7 @@ module Adamas::HIR
       end
 
       begin
-        lower_function_if_needed_impl(name)
+        lower_function_if_needed_impl(name, __LINE__)
         made_progress = (!requested_body_before && @module.has_function_with_body?(name)) ||
                         useful_force_return_type_change?(module_return_before, @module.function_by_name(name).try(&.return_type)) ||
                         useful_force_return_type_change?(function_return_before, @function_types[name]?) ||
@@ -83989,10 +83990,10 @@ module Adamas::HIR
         end
     end
 
-    private def lower_function_if_needed_impl(name : String) : Nil
+    private def lower_function_if_needed_impl(name : String, trace_site_line : Int32) : Nil
       return unless v2_string_readable?(name)
       return if name.empty?
-      record_lowering_trace_request(name)
+      record_lowering_trace_request(name, trace_site_line)
       return if synthetic_numeric_conversion_lower_target?(name)
       return if backend_owned_runtime_intrinsic_call?(name)
       if pending_target_gate_enabled?

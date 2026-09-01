@@ -192,6 +192,9 @@ private def parse_lowering_binary_trace(path : String) : ParsedLoweringTrace
           if event_id == Adamas::HIR::LoweringBinaryTrace::Event::LowerRequestEdge.value
             caller = symbols[symbol_id & 0xffff_ffff_u64]?
             symbol = symbols[symbol_id >> 32]? || ""
+          elsif event_id == Adamas::HIR::LoweringBinaryTrace::Event::LowerRequestSite.value
+            caller = "<site:src/compiler/hir/ast_to_hir.cr:#{symbol_id & 0xffff_ffff_u64}>"
+            symbol = symbols[symbol_id >> 32]? || ""
           else
             symbol = symbols[symbol_id]? || ""
           end
@@ -244,11 +247,17 @@ describe Adamas::HIR::LoweringBinaryTrace do
         depth: 2,
         ticks: 1_012_u64,
       )
+      first.record_request_site_at(
+        "Cycle#site$Bool",
+        4_242,
+        depth: 0,
+        ticks: 1_013_u64,
+      )
       first.record_symbol_at(
         Adamas::HIR::LoweringBinaryTrace::Event::MaterializeDone,
         "Cycle#step$Int32",
         depth: 1,
-        ticks: 1_013_u64,
+        ticks: 1_014_u64,
       )
       first.close
 
@@ -280,6 +289,7 @@ describe Adamas::HIR::LoweringBinaryTrace do
         "Cycle#step$Int32",
         "Cycle#step$Int32",
         "Cycle#work$String",
+        "Cycle#site$Bool",
         "Cycle#step$Int32",
         "Other#work",
       ])
@@ -287,12 +297,13 @@ describe Adamas::HIR::LoweringBinaryTrace do
         nil,
         nil,
         "Cycle#step$Int32",
+        "<site:src/compiler/hir/ast_to_hir.cr:4242>",
         nil,
         nil,
       ])
-      parsed.events.map(&.delta_ns).should eq([5_u64, 10_u64, 12_u64, 13_u64, 4_u64])
-      parsed.events.map(&.sequence).should eq([1_u32, 2_u32, 3_u32, 4_u32, 1_u32])
-      parsed.events.map(&.depth).should eq([1_u16, 2_u16, 2_u16, 1_u16, 0_u16])
+      parsed.events.map(&.delta_ns).should eq([5_u64, 10_u64, 12_u64, 13_u64, 14_u64, 4_u64])
+      parsed.events.map(&.sequence).should eq([1_u32, 2_u32, 3_u32, 4_u32, 5_u32, 1_u32])
+      parsed.events.map(&.depth).should eq([1_u16, 2_u16, 2_u16, 0_u16, 1_u16, 0_u16])
     ensure
       File.delete(path) if File.exists?(path)
     end

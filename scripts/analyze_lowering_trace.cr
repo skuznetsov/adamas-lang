@@ -199,6 +199,9 @@ module Adamas::Tools
         if event_id == TraceFormat::Event::LowerRequestEdge.value
           caller = symbols[value & 0xffff_ffff_u64]?
           symbol = symbols[value >> 32]?
+        elsif event_id == TraceFormat::Event::LowerRequestSite.value
+          caller = "<site:src/compiler/hir/ast_to_hir.cr:#{value & 0xffff_ffff_u64}>"
+          symbol = symbols[value >> 32]?
         elsif symbol_event?(event_id)
           symbol = symbols[value]?
         end
@@ -296,7 +299,8 @@ module Adamas::Tools
           end
           active_pass = nil
         when TraceFormat::Event::LowerRequest.value,
-             TraceFormat::Event::LowerRequestEdge.value
+             TraceFormat::Event::LowerRequestEdge.value,
+             TraceFormat::Event::LowerRequestSite.value
           if callee = event.symbol
             caller = event.caller ||
                      active_materializations.last?.try(&.event.symbol) ||
@@ -351,7 +355,8 @@ module Adamas::Tools
         enqueue = counts[TraceFormat::Event::QueueEnqueue.value]
         visit = counts[TraceFormat::Event::QueueVisit.value]
         request = counts[TraceFormat::Event::LowerRequest.value] +
-                  counts[TraceFormat::Event::LowerRequestEdge.value]
+                  counts[TraceFormat::Event::LowerRequestEdge.value] +
+                  counts[TraceFormat::Event::LowerRequestSite.value]
         start = counts[TraceFormat::Event::MaterializeStart.value]
         done = counts[TraceFormat::Event::MaterializeDone.value]
         puts "    #{total.to_s.rjust(8)} q=#{enqueue} v=#{visit} req=#{request} mat=#{start}/#{done}  #{name}"
@@ -454,7 +459,8 @@ module Adamas::Tools
 
     private def lower_request_event?(event_id : UInt16) : Bool
       event_id == TraceFormat::Event::LowerRequest.value ||
-        event_id == TraceFormat::Event::LowerRequestEdge.value
+        event_id == TraceFormat::Event::LowerRequestEdge.value ||
+        event_id == TraceFormat::Event::LowerRequestSite.value
     end
 
     private def read_header_at(io : File, offset : Int64, file_size : Int64) : ChunkHeader?
