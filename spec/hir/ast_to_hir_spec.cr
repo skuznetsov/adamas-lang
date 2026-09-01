@@ -16238,6 +16238,26 @@ describe Adamas::HIR::AstToHir do
       converter.__test_constant_literal_int_value("X::C1").should eq(0xacd5ad43274593b9_u64.unsafe_as(Int64))
     end
 
+    it "does not borrow a source literal from the same constant name in another owner" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        class AggregateOwner
+          VALUES = {} of String => String
+        end
+
+        class CallOwner
+          VALUES = build_values
+        end
+
+        class ScalarOwner
+          VALUES = 7
+        end
+      CRYSTAL
+
+      converter.__test_constant_literal_int_value("AggregateOwner::VALUES").should be_nil
+      converter.__test_constant_literal_int_value("CallOwner::VALUES").should be_nil
+      converter.__test_constant_literal_int_value("ScalarOwner::VALUES").should eq(7_i64)
+    end
+
     it "inlines enum predicates through zero-arg enum-returning calls" do
       converter = lower_program_with_main(<<-CRYSTAL)
         enum FileType : UInt8

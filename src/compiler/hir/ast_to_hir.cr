@@ -11098,6 +11098,21 @@ module Adamas::HIR
           if literal = constant_literal_value_from_source_rhs(rhs)
             return literal
           end
+
+          # These AST forms are already authoritative runtime values. A scan
+          # of the whole source by bare name cannot turn them into a scalar;
+          # it can only do quadratic work or borrow from another owner. Keep
+          # name recovery for MacroIf/Char/alias shapes that genuinely need it.
+          value_node = arena[node.value]
+          case value_node
+          when Adamas::Compiler::Frontend::ArrayLiteralNode,
+               Adamas::Compiler::Frontend::HashLiteralNode,
+               Adamas::Compiler::Frontend::TupleLiteralNode,
+               Adamas::Compiler::Frontend::NamedTupleLiteralNode,
+               Adamas::Compiler::Frontend::IdentifierNode,
+               Adamas::Compiler::Frontend::CallNode
+            return nil
+          end
         end
       end
 
