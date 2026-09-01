@@ -6504,6 +6504,7 @@ module Adamas::HIR
     @short_type_index : Hash(String, Set(String))
     @top_level_type_names : Set(String)
     @top_level_class_kinds : Hash(String, Bool)
+    @abstract_class_names : Set(String)
     # Track constant definitions and inferred types for constant resolution.
     @constant_defs : Set(String)
     @pre_scan_constant_defs : Set(String)
@@ -6826,6 +6827,7 @@ module Adamas::HIR
       @short_type_index = {} of String => Set(String)
       @top_level_type_names = Set(String).new
       @top_level_class_kinds = {} of String => Bool
+      @abstract_class_names = Set(String).new
       @current_typeof_local_names = nil
       @current_typeof_local_names_hash = 0_u64
       @current_typeof_local_names_hash_owner = nil
@@ -16115,6 +16117,19 @@ module Adamas::HIR
     end
 
     private def exact_call_type_required_for_annotation_name?(annotation_name : String, call_name : String) : Bool
+      if has_top_level_union_separator?(annotation_name)
+        variants = split_union_type_name(annotation_name)
+        variant_index = 0
+        while variant_index < variants.size
+          return true if exact_call_type_required_for_annotation_name?(
+            variants.unsafe_fetch(variant_index),
+            call_name,
+          )
+          variant_index += 1
+        end
+        return false
+      end
+
       annotation_base = strip_generic_args(annotation_name)
       case annotation_base
       when "Number"
@@ -16160,10 +16175,17 @@ module Adamas::HIR
         next false unless annotation_name
 
         resolved_name = resolve_type_alias_chain(resolve_type_name_in_context(annotation_name))
-        next false if resolved_name.includes?('|')
-
-        inherited_value_dispatch_needs_origin?(resolved_name) &&
-          class_has_subclasses?(resolved_name)
+        candidates = has_top_level_union_separator?(resolved_name) ? split_union_type_name(resolved_name) : [resolved_name]
+        candidate_index = 0
+        while candidate_index < candidates.size
+          candidate = candidates.unsafe_fetch(candidate_index)
+          abstract_numeric_template = candidate == "Number" || candidate == "Int" || candidate == "Float"
+          if inherited_value_dispatch_needs_origin?(candidate) &&
+             (abstract_numeric_template || class_has_subclasses?(candidate))
+            break true
+          end
+          candidate_index += 1
+        end
       end
     end
 
@@ -21928,7 +21950,16 @@ module Adamas::HIR
     private def annotation_type_ref(type_name : String, owner_name : String? = nil) : TypeRef
       cache_key = annotation_type_ref_cache_key(type_name, owner_name)
       if cached = @annotation_type_ref_cache[cache_key]?
-        return cached
+        if cached_desc = @module.get_type_descriptor(cached)
+          if cached_desc.kind == TypeKind::Union &&
+             cached_union_type_ref_stale?(cached, cached_desc.name)
+            @annotation_type_ref_cache.delete(cache_key)
+          else
+            return cached
+          end
+        else
+          return cached
+        end
       end
       trace_annotation = debug_env_filter_match?(
         "DEBUG_ANNOTATION_TRACE",
@@ -32732,6 +32763,7 @@ module Adamas::HIR
     )
       bootstrap_trace_puts "[CLASS_FRONTIER] class_current_arena_enter #{class_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
       class_name = resolve_class_name_for_definition(class_name)
+      @abstract_class_names.add(class_name) if node.is_abstract == true
       trace_class_exit = debug_env_filter_match?("DEBUG_CLASS_EXIT_PHASE", class_name, source_path_for(@arena) || "")
       STDERR.puts "[CLASS_EXIT] class=#{class_name} phase=enter" if trace_class_exit
       register_reopened_nested_type_name(class_name)
@@ -116960,7 +116992,7 @@ module Adamas::HIR
           end
         end
       end
-      if simple_name && !has_union && !has_comma && !has_paren && !has_brace
+      if simple_name && !has_union && !has_comma && !has_paren && !has_brace && !raw_name.includes?("___")
         self_prefixed = name.starts_with?("self")
         if @type_param_map.empty? && (@current_typeof_local_names.nil? || @current_typeof_local_names.not_nil!.empty?) &&
            !self_prefixed
@@ -117209,7 +117241,9 @@ module Adamas::HIR
         if lookup_is_union
           if cached && (desc = @module.get_type_descriptor(cached))
             if desc.kind == TypeKind::Union
-              return cached
+              unless cached_union_type_ref_stale?(cached, lookup_name)
+                return cached
+              end
             end
           end
           @type_cache.delete(cache_key)
@@ -117746,6 +117780,79 @@ module Adamas::HIR
       result
     end
 
+    private def registered_value_struct_type_name?(type_name : String) : Bool
+      lookup_name = type_name.starts_with?("::") ? type_name[2..] : type_name
+      if info = @class_info[lookup_name]?
+        return info.is_struct
+      end
+
+      base_name = strip_generic_args(lookup_name)
+      if base_name != lookup_name
+        if info = @class_info[base_name]?
+          return info.is_struct
+        end
+      end
+
+      @top_level_class_kinds[lookup_name]? == true ||
+        (base_name != lookup_name && @top_level_class_kinds[base_name]? == true)
+    end
+
+    private def registered_abstract_class_name?(type_name : String) : Bool
+      lookup_name = type_name.starts_with?("::") ? type_name[2..] : type_name
+      return true if @abstract_class_names.includes?(lookup_name)
+
+      base_name = strip_generic_args(lookup_name)
+      return true if base_name != lookup_name && @abstract_class_names.includes?(base_name)
+
+      if template = @generic_templates[base_name]?
+        return template.node.is_abstract == true
+      end
+      false
+    end
+
+    private def abstract_numeric_value_union_owner_name?(type_name : String) : Bool
+      case strip_generic_args(type_name)
+      when "Number", "Int", "Float"
+        true
+      else
+        false
+      end
+    end
+
+    # Crystal's numeric family roots are value-type categories, not runtime
+    # payloads. Expand only those magic roots before freezing a tagged-union
+    # ABI; ordinary value bases and reference owners keep their declared arm.
+    private def expand_abstract_value_union_variants(variant_names : Array(String)) : Array(String)
+      expanded = [] of String
+      variant_index = 0
+      while variant_index < variant_names.size
+        variant_name = variant_names.unsafe_fetch(variant_index)
+        lookup_name = variant_name.starts_with?("::") ? variant_name[2..] : variant_name
+        if registered_value_struct_type_name?(lookup_name) &&
+           abstract_numeric_value_union_owner_name?(lookup_name) &&
+           class_has_subclasses?(lookup_name)
+          concrete_count = 0
+          descendants = collect_subclasses_cached(lookup_name)
+          descendant_index = 0
+          while descendant_index < descendants.size
+            descendant = descendants.unsafe_fetch(descendant_index)
+            if registered_value_struct_type_name?(descendant) &&
+               !registered_abstract_class_name?(descendant) &&
+               !abstract_numeric_value_union_owner_name?(descendant)
+              expanded << descendant
+              concrete_count += 1
+            end
+            descendant_index += 1
+          end
+          expanded << variant_name if concrete_count == 0
+        else
+          expanded << variant_name
+        end
+        variant_index += 1
+      end
+      expanded
+    end
+
     # Create a union type from "Type1 | Type2 | Type3" syntax
     private def create_union_type(name : String) : TypeRef
       input_name = normalize_union_type_name(name)
@@ -117827,6 +117934,7 @@ module Adamas::HIR
         absolute ? "::#{resolved}" : resolved
       end
       resolved_variant_names.reject!(&.empty?)
+      resolved_variant_names = expand_abstract_value_union_variants(resolved_variant_names)
 
       normalized_name = normalize_union_type_name(resolved_variant_names.join(" | "))
       resolved_variant_names = split_union_type_name(normalized_name)
@@ -117949,6 +118057,8 @@ module Adamas::HIR
       normalized = normalize_union_type_name(union_name)
       variant_names = split_union_type_name(normalized)
       return false if variant_names.empty?
+      variant_names = expand_abstract_value_union_variants(variant_names)
+      variant_names = split_union_type_name(normalize_union_type_name(variant_names.join(" | ")))
       return true unless variant_names.size == descriptor.variants.size
 
       variant_names.each_with_index do |variant_name, idx|

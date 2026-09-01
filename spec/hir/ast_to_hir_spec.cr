@@ -703,6 +703,18 @@ class Adamas::HIR::AstToHir
     type_ref_for_name(name)
   end
 
+  def __test_annotation_type_ref(name : String, owner_name : String? = nil) : Adamas::HIR::TypeRef
+    annotation_type_ref(name, owner_name)
+  end
+
+  def __test_subclasses(name : String) : Array(String)
+    collect_subclasses_cached(name)
+  end
+
+  def __test_cached_union_type_ref_stale(type_ref : Adamas::HIR::TypeRef, name : String) : Bool
+    cached_union_type_ref_stale?(type_ref, name)
+  end
+
   def __test_get_type_name_from_ref(type_ref : Adamas::HIR::TypeRef) : String
     get_type_name_from_ref(type_ref)
   end
@@ -17418,6 +17430,201 @@ describe Adamas::HIR::AstToHir do
       base_number_call.not_nil!.method_name.should eq(
         "NumericDispatchHasher#number$NumericDispatchBase"
       )
+    end
+
+    it "specializes a broad value-union wrapper at the concrete call site" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        class Object
+        end
+
+        class ValueUnionSink < Object
+          def append(value : Char | Number | String) : Nil
+            value.render(self)
+          end
+        end
+
+        struct Number
+          abstract def render(io : ValueUnionSink) : Nil
+        end
+
+        struct Int
+        end
+
+        struct Int32
+          def render(io : ValueUnionSink) : Nil
+          end
+        end
+
+        abstract struct AbstractNumberLeaf < Number
+          abstract def render(io : ValueUnionSink) : Nil
+        end
+
+        struct Char
+          def render(io : ValueUnionSink) : Nil
+          end
+        end
+
+        class String < Object
+          def render(io : ValueUnionSink) : Nil
+          end
+        end
+
+        ValueUnionSink.new.append(1)
+        ValueUnionSink.new.append("value")
+      CRYSTAL
+      converter.flush_pending_functions
+
+      {
+        "Int32" => Adamas::HIR::TypeRef::INT32,
+        "String" => Adamas::HIR::TypeRef::STRING,
+      }.each do |value_type, type_ref|
+        wrapper = converter.module.function_by_name("ValueUnionSink#append$#{value_type}")
+        wrapper.should_not be_nil
+        wrapper.not_nil!.params[1].type.should eq(type_ref)
+
+        render_calls = wrapper.not_nil!.blocks.flat_map(&.instructions)
+          .compact_map(&.as?(Adamas::HIR::Call))
+          .select { |call| call.method_name.includes?("#render") }
+        render_calls.map(&.method_name).should eq(["#{value_type}#render$ValueUnionSink"])
+      end
+
+      converter.module.has_function_with_body?(
+        "ValueUnionSink#append$Char | Number | String"
+      ).should be_false
+      converter.module.has_function_with_body?("Number#render$ValueUnionSink").should be_false
+
+      runtime_union = converter.__test_type_ref_for_name("Char | Number | String")
+      converter.__test_get_type_name_from_ref(runtime_union).should eq(
+        "Char | Int32 | String"
+      )
+      descriptor = converter.union_descriptors[Adamas::MIR::TypeRef.from_hir(runtime_union)]
+      descriptor.variants.map(&.full_name).should eq(["Char", "Int32", "String"])
+    end
+
+    it "keeps abstract reference arms header-backed in runtime unions" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        class Object
+        end
+
+        class RuntimeUnionReferenceBase < Object
+        end
+
+        class RuntimeUnionReferenceLeaf < RuntimeUnionReferenceBase
+        end
+
+        struct Int32
+        end
+      CRYSTAL
+
+      runtime_union = converter.__test_type_ref_for_name(
+        "Int32 | RuntimeUnionReferenceBase"
+      )
+      converter.__test_get_type_name_from_ref(runtime_union).should eq(
+        "Int32 | RuntimeUnionReferenceBase"
+      )
+      descriptor = converter.union_descriptors[Adamas::MIR::TypeRef.from_hir(runtime_union)]
+      descriptor.variants.map(&.full_name).should eq(["Int32", "RuntimeUnionReferenceBase"])
+    end
+
+    it "keeps concrete value arms intact in runtime unions" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        struct ConcreteValueBase
+        end
+
+        struct ConcreteValueLeaf < ConcreteValueBase
+        end
+
+        struct Int32
+        end
+      CRYSTAL
+
+      runtime_union = converter.__test_type_ref_for_name(
+        "ConcreteValueBase | Int32"
+      )
+      converter.__test_get_type_name_from_ref(runtime_union).should eq(
+        "ConcreteValueBase | Int32"
+      )
+      descriptor = converter.union_descriptors[Adamas::MIR::TypeRef.from_hir(runtime_union)]
+      descriptor.variants.map(&.full_name).should eq(["ConcreteValueBase", "Int32"])
+    end
+
+    it "does not recurse into nested union annotations during specialization" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        class Object
+        end
+
+        struct Box(T)
+        end
+
+        struct Int32
+        end
+
+        class String < Object
+        end
+
+        class NestedUnionSink < Object
+          def accept(value : Box(Int32 | String)) : Nil
+          end
+        end
+
+        NestedUnionSink.new.accept(Box(Int32 | String).new)
+      CRYSTAL
+      converter.flush_pending_functions
+
+      converter.module.has_function_with_body?(
+        "NestedUnionSink#accept$Box(Int32 | String)"
+      ).should be_true
+    end
+
+    it "refreshes cached numeric unions after late descendant registration" do
+      source = <<-CRYSTAL
+        struct Number
+        end
+
+        struct Int32 < Number
+        end
+
+        class String
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      class_nodes = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+      end
+
+      converter.register_class(class_nodes[0])
+      converter.register_class(class_nodes[2])
+      converter.__test_get_type_name_from_ref(
+        converter.__test_type_ref_for_name("Number | String")
+      ).should eq("Number | String")
+      cached_annotation = converter.__test_annotation_type_ref("Number | String")
+      converter.__test_type_ref_for_name("Number___String")
+      converter.__test_annotation_type_ref("(Number | String)")
+
+      converter.register_class(class_nodes[1])
+
+      converter.__test_subclasses("Number").should contain("Int32")
+      converter.__test_cached_union_type_ref_stale(
+        cached_annotation,
+        "Number | String",
+      ).should be_true
+
+      {
+        converter.__test_type_ref_for_name("Number|String"),
+        converter.__test_type_ref_for_name("Number___String"),
+        converter.__test_type_ref_for_name("Number | String"),
+        converter.__test_annotation_type_ref("Number | String"),
+        converter.__test_annotation_type_ref("(Number | String)"),
+      }.each do |runtime_union|
+        converter.__test_get_type_name_from_ref(runtime_union).should eq("Int32 | String")
+        descriptor = converter.union_descriptors[Adamas::MIR::TypeRef.from_hir(runtime_union)]
+        descriptor.variants.map(&.full_name).should eq(["Int32", "String"])
+      end
     end
   end
 

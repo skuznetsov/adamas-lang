@@ -14443,6 +14443,53 @@ general Iterator fix. Next: build a small source-backed `Number#to_s(IO)`
 falsifier and determine why the resolved `Object#to_s$IO` body is not
 materialized before changing receiver repair.
 
+### Session 120: canonicalize runtime numeric-union payloads (2026-08-31)
+
+The `Number#to_s$IO` failure was not a missing receiver-repair definition.
+`Char | Number | String` had been frozen as a tagged runtime union even though
+`Number` is a compiler-defined value-family root with no payload of its own.
+The broad `IO#<<` wrapper then kept the abstract parameter identity and emitted
+the impossible static target `Number#to_s$IO`.
+
+Call-site specialization now inspects top-level union arms and defers eager
+value-dispatch templates that contain numeric family roots. Runtime union
+construction expands only Crystal's magic `Number`, `Int`, and `Float` value
+roots to registered concrete descendants before descriptor creation; explicit
+abstract descendants are excluded. Ordinary concrete value bases and abstract
+reference arms retain their declared representation. The same canonicalization
+is applied when deciding whether a cached union descriptor is stale.
+
+The first bootstrap probe exposed a progress bug in the new predicate:
+`String#includes?('|')` also matched nested union syntax, while the depth-aware
+split returned the original string. Stage2 therefore failed after 114.97
+seconds with 85,933 recursive calls instead of reaching the prior bodyless
+target. The predicate now uses the existing top-level-separator scanner, and a
+source-backed nested-generic regression guards that boundary. A separate red
+proved that the initial generic expansion incorrectly rewrote a concrete value
+base to its leaf; narrowing the rule to the three numeric family roots made it
+green. A final hostile cache audit found stale-return paths: annotation cache
+hits and equivalent normalized, parenthesized, or legacy spellings could bypass
+union freshness after a late numeric descendant registration. A red
+registration-order test now guards those paths. Cache hits reuse the existing
+descriptor comparison and rebuild only stale requests; the old descriptor
+remains available to HIR that was already materialized before the hierarchy
+advanced.
+
+The complete `ast_to_hir` suite passes 501 examples with zero failures or
+errors and two existing pending examples. A no-prelude numeric-union program
+compiles and runs under `run_safe.sh`. The exact full-prelude reproducer also
+compiles in 17.97 seconds and its executable prints `1`; emitted HIR contains
+`append_value$IO::FileDescriptor_Int32` calling `IO#<<$Int32`, with neither
+`IO#<<$Char | Number | String` nor `Number#to_s$IO`. The module registry still
+contains an earlier unused `Char | Number | String` type entry, so this is not
+a general proof that already-materialized HIR can be rewritten after late
+hierarchy registration.
+
+B4-F remains RED: the only fresh run exercised the now-fixed recursive
+predicate and produced no stage2 artifact. Next: commit this bounded
+correctness slice, then run one fresh guarded 300-second B4-F to measure the
+next actual frontier; do not infer bootstrap closure from the small repros.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
