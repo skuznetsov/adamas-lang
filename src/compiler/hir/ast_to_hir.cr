@@ -46699,9 +46699,12 @@ module Adamas::HIR
       value_id : ValueId,
       value_types : Hash(ValueId, TypeRef),
       repaired_value_types : Hash(ValueId, TypeRef),
+      seen_values : Set(ValueId) = Set(ValueId).new,
     ) : TypeRef
       current_type = value_types[value_id]? || TypeRef::VOID
       return current_type if current_type != TypeRef::VOID && current_type != TypeRef::POINTER
+      return TypeRef::VOID if seen_values.size >= 64
+      return TypeRef::VOID unless seen_values.add?(value_id)
       debug_recovery = debug_env_filter_match?(
         "DEBUG_RECEIVER_ARG_RECOVERY",
         func.name,
@@ -46710,6 +46713,41 @@ module Adamas::HIR
       func.blocks.each do |producer_block|
         producer_block.instructions.each_with_index do |producer, producer_index|
           next unless producer.id == value_id
+          if copy = producer.as?(Copy)
+            unless copy.type == TypeRef::VOID || copy.type == TypeRef::POINTER
+              return TypeRef::VOID
+            end
+            recovered = recover_receiver_repair_call_value_type(
+              func,
+              copy.source,
+              value_types,
+              repaired_value_types,
+              seen_values,
+            )
+            if recovered == TypeRef::VOID || recovered == TypeRef::POINTER
+              STDERR.puts "[RECEIVER_ARG_RECOVERY] caller=#{func.name} value=#{value_id} producer=Copy source=#{copy.source} reason=unresolved_copy_source" if debug_recovery
+              return TypeRef::VOID
+            end
+            if recovered == TypeRef::NIL || is_union_or_nilable_type?(recovered)
+              STDERR.puts "[RECEIVER_ARG_RECOVERY] caller=#{func.name} value=#{value_id} producer=Copy source=#{copy.source} reason=ambiguous_copy_source" if debug_recovery
+              return TypeRef::VOID
+            end
+
+            producer_block.replace(
+              producer_index,
+              Copy.new(copy.id, recovered, copy.source),
+            )
+            value_types[value_id] = recovered
+            repaired_value_types[value_id] = recovered
+            if debug_recovery
+              STDERR.puts(
+                "[RECEIVER_ARG_RECOVERY] caller=#{func.name} value=#{value_id} " \
+                "producer=Copy source=#{copy.source} recovered=#{get_type_name_from_ref(recovered)}"
+              )
+            end
+            return recovered
+          end
+
           call = producer.as?(Call)
           unless call
             if debug_recovery

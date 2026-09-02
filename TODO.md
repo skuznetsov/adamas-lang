@@ -1,13 +1,25 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-09-02 (receiver repair removed the previous
-`WithIndexIterator#any?$Proc_block` diagnostic, but a fresh B4-F stage2 still
-reaches the 300-second cap. Compact trace attribution now separates each
-missing-target iteration. The two dominant regimes are iteration 1, where
-`Hash` materializations consume 18.216 seconds of self time, and iteration 4,
-where the single late `AstToHir#lower_call` materialization consumes 11.127
-seconds of self time. Admission remains RED; investigate those two measured
-regimes independently.)
+Updated: 2026-09-02 (typed broad-root replay reduced the first missing-target
+fixed point to 59,551 functions at about 225 seconds, but fresh B4-F stage2
+still exits RED at about 265 seconds: late receiver repair sees
+`Hash(String, Int32)#[]?$arity1` with a `Void` key in
+`CLI#count_shadow_symbols_by_unit`. The immediate key producer is a weak
+`Copy`; guarded concrete-only recovery through that copy is locally verified
+but intentionally rejects union/nilable endpoints and does not move the B4-F
+frontier. Next: classify the copied source before widening any repair rule.)
+
+2026-09-02 LATE RECEIVER REPAIR RECOVERS CONCRETE CALL CONTRACTS THROUGH WEAK
+COPIES. A repaired call result can become concrete after an earlier `Copy` was
+already scanned, leaving a later consumer with a stale `Void` argument. The
+on-demand recovery now follows at most 64 weak `Copy` values, fails closed on
+cycles and union/nilable endpoints, and updates only the traversed copy whose
+source has an authoritative concrete return contract. A source-backed
+Call-to-Copy-to-untyped-consumer regression is green; all 54 receiver-repair
+examples and 15 nilable AstToHir examples are green. A fresh bounded B4-F run
+produced 1,775,598 trace events and retained the prior bodyless
+`Hash(String, Int32)#[]?` frontier at about 265 seconds, so this is a scoped
+correctness repair, not a bootstrap speed or closure claim.
 
 2026-09-01 NON-INLINE BLOCK CALLBACKS NO LONGER POLLUTE RECEIVER-REPAIR ARITY.
 HIR block calls retain both a block region and an appended executable Proc for

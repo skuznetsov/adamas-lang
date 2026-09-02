@@ -1036,6 +1036,88 @@ describe "receiver-bound class-literal repair" do
     converter.module.has_function_with_body?(repaired_consumer.not_nil!.method_name).should be_true
   end
 
+  it "recovers a void-typed call producer through a copy before specializing its consumer" do
+    converter, functions = parse_receiver_repair_source(<<-CRYSTAL)
+      class CopiedVoidArgProducer
+        def value : UInt64
+          1_u64
+        end
+      end
+
+      class CopiedVoidArgSink
+        def append(value)
+          value
+        end
+      end
+
+      def append_copied_void_arg(sink : CopiedVoidArgSink, producer : CopiedVoidArgProducer)
+        sink.append(producer.value)
+      end
+    CRYSTAL
+
+    caller = functions.find { |candidate| candidate.name.starts_with?("append_copied_void_arg$") }
+    caller.should_not be_nil
+    calls = caller.not_nil!.blocks.flat_map(&.instructions)
+      .compact_map { |instruction| instruction.as?(Adamas::HIR::Call) }
+    producer = calls.find { |instruction| instruction.method_name.includes?("#value") }
+    consumer = calls.find { |instruction| instruction.method_name.includes?("#append") }
+    producer.should_not be_nil
+    consumer.should_not be_nil
+
+    producer_block = caller.not_nil!.blocks.find do |candidate|
+      candidate.instructions.includes?(producer.not_nil!)
+    end
+    producer_block.should_not be_nil
+    producer_index = producer_block.not_nil!.instructions.index(producer.not_nil!).not_nil!
+    void_producer = Adamas::HIR::Call.with_receiver_virtual(
+      producer.not_nil!.id,
+      Adamas::HIR::TypeRef::VOID,
+      producer.not_nil!.receiver_value,
+      producer.not_nil!.method_name,
+      producer.not_nil!.args,
+      producer.not_nil!.virtual,
+    )
+    producer_block.not_nil!.instructions[producer_index] = void_producer
+    void_copy = Adamas::HIR::Copy.new(
+      caller.not_nil!.next_value_id,
+      Adamas::HIR::TypeRef::VOID,
+      void_producer.id,
+    )
+    producer_block.not_nil!.instructions.insert(producer_index + 1, void_copy)
+
+    converter.__test_forget_receiver_function_shape(
+      consumer.not_nil!.method_name,
+      "CopiedVoidArgSink#append",
+    )
+    consumer_block = caller.not_nil!.blocks.find do |candidate|
+      candidate.instructions.includes?(consumer.not_nil!)
+    end
+    consumer_block.should_not be_nil
+    consumer_index = consumer_block.not_nil!.instructions.index(consumer.not_nil!).not_nil!
+    stale_consumer = Adamas::HIR::Call.with_receiver_virtual(
+      consumer.not_nil!.id,
+      consumer.not_nil!.type,
+      consumer.not_nil!.receiver_value,
+      "CopiedVoidArgSink#append$arity1",
+      [void_copy.id],
+      consumer.not_nil!.virtual,
+    )
+    consumer_block.not_nil!.instructions[consumer_index] = stale_consumer
+
+    converter.__test_repair_receiver_bound_call_targets
+
+    repaired_values = caller.not_nil!.blocks.flat_map(&.instructions)
+    repaired_copy = repaired_values.find { |instruction| instruction.id == void_copy.id }
+    repaired_consumer = repaired_values
+      .compact_map { |instruction| instruction.as?(Adamas::HIR::Call) }
+      .find { |instruction| instruction.id == stale_consumer.id }
+    repaired_copy.should_not be_nil
+    repaired_consumer.should_not be_nil
+    repaired_copy.not_nil!.type.should eq(Adamas::HIR::TypeRef::UINT64)
+    repaired_consumer.not_nil!.method_name.should eq("CopiedVoidArgSink#append$UInt64")
+    converter.module.has_function_with_body?(repaired_consumer.not_nil!.method_name).should be_true
+  end
+
   it "recovers IO#pos from its exact backend ABI contract" do
     converter, functions = parse_receiver_repair_source(<<-CRYSTAL)
       class IO
