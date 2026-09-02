@@ -12896,6 +12896,9 @@ module Adamas::HIR
       @type_aliases[alias_name] = target_name
       if alias_changed
         @call_resolution_authority_revision = @call_resolution_authority_revision &+ 1_u64
+        # Module lookup follows aliases through include paths. A cached miss is
+        # stale as soon as a new alias makes another module reachable.
+        clear_module_def_lookup_caches
       end
       STDERR.puts "[ALIAS_ROOT] phase=register_type_alias.stored" if env_has?("ADAMAS_TRACE_ALIAS_ROOT")
       index_type_alias_suffix(alias_name)
@@ -26731,6 +26734,26 @@ module Adamas::HIR
       clear_receiver_specialization_caches
     end
 
+    private def record_module_def_entry(
+      module_name : String,
+      node : Adamas::Compiler::Frontend::ModuleNode,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Bool
+      entries = @module_defs[module_name]? || begin
+        created = [] of {Adamas::Compiler::Frontend::ModuleNode, Adamas::Compiler::Frontend::ArenaLike}
+        @module_defs[module_name] = created
+        created
+      end
+      entries.each do |existing_node, existing_arena|
+        # The registry and its lookup authority are unchanged by an exact replay.
+        # Body traversal still runs below; each semantic registry owns its own
+        # invalidation when that traversal discovers genuinely new state.
+        return false if existing_node.same?(node) && existing_arena.same?(arena)
+      end
+      entries << {node, arena}
+      true
+    end
+
     private def register_module_with_name(node : Adamas::Compiler::Frontend::ModuleNode, module_name : String)
       current_fit = arena_fits_module_node?(@arena, node)
       if current_fit
@@ -26905,10 +26928,11 @@ module Adamas::HIR
 
       # Keep module AST around for mixin expansion (`include Foo` in classes/structs).
       existing_defs = @module_defs.has_key?(module_name)
-      (@module_defs[module_name] ||= [] of {Adamas::Compiler::Frontend::ModuleNode, Adamas::Compiler::Frontend::ArenaLike}) << {node, @arena}
-      record_module_def_indexes(module_name)
-      bump_module_defs_cache_version
-      invalidate_type_cache_for_namespace(module_name) if existing_defs
+      if record_module_def_entry(module_name, node, @arena)
+        record_module_def_indexes(module_name)
+        bump_module_defs_cache_version
+        invalidate_type_cache_for_namespace(module_name) if existing_defs
+      end
 
       # Record module-to-module includes (e.g. Indexable includes Enumerable).
       # This is needed for yield function resolution: when looking for Enumerable#each,
@@ -31168,10 +31192,11 @@ module Adamas::HIR
       record_nested_type_names(full_name, node.body)
       # Keep nested module AST around for mixin expansion.
       existing_defs = @module_defs.has_key?(full_name)
-      (@module_defs[full_name] ||= [] of {Adamas::Compiler::Frontend::ModuleNode, Adamas::Compiler::Frontend::ArenaLike}) << {node, @arena}
-      record_module_def_indexes(full_name)
-      bump_module_defs_cache_version
-      invalidate_type_cache_for_namespace(full_name) if existing_defs
+      if record_module_def_entry(full_name, node, @arena)
+        record_module_def_indexes(full_name)
+        bump_module_defs_cache_version
+        invalidate_type_cache_for_namespace(full_name) if existing_defs
+      end
       # Add module to short_type_index so Printer can resolve to Float::Printer
       short_name = if env_has?("ADAMAS_INLINE_LAST_NAMESPACE_COMPONENT")
                      if idx = full_name.rindex("::")
@@ -44824,10 +44849,15 @@ module Adamas::HIR
       end
     end
 
-    private def ensure_module_def_lookup_cache
-      return if @module_def_lookup_cache_version == @module_defs_cache_version
+    @[AlwaysInline]
+    private def clear_module_def_lookup_caches : Nil
       @module_def_lookup_cache.clear
       @module_class_def_lookup_cache.clear
+    end
+
+    private def ensure_module_def_lookup_cache
+      return if @module_def_lookup_cache_version == @module_defs_cache_version
+      clear_module_def_lookup_caches
       @module_def_lookup_cache_version = @module_defs_cache_version
     end
 

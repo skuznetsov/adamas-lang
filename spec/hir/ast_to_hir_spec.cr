@@ -1319,6 +1319,23 @@ class Adamas::HIR::AstToHir
     @generic_reopenings[base_name]?.try(&.size) || 0
   end
 
+  def __test_module_def_count(name : String) : Int32
+    @module_defs[name]?.try(&.size) || 0
+  end
+
+  def __test_module_defs_cache_version : Int32
+    @module_defs_cache_version
+  end
+
+  def __test_has_module_def_recursive?(module_name : String, method_name : String) : Bool
+    !find_module_def_recursive(
+      module_name,
+      method_name,
+      0,
+      Set(String).new,
+    ).nil?
+  end
+
   def __test_union_type_for_values(
     left_type : Adamas::HIR::TypeRef,
     right_type : Adamas::HIR::TypeRef,
@@ -4151,6 +4168,127 @@ describe Adamas::HIR::AstToHir do
         "NestedModuleReplayOwner::Types::Reopened"
       ).should eq(1)
     end
+
+    it "stores exact nested module declarations once while preserving source reopenings" do
+      source = <<-CRYSTAL
+        module ExactModuleReplayOwner
+          module Single
+          end
+
+          module Reopened
+            def self.first : Int32
+              1
+            end
+          end
+
+          module Reopened
+            def self.second : Int32
+              2
+            end
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      owner = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ModuleNode)
+      end.first
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+
+      converter.register_module(owner)
+      version_after_first_registration = converter.__test_module_defs_cache_version
+      converter.register_module(owner)
+
+      converter.__test_module_defs_cache_version.should eq(version_after_first_registration)
+      converter.__test_module_def_count(
+        "ExactModuleReplayOwner::Single"
+      ).should eq(1)
+      converter.__test_module_def_count(
+        "ExactModuleReplayOwner::Reopened"
+      ).should eq(2)
+    end
+
+    it "replays a concrete class after a later nested struct resolves its inline layout" do
+      source = <<-CRYSTAL
+        module LateStructReplayOwner
+          class Probe
+            @slot : Later
+          end
+        end
+
+        module LateStructReplayOwner
+          struct Later
+            @left : Int64
+            @right : Int64
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      modules = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ModuleNode)
+      end
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+
+      converter.register_module(modules.first)
+      before_size = converter.class_info["LateStructReplayOwner::Probe"].size
+
+      converter.register_module(modules.last)
+      converter.register_module(modules.first)
+
+      after_size = converter.class_info["LateStructReplayOwner::Probe"].size
+      after_size.should be > before_size
+    end
+
+    it "refreshes a cached module-method miss after a late include alias" do
+      source = <<-CRYSTAL
+        module LateIncludeAliasOwner
+          include LateIncludeAlias
+        end
+
+        module LateIncludeAliasTarget
+          def probe : Int32
+            1
+          end
+        end
+
+        alias LateIncludeAlias = LateIncludeAliasTarget
+      CRYSTAL
+      arena, exprs = parse(source)
+      modules = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ModuleNode)
+      end
+      alias_node = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::AliasNode)
+      end.first
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+
+      converter.register_module(modules.first)
+      converter.register_module(modules.last)
+      converter.__test_has_module_def_recursive?(
+        "LateIncludeAliasOwner",
+        "probe",
+      ).should be_false
+
+      converter.register_alias(alias_node)
+      converter.register_module(modules.first)
+
+      converter.__test_has_module_def_recursive?(
+        "LateIncludeAliasOwner",
+        "probe",
+      ).should be_true
+    end
+
   end
 
   describe "protected access through included modules" do

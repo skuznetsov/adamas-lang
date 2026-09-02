@@ -14814,6 +14814,51 @@ closure claim: these are trace-on bounded runs and no fresh complete bootstrap
 has passed. The next measured target is the still-dominant concrete body loop,
 not legitimate source reopenings or a wider generic cache. B4-F remains RED.
 
+#### Session 127: deduplicate exact module-definition registry entries
+
+Concrete-class replay can revisit the same immutable nested `ModuleNode` in the
+same arena. Each visit appended the exact pair to `@module_defs`, rebuilt its
+indexes, bumped the module-definition version, and invalidated namespace type
+caches as if a new source reopening had appeared. The semantic module traversal
+still needs to run: later nested declarations can repair an already registered
+class layout.
+
+Module registration now deduplicates only the exact `{ModuleNode, arena}` pair
+before mutating that registry and its cache versions. It still performs aliases,
+classes, macros, methods, include expansion, and layout repair on every admitted
+replay. A focused source-backed regression was red before the change: one nested
+module declaration accumulated four registry entries after replaying its owner.
+It is now stored once and exact replay leaves the module-definition authority
+version unchanged, while two distinct same-name source reopenings remain two. A
+separate late-struct guard proves that replaying an earlier concrete class still
+increases its inline field layout after the later nested type appears.
+An adversarial phase-order fixture then primed a module-method miss before a
+late include alias made the target reachable. It was red because the old exact
+replay bump had accidentally masked an alias-owned invalidation gap. New aliases
+now clear only the two module-definition lookup caches; exact module replay
+remains version-neutral. The full AstToHir suite passes 510 examples with zero
+failures, zero errors, and two pending examples.
+
+On the same first-missing-wave process boundary, both traces ended at 162
+missing targets, zero pending targets, and 4,808 functions. A fresh control
+recorded 499,009 events and 1,142.889 ms of `AstToHir` concrete-registration
+self time; the final patch recorded 496,886 events and 1,014.917 ms, an
+observed 11.2% reduction. The dominant interval between nested replay and
+provisional class info fell from 216.277 ms to 107.153 ms. Inclusive
+registration time fell from 2,081.213 ms to 1,972.430 ms, an observed 5.2%
+reduction. Both traces had zero unmatched scopes and zero invalid intervals.
+
+Adversary verdict: ROBUST for exact registry-entry deduplication because exact
+duplicates, the authority version, real source reopenings, and late layout
+repair are independently guarded. The strongest late-alias counterexample now
+passes with change-owned lookup invalidation. Exact AST identity does not
+authorize a semantic replay cache: alias, include, class-layout, and method
+registration still run. VULNERABLE as a general wall-time or B4-F speed claim:
+this is one trace-on bounded A/B pair, numeric RSS/FD sampling remains
+unavailable, and no fresh complete bootstrap has passed. Preserve full semantic
+replay; the next probe should target the remaining concrete body/include cost
+rather than widen this identity guard into a replay cache. B4-F remains RED.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
