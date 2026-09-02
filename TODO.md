@@ -15053,6 +15053,36 @@ closure. The new tail is exact live-target replay from
 Next: explain why those owners are RTA-live and whether the replay shape is
 semantically required before changing admission or scheduling.
 
+#### Session 135: separate generic registration from broad-root liveness
+
+The next source-backed falsifier reached the registration-time replay path
+directly. After an `Object` virtual target was recorded, registering a dormant
+`Box(Int32)` specialization immediately materialized its override even though
+only `Box(String)` was RTA-live. In lazy RTA, broad `Object`/`Reference`
+targets now wait for exact concrete-owner liveness; narrower ancestor replay
+is unchanged.
+
+An adversary check found that applying this rule unconditionally stranded the
+same late target when `ADAMAS_LAZY_RTA=0`, because eager mode has no later
+live-type rendezvous. A second focused regression reproduced that loss. The
+guard is therefore explicitly limited to enabled lazy RTA: eager/off mode
+retains registration-time replay. Both boundary tests and the full AstToHir
+suite pass, with 521 examples, zero failures, zero errors, and two pending.
+
+A fresh default-lazy 300-second binary trace still timed out. It completed the
+first missing-target fixed point at 252.327 seconds with 62,154 functions and
+the second at 271.187 seconds with 62,736 functions, then continued into exact
+concrete generic equality replay. The trace contains 1,862,549 events; its tail
+still consists of `Hash(... )#==` demands with `AstArena`, `PageArena`,
+`VirtualArena`, or `ArenaUnion` arguments. The larger correct graph prevents a
+wall-time speedup claim from this run alone.
+
+Adversary verdict: ROBUST for the lazy/eager replay boundary and for rejecting
+registration as reachability in lazy RTA. VULNERABLE as B4-F or general
+performance closure. Next: test whether a broad equality demand whose argument
+is incompatible with a concrete generic override is incorrectly materialized;
+do not suppress generic equality or exact-live owners globally.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

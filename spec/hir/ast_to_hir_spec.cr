@@ -15313,6 +15313,100 @@ describe Adamas::HIR::AstToHir do
       converter.try(&.__test_set_lazy_rta_active(false))
     end
 
+    it "does not treat late generic registration as broad-root liveness" do
+      source = <<-CRYSTAL
+        class Object
+          def probe(value : Int32) : Int32
+            value
+          end
+        end
+
+        class Box(T) < Object
+          def probe(value : Int32) : Int32
+            value + 1
+          end
+        end
+
+        def invoke(value : Object) : Int32
+          value.probe(1)
+        end
+      CRYSTAL
+
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+      converter.arena = arena
+      class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+      def_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode) }
+      class_nodes.each { |node| converter.register_class(node) }
+      def_nodes.each { |node| converter.register_function(node) }
+
+      converter.__test_monomorphize_generic_class("Box", ["String"], "Box(String)")
+      converter.__test_mark_live_type("Box(String)")
+
+      invoke_node = def_nodes.find { |node| String.new(node.name.not_nil!) == "invoke" }
+      invoke_node.should_not be_nil
+      converter.lower_def(invoke_node.not_nil!)
+      converter.module.functions.any? { |func| func.name.starts_with?("Box(String)#probe$") }.should be_true
+
+      converter.__test_monomorphize_generic_class("Box", ["Int32"], "Box(Int32)")
+      converter.module.functions.any? { |func| func.name.starts_with?("Box(Int32)#probe$") }.should be_false
+
+      converter.__test_set_lazy_rta_active(true)
+      converter.__test_mark_live_type("Box(Int32)")
+
+      target = converter.module.functions.find { |func| func.name.starts_with?("Box(Int32)#probe$") }
+      target.should_not be_nil
+      converter.module.has_function_with_body?(target.not_nil!.name).should be_true
+    ensure
+      converter.try(&.__test_set_lazy_rta_active(false))
+    end
+
+    it "replays broad targets for late generic registration when lazy RTA is disabled" do
+      previous_lazy_rta = ENV["ADAMAS_LAZY_RTA"]?
+      ENV["ADAMAS_LAZY_RTA"] = "0"
+      source = <<-CRYSTAL
+        class Object
+          def probe(value : Int32) : Int32
+            value
+          end
+        end
+
+        class Box(T) < Object
+          def probe(value : Int32) : Int32
+            value + 1
+          end
+        end
+
+        def invoke(value : Object) : Int32
+          value.probe(1)
+        end
+      CRYSTAL
+
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+      converter.arena = arena
+      class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+      def_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode) }
+      class_nodes.each { |node| converter.register_class(node) }
+      def_nodes.each { |node| converter.register_function(node) }
+
+      converter.__test_monomorphize_generic_class("Box", ["String"], "Box(String)")
+      invoke_node = def_nodes.find { |node| String.new(node.name.not_nil!) == "invoke" }
+      invoke_node.should_not be_nil
+      converter.lower_def(invoke_node.not_nil!)
+
+      converter.__test_monomorphize_generic_class("Box", ["Int32"], "Box(Int32)")
+      target = converter.module.functions.find { |func| func.name.starts_with?("Box(Int32)#probe$") }
+      target.should_not be_nil
+      converter.module.has_function_with_body?(target.not_nil!.name).should be_true
+    ensure
+      if previous_lazy_rta
+        ENV["ADAMAS_LAZY_RTA"] = previous_lazy_rta
+      else
+        ENV.delete("ADAMAS_LAZY_RTA")
+      end
+    end
+
     it "replays a broad target when an already-live child enters lazy RTA" do
       source = <<-CRYSTAL
         class Object

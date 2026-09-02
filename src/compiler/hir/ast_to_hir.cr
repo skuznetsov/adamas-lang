@@ -9042,6 +9042,11 @@ module Adamas::HIR
       end
       replay_idx = 0
       ancestors.each do |ancestor|
+        # In lazy RTA, registering a concrete class proves that its shape
+        # exists, not that runtime dispatch can reach it. Broad roots must wait
+        # for exact liveness; eager mode has no later live-type rendezvous and
+        # therefore must retain registration-time replay.
+        next if lazy_rta_enabled? && broad_virtual_target_root?(ancestor) && !rta_live_owner?(class_name)
         STDERR.puts "[CLASS_TAIL] class=#{class_name} phase=virtual_replay_before idx=#{replay_idx} ancestor=#{ancestor}" if trace_tail
         lower_virtual_targets_for_child(class_name, ancestor)
         STDERR.puts "[CLASS_TAIL] class=#{class_name} phase=virtual_replay_after idx=#{replay_idx} ancestor=#{ancestor}" if trace_tail
