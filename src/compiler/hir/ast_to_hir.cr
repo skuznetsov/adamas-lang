@@ -54630,6 +54630,62 @@ module Adamas::HIR
       end
     end
 
+    # Lazy generic templates are not necessarily present in @function_defs yet.
+    # Inspect their authoritative AST before certifying an inherited hash ABI,
+    # so a direct Pointer/Tuple reopening cannot be hidden by registration order.
+    private def generic_owner_hash_overload_accepts_positional?(
+      owner : String,
+      call_arg_count : Int32,
+    ) : Bool
+      owner_base = strip_generic_args(owner)
+      template = @generic_templates[owner_base]?
+      return false unless template
+
+      candidates = [template]
+      if reopenings = @generic_reopenings[owner_base]?
+        candidates.concat(reopenings)
+      end
+
+      candidates.each do |candidate|
+        body = candidate.node.body
+        next unless body
+
+        found = false
+        scan_arena = candidate.arena
+        with_arena(scan_arena) do
+          body.each do |expr_id|
+            member = unwrap_visibility_member_in_arena(scan_arena[expr_id], scan_arena)
+            if member.is_a?(Adamas::Compiler::Frontend::DefNode)
+              if recovered = source_recovered_def_for(member, scan_arena)
+                member = recovered
+              end
+            end
+
+            case member
+            when Adamas::Compiler::Frontend::DefNode
+              next if member.is_abstract
+              next if def_receiver_is_self_from_node(member, scan_arena)
+              next unless def_method_name_from_node(member, scan_arena) == "hash"
+              if return_def_accepts_positional?(member, call_arg_count)
+                found = true
+                break
+              end
+            when Adamas::Compiler::Frontend::GetterNode,
+                 Adamas::Compiler::Frontend::PropertyNode
+              next if member.is_class? || call_arg_count != 0
+              if member.specs.any? { |spec| accessor_method_name(spec) == "hash" }
+                found = true
+                break
+              end
+            end
+          end
+        end
+        return true if found
+      end
+
+      false
+    end
+
     private def stdlib_definition_authoritative?(
       name : String,
       base_name : String,
@@ -54748,6 +54804,50 @@ module Adamas::HIR
         return nil unless function.return_type == TypeRef::VOID
       end
       return nil if registered_owner_hash_overload_accepts_positional?(base_name, 0)
+
+      TypeRef::UINT64
+    end
+
+    # A Pointer/Tuple union branch can select the inherited Object#hash before
+    # that body is materialized. Preserve the concrete receiver provenance here
+    # instead of widening Object#hash into a name-based hash contract.
+    private def inherited_built_in_zero_argument_hash_return_contract(
+      function_name : String,
+      receiver_type : TypeRef,
+      method_name : String,
+      call_arg_count : Int32,
+    ) : TypeRef?
+      return nil unless method_name == "hash" && call_arg_count == 0
+
+      receiver_name = normalize_method_owner_name(get_type_name_from_ref(receiver_type))
+      return nil unless built_in_value_hash_owner?(receiver_name)
+
+      base_name = strip_type_suffix(function_name)
+      parts = parse_method_name_compact(base_name)
+      return nil unless parts.separator == '#' && parts.method == "hash" &&
+                        normalize_method_owner_name(parts.owner) == "Object"
+
+      receiver_base_name = "#{receiver_name}#hash"
+      return nil if registered_owner_hash_overload_accepts_positional?(receiver_base_name, 0)
+      return nil if generic_owner_hash_overload_accepts_positional?(receiver_name, 0)
+
+      def_node = lookup_function_def_for_return(function_name, base_name, 0)
+      return nil unless def_node
+      return nil unless stdlib_definition_authoritative?(
+        function_name,
+        base_name,
+        def_node,
+      )
+      if def_node.return_type
+        declared_return = resolve_return_type_from_def(
+          function_name,
+          base_name,
+          receiver_type,
+          0,
+          def_node,
+        )
+        return declared_return == TypeRef::UINT64 ? TypeRef::UINT64 : nil
+      end
 
       TypeRef::UINT64
     end
@@ -97696,7 +97796,13 @@ module Adamas::HIR
         receiver_type,
         method_name,
         call_arg_count,
-      ) || built_in_zero_argument_hash_return_contract(function_name, call_arg_count) || TypeRef::VOID
+      ) || built_in_zero_argument_hash_return_contract(function_name, call_arg_count) ||
+        inherited_built_in_zero_argument_hash_return_contract(
+          function_name,
+          receiver_type,
+          method_name,
+          call_arg_count,
+        ) || TypeRef::VOID
     end
 
     # Keep union dispatch on the same authority path as ordinary return lookup

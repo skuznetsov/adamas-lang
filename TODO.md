@@ -14908,6 +14908,29 @@ non-block calls. The fallback deliberately does not widen to named, splat,
 block, unknown-argument, or non-generic receiver shapes. B4-F remains RED; the
 next step is a fresh bounded bootstrap trace, not broader overload machinery.
 
+#### Session 130: preserve the inherited built-in zero-argument hash ABI
+
+A clean B4-F run from `45384ba3` kept stage1 green in 21.21 seconds, then
+stage2 failed naturally after 195.17 seconds while lowering
+`Pointer(Void) | Tuple(String, Adamas::Compiler::Semantic::Type)`: the selected
+inherited `Object#hash` body was not materialized and its return type remained
+unknown. A bounded binary trace was complete and readable (1,958,163 events);
+the final debug samples confirmed that the failing target was exactly the
+bodyless `Object#hash`, not an owner-specific overload. The same trace also
+showed a larger registration amplifier for later work, but it is not needed to
+repair this semantic stopper.
+
+Union dispatch now admits `UInt64` for that inherited target only when the
+concrete branch owner is a built-in Pointer or Tuple, the selected target is
+exactly instance `Object#hash`, the definition has stdlib provenance, and no
+registered or lazy generic-template/reopening overload accepts zero positional
+arguments. External annotated reopenings and owner-specific lazy overrides fail
+closed. No generic Hash fallback, target registry, or return cache was added.
+The exact semantic-type tuple fixture, provenance guard, lazy-override guard,
+and the full hash cluster pass. The full AstToHir suite passes 516 examples
+with zero failures, zero errors, and two pending examples. A fresh clean B4-F
+run remains the next promotion gate.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

@@ -13142,6 +13142,125 @@ describe Adamas::HIR::AstToHir do
       converter.__test_get_type_name_from_ref(pointer_template_return).should eq("UInt64")
     end
 
+    it "preserves the inherited zero-argument hash ABI for semantic type tuples" do
+      stdlib_root = File.expand_path("src/stdlib")
+      converter = lower_program_with_main(<<-CRYSTAL, source_path: File.join(stdlib_root, "semantic_type_hash.cr"), stdlib_root: stdlib_root)
+        module Crystal
+          struct Hasher
+          end
+        end
+
+        class Object
+          def hash(hasher : Crystal::Hasher) : Crystal::Hasher
+            hasher
+          end
+
+          def hash
+            0_u64
+          end
+        end
+
+        module Adamas
+          module Compiler
+            module Semantic
+              abstract class Type
+                def hash : UInt64
+                  1_u64
+                end
+              end
+            end
+          end
+        end
+
+        def semantic_type_hash(
+          value : Pointer(Void) | Tuple(String, Adamas::Compiler::Semantic::Type),
+        )
+          value.hash
+        end
+
+        semantic_type_hash(Pointer(Void).null)
+      CRYSTAL
+      converter.flush_pending_functions
+
+      caller = converter.module.functions.find { |function| function.name.starts_with?("semantic_type_hash$") }
+      caller.should_not be_nil
+      converter.__test_get_type_name_from_ref(caller.not_nil!.return_type).should eq("UInt64")
+
+      hash_calls = caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.select { |call| call.method_name.includes?("#hash") }
+      hash_calls.should_not be_empty
+      hash_calls.each do |call|
+        converter.__test_get_type_name_from_ref(call.type).should eq("UInt64")
+      end
+    end
+
+    it "certifies an exact inherited Object hash target for a built-in value branch" do
+      stdlib_root = File.expand_path("src/stdlib")
+      converter = lower_program_with_main(<<-CRYSTAL, source_path: File.join(stdlib_root, "object_hash_contract.cr"), stdlib_root: stdlib_root)
+        class Object
+          def hash : UInt64
+            0_u64
+          end
+        end
+
+        0
+      CRYSTAL
+
+      converter.module.has_function_with_body?("Object#hash").should be_false
+      return_type = converter.__test_concrete_union_dispatch_return_type(
+        "Object#hash",
+        "Pointer(Void)",
+        "hash",
+        0,
+      )
+      converter.__test_get_type_name_from_ref(return_type).should eq("UInt64")
+    end
+
+    it "does not certify an untrusted or shadowed inherited Object hash target" do
+      untrusted = lower_program_with_main(<<-CRYSTAL)
+        class Object
+          def hash : UInt64
+            0_u64
+          end
+        end
+
+        0
+      CRYSTAL
+
+      untrusted.module.has_function_with_body?("Object#hash").should be_false
+      untrusted.__test_concrete_union_dispatch_return_type(
+        "Object#hash",
+        "Tuple(String, Int32)",
+        "hash",
+        0,
+      ).should eq(Adamas::HIR::TypeRef::VOID)
+
+      stdlib_root = File.expand_path("src/stdlib")
+      shadowed = lower_program_with_main(<<-CRYSTAL, source_path: File.join(stdlib_root, "shadowed_object_hash.cr"), stdlib_root: stdlib_root)
+        class Object
+          def hash : UInt64
+            0_u64
+          end
+        end
+
+        struct Pointer(T)
+          def hash(seed : Int32 = 0) : String
+            "pointer"
+          end
+        end
+
+        0
+      CRYSTAL
+
+      shadowed.__test_concrete_union_dispatch_return_type(
+        "Object#hash",
+        "Pointer(Void)",
+        "hash",
+        0,
+      ).should eq(Adamas::HIR::TypeRef::VOID)
+    end
+
     it "preserves the typed hash protocol ABI for nilable Tuple unions" do
       source = <<-CRYSTAL
         module Crystal
