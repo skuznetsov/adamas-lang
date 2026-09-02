@@ -1,13 +1,13 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-09-01 (receiver repair now separates the confirmed non-inline
-block callback Proc from real positional arguments before same-owner shape
-resolution. The previous `WithIndexIterator#any?$Proc_block` stage2 diagnostic
-is no longer reached. A fresh B4-F run builds stage1 in 19.20 seconds and passes
-both smokes, but stage2 still reaches the 300-second compiler cap without
-producing `cv2_s2`; wrapper wall time is 302.92 seconds. Admission therefore
-remains RED. The next frontier is the post-allocator-flush lowering tail, using
-the compact trace rather than another uninstrumented bootstrap run.)
+Updated: 2026-09-02 (receiver repair removed the previous
+`WithIndexIterator#any?$Proc_block` diagnostic, but a fresh B4-F stage2 still
+reaches the 300-second cap. Compact trace attribution now separates each
+missing-target iteration. The two dominant regimes are iteration 1, where
+`Hash` materializations consume 18.216 seconds of self time, and iteration 4,
+where the single late `AstToHir#lower_call` materialization consumes 11.127
+seconds of self time. Admission remains RED; investigate those two measured
+regimes independently.)
 
 2026-09-01 NON-INLINE BLOCK CALLBACKS NO LONGER POLLUTE RECEIVER-REPAIR ARITY.
 HIR block calls retain both a block region and an appended executable Proc for
@@ -14947,6 +14947,40 @@ The exact semantic-type tuple fixture, provenance guard, lazy-override guard,
 and the full hash cluster pass. The full AstToHir suite passes 516 examples
 with zero failures, zero errors, and two pending examples. A fresh clean B4-F
 run remains the next promotion gate.
+
+#### Session 131: attribute materialization cost to missing-target iterations
+
+The first complete compact trace after receiver repair showed that stage2 no
+longer fails at the old semantic target but expands from 842 to 40,483 HIR
+functions across five completed missing-target iterations before the
+300-second cap. Global hot-symbol reports mixed those waves together and could
+not distinguish an early generic fanout from a late self-host compiler body.
+
+The offline trace analyzer now tags each completed materialization with the
+active missing-target sweep and iteration and reports per-iteration count,
+unique symbol count, inclusive time, self time, and top generic-prefix groups.
+Separate sweeps cannot merge their zero-based iteration numbers. Each reported
+materialization bucket is explicitly marked incomplete when the trace ends
+before `MissingIterDone`, so the partial sixth wave cannot be mistaken for a
+complete measurement. No trace format, runtime event, lowering policy, or
+semantic registry changed.
+
+On the preserved B4-F trace, iteration 1 materialized 11,952 bodies (10,655
+unique) with 39.624 seconds of aggregate self time; `Hash` accounted for 7,805
+materializations and 18.216 seconds. Iteration 4 materialized 6,497 bodies
+(5,911 unique) with 37.868 seconds of aggregate self time; the single
+`AstToHir#lower_call` body accounted for 11.127 seconds. Iteration 5 is
+correctly marked incomplete.
+
+An attempted compile-time guard around 17 legacy arena-ledger calls was
+rejected and removed. A causal same-source A/B preserved 42,684 requests,
+2,958 materializations, and the exact 4,813-function frontier while changing
+the first heavy process only from 15,264.851 to 15,121.140 ms (0.94%), below a
+useful keep threshold and within observed run variance. Adversary verdict:
+ROBUST for iteration attribution and for rejecting that micro-optimization;
+VULNERABLE as a root-cause or B4-F closure claim. Next: split the measured
+`Hash` fanout from the late `lower_call` body cost with focused, no-prelude
+falsifiers before changing production lowering.
 
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 

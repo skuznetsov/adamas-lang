@@ -25,7 +25,9 @@ module Adamas::Tools
     duration_ns : UInt64,
     self_ns : UInt64,
     depth : UInt16,
-    start_sequence : UInt32
+    start_sequence : UInt32,
+    missing_sweep : UInt32?,
+    missing_iteration : UInt32?
 
   private record ConcretePhaseSample,
     symbol : String,
@@ -36,9 +38,15 @@ module Adamas::Tools
 
   private class ActiveMaterialization
     getter event : TraceEvent
+    getter missing_sweep : UInt32?
+    getter missing_iteration : UInt32?
     property child_ns : UInt64
 
-    def initialize(@event : TraceEvent)
+    def initialize(
+      @event : TraceEvent,
+      @missing_sweep : UInt32?,
+      @missing_iteration : UInt32?,
+    )
       @child_ns = 0_u64
     end
   end
@@ -309,6 +317,10 @@ module Adamas::Tools
       active_pass : TraceEvent? = nil
       pass_requests = 0
       pass_materializations = 0
+      next_missing_sweep = 0_u32
+      active_missing_sweep = nil.as(UInt32?)
+      active_missing_iteration = nil.as(UInt32?)
+      completed_missing_iterations = Set(Tuple(UInt32, UInt32)).new
       request_profile_enabled = run.events.any? do |event|
         event.event_id == TraceFormat::Event::LowerRequestProfile.value
       end
@@ -411,7 +423,11 @@ module Adamas::Tools
             request_edges[{caller, callee}] += 1
           end
         when TraceFormat::Event::MaterializeStart.value
-          active_materializations << ActiveMaterialization.new(event)
+          active_materializations << ActiveMaterialization.new(
+            event,
+            active_missing_sweep,
+            active_missing_iteration,
+          )
         when TraceFormat::Event::MaterializeDone.value
           if active = active_materializations.pop?
             started = active.event
@@ -425,6 +441,8 @@ module Adamas::Tools
                   self_ns,
                   event.depth,
                   started.sequence,
+                  active.missing_sweep,
+                  active.missing_iteration,
                 )
                 if parent = active_materializations.last?
                   parent.child_ns &+= duration_ns
@@ -539,11 +557,28 @@ module Adamas::Tools
           else
             unmatched_nested_registrations += 1
           end
-        when TraceFormat::Event::MissingStart.value,
-             TraceFormat::Event::MissingIterStart.value,
-             TraceFormat::Event::MissingScanDone.value,
-             TraceFormat::Event::MissingIterDone.value,
-             TraceFormat::Event::MissingDone.value
+        when TraceFormat::Event::MissingStart.value
+          active_missing_sweep = next_missing_sweep
+          next_missing_sweep &+= 1_u32
+          active_missing_iteration = nil
+          phase_events << event
+        when TraceFormat::Event::MissingIterStart.value
+          active_missing_iteration = (event.value & 0xffff_ffff_u64).to_u32
+          phase_events << event
+        when TraceFormat::Event::MissingIterDone.value
+          if sweep = active_missing_sweep
+            completed_missing_iterations << {
+              sweep,
+              (event.value & 0xffff_ffff_u64).to_u32,
+            }
+          end
+          active_missing_iteration = nil
+          phase_events << event
+        when TraceFormat::Event::MissingDone.value
+          active_missing_sweep = nil
+          active_missing_iteration = nil
+          phase_events << event
+        when TraceFormat::Event::MissingScanDone.value
           phase_events << event
         end
       end
@@ -587,6 +622,44 @@ module Adamas::Tools
       repeated.each do |name, totals|
         count, total_ns, self_ns = totals
         puts "    #{count.to_s.rjust(8)} total_ms=#{format_ms(total_ns)} self_ms=#{format_ms(self_ns)}  #{name}"
+      end
+
+      materializations_by_iteration = Hash(Tuple(UInt32, UInt32), Array(MaterializationSample)).new do |by_iteration, key|
+        by_iteration[key] = [] of MaterializationSample
+      end
+      materializations.each do |sample|
+        if (sweep = sample.missing_sweep) && (iteration = sample.missing_iteration)
+          materializations_by_iteration[{sweep, iteration}] << sample
+        end
+      end
+      puts "  missing_iteration_materializations:"
+      materializations_by_iteration.keys.sort.each do |key|
+        sweep, iteration = key
+        samples = materializations_by_iteration[key]
+        total_ns = samples.sum(0_u64, &.duration_ns)
+        self_ns = samples.sum(0_u64, &.self_ns)
+        unique = samples.map(&.symbol).uniq.size
+        complete = completed_missing_iterations.includes?(key) ? 1 : 0
+        puts "    sweep=#{sweep} iteration=#{iteration} complete=#{complete} count=#{samples.size} unique=#{unique} inclusive_ms=#{format_ms(total_ns)} self_ms=#{format_ms(self_ns)}"
+
+        family_counts = Hash(String, Int32).new(0)
+        family_total_ns = Hash(String, UInt64).new(0_u64)
+        family_self_ns = Hash(String, UInt64).new(0_u64)
+        family_symbols = Hash(String, Set(String)).new do |symbols, family|
+          symbols[family] = Set(String).new
+        end
+        samples.each do |sample|
+          family = generic_family(sample.symbol)
+          family_counts[family] += 1
+          family_total_ns[family] &+= sample.duration_ns
+          family_self_ns[family] &+= sample.self_ns
+          family_symbols[family] << sample.symbol
+        end
+        family_self_ns.to_a.sort_by do |family, accumulated_self_ns|
+          {-accumulated_self_ns.to_i128, -family_counts[family], family}
+        end.first(top).each do |family, accumulated_self_ns|
+          puts "      self_ms=#{format_ms(accumulated_self_ns).rjust(12)} inclusive_ms=#{format_ms(family_total_ns[family]).rjust(12)} count=#{family_counts[family].to_s.rjust(8)} unique=#{family_symbols[family].size.to_s.rjust(6)} family_prefix=#{family}"
+        end
       end
 
       concrete_families = concrete_registration_totals.to_a.sort_by do |family, totals|
