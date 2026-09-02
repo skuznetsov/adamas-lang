@@ -9814,6 +9814,17 @@ root-typed calls such as `exception : Object; exception.inspect_with_backtrace`,
 but avoids materializing unrelated live owners that cannot answer the method.
 Covered by `regression_tests/rta_root_virtual_method_replay_guard.sh`.
 
+RTA initialization-order repair (2026-09-02): the root replay guard above was
+still red when a concrete child became live while `initialize_lazy_rta` scanned
+the already-emitted synthetic main. Both pending-loop entry points enabled
+`@lazy_rta_active` only after that scan, so the existing live-type replay hook
+could not rendezvous the child with an already-recorded `Object` target. Lazy
+RTA is now activated before its one-time initialization. The no-prelude root
+override guard emits `MyError#inspect_with_backtrace$IO` without emitting an
+`Unrelated` target; the nested generic broad-root guard remains bounded at 23
+functions, 13 Object replays, and 6 Reference replays. The full AstToHir suite
+passes with 530 examples, 0 failures, 0 errors, and 2 pre-existing pending.
+
 Direct `s1 -> s2` previously produced a stage2 compiler in the focused gate:
 
 ```bash

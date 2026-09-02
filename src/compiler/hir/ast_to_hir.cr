@@ -65296,8 +65296,8 @@ module Adamas::HIR
       # Enable lazy RTA during the main process_pending pass only.
       # Default-on (opt-out via ADAMAS_LAZY_RTA=0).
       if lazy_rta_enabled?
-        initialize_lazy_rta
         @lazy_rta_active = true
+        initialize_lazy_rta
       end
       stop_after_flush_phase("lazy_rta_init", "ADAMAS_STOP_AFTER_HIR_FLUSH_LAZY_RTA_INIT")
       STDERR.puts "[FLUSH_ENTER] before_process" if env_has?("ADAMAS_TRACE_FLUSH_ENTER")
@@ -67721,8 +67721,8 @@ module Adamas::HIR
       # bypassing flush_pending_functions where lazy RTA is normally initialized.
       # Keep lazy RTA behavior consistent in both paths (default-on).
       if !lazy_rta && lazy_rta_enabled?
-        initialize_lazy_rta
         @lazy_rta_active = true
+        initialize_lazy_rta
         lazy_rta = true
       end
       stop_after_pending_phase("lazy_rta", "ADAMAS_STOP_AFTER_HIR_PENDING_LAZY_RTA", -1, -1, nil, lazy_rta ? "lazy_rta=1" : "lazy_rta=0")
