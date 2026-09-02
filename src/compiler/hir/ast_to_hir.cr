@@ -5005,15 +5005,6 @@ module Adamas::HIR
                     STDERR.puts "[RTA_LIVE] #{owner_base} via direct call #{mname} in #{func.name}"
                   end
                 end
-              elsif dot_idx2 = mname.rindex('.')
-                owner = mname[0, dot_idx2]
-                if mark_live_type(owner)
-                  new_types = true
-                  owner_base = strip_generics_simple(owner)
-                  if rta_trace && (rta_trace == "1" || owner_base.includes?(rta_trace))
-                    STDERR.puts "[RTA_LIVE] #{owner_base} via direct class call #{mname} in #{func.name}"
-                  end
-                end
               end
             end
           end
@@ -65505,18 +65496,32 @@ module Adamas::HIR
         STDERR.puts "[ARENA_STATS] arena_fits_def_cache size: #{@arena_fits_def_cache.size}"
       end
 
-      if @debug_virtual_target_replay_stats
-        STDERR.puts "[VTR_STATS] record_virtual_target calls: #{@vtr_stats_record_calls}"
-        STDERR.puts "[VTR_STATS] replay_virtual_targets_for_registered_class calls: #{@vtr_stats_replay_calls}"
-        STDERR.puts "[VTR_STATS] lower_virtual_targets_for_child calls: #{@vtr_stats_lower_child_calls}"
-        STDERR.puts "[VTR_STATS] lower_virtual_target_owner attempts: #{@vtr_stats_owner_attempts}"
-        STDERR.puts "[VTR_STATS] lower_virtual_target_owner skipped (dedup): #{@vtr_stats_owner_skipped}"
-        STDERR.puts "[VTR_STATS] unique replay keys: #{@virtual_target_replay_attempted.size}"
-        STDERR.puts "[VTR_STATS] targets_by_parent parents: #{@virtual_targets_by_parent.size}"
-        top_parents = @virtual_targets_by_parent.to_a.sort_by { |_, v| -v.size }.first(30)
-        STDERR.puts "[VTR_STATS] Top parents by target count:"
-        top_parents.each { |name, targets| STDERR.puts "  #{name}: #{targets.size} targets" }
+      report_virtual_target_replay_stats
+    end
+
+    private def report_virtual_target_replay_stats : Nil
+      return unless @debug_virtual_target_replay_stats
+
+      STDERR.puts "[VTR_STATS] record_virtual_target calls: #{@vtr_stats_record_calls}"
+      STDERR.puts "[VTR_STATS] replay_virtual_targets_for_registered_class calls: #{@vtr_stats_replay_calls}"
+      STDERR.puts "[VTR_STATS] lower_virtual_targets_for_child calls: #{@vtr_stats_lower_child_calls}"
+      STDERR.puts "[VTR_STATS] lower_virtual_target_owner attempts: #{@vtr_stats_owner_attempts}"
+      STDERR.puts "[VTR_STATS] lower_virtual_target_owner skipped (dedup): #{@vtr_stats_owner_skipped}"
+      STDERR.puts "[VTR_STATS] unique replay keys: #{@virtual_target_replay_attempted.size}"
+      STDERR.puts "[VTR_STATS] targets_by_parent parents: #{@virtual_targets_by_parent.size}"
+      top_parents = @virtual_targets_by_parent.to_a.sort_by { |_, targets| -targets.size }.first(30)
+      STDERR.puts "[VTR_STATS] Top parents by target count:"
+      top_parents.each { |name, targets| STDERR.puts "  #{name}: #{targets.size} targets" }
+      replay_counts = Hash({String, String}, Int32).new(0)
+      @virtual_target_replay_attempted.each do |key|
+        replay_counts[{key[1], key[2]}] += 1
       end
+      top_replays = replay_counts.to_a.sort_by { |_, count| -count }.first(30)
+      STDERR.puts "[VTR_STATS] Top parent/method replay keys:"
+      top_replays.each do |(parent_name, method_name), count|
+        STDERR.puts "  #{parent_name}##{method_name}: #{count} replay keys"
+      end
+      STDERR.flush
     end
 
     # A virtual-target dedup key records that lowering was attempted, not that
@@ -65861,6 +65866,7 @@ module Adamas::HIR
       if env_has?(env_key)
         log_flush_phase_status("stop_after_#{phase}", "taken")
         STDERR.puts "[FLUSH_GATE] stop_after=#{phase} env=#{env_key} pending=#{@pending_function_queue.size} funcs=#{@module.function_count}"
+        report_virtual_target_replay_stats
         flush_lowering_binary_trace
         LibC._exit(0)
       else
@@ -67334,6 +67340,7 @@ module Adamas::HIR
         log_missing_phase_status("stop_after_#{phase}", "taken", iteration, missing_count)
         STDERR.puts "[MISSING_GATE] stop_after=#{phase} env=#{env_key} iter=#{iteration} missing=#{missing_count} pending=#{@pending_function_queue.size} funcs=#{@module.function_count}"
         STDERR.puts "[FORCE_LOWER_GATE] total=#{@phase0_forced_lower_count} unique=#{@phase0_forced_lower_names.size}"
+        report_virtual_target_replay_stats
         flush_lowering_binary_trace
         LibC._exit(0)
       else

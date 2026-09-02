@@ -1,12 +1,36 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-09-02 (typed hash dispatch now preserves the selected stdlib
-`Pointer` definition's `Crystal::Hasher` ABI without inferring contracts from
-parameter names. Certified union branches stay on the ordinary queue; explicit
-or unresolved external generic overrides fail closed. The former heterogeneous
-`Int32 | Pointer(UInt8)` hash failure is absent from focused reducers and a
-fresh 300-second B4-F stage2 trace. B4-F remains RED on timeout; next: reduce
-the measured broad missing-target worklist rather than widen hash lowering.)
+Updated: 2026-09-02 (lazy RTA no longer treats an arbitrary class-method call
+as proof that instances of its owner can participate in broad virtual dispatch.
+Constructors and direct instance calls retain their existing liveness behavior.
+The bounded worklist is smaller, but B4-F remains RED and no wall-time speedup
+is claimed; next: distinguish required broad-root overrides from remaining
+`Object`/`Reference` replay fanout.)
+
+2026-09-02 CLASS-METHOD DEMAND NO LONGER IMPLIES INSTANCE LIVENESS.
+The lazy-RTA HIR scanner correctly recognized `.new` and direct `#` calls as
+evidence that an instance type can exist, but then applied the same rule to
+every non-virtual `Type.method` call. A class method can execute without any
+instance of its owner, so this mixed metaclass demand with runtime receiver
+liveness and replayed broad `Object`/`Reference` targets into dormant generic
+owners. A no-bootstrap synthetic HIR regression was red because
+`Box(Int32).touch` materialized `Box(Int32)#probe`; it is now green while a
+positive `.new` control still materializes the exact override. The full
+AstToHir suite passes 529 examples with zero failures and two existing pending
+examples. Diagnostic-only gate reporting now ranks replay keys by
+`parent#method` and is also available at bounded missing/flush exits.
+
+At the end of missing iteration 1, a source-matched before/after gate reduced
+registered-class replay calls from 97,558 to 91,084, child replay calls from
+324,586 to 300,558, unique replay keys from 14,454 to 14,279, and HIR functions
+from 19,274 to 19,192. The same run took about 2.3 seconds longer, so these
+structural reductions do not establish a speedup. Remaining replay is dominated
+by broad shapes: `Object#to_s` 3,951 keys, `Object#==` 2,634, `Object#hash` and
+`Object#inspect` 1,317 each, plus four `Reference` methods at 730 each.
+Adversary verdict: ROBUST for the class-vs-instance liveness boundary;
+VULNERABLE as a performance or B4-F closure claim. Next: use caller provenance
+and a small source-backed falsifier to determine which surviving broad shapes
+are semantically required before changing replay policy.
 
 2026-09-02 TYPED HASH UNION ABI USES SELECTED-DEFINITION PROVENANCE FIRST.
 The stdlib `def_hash` macro produces an owner-specific unannotated `Pointer`

@@ -1537,6 +1537,10 @@ class Adamas::HIR::AstToHir
     mark_live_type(name)
   end
 
+  def __test_scan_hir_function_for_live_types(func : Adamas::HIR::Function) : Bool
+    scan_hir_function_for_live_types(func)
+  end
+
   def __test_set_lazy_rta_active(value : Bool) : Nil
     @lazy_rta_active = value
   end
@@ -15718,6 +15722,68 @@ describe Adamas::HIR::AstToHir do
       child_target = converter.module.functions.find { |func| func.name.starts_with?("Box(Int32)#probe$") }
       child_target.should_not be_nil
       converter.module.has_function_with_body?(child_target.not_nil!.name).should be_true
+    ensure
+      converter.try(&.__test_set_lazy_rta_active(false))
+    end
+
+    it "does not make an instance type live from a class-method call" do
+      source = <<-CRYSTAL
+        class Object
+          def probe : Int32
+            1
+          end
+        end
+
+        class Box(T) < Object
+          def self.touch : Int32
+            2
+          end
+
+          def probe : Int32
+            3
+          end
+        end
+      CRYSTAL
+
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+      converter.arena = arena
+      class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+      def_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode) }
+      class_nodes.each { |node| converter.register_class(node) }
+      def_nodes.each { |node| converter.register_function(node) }
+      converter.__test_monomorphize_generic_class("Box", ["Int32"], "Box(Int32)")
+      converter.__test_set_lazy_rta_active(true)
+      converter.__test_record_virtual_target("Object", "probe", [] of Adamas::HIR::TypeRef)
+
+      caller = converter.module.create_function("class_method_only", Adamas::HIR::TypeRef::INT32)
+      caller.get_block(caller.entry_block).add(
+        Adamas::HIR::Call.without_receiver(
+          caller.next_value_id,
+          Adamas::HIR::TypeRef::INT32,
+          "Box(Int32).touch",
+          [] of Adamas::HIR::ValueId,
+        )
+      )
+      converter.__test_scan_hir_function_for_live_types(caller)
+
+      converter.module.functions.any? do |func|
+        func.name.starts_with?("Box(Int32)#probe") && converter.module.has_function_with_body?(func.name)
+      end.should be_false
+
+      caller.get_block(caller.entry_block).add(
+        Adamas::HIR::Call.without_receiver(
+          caller.next_value_id,
+          Adamas::HIR::TypeRef::VOID,
+          "Box(Int32).new",
+          [] of Adamas::HIR::ValueId,
+        )
+      )
+      converter.__test_scan_hir_function_for_live_types(caller)
+
+      converter.module.functions.any? do |func|
+        func.name.starts_with?("Box(Int32)#probe") && converter.module.has_function_with_body?(func.name)
+      end.should be_true
     ensure
       converter.try(&.__test_set_lazy_rta_active(false))
     end
