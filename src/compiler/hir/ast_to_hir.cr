@@ -50681,18 +50681,23 @@ module Adamas::HIR
     end
 
     private def macro_text_contains_yield?(text : String) : Bool
+      bytes = text.to_slice
       idx = 0
-      bytesize = text.bytesize
-      while idx < bytesize
-        pos = text.index("yield", idx)
-        break unless pos
-        before = pos == 0 ? 0_u8 : text.byte_at(pos - 1)
-        after_pos = pos + 5
-        after = after_pos >= bytesize ? 0_u8 : text.byte_at(after_pos)
-        if !identifier_byte?(before) && !identifier_byte?(after)
-          return true
+      last_start = bytes.size - 5
+      while idx <= last_start
+        if bytes.unsafe_fetch(idx) == 'y'.ord &&
+           bytes.unsafe_fetch(idx + 1) == 'i'.ord &&
+           bytes.unsafe_fetch(idx + 2) == 'e'.ord &&
+           bytes.unsafe_fetch(idx + 3) == 'l'.ord &&
+           bytes.unsafe_fetch(idx + 4) == 'd'.ord
+          before = idx == 0 ? 0_u8 : bytes.unsafe_fetch(idx - 1)
+          after_pos = idx + 5
+          after = after_pos >= bytes.size ? 0_u8 : bytes.unsafe_fetch(after_pos)
+          return true if !identifier_byte?(before) && !identifier_byte?(after)
+          idx = after_pos
+        else
+          idx += 1
         end
-        idx = after_pos
       end
       false
     end

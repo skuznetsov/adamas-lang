@@ -1264,6 +1264,10 @@ class Adamas::HIR::AstToHir
     end
   end
 
+  def __test_macro_text_contains_yield(text : String) : Bool
+    macro_text_contains_yield?(text)
+  end
+
   def __test_function_param_annotations(name : String) : Array(String?)
     node = @function_defs[name]?
     return [] of String? unless node
@@ -2198,6 +2202,17 @@ describe "yield classification cache" do
 
     converter.__test_seeded_yield_cache_result(yielding_name, false).should be_false
     converter.__test_seeded_yield_cache_result(plain_name, true).should be_true
+  end
+
+  it "recognizes standalone yield tokens without mixing character and byte offsets" do
+    converter = lower_program_with_main("1", source_backed: true)
+
+    converter.__test_macro_text_contains_yield("yield").should be_true
+    converter.__test_macro_text_contains_yield("before; yield(value)").should be_true
+    converter.__test_macro_text_contains_yield("λ yield").should be_true
+    converter.__test_macro_text_contains_yield("").should be_false
+    converter.__test_macro_text_contains_yield("yiel").should be_false
+    converter.__test_macro_text_contains_yield("yield_value preyield yield2").should be_false
   end
 end
 
