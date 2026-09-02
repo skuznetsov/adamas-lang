@@ -1562,6 +1562,14 @@ class Adamas::HIR::AstToHir
     record_virtual_target(parent_name, method_name, arg_types, false, false)
   end
 
+  def __test_record_virtual_target_inside_lowering(parent_name : String, method_name : String, arg_types : Array(Adamas::HIR::TypeRef)) : Nil
+    old_depth = @lowering_depth
+    @lowering_depth = @lowering_depth_limit + 1
+    record_virtual_target(parent_name, method_name, arg_types, false, false)
+  ensure
+    @lowering_depth = old_depth.as(Int32)
+  end
+
   def __test_collect_subclasses_cached(parent_name : String) : Array(String)
     collect_subclasses_cached(parent_name)
   end
@@ -15299,6 +15307,48 @@ describe Adamas::HIR::AstToHir do
       # The generic child owner is a MIR runtime candidate, but its inherited
       # implementation is already available under the non-generic ancestor.
       converter.module.functions.any? { |func| func.name.starts_with?("Box(Int32)#run$") }.should be_false
+    end
+
+    it "does not queue an inherited child wrapper while its ancestor target is pending" do
+      source = <<-CRYSTAL
+        class Object
+          def probe(value : Int32) : Int32
+            value
+          end
+        end
+
+        class Child < Object
+        end
+      CRYSTAL
+
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+      converter.arena = arena
+      class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+      def_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode) }
+      class_nodes.each { |node| converter.register_class(node) }
+      def_nodes.each { |node| converter.register_function(node) }
+      converter.__test_set_lazy_rta_active(true)
+      converter.__test_mark_live_type("Child")
+
+      converter.__test_record_virtual_target_inside_lowering(
+        "Object",
+        "probe",
+        [Adamas::HIR::TypeRef::INT32],
+      )
+
+      converter.__test_pending_function?("Object#probe$Int32").should be_true
+      converter.__test_pending_function?("Child#probe$Int32").should be_false
+      converter.__test_pending_function?("Child#probe").should be_false
+
+      converter.__test_process_pending_lower_functions
+
+      converter.module.has_function_with_body?("Object#probe$Int32").should be_true
+      converter.module.functions.any? do |func|
+        func.name.starts_with?("Child#probe") && converter.module.has_function_with_body?(func.name)
+      end.should be_false
+    ensure
+      converter.try(&.__test_set_lazy_rta_active(false))
     end
 
     it "does not synthesize generic equality for an incompatible broad-root argument" do

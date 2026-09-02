@@ -1,9 +1,29 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-09-02 (receiver-bearing direct calls no longer promote their
-selected implementation owner to an instantiated runtime type. The full
-AstToHir suite and both no-prelude broad-root guards pass. B4-F remains RED;
-next: remeasure the missing-target fixed point from this clean commit.)
+Updated: 2026-09-02 (nested virtual replay now treats a pending or in-progress
+selected ancestor as deferred work, not as proof that a child wrapper is
+required. The full AstToHir suite passes. B4-F remains RED; next: isolate the
+remaining Hash/Array and broad-virtual materialization wave.)
+
+2026-09-02 NESTED INHERITED REPLAY NO LONGER CLONES BEFORE ITS ANCESTOR QUEUE
+DRAINS. `lower_required_virtual_target_function` materializes immediately at
+top level but deliberately queues work during nested lowering. The inherited
+reuse path rechecked only for a body, so the nested case interpreted that
+temporary absence as a missing implementation and queued a child-owned clone.
+It now consults the existing `Pending`/`InProgress` state before taking the
+fallback; final repair remains responsible for a target that never produces a
+body. No registry, cache, or new lowering state was added.
+
+A no-bootstrap regression was red on the surplus child demand and is now green.
+All 26 inherited-target examples and the full AstToHir suite pass (536 examples,
+zero failures, two pre-existing pending), and a fresh host compiler builds. A
+source-matched 180-second trace remains RED, but finished iteration 4 about 3.8
+seconds earlier with 39,810 versus 40,237 HIR functions, 72,424 versus 75,948
+virtual replays, and 35,805 versus 36,125 materializations across the five
+completed missing iterations. Raw total materializations are not comparable
+because the new run progressed farther into iteration 5. Adversary verdict:
+ROBUST for the scoped scheduling contract; VULNERABLE as a stable speedup or
+B4-F closure claim.
 
 2026-09-02 INHERITED BROAD-ROOT REPLAY NO LONGER CREATES A CHILD WRAPPER ONLY
 BECAUSE THE ANCESTOR BODY WAS INITIALLY ABSENT. Lazy RTA can record a broad

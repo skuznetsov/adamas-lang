@@ -9219,10 +9219,13 @@ module Adamas::HIR
         elsif !resolved_owner.empty? && strip_generic_args(resolved_owner) != strip_generic_args(owner) &&
               !inherited_wrapper_reusable
           lower_required_virtual_target_function(resolved_name, exact_demand: true, replay_source: replay_trace_source)
-          # The first reuse check may fail only because the inherited body has
-          # not been materialized yet. Recheck the same fail-closed contract
-          # before creating a concrete child wrapper.
-          unless repair_resolved_body_available?(
+          # Nested replay queues the inherited target instead of materializing
+          # it synchronously. Do not mistake that temporary missing body for a
+          # need to clone the same implementation under every child owner;
+          # final repair rechecks the inherited body after the queue drains.
+          resolved_state = function_state(resolved_name)
+          unless resolved_state.pending? || resolved_state.in_progress? ||
+                 repair_resolved_body_available?(
                    owner,
                    base_name,
                    candidate,
