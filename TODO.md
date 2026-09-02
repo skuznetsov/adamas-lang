@@ -15477,6 +15477,33 @@ Adversary verdict: ROBUST for same-TypeRef single-payload nilable `==` and `!=`,
 including operator-preserving custom dispatch. Multi-payload unions remain
 outside this helper and no full-bootstrap or global-speedup claim is made.
 
+#### Session 145: lower expression inference through one core shape
+
+The binary trace exposed two complete lowerings of the roughly 1,480-line
+`infer_type_from_expr_inner` body, differing only because its optional receiver
+context arrived once as `String` and once as `String?`. The wrapper now keeps
+that context in save/restore instance state and calls one `ExprId`-only core.
+No inference branch, registry, or fallback was added.
+
+A no-prelude parser falsifier also exposed a pre-existing cache leak: inferring
+the same `self` expression under nil, concrete, then nil receiver contexts
+reused the concrete result. The existing cache, recursion-guard, and guarded
+keys now include the nullable receiver context. The red test is green, and the
+full AstToHir suite passes 535 examples with zero failures, zero errors, and two
+existing pending examples.
+
+The baseline trace materialized two core specializations with 8.914 seconds of
+self time and did not finish missing-target iteration one within 120 seconds.
+The final bounded trace materialized one core specialization with 0.795 seconds
+of self time and reached the iteration-one process gate at trace delta 78.052
+seconds. Run-to-run absolute timing remains noisy, so the durable claim is the
+single core shape and completed bounded gate, not a fixed wall-clock speedup.
+
+Adversary verdict: ROBUST for receiver-context restoration, cache isolation,
+and eliminating the duplicate heavy core body; VULNERABLE as full B4-F closure.
+Next: run the trace-toggle HIR ablation before considering the separate abstract
+`Value` virtual-replay guard.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

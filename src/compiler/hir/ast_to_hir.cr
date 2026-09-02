@@ -6176,12 +6176,17 @@ module Adamas::HIR
     @current_typeof_locals : Hash(String, TypeRef)?
     # Optional body context for local-type inference when resolving identifiers.
     @infer_body_context : Array(ExprId)?
-    # Guard against recursive inference loops (arena object_id + expr index).
-    @infer_expr_stack : Set({UInt64, UInt64})
-    @infer_type_cache : Hash({UInt64, UInt64}, {Int32, TypeRef})
+    # Guard against recursive inference loops (arena object_id + expr index,
+    # substitution generation, and receiver context).
+    @infer_expr_stack : Set({UInt64, UInt64, String?})
+    @infer_type_cache : Hash({UInt64, UInt64, String?}, {Int32, TypeRef})
     @infer_type_cache_version : Int32
-    @infer_type_guarded : Hash({UInt64, UInt64}, Int32)
+    @infer_type_guarded : Hash({UInt64, UInt64, String?}, Int32)
     @infer_type_cache_scope : String?
+    # Dynamically scoped receiver context for the large expression-inference
+    # core. Keeping it out of the core signature avoids lowering the same body
+    # once for String and again for String?, while preserving nil semantics.
+    @infer_self_type_name : String?
     @infer_local_type_cache : Hash({UInt64, String, String?, UInt64, Int32}, {Int32, TypeRef})
     @infer_local_type_nil_cache : Set({UInt64, String, String?, UInt64, Int32})
     @infer_local_type_stack : Set({UInt64, String, String?})
@@ -6744,11 +6749,12 @@ module Adamas::HIR
       @current_def_node = nil
       @current_typeof_locals = nil
       @infer_body_context = nil
-      @infer_expr_stack = Set({UInt64, UInt64}).new
-      @infer_type_cache = {} of {UInt64, UInt64} => {Int32, TypeRef}
+      @infer_expr_stack = Set({UInt64, UInt64, String?}).new
+      @infer_type_cache = {} of {UInt64, UInt64, String?} => {Int32, TypeRef}
       @infer_type_cache_version = 0
-      @infer_type_guarded = {} of {UInt64, UInt64} => Int32
+      @infer_type_guarded = {} of {UInt64, UInt64, String?} => Int32
       @infer_type_cache_scope = nil
+      @infer_self_type_name = nil
       @infer_local_type_cache = {} of {UInt64, String, String?, UInt64, Int32} => {Int32, TypeRef}
       @infer_local_type_nil_cache = Set({UInt64, String, String?, UInt64, Int32}).new
       @infer_local_type_stack = Set({UInt64, String, String?}).new
@@ -24176,7 +24182,7 @@ module Adamas::HIR
       @current_typeof_local_names = nil
       # Prevent cached inference results from a different callsite
       # from polluting return type inference.
-      @infer_type_cache = {} of {UInt64, UInt64} => {Int32, TypeRef}
+      @infer_type_cache = {} of {UInt64, UInt64, String?} => {Int32, TypeRef}
       @infer_local_type_cache = {} of {UInt64, String, String?, UInt64, Int32} => {Int32, TypeRef}
       @infer_local_type_nil_cache = Set({UInt64, String, String?, UInt64, Int32}).new
       @infer_type_cache_scope = nil
@@ -24598,7 +24604,7 @@ module Adamas::HIR
       old_arena = @arena
       @arena = arena
       expr_key = (arena.object_id.to_u64 << 32) ^ expr_id.index.to_u64
-      key = {expr_key, @subst_cache_gen}
+      key = {expr_key, @subst_cache_gen, self_type_name}
       if cached = @infer_type_cache[key]?
         cached_version, cached_type = cached
         if cached_version == @infer_type_cache_version
@@ -24621,13 +24627,16 @@ module Adamas::HIR
         end
       end
       @infer_expr_stack.add(key)
+      old_infer_self_type_name = @infer_self_type_name
+      @infer_self_type_name = self_type_name
       begin
-        result = infer_type_from_expr_inner(expr_id, self_type_name)
+        result = infer_type_from_expr_inner(expr_id)
         if result
           @infer_type_cache[key] = {@infer_type_cache_version, result}
         end
         result
       ensure
+        @infer_self_type_name = old_infer_self_type_name
         @infer_expr_stack.delete(key)
         @arena = old_arena
       end
@@ -24657,7 +24666,8 @@ module Adamas::HIR
       STDERR.puts "[INFER_GUARD] hits=#{@infer_guard_hits} expr=#{expr_id.index} kind=#{kind} current=#{current} method=#{method} file=#{File.basename(path)}#{span_info}"
     end
 
-    private def infer_type_from_expr_inner(expr_id : ExprId, self_type_name : String?) : TypeRef?
+    private def infer_type_from_expr_inner(expr_id : ExprId) : TypeRef?
+      self_type_name = @infer_self_type_name
       expr_node = @arena[expr_id]
       case expr_node
       when Adamas::Compiler::Frontend::NumberNode

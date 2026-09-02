@@ -719,6 +719,19 @@ class Adamas::HIR::AstToHir
     get_type_name_from_ref(type_ref)
   end
 
+  def __test_infer_type_name(
+    expr_id : Adamas::Compiler::Frontend::ExprId,
+    self_type_name : String?,
+  ) : String?
+    infer_type_from_expr(expr_id, self_type_name).try do |type_ref|
+      get_type_name_from_ref(type_ref)
+    end
+  end
+
+  def __test_infer_self_type_name : String?
+    @infer_self_type_name
+  end
+
   def __test_local_inference_after_dependency_update(
     body : Array(Adamas::Compiler::Frontend::ExprId),
     name : String,
@@ -5836,6 +5849,27 @@ describe Adamas::HIR::AstToHir do
       )
       before.should be_nil
       after.should be_nil
+    end
+
+    it "restores the optional self context around expression inference" do
+      arena, roots = parse("self\nself\nself")
+      converter = Adamas::HIR::AstToHir.new(arena)
+
+      converter.__test_infer_type_name(roots[0], "InferenceContext").should eq("InferenceContext")
+      converter.__test_infer_self_type_name.should be_nil
+      converter.__test_infer_type_name(roots[1], nil).should be_nil
+      converter.__test_infer_self_type_name.should be_nil
+      converter.__test_infer_type_name(roots[2], "InferenceContext").should eq("InferenceContext")
+      converter.__test_infer_self_type_name.should be_nil
+    end
+
+    it "keeps cached expression inference scoped to the self context" do
+      arena, roots = parse("self")
+      converter = Adamas::HIR::AstToHir.new(arena)
+
+      converter.__test_infer_type_name(roots[0], nil).should be_nil
+      converter.__test_infer_type_name(roots[0], "InferenceContext").should eq("InferenceContext")
+      converter.__test_infer_type_name(roots[0], nil).should be_nil
     end
 
     it "lowers class variable read" do
