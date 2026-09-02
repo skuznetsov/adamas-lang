@@ -13142,6 +13142,89 @@ describe Adamas::HIR::AstToHir do
       converter.__test_get_type_name_from_ref(pointer_template_return).should eq("UInt64")
     end
 
+    it "materializes unannotated typed hash branches inside generic block lowering" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        module Crystal
+          struct Hasher
+          end
+        end
+
+        struct Int32
+          def hash(hasher)
+            hasher
+          end
+        end
+
+        struct Pointer(T)
+          def hash(hasher)
+            hasher
+          end
+        end
+
+        struct HashBox(T)
+          def initialize(@value : T)
+          end
+
+          def each(&block : T ->)
+            yield @value
+          end
+
+          def hash(hasher : Crystal::Hasher)
+            each do |element|
+              hasher = element.hash(hasher)
+            end
+            hasher
+          end
+        end
+
+        HashBox(Int32 | Pointer(UInt8)).new(1).hash(Crystal::Hasher.new)
+      CRYSTAL
+      converter.flush_pending_functions
+
+      %w(Int32 Pointer(UInt8)).each do |owner|
+        target = converter.module.function_by_name("#{owner}#hash$Crystal::Hasher")
+        target.should_not be_nil
+        converter.__test_get_type_name_from_ref(target.not_nil!.return_type).should eq("Crystal::Hasher")
+      end
+
+      block_function = converter.module.functions.find do |function|
+        function.name.starts_with?("__crystal_block_proc_")
+      end
+      block_function.should_not be_nil
+      hash_calls = block_function.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.select { |call| call.method_name.includes?("#hash") }
+      hash_calls.size.should eq(2)
+      hash_calls.each do |call|
+        converter.__test_get_type_name_from_ref(call.type).should eq("Crystal::Hasher")
+      end
+    end
+
+    it "does not infer a typed hash ABI from an external parameter name" do
+      converter = lower_program_with_main(
+        <<-CRYSTAL,
+          module Crystal
+            struct Hasher
+            end
+          end
+
+          class ExternalHash
+            def hash(hasher)
+              hasher
+            end
+          end
+
+          0
+        CRYSTAL
+        source_path: "/tmp/external_hash_parameter_name.cr",
+        stdlib_root: File.expand_path("src/stdlib"),
+      )
+
+      names = converter.__test_function_def_names
+      names.should contain("ExternalHash#hash$arity1")
+      names.should_not contain("ExternalHash#hash$Crystal::Hasher")
+    end
+
     it "preserves the inherited zero-argument hash ABI for semantic type tuples" do
       stdlib_root = File.expand_path("src/stdlib")
       converter = lower_program_with_main(<<-CRYSTAL, source_path: File.join(stdlib_root, "semantic_type_hash.cr"), stdlib_root: stdlib_root)
@@ -13309,8 +13392,8 @@ describe Adamas::HIR::AstToHir do
       converter.__test_reset_lowering_state(tuple_target)
 
       # Re-lower the caller with the concrete Tuple protocol target absent.
-      # This reproduces the nested exact-demand path used by stage2 instead of
-      # accepting a body that eager fixture setup happened to materialize.
+      # The exact stdlib ABI certificate is sufficient for the caller; the
+      # ordinary pending queue may materialize the target body afterward.
       converter.__test_lower_function_if_needed(caller_name)
       caller = converter.module.function_by_name(caller_name)
       caller.should_not be_nil
@@ -13673,6 +13756,255 @@ describe Adamas::HIR::AstToHir do
 
       resolved_return = converter.__test_get_function_return_type_for_call(target, 1)
       converter.__test_get_type_name_from_ref(resolved_return).should eq("String")
+    end
+
+    it "certifies only stdlib macro-generated Pointer hash contracts" do
+      stdlib_root = File.expand_path("src/stdlib")
+      source = <<-CRYSTAL
+        module Crystal
+          struct Hasher
+          end
+        end
+
+        macro define_pointer_hash
+          def hash(hasher)
+            hasher
+          end
+        end
+
+        struct Pointer(T)
+          define_pointer_hash
+        end
+
+        def append_pointer_hash(value : Pointer(Void), hasher : Crystal::Hasher)
+          value.hash(hasher)
+        end
+
+        append_pointer_hash(Pointer(Void).null, Crystal::Hasher.new)
+      CRYSTAL
+
+      trusted = lower_program_with_sources(
+        source,
+        source_path: File.join(stdlib_root, "pointer_hash_contract_spec.cr"),
+        stdlib_root: stdlib_root,
+      )
+      trusted_contract = trusted.__test_canonical_typed_hash_return_contract(
+        "Pointer(Void)#hash$Crystal::Hasher",
+        "Pointer(Void)",
+      )
+      trusted_contract.should_not be_nil
+      trusted.__test_get_type_name_from_ref(trusted_contract.not_nil!).should eq("Crystal::Hasher")
+
+      external = lower_program_with_sources(
+        source.sub("hasher\n          end", "\"external\"\n          end"),
+        source_path: "/tmp/external_pointer_hash_macro.cr",
+        stdlib_root: stdlib_root,
+      )
+      external.__test_canonical_typed_hash_return_contract(
+        "Pointer(Void)#hash$Crystal::Hasher",
+        "Pointer(Void)",
+      ).should be_nil
+    end
+
+    it "keeps the stdlib Pointer hash contract across unrelated external reopenings" do
+      stdlib_root = File.expand_path("src/stdlib")
+      trusted_source = <<-CRYSTAL
+        module Crystal
+          struct Hasher
+          end
+        end
+
+        macro define_pointer_hash
+          def hash(hasher)
+            hasher
+          end
+        end
+
+        struct Pointer(T)
+          define_pointer_hash
+        end
+
+        def append_pointer_hash(value : Pointer(Void), hasher : Crystal::Hasher)
+          value.hash(hasher)
+        end
+
+        append_pointer_hash(Pointer(Void).null, Crystal::Hasher.new)
+      CRYSTAL
+      external_source = <<-CRYSTAL
+        struct Pointer(T)
+          def unrelated
+            1
+          end
+        end
+      CRYSTAL
+      trusted_arena, trusted_exprs = parse(trusted_source)
+      external_arena, external_exprs = parse(external_source)
+      converter = Adamas::HIR::AstToHir.new(
+        trusted_arena,
+        main_arenas: [trusted_arena, external_arena] of Adamas::Compiler::Frontend::ArenaLike,
+        sources_by_arena: {
+          trusted_arena.object_id.to_u64  => trusted_source,
+          external_arena.object_id.to_u64 => external_source,
+        },
+        paths_by_arena: {
+          trusted_arena.object_id.to_u64  => File.join(stdlib_root, "pointer_hash_contract_spec.cr"),
+          external_arena.object_id.to_u64 => "/tmp/unrelated_pointer_reopening.cr",
+        },
+        stdlib_root: stdlib_root,
+      )
+
+      converter.arena = trusted_arena
+      trusted_exprs.compact_map { |id| trusted_arena[id].as?(Adamas::Compiler::Frontend::ModuleNode) }
+        .each { |node| converter.register_module(node) }
+      trusted_exprs.compact_map { |id| trusted_arena[id].as?(Adamas::Compiler::Frontend::MacroDefNode) }
+        .each { |node| converter.register_macro(node) }
+      trusted_exprs.compact_map { |id| trusted_arena[id].as?(Adamas::Compiler::Frontend::ClassNode) }
+        .each { |node| converter.register_class(node) }
+      converter.arena = external_arena
+      external_exprs.compact_map { |id| external_arena[id].as?(Adamas::Compiler::Frontend::ClassNode) }
+        .each { |node| converter.register_class(node) }
+      converter.arena = trusted_arena
+      main_exprs = trusted_exprs.compact_map do |id|
+        id.index.to_u64 if trusted_arena[id].is_a?(Adamas::Compiler::Frontend::CallNode)
+      end
+      converter.lower_main(main_exprs)
+
+      contract = converter.__test_canonical_typed_hash_return_contract(
+        "Pointer(Void)#hash$Crystal::Hasher",
+        "Pointer(Void)",
+      )
+      contract.should_not be_nil
+      converter.__test_get_type_name_from_ref(contract.not_nil!).should eq("Crystal::Hasher")
+    end
+
+    it "does not certify an unresolved external Pointer hash macro reopening" do
+      stdlib_root = File.expand_path("src/stdlib")
+      trusted_source = <<-CRYSTAL
+        module Crystal
+          struct Hasher
+          end
+        end
+
+        macro define_trusted_pointer_hash
+          def hash(hasher)
+            hasher
+          end
+        end
+
+        struct Pointer(T)
+          define_trusted_pointer_hash
+        end
+      CRYSTAL
+      external_source = <<-CRYSTAL
+        macro define_external_pointer_hash
+          def hash(hasher)
+            "external"
+          end
+        end
+
+        struct Pointer(T)
+          define_external_pointer_hash
+        end
+      CRYSTAL
+      trusted_arena, trusted_exprs = parse(trusted_source)
+      external_arena, external_exprs = parse(external_source)
+      converter = Adamas::HIR::AstToHir.new(
+        trusted_arena,
+        main_arenas: [trusted_arena, external_arena] of Adamas::Compiler::Frontend::ArenaLike,
+        sources_by_arena: {
+          trusted_arena.object_id.to_u64  => trusted_source,
+          external_arena.object_id.to_u64 => external_source,
+        },
+        paths_by_arena: {
+          trusted_arena.object_id.to_u64  => File.join(stdlib_root, "pointer_hash_contract_spec.cr"),
+          external_arena.object_id.to_u64 => "/tmp/external_pointer_hash_macro_reopening.cr",
+        },
+        stdlib_root: stdlib_root,
+      )
+
+      converter.arena = trusted_arena
+      trusted_exprs.compact_map { |id| trusted_arena[id].as?(Adamas::Compiler::Frontend::ModuleNode) }
+        .each { |node| converter.register_module(node) }
+      trusted_exprs.compact_map { |id| trusted_arena[id].as?(Adamas::Compiler::Frontend::MacroDefNode) }
+        .each { |node| converter.register_macro(node) }
+      trusted_exprs.compact_map { |id| trusted_arena[id].as?(Adamas::Compiler::Frontend::ClassNode) }
+        .each { |node| converter.register_class(node) }
+      converter.arena = external_arena
+      external_exprs.compact_map { |id| external_arena[id].as?(Adamas::Compiler::Frontend::MacroDefNode) }
+        .each { |node| converter.register_macro(node) }
+      external_exprs.compact_map { |id| external_arena[id].as?(Adamas::Compiler::Frontend::ClassNode) }
+        .each { |node| converter.register_class(node) }
+
+      converter.__test_canonical_typed_hash_return_contract(
+        "Pointer(Void)#hash$Crystal::Hasher",
+        "Pointer(Void)",
+      ).should be_nil
+    end
+
+    it "does not certify an unresolved external Pointer hash include" do
+      stdlib_root = File.expand_path("src/stdlib")
+      trusted_source = <<-CRYSTAL
+        module Crystal
+          struct Hasher
+          end
+        end
+
+        macro define_trusted_pointer_hash
+          def hash(hasher)
+            hasher
+          end
+        end
+
+        struct Pointer(T)
+          define_trusted_pointer_hash
+        end
+      CRYSTAL
+      external_source = <<-CRYSTAL
+        module ExternalPointerHash
+          macro included
+            def hash(hasher)
+              "external"
+            end
+          end
+        end
+
+        struct Pointer(T)
+          include ExternalPointerHash
+        end
+      CRYSTAL
+      trusted_arena, trusted_exprs = parse(trusted_source)
+      external_arena, external_exprs = parse(external_source)
+      converter = Adamas::HIR::AstToHir.new(
+        trusted_arena,
+        main_arenas: [trusted_arena, external_arena] of Adamas::Compiler::Frontend::ArenaLike,
+        sources_by_arena: {
+          trusted_arena.object_id.to_u64  => trusted_source,
+          external_arena.object_id.to_u64 => external_source,
+        },
+        paths_by_arena: {
+          trusted_arena.object_id.to_u64  => File.join(stdlib_root, "pointer_hash_contract_spec.cr"),
+          external_arena.object_id.to_u64 => "/tmp/external_pointer_hash_include.cr",
+        },
+        stdlib_root: stdlib_root,
+      )
+
+      converter.arena = trusted_arena
+      trusted_exprs.compact_map { |id| trusted_arena[id].as?(Adamas::Compiler::Frontend::ModuleNode) }
+        .each { |node| converter.register_module(node) }
+      trusted_exprs.compact_map { |id| trusted_arena[id].as?(Adamas::Compiler::Frontend::MacroDefNode) }
+        .each { |node| converter.register_macro(node) }
+      trusted_exprs.compact_map { |id| trusted_arena[id].as?(Adamas::Compiler::Frontend::ClassNode) }
+        .each { |node| converter.register_class(node) }
+      converter.arena = external_arena
+      external_exprs.compact_map { |id| external_arena[id].as?(Adamas::Compiler::Frontend::ModuleNode) }
+        .each { |node| converter.register_module(node) }
+      external_exprs.compact_map { |id| external_arena[id].as?(Adamas::Compiler::Frontend::ClassNode) }
+        .each { |node| converter.register_class(node) }
+
+      converter.__test_canonical_typed_hash_return_contract(
+        "Pointer(Void)#hash$Crystal::Hasher",
+        "Pointer(Void)",
+      ).should be_nil
     end
 
     it "preserves an explicit zero-argument Pointer hash override" do

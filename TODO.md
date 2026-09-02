@@ -1,11 +1,35 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-09-02 (explicit block parameter annotations now resolve in the
-selected definition's lexical namespace. A fresh bounded B4-F run no longer
-reaches the prior `Semantic::Symbol` / `Hash(String, Int32)#[]?` failure and
-instead exits RED after about 238 seconds at bodyless `Object#==$Object` from
-`Indexable(T)::ItemIterator#includes?`. Next: reproduce that new equality
-frontier with a no-prelude source probe before changing receiver repair.)
+Updated: 2026-09-02 (typed hash dispatch now preserves the selected stdlib
+`Pointer` definition's `Crystal::Hasher` ABI without inferring contracts from
+parameter names. Certified union branches stay on the ordinary queue; explicit
+or unresolved external generic overrides fail closed. The former heterogeneous
+`Int32 | Pointer(UInt8)` hash failure is absent from focused reducers and a
+fresh 300-second B4-F stage2 trace. B4-F remains RED on timeout; next: reduce
+the measured broad missing-target worklist rather than widen hash lowering.)
+
+2026-09-02 TYPED HASH UNION ABI USES SELECTED-DEFINITION PROVENANCE FIRST.
+The stdlib `def_hash` macro produces an owner-specific unannotated `Pointer`
+definition, so inherited-definition identity alone incorrectly treated the
+typed target as an external override. The contract now admits that definition
+only when its selected `DefNode` comes from the configured stdlib and no
+explicit or unresolved external generic override is present. External macro
+calls, macro control nodes, and includes fail closed until ordinary generic
+materialization resolves their method inventory; unrelated ordinary reopenings
+retain the fast path. Union lowering consults this contract before synchronous
+materialization, and only an uncertified exact definition uses the bounded
+yield-free force path. No parameter-name inference, registry, or cache was
+added. The 25-example hash cluster, including six focused `Pointer` provenance
+adversaries, and the full AstToHir spec pass at 528 examples with two
+pre-existing pending examples. A fresh
+stage1 builds, and a real-prelude `Int32 | Pointer(UInt8)` plus
+`Slice(Int32 | Pointer(UInt8))` reducer compiles and executes under
+`run_safe`. A fresh 300-second B4-F trace advances past the former heterogeneous
+hash diagnostic but times out after deferred allocator flush. Its 2,545,381
+events show the missing-target closure growing from 836 to 62,338 functions;
+the hot repeated families are `Reference#==`, `Hash`, and `Array`, not typed
+hash materialization. This is a scoped correctness and policy-narrowing change,
+not a bootstrap speed claim; the remaining cost is the broad worklist frontier.
 
 2026-09-02 EXPLICIT BLOCK PARAMETER TYPES KEEP THE CALLEE DEFINITION NAMESPACE.
 `block_param_types_for_call` selected the callee `DefNode` but resolved its

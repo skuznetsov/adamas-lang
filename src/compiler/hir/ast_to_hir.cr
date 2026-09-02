@@ -54885,11 +54885,11 @@ module Adamas::HIR
       name : String,
       base_name : String,
       def_node : Adamas::Compiler::Frontend::DefNode,
+      allow_macro_generated : Bool = false,
     ) : Bool
-      return false if @macro_generated_parameter_def_ids.includes?(def_node.object_id.to_u64)
-
-      root = @stdlib_root
-      return false unless root
+      if @macro_generated_parameter_def_ids.includes?(def_node.object_id.to_u64)
+        return false unless allow_macro_generated
+      end
 
       arena : Adamas::Compiler::Frontend::ArenaLike? = nil
       if current = @function_defs[name]?
@@ -54912,12 +54912,103 @@ module Adamas::HIR
       return false unless arena
       return false unless arena_fits_def?(arena, def_node)
       return false unless @main_arenas.any? { |candidate| candidate.object_id == arena.object_id }
-      path = source_path_for(arena)
-      return false unless path
-      return true if path == root
+      stdlib_source_path?(source_path_for(arena))
+    end
 
+    private def stdlib_source_path?(path : String?) : Bool
+      return false unless path
+      root = @stdlib_root
+      return false unless root
+      return true if path == root
       prefix = root.ends_with?(File::SEPARATOR.to_s) ? root : root + File::SEPARATOR
       path.starts_with?(prefix)
+    end
+
+    private def generic_owner_has_stdlib_declaration?(owner : String) : Bool
+      owner_base = strip_generic_args(owner)
+      if template = @generic_templates[owner_base]?
+        return true if stdlib_source_path?(source_path_for(template.arena))
+      end
+      if reopenings = @generic_reopenings[owner_base]?
+        return reopenings.any? do |candidate|
+          stdlib_source_path?(source_path_for(candidate.arena))
+        end
+      end
+      false
+    end
+
+    private def generic_owner_has_registered_declaration?(owner : String) : Bool
+      owner_base = strip_generic_args(owner)
+      return true if @generic_templates.has_key?(owner_base)
+
+      reopenings = @generic_reopenings[owner_base]?
+      !!(reopenings && !reopenings.empty?)
+    end
+
+    private def generic_member_requires_expansion_for_method_inventory?(
+      expr_id : ExprId,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+      owner : String,
+      depth : Int32 = 0,
+    ) : Bool
+      return true if depth > 32
+
+      member = unwrap_visibility_member_in_arena(arena[expr_id], arena)
+      case member
+      when Adamas::Compiler::Frontend::IdentifierNode
+        method_name = safe_slice_to_string(member.name) || ""
+        !method_name.empty? && !lookup_macro_entry_with_inheritance(method_name, owner).nil?
+      when Adamas::Compiler::Frontend::CallNode
+        callee = arena[member.callee]
+        if callee.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
+          method_name = safe_slice_to_string(callee.name) || ""
+          !method_name.empty? && !lookup_macro_entry_with_inheritance(method_name, owner).nil?
+        else
+          false
+        end
+      when Adamas::Compiler::Frontend::MacroIfNode,
+           Adamas::Compiler::Frontend::MacroForNode,
+           Adamas::Compiler::Frontend::MacroLiteralNode
+        true
+      when Adamas::Compiler::Frontend::IncludeNode
+        true
+      when Adamas::Compiler::Frontend::BeginNode,
+           Adamas::Compiler::Frontend::BlockNode
+        member.body.any? do |child_id|
+          generic_member_requires_expansion_for_method_inventory?(child_id, arena, owner, depth + 1)
+        end
+      else
+        false
+      end
+    end
+
+    # A macro in an external generic declaration can add an owner-specific
+    # hash overload before a concrete instance has produced a DefNode. The
+    # stdlib hash certificate is only an optimization, so fail closed until
+    # ordinary generic materialization resolves that method inventory.
+    private def generic_owner_has_external_method_generators?(owner : String) : Bool
+      owner_base = strip_generic_args(owner)
+      candidates = [] of GenericClassTemplate
+      if template = @generic_templates[owner_base]?
+        candidates << template
+      end
+      if reopenings = @generic_reopenings[owner_base]?
+        candidates.concat(reopenings)
+      end
+
+      candidates.any? do |candidate|
+        next false if stdlib_source_path?(source_path_for(candidate.arena))
+        body = candidate.node.body
+        next false unless body
+
+        body.any? do |expr_id|
+          generic_member_requires_expansion_for_method_inventory?(
+            expr_id,
+            candidate.arena,
+            candidate.name,
+          )
+        end
+      end
     end
 
     # The typed hash protocol is authoritative only for the currently selected
@@ -54953,9 +55044,30 @@ module Adamas::HIR
       end
 
       pointer_owner = target_owner == "Pointer" || target_owner.starts_with?("Pointer(")
-      pointer_override = pointer_owner &&
-                         registered_owner_hash_overload_accepts_positional?(base_name, 1)
       def_node = selected_def || lookup_function_def_for_return(name, base_name, 1)
+      materialized_inherited = if def_node
+                                 inherited_def = lookup_inherited_function_def_for_return(base_name)
+                                 inherited_def ? def_node.same?(inherited_def) : false
+                               else
+                                 false
+                               end
+      trusted_pointer_definition = pointer_owner && def_node &&
+                                   stdlib_definition_authoritative?(
+                                     name,
+                                     base_name,
+                                     def_node,
+                                     allow_macro_generated: true,
+                                   )
+      registered_pointer_override = pointer_owner &&
+                                    !materialized_inherited &&
+                                    !trusted_pointer_definition &&
+                                    registered_owner_hash_overload_accepts_positional?(base_name, 1)
+      pointer_override = registered_pointer_override ||
+                         (pointer_owner && generic_owner_hash_overload_accepts_positional?(target_owner, 1)) ||
+                         (pointer_owner && generic_owner_has_external_method_generators?(target_owner)) ||
+                         (pointer_owner && def_node.nil? &&
+                           generic_owner_has_registered_declaration?(target_owner) &&
+                           !generic_owner_has_stdlib_declaration?(target_owner))
       if def_node
         declared_return : TypeRef? = nil
         if def_node.return_type
@@ -54968,7 +55080,12 @@ module Adamas::HIR
           )
           return nil unless declared_return == hasher_ref
         end
-        return hasher_ref if stdlib_definition_authoritative?(name, base_name, def_node)
+        return hasher_ref if stdlib_definition_authoritative?(
+                               name,
+                               base_name,
+                               def_node,
+                               allow_macro_generated: pointer_owner && !pointer_override,
+                             )
         return hasher_ref if pointer_owner && !pointer_override && declared_return == hasher_ref
         return nil
       end
@@ -84370,6 +84487,7 @@ module Adamas::HIR
     private def force_lower_function_for_return_type(
       name : String,
       bypass_inline_yield : Bool = false,
+      bypass_speculative_helper_guards : Bool = false,
       pending_call_target_slot : Int32 = 0,
       pending_call_target_context : String = "direct",
       pending_call_target_prior1 : String = "not_applicable",
@@ -84377,10 +84495,17 @@ module Adamas::HIR
     ) : Bool
       return false unless v2_string_readable?(name)
       return false if name.empty?
-      return false if @suppress_force_lower_return_type_depth > 0
-      return false if speculative_root_fallback_helper_mark?(name) ||
-                      recursive_formatting_helper_defer?(name) ||
-                      (inside_lowering? && rta_exact_helper_suppressed?(name))
+      if @suppress_force_lower_return_type_depth > 0
+        # Inline-yield fallback suppresses recursive return discovery while it
+        # is assembling the callback. An explicit bypass remains safe for an
+        # exact callee whose Def proves that it cannot yield.
+        return false unless bypass_inline_yield && callee_is_yield_free?(name)
+      end
+      unless bypass_speculative_helper_guards
+        return false if speculative_root_fallback_helper_mark?(name) ||
+                        (inside_lowering? && rta_exact_helper_suppressed?(name))
+      end
+      return false if recursive_formatting_helper_defer?(name)
 
       in_inline_yield = @inline_yield_function_depth > 0 ||
                         @inline_yield_block_body_depth > 0 ||
@@ -97893,9 +98018,26 @@ module Adamas::HIR
         exact_typed_hash_target = arg_types.size == 1 &&
                                   hash_protocol_typed_name?(requested_vm, vb)
         vm = requested_vm if exact_typed_hash_target
+        typed_hash_contract = if exact_typed_hash_target
+                                typed_hash_dispatch_return_contract(
+                                  vm,
+                                  vr,
+                                  mb,
+                                  arg_types.size,
+                                )
+                              end
         if exact_inherited_hash_demand
           lower_required_virtual_target_function(vm, exact_demand: true)
           force_lower_function_for_return_type(vm) unless @module.has_function_with_body?(vm)
+        elsif exact_typed_hash_target && typed_hash_contract.nil?
+          # Only uncertified definitions need a body before union ABI
+          # consensus. Proven stdlib targets stay on the ordinary queue.
+          lower_required_virtual_target_function(vm, exact_demand: true)
+          force_lower_function_for_return_type(
+            vm,
+            bypass_inline_yield: true,
+            bypass_speculative_helper_guards: true,
+          ) unless @module.has_function_with_body?(vm)
         else
           lower_function_if_needed(vm)
         end
@@ -97913,8 +98055,12 @@ module Adamas::HIR
         end
         if concrete_returns.any? { |candidate| candidate == TypeRef::VOID } ||
            concrete_returns.uniq.size != 1
+          branch_contracts = vms.zip(concrete_returns).map do |(target, receiver, _), branch_return|
+            "#{get_type_name_from_ref(receiver)} -> #{target}: #{get_type_name_from_ref(branch_return)}"
+          end.join(", ")
           raise LoweringError.new(
-            "cannot safely lower heterogeneous hash returns for union #{recv_desc.name}"
+            "cannot safely lower heterogeneous hash returns for union #{recv_desc.name} " +
+            "in #{ctx.function.name}: #{branch_contracts}"
           )
         end
         dispatch_return_type = concrete_returns.first
