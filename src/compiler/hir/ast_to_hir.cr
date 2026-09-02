@@ -65521,6 +65521,41 @@ module Adamas::HIR
       top_replays.each do |(parent_name, method_name), count|
         STDERR.puts "  #{parent_name}##{method_name}: #{count} replay keys"
       end
+      active_shapes = Hash({String, String}, Int32).new(0)
+      historical_shapes = Hash({String, String}, Int32).new(0)
+      unattributed_shapes = Hash({String, String}, Int32).new(0)
+      @virtual_targets_by_parent.each do |parent_name, targets|
+        targets.each do |target|
+          report_key = {parent_name, target.method_name}
+          shape_key = virtual_target_shape_key(
+            parent_name,
+            target.method_name,
+            target.arg_types,
+            target.has_block,
+            target.has_splat,
+          )
+          caller_tokens = @virtual_target_callers[shape_key]?
+          if caller_tokens.nil? || caller_tokens.empty?
+            unattributed_shapes[report_key] += 1
+          elsif caller_tokens.any? { |caller_token| virtual_target_caller_active?(caller_token) }
+            active_shapes[report_key] += 1
+          else
+            historical_shapes[report_key] += 1
+          end
+        end
+      end
+      shape_keys = Set({String, String}).new
+      active_shapes.each_key { |key| shape_keys << key }
+      historical_shapes.each_key { |key| shape_keys << key }
+      unattributed_shapes.each_key { |key| shape_keys << key }
+      ranked_shapes = shape_keys.to_a.sort_by do |key|
+        -(active_shapes[key] + historical_shapes[key] + unattributed_shapes[key])
+      end.first(30)
+      STDERR.puts "[VTR_STATS] Target shapes by caller provenance (active/historical/unattributed):"
+      ranked_shapes.each do |parent_name, method_name|
+        key = {parent_name, method_name}
+        STDERR.puts "  #{parent_name}##{method_name}: #{active_shapes[key]}/#{historical_shapes[key]}/#{unattributed_shapes[key]} shapes"
+      end
       STDERR.flush
     end
 

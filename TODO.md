@@ -1,11 +1,35 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-09-02 (lazy RTA no longer treats an arbitrary class-method call
-as proof that instances of its owner can participate in broad virtual dispatch.
-Constructors and direct instance calls retain their existing liveness behavior.
-The bounded worklist is smaller, but B4-F remains RED and no wall-time speedup
-is claimed; next: distinguish required broad-root overrides from remaining
-`Object`/`Reference` replay fanout.)
+Updated: 2026-09-02 (the surviving broad-root target shapes have active callers,
+so stale caller provenance is not the current replay multiplier. The small
+no-prelude worklist remains quiet; the full source instead multiplies eleven
+active `Object`/`Reference` shapes across roughly 1,300 live owners. B4-F
+remains RED; next: avoid redundant per-owner inherited replay without losing
+real overrides, generic specialization, or union dispatch.)
+
+2026-09-02 BROAD-ROOT REPLAY IS LIVE FANOUT, NOT STALE CALLER RETENTION.
+Debug-only virtual-target reporting now classifies the already-recorded target
+shapes as active-caller, historical-only, or unattributed without adding hot
+path state. A source-matched bounded gate found every dominant broad-root shape
+active: `Object#to_s` was `3/0/0`, `Object#==` `2/0/0`, and the remaining
+`Object` plus four `Reference` methods were also active rather than historical.
+These few shapes still produced 13,099 replay keys, approximately one per live
+receiver owner. The stale-caller pruning hypothesis is therefore refuted for
+the current full-source frontier; unattributed union shapes remain explicitly
+out of scope because dropping them could silently lose legitimate union
+dispatch.
+
+The fast `p2_pending_budget_no_prelude.sh` guard remains green with only 28
+functions and a maximum queue of 10, while the root-self-replay reducer remains
+green at 23 functions, 13 `Object` replays, and six `Reference` replays. An
+existing full-source liveness trace recorded 890 newly-live observations: 394
+from direct instance calls, 344 from `.new`, and 152 from allocation. This
+supports a full-program live-owner multiplier rather than a local no-prelude
+cycle, but it does not yet prove that any individual live owner can be removed.
+Adversary verdict: ROBUST for rejecting stale provenance as the dominant broad
+root; VULNERABLE as an optimization claim. Next: prove whether non-overriding
+reference descendants can bypass repeated broad-root resolution while real
+overrides and owner-specific generic/value bodies remain preserved.
 
 2026-09-02 CLASS-METHOD DEMAND NO LONGER IMPLIES INSTANCE LIVENESS.
 The lazy-RTA HIR scanner correctly recognized `.new` and direct `#` calls as
