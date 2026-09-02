@@ -67669,7 +67669,7 @@ module Adamas::HIR
     end
 
     # Lower an AST node to HIR
-    def lower_node(ctx : LoweringContext, node : AstNode, expr_id : ExprId? = nil) : ValueId
+    def lower_node(ctx : LoweringContext, node : AstNode, expr_id : ExprId = ExprId.new(-1)) : ValueId
       maybe_log_lower_histo(node)
       kind = Adamas::Compiler::Frontend.node_kind(node)
       if !@pending_def_annotations.empty? &&
@@ -87748,7 +87748,7 @@ module Adamas::HIR
     private def lower_call(
       ctx : LoweringContext,
       node : Adamas::Compiler::Frontend::CallNode,
-      expr_id : ExprId? = nil,
+      expr_id : ExprId = ExprId.new(-1),
     ) : ValueId
       trace_lower_call_arena_phase(ctx, node, "entry")
       trace_lower_call_arena_expr(ctx, node, "entry.callee", node.callee, @arena, "lower_call.current")
@@ -92220,7 +92220,7 @@ module Adamas::HIR
           end
         end
       end
-      semantic_target = semantic_call_target(expr_id, lookup_name)
+      semantic_target = expr_id.invalid? ? nil : semantic_call_target(expr_id, lookup_name)
       selected_target = semantic_target
       selected_target ||= (m3e_input ? resolve_call_target(m3e_input) : nil)
       if selected_target.nil? && semantic_target.nil? && receiver_id &&

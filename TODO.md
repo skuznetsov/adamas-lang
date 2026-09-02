@@ -15006,6 +15006,29 @@ concrete owners, not one runaway generic closure. Next: localize the distinct
 11.127-second `AstToHir#lower_call` materialization before changing generic
 lowering policy.
 
+#### Session 133: canonicalize lowering expression identity
+
+Phase probes localized the late cost to compiling the same 426-expression
+`AstToHir#lower_call` body for both `ExprId` and `Nil | ExprId`. The nullable
+parameter was introduced to preserve semantic call targets, but every live
+source-backed call already supplies a concrete `ExprId`; only synthetic calls
+omit it.
+
+`lower_node` and `lower_call` now use the existing invalid `ExprId` sentinel
+for omitted identity. Valid IDs retain the semantic target path, while the
+sentinel explicitly takes the previous synthetic fallback. This keeps the
+large body on one concrete specialization without a wrapper, registry, cache,
+or nullable-struct ABI dependency.
+
+A fresh host build, the 518-example AstToHir suite, and a no-prelude Hash smoke
+pass. In a bounded 210-second self-host trace, only the concrete-`ExprId`
+`lower_call` specialization materialized (12.965 seconds inclusive); the former
+10.632-second nullable specialization was absent. The same graph reached the
+end of missing-target iteration 4 at 171.815 seconds versus 176.974 seconds in
+the preserved baseline, then completed iterations 5 through 8 before the cap.
+This verifies real graph progress, but not full B4-F completion or its final
+wall time. Next: run the 300-second B4-F gate and profile the remaining tail.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
