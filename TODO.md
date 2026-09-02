@@ -15451,6 +15451,32 @@ Nil-union unwrap; VULNERABLE as a claim about union-versus-union equality. The
 next falsifier is `String? != String?` with both runtime values Nil, whose left
 Nil branch currently does not inspect the right union's runtime tag.
 
+#### Session 144: compare both runtime tags for same nilable operands
+
+The predicted `String? != String?` falsifier was red: two runtime Nil values
+returned true because the left-Nil branch classified the right operand only by
+its static union type. The same defect affected `==` and every single-payload
+nilable union, independently of String's intrinsic fast path.
+
+Same-TypeRef single-payload nilable comparisons now share one runtime-tag
+decision tree. It distinguishes Nil/Nil, Nil/value, value/Nil, and value/value;
+only the final branch unwraps the payloads. Equality keeps the existing typed
+equality path. Inequality preserves the original operator and ordinary payload
+dispatch instead of assuming that `T#!=` is always `!(T#==)`. No registry,
+cache, new target identity, or general dispatch fallback was added.
+
+The no-prelude truth table covers String? and Int32? in all relevant runtime
+shapes plus explicit `.==` and `.!=`. Its adversary class deliberately defines
+both `==` and `!=` to return true; the passing runtime check proves nilable
+inequality still invokes the user-defined `Probe#!=`. The prior single-sided
+String regression and backend intrinsic boundary remain green. A bounded
+self-host reaches `AstToHir#register_alias` in iteration one after about 32
+seconds.
+
+Adversary verdict: ROBUST for same-TypeRef single-payload nilable `==` and `!=`,
+including operator-preserving custom dispatch. Multi-payload unions remain
+outside this helper and no full-bootstrap or global-speedup claim is made.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

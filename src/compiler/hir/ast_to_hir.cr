@@ -75425,6 +75425,14 @@ module Adamas::HIR
       end
       right_is_pointer = right_type == TypeRef::POINTER || (right_desc && right_desc.kind == TypeKind::Pointer)
 
+      if left_type == right_type &&
+         left_desc && left_desc.kind == TypeKind::Union &&
+         (op_str == "==" || op_str == "!=")
+        if same_nilable = try_lower_same_nilable_comparison(ctx, left_id, right_id, left_type, op_str)
+          return same_nilable
+        end
+      end
+
       # Nilable tuple elements (and other direct nilable values) must not fall
       # through the primitive BinaryOperation path for `nil == value` / `nil !=
       # value`.  Emit the tagged-union discriminator check with its source
@@ -94843,6 +94851,19 @@ module Adamas::HIR
       if receiver_id && args.size == 1
         receiver_type = ctx.type_of(receiver_id)
         arg_type = ctx.type_of(args[0])
+        if receiver_type == arg_type &&
+           is_union_or_nilable_type?(receiver_type) &&
+           (method_name == "==" || method_name == "!=")
+          if same_nilable = try_lower_same_nilable_comparison(
+               ctx,
+               receiver_id,
+               args[0],
+               receiver_type,
+               method_name,
+             )
+            return same_nilable
+          end
+        end
         receiver_type_literal = ctx.type_literal?(receiver_id) || module_type_ref?(receiver_type)
         arg_type_literal = ctx.type_literal?(args[0]) || module_type_ref?(arg_type)
         if receiver_type_literal && arg_type_literal &&
@@ -115763,7 +115784,16 @@ module Adamas::HIR
 
       if left_type == right_type
         if nilable = single_nilable_variant_info(left_type)
-          return lower_same_nilable_equality_intrinsic(ctx, left_id, right_id, left_type, nilable[0], nilable[1], nilable[2])
+          return lower_same_nilable_comparison(
+            ctx,
+            left_id,
+            right_id,
+            left_type,
+            nilable[0],
+            nilable[1],
+            nilable[2],
+            "==",
+          )
         end
 
         if left_type == TypeRef::STRING
@@ -115815,7 +115845,29 @@ module Adamas::HIR
       {non_nil_type, nil_variant_id, non_nil_variant_id}
     end
 
-    private def lower_same_nilable_equality_intrinsic(
+    private def try_lower_same_nilable_comparison(
+      ctx : LoweringContext,
+      left_id : ValueId,
+      right_id : ValueId,
+      union_type : TypeRef,
+      op : String,
+    ) : ValueId?
+      nilable = single_nilable_variant_info(union_type)
+      return nil unless nilable
+
+      lower_same_nilable_comparison(
+        ctx,
+        left_id,
+        right_id,
+        union_type,
+        nilable[0],
+        nilable[1],
+        nilable[2],
+        op,
+      )
+    end
+
+    private def lower_same_nilable_comparison(
       ctx : LoweringContext,
       left_id : ValueId,
       right_id : ValueId,
@@ -115823,6 +115875,7 @@ module Adamas::HIR
       non_nil_type : TypeRef,
       nil_variant_id : Int32,
       non_nil_variant_id : Int32,
+      op : String,
     ) : ValueId
       left_nil = UnionIs.new(ctx.next_id, left_id, nil_variant_id, union_type)
       ctx.emit(left_nil)
@@ -115839,6 +115892,19 @@ module Adamas::HIR
       right_nil_when_left_nil = UnionIs.new(ctx.next_id, right_id, nil_variant_id, union_type)
       ctx.emit(right_nil_when_left_nil)
       ctx.register_type(right_nil_when_left_nil.id, TypeRef::BOOL)
+      left_nil_result = if op == "!="
+                          not_right_nil = UnaryOperation.new(
+                            ctx.next_id,
+                            TypeRef::BOOL,
+                            UnaryOp::Not,
+                            right_nil_when_left_nil.id,
+                          )
+                          ctx.emit(not_right_nil)
+                          ctx.register_type(not_right_nil.id, TypeRef::BOOL)
+                          not_right_nil.id
+                        else
+                          right_nil_when_left_nil.id
+                        end
       left_nil_exit = ctx.current_block
       ctx.terminate(Jump.new(merge_block))
 
@@ -115857,7 +115923,7 @@ module Adamas::HIR
 
       ctx.current_block = right_nil_block
       ctx.restore_locals(pre_branch)
-      false_lit = emit_bool_literal(ctx, false)
+      nil_mismatch = emit_bool_literal(ctx, op == "!=")
       right_nil_exit = ctx.current_block
       ctx.terminate(Jump.new(merge_block))
 
@@ -115866,15 +115932,19 @@ module Adamas::HIR
       right_value = UnionUnwrap.new(ctx.next_id, non_nil_type, right_id, non_nil_variant_id, false)
       ctx.emit(right_value)
       ctx.register_type(right_value.id, non_nil_type)
-      value_eq = lower_value_equality_intrinsic(ctx, left_value.id, right_value.id)
+      value_comparison = if op == "=="
+                           lower_value_equality_intrinsic(ctx, left_value.id, right_value.id)
+                         else
+                           emit_unwrapped_binary_call(ctx, left_value.id, op, right_value.id)
+                         end
       both_value_exit = ctx.current_block
       ctx.terminate(Jump.new(merge_block))
 
       ctx.current_block = merge_block
       phi = Phi.new(ctx.next_id, TypeRef::BOOL)
-      phi.add_incoming(left_nil_exit, right_nil_when_left_nil.id)
-      phi.add_incoming(right_nil_exit, false_lit)
-      phi.add_incoming(both_value_exit, value_eq)
+      phi.add_incoming(left_nil_exit, left_nil_result)
+      phi.add_incoming(right_nil_exit, nil_mismatch)
+      phi.add_incoming(both_value_exit, value_comparison)
       ctx.emit(phi)
       ctx.register_type(phi.id, TypeRef::BOOL)
       phi.id
