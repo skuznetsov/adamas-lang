@@ -14297,6 +14297,39 @@ describe Adamas::HIR::AstToHir do
       hir_text(main.not_nil!).should contain("DirectConcreteExplicitAbiBox(String)#accept$Int32")
     end
 
+    it "keeps a direct untyped generic method authoritative over an included typed peer" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        module IncludedTypedAuthority(T)
+          def marker(value : String) : Int32
+            99
+          end
+        end
+
+        class DirectUntypedAuthorityBox(T)
+          include IncludedTypedAuthority(T)
+
+          def marker(value) : Int32
+            7
+          end
+        end
+
+        DirectUntypedAuthorityBox(String).new.marker("value")
+      CRYSTAL
+      converter.flush_pending_functions
+
+      main = converter.module.function_by_name("__adamas_main")
+      main.should_not be_nil
+      hir_text(main.not_nil!).should contain("DirectUntypedAuthorityBox(String)#marker$String")
+
+      target = converter.module.functions.find do |function|
+        function.name == "DirectUntypedAuthorityBox(String)#marker$String"
+      end
+      target.should_not be_nil
+      text = hir_text(target.not_nil!)
+      text.should contain("literal 7")
+      text.should_not contain("literal 99")
+    end
+
     it "does not treat included-module defaults as explicit call arguments" do
       lower_program_with_main(<<-CRYSTAL, source_backed: true)
         module DefaultedConcreteExplicitAbi(T)

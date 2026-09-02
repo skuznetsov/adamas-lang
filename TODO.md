@@ -14859,6 +14859,29 @@ unavailable, and no fresh complete bootstrap has passed. Preserve full semantic
 replay; the next probe should target the remaining concrete body/include cost
 rather than widen this identity guard into a replay cache. B4-F remains RED.
 
+#### Session 128: preserve exact untyped call authority through materialization
+
+A source-backed no-bootstrap regression exposed a narrow semantic identity
+loss. Structured call resolution selected the direct untyped method of a
+concrete generic class, but late exact-symbol materialization discarded that
+selection and rediscovered the same-name method from an included module. The
+resulting HIR call name remained plausible while its body returned the included
+method's value instead of the direct method's value. Original Crystal selected
+the direct body for the same source shape.
+
+Exact positional specializations of an already selected untyped definition now
+bind the existing `DefNode` and arena to the exact call-site symbol before late
+materialization. No new registry or cache is introduced. If a different body is
+already materialized under that symbol, lowering fails closed instead of
+silently retargeting it. The focused direct-vs-included regression is green,
+adjacent concrete included-overload controls remain green, and the full
+AstToHir suite passes 511 examples with zero failures, zero errors, and two
+pending examples. Adversary verdict: ROBUST for this exact untyped positional
+authority corridor, VULNERABLE as a general include-overload or bootstrap claim.
+A separate pre-existing case where a direct typed overload is incompatible and
+an included typed overload is compatible still misses the included candidate;
+keep that as the next semantic falsifier. B4-F remains RED.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

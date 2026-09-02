@@ -93502,6 +93502,40 @@ module Adamas::HIR
         block_pass_flag = block_pass_expr.nil? ? 0 : 1
         STDERR.puts "[CALL_TARGET_EARLY] caller=#{ctx.function.name} method=#{method_name} base=#{base_method_name} mangled=#{mangled_method_name} recv=#{recv_name} block_expr=#{block_expr_flag} block_pass=#{block_pass_flag} args=#{args.size}"
       end
+      # The overload resolver has already selected the authoritative DefNode.
+      # Preserve that binding when an untyped definition is specialized to an
+      # exact call-site symbol; late materialization must not rediscover a
+      # different included or inherited body from the serialized name alone.
+      if selected_def = selected_call_entry_def
+        if !has_block_call && !has_splat && !has_named_args &&
+           method_name_codec_exact_callsite_name?(
+             mangled_method_name,
+             base_method_name,
+             arg_types,
+             has_block_call,
+           ) &&
+           def_has_untyped_regular_param?(selected_def)
+          if existing_def = @function_defs[mangled_method_name]?
+            if !same_def_node?(existing_def, selected_def) &&
+               @module.has_function_with_body?(mangled_method_name)
+              raise LoweringError.new(
+                "exact call target #{mangled_method_name} already has a different materialized definition",
+                node,
+              )
+            end
+          end
+          set_function_def_entry(mangled_method_name, selected_def, false)
+          if selected_name = selected_call_entry_name
+            selected_arena = @function_def_arenas[selected_name]? ||
+                             @function_def_arenas[strip_type_suffix(selected_name)]? ||
+                             @arena
+            set_function_def_arena(
+              mangled_method_name,
+              resolve_arena_for_def(selected_def, selected_arena),
+            )
+          end
+        end
+      end
       lower_function_if_needed(mangled_method_name)
       exact_callsite_target_admitted = exact_untyped_callsite_target_admitted?(
         mangled_method_name,
