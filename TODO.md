@@ -15583,6 +15583,36 @@ claim. The remaining fanout is genuine late Hash/Array specialization work.
 Next: falsify any incremental missing-demand scan before adding a cache, using
 the existing late-target shadow fixture as the availability-change boundary.
 
+#### Session 148: attribute first materialization request origins
+
+The late-target shadow fixture refuted a persistent seen-set or cached
+post-filter missing-demand scan: an unchanged caller can require another scan
+after its target gains a body. Raw per-function demand segments could only be
+reused if target availability were replayed from live state on every iteration.
+That machinery is not justified here because scanning stayed below one second
+while iteration processing and materialization took roughly 16 to 39 seconds.
+
+The binary-trace analyzer now records the first observed requester for every
+materialized symbol and reports those origins for each missing-target
+iteration. It preserves a virtual replay source before the later queue-drain
+request site can mask it. A synthetic trace proves that a semantic requester
+survives a later administrative request, and the existing 180-second trace is
+almost fully attributed: iteration zero attributes 3,165 of 3,194 new symbols,
+iteration one 7,052 of 7,127, and iteration two 7,925 of 8,000.
+
+The dominant origins are broad virtual replays from `Object#to_s`,
+`Object#hash`, and many `Object#==` specializations. Each newly reached
+`Hash(K, V)#upsert` also tends to materialize an eleven-method Hash support
+family. This rejects both the missing-scan cache and direct Hash micro-tuning as
+the next KISS move: first determine why the Object replay regards so many
+owners as live.
+
+Adversary verdict: ROBUST for preserving first-observed request provenance and
+for rejecting the scan cache at the measured frontier; VULNERABLE as a claim
+that the first requester is the unique semantic cause. Next: build a bounded
+source-backed or no-prelude falsifier that separates required Object virtual
+replay from excess live-owner fanout before changing production semantics.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

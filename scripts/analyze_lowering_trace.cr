@@ -23,6 +23,7 @@ module Adamas::Tools
   private record MaterializationSample,
     symbol : String,
     parent : String?,
+    first_requester : String?,
     duration_ns : UInt64,
     self_ns : UInt64,
     depth : UInt16,
@@ -39,12 +40,14 @@ module Adamas::Tools
 
   private class ActiveMaterialization
     getter event : TraceEvent
+    getter first_requester : String?
     getter missing_sweep : UInt32?
     getter missing_iteration : UInt32?
     property child_ns : UInt64
 
     def initialize(
       @event : TraceEvent,
+      @first_requester : String?,
       @missing_sweep : UInt32?,
       @missing_iteration : UInt32?,
     )
@@ -309,6 +312,8 @@ module Adamas::Tools
       event_counts = Hash(String, Int32).new(0)
       symbol_counts = Hash(String, Hash(UInt16, Int32)).new
       request_edges = Hash(Tuple(String, String), Int32).new(0)
+      # Keep the semantic origin before a later queue-drain site obscures it.
+      first_requester_by_target = {} of String => String
       virtual_target_edges = Hash(Tuple(String, String), Int32).new(0)
       virtual_target_replay_edges = Hash(Tuple(String, String), Int32).new(0)
       strict_virtual_target_materialization_edges = Hash(Tuple(String, String), Int32).new(0)
@@ -455,6 +460,7 @@ module Adamas::Tools
                      active_materializations.last?.try(&.event.symbol) ||
                      "<root/phase>"
             request_edges[{caller, callee}] += 1
+            first_requester_by_target[callee] ||= caller
           end
         when TraceFormat::Event::VirtualTargetRecord.value
           if source = event.caller
@@ -466,12 +472,14 @@ module Adamas::Tools
           if source = event.caller
             if target = event.symbol
               virtual_target_replay_edges[{source, target}] += 1
+              first_requester_by_target[target] ||= "<virtual-replay:#{source}>"
               pending_virtual_target_replay = {source, target, event.sequence}
             end
           end
         when TraceFormat::Event::MaterializeStart.value
           active_materializations << ActiveMaterialization.new(
             event,
+            event.symbol.try { |symbol| first_requester_by_target[symbol]? },
             active_missing_sweep,
             active_missing_iteration,
           )
@@ -485,6 +493,7 @@ module Adamas::Tools
                 materializations << MaterializationSample.new(
                   symbol,
                   active_materializations.last?.try(&.event.symbol),
+                  active.first_requester,
                   duration_ns,
                   self_ns,
                   event.depth,
@@ -675,7 +684,12 @@ module Adamas::Tools
       materializations_by_iteration = Hash(Tuple(UInt32, UInt32), Array(MaterializationSample)).new do |by_iteration, key|
         by_iteration[key] = [] of MaterializationSample
       end
+      first_materialization_by_symbol = {} of String => MaterializationSample
       materializations.each do |sample|
+        previous = first_materialization_by_symbol[sample.symbol]?
+        if previous.nil? || sample.start_sequence < previous.start_sequence
+          first_materialization_by_symbol[sample.symbol] = sample
+        end
         if (sweep = sample.missing_sweep) && (iteration = sample.missing_iteration)
           materializations_by_iteration[{sweep, iteration}] << sample
         end
@@ -724,6 +738,30 @@ module Adamas::Tools
           {-accumulated_self_ns.to_i128, -method_counts[method], method}
         end.first(top).each do |method, accumulated_self_ns|
           puts "      self_ms=#{format_ms(accumulated_self_ns).rjust(12)} inclusive_ms=#{format_ms(method_total_ns[method]).rjust(12)} count=#{method_counts[method].to_s.rjust(8)} unique=#{method_symbols[method].size.to_s.rjust(6)} method_prefix=#{method}"
+        end
+
+        new_samples = samples.select do |sample|
+          first_materialization_by_symbol[sample.symbol]?.try(&.start_sequence) == sample.start_sequence
+        end
+        first_requester_counts = Hash(String, Int32).new(0)
+        first_requester_family_counts = Hash(String, Hash(String, Int32)).new do |by_requester, requester|
+          by_requester[requester] = Hash(String, Int32).new(0)
+        end
+        new_samples.each do |sample|
+          requester = sample.first_requester || "<unknown>"
+          first_requester_counts[requester] += 1
+          first_requester_family_counts[requester][generic_family(sample.symbol)] += 1
+        end
+        puts "      first_materialization_origins new=#{new_samples.size} attributed=#{new_samples.count { |sample| !sample.first_requester.nil? }}"
+        first_requester_counts.to_a.sort_by do |requester, count|
+          {-count, requester}
+        end.first(top).each do |requester, count|
+          families = first_requester_family_counts[requester].to_a
+            .sort_by { |family, family_count| {-family_count, family} }
+            .first(3)
+            .map { |family, family_count| "#{family}=#{family_count}" }
+            .join(",")
+          puts "        new=#{count.to_s.rjust(8)} families=#{families} first_requested_by=#{requester}"
         end
       end
 
