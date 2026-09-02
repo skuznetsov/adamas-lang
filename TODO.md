@@ -15136,6 +15136,38 @@ the typed broad-root replay boundary; B4-F wall time and equality-tail reduction
 remain unverified. Next: commit this semantic fix, then run one fresh bounded
 B4-F trace and compare the missing fixed points and concrete `Hash#==` tail.
 
+#### Session 137: restore nested generic template bindings during repair
+
+The next B4-F run moved past broad-root replay but failed while repairing
+`Indexable(T)::ItemIterator(Array(Adamas::HIR::TypeRef),
+Adamas::HIR::TypeRef)#includes?$Object`: the yielded element receiver had lost
+its concrete nested-owner binding and degraded to bodyless `Object#==$Object`.
+A no-prelude control proved ordinary nested generic lowering preserved the
+concrete `TypeRef` receiver, localizing the loss to the later helper that
+reconstructs a type-parameter map from a fully specialized nested owner.
+
+`type_param_map_for_generic_type_name` split the final generic segment
+correctly, but looked up its base spelling directly. Nested templates are
+registered under the namespace path with parent generic arguments removed, so
+`Outer(TypeRef)::ItemIterator` missed the existing
+`Outer::ItemIterator` template and returned an empty map. The helper now reuses
+the existing namespace-aware `resolve_generic_template_base` before lookup.
+No parser, registry, cache, fallback, or equality policy was added.
+
+The regression was red with an empty map, then green for both the intended
+owner and a sibling owner with the same `ItemIterator` leaf but different type
+parameter names. The focused receiver-repair suite passes 57 examples; the
+full AstToHir suite passes 522 examples with zero failures, zero errors, and
+two existing pending examples. A fresh stage1 built successfully. The bounded
+B4-F run no longer reached `Object#==$Object`; it advanced to a new fail-closed
+guard after about 266 seconds: `cannot safely lower heterogeneous hash returns
+for union Int32 | Pointer(UInt8)`.
+
+Adversary verdict: ROBUST for nested-template parameter identity and sibling
+isolation, but B4-F remains RED. Next: reproduce the heterogeneous union-hash
+return mismatch with a no-prelude/source-backed probe before changing hash or
+union lowering.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

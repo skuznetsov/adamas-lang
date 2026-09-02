@@ -234,6 +234,12 @@ class Adamas::HIR::AstToHir
     ).try(&.map { |type_ref| get_type_name_from_ref(type_ref) })
   end
 
+  def __test_type_param_map_for_generic_type_name(
+    type_name : String,
+  ) : Hash(String, String)
+    type_param_map_for_generic_type_name(type_name)
+  end
+
   def __test_preserves_annotated_union_param_for_shared_arity?(
     full_name_override : String?,
     type_annotation : String?,
@@ -445,6 +451,34 @@ private def replace_with_stale_type_literal_receiver(
 end
 
 describe "block parameter owner identity" do
+  it "binds the innermost template parameters of a specialized nested owner" do
+    converter, _ = parse_receiver_repair_source(<<-CRYSTAL)
+      module Outer(T)
+        class ItemIterator(A, T)
+        end
+      end
+
+      module OtherOuter(T)
+        class ItemIterator(K, V)
+        end
+      end
+    CRYSTAL
+
+    converter.__test_type_param_map_for_generic_type_name(
+      "Outer(Adamas::HIR::TypeRef)::ItemIterator(Array(Adamas::HIR::TypeRef), Adamas::HIR::TypeRef)",
+    ).should eq({
+      "A" => "Array(Adamas::HIR::TypeRef)",
+      "T" => "Adamas::HIR::TypeRef",
+    })
+
+    converter.__test_type_param_map_for_generic_type_name(
+      "OtherOuter(String)::ItemIterator(Int32, String)",
+    ).should eq({
+      "K" => "Int32",
+      "V" => "String",
+    })
+  end
+
   it "resolves a short block annotation in the callee definition namespace" do
     converter, _ = parse_receiver_repair_source(<<-CRYSTAL)
       struct Symbol

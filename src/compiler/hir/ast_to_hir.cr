@@ -59774,11 +59774,12 @@ module Adamas::HIR
       return {} of String => String unless info
 
       base = info.base
+      template_base = resolve_generic_template_base(base)
       args = split_generic_type_args(info.args).map do |arg|
         normalize_tuple_literal_type_name(arg.strip)
       end
       param_names : Array(String)? = nil
-      if template = @generic_templates[base]?
+      if template = @generic_templates[template_base]?
         param_names = template.type_params if template.type_params.size == args.size
       elsif mod_defs = @module_defs[base]?
         mod_defs.each do |mod_node, _|
