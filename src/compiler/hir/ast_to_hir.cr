@@ -8975,6 +8975,7 @@ module Adamas::HIR
         # lookup, or RTA consumers of the class hierarchy.
         if instances = @module.generic_instances[parent_name]?
           instances.each do |instance_name|
+            next if @lazy_rta_active && !rta_live_owner?(instance_name)
             lower_virtual_targets_for_child(instance_name, parent_name)
           end
         end
@@ -9095,6 +9096,10 @@ module Adamas::HIR
       @vtr_stats_replay_calls &+= 1 if @debug_virtual_target_replay_stats
       trace_tail = debug_env_filter_match?("DEBUG_CLASS_TAIL_PHASE", class_name, "")
       ancestors = ([class_name] + get_ancestor_chain(class_name)).uniq
+      generic_base = strip_generic_args_from_namespace_path(class_name)
+      if generic_base != class_name && @module.generic_instances[generic_base]?.try(&.includes?(class_name))
+        ancestors << generic_base unless ancestors.includes?(generic_base)
+      end
       if class_name != "Object" && !ancestors.includes?("Object")
         ancestors << "Object"
       end
@@ -35669,6 +35674,7 @@ module Adamas::HIR
       # The erased call may have been lowered before this instantiation existed.
       # Replay exactly the shapes recorded for the bare template after the full
       # concrete ClassInfo and method/accessor registry are available.
+      return if @lazy_rta_active && !rta_live_owner?(specialized_name)
       lower_virtual_targets_for_child(specialized_name, base_name)
     end
 

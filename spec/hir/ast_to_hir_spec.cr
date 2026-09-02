@@ -15884,6 +15884,56 @@ describe Adamas::HIR::AstToHir do
       converter.try(&.__test_set_lazy_rta_active(false))
     end
 
+    it "defers bare generic virtual targets until each concrete instance is live" do
+      source = <<-CRYSTAL
+        class Object
+        end
+
+        class Box(T) < Object
+          def probe(value : Int32) : Int32
+            value + 1
+          end
+        end
+      CRYSTAL
+
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+      converter.arena = arena
+      class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+      class_nodes.each { |node| converter.register_class(node) }
+      converter.__test_monomorphize_generic_class("Box", ["Int32"], "Box(Int32)")
+      converter.__test_monomorphize_generic_class("Box", ["String"], "Box(String)")
+      converter.__test_set_lazy_rta_active(true)
+      converter.__test_mark_live_type("Box(String)")
+
+      converter.__test_record_virtual_target("Box", "probe", [Adamas::HIR::TypeRef::INT32])
+
+      live_target = converter.module.functions.find { |func| func.name.starts_with?("Box(String)#probe$") }
+      live_target.should_not be_nil
+      converter.module.has_function_with_body?(live_target.not_nil!.name).should be_true
+      converter.module.functions.any? do |func|
+        func.name.starts_with?("Box(Int32)#probe$") && converter.module.has_function_with_body?(func.name)
+      end.should be_false
+
+      converter.__test_monomorphize_generic_class("Box", ["Float64"], "Box(Float64)")
+      converter.module.functions.any? do |func|
+        func.name.starts_with?("Box(Float64)#probe$") && converter.module.has_function_with_body?(func.name)
+      end.should be_false
+
+      converter.__test_mark_live_type("Box(Int32)")
+
+      late_target = converter.module.functions.find { |func| func.name.starts_with?("Box(Int32)#probe$") }
+      late_target.should_not be_nil
+      converter.module.has_function_with_body?(late_target.not_nil!.name).should be_true
+
+      converter.__test_mark_live_type("Box(Float64)")
+      registered_late_target = converter.module.functions.find { |func| func.name.starts_with?("Box(Float64)#probe$") }
+      registered_late_target.should_not be_nil
+      converter.module.has_function_with_body?(registered_late_target.not_nil!.name).should be_true
+    ensure
+      converter.try(&.__test_set_lazy_rta_active(false))
+    end
+
     it "does not make an instance type live from a class-method call" do
       source = <<-CRYSTAL
         class Object

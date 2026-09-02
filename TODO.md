@@ -15338,6 +15338,29 @@ instance-liveness separation and receiverless fallback preservation;
 VULNERABLE as a B4-F speedup claim. Next: compare the fresh bounded B4-F
 missing-target graph against commit `263de061`.
 
+#### Session 140: gate bare generic virtual replay by exact instance liveness
+
+The remaining virtual-target fanout treated membership in
+`generic_instances[template]` as runtime reachability. Recording one erased
+`Box#probe` target therefore materialized the target for every registered
+`Box(T)` specialization, including concrete instances with no allocation or
+other live-type witness.
+
+Lazy RTA now replays a bare generic target only for exact live instances. A
+newly live specialization explicitly revisits its registered bare-template
+bucket, preserving the rendezvous for both instances registered before the
+target and instances registered afterward. Eager behavior is unchanged. No
+new registry, cache, target representation, or fallback was added.
+
+The source-backed falsifier was red when dormant `Box(Int32)` materialized
+alongside live `Box(String)`. It is green after the change and also proves that
+late-live `Box(Int32)` and late-registered `Box(Float64)` both receive their
+previously deferred targets. The safely run full AstToHir suite passes 532
+examples with zero failures, zero errors, and two existing pending examples.
+Adversary verdict: ROBUST for exact generic-instance liveness and late replay;
+VULNERABLE as a B4-F speedup claim. Next: measure the same bounded deferred-HIR
+gate and compare virtual-target fanout with Session 139.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
