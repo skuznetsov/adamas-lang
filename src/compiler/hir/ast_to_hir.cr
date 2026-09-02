@@ -6543,6 +6543,12 @@ module Adamas::HIR
     @vtr_stats_record_calls : Int64 = 0_i64
     @vtr_stats_owner_time_ns : Int64 = 0_i64
     @vtr_stats_owner_time_by_parent_method : Hash({String, String}, Int64) = Hash({String, String}, Int64).new(0_i64)
+    @vtr_stats_primary_lookup_calls : Int64 = 0_i64
+    @vtr_stats_primary_lookup_time_ns : Int64 = 0_i64
+    @vtr_stats_reuse_check_calls : Int64 = 0_i64
+    @vtr_stats_reuse_check_time_ns : Int64 = 0_i64
+    @vtr_stats_broad_fallback_lookup_calls : Int64 = 0_i64
+    @vtr_stats_broad_fallback_lookup_time_ns : Int64 = 0_i64
 
     @[AlwaysInline]
     private def control_flow_dead_block?(ctx : LoweringContext, block_id : BlockId) : Bool
@@ -9130,13 +9136,20 @@ module Adamas::HIR
       remember_callsite_arg_types(base_name, arg_types, has_block: has_block_call)
       remember_callsite_arg_types(candidate, arg_types, has_block: has_block_call)
 
-      if resolved = lookup_function_def_for_call(base_name, arg_types.size, has_block_call, arg_types, has_splat)
+      primary_lookup_started_at = Time.instant if @debug_virtual_target_replay_stats
+      resolved = lookup_function_def_for_call(base_name, arg_types.size, has_block_call, arg_types, has_splat)
+      if @debug_virtual_target_replay_stats
+        @vtr_stats_primary_lookup_calls &+= 1
+        @vtr_stats_primary_lookup_time_ns &+= (Time.instant - primary_lookup_started_at.not_nil!).total_nanoseconds.to_i64
+      end
+      if resolved
         resolved_name = resolved[0]
         resolved_owner = method_owner(strip_type_suffix(resolved_name))
         preserve_requested_owner =
           exact_owner_required ||
             preserve_requested_value_owner_specialization?(candidate, resolved_name) ||
             preserve_requested_value_owner_specialization?(base_name, resolved_name)
+        reuse_check_started_at = Time.instant if @debug_virtual_target_replay_stats
         inherited_wrapper_reusable = repair_resolved_body_available?(
           owner,
           base_name,
@@ -9145,6 +9158,10 @@ module Adamas::HIR
           has_block_call,
           has_splat,
         )
+        if @debug_virtual_target_replay_stats
+          @vtr_stats_reuse_check_calls &+= 1
+          @vtr_stats_reuse_check_time_ns &+= (Time.instant - reuse_check_started_at.not_nil!).total_nanoseconds.to_i64
+        end
         if preserve_requested_owner
           # The resolved Def is semantic authority for materializing the
           # requested concrete value/generic owner; its ancestor-owned symbol
@@ -9157,8 +9174,20 @@ module Adamas::HIR
           lower_required_virtual_target_function(resolved_name, exact_demand: true)
           resolved_base = strip_type_suffix(resolved_name)
           lower_required_virtual_target_function(resolved_base, exact_demand: true) unless resolved_name == resolved_base
-          lower_required_virtual_target_function(candidate)
-          lower_required_virtual_target_function(base_name) unless candidate == base_name
+          # The first reuse check may fail only because the inherited body has
+          # not been materialized yet. Recheck the same fail-closed contract
+          # before creating a concrete child wrapper.
+          unless repair_resolved_body_available?(
+                   owner,
+                   base_name,
+                   candidate,
+                   arg_types,
+                   has_block_call,
+                   has_splat,
+                 )
+            lower_required_virtual_target_function(candidate)
+            lower_required_virtual_target_function(base_name) unless candidate == base_name
+          end
         else
           lower_required_virtual_target_function(resolved_name)
           resolved_base = strip_type_suffix(resolved_name)
@@ -9170,14 +9199,20 @@ module Adamas::HIR
         # overloads; find the nearest compatible non-abstract ancestor instead
         # of feeding the child spelling to untyped materialization fallbacks.
         if replay_parent && replay_parent != owner && broad_virtual_target_root?(replay_parent)
-          if replay_resolved = lookup_concrete_broad_replay_ancestor(
-               owner,
-               replay_parent,
-               method_name,
-               arg_types,
-               has_block_call,
-               has_splat,
-             )
+          broad_lookup_started_at = Time.instant if @debug_virtual_target_replay_stats
+          replay_resolved = lookup_concrete_broad_replay_ancestor(
+            owner,
+            replay_parent,
+            method_name,
+            arg_types,
+            has_block_call,
+            has_splat,
+          )
+          if @debug_virtual_target_replay_stats
+            @vtr_stats_broad_fallback_lookup_calls &+= 1
+            @vtr_stats_broad_fallback_lookup_time_ns &+= (Time.instant - broad_lookup_started_at.not_nil!).total_nanoseconds.to_i64
+          end
+          if replay_resolved
             replay_name = replay_resolved[0]
             lower_required_virtual_target_function(replay_name)
             replay_resolved_base = strip_type_suffix(replay_name)
@@ -65516,6 +65551,9 @@ module Adamas::HIR
       STDERR.puts "[VTR_STATS] lower_virtual_target_owner attempts: #{@vtr_stats_owner_attempts}"
       STDERR.puts "[VTR_STATS] lower_virtual_target_owner skipped (dedup): #{@vtr_stats_owner_skipped}"
       STDERR.puts "[VTR_STATS] lower_virtual_target_owner measured time: #{(@vtr_stats_owner_time_ns / 1_000_000.0).round(3)} ms"
+      STDERR.puts "[VTR_STATS] primary owner lookup: #{(@vtr_stats_primary_lookup_time_ns / 1_000_000.0).round(3)} ms/#{@vtr_stats_primary_lookup_calls} calls"
+      STDERR.puts "[VTR_STATS] initial inherited-body reuse check: #{(@vtr_stats_reuse_check_time_ns / 1_000_000.0).round(3)} ms/#{@vtr_stats_reuse_check_calls} calls"
+      STDERR.puts "[VTR_STATS] broad ancestor fallback lookup: #{(@vtr_stats_broad_fallback_lookup_time_ns / 1_000_000.0).round(3)} ms/#{@vtr_stats_broad_fallback_lookup_calls} calls"
       STDERR.puts "[VTR_STATS] unique replay keys: #{@virtual_target_replay_attempted.size}"
       STDERR.puts "[VTR_STATS] targets_by_parent parents: #{@virtual_targets_by_parent.size}"
       top_parents = @virtual_targets_by_parent.to_a.sort_by { |_, targets| -targets.size }.first(30)
@@ -65569,6 +65607,53 @@ module Adamas::HIR
       ranked_shapes.each do |parent_name, method_name|
         key = {parent_name, method_name}
         STDERR.puts "  #{parent_name}##{method_name}: #{active_shapes[key]}/#{historical_shapes[key]}/#{unattributed_shapes[key]} shapes"
+      end
+      STDERR.puts "[VTR_STATS] Broad-root target callers:"
+      {"Object", "Reference"}.each do |parent_name|
+        next unless targets = @virtual_targets_by_parent[parent_name]?
+        targets.each do |target|
+          shape_key = virtual_target_shape_key(
+            parent_name,
+            target.method_name,
+            target.arg_types,
+            target.has_block,
+            target.has_splat,
+          )
+          caller_tokens = @virtual_target_callers[shape_key]?
+          active_callers = caller_tokens.try do |tokens|
+            tokens.select { |caller_token| virtual_target_caller_active?(caller_token) }
+              .map(&.[0])
+              .uniq!
+              .sort!
+          end || [] of String
+          historical_count = caller_tokens.try(&.size) || 0
+          historical_count -= active_callers.size
+          arg_ids = target.arg_types.map(&.id).join(",")
+          STDERR.puts "  #{parent_name}##{target.method_name} args=[#{arg_ids}] block=#{target.has_block ? 1 : 0} splat=#{target.has_splat ? 1 : 0} active=#{active_callers.size} historical=#{historical_count} callers=#{active_callers.join(",")}"
+          active_callers.each do |caller_name|
+            next unless function = @module.function_by_name(caller_name)
+
+            value_types = Hash(ValueId, TypeRef).new
+            function.params.each { |param| value_types[param.id] = param.type }
+            function.blocks.each do |block|
+              block.instructions.each { |instruction| value_types[instruction.id] = instruction.type }
+            end
+            function.blocks.each do |block|
+              block.instructions.each do |instruction|
+                next unless call = instruction.as?(Call)
+                next unless call.virtual && call.has_receiver?
+                next unless method_part(call.method_name) == target.method_name
+                next unless call.has_block? == target.has_block
+                next unless receiver_type = value_types[call.receiver_value]?
+                next unless strip_generic_args(get_type_name_from_ref(receiver_type)) == parent_name
+                call_arg_types = call.args.map { |arg_id| value_types[arg_id]? || TypeRef::VOID }
+                next unless call_arg_types == target.arg_types
+
+                STDERR.puts "    site caller=#{caller_name} call=#{call.method_name} receiver=%#{call.receiver_value}:#{get_type_name_from_ref(receiver_type)}"
+              end
+            end
+          end
+        end
       end
       STDERR.flush
     end

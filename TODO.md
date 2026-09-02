@@ -1,10 +1,33 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-09-02 (the surviving broad-root target shapes have active callers,
-and their repeated owner lowering is now measured at 10.634 seconds of a
-64-second bounded source gate. Five `Object`/`Reference` families account for
-8.759 seconds. B4-F remains RED; next: falsify a KISS inherited-implementation
-shortcut against real overrides, generic specialization, and union dispatch.)
+Updated: 2026-09-02 (inherited broad-root replay now materializes the selected
+ancestor before reusing the existing fail-closed wrapper guard. One matched
+bounded A/B removed 132 HIR functions and observed 67 seconds before versus 64
+seconds after. B4-F remains RED; next: repair the pre-existing root-override
+replay gap, then remeasure the remaining materialization tail.)
+
+2026-09-02 INHERITED BROAD-ROOT REPLAY NO LONGER CREATES A CHILD WRAPPER ONLY
+BECAUSE THE ANCESTOR BODY WAS INITIALLY ABSENT. Lazy RTA can record a broad
+`Reference` target after a child is already live. The old order checked whether
+the ancestor body was reusable, found that it had not yet been materialized,
+lowered the ancestor, and still created a parent-typed child wrapper. Replay now
+rechecks the same existing fail-closed contract after ancestor materialization;
+exact-owner, generic/value specialization, real overrides, and incompatible
+overloads retain their existing paths. No new registry, cache, or dispatch
+identity was added.
+
+A no-bootstrap regression was red on the surplus `Child#hash$Crystal::Hasher`
+and is now green. All 80 concrete-virtual-repair examples and the full AstToHir
+suite pass (530 examples, zero failures, two pre-existing pending). The
+no-prelude root-self replay budget remains green. In one source-matched missing
+iteration-1 A/B, HIR functions fell from 19,215 to 19,083, missing targets from
+1,948 to 1,925, replay attempts from 14,226 to 14,133, and measured owner time
+from 11.314 to 10.307 seconds; safe-run wall time was approximately 67 seconds
+before and 64 seconds after. This is one matched observation, not a stable
+bootstrap benchmark. The root virtual override reducer is red on both binaries,
+so it is a pre-existing correctness gap rather than a regression from this
+change. Adversary verdict: ROBUST for the scoped wrapper-elision contract and
+structural reduction; VULNERABLE as B4-F or full-bootstrap closure.
 
 2026-09-02 BROAD-ROOT OWNER LOWERING IS A MEASURED COST, NOT JUST A LARGE COUNT.
 Debug-only virtual-target reporting now times each existing

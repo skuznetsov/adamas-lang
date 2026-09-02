@@ -15283,6 +15283,53 @@ describe Adamas::HIR::AstToHir do
       converter.module.functions.any? { |func| func.name.starts_with?("Crystal::Hasher#reference$Child") }.should be_false
     end
 
+    it "materializes an inherited Reference body before deciding that a child wrapper is required" do
+      source = <<-CRYSTAL
+        module Crystal
+          struct Hasher
+            def reference(value)
+              self
+            end
+          end
+        end
+
+        class Reference
+          def hash(hasher : Crystal::Hasher)
+            hasher.reference(self)
+          end
+        end
+
+        class Child < Reference
+        end
+      CRYSTAL
+
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+      converter.arena = arena
+      class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+      class_nodes.each { |node| converter.register_class(node) }
+
+      # Lazy RTA replays a newly recorded broad-root shape immediately for an
+      # already-live child. Keep the inherited body absent at that rendezvous:
+      # deciding reuse before materializing Reference#hash used to create a
+      # parent-typed Child#hash wrapper.
+      converter.__test_set_lazy_rta_active(true)
+      converter.__test_mark_live_type("Child")
+      converter.__test_record_virtual_target(
+        "Reference",
+        "hash",
+        [converter.__test_type_ref_for_name("Crystal::Hasher")],
+      )
+
+      parent_target = converter.module.functions.find { |func| func.name.starts_with?("Reference#hash$") }
+      parent_target.should_not be_nil
+      converter.module.has_function_with_body?(parent_target.not_nil!.name).should be_true
+      converter.module.functions.any? { |func| func.name.starts_with?("Child#hash$") }.should be_false
+      converter.module.functions.any? { |func| func.name.starts_with?("Crystal::Hasher#reference$Child") }.should be_false
+    ensure
+      converter.try(&.__test_set_lazy_rta_active(false))
+    end
+
     it "retains an exact runtime generic owner for an inherited Object wrapper" do
       source = <<-CRYSTAL
         class Object
