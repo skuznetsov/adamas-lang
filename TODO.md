@@ -15553,6 +15553,36 @@ the unnecessary generated Proc body; VULNERABLE as B4-F closure. Next: explain
 the cross-iteration missing-target fanout, starting with the Hash/Array families
 and request sources that cause thousands of new functions per iteration.
 
+#### Session 147: compile legacy lower-call ledgers only for debug builds
+
+Seventeen legacy arena and node-slot ledger calls still expanded into the
+roughly 9,200-line `lower_call` body in ordinary builds even when their runtime
+environment switches were unset. Existing `debug_hooks` compile-time gating now
+owns those call sites. A compiler built with `-Ddebug_hooks` retains the same
+fine-grained runtime switches; an ordinary compiler contains no calls from
+these sites. The three diagnostic scripts now state that build requirement and
+report it when no ledger rows are present.
+
+No-prelude controls proved both sides: the ordinary compiler emitted no
+`LC_ARENA` rows with the runtime switch set, while the debug compiler emitted
+five phase rows, three expression rows, and nine healthy node-slot rows. The
+safely run full AstToHir suite passes 536 examples with zero failures, zero
+errors, and two existing pending examples.
+
+A matched 180-second self-host trace kept identical materialization and function
+counts through missing-target iteration four, refuting the ledger as the cause
+of graph growth. It reduced the measured `lower_call` interval from 14.241 to
+12.880 seconds inclusive and from 12.105 to 10.941 seconds self time; iteration
+four completed at 154.8 seconds instead of 169.3 and the run reached iteration
+six before timeout. Absolute timing remains host-sensitive, so this is only a
+local hot-body cleanup, not B4-F closure.
+
+Adversary verdict: ROBUST for normal-build exclusion, opt-in diagnostics, and
+unchanged tested lowering semantics; VULNERABLE as a stable end-to-end speedup
+claim. The remaining fanout is genuine late Hash/Array specialization work.
+Next: falsify any incremental missing-demand scan before adding a cache, using
+the existing late-target shadow fixture as the availability-change boundary.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

@@ -88311,8 +88311,8 @@ module Adamas::HIR
       node : Adamas::Compiler::Frontend::CallNode,
       expr_id : ExprId = ExprId.new(-1),
     ) : ValueId
-      trace_lower_call_arena_phase(ctx, node, "entry")
-      trace_lower_call_arena_expr(ctx, node, "entry.callee", node.callee, @arena, "lower_call.current")
+      debug_lower_call_arena_phase(ctx, node, "entry")
+      debug_lower_call_arena_expr(ctx, node, "entry.callee", node.callee, @arena, "lower_call.current")
 
       if env_get("DEBUG_MISSING_SYMS")
         callee_node_dbg = @arena[node.callee]
@@ -88398,8 +88398,8 @@ module Adamas::HIR
         end
       end
       call_arena : Adamas::Compiler::Frontend::ArenaLike = @arena
-      trace_lower_call_arena_phase(ctx, node, "call_arena_set", call_arena)
-      trace_lower_call_arena_expr(ctx, node, "call_arena.callee", node.callee, call_arena, "lower_call.call")
+      debug_lower_call_arena_phase(ctx, node, "call_arena_set", call_arena)
+      debug_lower_call_arena_expr(ctx, node, "call_arena.callee", node.callee, call_arena, "lower_call.call")
 
       call_named_arg_names = named_arg_names_for(node.named_args)
       # Stage2 self-hosting has shown unstable nilable-ivar payloads while
@@ -88409,7 +88409,7 @@ module Adamas::HIR
         @callsite_method_cache.clear
         @callsite_method_cache_scope = nil
       end
-      trace_lower_call_arena_phase(ctx, node, "before.type_like_call", call_arena)
+      debug_lower_call_arena_phase(ctx, node, "before.type_like_call", call_arena)
       if type_like_call_expr?(node)
         base = resolve_path_like_name(node.callee) || stringify_type_expr(node.callee)
         if base
@@ -88420,15 +88420,15 @@ module Adamas::HIR
           end
         end
       end
-      trace_lower_call_arena_phase(ctx, node, "after.type_like_call", call_arena)
+      debug_lower_call_arena_phase(ctx, node, "after.type_like_call", call_arena)
       # CallNode has callee (ExprId) which can be:
       # - IdentifierNode: simple function call like foo() or ClassName.new()
       # - MemberAccessNode: method call like obj.method()
       # - Other: chained/complex calls
 
-      trace_lower_call_arena_expr(ctx, node, "before.callee_read", node.callee, call_arena, "lower_call.call")
+      debug_lower_call_arena_expr(ctx, node, "before.callee_read", node.callee, call_arena, "lower_call.call")
       callee_node = @arena[node.callee]
-      trace_lower_call_arena_phase(ctx, node, "after.callee_read", call_arena)
+      debug_lower_call_arena_phase(ctx, node, "after.callee_read", call_arena)
       callee_kind = Adamas::Compiler::Frontend.node_kind(callee_node)
       if env_get("DEBUG_READ_ATTR_CALL")
         callee_name = case callee_node
@@ -88500,7 +88500,7 @@ module Adamas::HIR
         when Adamas::Compiler::Frontend::UnaryNode
           if (safe_slice_to_string(last_node.operator) || "") == "&"
             operand = last_node.operand
-            trace_lower_call_arena_expr(ctx, node, "before.trailing_amp_operand_read", operand, call_arena, "lower_call.call")
+            debug_lower_call_arena_expr(ctx, node, "before.trailing_amp_operand_read", operand, call_arena, "lower_call.call")
             operand_node = @arena[operand]
             if operand_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
               block_expr = operand
@@ -88937,7 +88937,7 @@ module Adamas::HIR
         # registries — emit self explicitly when inside a String instance method.
         if method_name == "each_char" && block_expr && call_args.empty? && @current_class == "String"
           self_id = receiver_id || emit_self(ctx)
-          trace_lower_call_arena_expr(ctx, node, "before.bare_each_char_block_read", block_expr.not_nil!, call_arena, "lower_call.call")
+          debug_lower_call_arena_expr(ctx, node, "before.bare_each_char_block_read", block_expr.not_nil!, call_arena, "lower_call.call")
           blk_node = @arena[block_expr]
           if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
             return lower_string_each_char_intrinsic(ctx, self_id, blk_node)
@@ -88948,7 +88948,7 @@ module Adamas::HIR
           callee_node = callee_node.unsafe_as(Adamas::Compiler::Frontend::MemberAccessNode)
           # Could be method call: obj.method() or class method: ClassName.new()
           obj_expr = callee_node.object
-          trace_lower_call_arena_expr(ctx, node, "before.member_object_read", obj_expr, call_arena, "lower_call.call")
+          debug_lower_call_arena_expr(ctx, node, "before.member_object_read", obj_expr, call_arena, "lower_call.call")
           obj_node = @arena[obj_expr]
           obj_kind = Adamas::Compiler::Frontend.node_kind(obj_node)
           method_name = member_access_name_text(callee_node)
@@ -89027,7 +89027,7 @@ module Adamas::HIR
             if arg = call_args.first?
               type_str = stringify_type_expr(arg)
               if env_has?("DEBUG_UNSAFE_AS")
-                trace_lower_call_arena_expr(ctx, node, "before.unsafe_as_debug_arg_read", arg, call_arena, "lower_call.call")
+                debug_lower_call_arena_expr(ctx, node, "before.unsafe_as_debug_arg_read", arg, call_arena, "lower_call.call")
                 arg_node = @arena[arg]
                 arg_kind = arg_node.class.name.split("::").last
                 arg_name = case arg_node
@@ -89165,7 +89165,7 @@ module Adamas::HIR
             recv_id = lower_expr(ctx, obj_expr)
             recv_type = ctx.type_of(recv_id)
             if recv_type == TypeRef::STRING || recv_type == TypeRef::POINTER
-              trace_lower_call_arena_expr(ctx, node, "before.each_char_block_read", block_expr.not_nil!, call_arena, "lower_call.call")
+              debug_lower_call_arena_expr(ctx, node, "before.each_char_block_read", block_expr.not_nil!, call_arena, "lower_call.call")
               blk_node = @arena[block_expr]
               if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
                 return lower_string_each_char_intrinsic(ctx, recv_id, blk_node)
@@ -89272,7 +89272,7 @@ module Adamas::HIR
           if method_name == "count" && block_expr
             recv_id = lower_expr(ctx, obj_expr)
             if array_intrinsic_receiver?(ctx, recv_id)
-              trace_lower_call_arena_expr(ctx, node, "before.array_count_block_read", block_expr.not_nil!, call_arena, "lower_call.call")
+              debug_lower_call_arena_expr(ctx, node, "before.array_count_block_read", block_expr.not_nil!, call_arena, "lower_call.call")
               blk_node = @arena[block_expr]
               if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
                 return lower_array_count_dynamic(ctx, recv_id, blk_node)
@@ -91947,7 +91947,7 @@ module Adamas::HIR
       if method_name == "index" && receiver_id && args.empty? && block_expr && node.named_args.nil?
         blk_node = node_for_call_expr(call_arena, block_expr.not_nil!)
         if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode) && array_intrinsic_receiver?(ctx, receiver_id)
-          trace_lower_call_arena_expr(ctx, node, "after.array_index_block_read", block_expr.not_nil!, call_arena, "lower_call.call")
+          debug_lower_call_arena_expr(ctx, node, "after.array_index_block_read", block_expr.not_nil!, call_arena, "lower_call.call")
           return lower_array_index_block_dynamic(ctx, receiver_id, blk_node)
         end
       end
@@ -93151,7 +93151,7 @@ module Adamas::HIR
            node.named_args.nil?
           node.args.each_with_index do |arg_id, arg_index|
             break if arg_index >= 8
-            trace_lower_call_arena_expr(ctx, node, "before.untyped_splat_scan.arg#{arg_index}", arg_id, call_arena, "lower_call.call")
+            debug_lower_call_arena_expr(ctx, node, "before.untyped_splat_scan.arg#{arg_index}", arg_id, call_arena, "lower_call.call")
           end
         end
         if !mangled_method_name.includes?('$') &&
@@ -93284,7 +93284,7 @@ module Adamas::HIR
         # Module-typed dispatch is only for *value receivers* whose static type is a module-like type.
         # Do not apply it to implicit/self receivers, otherwise we can accidentally bind to a generic
         # template module (e.g. Impl(F, Info)) instead of the concrete generic instance.
-        trace_lower_call_arena_expr(ctx, node, "before.module_typed_object_read", callee_node.object, call_arena, "lower_call.call")
+        debug_lower_call_arena_expr(ctx, node, "before.module_typed_object_read", callee_node.object, call_arena, "lower_call.call")
         obj_node = @arena[callee_node.object]
         unless receiver_is_self_call
           receiver_type = ctx.type_of(receiver_id)

@@ -102,6 +102,28 @@ macro debug_hook(event, data)
   {% end %}
 end
 
+# Keep the legacy lower-call arena ledgers out of ordinary compiler builds.
+# The runtime environment variables remain the fine-grained switch for builds
+# compiled with -Ddebug_hooks.
+macro debug_lower_call_arena_phase(ctx, node, label, call_arena = nil)
+  {% if flag?(:debug_hooks) %}
+    trace_lower_call_arena_phase({{ctx}}, {{node}}, {{label}}, {{call_arena}})
+  {% end %}
+end
+
+macro debug_lower_call_arena_expr(ctx, node, label, expr_id, arena_owner, origin)
+  {% if flag?(:debug_hooks) %}
+    trace_lower_call_arena_expr(
+      {{ctx}},
+      {{node}},
+      {{label}},
+      {{expr_id}},
+      {{arena_owner}},
+      {{origin}},
+    )
+  {% end %}
+end
+
 macro debug_hook_type_cache(name, context, cache_key, resolved_name)
   {% if flag?(:debug_hooks) %}
     DebugHooks.debug(

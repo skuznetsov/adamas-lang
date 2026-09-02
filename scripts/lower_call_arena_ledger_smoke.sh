@@ -3,6 +3,7 @@ set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
   echo "usage: $0 <compiler>" >&2
+  echo "requires: compiler built with -Ddebug_hooks" >&2
   exit 2
 fi
 
@@ -41,6 +42,7 @@ fi
 
 if ! grep -q '^\[LC_ARENA\]' "$LOG"; then
   echo "FAIL: no [LC_ARENA] rows emitted" >&2
+  echo "hint: build the compiler with -Ddebug_hooks" >&2
   tail -80 "$LOG" >&2 || true
   exit 1
 fi
