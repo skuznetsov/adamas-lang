@@ -1,11 +1,27 @@
 # Adamas Bootstrap TODO
 
 Updated: 2026-09-02 (the surviving broad-root target shapes have active callers,
-so stale caller provenance is not the current replay multiplier. The small
-no-prelude worklist remains quiet; the full source instead multiplies eleven
-active `Object`/`Reference` shapes across roughly 1,300 live owners. B4-F
-remains RED; next: avoid redundant per-owner inherited replay without losing
-real overrides, generic specialization, or union dispatch.)
+and their repeated owner lowering is now measured at 10.634 seconds of a
+64-second bounded source gate. Five `Object`/`Reference` families account for
+8.759 seconds. B4-F remains RED; next: falsify a KISS inherited-implementation
+shortcut against real overrides, generic specialization, and union dispatch.)
+
+2026-09-02 BROAD-ROOT OWNER LOWERING IS A MEASURED COST, NOT JUST A LARGE COUNT.
+Debug-only virtual-target reporting now times each existing
+`lower_virtual_target_owner` call and aggregates the duration by parent and
+method without changing the trace-off path. In a source-matched gate stopped
+after missing iteration 1, 14,218 non-deduplicated calls consumed 10.634 seconds
+of approximately 64 seconds. `Reference#to_s` cost 3.139 seconds,
+`Object#hash` 1.891, `Object#inspect` 1.711, `Object#to_s` 1.450, and
+`Object#==` 0.568. The previous comparable gate took approximately 67 seconds,
+so the diagnostic did not visibly inflate this bounded run.
+
+Adversary verdict: ROBUST that per-owner broad-root lowering is worth a focused
+falsifier; VULNERABLE as proof of a safe speedup. Active callers make demand
+pruning invalid, and the timing does not yet separate compatible overrides from
+repeated inherited lookup. The next move must preserve every live runtime owner
+while bypassing resolution only when the selected implementation identity is
+provably shared.
 
 2026-09-02 BROAD-ROOT REPLAY IS LIVE FANOUT, NOT STALE CALLER RETENTION.
 Debug-only virtual-target reporting now classifies the already-recorded target

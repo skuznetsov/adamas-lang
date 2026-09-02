@@ -6541,6 +6541,8 @@ module Adamas::HIR
     @vtr_stats_owner_skipped : Int64 = 0_i64
     @vtr_stats_replay_calls : Int64 = 0_i64
     @vtr_stats_record_calls : Int64 = 0_i64
+    @vtr_stats_owner_time_ns : Int64 = 0_i64
+    @vtr_stats_owner_time_by_parent_method : Hash({String, String}, Int64) = Hash({String, String}, Int64).new(0_i64)
 
     @[AlwaysInline]
     private def control_flow_dead_block?(ctx : LoweringContext, block_id : BlockId) : Bool
@@ -9010,6 +9012,7 @@ module Adamas::HIR
           next
         end
         @virtual_target_replay_attempted << key
+        owner_started_at = Time.instant if @debug_virtual_target_replay_stats
         lower_virtual_target_owner(
           child_name,
           target.method_name,
@@ -9018,6 +9021,11 @@ module Adamas::HIR
           target.has_splat,
           replay_parent: parent_name,
         )
+        if owner_started_at
+          elapsed_ns = (Time.instant - owner_started_at).total_nanoseconds.to_i64
+          @vtr_stats_owner_time_ns &+= elapsed_ns
+          @vtr_stats_owner_time_by_parent_method[{parent_name, target.method_name}] &+= elapsed_ns
+        end
       end
       @virtual_target_replay_cursors[cursor_key] = target_idx
     end
@@ -65507,6 +65515,7 @@ module Adamas::HIR
       STDERR.puts "[VTR_STATS] lower_virtual_targets_for_child calls: #{@vtr_stats_lower_child_calls}"
       STDERR.puts "[VTR_STATS] lower_virtual_target_owner attempts: #{@vtr_stats_owner_attempts}"
       STDERR.puts "[VTR_STATS] lower_virtual_target_owner skipped (dedup): #{@vtr_stats_owner_skipped}"
+      STDERR.puts "[VTR_STATS] lower_virtual_target_owner measured time: #{(@vtr_stats_owner_time_ns / 1_000_000.0).round(3)} ms"
       STDERR.puts "[VTR_STATS] unique replay keys: #{@virtual_target_replay_attempted.size}"
       STDERR.puts "[VTR_STATS] targets_by_parent parents: #{@virtual_targets_by_parent.size}"
       top_parents = @virtual_targets_by_parent.to_a.sort_by { |_, targets| -targets.size }.first(30)
@@ -65520,6 +65529,11 @@ module Adamas::HIR
       STDERR.puts "[VTR_STATS] Top parent/method replay keys:"
       top_replays.each do |(parent_name, method_name), count|
         STDERR.puts "  #{parent_name}##{method_name}: #{count} replay keys"
+      end
+      top_owner_times = @vtr_stats_owner_time_by_parent_method.to_a.sort_by { |_, elapsed_ns| -elapsed_ns }.first(30)
+      STDERR.puts "[VTR_STATS] Top parent/method lower_virtual_target_owner time:"
+      top_owner_times.each do |(parent_name, method_name), elapsed_ns|
+        STDERR.puts "  #{parent_name}##{method_name}: #{(elapsed_ns / 1_000_000.0).round(3)} ms"
       end
       active_shapes = Hash({String, String}, Int32).new(0)
       historical_shapes = Hash({String, String}, Int32).new(0)
