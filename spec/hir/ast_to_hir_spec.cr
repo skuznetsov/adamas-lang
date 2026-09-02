@@ -14330,6 +14330,86 @@ describe Adamas::HIR::AstToHir do
       text.should_not contain("literal 99")
     end
 
+    it "selects an included typed overload when the direct generic overload is incompatible" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        module IncludedCompatibleOverload(T)
+          def marker(value : T) : Int32
+            99
+          end
+        end
+
+        class DirectIncompatibleOverloadBox(T)
+          include IncludedCompatibleOverload(T)
+
+          def marker(value : String) : Int32
+            7
+          end
+        end
+
+        DirectIncompatibleOverloadBox(Int32).new.marker(1)
+        DirectIncompatibleOverloadBox(Int32).new.marker("value")
+      CRYSTAL
+      converter.flush_pending_functions
+
+      main = converter.module.function_by_name("__adamas_main")
+      main.should_not be_nil
+      hir_text(main.not_nil!).should contain("DirectIncompatibleOverloadBox(Int32)#marker$Int32")
+      hir_text(main.not_nil!).should contain("DirectIncompatibleOverloadBox(Int32)#marker$String")
+
+      target = converter.module.functions.find do |function|
+        function.name == "DirectIncompatibleOverloadBox(Int32)#marker$Int32"
+      end
+      target.should_not be_nil
+      text = hir_text(target.not_nil!)
+      text.should contain("literal 99")
+      text.should_not contain("literal 7")
+
+      direct = converter.module.functions.find do |function|
+        function.name == "DirectIncompatibleOverloadBox(Int32)#marker$String"
+      end
+      direct.should_not be_nil
+      direct_text = hir_text(direct.not_nil!)
+      direct_text.should contain("literal 7")
+      direct_text.should_not contain("literal 99")
+    end
+
+    it "continues to a later included origin after an incompatible sibling" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        module FirstIncompatibleSiblingOverload
+          def marker(value : Bool) : Int32
+            11
+          end
+        end
+
+        module LaterCompatibleSiblingOverload
+          def marker(value : Int32) : Int32
+            22
+          end
+        end
+
+        class MultipleIncludedOverloadBox(T)
+          include FirstIncompatibleSiblingOverload
+          include LaterCompatibleSiblingOverload
+
+          def marker(value : String) : Int32
+            7
+          end
+        end
+
+        MultipleIncludedOverloadBox(String).new.marker(1)
+      CRYSTAL
+      converter.flush_pending_functions
+
+      target = converter.module.functions.find do |function|
+        function.name == "MultipleIncludedOverloadBox(String)#marker$Int32"
+      end
+      target.should_not be_nil
+      text = hir_text(target.not_nil!)
+      text.should contain("literal 22")
+      text.should_not contain("literal 11")
+      text.should_not contain("literal 7")
+    end
+
     it "does not treat included-module defaults as explicit call arguments" do
       lower_program_with_main(<<-CRYSTAL, source_backed: true)
         module DefaultedConcreteExplicitAbi(T)

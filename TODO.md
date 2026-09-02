@@ -14882,6 +14882,32 @@ A separate pre-existing case where a direct typed overload is incompatible and
 an included typed overload is compatible still misses the included candidate;
 keep that as the next semantic falsifier. B4-F remains RED.
 
+#### Session 129: recover compatible included overloads after a direct miss
+
+The next source-backed falsifier confirmed that method-name shadowing was too
+broad in the lazy generic corridor. A direct `String` overload was the only
+registered candidate for an `Int32` call, so structured resolution correctly
+rejected it but lowering then reused that incompatible serialized target instead
+of consulting the included module. Original Crystal selects the included
+`Int32` overload for the same source shape.
+
+Exact positional calls on concrete generic receivers now consult included
+modules only after ordinary direct overload resolution has returned no target.
+The demanded included `DefNode`, source arena, namespace, and type-param map are
+bound only to the exact call-site symbol; the direct method family's base facts
+remain untouched. A symbol collision with a different definition fails closed.
+The regression calls both the included `Int32` body and the direct `String` body
+on the same receiver family and proves that their literals do not cross. A
+second regression, checked against original Crystal, proves that an incompatible
+included sibling does not hide a later compatible sibling while the existing
+same-origin guard remains fail-closed. The full AstToHir suite passes 513
+examples with zero failures, zero errors, and two pending examples.
+
+Adversary verdict: ROBUST for concrete generic, fully typed, positional,
+non-block calls. The fallback deliberately does not widen to named, splat,
+block, unknown-argument, or non-generic receiver shapes. B4-F remains RED; the
+next step is a fresh bounded bootstrap trace, not broader overload machinery.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

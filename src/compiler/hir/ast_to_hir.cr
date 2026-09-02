@@ -19576,7 +19576,13 @@ module Adamas::HIR
       end
     end
 
-    private def store_function_type_param_map(full_name : String, base_name : String, params : Hash(String, String), allowed_concrete_long_params : Array(String)? = nil) : Nil
+    private def store_function_type_param_map(
+      full_name : String,
+      base_name : String,
+      params : Hash(String, String),
+      allowed_concrete_long_params : Array(String)? = nil,
+      store_base : Bool = true,
+    ) : Nil
       return if params.empty?
 
       owner_name : String? = nil
@@ -19640,7 +19646,9 @@ module Adamas::HIR
       return if stored.empty?
 
       @function_type_param_maps[full_name] = stored
-      @function_type_param_maps[base_name] = stored unless @function_type_param_maps.has_key?(base_name)
+      if store_base && !@function_type_param_maps.has_key?(base_name)
+        @function_type_param_maps[base_name] = stored
+      end
     end
 
     private def concrete_type_param_binding_value?(value : String) : Bool
@@ -19734,10 +19742,17 @@ module Adamas::HIR
       nil
     end
 
-    private def store_function_namespace_override(full_name : String, base_name : String, namespace : String) : Nil
+    private def store_function_namespace_override(
+      full_name : String,
+      base_name : String,
+      namespace : String,
+      store_base : Bool = true,
+    ) : Nil
       return if namespace.empty?
       @function_namespace_overrides[full_name] = namespace
-      @function_namespace_overrides[base_name] = namespace unless @function_namespace_overrides.has_key?(base_name)
+      if store_base && !@function_namespace_overrides.has_key?(base_name)
+        @function_namespace_overrides[base_name] = namespace
+      end
     end
 
     private def function_namespace_override_for(name : String) : String?
@@ -45527,13 +45542,17 @@ module Adamas::HIR
       method_name : String,
       arg_count : Int32,
       has_block_call : Bool,
+      respect_direct_declarations : Bool = true,
+      compatible_arg_types : Array(TypeRef)? = nil,
     ) : Tuple(Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike, String)?
       current = owner
       visited = Set(String).new
 
       while !current.empty? && !visited.includes?(current)
         visited << current
-        return nil if owner_directly_declares_instance_method?(current, method_name)
+        if respect_direct_declarations && owner_directly_declares_instance_method?(current, method_name)
+          return nil
+        end
 
         current_base = strip_generic_args(current)
         included = [] of String
@@ -45556,7 +45575,18 @@ module Adamas::HIR
                nil,
                has_block_call,
              )
-            return found
+            unless arg_types = compatible_arg_types
+              return found
+            end
+            if compatible = find_compatible_included_module_def_for_origin(
+                 owner,
+                 method_name,
+                 found,
+                 arg_types,
+                 has_block_call,
+               )
+              return compatible
+            end
           end
         end
 
@@ -45633,9 +45663,18 @@ module Adamas::HIR
       return nil if owner.empty?
       return nil if arg_types.empty? || arg_types.all? { |t| t == TypeRef::VOID }
 
-      found = find_included_module_def_origin_for_owner(owner, method_name, arg_types.size, has_block_call)
-      return nil unless found
-      find_compatible_included_module_def_for_origin(owner, method_name, found, arg_types, has_block_call)
+      # This helper is called only after ordinary direct overload resolution has
+      # missed. At that point a same-name direct declaration is not a compatible
+      # target, so it must not hide a compatible included overload.
+      found = find_included_module_def_origin_for_owner(
+        owner,
+        method_name,
+        arg_types.size,
+        has_block_call,
+        respect_direct_declarations: false,
+        compatible_arg_types: arg_types,
+      )
+      found
     end
 
     private def declared_module_type_param_names(module_owner : String) : Array(String)
@@ -92068,6 +92107,54 @@ module Adamas::HIR
       semantic_target = semantic_call_target(expr_id, lookup_name)
       selected_target = semantic_target
       selected_target ||= (m3e_input ? resolve_call_target(m3e_input) : nil)
+      if selected_target.nil? && semantic_target.nil? && receiver_id &&
+         !ctx.type_literal?(receiver_id) && !has_block_call && !has_splat &&
+         !has_named_args && !arg_types.empty? &&
+         arg_types.all? { |type_ref| type_ref != TypeRef::VOID }
+        receiver_name = normalize_method_owner_name(get_type_name_from_ref(ctx.type_of(receiver_id)))
+        if owner_info = generic_owner_info(receiver_name)
+          if concrete_type_args?(owner_info.args)
+            if found = find_included_module_def_for_owner(
+                 receiver_name,
+                 method_name,
+                 arg_types,
+                 false,
+               )
+              included_base_name = "#{receiver_name}##{method_name}"
+              included_target_name = mangle_function_name(included_base_name, arg_types, false)
+              if existing_def = @function_defs[included_target_name]?
+                unless same_def_node?(existing_def, found[0])
+                  raise LoweringError.new(
+                    "included call target #{included_target_name} collides with a different definition",
+                    node,
+                  )
+                end
+              end
+
+              module_owner = found[2]
+              module_param_names = declared_module_type_param_names(module_owner)
+              if module_param_map = included_module_type_param_map(receiver_name, module_owner)
+                store_function_type_param_map(
+                  included_target_name,
+                  included_base_name,
+                  module_param_map,
+                  module_param_names,
+                  store_base: false,
+                )
+              end
+              store_function_namespace_override(
+                included_target_name,
+                included_base_name,
+                module_owner,
+                store_base: false,
+              )
+              set_function_def_entry(included_target_name, found[0], false)
+              set_function_def_arena(included_target_name, found[1])
+              selected_target = SelectedCallTarget.new(included_target_name, found[0])
+            end
+          end
+        end
+      end
       if selected_target
         resolved_by_lookup = true
         entry_name = selected_target.symbol_name
