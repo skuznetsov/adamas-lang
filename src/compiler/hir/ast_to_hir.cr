@@ -61140,7 +61140,15 @@ module Adamas::HIR
         )
       end
 
-      resolved_names.map { |name| type_ref_for_name(name) }
+      definition_owner = function_context_from_name(resolved_mangled) ||
+                         function_context_from_name(resolved_base)
+      resolved_names.map do |name|
+        if definition_owner
+          annotation_type_ref(name, definition_owner)
+        else
+          type_ref_for_name(name)
+        end
+      end
     end
 
     private def infer_yield_param_types_from_body(

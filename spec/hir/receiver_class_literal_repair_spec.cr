@@ -218,6 +218,22 @@ class Adamas::HIR::AstToHir
     get_type_name_from_ref(type_ref)
   end
 
+  def __test_block_param_types_for_call(
+    base_method_name : String,
+    mangled_method_name : String,
+    receiver_name : String,
+    arg_type_names : Array(String),
+  ) : Array(String)?
+    receiver_type = type_ref_for_name(receiver_name)
+    arg_types = arg_type_names.map { |name| type_ref_for_name(name) }
+    block_param_types_for_call(
+      base_method_name,
+      mangled_method_name,
+      receiver_type,
+      arg_types,
+    ).try(&.map { |type_ref| get_type_name_from_ref(type_ref) })
+  end
+
   def __test_preserves_annotated_union_param_for_shared_arity?(
     full_name_override : String?,
     type_annotation : String?,
@@ -426,6 +442,86 @@ private def replace_with_stale_type_literal_receiver(
   )
   block.instructions[call_index + 1] = stale
   stale
+end
+
+describe "block parameter owner identity" do
+  it "resolves a short block annotation in the callee definition namespace" do
+    converter, _ = parse_receiver_repair_source(<<-CRYSTAL)
+      struct Symbol
+      end
+
+      module OwnerScope
+        abstract class Symbol
+          getter node_id : UInt32
+        end
+
+        class Table
+          def each_local_symbol(&block : String, Symbol ->)
+          end
+        end
+      end
+
+      def read_node_id(table : OwnerScope::Table)
+        table.each_local_symbol do |_name, symbol|
+          symbol.node_id
+        end
+      end
+    CRYSTAL
+
+    converter.__test_block_param_types_for_call(
+      "OwnerScope::Table#each_local_symbol",
+      "OwnerScope::Table#each_local_symbol",
+      "OwnerScope::Table",
+      [] of String,
+    ).should eq(["String", "OwnerScope::Symbol"])
+
+    node_id_calls = converter.module.functions.flat_map(&.blocks).flat_map(&.instructions)
+      .compact_map(&.as?(Adamas::HIR::Call))
+      .select { |call| call.method_name.ends_with?("#node_id") }
+      .map(&.method_name)
+    node_id_calls.should contain("OwnerScope::Symbol#node_id")
+    node_id_calls.should_not contain("Symbol#node_id")
+  end
+
+  it "keeps the included module namespace for short block annotations" do
+    converter, _ = parse_receiver_repair_source(<<-CRYSTAL)
+      class Local
+      end
+
+      module IncludedOwner
+        class Local
+          getter value : Int32
+        end
+
+        def each(&block : Local ->)
+        end
+      end
+
+      class IncludedTable
+        include IncludedOwner
+      end
+
+      def read_value(table : IncludedTable)
+        table.each do |item|
+          item.value
+        end
+      end
+    CRYSTAL
+
+    converter.__test_block_param_types_for_call(
+      "IncludedTable#each",
+      "IncludedTable#each",
+      "IncludedTable",
+      [] of String,
+    ).should eq(["IncludedOwner::Local"])
+
+    value_calls = converter.module.functions.flat_map(&.blocks).flat_map(&.instructions)
+      .compact_map(&.as?(Adamas::HIR::Call))
+      .select { |call| call.method_name.ends_with?("#value") }
+      .map(&.method_name)
+    value_calls.should contain("IncludedOwner::Local#value")
+    value_calls.should_not contain("Local#value")
+  end
 end
 
 describe "receiver-bound class-literal repair" do

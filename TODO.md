@@ -1,13 +1,25 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-09-02 (typed broad-root replay reduced the first missing-target
-fixed point to 59,551 functions at about 225 seconds, but fresh B4-F stage2
-still exits RED at about 265 seconds: late receiver repair sees
-`Hash(String, Int32)#[]?$arity1` with a `Void` key in
-`CLI#count_shadow_symbols_by_unit`. The immediate key producer is a weak
-`Copy`; guarded concrete-only recovery through that copy is locally verified
-but intentionally rejects union/nilable endpoints and does not move the B4-F
-frontier. Next: classify the copied source before widening any repair rule.)
+Updated: 2026-09-02 (explicit block parameter annotations now resolve in the
+selected definition's lexical namespace. A fresh bounded B4-F run no longer
+reaches the prior `Semantic::Symbol` / `Hash(String, Int32)#[]?` failure and
+instead exits RED after about 238 seconds at bodyless `Object#==$Object` from
+`Indexable(T)::ItemIterator#includes?`. Next: reproduce that new equality
+frontier with a no-prelude source probe before changing receiver repair.)
+
+2026-09-02 EXPLICIT BLOCK PARAMETER TYPES KEEP THE CALLEE DEFINITION NAMESPACE.
+`block_param_types_for_call` selected the callee `DefNode` but resolved its
+explicit Proc input names through the caller's ambient namespace. In the
+bootstrap compiler this turned `Semantic::SymbolTable#each_local_symbol`'s
+short `Symbol` annotation into top-level `::Symbol`; its generated getters then
+lost their return contracts and eventually produced a `Void` Hash key. The
+conversion now reuses the existing owner-aware annotation resolver. Two
+no-bootstrap collision regressions cover both a nested class method and an
+included module method; the receiver-repair spec is green at 56 examples and
+the full AstToHir spec is green at 522 examples with two pre-existing pending
+examples. A fresh stage1 build is green. Bounded B4-F removes the old failure
+and exposes the distinct `Object#==$Object` frontier after about 238 seconds,
+so this closes only the block-annotation owner defect, not bootstrap.
 
 2026-09-02 LATE RECEIVER REPAIR RECOVERS CONCRETE CALL CONTRACTS THROUGH WEAK
 COPIES. A repaired call result can become concrete after an earlier `Copy` was
