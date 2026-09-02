@@ -1245,6 +1245,25 @@ class Adamas::HIR::AstToHir
     @function_defs.keys.select { |name| prefix.empty? || name.starts_with?(prefix) }
   end
 
+  def __test_seeded_yield_cache_result(function_name : String, cached_value : Bool) : Bool
+    node = @function_defs[function_name]? || raise "test function not found: #{function_name}"
+    arena = @function_def_arenas[function_name]? || @arena
+    resolved_arena = arena_fits_def?(arena, node) ? arena : resolve_arena_for_def(node, arena)
+    cache_key = def_contains_yield_cache_key(node, resolved_arena)
+    had_cached_value = @yield_check_cache.has_key?(cache_key)
+    previous_value = @yield_check_cache[cache_key]?
+    @yield_check_cache[cache_key] = cached_value
+    begin
+      def_contains_yield?(node, arena)
+    ensure
+      if had_cached_value
+        @yield_check_cache[cache_key] = previous_value.not_nil!
+      else
+        @yield_check_cache.delete(cache_key)
+      end
+    end
+  end
+
   def __test_function_param_annotations(name : String) : Array(String?)
     node = @function_defs[name]?
     return [] of String? unless node
@@ -2152,6 +2171,33 @@ describe "assignment expression type preservation" do
 
     call_names.any? { |name| name.starts_with?("Hash(String, String)#[]?") }.should be_true
     call_names.none? { |name| name.starts_with?("Nil#[]?") }.should be_true
+  end
+end
+
+describe "yield classification cache" do
+  it "treats false and true as authoritative cached values" do
+    converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+      class YieldCacheValueProbe
+        def plain : Int32
+          1
+        end
+
+        def yielding(&) : Int32
+          yield
+          1
+        end
+      end
+
+      probe = YieldCacheValueProbe.new
+      probe.plain
+      probe.yielding { nil }
+    CRYSTAL
+
+    plain_name = converter.__test_function_def_names("YieldCacheValueProbe#plain").first
+    yielding_name = converter.__test_function_def_names("YieldCacheValueProbe#yielding").first
+
+    converter.__test_seeded_yield_cache_result(yielding_name, false).should be_false
+    converter.__test_seeded_yield_cache_result(plain_name, true).should be_true
   end
 end
 

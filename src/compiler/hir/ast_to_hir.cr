@@ -2227,8 +2227,7 @@ module Adamas::HIR
     # Values produced by __adamas_regex_match — for intercepting [] on match results
     @regex_match_results : Set(ValueId)
 
-    # Cache for def_contains_yield? keyed by {DefNode object_id, resolved arena object_id} → Bool.
-    # DefNode ids are arena-local and can collide across different arenas.
+    # Cache for def_contains_yield? keyed by {source span, resolved arena object_id} → Bool.
     @yield_check_cache : Hash({Int32, Int32, UInt64}, Bool) = {} of {Int32, Int32, UInt64} => Bool
     # Cache for the inline return-order safety classifier. The summary depends
     # only on the parsed DefNode and its arena, not on a concrete call site.
@@ -50828,7 +50827,8 @@ module Adamas::HIR
       end
       cache_key = def_contains_yield_cache_key(node, resolved_arena)
       STDERR.puts "[DEF_CONTAINS_YIELD] phase=after_cache_key" if debug_register_raw
-      if cached = @yield_check_cache[cache_key]?
+      if @yield_check_cache.has_key?(cache_key)
+        cached = @yield_check_cache[cache_key]
         STDERR.puts "[DEF_CONTAINS_YIELD] phase=cache_hit value=#{cached ? 1 : 0}" if debug_register_raw
         return cached
       end
