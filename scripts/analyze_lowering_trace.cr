@@ -788,6 +788,17 @@ module Adamas::Tools
       longest.each do |sample|
         puts "    total_ms=#{format_ms(sample.duration_ns).rjust(12)} self_ms=#{format_ms(sample.self_ns).rjust(12)} depth=#{sample.depth} seq=#{sample.start_sequence}  #{sample.symbol}"
       end
+      unless active_materializations.empty?
+        trace_end_ns = run.events.last?.try(&.delta_ns) || 0_u64
+        puts "  unfinished_materializations:"
+        active_materializations.reverse_each do |active|
+          elapsed_ns = trace_end_ns >= active.event.delta_ns ? trace_end_ns - active.event.delta_ns : 0_u64
+          sweep = active.missing_sweep.try(&.to_s) || "none"
+          iteration = active.missing_iteration.try(&.to_s) || "none"
+          symbol = active.event.symbol || numeric_value(active.event)
+          puts "    elapsed_ms=#{format_ms(elapsed_ns)} depth=#{active.event.depth} seq=#{active.event.sequence} sweep=#{sweep} iteration=#{iteration}  #{symbol}"
+        end
+      end
 
       puts "  processes:"
       processes.each do |sample|
