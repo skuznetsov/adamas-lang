@@ -201,10 +201,10 @@ module Adamas::Tools
       end
     end
 
-    def print_summary(top : Int32, tail : Int32) : Nil
+    def print_summary(top : Int32, tail : Int32, virtual_target_match : String?) : Nil
       puts "trace=#{@path} runs=#{@runs.size} recovered_segments=#{@recovered_segments} truncated_tail=#{@truncated_tail ? 1 : 0}"
       @runs.each do |run|
-        print_run(run, top, tail)
+        print_run(run, top, tail, virtual_target_match)
       end
     end
 
@@ -284,7 +284,7 @@ module Adamas::Tools
       }
     end
 
-    private def print_run(run : TraceRun, top : Int32, tail : Int32) : Nil
+    private def print_run(run : TraceRun, top : Int32, tail : Int32, virtual_target_match : String?) : Nil
       puts "run=#{run.index} pid=#{run.pid} events=#{run.events.size} capacity=#{run.capacity_records} flush_ms=#{run.flush_interval_ns // 1_000_000_u64}"
       if summary = run.summary
         total, dropped, flushes, bytes, write_ns = summary
@@ -296,6 +296,10 @@ module Adamas::Tools
       event_counts = Hash(String, Int32).new(0)
       symbol_counts = Hash(String, Hash(UInt16, Int32)).new
       request_edges = Hash(Tuple(String, String), Int32).new(0)
+      virtual_target_edges = Hash(Tuple(String, String), Int32).new(0)
+      virtual_target_replay_edges = Hash(Tuple(String, String), Int32).new(0)
+      strict_virtual_target_materialization_edges = Hash(Tuple(String, String), Int32).new(0)
+      pending_virtual_target_replay = nil.as(Tuple(String, String, UInt32)?)
       active_materializations = [] of ActiveMaterialization
       materializations = [] of MaterializationSample
       unmatched_materializations = 0
@@ -329,6 +333,22 @@ module Adamas::Tools
       request_profiles = [] of RequestProfileSample
       unmatched_request_profiles = 0
       run.events.each do |event|
+        if pending = pending_virtual_target_replay
+          source, target, prior_sequence = pending
+          if event.sequence == prior_sequence &+ 1_u32
+            if lower_request_event?(event.event_id) && event.symbol == target
+              pending_virtual_target_replay = {source, target, event.sequence}
+            elsif event.event_id == TraceFormat::Event::MaterializeStart.value && event.symbol == target
+              strict_virtual_target_materialization_edges[{source, target}] += 1
+              pending_virtual_target_replay = nil
+            else
+              pending_virtual_target_replay = nil
+            end
+          else
+            pending_virtual_target_replay = nil
+          end
+        end
+
         event_counts[event_name(event.event_id)] += 1
         if (symbol = event.symbol) && !site_symbol_event?(event.event_id)
           # Concrete registration has its own family and phase reports below;
@@ -422,6 +442,19 @@ module Adamas::Tools
                      active_materializations.last?.try(&.event.symbol) ||
                      "<root/phase>"
             request_edges[{caller, callee}] += 1
+          end
+        when TraceFormat::Event::VirtualTargetRecord.value
+          if source = event.caller
+            if target = event.symbol
+              virtual_target_edges[{source, target}] += 1
+            end
+          end
+        when TraceFormat::Event::VirtualTargetReplay.value
+          if source = event.caller
+            if target = event.symbol
+              virtual_target_replay_edges[{source, target}] += 1
+              pending_virtual_target_replay = {source, target, event.sequence}
+            end
           end
         when TraceFormat::Event::MaterializeStart.value
           active_materializations << ActiveMaterialization.new(
@@ -767,6 +800,80 @@ module Adamas::Tools
         puts "    unique=#{targets.size.to_s.rjust(8)} requests=#{caller_request_counts[caller].to_s.rjust(8)} families=#{families} methods=#{methods}  #{caller}"
       end
 
+      virtual_target_records = virtual_target_edges.to_a
+      if pattern = virtual_target_match
+        virtual_target_records = virtual_target_records.select do |edge, _count|
+          source, target = edge
+          source.includes?(pattern) || target.includes?(pattern)
+        end
+      end
+      unless virtual_target_records.empty? && virtual_target_match.nil?
+        label = virtual_target_match ? " match=#{virtual_target_match}" : ""
+        puts "  virtual_target_records#{label}:"
+        virtual_target_records.sort_by do |(source, target), count|
+          {-count, source, target}
+        end.first(top).each do |(source, target), count|
+          puts "    #{count.to_s.rjust(8)}  #{source} -> #{target}"
+        end
+      end
+
+      virtual_target_replays = virtual_target_replay_edges.to_a
+      if pattern = virtual_target_match
+        virtual_target_replays = virtual_target_replays.select do |edge, _count|
+          source, target = edge
+          source.includes?(pattern) || target.includes?(pattern)
+        end
+      end
+      unless virtual_target_replays.empty? && virtual_target_match.nil?
+        label = virtual_target_match ? " match=#{virtual_target_match}" : ""
+        puts "  virtual_target_replays#{label}:"
+        virtual_target_replays.sort_by do |(source, target), count|
+          {-count, source, target}
+        end.first(top).each do |(source, target), count|
+          puts "    #{count.to_s.rjust(8)}  #{source} -> #{target}"
+        end
+
+        replay_targets = Hash(String, Set(String)).new do |targets, source|
+          targets[source] = Set(String).new
+        end
+        replay_counts = Hash(String, Int32).new(0)
+        virtual_target_replays.each do |(source, target), count|
+          replay_targets[source] << target
+          replay_counts[source] += count
+        end
+        puts "  virtual_target_replay_fanout#{label}:"
+        replay_targets.to_a.sort_by do |source, targets|
+          {-targets.size, -replay_counts[source], source}
+        end.first(top).each do |source, targets|
+          families = Hash(String, Int32).new(0)
+          targets.each { |target| families[generic_family(target)] += 1 }
+          top_families = families.to_a
+            .sort_by { |family, count| {-count, family} }
+            .first(3)
+            .map { |family, count| "#{family}=#{count}" }
+            .join(",")
+          puts "    unique=#{targets.size.to_s.rjust(8)} requests=#{replay_counts[source].to_s.rjust(8)} families=#{top_families}  #{source}"
+        end
+
+        materialized_targets = Hash(String, Set(String)).new do |targets, source|
+          targets[source] = Set(String).new
+        end
+        materialization_counts = Hash(String, Int32).new(0)
+        strict_virtual_target_materialization_edges.each do |(source, target), count|
+          if pattern = virtual_target_match
+            next unless source.includes?(pattern) || target.includes?(pattern)
+          end
+          materialized_targets[source] << target
+          materialization_counts[source] += count
+        end
+        puts "  virtual_target_replay_materializations_strict#{label}:"
+        materialized_targets.to_a.sort_by do |source, targets|
+          {-targets.size, -materialization_counts[source], source}
+        end.first(top).each do |source, targets|
+          puts "    unique=#{targets.size.to_s.rjust(8)} starts=#{materialization_counts[source].to_s.rjust(8)}  #{source}"
+        end
+      end
+
       profile_site_totals = Hash(Tuple(UInt32, TraceFormat::RequestProfileState, TraceFormat::RequestProfileState), Tuple(Int32, UInt64, UInt64, Int32)).new
       profile_totals = Hash(Tuple(UInt32, String, TraceFormat::RequestProfileState, TraceFormat::RequestProfileState), Tuple(Int32, UInt64, UInt64, Int32)).new
       request_profiles.each do |sample|
@@ -1037,7 +1144,10 @@ module Adamas::Tools
     end
 
     private def site_symbol_event?(event_id : UInt16) : Bool
-      concrete_registration_event?(event_id) || nested_registration_event?(event_id)
+      concrete_registration_event?(event_id) ||
+        nested_registration_event?(event_id) ||
+        event_id == TraceFormat::Event::VirtualTargetRecord.value ||
+        event_id == TraceFormat::Event::VirtualTargetReplay.value
     end
 
     private def lower_request_event?(event_id : UInt16) : Bool
@@ -1156,19 +1266,22 @@ module Adamas::Tools
   end
 
   private def self.usage : NoReturn
-    STDERR.puts "Usage: crystal run scripts/analyze_lowering_trace.cr -- TRACE_FILE [--top N] [--tail N]"
+    STDERR.puts "Usage: crystal run scripts/analyze_lowering_trace.cr -- TRACE_FILE [--top N] [--tail N] [--virtual-target-match TEXT]"
     exit 2
   end
 
   path = ARGV.shift? || usage
   top = 20
   tail = 40
+  virtual_target_match = nil.as(String?)
   until ARGV.empty?
     case option = ARGV.shift
     when "--top"
       top = (ARGV.shift? || usage).to_i
     when "--tail"
       tail = (ARGV.shift? || usage).to_i
+    when "--virtual-target-match"
+      virtual_target_match = ARGV.shift? || usage
     else
       STDERR.puts "Unknown option: #{option}"
       usage
@@ -1178,5 +1291,5 @@ module Adamas::Tools
 
   analyzer = LoweringTraceAnalyzer.new(path)
   analyzer.parse
-  analyzer.print_summary(top, tail)
+  analyzer.print_summary(top, tail, virtual_target_match)
 end

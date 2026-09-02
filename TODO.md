@@ -15361,6 +15361,43 @@ Adversary verdict: ROBUST for exact generic-instance liveness and late replay;
 VULNERABLE as a B4-F speedup claim. Next: measure the same bounded deferred-HIR
 gate and compare virtual-target fanout with Session 139.
 
+#### Session 141: stop replaying stripped virtual overload siblings
+
+The first binary virtual-target event captured registration context but not the
+later concrete replay that caused bootstrap growth. Two compact events now
+retain the recorded target and each requested concrete target, and the offline
+analyzer reports replay fanout plus a conservative strict correlation for an
+adjacent replay/request/materialization chain. The trace remains default-off
+and keeps the existing fixed-size event format.
+
+A source-backed no-bootstrap falsifier then reproduced the highest-value loss:
+an annotated broad `Object#render(Sink)` target resolved correctly, but replay
+also stripped the `$Sink` suffix and materialized the unrelated zero-argument
+`Object#render` sibling. Virtual replay now lowers only the resolver-selected
+name in those branches. It does not prune whole method families, alter liveness,
+or suppress the exact candidate and base aliases used when resolution itself
+fails.
+
+The regression was red before the change and green afterward. The full
+AstToHir suite passes 533 examples with zero failures, zero errors, and two
+existing pending examples. The binary-trace spec passes, and three no-prelude
+guards pass: the new annotated-overload HIR/runtime oracle, the late concrete
+override guard, and the broad-root budget reducer (`23` functions, 12 Object
+replays, five Reference replays).
+
+In comparable 90-second incomplete traces, virtual replay requests fell from
+41,294 to 28,531 and materialization starts from 22,875 to 18,785. Completed
+missing-target iteration zero fell from 6,667 to 5,479 functions; iteration one
+fell from 17,794 to 14,832 and completed at 54.142 seconds instead of 58.608.
+Strict materializations attributed to `Object#inspect$String::Builder` fell
+from 1,418 to 97. Because both traces ended during iteration two, these are
+bounded lower-bound comparisons rather than full-bootstrap closure.
+
+Adversary verdict: ROBUST for preserving the exact annotated target while
+rejecting its unsuffixed sibling and unrelated generic wrappers. VULNERABLE as
+overall B4-F closure. Next: inspect the post-fix iteration-two tail for the next
+largest exact materialization family before changing another replay rule.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

@@ -5342,6 +5342,27 @@ module Adamas::HIR
       end
     end
 
+    @[AlwaysInline]
+    private def record_lowering_trace_virtual_target(
+      parent_name : String,
+      method_name : String,
+      arg_types : Array(TypeRef),
+      has_block : Bool,
+      caller_token : {String, FunctionId}?,
+    ) : Nil
+      if trace = @lowering_binary_trace
+        target = mangle_function_name("#{parent_name}##{method_name}", arg_types, has_block)
+        trace.record_virtual_target(
+          target,
+          caller_token.try(&.[0]),
+          @current_class,
+          @current_method,
+          @current_method_is_class,
+          @lowering_depth,
+        )
+      end
+    end
+
     # Each expansion embeds its enclosing method and source line as one static
     # symbol. Runtime records then carry only two UInt32 symbol ids: this site
     # and the dynamic concrete class being registered.
@@ -8950,6 +8971,7 @@ module Adamas::HIR
       @virtual_targets_recorded.add(key)
       remember_virtual_target_caller_for_key(key, caller_token)
       @vtr_stats_record_calls &+= 1 if @debug_virtual_target_replay_stats
+      record_lowering_trace_virtual_target(parent_name, method_name, arg_types, has_block, caller_token)
 
       entry = VirtualTarget.new(method_name, arg_types.dup, has_block, has_splat)
       (@virtual_targets_by_parent[parent_name] ||= [] of VirtualTarget) << entry
@@ -9041,7 +9063,14 @@ module Adamas::HIR
       @virtual_target_replay_cursors[cursor_key] = target_idx
     end
 
-    private def lower_required_virtual_target_function(name : String, exact_demand : Bool = false) : Nil
+    private def lower_required_virtual_target_function(
+      name : String,
+      exact_demand : Bool = false,
+      replay_source : String? = nil,
+    ) : Nil
+      if source = replay_source
+        @lowering_binary_trace.try(&.record_virtual_target_replay(source, name, @lowering_depth))
+      end
       @rta_called_methods << name if exact_demand
       @module.mark_virtual_dispatch_target_function(name)
       lower_function_if_needed(name)
@@ -9136,6 +9165,9 @@ module Adamas::HIR
 
       base_name = "#{owner}##{method_name}"
       candidate = mangle_function_name(base_name, arg_types, has_block_call)
+      replay_trace_source = if @lowering_binary_trace && (parent = replay_parent)
+                              mangle_function_name("#{parent}##{method_name}", arg_types, has_block_call)
+                            end
 
       # Virtual-target prelower often needs the exact callsite arg signature to
       # synthesize inherited child wrappers (for example Kqueue#write from
@@ -9177,12 +9209,10 @@ module Adamas::HIR
           # is not an additional runtime target. Lowering both creates a
           # parent-typed executable body whose internal static redispatch has
           # already lost the concrete `self` identity.
-          lower_required_virtual_target_function(candidate, exact_demand: exact_owner_required)
+          lower_required_virtual_target_function(candidate, exact_demand: exact_owner_required, replay_source: replay_trace_source)
         elsif !resolved_owner.empty? && strip_generic_args(resolved_owner) != strip_generic_args(owner) &&
               !inherited_wrapper_reusable
-          lower_required_virtual_target_function(resolved_name, exact_demand: true)
-          resolved_base = strip_type_suffix(resolved_name)
-          lower_required_virtual_target_function(resolved_base, exact_demand: true) unless resolved_name == resolved_base
+          lower_required_virtual_target_function(resolved_name, exact_demand: true, replay_source: replay_trace_source)
           # The first reuse check may fail only because the inherited body has
           # not been materialized yet. Recheck the same fail-closed contract
           # before creating a concrete child wrapper.
@@ -9194,13 +9224,11 @@ module Adamas::HIR
                    has_block_call,
                    has_splat,
                  )
-            lower_required_virtual_target_function(candidate)
-            lower_required_virtual_target_function(base_name) unless candidate == base_name
+            lower_required_virtual_target_function(candidate, replay_source: replay_trace_source)
+            lower_required_virtual_target_function(base_name, replay_source: replay_trace_source) unless candidate == base_name
           end
         else
-          lower_required_virtual_target_function(resolved_name)
-          resolved_base = strip_type_suffix(resolved_name)
-          lower_required_virtual_target_function(resolved_base) unless resolved_name == resolved_base
+          lower_required_virtual_target_function(resolved_name, replay_source: replay_trace_source)
         end
       else
         # A broad-root call remains inherited when the concrete child only has
@@ -9223,16 +9251,14 @@ module Adamas::HIR
           end
           if replay_resolved
             replay_name = replay_resolved[0]
-            lower_required_virtual_target_function(replay_name)
-            replay_resolved_base = strip_type_suffix(replay_name)
-            lower_required_virtual_target_function(replay_resolved_base) unless replay_name == replay_resolved_base
+            lower_required_virtual_target_function(replay_name, replay_source: replay_trace_source)
           end
           # No compatible implementation is safer than materializing a known
           # incompatible child overload under the requested argument suffix.
           return
         end
-        lower_required_virtual_target_function(candidate)
-        lower_required_virtual_target_function(base_name) unless candidate == base_name
+        lower_required_virtual_target_function(candidate, replay_source: replay_trace_source)
+        lower_required_virtual_target_function(base_name, replay_source: replay_trace_source) unless candidate == base_name
       end
     end
 
@@ -9255,6 +9281,9 @@ module Adamas::HIR
     ) : Nil
       base_name = "#{owner}##{method_name}"
       candidate = mangle_function_name(base_name, arg_types, has_block_call)
+      replay_trace_source = if @lowering_binary_trace && (parent = replay_parent)
+                              mangle_function_name("#{parent}##{method_name}", arg_types, has_block_call)
+                            end
 
       remember_callsite_arg_types(base_name, arg_types, has_block: has_block_call)
       remember_callsite_arg_types(candidate, arg_types, has_block: has_block_call)
@@ -9265,9 +9294,9 @@ module Adamas::HIR
           preserve_requested_value_owner_specialization?(candidate, resolved_name) ||
             preserve_requested_value_owner_specialization?(base_name, resolved_name)
         if preserve_requested_owner
-          lower_required_virtual_target_function(candidate)
+          lower_required_virtual_target_function(candidate, replay_source: replay_trace_source)
         else
-          lower_required_virtual_target_function(resolved_name)
+          lower_required_virtual_target_function(resolved_name, replay_source: replay_trace_source)
         end
       else
         lower_virtual_target_owner(

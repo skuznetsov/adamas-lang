@@ -7,6 +7,7 @@ module Adamas::HIR
   class LoweringBinaryTrace
     CHUNK_MAGIC             = 0x4352_5441_u32 # "ATRC" in little-endian byte order
     CHUNK_FOOTER_MAGIC      = 0x444E_4541_u32 # "AEND" in little-endian byte order
+    # Event ids are additive; bump this only when chunk or record framing changes.
     FORMAT_VERSION          =           1_u16
     CHUNK_RUN               =           1_u16
     CHUNK_SYMBOLS           =           2_u16
@@ -44,6 +45,8 @@ module Adamas::HIR
       ConcreteRegisterDone  = 20
       NestedRegisterStart   = 21
       NestedRegisterDone    = 22
+      VirtualTargetRecord   = 23
+      VirtualTargetReplay   = 24
     end
 
     enum RequestProfileState : UInt8
@@ -199,6 +202,32 @@ module Adamas::HIR
       else
         record_symbol(Event::LowerRequest, target, depth)
       end
+    end
+
+    def record_virtual_target(
+      target : String,
+      caller : String?,
+      current_class : String?,
+      current_method : String?,
+      current_method_is_class : Bool,
+      depth : Int32 = 0,
+      ticks : UInt64 = Crystal::System::Time.ticks,
+    ) : Nil
+      return unless @active
+
+      source = caller ||
+               context_symbol(current_class, current_method, current_method_is_class) ||
+               "<root/phase>"
+      record_site_symbol_at(Event::VirtualTargetRecord, source, target, depth: depth, ticks: ticks)
+    end
+
+    def record_virtual_target_replay(
+      source : String,
+      target : String,
+      depth : Int32 = 0,
+      ticks : UInt64 = Crystal::System::Time.ticks,
+    ) : Nil
+      record_site_symbol_at(Event::VirtualTargetReplay, source, target, depth: depth, ticks: ticks)
     end
 
     def materialization_start(symbol : String, depth : Int32 = 0) : Nil

@@ -15832,6 +15832,57 @@ describe Adamas::HIR::AstToHir do
       converter.module.functions.any? { |func| func.name.starts_with?("Box(Int32)#to_s") }.should be_false
     end
 
+    it "does not materialize an unsuffixed sibling for an annotated broad target" do
+      source = <<-CRYSTAL
+        class Object
+          def render : Int32
+            11
+          end
+
+          def render(sink : Sink) : Int32
+            22
+          end
+        end
+
+        class Reference < Object
+        end
+
+        class Sink < Reference
+        end
+
+        class FancySink < Sink
+        end
+
+        class Box(T) < Reference
+        end
+      CRYSTAL
+
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+      converter.arena = arena
+      class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+      def_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode) }
+      class_nodes.each { |node| converter.register_class(node) }
+      def_nodes.each { |node| converter.register_function(node) }
+      converter.__test_monomorphize_generic_class("Box", ["Int32"], "Box(Int32)")
+      converter.__test_set_lazy_rta_active(true)
+      converter.__test_mark_live_type("Box(Int32)")
+
+      converter.__test_record_virtual_target(
+        "Object",
+        "render",
+        [converter.__test_type_ref_for_name("FancySink")],
+      )
+
+      converter.module.has_function_with_body?("Object#render$Sink").should be_true
+      converter.module.has_function_with_body?("Object#render").should be_false
+      converter.module.functions.any? do |func|
+        func.name.starts_with?("Box(Int32)#render") && converter.module.has_function_with_body?(func.name)
+      end.should be_false
+    ensure
+      converter.try(&.__test_set_lazy_rta_active(false))
+    end
+
     it "defers broad-root override fanout until the concrete child is live" do
       source = <<-CRYSTAL
         class Object
