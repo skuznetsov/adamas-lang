@@ -9019,7 +9019,14 @@ module Adamas::HIR
           next
         end
         @virtual_target_replay_attempted << key
-        lower_virtual_target_owner(child_name, target.method_name, target.arg_types, target.has_block, target.has_splat)
+        lower_virtual_target_owner(
+          child_name,
+          target.method_name,
+          target.arg_types,
+          target.has_block,
+          target.has_splat,
+          replay_parent: parent_name,
+        )
       end
       @virtual_target_replay_cursors[cursor_key] = target_idx
     end
@@ -9028,6 +9035,51 @@ module Adamas::HIR
       @rta_called_methods << name if exact_demand
       @module.mark_virtual_dispatch_target_function(name)
       lower_function_if_needed(name)
+    end
+
+    private def lookup_concrete_broad_replay_ancestor(
+      owner : String,
+      replay_parent : String,
+      method_name : String,
+      arg_types : Array(TypeRef),
+      has_block_call : Bool,
+      has_splat : Bool,
+    ) : Tuple(String, Adamas::Compiler::Frontend::DefNode)?
+      replay_parent_base = strip_generic_args(replay_parent)
+      get_ancestor_chain(owner).each do |ancestor|
+        ancestor_base = "#{ancestor}##{method_name}"
+        remember_callsite_arg_types(ancestor_base, arg_types, has_block: has_block_call)
+        if resolved = lookup_function_def_for_call(
+             ancestor_base,
+             arg_types.size,
+             has_block_call,
+             arg_types,
+             has_splat,
+           )
+          return resolved unless resolved[1].is_abstract
+        end
+        if included = find_included_module_def_origin_for_owner(
+             ancestor,
+             method_name,
+             arg_types.size,
+             has_block_call,
+             respect_direct_declarations: false,
+             compatible_arg_types: arg_types,
+             search_parents: false,
+           )
+          unless included[0].is_abstract
+            return register_included_module_call_target(
+              ancestor,
+              method_name,
+              arg_types,
+              has_block_call,
+              included,
+            )
+          end
+        end
+        break if strip_generic_args(ancestor) == replay_parent_base
+      end
+      nil
     end
 
     private def replay_virtual_targets_for_registered_class(class_name : String) : Nil
@@ -9061,6 +9113,7 @@ module Adamas::HIR
       has_block_call : Bool,
       has_splat : Bool,
       exact_owner_required : Bool = false,
+      replay_parent : String? = nil,
     ) : Nil
       # A bare reference-generic template has no concrete layout. Its target
       # shape is replayed for registered instances; a template body could embed
@@ -9113,6 +9166,28 @@ module Adamas::HIR
           lower_required_virtual_target_function(resolved_base) unless resolved_name == resolved_base
         end
       else
+        # A broad-root call remains inherited when the concrete child only has
+        # incompatible overloads. The child lookup has already rejected those
+        # overloads; find the nearest compatible non-abstract ancestor instead
+        # of feeding the child spelling to untyped materialization fallbacks.
+        if replay_parent && replay_parent != owner && broad_virtual_target_root?(replay_parent)
+          if replay_resolved = lookup_concrete_broad_replay_ancestor(
+               owner,
+               replay_parent,
+               method_name,
+               arg_types,
+               has_block_call,
+               has_splat,
+             )
+            replay_name = replay_resolved[0]
+            lower_required_virtual_target_function(replay_name)
+            replay_resolved_base = strip_type_suffix(replay_name)
+            lower_required_virtual_target_function(replay_resolved_base) unless replay_name == replay_resolved_base
+          end
+          # No compatible implementation is safer than materializing a known
+          # incompatible child overload under the requested argument suffix.
+          return
+        end
         lower_required_virtual_target_function(candidate)
         lower_required_virtual_target_function(base_name) unless candidate == base_name
       end
@@ -9133,6 +9208,7 @@ module Adamas::HIR
       arg_types : Array(TypeRef),
       has_block_call : Bool,
       has_splat : Bool,
+      replay_parent : String? = nil,
     ) : Nil
       base_name = "#{owner}##{method_name}"
       candidate = mangle_function_name(base_name, arg_types, has_block_call)
@@ -9151,7 +9227,14 @@ module Adamas::HIR
           lower_required_virtual_target_function(resolved_name)
         end
       else
-        lower_virtual_target_owner(owner, method_name, arg_types, has_block_call, has_splat)
+        lower_virtual_target_owner(
+          owner,
+          method_name,
+          arg_types,
+          has_block_call,
+          has_splat,
+          replay_parent: replay_parent,
+        )
       end
     end
 
@@ -45561,6 +45644,7 @@ module Adamas::HIR
       has_block_call : Bool,
       respect_direct_declarations : Bool = true,
       compatible_arg_types : Array(TypeRef)? = nil,
+      search_parents : Bool = true,
     ) : Tuple(Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike, String)?
       current = owner
       visited = Set(String).new
@@ -45607,6 +45691,7 @@ module Adamas::HIR
           end
         end
 
+        break unless search_parents
         parent = @class_info[current]?.try(&.parent_name) ||
                  @module.class_parents[current]? ||
                  (current_base != current ? (@class_info[current_base]?.try(&.parent_name) || @module.class_parents[current_base]?) : nil)
@@ -45692,6 +45777,45 @@ module Adamas::HIR
         compatible_arg_types: arg_types,
       )
       found
+    end
+
+    private def register_included_module_call_target(
+      receiver_name : String,
+      method_name : String,
+      arg_types : Array(TypeRef),
+      has_block_call : Bool,
+      found : Tuple(Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike, String),
+    ) : Tuple(String, Adamas::Compiler::Frontend::DefNode)
+      included_base_name = "#{receiver_name}##{method_name}"
+      included_target_name = mangle_function_name(included_base_name, arg_types, has_block_call)
+      if existing_def = @function_defs[included_target_name]?
+        unless same_def_node?(existing_def, found[0])
+          raise LoweringError.new(
+            "included call target #{included_target_name} collides with a different definition"
+          )
+        end
+      end
+
+      module_owner = found[2]
+      module_param_names = declared_module_type_param_names(module_owner)
+      if module_param_map = included_module_type_param_map(receiver_name, module_owner)
+        store_function_type_param_map(
+          included_target_name,
+          included_base_name,
+          module_param_map,
+          module_param_names,
+          store_base: false,
+        )
+      end
+      store_function_namespace_override(
+        included_target_name,
+        included_base_name,
+        module_owner,
+        store_base: false,
+      )
+      set_function_def_entry(included_target_name, found[0], false)
+      set_function_def_arena(included_target_name, found[1])
+      {included_target_name, found[0]}
     end
 
     private def declared_module_type_param_names(module_owner : String) : Array(String)
@@ -65339,23 +65463,30 @@ module Adamas::HIR
     end
 
     private def execute_final_repair_virtual_target_requests(
-      requests : Array({String, String, Array(TypeRef), Bool, Bool}),
+      requests : Array({String, String, String, Array(TypeRef), Bool, Bool}),
     ) : Int32
       executed = 0
-      requests.each do |owner, method_name, arg_types, has_block, has_splat|
+      requests.each do |owner, replay_parent, method_name, arg_types, has_block, has_splat|
         base_name = "#{owner}##{method_name}"
         candidate = mangle_function_name(base_name, arg_types, has_block)
         next if @module.has_function_with_body?(candidate)
         next if repair_resolved_body_available?(owner, base_name, candidate, arg_types, has_block, has_splat)
 
-        lower_final_repair_virtual_target_owner(owner, method_name, arg_types, has_block, has_splat)
+        lower_final_repair_virtual_target_owner(
+          owner,
+          method_name,
+          arg_types,
+          has_block,
+          has_splat,
+          replay_parent: replay_parent,
+        )
         executed += 1
       end
       executed
     end
 
     private def repair_missing_concrete_virtual_targets : Int32
-      requests = [] of {String, String, Array(TypeRef), Bool, Bool}
+      requests = [] of {String, String, String, Array(TypeRef), Bool, Bool}
       target_shapes = 0
       active_shapes = 0
       historical_only = 0
@@ -65513,7 +65644,7 @@ module Adamas::HIR
                 lookup_nil += 1
               end
             end
-            requests << {owner, target.method_name, target.arg_types, target.has_block, target.has_splat}
+            requests << {owner, parent_name, target.method_name, target.arg_types, target.has_block, target.has_splat}
           end
         end
       end
@@ -65531,13 +65662,20 @@ module Adamas::HIR
         probe_body_delta = 0
         probe_function_delta = 0
         while probe_index < requests.size && probe_index < probe_limit
-          owner, method_name, arg_types, has_block, has_splat = requests[probe_index]
+          owner, replay_parent, method_name, arg_types, has_block, has_splat = requests[probe_index]
           display_index = probe_index + 1
           STDERR.puts "[VIRTUAL_REPAIR_EXEC_PROBE] START index=#{display_index}/#{requests.size} owner=#{owner} method=#{method_name}"
           started_at = Time.instant
           body_count_before = virtual_repair_body_count
           function_count_before = @module.functions.size
-          lower_final_repair_virtual_target_owner(owner, method_name, arg_types, has_block, has_splat)
+          lower_final_repair_virtual_target_owner(
+            owner,
+            method_name,
+            arg_types,
+            has_block,
+            has_splat,
+            replay_parent: replay_parent,
+          )
           elapsed_ms = (Time.instant - started_at).total_milliseconds
           body_count_delta = virtual_repair_body_count - body_count_before
           function_count_delta = @module.functions.size - function_count_before
@@ -73293,7 +73431,14 @@ module Adamas::HIR
                     unless @method_index[base_owner]?.try(&.has_key?(name))
                       next unless @class_info.has_key?(owner)
                     end
-                    lower_virtual_target_owner(owner, name, arg_types, false, false)
+                    lower_virtual_target_owner(
+                      owner,
+                      name,
+                      arg_types,
+                      false,
+                      false,
+                      replay_parent: current_class,
+                    )
                   end
                 end
               end
@@ -77162,7 +77307,14 @@ module Adamas::HIR
                 unless @method_index[base_owner]?.try(&.has_key?(op))
                   next unless @class_info.has_key?(owner)
                 end
-                lower_virtual_target_owner(owner, op, arg_types, false, false)
+                lower_virtual_target_owner(
+                  owner,
+                  op,
+                  arg_types,
+                  false,
+                  false,
+                  replay_parent: left_desc.name,
+                )
               end
             end
           end
@@ -95726,7 +95878,14 @@ module Adamas::HIR
                 unless @method_index[base_owner]?.try(&.has_key?(method_name))
                   next unless @class_info.has_key?(owner)
                 end
-                lower_virtual_target_owner(owner, method_name, arg_types, has_block_call, has_splat)
+                lower_virtual_target_owner(
+                  owner,
+                  method_name,
+                  arg_types,
+                  has_block_call,
+                  has_splat,
+                  replay_parent: type_desc.name,
+                )
               end
             end
           elsif type_desc.kind == TypeKind::Union
@@ -110462,7 +110621,14 @@ module Adamas::HIR
                 unless @method_index[base_owner]?.try(&.has_key?(member_name))
                   next unless @class_info.has_key?(owner)
                 end
-                lower_virtual_target_owner(owner, member_name, arg_types, false, false)
+                lower_virtual_target_owner(
+                  owner,
+                  member_name,
+                  arg_types,
+                  false,
+                  false,
+                  replay_parent: type_desc.name,
+                )
               end
             end
           elsif type_desc.kind == TypeKind::Union

@@ -14820,6 +14820,83 @@ describe Adamas::HIR::AstToHir do
       converter.module.functions.any? { |func| func.name.starts_with?("Box(Int32)#run$") }.should be_false
     end
 
+    it "does not synthesize generic equality for an incompatible broad-root argument" do
+      source = <<-CRYSTAL
+        class Token
+        end
+
+        class Object
+          abstract def ==(value : Token) : Bool
+        end
+
+        module EqualityFallback
+          def ==(value : ::Token) : Bool
+            false
+          end
+        end
+
+        class Reference < Object
+          include EqualityFallback
+        end
+
+        class Box(T) < Reference
+          def ==(value : Box(T)) : Bool
+            false
+          end
+        end
+
+        def invoke_root(value : Object, token : Token) : Bool
+          value == token
+        end
+
+        def invoke_box(value : Box(Int32), other : Box(Int32)) : Bool
+          value == other
+        end
+      CRYSTAL
+
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+      converter.arena = arena
+      module_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ModuleNode) }
+      class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+      def_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode) }
+      module_nodes.each { |node| converter.register_module(node) }
+      class_nodes.each { |node| converter.register_class(node) }
+      def_nodes.each { |node| converter.register_function(node) }
+      converter.__test_monomorphize_generic_class("Box", ["Int32"], "Box(Int32)")
+      converter.__test_mark_live_type("Box(Int32)")
+
+      invoke_root = def_nodes.find { |node| String.new(node.name.not_nil!) == "invoke_root" }
+      invoke_root.should_not be_nil
+      converter.lower_def(invoke_root.not_nil!)
+
+      converter.module.functions.any? do |func|
+        func.name.starts_with?("Box(Int32)#==$Token") && converter.module.has_function_with_body?(func.name)
+      end.should be_false
+      converter.module.functions.any? do |func|
+        func.name == "Box(Int32)#==$arity1" && converter.module.has_function_with_body?(func.name)
+      end.should be_false
+
+      executed = converter.__test_repair_missing_concrete_virtual_targets
+      executed.should be >= 1
+      inherited_target = converter.module.functions.find { |func| func.name.starts_with?("Reference#==$Token") }
+      inherited_target.should_not be_nil
+      converter.module.has_function_with_body?(inherited_target.not_nil!.name).should be_true
+      converter.module.functions.any? do |func|
+        func.name.starts_with?("Box(Int32)#==$Token") && converter.module.has_function_with_body?(func.name)
+      end.should be_false
+      converter.module.functions.any? do |func|
+        func.name == "Box(Int32)#==$arity1" && converter.module.has_function_with_body?(func.name)
+      end.should be_false
+
+      invoke_box = def_nodes.find { |node| String.new(node.name.not_nil!) == "invoke_box" }
+      invoke_box.should_not be_nil
+      converter.lower_def(invoke_box.not_nil!)
+      converter.module.functions.any? do |func|
+        func.name.starts_with?("Box(Int32)#==$Box(Int32)") && converter.module.has_function_with_body?(func.name)
+      end.should be_true
+    end
+
     it "does not synthesize an inherited Reference wrapper when the ancestor body is reusable" do
       source = <<-CRYSTAL
         module Crystal

@@ -15083,6 +15083,35 @@ performance closure. Next: test whether a broad equality demand whose argument
 is incompatible with a concrete generic override is incorrectly materialized;
 do not suppress generic equality or exact-live owners globally.
 
+#### Session 136: preserve typed broad-root overload selection during replay
+
+A source-backed binary-equality falsifier reproduced the equality-tail
+mechanism without bootstrap. An abstract `Object#==(Token)` demand was replayed
+to a live `Box(Int32) < Reference` whose only direct overload accepted
+`Box(Int32)`, while `Reference#==(Token)` came from an included module. The
+typed resolver correctly rejected the child overload, but virtual fanout then
+passed the child spelling to untyped materialization fallbacks, which could
+synthesize incompatible `Box(Int32)#==` aliases instead of using the included
+ancestor implementation.
+
+Broad-root fanout now carries its recorded static parent through both initial
+replay and final-repair requests. On a typed child miss, one shared helper walks
+from the concrete owner toward that root and checks each ancestor's direct and
+directly included typed definitions, materializing the nearest compatible
+non-abstract target. If no such implementation exists, replay fails closed
+instead of selecting an incompatible child overload. Narrow roots and successful
+concrete child resolution keep their previous behavior; no registry, cache, or
+new identity type was added.
+
+The falsifier explicitly executes final repair and keeps a positive
+`Box(Int32)#==(Box(Int32))` control, so a dropped parent identity or over-broad
+suppression fails. The focused missing-target-repair group and the full
+AstToHir suite pass: 72/72 focused examples and 522 full examples, zero
+failures, zero errors, and two existing pending. Adversary verdict: ROBUST for
+the typed broad-root replay boundary; B4-F wall time and equality-tail reduction
+remain unverified. Next: commit this semantic fix, then run one fresh bounded
+B4-F trace and compare the missing fixed points and concrete `Hash#==` tail.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
