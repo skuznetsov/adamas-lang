@@ -149,6 +149,32 @@ describe Adamas::HIR do
       reachable.should contain("B#foo")
       reachable.should_not contain("C#bar")
     end
+
+    it "normalizes only synthetic super callees during reachability" do
+      mod = Adamas::HIR::Module.new
+      main = mod.create_function("__adamas_main", Adamas::HIR::TypeRef::VOID)
+      main.blocks[0].add(Adamas::HIR::Call.without_receiver(
+        1_u32,
+        Adamas::HIR::TypeRef::VOID,
+        "Parent#foo_super",
+        [] of Adamas::HIR::ValueId,
+      ))
+      main.blocks[0].add(Adamas::HIR::Call.without_receiver(
+        2_u32,
+        Adamas::HIR::TypeRef::VOID,
+        "Special#bar_super",
+        [] of Adamas::HIR::ValueId,
+      ))
+
+      mod.create_function("Parent#foo", Adamas::HIR::TypeRef::VOID)
+      mod.create_function("Special#bar", Adamas::HIR::TypeRef::VOID)
+      mod.create_function("Special#bar_super", Adamas::HIR::TypeRef::VOID)
+
+      reachable = mod.reachable_function_names(["__adamas_main"])
+      reachable.should contain("Parent#foo")
+      reachable.should contain("Special#bar_super")
+      reachable.should_not contain("Special#bar")
+    end
   end
 
   describe "Function" do

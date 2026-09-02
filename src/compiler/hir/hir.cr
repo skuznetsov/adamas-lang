@@ -2638,18 +2638,6 @@ module Adamas::HIR
         normalized.split(" | ").map(&.strip).reject(&.empty?)
       end
 
-      normalize_direct_callee = ->(name : String) do
-        # `lower_super` tags ordinary parent calls as `<name>_super` so later MIR
-        # lowering can skip virtual dispatch. Reachability must still retain the
-        # real parent body; otherwise RTA discards it and MIR falls back to an
-        # unresolved extern stub for the synthetic `_super` name.
-        if name.ends_with?("_super") && !func_by_name.has_key?(name)
-          name[0, name.bytesize - 6]
-        else
-          name
-        end
-      end
-
       # ── RTA Phase 1: Collect instantiated types from ALL functions ──
       # Scan every function for Allocate instructions to build the set of
       # types that can actually exist at runtime. This is conservative
@@ -2964,7 +2952,17 @@ module Adamas::HIR
               end
               next
             end
-            direct_callee = normalize_direct_callee.call(callee)
+            # `lower_super` tags ordinary parent calls as `<name>_super` so later
+            # MIR lowering can skip virtual dispatch. Keep a real function with
+            # that spelling, otherwise retain the parent body under its true name.
+            # Keep this single-use operation inline: capturing `func_by_name` in
+            # a local Proc forces generated-stage local inference to rescan this
+            # large method body when the Proc is lowered.
+            direct_callee = if callee.ends_with?("_super") && !func_by_name.has_key?(callee)
+                              callee[0, callee.bytesize - 6]
+                            else
+                              callee
+                            end
             unless func_by_name.has_key?(direct_callee)
               # If this is a parameterized .new (e.g. Foo.new$Bar_Baz),
               # try the base .new (Foo.new) which has the real allocator body

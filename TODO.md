@@ -15504,6 +15504,35 @@ and eliminating the duplicate heavy core body; VULNERABLE as full B4-F closure.
 Next: run the trace-toggle HIR ablation before considering the separate abstract
 `Value` virtual-replay guard.
 
+#### Session 146: keep one-use reachability normalization inline
+
+The post-Session-145 trace refuted the proposed abstract `Value` replay guard:
+`Value#to_s$String::Builder` produced only two replay requests and no enqueue or
+materialization. The same trace instead showed a 25.526-second silent gap while
+materializing `Module#reachable_function_names`, between the captured
+`normalize_direct_callee` Proc's `String#ends_with?` and `Hash#has_key?` calls.
+
+That normalization had one call site, so it is now inline at the call site. No
+reachability state, target rule, cache, or fallback was added. A focused HIR
+guard preserves both branches: a synthetic missing `_super` callee normalizes
+to its base method, while a real function whose name ends in `_super` remains
+the direct target. The full HIR module spec passes 24 examples, and the fresh
+stage1 build plus plain and no-prelude smoke checks pass.
+
+In the comparable binary trace, the first missing-process gate moved from about
+78 seconds to about 29 seconds and `Module#reachable_function_names` no longer
+had a materialization interval. The full two-stage 300-second B4-F run still
+timed out at stage2 after 302.67 seconds, so the overall speedup claim is
+rejected. A later 180-second trace completed five missing-target iterations;
+their process times grew from 17.9 to 44.4 seconds while the HIR function set
+grew from 695 to 40,237. The timeout tail was routine work inside
+`lower_array_any_dynamic`, not a long materialization.
+
+Adversary verdict: ROBUST for preserving direct `_super` semantics and removing
+the unnecessary generated Proc body; VULNERABLE as B4-F closure. Next: explain
+the cross-iteration missing-target fanout, starting with the Hash/Array families
+and request sources that cause thousands of new functions per iteration.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
