@@ -11276,6 +11276,117 @@ describe Adamas::HIR::AstToHir do
       converter.__test_rta_called_method?("RootDemandRunner#run").should be_true
       converter.__test_rta_called_method?("Array(Point)#inspect$IO").should be_false
     end
+
+    it "does not infer parent instance liveness from an inherited direct-call symbol" do
+      source = <<-CRYSTAL
+        class Object
+          def probe : Int32
+            1
+          end
+        end
+
+        class RtaCallOwnerParent < Object
+          def touch : Int32
+            2
+          end
+
+          def probe : Int32
+            3
+          end
+        end
+
+        class RtaCallOwnerChild(T) < RtaCallOwnerParent
+          def probe : Int32
+            4
+          end
+        end
+
+        def touch_inherited(value : RtaCallOwnerChild(Int32)) : Int32
+          value.touch
+        end
+      CRYSTAL
+
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      class_nodes = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode)
+      end
+      def_nodes = exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode)
+      end
+      class_nodes.each { |node| converter.register_class(node) }
+      def_nodes.each { |node| converter.register_function(node) }
+      converter.__test_monomorphize_generic_class(
+        "RtaCallOwnerChild",
+        ["Int32"],
+        "RtaCallOwnerChild(Int32)",
+      )
+
+      converter.__test_set_lazy_rta_active(true)
+      converter.__test_mark_live_type("RtaCallOwnerChild(Int32)")
+      converter.__test_record_virtual_target(
+        "Object",
+        "probe",
+        [] of Adamas::HIR::TypeRef,
+      )
+
+      child_target = converter.module.functions.find do |func|
+        func.name.starts_with?("RtaCallOwnerChild(Int32)#probe")
+      end
+      child_target.should_not be_nil
+      converter.module.has_function_with_body?(child_target.not_nil!.name).should be_true
+      converter.module.functions.any? do |func|
+        func.name.starts_with?("RtaCallOwnerParent#probe") &&
+          converter.module.has_function_with_body?(func.name)
+      end.should be_false
+
+      touch_node = def_nodes.find do |node|
+        String.new(node.name.not_nil!) == "touch_inherited"
+      end
+      touch_node.should_not be_nil
+      converter.lower_def(touch_node.not_nil!)
+      caller = converter.module.functions.find do |func|
+        func.name.starts_with?("touch_inherited$")
+      end
+      caller.should_not be_nil
+      inherited_call = caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.find { |call| call.method_name.starts_with?("RtaCallOwnerParent#touch") }
+      inherited_call.should_not be_nil
+      inherited_call.not_nil!.has_receiver?.should be_true
+
+      converter.__test_scan_hir_function_for_live_types(caller.not_nil!)
+
+      converter.module.functions.any? do |func|
+        func.name.starts_with?("RtaCallOwnerParent#probe") &&
+          converter.module.has_function_with_body?(func.name)
+      end.should be_false
+
+      receiverless = converter.module.create_function(
+        "receiverless_call_owner_witness",
+        Adamas::HIR::TypeRef::INT32,
+      )
+      receiverless.get_block(receiverless.entry_block).add(
+        Adamas::HIR::Call.without_receiver(
+          receiverless.next_value_id,
+          Adamas::HIR::TypeRef::INT32,
+          "RtaCallOwnerParent#touch",
+          [] of Adamas::HIR::ValueId,
+        )
+      )
+      converter.__test_scan_hir_function_for_live_types(receiverless)
+
+      converter.module.functions.any? do |func|
+        func.name.starts_with?("RtaCallOwnerParent#probe") &&
+          converter.module.has_function_with_body?(func.name)
+      end.should be_true
+    ensure
+      converter.try(&.__test_set_lazy_rta_active(false))
+    end
   end
 
   describe "named arg block overload resolution" do

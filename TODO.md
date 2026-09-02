@@ -1,10 +1,9 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-09-02 (inherited broad-root replay now materializes the selected
-ancestor before reusing the existing fail-closed wrapper guard. One matched
-bounded A/B removed 132 HIR functions and observed 67 seconds before versus 64
-seconds after. B4-F remains RED; next: repair the pre-existing root-override
-replay gap, then remeasure the remaining materialization tail.)
+Updated: 2026-09-02 (receiver-bearing direct calls no longer promote their
+selected implementation owner to an instantiated runtime type. The full
+AstToHir suite and both no-prelude broad-root guards pass. B4-F remains RED;
+next: remeasure the missing-target fixed point from this clean commit.)
 
 2026-09-02 INHERITED BROAD-ROOT REPLAY NO LONGER CREATES A CHILD WRAPPER ONLY
 BECAUSE THE ANCESTOR BODY WAS INITIALLY ABSENT. Lazy RTA can record a broad
@@ -15313,6 +15312,31 @@ speedup claim. A target/site-only suppression is rejected because the lower
 gate also preserves deferred state and virtual-dispatch metadata. Next: use a
 source-backed falsifier to distinguish receiver runtime liveness from a method
 owner that is merely present in a serialized call symbol.
+
+#### Session 139: separate direct-call implementation owner from instance liveness
+
+A source-backed no-bootstrap falsifier made only
+`RtaCallOwnerChild(Int32)` live, recorded a broad `Object#probe` shape, and
+lowered an inherited direct call whose HIR spelling was
+`RtaCallOwnerParent#touch`. Scanning that receiver-bearing call incorrectly
+promoted the selected parent implementation owner to a live instance type and
+materialized the otherwise dormant `RtaCallOwnerParent#probe` override.
+
+The scanner now retains its conservative owner fallback only for receiverless
+instance spellings. Receiver-bearing calls rely on the existing allocation,
+literal, and `.new` witnesses for concrete instance liveness; missing-call
+repair remains responsible for materializing their selected direct target. No
+value-type map, reachability registry, cache, or new HIR field was added.
+
+The regression was red before the condition change and is now green. Its
+receiverless positive control still promotes the parent owner. The safely run
+full AstToHir suite passes 531 examples with zero failures, zero errors, and two
+existing pending examples. Both no-prelude root replay guards pass; the bounded
+self-replay counts moved from the previous 13 Object and six Reference replays
+to 12 and five. Adversary verdict: ROBUST for implementation-owner versus
+instance-liveness separation and receiverless fallback preservation;
+VULNERABLE as a B4-F speedup claim. Next: compare the fresh bounded B4-F
+missing-target graph against commit `263de061`.
 
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 

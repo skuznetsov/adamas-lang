@@ -4994,8 +4994,12 @@ module Adamas::HIR
                 end
               end
             end
-            # Track non-virtual calls — direct calls prove the target type is used
-            unless inst.virtual
+            # A receiver-bearing direct-call owner names the selected
+            # implementation, not the concrete receiver instance. Inherited
+            # calls can therefore carry a parent owner even when only a child
+            # is live. Receiverless instance spellings have no separate value
+            # witness, so retain the conservative owner fallback for them.
+            unless inst.virtual || inst.has_receiver?
               if hash_idx = mname.rindex('#')
                 owner = mname[0, hash_idx]
                 if mark_live_type(owner)
