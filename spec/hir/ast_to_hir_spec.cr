@@ -15971,6 +15971,112 @@ describe Adamas::HIR::AstToHir do
       text.should_not contain("literal 9")
     end
 
+    it "repairs a zero-positional block target from a transitive generic inclusion" do
+      previous = ENV["ADAMAS_DISABLE_INLINE_YIELD"]?
+      ENV["ADAMAS_DISABLE_INLINE_YIELD"] = "1"
+      begin
+        converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+          module LazyAnyLike(T)
+            def any?(& : T ->) : Bool
+              each { |value| return true if yield value }
+              false
+            end
+          end
+
+          module LazyEnumerableLike(T)
+            include LazyAnyLike(T)
+          end
+
+          class LazyAnyIterator(T)
+            include LazyEnumerableLike(T)
+
+            def each(& : T ->) : Nil
+              yield uninitialized T
+            end
+          end
+
+          LazyAnyIterator(Int32).new.any? { |value| value > 0 }
+        CRYSTAL
+
+        main = converter.module.function_by_name("__adamas_main")
+        main.should_not be_nil
+        before_repair = main.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+          instruction.as?(Adamas::HIR::Call)
+        end.find { |call| call.method_name.includes?("#any?") }
+        before_repair.should_not be_nil, hir_text(main.not_nil!)
+        before_repair.not_nil!.args.size.should eq(1)
+        before_repair.not_nil!.has_block?.should be_true
+        before_repair.not_nil!.method_name.should eq(
+          "LazyAnyIterator(Int32)#any?$block"
+        )
+        stale_name = "LazyAnyIterator(Int32)#any?$Proc_block"
+        before_repair.not_nil!.method_name = stale_name
+        converter.module.remove_function(stale_name)
+        converter.__test_reset_lowering_state(stale_name)
+
+        converter.__test_repair_receiver_bound_call_targets
+
+        repaired_name = main.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+          instruction.as?(Adamas::HIR::Call).try(&.method_name)
+        end.find { |name| name.includes?("#any?") }
+        repaired_name.should_not be_nil, hir_text(main.not_nil!)
+        repaired_name.not_nil!.should eq("LazyAnyIterator(Int32)#any?$block")
+        target = converter.module.function_by_name(repaired_name.not_nil!)
+        target.should_not be_nil
+        target.not_nil!.blocks.any? { |block| !block.instructions.empty? }.should be_true
+      ensure
+        if previous
+          ENV["ADAMAS_DISABLE_INLINE_YIELD"] = previous
+        else
+          ENV.delete("ADAMAS_DISABLE_INLINE_YIELD")
+        end
+      end
+    end
+
+    it "preserves a real Proc argument while repairing a block target" do
+      previous = ENV["ADAMAS_DISABLE_INLINE_YIELD"]?
+      ENV["ADAMAS_DISABLE_INLINE_YIELD"] = "1"
+      begin
+        converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+          class ProcAndBlockIterator(T)
+            def select(predicate : Proc(T, Bool), & : T ->) : Bool
+              false
+            end
+          end
+
+          predicate = ->(value : Int32) { value > 0 }
+          ProcAndBlockIterator(Int32).new.select(predicate) { |value| value > 1 }
+        CRYSTAL
+
+        main = converter.module.function_by_name("__adamas_main")
+        main.should_not be_nil
+        call = main.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+          instruction.as?(Adamas::HIR::Call)
+        end.find { |candidate| candidate.method_name.includes?("#select") }
+        call.should_not be_nil, hir_text(main.not_nil!)
+        call.not_nil!.args.size.should eq(2)
+        call.not_nil!.has_block?.should be_true
+        original_name = call.not_nil!.method_name
+        original_name.should contain("ProcAndBlockIterator(Int32)#select")
+        original_name.should end_with("$Proc_block")
+        converter.module.remove_function(original_name)
+        converter.__test_reset_lowering_state(original_name)
+
+        converter.__test_repair_receiver_bound_call_targets
+
+        call.not_nil!.method_name.should eq(original_name)
+        target = converter.module.function_by_name(original_name)
+        target.should_not be_nil
+        target.not_nil!.blocks.any? { |block| !block.instructions.empty? }.should be_true
+      ensure
+        if previous
+          ENV["ADAMAS_DISABLE_INLINE_YIELD"] = previous
+        else
+          ENV.delete("ADAMAS_DISABLE_INLINE_YIELD")
+        end
+      end
+    end
+
     it "resolves a bare included method registered after generic monomorphization" do
       source = <<-CRYSTAL
         module EnumerableLike(T)

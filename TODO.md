@@ -1,11 +1,28 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-09-01 (shared inherited-body reuse reduces the first self-host
-missing-process boundary by 274 missing targets and 4,361 functions. A fresh
-clean-`03875097` B4-F run builds stage1 in 16.61 seconds and passes both stage1
-smokes, but stage2 reaches the 300-second compiler cap without producing
-`cv2_s2`; wrapper wall time is 302.69 seconds. Admission therefore remains RED.
-T1 and full-source MIR/LLVM continuity remain open.)
+Updated: 2026-09-01 (receiver repair now separates the confirmed non-inline
+block callback Proc from real positional arguments before same-owner shape
+resolution. The previous `WithIndexIterator#any?$Proc_block` stage2 diagnostic
+is no longer reached. A fresh B4-F run builds stage1 in 19.20 seconds and passes
+both smokes, but stage2 still reaches the 300-second compiler cap without
+producing `cv2_s2`; wrapper wall time is 302.92 seconds. Admission therefore
+remains RED. The next frontier is the post-allocator-flush lowering tail, using
+the compact trace rather than another uninstrumented bootstrap run.)
+
+2026-09-01 NON-INLINE BLOCK CALLBACKS NO LONGER POLLUTE RECEIVER-REPAIR ARITY.
+HIR block calls retain both a block region and an appended executable Proc for
+the callee ABI. Late receiver repair previously counted that callback as a real
+positional argument before its same-owner decision, turning zero-argument
+`any?(&)` into the stale `$Proc_block` demand and rejecting the included source
+definition as arity one. Repair now removes only the confirmed trailing callback
+before resolution. A parsed, source-backed transitive-generic regression repairs
+the observed stale symbol to `$block`; an adversary with one real positional
+Proc plus a block remains `$Proc_block` and rematerializes its body. The focused
+cluster is 37/0 and the full AstToHir spec is 518/0 with two pre-existing
+pending examples. Fresh B4-F stage1 and both smokes are green; stage2 no longer
+emits the prior bodyless-target diagnostic but times out at 302.92 seconds after
+deferred allocator flush. This closes the correctness slice, not B4-F or the
+remaining performance tail.
 
 2026-09-01 EXACT GENERIC DECLARATION REPLAY NO LONGER BECOMES A SOURCE
 REOPENING. Late module replay remains intact because focused adversaries showed

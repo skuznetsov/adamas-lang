@@ -47567,6 +47567,22 @@ module Adamas::HIR
               receiver_repair_semantic_value_type(func.name, arg, raw_type)
             end
             has_block_call = !inst.block.nil?
+            # Non-inline block calls carry the callback twice in HIR: the block
+            # region is stored on Call#block and its executable Proc is appended
+            # to Call#args for the callee ABI.  Receiver repair resolves source
+            # defs by positional arity, so remove that confirmed callback before
+            # any same-owner shape decision.  A real Proc positional argument is
+            # preserved because it precedes the appended callback Proc.
+            if has_block_call && !arg_types.empty?
+              trailing = arg_types.last
+              if descriptor = @module.get_type_descriptor(trailing)
+                if descriptor.kind == TypeKind::Proc ||
+                   descriptor.name == "Proc" ||
+                   descriptor.name.starts_with?("Proc(")
+                  arg_types = arg_types[0, arg_types.size - 1]
+                end
+              end
+            end
             named_call_shape = named_call_shape_for(func.name, inst.id)
             same_owner_body_shape_matches = true
             if method_name == "===" && enum_name_for_type_ref(receiver_dispatch_type)
