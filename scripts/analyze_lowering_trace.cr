@@ -22,6 +22,7 @@ module Adamas::Tools
 
   private record MaterializationSample,
     symbol : String,
+    parent : String?,
     duration_ns : UInt64,
     self_ns : UInt64,
     depth : UInt16,
@@ -437,6 +438,7 @@ module Adamas::Tools
                 self_ns = duration_ns >= active.child_ns ? duration_ns - active.child_ns : 0_u64
                 materializations << MaterializationSample.new(
                   symbol,
+                  active_materializations.last?.try(&.event.symbol),
                   duration_ns,
                   self_ns,
                   event.depth,
@@ -736,6 +738,35 @@ module Adamas::Tools
         puts "    #{count.to_s.rjust(8)}  #{caller} -> #{callee}"
       end
 
+      caller_targets = Hash(String, Set(String)).new do |targets, caller|
+        targets[caller] = Set(String).new
+      end
+      caller_request_counts = Hash(String, Int32).new(0)
+      request_edges.each do |(caller, callee), count|
+        caller_targets[caller] << callee
+        caller_request_counts[caller] += count
+      end
+      puts "  request_fanout_callers:"
+      caller_targets.to_a.sort_by do |caller, targets|
+        {-targets.size, -caller_request_counts[caller], caller}
+      end.first(top).each do |caller, targets|
+        family_counts = Hash(String, Int32).new(0)
+        method_counts = Hash(String, Int32).new(0)
+        targets.each do |target|
+          family_counts[generic_family(target)] += 1
+          method_counts[method_family_prefix(target)] += 1
+        end
+        families = family_counts.to_a.sort_by { |family, count| {-count, family} }
+          .first(3)
+          .map { |family, count| "#{family}=#{count}" }
+          .join(",")
+        methods = method_counts.to_a.sort_by { |method, count| {-count, method} }
+          .first(3)
+          .map { |method, count| "#{method}=#{count}" }
+          .join(",")
+        puts "    unique=#{targets.size.to_s.rjust(8)} requests=#{caller_request_counts[caller].to_s.rjust(8)} families=#{families} methods=#{methods}  #{caller}"
+      end
+
       profile_site_totals = Hash(Tuple(UInt32, TraceFormat::RequestProfileState, TraceFormat::RequestProfileState), Tuple(Int32, UInt64, UInt64, Int32)).new
       profile_totals = Hash(Tuple(UInt32, String, TraceFormat::RequestProfileState, TraceFormat::RequestProfileState), Tuple(Int32, UInt64, UInt64, Int32)).new
       request_profiles.each do |sample|
@@ -786,7 +817,13 @@ module Adamas::Tools
       end.first(top)
       puts "  longest_materializations: unmatched=#{unmatched_materializations}"
       longest.each do |sample|
-        puts "    total_ms=#{format_ms(sample.duration_ns).rjust(12)} self_ms=#{format_ms(sample.self_ns).rjust(12)} depth=#{sample.depth} seq=#{sample.start_sequence}  #{sample.symbol}"
+        parent = sample.parent || "<root/phase>"
+        puts "    total_ms=#{format_ms(sample.duration_ns).rjust(12)} self_ms=#{format_ms(sample.self_ns).rjust(12)} depth=#{sample.depth} seq=#{sample.start_sequence} parent=#{parent}  #{sample.symbol}"
+        request_edges.compact_map do |edge, count|
+          edge[1] == sample.symbol ? {edge[0], count} : nil
+        end.sort_by { |caller, count| {-count, caller} }.first(5).each do |caller, count|
+          puts "      requested_by=#{caller} count=#{count}"
+        end
       end
       unless active_materializations.empty?
         trace_end_ns = run.events.last?.try(&.delta_ns) || 0_u64

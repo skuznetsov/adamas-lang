@@ -15290,6 +15290,30 @@ isolation, but B4-F remains RED. Next: reproduce the heterogeneous union-hash
 return mismatch with a no-prelude/source-backed probe before changing hash or
 union lowering.
 
+#### Session 138: attribute request fanout without treating requests as work
+
+The binary-trace analyzer now records each completed materialization's active
+parent, lists the strongest request sources for the longest materializations,
+and ranks request callers by distinct targets with both generic-owner and
+method-family summaries. This is an offline-only diagnostic change: the trace
+format and compiler hot path are unchanged.
+
+The safely bounded analyzer recovered the intentionally timed-out 45 MiB B4-F
+trace with 1,393,304 events. It separated 426,613 request edges from only
+39,981 completed materializations, proving that request volume cannot be used
+as a materialization count. The virtual replay site requested 11,087 distinct
+targets, led by `Pointer#===` (1,566), `Pointer#to_s` (712), and `Pointer#hash`
+(710). The 14.811-second `lower_call` materialization was a queue root requested
+by `lower_node`, not a nested virtual-target materialization.
+
+The analyzer builds cleanly and exits zero under `scripts/run_safe.sh` while
+reading the preserved truncated trace. Adversary verdict: ROBUST for request
+provenance and fanout classification, VULNERABLE as a reachability or B4-F
+speedup claim. A target/site-only suppression is rejected because the lower
+gate also preserves deferred state and virtual-dispatch metadata. Next: use a
+source-backed falsifier to distinguish receiver runtime liveness from a method
+owner that is merely present in a serialized call symbol.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
