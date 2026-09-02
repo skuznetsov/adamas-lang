@@ -201,10 +201,16 @@ module Adamas::Tools
       end
     end
 
-    def print_summary(top : Int32, tail : Int32, virtual_target_match : String?) : Nil
+    def print_summary(
+      top : Int32,
+      tail : Int32,
+      virtual_target_match : String?,
+      event_window : Tuple(UInt32, Int32)?,
+      event_match : String?,
+    ) : Nil
       puts "trace=#{@path} runs=#{@runs.size} recovered_segments=#{@recovered_segments} truncated_tail=#{@truncated_tail ? 1 : 0}"
       @runs.each do |run|
-        print_run(run, top, tail, virtual_target_match)
+        print_run(run, top, tail, virtual_target_match, event_window, event_match)
       end
     end
 
@@ -284,7 +290,14 @@ module Adamas::Tools
       }
     end
 
-    private def print_run(run : TraceRun, top : Int32, tail : Int32, virtual_target_match : String?) : Nil
+    private def print_run(
+      run : TraceRun,
+      top : Int32,
+      tail : Int32,
+      virtual_target_match : String?,
+      event_window : Tuple(UInt32, Int32)?,
+      event_match : String?,
+    ) : Nil
       puts "run=#{run.index} pid=#{run.pid} events=#{run.events.size} capacity=#{run.capacity_records} flush_ms=#{run.flush_interval_ns // 1_000_000_u64}"
       if summary = run.summary
         total, dropped, flushes, bytes, write_ns = summary
@@ -959,13 +972,48 @@ module Adamas::Tools
         puts "    seq=#{event.sequence} delta_ms=#{format_ms(event.delta_ns)} event=#{event_name(event.event_id)} value=#{numeric_value(event)}"
       end
 
+      if window = event_window
+        sequence, radius = window
+        lower_sequence = sequence.to_u64 > radius.to_u64 ? sequence.to_u64 - radius.to_u64 : 1_u64
+        upper_sequence = sequence.to_u64 + radius.to_u64
+        puts "  event_window sequence=#{sequence} radius=#{radius}:"
+        found = false
+        run.events.each do |event|
+          next unless lower_sequence <= event.sequence.to_u64 <= upper_sequence
+
+          found = true
+          print_event(event)
+        end
+        puts "    <sequence not present in this run>" unless found
+      end
+
+      if match = event_match
+        matching_events = [] of TraceEvent
+        matching_count = 0
+        run.events.each do |event|
+          next unless event.symbol.try(&.includes?(match)) || event.caller.try(&.includes?(match))
+
+          matching_count += 1
+          matching_events << event if matching_events.size < 100
+        end
+        puts "  matching_events text=#{match.inspect} count=#{matching_count}:"
+        matching_events.each { |event| print_event(event) }
+        if matching_count > matching_events.size
+          puts "    <#{matching_count - matching_events.size} additional matches omitted>"
+        end
+      end
+
       return if tail <= 0
       puts "  tail:"
       run.events.last(tail).each do |event|
-        target = event.symbol || numeric_value(event)
-        edge = event.caller ? " caller=#{event.caller}" : ""
-        puts "    seq=#{event.sequence} delta_ms=#{format_ms(event.delta_ns)} depth=#{event.depth} event=#{event_name(event.event_id)} value=#{target}#{edge}"
+        print_event(event)
       end
+    end
+
+    private def print_event(event : TraceEvent) : Nil
+      target = event.symbol || numeric_value(event)
+      edge = event.caller ? " caller=#{event.caller}" : ""
+      puts "    seq=#{event.sequence} delta_ms=#{format_ms(event.delta_ns)} depth=#{event.depth} event=#{event_name(event.event_id)} value=#{target}#{edge}"
     end
 
     private def numeric_value(event : TraceEvent) : String
@@ -1266,7 +1314,7 @@ module Adamas::Tools
   end
 
   private def self.usage : NoReturn
-    STDERR.puts "Usage: crystal run scripts/analyze_lowering_trace.cr -- TRACE_FILE [--top N] [--tail N] [--virtual-target-match TEXT]"
+    STDERR.puts "Usage: crystal run scripts/analyze_lowering_trace.cr -- TRACE_FILE [--top N] [--tail N] [--virtual-target-match TEXT] [--event-window SEQUENCE:RADIUS] [--event-match TEXT]"
     exit 2
   end
 
@@ -1274,6 +1322,8 @@ module Adamas::Tools
   top = 20
   tail = 40
   virtual_target_match = nil.as(String?)
+  event_window = nil.as(Tuple(UInt32, Int32)?)
+  event_match = nil.as(String?)
   until ARGV.empty?
     case option = ARGV.shift
     when "--top"
@@ -1282,6 +1332,15 @@ module Adamas::Tools
       tail = (ARGV.shift? || usage).to_i
     when "--virtual-target-match"
       virtual_target_match = ARGV.shift? || usage
+    when "--event-window"
+      parts = (ARGV.shift? || usage).split(':', 2)
+      usage unless parts.size == 2
+      sequence = parts[0].to_u32? || usage
+      radius = parts[1].to_i? || usage
+      usage if sequence == 0 || radius < 0
+      event_window = {sequence, radius}
+    when "--event-match"
+      event_match = ARGV.shift? || usage
     else
       STDERR.puts "Unknown option: #{option}"
       usage
@@ -1291,5 +1350,5 @@ module Adamas::Tools
 
   analyzer = LoweringTraceAnalyzer.new(path)
   analyzer.parse
-  analyzer.print_summary(top, tail, virtual_target_match)
+  analyzer.print_summary(top, tail, virtual_target_match, event_window, event_match)
 end

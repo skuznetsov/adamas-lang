@@ -15398,6 +15398,27 @@ rejecting its unsuffixed sibling and unrelated generic wrappers. VULNERABLE as
 overall B4-F closure. Next: inspect the post-fix iteration-two tail for the next
 largest exact materialization family before changing another replay rule.
 
+#### Session 142: expose compact causal windows in lowering traces
+
+The aggregate replay report hid the enqueue site and event ordering behind the
+largest fanout families. The offline analyzer now supports a bounded sequence
+window and a text match over symbols and callers. Matching keeps only the first
+100 events in memory while retaining the full count; tracing and compiler
+behavior remain unchanged.
+
+The post-Session-141 trace shows that `Object#!=$String` was first enqueued while
+lowering `AstToHir#register_alias$AliasNode`. Its broad `Object#==$String` call
+then replayed more than 600 concrete equality targets during materialization.
+The equivalent source-backed `Hash(String, String)#[]?` comparison remains
+correct, so this is not yet evidence for a general binary-lowering fix. The
+current hypothesis is a full-self-host lowering-order or stale return-type
+fact for the saved nullable lookup result.
+
+Adversary verdict: ROBUST for causal-window reconstruction from the captured
+trace, VULNERABLE as a root-cause or speedup claim. Next: capture the operand
+type and provenance immediately before the bad `previous != target_name`
+lowering, then require a red bounded falsifier before changing production code.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
