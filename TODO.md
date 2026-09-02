@@ -14843,8 +14843,8 @@ On the same first-missing-wave process boundary, both traces ended at 162
 missing targets, zero pending targets, and 4,808 functions. A fresh control
 recorded 499,009 events and 1,142.889 ms of `AstToHir` concrete-registration
 self time; the final patch recorded 496,886 events and 1,014.917 ms, an
-observed 11.2% reduction. The dominant interval between nested replay and
-provisional class info fell from 216.277 ms to 107.153 ms. Inclusive
+observed 11.2% reduction. The aggregated defined-method scan immediately after
+provisional class info fell from 216.277 ms to 113.898 ms. Inclusive
 registration time fell from 2,081.213 ms to 1,972.430 ms, an observed 5.2%
 reduction. Both traces had zero unmatched scopes and zero invalid intervals.
 
