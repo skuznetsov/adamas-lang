@@ -15029,6 +15029,30 @@ the preserved baseline, then completed iterations 5 through 8 before the cap.
 This verifies real graph progress, but not full B4-F completion or its final
 wall time. Next: run the 300-second B4-F gate and profile the remaining tail.
 
+#### Session 134: filter broad-root direct fanout by RTA liveness
+
+`record_virtual_target` already deferred broad `Object`/`Reference` replay
+outside lazy RTA, but four call-lowering branches immediately bypassed that
+contract by enumerating every registered descendant. A source-backed generic
+falsifier now distinguishes an already-live override from a dormant concrete
+specialization: the live target is retained, the dormant target is deferred,
+and marking it live later replays the exact target.
+
+All four class virtual-call branches now share one small owner-appending helper.
+Broad roots always admit only RTA-live descendants; narrower class roots keep
+their existing eager behavior outside lazy RTA. The 519-example AstToHir suite
+passes. In the bounded 300-second self-host trace, concrete registration events
+fell from 235,076 to 155,203, Array registrations from 1,488 to 668, and
+method-level Array registration scans from 100,574 to 45,090. The former
+30.633-second unfinished `Array(Object)#to_s$IO` materialization is no longer
+the tail.
+
+The run still times out before final HIR completion, so this is not B4-F
+closure. The new tail is exact live-target replay from
+`lower_virtual_targets_for_child`, ending in concrete generic `#==` requests.
+Next: explain why those owners are RTA-live and whether the replay shape is
+semantically required before changing admission or scheduling.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

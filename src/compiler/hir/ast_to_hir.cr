@@ -8960,7 +8960,7 @@ module Adamas::HIR
       # immediately. For broad roots, only do this while lazy RTA can filter to
       # live owners; otherwise late repair/force-lower paths replay Object or
       # Reference targets across every generic helper seen by the compiler.
-      unless (parent_name == "Object" || parent_name == "Reference") && !@lazy_rta_active
+      unless broad_virtual_target_root?(parent_name) && !@lazy_rta_active
         collect_subclasses_cached(parent_name).each do |child_name|
           if @lazy_rta_active
             next unless rta_live_owner?(child_name)
@@ -8975,6 +8975,18 @@ module Adamas::HIR
             lower_virtual_targets_for_child(instance_name, parent_name)
           end
         end
+      end
+    end
+
+    private def broad_virtual_target_root?(owner : String) : Bool
+      owner == "Object" || owner == "Reference"
+    end
+
+    private def append_virtual_target_descendants(owners : Array(String), parent_name : String) : Nil
+      live_only = @lazy_rta_active || broad_virtual_target_root?(parent_name)
+      collect_subclasses_cached(parent_name).each do |owner|
+        next if live_only && !rta_live_owner?(owner)
+        owners << owner
       end
     end
 
@@ -73269,12 +73281,7 @@ module Adamas::HIR
                   @virtual_targets_lowered.add(key)
                   record_virtual_target(current_class, name, arg_types, false, false, caller_token)
                   owners = [current_class]
-                  collect_subclasses_cached(current_class).each do |owner|
-                    if @lazy_rta_active
-                      next unless rta_live_owner?(owner)
-                    end
-                    owners << owner
-                  end
+                  append_virtual_target_descendants(owners, current_class)
                   ensure_method_index_built
                   owners.each do |owner|
                     base_owner = method_index_owner_key(owner)
@@ -77143,10 +77150,7 @@ module Adamas::HIR
               @virtual_targets_lowered.add(key)
               record_virtual_target(left_desc.name, op, arg_types, false, false, caller_token)
               owners = [left_desc.name]
-              collect_subclasses_cached(left_desc.name).each do |owner|
-                next if @lazy_rta_active && !rta_live_owner?(owner)
-                owners << owner
-              end
+              append_virtual_target_descendants(owners, left_desc.name)
               ensure_method_index_built
               owners.each do |owner|
                 base_owner = method_index_owner_key(owner)
@@ -95708,12 +95712,7 @@ module Adamas::HIR
               @virtual_targets_lowered.add(key)
               record_virtual_target(type_desc.name, method_name, arg_types, has_block_call, has_splat, caller_token)
               owners = [type_desc.name]
-              collect_subclasses_cached(type_desc.name).each do |owner|
-                if @lazy_rta_active
-                  next unless rta_live_owner?(owner)
-                end
-                owners << owner
-              end
+              append_virtual_target_descendants(owners, type_desc.name)
               ensure_method_index_built
               owners.each do |owner|
                 # Fast pre-filter: skip owners that don't have this method registered
@@ -110451,12 +110450,7 @@ module Adamas::HIR
               @virtual_targets_lowered.add(key)
               record_virtual_target(type_desc.name, member_name, arg_types, false, false, caller_token)
               owners = [type_desc.name]
-              collect_subclasses_cached(type_desc.name).each do |owner|
-                if @lazy_rta_active
-                  next unless rta_live_owner?(owner)
-                end
-                owners << owner
-              end
+              append_virtual_target_descendants(owners, type_desc.name)
               ensure_method_index_built
               owners.each do |owner|
                 base_owner = method_index_owner_key(owner)
