@@ -868,15 +868,15 @@ module Adamas::Tools
           puts "    unique=#{targets.size.to_s.rjust(8)} requests=#{replay_counts[source].to_s.rjust(8)} families=#{top_families}  #{source}"
         end
 
-        materialized_targets = Hash(String, Set(String)).new do |targets, source|
-          targets[source] = Set(String).new
+        materialized_targets = Hash(String, Hash(String, Int32)).new do |targets, source|
+          targets[source] = Hash(String, Int32).new(0)
         end
         materialization_counts = Hash(String, Int32).new(0)
         strict_virtual_target_materialization_edges.each do |(source, target), count|
           if pattern = virtual_target_match
             next unless source.includes?(pattern) || target.includes?(pattern)
           end
-          materialized_targets[source] << target
+          materialized_targets[source][target] += count
           materialization_counts[source] += count
         end
         puts "  virtual_target_replay_materializations_strict#{label}:"
@@ -884,6 +884,12 @@ module Adamas::Tools
           {-targets.size, -materialization_counts[source], source}
         end.first(top).each do |source, targets|
           puts "    unique=#{targets.size.to_s.rjust(8)} starts=#{materialization_counts[source].to_s.rjust(8)}  #{source}"
+          targets.to_a
+            .sort_by { |target, count| {-count, target} }
+            .first(3)
+            .each do |target, count|
+              puts "      #{count.to_s.rjust(8)}  #{target}"
+            end
         end
       end
 
