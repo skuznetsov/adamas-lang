@@ -4112,6 +4112,45 @@ describe Adamas::HIR::AstToHir do
 
       converter.__test_generic_reopening_count("NestedGenericOwner::Entry").should eq(0)
     end
+
+    it "registers nested module generic declarations once while preserving source reopenings" do
+      source = <<-CRYSTAL
+        module NestedModuleReplayOwner
+          module Types
+            class Single(T)
+            end
+
+            class Reopened(T)
+              def first : Int32
+                1
+              end
+            end
+
+            class Reopened(T)
+              def second : Int32
+                2
+              end
+            end
+          end
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      exprs.compact_map do |expr_id|
+        arena[expr_id].as?(Adamas::Compiler::Frontend::ModuleNode)
+      end.each { |node| converter.register_module(node) }
+
+      converter.__test_generic_reopening_count(
+        "NestedModuleReplayOwner::Types::Single"
+      ).should eq(0)
+      converter.__test_generic_reopening_count(
+        "NestedModuleReplayOwner::Types::Reopened"
+      ).should eq(1)
+    end
   end
 
   describe "protected access through included modules" do

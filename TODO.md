@@ -7,6 +7,20 @@ smokes, but stage2 reaches the 300-second compiler cap without producing
 `cv2_s2`; wrapper wall time is 302.69 seconds. Admission therefore remains RED.
 T1 and full-source MIR/LLVM continuity remain open.)
 
+2026-09-01 EXACT GENERIC DECLARATION REPLAY NO LONGER BECOMES A SOURCE
+REOPENING. Late module replay remains intact because focused adversaries showed
+that it supplies real namespace and layout repair. Generic registration now
+uses the existing template identities to ignore only the same `ClassNode` in
+the same arena; distinct same-name source declarations remain legitimate
+reopenings. Five focused semantic guards and the full AstToHir spec are green
+at 507 examples, zero failures, and two pre-existing pending examples. A fresh
+bounded full-source first missing wave preserved the frontier at 162 missing
+targets, zero pending targets, and 842 functions before processing (4,808
+after). The trace still shows two concrete registrations of
+`Adamas::HIR::AstToHir` costing about 1.173 seconds of self time, so this is a
+narrow correctness and duplicate-work fix, not the main bootstrap speedup.
+B4-F remains RED.
+
 2026-09-01 APPEND-ONLY LOWERING TRACE AVAILABLE; FIRST BOUNDED WAVE LOCALIZED.
 `ADAMAS_HIR_BINARY_TRACE=<path>` now records fixed 24-byte events for pending
 queue visits, lowering requests/materialization, passes, and missing-target scan

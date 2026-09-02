@@ -32872,6 +32872,15 @@ module Adamas::HIR
       bootstrap_trace_puts "[CLASS_FRONTIER] class_current_arena_enter #{class_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
       class_name = resolve_class_name_for_definition(class_name)
       @abstract_class_names.add(class_name) if node.is_abstract == true
+      if type_params = node.type_params
+        if type_params.size > 0
+          # Module registration deliberately revisits definitions after more
+          # namespace facts are known. The same generic AST declaration is
+          # immutable, however, and replaying it would misclassify it as a
+          # source reopening and recursively rescan its nested declarations.
+          return if generic_template_declaration_registered?(class_name, node, @arena)
+        end
+      end
       trace_class_exit = debug_env_filter_match?("DEBUG_CLASS_EXIT_PHASE", class_name, source_path_for(@arena) || "")
       STDERR.puts "[CLASS_EXIT] class=#{class_name} phase=enter" if trace_class_exit
       register_reopened_nested_type_name(class_name)
@@ -32991,6 +33000,22 @@ module Adamas::HIR
         STDERR.puts "[CLASS_EXIT] class=#{class_name} phase=ensure_after_restore" if trace_class_exit
       end
       STDERR.puts "[CLASS_EXIT] class=#{class_name} phase=leave" if trace_class_exit
+    end
+
+    private def generic_template_declaration_registered?(
+      class_name : String,
+      node : Adamas::Compiler::Frontend::ClassNode,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Bool
+      if template = @generic_templates[class_name]?
+        return true if template.node.same?(node) && template.arena.same?(arena)
+      end
+      if reopenings = @generic_reopenings[class_name]?
+        return reopenings.any? do |template|
+          template.node.same?(node) && template.arena.same?(arena)
+        end
+      end
+      false
     end
 
     private def register_instance_var_decl_in_class(
@@ -33250,6 +33275,7 @@ module Adamas::HIR
         STDERR.puts "[REG_CONCRETE_PHASE] class=#{class_name} phase=enter body=#{class_body.size} existing=#{existing_info ? 1 : 0} c_struct=#{is_c_struct ? 1 : 0}"
       end
       bootstrap_trace_puts "[CLASS_FRONTIER] concrete_body #{class_name} body=#{class_body.size}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
+      trace_concrete_registration LoweringBinaryTrace::Event::ConcreteRegisterPoint, class_name
       if !class_body.empty?
         specialized_class = class_name.includes?('(')
         if mono_debug
