@@ -14982,6 +14982,30 @@ VULNERABLE as a root-cause or B4-F closure claim. Next: split the measured
 `Hash` fanout from the late `lower_call` body cost with focused, no-prelude
 falsifiers before changing production lowering.
 
+#### Session 132: split generic fanout by method prefix
+
+The iteration report now adds a diagnostic-only `owner#method` prefix ranking.
+It collapses concrete owner arguments and overload suffixes without importing
+the compiler's private hot-path parser into the standalone analyzer. A nested
+generic probe groups two distinct `Hash(K, V)#find_entry_with_index` symbols
+together while keeping `Hash#upsert` separate.
+
+The preserved B4-F trace shows that iteration 1 is not dominated by one slow
+Hash body. `Hash#find_entry_with_index_linear_scan` materializes 920 times
+across 674 unique symbols for 4.964 seconds of self time, while
+`Hash#find_entry_with_index` materializes 969 times across the same 674-symbol
+fanout for 4.135 seconds. Explicit-`require "hash"` no-prelude reducers produce
+bounded closures for one `Hash(String, Int32)` specialization: 19 HIR functions
+and 21 materializations for lookup only, or 46 HIR functions and 48
+materializations for insertion plus lookup. This localizes a specialization
+corridor and rules out a large single-specialization closure. An eight-owner
+lookup reducer scales to 145 HIR functions and 168 materializations, close to
+eight times the one-owner 19/21 closure rather than a combinatorial expansion.
+Current evidence therefore attributes the B4-F Hash fanout to many demanded
+concrete owners, not one runaway generic closure. Next: localize the distinct
+11.127-second `AstToHir#lower_call` materialization before changing generic
+lowering policy.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

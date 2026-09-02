@@ -648,17 +648,34 @@ module Adamas::Tools
         family_symbols = Hash(String, Set(String)).new do |symbols, family|
           symbols[family] = Set(String).new
         end
+        method_counts = Hash(String, Int32).new(0)
+        method_total_ns = Hash(String, UInt64).new(0_u64)
+        method_self_ns = Hash(String, UInt64).new(0_u64)
+        method_symbols = Hash(String, Set(String)).new do |symbols, method|
+          symbols[method] = Set(String).new
+        end
         samples.each do |sample|
           family = generic_family(sample.symbol)
           family_counts[family] += 1
           family_total_ns[family] &+= sample.duration_ns
           family_self_ns[family] &+= sample.self_ns
           family_symbols[family] << sample.symbol
+
+          method = method_family_prefix(sample.symbol)
+          method_counts[method] += 1
+          method_total_ns[method] &+= sample.duration_ns
+          method_self_ns[method] &+= sample.self_ns
+          method_symbols[method] << sample.symbol
         end
         family_self_ns.to_a.sort_by do |family, accumulated_self_ns|
           {-accumulated_self_ns.to_i128, -family_counts[family], family}
         end.first(top).each do |family, accumulated_self_ns|
           puts "      self_ms=#{format_ms(accumulated_self_ns).rjust(12)} inclusive_ms=#{format_ms(family_total_ns[family]).rjust(12)} count=#{family_counts[family].to_s.rjust(8)} unique=#{family_symbols[family].size.to_s.rjust(6)} family_prefix=#{family}"
+        end
+        method_self_ns.to_a.sort_by do |method, accumulated_self_ns|
+          {-accumulated_self_ns.to_i128, -method_counts[method], method}
+        end.first(top).each do |method, accumulated_self_ns|
+          puts "      self_ms=#{format_ms(accumulated_self_ns).rjust(12)} inclusive_ms=#{format_ms(method_total_ns[method]).rjust(12)} count=#{method_counts[method].to_s.rjust(8)} unique=#{method_symbols[method].size.to_s.rjust(6)} method_prefix=#{method}"
         end
       end
 
@@ -896,6 +913,62 @@ module Adamas::Tools
         symbol.byte_slice(0, generic_start)
       else
         symbol
+      end
+    end
+
+    # Best-effort diagnostic grouping only: collapse concrete owner arguments
+    # and overload suffixes while preserving the owner/method separator.
+    private def method_family_prefix(symbol : String) : String
+      separator_index : Int32? = nil
+      separator_byte = 0_u8
+      suffix_index : Int32? = nil
+      index = 0
+      while index < symbol.bytesize
+        byte = symbol.to_unsafe[index]
+        if byte == '#'.ord.to_u8
+          separator_index = index
+          separator_byte = byte
+        elsif byte == '.'.ord.to_u8
+          unless separator_index
+            separator_index = index
+            separator_byte = byte
+          end
+        elsif byte == '$'.ord.to_u8
+          suffix_index = index
+          break
+        end
+        index += 1
+      end
+
+      unless separator = separator_index
+        base = suffix_index ? symbol.byte_slice(0, suffix_index) : symbol
+        return generic_namespace_family(base)
+      end
+
+      owner = symbol.byte_slice(0, separator)
+      method_end = suffix_index || symbol.bytesize
+      method = symbol.byte_slice(separator + 1, method_end - separator - 1)
+      separator_text = separator_byte == '#'.ord.to_u8 ? "#" : "."
+      "#{generic_namespace_family(owner)}#{separator_text}#{method}"
+    end
+
+    private def generic_namespace_family(owner : String) : String
+      return owner unless owner.includes?('(')
+
+      String.build(owner.bytesize) do |io|
+        depth = 0
+        index = 0
+        while index < owner.bytesize
+          byte = owner.to_unsafe[index]
+          if byte == '('.ord.to_u8
+            depth += 1
+          elsif byte == ')'.ord.to_u8
+            depth -= 1 if depth > 0
+          elsif depth == 0
+            io << byte.unsafe_chr
+          end
+          index += 1
+        end
       end
     end
 
