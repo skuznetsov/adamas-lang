@@ -15419,6 +15419,38 @@ trace, VULNERABLE as a root-cause or speedup claim. Next: capture the operand
 type and provenance immediately before the bad `previous != target_name`
 lowering, then require a red bounded falsifier before changing production code.
 
+#### Session 143: keep concrete String comparisons intrinsic after union unwrap
+
+The traced `Object#!=$String` fanout was not an arena, generic-owner, or Hash
+return-type loss. Both operands were concrete `String` after unwrapping the
+saved `String | Nil` lookup result, but the recursive comparison path bypassed
+`lower_binary`'s direct String intrinsic. Primitive String has no user-type
+descriptor, so general method dispatch first formed bare `!=$String` and then
+legitimately inherited `Object#!=`, whose virtual `==` call caused the observed
+fanout.
+
+Only the three comparison paths that recurse immediately after a Nil-union
+unwrap now pass through one narrow helper. Exact String/String `==` and `!=`
+emit `__adamas_string_eq` (with negation for `!=`); every other static type keeps
+ordinary dispatch. The general `emit_binary_call` hot path, method registry,
+and Object semantics are unchanged.
+
+The no-prelude regression was red for both infix `previous != target` and the
+explicit `previous.!=(target)` spelling. It now checks their HIR and runtime
+result, while a broad `Object` receiver proves that `Object#!=$String` remains
+available and does not use the String intrinsic. The existing backend intrinsic
+boundary also passes. A fresh bounded trace of the original infix caller reaches
+the same `register_alias` gate in about 42 seconds with zero
+`Object#!=$String` events. Two no-trace exact-source gates completed in about
+38 and 54 seconds versus the rebuilt baseline's roughly 45 seconds, so the
+performance effect is inconclusive but does not reproduce the earlier broad
+hot-path penalty.
+
+Adversary verdict: ROBUST for concrete String comparison after a single-sided
+Nil-union unwrap; VULNERABLE as a claim about union-versus-union equality. The
+next falsifier is `String? != String?` with both runtime values Nil, whose left
+Nil branch currently does not inspect the right union's runtime tag.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

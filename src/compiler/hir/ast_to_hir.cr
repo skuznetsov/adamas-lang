@@ -75804,7 +75804,7 @@ module Adamas::HIR
                   cmp_id = cmp.id
                 else
                   # Non-primitive: use method call (e.g., String#==)
-                  cmp_id = emit_binary_call(ctx, unwrapped.id, op_str, right_id)
+                  cmp_id = emit_unwrapped_binary_call(ctx, unwrapped.id, op_str, right_id)
                 end
                 non_nil_exit = ctx.current_block
                 ctx.terminate(Jump.new(merge_block))
@@ -77573,7 +77573,7 @@ module Adamas::HIR
                 ctx.current_block = eb; ctx.restore_locals(pb)
                 uw = UnionUnwrap.new(ctx.next_id, non_nil_type, right, non_nil_vid, false)
                 ctx.emit(uw); ctx.register_type(uw.id, non_nil_type)
-                inner = emit_binary_call(ctx, left, op, uw.id)
+                inner = emit_unwrapped_binary_call(ctx, left, op, uw.id)
                 eb_end = ctx.current_block; ctx.terminate(Jump.new(mb))
                 ctx.current_block = mb
                 phi = Phi.new(ctx.next_id, TypeRef::BOOL, [{tb_end, nil_result.id}, {eb_end, inner}])
@@ -77684,6 +77684,33 @@ module Adamas::HIR
       ctx.emit(call)
       ctx.register_type(call.id, return_type)
       call.id
+    end
+
+    # Union comparison paths recurse after unwrapping and therefore bypass
+    # lower_binary's direct String fast path. Keep that exceptional routing
+    # out of the general emit_binary_call hot path.
+    private def emit_unwrapped_binary_call(
+      ctx : LoweringContext,
+      left : ValueId,
+      op : String,
+      right : ValueId,
+    ) : ValueId
+      if ctx.type_of(left) == TypeRef::STRING &&
+         ctx.type_of(right) == TypeRef::STRING &&
+         (op == "==" || op == "!=")
+        call = Call.with_receiver(ctx.next_id, TypeRef::BOOL, left, "__adamas_string_eq", [right])
+        ctx.emit(call)
+        ctx.register_type(call.id, TypeRef::BOOL)
+        if op == "!="
+          neg = UnaryOperation.new(ctx.next_id, TypeRef::BOOL, UnaryOp::Not, call.id)
+          ctx.emit(neg)
+          ctx.register_type(neg.id, TypeRef::BOOL)
+          return neg.id
+        end
+        return call.id
+      end
+
+      emit_binary_call(ctx, left, op, right)
     end
 
     private def lower_unary(ctx : LoweringContext, node : Adamas::Compiler::Frontend::UnaryNode) : ValueId
@@ -94923,7 +94950,7 @@ module Adamas::HIR
                   cmp_id = cmp.id
                 else
                   # Non-primitive: use method call (e.g., String#==)
-                  cmp_id = emit_binary_call(ctx, unwrapped.id, method_name, args[0])
+                  cmp_id = emit_unwrapped_binary_call(ctx, unwrapped.id, method_name, args[0])
                 end
                 non_nil_exit = ctx.current_block
                 ctx.terminate(Jump.new(merge_block))
