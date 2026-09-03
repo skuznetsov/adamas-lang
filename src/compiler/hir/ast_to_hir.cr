@@ -32783,10 +32783,7 @@ module Adamas::HIR
         rt_text = (safe_slice_to_string(rt) || "")
         resolved_return = TypeRef::VOID
         with_type_param_map(extra_type_params) do
-          module_merged_return_name = rt_text
-          if contextual_alias = resolve_contextual_type_alias_name(module_merged_return_name)
-            module_merged_return_name = contextual_alias
-          end
+          module_merged_return_name = resolve_contextual_type_alias_name_or_original(rt_text)
           inferred = if !is_class_method && module_like_type_name?(module_merged_return_name)
                        infer_concrete_return_type_from_body(node, module_name)
                      end
@@ -58350,6 +58347,10 @@ module Adamas::HIR
       target = @type_aliases[matches[0]]?
       return nil if target.nil? || target == name
       target
+    end
+
+    private def resolve_contextual_type_alias_name_or_original(name : String) : String
+      resolve_contextual_type_alias_name(name) || name
     end
 
     private def resolve_type_alias_by_suffix(name : String) : String?

@@ -1,9 +1,31 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-09-03 (allocator-overload counters no longer share a generated
-closure cell and widen an `Int32` parameter index to `Nil | Int32`. The
-`Function#set_param_default_literal` ambiguity is gone; B4-F remains RED at the
-later independent `AstToHir#annotation_type_ref` ambiguity.)
+Updated: 2026-09-03 (module return alias fallback now crosses generated-closure
+boundaries through an explicit `String -> String` helper. The
+`AstToHir#annotation_type_ref` ambiguity is gone; B4-F remains RED at the later
+independent bare generic `Array(UInt64)#size` dispatch guard.)
+
+2026-09-03 MODULE RETURN ALIAS FALLBACK NO LONGER LEAKS A NULLABLE TYPE INTO A
+GENERATED CLOSURE CALL. The second annotated-return resolution in
+`lower_module_method` combined a contextual `String?` alias with the original
+`String` inside `with_type_param_map`. Although the source expression was
+non-null, generated block lowering still widened the local and emitted
+`annotation_type_ref$Nil | String_String`. Moving only the alias-or-original
+choice behind a small helper with an explicit `String -> String` contract keeps
+the closure call exact. No cast, overload widening, registry, or cache was
+added.
+
+The direct `alias || original` rewrite was falsified by the same source-aware
+self-host trace and was not retained. With the helper boundary, both the outer
+method and generated block emit `annotation_type_ref$String_String`; the run
+advances in about 247 seconds to `Bare generic dispatch Array(UInt64)#size has
+no complete ABI-compatible instance family`. Observed RSS remained below about
+2.2 GB during the bounded run. The focused module-return example passes, and
+the full AstToHir suite passes 540 examples with zero failures and two
+pre-existing pending examples. Adversary verdict: ROBUST for this exact
+generated-call contract; VULNERABLE as a general closure-flow or B4-F closure
+claim. Next: locate the exact producer of the bare `Array(UInt64)#size` call
+before changing generic dispatch admission.
 
 2026-09-03 ALLOCATOR-OVERLOAD COUNTERS NO LONGER POLLUTE EACH OTHER THROUGH A
 SHARED GENERATED CLOSURE CELL. `generate_allocator_overload` reused the local
