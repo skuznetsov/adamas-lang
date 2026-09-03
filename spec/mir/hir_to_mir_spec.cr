@@ -420,6 +420,59 @@ describe Adamas::MIR::HIRToMIRLowering do
   end
 
   describe "virtual method family resolution" do
+    it "keeps an exact concrete generic target direct when the receiver carries its erased template" do
+      hir_mod = Adamas::HIR::Module.new("exact_generic_target_with_erased_receiver")
+      box_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Class,
+        "LayoutBox"
+      ))
+      int_box_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Class,
+        "LayoutBox(Int32)"
+      ))
+      hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Class,
+        "LayoutBox(String)"
+      ))
+      hir_mod.register_generic_dispatch_template("LayoutBox")
+      hir_mod.register_generic_instance("LayoutBox", "LayoutBox(Int32)")
+      hir_mod.register_generic_instance("LayoutBox", "LayoutBox(String)")
+
+      target = hir_mod.create_function("LayoutBox(Int32)#size", Adamas::HIR::TypeRef::INT32)
+      target.add_param("self", int_box_ref)
+      target_block = target.get_block(target.entry_block)
+      target_value = Adamas::HIR::Literal.new(
+        target.next_value_id,
+        Adamas::HIR::TypeRef::INT32,
+        11_i64
+      )
+      target_block.add(target_value)
+      target_block.terminator = Adamas::HIR::Return.new(target_value.id)
+
+      caller = hir_mod.create_function("exact_generic_caller", Adamas::HIR::TypeRef::INT32)
+      receiver = caller.add_param("receiver", box_ref)
+      caller_block = caller.get_block(caller.entry_block)
+      call = Adamas::HIR::Call.with_receiver(
+        caller.next_value_id,
+        Adamas::HIR::TypeRef::INT32,
+        receiver.id,
+        target.name,
+        [] of Adamas::HIR::ValueId
+      )
+      caller_block.add(call)
+      caller_block.terminator = Adamas::HIR::Return.new(call.id)
+
+      mir_mod = Adamas::MIR::HIRToMIRLowering.new(hir_mod).lower
+      mir_caller = mir_mod.functions.find { |function| function.name == caller.name }.not_nil!
+      mir_call = mir_caller.blocks
+        .flat_map(&.instructions)
+        .find(&.is_a?(Adamas::MIR::Call))
+        .not_nil!
+        .as(Adamas::MIR::Call)
+      callee = mir_mod.functions.find { |function| function.id == mir_call.callee }.not_nil!
+      callee.name.should eq(target.name)
+    end
+
     it "includes every registered bare generic instance with a unanimous ABI" do
       hir_mod = Adamas::HIR::Module.new("bare_generic_virtual_dispatch")
       box_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(

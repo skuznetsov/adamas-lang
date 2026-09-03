@@ -1,9 +1,30 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-09-03 (module return alias fallback now crosses generated-closure
-boundaries through an explicit `String -> String` helper. The
-`AstToHir#annotation_type_ref` ambiguity is gone; B4-F remains RED at the later
-independent bare generic `Array(UInt64)#size` dispatch guard.)
+Updated: 2026-09-03 (an exact non-virtual concrete generic target now remains
+direct when its receiver retains only the registered bare template type. The
+`Array(UInt64)#size` family-expansion failure is gone; B4-F remains RED at the
+later independent unsuffixed `Set(String)#add` overload ambiguity.)
+
+2026-09-03 EXACT CONCRETE GENERIC CALLS NO LONGER EXPAND TO AN INCOMPLETE BARE
+FAMILY. HIR can preserve a resolved target such as `Array(UInt64)#size` while a
+self-hosted copy of the receiver retains only the registered `Array` template
+type. MIR's inherited-wrapper heuristic compared those owner strings, forced
+virtual dispatch, and incorrectly required every registered Array instance to
+provide one unanimous ABI family. MIR now keeps the call direct only when the
+owner is a registered concrete specialization of that same erased template and
+the exact MIR target already exists. Explicit virtual calls, bare targets,
+unregistered specializations, missing targets, and ordinary inherited owners
+still take the existing fail-closed path.
+
+A synthetic MIR regression was red on an exact `LayoutBox(Int32)#size` call
+with a bare `LayoutBox` receiver and one deliberately incomplete sibling
+specialization; it now resolves to the exact target. The full MIR file passes
+40 examples with zero failures or errors. A fresh bounded self-host advances
+past `Array(UInt64)#size` in about 246 seconds and stops at the separate
+`Set(String)#add` ambiguity between its String and Tuple overloads. Adversary
+verdict: ROBUST for the exact registered-specialization boundary; no B4-F or
+general erased-receiver correctness claim is made. Next: preserve the selected
+Set overload identity before MIR family fallback.
 
 2026-09-03 MODULE RETURN ALIAS FALLBACK NO LONGER LEAKS A NULLABLE TYPE INTO A
 GENERATED CLOSURE CALL. The second annotated-return resolution in

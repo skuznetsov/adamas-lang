@@ -6793,7 +6793,19 @@ module Adamas
           if hash_pos = call.method_name.index('#')
             owner_name = call.method_name.byte_slice(0, hash_pos)
             if owner_name != recv_desc.name && !call.method_name.includes?("_super")
-              force_virtual_dispatch = true
+              # A self-hosted value can retain only its erased generic template
+              # while the resolved call still carries an exact concrete owner.
+              # That is not an inherited wrapper: widening it to every generic
+              # instance loses the already-selected target and can require an
+              # unrelated, incomplete family. Keep the exception narrow to a
+              # registered specialization with an existing exact MIR target.
+              registered_instances = @hir_module.generic_instances[recv_desc.name]?
+              exact_concrete_generic_target =
+                owner_name.includes?('(') &&
+                  strip_generic_args(owner_name) == recv_desc.name &&
+                  registered_instances.try(&.includes?(owner_name)) &&
+                  !@mir_module.get_function(call.method_name).nil?
+              force_virtual_dispatch = !exact_concrete_generic_target
             end
           end
         end
