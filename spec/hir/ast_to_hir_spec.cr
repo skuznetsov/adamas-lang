@@ -790,6 +790,19 @@ class Adamas::HIR::AstToHir
     get_type_name_from_ref(type_ref)
   end
 
+  def __test_infer_short_circuit_result_type_name(
+    op : String,
+    left_name : String,
+    right_name : String,
+  ) : String?
+    result = infer_short_circuit_result_type(
+      op,
+      type_ref_for_name(left_name),
+      type_ref_for_name(right_name),
+    )
+    result.try { |type_ref| get_type_name_from_ref(type_ref) }
+  end
+
   def __test_infer_type_name(
     expr_id : Adamas::Compiler::Frontend::ExprId,
     self_type_name : String?,
@@ -2375,6 +2388,72 @@ describe "yield parameter flow narrowing" do
 end
 
 describe "while assignment flow narrowing" do
+  it "removes only impossible nil from inferred or results" do
+    converter = Adamas::HIR::AstToHir.new(Adamas::Compiler::Frontend::AstArena.new)
+
+    converter
+      .__test_infer_short_circuit_result_type_name("||", "Nil", "String")
+      .should eq("String")
+    converter
+      .__test_infer_short_circuit_result_type_name("||", "Nil | Bool", "String")
+      .not_nil!.split(" | ").sort.should eq(["Bool", "String"])
+    converter
+      .__test_infer_short_circuit_result_type_name("&&", "Nil | String", "Bool")
+      .not_nil!.split(" | ").sort.should eq(["Bool", "Nil", "String"])
+  end
+
+  it "keeps an or-fallback local concrete across loop iterations" do
+    converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+      class Set(T)
+        def self.new
+          uninitialized self
+        end
+
+        def includes?(value : T)
+          false
+        end
+
+        def add(value : T)
+          true
+        end
+      end
+
+      class Hash(K, V)
+        def self.new
+          uninitialized self
+        end
+
+        def []?(key : K) : V?
+          nil
+        end
+      end
+
+      def walk_parents(class_name : String)
+        current = class_name
+        seen = Set(String).new
+        parents = Hash(String, String).new
+        while !current.empty? && !seen.includes?(current)
+          seen.add(current)
+          parent = parents[current]?
+          current = parent || ""
+        end
+      end
+
+      walk_parents("Child")
+    CRYSTAL
+
+    function = converter.module.functions.find { |candidate| candidate.name.starts_with?("walk_parents$") }
+    function.should_not be_nil
+    add_calls = function.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+      instruction.as?(Adamas::HIR::Call).try do |call|
+        call if call.method_name.includes?("Set(String)#add")
+      end
+    end
+
+    add_calls.size.should eq(1)
+    add_calls.first.method_name.should eq("Set(String)#add$String")
+  end
+
   it "keeps an assigned nilable Proc non-nil inside the loop body" do
     converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
       class ExitHandlerException

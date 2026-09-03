@@ -24602,6 +24602,30 @@ module Adamas::HIR
       @lower_method_stats_stack[stats_index] = stats
     end
 
+    private def infer_short_circuit_result_type(
+      op : String,
+      left_type : TypeRef?,
+      right_type : TypeRef?,
+    ) : TypeRef?
+      effective_left = left_type
+      if op == "||" && left_type
+        effective_left = if left_type == TypeRef::NIL
+                           nil
+                         else
+                           non_nil_type_for_union(left_type) || left_type
+                         end
+      end
+
+      effective_left = nil if effective_left == TypeRef::VOID
+      effective_right = right_type
+      effective_right = nil if effective_right == TypeRef::VOID
+      if effective_left && effective_right
+        union_type_for_values(effective_left, effective_right)
+      else
+        effective_left || effective_right
+      end
+    end
+
     private def infer_type_from_expr(expr_id : ExprId, self_type_name : String?) : TypeRef?
       stats_index = active_lower_method_stats_index
       stats_start = stats_index ? Time.instant : nil
@@ -25278,11 +25302,7 @@ module Adamas::HIR
               end
             else
               right_type = infer_type_from_expr(value_node.right, self_type_name)
-              if left_type && right_type
-                value_type = union_type_for_values(left_type, right_type)
-              end
-              value_type ||= left_type if left_type && left_type != TypeRef::VOID
-              value_type ||= right_type if right_type && right_type != TypeRef::VOID
+              value_type = infer_short_circuit_result_type(op, left_type, right_type)
             end
             if env_get("DEBUG_INFER_ASSIGN") && value_type.nil?
               left_name = left_type ? get_type_name_from_ref(left_type) : "nil"
@@ -25951,11 +25971,7 @@ module Adamas::HIR
             return non_nil_type_for_union(left_type) || left_type if left_type && left_type != TypeRef::VOID
           end
           right_type = infer_type_from_expr(expr_node.right, self_type_name)
-          if left_type && right_type
-            return union_type_for_values(left_type, right_type)
-          end
-          return left_type if left_type && left_type != TypeRef::VOID
-          return right_type if right_type && right_type != TypeRef::VOID
+          return infer_short_circuit_result_type(op, left_type, right_type)
         end
         if op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">="
           return TypeRef::BOOL

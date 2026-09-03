@@ -1,9 +1,27 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-09-03 (an exact non-virtual concrete generic target now remains
-direct when its receiver retains only the registered bare template type. The
-`Array(UInt64)#size` family-expansion failure is gone; B4-F remains RED at the
-later independent unsuffixed `Set(String)#add` overload ambiguity.)
+Updated: 2026-09-03 (loop pre-inference now models the value returned by `||`
+instead of retaining an impossible Nil arm. The `Set(String)#add` ambiguity is
+gone; B4-F remains RED at the later bare generic `Hash#size` dispatch guard.)
+
+2026-09-03 OR-FALLBACK LOOP INFERENCE NO LONGER RETAINS AN IMPOSSIBLE NIL ARM.
+Value lowering already unwraps the truthy arm of `left || right`, but the two
+ahead-of-time inference paths merged the raw nilable left type with the right
+type. A loop-carried local therefore widened from `String` to `Nil | String`
+and emitted a bare `Set(String)#add` call. Both inference paths now share one
+small result-type helper that removes only Nil from the left arm of `||`.
+`&&` and non-nil left variants remain unchanged.
+
+A source-backed Hash(String, String)#[]? loop fixture was RED with
+`Set(String)#add$Nil | String` and is GREEN with the exact `$String` target.
+Focused adversary checks preserve Bool across `Nil | Bool || String`, keep the
+pure-Nil fallback concrete, and leave `&&` nilability intact. The full AstToHir
+suite passes 542 examples with zero failures/errors and two pre-existing
+pending examples. A fresh bounded self-host clears the Set ambiguity and stops
+after about 250 seconds at the independent `Bare generic dispatch Hash#size`
+guard. Adversary verdict: ROBUST for inferred short-circuit result types; no
+general loop-flow or B4-F closure claim is made. Next: locate the producer of
+the bare Hash call before changing generic dispatch admission.
 
 2026-09-03 EXACT CONCRETE GENERIC CALLS NO LONGER EXPAND TO AN INCOMPLETE BARE
 FAMILY. HIR can preserve a resolved target such as `Array(UInt64)#size` while a
