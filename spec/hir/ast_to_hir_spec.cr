@@ -266,6 +266,40 @@ class Adamas::HIR::AstToHir
     owner_methods[method_name]?.try(&.all_candidates.dup) || [] of String
   end
 
+  def __test_resolve_type_name_in_context(
+    name : String,
+    current : String?,
+    override : String? = nil,
+  ) : String
+    old_current = @current_class
+    old_override = @current_namespace_override
+    @current_class = current
+    @current_namespace_override = override
+    begin
+      resolve_type_name_in_context(name)
+    ensure
+      @current_class = old_current
+      @current_namespace_override = old_override
+    end
+  end
+
+  def __test_resolved_type_name_last_entry(
+    name : String,
+    current : String?,
+    override : String? = nil,
+  ) : String?
+    old_current = @current_class
+    old_override = @current_namespace_override
+    @current_class = current
+    @current_namespace_override = override
+    begin
+      resolved_type_name_cache_get(name)
+    ensure
+      @current_class = old_current
+      @current_namespace_override = old_override
+    end
+  end
+
   def __test_perturb_unrelated_lowering_work(name : String) : Nil
     set_function_state(name, FunctionLoweringState::Pending)
     enqueue_pending_function(name, "call_resolution_memo_spec")
@@ -2432,6 +2466,49 @@ describe "signature short-name resolution" do
       "Many",
       Set{"Outer::VeryLongMany", "Other::Many"}
     ).should eq("Other::Many")
+  end
+end
+
+describe "resolved type-name last-entry cache" do
+  it "reuses only the exact name and namespace context" do
+    converter = lower_program(<<-CRYSTAL)
+      module ResolverCacheLeft
+        class Item
+        end
+      end
+
+      module ResolverCacheRight
+        class Item
+        end
+      end
+    CRYSTAL
+    name = "Item"
+    left = "ResolverCacheLeft"
+    right = "ResolverCacheRight"
+
+    converter.__test_resolve_type_name_in_context(name, left).should eq("ResolverCacheLeft::Item")
+    converter.__test_resolved_type_name_last_entry(name, left).should eq("ResolverCacheLeft::Item")
+    converter.__test_resolved_type_name_last_entry(name, right).should be_nil
+    converter.__test_resolve_type_name_in_context(name, right).should eq("ResolverCacheRight::Item")
+    converter.__test_resolved_type_name_last_entry(name, right).should eq("ResolverCacheRight::Item")
+    converter.__test_resolved_type_name_last_entry(name, left).should be_nil
+  end
+
+  it "invalidates a cached fallback when a nested class is registered" do
+    arena, roots = parse(<<-CRYSTAL)
+      class Late
+      end
+    CRYSTAL
+    class_node = roots.compact_map do |id|
+      arena[id].as?(Adamas::Compiler::Frontend::ClassNode)
+    end.first
+    converter = Adamas::HIR::AstToHir.new(arena)
+    name = "Late"
+    owner = "LateResolverHost"
+
+    converter.__test_resolve_type_name_in_context(name, owner).should eq("Late")
+    converter.__test_register_concrete_class(class_node, "LateResolverHost::Late")
+    converter.__test_resolve_type_name_in_context(name, owner).should eq("LateResolverHost::Late")
   end
 end
 
@@ -14882,6 +14959,71 @@ describe Adamas::HIR::AstToHir do
       main = converter.module.function_by_name("__adamas_main")
       main.should_not be_nil
       hir_text(main.not_nil!).should contain("OverloadedConcreteExplicitAbiBox(String)#accept$Int32")
+    end
+
+    it "keeps the selected declared overload target for a broader union argument" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        abstract class DeclaredDispatchBase
+        end
+
+        class DeclaredDispatchLeft < DeclaredDispatchBase
+        end
+
+        class DeclaredDispatchRight < DeclaredDispatchBase
+        end
+
+        class DeclaredDispatchProbe
+          def choose(value : DeclaredDispatchBase, marker : Nil) : Int32
+            1
+          end
+
+          def choose(value : DeclaredDispatchLeft, marker : String) : Int32
+            2
+          end
+
+          def run(value : DeclaredDispatchLeft | DeclaredDispatchRight) : Int32
+            choose(value, nil)
+          end
+        end
+
+        DeclaredDispatchProbe.new.run(DeclaredDispatchLeft.new)
+      CRYSTAL
+      converter.flush_pending_functions
+
+      converter.__test_reset_call_resolution_memo
+      declared_union = converter.__test_type_ref_for_name(
+        "DeclaredDispatchLeft | DeclaredDispatchRight"
+      )
+      invalid_union = converter.__test_type_ref_for_name(
+        "DeclaredDispatchLeft | String"
+      )
+      nilable_union = converter.__test_type_ref_for_name(
+        "Nil | DeclaredDispatchLeft"
+      )
+      nil_type = converter.__test_type_ref_for_name("Nil")
+
+      converter.__test_resolve_call_memo(
+        "DeclaredDispatchProbe#choose",
+        [declared_union, nil_type],
+      )[0].should eq("DeclaredDispatchProbe#choose$DeclaredDispatchBase_Nil")
+      converter.__test_resolve_call_memo(
+        "DeclaredDispatchProbe#choose",
+        [invalid_union, nil_type],
+      )[0].should be_nil
+      converter.__test_resolve_call_memo(
+        "DeclaredDispatchProbe#choose",
+        [nilable_union, nil_type],
+      )[0].should be_nil
+
+      caller = converter.module.functions.find { |function| function.name.starts_with?("DeclaredDispatchProbe#run$") }
+      caller.should_not be_nil
+      call = caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.find { |instruction| instruction.method_name.includes?("#choose") }
+      call.should_not be_nil
+      call.not_nil!.method_name.should eq(
+        "DeclaredDispatchProbe#choose$DeclaredDispatchBase_Nil"
+      )
     end
 
     it "consumes a semantic overload target before legacy HIR scoring" do

@@ -1299,32 +1299,6 @@ module Adamas::HIR
       end
     end
 
-    private struct TypeNameContextKey
-      getter override : String?
-      getter current : String?
-      getter locals_hash : UInt64
-      getter type_params_hash : UInt64
-
-      def initialize(@override : String?, @current : String?, @locals_hash : UInt64, @type_params_hash : UInt64)
-      end
-
-      def hash : UInt64
-        h = 0_u64
-        h &+= @override.try(&.hash) || 0_u64
-        h &+= (@current.try(&.hash) || 0_u64) &* 31_u64
-        h &+= @locals_hash &* 131_u64
-        h &+= @type_params_hash &* 521_u64
-        h
-      end
-
-      def ==(other : TypeNameContextKey) : Bool
-        @override == other.override &&
-          @current == other.current &&
-          @locals_hash == other.locals_hash &&
-          @type_params_hash == other.type_params_hash
-      end
-    end
-
     private struct BlockLookupKey
       getter func_name : String
       getter arg_count : Int32
@@ -2338,13 +2312,19 @@ module Adamas::HIR
     @method_name_parts_cache_limit : Int32 = 65536
     @method_name_parts_last_id : UInt64 = 0
     @method_name_parts_last : MethodNameParts? = nil
-    @type_param_map_hash_owner : UInt64 = 0
-    @type_param_map_hash_value : UInt64 = 0
-    @resolved_type_name_cache_last_ctx_key : TypeNameContextKey? = nil
-    @resolved_type_name_cache_last_ctx_map : Hash(String, ResolvedTypeNameCacheEntry)? = nil
-    @resolved_type_name_last_entry_ctx : TypeNameContextKey? = nil
+    @resolved_type_name_last_entry_name : String? = nil
     @resolved_type_name_last_entry_name_id : UInt64 = 0
     @resolved_type_name_last_entry_value : String? = nil
+    @resolved_type_name_last_entry_current : String? = nil
+    @resolved_type_name_last_entry_current_id : UInt64 = 0
+    @resolved_type_name_last_entry_override : String? = nil
+    @resolved_type_name_last_entry_override_id : UInt64 = 0
+    @resolved_type_name_last_entry_locals : Hash(String, String)? = nil
+    @resolved_type_name_last_entry_locals_id : UInt64 = 0
+    @resolved_type_name_last_entry_type_params : Hash(String, String)? = nil
+    @resolved_type_name_last_entry_type_params_id : UInt64 = 0
+    @resolved_type_name_last_entry_infer_version : Int32 = 0
+    @resolved_type_name_last_entry_subst_gen : UInt64 = 0
     @resolved_type_name_last_entry_epoch : Int32 = 0
     # Recursion guard for substitute_type_params_in_type_name.
     @substitute_type_params_stack : Set(String) = Set(String).new
@@ -4334,7 +4314,6 @@ module Adamas::HIR
       owner = method_owner_from_name(name)
       return false unless owner.starts_with?("Adamas::HIR::AstToHir::")
       return false unless owner.ends_with?("LookupKey") ||
-                          owner.ends_with?("TypeNameContextKey") ||
                           owner.ends_with?("CallSignature")
 
       method = method_short_from_name(name)
@@ -6345,14 +6324,6 @@ module Adamas::HIR
     # back to the union currently being sized before MIR descriptors exist.
     @hir_union_storage_in_progress : Set(String)
 
-    private struct ResolvedTypeNameCacheEntry
-      getter value : String
-      getter epoch : Int32
-
-      def initialize(@value : String, @epoch : Int32)
-      end
-    end
-
     private struct TypeNameExistsCacheEntry
       getter exists : Bool
       getter negative_stamp : UInt64
@@ -6361,11 +6332,10 @@ module Adamas::HIR
       end
     end
 
-    # Cache resolved type names per namespace to avoid repeated context scans.
-    @resolved_type_name_cache_global : Hash(String, ResolvedTypeNameCacheEntry)
-    @resolved_type_name_cache_by_ctx : Hash(TypeNameContextKey, Hash(String, ResolvedTypeNameCacheEntry))
+    # The resolved type-name fast path retains exactly one identity-keyed entry.
+    # A larger content-keyed cache is unsafe in generated stage2 because hashing
+    # transient String/context payloads can crash before resolution begins.
     @resolved_type_name_cache_epoch : Int32
-    @resolved_type_name_invalidations : Hash(String, Int32)
     # Cache resolved class names for .class/.metaclass type literals.
     @type_literal_class_cache : Hash(String, String?)
     # Temporary cache for type_name_exists? lookups (used during signature collection).
@@ -6974,10 +6944,7 @@ module Adamas::HIR
       @annotation_type_ref_cache = Hash(String, TypeRef).new(initial_capacity: 4096)
       @union_in_progress = Set(String).new
       @hir_union_storage_in_progress = Set(String).new
-      @resolved_type_name_cache_global = Hash(String, ResolvedTypeNameCacheEntry).new(initial_capacity: 8192)
-      @resolved_type_name_cache_by_ctx = {} of TypeNameContextKey => Hash(String, ResolvedTypeNameCacheEntry)
       @resolved_type_name_cache_epoch = 0
-      @resolved_type_name_invalidations = {} of String => Int32
       @type_literal_class_cache = {} of String => String?
       @type_name_exists_cache = nil
       @signature_scan_mode = false
@@ -7134,15 +7101,20 @@ module Adamas::HIR
       @method_name_parts_cache_limit = 65536
       @method_name_parts_last_id = 0_u64
       @method_name_parts_last = nil.as(MethodNameParts?)
-      # Type param map hash
-      @type_param_map_hash_owner = 0_u64
-      @type_param_map_hash_value = 0_u64
-      # Resolved type name caches
-      @resolved_type_name_cache_last_ctx_key = nil.as(TypeNameContextKey?)
-      @resolved_type_name_cache_last_ctx_map = nil.as(Hash(String, ResolvedTypeNameCacheEntry)?)
-      @resolved_type_name_last_entry_ctx = nil.as(TypeNameContextKey?)
+      # Resolved type name last-entry fast path
+      @resolved_type_name_last_entry_name = nil.as(String?)
       @resolved_type_name_last_entry_name_id = 0_u64
       @resolved_type_name_last_entry_value = nil.as(String?)
+      @resolved_type_name_last_entry_current = nil.as(String?)
+      @resolved_type_name_last_entry_current_id = 0_u64
+      @resolved_type_name_last_entry_override = nil.as(String?)
+      @resolved_type_name_last_entry_override_id = 0_u64
+      @resolved_type_name_last_entry_locals = nil.as(Hash(String, String)?)
+      @resolved_type_name_last_entry_locals_id = 0_u64
+      @resolved_type_name_last_entry_type_params = nil.as(Hash(String, String)?)
+      @resolved_type_name_last_entry_type_params_id = 0_u64
+      @resolved_type_name_last_entry_infer_version = 0
+      @resolved_type_name_last_entry_subst_gen = 0_u64
       @resolved_type_name_last_entry_epoch = 0
       # Substitute type params
       @substitute_type_params_stack = Set(String).new
@@ -7808,25 +7780,36 @@ module Adamas::HIR
     end
 
     def seed_top_level_type_names(names : Enumerable(String)) : Nil
+      observed = false
       names.each do |name|
+        observed = true
         @top_level_type_names.add(name)
         if idx = name.index('(')
           base = name[0, idx]
           @top_level_type_names.add(base) unless base.empty?
         end
       end
+      bump_resolved_type_name_cache_epoch if observed
     end
 
     def seed_top_level_class_kinds(kinds : Enumerable(Tuple(String, Bool))) : Nil
-      kinds.each { |name, is_struct| @top_level_class_kinds[name] = is_struct }
+      observed = false
+      kinds.each do |name, is_struct|
+        observed = true
+        @top_level_class_kinds[name] = is_struct
+      end
+      bump_resolved_type_name_cache_epoch if observed
     end
 
     def seed_nested_type_names(names : Hash(String, Set(String))) : Nil
+      observed = false
       names.each do |owner, nested|
+        observed = true
         set = @nested_type_names[owner]? || Set(String).new
         nested.each { |name| set << name }
         @nested_type_names[owner] = set
       end
+      bump_resolved_type_name_cache_epoch if observed
     end
 
     private def effect_annotation_name(node : Adamas::Compiler::Frontend::AnnotationNode) : String?
@@ -8117,7 +8100,10 @@ module Adamas::HIR
           cache_bump = true
         end
       end
-      @module_includers_version += 1 if cache_bump
+      if cache_bump
+        @module_includers_version += 1
+        bump_resolved_type_name_cache_epoch
+      end
       debug_hook("module.include", "#{class_name} <= #{resolved_module_name}")
     end
 
@@ -8900,7 +8886,7 @@ module Adamas::HIR
       return if @module.class_parents[type_name]? == parent_name
 
       record_class_parent(type_name, parent_name)
-      @module.register_class_parent(type_name, parent_name)
+      register_hir_class_parent(type_name, parent_name)
 
       # These caches assume the parent graph is stable after class registration.
       # Parameterized reference-like types (Array/Hash) are interned later, so
@@ -8908,6 +8894,11 @@ module Adamas::HIR
       @subclasses_cache.clear
       @ancestor_chain_cache.try(&.clear)
       bump_class_info_version
+    end
+
+    private def register_hir_class_parent(type_name : String, parent_name : String?) : Nil
+      @module.register_class_parent(type_name, parent_name)
+      bump_resolved_type_name_cache_epoch
     end
 
     # Cache of ancestor chains to avoid repeated hash lookups during class registration.
@@ -11004,7 +10995,7 @@ module Adamas::HIR
         register_enum_in_best_arena(node, enum_name, debug_enum)
         # Register Enum as parent class so deferred method lookup can find
         # inherited methods like includes?, none?, etc.
-        @module.register_class_parent(enum_name, "Enum") unless enum_name.empty?
+        register_hir_class_parent(enum_name, "Enum") unless enum_name.empty?
       ensure
         @current_class = old_class
         @current_namespace_override = old_override
@@ -11383,7 +11374,7 @@ module Adamas::HIR
       old_override = @current_namespace_override
       begin
         register_enum_in_best_arena(node, full_enum_name, debug_enum)
-        @module.register_class_parent(full_enum_name, "Enum") unless full_enum_name.empty?
+        register_hir_class_parent(full_enum_name, "Enum") unless full_enum_name.empty?
       ensure
         @current_class = old_class
         @current_namespace_override = old_override
@@ -11482,7 +11473,7 @@ module Adamas::HIR
         register_enum_methods(node, full_enum_name)
         # Register Enum as included module so enum instances can dispatch Enum methods
         enum_list = @class_included_modules[full_enum_name] ||= [] of String
-        push_unique_module_name(enum_list, "Enum")
+        bump_resolved_type_name_cache_epoch if push_unique_module_name(enum_list, "Enum")
         return
       end
 
@@ -11549,7 +11540,7 @@ module Adamas::HIR
       register_enum_methods(node, full_enum_name)
       # Register Enum as included module so enum instances can dispatch Enum methods
       enum_list = @class_included_modules[full_enum_name] ||= [] of String
-      push_unique_module_name(enum_list, "Enum")
+      bump_resolved_type_name_cache_epoch if push_unique_module_name(enum_list, "Enum")
       attach_enum_instance_methods(full_enum_name)
     end
 
@@ -12736,6 +12727,7 @@ module Adamas::HIR
         STDERR.puts "[NESTED_TYPES] class=#{class_name} names=#{set.to_a.sort.join(",")}"
       end
       @nested_type_names[class_name] = set unless set.empty?
+      bump_resolved_type_name_cache_epoch
     end
 
     private def self_nested_module_name?(owner_name : String, nested_name : String) : Bool
@@ -26945,6 +26937,7 @@ module Adamas::HIR
     @[AlwaysInline]
     private def bump_class_info_version : Nil
       @class_info_version += 1
+      bump_resolved_type_name_cache_epoch
       @type_name_exists_cache = nil
       clear_receiver_specialization_caches
       # Parent chain cache depends on class_info — invalidate when hierarchy changes
@@ -26956,6 +26949,7 @@ module Adamas::HIR
     @[AlwaysInline]
     private def bump_module_defs_cache_version : Nil
       @module_defs_cache_version += 1
+      bump_resolved_type_name_cache_epoch
       @module_defs_stripped_lookup_version = @module_defs_cache_version
       @type_name_exists_cache = nil
       @module_include_alias_cache.clear
@@ -32760,14 +32754,14 @@ module Adamas::HIR
       if rt = node.return_type
         rt_text = (safe_slice_to_string(rt) || "")
         resolve_module_return = -> do
-          rt_name = rt_text
-          if contextual_alias = resolve_contextual_type_alias_name(rt_name)
-            rt_name = contextual_alias
+          module_return_name = rt_text
+          if contextual_alias = resolve_contextual_type_alias_name(module_return_name)
+            module_return_name = contextual_alias
           end
-          inferred = if !is_class_method && module_like_type_name?(rt_name)
+          inferred = if !is_class_method && module_like_type_name?(module_return_name)
                        infer_concrete_return_type_from_body(node, module_name)
                      end
-          inferred || annotation_type_ref(rt_name, module_name)
+          inferred || annotation_type_ref(module_return_name, module_name)
         end
         if extra_type_params.empty?
           return_type = resolve_module_return.call
@@ -32789,14 +32783,14 @@ module Adamas::HIR
         rt_text = (safe_slice_to_string(rt) || "")
         resolved_return = TypeRef::VOID
         with_type_param_map(extra_type_params) do
-          rt_name = rt_text
-          if contextual_alias = resolve_contextual_type_alias_name(rt_name)
-            rt_name = contextual_alias
+          module_merged_return_name = rt_text
+          if contextual_alias = resolve_contextual_type_alias_name(module_merged_return_name)
+            module_merged_return_name = contextual_alias
           end
-          inferred = if !is_class_method && module_like_type_name?(rt_name)
+          inferred = if !is_class_method && module_like_type_name?(module_merged_return_name)
                        infer_concrete_return_type_from_body(node, module_name)
                      end
-          resolved_return = inferred || annotation_type_ref(rt_name, module_name)
+          resolved_return = inferred || annotation_type_ref(module_merged_return_name, module_name)
         end
         if resolved_return != TypeRef::VOID || return_type == TypeRef::VOID
           return_type = resolved_return
@@ -33198,6 +33192,7 @@ module Adamas::HIR
             else
               bootstrap_trace_puts "[CLASS_FRONTIER] generic_before_store #{class_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
               @generic_templates[class_name] = new_template
+              bump_resolved_type_name_cache_epoch
               bootstrap_trace_puts "[CLASS_FRONTIER] generic_after_store #{class_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
             end
             # Register nested types inside generic templates under the base namespace.
@@ -34842,7 +34837,7 @@ module Adamas::HIR
       if env_has?("DEBUG_CLASS_PARENTS") && (class_name == "Base" || class_name == "Child" || class_name == "IO::Memory")
         STDERR.puts "[CLASS_PARENT] class=#{class_name} parent=#{parent_name || "nil"}"
       end
-      @module.register_class_parent(class_name, parent_name)
+      register_hir_class_parent(class_name, parent_name)
       trace_concrete_registration LoweringBinaryTrace::Event::ConcreteRegisterPoint, class_name
       class_info_filter = env_get("DEBUG_CLASS_INFO_FILTER")
       should_dump_class_info =
@@ -35845,8 +35840,8 @@ module Adamas::HIR
       old_map = @type_param_map.dup
       template.type_params.each_with_index do |param, i|
         @type_param_map[param] = resolve_type_alias_chain(type_args[i])
+        @subst_cache_gen &+= 1
       end
-      @subst_cache_gen &+= 1
 
       # Switch to the template's arena for AST node lookup
       old_arena = @arena
@@ -36019,8 +36014,8 @@ module Adamas::HIR
           pname = safe_slice_to_string(param) || ""
           next if pname.empty?
           @type_param_map[pname] = resolve_type_alias_chain(type_args[i])
+          @subst_cache_gen &+= 1
         end
-        @subst_cache_gen &+= 1
       end
 
       old_arena = @arena
@@ -39698,13 +39693,15 @@ module Adamas::HIR
             end
           end
           if param_type == TypeRef::VOID && method_name == "hash" && param_name == "hasher"
-            inferred = type_ref_for_name("Crystal::Hasher")
-            param_type = inferred if inferred != TypeRef::VOID
+            # Keep these bindings purpose-specific. Reusing `inferred` across
+            # blocks widens produced-stage closure cells to unrelated types.
+            hasher_param_type = type_ref_for_name("Crystal::Hasher")
+            param_type = hasher_param_type if hasher_param_type != TypeRef::VOID
           end
           if param_type == TypeRef::VOID && !param.is_block && !param.is_splat && !param.is_double_splat
             if call_index < call_types.size
-              inferred = type_ref_array_fetch_or_void(call_types, call_index)
-              param_type = inferred if inferred != TypeRef::VOID
+              callsite_param_type = type_ref_array_fetch_or_void(call_types, call_index)
+              param_type = callsite_param_type if callsite_param_type != TypeRef::VOID
             end
           end
           preserve_shared_arity_union =
@@ -39957,15 +39954,15 @@ module Adamas::HIR
         return_type = if is_initialize_method
                         TypeRef::VOID
                       elsif rt = node.return_type
-                        rt_name = (safe_slice_to_string(rt) || "")
+                        direct_return_name = (safe_slice_to_string(rt) || "")
                         # "self" in return type means "the current class type"
-                        if rt_name == "self"
+                        if direct_return_name == "self"
                           class_info.type_ref
-                        elsif module_like_type_name?(rt_name)
-                          inferred = infer_concrete_return_type_from_body(node, class_name)
-                          inferred || annotation_type_ref(rt_name, signature_owner)
+                        elsif module_like_type_name?(direct_return_name)
+                          direct_inferred_return = infer_concrete_return_type_from_body(node, class_name)
+                          direct_inferred_return || annotation_type_ref(direct_return_name, signature_owner)
                         else
-                          annotation_type_ref(rt_name, signature_owner)
+                          annotation_type_ref(direct_return_name, signature_owner)
                         end
                       elsif method_name.ends_with?('?')
                         provisional_query_return_type_for_registration(
@@ -39978,8 +39975,8 @@ module Adamas::HIR
                         )
                       else
                         # Try to infer return type from getter-style methods (single ivar access)
-                        inferred = infer_getter_return_type(node, class_info.ivars)
-                        inferred || TypeRef::VOID
+                        direct_getter_return = infer_getter_return_type(node, class_info.ivars)
+                        direct_getter_return || TypeRef::VOID
                       end
         # Avoid AST-walk return type inference during lowering. We'll infer/refresh the return
         # type after lowering from the lowered body (terminators/last expression), which is
@@ -39989,15 +39986,15 @@ module Adamas::HIR
           return_type = if is_initialize_method
                           TypeRef::VOID
                         elsif rt = node.return_type
-                          rt_name = (safe_slice_to_string(rt) || "")
+                          generic_return_name = (safe_slice_to_string(rt) || "")
                           # "self" in return type means "the current class type"
-                          if rt_name == "self"
+                          if generic_return_name == "self"
                             class_info.type_ref
-                          elsif module_like_type_name?(rt_name)
-                            inferred = infer_concrete_return_type_from_body(node, class_name)
-                            inferred || annotation_type_ref(rt_name, signature_owner)
+                          elsif module_like_type_name?(generic_return_name)
+                            generic_inferred_return = infer_concrete_return_type_from_body(node, class_name)
+                            generic_inferred_return || annotation_type_ref(generic_return_name, signature_owner)
                           else
-                            annotation_type_ref(rt_name, signature_owner)
+                            annotation_type_ref(generic_return_name, signature_owner)
                           end
                         elsif method_name.ends_with?('?')
                           provisional_query_return_type_for_registration(
@@ -40010,8 +40007,8 @@ module Adamas::HIR
                           )
                         else
                           # Try to infer return type from getter-style methods (single ivar access)
-                          inferred = infer_getter_return_type(node, class_info.ivars)
-                          inferred || TypeRef::VOID
+                          generic_getter_return = infer_getter_return_type(node, class_info.ivars)
+                          generic_getter_return || TypeRef::VOID
                         end
         end
       end
@@ -40060,21 +40057,21 @@ module Adamas::HIR
       if !is_initialize_method && (rt = node.return_type)
         resolved_return = TypeRef::VOID
         with_type_param_map(extra_type_params) do
-          rt_name = (safe_slice_to_string(rt) || "")
-          if rt_name == "self"
+          merged_return_name = (safe_slice_to_string(rt) || "")
+          if merged_return_name == "self"
             resolved_return = class_info.type_ref
-          elsif module_like_type_name?(rt_name)
-            inferred = infer_concrete_return_type_from_body(node, class_name)
-            annotated = annotation_type_ref(rt_name, signature_owner)
-            if inferred && inferred != TypeRef::VOID && inferred != TypeRef::NIL
-              resolved_return = inferred
+          elsif module_like_type_name?(merged_return_name)
+            merged_inferred_return = infer_concrete_return_type_from_body(node, class_name)
+            annotated = annotation_type_ref(merged_return_name, signature_owner)
+            if merged_inferred_return && merged_inferred_return != TypeRef::VOID && merged_inferred_return != TypeRef::NIL
+              resolved_return = merged_inferred_return
             elsif annotated == TypeRef::VOID
-              resolved_return = type_ref_for_name(resolve_type_name_in_context(rt_name))
+              resolved_return = type_ref_for_name(resolve_type_name_in_context(merged_return_name))
             else
               resolved_return = annotated
             end
           else
-            resolved_return = annotation_type_ref(rt_name, signature_owner)
+            resolved_return = annotation_type_ref(merged_return_name, signature_owner)
           end
         end
         if resolved_return != TypeRef::VOID || return_type == TypeRef::VOID
@@ -49031,6 +49028,13 @@ module Adamas::HIR
                 end
               end
             end
+            # A union of reference subclasses has the same pointer ABI as its
+            # declared parent. Admit it only when every arm proves that upcast;
+            # mixed, nilable, and value unions remain fail-closed.
+            if class_union_upcast_compatible?(arg_type, param_resolved_name)
+              arg_idx += 1
+              next
+            end
             # Check if arg type includes the param type (for module methods)
             # e.g., IO::FileDescriptor includes Crystal::System::FileDescriptor
             if arg_desc
@@ -49087,6 +49091,35 @@ module Adamas::HIR
         return arg_desc.kind == TypeKind::Pointer || arg_desc.name.starts_with?("Pointer(")
       end
       false
+    end
+
+    private def class_union_upcast_compatible?(
+      arg_type : TypeRef,
+      parent_name : String,
+    ) : Bool
+      return false if parent_name.empty?
+
+      arg_desc = @module.get_type_descriptor(arg_type)
+      return false unless arg_desc && arg_desc.kind == TypeKind::Union
+
+      resolved_parent = resolve_type_alias_chain(parent_name)
+      parent_info = @class_info[resolved_parent]?
+      return false unless parent_info && !parent_info.is_struct
+
+      variants = split_union_type_name(arg_desc.name)
+      return false if variants.empty?
+
+      index = 0
+      while index < variants.size
+        child_name = resolve_type_alias_chain(variants.unsafe_fetch(index).strip)
+        child_info = @class_info[child_name]?
+        return false unless child_info && !child_info.is_struct
+        unless child_name == resolved_parent || class_inherits_from?(child_name, resolved_parent)
+          return false
+        end
+        index += 1
+      end
+      true
     end
 
     private def pointer_type_ref_or_name?(type_ref : TypeRef, type_name : String) : Bool
@@ -49432,6 +49465,8 @@ module Adamas::HIR
         return 1 if numeric_compatible?(arg_type, param_type)
         return 1 if numeric_param_target_type(resolved_name, arg_type)
       end
+
+      return 1 if class_union_upcast_compatible?(arg_type, resolved_name)
 
       arg_name = if arg_desc = @module.get_type_descriptor(arg_type)
                    resolve_type_alias_chain(arg_desc.name)
@@ -58017,12 +58052,15 @@ module Adamas::HIR
     # fail-closed as well.
     private def record_short_type_candidate(short_name : String, full_name : String) : Nil
       if @short_type_index.has_key?(short_name)
-        @short_type_index[short_name] << full_name
+        candidates = @short_type_index[short_name]
+        return if candidates.includes?(full_name)
+        candidates << full_name
       else
         candidates = Set(String).new
         candidates << full_name
         @short_type_index[short_name] = candidates
       end
+      bump_resolved_type_name_cache_epoch
     end
 
     private def pick_short_type_candidate(candidates : Set(String), namespace : String) : String?
@@ -59944,6 +59982,7 @@ module Adamas::HIR
 
       instantiations << instantiation
       @class_include_instantiations_version += 1
+      bump_resolved_type_name_cache_epoch
       module_base = split_generic_base_and_args(instantiation).try(&.base) ||
                     strip_generic_args(instantiation)
       @module_include_shape_versions[module_base] =
@@ -117162,126 +117201,57 @@ module Adamas::HIR
       end
     end
 
-    private def current_type_name_context_key : TypeNameContextKey?
-      override = @current_namespace_override
-      current = @current_class
-      locals = @current_typeof_local_names
-      locals_hash = 0_u64
-      if locals && !locals.empty?
-        owner = locals.object_id
-        if @current_typeof_local_names_hash_owner == owner
-          locals_hash = @current_typeof_local_names_hash
-        else
-          # V2 safety: .hash on Hash triggers Object#hash vdispatch crash in V2 binaries
-          locals_hash = locals.object_id.to_u64 &* 2654435761_u64
-          @current_typeof_local_names_hash = locals_hash
-          @current_typeof_local_names_hash_owner = owner
-        end
-      end
-      type_params_hash = 0_u64
-      if !@type_param_map.empty?
-        owner = @type_param_map.object_id
-        if @type_param_map_hash_owner == owner
-          type_params_hash = @type_param_map_hash_value
-        else
-          # V2 safety: .hash on Hash triggers Object#hash vdispatch crash in V2 binaries
-          type_params_hash = @type_param_map.object_id.to_u64 &* 2654435761_u64
-          @type_param_map_hash_value = type_params_hash
-          @type_param_map_hash_owner = owner
-        end
-      end
-      return nil if override.nil? && current.nil? && locals_hash == 0_u64 && type_params_hash == 0_u64
-      TypeNameContextKey.new(override, current, locals_hash, type_params_hash)
-    end
-
     private def resolved_type_name_cache_get(name : String) : String?
-      # Stage2 self-hosting can carry unstable String payloads in contextual
-      # cache keys (`@current_class` / namespace override), which makes the
-      # cache's Hash keying crash before type resolution runs. This cache is a
-      # resolver accelerator only; keep it disabled on the bootstrap path.
-      return nil
-      if ctx = current_type_name_context_key
-        if @resolved_type_name_last_entry_ctx == ctx && @resolved_type_name_last_entry_name_id == name.object_id
-          if value = @resolved_type_name_last_entry_value
-            invalid = @resolved_type_name_invalidations[name]?
-            if invalid.nil? || @resolved_type_name_last_entry_epoch >= invalid
-              record_cache_stat("resolved_type_ctx", true)
-              return value
-            end
-          end
+      current = @current_class
+      override = @current_namespace_override
+      locals = @current_typeof_local_names
+      type_params = @type_param_map
+      if @resolved_type_name_last_entry_name_id == name.object_id &&
+         @resolved_type_name_last_entry_name.try(&.same?(name)) &&
+         @resolved_type_name_last_entry_current_id == (current.try(&.object_id) || 0_u64) &&
+         @resolved_type_name_last_entry_override_id == (override.try(&.object_id) || 0_u64) &&
+         @resolved_type_name_last_entry_locals_id == (locals.try(&.object_id) || 0_u64) &&
+         @resolved_type_name_last_entry_type_params_id == type_params.object_id &&
+         @resolved_type_name_last_entry_infer_version == @infer_type_cache_version &&
+         @resolved_type_name_last_entry_subst_gen == @subst_cache_gen &&
+         @resolved_type_name_last_entry_epoch == @resolved_type_name_cache_epoch
+        if value = @resolved_type_name_last_entry_value
+          record_cache_stat("resolved_type_last", true)
+          return value
         end
-        map = nil
-        if @resolved_type_name_cache_last_ctx_key == ctx
-          map = @resolved_type_name_cache_last_ctx_map
-        end
-        unless map
-          map = @resolved_type_name_cache_by_ctx[ctx]?
-          @resolved_type_name_cache_last_ctx_key = ctx
-          @resolved_type_name_cache_last_ctx_map = map
-        end
-        if map
-          if entry = map[name]?
-            if resolved_type_name_cache_entry_valid?(name, entry)
-              record_cache_stat("resolved_type_ctx", true)
-              @resolved_type_name_last_entry_ctx = ctx
-              @resolved_type_name_last_entry_name_id = name.object_id
-              @resolved_type_name_last_entry_value = entry.value
-              @resolved_type_name_last_entry_epoch = entry.epoch
-              return entry.value
-            end
-          end
-          record_cache_stat("resolved_type_ctx", false)
-          return nil
-        end
-        record_cache_stat("resolved_type_ctx", false)
-        nil
-      else
-        if entry = @resolved_type_name_cache_global[name]?
-          if resolved_type_name_cache_entry_valid?(name, entry)
-            record_cache_stat("resolved_type_global", true)
-            return entry.value
-          end
-        end
-        record_cache_stat("resolved_type_global", false)
-        nil
       end
+      record_cache_stat("resolved_type_last", false)
+      nil
     end
 
     private def resolved_type_name_cache_set(name : String, value : String) : Nil
-      # See resolved_type_name_cache_get: avoid contextual cache-key hashing in
-      # generated stage2 until the underlying String/context lifetime issue is
-      # removed.
-      return
-      if ctx = current_type_name_context_key
-        map = nil
-        if @resolved_type_name_cache_last_ctx_key == ctx
-          map = @resolved_type_name_cache_last_ctx_map
-        end
-        unless map
-          map = @resolved_type_name_cache_by_ctx[ctx]?
-        end
-        unless map
-          map = {} of String => ResolvedTypeNameCacheEntry
-          @resolved_type_name_cache_by_ctx[ctx] = map
-        end
-        entry = ResolvedTypeNameCacheEntry.new(value, @resolved_type_name_cache_epoch)
-        map[name] = entry
-        @resolved_type_name_cache_last_ctx_key = ctx
-        @resolved_type_name_cache_last_ctx_map = map
-        @resolved_type_name_last_entry_ctx = ctx
-        @resolved_type_name_last_entry_name_id = name.object_id
-        @resolved_type_name_last_entry_value = value
-        @resolved_type_name_last_entry_epoch = entry.epoch
-      else
-        @resolved_type_name_cache_global[name] = ResolvedTypeNameCacheEntry.new(value, @resolved_type_name_cache_epoch)
-      end
+      current = @current_class
+      override = @current_namespace_override
+      locals = @current_typeof_local_names
+      type_params = @type_param_map
+      @resolved_type_name_last_entry_name = name
+      @resolved_type_name_last_entry_name_id = name.object_id
+      @resolved_type_name_last_entry_value = value
+      @resolved_type_name_last_entry_current = current
+      @resolved_type_name_last_entry_current_id = current.try(&.object_id) || 0_u64
+      @resolved_type_name_last_entry_override = override
+      @resolved_type_name_last_entry_override_id = override.try(&.object_id) || 0_u64
+      @resolved_type_name_last_entry_locals = locals
+      @resolved_type_name_last_entry_locals_id = locals.try(&.object_id) || 0_u64
+      @resolved_type_name_last_entry_type_params = type_params
+      @resolved_type_name_last_entry_type_params_id = type_params.object_id
+      @resolved_type_name_last_entry_infer_version = @infer_type_cache_version
+      @resolved_type_name_last_entry_subst_gen = @subst_cache_gen
+      @resolved_type_name_last_entry_epoch = @resolved_type_name_cache_epoch
     end
 
-    private def invalidate_resolved_type_name_cache_for(name : String) : Nil
-      short = last_namespace_component_if_nested(name)
+    @[AlwaysInline]
+    private def bump_resolved_type_name_cache_epoch : Nil
       @resolved_type_name_cache_epoch &+= 1
-      @resolved_type_name_invalidations[name] = @resolved_type_name_cache_epoch
-      @resolved_type_name_invalidations[short] = @resolved_type_name_cache_epoch if short
+    end
+
+    private def invalidate_resolved_type_name_cache_for(_name : String) : Nil
+      bump_resolved_type_name_cache_epoch
       # Caches that key on @module_defs_cache_version (not epoch) are NOT cleared
       # here — they depend on @type_aliases and @module_defs, which have their own
       # invalidation paths (register_type_alias, bump_module_defs_cache_version).
@@ -117289,14 +117259,6 @@ module Adamas::HIR
       # change when new generic instances are registered during monomorphization.
       # The annotation cache still includes epoch in key for correctness (the
       # epoch change naturally causes a miss, so clearing is redundant).
-    end
-
-    private def resolved_type_name_cache_entry_valid?(name : String, entry : ResolvedTypeNameCacheEntry) : Bool
-      if invalid = @resolved_type_name_invalidations[name]?
-        entry.epoch >= invalid
-      else
-        true
-      end
     end
 
     private def invalidate_type_literal_cache_for(name : String) : Nil
@@ -117353,13 +117315,20 @@ module Adamas::HIR
         @type_cache_keys_by_component.clear
         @type_cache_keys_by_generic_prefix.clear
         @type_name_exists_cache = nil
-        @resolved_type_name_cache_global.clear
-        @resolved_type_name_cache_by_ctx.clear
-        @resolved_type_name_invalidations.clear
         @resolved_type_name_cache_epoch = 0
-        @resolved_type_name_last_entry_ctx = nil
+        @resolved_type_name_last_entry_name = nil
         @resolved_type_name_last_entry_name_id = 0_u64
         @resolved_type_name_last_entry_value = nil
+        @resolved_type_name_last_entry_current = nil
+        @resolved_type_name_last_entry_current_id = 0_u64
+        @resolved_type_name_last_entry_override = nil
+        @resolved_type_name_last_entry_override_id = 0_u64
+        @resolved_type_name_last_entry_locals = nil
+        @resolved_type_name_last_entry_locals_id = 0_u64
+        @resolved_type_name_last_entry_type_params = nil
+        @resolved_type_name_last_entry_type_params_id = 0_u64
+        @resolved_type_name_last_entry_infer_version = 0
+        @resolved_type_name_last_entry_subst_gen = 0_u64
         @resolved_type_name_last_entry_epoch = 0
         @type_literal_class_cache.clear
         @type_name_normalize_cache.clear

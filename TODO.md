@@ -1,10 +1,33 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-09-03 (method-index buckets now preserve registration order while
-serving instance and class candidates without reparsing every stored name. The
-full AstToHir suite passes and separator filtering disappears from bounded
-samples. B4-F remains RED; next: discriminate repeated contextual type-name
-resolution before changing that path.)
+Updated: 2026-09-03 (contextual type-name resolution now reuses one exact
+identity-keyed entry without hashing unstable generated-stage strings, and
+class-only unions can bind a declared parent overload only when every arm
+proves the upcast. The previous `infer_method_call_result` ambiguity is gone;
+B4-F remains RED at `Function#set_param_default_literal`.)
+
+2026-09-03 CONTEXTUAL TYPE RESOLUTION AND CLASS-UNION OVERLOAD SELECTION ARE
+NARROWER AND CHEAPER. The disabled full Hash cache has been replaced by one
+strong-reference last-entry cache keyed by object identity, local/type-param
+map identity, substitution and inference revisions, and a registry epoch.
+Central registration mutations bump that epoch; no new registry or unbounded
+cache was added. Purpose-specific local names also keep generated-stage closure
+cells from widening across unrelated return and parameter inference paths.
+
+Call resolution now admits an actual union against a scalar parent annotation
+only when the parent and every union arm are reference classes and every arm is
+the parent or a subclass. Mixed, value, and nilable unions remain fail-closed,
+and the same predicate is used by compatibility filtering and match scoring.
+The source-backed regression was red on `Left | Right -> Base` and also proves
+that `Left | String` and `Nil | Left` stay rejected. The full AstToHir suite
+passes 540 examples with zero failures and two pre-existing pending examples.
+A fresh bounded self-host run removes the former `infer_method_call_result`
+MIR ambiguity and reaches the later independent
+`Adamas::HIR::Function#set_param_default_literal` ambiguity in about 235
+seconds, with observed RSS rising gradually to about 2.1 GB. This is verified
+forward progress and a bounded hot-path change, not a B4-F or stable speed
+claim. Next: reduce the new exact call shape before changing another general
+compatibility rule.
 
 2026-09-03 METHOD-INDEX LOOKUPS NO LONGER REPARSE EVERY CANDIDATE TO SEPARATE
 INSTANCE AND CLASS METHODS. The index still groups candidates by owner and
