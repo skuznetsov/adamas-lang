@@ -37870,14 +37870,14 @@ module Adamas::HIR
           STDERR.puts "[ALLOC_OVERLOAD_TRACE] matched_init=#{matched_init_name}" if trace_allocator_overload
           if alt_params = matched_init_def.params
             alt_init_params = [] of {String, TypeRef}
-            param_idx = 0
+            matched_param_index = 0
             call_arg_size = type_ref_array_size_or_zero(initializer_call_arg_types)
             done_regular_params = false
             with_arena(matched_init_arena.not_nil!) do
               each_param(alt_params) do |p|
                 next if done_regular_params
                 next if named_only_separator?(p)
-                pname = (nm = p.name) ? (safe_slice_to_string(nm) || "arg#{param_idx}") : "arg#{param_idx}"
+                pname = (nm = p.name) ? (safe_slice_to_string(nm) || "arg#{matched_param_index}") : "arg#{matched_param_index}"
                 pname = pname.lstrip('@')
                 if p.is_block
                   ptype = if ta = p.type_annotation
@@ -37888,11 +37888,11 @@ module Adamas::HIR
                   block_param_info = {pname, ptype}
                   next
                 end
-                unless param_idx < call_arg_size
+                unless matched_param_index < call_arg_size
                   done_regular_params = true
                   next
                 end
-                call_arg_type = type_ref_array_fetch_or_void(initializer_call_arg_types, param_idx)
+                call_arg_type = type_ref_array_fetch_or_void(initializer_call_arg_types, matched_param_index)
                 ptype = if ta = p.type_annotation
                           ta_str = safe_slice_to_string(ta) || ""
                           resolved = annotation_type_ref(ta_str, class_name)
@@ -37910,7 +37910,7 @@ module Adamas::HIR
                           call_arg_type
                         end
                 alt_init_params << {pname, ptype}
-                param_idx += 1
+                matched_param_index += 1
               end
             end
             if alt_init_params.size == initializer_call_arg_types.size
@@ -37958,18 +37958,18 @@ module Adamas::HIR
             alt_name, alt_def = alt_match
             if alt_params = alt_def.params
               alt_init_params = [] of {String, TypeRef}
-              param_idx = 0
+              alternate_param_index = 0
               call_arg_size = type_ref_array_size_or_zero(initializer_call_arg_types)
               done_regular_params = false
               each_param(alt_params) do |p|
                 next if done_regular_params
                 next if p.is_block || named_only_separator?(p)
-                unless param_idx < call_arg_size
+                unless alternate_param_index < call_arg_size
                   done_regular_params = true
                   next
                 end
-                call_arg_type = type_ref_array_fetch_or_void(initializer_call_arg_types, param_idx)
-                pname = (nm = p.name) ? (safe_slice_to_string(nm) || "arg#{param_idx}") : "arg#{param_idx}"
+                call_arg_type = type_ref_array_fetch_or_void(initializer_call_arg_types, alternate_param_index)
+                pname = (nm = p.name) ? (safe_slice_to_string(nm) || "arg#{alternate_param_index}") : "arg#{alternate_param_index}"
                 pname = pname.lstrip('@')
                 ptype = if ta = p.type_annotation
                           ta_str = safe_slice_to_string(ta) || ""
@@ -37987,7 +37987,7 @@ module Adamas::HIR
                           call_arg_type
                         end
                 alt_init_params << {pname, ptype}
-                param_idx += 1
+                alternate_param_index += 1
               end
               if alt_init_params.size == initializer_call_arg_types.size
                 init_params = alt_init_params
@@ -38056,16 +38056,16 @@ module Adamas::HIR
       if init_def_for_defaults && (init_def_params = init_def_for_defaults.params)
         init_arena_for_defaults = matched_init_arena || (init_def_key_ovr ? (@function_def_arenas[init_def_key_ovr]? || @arena) : @arena)
         with_arena(init_arena_for_defaults) do
-          param_idx = 0
+          default_param_index = 0
           init_def_params.each do |ast_param|
             next if named_only_separator?(ast_param)
             next if ast_param.is_block
-            break if param_idx >= func.params.size
+            break if default_param_index >= func.params.size
             if default_lit = extract_param_default_literal(ast_param)
-              func.params[param_idx].default_literal = default_lit
-              func.set_param_default_literal(param_idx, default_lit)
+              func.params[default_param_index].default_literal = default_lit
+              func.set_param_default_literal(default_param_index, default_lit)
             end
-            param_idx += 1
+            default_param_index += 1
           end
         end
       end

@@ -1,10 +1,32 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-09-03 (contextual type-name resolution now reuses one exact
-identity-keyed entry without hashing unstable generated-stage strings, and
-class-only unions can bind a declared parent overload only when every arm
-proves the upcast. The previous `infer_method_call_result` ambiguity is gone;
-B4-F remains RED at `Function#set_param_default_literal`.)
+Updated: 2026-09-03 (allocator-overload counters no longer share a generated
+closure cell and widen an `Int32` parameter index to `Nil | Int32`. The
+`Function#set_param_default_literal` ambiguity is gone; B4-F remains RED at the
+later independent `AstToHir#annotation_type_ref` ambiguity.)
+
+2026-09-03 ALLOCATOR-OVERLOAD COUNTERS NO LONGER POLLUTE EACH OTHER THROUGH A
+SHARED GENERATED CLOSURE CELL. `generate_allocator_overload` reused the local
+name `param_idx` for matched-parameter reconstruction, alternate overload
+reconstruction, and default-literal propagation. Nested generated closures
+then merged those logically separate locals and self-hosting emitted
+`set_param_default_literal$Nil | Int32_String` instead of the exact
+`$Int32_String` call. The three counters now have purpose-specific names; no
+cast, compatibility widening, new registry, or general closure-flow rule was
+added.
+
+A no-prelude nested-closure reducer reproduces the underlying generic flow-
+typing limitation, so this is intentionally a source-local bootstrap repair,
+not a claim that captured-cell narrowing is solved. A fresh traced self-host
+emits only `$Int32_String` at every `set_param_default_literal` call site and
+advances to the later independent
+`AstToHir#annotation_type_ref$Nil | String_String` ambiguity in about 167
+seconds (maximum RSS 2,835,376 KB, maximum FD 11). The full AstToHir suite
+passes 540 examples with zero failures and two pre-existing pending examples.
+Adversary verdict: ROBUST for the exact allocator-overload pollution;
+VULNERABLE as a general generated-closure or B4-F closure claim. Next: trace
+the first argument of the new `annotation_type_ref` frontier before changing
+another compatibility rule.
 
 2026-09-03 CONTEXTUAL TYPE RESOLUTION AND CLASS-UNION OVERLOAD SELECTION ARE
 NARROWER AND CHEAPER. The disabled full Hash cache has been replaced by one
