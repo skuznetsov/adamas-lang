@@ -6799,13 +6799,10 @@ module Adamas
               # instance loses the already-selected target and can require an
               # unrelated, incomplete family. Keep the exception narrow to a
               # registered specialization with an existing exact MIR target.
-              registered_instances = @hir_module.generic_instances[recv_desc.name]?
-              exact_concrete_generic_target =
-                owner_name.includes?('(') &&
-                  strip_generic_args(owner_name) == recv_desc.name &&
-                  registered_instances.try(&.includes?(owner_name)) &&
-                  !@mir_module.get_function(call.method_name).nil?
-              force_virtual_dispatch = !exact_concrete_generic_target
+              force_virtual_dispatch = !exact_concrete_generic_target_for_erased_receiver?(
+                call,
+                recv_desc,
+              )
             end
           end
         end
@@ -7583,6 +7580,7 @@ module Adamas
         recv_type = @hir_value_types[recv_id]? || return nil
         recv_desc = @hir_module.get_type_descriptor(recv_type)
         return nil unless recv_desc
+        return nil if exact_concrete_generic_target_for_erased_receiver?(call, recv_desc)
 
         method_suffix = extract_method_suffix(call.method_name)
         return nil unless method_suffix
@@ -7817,6 +7815,21 @@ module Adamas
         end
 
         @builder.not_nil!.call(dispatch_func.id, call_args, dispatch_func.return_type)
+      end
+
+      private def exact_concrete_generic_target_for_erased_receiver?(
+        call : HIR::Call,
+        recv_desc : HIR::TypeDescriptor,
+      ) : Bool
+        return false unless recv_desc.kind == HIR::TypeKind::Class
+        hash_pos = call.method_name.index('#') || return false
+        owner_name = call.method_name.byte_slice(0, hash_pos)
+        return false unless owner_name.includes?('(')
+        return false unless strip_generic_args(owner_name) == recv_desc.name
+
+        registered_instances = @hir_module.generic_instances[recv_desc.name]? || return false
+        registered_instances.includes?(owner_name) &&
+          !@mir_module.get_function(call.method_name).nil?
       end
 
       private def extract_method_suffix(full_name : String) : String?
