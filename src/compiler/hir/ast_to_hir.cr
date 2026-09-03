@@ -5565,6 +5565,11 @@ module Adamas::HIR
       end
       if is_new
         @function_defs[name] = def_node # missing-revision-owner
+        if @method_index_built && @method_index_size_at_build == @function_defs.size - 1
+          append_new_method_index_entry(name)
+          @method_index_processed_count = @function_defs.size
+          @method_index_size_at_build = @function_defs.size
+        end
         set_function_visibility(name, def_node.visibility)
         STDERR.puts "[SET_FDEF] phase=after_map_write name=#{name}" if env_has?("DEBUG_REGISTER_DEF_RAW")
         seed_function_param_caches(name, def_node)
@@ -5765,8 +5770,7 @@ module Adamas::HIR
       false
     end
 
-    # Register a function def and update the method index for fast parent lookups.
-    # Call this instead of directly assigning to @function_defs.
+    # Register a function def. The centralized setter updates all live indexes.
     private def register_function_def(
       full_name : String,
       def_node : Adamas::Compiler::Frontend::DefNode,
@@ -5774,8 +5778,9 @@ module Adamas::HIR
     )
       set_function_def_entry(full_name, def_node)
       set_function_def_arena(full_name, arena)
+    end
 
-      # Update method index: base_owner → method_name → [full_names]
+    private def append_new_method_index_entry(full_name : String) : Nil
       parts = parse_method_name_compact(full_name)
       if parts.separator && parts.method
         base_owner = method_index_owner_key(parts.owner)
@@ -5804,21 +5809,7 @@ module Adamas::HIR
       @function_defs.each_key do |full_name|
         count += 1
         next if count <= @method_index_processed_count
-        parts = parse_method_name_compact(full_name)
-        next unless parts.separator && parts.method
-        base_owner = method_index_owner_key(parts.owner)
-        method_name = parts.method.not_nil!
-        owner_methods = @method_index[base_owner]?
-        unless owner_methods
-          owner_methods = Hash(String, Array(String)).new
-          @method_index[base_owner] = owner_methods
-        end
-        list = owner_methods[method_name]?
-        if list
-          list << full_name
-        else
-          owner_methods[method_name] = [full_name]
-        end
+        append_new_method_index_entry(full_name)
       end
       @method_index_processed_count = count
       @method_index_built = true

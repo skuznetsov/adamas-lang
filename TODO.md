@@ -1,9 +1,30 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-09-02 (nested virtual replay now treats a pending or in-progress
-selected ancestor as deferred work, not as proof that a child wrapper is
-required. The full AstToHir suite passes. B4-F remains RED; next: isolate the
-remaining Hash/Array and broad-virtual materialization wave.)
+Updated: 2026-09-03 (the lazy method index now appends synchronized late
+definitions instead of rescanning its entire prefix on the next lookup. The
+full AstToHir suite passes and the rescanner disappears from bounded samples.
+B4-F remains RED; next: measure the remaining candidate-name parsing/filtering
+cost before changing its representation.)
+
+2026-09-03 SYNCHRONIZED METHOD-INDEX INSERTIONS NO LONGER TRIGGER FULL PREFIX
+RESCANS. The function-definition table is append-only, but its lazy method
+index previously learned about every late definition only by walking the full
+Hash prefix again. The central definition setter now appends a genuinely new
+entry when the existing index is synchronized; replacement writes do not
+append, and the old lazy repair remains as a fail-safe for unsynchronized
+callers. The registration wrapper no longer performs a second independent
+append.
+
+A source-backed no-bootstrap regression was red on the stale processed count
+and is now green while also covering same-key registration, a late generic-owner
+alias, and exactly-once candidate insertion. The full AstToHir suite passes 537
+examples with zero failures and two pre-existing pending examples, and a fresh
+host compiler builds. In the bounded baseline, `ensure_method_index_built` was
+the top stack frame 422 times in one sample and appeared in 681 sample-tree
+rows; after the change it appeared in zero rows across five samples. Stage2
+still exceeded 210 seconds, so this is a verified local hot-path removal, not a
+B4-F or whole-bootstrap speed claim. The next measured costs are compact method
+name parsing and separator filtering.
 
 2026-09-02 NESTED INHERITED REPLAY NO LONGER CLONES BEFORE ITS ANCESTOR QUEUE
 DRAINS. `lower_required_virtual_target_function` materializes immediately at

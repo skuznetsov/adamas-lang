@@ -235,6 +235,25 @@ class Adamas::HIR::AstToHir
     set_function_def_entry(name, def_node, record_current_arena: false)
   end
 
+  def __test_add_function_def_alias(source_name : String, alias_name : String) : Nil
+    def_node = @function_defs[source_name]? || raise "missing function def fixture: #{source_name}"
+    set_function_def_entry(alias_name, def_node, record_current_arena: false)
+  end
+
+  def __test_method_index_state
+    {
+      built:         @method_index_built,
+      size_at_build: @method_index_size_at_build,
+      processed:     @method_index_processed_count,
+      defs_size:     @function_defs.size,
+    }
+  end
+
+  def __test_method_index_candidates(owner : String, method_name : String) : Array(String)
+    ensure_method_index_built
+    @method_index[method_index_owner_key(owner)]?.try(&.[method_name]?).try(&.dup) || [] of String
+  end
+
   def __test_perturb_unrelated_lowering_work(name : String) : Nil
     set_function_state(name, FunctionLoweringState::Pending)
     enqueue_pending_function(name, "call_resolution_memo_spec")
@@ -3180,6 +3199,45 @@ describe Adamas::HIR::AstToHir do
       # The reverse would let Child.foo mask Parent#foo for a Child#foo call.
       converter.__test_method_index_call_candidates_for_separator(class_only, '#')
         .should be_empty
+    end
+  end
+
+  describe "method-index incremental maintenance" do
+    it "indexes each late definition once without rescanning the old prefix" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        class MethodIndexProbe
+          def pick(value : Int32) : Int32
+            value
+          end
+
+          def pick(value : String) : String
+            value
+          end
+        end
+
+        1
+        CRYSTAL
+
+      source_name = converter.__test_function_def_names("MethodIndexProbe#pick$Int32").first
+      initial_candidates = converter.__test_method_index_candidates("MethodIndexProbe", "pick")
+      initial_candidates.should contain(source_name)
+      initial_state = converter.__test_method_index_state
+      initial_state[:built].should be_true
+      initial_state[:processed].should eq(initial_state[:defs_size])
+      initial_state[:size_at_build].should eq(initial_state[:defs_size])
+
+      converter.__test_reregister_function_def(source_name)
+      converter.__test_method_index_state.should eq(initial_state)
+
+      alias_name = "MethodIndexProbe(String)#pick$Late"
+      converter.__test_add_function_def_alias(source_name, alias_name)
+      late_state = converter.__test_method_index_state
+      late_state[:built].should be_true
+      late_state[:processed].should eq(late_state[:defs_size])
+      late_state[:size_at_build].should eq(late_state[:defs_size])
+
+      late_candidates = converter.__test_method_index_candidates("MethodIndexProbe(String)", "pick")
+      late_candidates.count(alias_name).should eq(1)
     end
   end
 
