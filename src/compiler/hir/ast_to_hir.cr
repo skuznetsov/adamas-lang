@@ -97504,7 +97504,8 @@ module Adamas::HIR
       if filter = env_get("ADAMAS_TRACE_CALL_EMIT")
         if emit_method_name.includes?(filter)
           recv_t = receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "nil"
-          STDERR.puts "[CALL_EMIT] site=lower_call emit=#{emit_method_name} mangled=#{mangled_method_name} base=#{base_method_name} recv_type=#{recv_t} virtual=#{call_virtual} ret=#{get_type_name_from_ref(return_type)} block=#{block_id ? 1 : 0} caller=#{ctx.function.name}"
+          source = source_location_for_node(@arena, node).try(&.to_s) || "unknown"
+          STDERR.puts "[CALL_EMIT] site=lower_call emit=#{emit_method_name} mangled=#{mangled_method_name} base=#{base_method_name} recv_type=#{recv_t} virtual=#{call_virtual} ret=#{get_type_name_from_ref(return_type)} block=#{block_id ? 1 : 0} caller=#{ctx.function.name} source=#{source}"
         end
       end
       args = coerce_raw_proc_call_args_to_function_params(ctx, args, emit_method_name)

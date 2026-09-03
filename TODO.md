@@ -23,6 +23,9 @@ advances to the later independent
 `AstToHir#annotation_type_ref$Nil | String_String` ambiguity in about 167
 seconds (maximum RSS 2,835,376 KB, maximum FD 11). The full AstToHir suite
 passes 540 examples with zero failures and two pre-existing pending examples.
+Opt-in `CALL_EMIT` diagnostics now include the source path, line, and column, so
+a generated closure caller can be mapped back to its original call without
+adding site-specific logging.
 Adversary verdict: ROBUST for the exact allocator-overload pollution;
 VULNERABLE as a general generated-closure or B4-F closure claim. Next: trace
 the first argument of the new `annotation_type_ref` frontier before changing
