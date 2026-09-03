@@ -249,9 +249,21 @@ class Adamas::HIR::AstToHir
     }
   end
 
-  def __test_method_index_candidates(owner : String, method_name : String) : Array(String)
+  def __test_method_index_candidates(
+    owner : String,
+    method_name : String,
+    separator : Char = '#',
+  ) : Array(String)
     ensure_method_index_built
-    @method_index[method_index_owner_key(owner)]?.try(&.[method_name]?).try(&.dup) || [] of String
+    owner_methods = @method_index[method_index_owner_key(owner)]? || return [] of String
+    bucket = owner_methods[method_name]? || return [] of String
+    method_index_candidates_for_separator(bucket, separator).dup
+  end
+
+  def __test_method_index_all_candidates(owner : String, method_name : String) : Array(String)
+    ensure_method_index_built
+    owner_methods = @method_index[method_index_owner_key(owner)]? || return [] of String
+    owner_methods[method_name]?.try(&.all_candidates.dup) || [] of String
   end
 
   def __test_perturb_unrelated_lowering_work(name : String) : Nil
@@ -298,7 +310,13 @@ class Adamas::HIR::AstToHir
     candidates : Array(String),
     separator : Char,
   ) : Array(String)
-    method_index_call_candidates_for_separator(candidates, separator)
+    bucket = MethodIndexBucket.new
+    candidates.each do |candidate|
+      parts = parse_method_name_compact(candidate)
+      next unless parts.separator && parts.method
+      bucket.append(candidate, parts.separator.not_nil!)
+    end
+    method_index_call_candidates_for_separator(bucket, separator)
   end
 
   def __test_collect_assigned_vars(body : Array(Adamas::Compiler::Frontend::ExprId)) : Array(String)
@@ -3184,9 +3202,9 @@ describe Adamas::HIR::AstToHir do
       mixed = [instance_only.first, class_only.first]
 
       converter.__test_method_index_call_candidates_for_separator(instance_only, '#')
-        .same?(instance_only).should be_true
+        .should eq(instance_only)
       converter.__test_method_index_call_candidates_for_separator(class_only, '.')
-        .same?(class_only).should be_true
+        .should eq(class_only)
 
       converter.__test_method_index_call_candidates_for_separator(mixed, '#')
         .should eq(instance_only)
@@ -3195,7 +3213,7 @@ describe Adamas::HIR::AstToHir do
 
       # `extend self` can expose an instance registration to a class-form call.
       converter.__test_method_index_call_candidates_for_separator(instance_only, '.')
-        .same?(instance_only).should be_true
+        .should eq(instance_only)
       # The reverse would let Child.foo mask Parent#foo for a Child#foo call.
       converter.__test_method_index_call_candidates_for_separator(class_only, '#')
         .should be_empty
@@ -3213,6 +3231,10 @@ describe Adamas::HIR::AstToHir do
           def pick(value : String) : String
             value
           end
+
+          def self.pick(value : Bool) : Bool
+            value
+          end
         end
 
         1
@@ -3221,6 +3243,10 @@ describe Adamas::HIR::AstToHir do
       source_name = converter.__test_function_def_names("MethodIndexProbe#pick$Int32").first
       initial_candidates = converter.__test_method_index_candidates("MethodIndexProbe", "pick")
       initial_candidates.should contain(source_name)
+      initial_candidates.should_not contain("MethodIndexProbe.pick$Bool")
+      converter.__test_method_index_candidates("MethodIndexProbe", "pick", '.').should eq([
+        "MethodIndexProbe.pick$Bool",
+      ])
       initial_state = converter.__test_method_index_state
       initial_state[:built].should be_true
       initial_state[:processed].should eq(initial_state[:defs_size])
@@ -3230,7 +3256,9 @@ describe Adamas::HIR::AstToHir do
       converter.__test_method_index_state.should eq(initial_state)
 
       alias_name = "MethodIndexProbe(String)#pick$Late"
+      class_alias_name = "MethodIndexProbe(String).pick$Late"
       converter.__test_add_function_def_alias(source_name, alias_name)
+      converter.__test_add_function_def_alias("MethodIndexProbe.pick$Bool", class_alias_name)
       late_state = converter.__test_method_index_state
       late_state[:built].should be_true
       late_state[:processed].should eq(late_state[:defs_size])
@@ -3238,6 +3266,15 @@ describe Adamas::HIR::AstToHir do
 
       late_candidates = converter.__test_method_index_candidates("MethodIndexProbe(String)", "pick")
       late_candidates.count(alias_name).should eq(1)
+      late_class_candidates = converter.__test_method_index_candidates("MethodIndexProbe(String)", "pick", '.')
+      late_class_candidates.count(class_alias_name).should eq(1)
+      converter.__test_method_index_all_candidates("MethodIndexProbe", "pick").should eq([
+        "MethodIndexProbe#pick$Int32",
+        "MethodIndexProbe#pick$String",
+        "MethodIndexProbe.pick$Bool",
+        alias_name,
+        class_alias_name,
+      ])
     end
   end
 

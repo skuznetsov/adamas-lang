@@ -1,10 +1,31 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-09-03 (the lazy method index now appends synchronized late
-definitions instead of rescanning its entire prefix on the next lookup. The
-full AstToHir suite passes and the rescanner disappears from bounded samples.
-B4-F remains RED; next: measure the remaining candidate-name parsing/filtering
-cost before changing its representation.)
+Updated: 2026-09-03 (method-index buckets now preserve registration order while
+serving instance and class candidates without reparsing every stored name. The
+full AstToHir suite passes and separator filtering disappears from bounded
+samples. B4-F remains RED; next: discriminate repeated contextual type-name
+resolution before changing that path.)
+
+2026-09-03 METHOD-INDEX LOOKUPS NO LONGER REPARSE EVERY CANDIDATE TO SEPARATE
+INSTANCE AND CLASS METHODS. The index still groups candidates by owner and
+method, but each bucket now preserves the original interleaved registration
+order and materializes separate `#` and `.` arrays only when both forms occur.
+Strict parent, splat, and presence lookups use the exact form; dynamic class
+calls retain the existing `extend self` fallback; block fallback retains the
+original global order. No new global registry or semantic identity was added.
+
+The no-bootstrap method-index contract now covers mixed instance/class
+definitions, late generic-owner aliases, exactly-once insertion, and preserved
+interleaved order. The focused examples pass 2/2, the full AstToHir suite passes
+537 examples with zero failures and two pre-existing pending examples, and a
+fresh host compiler builds. In the previous bounded profile, compact method
+name parsing reached 465 top-stack samples and separator filtering reached 167
+in one five-second series. With buckets, neither function appears in the top-25
+summary of any of five series; residual parsing from other callers remains.
+Stage2 still reached the same allocator-flush frontier without finishing in 210
+seconds, so this is a verified local hot-path removal rather than a whole-run
+speed claim. The new leading compiler frame is contextual type-name resolution;
+measure its repeated inputs and invalidation boundary before attempting a cache.
 
 2026-09-03 SYNCHRONIZED METHOD-INDEX INSERTIONS NO LONGER TRIGGER FULL PREFIX
 RESCANS. The function-definition table is append-only, but its lazy method

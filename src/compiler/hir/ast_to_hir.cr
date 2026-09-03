@@ -1762,27 +1762,72 @@ module Adamas::HIR
       strip_generic_args_from_namespace_path(owner)
     end
 
+    private class MethodIndexBucket
+      getter all_candidates : Array(String)
+
+      def initialize
+        @all_candidates = [] of String
+        @single_separator = nil.as(Char?)
+        @instance_candidates = nil.as(Array(String)?)
+        @class_candidates = nil.as(Array(String)?)
+      end
+
+      def append(name : String, separator : Char) : Nil
+        if @all_candidates.empty?
+          @single_separator = separator
+        elsif single_separator = @single_separator
+          if single_separator != separator
+            previous = @all_candidates.dup
+            if single_separator == '#'
+              @instance_candidates = previous
+              @class_candidates = [name]
+            else
+              @class_candidates = previous
+              @instance_candidates = [name]
+            end
+            @single_separator = nil
+          end
+        elsif separator == '#'
+          @instance_candidates.not_nil! << name
+        else
+          @class_candidates.not_nil! << name
+        end
+        @all_candidates << name
+      end
+
+      def candidates(separator : Char) : Array(String)
+        if single_separator = @single_separator
+          return @all_candidates if single_separator == separator
+          return [] of String
+        end
+        if separator == '#'
+          @instance_candidates || [] of String
+        else
+          @class_candidates || [] of String
+        end
+      end
+    end
+
     private def method_index_candidates_for_separator(
-      candidates : Array(String),
+      bucket : MethodIndexBucket,
       separator : Char,
     ) : Array(String)
-      matching = [] of String
-      candidates.each do |candidate|
-        parts = parse_method_name_compact(candidate)
-        matching << candidate if parts.separator == separator
-      end
-      matching.size == candidates.size ? candidates : matching
+      bucket.candidates(separator)
     end
 
     private def method_index_call_candidates_for_separator(
-      candidates : Array(String),
+      bucket : MethodIndexBucket,
       separator : Char,
     ) : Array(String)
-      matching = method_index_candidates_for_separator(candidates, separator)
+      matching = method_index_candidates_for_separator(bucket, separator)
       # `extend self` paths can retain only an instance-form registration for
       # a class-form request. Preserve that historical call-resolution fallback
       # without exposing it to strict presence, splat, or parent-index queries.
-      matching.empty? && separator == '.' ? candidates : matching
+      if matching.empty? && separator == '.'
+        bucket.all_candidates
+      else
+        matching
+      end
     end
 
     private def strip_generic_receiver_from_method_path(method_name : String) : String
@@ -2188,7 +2233,7 @@ module Adamas::HIR
     # Instead of building strings in hot loops for parent class method lookup,
     # we maintain a reverse index and cache lookup results.
     #
-    # @method_index: Maps {base_class, method_name} → [full_function_names]
+    # @method_index: Maps {base_class, method_name} to an order-preserving bucket.
     #   - base_class is stripped of generics: "Array(Int32)" → "Array"
     #   - method_name is the method part without type suffix
     #   - Populated at def registration time
@@ -2201,15 +2246,12 @@ module Adamas::HIR
     #
     alias ParentLookupResult = {Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike, String}
 
-    # Nested hash: base_owner → (method_name → [full_function_names])
-    # Avoids Tuple(String,String) key hashing; two single-String lookups instead.
-    @method_index : Hash(String, Hash(String, Array(String))) = {} of String => Hash(String, Array(String))
+    # Nested hash: base_owner → (method_name → candidate bucket)
+    # Buckets preserve legacy insertion order while partitioning `#` and `.`.
+    @method_index : Hash(String, Hash(String, MethodIndexBucket)) = {} of String => Hash(String, MethodIndexBucket)
     @method_index_built : Bool = false
     @method_index_size_at_build : Int32 = 0
     @method_index_processed_count : Int32 = 0
-    @method_index_last_owner : String? = nil
-    @method_index_last_method : String? = nil
-    @method_index_last_candidates : Array(String)? = nil
     @parent_lookup_cache : Hash(String, ParentLookupResult?) = {} of String => ParentLookupResult?
     # Second-tier cache: maps base name ("Owner#method") → parent class that defines it.
     # All overloads of the same method share this, avoiding repeated parent chain walks.
@@ -5787,15 +5829,15 @@ module Adamas::HIR
         method_name = parts.method.not_nil!
         owner_methods = @method_index[base_owner]?
         unless owner_methods
-          owner_methods = Hash(String, Array(String)).new
+          owner_methods = Hash(String, MethodIndexBucket).new
           @method_index[base_owner] = owner_methods
         end
-        list = owner_methods[method_name]?
-        if list
-          list << full_name
-        else
-          owner_methods[method_name] = [full_name]
+        bucket = owner_methods[method_name]? || begin
+          created = MethodIndexBucket.new
+          owner_methods[method_name] = created
+          created
         end
+        bucket.append(full_name, parts.separator.not_nil!)
       end
     end
 
@@ -5857,8 +5899,10 @@ module Adamas::HIR
       base_parent = method_index_owner_key(parent)
       owner_methods = @method_index[base_parent]?
       return nil unless owner_methods
-      candidates = owner_methods[method]?
-      return nil unless candidates
+      bucket = owner_methods[method]?
+      return nil unless bucket
+      candidates = bucket.candidates('#')
+      return nil if candidates.empty?
 
       # Try exact suffix match first
       candidates.each do |candidate_name|
@@ -7044,13 +7088,10 @@ module Adamas::HIR
       @function_defs_processed_for_overloads = 0
       @function_types_processed_for_keys = 0
       # Method index
-      @method_index = {} of String => Hash(String, Array(String))
+      @method_index = {} of String => Hash(String, MethodIndexBucket)
       @method_index_built = false
       @method_index_size_at_build = 0
       @method_index_processed_count = 0
-      @method_index_last_owner = nil.as(String?)
-      @method_index_last_method = nil.as(String?)
-      @method_index_last_candidates = nil.as(Array(String)?)
       # Parent lookup
       @parent_lookup_cache = {} of String => ParentLookupResult?
       @parent_class_for_method = {} of String => String?
@@ -44237,31 +44278,11 @@ module Adamas::HIR
           ensure_method_index_built
           base_owner = method_index_owner_key(parts.owner)
           method_name = parts.method.not_nil!
-          if @method_index_last_owner == base_owner && @method_index_last_method == method_name
-            if cached_candidates = @method_index_last_candidates
-              matching_candidates = method_index_candidates_for_separator(
-                cached_candidates,
-                parts.separator.not_nil!,
-              )
-              if matching_candidates.same?(cached_candidates)
-                @function_def_overloads_cache[base_name] = matching_candidates
-              end
-              return matching_candidates
-            end
-          end
           if owner_methods = @method_index[base_owner]?
-            if candidates = owner_methods[method_name]?
-              @method_index_last_owner = base_owner
-              @method_index_last_method = method_name
-              @method_index_last_candidates = candidates
-              matching_candidates = method_index_candidates_for_separator(
-                candidates,
-                parts.separator.not_nil!,
-              )
-              if matching_candidates.same?(candidates)
-                @function_def_overloads_cache[base_name] = matching_candidates
-              end
-              return matching_candidates
+            if bucket = owner_methods[method_name]?
+              candidates = method_index_candidates_for_separator(bucket, parts.separator.not_nil!)
+              @function_def_overloads_cache[base_name] = candidates unless candidates.empty?
+              return candidates
             end
           end
         end
@@ -44326,12 +44347,9 @@ module Adamas::HIR
           ensure_method_index_built
           base_owner = method_index_owner_key(parts.owner)
           if owner_methods = @method_index[base_owner]?
-            if candidates = owner_methods[parts.method.not_nil!]?
-              matching_candidates = method_index_candidates_for_separator(
-                candidates,
-                parts.separator.not_nil!,
-              )
-              value = matching_candidates.any? { |name| name.includes?("_splat") }
+            if bucket = owner_methods[parts.method.not_nil!]?
+              candidates = method_index_candidates_for_separator(bucket, parts.separator.not_nil!)
+              value = candidates.any? { |name| name.includes?("_splat") }
               @function_def_has_splat[base_name] = value
               return value
             end
@@ -44362,12 +44380,9 @@ module Adamas::HIR
           ensure_method_index_built
           base_owner = method_index_owner_key(parts.owner)
           if owner_methods = @method_index[base_owner]?
-            if candidates = owner_methods[parts.method.not_nil!]?
-              matching_candidates = method_index_candidates_for_separator(
-                candidates,
-                parts.separator.not_nil!,
-              )
-              value = matching_candidates.any? { |name| name.includes?("_double_splat") }
+            if bucket = owner_methods[parts.method.not_nil!]?
+              candidates = method_index_candidates_for_separator(bucket, parts.separator.not_nil!)
+              value = candidates.any? { |name| name.includes?("_double_splat") }
               @function_def_has_double_splat[base_name] = value
               return value
             end
@@ -93311,9 +93326,9 @@ module Adamas::HIR
               ensure_method_index_built
               base_owner = method_index_owner_key(module_full)
               if owner_methods = @method_index[base_owner]?
-                if candidates = owner_methods[method_name]?
+                if bucket = owner_methods[method_name]?
                   owner_prefix = "#{module_full}."
-                  candidates.each do |cand|
+                  bucket.candidates('.').each do |cand|
                     if cand.starts_with?(owner_prefix)
                       module_method_full = "#{module_full}.#{method_name}"
                       base_method_name = module_method_full
@@ -100250,16 +100265,19 @@ module Adamas::HIR
             STDERR.puts "[SLICE_LOOKUP_FN] func=#{func_name} base_owner=#{base_owner} method=#{parts.method}"
           end
           if owner_methods = @method_index[base_owner]?
-            if candidates = owner_methods[parts.method.not_nil!]?
-              if dbg_slice_lookup
-                STDERR.puts "[SLICE_LOOKUP_FN]   method_index[#{base_owner}][#{parts.method}] = #{candidates.join(", ")}"
-              end
+            method_name = parts.method.not_nil!
+            if bucket = owner_methods[method_name]?
               overload_keys = method_index_call_candidates_for_separator(
-                candidates,
+                bucket,
                 parts.separator.not_nil!,
               )
+            end
+            if !overload_keys.empty?
+              if dbg_slice_lookup
+                STDERR.puts "[SLICE_LOOKUP_FN]   method_index[#{base_owner}][#{parts.separator}#{method_name}] = #{overload_keys.join(", ")}"
+              end
             elsif dbg_slice_lookup
-              STDERR.puts "[SLICE_LOOKUP_FN]   method_index[#{base_owner}] has no '#{parts.method}' key"
+              STDERR.puts "[SLICE_LOOKUP_FN]   method_index[#{base_owner}] has no '#{parts.separator}#{method_name}' key"
             end
           elsif dbg_slice_lookup
             STDERR.puts "[SLICE_LOOKUP_FN]   no method_index entry for owner '#{base_owner}'"
@@ -100294,8 +100312,9 @@ module Adamas::HIR
                 base_parent = method_index_owner_key(parent)
                 owner_methods = @method_index[base_parent]?
                 next unless owner_methods
-                if candidates = owner_methods[parent_method]?
-                  next if method_index_candidates_for_separator(candidates, '#').empty?
+                bucket = owner_methods[parent_method]?
+                next unless bucket
+                unless method_index_candidates_for_separator(bucket, '#').empty?
                   found_parent = parent
                   break
                 end
@@ -100306,8 +100325,8 @@ module Adamas::HIR
             if found_parent
               parent_owner = method_index_owner_key(found_parent)
               if owner_methods = @method_index[parent_owner]?
-                if candidates = owner_methods[parent_method]?
-                  overload_keys = method_index_candidates_for_separator(candidates, '#')
+                if bucket = owner_methods[parent_method]?
+                  overload_keys = method_index_candidates_for_separator(bucket, '#')
                 end
               end
 
@@ -100934,8 +100953,8 @@ module Adamas::HIR
       ensure_method_index_built
       candidates = [] of String
       @method_index.each_value do |owner_methods|
-        if names = owner_methods[method_short]?
-          names.each do |name|
+        if bucket = owner_methods[method_short]?
+          bucket.all_candidates.each do |name|
             next if name.includes?("$$block")
             candidates << name
           end
