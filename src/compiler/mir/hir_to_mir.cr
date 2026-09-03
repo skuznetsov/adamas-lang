@@ -7902,7 +7902,6 @@ module Adamas
 
         expected_return = nil.as(TypeRef?)
         expected_args = nil.as(::Array(TypeRef)?)
-        admitted_type_ids = ::Set(Int32).new
 
         candidates.each do |candidate|
           func = candidate.func || return false
@@ -7923,13 +7922,6 @@ module Adamas
             expected_return = func.return_type
             expected_args = explicit_args
           end
-          admitted_type_ids.add(candidate.type_id)
-        end
-
-        instances.each do |instance_name|
-          mir_type = @mir_module.type_registry.get_by_name(instance_name) || return false
-          return false unless Adamas::MIR.runtime_header_backed_type?(mir_type)
-          return false unless admitted_type_ids.includes?(mir_type.id.to_i32)
         end
 
         true
@@ -8095,10 +8087,12 @@ module Adamas
           end
         elsif recv_desc.kind == HIR::TypeKind::Class
           base = recv_desc.name
+          bare_generic_class_dispatch = @hir_module.generic_instances.has_key?(base)
           # Bare generic templates have no concrete runtime layout. Their
-          # registered instances are traversed through subclasses_for; ordinary
-          # class dispatch retains the source-level root candidate.
-          all_classes = if @hir_module.generic_instances.has_key?(base)
+          # registered instances are traversed through subclasses_for. The
+          # registry is a structural superset, so only HIR-admitted virtual
+          # targets participate after lazy replay/RTA.
+          all_classes = if bare_generic_class_dispatch
                           subclasses_for(base)
                         else
                           [base] + subclasses_for(base)
@@ -8118,6 +8112,10 @@ module Adamas
             end
             func = func || resolve_virtual_method_for_class(class_name, method_suffix, arg_count)
             if func
+              if bare_generic_class_dispatch &&
+                 !@hir_module.virtual_dispatch_target_functions.includes?(func.name)
+                next
+              end
               next unless mir_type = @mir_module.type_registry.get_by_name(class_name)
               # Class-root vdispatch reads an object-header type id.  Admit
               # only MIR types whose runtime representation carries that
@@ -8134,7 +8132,8 @@ module Adamas
               # No function found for this class — record for fallback pass.
               # Only runtime-header-backed types can re-enter through an
               # inherited/sibling fallback candidate.
-              if mir_type = @mir_module.type_registry.get_by_name(class_name)
+              if !bare_generic_class_dispatch &&
+                 (mir_type = @mir_module.type_registry.get_by_name(class_name))
                 missing_classes << {class_name, mir_type} if Adamas::MIR.runtime_header_backed_type?(mir_type)
               end
             end
@@ -8188,7 +8187,7 @@ module Adamas
               end
             end
           end
-          if @hir_module.generic_instances.has_key?(base) &&
+          if bare_generic_class_dispatch &&
              !bare_generic_dispatch_contract_valid?(base, candidates, arg_count)
             return [] of VDispatchCandidate
           end

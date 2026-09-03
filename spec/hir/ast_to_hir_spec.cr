@@ -13392,6 +13392,8 @@ describe Adamas::HIR::AstToHir do
       string_getter.should_not be_nil
       converter.module.has_function_with_body?("LayoutBox(Int32)#size").should be_true
       converter.module.has_function_with_body?("LayoutBox(String)#size").should be_true
+      converter.module.virtual_dispatch_target_functions.should contain("LayoutBox(Int32)#size")
+      converter.module.virtual_dispatch_target_functions.should contain("LayoutBox(String)#size")
 
       int_field = int_getter.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
         instruction.as?(Adamas::HIR::FieldGet)

@@ -1,8 +1,34 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-09-03 (loop pre-inference now models the value returned by `||`
-instead of retaining an impossible Nil arm. The `Set(String)#add` ambiguity is
-gone; B4-F remains RED at the later bare generic `Hash#size` dispatch guard.)
+Updated: 2026-09-03 (bare generic MIR dispatch now consumes HIR-admitted live
+targets instead of requiring every structurally registered specialization.
+The `Hash#size` guard is gone; B4-F remains RED at the later
+`Hash(String, Nil)#find_entry$Adamas::MIR::TypeRef` dispatch guard.)
+
+2026-09-03 BARE GENERIC MIR DISPATCH NOW FOLLOWS HIR LIVENESS ADMISSION.
+`generic_instances` is a structural registry and retains specializations that
+lazy HIR replay/RTA did not admit. MIR treated that superset as a complete
+dispatch family, so one dead or unmaterialized specialization poisoned an
+otherwise valid bare generic call such as `Hash#size`. Bare generic candidate
+collection now keeps only functions already named by HIR's existing
+`virtual_dispatch_target_functions` authority. The ABI guard still requires a
+nonempty family, bodies, matching arity, and unanimous explicit argument and
+return types. No new registry, cache, name rewrite, or common-layout getter was
+added.
+
+The focused MIR regression was RED when an inactive `LayoutBox(Bool)#size`
+with an incompatible return ABI was structurally registered beside two
+HIR-admitted targets; it is GREEN with exactly the two admitted runtime type
+ids. A zero-admitted-target adversary remains fail-closed, the mixed active ABI
+family remains rejected, and the full MIR file passes 41 examples. A
+source-backed layout-distinct fixture confirms that HIR marks both concrete
+getter bodies while preserving their different field offsets. A fresh
+two-stage run clears `Hash#size` and reaches the later independent
+`Hash(String, Nil)#find_entry$Adamas::MIR::TypeRef` guard after 292.03 seconds.
+Adversary verdict: ROBUST for live-target admission and ABI rejection;
+VULNERABLE as a B4-F or general concrete-generic dispatch claim. Next: classify
+why the concrete `Hash(String, Nil)` owner is itself entering the bare-family
+path before changing admission again.
 
 2026-09-03 OR-FALLBACK LOOP INFERENCE NO LONGER RETAINS AN IMPOSSIBLE NIL ARM.
 Value lowering already unwraps the truthy arm of `left || right`, but the two
