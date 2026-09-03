@@ -921,7 +921,14 @@ module Adamas::Tools
         materialized_targets.to_a.sort_by do |source, targets|
           {-targets.size, -materialization_counts[source], source}
         end.first(top).each do |source, targets|
-          puts "    unique=#{targets.size.to_s.rjust(8)} starts=#{materialization_counts[source].to_s.rjust(8)}  #{source}"
+          families = Hash(String, Int32).new(0)
+          targets.each_key { |target| families[generic_family(target)] += 1 }
+          top_families = families.to_a
+            .sort_by { |family, count| {-count, family} }
+            .first(3)
+            .map { |family, count| "#{family}=#{count}" }
+            .join(",")
+          puts "    unique=#{targets.size.to_s.rjust(8)} starts=#{materialization_counts[source].to_s.rjust(8)} families=#{top_families}  #{source}"
           targets.to_a
             .sort_by { |target, count| {-count, target} }
             .first(3)
