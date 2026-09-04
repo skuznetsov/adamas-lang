@@ -16430,7 +16430,7 @@ zero in 187 seconds and emits 35,342 functions.
 
 In equal 120-second samples, aggregate inclusive `reachable_blocks` samples fell
 from 1,096 to 212. Normalized to sampled `lower_missing_call_targets` progress,
-its share fell from 10.36% to 2.37%, while `Hash(UInt32, Block)` disappeared from
+its share fell from 11.91% to 2.37%, while `Hash(UInt32, Block)` disappeared from
 the new profile. The adjacent 194- and 187-second wall samples are supporting
 evidence only, not a stable end-to-end speedup certificate.
 
