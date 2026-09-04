@@ -16411,6 +16411,35 @@ observability; VULNERABLE as a claim about repeatable end-to-end speedup. The
 remaining profile is diffuse productive lowering. Next: rank leaf costs by
 their exact caller contexts before changing another hot path.
 
+#### Session 167: use dense block IDs for CFG reachability
+
+A 120-second runtime sample ranked `reachable_blocks` as the largest actionable
+AstToHir-owned leaf context. The helper rebuilt a `Hash(BlockId, Block)` and a
+`Set(BlockId)` on every traversal even though HIR functions already assign block
+IDs by append order and `Function#get_block` indexes `@blocks` directly by ID.
+The traversal now uses the existing dense-ID contract with one bounds-checked
+`Array(Bool)` visited bitmap and direct block-array lookup. Its result, ordering,
+and invalid-successor handling remain unchanged; no cache or lowering state was
+added.
+
+The focused short-circuit and impossible-branch examples pass, and the full
+AstToHir suite passes 560 examples with zero failures or errors and two existing
+pending examples. A no-prelude dead/live short-circuit probe produces
+byte-identical HIR before and after the change. A bounded full-HIR self-host exits
+zero in 187 seconds and emits 35,342 functions.
+
+In equal 120-second samples, aggregate inclusive `reachable_blocks` samples fell
+from 1,096 to 212. Normalized to sampled `lower_missing_call_targets` progress,
+its share fell from 10.36% to 2.37%, while `Hash(UInt32, Block)` disappeared from
+the new profile. The adjacent 194- and 187-second wall samples are supporting
+evidence only, not a stable end-to-end speedup certificate.
+
+Adversary verdict: ROBUST for the local allocation/hash removal and semantic
+equivalence; VULNERABLE for repeatable whole-bootstrap attribution. The dense-ID
+assumption is already the authority used by `Function#get_block`, and repository
+search found no block-array reordering or deletion. Next: rerank the remaining
+profile rather than generalize this representation change to unrelated sets.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

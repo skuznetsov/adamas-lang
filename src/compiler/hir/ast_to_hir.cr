@@ -24559,25 +24559,27 @@ module Adamas::HIR
       blocks = func.blocks
       return [] of Block if blocks.empty?
 
-      by_id = Hash(BlockId, Block).new(initial_capacity: blocks.size)
-      blocks.each { |block| by_id[block.id] = block }
-
+      block_count = blocks.size.to_u32
       entry_id = blocks.first.id
-      visited = Set(BlockId).new(initial_capacity: blocks.size)
-      queue = [entry_id] of BlockId
-      result = [] of Block
+      visited = Array(Bool).new(blocks.size, false)
+      queue = Array(BlockId).new(blocks.size)
+      queue << entry_id
+      result = Array(Block).new(blocks.size)
 
       until queue.empty?
         block_id = queue.pop
-        next if visited.includes?(block_id)
-        visited.add(block_id)
+        next if block_id >= block_count
 
-        block = by_id[block_id]?
-        next unless block
+        block_index = block_id.to_i
+        next if visited.unsafe_fetch(block_index)
+        visited[block_index] = true
+
+        block = blocks.unsafe_fetch(block_index)
         result << block
 
         block.terminator.successors.each do |succ|
-          queue << succ unless visited.includes?(succ)
+          next if succ >= block_count
+          queue << succ unless visited.unsafe_fetch(succ.to_i)
         end
       end
 
