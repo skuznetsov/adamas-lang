@@ -1,6 +1,8 @@
 #!/bin/bash
 # Run combined regression tests (fewer compilations, more coverage per file)
 # Usage: ./regression_tests/run_combined.sh [path-to-compiler] [parallelism]
+# REGRESSION_COMPILE_TIMEOUT=120 and REGRESSION_COMPILE_MAX_MEM=4096 bound each compile.
+# REGRESSION_KEEP_LOGS=1 retains per-test exit codes and full supervisor output.
 #
 # Each .cr file may have "# EXPECT: <substring>" (first matching line wins).
 # Opt-in strict mode: if a sibling file "<name>.out" exists (same directory), program
@@ -16,7 +18,24 @@ COMPILER="${1:-bin/adamas}"
 JOBS="${2:-8}"   # default = performance-core count; memory per compile ~0.4GB so RAM is not the limit
 TIMEOUT=15
 MAX_MEM=512
-BIN_DIR="regression_tests/combined/bin"
+COMPILE_TIMEOUT="${REGRESSION_COMPILE_TIMEOUT:-120}"
+COMPILE_MAX_MEM="${REGRESSION_COMPILE_MAX_MEM:-4096}"
+KEEP_LOGS="${REGRESSION_KEEP_LOGS:-0}"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SAFE_RUN="$ROOT_DIR/scripts/run_safe.sh"
+
+for budget in "$JOBS" "$COMPILE_TIMEOUT" "$COMPILE_MAX_MEM"; do
+  if ! [[ "$budget" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: parallelism and compile budgets must be positive integers" >&2
+    exit 2
+  fi
+done
+case "$KEEP_LOGS" in
+  0|1) ;;
+  *) echo "ERROR: REGRESSION_KEEP_LOGS must be 0 or 1" >&2; exit 2 ;;
+esac
+# The golden reader requires the supervisor's captured-output framing.
+unset RUN_SAFE_PASSTHROUGH_STDIO RUN_SAFE_RESOURCE_FILE
 
 if [ ! -x "$COMPILER" ]; then
   echo "ERROR: Compiler not found at $COMPILER"
@@ -24,7 +43,8 @@ if [ ! -x "$COMPILER" ]; then
   exit 1
 fi
 
-mkdir -p "$BIN_DIR"
+# Only this invocation can produce a candidate executable in this directory.
+BIN_DIR=$(mktemp -d "${TMPDIR:-/tmp}/adamas_regression_combined.XXXXXX") || exit 2
 
 run_one_test() {
   local src="$1"
@@ -32,48 +52,45 @@ run_one_test() {
   local bin_path="${BIN_DIR}/${name}"
   local result_path="${BIN_DIR}/${name}.result"
 
-  # Compile (--no-prelude for dedicated contract oracles)
-  local compile_output
+  # Bound compilation separately from execution and preserve its own status.
+  local compile_log="${BIN_DIR}/${name}.compile.log"
+  local compile_rc
+  local compile_args=("$src" -o "$bin_path")
   if [[ "$name" == test_no_prelude_* ]]; then
-    compile_output=$("$COMPILER" --no-prelude "$src" 2>&1)
-  else
-    compile_output=$("$COMPILER" "$src" 2>&1)
+    compile_args=(--no-prelude "${compile_args[@]}")
   fi
-  local compile_rc=$?
-
-  if [ $compile_rc -ne 0 ]; then
-    printf 'COMPILE_FAIL\n%s\n' "$(echo "$compile_output" | tail -10)" > "$result_path"
-    rm -f "regression_tests/combined/${name}"
+  "$SAFE_RUN" "$COMPILER" "$COMPILE_TIMEOUT" "$COMPILE_MAX_MEM" "${compile_args[@]}" > "$compile_log" 2>&1
+  compile_rc=$?
+  printf '%s\n' "$compile_rc" > "${BIN_DIR}/${name}.compile.exit"
+  if [ "$compile_rc" -ne 0 ]; then
+    printf 'COMPILE_FAIL\n%s\n' "$(tail -10 "$compile_log")" > "$result_path"
+    rm -f "$bin_path"
     return
   fi
 
-  # Move binary if compiler placed it next to source
-  if [ -f "regression_tests/combined/${name}" ]; then
-    mv "regression_tests/combined/${name}" "$bin_path"
-  fi
-
-  if [ ! -f "$bin_path" ]; then
+  if [ ! -f "$bin_path" ] || [ ! -x "$bin_path" ]; then
     echo "NO_BINARY" > "$result_path"
+    rm -f "$bin_path"
     return
   fi
 
   # Run with timeout
-  local output exit_code
-  output=$(scripts/run_safe.sh "$bin_path" $TIMEOUT $MAX_MEM 2>/dev/null)
+  local runtime_log="${BIN_DIR}/${name}.runtime.log"
+  local exit_code
+  "$SAFE_RUN" "$bin_path" "$TIMEOUT" "$MAX_MEM" > "$runtime_log" 2>&1
   exit_code=$?
+  printf '%s\n' "$exit_code" > "${BIN_DIR}/${name}.runtime.exit"
   rm -f "$bin_path"
 
   # Check execution before either golden output or a marker can admit PASS.
   if [ "$exit_code" -ne 0 ]; then
-    printf 'CRASH\n%s\n' "$(echo "$output" | tail -5)" > "$result_path"
+    printf 'CRASH\n%s\n' "$(tail -5 "$runtime_log")" > "$result_path"
     return
   fi
 
   local golden_path="${src%.cr}.out"
-  local actual_tmp
-  actual_tmp=$(mktemp "${TMPDIR:-/tmp}/run_combined_stdout.XXXXXX")
-
-  echo "$output" | awk '/^=== STDOUT ===$/{p=1;next}/^=== STDERR ===$/{p=0}p' > "$actual_tmp"
+  local actual_tmp="${BIN_DIR}/${name}.stdout"
+  awk '/^=== STDOUT ===$/{p=1;next}/^=== STDERR ===$/{p=0}p' "$runtime_log" > "$actual_tmp"
 
   if [ -f "$golden_path" ]; then
     if cmp -s "$actual_tmp" "$golden_path"; then
@@ -84,18 +101,16 @@ run_one_test() {
         diff -u "$golden_path" "$actual_tmp" || true
       } > "$result_path"
     fi
-    rm -f "$actual_tmp"
     return
   fi
-  rm -f "$actual_tmp"
 
   local expect=$(grep -m1 '^# EXPECT:' "$src" | sed 's/^# EXPECT: *//' || true)
 
   if [ -n "$expect" ]; then
-    if echo "$output" | grep -qF "$expect"; then
+    if grep -qF "$expect" "$runtime_log"; then
       echo "PASS" > "$result_path"
     else
-      printf 'OUTPUT_MISMATCH\nexpected: %s\ngot:\n%s\n' "$expect" "$(echo "$output" | tail -10)" > "$result_path"
+      printf 'OUTPUT_MISMATCH\nexpected: %s\ngot:\n%s\n' "$expect" "$(tail -10 "$runtime_log")" > "$result_path"
     fi
   else
     echo "PASS" > "$result_path"
@@ -103,7 +118,7 @@ run_one_test() {
 }
 
 export -f run_one_test
-export COMPILER TIMEOUT MAX_MEM BIN_DIR
+export COMPILER TIMEOUT MAX_MEM BIN_DIR SAFE_RUN COMPILE_TIMEOUT COMPILE_MAX_MEM
 
 echo "=== Combined Regression Tests ==="
 echo "Compiler: $COMPILER"
@@ -164,9 +179,14 @@ for src in "${SOURCES[@]}"; do
       FAIL=$((FAIL + 1))
       ;;
   esac
-  rm -f "$result_path"
 done
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed out of $((PASS + FAIL)) combined tests"
+# xargs has joined all workers; cleanup cannot race an active compiler.
+if [ "$KEEP_LOGS" = 1 ]; then
+  echo "Logs: $BIN_DIR"
+else
+  rm -rf "$BIN_DIR"
+fi
 [ $FAIL -eq 0 ] && exit 0 || exit 1

@@ -34,6 +34,23 @@ private class RegressionRunnerFixture
       case "$name" in
         compile_fail) echo "intentional compile failure" >&2; exit 3 ;;
         no_binary) exit 0 ;;
+        nonexec_compile)
+          printf '#!/bin/bash\ntouch partial_executed\n' > "$out"
+          exit 0
+          ;;
+        compile_timeout)
+          echo $$ > compiler.pid
+          sleep 60 &
+          echo $! > compiler_child.pid
+          wait
+          exit 0
+          ;;
+        partial_compile)
+          printf '#!/bin/bash\ntouch partial_executed\nexit 0\n' > "$out"
+          chmod +x "$out"
+          echo "intentional failure after output" >&2
+          exit 3
+          ;;
       esac
       rc=0
       case "$name" in *_exit7) rc=7 ;; esac
@@ -58,20 +75,107 @@ private class RegressionRunnerFixture
     end
   end
 
-  def run(name : String)
+  def run(name : String, extra_env = {} of String => String?, timeout : String = "60")
     stdout = IO::Memory.new
     stderr = IO::Memory.new
     status = Process.run(
       File.join(@root, "scripts/run_safe.sh"),
-      ["/bin/bash", "60", "512", "regression_tests/#{name}", "./compiler", "1"],
+      ["/bin/bash", timeout, "512", "regression_tests/#{name}", "./compiler", "1"],
       chdir: @work, output: stdout, error: stderr,
-      env: {"RUN_SAFE_PASSTHROUGH_STDIO" => nil, "RUN_SAFE_RESOURCE_FILE" => nil}
+      env: {"RUN_SAFE_PASSTHROUGH_STDIO" => nil, "RUN_SAFE_RESOURCE_FILE" => nil}.merge(extra_env)
     )
     {status.exit_code, "#{stdout}#{stderr}"}
   end
 
   def cleanup
     FileUtils.rm_rf(@work)
+  end
+end
+
+describe "regression compilation supervision" do
+  {"run_all.sh" => false, "run_combined.sh" => true}.each do |runner, combined|
+    it "keeps stale files outside fresh compilation outputs in #{runner}" do
+      fixture = RegressionRunnerFixture.new
+      begin
+        fixture.add("no_binary", combined)
+        dir = File.join(fixture.work, combined ? "regression_tests/combined" : "regression_tests")
+        FileUtils.mkdir_p(File.join(dir, "bin"))
+        stale = [File.join(dir, "no_binary"), File.join(dir, "bin/no_binary")]
+        stale.each do |path|
+          File.write(path, "#!/bin/bash\ntouch stale_executed\nexit 0\n")
+          File.chmod(path, 0o755)
+        end
+        rc, output = fixture.run(runner)
+        rc.should eq(1), output
+        output.should contain("FAIL (no binary): no_binary")
+        File.exists?(File.join(fixture.work, "stale_executed")).should be_false
+        stale.each { |path| File.exists?(path).should be_true }
+      ensure
+        fixture.cleanup
+      end
+    end
+
+    it "rejects partial compilation output in #{runner}" do
+      fixture = RegressionRunnerFixture.new
+      begin
+        fixture.add("partial_compile", combined)
+        fixture.add("nonexec_compile", combined)
+        rc, output = fixture.run(runner)
+        rc.should eq(1), output
+        output.should contain("FAIL (compile): partial_compile")
+        output.should contain("FAIL (no binary): nonexec_compile")
+        output.should contain("intentional failure after output")
+        File.exists?(File.join(fixture.work, "partial_executed")).should be_false
+      ensure
+        fixture.cleanup
+      end
+    end
+
+    it "cleans owned logs by default and can retain raw failure evidence in #{runner}" do
+      fixture = RegressionRunnerFixture.new
+      begin
+        fixture.add("marker_exit7", combined)
+        logs_root = File.join(fixture.work, "logs")
+        FileUtils.mkdir_p(logs_root)
+        rc, output = fixture.run(runner, {"TMPDIR" => logs_root})
+        rc.should eq(1), output
+        Dir.children(logs_root).should be_empty
+
+        rc, output = fixture.run(runner, {"TMPDIR" => logs_root, "REGRESSION_KEEP_LOGS" => "1"})
+        rc.should eq(1), output
+        dirs = Dir.children(logs_root)
+        dirs.size.should eq(1)
+        logs = File.join(logs_root, dirs.first)
+        output.should contain("Logs: #{logs}")
+        File.read(File.join(logs, "marker_exit7.compile.exit")).strip.should eq("0")
+        File.read(File.join(logs, "marker_exit7.runtime.exit")).strip.should eq("7")
+        File.read(File.join(logs, "marker_exit7.runtime.log")).should contain("MARKER")
+        File.read(File.join(logs, "marker_exit7.result")).should start_with("CRASH\n")
+        File.exists?(File.join(logs, "marker_exit7")).should be_false
+      ensure
+        fixture.cleanup
+      end
+    end
+
+    it "stops hung compilation and its child in #{runner}" do
+      fixture = RegressionRunnerFixture.new
+      begin
+        fixture.add("compile_timeout", combined)
+        rc, output = fixture.run(runner, {"REGRESSION_COMPILE_TIMEOUT" => "1"}, "10")
+        rc.should eq(1), output
+        output.should contain("FAIL (compile): compile_timeout")
+        %w[compiler.pid compiler_child.pid].each do |name|
+          pid = File.read(File.join(fixture.work, name)).strip.to_i
+          deadline = Time.instant + 2.seconds
+          while Process.exists?(pid) && Time.instant < deadline
+            sleep 20.milliseconds
+          end
+          Process.exists?(pid).should be_false
+        end
+      ensure
+        fixture.cleanup
+      end
+    end
   end
 end
 

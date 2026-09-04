@@ -1,8 +1,26 @@
 # Adamas Bootstrap TODO
 
 Current action order: [integrated execution plan](docs/compiler_refactor_architecture_plan.md#0-current-execution-plan).
-Both regression runners now reject failed runtime processes before comparing
-output. Re-establish real-program pass counts after supervision/freshness repair.
+Both regression runners now reject failed processes and compile into fresh,
+supervised outputs. Next: re-establish real-program pass counts with one job.
+
+2026-09-04 REGRESSION COMPILATION IS SUPERVISED AND CANNOT REUSE STALE OUTPUT.
+Both runners pass explicit `-o` into a private per-run temporary directory;
+source-adjacent and legacy-bin executables are never consumed or removed.
+Each compiler invocation uses `scripts/run_safe.sh` with 120-second / 4096-MB
+defaults, separately configurable from unchanged runtime budgets. Exit status
+is captured before testing executable presence. File-based logs preserve full
+supervisor diagnostics; `REGRESSION_KEEP_LOGS=1` retains per-test compile/runtime
+exit codes and output, while default cleanup runs after all workers have joined.
+
+The supervision tests were RED in four cases: both runners accepted stale
+binaries after an empty successful compile, and both let a hung compiler reach
+the outer test watchdog. Partial-output failures supplied passing controls.
+The expanded safe runner-contract suite passes 14 examples, including a hung
+compiler's child termination, non-executable output, log retention, and cleanup:
+`scripts/run_all_specs.sh 1 180 4096 spec/regression_runner_contract_spec.cr`.
+Adversary scope: ROBUST for these runner contracts; actual compiler/runtime
+correctness and historical 27/37 counts still require the fresh baseline.
 
 2026-09-04 REGRESSION RUNTIME VERDICTS PRESERVE FAILURE.
 Separate output assignment from `local` declaration and check the captured

@@ -1,6 +1,6 @@
 # Crystal V2 Compiler Refactor Architecture Plan
 
-> Status: execution in progress; runtime verdict repair verified 2026-09-04.
+> Status: execution in progress; runner verdict and supervision repairs verified 2026-09-04.
 > Section 0 integrates the current reliability and architecture work. Its
 > implementation steps are not completed by this document. Sections 1-9 retain
 > the original staged refactor design (2026-04) as a deferred reference;
@@ -50,7 +50,16 @@ Step 1 is now implemented: the [runner contract spec](../spec/regression_runner_
 covers 21 individual cases and all four aggregate success/failure combinations.
 The safe spec runner passes 6 examples; the original 17-case manual witness
 changed from five false PASS results to zero and was retired into these specs.
-The real-program baseline still awaits step 2.
+Step 2 now gives every run a fresh output directory, passes explicit `-o`,
+requires a newly produced executable, and supervises each compile with defaults
+of 120 seconds / 4096 MB. `REGRESSION_COMPILE_TIMEOUT` and
+`REGRESSION_COMPILE_MAX_MEM` override those budgets. The 14-example runner
+contract suite covers stale source-adjacent and legacy-bin sentinels, failed
+partial output, non-executable output, compiler timeout plus child cleanup,
+and default cleanup / optional raw-log retention. Existing runtime budgets
+remain 10/15 seconds and 512 MB. Use one explicit job and
+`REGRESSION_KEEP_LOGS=1` for the still-pending real-program baseline; retained
+logs contain per-test compile/runtime exit codes and supervisor output.
 
 ### 0.2 Causal model and alternatives
 
@@ -224,7 +233,7 @@ Fold its case into the affected specs when implementing that repair.
 Use the existing safe spec runner; run only the checks affected by the slice:
 
 ```bash
-scripts/run_all_specs.sh 1 150 4096 spec/regression_runner_contract_spec.cr
+scripts/run_all_specs.sh 1 180 4096 spec/regression_runner_contract_spec.cr
 scripts/run_all_specs.sh 1 300 8192 spec/hir/ast_to_hir_spec.cr
 scripts/run_all_specs.sh 1 180 4096 spec/hir/missing_incremental_shadow_spec.cr spec/hir/missing_revision_ledger_spec.cr
 scripts/run_all_specs.sh 1 120 4096 spec/compiler/mir/ltp_wba_spec.cr spec/mir/abi_layout_spec.cr
