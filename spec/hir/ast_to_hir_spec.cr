@@ -181,6 +181,15 @@ end
 
 # Test-only access to private parsing helpers (keeps production API small).
 class Adamas::HIR::AstToHir
+  def __test_substitute_type_params_in_type_name(
+    name : String,
+    type_params : Hash(String, String),
+  ) : String
+    with_isolated_type_param_map(type_params) do
+      substitute_type_params_in_type_name(name)
+    end
+  end
+
   def __test_begin_call_resolution_profile : Nil
     @call_resolution_profile_count = 0_i64
     @call_resolution_profile_active = true
@@ -15649,6 +15658,36 @@ describe Adamas::HIR::AstToHir do
 
         MethodGenericArray(String).new.collect_identity { |value| value }
       CRYSTAL
+    end
+
+    it "canonicalizes duplicate variants in nested method-generic return owners" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        class MergeShape(K, V)
+          def self.new
+            uninitialized self
+          end
+
+          def merge(other : MergeShape(L, W)) : MergeShape(K | L, V | W) forall L, W
+            MergeShape(K | L, V | W).new
+          end
+        end
+
+        MergeShape(String, String).new.merge(MergeShape(String, String).new)
+      CRYSTAL
+
+      converter.__test_process_pending_lower_functions
+      emitted_names = converter.module.functions.flat_map(&.blocks).flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call).try(&.method_name)
+      end
+      emitted_names.should contain("MergeShape(String, String).new")
+      emitted_names.any? { |name| name.includes?("MergeShape(String | String, String | String)") }.should be_false
+      converter.module.functions.any? do |function|
+        function.name.includes?("MergeShape(String | String, String | String)")
+      end.should be_false
+      converter.__test_substitute_type_params_in_type_name(
+        "K | L",
+        {"K" => "String", "L" => "Int32"},
+      ).should eq("Int32 | String")
     end
 
     it "rejects incompatible normalized included-module call shapes for concrete generic receivers" do

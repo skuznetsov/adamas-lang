@@ -15915,6 +15915,30 @@ but a single host-sensitive timing sample is not a stable speed certificate.
 Next: explain and reduce the remaining genuine Hash/Array demand fanout without
 suppressing reachable work or adding another cache.
 
+#### Session 150: canonicalize method-generic union substitutions
+
+The completed self-host HIR contained real functions under
+`Hash(String | String, String | String)` even though their values used the
+canonical `Hash(String, String)` TypeRef. A no-prelude source-backed
+`MergeShape(K, V)#merge` falsifier reproduced the split: substituting equal
+method-generic operands joined their names without applying the existing union
+canonicalization.
+
+Union expressions produced by `substitute_type_params_in_type_name` now pass
+through `normalize_union_type_name` after recursive substitution. This reuses
+the existing top-level contract and adds no registry, cache, target rule, or
+new identity. The regression rejects noncanonical nested owners and directly
+checks that distinct operands remain the sorted `Int32 | String` union. The
+full AstToHir suite passes 548 examples with zero failures, zero errors, and
+two existing pending examples.
+
+Adversary verdict: ROBUST for duplicate variants introduced by explicit union
+expressions during type-parameter substitution. No fresh full self-host was
+run, so the size and timing effect on the remaining Hash/Array fanout are not
+yet measured. This is not a general recursive canonicalizer for every nested
+type spelling. Next: use the remaining fanout map to select one measured
+producer before considering any broader normalization.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

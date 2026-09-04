@@ -59049,7 +59049,8 @@ module Adamas::HIR
         if ascii_byte_index(name, '|'.ord.to_u8)
           parts = split_union_type_name(name).map(&.strip)
           if parts.size > 1
-            return scope_cache[name] = parts.map { |part| substitute_type_params_in_type_name(part) }.join(" | ")
+            substituted = parts.map { |part| substitute_type_params_in_type_name(part) }
+            return scope_cache[name] = normalize_union_type_name(substituted.join(" | "))
           end
         end
 
