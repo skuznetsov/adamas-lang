@@ -17013,6 +17013,58 @@ describe Adamas::HIR::AstToHir do
       converter.try(&.__test_set_lazy_rta_active(false))
     end
 
+    it "does not repeat broad-root descendant lookup after recording a normal virtual call" do
+      source = <<-CRYSTAL
+        class Object
+          def probe(value : Int32) : Int32
+            value
+          end
+        end
+
+        class Parent < Object
+          def probe(value : Int32) : Int32
+            value + 1
+          end
+        end
+
+        class ChildA < Parent
+        end
+
+        class ChildB < Parent
+        end
+
+        def dispatch(value : Object) : Int32
+          value.probe(1)
+        end
+      CRYSTAL
+
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+      converter.arena = arena
+      class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+      def_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode) }
+      class_nodes.each { |node| converter.register_class(node) }
+      def_nodes.each { |node| converter.register_function(node) }
+
+      converter.__test_set_lazy_rta_active(true)
+      converter.__test_mark_live_type("ChildA")
+      converter.__test_mark_live_type("ChildB")
+      converter.__test_enable_virtual_target_replay_stats
+      dispatch_node = def_nodes.find { |node| String.new(node.name.not_nil!) == "dispatch" }
+      dispatch_node.should_not be_nil
+      converter.lower_def(dispatch_node.not_nil!)
+
+      converter.__test_virtual_target_primary_lookup_calls.should eq(2)
+      converter.module.has_function_with_body?("Object#probe$Int32").should be_true
+      converter.module.has_function_with_body?("Parent#probe$Int32").should be_true
+      converter.module.functions.any? do |func|
+        (func.name.starts_with?("ChildA#probe$") || func.name.starts_with?("ChildB#probe$")) &&
+          converter.module.has_function_with_body?(func.name)
+      end.should be_false
+    ensure
+      converter.try(&.__test_set_lazy_rta_active(false))
+    end
+
     it "preserves a concrete generic override below a shared broad-root ancestor" do
       source = <<-CRYSTAL
         class Object

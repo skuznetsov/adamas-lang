@@ -96456,24 +96456,31 @@ module Adamas::HIR
             unless @virtual_targets_lowered.includes?(key)
               @virtual_targets_lowered.add(key)
               record_virtual_target(type_desc.name, method_name, arg_types, has_block_call, has_splat, caller_token)
-              owners = [type_desc.name]
-              append_virtual_target_descendants(owners, type_desc.name)
-              ensure_method_index_built
-              owners.each do |owner|
-                # Fast pre-filter: skip owners that don't have this method registered
-                # (uses pre-built method_index for O(1) lookup, avoids string building + hash)
-                base_owner = method_index_owner_key(owner)
-                unless @method_index[base_owner]?.try(&.has_key?(method_name))
-                  next unless @class_info.has_key?(owner)
+              if @lazy_rta_active && broad_virtual_target_root?(type_desc.name)
+                # Recording already replays every live descendant through the
+                # append-only bucket. Consume the root through the same cursor
+                # instead of repeating descendant owner lookup here.
+                lower_virtual_targets_for_child(type_desc.name, type_desc.name)
+              else
+                owners = [type_desc.name]
+                append_virtual_target_descendants(owners, type_desc.name)
+                ensure_method_index_built
+                owners.each do |owner|
+                  # Fast pre-filter: skip owners that don't have this method registered
+                  # (uses pre-built method_index for O(1) lookup, avoids string building + hash)
+                  base_owner = method_index_owner_key(owner)
+                  unless @method_index[base_owner]?.try(&.has_key?(method_name))
+                    next unless @class_info.has_key?(owner)
+                  end
+                  lower_virtual_target_owner(
+                    owner,
+                    method_name,
+                    arg_types,
+                    has_block_call,
+                    has_splat,
+                    replay_parent: type_desc.name,
+                  )
                 end
-                lower_virtual_target_owner(
-                  owner,
-                  method_name,
-                  arg_types,
-                  has_block_call,
-                  has_splat,
-                  replay_parent: type_desc.name,
-                )
               end
             end
           elsif type_desc.kind == TypeKind::Union

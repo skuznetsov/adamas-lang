@@ -16166,6 +16166,32 @@ work, whose four direct dispatch loops bypass the helper. Next: isolate the
 dominant normal-call loop with a no-prelude falsifier before sharing the replay
 seam.
 
+#### Session 158: reuse recorded broad replay in normal calls
+
+The normal virtual-call path called `record_virtual_target`, which already
+replayed the new target for every live broad-root descendant, and then repeated
+direct owner lookup across the same descendants. In lazy RTA, `Object` and
+`Reference` calls now consume the root through the existing replay helper after
+registration. Narrow owners and eager lowering keep their previous direct loop.
+
+A no-prelude `Object -> Parent -> ChildA/ChildB` falsifier observed four primary
+lookups before the change and exactly two declaring-owner lookups afterwards,
+while preserving the `Object` and `Parent` bodies and avoiding child wrappers.
+Four focused adversary fixtures cover deferred liveness, shared declarations,
+generic overrides, and late lazy-RTA entry. The full AstToHir suite passes 558
+examples with zero failures, zero errors, and two pending examples. A fresh
+full-HIR self-host completed with exit zero and the same 40,657 functions.
+Primary lookups fell from 42,043 to 38,173, inherited-reuse checks from 21,574
+to 18,784, `lower_missing` from 199.6 to 191.75 seconds, and adjacent wall time
+from 218.4 to 209.16 seconds. The wall result is one local comparison, not a
+stable benchmark certificate.
+
+Adversary verdict: ROBUST for the lazy normal-call broad-root corridor. Exact
+inherited child wrappers still rely on the existing final repair, whose replay
+attempt evidence is preserved. The identifier, binary, and member-access direct
+loops remain unchanged. Next: measure those residual paths separately before
+generalizing the seam.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
