@@ -8401,6 +8401,12 @@ module Adamas
                         method_suffix
                       end
 
+        # A child can materialize only a different same-arity overload while
+        # inheriting the exact typed overload from an ancestor. Keep the lossy
+        # arity/family match as a last resort so it cannot shadow that exact
+        # inherited target (for example DebugSink#print(String) vs IO#print(Char)).
+        deferred_typed_fallback = nil.as(Adamas::MIR::Function?)
+
         current = class_name
         seen = ::Set(String).new
         while !current.empty? && !seen.includes?(current)
@@ -8477,7 +8483,13 @@ module Adamas
               io << arg_count
             end
             if arity_func = @mir_module.get_function(arity_alias)
-              return arity_func if arity_func.params.size == arg_count + 1
+              if arity_func.params.size == arg_count + 1
+                if has_explicit_suffix
+                  deferred_typed_fallback ||= arity_func
+                else
+                  return arity_func
+                end
+              end
             end
 
             # Use class index + pre-computed prefix (avoids O(N) full scan + GC from interpolation)
@@ -8491,7 +8503,13 @@ module Adamas
                 next unless candidate.params.size == arg_count + 1
                 candidates << candidate
               end
-              return candidates.first if candidates.size == 1
+              if candidates.size == 1
+                if has_explicit_suffix
+                  deferred_typed_fallback ||= candidates.first
+                else
+                  return candidates.first
+                end
+              end
             end
             if allow_module_method
               module_prefix = String.build(current.bytesize + 1 + base_method.bytesize) do |io|
@@ -8526,7 +8544,7 @@ module Adamas
           end
         end
 
-        nil
+        deferred_typed_fallback
       end
 
       # Find a candidate function for a virtual dispatch method by looking at

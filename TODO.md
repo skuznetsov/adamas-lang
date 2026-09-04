@@ -16440,6 +16440,36 @@ assumption is already the authority used by `Function#get_block`, and repository
 search found no block-array reordering or deletion. Next: rerank the remaining
 profile rather than generalize this representation change to unrelated sets.
 
+#### Session 168: preserve exact inherited typed overloads in virtual dispatch
+
+A fresh 300-second B4-F run built stage1 in 17.26 seconds and stage2 in 279.30
+seconds, but both stage2 smokes crashed. The first startup failure reduced to
+`Stage2DebugSink#print(Char)` dispatching to the child's materialized
+`print(String)` overload instead of the exact inherited `IO#print(Char)` target.
+The virtual resolver returned a unique same-arity child-family fallback before
+walking the parent lineage for the exact typed suffix.
+
+A synthetic MIR regression was RED with exactly that topology: child
+`DebugSink#print$String`, parent `IO#print$Char`, and a `print$Char` request on
+the child resolved to the String overload. Typed calls now defer arity/family
+fallbacks until the complete class and included-module lineage has been searched
+for an exact target. Bare unsuffixed calls retain their previous eager fallback
+behavior, and the deferred candidate remains available when no exact typed
+target exists.
+
+The focused regression and all nine virtual-family examples pass. The complete
+HIR-to-MIR spec passes 42 examples with zero failures or errors. A fresh B4-F
+run built stage1 in 16.22 seconds and stage2 in 277.64 seconds; the produced
+stage2 now passes `--version` and the no-prelude smoke. The plain-prelude smoke
+still crashes later while registering the final prelude enum, in
+`NodeSlot#node <- AstArena#[] <- extract_enum_member_from_parsed_expr`.
+
+Adversary verdict: ROBUST for the exact-over-lossy virtual target precedence and
+its produced-stage startup effect; VULNERABLE as complete B4-F closure. The
+remaining prelude failure is a separate arena or all-reference-union dispatch
+boundary. Next: falsify whether that dispatcher mixes local union ordinals with
+global runtime class type IDs before changing arena storage or ownership.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

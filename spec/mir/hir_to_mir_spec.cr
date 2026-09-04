@@ -696,6 +696,30 @@ describe Adamas::MIR::HIRToMIRLowering do
       resolved.not_nil!.name.should eq("IO::FileDescriptor#write$arity1")
     end
 
+    it "prefers an exact inherited typed overload over a child arity fallback" do
+      hir_mod = Adamas::HIR::Module.new("virtual_method_inherited_overload")
+      hir_mod.register_class_parent("DebugSink", "IO")
+
+      incompatible_child = hir_mod.create_function("DebugSink#print$String", Adamas::HIR::TypeRef::VOID)
+      incompatible_child.add_param("self", Adamas::HIR::TypeRef::POINTER)
+      incompatible_child.add_param("value", Adamas::HIR::TypeRef::STRING)
+
+      inherited_exact = hir_mod.create_function("IO#print$Char", Adamas::HIR::TypeRef::VOID)
+      inherited_exact.add_param("self", Adamas::HIR::TypeRef::POINTER)
+      inherited_exact.add_param("value", Adamas::HIR::TypeRef::CHAR)
+
+      lowering = Adamas::MIR::HIRToMIRLowering.new(hir_mod)
+      lowering.prepare
+
+      resolved = lowering.__test_resolve_virtual_method_for_class(
+        "DebugSink",
+        "print$Char",
+        1
+      )
+      resolved.should_not be_nil
+      resolved.not_nil!.name.should eq("IO#print$Char")
+    end
+
     it "keeps a module includer's arity alias in vdispatch candidates" do
       hir_mod = Adamas::HIR::Module.new("virtual_dispatch_candidates")
       io_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(Adamas::HIR::TypeKind::Module, "IO"))
