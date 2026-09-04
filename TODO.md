@@ -16381,6 +16381,36 @@ the helper by receiver kind unless a new profile identifies a specific internal
 hotspot. Next: profile runtime work inside productive lowering rather than infer
 it from source size.
 
+#### Session 166: remove ordinary-build diagnostic environment lookups
+
+A 120-second runtime sample placed 413 libc `getenv` samples in the productive
+lowering corridor. Direct-parent attribution exposed three avoidable sources:
+the central diagnostic filter, generic-split validation, and one dead
+`ADAMAS_TRUST_SLICE_ADDR` read in `safe_slice_to_string`. Ordinary builds now
+short-circuit the two diagnostic helpers through the existing compile-time
+`debug_hooks` contract, and the unused read is gone. The semantic
+`FORCE_LIB_REPARSE` override remains a direct environment lookup and therefore
+retains its ordinary-build behavior. No lowering state, lookup, or cache changed.
+
+The full AstToHir suite passes 560 examples with zero failures or errors and two
+existing pending examples. Ordinary and `-Ddebug_hooks` compiler builds pass; a
+no-prelude debug oracle still emits `GEN_SPLIT_VALIDATE`, while the ordinary
+before/after no-prelude HIR is byte-identical. The bounded full-HIR self-host
+exits zero and preserves the same 35,338 functions.
+
+In equal 120-second samples, direct `env_get` children of the diagnostic filter
+fell from 63 to zero, `env_has?` children fell from 180 to 60, and
+`__findenv_locked` leaf samples fell from 424 to 243. Normalized to the sampled
+`lower_missing_call_targets` corridor, `__findenv_locked` fell from 4.01% to
+2.64%. The adjacent full-HIR wall samples were 216 and 194 seconds, but another
+workload occupied a core, so the wall delta is supporting evidence only.
+
+Adversary verdict: ROBUST for removing the measured ordinary-build diagnostic
+lookups while preserving the explicit reparse override and debug-build
+observability; VULNERABLE as a claim about repeatable end-to-end speedup. The
+remaining profile is diffuse productive lowering. Next: rank leaf costs by
+their exact caller contexts before changing another hot path.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

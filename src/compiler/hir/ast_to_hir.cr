@@ -7798,6 +7798,8 @@ module Adamas::HIR
       text3 : String? = nil,
       text4 : String? = nil,
     ) : Bool
+      return false unless DebugHooks::ENABLED
+
       value = env_get(env_key)
       return false unless value
       env_filter_match_texts?(value, text1, text2, text3, text4)
@@ -13249,7 +13251,11 @@ module Adamas::HIR
                          else
                            false
                          end
-      force_reparse = debug_env_filter_match?("FORCE_LIB_REPARSE", lib_name, source_path_for(@arena) || "")
+      force_reparse = if value = env_get("FORCE_LIB_REPARSE")
+                        env_filter_match_texts?(value, lib_name, source_path_for(@arena) || "")
+                      else
+                        false
+                      end
       prefer_source_reparse = sizeof(Slice(UInt8)) <= 8
 
       if body = node.body
@@ -16934,7 +16940,6 @@ module Adamas::HIR
       # The pointer may be NULL. In V2, even unsafe_as dereferences memory.
       # Check the raw pointer value via pointerof (accesses the stack slot,
       # not the heap object, so it's safe even when the pointer is NULL).
-      trust_slice_addr = env_has?("ADAMAS_TRUST_SLICE_ADDR")
       slot_raw = pointerof(slice).as(UInt64*).value
       return nil if slot_raw == 0_u64
       raw = slot_raw
@@ -58909,6 +58914,7 @@ module Adamas::HIR
     # Example: "Foo(Bar, Baz)::Entry(Qux)" -> base="Foo(Bar, Baz)::Entry", args="Qux"
     @[NoInline]
     private def debug_validate_generic_split(label : String, name : String, value : GenericSplitInfo?)
+      return unless DebugHooks::ENABLED
       return unless env_has?("DEBUG_GENERIC_SPLIT_VALIDATE")
 
       if value
