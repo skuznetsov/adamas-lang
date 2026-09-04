@@ -2829,7 +2829,17 @@ module Adamas::HIR
                                      source_arena,
                                    )
         end
-        same_method_delegate || case_equality_delegate
+        inequality_delegate = false
+        if method_name == "!=" &&
+           (param_name = canonical_case_equality_wrapper_param_name(resolved_def, source_arena))
+          inequality_delegate = body.size == 1 &&
+                                expression_is_negated_self_equality_delegate?(
+                                  body.first,
+                                  param_name,
+                                  source_arena,
+                                )
+        end
+        same_method_delegate || case_equality_delegate || inequality_delegate
       ensure
         @arena = old_arena
       end
@@ -2876,6 +2886,34 @@ module Adamas::HIR
         expression_is_case_equality_self_delegate?(
           node.expression,
           wrapper_method_name,
+          delegate_param_name,
+          source_arena,
+        )
+      else
+        false
+      end
+    end
+
+    private def expression_is_negated_self_equality_delegate?(
+      expr_id : Adamas::Compiler::Frontend::ExprId,
+      delegate_param_name : String,
+      source_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Bool
+      return false if expr_id.index < 0 || expr_id.index >= source_arena.size
+
+      node = source_arena[expr_id]
+      case node
+      when Adamas::Compiler::Frontend::UnaryNode
+        unary_operator_text(node) == "!" &&
+          expression_is_case_equality_self_delegate?(
+            node.operand,
+            "===",
+            delegate_param_name,
+            source_arena,
+          )
+      when Adamas::Compiler::Frontend::GroupingNode
+        expression_is_negated_self_equality_delegate?(
+          node.expression,
           delegate_param_name,
           source_arena,
         )
@@ -45408,7 +45446,7 @@ module Adamas::HIR
     end
 
     @[AlwaysInline]
-    private def runtime_case_equality_primary?(
+    private def runtime_object_wrapper_primary?(
       primary_mangled_name : String,
       resolved_method_name : String,
       receiver_type : TypeRef,
@@ -77723,16 +77761,16 @@ module Adamas::HIR
         end
       end
       lower_function_if_needed(primary_mangled_name)
-      use_primary_case_equality = op == "===" && runtime_case_equality_primary?(
+      use_primary_object_wrapper = (op == "===" || op == "!=") && runtime_object_wrapper_primary?(
         primary_mangled_name,
         method_name,
         left_type,
         right_type,
       )
-      if method_name != primary_mangled_name && !use_primary_case_equality
+      if method_name != primary_mangled_name && !use_primary_object_wrapper
         lower_function_if_needed(method_name)
       end
-      call_target_name = if use_primary_case_equality
+      call_target_name = if use_primary_object_wrapper
                            primary_mangled_name
                          else
                            prefer_primary_call_target(method_name, primary_mangled_name, [right_type])

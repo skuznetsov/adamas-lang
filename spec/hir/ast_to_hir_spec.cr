@@ -16566,6 +16566,76 @@ describe Adamas::HIR::AstToHir do
       base_call.not_nil!.virtual.should be_true
     end
 
+    it "retains an exact concrete reference owner for Object inequality wrappers" do
+      source = <<-CRYSTAL
+        class Object
+          def ==(other) : Bool
+            false
+          end
+
+          def !=(other) : Bool
+            !(self == other)
+          end
+        end
+
+        class Reference < Object
+        end
+
+        class Node < Reference
+          def ==(other : Node) : Bool
+            true
+          end
+        end
+
+        def different(node : Node, other : Node) : Bool
+          node != other
+        end
+
+        def different_unknown(node : Object, other : Node) : Bool
+          node != other
+        end
+      CRYSTAL
+
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+      converter.arena = arena
+      class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+      def_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode) }
+      class_nodes.each { |node| converter.register_class(node) }
+      def_nodes.each { |node| converter.register_function(node) }
+
+      different = def_nodes.find { |node| String.new(node.name.not_nil!) == "different" }
+      different.should_not be_nil
+      converter.lower_def(different.not_nil!)
+      concrete_caller = converter.module.functions.find { |func| func.name.starts_with?("different$") }
+      concrete_caller.should_not be_nil
+      concrete_call = concrete_caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.find { |call| call.method_name.includes?("#!=") }
+      concrete_call.should_not be_nil
+      concrete_call.not_nil!.method_name.should eq("Node#!=$Node")
+
+      converter.__test_process_pending_lower_functions
+      wrapper = converter.module.functions.find { |func| func.name == "Node#!=$Node" }
+      wrapper.should_not be_nil
+      equality_call = wrapper.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.find { |call| call.method_name.includes?("#==") }
+      equality_call.should_not be_nil
+      equality_call.not_nil!.method_name.should eq("Node#==$Node")
+
+      different_unknown = def_nodes.find { |node| String.new(node.name.not_nil!) == "different_unknown" }
+      different_unknown.should_not be_nil
+      converter.lower_def(different_unknown.not_nil!)
+      unknown_caller = converter.module.functions.find { |func| func.name.starts_with?("different_unknown$") }
+      unknown_caller.should_not be_nil
+      unknown_call = unknown_caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.find { |call| call.method_name.includes?("#!=") }
+      unknown_call.should_not be_nil
+      unknown_call.not_nil!.method_name.should eq("Object#!=$Node")
+    end
+
     it "retains tracked enum owners for Object case-equality wrappers" do
       converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
         class Object

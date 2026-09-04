@@ -1,8 +1,37 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-09-03 (exact function registration now rebuilds provisional
-parameter facts; the measured zero-argument Object hash protocol misrouting is
-gone, while full-HIR lowering remains above the historical target.)
+Updated: 2026-09-04 (concrete Reference inequality calls now retain their
+receiver owner; the measured Object equality replay fanout is substantially
+smaller, while full-HIR lowering remains above the historical target.)
+
+2026-09-04 OBJECT INEQUALITY REDISPATCH NOW RETAINS CONCRETE REFERENCE OWNERS.
+The inherited `Object#!=` wrapper is exactly `!(self == other)`. Calls with a
+known concrete Reference receiver were nevertheless emitted as
+`Object#!=$Concrete`, so the wrapper's `self : Object` replayed the nested
+`Object#==$Concrete` target across every live type. The existing concrete-owner
+preservation mechanism for Object wrappers now recognizes only the canonical
+single-expression negated equality delegate, and binary call emission uses the
+same already-materialized primary target for `!=` as for `===`. No registry,
+cache, dispatch mode, or general inherited-method cloning rule was added.
+
+The source-backed no-prelude regression was red with `Object#!=$Node` and is
+green with `Node#!=$Node` calling `Node#==$Node`; an actual Object-typed receiver
+remains `Object#!=$Node`. The safely run full AstToHir suite passes 554 examples
+with zero failures/errors and two existing pending examples. A fresh bounded
+self-host completed with exit zero in about 200 seconds (`204.52s` external
+wall including the wrapper). Compared with the adjacent `642c6aec` diagnostic,
+`lower_missing` fell from 204.5 to 187.1 seconds, internal functions from 48,680
+to 43,238, serialized HIR functions from 44,306 to 38,848, Object equality
+replay keys from 22,958 to 8,770, and virtual-owner attempts from 43,996 to
+28,238. The full combined runtime suite remains 27/37, but all ten failures
+matched the previous compiler in compile/runtime exit and output, so this patch
+introduced no observed regression there.
+
+Adversary verdict: ROBUST for the exact wrapper-shape contract, retained Object
+control, and measured fanout reduction; VULNERABLE as a stable wall-clock or
+B4-F closure claim because this is one adjacent sample and `lower_missing`
+still dominates. Next: classify the five remaining active `Object#==` target
+shapes before changing another wrapper or replay rule.
 
 2026-09-03 EXACT FUNCTION REGISTRATION NOW REBUILDS PROVISIONAL PARAMETER FACTS.
 Return-type probing can ask about an exact typed symbol before that symbol has
