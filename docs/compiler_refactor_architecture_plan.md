@@ -1,6 +1,6 @@
 # Crystal V2 Compiler Refactor Architecture Plan
 
-> Status: execution in progress; runner verdict and supervision repairs verified 2026-09-04.
+> Status: runner and bounded MIR repairs implemented; matched combined baseline 33/37; B4-F open (2026-09-04).
 > Section 0 integrates the current reliability and architecture work. Its
 > implementation steps are not completed by this document. Sections 1-9 retain
 > the original staged refactor design (2026-04) as a deferred reference;
@@ -58,12 +58,21 @@ contract suite covers stale source-adjacent and legacy-bin sentinels, failed
 partial output, non-executable output, compiler timeout plus child cleanup,
 and default cleanup / optional raw-log retention. Existing runtime budgets
 remain 10/15 seconds and 512 MB. Use one explicit job and
-`REGRESSION_KEEP_LOGS=1` for the still-pending real-program baseline; retained
+`REGRESSION_KEEP_LOGS=1` for real-program baselines; retained
 logs contain per-test compile/runtime exit codes and supervisor output.
 Per-test artifact directories are removed on completed success and failure
 paths even when logs are retained, including compiler-generated siblings such
 as LLVM IR. A focused old-runner/new-spec ablation fails both retention cases;
 the repaired runners pass both, and the full contract suite passes 14 examples.
+
+The fresh combined baseline is complete: candidate `d58cd268` and a same-source
+control with only the pre-repair optimizer both produced 33/37 PASS. All paired
+verdicts, exit codes and program output matched. Two fixtures share one bodyless
+Tuple target error, one segfaults, and one deliberately exercises a second
+`String::Builder#to_s` without a dedicated expected-termination oracle. These
+remain non-PASS results; see the current `TODO.md` table. The old 27/37 number
+has been superseded for this checkout, without attributing its difference to
+the MIR repair. The fresh canonical stage2 gate timed out and remains open.
 
 ### 0.2 Causal model and alternatives
 

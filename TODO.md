@@ -2,7 +2,56 @@
 
 Current action order: [integrated execution plan](docs/compiler_refactor_architecture_plan.md#0-current-execution-plan).
 Both regression runners now reject failed processes and compile into fresh,
-supervised outputs. Next: re-establish real-program pass counts with one job.
+supervised outputs. The matched combined baseline is 33/37 on both sides;
+next: isolate the typed inequality fallback loss, with B4-F still open.
+
+2026-09-04 FRESH MATCHED COMBINED BASELINE: 33/37 ON BOTH COMPILERS.
+Runner source: `2ae2b025`; candidate compiler source: `d58cd268` plus the
+unchanged user HIR patch identified below. The control was rebuilt from the
+same tracked sources plus that same patch, replacing only
+`src/compiler/mir/optimizations.cr` with its `1951fa6c` version. Tracked-source
+comparison confirmed that this optimizer file was the sole source difference.
+Both compiler binaries were freshly built with host Crystal 1.21.0.
+
+Run: `REGRESSION_KEEP_LOGS=1 regression_tests/run_combined.sh <compiler> 1`,
+with fresh per-side temporary outputs, 120s/4096MB compile supervision and
+15s/512MB runtime supervision. Experimental `ADAMAS_*` and inherited supervisor
+framing/resource settings were removed; candidate then control ran sequentially.
+Both returned runner exit 1: 33 PASS, two COMPILE_FAIL, and two CRASH results.
+All 37 paired verdicts, compile/runtime exits, stdout, runtime stderr payloads,
+and compiler error messages matched. This refresh covers the combined suite,
+not all 174 original fixtures, and is not a performance comparison.
+
+| Fixture | Observed stage/result on both sides | Interpretation |
+|---|---|---|
+| `test_batch_strings`, `test_strings_join` | Compile exit 1: bodyless `Tuple#each$Proc` from `Unicode.foldcase` | One unresolved lowering family; no binary ran. |
+| `test_batch_misc` | Compile 0, runtime 139 after `env_nil_ok` | Runtime failure remains; last output alone does not locate its cause. |
+| `test_builder_double_to_s` | Compile 0, runtime 134 after `first_ok` and the single-use diagnostic | This fixture deliberately invokes the second `to_s`; its expected termination needs a dedicated oracle. The generic runner correctly retains failure and does not infer permission from a marker. |
+
+No observed behavioral regression from the bounded MIR repair in this suite.
+No readiness claim follows from 33 PASS or from equivalence of the four
+non-PASS outcomes. Per-test artifacts were fully removed on both sides even
+with logs retained. Raw logs, source/binary hashes, and the paired comparison:
+`/private/tmp/adamas-quadrumvirate-baseline.a6csktey/` (`source-comparison.json`,
+`comparison.json`). Temporary evidence expires on cleanup/reboot; changing the
+compiler, user patch, fixture set, or runner requires a fresh relevant check.
+
+2026-09-04 FRESH POST-REPAIR BOOTSTRAP REMAINS OPEN AT STAGE2.
+The canonical two-stage producer ran from `d58cd268` plus the unchanged user
+HIR patch (SHA256 `6696df2b2797a496c1601bbe16b5e3784b35485a9251c4dca3e3559410f30372`).
+Command: `scripts/build_bootstrap_stages.sh --out <fresh-parent>/run --stages 2 --timeout 300 --mem 12288`,
+with disallowed control environment variables removed. Stage1 built in 19.62s
+and passed both exact plain and no-prelude smokes. Stage2 produced no binary:
+exit 143, timeout reason, external wall 634.40s. The last emitted breadcrumbs
+show deferred allocator generation; they do not locate the full time cost.
+The manifest validator rejects this run with `reason=manifest_status`.
+
+Sandbox `ps` denial made RSS/FD evidence unknown, so the configured cap is not
+a measured memory certificate. A two-second sleep falsifier terminated in
+2.49s inside the sandbox and 4.07s outside with resource observation; this does
+not reproduce or explain the long-run wall discrepancy. The stage2 failure
+remains a bounded diagnostic result, not B4-F closure or proof of a new compiler
+regression. Raw run: `/private/tmp/adamas-quadrumvirate-gate.n4a8532u/run`.
 
 2026-09-04 LTP CONSTANT-FOLD NORMALIZATION NOW REFRESHES ITS BASELINE.
 A dual-frame constant fold could change MIR but return rejection when the
