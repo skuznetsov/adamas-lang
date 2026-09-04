@@ -2579,9 +2579,8 @@ module Adamas::HIR
     @rta_deferred_functions : Array(String) = [] of String
     @rta_deferred_set : Set(String) = Set(String).new
     @rta_module_base_names : Set(String) = Set(String).new
-    @rta_scan_start_idx : Int32 = 0      # Track which functions we've already scanned
-    @rta_type_scan_start_idx : Int32 = 0 # Track which type descriptors we've already scanned
-    @lazy_rta_active : Bool = false      # Set to true only during main process_pending pass
+    @rta_scan_start_idx : Int32 = 0 # Track which functions we've already scanned
+    @lazy_rta_active : Bool = false # Set to true only during main process_pending pass
     # Method-level RTA: exact call target names from already-lowered functions
     @rta_called_methods : Set(String) = Set(String).new
     # Method-level RTA: method parts (after # or .) for virtual dispatch matching
@@ -2632,7 +2631,6 @@ module Adamas::HIR
         scan_hir_function_for_live_types(func)
       end
       @rta_scan_start_idx = @module.function_count
-      @rta_type_scan_start_idx = @module.types.size
     end
 
     # Extract owner type from function name and mark as live
@@ -4293,7 +4291,7 @@ module Adamas::HIR
         method == "record_pending_callee_for_rta" ||
         method == "scan_hir_function_for_live_types" ||
         method == "scan_new_functions_for_live_types" ||
-        method == "scan_new_type_descriptors_for_live_types" ||
+        method == "mark_live_union_variants_for_type_ref" ||
         method == "undefer_rta_functions" ||
         method == "extract_owner_base_for_rta" ||
         method == "extract_method_part_for_rta"
@@ -4955,8 +4953,15 @@ module Adamas::HIR
     private def scan_hir_function_for_live_types(func : Adamas::HIR::Function) : Bool
       new_types = false
       rta_trace = env_get("ADAMAS_RTA_TRACE")
+      new_types = true if mark_live_union_variants_for_type_ref(func.return_type)
+      func.params.each do |param|
+        new_types = true if mark_live_union_variants_for_type_ref(param.type)
+      end
       func.blocks.each do |block|
         block.instructions.each do |inst|
+          if inst.is_a?(Adamas::HIR::Value)
+            new_types = true if mark_live_union_variants_for_type_ref(inst.type)
+          end
           case inst
           when Adamas::HIR::Allocate
             if desc = @module.get_type_descriptor(inst.type)
@@ -4975,6 +4980,9 @@ module Adamas::HIR
             if desc = @module.get_type_descriptor(inst.element_type)
               new_types = true if mark_live_type(desc.name)
             end
+            new_types = true if mark_live_union_variants_for_type_ref(inst.element_type)
+          when Adamas::HIR::ArrayNew
+            new_types = true if mark_live_union_variants_for_type_ref(inst.element_type)
           when Adamas::HIR::StringInterpolation
             new_types = true if mark_live_type("String")
           when Adamas::HIR::Call
@@ -5055,16 +5063,10 @@ module Adamas::HIR
       new_types
     end
 
-    # Scan only newly-added type descriptors for union variants.
-    private def scan_new_type_descriptors_for_live_types : Bool
-      new_types = false
-      current_count = @module.types.size
-      while @rta_type_scan_start_idx < current_count
-        desc = @module.types[@rta_type_scan_start_idx]
-        new_types = true if mark_union_variants_live(desc.name)
-        @rta_type_scan_start_idx += 1
-      end
-      new_types
+    private def mark_live_union_variants_for_type_ref(type_ref : TypeRef) : Bool
+      desc = @module.get_type_descriptor(type_ref)
+      return false unless desc && desc.kind == TypeKind::Union
+      mark_union_variants_live(desc.name)
     end
 
     # Add union variants to live types without using split allocations.
@@ -7244,7 +7246,6 @@ module Adamas::HIR
       @rta_deferred_set = Set(String).new
       @rta_module_base_names = Set(String).new
       @rta_scan_start_idx = 0
-      @rta_type_scan_start_idx = 0
       @lazy_rta_active = false
       @rta_called_methods = Set(String).new
       @rta_called_method_parts = [] of String
@@ -67926,7 +67927,6 @@ module Adamas::HIR
         pass_periodic_rta_ms = 0.0
         pass_periodic_function_scan_ms = 0.0
         pass_periodic_monomorphized_scan_ms = 0.0
-        pass_periodic_type_scan_ms = 0.0
         pass_periodic_undefer_ms = 0.0
         pass_end_rta_ms = 0.0
         pass_periodic_rta_count = 0
@@ -68057,9 +68057,6 @@ module Adamas::HIR
             end
             pass_periodic_monomorphized_scan_ms += (Time.instant - rta_step_started_at.not_nil!).total_milliseconds if phase_stats
             rta_step_started_at = Time.instant if phase_stats
-            scan_new_type_descriptors_for_live_types
-            pass_periodic_type_scan_ms += (Time.instant - rta_step_started_at.not_nil!).total_milliseconds if phase_stats
-            rta_step_started_at = Time.instant if phase_stats
             undeferred = undefer_rta_functions
             pass_periodic_undefer_ms += (Time.instant - rta_step_started_at.not_nil!).total_milliseconds if phase_stats
             rta_undeferred_total += undeferred
@@ -68088,7 +68085,6 @@ module Adamas::HIR
               end
             end
           end
-          scan_new_type_descriptors_for_live_types
           undeferred = undefer_rta_functions
           rta_undeferred_total += undeferred
           pass_end_rta_ms = (Time.instant - end_rta_started_at.not_nil!).total_milliseconds if phase_stats
@@ -68117,7 +68113,7 @@ module Adamas::HIR
           pass_call_change_other_count = pass_call_symbol_changed_count - pass_call_suffix_only_count - pass_call_same_method_base_changed_count
           pass_call_change_other_time_ns = pass_call_symbol_changed_time_ns - pass_call_suffix_only_time_ns - pass_call_same_method_base_changed_time_ns
           pass_call_normal_scorer_suffix_count = pass_call_normal_scorer_suffix_single_count + pass_call_normal_scorer_suffix_wide_count
-          STDERR.puts "[PHASE_STATS] process_pending.pass=#{pass} context=#{@pending_process_context || "none"} total=#{pass_total_ms.round(1)}ms lower=#{pass_lower_ms.round(1)}ms call_resolution=#{(pass_call_resolution_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_resolution_count} call_symbol_same=#{(pass_call_symbol_same_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_symbol_same_count} call_symbol_changed=#{(pass_call_symbol_changed_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_symbol_changed_count} call_change_suffix_only=#{(pass_call_suffix_only_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_suffix_only_count} call_change_same_method_base=#{(pass_call_same_method_base_changed_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_same_method_base_changed_count} call_change_other=#{(pass_call_change_other_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_change_other_count} call_suffix_normal_scorer=#{pass_call_normal_scorer_suffix_count} call_suffix_normal_scorer_single=#{pass_call_normal_scorer_suffix_single_count} call_suffix_normal_scorer_wide=#{pass_call_normal_scorer_suffix_wide_count} call_suffix_normal_scorer_keys=#{pass_call_normal_scorer_suffix_key_total} call_miss=#{(pass_call_miss_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_miss_count} periodic_rta=#{pass_periodic_rta_ms.round(1)}ms/#{pass_periodic_rta_count} periodic_functions=#{pass_periodic_function_scan_ms.round(1)}ms periodic_monomorphized=#{pass_periodic_monomorphized_scan_ms.round(1)}ms periodic_types=#{pass_periodic_type_scan_ms.round(1)}ms periodic_undefer=#{pass_periodic_undefer_ms.round(1)}ms end_rta=#{pass_end_rta_ms.round(1)}ms residual=#{pass_residual_ms.round(1)}ms max_lower=#{pass_max_lower_ms.round(1)}ms max_name=#{pass_max_lower_name} lowered=#{pass_lowered} deferred=#{pass_deferred} visited=#{idx}"
+          STDERR.puts "[PHASE_STATS] process_pending.pass=#{pass} context=#{@pending_process_context || "none"} total=#{pass_total_ms.round(1)}ms lower=#{pass_lower_ms.round(1)}ms call_resolution=#{(pass_call_resolution_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_resolution_count} call_symbol_same=#{(pass_call_symbol_same_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_symbol_same_count} call_symbol_changed=#{(pass_call_symbol_changed_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_symbol_changed_count} call_change_suffix_only=#{(pass_call_suffix_only_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_suffix_only_count} call_change_same_method_base=#{(pass_call_same_method_base_changed_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_same_method_base_changed_count} call_change_other=#{(pass_call_change_other_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_change_other_count} call_suffix_normal_scorer=#{pass_call_normal_scorer_suffix_count} call_suffix_normal_scorer_single=#{pass_call_normal_scorer_suffix_single_count} call_suffix_normal_scorer_wide=#{pass_call_normal_scorer_suffix_wide_count} call_suffix_normal_scorer_keys=#{pass_call_normal_scorer_suffix_key_total} call_miss=#{(pass_call_miss_time_ns / 1_000_000.0).round(1)}ms/#{pass_call_miss_count} periodic_rta=#{pass_periodic_rta_ms.round(1)}ms/#{pass_periodic_rta_count} periodic_functions=#{pass_periodic_function_scan_ms.round(1)}ms periodic_monomorphized=#{pass_periodic_monomorphized_scan_ms.round(1)}ms periodic_undefer=#{pass_periodic_undefer_ms.round(1)}ms end_rta=#{pass_end_rta_ms.round(1)}ms residual=#{pass_residual_ms.round(1)}ms max_lower=#{pass_max_lower_ms.round(1)}ms max_name=#{pass_max_lower_name} lowered=#{pass_lowered} deferred=#{pass_deferred} visited=#{idx}"
         end
         if phase_stats
           STDERR.puts "[CALL_RESOLUTION_MEMO] pass=#{pass} enabled=#{@call_resolution_memo_enabled ? 1 : 0} entries=#{@call_resolution_memo.size} hits=#{@call_resolution_memo_hits} misses=#{@call_resolution_memo_misses} store_skips=#{@call_resolution_memo_store_skips}"

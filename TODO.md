@@ -15962,10 +15962,50 @@ Focused `is_a` tests pass three examples, and the safely run full AstToHir suite
 passes 550 examples with zero failures, zero errors, and two existing pending
 examples.
 
-Adversary verdict: ROBUST for the narrow static-pruning contract; VULNERABLE as
-an end-to-end speed or graph-size claim. No post-change self-host measurement
-has been taken yet. Next: compare one fresh bounded self-host graph against the
-Session 149 baseline before selecting another fanout producer.
+The fresh bounded self-host completed in about 219 seconds. It produced 50,610
+internal functions and 46,239 serialized HIR bodies; `lower_missing` still
+consumed about 206 seconds. The local equality-family simplification was large:
+before the change 485 of 973 equality bodies contained `is_a?`, with 23,744
+instructions and 988 calls; afterwards none of 982 bodies contained `is_a?`,
+with 1,028 instructions and four calls.
+
+Adversary verdict: ROBUST for the narrow static-pruning contract and its large
+local body simplification; BROKEN as an end-to-end speedup claim. The global
+graph remained dominated by later virtual replay and missing-target fanout.
+Next: identify a false liveness witness before changing another lowering rule.
+
+#### Session 152: derive union-arm liveness from reachable HIR
+
+Lazy RTA treated every newly registered type descriptor as a runtime liveness
+witness. Merely interning a union therefore marked all of its arms live and
+replayed their registered virtual targets, even when no reachable function used
+the descriptor. It also applied the string-level union splitter to descriptor
+names without first requiring a union descriptor kind.
+
+Descriptor scanning is removed. Union arms are now marked live only when a
+reachable HIR function exposes a union TypeRef through its return type,
+parameters, produced values, or array element type. This reuses the existing
+type registry and live-type replay path; it adds no cache, target registry, or
+fallback. A source-backed falsifier first interns an unused union and proves
+that neither arm nor its override becomes live, then places the same TypeRef in
+a reachable function parameter and proves that both overrides materialize.
+
+The focused falsifier was red before the production change and is now green.
+The adjacent virtual-target repair group passes 89 examples, and the full
+AstToHir suite passes 551 examples with zero failures, zero errors, and two
+existing pending examples. A fresh safely bounded self-host completed with exit
+zero in about 225 seconds and remained near 2.0 GiB RSS. Compared with Session
+151, the internal graph decreased from 50,610 to 49,556 functions and serialized
+HIR bodies from 46,239 to 45,183. The function sets changed by 2,522 removals
+and 1,466 additions as actual reachable union signatures supplied liveness that
+descriptor timing had previously missed.
+
+Adversary verdict: ROBUST for separating descriptor existence from runtime
+liveness and for completing the full HIR self-host; BROKEN as a wall-clock
+speedup claim. `lower_missing` still consumed about 212 seconds, and Hash-family
+bodies increased while Pointer-family bodies decreased. Next: explain the
+remaining broad Object/Reference virtual replay from actual live witnesses;
+do not add another cache or suppress a target solely because it is expensive.
 
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 

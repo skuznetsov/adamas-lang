@@ -1647,6 +1647,14 @@ class Adamas::HIR::AstToHir
     scan_hir_function_for_live_types(func)
   end
 
+  def __test_initialize_lazy_rta : Nil
+    initialize_lazy_rta
+  end
+
+  def __test_live_type?(name : String) : Bool
+    @live_types.includes?(name)
+  end
+
   def __test_set_lazy_rta_active(value : Bool) : Nil
     @lazy_rta_active = value
   end
@@ -16745,6 +16753,71 @@ describe Adamas::HIR::AstToHir do
       child_target = converter.module.functions.find { |func| func.name.starts_with?("Box(Int32)#probe$") }
       child_target.should_not be_nil
       converter.module.has_function_with_body?(child_target.not_nil!.name).should be_true
+    ensure
+      converter.try(&.__test_set_lazy_rta_active(false))
+    end
+
+    it "derives union-arm liveness from reachable HIR values, not descriptor registration" do
+      source = <<-CRYSTAL
+        class Object
+          def probe(value : Int32) : Int32
+            value
+          end
+        end
+
+        class DescriptorArmA < Object
+          def probe(value : Int32) : Int32
+            value + 1
+          end
+        end
+
+        class DescriptorArmB < Object
+          def probe(value : Int32) : Int32
+            value + 2
+          end
+        end
+      CRYSTAL
+
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+      converter.arena = arena
+      class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+      def_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode) }
+      class_nodes.each { |node| converter.register_class(node) }
+      def_nodes.each { |node| converter.register_function(node) }
+
+      converter.__test_set_lazy_rta_active(true)
+      converter.__test_initialize_lazy_rta
+      converter.__test_record_virtual_target("Object", "probe", [Adamas::HIR::TypeRef::INT32])
+      union_ref = converter.module.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Union,
+        "DescriptorArmA | DescriptorArmB",
+      ))
+
+      converter.__test_process_pending_lower_functions
+
+      converter.__test_live_type?("DescriptorArmA").should be_false
+      converter.__test_live_type?("DescriptorArmB").should be_false
+      converter.module.functions.any? do |func|
+        func.name.starts_with?("DescriptorArmA#probe$") && converter.module.has_function_with_body?(func.name)
+      end.should be_false
+      converter.module.functions.any? do |func|
+        func.name.starts_with?("DescriptorArmB#probe$") && converter.module.has_function_with_body?(func.name)
+      end.should be_false
+
+      live_user = converter.module.create_function("live_union_user", Adamas::HIR::TypeRef::VOID)
+      live_user.add_param("value", union_ref)
+      converter.__test_set_lazy_rta_active(true)
+      converter.__test_scan_hir_function_for_live_types(live_user)
+
+      converter.__test_live_type?("DescriptorArmA").should be_true
+      converter.__test_live_type?("DescriptorArmB").should be_true
+      converter.module.functions.any? do |func|
+        func.name.starts_with?("DescriptorArmA#probe$") && converter.module.has_function_with_body?(func.name)
+      end.should be_true
+      converter.module.functions.any? do |func|
+        func.name.starts_with?("DescriptorArmB#probe$") && converter.module.has_function_with_body?(func.name)
+      end.should be_true
     ensure
       converter.try(&.__test_set_lazy_rta_active(false))
     end
