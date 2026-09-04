@@ -177,6 +177,69 @@ module LTPTestHelpers
 
     func
   end
+
+  def self.create_test_function_with_rejected_dual_frame_mutation : Adamas::MIR::Function
+    int_type = Adamas::MIR::TypeRef::INT32
+
+    func = Adamas::MIR::Function.new(next_func_id, "ltp_rejected_dual_frame", int_type)
+    entry_id = func.create_block
+    entry = func.get_block(entry_id)
+
+    left = Adamas::MIR::Constant.new(1_u32, int_type, 10_i64)
+    right = Adamas::MIR::Constant.new(2_u32, int_type, 32_i64)
+    add = Adamas::MIR::BinaryOp.new(
+      3_u32,
+      int_type,
+      Adamas::MIR::BinOp::Add,
+      left.id,
+      right.id
+    )
+    alloc = Adamas::MIR::Alloc.new(
+      4_u32,
+      int_type,
+      Adamas::MIR::MemoryStrategy::ARC,
+      int_type
+    )
+
+    # Keep both operands live so DCE cannot turn the normalization into a
+    # later descent. The constant fold changes MIR shape while Φ′ stays fixed.
+    entry.add(left)
+    entry.add(right)
+    entry.add(add)
+    entry.add(alloc)
+    entry.add(Adamas::MIR::Store.new(5_u32, alloc.id, left.id))
+    entry.add(Adamas::MIR::Store.new(6_u32, alloc.id, right.id))
+    entry.terminator = Adamas::MIR::Return.new(add.id)
+
+    func
+  end
+
+  def self.create_test_function_with_equal_cf_then_dce : Adamas::MIR::Function
+    int_type = Adamas::MIR::TypeRef::INT32
+
+    func = Adamas::MIR::Function.new(next_func_id, "ltp_equal_cf_then_dce", int_type)
+    entry_id = func.create_block
+    entry = func.get_block(entry_id)
+
+    left = Adamas::MIR::Constant.new(1_u32, int_type, 10_i64)
+    right = Adamas::MIR::Constant.new(2_u32, int_type, 32_i64)
+    add = Adamas::MIR::BinaryOp.new(
+      3_u32,
+      int_type,
+      Adamas::MIR::BinOp::Add,
+      left.id,
+      right.id
+    )
+    dead = Adamas::MIR::Constant.new(4_u32, int_type, 99_i64)
+
+    entry.add(left)
+    entry.add(right)
+    entry.add(add)
+    entry.add(dead)
+    entry.terminator = Adamas::MIR::Return.new(add.id)
+
+    func
+  end
 end
 
 describe Adamas::MIR::LTPPotential do
@@ -614,6 +677,52 @@ describe "LTP Theory Compliance" do
   end
 
   describe "Dual Frame Fallback" do
+    it "accounts for an equal-potential dual-frame normalization" do
+      func = LTPTestHelpers.create_test_function_with_rejected_dual_frame_mutation
+      entry = func.blocks.last
+      engine = Adamas::MIR::LTPEngine.new(func)
+
+      initial = engine.frame_potential
+      initial.should eq(Adamas::MIR::LTPPotential.new(0, 0, 2, 6))
+      before = entry.instructions.map(&.class.name)
+
+      reported = engine.run(max_iters: 1)
+
+      after = entry.instructions.map(&.class.name)
+      after.should_not eq(before)
+      entry.instructions.any? do |inst|
+        inst.is_a?(Adamas::MIR::Constant) && inst.id == 3_u32
+      end.should be_true
+      engine.moves_applied.should be_empty
+      reported.should eq(initial)
+      reported.should eq(engine.frame_potential)
+      engine.potential_trace.size.should eq(2)
+      engine.potential_trace[0].should eq(initial)
+      engine.potential_trace[1].should eq(reported)
+    end
+
+    it "retains equal CF progress for a later curvature descent" do
+      func = LTPTestHelpers.create_test_function_with_equal_cf_then_dce
+      entry = func.blocks.last
+      engine = Adamas::MIR::LTPEngine.new(func)
+      initial = engine.frame_potential
+
+      reported = engine.run(max_iters: 2)
+
+      entry.instructions.any? do |inst|
+        inst.is_a?(Adamas::MIR::Constant) && inst.id == 3_u32
+      end.should be_true
+      entry.instructions.any? do |inst|
+        inst.is_a?(Adamas::MIR::Constant) && inst.id == 4_u32
+      end.should be_false
+      engine.potential_trace.size.should eq(3)
+      engine.potential_trace[1].should eq(initial)
+      engine.potential_trace[2].should be < engine.potential_trace[1]
+      reported.should eq(engine.potential_trace[2])
+      reported.should eq(engine.frame_potential)
+      engine.frame_kind.should eq(Adamas::MIR::FrameKind::Curvature)
+    end
+
     it "applies constant folding when no LTP move or collapse is available" do
       int_type = Adamas::MIR::TypeRef::INT32
 

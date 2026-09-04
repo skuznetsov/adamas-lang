@@ -4,6 +4,26 @@ Current action order: [integrated execution plan](docs/compiler_refactor_archite
 Both regression runners now reject failed processes and compile into fresh,
 supervised outputs. Next: re-establish real-program pass counts with one job.
 
+2026-09-04 LTP CONSTANT-FOLD NORMALIZATION NOW REFRESHES ITS BASELINE.
+A dual-frame constant fold could change MIR but return rejection when the
+potential remained equal, leaving a one-entry trace that omitted the retained
+mutation. Constant folding is now explicitly ordinary normalization: a
+non-increasing result refreshes the measured baseline without claiming a
+certified move; an increasing result restores the pass's instruction-array
+mutation and rebuilds analysis maps. No generalized undo mechanism or changes
+to direct Spike/Diamond and curvature admission were introduced.
+
+The original witness was RED (28 examples, one failure), then moved into the
+normal LTP suite. The retained-MIR/recomputed-potential/trace assertions and a
+fold-then-later-DCE adversary pass; safe LTP and ordinary optimizer suites pass
+29 + 46 examples. Command:
+`scripts/run_all_specs.sh 1 120 4096 spec/compiler/mir/ltp_wba_spec.cr spec/mir/optimizations_spec.cr`.
+Serial CLI and LLVM worker consumers use the same `optimize_with_potential`
+entrypoint. Adversary verdict: ROBUST for equal-potential CF accounting and
+retained later DCE; snapshot recovery is limited to the current CF mutation
+surface. This was an acceptance/accounting defect, not a demonstrated
+miscompile or a full LTP/WBA proof. Fresh bootstrap remains a separate gate.
+
 2026-09-04 REGRESSION COMPILATION IS SUPERVISED AND CANNOT REUSE STALE OUTPUT.
 Both runners pass explicit `-o` into a private per-run temporary directory;
 source-adjacent and legacy-bin executables are never consumed or removed.

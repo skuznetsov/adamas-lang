@@ -2749,6 +2749,26 @@ module Adamas::MIR
       end
     end
 
+    # Constant folding mutates instruction arrays in place. Keep a
+    # function-local, instruction-only snapshot so an increased-potential
+    # normalization can be rolled back without introducing a general undo
+    # engine.
+    private def snapshot_instruction_lists : Array(Tuple(BasicBlock, Array(Value)))
+      snapshots = [] of Tuple(BasicBlock, Array(Value))
+      @function.blocks.each do |block|
+        snapshots << {block, block.instructions.dup}
+      end
+      snapshots
+    end
+
+    private def restore_instruction_lists(snapshots : Array(Tuple(BasicBlock, Array(Value)))) : Nil
+      snapshots.each do |snapshot|
+        block = snapshot[0]
+        block.instructions.clear
+        snapshot[1].each { |instruction| block.instructions << instruction }
+      end
+    end
+
     # ═══════════════════════════════════════════════════════════════════════════
     # BR-4: Dual Frame Fallback
     # ═══════════════════════════════════════════════════════════════════════════
@@ -2762,18 +2782,24 @@ module Adamas::MIR
 
     private def try_escape_frame : Bool
       pre = compute_frame_potential
+      snapshot = snapshot_instruction_lists
       cf = ConstantFoldingPass.new(@function)
       folded = cf.run
       return false if folded == 0
 
       build_analysis_maps
       post = compute_frame_potential
-      if post < pre
-        log { "    Dual frame (CF): folded #{folded} constants, Phi #{pre} -> #{post}" }
+      if post <= pre
+        # Constant folding is an ordinary pure normalization, not a
+        # certified LTP move. Equal-potential changes are accepted only after
+        # recording the freshly recomputed baseline in the caller's trace.
+        log { "    Dual frame (CF) normalization: folded #{folded} constants, Phi #{pre} -> #{post}; baseline refreshed" }
         return true
       end
 
-      log { "    Dual frame (CF) made changes but did not decrease Phi" }
+      restore_instruction_lists(snapshot)
+      build_analysis_maps
+      log { "    Dual frame (CF) made changes but increased Phi; restored MIR" }
       false
     end
 

@@ -165,19 +165,22 @@ constant while initial/final potential and the only trace entry all remain
 defect, not a demonstrated miscompile or incorrect numeric result. The current
 Spike/Diamond constructors remove an RC pair, strictly reducing the first
 potential component; their non-decrease branch is not the demonstrated route.
-The [retained MIR witness](../scripts/probes/ltp_rejected_dual_frame.cr) returns
-exit 1 when it reproduces the rejected mutation.
+The witness is now a regression in
+[`ltp_wba_spec.cr`](../spec/compiler/mir/ltp_wba_spec.cr). Its original RED
+result was a one-entry trace despite changed MIR at unchanged potential.
 
-Start with the actual dual-frame rejection. Either restore the touched state
-when rejecting a candidate, or perform ordinary normalization explicitly
-outside the certified descent loop and refresh its baseline. Choose the
-smallest contract that preserves intended semantics and useful optimization;
-do not introduce whole-function cloning or a general undo engine first.
-Check retained MIR, freshly computed potential, trace, and accepted/rejected
-status together. Preserve semantic/effect and alias barriers separately from
-the numeric potential. Cover serial and worker consumers; wrong emitted
-behavior, if found, takes priority over lowering performance. Ordinary
-constant folding alone is not a certified LTP/WBA move.
+The bounded CF repair is implemented. A non-increasing constant fold is
+explicitly ordinary normalization, with a freshly recomputed baseline recorded
+by the caller; it is not added to certified `moves_applied`. A fold that raises
+the selected-frame potential restores the instruction arrays and analysis
+maps. The snapshot covers this pass's actual mutation surface, not generic
+object state. Direct Spike/Diamond and curvature paths remain unchanged.
+The witness and an adversary CF-then-later-DCE case both pass, and both compare
+reported potential with a fresh computation over retained MIR. The LTP and
+ordinary optimization suites pass 29 + 46 examples. Serial and worker paths
+share `Function#optimize_with_potential`; this source check is not a fresh
+worker-runtime or bootstrap certificate. Miscompilation and full LTP/WBA
+proof closure have not been demonstrated by this accounting repair.
 
 **ABI facts.** Extend the existing A' inline-Array producer/consumer before
 proposing another registry. `populate_inline_value_array_storage_facts` in
@@ -214,21 +217,9 @@ work, `rg -n 'bind_semantic_call_targets|semantic_call_target|if semantic_target
 locates the CLI handoff, lookup, and final normal-emission check. These are
 routing anchors, not proofs of complete semantic or runtime coverage.
 
-The remaining manual MIR witness is RED at the reviewed source:
-
-```bash
-(
-  set -e
-  review_probe_dir=$(mktemp -d /private/tmp/adamas-review-ltp.XXXXXX)
-  trap 'rm -rf "$review_probe_dir"' EXIT
-  CRYSTAL_CACHE_DIR="$review_probe_dir/cache" scripts/run_safe.sh "$(command -v crystal)" 120 4096 build scripts/probes/ltp_rejected_dual_frame.cr -o "$review_probe_dir/probe" --error-trace
-  scripts/run_safe.sh "$review_probe_dir/probe" 5 512
-)
-```
-
-It returns exit 1 for the demonstrated contract violation. It is a manual
-reproducer, not an addition to the default spec suite or evidence of a fix.
-Fold its case into the affected specs when implementing that repair.
+Both manual review witnesses have been promoted into normal specs and removed
+from `scripts/probes`; their original RED behavior and limited claim scopes
+remain recorded above and in git history.
 
 Use the existing safe spec runner; run only the checks affected by the slice:
 
@@ -236,7 +227,7 @@ Use the existing safe spec runner; run only the checks affected by the slice:
 scripts/run_all_specs.sh 1 180 4096 spec/regression_runner_contract_spec.cr
 scripts/run_all_specs.sh 1 300 8192 spec/hir/ast_to_hir_spec.cr
 scripts/run_all_specs.sh 1 180 4096 spec/hir/missing_incremental_shadow_spec.cr spec/hir/missing_revision_ledger_spec.cr
-scripts/run_all_specs.sh 1 120 4096 spec/compiler/mir/ltp_wba_spec.cr spec/mir/abi_layout_spec.cr
+scripts/run_all_specs.sh 1 120 4096 spec/compiler/mir/ltp_wba_spec.cr spec/mir/optimizations_spec.cr
 scripts/run_all_specs.sh 1 300 8192 spec/mir/llvm_backend_spec.cr
 scripts/run_all_specs.sh 1 300 8192 spec/semantic_cli_spec.cr spec/semantic_cli_compile_contracts_spec.cr spec/semantic/identity_spec.cr
 ```
