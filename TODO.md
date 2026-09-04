@@ -16142,6 +16142,30 @@ is a matched local sample, not a stable benchmark certificate, and broad replay
 still enters per runtime owner. Next: profile those remaining entry calls and
 remove traversal only when a source-backed falsifier proves it redundant.
 
+#### Session 157: skip caught-up virtual replay buckets
+
+Registered-class replay entered `lower_virtual_targets_for_child` for every
+known ancestor even when that child had already consumed the ancestor's
+append-only target bucket. The caller now uses the existing bucket and replay
+cursor to skip missing or caught-up buckets before entering the helper. No new
+cache or lifecycle state was introduced; appended targets increase the bucket
+size and remain visible to both registration-time and live-type replay.
+
+A no-prelude regression proves that repeatedly marking an already-live child
+does not re-enter a caught-up bucket and still materializes its concrete
+override. The full AstToHir suite passes 557 examples with zero failures, zero
+errors, and two pending examples. A fresh full-HIR self-host completed with exit
+zero. Compared with Session 156, helper entries fell from 2,068,714 to 26,261
+while real owner attempts and primary lookups remained exactly 28,029 and
+42,043. The machine slept during the run, so its wall-clock and phase timings
+are not valid performance evidence.
+
+Adversary verdict: ROBUST for removing redundant helper entry overhead without
+changing the consumed target suffix. This does not reduce the real owner lookup
+work, whose four direct dispatch loops bypass the helper. Next: isolate the
+dominant normal-call loop with a no-prelude falsifier before sharing the replay
+seam.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

@@ -1671,6 +1671,10 @@ class Adamas::HIR::AstToHir
     @vtr_stats_primary_lookup_calls
   end
 
+  def __test_virtual_target_lower_child_calls : Int64
+    @vtr_stats_lower_child_calls
+  end
+
   def __test_forget_registered_instance_method_names(owner : String) : Nil
     @instance_method_names_by_owner.delete(owner)
   end
@@ -17046,6 +17050,43 @@ describe Adamas::HIR::AstToHir do
       converter.__test_record_virtual_target("Object", "probe", [Adamas::HIR::TypeRef::INT32])
 
       child_target = converter.module.functions.find { |func| func.name.starts_with?("Child(Int32)#probe$") }
+      child_target.should_not be_nil
+      converter.module.has_function_with_body?(child_target.not_nil!.name).should be_true
+    ensure
+      converter.try(&.__test_set_lazy_rta_active(false))
+    end
+
+    it "does not re-enter caught-up virtual target buckets for a live child" do
+      source = <<-CRYSTAL
+        class Object
+          def probe(value : Int32) : Int32
+            value
+          end
+        end
+
+        class Child < Object
+          def probe(value : Int32) : Int32
+            value + 1
+          end
+        end
+      CRYSTAL
+
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+      converter.arena = arena
+      class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+      def_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode) }
+      class_nodes.each { |node| converter.register_class(node) }
+      def_nodes.each { |node| converter.register_function(node) }
+
+      converter.__test_set_lazy_rta_active(true)
+      converter.__test_enable_virtual_target_replay_stats
+      converter.__test_record_virtual_target("Object", "probe", [Adamas::HIR::TypeRef::INT32])
+      converter.__test_mark_live_type("Child")
+      converter.__test_mark_live_type("Child")
+
+      converter.__test_virtual_target_lower_child_calls.should eq(1)
+      child_target = converter.module.functions.find { |func| func.name.starts_with?("Child#probe$") }
       child_target.should_not be_nil
       converter.module.has_function_with_body?(child_target.not_nil!.name).should be_true
     ensure

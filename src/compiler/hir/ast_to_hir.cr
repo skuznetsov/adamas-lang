@@ -9265,6 +9265,10 @@ module Adamas::HIR
         # for exact liveness; eager mode has no later live-type rendezvous and
         # therefore must retain registration-time replay.
         next if lazy_rta_enabled? && broad_virtual_target_root?(ancestor) && !rta_live_owner?(class_name)
+        targets = @virtual_targets_by_parent[ancestor]?
+        next unless targets
+        replay_cursor = @virtual_target_replay_cursors[{class_name, ancestor}]? || 0
+        next if replay_cursor == targets.size
         STDERR.puts "[CLASS_TAIL] class=#{class_name} phase=virtual_replay_before idx=#{replay_idx} ancestor=#{ancestor}" if trace_tail
         lower_virtual_targets_for_child(class_name, ancestor)
         STDERR.puts "[CLASS_TAIL] class=#{class_name} phase=virtual_replay_after idx=#{replay_idx} ancestor=#{ancestor}" if trace_tail
