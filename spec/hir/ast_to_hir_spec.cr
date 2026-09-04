@@ -11570,6 +11570,78 @@ describe Adamas::HIR::AstToHir do
       converter.__test_rta_called_method?("Array(Point)#inspect$IO").should be_false
     end
 
+    it "defers an uncalled constructor specialization but keeps exact root demand" do
+      source = <<-CRYSTAL
+        class ConstructorDemandBox(T)
+          def initialize(@value : T)
+          end
+        end
+      CRYSTAL
+
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(
+        arena,
+        sources_by_arena: {arena.object_id.to_u64 => source},
+      )
+      converter.arena = arena
+      exprs.each do |expr_id|
+        case node = arena[expr_id]
+        when Adamas::Compiler::Frontend::ClassNode
+          converter.register_class(node)
+        when Adamas::Compiler::Frontend::DefNode
+          converter.register_function(node)
+        end
+      end
+      converter.__test_monomorphize_generic_class(
+        "ConstructorDemandBox",
+        ["String"],
+        "ConstructorDemandBox(String)",
+      )
+      converter.__test_monomorphize_generic_class(
+        "ConstructorDemandBox",
+        ["Int32"],
+        "ConstructorDemandBox(Int32)",
+      )
+
+      target = "ConstructorDemandBox(Int32)#initialize$Int32"
+      converter.__test_set_lazy_rta_active(true)
+      converter.__test_mark_live_type("ConstructorDemandBox(String)")
+      converter.__test_record_lowering_demand(
+        target,
+        "speculative_constructor",
+        [Adamas::HIR::TypeRef::INT32],
+      )
+      converter.__test_process_pending_lower_functions
+
+      converter.module.has_function_with_body?(target).should be_false
+
+      main = converter.module.create_function(
+        "__adamas_main",
+        Adamas::HIR::TypeRef::VOID,
+      )
+      main.get_block(main.entry_block).add(
+        Adamas::HIR::Call.without_receiver(
+          main.next_value_id,
+          Adamas::HIR::TypeRef::VOID,
+          target,
+          [] of Adamas::HIR::ValueId,
+        )
+      )
+      converter.__test_set_lazy_rta_active(true)
+      converter.__test_scan_hir_function_for_live_types(main)
+      converter.__test_record_lowering_demand(
+        target,
+        "exact_constructor",
+        [Adamas::HIR::TypeRef::INT32],
+      )
+      converter.__test_process_pending_lower_functions
+
+      converter.__test_rta_called_method?(target).should be_true
+      converter.module.has_function_with_body?(target).should be_true
+    ensure
+      converter.try(&.__test_set_lazy_rta_active(false))
+    end
+
     it "does not infer parent instance liveness from an inherited direct-call symbol" do
       source = <<-CRYSTAL
         class Object

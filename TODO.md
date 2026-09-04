@@ -1,9 +1,27 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-09-03 (bare generic MIR dispatch now consumes HIR-admitted live
-targets instead of requiring every structurally registered specialization.
-The `Hash#size` guard is gone; B4-F remains RED at the later
-`Hash(String, Nil)#find_entry$Adamas::MIR::TypeRef` dispatch guard.)
+Updated: 2026-09-03 (concrete generic constructors now require exact RTA
+demand, but the full-HIR bootstrap remains slow because later missing-call
+scans recreate almost the entire transitive worklist.)
+
+2026-09-03 CONCRETE GENERIC CONSTRUCTORS ARE NO LONGER UNCONDITIONAL RTA ROOTS.
+Constructor owner extraction used to return no owner for every `initialize`,
+`.new`, and `.allocate`, so queued `Hash(K, V)` and other generic constructor
+specializations bypassed exact-instance reachability. Concrete generic
+constructors now use the normal owner-liveness contract while legacy
+non-generic constructors remain eager. An exact emitted call still admits and
+materializes its target.
+
+The focused regression was RED when an uncalled `ConstructorDemandBox(Int32)`
+initializer acquired a body and is GREEN while the exact-root control still
+lowers it. The full AstToHir suite passes 544 examples with zero failures and
+two pending examples. At a bounded first-wave budget, materialized functions
+fell from 5,196 to 1,137 and processing from about 29 seconds to 0.79 seconds.
+The source-matched full HIR improved only from 246.5 to 245.3 seconds and from
+52,263 to 52,100 functions: later all-function missing-call scans re-admit most
+of the work. Adversary verdict: ROBUST for constructor admission, VULNERABLE as
+a global bootstrap speedup. Next: require a live/admitted caller before its HIR
+body can create new lowering demand.
 
 2026-09-03 BARE GENERIC MIR DISPATCH NOW FOLLOWS HIR LIVENESS ADMISSION.
 `generic_instances` is a structural registry and retains specializations that

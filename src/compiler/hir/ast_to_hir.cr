@@ -4909,9 +4909,11 @@ module Adamas::HIR
       if hash_idx = name.rindex('#')
         owner = name[0, hash_idx]
         base = strip_generics_simple(owner)
-        # Constructors → never defer (needed for .new allocation)
+        # Keep legacy non-generic constructors eager. Concrete generic
+        # constructors still need exact instance reachability; treating every
+        # queued Hash(K, V)#initialize as a root reopens all sibling instances.
         method_part = name[(hash_idx + 1)..]
-        return nil if method_part.starts_with?("initialize")
+        return nil if method_part.starts_with?("initialize") && !owner.includes?('(')
         # Module methods → never defer (they're dispatched via includers)
         return nil if @rta_module_base_names.includes?(base)
         return owner.includes?('(') ? owner : base
@@ -4922,8 +4924,11 @@ module Adamas::HIR
         owner = name[0, dot_idx]
         base = strip_generics_simple(owner)
         method_part = name[(dot_idx + 1)..]
-        # .new / .allocate → never defer (needed for allocation)
-        return nil if method_part.starts_with?("new") || method_part == "allocate"
+        # Keep legacy non-generic allocators eager, but let concrete generic
+        # allocators use the same exact-instance RTA contract as their methods.
+        if !owner.includes?('(') && (method_part.starts_with?("new") || method_part == "allocate")
+          return nil
+        end
         # Module class methods → never defer
         return nil if @rta_module_base_names.includes?(base)
         return owner.includes?('(') ? owner : base
