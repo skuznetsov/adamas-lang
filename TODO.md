@@ -15904,13 +15904,16 @@ method-generic shadowing and `IdentityChild#itself` through pending-function
 flush. The full AstToHir suite passes 547 examples with zero failures, zero
 errors, and two existing pending examples. A safely compiled `Array(String)#uniq!`
 probe contains `Hash(String, String)` and no `Hash(Object, String)`, and a fresh
-full HIR run completed in about 216 seconds with 50,231 functions.
+full HIR run completed in about 216 seconds. Comparable counters decreased:
+the internal function graph went from 51,290 to 50,231 entries, while serialized
+HIR bodies went from 46,939 to 45,889.
 
 Adversary verdict: ROBUST for these two scope/type contracts; VULNERABLE as a
 bootstrap-speed claim. The run completed faster than the prior sample but
-materialized 3,292 more functions, while `lower_missing` still consumed about
-204 seconds. Next: explain and reduce that genuine Hash/Array demand fanout
-without suppressing reachable work or adding another cache.
+`lower_missing` still consumed about 204 seconds. The graph reduction is real,
+but a single host-sensitive timing sample is not a stable speed certificate.
+Next: explain and reduce the remaining genuine Hash/Array demand fanout without
+suppressing reachable work or adding another cache.
 
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
