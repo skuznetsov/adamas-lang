@@ -76534,6 +76534,8 @@ module Adamas::HIR
         return nil unless local_id
         value_type = ctx.type_of(local_id)
         target_name = resolve_typeof_in_type_string((safe_slice_to_string(node.target_type) || ""))
+        target_name = resolve_type_name_in_context(target_name)
+        target_name = resolve_type_alias_chain(target_name)
         target_type = type_ref_for_name(target_name)
         statically_is_a_type?(value_type, target_type)
       when Adamas::Compiler::Frontend::CallNode
@@ -76548,6 +76550,8 @@ module Adamas::HIR
           value_type = ctx.type_of(local_id)
           if type_str = stringify_type_expr(node.args.first)
             type_str = resolve_typeof_in_type_string(type_str)
+            type_str = resolve_type_name_in_context(type_str)
+            type_str = resolve_type_alias_chain(type_str)
             target_type = type_ref_for_name(type_str)
             return statically_is_a_type?(value_type, target_type)
           end
@@ -77122,6 +77126,11 @@ module Adamas::HIR
       # not registered yet.
       if numeric_primitive?(value_type)
         check_name = check_desc.try(&.name) || get_type_name_from_ref(check_type)
+        static_result = primitive_is_a_hierarchy?(get_type_name_from_ref(value_type), check_name)
+        return static_result unless static_result.nil?
+        if check_desc && (check_desc.kind == TypeKind::Class || check_desc.kind == TypeKind::Struct)
+          return false
+        end
         return false if check_name == "Hash" || check_name == "NamedTuple"
       end
 

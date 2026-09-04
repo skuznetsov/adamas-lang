@@ -8274,6 +8274,59 @@ describe Adamas::HIR::AstToHir do
       first_comparison_branch.should_not be_nil
     end
 
+    it "does not lower an impossible is_a equality branch" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        class StaticEqualityProbe
+          def deep_compare(other : StaticEqualityProbe) : Bool
+            true
+          end
+
+          def ==(other : Int32) : Bool
+            return false unless other.is_a?(self)
+            deep_compare(other)
+          end
+        end
+
+        StaticEqualityProbe.new == 1
+      CRYSTAL
+
+      equality = converter.module.functions.find do |candidate|
+        candidate.name.starts_with?("StaticEqualityProbe#==")
+      end
+      equality.should_not be_nil
+      calls = equality.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end
+      calls.none? { |call| call.method_name.includes?("StaticEqualityProbe#deep_compare") }.should be_true
+      hir_text(equality.not_nil!).should contain("literal false")
+    end
+
+    it "keeps a reachable is_a equality branch" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        class DynamicEqualityProbe
+          def deep_compare(other : DynamicEqualityProbe) : Bool
+            true
+          end
+
+          def ==(other : DynamicEqualityProbe) : Bool
+            return false unless other.is_a?(self)
+            deep_compare(other)
+          end
+        end
+
+        DynamicEqualityProbe.new == DynamicEqualityProbe.new
+      CRYSTAL
+
+      equality = converter.module.functions.find do |candidate|
+        candidate.name.starts_with?("DynamicEqualityProbe#==")
+      end
+      equality.should_not be_nil
+      calls = equality.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end
+      calls.any? { |call| call.method_name.includes?("DynamicEqualityProbe#deep_compare") }.should be_true
+    end
+
     it "preserves element case equality for Tuple#===" do
       func = lower_function(<<-CRYSTAL)
         class CaseEqualityProbe

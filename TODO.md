@@ -15939,6 +15939,34 @@ yet measured. This is not a general recursive canonicalizer for every nested
 type spelling. Next: use the remaining fanout map to select one measured
 producer before considering any broader normalization.
 
+#### Session 151: prune statically impossible primitive type branches
+
+Materialized equality overloads such as `Formatter#==(other : Int32)` still
+lowered the success body behind `return false unless other.is_a?(self)`. The
+early condition evaluator resolved `typeof(...)` spellings but not contextual
+`self` or aliases. Even after resolving the target name, builtin numeric types
+have no ordinary `TypeDescriptor`, so the existing hierarchy proof returned
+unknown instead of proving that an `Int32` cannot be a concrete formatter.
+
+The early evaluator now applies the same contextual and alias resolution used
+by normal `is_a?` lowering. Its existing numeric-primitive path also reuses the
+primitive hierarchy check and returns false only against a registered concrete
+class or struct. Modules, unions, and unavailable hierarchy facts remain
+conservative. No equality-specific rule, cache, registry, or replay policy was
+added.
+
+A source-backed no-prelude regression was red before the change because the
+impossible branch emitted `StaticEqualityProbe#deep_compare`; it now emits only
+the false path. The adversary control keeps the same-type reachable branch.
+Focused `is_a` tests pass three examples, and the safely run full AstToHir suite
+passes 550 examples with zero failures, zero errors, and two existing pending
+examples.
+
+Adversary verdict: ROBUST for the narrow static-pruning contract; VULNERABLE as
+an end-to-end speed or graph-size claim. No post-change self-host measurement
+has been taken yet. Next: compare one fresh bounded self-host graph against the
+Session 149 baseline before selecting another fanout producer.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
