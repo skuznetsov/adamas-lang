@@ -1,8 +1,31 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-09-03 (runtime Reference wrappers now retain their exact
-receiver owner, removing one measured Object-wide replay wave; full-HIR
-lowering still takes about 246 seconds.)
+Updated: 2026-09-03 (late receiver repair now preserves call arity when
+recovering return contracts; full-HIR lowering still takes about 238 seconds
+and the remaining Object hash replay is unchanged.)
+
+2026-09-03 LATE RECEIVER REPAIR NOW KEEPS ZERO-ARGUMENT HASH ABI SEPARATE.
+Receiver-bound target repair could correctly rewrite `Object#hash` to a
+concrete owner and then recover its return type through an arity-less lookup.
+For owners with both `hash` and `hash(hasher)`, that allowed the typed protocol
+sibling's `Crystal::Hasher` return contract to contaminate a zero-argument
+call. The repair now passes the already-known argument count through the two
+existing return-type queries. No new cache, registry, resolver path, or hash
+special case was added.
+
+The source-backed generic regression was RED with zero arguments but a
+`Crystal::Hasher` result and is GREEN with `UInt64`; its adversary control keeps
+the one-argument typed hash body returning `Crystal::Hasher`. An ablation
+removed 28 earlier inference-site edits without reopening the failure, leaving
+only the two repair-site arguments. The full AstToHir suite passes 545 examples
+with zero failures/errors and two pending examples, and a fresh stage1 compiler
+completes full HIR safely with 51,284 functions and 46,933 reachable functions.
+The run measured 237.960 seconds in HIR and 247.975 seconds total, but the
+remaining `.Object#hash$Crystal::Hasher()` lines stayed exactly 579 versus the
+preceding source-matched HIR. Adversary verdict: ROBUST for the repaired
+zero-argument return ABI; BROKEN as an explanation of the measured Object hash
+fanout. Next: trace one surviving full-source call to the earlier owner/arity
+loss boundary before changing another lookup.
 
 2026-09-03 OBJECT CASE-EQUALITY REDISPATCH NO LONGER ERASES CONCRETE REFERENCE
 OWNERS. `Object#===` delegates through `self == other`, but the existing owner

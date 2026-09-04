@@ -48494,11 +48494,11 @@ module Adamas::HIR
             return_type = if preserve_receiver_call_type
                             preserved_receiver_return_type
                           else
-                            get_function_return_type(corrected_name)
+                            get_function_return_type(corrected_name, arg_types.size)
                           end
             unless preserve_receiver_call_type
               if return_type == TypeRef::VOID
-                if inferred = resolve_return_type_from_def(corrected_name, resolved_base, receiver_type)
+                if inferred = resolve_return_type_from_def(corrected_name, resolved_base, receiver_type, arg_types.size)
                   return_type = inferred if inferred != TypeRef::VOID
                 end
               end

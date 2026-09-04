@@ -13624,6 +13624,81 @@ describe Adamas::HIR::AstToHir do
       converter.__test_get_type_name_from_ref(pointer_template_return).should eq("UInt64")
     end
 
+    it "keeps zero-argument hash calls separate from the typed hash protocol across generic owners" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        module Crystal
+          struct Hasher
+            def result : UInt64
+              0_u64
+            end
+          end
+        end
+
+        class Object
+          def hash(hasher : Crystal::Hasher) : Crystal::Hasher
+            hasher
+          end
+
+          def hash : UInt64
+            hash(Crystal::Hasher.new).result
+          end
+        end
+
+        struct UInt64
+          def hash(hasher : Crystal::Hasher) : Crystal::Hasher
+            hasher
+          end
+        end
+
+        class HashArityProbeKey
+          def object_id : UInt64
+            1_u64
+          end
+
+          def hash(hasher : Crystal::Hasher) : Crystal::Hasher
+            hasher
+          end
+        end
+
+        class HashArityProbe(K, V)
+          def key_hash(key : K, compare_by_identity : Bool)
+            if compare_by_identity
+              key.object_id.hash
+            else
+              key.hash
+            end
+          end
+        end
+
+        HashArityProbe(HashArityProbeKey, String).new.key_hash(HashArityProbeKey.new, true)
+        HashArityProbe(HashArityProbeKey, Int32).new.key_hash(HashArityProbeKey.new, true)
+      CRYSTAL
+      converter.flush_pending_functions
+
+      callers = converter.module.functions.select do |function|
+        function.name.starts_with?("HashArityProbe(HashArityProbeKey, ") &&
+          function.name.includes?("#key_hash")
+      end
+      callers.size.should eq(2)
+      callers.each do |caller|
+        hash_calls = caller.blocks.flat_map(&.instructions).compact_map do |instruction|
+          instruction.as?(Adamas::HIR::Call)
+        end.select { |call| call.method_name.includes?("#hash") }
+        hash_calls.size.should eq(2)
+        hash_calls.each do |call|
+          call.args.should be_empty
+          call.method_name.should_not contain("$Crystal::Hasher")
+          converter.__test_get_type_name_from_ref(call.type).should eq("UInt64")
+        end
+      end
+
+      typed_return = converter.__test_get_function_return_type_for_call(
+        "HashArityProbeKey#hash$Crystal::Hasher",
+        1,
+      )
+      converter.__test_get_type_name_from_ref(typed_return).should eq("Crystal::Hasher")
+    end
+
     it "materializes unannotated typed hash branches inside generic block lowering" do
       converter = lower_program_with_main(<<-CRYSTAL)
         module Crystal
