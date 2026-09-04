@@ -91122,14 +91122,20 @@ module Adamas::HIR
                       else
                         lower_args_with_expected_types(ctx, call_args, method_name, arg_binding_full_method_name, has_block_call, arg_lowering_arena)
                       end
-        if debug_env_filter_match?("DEBUG_CALL_TRACE", method_name, method_name, full_method_name || "")
-          STDERR.puts "[CALL_TRACE] stage=with_arena_done method=#{method_name} args=#{args_result.size} receiver=#{!!receiver_id} full=#{full_method_name || ""}"
-        end
+        debug_lower_call_trace(
+          method_name,
+          method_name,
+          full_method_name || "",
+          "[CALL_TRACE] stage=with_arena_done method=#{method_name} args=#{args_result.size} receiver=#{!!receiver_id} full=#{full_method_name || ""}",
+        )
         args_result
       end
-      if debug_env_filter_match?("DEBUG_CALL_TRACE", method_name, method_name, full_method_name || "")
-        STDERR.puts "[CALL_TRACE] stage=after_args method=#{method_name} args=#{args.size} receiver=#{!!receiver_id} full=#{full_method_name || ""}"
-      end
+      debug_lower_call_trace(
+        method_name,
+        method_name,
+        full_method_name || "",
+        "[CALL_TRACE] stage=after_args method=#{method_name} args=#{args.size} receiver=#{!!receiver_id} full=#{full_method_name || ""}",
+      )
       # Positional arguments are evaluated left-to-right. If one selected call
       # is explicitly NoReturn, its value cannot participate in outer target
       # resolution and later arguments must not be evaluated.
@@ -91151,9 +91157,12 @@ module Adamas::HIR
                                                        apply_default_args(ctx, args, method_name, arg_binding_full_method_name, has_block_call, has_named_args, receiver_id)
                                                      end
       has_named_args = false if constructor_arg_binding_name
-      if debug_env_filter_match?("DEBUG_CALL_TRACE", method_name, method_name, full_method_name || "")
-        STDERR.puts "[CALL_TRACE] stage=after_defaults method=#{method_name} args=#{args.size} receiver=#{!!receiver_id} full=#{full_method_name || ""}"
-      end
+      debug_lower_call_trace(
+        method_name,
+        method_name,
+        full_method_name || "",
+        "[CALL_TRACE] stage=after_defaults method=#{method_name} args=#{args.size} receiver=#{!!receiver_id} full=#{full_method_name || ""}",
+      )
 
       # Resolve pointer arithmetic before overload resolution can bind the
       # numeric variant of an imprecise Pointer(T) | Int32 phi. This is the
@@ -91578,13 +91587,19 @@ module Adamas::HIR
       pack_result = pack_splat_args_for_call(ctx, args, method_name, splat_pack_full_method_name, has_block_call, has_named_args, receiver_id, has_splat)
       args = pack_result[0]
       splat_packed = pack_result[1]
-      if debug_env_filter_match?("DEBUG_CALL_TRACE", method_name, method_name, full_method_name || "")
-        STDERR.puts "[CALL_TRACE] stage=after_pack method=#{method_name} args=#{args.size} receiver=#{!!receiver_id} full=#{full_method_name || ""}"
-      end
+      debug_lower_call_trace(
+        method_name,
+        method_name,
+        full_method_name || "",
+        "[CALL_TRACE] stage=after_pack method=#{method_name} args=#{args.size} receiver=#{!!receiver_id} full=#{full_method_name || ""}",
+      )
       args = ensure_double_splat_arg(ctx, args, method_name, full_method_name, has_block_call, has_named_args, receiver_id)
-      if debug_env_filter_match?("DEBUG_CALL_TRACE", method_name, method_name, full_method_name || "")
-        STDERR.puts "[CALL_TRACE] stage=after_double_splat method=#{method_name} args=#{args.size} receiver=#{!!receiver_id} full=#{full_method_name || ""}"
-      end
+      debug_lower_call_trace(
+        method_name,
+        method_name,
+        full_method_name || "",
+        "[CALL_TRACE] stage=after_double_splat method=#{method_name} args=#{args.size} receiver=#{!!receiver_id} full=#{full_method_name || ""}",
+      )
 
       # Array.new(size, value) intercept -> runtime helper for filled array.
       # These helpers hardcode both the element stride and Array(T) runtime id,
@@ -92254,22 +92269,27 @@ module Adamas::HIR
           end
         end
       end
-      if debug_env_filter_match?("DEBUG_L10_MNAME", method_name, full_method_name || "")
-        STDERR.puts "[L10_MN] site=A method=#{method_name} full=#{full_method_name || "nil"}"
-      end
+      debug_lower_call_l10(
+        method_name,
+        full_method_name || "",
+        "[L10_MN] site=A method=#{method_name} full=#{full_method_name || "nil"}",
+      )
       # Guard method_name before any string ops: in generated stage2, String fields
       # can be null pointers under V2's heap-allocated struct ABI.
       unless v2_string_readable?(method_name)
         method_name = ""
       end
-      if debug_env_filter_match?("DEBUG_L10_MNAME", method_name, full_method_name || "")
-        STDERR.puts "[L10_MN] site=B method=#{method_name} full=#{full_method_name || "nil"}"
-      end
-      if debug_env_filter_match?("DEBUG_CALL_TRACE", method_name, method_name, full_method_name || "")
-        type_ids = arg_types.map(&.id)
-        type_names = arg_types.map { |t| get_type_name_from_ref(t) }
-        STDERR.puts "[CALL_TRACE] stage=after_arg_types method=#{method_name} arg_types=#{type_ids.join(",")} names=#{type_names.join("|")}"
-      end
+      debug_lower_call_l10(
+        method_name,
+        full_method_name || "",
+        "[L10_MN] site=B method=#{method_name} full=#{full_method_name || "nil"}",
+      )
+      debug_lower_call_trace(
+        method_name,
+        method_name,
+        full_method_name || "",
+        "[CALL_TRACE] stage=after_arg_types method=#{method_name} arg_types=#{arg_types.map(&.id).join(",")} names=#{arg_types.map { |t| get_type_name_from_ref(t) }.join("|")}",
+      )
       if callee_kind == Adamas::Compiler::Frontend::NodeKind::Identifier &&
          full_method_name.nil? &&
          static_class_name.nil? &&
@@ -92418,9 +92438,11 @@ module Adamas::HIR
                                 end
         method_name = recovered_method_name unless recovered_method_name.empty?
       end
-      if debug_env_filter_match?("DEBUG_L10_MNAME", method_name, full_method_name || "")
-        STDERR.puts "[L10_MN] site=C method=#{method_name} full=#{full_method_name || "nil"} lexical=#{lexical_method_name}"
-      end
+      debug_lower_call_l10(
+        method_name,
+        full_method_name || "",
+        "[L10_MN] site=C method=#{method_name} full=#{full_method_name || "nil"} lexical=#{lexical_method_name}",
+      )
       if callee_kind == Adamas::Compiler::Frontend::NodeKind::Identifier &&
          static_class_name.nil? &&
          @current_class.nil?
@@ -92455,9 +92477,11 @@ module Adamas::HIR
       # Third null guard: method_name may have been reassigned by source_method_name
       # or recovered_method_name paths above; re-sanitize before all downstream string ops.
       method_name = "" unless v2_string_readable?(method_name)
-      if debug_env_filter_match?("DEBUG_L10_MNAME", method_name, full_method_name || "")
-        STDERR.puts "[L10_MN] site=D method=#{method_name} full=#{full_method_name || "nil"}"
-      end
+      debug_lower_call_l10(
+        method_name,
+        full_method_name || "",
+        "[L10_MN] site=D method=#{method_name} full=#{full_method_name || "nil"}",
+      )
       if top_level_target = top_level_bare_call_target
         if !has_block_call && block_expr.nil? && block_pass_expr.nil?
           if env_has?("ADAMAS_TRACE_TOPLEVEL_CALL_SHAPE") &&
@@ -92575,9 +92599,12 @@ module Adamas::HIR
       unless v2_string_readable?(base_method_name)
         base_method_name = v2_string_readable?(method_name) ? method_name : ""
       end
-      if debug_env_filter_match?("DEBUG_L10_MNAME", method_name, full_method_name || "", base_method_name)
-        STDERR.puts "[L10_MN] site=E method=#{method_name} base=#{base_method_name} full=#{full_method_name || "nil"}"
-      end
+      debug_lower_call_l10_base(
+        method_name,
+        full_method_name || "",
+        base_method_name,
+        "[L10_MN] site=E method=#{method_name} base=#{base_method_name} full=#{full_method_name || "nil"}",
+      )
       # Late fallback: if this is an unresolved class-method call on a type literal,
       # use meta-instance methods (e.g., Int32.to_s -> Class#to_s).
       if receiver_id.nil? && v2_string_readable?(base_method_name) && base_method_name.includes?('.') &&
@@ -92693,9 +92720,12 @@ module Adamas::HIR
                             else
                               mangle_function_name(base_method_name, arg_types, has_block_call)
                             end
-      if debug_env_filter_match?("DEBUG_L10_MNAME", method_name, full_method_name || "", base_method_name)
-        STDERR.puts "[L10_MN] site=F method=#{method_name} base=#{base_method_name} mangled=#{mangled_method_name} full=#{full_method_name || "nil"}"
-      end
+      debug_lower_call_l10_base(
+        method_name,
+        full_method_name || "",
+        base_method_name,
+        "[L10_MN] site=F method=#{method_name} base=#{base_method_name} mangled=#{mangled_method_name} full=#{full_method_name || "nil"}",
+      )
 
       if receiver_id && v2_string_readable?(base_method_name) && base_method_name.includes?('|') && base_method_name.includes?('#')
         union_name = method_owner(base_method_name)
@@ -93488,9 +93518,12 @@ module Adamas::HIR
         end
       end
       arg_names = arg_types.map { |t| type_name_for_mangling(t) }
-      if debug_env_filter_match?("DEBUG_CALL_TRACE", method_name, base_method_name, mangled_method_name)
-        STDERR.puts "[CALL_TRACE] stage=after_resolve method=#{method_name} base=#{base_method_name} mangled=#{mangled_method_name}"
-      end
+      debug_lower_call_trace(
+        method_name,
+        base_method_name,
+        mangled_method_name,
+        "[CALL_TRACE] stage=after_resolve method=#{method_name} base=#{base_method_name} mangled=#{mangled_method_name}",
+      )
       # Static calls have no receiver value, but block-overload fallback still
       # needs an owner constraint. Without it, a synthesized allocator such as
       # `Widget.new { ... }` can be retargeted to any unrelated `new(&block)`
@@ -94416,10 +94449,13 @@ module Adamas::HIR
           return_def_arg_count,
         )
       end
-      if debug_env_filter_match?("DEBUG_L11_RT", method_name, mangled_method_name, base_method_name)
-        STDERR.puts "[L11_RT] site=A name=#{mangled_method_name}"
-        STDERR.puts "[L11_RT] site=A rt=#{get_type_name_from_ref(return_type)}"
-      end
+      debug_lower_call_l11(
+        method_name,
+        mangled_method_name,
+        base_method_name,
+        "[L11_RT] site=A name=#{mangled_method_name}",
+        "[L11_RT] site=A rt=#{get_type_name_from_ref(return_type)}",
+      )
       begin
         if def_node = selected_return_def
           if debug_env_filter_match?("DEBUG_RETURN_DEF", mangled_method_name, base_method_name)
@@ -94505,10 +94541,13 @@ module Adamas::HIR
             if def_node.return_type.nil? && !defer_specialized_body_inference
               owner_name = function_context_from_name(base_method_name)
               if inferred = infer_return_type_from_body_without_callsite(def_node, owner_name)
-                if debug_env_filter_match?("DEBUG_L11_RT", method_name, mangled_method_name, base_method_name)
-                  STDERR.puts "[L11_RT] site=A0b name=#{mangled_method_name} owner=#{owner_name}"
-                  STDERR.puts "[L11_RT] site=A0b inferred=#{get_type_name_from_ref(inferred)}"
-                end
+                debug_lower_call_l11(
+                  method_name,
+                  mangled_method_name,
+                  base_method_name,
+                  "[L11_RT] site=A0b name=#{mangled_method_name} owner=#{owner_name}",
+                  "[L11_RT] site=A0b inferred=#{get_type_name_from_ref(inferred)}",
+                )
                 if inferred != TypeRef::VOID && inferred != TypeRef::NIL
                   inferred_desc = @module.get_type_descriptor(inferred)
                   if return_type == TypeRef::VOID || return_type == TypeRef::NIL
@@ -94528,10 +94567,13 @@ module Adamas::HIR
         end
       end
 
-      if debug_env_filter_match?("DEBUG_L11_RT", method_name, mangled_method_name, base_method_name)
-        STDERR.puts "[L11_RT] site=A1 name=#{mangled_method_name}"
-        STDERR.puts "[L11_RT] site=A1 rt=#{get_type_name_from_ref(return_type)}"
-      end
+      debug_lower_call_l11(
+        method_name,
+        mangled_method_name,
+        base_method_name,
+        "[L11_RT] site=A1 name=#{mangled_method_name}",
+        "[L11_RT] site=A1 rt=#{get_type_name_from_ref(return_type)}",
+      )
       # If no concrete signature was registered for the mangled name, prefer
       # resolving the return type from the def in the owner's namespace.
       if !@function_types.has_key?(mangled_method_name)
@@ -94539,10 +94581,13 @@ module Adamas::HIR
           return_type = inferred unless inferred == TypeRef::VOID || inferred == TypeRef::NIL
         end
       end
-      if debug_env_filter_match?("DEBUG_L11_RT", method_name, mangled_method_name, base_method_name)
-        STDERR.puts "[L11_RT] site=A2 name=#{mangled_method_name}"
-        STDERR.puts "[L11_RT] site=A2 rt=#{get_type_name_from_ref(return_type)}"
-      end
+      debug_lower_call_l11(
+        method_name,
+        mangled_method_name,
+        base_method_name,
+        "[L11_RT] site=A2 name=#{mangled_method_name}",
+        "[L11_RT] site=A2 rt=#{get_type_name_from_ref(return_type)}",
+      )
 
       # For Proc#call, extract return type from Proc type_params (last element is return type)
       if return_type == TypeRef::VOID && method_name == "call" && receiver_id
@@ -94674,10 +94719,13 @@ module Adamas::HIR
         end
       end
 
-      if debug_env_filter_match?("DEBUG_L11_RT", method_name, mangled_method_name, base_method_name)
-        STDERR.puts "[L11_RT] site=B name=#{mangled_method_name}"
-        STDERR.puts "[L11_RT] site=B rt=#{get_type_name_from_ref(return_type)}"
-      end
+      debug_lower_call_l11(
+        method_name,
+        mangled_method_name,
+        base_method_name,
+        "[L11_RT] site=B name=#{mangled_method_name}",
+        "[L11_RT] site=B rt=#{get_type_name_from_ref(return_type)}",
+      )
       if block_return_name
         if inferred = resolve_block_dependent_return_type(mangled_method_name, base_method_name, block_return_name)
           return_type = inferred
@@ -94688,10 +94736,13 @@ module Adamas::HIR
           end
         end
       end
-      if debug_env_filter_match?("DEBUG_L11_RT", method_name, mangled_method_name, base_method_name)
-        STDERR.puts "[L11_RT] site=C name=#{mangled_method_name}"
-        STDERR.puts "[L11_RT] site=C rt=#{get_type_name_from_ref(return_type)}"
-      end
+      debug_lower_call_l11(
+        method_name,
+        mangled_method_name,
+        base_method_name,
+        "[L11_RT] site=C name=#{mangled_method_name}",
+        "[L11_RT] site=C rt=#{get_type_name_from_ref(return_type)}",
+      )
       if env_get("DEBUG_BLOCK_RETURN") && (mangled_method_name.includes?("sort_by") || base_method_name.includes?("sort_by"))
         STDERR.puts "[BLOCK_RETURN] method=#{mangled_method_name} base=#{base_method_name} return=#{block_return_name || "nil"}"
       end
@@ -94729,10 +94780,13 @@ module Adamas::HIR
           return_type = tuple_return
         end
       end
-      if debug_env_filter_match?("DEBUG_L11_RT", method_name, mangled_method_name, base_method_name)
-        STDERR.puts "[L11_RT] site=D name=#{mangled_method_name}"
-        STDERR.puts "[L11_RT] site=D rt=#{get_type_name_from_ref(return_type)}"
-      end
+      debug_lower_call_l11(
+        method_name,
+        mangled_method_name,
+        base_method_name,
+        "[L11_RT] site=D name=#{mangled_method_name}",
+        "[L11_RT] site=D rt=#{get_type_name_from_ref(return_type)}",
+      )
 
       if receiver_id && v2_string_readable?(method_name) && method_name.ends_with?('?')
         # For Hash#[]? and similar query methods, infer nilable return type.
@@ -94799,10 +94853,13 @@ module Adamas::HIR
         STDERR.puts "[CALL_RETURN] before name=#{mangled_method_name} base=#{base_method_name} return=#{get_type_name_from_ref(return_type)}"
       end
 
-      if debug_env_filter_match?("DEBUG_L11_RT", method_name, mangled_method_name, base_method_name)
-        STDERR.puts "[L11_RT] site=E name=#{mangled_method_name}"
-        STDERR.puts "[L11_RT] site=E rt=#{get_type_name_from_ref(return_type)}"
-      end
+      debug_lower_call_l11(
+        method_name,
+        mangled_method_name,
+        base_method_name,
+        "[L11_RT] site=E name=#{mangled_method_name}",
+        "[L11_RT] site=E rt=#{get_type_name_from_ref(return_type)}",
+      )
       if return_type == TypeRef::VOID || return_type == TypeRef::NIL
         if inferred = resolve_return_type_from_def(mangled_method_name, base_method_name, receiver_id ? ctx.type_of(receiver_id) : nil, return_def_arg_count)
           return_type = inferred unless inferred == TypeRef::VOID || inferred == TypeRef::NIL
@@ -94812,10 +94869,13 @@ module Adamas::HIR
           end
         end
       end
-      if debug_env_filter_match?("DEBUG_L11_RT", method_name, mangled_method_name, base_method_name)
-        STDERR.puts "[L11_RT] site=F name=#{mangled_method_name}"
-        STDERR.puts "[L11_RT] site=F rt=#{get_type_name_from_ref(return_type)}"
-      end
+      debug_lower_call_l11(
+        method_name,
+        mangled_method_name,
+        base_method_name,
+        "[L11_RT] site=F name=#{mangled_method_name}",
+        "[L11_RT] site=F rt=#{get_type_name_from_ref(return_type)}",
+      )
 
       if def_node = @function_defs[mangled_method_name]? || @function_defs[base_method_name]?
         param_map = {} of String => String
@@ -94850,10 +94910,13 @@ module Adamas::HIR
         end
       end
 
-      if debug_env_filter_match?("DEBUG_L11_RT", method_name, mangled_method_name, base_method_name)
-        STDERR.puts "[L11_RT] site=G name=#{mangled_method_name} recv=#{receiver_id ? 1 : 0}"
-        STDERR.puts "[L11_RT] site=G rt=#{get_type_name_from_ref(return_type)}"
-      end
+      debug_lower_call_l11(
+        method_name,
+        mangled_method_name,
+        base_method_name,
+        "[L11_RT] site=G name=#{mangled_method_name} recv=#{receiver_id ? 1 : 0}",
+        "[L11_RT] site=G rt=#{get_type_name_from_ref(return_type)}",
+      )
       if receiver_id
         return_type = specialize_type_with_receiver_map(return_type, ctx.type_of(receiver_id))
       end
@@ -96580,9 +96643,12 @@ module Adamas::HIR
         end
       end
 
-      if debug_env_filter_match?("DEBUG_CALL_TRACE", method_name, base_method_name, mangled_method_name)
-        STDERR.puts "[CALL_TRACE] stage=before_lower_function method=#{method_name} mangled=#{mangled_method_name} primary=#{primary_mangled_name} return=#{return_type.id}"
-      end
+      debug_lower_call_trace(
+        method_name,
+        base_method_name,
+        mangled_method_name,
+        "[CALL_TRACE] stage=before_lower_function method=#{method_name} mangled=#{mangled_method_name} primary=#{primary_mangled_name} return=#{return_type.id}",
+      )
       if receiver_id && args.empty? && (method_name == "inspect" || method_name == "to_s")
         base = base_method_name
         if has_function_base?(base)
@@ -96679,9 +96745,12 @@ module Adamas::HIR
           end
         end
       end
-      if debug_env_filter_match?("DEBUG_CALL_TRACE", method_name, base_method_name, mangled_method_name)
-        STDERR.puts "[CALL_TRACE] stage=after_remember method=#{method_name} mangled=#{mangled_method_name} primary=#{primary_mangled_name}"
-      end
+      debug_lower_call_trace(
+        method_name,
+        base_method_name,
+        mangled_method_name,
+        "[CALL_TRACE] stage=after_remember method=#{method_name} mangled=#{mangled_method_name} primary=#{primary_mangled_name}",
+      )
       if debug_env_filter_match?("DEBUG_EACH_RESOLVE", method_name)
         STDERR.puts "[EACH_LOWER] primary=#{primary_mangled_name} mangled=#{mangled_method_name} func=#{ctx.function.name}"
       end
@@ -96749,9 +96818,12 @@ module Adamas::HIR
           )
         end
       end
-      if debug_env_filter_match?("DEBUG_CALL_TRACE", method_name, base_method_name, mangled_method_name)
-        STDERR.puts "[CALL_TRACE] stage=after_lower_function method=#{method_name} mangled=#{mangled_method_name} primary=#{primary_mangled_name}"
-      end
+      debug_lower_call_trace(
+        method_name,
+        base_method_name,
+        mangled_method_name,
+        "[CALL_TRACE] stage=after_lower_function method=#{method_name} mangled=#{mangled_method_name} primary=#{primary_mangled_name}",
+      )
 
       # Lazy lowering can defer the callee body while still leaving an early
       # pre-lowering return type in the cache. If the target is still pending,
@@ -96990,9 +97062,12 @@ module Adamas::HIR
 
       # Coerce arguments to union types if needed
       # This handles cases like passing Int32 to a parameter of type Int32 | Nil
-      if debug_env_filter_match?("DEBUG_CALL_TRACE", method_name, base_method_name, mangled_method_name)
-        STDERR.puts "[CALL_TRACE] stage=before_coerce method=#{method_name} mangled=#{mangled_method_name} args=#{args.size}"
-      end
+      debug_lower_call_trace(
+        method_name,
+        base_method_name,
+        mangled_method_name,
+        "[CALL_TRACE] stage=before_coerce method=#{method_name} mangled=#{mangled_method_name} args=#{args.size}",
+      )
       coerced_args = coerce_args_to_param_types(ctx, args, mangled_method_name)
       if receiver_id && args.size == 1 && container_write_method?(base_method_name, method_name, mangled_method_name)
         if arg_id = coerced_args.first?
@@ -97007,14 +97082,19 @@ module Adamas::HIR
         end
       end
       args = coerced_args
-      if debug_env_filter_match?("DEBUG_CALL_TRACE", method_name, base_method_name, mangled_method_name)
-        STDERR.puts "[CALL_TRACE] stage=after_coerce method=#{method_name} mangled=#{mangled_method_name} args=#{args.size}"
-      end
+      debug_lower_call_trace(
+        method_name,
+        base_method_name,
+        mangled_method_name,
+        "[CALL_TRACE] stage=after_coerce method=#{method_name} mangled=#{mangled_method_name} args=#{args.size}",
+      )
 
-      if debug_env_filter_match?("DEBUG_CALL_TRACE", method_name, base_method_name, mangled_method_name)
-        recv_type_name = receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "nil"
-        STDERR.puts "[CALL_TRACE] stage=before_emit method=#{method_name} mangled=#{mangled_method_name} return=#{return_type.id} recv_type=#{recv_type_name} virtual=#{call_virtual}"
-      end
+      debug_lower_call_trace(
+        method_name,
+        base_method_name,
+        mangled_method_name,
+        "[CALL_TRACE] stage=before_emit method=#{method_name} mangled=#{mangled_method_name} return=#{return_type.id} recv_type=#{receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "nil"} virtual=#{call_virtual}",
+      )
       if debug_env_filter_match?("DEBUG_DECODE_CALL", method_name, base_method_name, mangled_method_name)
         recv_id = receiver_id ? receiver_id.to_s : "nil"
         STDERR.puts "[DECODE_CALL_EMIT] name=#{mangled_method_name} recv_id=#{recv_id}"
@@ -97570,10 +97650,12 @@ module Adamas::HIR
         ctx.mark_type_literal(call.id)
       end
       track_enum_return_value(call.id, mangled_method_name, return_type)
-      if debug_env_filter_match?("DEBUG_CALL_TRACE", method_name, base_method_name, mangled_method_name)
-        recv_type_name = receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "nil"
-        STDERR.puts "[CALL_TRACE] stage=after_emit method=#{method_name} mangled=#{mangled_method_name} recv_type=#{recv_type_name} virtual=#{call_virtual}"
-      end
+      debug_lower_call_trace(
+        method_name,
+        base_method_name,
+        mangled_method_name,
+        "[CALL_TRACE] stage=after_emit method=#{method_name} mangled=#{mangled_method_name} recv_type=#{receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "nil"} virtual=#{call_virtual}",
+      )
       call.id
     end
 

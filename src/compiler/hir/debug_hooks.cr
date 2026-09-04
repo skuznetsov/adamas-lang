@@ -280,6 +280,42 @@ macro debug_lower_call_read_attr(ctx, node, callee_node)
   {% end %}
 end
 
+# Keep the high-volume call-resolution ledgers out of ordinary compiler builds.
+# The explicit argument form avoids introducing a block parameter into
+# `lower_call`, which would change its self-hosted ABI.
+macro debug_lower_call_trace(method_name, candidate1, candidate2, message)
+  {% if flag?(:debug_hooks) %}
+    if debug_env_filter_match?("DEBUG_CALL_TRACE", {{method_name}}, {{candidate1}}, {{candidate2}})
+      STDERR.puts {{message}}
+    end
+  {% end %}
+end
+
+macro debug_lower_call_l10(method_name, full_method_name, message)
+  {% if flag?(:debug_hooks) %}
+    if debug_env_filter_match?("DEBUG_L10_MNAME", {{method_name}}, {{full_method_name}})
+      STDERR.puts {{message}}
+    end
+  {% end %}
+end
+
+macro debug_lower_call_l10_base(method_name, full_method_name, base_method_name, message)
+  {% if flag?(:debug_hooks) %}
+    if debug_env_filter_match?("DEBUG_L10_MNAME", {{method_name}}, {{full_method_name}}, {{base_method_name}})
+      STDERR.puts {{message}}
+    end
+  {% end %}
+end
+
+macro debug_lower_call_l11(method_name, mangled_method_name, base_method_name, message1, message2)
+  {% if flag?(:debug_hooks) %}
+    if debug_env_filter_match?("DEBUG_L11_RT", {{method_name}}, {{mangled_method_name}}, {{base_method_name}})
+      STDERR.puts {{message1}}
+      STDERR.puts {{message2}}
+    end
+  {% end %}
+end
+
 macro debug_hook_type_cache(name, context, cache_key, resolved_name)
   {% if flag?(:debug_hooks) %}
     DebugHooks.debug(

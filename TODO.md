@@ -16318,6 +16318,40 @@ misrouted lazy branch, and all direct calls together are a small subset of the
 27,882 measured owner attempts. Next: locate the dominant operation inside
 `lower_missing` instead of adding a semantic dedup guard here.
 
+#### Session 164: remove high-volume lower-call resolution ledgers
+
+An append-only binary trace separated request volume from actual lowering work.
+Repeated requests for the same symbol were cheap, while the primary
+`lower_missing` sweep spent 14-31 seconds per productive iteration on thousands
+of unique materializations. The largest single observed self-time was 11.8
+seconds in `AstToHir#lower_call`. Stable late full-module scans add a smaller
+roughly 8-10 second tax, but the existing incremental shadow cannot safely skip
+them: target availability and callsite metadata can change without a caller
+body revision. A body-revision-only production cache is therefore rejected.
+
+The smaller reversible step moves the high-volume `DEBUG_CALL_TRACE`,
+`DEBUG_L10_MNAME`, and `DEBUG_L11_RT` ledgers behind explicit non-block
+`debug_hooks` macros. Ordinary builds no longer carry their filters, strings,
+or formatting work; `-Ddebug_hooks` builds preserve the previous output. No
+lowering decision, cache, target selection, or behavioral environment switch
+moved with them.
+
+Ordinary and `-Ddebug_hooks` compiler builds pass. No-prelude bare-call and
+receiver-call probes emit no selected ledger in the ordinary build and preserve
+all applicable L10/L11/call-trace stages in the debug build. The full AstToHir
+suite passes 560 examples with zero failures or errors and two existing pending
+examples. A bounded full-HIR self-host exits zero with the same 35,334 functions
+and exact non-block `lower_call` ABI. Its HIR is 1,155 lines smaller, and the
+selected debug-marker occurrences fall from 90 to 20; the remaining occurrences
+belong to other lowering functions. The observed 217-second wall time is a
+single noisy-host sample, not a speedup certificate.
+
+Adversary verdict: ROBUST for semantic preservation and structural reduction;
+VULNERABLE for wall-clock attribution. Next: profile the remaining productive
+`lower_call` work before changing semantic resolution. Keep full scans
+authoritative until a global semantic-epoch cache has a late-materialization
+falsifier and preserves queue/callsite side effects.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
