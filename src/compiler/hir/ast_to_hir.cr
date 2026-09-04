@@ -96394,239 +96394,20 @@ module Adamas::HIR
         end
       end
 
-      # Ensure virtual dispatch targets are lowered so MIR can build vdispatch tables.
-      if call_virtual && receiver_id
-        if type_desc = @module.get_type_descriptor(ctx.type_of(receiver_id))
-          if type_desc.kind == TypeKind::Class
-            ah = arg_types_hash(arg_types)
-            vf = vdispatch_flags(has_block_call)
-            key = {type_desc.name, method_name, ah, vf}
-            caller_token = virtual_target_caller_token(ctx)
-            remember_virtual_target_caller(type_desc.name, method_name, arg_types, has_block_call, has_splat, caller_token)
-            unless @virtual_targets_lowered.includes?(key)
-              @virtual_targets_lowered.add(key)
-              record_virtual_target(type_desc.name, method_name, arg_types, has_block_call, has_splat, caller_token)
-              if @lazy_rta_active && broad_virtual_target_root?(type_desc.name)
-                # Recording already replays every live descendant through the
-                # append-only bucket. Consume the root through the same cursor
-                # instead of repeating descendant owner lookup here.
-                lower_virtual_targets_for_child(type_desc.name, type_desc.name)
-              else
-                owners = [type_desc.name]
-                append_virtual_target_descendants(owners, type_desc.name)
-                ensure_method_index_built
-                owners.each do |owner|
-                  # Fast pre-filter: skip owners that don't have this method registered
-                  # (uses pre-built method_index for O(1) lookup, avoids string building + hash)
-                  base_owner = method_index_owner_key(owner)
-                  unless @method_index[base_owner]?.try(&.has_key?(method_name))
-                    next unless @class_info.has_key?(owner)
-                  end
-                  if @debug_virtual_target_replay_stats
-                    @vtr_stats_direct_normal_call_owner_calls &+= 1
-                    stats_key = {owner, method_name, ah, vf}
-                    if @vtr_stats_direct_normal_call_owner_keys.includes?(stats_key)
-                      @vtr_stats_direct_normal_call_owner_repeats &+= 1
-                    else
-                      @vtr_stats_direct_normal_call_owner_keys << stats_key
-                    end
-                    @vtr_stats_direct_normal_call_broad_root &+= 1 if broad_virtual_target_root?(type_desc.name)
-                    @vtr_stats_direct_normal_call_outside_lazy_rta &+= 1 unless @lazy_rta_active
-                  end
-                  lower_virtual_target_owner(
-                    owner,
-                    method_name,
-                    arg_types,
-                    has_block_call,
-                    has_splat,
-                    replay_parent: type_desc.name,
-                  )
-                end
-              end
-            end
-          elsif type_desc.kind == TypeKind::Union
-            union_name = normalize_union_type_name(type_desc.name)
-            unless numeric_conversion_method_name?(method_name)
-              ah = arg_types_hash(arg_types)
-              vf = vdispatch_flags(has_block_call, is_union: true)
-              key = {union_name, method_name, ah, vf}
-              unless @virtual_targets_lowered.includes?(key)
-                @virtual_targets_lowered.add(key)
-                # Keep every union variant's method alive through lazy RTA so the
-                # MIR vdispatch table enumerates all variants (see the MemberAccess
-                # branch above and union_vdispatch_variant_enum_repro.sh).
-                rta_record_union_receiver_targets(union_name, method_name)
-                split_union_type_name(union_name).each do |variant|
-                  next if variant == "Nil"
-                  resolved_variant = resolve_type_alias_chain(variant)
-                  expanded = [] of String
-                  [resolved_variant, variant].uniq.each do |owner|
-                    if owner.includes?('|')
-                      split_union_type_name(owner).each { |entry| expanded << entry }
-                    else
-                      expanded << owner
-                    end
-                  end
-                  expanded.uniq.each do |owner|
-                    owners = [owner]
-                    if class_has_subclasses?(owner)
-                      collect_subclasses_cached(owner).each do |entry|
-                        if @lazy_rta_active
-                          next unless rta_live_owner?(entry)
-                        end
-                        owners << entry
-                      end
-                    end
-                    record_virtual_target(owner, method_name, arg_types, has_block_call, has_splat)
-                    owners.uniq.each do |resolved_owner|
-                      lower_virtual_target_resolved(resolved_owner, method_name, arg_types, has_block_call, has_splat)
-                    end
-                  end
-                end
-              end
-            end
-          elsif type_desc.kind == TypeKind::Module || (type_desc.kind == TypeKind::Generic &&
-                (module_like_type_name?(type_desc.name) || module_includers_match?(type_desc.name)))
-            fanout_receiver_name = type_desc.name
-            fanout_receiver_shape = substitute_type_params_in_type_name(fanout_receiver_name)
-            module_base = type_desc.name
-            if type_desc.kind == TypeKind::Generic
-              module_base = strip_generic_args(module_base)
-            end
-            includers = @module_includers[module_base]?
-            if includers.nil? || includers.empty?
-              if matches = @module_includer_keys_by_suffix[module_base]?
-                if matches.size == 1
-                  module_base = matches.first
-                  includers = @module_includers[module_base]?
-                end
-              end
-            end
-            if includers.nil? || includers.empty?
-              short_name = last_namespace_component(module_base)
-              if short_name != module_base
-                includers = @module_includers[short_name]?
-                if includers.nil? || includers.empty?
-                  if matches = @module_includer_keys_by_suffix[short_name]?
-                    if matches.size == 1
-                      module_base = matches.first
-                      includers = @module_includers[module_base]?
-                    end
-                  end
-                end
-              end
-            end
-            fanout_trace = debug_env_filter_match?(
-              "DEBUG_VIRTUAL_FANOUT",
-              ctx.function.name,
-              module_base,
-              method_name,
-            )
-            fanout_key = virtual_target_shape_key(
-              "#{module_base}\u{1f}#{fanout_receiver_shape}",
-              method_name,
-              arg_types,
-              has_block_call,
-              has_splat,
-            )
-            fanout_cacheable = !has_named_args && !has_splat && !splat_packed
-            fanout_registry_version = module_virtual_fanout_registry_version(module_base)
-            fanout_cached = fanout_cacheable &&
-                            @module_virtual_fanout_versions[fanout_key]? == fanout_registry_version
-            if fanout_cached
-              retried_targets = retry_module_virtual_fanout_pending_targets(fanout_key)
-              if fanout_trace
-                STDERR.puts "[VIRTUAL_FANOUT_CACHE_HIT] caller=#{ctx.function.name} module=#{module_base} receiver=#{fanout_receiver_shape} method=#{method_name} retried=#{retried_targets}"
-              end
-            else
-              fanout_pending_targets = fanout_cacheable ? ({} of String => ModuleVirtualFanoutPendingTarget) : nil
-              current_includers = @module_includers[module_base]? || includers
-              owners, fanout_owner_count = module_fanout_owner_plan(
-                module_base,
-                fanout_receiver_shape,
-                current_includers,
-              )
-              ensure_method_index_built
-              fanout_start = fanout_trace ? Time.instant : nil
-              fanout_attempted = 0
-              fanout_skipped = fanout_owner_count - owners.size
-              fanout_live = 0
-              fanout_slowest_owner = ""
-              fanout_slowest_ms = 0.0
-              owners.each do |owner|
-                fanout_live += 1 if !@lazy_rta_active || rta_live_owner?(owner)
-                # Skip owners without registered class info or the method
-                base_owner = method_index_owner_key(owner)
-                unless @method_index[base_owner]?.try(&.has_key?(method_name))
-                  unless @class_info.has_key?(owner)
-                    fanout_skipped += 1
-                    next
-                  end
-                end
-                owner_start = fanout_trace ? Time.instant : nil
-                fanout_attempted += 1
-                # A value receiver uses instance dispatch. This helper owns both
-                # resolution and pending tracking; do not invent `Owner.method` targets.
-                lower_virtual_target_resolved(
-                  owner,
-                  method_name,
-                  arg_types,
-                  has_block_call,
-                  has_splat,
-                  fanout_pending_targets,
-                )
-                if started = owner_start
-                  owner_ms = (Time.instant - started).total_milliseconds
-                  if owner_ms > fanout_slowest_ms
-                    fanout_slowest_ms = owner_ms
-                    fanout_slowest_owner = owner
-                  end
-                end
-              end
-              if started = fanout_start
-                elapsed_ms = (Time.instant - started).total_milliseconds
-                STDERR.puts "[VIRTUAL_FANOUT] caller=#{ctx.function.name} module=#{module_base} receiver=#{fanout_receiver_shape} method=#{method_name} owners=#{fanout_owner_count} live=#{fanout_live} attempted=#{fanout_attempted} skipped=#{fanout_skipped} elapsed=#{elapsed_ms.round(1)}ms slowest=#{fanout_slowest_owner}:#{fanout_slowest_ms.round(1)}ms"
-              end
-              if fanout_cacheable
-                @module_virtual_fanout_versions[fanout_key] = fanout_registry_version
-                fanout_keys = @module_virtual_fanout_keys_by_method[method_name] ||= Set(String).new
-                fanout_keys << fanout_key
-                if pending_targets = fanout_pending_targets
-                  if pending_targets.empty?
-                    @module_virtual_fanout_pending_targets.delete(fanout_key)
-                  else
-                    @module_virtual_fanout_pending_targets[fanout_key] = pending_targets
-                  end
-                  if fanout_trace
-                    STDERR.puts "[VIRTUAL_FANOUT_CACHE_STORE] caller=#{ctx.function.name} module=#{module_base} receiver=#{fanout_receiver_shape} method=#{method_name} pending=#{pending_targets.size}"
-                  end
-                end
-              end
-            end
-          else
-            # Module-typed virtual calls can still have a concrete non-class receiver
-            # (for example Tuple/String/Path values dispatched through Enumerable).
-            # Ensure the concrete receiver implementation is lowered, otherwise
-            # vdispatch can miss that type and fall back to no-op/default branch.
-            receiver_owner = type_desc.name
-            ah = arg_types_hash(arg_types)
-            vf = vdispatch_flags(has_block_call)
-            key = {receiver_owner, method_name, ah, vf}
-            unless @virtual_targets_lowered.includes?(key)
-              @virtual_targets_lowered.add(key)
-              record_virtual_target(receiver_owner, method_name, arg_types, has_block_call, has_splat)
-
-              owners = [receiver_owner]
-              receiver_base = strip_generic_args(receiver_owner)
-              owners << receiver_base if receiver_base != receiver_owner
-              owners.uniq!
-
-              owners.each do |owner|
-                lower_virtual_target_resolved(owner, method_name, arg_types, has_block_call, has_splat)
-              end
-            end
-          end
-        end
+      # Keep target reachability policy out of this already-large call resolver.
+      # The helper owns the existing fanout registries and does not alter call
+      # selection or return-type inference.
+      if call_virtual && (virtual_receiver_id = receiver_id)
+        ensure_virtual_call_targets_lowered(
+          ctx,
+          virtual_receiver_id,
+          method_name,
+          arg_types,
+          has_block_call,
+          has_splat,
+          has_named_args,
+          splat_packed,
+        )
       end
 
       if return_type == TypeRef::VOID && call_virtual && receiver_id
@@ -97657,6 +97438,252 @@ module Adamas::HIR
         "[CALL_TRACE] stage=after_emit method=#{method_name} mangled=#{mangled_method_name} recv_type=#{receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "nil"} virtual=#{call_virtual}",
       )
       call.id
+    end
+
+    # Materialize every target needed by an already-classified virtual call.
+    # Call selection and return-type inference remain in lower_call; this helper
+    # only owns the existing reachability and retry side effects.
+    private def ensure_virtual_call_targets_lowered(
+      ctx : LoweringContext,
+      receiver_id : ValueId,
+      method_name : String,
+      arg_types : Array(TypeRef),
+      has_block_call : Bool,
+      has_splat : Bool,
+      has_named_args : Bool,
+      splat_packed : Bool,
+    ) : Nil
+      return unless type_desc = @module.get_type_descriptor(ctx.type_of(receiver_id))
+
+      if type_desc.kind == TypeKind::Class
+        ah = arg_types_hash(arg_types)
+        vf = vdispatch_flags(has_block_call)
+        key = {type_desc.name, method_name, ah, vf}
+        caller_token = virtual_target_caller_token(ctx)
+        remember_virtual_target_caller(type_desc.name, method_name, arg_types, has_block_call, has_splat, caller_token)
+        unless @virtual_targets_lowered.includes?(key)
+          @virtual_targets_lowered.add(key)
+          record_virtual_target(type_desc.name, method_name, arg_types, has_block_call, has_splat, caller_token)
+          if @lazy_rta_active && broad_virtual_target_root?(type_desc.name)
+            # Recording already replays every live descendant through the
+            # append-only bucket. Consume the root through the same cursor
+            # instead of repeating descendant owner lookup here.
+            lower_virtual_targets_for_child(type_desc.name, type_desc.name)
+          else
+            owners = [type_desc.name]
+            append_virtual_target_descendants(owners, type_desc.name)
+            ensure_method_index_built
+            owners.each do |owner|
+              # Fast pre-filter: skip owners that don't have this method registered
+              # (uses pre-built method_index for O(1) lookup, avoids string building + hash)
+              base_owner = method_index_owner_key(owner)
+              unless @method_index[base_owner]?.try(&.has_key?(method_name))
+                next unless @class_info.has_key?(owner)
+              end
+              if @debug_virtual_target_replay_stats
+                @vtr_stats_direct_normal_call_owner_calls &+= 1
+                stats_key = {owner, method_name, ah, vf}
+                if @vtr_stats_direct_normal_call_owner_keys.includes?(stats_key)
+                  @vtr_stats_direct_normal_call_owner_repeats &+= 1
+                else
+                  @vtr_stats_direct_normal_call_owner_keys << stats_key
+                end
+                @vtr_stats_direct_normal_call_broad_root &+= 1 if broad_virtual_target_root?(type_desc.name)
+                @vtr_stats_direct_normal_call_outside_lazy_rta &+= 1 unless @lazy_rta_active
+              end
+              lower_virtual_target_owner(
+                owner,
+                method_name,
+                arg_types,
+                has_block_call,
+                has_splat,
+                replay_parent: type_desc.name,
+              )
+            end
+          end
+        end
+      elsif type_desc.kind == TypeKind::Union
+        union_name = normalize_union_type_name(type_desc.name)
+        unless numeric_conversion_method_name?(method_name)
+          ah = arg_types_hash(arg_types)
+          vf = vdispatch_flags(has_block_call, is_union: true)
+          key = {union_name, method_name, ah, vf}
+          unless @virtual_targets_lowered.includes?(key)
+            @virtual_targets_lowered.add(key)
+            # Keep every union variant's method alive through lazy RTA so the
+            # MIR vdispatch table enumerates all variants (see the MemberAccess
+            # branch above and union_vdispatch_variant_enum_repro.sh).
+            rta_record_union_receiver_targets(union_name, method_name)
+            split_union_type_name(union_name).each do |variant|
+              next if variant == "Nil"
+              resolved_variant = resolve_type_alias_chain(variant)
+              expanded = [] of String
+              [resolved_variant, variant].uniq.each do |owner|
+                if owner.includes?('|')
+                  split_union_type_name(owner).each { |entry| expanded << entry }
+                else
+                  expanded << owner
+                end
+              end
+              expanded.uniq.each do |owner|
+                owners = [owner]
+                if class_has_subclasses?(owner)
+                  collect_subclasses_cached(owner).each do |entry|
+                    if @lazy_rta_active
+                      next unless rta_live_owner?(entry)
+                    end
+                    owners << entry
+                  end
+                end
+                record_virtual_target(owner, method_name, arg_types, has_block_call, has_splat)
+                owners.uniq.each do |resolved_owner|
+                  lower_virtual_target_resolved(resolved_owner, method_name, arg_types, has_block_call, has_splat)
+                end
+              end
+            end
+          end
+        end
+      elsif type_desc.kind == TypeKind::Module || (type_desc.kind == TypeKind::Generic &&
+            (module_like_type_name?(type_desc.name) || module_includers_match?(type_desc.name)))
+        fanout_receiver_name = type_desc.name
+        fanout_receiver_shape = substitute_type_params_in_type_name(fanout_receiver_name)
+        module_base = type_desc.name
+        if type_desc.kind == TypeKind::Generic
+          module_base = strip_generic_args(module_base)
+        end
+        includers = @module_includers[module_base]?
+        if includers.nil? || includers.empty?
+          if matches = @module_includer_keys_by_suffix[module_base]?
+            if matches.size == 1
+              module_base = matches.first
+              includers = @module_includers[module_base]?
+            end
+          end
+        end
+        if includers.nil? || includers.empty?
+          short_name = last_namespace_component(module_base)
+          if short_name != module_base
+            includers = @module_includers[short_name]?
+            if includers.nil? || includers.empty?
+              if matches = @module_includer_keys_by_suffix[short_name]?
+                if matches.size == 1
+                  module_base = matches.first
+                  includers = @module_includers[module_base]?
+                end
+              end
+            end
+          end
+        end
+        fanout_trace = debug_env_filter_match?(
+          "DEBUG_VIRTUAL_FANOUT",
+          ctx.function.name,
+          module_base,
+          method_name,
+        )
+        fanout_key = virtual_target_shape_key(
+          "#{module_base}\u{1f}#{fanout_receiver_shape}",
+          method_name,
+          arg_types,
+          has_block_call,
+          has_splat,
+        )
+        fanout_cacheable = !has_named_args && !has_splat && !splat_packed
+        fanout_registry_version = module_virtual_fanout_registry_version(module_base)
+        fanout_cached = fanout_cacheable &&
+                        @module_virtual_fanout_versions[fanout_key]? == fanout_registry_version
+        if fanout_cached
+          retried_targets = retry_module_virtual_fanout_pending_targets(fanout_key)
+          if fanout_trace
+            STDERR.puts "[VIRTUAL_FANOUT_CACHE_HIT] caller=#{ctx.function.name} module=#{module_base} receiver=#{fanout_receiver_shape} method=#{method_name} retried=#{retried_targets}"
+          end
+        else
+          fanout_pending_targets = fanout_cacheable ? ({} of String => ModuleVirtualFanoutPendingTarget) : nil
+          current_includers = @module_includers[module_base]? || includers
+          owners, fanout_owner_count = module_fanout_owner_plan(
+            module_base,
+            fanout_receiver_shape,
+            current_includers,
+          )
+          ensure_method_index_built
+          fanout_start = fanout_trace ? Time.instant : nil
+          fanout_attempted = 0
+          fanout_skipped = fanout_owner_count - owners.size
+          fanout_live = 0
+          fanout_slowest_owner = ""
+          fanout_slowest_ms = 0.0
+          owners.each do |owner|
+            fanout_live += 1 if !@lazy_rta_active || rta_live_owner?(owner)
+            # Skip owners without registered class info or the method
+            base_owner = method_index_owner_key(owner)
+            unless @method_index[base_owner]?.try(&.has_key?(method_name))
+              unless @class_info.has_key?(owner)
+                fanout_skipped += 1
+                next
+              end
+            end
+            owner_start = fanout_trace ? Time.instant : nil
+            fanout_attempted += 1
+            # A value receiver uses instance dispatch. This helper owns both
+            # resolution and pending tracking; do not invent `Owner.method` targets.
+            lower_virtual_target_resolved(
+              owner,
+              method_name,
+              arg_types,
+              has_block_call,
+              has_splat,
+              fanout_pending_targets,
+            )
+            if started = owner_start
+              owner_ms = (Time.instant - started).total_milliseconds
+              if owner_ms > fanout_slowest_ms
+                fanout_slowest_ms = owner_ms
+                fanout_slowest_owner = owner
+              end
+            end
+          end
+          if started = fanout_start
+            elapsed_ms = (Time.instant - started).total_milliseconds
+            STDERR.puts "[VIRTUAL_FANOUT] caller=#{ctx.function.name} module=#{module_base} receiver=#{fanout_receiver_shape} method=#{method_name} owners=#{fanout_owner_count} live=#{fanout_live} attempted=#{fanout_attempted} skipped=#{fanout_skipped} elapsed=#{elapsed_ms.round(1)}ms slowest=#{fanout_slowest_owner}:#{fanout_slowest_ms.round(1)}ms"
+          end
+          if fanout_cacheable
+            @module_virtual_fanout_versions[fanout_key] = fanout_registry_version
+            fanout_keys = @module_virtual_fanout_keys_by_method[method_name] ||= Set(String).new
+            fanout_keys << fanout_key
+            if pending_targets = fanout_pending_targets
+              if pending_targets.empty?
+                @module_virtual_fanout_pending_targets.delete(fanout_key)
+              else
+                @module_virtual_fanout_pending_targets[fanout_key] = pending_targets
+              end
+              if fanout_trace
+                STDERR.puts "[VIRTUAL_FANOUT_CACHE_STORE] caller=#{ctx.function.name} module=#{module_base} receiver=#{fanout_receiver_shape} method=#{method_name} pending=#{pending_targets.size}"
+              end
+            end
+          end
+        end
+      else
+        # Module-typed virtual calls can still have a concrete non-class receiver
+        # (for example Tuple/String/Path values dispatched through Enumerable).
+        # Ensure the concrete receiver implementation is lowered, otherwise
+        # vdispatch can miss that type and fall back to no-op/default branch.
+        receiver_owner = type_desc.name
+        ah = arg_types_hash(arg_types)
+        vf = vdispatch_flags(has_block_call)
+        key = {receiver_owner, method_name, ah, vf}
+        unless @virtual_targets_lowered.includes?(key)
+          @virtual_targets_lowered.add(key)
+          record_virtual_target(receiver_owner, method_name, arg_types, has_block_call, has_splat)
+
+          owners = [receiver_owner]
+          receiver_base = strip_generic_args(receiver_owner)
+          owners << receiver_base if receiver_base != receiver_owner
+          owners.uniq!
+
+          owners.each do |owner|
+            lower_virtual_target_resolved(owner, method_name, arg_types, has_block_call, has_splat)
+          end
+        end
+      end
     end
 
     private def coerce_raw_proc_call_args_to_function_params(

@@ -16352,6 +16352,35 @@ VULNERABLE for wall-clock attribution. Next: profile the remaining productive
 authoritative until a global semantic-epoch cache has a late-materialization
 falsifier and preserves queue/callsite side effects.
 
+#### Session 165: isolate virtual-target reachability from call selection
+
+The remaining `lower_call` hotspot mixed two responsibilities: selecting and
+emitting one call, and ensuring every reachable virtual target is materialized.
+The existing virtual-target corridor now lives in one private Nil-returning
+helper with the receiver, argument shape, and dispatch flags passed explicitly.
+The move introduces no cache, result protocol, or new authority; call selection,
+return inference, retry state, and target recording remain unchanged.
+
+An ordinary compiler build passes. The five focused fanout examples and the full
+AstToHir suite pass: 560 examples, zero failures or errors, and two existing
+pending examples. A no-prelude differential probe produces byte-identical HIR
+before and after the move, retains both `ProbeA#probe$Int32` and
+`ProbeB#probe$Int32`, and does not invent a class target for the module owner.
+
+In a bounded full-HIR self-host trace, `lower_call` materialization self-time fell
+from 11,927.747 ms to 11,256.842 ms. The extracted helper costs 59.033 ms self,
+so the combined cost is 11,315.875 ms: an observed 611.872 ms (5.13%) reduction.
+Primary-sweep materialization self-time fell from 138,539.474 ms to 137,129.541
+ms, and the trace endpoint moved from 215.597 seconds to 212.606 seconds. This
+single noisy-host comparison passes the predeclared local 5% discriminator but
+is not a stable wall-clock speedup certificate.
+
+Adversary verdict: ROBUST for the extracted contract and observed semantic
+equivalence; VULNERABLE for repeatable performance attribution. Stop splitting
+the helper by receiver kind unless a new profile identifies a specific internal
+hotspot. Next: profile runtime work inside productive lowering rather than infer
+it from source size.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
