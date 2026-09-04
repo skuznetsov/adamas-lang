@@ -16224,6 +16224,34 @@ makes generated-program compatibility the residual risk beyond the focused HIR
 scope. Next: measure the member-access corridor, then run a quiet-host timing
 series before attributing wall-clock gains.
 
+#### Session 160: reuse recorded broad replay in member access
+
+No-parens member access had the next largest residual direct traversal after
+binary replay was deduplicated. Its class branch now uses the same append-only
+bucket and cursor for lazy `Object` and `Reference` receivers. Union and module
+member dispatch retain their separate variant/includer lowering, and narrow or
+eager class paths retain direct traversal.
+
+A no-prelude `Object -> Parent -> ChildA/ChildB` member-access falsifier observed
+four primary lookups before the change and two afterwards, preserving the root
+and nearest declaring-owner bodies without inherited child wrappers. Focused
+adversary checks cover default arguments, a concrete generic override, generic
+instance liveness, and the value-owner repair exclusion. The full AstToHir suite
+passes 560 examples with zero failures, zero errors, and two pending examples.
+
+A fresh bounded full-HIR self-host completed with exit zero and no unresolved
+concrete fanout. Member direct calls fell from 3,113 to 1,224, primary owner
+lookups from 31,934 to 30,042, and generated functions from 39,708 to 39,705.
+The adjacent wall sample improved from 257.84 to 223.38 seconds and
+`lower_missing` from 237.78 to 204.76 seconds. This single local comparison is
+encouraging but remains insufficient for a stable speedup claim.
+
+Adversary verdict: ROBUST for the class-only lazy broad-root member corridor.
+It would be unsafe to generalize the shortcut to union or module member access.
+The remaining direct member calls are narrow/eager work and the bare-identifier
+route contributes only one call. Next: use the counters to classify the 1,671
+normal-call and 1,224 member-access residuals before changing another path.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

@@ -111200,23 +111200,29 @@ module Adamas::HIR
             unless @virtual_targets_lowered.includes?(key)
               @virtual_targets_lowered.add(key)
               record_virtual_target(type_desc.name, member_name, arg_types, false, false, caller_token)
-              owners = [type_desc.name]
-              append_virtual_target_descendants(owners, type_desc.name)
-              ensure_method_index_built
-              owners.each do |owner|
-                base_owner = method_index_owner_key(owner)
-                unless @method_index[base_owner]?.try(&.has_key?(member_name))
-                  next unless @class_info.has_key?(owner)
+              if @lazy_rta_active && broad_virtual_target_root?(type_desc.name)
+                # Recording already replayed the new target for live descendants.
+                # Consume only the broad root through the same append-only bucket.
+                lower_virtual_targets_for_child(type_desc.name, type_desc.name)
+              else
+                owners = [type_desc.name]
+                append_virtual_target_descendants(owners, type_desc.name)
+                ensure_method_index_built
+                owners.each do |owner|
+                  base_owner = method_index_owner_key(owner)
+                  unless @method_index[base_owner]?.try(&.has_key?(member_name))
+                    next unless @class_info.has_key?(owner)
+                  end
+                  @vtr_stats_direct_member_access_owner_calls &+= 1 if @debug_virtual_target_replay_stats
+                  lower_virtual_target_owner(
+                    owner,
+                    member_name,
+                    arg_types,
+                    false,
+                    false,
+                    replay_parent: type_desc.name,
+                  )
                 end
-                @vtr_stats_direct_member_access_owner_calls &+= 1 if @debug_virtual_target_replay_stats
-                lower_virtual_target_owner(
-                  owner,
-                  member_name,
-                  arg_types,
-                  false,
-                  false,
-                  replay_parent: type_desc.name,
-                )
               end
             end
           elsif type_desc.kind == TypeKind::Union
