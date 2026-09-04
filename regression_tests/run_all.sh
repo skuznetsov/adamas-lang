@@ -44,8 +44,18 @@ BIN_DIR=$(mktemp -d "${TMPDIR:-/tmp}/adamas_regression_all.XXXXXX") || exit 2
 run_one_test() {
   local src="$1"
   local name=$(basename "$src" .cr)
-  local bin_path="${BIN_DIR}/${name}"
+  local artifact_dir="${BIN_DIR}/${name}.artifacts"
+  local bin_path="${artifact_dir}/${name}"
   local result_path="${BIN_DIR}/${name}.result"
+
+  # Keep compiler-owned output and every unknown sibling artifact in a
+  # per-test directory. Logs and verdict files intentionally stay outside so
+  # REGRESSION_KEEP_LOGS can retain raw evidence without retaining binaries or
+  # generated IR.
+  if ! mkdir -p "$artifact_dir"; then
+    printf 'COMPILE_FAIL\nfailed to create artifact directory: %s\n' "$artifact_dir" > "$result_path"
+    return
+  fi
 
   # Bound compilation separately from execution and preserve its own status.
   local compile_log="${BIN_DIR}/${name}.compile.log"
@@ -56,13 +66,13 @@ run_one_test() {
   printf '%s\n' "$compile_rc" > "${BIN_DIR}/${name}.compile.exit"
   if [ "$compile_rc" -ne 0 ]; then
     printf 'COMPILE_FAIL\n%s\n' "$(tail -10 "$compile_log")" > "$result_path"
-    rm -f "$bin_path"
+    rm -rf "$artifact_dir"
     return
   fi
 
   if [ ! -f "$bin_path" ] || [ ! -x "$bin_path" ]; then
     echo "NO_BINARY" > "$result_path"
-    rm -f "$bin_path"
+    rm -rf "$artifact_dir"
     return
   fi
 
@@ -75,7 +85,7 @@ run_one_test() {
   "$SAFE_RUN" "$bin_path" "$TIMEOUT" "$MAX_MEM" > "$runtime_log" 2>&1
   exit_code=$?
   printf '%s\n' "$exit_code" > "${BIN_DIR}/${name}.runtime.exit"
-  rm -f "$bin_path"
+  rm -rf "$artifact_dir"
 
   # A matching marker cannot turn a failed process into a passing test.
   if [ "$exit_code" -ne 0 ]; then

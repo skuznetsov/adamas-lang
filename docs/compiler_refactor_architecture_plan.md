@@ -60,6 +60,10 @@ and default cleanup / optional raw-log retention. Existing runtime budgets
 remain 10/15 seconds and 512 MB. Use one explicit job and
 `REGRESSION_KEEP_LOGS=1` for the still-pending real-program baseline; retained
 logs contain per-test compile/runtime exit codes and supervisor output.
+Per-test artifact directories are removed on completed success and failure
+paths even when logs are retained, including compiler-generated siblings such
+as LLVM IR. A focused old-runner/new-spec ablation fails both retention cases;
+the repaired runners pass both, and the full contract suite passes 14 examples.
 
 ### 0.2 Causal model and alternatives
 

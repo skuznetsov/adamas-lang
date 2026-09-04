@@ -31,6 +31,7 @@ private class RegressionRunnerFixture
       done
       [ -n "$out" ] || out="${src%.cr}"
       name=$(basename "$src" .cr)
+      printf 'generated sibling artifact\n' > "${out}.ll"
       case "$name" in
         compile_fail) echo "intentional compile failure" >&2; exit 3 ;;
         no_binary) exit 0 ;;
@@ -135,6 +136,7 @@ describe "regression compilation supervision" do
       fixture = RegressionRunnerFixture.new
       begin
         fixture.add("marker_exit7", combined)
+        fixture.add("partial_compile", combined)
         logs_root = File.join(fixture.work, "logs")
         FileUtils.mkdir_p(logs_root)
         rc, output = fixture.run(runner, {"TMPDIR" => logs_root})
@@ -151,7 +153,13 @@ describe "regression compilation supervision" do
         File.read(File.join(logs, "marker_exit7.runtime.exit")).strip.should eq("7")
         File.read(File.join(logs, "marker_exit7.runtime.log")).should contain("MARKER")
         File.read(File.join(logs, "marker_exit7.result")).should start_with("CRASH\n")
+        File.read(File.join(logs, "partial_compile.compile.exit")).strip.should eq("3")
+        File.read(File.join(logs, "partial_compile.compile.log")).should contain("intentional failure after output")
         File.exists?(File.join(logs, "marker_exit7")).should be_false
+        File.exists?(File.join(logs, "partial_compile")).should be_false
+        File.exists?(File.join(logs, "marker_exit7.ll")).should be_false
+        File.exists?(File.join(logs, "partial_compile.ll")).should be_false
+        Dir.children(logs).all? { |entry| entry.ends_with?(".log") || entry.ends_with?(".exit") || entry.ends_with?(".result") }.should be_true
       ensure
         fixture.cleanup
       end
