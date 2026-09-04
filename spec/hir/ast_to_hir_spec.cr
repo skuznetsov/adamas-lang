@@ -3617,23 +3617,17 @@ describe Adamas::HIR::AstToHir do
       converter = lower_program_with_main(
         <<-CRYSTAL,
           module InstanceFanoutRoot
-            abstract def probe(value : Int32) : Int32
-          end
-
-          class InstanceFanoutOwnerA
-            include InstanceFanoutRoot
-
             def probe(value : Int32) : Int32
               value + 1
             end
           end
 
+          class InstanceFanoutOwnerA
+            include InstanceFanoutRoot
+          end
+
           class InstanceFanoutOwnerB
             include InstanceFanoutRoot
-
-            def probe(value : Int32) : Int32
-              value + 2
-            end
           end
 
           class InstanceFanoutHolder
@@ -3661,6 +3655,10 @@ describe Adamas::HIR::AstToHir do
       converter.flush_pending_functions
       converter.__test_missing_incremental_target_certificate(
         "InstanceFanoutRoot.probe$Int32",
+        [] of String,
+      )[1].should eq("NotStarted")
+      converter.__test_missing_incremental_target_certificate(
+        "InstanceFanoutRoot#probe$Int32",
         [] of String,
       )[1].should eq("NotStarted")
       converter.module.functions.none?(&.name.matches?(/^InstanceFanoutOwner[AB]\.probe/))

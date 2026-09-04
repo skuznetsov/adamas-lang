@@ -59811,10 +59811,9 @@ module Adamas::HIR
         end
       end
 
+      # Only concrete includers and their descendants can receive an instance
+      # call. The module supplies method definitions, but is not a runtime owner.
       candidates = includers ? includers.to_a : [] of String
-      if module_like_type_name?(module_base) && !candidates.includes?(module_base)
-        candidates << module_base
-      end
       parent_keys = candidates.dup
       unless module_base.includes?("::")
         candidates.each do |owner|

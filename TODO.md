@@ -16031,6 +16031,30 @@ targets are never legal. The timing is one adjacent sample, not a stable
 benchmark certificate. Next: profile the surviving 725 instance-form fanout
 targets and change only a producer disproved by a source-backed falsifier.
 
+#### Session 154: exclude modules from instance fanout owners
+
+The runtime module fanout owner plan still admitted the module itself alongside
+its concrete includers. A module supplies an instance-method definition but
+cannot receive an instance call, so a concrete default method left
+`Module#method` as an unmaterialized concrete demand even after both includer
+bodies were emitted. The owner plan now contains only includers and their
+descendants; no registry, cache, or retry policy was added.
+
+A lazy source-backed regression with one module default method and two concrete
+includers failed closed before the production change and now emits both
+includer-owned bodies while leaving both module instance and class targets
+unstarted. The real module class-method control remains green, and the full
+AstToHir suite passes 552 examples with zero failures, zero errors, and two
+existing pending examples. A fresh bounded self-host completed with exit zero
+in about 225 seconds, 49,520 functions, and a 136 MiB HIR.
+
+Adversary verdict: ROBUST for excluding a module object from runtime instance
+owners; BROKEN as an explanation of the remaining bootstrap cost. Terminal
+fanout discards changed only from 725 to 720, retry-site events from 2,995 to
+2,980, and `lower_missing` was about 212 seconds. Next: partition those 720
+targets by producer and repeated family, then falsify the largest family before
+changing another lowering rule.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
