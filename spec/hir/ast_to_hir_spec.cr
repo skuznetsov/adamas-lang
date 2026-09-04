@@ -16119,6 +16119,88 @@ describe Adamas::HIR::AstToHir do
       equality_call.not_nil!.type.should eq(Adamas::HIR::TypeRef::BOOL)
     end
 
+    it "retains an exact concrete reference owner when an Object wrapper redispatches through self" do
+      source = <<-CRYSTAL
+        class Object
+          def ===(other) : Bool
+            self == other
+          end
+
+          def ==(other) : Bool
+            false
+          end
+        end
+
+        class Reference < Object
+        end
+
+        class IOBase < Reference
+        end
+
+        class FileHandle < IOBase
+          def ==(other : FileHandle) : Bool
+            true
+          end
+        end
+
+        def compare(handle : FileHandle, other : FileHandle) : Bool
+          handle === other
+        end
+
+        def compare_unknown(handle : Object, other : FileHandle) : Bool
+          handle === other
+        end
+
+        def compare_base(handle : IOBase, other : FileHandle) : Bool
+          handle === other
+        end
+      CRYSTAL
+
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+      converter.arena = arena
+      class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+      def_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode) }
+      class_nodes.each { |node| converter.register_class(node) }
+      def_nodes.each { |node| converter.register_function(node) }
+
+      converter.__test_queue_pending_inside_lowering("FileHandle#===$FileHandle")
+      compare = def_nodes.find { |node| String.new(node.name.not_nil!) == "compare" }
+      compare.should_not be_nil
+      converter.lower_def(compare.not_nil!)
+      concrete_caller = converter.module.functions.find { |func| func.name.starts_with?("compare$") }
+      concrete_caller.should_not be_nil
+      concrete_call = concrete_caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.find { |call| call.method_name.includes?("#===") }
+      concrete_call.should_not be_nil
+      concrete_call.not_nil!.method_name.should eq("FileHandle#===$FileHandle")
+      converter.__test_pending_function?("Object#===$FileHandle").should be_false
+
+      compare_unknown = def_nodes.find { |node| String.new(node.name.not_nil!) == "compare_unknown" }
+      compare_unknown.should_not be_nil
+      converter.lower_def(compare_unknown.not_nil!)
+      unknown_caller = converter.module.functions.find { |func| func.name.starts_with?("compare_unknown$") }
+      unknown_caller.should_not be_nil
+      unknown_call = unknown_caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.find { |call| call.method_name.includes?("#===") }
+      unknown_call.should_not be_nil
+      unknown_call.not_nil!.method_name.should eq("Object#===$FileHandle")
+
+      compare_base = def_nodes.find { |node| String.new(node.name.not_nil!) == "compare_base" }
+      compare_base.should_not be_nil
+      converter.lower_def(compare_base.not_nil!)
+      base_caller = converter.module.functions.find { |func| func.name.starts_with?("compare_base$") }
+      base_caller.should_not be_nil
+      base_call = base_caller.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.find { |call| call.method_name.includes?("#===") }
+      base_call.should_not be_nil
+      base_call.not_nil!.method_name.should eq("IOBase#===$FileHandle")
+      base_call.not_nil!.virtual.should be_true
+    end
+
     it "retains tracked enum owners for Object case-equality wrappers" do
       converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
         class Object

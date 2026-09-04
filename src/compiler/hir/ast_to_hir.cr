@@ -2783,7 +2783,7 @@ module Adamas::HIR
     end
 
     # Object-level convenience wrappers such as `inspect : String` and `===`
-    # redispatch through `self`. Preserve the concrete runtime generic owner
+    # redispatch through `self`. Preserve the concrete runtime reference owner
     # only for that structural wrapper shape; ordinary inherited Object bodies
     # keep their existing ancestor-owned lowering.
     private def preserve_requested_runtime_reference_wrapper_owner?(
@@ -2796,9 +2796,9 @@ module Adamas::HIR
       return false unless requested_parts.is_instance && resolved_parts.is_instance
 
       requested_owner = requested_parts.owner
-      return false if requested_owner.empty? || !requested_owner.includes?('(')
+      return false if requested_owner.empty?
       return false unless resolved_parts.owner == "Object"
-      return false unless @module.class_parents[requested_owner]? == "Reference"
+      return false unless class_inherits_from?(requested_owner, "Reference")
       return false unless object_wrapper_source_redispatches_through_self?(resolved_name, resolved_def)
 
       @class_info.has_key?(requested_owner)

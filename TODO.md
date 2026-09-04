@@ -1,8 +1,34 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-09-03 (concrete generic constructors now require exact RTA
-demand, but the full-HIR bootstrap remains slow because later missing-call
-scans recreate almost the entire transitive worklist.)
+Updated: 2026-09-03 (runtime Reference wrappers now retain their exact
+receiver owner, removing one measured Object-wide replay wave; full-HIR
+lowering still takes about 246 seconds.)
+
+2026-09-03 OBJECT CASE-EQUALITY REDISPATCH NO LONGER ERASES CONCRETE REFERENCE
+OWNERS. `Object#===` delegates through `self == other`, but the existing owner
+preservation gate covered only concrete generics whose direct parent was
+`Reference`. `IO::FileDescriptor` inherits indirectly through `IO`, so three
+calls in `Crystal::System::Process.to_real_fd` were lowered as
+`Object#===$IO::FileDescriptor`; that one erased receiver replayed
+`Object#==$IO::FileDescriptor` across hundreds of live owners. The gate now
+uses the existing transitive `class_inherits_from?` fact for any registered
+concrete Reference descendant. No registry, cache, dispatch mode, or name
+rewrite was added.
+
+The source-backed regression was RED with an Object-owned call and is GREEN
+with `FileHandle#===$FileHandle`; an actual Object receiver remains
+Object-owned, while a base-typed receiver keeps `IOBase#===$FileHandle` virtual.
+The full AstToHir suite passes 544 examples with zero failures/errors and two
+pending examples. In an adjacent same-source single-sample A/B, HIR fell from
+247.783 to 246.520 seconds and total time from 256.720 to 255.322 seconds;
+functions fell from 51,684 to 51,284 and reachable functions from 47,359 to
+46,933. `Object#===$IO::FileDescriptor` disappeared and
+`#==$IO::FileDescriptor` occurrences fell from 758 to 36. Adversary verdict:
+ROBUST for exact reference-wrapper ownership and preserved virtuality;
+VULNERABLE as a stable timing or B4-F closure claim because this is one matched
+sample and full-HIR lowering remains far above the historical 2-4 minute
+bootstrap target. Next: rank the remaining high-fanout erased receiver families
+instead of widening missing-demand admission.
 
 2026-09-03 CONCRETE GENERIC CONSTRUCTORS ARE NO LONGER UNCONDITIONAL RTA ROOTS.
 Constructor owner extraction used to return no owner for every `initialize`,
