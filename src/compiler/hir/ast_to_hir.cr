@@ -9125,6 +9125,24 @@ module Adamas::HIR
           next
         end
         @virtual_target_replay_attempted << key
+
+        # MIR can map an inherited runtime type to its ancestor implementation.
+        # For broad roots, resolve that implementation once at the nearest
+        # declaring owner instead of repeating the same lookup for every live
+        # inheritor. Keep the child attempt above so final repair still knows
+        # that this exact runtime owner was considered.
+        if broad_virtual_target_root?(parent_name)
+          declaring_owner = broad_virtual_replay_declaring_owner(
+            child_name,
+            parent_name,
+            target.method_name,
+          )
+          if declaring_owner && declaring_owner != child_name
+            lower_virtual_targets_for_child(declaring_owner, parent_name)
+            next
+          end
+        end
+
         owner_started_at = Time.instant if @debug_virtual_target_replay_stats
         lower_virtual_target_owner(
           child_name,
@@ -9141,6 +9159,31 @@ module Adamas::HIR
         end
       end
       @virtual_target_replay_cursors[cursor_key] = target_idx
+    end
+
+    private def broad_virtual_replay_declaring_owner(
+      owner_name : String,
+      replay_parent : String,
+      method_name : String,
+    ) : String?
+      current = owner_name
+      visited = Set(String).new
+      while !current.empty? && !visited.includes?(current)
+        visited << current
+        current_base = strip_generic_args_from_namespace_path(current)
+        break if current == replay_parent || current_base == replay_parent
+
+        declares_method = owner_directly_declares_instance_method?(current, method_name) ||
+                          (current_base != current && owner_directly_declares_instance_method?(current_base, method_name)) ||
+                          rta_included_module_declares_instance_method_name?(current, current_base, method_name)
+        return current if declares_method
+
+        parent = parent_name_for_hierarchy_lookup(current)
+        parent ||= parent_name_for_hierarchy_lookup(current_base) if current_base != current
+        break unless parent
+        current = parent
+      end
+      nil
     end
 
     private def lower_required_virtual_target_function(

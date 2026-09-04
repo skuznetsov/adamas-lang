@@ -16115,6 +16115,33 @@ most bootstrap time is still spent in `lower_missing`. Next: classify the
 largest remaining repeated lowering family rather than generalizing this
 predicate again.
 
+#### Session 156: reuse broad-root virtual declarations
+
+Broad `Object` and `Reference` replay repeated the same method lookup for every
+live inheritor even though MIR dispatch maps an inherited runtime type to its
+nearest declaring implementation. Replay now redirects those demands to that
+declaring owner. The original child attempt remains recorded for final repair,
+and an owner that cannot be proven still follows the existing resolver path.
+Direct declarations use the authoritative source oracle, including generic
+templates, rather than the timing-sensitive registered-name table.
+
+Two no-prelude regressions cover shared inherited implementations, incompatible
+intermediate overloads, direct overrides, and a concrete generic override after
+the ephemeral method-name entry is deliberately removed. The full AstToHir
+suite passes 556 examples with zero failures, zero errors, and two pending
+examples. A fresh full-HIR self-host completed with exit zero. In an adjacent
+A/B against `26c7a205`, wall time changed from 225.14 to 218.40 seconds,
+registered functions from 43,239 to 40,657, primary target lookups from 51,807
+to 42,043, inherited-reuse checks from 29,606 to 21,574, and measured owner
+lookup time from 11.52 to 9.27 seconds. The combined compatibility suite remains
+at the exact known baseline: 27 passed and the same 10 failed out of 37.
+
+Adversary verdict: ROBUST for reusing proven broad-root declarations without
+losing generic overrides or the fallback path. The roughly 3% wall-clock gain
+is a matched local sample, not a stable benchmark certificate, and broad replay
+still enters per runtime owner. Next: profile those remaining entry calls and
+remove traversal only when a source-backed falsifier proves it redundant.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

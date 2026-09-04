@@ -1663,6 +1663,18 @@ class Adamas::HIR::AstToHir
     @lazy_rta_active = value
   end
 
+  def __test_enable_virtual_target_replay_stats : Nil
+    @debug_virtual_target_replay_stats = true
+  end
+
+  def __test_virtual_target_primary_lookup_calls : Int64
+    @vtr_stats_primary_lookup_calls
+  end
+
+  def __test_forget_registered_instance_method_names(owner : String) : Nil
+    @instance_method_names_by_owner.delete(owner)
+  end
+
   def __test_record_virtual_target(parent_name : String, method_name : String, arg_types : Array(Adamas::HIR::TypeRef)) : Nil
     record_virtual_target(parent_name, method_name, arg_types, false, false)
   end
@@ -16920,6 +16932,120 @@ describe Adamas::HIR::AstToHir do
       converter.__test_mark_live_type("Box(Int32)")
 
       child_target = converter.module.functions.find { |func| func.name.starts_with?("Box(Int32)#probe$") }
+      child_target.should_not be_nil
+      converter.module.has_function_with_body?(child_target.not_nil!.name).should be_true
+    ensure
+      converter.try(&.__test_set_lazy_rta_active(false))
+    end
+
+    it "resolves a shared broad-root override once for its live inheritors" do
+      source = <<-CRYSTAL
+        class Object
+          def probe(value : Int32) : Int32
+            value
+          end
+        end
+
+        class Parent < Object
+          def probe(value : Int32) : Int32
+            value + 1
+          end
+        end
+
+        class ChildA < Parent
+        end
+
+        class ChildB < Parent
+        end
+
+        class Override < Object
+          def probe(value : Int32) : Int32
+            value + 2
+          end
+        end
+
+        class MismatchParent < Object
+          def probe(value : String) : Int32
+            value.size
+          end
+        end
+
+        class MismatchChildA < MismatchParent
+        end
+
+        class MismatchChildB < MismatchParent
+        end
+      CRYSTAL
+
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+      converter.arena = arena
+      class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+      def_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode) }
+      class_nodes.each { |node| converter.register_class(node) }
+      def_nodes.each { |node| converter.register_function(node) }
+
+      converter.__test_set_lazy_rta_active(true)
+      converter.__test_mark_live_type("ChildA")
+      converter.__test_mark_live_type("ChildB")
+      converter.__test_mark_live_type("Override")
+      converter.__test_mark_live_type("MismatchChildA")
+      converter.__test_mark_live_type("MismatchChildB")
+      converter.__test_enable_virtual_target_replay_stats
+      converter.__test_record_virtual_target("Object", "probe", [Adamas::HIR::TypeRef::INT32])
+
+      converter.__test_virtual_target_primary_lookup_calls.should eq(3)
+      converter.module.has_function_with_body?("Object#probe$Int32").should be_true
+      converter.module.has_function_with_body?("Parent#probe$Int32").should be_true
+      converter.module.has_function_with_body?("Override#probe$Int32").should be_true
+      converter.module.functions.any? do |func|
+        (func.name.starts_with?("ChildA#probe$") ||
+          func.name.starts_with?("ChildB#probe$") ||
+          func.name.starts_with?("MismatchChildA#probe$") ||
+          func.name.starts_with?("MismatchChildB#probe$")) &&
+          converter.module.has_function_with_body?(func.name)
+      end.should be_false
+    ensure
+      converter.try(&.__test_set_lazy_rta_active(false))
+    end
+
+    it "preserves a concrete generic override below a shared broad-root ancestor" do
+      source = <<-CRYSTAL
+        class Object
+          def probe(value : Int32) : Int32
+            value
+          end
+        end
+
+        class Parent < Object
+          def probe(value : Int32) : Int32
+            value + 1
+          end
+        end
+
+        class Child(T) < Parent
+          def probe(value : Int32) : Int32
+            value + 2
+          end
+        end
+      CRYSTAL
+
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+      converter.arena = arena
+      class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+      def_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode) }
+      class_nodes.each { |node| converter.register_class(node) }
+      def_nodes.each { |node| converter.register_function(node) }
+      converter.__test_monomorphize_generic_class("Child", ["Int32"], "Child(Int32)")
+      converter.__test_forget_registered_instance_method_names("Child")
+      converter.__test_forget_registered_instance_method_names("Child(Int32)")
+
+      converter.__test_set_lazy_rta_active(true)
+      converter.__test_mark_live_type("Child(Int32)")
+      converter.__test_record_virtual_target("Object", "probe", [Adamas::HIR::TypeRef::INT32])
+
+      child_target = converter.module.functions.find { |func| func.name.starts_with?("Child(Int32)#probe$") }
       child_target.should_not be_nil
       converter.module.has_function_with_body?(child_target.not_nil!.name).should be_true
     ensure
