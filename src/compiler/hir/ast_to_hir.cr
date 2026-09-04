@@ -96515,6 +96515,8 @@ module Adamas::HIR
                 end
                 owner_start = fanout_trace ? Time.instant : nil
                 fanout_attempted += 1
+                # A value receiver uses instance dispatch. This helper owns both
+                # resolution and pending tracking; do not invent `Owner.method` targets.
                 lower_virtual_target_resolved(
                   owner,
                   method_name,
@@ -96523,55 +96525,6 @@ module Adamas::HIR
                   has_splat,
                   fanout_pending_targets,
                 )
-                module_base_name = "#{owner}.#{method_name}"
-                module_candidate = mangle_function_name(module_base_name, arg_types, has_block_call)
-                # M3k: convert this module/generic-module virtual target loop site to
-                # the structured resolver. Same pattern: unreadable name -> nil,
-                # canonical named args, one resolver call.
-                m3k_input = v2_string_readable?(module_base_name) ? CallResolutionInput.new(
-                  func_name: module_base_name,
-                  arg_count: arg_types.size,
-                  arg_types: arg_types,
-                  has_block: has_block_call,
-                  has_splat: has_splat,
-                  has_named: has_named_args,
-                  named_names: canonical_named_arg_names(call_named_arg_names),
-                ) : nil
-                if resolved = (m3k_input ? resolve_call_input(m3k_input) : nil)
-                  resolved_name = resolved[0]
-                  lower_function_if_needed(resolved_name)
-                  resolved_base = strip_type_suffix(resolved_name)
-                  lower_function_if_needed(resolved_base) unless resolved_name == resolved_base
-                  unless @module.has_function_with_body?(resolved_name) ||
-                         (resolved_base != resolved_name && @module.has_function_with_body?(resolved_base))
-                    if pending_targets = fanout_pending_targets
-                      pending_targets[module_candidate] = ModuleVirtualFanoutPendingTarget.new(
-                        module_candidate,
-                        owner,
-                        method_name,
-                        arg_types.dup,
-                        has_block_call,
-                        has_splat,
-                      )
-                    end
-                  end
-                else
-                  lower_function_if_needed(module_candidate)
-                  lower_function_if_needed(module_base_name) unless module_candidate == module_base_name
-                  unless @module.has_function_with_body?(module_candidate) ||
-                         (module_candidate != module_base_name && @module.has_function_with_body?(module_base_name))
-                    if pending_targets = fanout_pending_targets
-                      pending_targets[module_candidate] = ModuleVirtualFanoutPendingTarget.new(
-                        module_candidate,
-                        owner,
-                        method_name,
-                        arg_types.dup,
-                        has_block_call,
-                        has_splat,
-                      )
-                    end
-                  end
-                end
                 if started = owner_start
                   owner_ms = (Time.instant - started).total_milliseconds
                   if owner_ms > fanout_slowest_ms

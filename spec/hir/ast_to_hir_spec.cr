@@ -2689,6 +2689,7 @@ private def lower_program_with_main(
   stdlib_root : String? = nil,
   semantic_call_targets : Bool = false,
   profile_call_resolution : Bool = false,
+  eager_bodies : Bool = true,
 ) : Adamas::HIR::AstToHir
   arena, exprs = parse(code)
   sources_by_arena = if source_backed || source_path
@@ -2750,9 +2751,16 @@ private def lower_program_with_main(
   alias_nodes.each { |node| converter.register_alias(node) }
   def_nodes.each { |node| converter.register_function(node) }
 
-  module_nodes.each { |node| converter.lower_module(node) }
-  class_nodes.each { |node| converter.lower_class(node) }
-  def_nodes.each { |node| converter.lower_def(node) }
+  if eager_bodies
+    module_nodes.each { |node| converter.lower_module(node) }
+    class_nodes.each { |node| converter.lower_class(node) }
+    def_nodes.each { |node| converter.lower_def(node) }
+  else
+    converter.flush_pending_monomorphizations
+    converter.refresh_union_descriptors
+    converter.refresh_void_type_params
+    converter.fixup_inherited_ivars
+  end
 
   converter.__test_begin_call_resolution_profile if profile_call_resolution
   converter.lower_main(main_exprs) if main_exprs.size > 0
@@ -3603,6 +3611,68 @@ describe Adamas::HIR::AstToHir do
 
       int_receiver.should_not eq(string_receiver)
       int_receiver.should_not eq(unknown_arg)
+    end
+
+    it "does not invent class-method targets for module instance fanout" do
+      converter = lower_program_with_main(
+        <<-CRYSTAL,
+          module InstanceFanoutRoot
+            abstract def probe(value : Int32) : Int32
+          end
+
+          class InstanceFanoutOwnerA
+            include InstanceFanoutRoot
+
+            def probe(value : Int32) : Int32
+              value + 1
+            end
+          end
+
+          class InstanceFanoutOwnerB
+            include InstanceFanoutRoot
+
+            def probe(value : Int32) : Int32
+              value + 2
+            end
+          end
+
+          class InstanceFanoutHolder
+            @owner : ::InstanceFanoutRoot
+
+            def initialize(@owner : ::InstanceFanoutRoot)
+            end
+
+            def run : Int32
+              @owner.probe(1)
+            end
+          end
+
+          def run_instance_fanout_probe : Int32
+            InstanceFanoutHolder.new(InstanceFanoutOwnerA.new).run
+            InstanceFanoutHolder.new(InstanceFanoutOwnerB.new).run
+          end
+
+          run_instance_fanout_probe()
+        CRYSTAL
+        source_backed: true,
+        eager_bodies: false,
+      )
+
+      converter.flush_pending_functions
+      converter.__test_missing_incremental_target_certificate(
+        "InstanceFanoutRoot.probe$Int32",
+        [] of String,
+      )[1].should eq("NotStarted")
+      converter.module.functions.none?(&.name.matches?(/^InstanceFanoutOwner[AB]\.probe/))
+        .should be_true
+      converter.module.functions.any? do |function|
+        function.name.starts_with?("InstanceFanoutOwnerA#probe$Int32") &&
+          converter.module.has_function_with_body?(function.name)
+      end.should be_true
+      converter.module.functions.any? do |function|
+        function.name.starts_with?("InstanceFanoutOwnerB#probe$Int32") &&
+          converter.module.has_function_with_body?(function.name)
+      end.should be_true
     end
 
     it "filters only explicitly incompatible generic module includers" do

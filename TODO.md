@@ -16007,6 +16007,30 @@ bodies increased while Pointer-family bodies decreased. Next: explain the
 remaining broad Object/Reference virtual replay from actual live witnesses;
 do not add another cache or suppress a target solely because it is expensive.
 
+#### Session 153: keep runtime module fanout on instance targets
+
+Runtime fanout for a module-typed value already resolves each live includer as
+`Owner#method`, but a second legacy block also synthesized `Owner.method` for
+the same receiver. Those class-form targets could not materialize and survived
+until repeated terminal cleanup. The duplicate dot block is removed; real
+module and extended class methods continue through their existing static
+resolution paths. No target filter, cache, registry, or retry policy was added.
+
+A lazy source-backed no-prelude regression was red with the abstract dotted
+target in progress and is green with both concrete instance bodies. The real
+module class-method control remains green, and the full AstToHir suite passes
+552 examples with zero failures, zero errors, and two existing pending
+examples. A fresh bounded self-host completed in about 216 seconds versus the
+225--227 second Session 152 samples. `lower_missing` fell from about 212--215
+to 204 seconds, terminal fanout discards from 2,667 to 725, exact retry-site
+events from 8,836 to 2,995, and functions from 49,556 to 49,525.
+
+Adversary verdict: ROBUST for removing class-form targets from this runtime
+value-receiver producer; BROKEN for the broader claim that dotted module
+targets are never legal. The timing is one adjacent sample, not a stable
+benchmark certificate. Next: profile the surviving 725 instance-form fanout
+targets and change only a producer disproved by a source-backed falsifier.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
