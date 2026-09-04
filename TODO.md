@@ -16295,6 +16295,29 @@ diagnostics do not explain the dominant `lower_missing` cost. Next: split the
 residual direct-route counters by root, mode, and actual replay work before
 changing semantic traversal.
 
+#### Session 163: classify residual direct virtual-target traversal
+
+Debug-only replay statistics now distinguish unique semantic owner keys,
+repeated keys, broad roots, and work performed outside lazy RTA for the normal
+call and member-access direct loops. The counters do not skip or reorder
+lowering and reuse the existing `DEBUG_VIRTUAL_TARGET_REPLAY_STATS` report.
+
+A bounded full-HIR self-host completed in 195 seconds. Normal calls recorded
+1,671 direct owner attempts: 1,633 unique keys, 38 repeats, 846 broad-root
+attempts, and 905 attempts outside lazy RTA. By branch construction, broad-root
+work cannot enter this direct loop while lazy RTA is active, so the inferred
+split is 846 broad/outside, 59 narrow/outside, and 766 narrow/lazy. Member
+access recorded 1,224 attempts: 1,215 unique keys, 9 repeats, no broad roots,
+and only 2 outside lazy RTA. The full AstToHir suite passes 560 examples with
+zero failures or errors and two existing pending examples.
+
+Adversary verdict: BROKEN for the hypothesis that repeated residual direct
+keys explain the bootstrap slowdown; repeats are only 1.6% across both paths.
+The broad/outside calls are expected late safety-net work, not evidence of a
+misrouted lazy branch, and all direct calls together are a small subset of the
+27,882 measured owner attempts. Next: locate the dominant operation inside
+`lower_missing` instead of adding a semantic dedup guard here.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

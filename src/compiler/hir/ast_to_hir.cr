@@ -6640,6 +6640,14 @@ module Adamas::HIR
     @vtr_stats_direct_binary_owner_calls : Int64 = 0_i64
     @vtr_stats_direct_normal_call_owner_calls : Int64 = 0_i64
     @vtr_stats_direct_member_access_owner_calls : Int64 = 0_i64
+    @vtr_stats_direct_normal_call_owner_keys : Set({String, String, UInt64, UInt8}) = Set({String, String, UInt64, UInt8}).new
+    @vtr_stats_direct_member_access_owner_keys : Set({String, String, UInt64, UInt8}) = Set({String, String, UInt64, UInt8}).new
+    @vtr_stats_direct_normal_call_owner_repeats : Int64 = 0_i64
+    @vtr_stats_direct_member_access_owner_repeats : Int64 = 0_i64
+    @vtr_stats_direct_normal_call_broad_root : Int64 = 0_i64
+    @vtr_stats_direct_member_access_broad_root : Int64 = 0_i64
+    @vtr_stats_direct_normal_call_outside_lazy_rta : Int64 = 0_i64
+    @vtr_stats_direct_member_access_outside_lazy_rta : Int64 = 0_i64
 
     @[AlwaysInline]
     private def control_flow_dead_block?(ctx : LoweringContext, block_id : BlockId) : Bool
@@ -65783,6 +65791,8 @@ module Adamas::HIR
       STDERR.puts "[VTR_STATS] initial inherited-body reuse check: #{(@vtr_stats_reuse_check_time_ns / 1_000_000.0).round(3)} ms/#{@vtr_stats_reuse_check_calls} calls"
       STDERR.puts "[VTR_STATS] broad ancestor fallback lookup: #{(@vtr_stats_broad_fallback_lookup_time_ns / 1_000_000.0).round(3)} ms/#{@vtr_stats_broad_fallback_lookup_calls} calls"
       STDERR.puts "[VTR_STATS] direct owner calls: identifier=#{@vtr_stats_direct_identifier_owner_calls} binary=#{@vtr_stats_direct_binary_owner_calls} normal_call=#{@vtr_stats_direct_normal_call_owner_calls} member_access=#{@vtr_stats_direct_member_access_owner_calls}"
+      STDERR.puts "[VTR_STATS] direct normal keys: unique=#{@vtr_stats_direct_normal_call_owner_keys.size} repeat=#{@vtr_stats_direct_normal_call_owner_repeats} broad_root=#{@vtr_stats_direct_normal_call_broad_root} outside_lazy_rta=#{@vtr_stats_direct_normal_call_outside_lazy_rta}"
+      STDERR.puts "[VTR_STATS] direct member keys: unique=#{@vtr_stats_direct_member_access_owner_keys.size} repeat=#{@vtr_stats_direct_member_access_owner_repeats} broad_root=#{@vtr_stats_direct_member_access_broad_root} outside_lazy_rta=#{@vtr_stats_direct_member_access_outside_lazy_rta}"
       STDERR.puts "[VTR_STATS] unique replay keys: #{@virtual_target_replay_attempted.size}"
       STDERR.puts "[VTR_STATS] targets_by_parent parents: #{@virtual_targets_by_parent.size}"
       top_parents = @virtual_targets_by_parent.to_a.sort_by { |_, targets| -targets.size }.first(30)
@@ -96349,7 +96359,17 @@ module Adamas::HIR
                   unless @method_index[base_owner]?.try(&.has_key?(method_name))
                     next unless @class_info.has_key?(owner)
                   end
-                  @vtr_stats_direct_normal_call_owner_calls &+= 1 if @debug_virtual_target_replay_stats
+                  if @debug_virtual_target_replay_stats
+                    @vtr_stats_direct_normal_call_owner_calls &+= 1
+                    stats_key = {owner, method_name, ah, vf}
+                    if @vtr_stats_direct_normal_call_owner_keys.includes?(stats_key)
+                      @vtr_stats_direct_normal_call_owner_repeats &+= 1
+                    else
+                      @vtr_stats_direct_normal_call_owner_keys << stats_key
+                    end
+                    @vtr_stats_direct_normal_call_broad_root &+= 1 if broad_virtual_target_root?(type_desc.name)
+                    @vtr_stats_direct_normal_call_outside_lazy_rta &+= 1 unless @lazy_rta_active
+                  end
                   lower_virtual_target_owner(
                     owner,
                     method_name,
@@ -111077,7 +111097,17 @@ module Adamas::HIR
                   unless @method_index[base_owner]?.try(&.has_key?(member_name))
                     next unless @class_info.has_key?(owner)
                   end
-                  @vtr_stats_direct_member_access_owner_calls &+= 1 if @debug_virtual_target_replay_stats
+                  if @debug_virtual_target_replay_stats
+                    @vtr_stats_direct_member_access_owner_calls &+= 1
+                    stats_key = {owner, member_name, ah, vf}
+                    if @vtr_stats_direct_member_access_owner_keys.includes?(stats_key)
+                      @vtr_stats_direct_member_access_owner_repeats &+= 1
+                    else
+                      @vtr_stats_direct_member_access_owner_keys << stats_key
+                    end
+                    @vtr_stats_direct_member_access_broad_root &+= 1 if broad_virtual_target_root?(type_desc.name)
+                    @vtr_stats_direct_member_access_outside_lazy_rta &+= 1 unless @lazy_rta_active
+                  end
                   lower_virtual_target_owner(
                     owner,
                     member_name,
