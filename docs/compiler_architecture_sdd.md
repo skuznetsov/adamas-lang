@@ -1,7 +1,8 @@
 # Compiler Architecture SDD
 
-> Status: ACTIVE spec; R0 reconciliation in progress; T1 local typed decision
-> guarded but cross-phase consumer absent (amended 2026-08-01).
+> Status: ACTIVE spec; fresh B4-F and broad semantic promotion remain open.
+> T1 has an opt-in single-active-unit selected-definition consumer; broader
+> identity continuity remains open (source-routing refresh 2026-09-04).
 > Scope: target ownership architecture for the Adamas compiler
 > (HIR -> MIR -> LLVM) and the migration contract toward it.
 > The 2026-06-25..07-03 execution ledger (145 slices, ~11,600 lines) that
@@ -26,6 +27,11 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+The [current execution plan](compiler_refactor_architecture_plan.md#0-current-execution-plan)
+integrates reliability and architecture priorities. This refresh did not run a
+new bootstrap. The older R0 source/artifact rows below retain their historical
+scope; their "current-source" labels refer to those runs, not this checkout.
+
 - **B4-H (historical generated artifact): HISTORICAL.** A previously generated
   `s2` passed the downstream full-prelude classifier and printed `42` under
   `scripts/run_safe.sh`. This remains useful compatibility evidence, but it
@@ -49,16 +55,16 @@ Document contract (hard rules):
   enforces normal no-worker production, numeric resource coverage, both exact
   semantic smokes, and stage2 wall <=300 seconds. The validator exists; no
   fresh current-source receipt has passed it.
-- **T1 (typed call identity): LOCAL GUARD COMPLETE / CONTINUITY RED.** Exact
-  r1-r5 explicit-receiver shapes construct and immediately validate one
-  private `LocalCallResolution {MethodSymbol, DefInstanceKey}` before legacy
-  body inference. Selected Def payload plus receiver visibility/owner
-  provenance fail closed for independent roots while canonical re-export
-  remains valid. No `ResolutionId`, producer stream, aggregate-to-original arena
-  handoff, downstream join, or lowering authority is admitted. A current
-  compiler-consumer inventory found no semantic object flow from the aggregate
-  prepass into per-file HIR, so cross-arena `MethodSymbol` admission is rejected
-  rather than scaffolded; LSP symbol merging is a separate bounded context.
+- **T1 (typed call identity): BOUNDED CONSUMER EXISTS / BROADER CONTINUITY OPEN.**
+  Under opt-in semantic compilation with one active parsed unit, CLI analyzes
+  the original arena and binds its selected-definition context to HIR.
+  `semantic_call_target` consumes the exact owned `DefNode` before legacy
+  overload selection; normal call emission guards selected/emitted continuity.
+  Multiple active units retain the shadow aggregate without handing its
+  identities to HIR. Generic receivers, generated nodes and early-return call
+  shapes remain outside this bounded claim. No `ResolutionId` stream,
+  cross-arena promotion, or default bootstrap coverage follows from it.
+  See SDD07 section 2.1 for the full consumer boundary and recorded tests.
 - **B5 (s2 self-build -> s3): BLOCKED BY B4-F / HISTORICAL LOCATOR ONLY.** The
   historical first bad stop was
   `ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_BODY_LOWERED` inside the
@@ -152,6 +158,7 @@ a current full-source emitted artifact reproduces it.
 | zero struct sentinels | none (raw value storage `be44b058`) | `REQUIRE_SELECTED=1 scripts/generated_stage_zero_struct_sentinel_report.sh` | consumed |
 | GC-aware realloc demand | LLVMEmissionSession `GRH` tag (`31cd6009`) | `scripts/generated_stage_gc_realloc_helper_report.sh` + `regression_tests/gc_aware_realloc_gating_repro.sh` | consumed |
 | STABLE6 materialization replay shadow | none on main (`MaterializationReplayShadow` prototype only in `/private/tmp`) | in-process prototype discriminator; no admitted owner | REFUTED IN-PROCESS PROTOTYPE / NOT ADMITTED |
+| same-arena selected definition -> ordinary HIR call | existing `DefInstanceKey` / `TypeContext` / `SelectedCallTarget` | `spec/semantic_cli_spec.cr`, `spec/semantic_cli_compile_contracts_spec.cr`; `ADAMAS_SEMANTIC_COMPILE=1` | consumed only for the admitted single-active-unit source-backed shapes; broader T1 open |
 
 ### 0.3 STABLE6 — refuted in-process prototype / not admitted
 
@@ -210,7 +217,7 @@ document does not claim that existing streams suffice. A future analyzer may
 stream its inputs, but the current log ceiling is diagnostic unless a guard
 hard-caps it; no bounded-memory or backpressure claim is admitted.
 
-### 0.4 T1 identity-join boundary (current-red)
+### 0.4 T1 identity-join boundary (broader continuity open)
 
 T1 rejects the late `lower_function_if_needed` / MAT string ledger as the
 semantic producer. That point is downstream of resolution and can also be
@@ -222,8 +229,9 @@ HIR/value/ABI coercion**, analogous to the original Crystal
 `Call#instantiate` boundary. This is an ownership placement, not a behavior
 or performance claim.
 
-The first admitted semantic-producer handoff is this versioned,
-telemetry-only record shape:
+The proposed future `ResolutionId` producer uses this versioned,
+telemetry-only record shape, distinct from the existing opt-in single-active-unit
+selected-definition consumer:
 
 ```text
 [T1_IDENTITY_JOIN] schema=t1_identity_join_v1 case_id=<opaque-case-id> resolution_id=<u64> def_arena_id=<u64> def_expr_index=<i32> receiver_semantic_type_id=<u32|none> arg_semantic_type_ids=<ordered-u32-list|none> block_semantic_type_id=<u32|none> named_semantic_args=<ordered-NameId:SemanticTypeId-list|none> producer_phase=post_resolution_pre_hir_coercion
@@ -241,9 +249,9 @@ until it exists, the external join is pending.
 
 Current blockers are explicit and remain red:
 
-- exact r1-r5 shapes have a local semantic decision, but semantic analysis owns
-  an aggregate reparse arena while `AstToHir` consumes original per-file
-  arenas;
+- with multiple active units, semantic analysis owns an aggregate reparse
+  arena while `AstToHir` consumes original per-file arenas; the existing
+  single-active-unit consumer does not close this boundary;
 - no owned callsite mapping or genuine downstream compiler consumer exists for
   a `ResolutionId`; inference-order ordinals and raw `ExprId` surrogates are
   rejected;
@@ -263,8 +271,8 @@ recollecting a shared symbol-table context from a distinct arena rejects stale
 receiver and method symbols while admitting the replacement symbol.
 Same-arena stale-`MethodSymbol` admission and exact duplicate-signature
 redefinition ordering are guarded. Cross-arena `MethodSymbol` admission for
-compiler lowering is rejected at the current boundary: the aggregate semantic
-prepass has no semantic-object handoff to `AstToHir`, and the existing unit
+compiler lowering is rejected at the multi-active-unit boundary: the aggregate
+semantic prepass has no semantic-object handoff to `AstToHir`, and the existing unit
 offsets are only a structurally validated node map. LSP per-file symbol merging
 belongs to a separate bounded context. This does not authorize a producer
 stream, create a cross-arena consumer, or make T1 green.
@@ -1307,19 +1315,26 @@ A/B. Neither B4-H, G9, nor the manifest substitutes for those gates.
 
 ### Phase 0a.1: Reliability/architecture two-track join
 
+The [execution-plan promotion policy](compiler_refactor_architecture_plan.md#03-order-of-work-and-promotion-policy)
+distinguishes a targeted repair of the existing path from promotion of a
+replacement path. A red B4-F does not prohibit a reducer-backed correction of
+its cause. Such a repair needs the existing owner/consumer, relevant tests,
+an adversary control, and a source-matched bootstrap classification when that
+corridor changes; it does not require an unrelated T0 A/B or new owner ledger.
+
 The reliability track owns the <=300s fresh-stage budget, generated-stage
 provenance, exact plain/no-prelude smokes, and rollback. The architecture track
-owns T0 -> typed `ResolutionId`/`CallResolution`/materialization contracts and
-the active typed resolution-to-materialization queue payload/transaction guard
-at final HIR emission plus `lower_missing` replay. Evidence currently supports
-a high-confidence string-keyed replay/materialization amplification hypothesis,
-not causal proof. Its falsifier is a bounded typed payload/shadow that reduces
-duplicate shape expansion while preserving exact semantics. Architecture work
-must remain guard/shadow-only while reliability is red; the default-path
-consumer stays blocked. Neither track may delete a queue/shim or claim a
-speedup until the same source snapshot passes B4-F and both semantic gates.
-Reliability fixes must name an owner boundary; architecture slices must retain
-a legacy kill switch.
+reuses the bounded selected-definition consumer and develops only the next
+required typed resolution/materialization contract. Current observations
+separate lost call facts, excessive admission, and the cost of correct repeated
+scans; no single cause has been established for all three. A shadow can locate
+a mismatch but cannot itself demonstrate reduced production work.
+
+Replacement-path promotion and queue/shim deletion remain blocked until the
+same source snapshot passes B4-F and both semantic gates. Local diagnostic
+improvements may be reported with their measured scope, but cannot substitute
+for that result or a matched performance comparison. Reliability fixes name
+an owner boundary; replacement slices retain the legacy rollback path.
 
 ### Phase 0b: Architecture transition gate
 

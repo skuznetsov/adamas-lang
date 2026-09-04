@@ -1,11 +1,11 @@
 # Compiler Decomposition and Semantic Replacement — Frontier SDD
 
-> Status: DESIGN-SEALED; R0 CURRENT-SOURCE SNAPSHOT SEALED,
-> B4-F UNMEASURED UNDER THE 300-SECOND POLICY; STAGE2 SEMANTIC SMOKES UNAVAILABLE;
-> T1 LOCAL TYPED DECISION GUARDED, CROSS-PHASE CONSUMER ABSENT
-> (frontier refresh, 2026-08-01).
+> Status: DESIGN-SEALED; fresh B4-F and broad semantic promotion remain open.
+> T1 has an opt-in single-active-unit selected-definition consumer;
+> multi-active-arena continuity and the ResolutionId stream remain open.
+> Execution-plan and source-routing refresh: 2026-09-04; no new bootstrap run.
 > Audit snapshot: source-shape counts remain scoped to checkout `05954794`.
-> Current R0 evidence is the seven-path dirty-source snapshot sealed at base
+> Historical R0 evidence is the seven-path dirty-source snapshot sealed at base
 > `c216b9ef...`, tree `1efb635...`, patch `d7ad2cac...`; measured evidence and
 > remaining promotion gates are recorded below.
 > Bounded context: Adamas compile semantics from parser arenas through HIR,
@@ -14,13 +14,18 @@
 This SDD defines the architecture transition from the current stateful
 compiler to explicit semantic owners. It is a transition contract, not an
 authorization to rewrite source files. It complements, and does not replace,
-the [Compiler Architecture SDD](../compiler_architecture_sdd.md), the deferred
+the [Compiler Architecture SDD](../compiler_architecture_sdd.md), the current
 [Refactor Architecture Plan](../compiler_refactor_architecture_plan.md), and
 the [Demand-Driven Rewrite RFC](../../PLAN_DEMAND_DRIVEN_REWRITE_RFC.md).
 Their execution history and current owner records remain authoritative in
 those documents, `TODO.md`, `LANDMARKS.md`, and git history. This document
 narrows the next architecture decision: selective semantic replacement with
 typed identity and shadow gates.
+
+The [execution plan](../compiler_refactor_architecture_plan.md#0-current-execution-plan)
+orders the next bounded work. Older snapshot rows below are revision-scoped
+history; they do not classify the September checkout. Its current T1 consumer
+is described in section 2.1 and does not participate in canonical bootstrap.
 
 ## 1. Live audit and ProblemCard
 
@@ -269,7 +274,7 @@ document does not claim that existing streams suffice. A future analyzer may
 stream its inputs, but the current log ceiling is diagnostic unless a guard
 hard-caps it; no bounded-memory or backpressure claim is admitted.
 
-### 2.6 T1 identity-join boundary (current-red)
+### 2.6 T1 identity-join boundary (broader continuity open)
 
 T1 rejects the late `lower_function_if_needed` / MAT string ledger as the
 semantic producer. That point is downstream of resolution and can also be
@@ -281,8 +286,9 @@ HIR/value/ABI coercion**, analogous to the original Crystal
 `Call#instantiate` boundary. This is an ownership placement, not a behavior
 or performance claim.
 
-The first admitted semantic-producer handoff is this versioned,
-telemetry-only record shape:
+The proposed future `ResolutionId` producer uses this versioned,
+telemetry-only record shape. It is distinct from the existing single-active-unit
+selected-definition handoff described in section 2.1:
 
 ```text
 [T1_IDENTITY_JOIN] schema=t1_identity_join_v1 case_id=<opaque-case-id> resolution_id=<u64> def_arena_id=<u64> def_expr_index=<i32> receiver_semantic_type_id=<u32|none> arg_semantic_type_ids=<ordered-u32-list|none> block_semantic_type_id=<u32|none> named_semantic_args=<ordered-NameId:SemanticTypeId-list|none> producer_phase=post_resolution_pre_hir_coercion
@@ -300,9 +306,9 @@ until it exists, the external join is pending.
 
 Current blockers are explicit and remain red:
 
-- exact r1-r5 shapes have a local semantic decision, but semantic analysis owns
-  an aggregate reparse arena while `AstToHir` later consumes the original
-  per-file arenas;
+- with multiple active units, semantic analysis owns an aggregate reparse
+  arena while `AstToHir` consumes the original per-file arenas; the existing
+  single-active-unit handoff does not solve this boundary;
 - no owned callsite mapping or genuine downstream compiler consumer exists for
   a `ResolutionId`; an inference-order ordinal or raw `ExprId` surrogate is
   rejected;
@@ -322,8 +328,8 @@ recollecting a shared symbol-table context from a distinct arena rejects stale
 receiver and method symbols while admitting the replacement symbol.
 Same-arena stale-`MethodSymbol` admission and exact duplicate-signature
 redefinition ordering are guarded. Cross-arena `MethodSymbol` admission for
-compiler lowering is rejected at the current boundary: the aggregate semantic
-prepass has no semantic-object handoff to `AstToHir`, and its unit offsets are a
+compiler lowering is rejected at the multi-active-unit boundary: the aggregate
+semantic prepass has no semantic-object handoff to `AstToHir`, and its unit offsets are a
 structurally validated node map rather than a consumer. LSP per-file symbol
 merging is a separate bounded context. This completes the local portion of
 steps 1-2 in section 13.3. It does not authorize a stream, create a cross-arena
@@ -630,6 +636,10 @@ a silent implementation dependency.
 The order reconciles the current architecture SDD's owner-first phases with the
 RFC's demand-driven phases:
 
+Use the [current execution plan](../compiler_refactor_architecture_plan.md#03-order-of-work-and-promotion-policy)
+to select a bounded repair. The phases below govern replacement-path promotion,
+not a requirement to rebuild every precursor for each correctness fix.
+
 ### 9.1 R0 reconciliation gate (before Slice 1B)
 
 R0 is a required evidence seal, not another semantic owner. It prevents a
@@ -675,26 +685,33 @@ The work proceeds on two coordinated tracks:
   (with <=180 seconds retained as a stretch target), then keep exact plain and
   no-prelude smokes green across every promoted slice. It owns source snapshots, generated
   stage provenance, resource budgets, and bootstrap rollback.
-- **Architecture track:** move from T0 guard-only provenance to typed
-  `ResolutionId`, `CallResolution`, and a typed
-  resolution-to-materialization queue payload/transaction guard at final HIR
-  emission plus `lower_missing` replay without injecting whole compiler
-  contexts. It owns identity/lifetime contracts, normalized shadow, and
-  structural tripwires; the default-path consumer remains blocked.
+- **Architecture track:** reuse the bounded selected-definition consumer and
+  develop the next required resolution/materialization contract without
+  injecting whole compiler contexts. It owns identity/lifetime contracts,
+  normalized shadow, and structural tripwires; promotion of a replacement
+  default path remains blocked.
 
-The **join** is a release gate: an architecture slice may run in guard/shadow
-mode while reliability is red, but it cannot change the default path, delete a
-queue/shim, or claim a performance win until the same source snapshot passes
-B4-F plus both semantic smoke modes. Conversely, a reliability fix cannot
-enter the architecture track without naming the owner boundary and preserving
-the typed shadow ledger. A lower queue count or faster host build cannot
+The **join** is a release gate: a replacement architecture slice may run in
+guard/shadow mode while reliability is red, but default-path promotion and
+queue/shim deletion require the same source snapshot to pass B4-F plus both
+semantic smoke modes. Local improvements retain their measured scope; they
+cannot substitute for that result. A reliability fix names its owner boundary
+and preserves any applicable existing shadow checks. A lower queue count or faster host build cannot
 compensate for a semantic mismatch, and a semantic parity result cannot hide a
 10x fresh-stage slowdown.
 
+A targeted repair of an established defect in the existing compile path may
+proceed while B4-F is red, using its reducer, owner/consumer boundary, nearest
+adversary control, affected tests, and an attributable bootstrap classification
+when that corridor changes. This is the existing emergency-fix lane, not a
+replacement-path promotion. A helper extracted for that fix must be consumed
+in the same slice; it does not require a new ledger or a repeated unrelated
+T0 A/B. The execution plan defines the checks and conditional next steps.
+
 0. **Bootstrap freeze.** Keep B4-F/B5 evidence current and label B4-H as
    historical only. Permit docs, census,
-   reducers, and emergency fixes that add an owner ledger; stop broad refactor
-   while the frontier moves.
+   reducers, and emergency fixes that identify the existing owner/consumer;
+   stop broad refactor while the frontier moves.
 1. **Decision and dead-code census.** Enumerate semantic writers/readers,
    string rewrites, ambient maps, arena reads, pending queues, and candidate
    shims. No behavior change.

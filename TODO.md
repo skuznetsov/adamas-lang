@@ -1,5 +1,9 @@
 # Adamas Bootstrap TODO
 
+Current action order: [integrated execution plan](docs/compiler_refactor_architecture_plan.md#0-current-execution-plan).
+The review found exit-status masking in both regression runners; re-establish
+their pass counts after repair before using them as acceptance evidence.
+
 Updated: 2026-09-04 (concrete Reference inequality calls now retain their
 receiver owner; the measured Object equality replay fanout is substantially
 smaller, while full-HIR lowering remains above the historical target.)

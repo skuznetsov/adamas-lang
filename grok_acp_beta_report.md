@@ -1420,3 +1420,15 @@ runtime storage, late generic union stride, tuple-layout guards, host build, and
 broad HIR suite pass after the minimal fixes.
 **Verdict:** failed/no-signal interaction. Do not count this run as evidence.
 **Cost saved:** none.
+
+### Session 56 — 2026-09-04 — Integrated plan causal countercase
+
+**Task:** read-only critique of the supplied owner/arity, constructor-admission,
+and equality-replay observations; distinguish common cause from independent
+costs and choose a separating probe. No tools or edits requested.
+**Invocation:** `grok_acp_delegate.py`, default `grok-build`, without
+`--always-approve`; 15-second request and 30-second stream timeouts.
+**Outcome:** `session/new` failed with `RuntimeError: Permission denied` before
+a model answer. No review signal or cost saving; no claim relies on this call.
+Local source inspection, isolated regression-runner probes, and opposed Luna
+Max analyses continued without waiting for Grok availability.
