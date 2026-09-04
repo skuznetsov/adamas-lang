@@ -16252,6 +16252,29 @@ The remaining direct member calls are narrow/eager work and the bare-identifier
 route contributes only one call. Next: use the counters to classify the 1,671
 normal-call and 1,224 member-access residuals before changing another path.
 
+#### Session 161: compile out legacy lower-call entry diagnostics
+
+The hottest self-host function still carried seven environment-gated diagnostic
+branches in every ordinary build. Their bodies were moved behind two existing-style
+`debug_hooks` macros, leaving only two empty macro calls in ordinary `lower_call`.
+No lowering decision, state, cache, or fallback moved with them. A direct
+compile-time conditional inside `lower_call` was rejected because it changed the
+self-hosted function ABI to an unintended `_block` form.
+
+The full AstToHir suite passes 560 examples with zero failures or errors and two
+existing pending examples. Ordinary and `-Ddebug_hooks` compiler builds pass; a
+no-prelude debug oracle still emits the requested `DEBUG_ALL_CALLS` diagnostic.
+A bounded full-HIR self-host preserves the exact non-block `lower_call` symbol and
+reduces its HIR from 76,929 to 75,857 lines. Whole-program HIR shrinks by 1,072
+lines, 51 scopes, and 857 instructions with the same 35,332 functions.
+
+Matched noisy-host wall samples were 220 seconds for `HEAD`, 264 seconds for the
+first patched run, and 212 seconds for the immediate patched repeat while an
+unrelated process occupied one core. This refutes a reproducible 20% regression
+but is not a stable speedup certificate. Adversary verdict: ROBUST for semantics
+and structural reduction; VULNERABLE for wall-clock attribution. Next: continue
+profiling residual lowering work rather than widening this diagnostic seam.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

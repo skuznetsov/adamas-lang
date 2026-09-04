@@ -88503,89 +88503,7 @@ module Adamas::HIR
       debug_lower_call_arena_phase(ctx, node, "entry")
       debug_lower_call_arena_expr(ctx, node, "entry.callee", node.callee, @arena, "lower_call.current")
 
-      if env_get("DEBUG_MISSING_SYMS")
-        callee_node_dbg = @arena[node.callee]
-        method_name_dbg2 = case callee_node_dbg
-                           when Adamas::Compiler::Frontend::MemberAccessNode
-                             (safe_slice_to_string(callee_node_dbg.member) || "")
-                           when Adamas::Compiler::Frontend::IdentifierNode
-                             (safe_slice_to_string(callee_node_dbg.name) || "")
-                           else
-                             nil
-                           end
-        if method_name_dbg2 == "leap_year?" || method_name_dbg2 == "month_week_date"
-          obj_dbg = case callee_node_dbg
-                    when Adamas::Compiler::Frontend::MemberAccessNode
-                      obj_node_dbg = @arena[callee_node_dbg.object]
-                      "#{obj_node_dbg.class.name}(#{obj_node_dbg.is_a?(Adamas::Compiler::Frontend::ConstantNode) ? (safe_slice_to_string(obj_node_dbg.name) || "") : "?"})"
-                    else
-                      "bare"
-                    end
-          STDERR.puts "[LOWER_CALL_ENTRY_DBG] method=#{method_name_dbg2} obj=#{obj_dbg} func=#{ctx.function.name} current_class=#{@current_class}"
-        end
-      end
-      if env_get("DEBUG_UNION_CONV_ALL")
-        callee_node = @arena[node.callee]
-        method_name_dbg = case callee_node
-                          when Adamas::Compiler::Frontend::MemberAccessNode
-                            (safe_slice_to_string(callee_node.member) || "")
-                          when Adamas::Compiler::Frontend::IdentifierNode
-                            (safe_slice_to_string(callee_node.name) || "")
-                          else
-                            nil
-                          end
-        if method_name_dbg && (method_name_dbg == "to_i32!" || method_name_dbg == "to_u32!" || method_name_dbg == "to_u64!")
-          STDERR.puts "[LOWER_CALL_ENTRY] method=#{method_name_dbg} func=#{ctx.function.name}"
-        end
-      end
-      if env_get("DEBUG_ENUM_UNION_PREDICATE")
-        callee_node = @arena[node.callee]
-        callee_name = case callee_node
-                      when Adamas::Compiler::Frontend::MemberAccessNode
-                        (safe_slice_to_string(callee_node.member) || "")
-                      else
-                        nil
-                      end
-        if callee_name && (callee_name == "kill?" || callee_name == "hup?" || callee_name == "quit?")
-          STDERR.puts "[LOWER_CALL_SIGNAL] method=#{callee_name} func=#{ctx.function.name}"
-        end
-      end
-      if env_get("DEBUG_ALL_CALLS") || env_get("DEBUG_LOWER_CALL")
-        callee_node = @arena[node.callee]
-        callee_name = case callee_node
-                      when Adamas::Compiler::Frontend::IdentifierNode
-                        (safe_slice_to_string(callee_node.name) || "")
-                      when Adamas::Compiler::Frontend::MemberAccessNode
-                        (safe_slice_to_string(callee_node.member) || "")
-                      else
-                        "(other)"
-                      end
-        if env_get("DEBUG_ALL_CALLS") || callee_name == "byte_range"
-          STDERR.puts "[LOWER_CALL] method=#{callee_name} callee_type=#{callee_node.class.name.split("::").last} current_class=#{@current_class || "nil"} block=#{node.block.nil? ? "no" : "yes"} func=#{ctx.function.name}"
-        end
-      end
-      if env_get("DEBUG_INLINE_CRASH")
-        if @inline_yield_name_stack.any? { |name| name.includes?("Char::Reader#decode_char_at") }
-          stack = @inline_yield_name_stack.join(" -> ")
-          if ctx.current_block >= ctx.function.blocks.size
-            STDERR.puts "[INLINE_CRASH] block_oob call block=#{ctx.current_block} size=#{ctx.function.blocks.size} stack=#{stack}"
-          end
-          if source = source_for_arena(@arena)
-            span = node.span
-            start = span.start_offset
-            length = span.end_offset - span.start_offset
-            if length > 0 && start >= 0 && start < source.bytesize
-              slice_len = length > 80 ? 80 : length
-              snippet = source.byte_slice(start, slice_len).gsub(/\s+/, " ").strip
-              STDERR.puts "[INLINE_CRASH] lower_call span=#{start}..#{span.end_offset} stack=#{stack} \"#{snippet}\""
-            else
-              STDERR.puts "[INLINE_CRASH] lower_call span=#{start}..#{span.end_offset} stack=#{stack}"
-            end
-          else
-            STDERR.puts "[INLINE_CRASH] lower_call span=#{node.span.start_offset}..#{node.span.end_offset} stack=#{stack}"
-          end
-        end
-      end
+      debug_lower_call_entry_diagnostics(ctx, node)
       call_arena : Adamas::Compiler::Frontend::ArenaLike = @arena
       debug_lower_call_arena_phase(ctx, node, "call_arena_set", call_arena)
       debug_lower_call_arena_expr(ctx, node, "call_arena.callee", node.callee, call_arena, "lower_call.call")
@@ -88619,30 +88537,7 @@ module Adamas::HIR
       callee_node = @arena[node.callee]
       debug_lower_call_arena_phase(ctx, node, "after.callee_read", call_arena)
       callee_kind = Adamas::Compiler::Frontend.node_kind(callee_node)
-      if env_get("DEBUG_READ_ATTR_CALL")
-        callee_name = case callee_node
-                      when Adamas::Compiler::Frontend::IdentifierNode
-                        (safe_slice_to_string(callee_node.name) || "")
-                      when Adamas::Compiler::Frontend::MemberAccessNode
-                        (safe_slice_to_string(callee_node.member) || "")
-                      else
-                        nil
-                      end
-        if callee_name == "read_attribute_value"
-          snippet = nil
-          if source = source_for_arena(@arena)
-            span = node.span
-            start = span.start_offset
-            length = span.end_offset - span.start_offset
-            if length > 0 && start >= 0 && start < source.bytesize
-              slice_len = length > 120 ? 120 : length
-              snippet = source.byte_slice(start, slice_len).gsub(/\s+/, " ").strip
-            end
-          end
-          snippet_label = snippet ? " \"#{snippet}\"" : ""
-          STDERR.puts "[DEBUG_READ_ATTR_CALL] func=#{ctx.function.name} class=#{@current_class || "nil"} arena=#{@arena.class}:#{@arena.size}#{snippet_label}"
-        end
-      end
+      debug_lower_call_read_attr(ctx, node, callee_node)
 
       # Intrinsic: obj.is_a?(Type) should lower to IsA/UnionIs without a runtime method call.
       no_named_args = node.named_args.nil?
