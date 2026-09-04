@@ -720,6 +720,85 @@ describe Adamas::MIR::HIRToMIRLowering do
       resolved.not_nil!.name.should eq("IO#print$Char")
     end
 
+    it "uses global runtime type ids for all-reference union dispatch" do
+      hir_mod = Adamas::HIR::Module.new("all_reference_union_dispatch_ids")
+      ast_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Class,
+        "AstArena"
+      ))
+      page_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Class,
+        "PageArena"
+      ))
+      virtual_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Class,
+        "VirtualArena"
+      ))
+      union_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+        Adamas::HIR::TypeKind::Union,
+        "AstArena | PageArena | VirtualArena",
+        [ast_ref, page_ref, virtual_ref]
+      ))
+
+      [
+        {"AstArena", ast_ref},
+        {"PageArena", page_ref},
+        {"VirtualArena", virtual_ref},
+      ].each do |name, type_ref|
+        function = hir_mod.create_function("#{name}#fetch", Adamas::HIR::TypeRef::INT32)
+        function.add_param("self", type_ref)
+      end
+
+      union_mir_ref = Adamas::MIR::TypeRef.from_hir(union_ref)
+      variant_refs = [ast_ref, page_ref, virtual_ref].map { |ref| Adamas::MIR::TypeRef.from_hir(ref) }
+      union_descriptor = Adamas::MIR::UnionDescriptor.new(
+        "AstArena | PageArena | VirtualArena",
+        [
+          Adamas::MIR::UnionVariantDescriptor.new(0, variant_refs[0], "AstArena", 8, 8, nil),
+          Adamas::MIR::UnionVariantDescriptor.new(1, variant_refs[1], "PageArena", 8, 8, nil),
+          Adamas::MIR::UnionVariantDescriptor.new(2, variant_refs[2], "VirtualArena", 8, 8, nil),
+        ],
+        16,
+        8
+      )
+      empty_ivars = [] of Adamas::HIR::IVarInfo
+      empty_class_vars = [] of Adamas::HIR::ClassVarInfo
+      class_infos = {
+        "AstArena" => Adamas::HIR::ClassInfo.new("AstArena", ast_ref, empty_ivars, empty_class_vars, 8),
+        "PageArena" => Adamas::HIR::ClassInfo.new("PageArena", page_ref, empty_ivars, empty_class_vars, 8),
+        "VirtualArena" => Adamas::HIR::ClassInfo.new("VirtualArena", virtual_ref, empty_ivars, empty_class_vars, 8),
+      } of String => Adamas::HIR::ClassInfo
+
+      lowering = Adamas::MIR::HIRToMIRLowering.new(hir_mod)
+      lowering.register_union_types([
+        Adamas::HIR::UnionDescriptorRegistration.new(union_mir_ref, union_descriptor),
+      ])
+      lowering.register_class_types(class_infos)
+      lowering.prepare
+
+      call = Adamas::HIR::Call.with_receiver_virtual(
+        0_u32,
+        Adamas::HIR::TypeRef::INT32,
+        0_u32,
+        "ArenaLike#fetch",
+        [] of Adamas::HIR::ValueId,
+        true
+      )
+      lowering.__test_lower_virtual_dispatch_for_receiver(union_ref, call).should_not be_nil
+
+      dispatch = lowering.mir_module.functions.find do |function|
+        function.name.starts_with?("__vdispatch__ArenaLike#fetch")
+      end
+      dispatch.should_not be_nil
+      switch = dispatch.not_nil!.blocks
+        .map(&.terminator)
+        .find(&.is_a?(Adamas::MIR::Switch))
+        .not_nil!
+        .as(Adamas::MIR::Switch)
+      expected_ids = variant_refs.map(&.id.to_i64).sort
+      switch.cases.map(&.first).sort.should eq(expected_ids)
+    end
+
     it "keeps a module includer's arity alias in vdispatch candidates" do
       hir_mod = Adamas::HIR::Module.new("virtual_dispatch_candidates")
       io_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(Adamas::HIR::TypeKind::Module, "IO"))

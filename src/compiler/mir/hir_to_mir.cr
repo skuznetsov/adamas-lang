@@ -7609,7 +7609,7 @@ module Adamas
                 next if variant.full_name == "Nil" || variant.full_name.starts_with?('*')
                 if func = resolve_virtual_method_for_class(variant.full_name, method_suffix, call.args.size)
                   old_candidates << VDispatchCandidate.new(
-                    type_id: variant.type_id,
+                    type_id: variant.type_ref.id.to_i32,
                     type_ref: variant.type_ref,
                     variant_id: variant.type_id,
                     func: func,
@@ -7629,9 +7629,7 @@ module Adamas
         if recv_desc.kind == HIR::TypeKind::Union
           existing_variant_ids = ::Set(Int32).new
           old_candidates.each do |c|
-            if variant_id = c.variant_id
-              existing_variant_ids.add(variant_id)
-            end
+            existing_variant_ids.add(c.type_id)
           end
 
           variant_names = [] of String
@@ -8079,7 +8077,7 @@ module Adamas
                   STDERR.puts "[VDISPATCH_UNION] candidate=#{variant.full_name} func=#{func.name}"
                 end
                 candidates << VDispatchCandidate.new(
-                  type_id: variant.type_id,
+                  type_id: variant.type_ref.id.to_i32,
                   type_ref: variant.type_ref,
                   variant_id: variant.type_id,
                   func: func,
@@ -8089,7 +8087,7 @@ module Adamas
                     Adamas::MIR.runtime_header_backed_type?(mir_type) &&
                     !subclasses_for(variant.full_name).empty?
                 candidates << VDispatchCandidate.new(
-                  type_id: variant.type_id,
+                  type_id: variant.type_ref.id.to_i32,
                   type_ref: variant.type_ref,
                   variant_id: variant.type_id,
                   func: nil,

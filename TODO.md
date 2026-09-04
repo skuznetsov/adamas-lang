@@ -16470,6 +16470,37 @@ remaining prelude failure is a separate arena or all-reference-union dispatch
 boundary. Next: falsify whether that dispatcher mixes local union ordinals with
 global runtime class type IDs before changing arena storage or ownership.
 
+#### Session 169: separate union ordinals from runtime class type IDs
+
+The all-reference-union dispatcher mixed two identity domains. Initial union
+candidates used descriptor-local variant ordinals while candidates discovered
+from registered HIR types used global runtime class type IDs. The resulting
+class-header switch contained both sets, for example local `0, 1, 2` together
+with global `749, 753`, even though a heap object's header can contain only a
+global runtime type ID.
+
+A synthetic HIR-to-MIR regression was RED: an all-reference union with local
+variant ordinals `0, 1, 2` and global type IDs `52, 53, 54` emitted all six
+switch cases instead of exactly the three global IDs. Union dispatch candidates
+now use `type_ref.id` for class-header matching while retaining the local
+`variant_id` solely for tagged-union extraction. Candidate augmentation also
+deduplicates by the runtime switch key.
+
+The focused regression, all ten virtual-family examples, and the complete
+HIR-to-MIR spec pass; the latter reports 43 examples with zero failures or
+errors. A fresh B4-F run built stage1 in 16.72 seconds and stage2 in 277.21
+seconds. The produced stage2 passes the no-prelude smoke, but its plain-prelude
+smoke still crashes in the final enum registration corridor.
+
+LLDB confirms the repaired dispatcher now compares only global IDs `749` and
+`753`; the local ordinal cases are gone. The remaining crash is narrower and
+independent: `extract_enum_member_from_parsed_expr` receives `ExprId(4)` with a
+paired `AstArena` whose node-slot array has size four, causing an exact
+one-past-end read. Adversary verdict: ROBUST for the runtime switch-key
+contract; BROKEN as a complete prelude-crash fix. Next: falsify the producer
+contract of `parse_macro_literal_program` with a small parser-only fixture rather
+than masking the invalid root with a safe lookup.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
