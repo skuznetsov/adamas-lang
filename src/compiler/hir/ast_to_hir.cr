@@ -5590,6 +5590,13 @@ module Adamas::HIR
         end
       end
       if is_new
+        # Return-type probing can populate name-keyed parameter facts before an
+        # exact function symbol is registered, using the current base-name def
+        # as a provisional source. Once the exact symbol gains its authoritative
+        # DefNode, discard those provisional facts so overload arity is rebuilt
+        # from that definition instead of a same-base sibling.
+        @function_param_stats.delete(name)
+        @function_param_infos.delete(name)
         @function_defs[name] = def_node # missing-revision-owner
         if @method_index_built && @method_index_size_at_build == @function_defs.size - 1
           append_new_method_index_entry(name)

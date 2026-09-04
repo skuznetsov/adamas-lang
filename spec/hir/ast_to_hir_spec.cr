@@ -13635,9 +13635,7 @@ describe Adamas::HIR::AstToHir do
         end
 
         class Object
-          def hash(hasher : Crystal::Hasher) : Crystal::Hasher
-            hasher
-          end
+          abstract def hash(hasher)
 
           def hash : UInt64
             hash(Crystal::Hasher.new).result
@@ -13645,6 +13643,12 @@ describe Adamas::HIR::AstToHir do
         end
 
         struct UInt64
+          def hash(hasher : Crystal::Hasher) : Crystal::Hasher
+            hasher
+          end
+        end
+
+        class String
           def hash(hasher : Crystal::Hasher) : Crystal::Hasher
             hasher
           end
@@ -13672,14 +13676,15 @@ describe Adamas::HIR::AstToHir do
 
         HashArityProbe(HashArityProbeKey, String).new.key_hash(HashArityProbeKey.new, true)
         HashArityProbe(HashArityProbeKey, Int32).new.key_hash(HashArityProbeKey.new, true)
+        HashArityProbe(String, Int32).new.key_hash("probe", false)
       CRYSTAL
       converter.flush_pending_functions
 
       callers = converter.module.functions.select do |function|
-        function.name.starts_with?("HashArityProbe(HashArityProbeKey, ") &&
+        function.name.starts_with?("HashArityProbe(") &&
           function.name.includes?("#key_hash")
       end
-      callers.size.should eq(2)
+      callers.size.should eq(3)
       callers.each do |caller|
         hash_calls = caller.blocks.flat_map(&.instructions).compact_map do |instruction|
           instruction.as?(Adamas::HIR::Call)
@@ -13691,6 +13696,19 @@ describe Adamas::HIR::AstToHir do
           converter.__test_get_type_name_from_ref(call.type).should eq("UInt64")
         end
       end
+
+      zero_arg_wrapper = converter.module.functions.find(&.name.==("Object#hash$arity0")).not_nil!
+      protocol_call = zero_arg_wrapper.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call)
+      end.find(&.method_name.ends_with?("#hash$Crystal::Hasher")).not_nil!
+      protocol_call.args.size.should eq(1)
+      converter.__test_get_type_name_from_ref(protocol_call.type).should eq("Crystal::Hasher")
+
+      zero_arg_return = converter.__test_get_function_return_type_for_call(
+        "HashArityProbeKey#hash",
+        0,
+      )
+      converter.__test_get_type_name_from_ref(zero_arg_return).should eq("UInt64")
 
       typed_return = converter.__test_get_function_return_type_for_call(
         "HashArityProbeKey#hash$Crystal::Hasher",

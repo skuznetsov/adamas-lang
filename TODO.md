@@ -1,8 +1,40 @@
 # Adamas Bootstrap TODO
 
-Updated: 2026-09-03 (late receiver repair now preserves call arity when
-recovering return contracts; full-HIR lowering still takes about 238 seconds
-and the remaining Object hash replay is unchanged.)
+Updated: 2026-09-03 (exact function registration now rebuilds provisional
+parameter facts; the measured zero-argument Object hash protocol misrouting is
+gone, while full-HIR lowering remains above the historical target.)
+
+2026-09-03 EXACT FUNCTION REGISTRATION NOW REBUILDS PROVISIONAL PARAMETER FACTS.
+Return-type probing can ask about an exact typed symbol before that symbol has
+its authoritative `DefNode`. The parameter cache then derives arity from the
+current bare-name definition. Later first-time exact registration previously
+kept those provisional facts, so `Object#hash$Crystal::Hasher` could remain
+recorded as a zero-argument method after the real one-argument definition was
+known. Zero-argument `Hash#key_hash` calls consequently selected the typed hash
+protocol and amplified the wrong target throughout full HIR.
+
+The centralized first-registration path now discards only the two derived
+parameter entries before reseeding them from the exact `DefNode`. No resolver,
+registry, special-case hash rule, or materialization policy was added. A
+source-backed no-bootstrap regression covers three generic owners and was RED
+when their zero-argument calls selected `$Crystal::Hasher`; it is GREEN with
+zero arguments and `UInt64`, while the one-argument wrapper and concrete typed
+return contract remain `Crystal::Hasher`. A controlled ablation of exactly the
+two cache deletions restored the wrong zero-argument typed target.
+
+The full AstToHir suite passes 545 examples with zero failures/errors and two
+pending examples, and a fresh stage1 compiler completed full HIR safely in
+about 223 seconds. Against the preceding same-source HIR, erroneous
+`.Object#hash$Crystal::Hasher()` calls fell from 579 to zero and total
+`Object#hash$Crystal::Hasher` call occurrences fell from 591 to the 12 real
+one-argument protocol calls. Printed HIR bodies stayed essentially flat
+(46,933 to 46,939), so this is not evidence that global materialization fanout
+fell. The prior run took about 248 seconds total; the single new sample is
+encouraging but not a stable timing certificate. Adversary verdict: ROBUST for
+exact-symbol arity cache invalidation and removal of the measured wrong calls;
+VULNERABLE as a general bootstrap-speed claim. Next: profile the remaining
+Hash/Array lowering work with correct call identities instead of adding another
+broad cache or admission rule.
 
 2026-09-03 LATE RECEIVER REPAIR NOW KEEPS ZERO-ARGUMENT HASH ABI SEPARATE.
 Receiver-bound target repair could correctly rewrite `Object#hash` to a
