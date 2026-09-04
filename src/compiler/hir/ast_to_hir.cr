@@ -6636,6 +6636,10 @@ module Adamas::HIR
     @vtr_stats_reuse_check_time_ns : Int64 = 0_i64
     @vtr_stats_broad_fallback_lookup_calls : Int64 = 0_i64
     @vtr_stats_broad_fallback_lookup_time_ns : Int64 = 0_i64
+    @vtr_stats_direct_identifier_owner_calls : Int64 = 0_i64
+    @vtr_stats_direct_binary_owner_calls : Int64 = 0_i64
+    @vtr_stats_direct_normal_call_owner_calls : Int64 = 0_i64
+    @vtr_stats_direct_member_access_owner_calls : Int64 = 0_i64
 
     @[AlwaysInline]
     private def control_flow_dead_block?(ctx : LoweringContext, block_id : BlockId) : Bool
@@ -65778,6 +65782,7 @@ module Adamas::HIR
       STDERR.puts "[VTR_STATS] primary owner lookup: #{(@vtr_stats_primary_lookup_time_ns / 1_000_000.0).round(3)} ms/#{@vtr_stats_primary_lookup_calls} calls"
       STDERR.puts "[VTR_STATS] initial inherited-body reuse check: #{(@vtr_stats_reuse_check_time_ns / 1_000_000.0).round(3)} ms/#{@vtr_stats_reuse_check_calls} calls"
       STDERR.puts "[VTR_STATS] broad ancestor fallback lookup: #{(@vtr_stats_broad_fallback_lookup_time_ns / 1_000_000.0).round(3)} ms/#{@vtr_stats_broad_fallback_lookup_calls} calls"
+      STDERR.puts "[VTR_STATS] direct owner calls: identifier=#{@vtr_stats_direct_identifier_owner_calls} binary=#{@vtr_stats_direct_binary_owner_calls} normal_call=#{@vtr_stats_direct_normal_call_owner_calls} member_access=#{@vtr_stats_direct_member_access_owner_calls}"
       STDERR.puts "[VTR_STATS] unique replay keys: #{@virtual_target_replay_attempted.size}"
       STDERR.puts "[VTR_STATS] targets_by_parent parents: #{@virtual_targets_by_parent.size}"
       top_parents = @virtual_targets_by_parent.to_a.sort_by { |_, targets| -targets.size }.first(30)
@@ -73955,6 +73960,7 @@ module Adamas::HIR
                     unless @method_index[base_owner]?.try(&.has_key?(name))
                       next unless @class_info.has_key?(owner)
                     end
+                    @vtr_stats_direct_identifier_owner_calls &+= 1 if @debug_virtual_target_replay_stats
                     lower_virtual_target_owner(
                       owner,
                       name,
@@ -77840,22 +77846,29 @@ module Adamas::HIR
             unless @virtual_targets_lowered.includes?(key)
               @virtual_targets_lowered.add(key)
               record_virtual_target(left_desc.name, op, arg_types, false, false, caller_token)
-              owners = [left_desc.name]
-              append_virtual_target_descendants(owners, left_desc.name)
-              ensure_method_index_built
-              owners.each do |owner|
-                base_owner = method_index_owner_key(owner)
-                unless @method_index[base_owner]?.try(&.has_key?(op))
-                  next unless @class_info.has_key?(owner)
+              if @lazy_rta_active && broad_virtual_target_root?(left_desc.name)
+                # Recording already replayed the new target for live descendants.
+                # Consume only the broad root through the same append-only bucket.
+                lower_virtual_targets_for_child(left_desc.name, left_desc.name)
+              else
+                owners = [left_desc.name]
+                append_virtual_target_descendants(owners, left_desc.name)
+                ensure_method_index_built
+                owners.each do |owner|
+                  base_owner = method_index_owner_key(owner)
+                  unless @method_index[base_owner]?.try(&.has_key?(op))
+                    next unless @class_info.has_key?(owner)
+                  end
+                  @vtr_stats_direct_binary_owner_calls &+= 1 if @debug_virtual_target_replay_stats
+                  lower_virtual_target_owner(
+                    owner,
+                    op,
+                    arg_types,
+                    false,
+                    false,
+                    replay_parent: left_desc.name,
+                  )
                 end
-                lower_virtual_target_owner(
-                  owner,
-                  op,
-                  arg_types,
-                  false,
-                  false,
-                  replay_parent: left_desc.name,
-                )
               end
             end
           end
@@ -96472,6 +96485,7 @@ module Adamas::HIR
                   unless @method_index[base_owner]?.try(&.has_key?(method_name))
                     next unless @class_info.has_key?(owner)
                   end
+                  @vtr_stats_direct_normal_call_owner_calls &+= 1 if @debug_virtual_target_replay_stats
                   lower_virtual_target_owner(
                     owner,
                     method_name,
@@ -111194,6 +111208,7 @@ module Adamas::HIR
                 unless @method_index[base_owner]?.try(&.has_key?(member_name))
                   next unless @class_info.has_key?(owner)
                 end
+                @vtr_stats_direct_member_access_owner_calls &+= 1 if @debug_virtual_target_replay_stats
                 lower_virtual_target_owner(
                   owner,
                   member_name,

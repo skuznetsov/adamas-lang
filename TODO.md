@@ -16192,6 +16192,38 @@ attempt evidence is preserved. The identifier, binary, and member-access direct
 loops remain unchanged. Next: measure those residual paths separately before
 generalizing the seam.
 
+#### Session 159: reuse recorded broad replay in binary calls
+
+Four debug-only route counters separated the residual direct owner loops during
+a bounded full-HIR self-host. Binary operators accounted for 6,220 calls,
+member access for 3,119, normal calls for 1,687, and bare identifiers for one.
+Only the dominant binary corridor was changed. In lazy RTA, binary calls rooted
+at `Object` or `Reference` now consume the already-recorded append-only replay
+bucket instead of directly traversing the same live descendants again. Narrow
+owners, eager lowering, and the existing `!=` / `===` wrapper selection remain
+unchanged.
+
+A no-prelude `Object -> Parent -> ChildA/ChildB` falsifier observed four primary
+lookups before the change and two afterwards, while preserving the `Object` and
+`Parent` implementations and avoiding inherited child wrappers. Focused
+adversary fixtures cover noncanonical case-equality wrappers, exact concrete
+inequality wrappers, and abstract operator dispatch with concrete override
+materialization. The full AstToHir suite passes 559 examples with zero failures,
+zero errors, and two pending examples.
+
+A fresh full-HIR self-host completed with exit zero and no unresolved concrete
+fanout. Binary direct calls fell from 6,220 to 99, primary owner lookups from
+38,173 to 31,934, inherited-reuse checks from 18,784 to 13,964, and generated
+functions from 40,657 to 39,708. The adjacent wall-time samples regressed from
+252.32 to 257.84 seconds and `lower_missing` from 233.36 to 237.78 seconds, so
+this is structural work-reduction evidence, not a speedup certificate.
+
+Adversary verdict: ROBUST for the lazy broad-root binary corridor. Final repair
+still sees the recorded exact child attempts, but the 949-function reduction
+makes generated-program compatibility the residual risk beyond the focused HIR
+scope. Next: measure the member-access corridor, then run a quiet-host timing
+series before attributing wall-clock gains.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the
