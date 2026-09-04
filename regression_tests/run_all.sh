@@ -49,24 +49,25 @@ run_one_test() {
   local expect=$(grep -m1 '^# EXPECT:' "$src" | sed 's/^# EXPECT: *//')
 
   # Run with timeout
-  local output=$(scripts/run_safe.sh "$bin_path" $TIMEOUT $MAX_MEM 2>/dev/null)
-  local exit_code=$?
+  local output exit_code
+  output=$(scripts/run_safe.sh "$bin_path" $TIMEOUT $MAX_MEM 2>/dev/null)
+  exit_code=$?
   rm -f "$bin_path"
+
+  # A matching marker cannot turn a failed process into a passing test.
+  if [ "$exit_code" -ne 0 ]; then
+    printf 'CRASH\n%s\n' "$(echo "$output" | tail -3)" > "$result_path"
+    return
+  fi
 
   if [ -n "$expect" ]; then
     if echo "$output" | grep -qF "$expect"; then
       echo "PASS" > "$result_path"
-    elif [ $exit_code -ne 0 ]; then
-      printf 'CRASH\n%s\n' "$(echo "$output" | tail -3)" > "$result_path"
     else
       printf 'OUTPUT_MISMATCH\n%s\n%s\n' "$expect" "$(echo "$output" | tail -5)" > "$result_path"
     fi
   else
-    if [ $exit_code -eq 0 ]; then
-      echo "PASS" > "$result_path"
-    else
-      printf 'CRASH\n%s\n' "$(echo "$output" | tail -3)" > "$result_path"
-    fi
+    echo "PASS" > "$result_path"
   fi
 }
 

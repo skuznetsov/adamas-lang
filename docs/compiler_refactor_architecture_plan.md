@@ -1,6 +1,6 @@
 # Crystal V2 Compiler Refactor Architecture Plan
 
-> Status: proposed execution plan, refreshed 2026-09-04.
+> Status: execution in progress; runtime verdict repair verified 2026-09-04.
 > Section 0 integrates the current reliability and architecture work. Its
 > implementation steps are not completed by this document. Sections 1-9 retain
 > the original staged refactor design (2026-04) as a deferred reference;
@@ -46,9 +46,11 @@ golden-output+exit7. Exit-zero positives, output mismatches, compile failures,
 and missing binaries supplied controls. Therefore the recorded combined
 27/37 pass count must be re-established after the runner repair. Known failing
 fixtures remain failures; additional failures may be revealed.
-The retained [runner probe](../scripts/probes/regression_runner_exit_contract.py)
-checks 17 cases across both runners, including five nonzero-exit false positives.
-It intentionally remains RED until the runner contract is repaired.
+Step 1 is now implemented: the [runner contract spec](../spec/regression_runner_contract_spec.cr)
+covers 21 individual cases and all four aggregate success/failure combinations.
+The safe spec runner passes 6 examples; the original 17-case manual witness
+changed from five false PASS results to zero and was retired into these specs.
+The real-program baseline still awaits step 2.
 
 ### 0.2 Causal model and alternatives
 
@@ -203,10 +205,9 @@ work, `rg -n 'bind_semantic_call_targets|semantic_call_target|if semantic_target
 locates the CLI handoff, lookup, and final normal-emission check. These are
 routing anchors, not proofs of complete semantic or runtime coverage.
 
-The two manual review witnesses are intentionally RED at the inspected source:
+The remaining manual MIR witness is RED at the reviewed source:
 
 ```bash
-scripts/run_safe.sh /usr/bin/python3 45 512 scripts/probes/regression_runner_exit_contract.py
 (
   set -e
   review_probe_dir=$(mktemp -d /private/tmp/adamas-review-ltp.XXXXXX)
@@ -216,15 +217,14 @@ scripts/run_safe.sh /usr/bin/python3 45 512 scripts/probes/regression_runner_exi
 )
 ```
 
-Both return exit 1 for the demonstrated contract violations. They are manual
-reproducers, not additions to the default spec suite or evidence of a fix.
-Fold their cases into the affected specs when implementing each repair.
+It returns exit 1 for the demonstrated contract violation. It is a manual
+reproducer, not an addition to the default spec suite or evidence of a fix.
+Fold its case into the affected specs when implementing that repair.
 
-Use the existing safe spec runner; the proposed runner-contract file is added
-by step 1, not present as a completed test in this plan:
+Use the existing safe spec runner; run only the checks affected by the slice:
 
 ```bash
-scripts/run_all_specs.sh 1 120 4096 spec/regression_runner_contract_spec.cr
+scripts/run_all_specs.sh 1 150 4096 spec/regression_runner_contract_spec.cr
 scripts/run_all_specs.sh 1 300 8192 spec/hir/ast_to_hir_spec.cr
 scripts/run_all_specs.sh 1 180 4096 spec/hir/missing_incremental_shadow_spec.cr spec/hir/missing_revision_ledger_spec.cr
 scripts/run_all_specs.sh 1 120 4096 spec/compiler/mir/ltp_wba_spec.cr spec/mir/abi_layout_spec.cr

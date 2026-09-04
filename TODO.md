@@ -1,8 +1,19 @@
 # Adamas Bootstrap TODO
 
 Current action order: [integrated execution plan](docs/compiler_refactor_architecture_plan.md#0-current-execution-plan).
-The review found exit-status masking in both regression runners; re-establish
-their pass counts after repair before using them as acceptance evidence.
+Both regression runners now reject failed runtime processes before comparing
+output. Re-establish real-program pass counts after supervision/freshness repair.
+
+2026-09-04 REGRESSION RUNTIME VERDICTS PRESERVE FAILURE.
+Separate output assignment from `local` declaration and check the captured
+exit code before markers or golden output. The promoted runner-contract spec
+uses real runners and the safe supervisor with fake compilers; it covers 21
+individual cases (including signal/timeout), plus all four aggregate success/
+failure combinations. `scripts/run_all_specs.sh 1 150 4096 spec/regression_runner_contract_spec.cr`
+passes 6 examples; the original 17-case manual witness also changed from five
+false PASS results to zero before being retired. Scope: runtime verdicts only;
+compiler supervision, stale executable prevention, and a fresh real baseline
+remain next. The compiler and existing user HIR changes are unaffected.
 
 Updated: 2026-09-04 (concrete Reference inequality calls now retain their
 receiver owner; the measured Object equality replay fanout is substantially

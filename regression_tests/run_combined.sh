@@ -58,9 +58,16 @@ run_one_test() {
   fi
 
   # Run with timeout
-  local output=$(scripts/run_safe.sh "$bin_path" $TIMEOUT $MAX_MEM 2>/dev/null)
-  local exit_code=$?
+  local output exit_code
+  output=$(scripts/run_safe.sh "$bin_path" $TIMEOUT $MAX_MEM 2>/dev/null)
+  exit_code=$?
   rm -f "$bin_path"
+
+  # Check execution before either golden output or a marker can admit PASS.
+  if [ "$exit_code" -ne 0 ]; then
+    printf 'CRASH\n%s\n' "$(echo "$output" | tail -5)" > "$result_path"
+    return
+  fi
 
   local golden_path="${src%.cr}.out"
   local actual_tmp
@@ -69,11 +76,6 @@ run_one_test() {
   echo "$output" | awk '/^=== STDOUT ===$/{p=1;next}/^=== STDERR ===$/{p=0}p' > "$actual_tmp"
 
   if [ -f "$golden_path" ]; then
-    if [ $exit_code -ne 0 ]; then
-      printf 'CRASH\n%s\n' "$(echo "$output" | tail -5)" > "$result_path"
-      rm -f "$actual_tmp"
-      return
-    fi
     if cmp -s "$actual_tmp" "$golden_path"; then
       echo "PASS" > "$result_path"
     else
@@ -92,17 +94,11 @@ run_one_test() {
   if [ -n "$expect" ]; then
     if echo "$output" | grep -qF "$expect"; then
       echo "PASS" > "$result_path"
-    elif [ $exit_code -ne 0 ]; then
-      printf 'CRASH\n%s\n' "$(echo "$output" | tail -5)" > "$result_path"
     else
       printf 'OUTPUT_MISMATCH\nexpected: %s\ngot:\n%s\n' "$expect" "$(echo "$output" | tail -10)" > "$result_path"
     fi
   else
-    if [ $exit_code -eq 0 ]; then
-      echo "PASS" > "$result_path"
-    else
-      printf 'CRASH\n%s\n' "$(echo "$output" | tail -5)" > "$result_path"
-    fi
+    echo "PASS" > "$result_path"
   fi
 }
 
