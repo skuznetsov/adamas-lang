@@ -16275,6 +16275,26 @@ but is not a stable speedup certificate. Adversary verdict: ROBUST for semantics
 and structural reduction; VULNERABLE for wall-clock attribution. Next: continue
 profiling residual lowering work rather than widening this diagnostic seam.
 
+#### Session 162: compile out early member-call diagnostics
+
+Six diagnostic-only environment checks at member-call entry now use the same
+non-block `debug_hooks` macro seam. Ordinary builds no longer execute the
+checks; `-Ddebug_hooks` builds preserve the existing `DEBUG_TPM_CALL` output.
+The puts interception, virtual dispatch, receiver lowering, and all semantic
+branches remain untouched.
+
+The full AstToHir suite passes 560 examples with zero failures or errors and two
+existing pending examples. A no-prelude member-call control emits `[TPM_CALL]`
+only in the debug-hooks build. Full self-host HIR preserves the exact non-block
+`lower_call` symbol and the same 35,332 functions while removing another 464
+lines, 16 scopes, and 302 instruction lines. Wall time repeated at 212 seconds
+on the noisy host, which is not a stable speedup certificate.
+
+Adversary verdict: ROBUST for behavior and structural reduction. These
+diagnostics do not explain the dominant `lower_missing` cost. Next: split the
+residual direct-route counters by root, mode, and actual replay work before
+changing semantic traversal.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

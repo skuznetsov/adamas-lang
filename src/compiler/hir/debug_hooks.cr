@@ -214,6 +214,43 @@ macro debug_lower_call_entry_diagnostics(ctx, node)
   {% end %}
 end
 
+macro debug_lower_call_member_entry(ctx, callee_node, obj_expr, obj_node, method_name)
+  {% if flag?(:debug_hooks) %}
+    if debug_env_filter_match?("DEBUG_TPM_CALL", {{method_name}})
+      STDERR.puts "[TPM_CALL] method=#{ {{method_name}} } current=#{@current_class || "nil"} map=#{type_param_map_debug_string}"
+    end
+    if env_get("DEBUG_EXE_PATH_CALL") && {{method_name}} == "executable_path"
+      raw_obj = stringify_type_expr({{obj_expr}}) || "(unknown)"
+      obj_label = {{obj_node}}.class.name.split("::").last
+      current_label = @current_class || "nil"
+      override_label = @current_namespace_override || "nil"
+      STDERR.puts "[DEBUG_EXE_PATH_CALL] early obj=#{obj_label} raw=#{raw_obj} current=#{current_label} override=#{override_label}"
+    end
+    if env_get("DEBUG_ENUM_PREDICATE") && {{method_name}} == "character_device?"
+      STDERR.puts "[DEBUG_ENUM_CALL_PATH] lower_call method=#{ {{method_name}} } callee=#{ {{callee_node}}.class.name }"
+    end
+    if env_get("DEBUG_BYTEFORMAT_FORMAT") && {{method_name}} == "decode" &&
+       {{obj_node}}.is_a?(Adamas::Compiler::Frontend::IdentifierNode) &&
+       (safe_slice_to_string({{obj_node}}.name) || "") == "format"
+      local_id = {{ctx}}.lookup_local("format")
+      lit_flag = local_id ? {{ctx}}.type_literal?(local_id) : false
+      local_type = local_id ? get_type_name_from_ref({{ctx}}.type_of(local_id)) : "nil"
+      module_flag = local_id ? module_type_ref?({{ctx}}.type_of(local_id)) : false
+      STDERR.puts "[BYTEFORMAT_FORMAT] lookup=#{local_id || "nil"} type=#{local_type} lit=#{lit_flag} module=#{module_flag} current=#{@current_class || "nil"}##{@current_method || "nil"} class_method=#{@current_method_is_class ? 1 : 0}"
+    end
+    if env_get("DEBUG_THREAD_RESOLVE") && {{method_name}} == "threads"
+      STDERR.puts "[THREAD_RESOLVE_CALL] obj_node=#{ {{obj_node}}.class.name } current=#{@current_class || "nil"} override=#{@current_namespace_override || "nil"}"
+    end
+    if env_get("DEBUG_POINTER_LIST") && {{method_name}} == "new"
+      if obj_name = stringify_type_expr({{obj_expr}})
+        if obj_name.includes?("PointerLinkedList")
+          STDERR.puts "[POINTER_LIST_AST] obj=#{obj_name} method=#{ {{method_name}} }"
+        end
+      end
+    end
+  {% end %}
+end
+
 macro debug_lower_call_read_attr(ctx, node, callee_node)
   {% if flag?(:debug_hooks) %}
     if env_get("DEBUG_READ_ATTR_CALL")
