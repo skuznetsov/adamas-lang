@@ -1068,6 +1068,10 @@ class Adamas::HIR::AstToHir
     module_shape_has_unbound_params?(type_name)
   end
 
+  def __test_module_dispatch_type_name?(type_name : String) : Bool
+    module_like_type_name?(type_name) || module_includers_match?(type_name)
+  end
+
   def __test_module_fanout_owner_plan(
     module_base : String,
     receiver_shape : String,
@@ -3671,6 +3675,33 @@ describe Adamas::HIR::AstToHir do
         function.name.starts_with?("InstanceFanoutOwnerB#probe$Int32") &&
           converter.module.has_function_with_body?(function.name)
       end.should be_true
+    end
+
+    it "does not classify a nested generic class as its enclosing module" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        module NestedFanoutContainer(T)
+          module NestedDispatch(U)
+          end
+
+          class ItemIterator(A, U)
+          end
+        end
+
+        struct NestedFanoutOwner
+          include NestedFanoutContainer(Int32)
+        end
+
+        1
+      CRYSTAL
+
+      converter.__test_module_dispatch_type_name?("NestedFanoutContainer(Int32)")
+        .should be_true
+      converter.__test_module_dispatch_type_name?(
+        "NestedFanoutContainer(Int32)::NestedDispatch(String)",
+      ).should be_true
+      converter.__test_module_dispatch_type_name?(
+        "NestedFanoutContainer(T)::ItemIterator(Array(Int32), Int32)",
+      ).should be_false
     end
 
     it "filters only explicitly incompatible generic module includers" do

@@ -16055,6 +16055,37 @@ fanout discards changed only from 725 to 720, retry-site events from 2,995 to
 targets by producer and repeated family, then falsify the largest family before
 changing another lowering rule.
 
+#### Session 155: preserve nested generic class identity in module checks
+
+An env-gated terminal classifier showed that all 720 surviving fanout targets
+were resolver misses rather than known abstract definitions. Of those, 717
+were `with_index` demands for two concrete specializations of
+`Indexable(T)::ItemIterator(...)`. `module_like_type_name?` stripped everything
+after the first `(`, collapsing that nested class to the enclosing `Indexable`
+module and admitting fanout across every includer.
+
+The final fix adds only a path-aware class/template rejection before retaining
+the existing module lookup. A source-backed regression distinguishes the three
+relevant cases: the enclosing generic module and a nested generic module remain
+module-dispatch types, while the nested generic class is rejected. The first
+path-normalization attempt was discarded after this adversary made the nested
+module assertion fail. The focused regression and the full AstToHir suite pass
+with 553 examples, zero failures, zero errors, and two existing pending
+examples.
+
+A bounded self-host from the final source completed with exit zero in about
+220 seconds. Terminal fanout discards fell from 720 to 3 and generated
+functions from 49,520 to 48,680; `lower_missing` remained about 207 seconds and
+the emitted HIR was 135 MiB. The structural reduction is proven, but the one
+wall-clock sample is not a stable speedup certificate.
+
+Adversary verdict: ROBUST for separating registered nested classes from the
+legacy module-positive path. BROKEN as a claim that fanout is fully repaired:
+three `Crystal::EventLoop::FileDescriptor` read/write/close misses remain, and
+most bootstrap time is still spent in `lower_missing`. Next: classify the
+largest remaining repeated lowering family rather than generalizing this
+predicate again.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

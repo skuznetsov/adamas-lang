@@ -23565,12 +23565,10 @@ module Adamas::HIR
     end
 
     private def module_like_type_name?(name : String) : Bool
-      base = if paren = name.index('(')
-               name[0, paren]
-             else
-               name
-             end
-      return false if class_like_namespace?(base)
+      path_base = strip_generic_args_from_namespace_path(name)
+      return false if class_like_namespace?(path_base)
+
+      base = strip_generic_args(name)
       return true if @module_defs.has_key?(base)
       return true if @module_includers.has_key?(base) || @module_includer_keys_by_suffix.has_key?(base)
 
