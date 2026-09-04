@@ -45840,11 +45840,7 @@ module Adamas::HIR
         )
       }
 
-      compatible = if map = param_map
-                     with_type_param_map(map) { check.call }
-                   else
-                     check.call
-                   end
+      compatible = with_isolated_type_param_map(param_map || EMPTY_DEFERRED_TYPE_PARAM_SNAPSHOT) { check.call }
       return nil unless compatible
       compatible[2] == strip_generic_args(module_owner) ? compatible : nil
     end
@@ -48597,6 +48593,16 @@ module Adamas::HIR
       value_types
     end
 
+    private def receiver_type_preserving_method?(method_name : String) : Bool
+      case method_name
+      when "tap", "itself", "clamp", "abs", "ceil", "floor", "round", "truncate",
+           "remainder", "tdiv", "unsafe_mod", "unsafe_div", "gcd", "lcm"
+        true
+      else
+        false
+      end
+    end
+
     private def resolved_call_return_type_for_repair(inst : Call, value_types : Hash(ValueId, TypeRef)) : TypeRef
       candidate = TypeRef::VOID
       candidate_from_materialized_function = false
@@ -48621,6 +48627,14 @@ module Adamas::HIR
       end
 
       return TypeRef::VOID if candidate == TypeRef::VOID || candidate == TypeRef::NIL
+
+      if inst.has_receiver?
+        receiver_type = value_types[inst.receiver_value]? || TypeRef::VOID
+        if receiver_type != TypeRef::VOID
+          method_name = method_short_from_name(inst.method_name) || inst.method_name
+          return receiver_type if receiver_type_preserving_method?(method_name)
+        end
+      end
 
       # Function type caches can be stale while demand-driven lowering is still
       # materializing concrete overloads. Do not let a cache-only repair overwrite
@@ -95893,7 +95907,7 @@ module Adamas::HIR
 
       # For allocator calls (ClassName.new), enforce return type as the class type.
       # Prefer fully-qualified owners to avoid short-name collisions (e.g. multiple `Parser` classes).
-      constructor_return_type_pinned = false
+      return_type_pinned = false
       if method_name == "new"
         owner_candidates = [] of String
         if full_method_name
@@ -95955,7 +95969,7 @@ module Adamas::HIR
           end
           unless class_type == TypeRef::VOID
             return_type = class_type
-            constructor_return_type_pinned = true
+            return_type_pinned = true
           end
         else
           owner_idx = 0
@@ -95964,14 +95978,14 @@ module Adamas::HIR
             class_type = type_ref_for_name(owner)
             unless class_type == TypeRef::VOID
               return_type = class_type
-              constructor_return_type_pinned = true
+              return_type_pinned = true
               break
             end
             owner_idx += 1
           end
         end
 
-        if !constructor_return_type_pinned && return_type == TypeRef::VOID && full_method_name
+        if !return_type_pinned && return_type == TypeRef::VOID && full_method_name
           # Legacy fallback for unresolved owners.
           class_name = full_method_name.rchop(".new")
           short_name = class_name.includes?("::") ? class_name.split("::").last : nil
@@ -95983,7 +95997,7 @@ module Adamas::HIR
               candidate_type = type_ref_for_name(candidate)
               if candidate_type != TypeRef::VOID
                 return_type = candidate_type
-                constructor_return_type_pinned = true
+                return_type_pinned = true
                 found_via_short = true
                 break
               end
@@ -95991,7 +96005,7 @@ module Adamas::HIR
                 class_type = ci.type_ref
                 unless class_type == TypeRef::VOID
                   return_type = class_type
-                  constructor_return_type_pinned = true
+                  return_type_pinned = true
                 end
                 found_via_short = true
                 break
@@ -96006,7 +96020,7 @@ module Adamas::HIR
                   end
                   unless class_type == TypeRef::VOID
                     return_type = class_type
-                    constructor_return_type_pinned = true
+                    return_type_pinned = true
                   end
                   found_via_short = true
                   break
@@ -96055,9 +96069,7 @@ module Adamas::HIR
 
       # Methods that return the same type as the receiver.
       # Handle this even if return_type is NIL (often incorrectly registered for abstract modules).
-      methods_returning_receiver_type = ["tap", "itself", "clamp", "abs", "ceil", "floor", "round", "truncate",
-                                         "remainder", "tdiv", "unsafe_mod", "unsafe_div", "gcd", "lcm"]
-      if receiver_id && methods_returning_receiver_type.includes?(method_name)
+      if receiver_id && receiver_type_preserving_method?(method_name)
         recv_type = ctx.type_of(receiver_id)
         # Only override if receiver is not Nil (these methods don't make sense on Nil)
         if recv_type != TypeRef::NIL && recv_type != TypeRef::VOID
@@ -96065,6 +96077,7 @@ module Adamas::HIR
             STDERR.puts "[RECV_TYPE_CALL] method=#{method_name} recv_type=#{recv_type.id} old_return=#{return_type.id} current_class=#{@current_class || ""} current_method=#{@current_method || ""}"
           end
           return_type = recv_type
+          return_type_pinned = true
         elsif env_has?("DEBUG_RECV_TYPE") && (method_name == "abs" || method_name == "remainder")
           STDERR.puts "[RECV_TYPE_CALL_SKIP] method=#{method_name} recv_type=#{recv_type.id} return=#{return_type.id} current_class=#{@current_class || ""} current_method=#{@current_method || ""}"
         end
@@ -96952,7 +96965,7 @@ module Adamas::HIR
       if resolved_return_type == TypeRef::VOID && mangled_method_name != base_method_name
         resolved_return_type = get_function_return_type(base_method_name, return_def_arg_count)
       end
-      if !constructor_return_type_pinned &&
+      if !return_type_pinned &&
          resolved_return_type != TypeRef::VOID && resolved_return_type != TypeRef::NIL && resolved_return_type != return_type
         resolved_name = get_type_name_from_ref(resolved_return_type)
         resolved_placeholder = unresolved_generic_return_type?(resolved_return_type) || type_param_like?(resolved_name)
@@ -96970,7 +96983,7 @@ module Adamas::HIR
                                          return_type != TypeRef::VOID &&
                                          return_type != TypeRef::NIL &&
                                          !unresolved_generic_return_type?(return_type)
-      unless constructor_return_type_pinned
+      unless return_type_pinned
         [mangled_method_name, primary_mangled_name, base_method_name].uniq.each do |name|
           next if name.empty?
           next if preserve_specialized_return_type && name == base_method_name
@@ -111019,9 +111032,7 @@ module Adamas::HIR
 
       # Methods that return the same type as the receiver.
       # Handle this even if return_type is NIL (often incorrectly registered for abstract modules).
-      methods_returning_receiver_type = ["tap", "itself", "clamp", "abs", "ceil", "floor", "round", "truncate",
-                                         "remainder", "tdiv", "unsafe_mod", "unsafe_div", "gcd", "lcm"]
-      if methods_returning_receiver_type.includes?(member_name)
+      if receiver_type_preserving_method?(member_name)
         recv_type = ctx.type_of(object_id)
         # Only override if receiver is not Nil (these methods don't make sense on Nil)
         if recv_type != TypeRef::NIL && recv_type != TypeRef::VOID
@@ -111029,6 +111040,7 @@ module Adamas::HIR
             STDERR.puts "[RECV_TYPE] member=#{member_name} recv_type=#{recv_type.id} old_return=#{return_type.id} current_class=#{@current_class || ""} current_method=#{@current_method || ""}"
           end
           return_type = recv_type
+          forced_return_type = true
         elsif env_has?("DEBUG_RECV_TYPE") && (member_name == "abs" || member_name == "remainder")
           STDERR.puts "[RECV_TYPE_SKIP] member=#{member_name} recv_type=#{recv_type.id} return=#{return_type.id} current_class=#{@current_class || ""} current_method=#{@current_method || ""}"
         end

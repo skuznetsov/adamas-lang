@@ -15889,6 +15889,29 @@ that the first requester is the unique semantic cause. Next: build a bounded
 source-backed or no-prelude falsifier that separates required Object virtual
 replay from excess live-owner fanout before changing production semantics.
 
+#### Session 149: preserve callee generic scope and concrete self returns
+
+Included-method compatibility inherited the caller's generic bindings. An
+outer `U = String` therefore captured the independent `forall U` declared by
+`Enumerable#each_with_object`, rejecting the concrete `Hash(String, String)`
+argument. Compatibility checks now run in the callee's isolated module binding
+map. Separately, late call repair could replace a concrete inherited
+self-returning call type with its materialized base method return; the existing
+receiver-preserving method rule now also guards that repair boundary.
+
+Two source-backed regressions were red before the changes and now preserve both
+method-generic shadowing and `IdentityChild#itself` through pending-function
+flush. The full AstToHir suite passes 547 examples with zero failures, zero
+errors, and two existing pending examples. A safely compiled `Array(String)#uniq!`
+probe contains `Hash(String, String)` and no `Hash(Object, String)`, and a fresh
+full HIR run completed in about 216 seconds with 50,231 functions.
+
+Adversary verdict: ROBUST for these two scope/type contracts; VULNERABLE as a
+bootstrap-speed claim. The run completed faster than the prior sample but
+materialized 3,292 more functions, while `lower_missing` still consumed about
+204 seconds. Next: explain and reduce that genuine Hash/Array demand fanout
+without suppressing reachable work or adding another cache.
+
 ### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
 
 V2's release-compile speed advantage over original Crystal comes from the

@@ -6722,6 +6722,50 @@ describe Adamas::HIR::AstToHir do
       text.should contain("bar")
     end
 
+    it "preserves the concrete receiver type for inherited self-returning calls" do
+      converter = lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        class IdentityBase
+          def itself
+            self
+          end
+        end
+
+        class IdentityChild < IdentityBase
+        end
+
+        def identity_member(value : IdentityChild)
+          value.itself
+        end
+
+        def identity_call(value : IdentityChild)
+          value.itself()
+        end
+
+        identity_member(IdentityChild.new)
+        identity_call(IdentityChild.new)
+      CRYSTAL
+      converter.flush_pending_functions
+
+      observed_types = ["identity_member$", "identity_call$"].map do |prefix|
+        function = converter.module.functions.find { |candidate| candidate.name.starts_with?(prefix) }
+        function.should_not be_nil
+
+        call = function.not_nil!.blocks.flat_map(&.instructions).compact_map do |instruction|
+          instruction.as?(Adamas::HIR::Call)
+        end.find { |candidate| candidate.method_name.includes?("#itself") }
+        call.should_not be_nil
+
+        [
+          converter.__test_get_type_name_from_ref(function.not_nil!.return_type),
+          converter.__test_get_type_name_from_ref(call.not_nil!.type),
+        ]
+      end
+      observed_types.should eq([
+        ["IdentityChild", "IdentityChild"],
+        ["IdentityChild", "IdentityChild"],
+      ])
+    end
+
     it "resolves enum value method calls" do
       code = <<-CRYSTAL
         enum Signal
@@ -15575,6 +15619,35 @@ describe Adamas::HIR::AstToHir do
 
         CompatibleNormalizedConcreteExplicitAbiBox(String).new.accept(value: "named")
         CompatibleNormalizedConcreteExplicitAbiBox(String).new.accept(*{"splat"})
+      CRYSTAL
+    end
+
+    it "accepts method-generic arguments for included methods on concrete generic receivers" do
+      lower_program_with_main(<<-CRYSTAL, source_backed: true)
+        module MethodGenericEnumerable(T)
+          def each_with_object(object : U, & : T, U ->) : U forall U
+            object
+          end
+        end
+
+        module MethodGenericIndexable(T)
+          include MethodGenericEnumerable(T)
+        end
+
+        class MethodGenericArray(T)
+          include MethodGenericIndexable(T)
+
+          def collect_identity(& : T -> U) forall U
+            each_with_object(MethodGenericBox(U, T).new) do |value, memo|
+              yield value
+            end
+          end
+        end
+
+        class MethodGenericBox(K, V)
+        end
+
+        MethodGenericArray(String).new.collect_identity { |value| value }
       CRYSTAL
     end
 
