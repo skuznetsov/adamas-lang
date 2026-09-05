@@ -37086,6 +37086,134 @@ module Adamas::HIR
       nil
     end
 
+    # Synthesized allocators normally use only the runtime argument types in
+    # their symbol. A named-only initializer is a source-level overload even
+    # when its runtime parameter types are identical to a positional
+    # initializer, so retain the canonical named shape in that allocator
+    # symbol. Keep ordinary named spelling of a positional initializer on the
+    # legacy symbol and leave explicit `.new` methods to their own resolver.
+    private def allocator_overload_name_for_call(
+      class_name : String,
+      call_arg_types : Array(TypeRef),
+      call_has_named_args : Bool = false,
+      call_has_block : Bool = false,
+      call_named_arg_names : Array(String)? = nil,
+      selected_init_def : Adamas::Compiler::Frontend::DefNode? = nil,
+    ) : String
+      base_name = allocator_new_name_for(class_name)
+      overload_name = mangle_function_name(base_name, call_arg_types, call_has_block)
+      return overload_name unless call_has_named_args
+
+      named_arg_names = canonical_named_arg_names(call_named_arg_names)
+      return overload_name unless named_arg_names && !named_arg_names.not_nil!.empty?
+
+      init_def = selected_init_def
+      if init_def.nil?
+        if init_base_name = resolve_method_with_inheritance(class_name, "initialize")
+          requested_init_name = if class_name.starts_with?("::") && !init_base_name.starts_with?("::")
+                                  "::#{init_base_name}"
+                                else
+                                  init_base_name
+                                end
+          if resolved = allocator_initializer_def_for(
+               init_base_name,
+               requested_init_name,
+               call_arg_types,
+               call_has_block,
+               call_has_named_args,
+               named_arg_names,
+             )
+            init_def = resolved[1]
+          end
+        end
+      end
+      return overload_name unless init_def && allocator_def_has_named_only?(init_def.not_nil!)
+
+      shape_suffix = allocator_named_shape_suffix(named_arg_names)
+      shape_suffix ? "#{overload_name}_#{shape_suffix}" : overload_name
+    end
+
+    # Encode the canonical source-level named shape into a generated symbol.
+    # Length-prefixing keeps distinct names unambiguous even when they contain
+    # adjacent text that could otherwise form the same concatenated spelling.
+    private def allocator_named_shape_suffix(named_arg_names : Array(String)?) : String?
+      names = canonical_named_arg_names(named_arg_names)
+      return nil unless names && !names.not_nil!.empty?
+
+      "named_#{names.not_nil!.map { |name| "#{name.bytesize}_#{name}" }.join("_")}"
+    end
+
+    # The unsuffixed allocator is the compatibility entry point for positional
+    # calls. If a named-only initializer is discovered first, keep that entry
+    # point materialized from a positional initializer when one exists; the
+    # named call gets its shape-specific allocator below. Otherwise the shared
+    # initializer symbol can be populated from the named-only body and a later
+    # positional call will execute the wrong body.
+    private def allocator_base_call_has_named_args(
+      class_name : String,
+      call_arg_types : Array(TypeRef)?,
+      call_has_named_args : Bool,
+      call_has_block : Bool,
+      call_named_arg_names : Array(String)?,
+    ) : Bool
+      return call_has_named_args unless call_has_named_args
+      return call_has_named_args unless call_arg_types
+      return call_has_named_args if call_arg_types.not_nil!.empty?
+
+      base_name = allocator_new_name_for(class_name)
+      named_names = canonical_named_arg_names(call_named_arg_names)
+      if lookup_function_def_for_call(
+           base_name,
+           call_arg_types.not_nil!.size,
+           call_has_block,
+           call_arg_types.not_nil!,
+           false,
+           true,
+           named_names,
+         )
+        # Explicit `def self.new` owns this call path. Leave its allocator
+        # preparation semantics unchanged.
+        return call_has_named_args
+      end
+
+      shape_name = allocator_overload_name_for_call(
+        class_name,
+        call_arg_types.not_nil!,
+        call_has_named_args,
+        call_has_block,
+        named_names,
+      )
+      positional_name = mangle_function_name(
+        base_name,
+        call_arg_types.not_nil!,
+        call_has_block,
+      )
+      if shape_name != positional_name
+        # A class with only a named-only initializer has no positional body
+        # that can safely populate the legacy allocator entry point. Keep
+        # its named-only call on the shape-specific path.
+        if init_base_name = resolve_method_with_inheritance(class_name, "initialize")
+          requested_init_name = if class_name.starts_with?("::") && !init_base_name.starts_with?("::")
+                                  "::#{init_base_name}"
+                                else
+                                  init_base_name
+                                end
+          if allocator_initializer_def_for(
+               init_base_name,
+               requested_init_name,
+               call_arg_types.not_nil!,
+               call_has_block,
+               false,
+               nil,
+             )
+            return false
+          end
+        end
+      end
+
+      call_has_named_args
+    end
+
     private def lower_allocator_initializer_body(
       class_name : String,
       class_info : ClassInfo,
@@ -37279,6 +37407,17 @@ module Adamas::HIR
         class_info = latest
       end
 
+      # Keep the legacy allocator body positional when this first call selects
+      # a named-only initializer. The shape-specific overload emitted after
+      # the base allocator remains responsible for the named call itself.
+      base_allocator_has_named_args = allocator_base_call_has_named_args(
+        class_name,
+        call_arg_types,
+        call_has_named_args,
+        call_has_block,
+        call_named_arg_names,
+      )
+
       # Skip if allocator already generated (for reopened classes), but
       # still feed callsite arg types to initialize lowering when available.
       # Exception: if the allocator was generated with empty ivars (stale), the
@@ -37430,8 +37569,8 @@ module Adamas::HIR
               init_name,
               callsite_init_types,
               allocator_initializer_has_block,
-              call_has_named_args,
-              call_named_arg_names,
+              base_allocator_has_named_args,
+              base_allocator_has_named_args ? call_named_arg_names : nil,
             )
             if latest = @class_info[class_name]?
               class_info = latest
@@ -37701,14 +37840,14 @@ module Adamas::HIR
           allocator_initializer_has_block,
         )
         requested_init_name = init_name
-        if allocator_initializer_base_request?(init_name, init_base_name) && !call_has_named_args
+        if allocator_initializer_base_request?(init_name, init_base_name) && !base_allocator_has_named_args
           if resolved = allocator_initializer_def_for(
                init_base_name,
                init_name,
                init_param_types,
                allocator_initializer_has_block,
-               call_has_named_args,
-               call_named_arg_names,
+               base_allocator_has_named_args,
+               base_allocator_has_named_args ? call_named_arg_names : nil,
              )
             init_name = resolved[0]
           end
@@ -37845,7 +37984,6 @@ module Adamas::HIR
       base_name = allocator_new_name_for(class_name)
       overload_name = mangle_function_name(base_name, call_arg_types, call_has_block)
       return if overload_name == base_name
-      return if @module.has_function_with_body?(overload_name)
 
       debug_string_new = env_get("DEBUG_STRING_NEW_OVERLOAD") &&
                          class_name == "String" &&
@@ -37919,6 +38057,16 @@ module Adamas::HIR
 
         return unless allow_allocator_overload
       end
+
+      overload_name = allocator_overload_name_for_call(
+        class_name,
+        call_arg_types,
+        call_has_named_args,
+        call_has_block,
+        allocator_named_arg_names,
+      )
+      return if overload_name == base_name
+      return if @module.has_function_with_body?(overload_name)
 
       # When auto-allocator init params have a hard type mismatch with call args
       # (e.g., File.new(path, mode) where init expects fd:Int but call passes String),
@@ -38427,6 +38575,16 @@ module Adamas::HIR
                allocator_named_arg_names,
              )
             init_name = resolved[0]
+          end
+        end
+        # Named-only initializers are source-level overloads even when their
+        # runtime parameter types coincide. Materialize the selected body under
+        # the same canonical shape identity as its allocator so two named-only
+        # definitions with identical types cannot share a lowered initializer.
+        if call_has_named_args && matched_init_def && allocator_def_has_named_only?(matched_init_def.not_nil!)
+          if shape_suffix = allocator_named_shape_suffix(allocator_named_arg_names)
+            init_base_mangled = mangle_function_name(init_base_name, init_param_types, initializer_has_block)
+            init_name = "#{init_base_mangled}_#{shape_suffix}"
           end
         end
         if trace_allocator_overload
@@ -88843,6 +89001,8 @@ module Adamas::HIR
       explicit_self_receiver = false
       prefer_allocator_new_call = false
       constructor_arg_binding_name : String? = nil
+      allocator_call_shape_target : String? = nil
+      allocator_explicit_new_call = false
 
       if callee_kind == Adamas::Compiler::Frontend::NodeKind::Identifier
         callee_ident = callee_node.unsafe_as(Adamas::Compiler::Frontend::IdentifierNode)
@@ -93501,6 +93661,13 @@ module Adamas::HIR
               call_has_block: !!has_block_call,
               call_named_arg_names: call_named_arg_names
             )
+            allocator_call_shape_target = allocator_overload_name_for_call(
+              class_name,
+              arg_types,
+              allocator_has_named_args,
+              !!has_block_call,
+              call_named_arg_names,
+            )
             if has_block_call && !has_unknown_arg_types
               generated_block_name = mangle_function_name(full_method_name, arg_types, true)
               if @module.has_function?(generated_block_name) ||
@@ -93531,6 +93698,7 @@ module Adamas::HIR
                            m3h_input ? resolve_call_input(m3h_input) : nil
                          end
         explicit_new = !!explicit_match
+        allocator_explicit_new_call = explicit_new
         if explicit_new && explicit_match
           matched_def = explicit_match[1]
           if ENV.has_key?("DEBUG_CALL_PARAM_INFO")
@@ -93584,6 +93752,14 @@ module Adamas::HIR
            arg_types.all? { |t| t == TypeRef::VOID }
           mangled_method_name = full_method_name
           base_method_name = full_method_name
+        end
+        if !allocator_explicit_new_call && (allocator_target = allocator_call_shape_target)
+          if @module.has_function?(allocator_target) ||
+             @module.has_function_with_body?(allocator_target) ||
+             @function_defs.has_key?(allocator_target) ||
+             @function_types.has_key?(allocator_target)
+            mangled_method_name = allocator_target
+          end
         end
       end
 
@@ -93657,6 +93833,14 @@ module Adamas::HIR
       end
       if callsite = prefer_callsite_specialization(base_method_name, mangled_method_name, arg_types, has_block_call)
         mangled_method_name = callsite
+      end
+      if !allocator_explicit_new_call && (allocator_target = allocator_call_shape_target)
+        if @module.has_function?(allocator_target) ||
+           @module.has_function_with_body?(allocator_target) ||
+           @function_defs.has_key?(allocator_target) ||
+           @function_types.has_key?(allocator_target)
+          mangled_method_name = allocator_target
+        end
       end
       if !has_unknown_arg_types && arg_types.any? { |t| t != TypeRef::VOID } &&
          NILABLE_QUERY_METHODS.includes?(method_name)

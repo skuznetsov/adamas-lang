@@ -74,12 +74,30 @@ runtimes, including nonzero marker and user namespace. Produced accessor is
 green/plain crash; no general pending-drain or B4-F closure. See TODO for
 hashes/commands. Refresh after static-member, descriptor, or default changes.
 
-[LM-S2-INITIALIZER-NAME-TRANSPORT|OPEN 2026-09-05]:
-Both stages pass 73 to the same initializer, but produced @param assignment
-writes offset 0 instead of 4. LLDB sees @t at get_ivar_offset and its current
-class slot reads Probe#initialize; return is 0. Getter retains 42 (exit 225).
-Trace the preceding name/scope transport; do not fix this with a fallback
-offset or assume stale ClassInfo. See TODO and initializer-override evidence.
+[LM-S2-INITIALIZER-NAME-TRANSPORT|bounded allocator repair 2026-09-05]:
+Both source names and the arena copy were intact: produced lstrip received
+"count" but returned "t" because Char::Reader.new(String) reused the named-only
+at_end body. Allocator and initializer symbols now retain canonical named shape;
+final call selection preserves that identity. Three HIR and eight host runtime
+guards cover both discovery orders, same-arity named bodies, generic owners,
+defaults, and explicit-new authority. Joint fresh stage2 (317.77s diagnostic)
+changes accessor 6/7 -> 7/7, explicit override 225 -> 0; LLVM stores %count at
+byte offset 4 and LLDB lstrip returns "count". A new split resolver change is
+refuted by prior IR selecting the correct Char/Nil overload. New produced
+constructor reducers still hit separate traps/stubs (1/8 pass); no general
+stage2 or B4-F closure. See TODO for hashes, commands, and evidence.
+Refresh on allocator identity, named binding, or initializer materialization.
+
+[LM-S2-NAMED-ONLY-BREAK|OPEN 2026-09-05]:
+Fresh and prior tuple stage2 both trap in allocator_def_has_named_only?'s
+materialized each_param callback. Its `break` is emitted as `unreachable` after
+setting found=true. Current caller includes the new shape helpers; the prior
+caller enters generate_allocator_overload directly. This is an inherited
+nonlocal-break boundary, not Path/enum discovery. Next falsifier: a bounded
+no-break scan in this pure predicate, followed by the produced named-first and
+default matrix. Pointer#any? missing-demand cases remain separate. Evidence:
+call-contract-final/named-first.lldb.log and tuple-named-first-escalated.lldb.log.
+Refresh after raw block control flow or this helper changes.
 
 [LM-S2-RAW-YIELD-UNION-ABI|OPEN 2026-09-05]:
 Produced Tuple#reduce extracts Path | String payload and passes ptr to an

@@ -132,10 +132,15 @@ takes 322.19s and repairs the empty-initializer crash. Explicit override reaches
 runtime but keeps 42 instead of 73. Absolute Pointer null now uses the existing
 static-member intrinsic; four produced runtime controls pass. Final HIR/MIR is
 646/0 with two pending, and 25 owned-source guards pass. Stage2 takes 284.85s;
-plain compilation still fails. Next repair initializer name/scope transport
-(@count becomes @t before offset lookup) and raw-yield union ABI (Tuple#reduce
-passes payload to a callback expecting Path | String). Retain the separate
-Pointer#any? forced-proc stub. Diagnostic timings do not close canonical B4-F/resource obligations.
+plain compilation still fails. Constructor identity now distinguishes named-only
+and positional bodies despite equal runtime types. The joint fresh stage2
+(317.77s diagnostic) passes all seven accessor cases: %count is stored at offset
+4 and lstrip preserves its input. Three HIR and eight host runtime guards retain
+named/default/explicit-new contracts; broader produced constructor reducers
+remain blocked. Next address the measured nonlocal-break trap in the named-only
+helper, then raw-yield union ABI (Tuple#reduce passes payload to a callback
+expecting Path | String), retaining the separate Pointer#any?
+forced-proc stub. Diagnostic timings do not close canonical B4-F/resource obligations.
 See `TODO.md` for exact provenance and claim boundaries.
 The genuine-union operator return pointer also remains: the ordinary-call
 control splits union arguments, while `emit_binary_call` selects once with the

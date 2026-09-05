@@ -3,9 +3,63 @@
 Current action order: [integrated execution plan](docs/compiler_refactor_architecture_plan.md#0-current-execution-plan).
 Both regression runners reject failed processes and compile into fresh,
 supervised outputs. The matched combined baseline is 33/37 on both sides.
-Next: repair initializer name/context transport and the raw-yield union ABI
-behind Path#join, retaining the forced-proc successor. Captured nullable Tuple
-destructuring now preserves element pointers; B4-F remains open.
+Next: remove the observed nonlocal-break trap in the named-only helper, then
+carry untyped callback signatures to the raw-yield boundary behind Path#join. Constructor call-shape identity now repairs the
+produced initializer name/context corruption; B4-F remains open.
+
+2026-09-05 ALLOCATOR CALL-SHAPE IDENTITY (BOUNDED REPAIR).
+The previous stage2 String#lstrip(Char) received "count" and '@' but returned
+"t": Char::Reader.new(String) reused the named-only at_end initializer body.
+Runtime types alone did not distinguish positional and named-only constructors.
+Preserve canonical named shape in both allocator and initializer symbols and
+carry that target through final call selection. Keep the legacy positional
+body when it exists; named-only-only classes and explicit self.new retain their
+own authority. Scope: synthesized constructor identity, not general overload
+resolution. Risk: CAUTION; rollback is the isolated HIR change and its guards.
+
+Falsifiers: named-first exit 71, positional-first 72, generic-owner 75, and two
+HIR failures requiring distinct bodies. Original Crystal passes the minimal
+named-first reducer. Three HIR guards and eight no-prelude host runtimes now
+pass, also in an isolated allocator-only host build without the user patch or
+MIR candidate, including same-arity named-only definitions, defaults, explicit self.new,
+and ordinary named spelling of positional parameters. A draft default probe
+incorrectly exited 0 on a failed assertion; it was corrected to 80 before
+accepting its result. A new empty-class HIR fixture deferred allocation rather
+than testing body identity; explicit stored fields make that guard substantive.
+
+The jointly frozen allocator/MIR candidate produces stage2 in 317.77s under a
+420s diagnostic allowance. No-prelude smoke passes; plain compilation still
+crashes in Path#join. Produced accessor changes 6/7 -> 7/7: explicit override
+225 -> 0, LLVM stores %count at byte offset 4, and LLDB lstrip returns the same
+"count" string. Four Pointer and six grouped-nullable controls still pass.
+A new split resolver repair is refuted: prior produced IR already selected the
+correct Char/Nil overload at both owner-context sites. The four full-prelude
+split reducers remain blocked during compilation. The new produced allocator
+matrix is only 1/8 (explicit-new passes). Safe LLDB locates named-first trap133
+in allocator_def_has_named_only?'s each_param callback: its break becomes LLVM
+unreachable. The previous tuple stage2 reaches the same helper trap. This is
+not the Path/enum-discovery crash; equal exit codes alone did not establish a
+shared root. Other cases retain the separate Pointer#any? stub. Next falsifier:
+make the helper scan avoid the nonlocal break, then rerun this exact produced
+matrix before widening the constructor claim. Adversary: ROBUST for the host
+identity contract and the measured produced accessor repair; broader stage2
+coverage remains open.
+
+Commands: safe Crystal spec spec/hir/allocator_named_shape_spec.cr;
+bash regression_tests/allocator_named_shape_repro.sh <host-or-stage2>;
+bash regression_tests/nested_accessor_defaults.sh <stage2>;
+bash regression_tests/absolute_pointer_null_default.sh <stage2>;
+bash regression_tests/grouped_nullable_union.sh <stage2>;
+scripts/build_bootstrap_stages.sh --out <fresh> --stages 2 --timeout 420 --mem 12288.
+Frozen source HIR SHA256 (includes preserved user edits):
+95e0ce9beac247dadebd11a9a1c0a89e9d291e7e38649328a6320dc57fbb50e3;
+MIR bdda42c4a16d7d8cb409e1e19e093259e34227ef846b1f7a6afa78690794e27a;
+binary 3fc81d10e6d8492d1bba208cbe0507c5d96f4ce4239b91bcda0776941501fd57.
+Concurrent checks and missing bootstrap RSS/FD coverage preclude a performance
+or resource certificate. Evidence: /private/tmp/adamas-call-contract-final/
+(bootstrap, lstrip.log, explicit-override.ll, accessor-stage2.log, allocator-*.log);
+RED evidence: /private/tmp/adamas-string-transport/.
+Refresh after allocator/initializer identity, named binding, or lowering changes.
 
 2026-09-05 ABSOLUTE POINTER NULL MEMBER (BOUNDED REPAIR).
 Owner: lower_static_member_access_call. The requested ::Pointer(Probe).null

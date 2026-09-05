@@ -27,17 +27,25 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+Synthesized allocator and initializer identities now preserve canonical named
+shape when runtime argument types coincide. Host guards cover both discovery
+orders, generic owners, ordinary named arguments, defaults, and explicit
+`self.new` authority. The joint fresh stage2 repairs the observed initializer
+name/context corruption; broader produced constructor reducers remain blocked.
+Raw-yield tagged-union transport remains an active repair contract: preserve the
+callback formal ABI, including scalar/payload and mixed-argument controls.
+
 The [current execution plan](compiler_refactor_architecture_plan.md#0-current-execution-plan)
 integrates reliability and architecture priorities. Grouped-union normalization
 repairs literal defaults; the Phi cross-block pre-scan now uses the existing
 indexed API and all six produced grouped-nullable runtimes pass. Nullable Tuple
 multiple assignment now retains positional pointer types across captured-block
-spills; the produced empty initializer compiles/runs. Explicit override reaches
-runtime but retains its default value. Absolute Pointer(self).null now uses the
+spills; the produced empty initializer compiles/runs. Explicit override now
+stores the supplied value at the correct field offset. Absolute Pointer(self).null now uses the
 static-member intrinsic and passes produced runtime controls. Plain compilation
 still crashes: raw Tuple#reduce callback transport drops the Path | String tag.
-The latest stage2 takes 284.85s under a 420s diagnostic allowance.
-B-ABSOLUTE-POINTER-NULL, B-NULLABLE-TUPLE-DESTRUCTURE,
+The latest stage2 takes 317.77s under a 420s diagnostic allowance.
+B-ALLOCATOR-NAMED-SHAPE, B-ABSOLUTE-POINTER-NULL, B-NULLABLE-TUPLE-DESTRUCTURE,
 B-GROUPED-NULLABLE and B-PHI-PRESCAN guard positional typing, type identity,
 Proc/generic boundaries, and ARC input lifetime. This is not canonical
 B4-F/resource promotion. Older R0
