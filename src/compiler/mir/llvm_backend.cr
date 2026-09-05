@@ -29065,9 +29065,8 @@ module Adamas::MIR
           instructions = block.instructions
           i = 0
           while i < instructions.size
-            if inst = instructions[i]?
-              return inst if inst.id == id
-            end
+            inst = instructions.unsafe_fetch(i)
+            return inst if inst.id == id
             i += 1
           end
         end

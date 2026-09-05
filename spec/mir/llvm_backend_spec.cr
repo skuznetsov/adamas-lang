@@ -27,6 +27,12 @@ class Adamas::MIR::LLVMIRGenerator
   def __test_materialization_emit_token(value : String?) : String
     materialization_emit_token(value)
   end
+
+  def __test_find_def_inst(block : Adamas::MIR::BasicBlock, id : Adamas::MIR::ValueId)
+    @value_def_block[id] = block.id
+    @current_func_blocks[block.id] = block
+    find_def_inst(id)
+  end
 end
 
 describe Adamas::MIR::LLVMTypeMapper do
@@ -95,6 +101,23 @@ describe Adamas::MIR::LLVMTypeMapper do
 end
 
 describe Adamas::MIR::LLVMIRGenerator do
+  describe "#find_def_inst" do
+    it "finds a definition and fails closed for missing ids" do
+      mod = Adamas::MIR::Module.new("find_def_inst")
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
+      block = Adamas::MIR::BasicBlock.new(7_u32)
+      definition = Adamas::MIR::Constant.new(
+        42_u32,
+        Adamas::MIR::TypeRef::INT32,
+        7_i64,
+      )
+      block.add(definition)
+
+      gen.__test_find_def_inst(block, definition.id).should eq(definition)
+      gen.__test_find_def_inst(block, 99_u32).should be_nil
+    end
+  end
+
   describe "#materialization_emit_token" do
     it "keeps nil fail-closed and escapes ledger separators" do
       mod = Adamas::MIR::Module.new("materialization_emit_token")

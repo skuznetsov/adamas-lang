@@ -7,6 +7,30 @@ Next: resolve the remaining produced initializer-body mismatch and carry
 untyped callback signatures to the raw-yield boundary behind Path#join. The user objective is a fresh stage2 that can build stage3.
 B4-F remains open.
 
+2026-09-05 GENERATED MIR DEFINITION LOOKUP (BOUNDED REPAIR).
+The generated backend's nullable instructions[i]? scan misses present MIR
+values and turns interpolation operands into null. Within the existing size
+bound, use unsafe_fetch to retrieve the instruction and retain the id match.
+This repairs this compiler-source lookup; general Array#[]? lowering is open.
+Risk: indexed access; the loop bound and missing-id unit guard preserve safety.
+Rollback: isolated find_def_inst hunk, spec and generated-stage regression.
+
+DoD: scripts/run_safe.sh crystal 120 8192 spec spec/mir/llvm_backend_spec.cr;
+regression_tests/p2_generated_stage2_find_def_inst_no_prelude.sh <fresh-stage2>.
+The backend unit suite passes 89 examples, zero failures/errors. The generated
+regression changes blank lines to exact hello world / n=42.
+Frozen find-def-isolated-work retains merged-work HIR SHA256
+5c909a4fbe6691a164159754ee22d5ca3f230ddbf48de3c3ebb4e49bd778ccdc
+and changes only the backend implementation, SHA256
+dac1dc497047394665c1f6267c82f0bde9a7bc8fa7057e24cd82ec665ce43e40.
+Fresh stage2 builds in 302.36s under a 900s diagnostic allowance; canonical
+NP smoke and the exact interpolation regression pass. Plain smoke still
+exits138 at the stack boundary; stage3 remains unbuilt. No B4-F timing or
+resource promotion. Evidence: /private/tmp/adamas-stage3-drive/
+find-def-isolated-bootstrap, find-def-isolated-np.log, find-def-baseline-np.log
+and find-def-unit-final.log. Refresh on definition maps, instruction storage,
+indexed access or value_ref changes.
+
 2026-09-05 INDEXED YIELD TYPE MERGE (BOUNDED COMPILER-SOURCE REPAIR).
 A fresh callback candidate reaches merge_yield_param_types and crashes while
 reading Array#zip's Tuple elements as Array buffers. LLDB localizes the null

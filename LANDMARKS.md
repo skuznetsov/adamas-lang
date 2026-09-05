@@ -12,6 +12,16 @@ checkpoint remain recoverable from git history, especially:
 
 ## Current produced-stage successor
 
+[LM-S2-MIR-DEFINITION-LOOKUP|bounded repair 2026-09-05]:
+The generated find_def_inst nullable Array lookup misses present instruction
+ids; value_ref then emits null interpolation operands. Use unsafe_fetch under
+the existing size bound and retain exact id matching. The frozen matched stage2
+changes blank output to hello world / n=42; canonical NP smoke passes. Stage2
+builds in302.36s diagnostically, plain smoke still exits138, stage3 is unbuilt.
+This does not establish general Array#[]? correctness. See TODO for source
+identity, the missing-id guard and exact regression commands. Refresh after
+instruction storage, definition mapping, indexed fetch or value_ref changes.
+
 [LM-YIELD-TYPE-MERGE-INDEXED|bounded repair 2026-09-05]:
 The produced merge_yield_param_types zip/map destructures pointer-backed Tuple
 values as Array buffers and crashes on a null load. Use paired indexed reads
