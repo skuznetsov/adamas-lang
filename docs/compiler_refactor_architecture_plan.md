@@ -1,6 +1,6 @@
 # Crystal V2 Compiler Refactor Architecture Plan
 
-> Status: runner and bounded MIR repairs implemented; matched combined baseline 33/37; B4-F open (2026-09-04).
+> Status: runner, bounded MIR, and selected-ancestor HIR repairs implemented; pre-HIR combined baseline 33/37; B4-F open (2026-09-04).
 > Section 0 integrates the current reliability and architecture work. Its
 > implementation steps are not completed by this document. Sections 1-9 retain
 > the original staged refactor design (2026-04) as a deferred reference;
@@ -72,7 +72,22 @@ Tuple target error, one segfaults, and one deliberately exercises a second
 `String::Builder#to_s` without a dedicated expected-termination oracle. These
 remain non-PASS results; see the current `TODO.md` table. The old 27/37 number
 has been superseded for this checkout, without attributing its difference to
-the MIR repair. The fresh canonical stage2 gate timed out and remains open.
+the MIR repair. That pre-HIR canonical stage2 gate timed out and remained open.
+
+Step 3 now has a bounded repair: initial binary emission selects the correct
+`Object#==$PageArena`, but late receiver repair replaces it with the child's
+incompatible bare family. Typed ancestor lookup now preserves the selected
+family only when the actual and receiver-context return contracts agree. The
+self-return counterexample rejected broader drafts; see `TODO.md` and the two
+new abstract-dispatch HIR specs. The source-backed sparse regression and a
+separate genuine-union reducer prevent warm materialization from disguising
+the remaining dispatch error. The affected HIR suite retains one pre-existing
+initializer failure; MIR passes. This does not promote the semantic replacement
+path, establish global demand reduction, or refresh the pre-HIR 33/37 result.
+The final same-source bootstrap builds stage2 in 302.57s and passes its
+no-prelude smoke, but stage2 crashes compiling the plain smoke (exit 139).
+The B4-F time, exact-smoke, and complete-resource obligations remain open;
+`TODO.md` records the manifest, observed RSS, unknown FD coverage, and next probe.
 
 ### 0.2 Causal model and alternatives
 

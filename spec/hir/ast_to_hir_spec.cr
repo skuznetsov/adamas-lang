@@ -20737,6 +20737,124 @@ describe Adamas::HIR::AstToHir do
   end
 
   describe "abstract binary operator dispatch" do
+    it "keeps an inherited inequality fallback typed across sibling reference classes" do
+      source = <<-CRYSTAL
+        class Object
+          def ==(other) : Bool
+            false
+          end
+
+          def !=(other) : Bool
+            !(self == other)
+          end
+        end
+
+        class Reference < Object
+        end
+
+        class AstArena < Reference
+          def ==(other : AstArena) : Bool
+            true
+          end
+        end
+
+        class PageArena < Reference
+          def ==(other : PageArena) : Bool
+            false
+          end
+        end
+
+        class ChildArena < Reference
+          def ==(other : ChildArena) : Bool
+            true
+          end
+        end
+
+        def different(left : AstArena, right : PageArena) : Bool
+          left != right
+        end
+
+        def child_same(left : ChildArena, right : ChildArena) : Bool
+          left != right
+        end
+      CRYSTAL
+
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+      converter.arena = arena
+      class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+      def_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode) }
+      class_nodes.each { |node| converter.register_class(node) }
+      def_nodes.each { |node| converter.register_function(node) }
+
+      different = def_nodes.find { |node| String.new(node.name.not_nil!) == "different" }
+      different.should_not be_nil
+      converter.lower_def(different.not_nil!)
+      converter.__test_process_pending_lower_functions
+      converter.__test_repair_receiver_bound_call_targets
+
+      inherited_wrapper = converter.module.function_by_name("AstArena#!=$PageArena")
+      inherited_wrapper.should_not be_nil
+      inherited_equality = inherited_wrapper.not_nil!.blocks.flat_map(&.instructions)
+        .compact_map { |instruction| instruction.as?(Adamas::HIR::Call) }
+        .find { |call| call.method_name.includes?("#==") }
+      inherited_equality.should_not be_nil
+      inherited_equality.not_nil!.method_name.should eq("Object#==$PageArena")
+
+      child_same = def_nodes.find { |node| String.new(node.name.not_nil!) == "child_same" }
+      child_same.should_not be_nil
+      converter.lower_def(child_same.not_nil!)
+      converter.__test_process_pending_lower_functions
+      converter.__test_repair_receiver_bound_call_targets
+      child_wrapper = converter.module.function_by_name("ChildArena#!=$ChildArena")
+      child_wrapper.should_not be_nil
+      child_equality = child_wrapper.not_nil!.blocks.flat_map(&.instructions)
+        .compact_map { |instruction| instruction.as?(Adamas::HIR::Call) }
+        .find { |call| call.method_name.includes?("#==") }
+      child_equality.should_not be_nil
+      child_equality.not_nil!.method_name.should eq("ChildArena#==$ChildArena")
+    end
+
+    it "does not widen a receiver-owned self return through typed ancestor repair" do
+      source = <<-CRYSTAL
+        class Base
+          def convert(value : Int32) : self
+            self
+          end
+        end
+
+        class Child < Base
+          def convert(value : String) : self
+            self
+          end
+        end
+
+        def use(child : Child) : Child
+          child.convert(1)
+        end
+      CRYSTAL
+      arena, exprs = parse(source)
+      converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: {arena.object_id.to_u64 => source})
+      converter.arena = arena
+      class_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::ClassNode) }
+      def_nodes = exprs.compact_map { |expr_id| arena[expr_id].as?(Adamas::Compiler::Frontend::DefNode) }
+      class_nodes.each { |node| converter.register_class(node) }
+      def_nodes.each { |node| converter.register_function(node) }
+      use_def = def_nodes.find { |node| String.new(node.name.not_nil!) == "use" }
+      use_def.should_not be_nil
+      converter.lower_def(use_def.not_nil!)
+      converter.__test_process_pending_lower_functions
+      converter.__test_repair_receiver_bound_call_targets
+
+      use = converter.module.function_by_name("use$Child")
+      use.should_not be_nil
+      conversion = use.not_nil!.blocks.flat_map(&.instructions)
+        .compact_map { |instruction| instruction.as?(Adamas::HIR::Call) }
+        .find { |call| call.method_name.includes?("#convert") }
+      conversion.should_not be_nil
+      conversion.not_nil!.type.should eq(use.not_nil!.return_type)
+    end
+
     it "does not borrow a typed equality overload from a sibling callsite" do
       source = <<-CRYSTAL
         class EqualityBox

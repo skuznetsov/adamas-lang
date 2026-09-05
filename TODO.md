@@ -3,7 +3,79 @@
 Current action order: [integrated execution plan](docs/compiler_refactor_architecture_plan.md#0-current-execution-plan).
 Both regression runners now reject failed processes and compile into fresh,
 supervised outputs. The matched combined baseline is 33/37 on both sides;
-next: isolate the typed inequality fallback loss, with B4-F still open.
+next: trace the genuine-union argument dispatch mismatch; B4-F remains open.
+
+2026-09-04 TYPED INEQUALITY: PRESERVE THE SELECTED ANCESTOR CONTRACT.
+The sparse no-prelude witness in
+`regression_tests/typed_inequality_overload_repro.sh` originally failed at MIR:
+ambiguous bare `AstArena#==` when a typed AstArena overload cannot accept a
+PageArena argument. Original Crystal 1.21.0 compiles and runs it with exit 0.
+Temporary instrumentation proved that initial binary emission correctly
+selects `Object#==$PageArena`; `repair_receiver_bound_call_targets` subsequently
+replaced it with the incompatible child's bare family. Missing ancestor
+registration and initial typed lookup failure are refuted for this shape.
+Adding all nine concrete type pairs masks the failure through materialization;
+the sparse witness must remain separate from that warm-target control.
+
+Late repair now admits typed ancestor lookup only for known positional class
+calls without block, named, or splat shapes. It must preserve the previously
+selected family and a known return type that agrees with both the current call
+and the declaration interpreted for this receiver. Unknown contracts reject.
+An unrestricted ancestor fallback, and then an owner/current-return-only guard,
+were refuted by `Base#convert(Int32) : self` with a Child String overload.
+The unrestricted version executed successfully, but HIR inspection and the
+regression rejected both drafts: the static Child return became Base.
+The final receiver-context comparison retains Child. Existing exact child
+candidates take precedence. No registry, wrapper widening, MIR guard relaxation,
+or method-name allowlist was added.
+
+DoD: `CRYSTAL_WORKERS=1 scripts/run_safe.sh /opt/homebrew/bin/crystal 120 12288 spec spec/hir/ast_to_hir_spec.cr -e 'abstract binary operator dispatch'`:
+5 examples, 0 failures, including the sparse target and self-return regression.
+The sparse target assertion was RED before the repair; the self-return control
+passes on the original source and rejects both wider drafts. Affected suites:
+`scripts/run_all_specs.sh 1 180 12288 spec/hir/ast_to_hir_spec.cr spec/mir/hir_to_mir_spec.cr`.
+Final candidate: HIR 563 examples / 1 failure / 2 pending; MIR 43 / 0.
+The same initializer-parameter-count failure is present on the unchanged user
+source (HIR 561 / 1 / 2 pending), so the full suite is not green. The existing
+user allocator/union patch remains outside this commit. Adversary: ROBUST for
+this bounded contract-preservation repair; general dispatch remains unproven.
+The final fresh stage1 binary compiles and runs the sparse and warm-target
+controls with exit 0. The explicit-self CLI control also exits 0 and retains
+Child in HIR; this certifies return preservation, not general overload selection.
+The genuine-union companion still compiles successfully and exits 8.
+
+`regression_tests/typed_inequality_union_repro.sh` preserves `ArenaLike` through
+`pick(Int32) : ArenaLike` and exposes a separate runtime mismatch. Its emitted
+equality dispatcher sends an AstArena receiver with a union argument to the
+inherited false-returning body, although the typed AstArena body is present.
+The untyped-override companion passes. Binary operator emission bypasses the
+ordinary call's union-argument dispatch helper; the earliest missing split
+still needs a causal probe. Next discriminator: trace the argument TypeRef from
+`lower_binary` through `emit_binary_call` into the AstArena equality arm for
+`pick(0), pick(0)` before selecting a repair site. Neither the sparse fix nor the old 33/37 baseline
+certifies this union boundary, bootstrap readiness, or global speed.
+Evidence: `/private/tmp/adamas-union-target-repair.rz515yvl/`; final source SHA256
+`a53b15d88d86b6a1c04d336727837c57dfe9a17ba1f7cb6473565f8d905d98cc`
+includes the unchanged user patch. Temporary logs expire on cleanup/reboot;
+compiler, declaration, caller-shape, or user-patch changes require rechecking.
+
+2026-09-04 FINAL TYPED-ANCESTOR BOOTSTRAP: STAGE2 BUILDS, PLAIN SMOKE FAILS.
+Canonical command: `scripts/build_bootstrap_stages.sh --out <fresh-parent>/run --stages 2 --timeout 300 --mem 12288`.
+The final source above was frozen throughout the run; manifest start/end source
+hashes match. Stage1: build exit 0 in 17.01s, both exact smokes pass. Stage2:
+build exit 0 in 302.57s, output present; no-prelude compile/runtime smoke passes,
+but compiling the plain `puts 42` smoke crashes with exit 139 before producing
+an executable. Total producer wall: 346.93s. The validator exits 1 with
+`reason=manifest_status`; the <=300s stage2 policy also remains unmet.
+Stage2 build RSS was observed (maximum 5,364,384 KiB); FD coverage is unknown
+because one topology sample was unstable. The configured cap is not a complete
+resource certificate. This is progress to a concrete executable and a narrower
+failure, not B4-F closure or a controlled performance comparison. The earlier
+unrestricted draft also reached the same plain-smoke crash; it was rejected
+for the self-return contract regardless of bootstrap timing.
+Run: `/private/tmp/adamas-bounded-inequality-bootstrap.o8hupn3_/run`.
+Keep the stage2 binary/logs for the next crash probe; source, host, harness, or
+control-environment changes invalidate this classification.
 
 2026-09-04 FRESH MATCHED COMBINED BASELINE: 33/37 ON BOTH COMPILERS.
 Runner source: `2ae2b025`; candidate compiler source: `d58cd268` plus the

@@ -48370,6 +48370,32 @@ module Adamas::HIR
                 candidate = mangle_function_name(resolved_base, arg_types, has_block_call)
                 if @function_types.has_key?(candidate) || @module.has_function?(candidate) || @function_defs.has_key?(candidate)
                   corrected_name = candidate
+                elsif !has_block_call && named_call_shape.nil? &&
+                      !receiver_repair_target_has_splat?(method_name_text) &&
+                      receiver_desc && receiver_desc.kind == TypeKind::Class &&
+                      !arg_types.empty? && arg_types.all? { |arg_type| arg_type != TypeRef::VOID }
+                  # A child family can exist without accepting these argument
+                  # types. Preserve the earlier ancestor choice only when typed
+                  # lookup confirms its owner and the existing return contract.
+                  # Selecting a new ancestor here can erase a child `self` type.
+                  if ancestor_target = resolve_ancestor_overload_typed(
+                       receiver_name,
+                       method_name,
+                       arg_types,
+                       false,
+                     )
+                    ancestor_base = strip_type_suffix(ancestor_target)
+                    ancestor_return = get_function_return_type(ancestor_target, arg_types.size)
+                    receiver_return = resolve_return_type_from_def(
+                      ancestor_target, ancestor_base, receiver_type, arg_types.size,
+                    )
+                    if ancestor_base == base_name &&
+                       ancestor_return != TypeRef::VOID && ancestor_return == inst.type &&
+                       receiver_return == ancestor_return
+                      corrected_name = ancestor_target
+                      resolved_base = ancestor_base
+                    end
+                  end
                 elsif has_block_call
                   if block_entry = lookup_block_function_def_for_call(resolved_base, arg_types.size, arg_types, recv_for_block)
                     corrected_name = block_entry[0]
