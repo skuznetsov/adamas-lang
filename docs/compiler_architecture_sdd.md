@@ -30,10 +30,13 @@ Document contract (hard rules):
 The [current execution plan](compiler_refactor_architecture_plan.md#0-current-execution-plan)
 integrates reliability and architecture priorities. Grouped-union normalization
 repairs literal defaults; the Phi cross-block pre-scan now uses the existing
-indexed API and all six produced grouped-nullable runtimes pass. Plain and
-explicit-initializer compilation still crash; Pointer(self) now reaches a
-runtime ::Pointer(Probe).null stub. The latest stage2 takes 318.59s under a 420s
-diagnostic allowance. B-GROUPED-NULLABLE and B-PHI-PRESCAN guard type identity,
+indexed API and all six produced grouped-nullable runtimes pass. Nullable Tuple
+multiple assignment now retains positional pointer types across captured-block
+spills; the produced empty initializer compiles/runs. Explicit override reaches
+runtime but retains its default value; Pointer(self) still reaches a null stub.
+Plain compilation still crashes in Path#join/tuple reduction. The latest stage2
+takes 322.19s under a 420s diagnostic allowance. B-NULLABLE-TUPLE-DESTRUCTURE,
+B-GROUPED-NULLABLE and B-PHI-PRESCAN guard positional typing, type identity,
 Proc/generic boundaries, and ARC input lifetime. This is not canonical
 B4-F/resource promotion. Older R0
 source/artifact rows below retain historical scope; their "current-source"

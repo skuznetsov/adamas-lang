@@ -112607,7 +112607,24 @@ module Adamas::HIR
         # Index into the RHS to get this element
         index_lit = Literal.new(ctx.next_id, TypeRef::INT32, idx.to_i64)
         ctx.emit(index_lit)
-        element_type = tuple_element_type(rhs_type, idx) || TypeRef::VOID
+        element_type = tuple_element_type(rhs_type, idx)
+        if element_type.nil?
+          # A nullable Tuple reaches this path as a top-level Union.  Its
+          # concrete Tuple descriptor still has authoritative positional
+          # storage. Recover it before falling back to Void; leave other
+          # descriptor kinds on the existing fallback.
+          if rhs_desc = @module.get_type_descriptor(rhs_type)
+            if rhs_desc.kind == TypeKind::Union
+              if concrete_type = non_nil_type_for_union(rhs_type)
+                concrete_desc = @module.get_type_descriptor(concrete_type)
+                if concrete_desc && concrete_desc.kind == TypeKind::Tuple
+                  element_type = tuple_element_type(concrete_type, idx)
+                end
+              end
+            end
+          end
+        end
+        element_type ||= TypeRef::VOID
         element_id = IndexGet.new(ctx.next_id, element_type, rhs_id, index_lit.id)
         ctx.emit(element_id)
         ctx.register_type(element_id.id, element_type)

@@ -3,11 +3,65 @@
 Current action order: [integrated execution plan](docs/compiler_refactor_architecture_plan.md#0-current-execution-plan).
 Both regression runners reject failed processes and compile into fresh,
 supervised outputs. The matched combined baseline is 33/37 on both sides.
-Next: classify the produced plain/explicit-initializer/forced-proc crashes and
-Pointer(Probe).null demand. Grouped nullable payloads and the Phi pre-scan stub
-are repaired on fresh stage2; B4-F remains open.
+Next: repair explicit-initializer argument transport, absolute Pointer null
+defaults, and the Path#join/forced-proc successors. Captured nullable Tuple
+destructuring now preserves element pointers; B4-F remains open.
 
-2026-09-05 NEXT DISCRIMINATORS (OPEN).
+2026-09-05 CAPTURED NULLABLE TUPLE DESTRUCTURING (BOUNDED REPAIR).
+A supervised LLDB run now localizes the empty-initializer crash: DefNode#params
+receives a small integer header instead of a pointer. In the produced
+lower_allocator_initializer_body proc, destructuring the captured nullable
+Tuple(String, DefNode, ArenaLike) leaves element HIR types VOID; cross-block
+LLVM slots default to i32 and reload object headers as pointers. A fresh host
+reducer reproduces this with captured nullable tuple + intervening branch
+(exit 139); the same-block control passes and original Crystal runs 0.
+Owner: lower_multiple_assign's per-position type lookup, before MIR spills.
+Risk: CAUTION (type/layout); rollback is the isolated lowering hunk and tests.
+DoD observed: the committed no-prelude captured-branch regression changes host
+runtime 139 -> 0 with ADAMAS_DISABLE_INLINE_YIELD=1; original Crystal runs the
+minimal reducer 0. The same-block/Nil controls remain green. HIR/MIR is
+643 examples, 0 failures/errors, 2 pending; 22 focused tests also pass with
+only the owned source hunk (excluding existing user edits). Positional type
+guards retain String, Node, and Arena | OtherArena. Existing normalization of
+equal-arity Tuple unions is guarded; this change adds no new merging policy.
+Exact-HEAD HIR ablation is 2 examples / 1 failure: the normalized multi-Tuple
+case previously produced [Void, Void], now [Int32 | String, Node]. The already
+narrowed single-Tuple HIR case is a green control; the runtime reducer is the
+decisive captured-single-Tuple failure.
+
+Fresh stage2 builds in 322.19s under the 420s diagnostic allowance. Its
+lower_allocator_initializer_body proc now spills all three positions as ptr,
+not i32; the empty-initializer compiler crash changes 139 -> compile/run 0.
+All six grouped nullable runtimes remain green. Explicit override now compiles
+but runs 225 (42 - 73): argument/body transport is a separate open successor.
+Accessor suite is 5/7 including rejection controls; Pointer null still aborts
+134. Plain smoke still crashes, now localized to String#bytesize from
+Path#join(Path | String) / Tuple#reduce / block_proc_664. No-prelude smoke passes.
+The class-union accumulator now aborts compilation at Pointer#any? block stub.
+The captured regression itself is not stage2-green: forcing proc lowering
+crashes compilation; the minimal non-forced source emits an invalid `%5.elem_ptr`
+LLVM identifier. Do not promote host runtime evidence to these produced paths.
+
+Commands (crystal through run_safe, CRYSTAL_WORKERS=1, 180s/12288MB):
+crystal spec spec/hir/{ast_to_hir,macro_yield_param_types,nested_accessor_defaults,
+collection_element_union,reachable_block_return_type_name,explicit_indexer_call,
+grouped_union_type,multiple_assign_nullable_tuple}_spec.cr
+spec/mir/{hir_to_mir,phi_cross_block_prescan}_spec.cr;
+bash regression_tests/nullable_tuple_destructure_capture_repro.sh <fresh-s1>;
+scripts/build_bootstrap_stages.sh --out <fresh> --stages 2 --timeout 420 --mem 12288;
+bash regression_tests/{nested_accessor_defaults,grouped_nullable_union}.sh <fresh-s2>.
+Stage2 HIR source SHA256 (including preserved user edits):
+328953db5bb5780fc06602ea1b461dacf61076115e89b20792687bde4cb732ee;
+MIR cbeeb71f70d8b36d30f35262926520fa0808fe14ff25ed099007f70ec63ba1eb;
+binary 57daeec2034ca46e961f95026107164b8e8024ebc6157ff8bf3738905979152d.
+Evidence: /private/tmp/adamas-tuple-destructure/ (script-baseline/host/produced,
+full-suite, clean-focused, bootstrap, accessor/grouped/accumulator-produced,
+plain.lldb logs); initializer-successor/empty.lldb2.log under the previous
+adamas-nested-nullable folder. Adversary: ROBUST for nullable Tuple element
+typing and the empty constructor; broader produced bootstrap remains open.
+Refresh after Tuple normalization/identity, multiple assignment, or spill changes.
+
+2026-09-05 PRE-REPAIR DISCRIMINATORS (historical baseline; current result above).
 The explicit-initializer crash reduces to no-prelude source:
 `class Probe; def initialize; end; end; Probe.new`.
 Fresh host compiles/runs it with exit 0; the produced 96d8ba4f compiler exits

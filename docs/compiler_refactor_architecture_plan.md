@@ -125,8 +125,13 @@ focused MIR/HIR checks pass, including an ARC positive cleanup control, and a
 fresh stage2 removes the bare Phi getter stub. All six produced grouped-nullable
 runtimes pass. That build takes 318.59s; no-prelude smoke passes, plain compilation
 still crashes. Pointer(self) advances to a runtime ::Pointer(Probe).null stub.
-Next classify that demand boundary and the plain/initializer/forced-proc compile
-crashes. Diagnostic timings do not close canonical B4-F/resource obligations.
+Nullable Tuple multiple assignment now recovers concrete positional types before
+captured-block spills. Host regression changes 139 -> 0; 643 HIR/MIR examples
+have no failures (two pending), with 22 clean owned-source guards. Fresh stage2
+takes 322.19s and repairs the empty-initializer crash. Explicit override reaches
+runtime but keeps 42 instead of 73. Next repair that transport boundary and
+Pointer-null intrinsic/demand handling; localize the remaining Path#join and
+forced-proc successors. Diagnostic timings do not close canonical B4-F/resource obligations.
 See `TODO.md` for exact provenance and claim boundaries.
 The genuine-union operator return pointer also remains: the ordinary-call
 control splits union arguments, while `emit_binary_call` selects once with the

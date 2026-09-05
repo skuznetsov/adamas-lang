@@ -12,6 +12,20 @@ checkpoint remain recoverable from git history, especially:
 
 ## Current produced-stage successor
 
+[LM-S2-NULLABLE-TUPLE-DESTRUCTURE|bounded repair 2026-09-05]:
+Captured nullable Tuple destructuring lost positional HIR types to VOID.
+Cross-block slots then loaded object headers as i32 and passed them as pointers;
+LLDB localized DefNode#params via lower_allocator_initializer_body. Recover the
+concrete Tuple through descriptor identity before per-position lookup, retaining
+the nullable receiver for extraction. The forced-proc host runtime changes
+139 -> 0; same-block/Nil controls and original Crystal pass. HIR/MIR 643/0 with
+two pending; 22 guards pass without user source edits. Fresh stage2 (322.19s,
+diagnostic) uses ptr slots and compiles/runs the empty initializer. Explicit
+override now compiles but retains 42 instead of 73. Plain Path#join crash,
+Pointer-null stub, and produced captured/forced-proc reducers remain open.
+See TODO for exact source hashes, commands, refuted scope, and evidence.
+Refresh on Tuple identity/normalization, multiple assignment, or spill changes.
+
 [LM-S2-ACCESSOR-LITERAL-PAYLOAD|bounded repair 2026-09-05]:
 `(Int64 | Nil)?` materialized a nested tagged union; extraction consumed tag 6
 and payload 42 as 42 * 2^32 + 6. Flatten enclosing union groups before descriptor
@@ -37,7 +51,7 @@ stub. Explicit initializer and forced-proc compile crashes remain separate.
 See TODO for hashes/commands. Refresh on Phi storage/API, ARC, or method-target
 lowering changes; no general alias/demand or B4-F closure.
 
-[LM-S2-EXPLICIT-INITIALIZER|OPEN 2026-09-05]:
+[LM-S2-EXPLICIT-INITIALIZER|baseline superseded by nullable Tuple repair]:
 `class Probe; def initialize; end; end; Probe.new` under --no-prelude compiles
 and runs on fresh host, but the 96d8ba4f stage2 compiler exits 139. Macros,
 fields, and default arguments are unnecessary to trigger it. Next localize
