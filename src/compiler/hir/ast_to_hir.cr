@@ -76582,6 +76582,13 @@ module Adamas::HIR
       if then_flows_to_merge || else_flows_to_merge
         if then_flows_to_merge && else_flows_to_merge
           # Merge locals and result value
+          # The RHS may have introduced temporary condition narrowings (for
+          # example, lower_ternary narrows `init_def` while evaluating
+          # `init_def ? ... : ...`).  Start the join from the pre-expression
+          # state so those RHS-only bindings cannot escape onto the
+          # short-circuit lhs path.  Real RHS assignments are still merged by
+          # the assigned-var filter below.
+          ctx.restore_locals(pre_branch_locals)
           merge_branch_locals(ctx, pre_branch_locals.locals, then_locals, else_locals, then_exit, else_exit,
             collect_assigned_var_set(node.right))
 

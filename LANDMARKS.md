@@ -12,6 +12,18 @@ checkpoint remain recoverable from git history, especially:
 
 ## Current produced-stage successor
 
+[LM-SHORT-CIRCUIT-LOCAL-JOIN|host verified; produced open 2026-09-05]:
+An RHS-only ternary narrowing escaped a short-circuit join because the
+assignment-filtered merge inherited the RHS locals map. The skipped path read
+an uninitialized Phi spill, losing the selected initializer DefNode and taking
+a wrong overload fallback. Restore the pre-expression snapshot before merging
+real assignments. The 14-case no-prelude runtime changes 71 -> 0; original
+Crystal agrees, host allocator 8/8 and HIR 575/0/2 pending pass. Fresh stage2
+builds in 319.63s, but constructors remain 4/8 and plain compilation exits139;
+the produced reducer reaches a missing choose_or stub before its guards.
+This repair does not establish produced initializer selection. See TODO and B-SHORT-CIRCUIT-LOCAL-JOIN.
+Refresh on short-circuit lowering, snapshot/narrowing, or Phi transport changes.
+
 [LM-S2-NULLABLE-TUPLE-DESTRUCTURE|bounded repair 2026-09-05]:
 Captured nullable Tuple destructuring lost positional HIR types to VOID.
 Cross-block slots then loaded object headers as i32 and passed them as pointers;

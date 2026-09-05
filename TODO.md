@@ -3,11 +3,41 @@
 Current action order: [integrated execution plan](docs/compiler_refactor_architecture_plan.md#0-current-execution-plan).
 Both regression runners reject failed processes and compile into fresh,
 supervised outputs. The matched combined baseline is 33/37 on both sides.
-Next: trace selected initializer definition/arity transport in produced stage2
-(the positional body receives the named-only definition), and carry untyped
-callback signatures to the raw-yield boundary behind Path#join. The earlier
-constructor identity repair preserves accessor field-name/context correctness;
+Next: resolve the remaining produced initializer-body mismatch and carry
+untyped callback signatures to the raw-yield boundary behind Path#join. The user objective is a fresh stage2 that can build stage3.
 B4-F remains open.
+
+2026-09-05 SHORT-CIRCUIT LOCAL JOIN (HOST VERIFIED; PRODUCED STILL OPEN).
+A nested ternary on the RHS of `label || (selected ? ... : nil)` narrows
+`selected`. The outer join filters its local merge to real assignments, but
+previously started from the RHS local map. Its RHS-only Phi therefore escaped
+to the skipped path and read a zero-initialized spill. In allocator recovery,
+this erased the selected DefNode and chose the bare named-only alias instead.
+LLDB confirms the wrong definition enters lower_method under the correct
+positional symbol; the emitted callback reads the RHS-only r23.slot.
+
+Restore the pre-expression local snapshot before the assignment-filtered merge.
+Actual RHS assignments still merge; globally registered SSA value types and
+owner-checked boxes remain intact. Risk: branch state restoration; rollback is
+the isolated lower_short_circuit hunk. DoD: safe host build, then
+`bash regression_tests/short_circuit_nullable_local_repro.sh <compiler>`;
+14 OR/AND, skipped/executed RHS, nullable and assignment guards change runtime
+71 -> 0. Original Crystal passes all 14. Host allocator cases 8/8 pass.
+Safe Crystal spec over ast_to_hir_spec, allocator_named_shape_spec,
+macro_yield_param_types_spec and nested_accessor_defaults_spec: 575 examples,
+zero failures/errors, two existing pending. Review: ROBUST within value
+short-circuit local joins; condition-context behavior is not widened.
+Fresh stage2 builds in 319.63s under a 900s diagnostic allowance; NP smoke
+passes, plain compilation still exits 139, so the harness does not reach stage3.
+Constructor runtime remains 4/8, accessor 7/7. The produced 14-case reducer
+stops at a missing choose_or$Choice_String stub (134), before its guards.
+The host repair is established; claiming it closes produced constructor
+selection is refuted by this run. Inspect fresh callback IR and DefNode flow.
+Frozen short-work HIR SHA256 including preserved user edits:
+867b7f3af4f49e68ccd976c6423d790700413c3f89784f5ff8a6172b86e11b7b.
+Evidence: /private/tmp/adamas-stage3-drive/short-{baseline,after,hir}.log,
+method-debug.log, allocator.ll, short-work and short-bootstrap.
+Refresh on logical-expression lowering, local snapshots, narrowing, or Phi changes.
 
 2026-09-05 ALLOCATOR UNION SPECIALIZATION INDEXED SCAN (BOUNDED REPAIR).
 The exact generate_allocator_overload call chain emitted blockless

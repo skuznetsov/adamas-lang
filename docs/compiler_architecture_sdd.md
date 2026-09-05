@@ -36,6 +36,11 @@ without a nonlocal break. An indexed union-specialization scan removes the
 Pointer#any? iterator stub from allocator generation. All eight produced
 constructor reducers compile and four pass runtime; selected initializer
 body/arity transport remains incorrect in four cases.
+A host-verified short-circuit join repair addresses the observed DefNode loss:
+RHS-only narrowing no longer escapes onto the skipped path. Fourteen runtime
+guards and HIR 575/0/2 pending pass. Fresh produced constructors remain 4/8;
+the standalone reducer hits a missing choose_or stub before its guards.
+The host repair does not close produced initializer selection.
 Raw-yield transport now preserves compatible known Proc formal ABIs using a
 complete per-argument plan, with scalar/payload and mixed-argument controls.
 Unknown/ambiguous signatures and unsupported layouts retain legacy behavior.
@@ -51,7 +56,7 @@ spills; the produced empty initializer compiles/runs. Explicit override now
 stores the supplied value at the correct field offset. Absolute Pointer(self).null now uses the
 static-member intrinsic and passes produced runtime controls. Plain compilation
 still crashes: raw Tuple#reduce callback transport drops the Path | String tag.
-The latest stage2 takes 318.00s under a 420s diagnostic allowance.
+The latest stage2 takes 319.63s under a 900s diagnostic allowance.
 B-RAW-YIELD-CALLBACK-ABI, B-ALLOCATOR-NAMED-SHAPE, B-ABSOLUTE-POINTER-NULL,
 B-NULLABLE-TUPLE-DESTRUCTURE,
 B-GROUPED-NULLABLE and B-PHI-PRESCAN guard positional typing, type identity,
