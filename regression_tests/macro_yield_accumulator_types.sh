@@ -57,8 +57,8 @@ result = Path.new(39).join({1, 2})
 LibC.exit(result.value &- 42)
 CR
 
-# This opt-in falsifier remains RED: an empty OtherPart can hide a wrong
-# overload, whereas the stored sentinel distinguishes it from Path#join.
+# The union control needs a nonempty OtherPart: an empty alternative can hide
+# a wrong overload. Its sentinel also exposes a lost callback return value.
 if [[ "$CASE" == "--class-union" ]]; then
   cat > "$TMP_DIR/repro.cr" <<'CR'
 lib LibC

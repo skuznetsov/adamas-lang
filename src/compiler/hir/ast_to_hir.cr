@@ -15985,7 +15985,7 @@ module Adamas::HIR
       stripped_type_name = ascii_strip(type_name)
       return nil if stripped_type_name.empty?
       name = normalize_compiler_collection_owner_name(stripped_type_name)
-      if name.includes?('|')
+      if has_top_level_union_separator?(name)
         variants = split_union_type_name(name).map(&.strip)
         return nil unless variants.size > 1
         element_variants = variants.compact_map { |v| element_type_for_type_name(v) }
@@ -26059,6 +26059,36 @@ module Adamas::HIR
             if value_name = hash_value_type_for_type_name(type_name)
               value_ref = type_ref_for_name(value_name)
               return value_ref if value_ref != TypeRef::VOID
+            end
+          end
+          # A literal Tuple index has positional type information.  The
+          # collection-name fallback below intentionally merges every Tuple
+          # element, which loses that information for heterogeneous tuples
+          # during body and yield-parameter inference.
+          tuple_type = obj_type
+          tuple_desc = desc
+          if desc && desc.kind == TypeKind::Union
+            # Preliminary inference can retain Nil after a guarded lookup.
+            # Narrow through the existing descriptor identity helper; only a
+            # concrete Tuple may use the positional path below.
+            if non_nil_type = non_nil_type_for_union(obj_type)
+              tuple_type = non_nil_type
+              tuple_desc = @module.get_type_descriptor(tuple_type)
+            end
+          end
+          if expr_node.indexes.size == 1 && tuple_desc && tuple_desc.kind != TypeKind::Union &&
+             (tuple_desc.kind == TypeKind::Tuple || tuple_desc.name == "Tuple" || tuple_desc.name.starts_with?("Tuple("))
+            index_node = node_for_expr(expr_node.indexes.first)
+            if index_node.is_a?(Adamas::Compiler::Frontend::NumberNode)
+              if index = (safe_slice_to_string(index_node.value) || "").to_i?
+                # Keep inference aligned with lower_index: only a known
+                # nonnegative position is promoted to an exact element type.
+                if index >= 0
+                  if element_ref = tuple_element_type(tuple_type, index)
+                    return element_ref if element_ref != TypeRef::VOID
+                  end
+                end
+              end
             end
           end
           if elem_name = element_type_for_type_name(type_name)
@@ -60495,16 +60525,46 @@ module Adamas::HIR
     end
 
     private def block_return_type_name(ctx : LoweringContext, block_id : BlockId) : String?
-      block = ctx.get_block(block_id)
-      term = block.terminator
-      return nil unless term.is_a?(Return)
-      value_id = term.value
-      return nil unless value_id
-      type_ref = ctx.type_of(value_id)
-      return nil if type_ref == TypeRef::VOID
-      type_name = get_type_name_from_ref(type_ref)
-      return nil if type_name == "Void" || type_name == "Unknown"
-      type_name
+      # A block body can lower to a detached CFG whose entry terminator is a
+      # Branch/Jump. Inspect only blocks reachable from that entry; unrelated
+      # blocks in the enclosing function must not affect the result.
+      block_count = ctx.function.blocks.size
+      return nil if block_id.to_i >= block_count
+
+      pending = [block_id]
+      seen = Set(BlockId).new
+      return_name = nil.as(String?)
+      saw_return = false
+
+      until pending.empty?
+        current = pending.pop
+        next if seen.includes?(current)
+        return nil if current.to_i >= block_count
+        seen.add(current)
+
+        term = ctx.get_block(current).terminator
+        if term.is_a?(Return)
+          saw_return = true
+          value_id = term.value
+          return nil unless value_id
+          type_ref = ctx.type_of(value_id)
+          return nil if type_ref == TypeRef::VOID
+          type_name = get_type_name_from_ref(type_ref)
+          return nil if type_name == "Void" || type_name == "Unknown"
+          if previous = return_name
+            return nil unless previous == type_name
+          else
+            return_name = type_name
+          end
+        else
+          term.successors.each do |successor|
+            return nil if successor.to_i >= block_count
+            pending << successor unless seen.includes?(successor)
+          end
+        end
+      end
+
+      saw_return ? return_name : nil
     end
 
     private def stable_type_name_for_block_return?(type_name : String) : Bool

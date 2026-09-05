@@ -3,9 +3,71 @@
 Current action order: [integrated execution plan](docs/compiler_refactor_architecture_plan.md#0-current-execution-plan).
 Both regression runners now reject failed processes and compile into fresh,
 supervised outputs. The matched combined baseline is 33/37 on both sides;
-next: reduce the produced-stage nested `property` accessor failure in
-Crystal::Once::Operation; retain the class-union argument probe and measured
-build-cost frontier. B4-F is open.
+next: reduce the produced-stage accessor literal payload mismatch (42 becomes
+180388626438 in an i32 store), then the plain/forced-proc compile crashes. The
+host Tuple union/return and nested-default regressions are green; B4-F is open.
+
+2026-09-04 TUPLE REDUCTION: PRESERVE ELEMENT POSITIONS AND BLOCK RETURNS.
+`element_type_for_type_name` treated any `|` as a top-level union, returning nil
+for Array(A | B) and Tuple(A | B, C). Use the existing top-level separator test.
+IndexNode preliminary inference also merged all Tuple positions. Resolve a
+nonnegative literal position through tuple_element_type; for a nilable receiver,
+first recover the concrete descriptor through non_nil_type_for_union. True
+multi-Tuple and non-Tuple unions retain the aggregate fallback. Original Crystal
+src/tuple.cr:178-193 and semantic/call.cr:509 distinguish literal precision from
+a variable index's aggregate type. Negative/dynamic/out-of-range runtime indexing
+is not newly certified.
+
+Refuted routes: helper-only bootstrap failed after 170.68s; concrete-Tuple-only
+inference still failed after 149.02s. Both widened found[0] from a nilable
+{DefNode, ArenaLike} pair into DefNode | ArenaLike, leaving lower_method bodyless.
+The two nullable positional tests fail on the preceding concrete-only source
+and pass with the narrowed descriptor. Reusing the union-Tuple
+collector was rejected because it filters empty variants/unknown parameters;
+its retained count cannot certify that every original arm contributed.
+
+The corrected class-union parameter then exposed a separate return boundary:
+block_return_type_name inspected only the detached entry, while union dispatch
+placed Return in a reachable merge block. Traverse successors from that entry
+before recording __block_return__. Ignore unrelated blocks, terminate cycles,
+and decline mixed/unknown types or raw HIR Return without a value. A Nil literal
+retains the previous type-name and consumer-filter behavior; this does not change
+source-level bare-return normalization.
+
+DoD: CRYSTAL_WORKERS=1 scripts/run_safe.sh /opt/homebrew/bin/crystal 180 12288 spec spec/hir/ast_to_hir_spec.cr spec/hir/macro_yield_param_types_spec.cr spec/hir/nested_accessor_defaults_spec.cr spec/hir/collection_element_union_spec.cr spec/hir/reachable_block_return_type_name_spec.cr spec/hir/explicit_indexer_call_spec.cr spec/mir/hir_to_mir_spec.cr
+Observed: 634 examples, zero failures/errors, two existing pending. Twenty
+focused accessor/collection/CFG examples also pass with only owned source edits.
+A compiler built from that clean source also passes the class-union runtime and
+all seven accessor controls.
+The five CFG tests change three failures to zero. A fresh compiler passes
+regression_tests/macro_yield_accumulator_types.sh in ordinary and --class-union
+modes, the manually unrolled union-yield control, and all seven accessor checks.
+The sentinel-bearing class-union runtime changes 139 to 0; the original empty
+alternative and already-green IndexGet check were insufficient discriminators.
+Adversary: ROBUST within these positional and reachable-return boundaries;
+full bootstrap and general union dispatch remain separate obligations.
+A frozen normal-flags bootstrap with a 420s diagnostic allowance builds stage2
+in 284.96s. Stage1 passes both smokes; stage2 passes exact no-prelude interpolation
+but crashes compiling the plain smoke (139). Source endpoint hashes match;
+source ast_to_hir SHA256 is 3cef991a5a37232a7bdb2a5cd89bdfdfd70dbc79877318ae37c32be0b2731ea0.
+Stage2 SHA256 is d6762c8ecb773297aae0fa7506297756d12b7619f6e0d961fada41a7c6433519
+(manually rechecked after probes; the failed-stage manifest omits its end hash).
+This single timing is not a speedup or canonical B4-F certificate; RSS/FD
+coverage remains unavailable.
+
+Produced-stage residuals: the forced-proc class-union reducer still crashes
+while compiling (139). Accessor default method-call and rejection controls pass,
+but class/struct literal defaults exit 220, constructor override compilation
+crashes (139), and Pointer(self) reaches HIR::Phi#incoming stub (134). The retained
+produced-default.cr/LLVM reduces the literal mismatch: Probe.new emits
+`store i32 180388626438` (42 * 2^32 + 6), whose low bits are 6, while the getter
+subtraction uses 42. Payload/tag confusion is a hypothesis, not a proven root.
+The next discriminator is the allocator's literal/default value representation
+versus ordinary method literal lowering. Do not promote host runtime results to
+produced-stage correctness.
+Evidence: /private/tmp/adamas-accessor-series.55pw998a/;
+bootstrap-nullable-return/bootstrap_chain.manifest and produced-default.ll.
+Refresh after descriptor identity, Tuple inference, or block CFG changes.
 
 2026-09-04 NESTED ACCESSOR DEFAULTS: REUSE THE EXISTING IVAR INITIALIZER.
 The produced-stage `Crystal::Once::Operation` error reduces without prelude on

@@ -10,6 +10,39 @@ checkpoint remain recoverable from git history, especially:
 - archived full-file SHA256:
   `d43826fdcc2277b6075026244764a84d0069d1a30b675642b603f3511b14a1e5`
 
+## Current produced-stage successor
+
+[LM-S2-ACCESSOR-LITERAL-PAYLOAD|OPEN 2026-09-04]:
+The combined host repairs produce stage2 in 284.96s under a 420s diagnostic
+allowance, with matching source hashes. Exact no-prelude interpolation passes;
+plain compilation crashes (139). The produced accessor reducer emits
+`store i32 180388626438` for default 42 (42 * 2^32 + 6), causing runtime 220;
+ordinary default method-call control passes. This suggests payload/tag confusion
+but does not prove its origin. Preserve produced-default.cr/.ll in the TODO
+artifact directory; compare allocator literal representation with ordinary
+method lowering next. Forced-proc union compilation still crashes, and the
+Pointer(self) control reaches the existing HIR::Phi#incoming stub. Host tests
+are not produced-stage certificates; B4-F semantics/resources remain open.
+
+## Current Tuple reduction boundary
+
+[LM-TUPLE-UNION-BLOCK-RETURN|bounded repair 2026-09-04]:
+Nested generic unions require a top-level separator test. Preliminary literal
+Tuple indexing must preserve positions, including a single concrete Tuple
+recovered from Nil through the descriptor identity helper. Helper-only and
+concrete-only candidates both broke bootstrap by joining DefNode with ArenaLike;
+two nullable positional tests expose the missing case. General multi-Tuple
+inference remains on its existing aggregate fallback.
+A detached block entry can branch while its reachable merge returns Path.
+Inspecting only the entry lost __block_return__, so reduce discarded both yield
+results and passed null as the next accumulator. Traverse reachable successors,
+reject conflicting/unknown returns, and retain the previous Nil-literal policy.
+The sentinel-bearing class-union runtime now exits 0 instead of 139; ordinary
+and explicit-yield controls pass. Full HIR/MIR is 634/0 with two pending; 20
+focused tests pass without the user's source edits. See TODO for commands,
+refuted probes, and bootstrap classification. Refresh after Tuple descriptor
+identity, expression inference, or detached block CFG changes.
+
 ## Current nested accessor boundary
 
 [LM-NESTED-ACCESSOR-DEFAULT|bounded repair 2026-09-04]:
@@ -36,8 +69,9 @@ class-union element remains Pointer: an empty alternative masked that defect;
 an Int32 sentinel exposes runtime 100. Nested macros and general union dispatch
 remain outside the repair. The 317.26s diagnostic stage2 passes its no-prelude
 smoke and reaches a nested `property` accessor error in Crystal::Once::Operation
-on the plain smoke. Reduce that successor next; B4-F time/resources/full plain
-semantics remain open. Refresh after macro expansion or block inference changes.
+on the plain smoke. The sections above supersede that successor: defaults are
+admitted on the host, while produced literal payload/compile failures remain.
+B4-F time/resources/full plain semantics remain open. Refresh after macro expansion or block inference changes.
 
 ## Current constructor boundary
 

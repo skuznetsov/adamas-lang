@@ -109,11 +109,18 @@ checks pass, including a clean-HEAD ablation; the full HIR/MIR set is 613/0 with
 two pending. The no-prelude runtime reducer changes 134 to 0. A frozen normal
 build with a 420s diagnostic allowance produces stage2 in 317.26s. Its exact
 no-prelude smoke passes; plain compilation now reports an unsupported nested
-`property` accessor in Crystal::Once::Operation. Reduce that successor next.
-The produced proc calls Path#join(Pointer), so class-union argument typing remains
-open; an Int32 sentinel rejects the misleading empty-class control. The separate
-forced-proc reducer still crashes compiling under both old and new stage2. Keep
-these residuals, the HIR Phi stub, and the >300s build cost as open obligations.
+`property` accessor in Crystal::Once::Operation. Typed nested defaults now reuse
+the existing ExprId/arena initializer pipeline. The host class-union reducer also
+passes after nested collection-union extraction, literal Tuple position inference
+(including nullable concrete Tuples), and reachable detached-block return typing.
+The full HIR/MIR set is 634/0 with two pending; 20 focused examples pass without
+the user's source edits. A fresh 420s diagnostic builds stage2 in 284.96s and
+passes no-prelude interpolation, but plain compilation still crashes. Produced
+literal defaults expose the next precise mismatch: default 42 becomes an i32
+store of 180388626438 (low bits 6); the ordinary method-call default passes.
+Reduce that representation boundary next. Forced-proc compilation and the HIR
+Phi stub remain open. One sub-300s diagnostic timing does not establish a cost
+improvement or close canonical B4-F/resource obligations.
 See `TODO.md` for exact provenance and claim boundaries.
 The genuine-union operator return pointer also remains: the ordinary-call
 control splits union arguments, while `emit_binary_call` selects once with the
