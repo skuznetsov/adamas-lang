@@ -6229,7 +6229,7 @@ module Adamas::HIR
     # Current method name being lowered (for super calls)
     @current_method : String?
     # Declared return type of the function currently being lowered.
-    # Used by lower_tuple_literal to coerce elements to match tuple return types.
+    # Consumed only when lowering a return, not when typing local expressions.
     @current_def_return_type : TypeRef = TypeRef::VOID
     # Track whether the current method is a class/module method (self.)
     @current_method_is_class : Bool
@@ -116068,38 +116068,10 @@ module Adamas::HIR
     private def lower_tuple_literal(ctx : LoweringContext, node : Adamas::Compiler::Frontend::TupleLiteralNode) : ValueId
       element_ids = node.elements.map { |e| lower_expr(ctx, e) }
 
-      # If the enclosing function has a tuple return type with the same arity,
-      # coerce each element to match the return type's element types.
-      # This handles cases like {nil, 1} in a function returning {Int32?, Int32?}.
-      ret_type = @current_def_return_type
-      if ret_type != TypeRef::VOID
-        ret_desc = @module.get_type_descriptor(ret_type)
-        if ret_desc && (ret_desc.kind == TypeKind::Tuple || ret_desc.name.starts_with?("Tuple("))
-          ret_params = ret_desc.type_params
-          if ret_params.size == element_ids.size
-            coerced_ids = element_ids.map_with_index do |eid, i|
-              elem_type = ctx.type_of(eid)
-              target_type = ret_params[i]
-              if elem_type != target_type && target_type != TypeRef::VOID
-                coerce_value_to_type(ctx, eid, target_type)
-              else
-                eid
-              end
-            end
-            alloc = Allocate.new(ctx.next_id, ret_type, coerced_ids)
-            # Tuple may be returned from this function — must heap-allocate
-            # to survive the function return (stack alloca would dangle).
-            alloc.lifetime = LifetimeTag::HeapEscape
-            ctx.emit(alloc)
-            if path = source_path_for(@arena)
-              span = node.span
-              ctx.function.record_value_location(alloc.id, SourceLocation.new(path, span.start_line, span.start_column))
-            end
-            return alloc.id
-          end
-        end
-      end
-
+      # A tuple literal has its elements' types even inside a tuple-returning
+      # function. Return boundaries already coerce explicit and implicit return
+      # values; using the enclosing return here also corrupts local tuples and
+      # arguments of the same arity (for example a Hash's {String, String} key).
       element_names = element_ids.map { |id| get_type_name_from_ref(ctx.type_of(id)) }
       normalized_names = element_names.map do |name|
         (name == "Void" || name == "Unknown") ? "Unknown" : name

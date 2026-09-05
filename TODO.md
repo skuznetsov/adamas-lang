@@ -7,6 +7,27 @@ Next: resolve the remaining produced initializer-body mismatch and carry
 untyped callback signatures to the raw-yield boundary behind Path#join. The user objective is a fresh stage2 that can build stage3.
 B4-F remains open.
 
+2026-09-05 TUPLE LITERAL RETURN SCOPE (BOUNDED REPAIR).
+A local tuple inherited the enclosing function's declared tuple return type
+whenever the arity matched. In module_fanout_owner_plan, a {String, String}
+Hash key became {Array(String), Int32}; generated equality then dereferenced
+an invalid receiver. Remove coercion from literal construction. Existing
+explicit/implicit return boundaries still perform element-wise coercion, and
+escape analysis marks returned allocations as HeapEscape.
+Risk: tuple return ABI and lifetime. Guard both explicit and implicit nullable
+returns, plus a same-arity local with a different wide element type.
+DoD: spec/hir/tuple_literal_return_scope_spec.cr and
+regression_tests/tuple_literal_return_scope_repro.sh <compiler>.
+The pre-repair host fails one of three HIR examples; the runtime reducer aborts
+in key_weight$Tuple(Int32, Int32). Patched focused tests pass19/19; the full
+HIR/MIR suite passes1217 examples, zero failures/errors, two pending. The
+no-prelude runtime matches original Crystal, including nullable return tags.
+Evidence: /private/tmp/adamas-stage3-drive/tuple-return-{before,after,unit}.log,
+tuple-return-numeric-before.log and tuple-return-after-runtime.log.
+Generated-stage validation remains in progress in tuple-scope-bootstrap.
+Rollback: lower_tuple_literal hunk and its return-state comment, spec/script.
+Refresh after literal typing, return coercion, tuple layout or escape changes.
+
 2026-09-05 GENERATED MIR DEFINITION LOOKUP (BOUNDED REPAIR).
 The generated backend's nullable instructions[i]? scan misses present MIR
 values and turns interpolation operands into null. Within the existing size
