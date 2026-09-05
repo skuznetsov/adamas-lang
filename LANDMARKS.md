@@ -12,6 +12,17 @@ checkpoint remain recoverable from git history, especially:
 
 ## Current produced-stage successor
 
+[LM-INLINE-CALLER-FRAME-LOOKUP|bounded repair 2026-09-05]:
+Generated nullable caller-frame lookup returned null for a live frame and
+recursively lowered the same active yield block. Five reads now share a bounded
+unsafe_fetch accessor preserving negative indices and snapshot identity. Host
+bounds/identity guards pass3/3; fresh stage2 changes the nested-yield regression
+from compile138 to runtime results=2,-1. The separate outer-index capture guard
+remains red on old/new stage1. In the combined snapshot, plain advances to
+Pointer#size stub134; stage3 remains unbuilt. TODO records exact source identity,
+commands and coexisting changes. Refresh after stack lifetime/indexing/snapshot,
+yield context or generated Array access changes.
+
 [LM-S2-MIR-DEFINITION-LOOKUP|bounded repair 2026-09-05]:
 The generated find_def_inst nullable Array lookup misses present instruction
 ids; value_ref then emits null interpolation operands. Use unsafe_fetch under

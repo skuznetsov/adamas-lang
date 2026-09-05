@@ -80518,7 +80518,7 @@ module Adamas::HIR
       if active_idx = @inline_active_caller_locals_index_stack.last?
         idx = active_idx
         while idx >= 0
-          if locals = @inline_caller_locals_stack[idx]?
+          if locals = inline_caller_locals_at?(idx)
             if val = locals[name]?
               val_type = ctx.type_of(val)
               if val_type == TypeRef::VOID
@@ -80654,11 +80654,21 @@ module Adamas::HIR
       snapshot
     end
 
+    # Read the compiler-owned caller-frame stack without going through the
+    # nullable generic Array#[]? dispatch. Keep Array's negative-index and
+    # out-of-bounds behavior while making the element type explicit to HIR.
+    private def inline_caller_locals_at?(index : Int32) : Hash(String, ValueId)?
+      size = @inline_caller_locals_stack.size
+      normalized_index = index < 0 ? index + size : index
+      return nil unless 0 <= normalized_index < size
+      @inline_caller_locals_stack.unsafe_fetch(normalized_index)
+    end
+
     private def snapshot_active_inline_caller_locals(
       ctx : LoweringContext,
       caller_locals_index : Int32,
     ) : Hash(String, ValueId)?
-      caller_locals = @inline_caller_locals_stack[caller_locals_index]?
+      caller_locals = inline_caller_locals_at?(caller_locals_index)
       return nil unless caller_locals
 
       snapshot = caller_locals.dup
@@ -82900,7 +82910,7 @@ module Adamas::HIR
         end
       end
       if return_locals = @inline_yield_return_caller_locals_stack[inline_return_index]?
-        if caller_locals = @inline_caller_locals_stack[inline_return_index]?
+        if caller_locals = inline_caller_locals_at?(inline_return_index)
           return_locals << {current_block, snapshot_inline_caller_locals_for_return(caller_locals)}
         end
       end
@@ -108121,7 +108131,10 @@ module Adamas::HIR
             end
           end
         end
-        result = if caller_locals = @inline_caller_locals_stack[caller_locals_index]?
+        # Use the typed stack accessor here; generated stage2 can mis-specialize
+        # nullable Array#[]? and return Nil for a live caller frame.
+        caller_locals = inline_caller_locals_at?(caller_locals_index)
+        result = if caller_locals
                    use_stack_caller_locals = !cross_function_owner
                    if cross_function_owner
                      caller_locals = ctx.save_locals.locals
@@ -108296,7 +108309,11 @@ module Adamas::HIR
                        end
 
                        caller_locals_after = if use_stack_caller_locals && control_flow_dead_block?(ctx, ctx.current_block)
-                                               (@inline_caller_locals_stack[caller_locals_index]? || ctx.save_locals.locals).dup
+                                               if stack_caller_locals = inline_caller_locals_at?(caller_locals_index)
+                                                 stack_caller_locals.dup
+                                               else
+                                                 ctx.save_locals.locals.dup
+                                               end
                                              else
                                                ctx.save_locals.locals
                                              end

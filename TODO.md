@@ -31,6 +31,25 @@ find-def-isolated-bootstrap, find-def-isolated-np.log, find-def-baseline-np.log
 and find-def-unit-final.log. Refresh on definition maps, instruction storage,
 indexed access or value_ref changes.
 
+2026-09-05 INLINE CALLER-FRAME LOOKUP (BOUNDED REPAIR).
+A generated nullable Array(Hash(String, UInt32)) read returned null for a live
+caller frame. The fallback re-lowered the same block with its yield context
+still active, retaining2520 frames before stack exhaustion. All five nullable
+caller-frame reads now use one bounds-checked unsafe_fetch accessor, preserving
+negative indices, nil on OOB, object identity and independent snapshot copies.
+DoD: inline_caller_locals_stack_spec.cr passes3/3; fresh stage2 changes
+nested_yield_nonlocal_return_caller_frame_repro.sh from compile138 to exact
+runtime results=2,-1. CHECK_INDEX_CAPTURE=1 preserves an independent index0
+versus2 capture defect present in both old/new stage1. Frozen indexed-reads-work
+HIR SHA256: 989adf79e15fdc1cc55541db6826691201e7feef28889cb7f850425ddd3316f0.
+The snapshot also contains pending callback/descriptor changes; no global
+generic lookup repair is claimed. Stage2 builds in290.96s diagnostically and
+passes NP smoke; plain advances to Pointer#size stub134 in signature candidate
+iteration. Stage3 is unbuilt. Evidence: caller-frame-unit.log,
+caller-frame-baseline.log, indexed-reads-s2-nested.log, indexed-reads-plain.lldb.log.
+Rollback: isolated accessor/callsite hunks. Refresh after caller-stack lifetime,
+indexing, snapshots, yield-context or generated Array access changes.
+
 2026-09-05 INDEXED YIELD TYPE MERGE (BOUNDED COMPILER-SOURCE REPAIR).
 A fresh callback candidate reaches merge_yield_param_types and crashes while
 reading Array#zip's Tuple elements as Array buffers. LLDB localizes the null
