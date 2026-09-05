@@ -7,6 +7,34 @@ Next: classify the produced plain/explicit-initializer/forced-proc crashes and
 Pointer(Probe).null demand. Grouped nullable payloads and the Phi pre-scan stub
 are repaired on fresh stage2; B4-F remains open.
 
+2026-09-05 NEXT DISCRIMINATORS (OPEN).
+The explicit-initializer crash reduces to no-prelude source:
+`class Probe; def initialize; end; end; Probe.new`.
+Fresh host compiles/runs it with exit 0; the produced 96d8ba4f compiler exits
+139. Direct fields, required/default arguments, and macro expansion are not
+necessary: empty and assignment-only constructors both reproduce it. The
+existing ADAMAS_TRACE_ALLOCATOR_OVERLOAD=Probe probe emits no allocator marker;
+that is only an execution locator, not an established root cause. LLDB could
+not launch this binary in the current environment, so no stack was obtained.
+Reproducer/control artifacts: /private/tmp/adamas-nested-nullable/initializer-successor/.
+Next: localize the first constructor-handling boundary using this tiny input;
+retain the accessor suite as the larger end-to-end guard. Plain/forced-proc
+crashes are not proven to share this cause. Keep --no-prelude for this loop.
+
+Pointer null is also narrowed: direct Pointer(Probe).null and
+::Pointer(Probe).null controls compile/run 0. The absolute control emits the
+same symbol with a real body, refuting leading :: as a sufficient cause. The
+failing default fixture records selected_def_source=exact, state=pending body=0,
+then backend body_present=0 and the abort stub. Replacing include Link with the
+same property declarations directly in Probe still compiles then aborts 134;
+nested macro replay is not necessary. Next inspect deferred demand completion
+for allocator field defaults, retaining direct-call and nonzero-marker controls.
+This is a hypothesis about the drain boundary, not a proven general fix.
+Evidence: /private/tmp/adamas-nested-nullable/pointer-successor/ (corrected
+pointer_relative/absolute.runtime2.log, pointer_self_default_trace.compile.log,
+pointer_direct_defaults.cr/.ll, direct.runtime.log). Earlier direct-control
+exit 1 logs came from a temporary inverted assertion and are superseded.
+
 2026-09-05 PHI CROSS-BLOCK PRE-SCAN: USE THE EXISTING INDEXED API.
 The produced grouped-nullable suite aborted even in its flat control:
 hir_to_mir's pre-scan emitted the bare HIR::Phi#incoming getter with no body.

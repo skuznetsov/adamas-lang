@@ -37,6 +37,24 @@ stub. Explicit initializer and forced-proc compile crashes remain separate.
 See TODO for hashes/commands. Refresh on Phi storage/API, ARC, or method-target
 lowering changes; no general alias/demand or B4-F closure.
 
+[LM-S2-EXPLICIT-INITIALIZER|OPEN 2026-09-05]:
+`class Probe; def initialize; end; end; Probe.new` under --no-prelude compiles
+and runs on fresh host, but the 96d8ba4f stage2 compiler exits 139. Macros,
+fields, and default arguments are unnecessary to trigger it. Next localize
+constructor handling on this input; do not merge plain/forced-proc crashes into
+this root without evidence. Existing nested_accessor_defaults.sh retains the
+larger regression. See TODO for artifacts and the unsuccessful LLDB attempt.
+Refresh after constructor dispatch/lowering or produced compiler changes.
+
+[LM-S2-POINTER-DEFAULT-DEMAND|OPEN 2026-09-05]:
+Direct relative/absolute Pointer(Probe).null calls run 0; the absolute call has
+the same symbol with a real body. Both nested and direct property defaults
+instead compile to its abort stub (runtime 134). Trace selects the exact def
+but leaves it pending/body=0 before backend emission. Leading :: and nested
+macro replay are insufficient explanations. Next inspect allocator field-default
+demand completion; preserve direct-call and nonzero-marker controls. See TODO
+for evidence. Refresh after default generation or pending-method processing.
+
 ## Current Tuple reduction boundary
 
 [LM-TUPLE-UNION-BLOCK-RETURN|bounded repair 2026-09-04]:
