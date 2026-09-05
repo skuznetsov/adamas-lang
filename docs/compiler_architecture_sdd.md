@@ -34,13 +34,14 @@ orders, generic owners, ordinary named arguments, defaults, and explicit
 name/context corruption. The named-only predicate now completes its safe scan
 without a nonlocal break. An indexed union-specialization scan removes the
 Pointer#any? iterator stub from allocator generation. All eight produced
-constructor reducers compile and four pass runtime; selected initializer
-body/arity transport remains incorrect in four cases.
+constructor reducers compile and six pass runtime; generic and distinct
+named-only initializer bodies remain incorrect.
 A host-verified short-circuit join repair addresses the observed DefNode loss:
 RHS-only narrowing no longer escapes onto the skipped path. Fourteen runtime
-guards and HIR 575/0/2 pending pass. Fresh produced constructors remain 4/8;
+guards and HIR 575/0/2 pending pass. Fresh produced constructors improve
+4/8 -> 6/8, including both positional/named discovery orders;
 the standalone reducer hits a missing choose_or stub before its guards.
-The host repair does not close produced initializer selection.
+The two remaining constructor reducers keep broader selection open.
 Raw-yield transport now preserves compatible known Proc formal ABIs using a
 complete per-argument plan, with scalar/payload and mixed-argument controls.
 Unknown/ambiguous signatures and unsupported layouts retain legacy behavior.

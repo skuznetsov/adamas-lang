@@ -29,10 +29,12 @@ zero failures/errors, two existing pending. Review: ROBUST within value
 short-circuit local joins; condition-context behavior is not widened.
 Fresh stage2 builds in 319.63s under a 900s diagnostic allowance; NP smoke
 passes, plain compilation still exits 139, so the harness does not reach stage3.
-Constructor runtime remains 4/8, accessor 7/7. The produced 14-case reducer
+Constructor runtime improves 4/8 -> 6/8: both positional/named discovery
+orders now pass. Generic shapes (74) and distinct named-only bodies (77) remain
+red; accessor 7/7 passes. The produced 14-case reducer
 stops at a missing choose_or$Choice_String stub (134), before its guards.
-The host repair is established; claiming it closes produced constructor
-selection is refuted by this run. Inspect fresh callback IR and DefNode flow.
+The repair establishes the observed positional DefNode transport improvement;
+full constructor closure remains refuted. Inspect the two remaining reducers.
 Frozen short-work HIR SHA256 including preserved user edits:
 867b7f3af4f49e68ccd976c6423d790700413c3f89784f5ff8a6172b86e11b7b.
 Evidence: /private/tmp/adamas-stage3-drive/short-{baseline,after,hir}.log,
