@@ -5,8 +5,9 @@ Both regression runners reject failed processes and compile into fresh,
 supervised outputs. The matched combined baseline is 33/37 on both sides.
 Next: trace selected initializer definition/arity transport in produced stage2
 (the positional body receives the named-only definition), and carry untyped
-callback signatures to the raw-yield boundary behind Path#join. Constructor call-shape identity now repairs the
-produced initializer name/context corruption; B4-F remains open.
+callback signatures to the raw-yield boundary behind Path#join. The earlier
+constructor identity repair preserves accessor field-name/context correctness;
+B4-F remains open.
 
 2026-09-05 ALLOCATOR UNION SPECIALIZATION INDEXED SCAN (BOUNDED REPAIR).
 The exact generate_allocator_overload call chain emitted blockless

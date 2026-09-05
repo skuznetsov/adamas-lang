@@ -138,8 +138,8 @@ and positional bodies despite equal runtime types. The joint fresh stage2
 4 and lstrip preserves its input. Three HIR and eight host runtime guards retain
 named/default/explicit-new contracts; broader produced constructor reducers
 remain blocked. Known Proc callback signatures now govern raw-yield union
-transport; ten MIR guards and two typed host runtimes pass. Final HIR/MIR is
-659/0 with two pending. The named-only helper now avoids its nonlocal break;
+transport; ten MIR guards and two typed host runtimes pass. Before the indexed
+scan, HIR/MIR is 659/0 with two pending. The named-only helper now avoids its nonlocal break;
 the union-specialization predicate now uses an indexed scan, removing the
 Pointer#any? stub from allocator generation. All eight produced cases compile;
 four pass runtime and four now expose initializer body/arity mismatches.
@@ -148,8 +148,9 @@ Host constructor 8/8 and 567 HIR examples pass (two pending). Next trace selecte
 initializer DefNode/default transport and carry untyped callback signatures through HIR:
 Tuple#reduce still passes payload to a callback expecting Path | String.
 The optional UNTYPED_CALLBACK=1 no-prelude regression is red (81), while original
-Crystal passes; use it before another bootstrap. Retain the separate Pointer#any?
-forced-proc stub. Diagnostic timings do not close canonical B4-F/resource obligations.
+Crystal passes; use it before another bootstrap. The allocator Pointer#any? stub
+is removed; generic iterator inference remains open outside this local scan.
+Diagnostic timings do not close canonical B4-F/resource obligations.
 See `TODO.md` for exact provenance and claim boundaries.
 The genuine-union operator return pointer also remains: the ordinary-call
 control splits union arguments, while `emit_binary_call` selects once with the
