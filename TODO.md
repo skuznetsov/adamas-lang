@@ -7,6 +7,28 @@ next: reduce the produced-stage nested `property` accessor failure in
 Crystal::Once::Operation; retain the class-union argument probe and measured
 build-cost frontier. B4-F is open.
 
+2026-09-04 NESTED ACCESSOR DEFAULTS: REUSE THE EXISTING IVAR INITIALIZER.
+The produced-stage `Crystal::Once::Operation` error reduces without prelude on
+both stages: `macro included` emits `property count : Int32 = 42`, and accessor
+materialization explicitly rejects its default. The typed AccessorSpec already
+carries the expression into `register_accessors_in_class`, which stores its
+ExprId together with the macro-definition arena. Remove only that default
+rejection; preserve untyped, bang, class, named-argument, and block guards.
+
+DoD: `regression_tests/nested_accessor_defaults.sh <fresh-stage1>` passes five
+runtime cases and two rejection controls. The previous stage1 fails all five
+runtime cases at the accessor guard. Cases cover nonzero class/struct defaults,
+constructor override, a default method call, and Pointer(self) null plus nonzero
+pointer defaults. `spec/hir/nested_accessor_defaults_spec.cr` changes two errors
+to zero and checks ExprId/arena pairing across separately parsed macro and owner
+sources. A same-file arena-inequality assumption was refuted: expansion uses the
+macro-definition arena, which can equal the owner's arena. The default-only
+HIR/MIR suite passes 615 examples, zero failures/errors, two existing pending.
+Adversary: ROBUST for these typed instance defaults; no lazy/bang/class accessor
+or duplicate-default semantics are newly certified. Refresh after macro arena,
+accessor registration, or allocator default initialization changes.
+Evidence: `/private/tmp/adamas-accessor-series.55pw998a/`.
+
 2026-09-04 MACRO YIELDS: RETAIN THE ACCUMULATOR BEFORE PROC LOWERING.
 `Path#join` reduces a Tuple through a macro-generated `yield memo, self[i]`.
 The yield collector saw no AST yields inside the MacroFor body, so proc fallback

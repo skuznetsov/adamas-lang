@@ -12257,7 +12257,7 @@ module Adamas::HIR
 
       raw_name = safe_slice_to_string(callee.name) || ""
       # The lightweight accessor AST does not retain Crystal's bang semantics,
-      # and class/default/untyped accessors require additional storage and
+      # and class/untyped accessors require additional storage and
       # initialization contracts.  Keep this recovery path fail-closed to the
       # typed instance forms whose ABI can be represented exactly.
       return nil if raw_name.ends_with?('!')
@@ -12314,7 +12314,6 @@ module Adamas::HIR
 
         return nil unless accessor_name_text?(safe_slice_to_string(name) || "")
         return nil unless type_annotation
-        return nil if default_value
         default_span = default_value.try { |value_id| @arena[value_id].span }
         specs << Adamas::Compiler::Frontend::AccessorSpec.new(
           name: name,

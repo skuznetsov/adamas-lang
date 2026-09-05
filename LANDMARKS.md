@@ -10,6 +10,18 @@ checkpoint remain recoverable from git history, especially:
 - archived full-file SHA256:
   `d43826fdcc2277b6075026244764a84d0069d1a30b675642b603f3511b14a1e5`
 
+## Current nested accessor boundary
+
+[LM-NESTED-ACCESSOR-DEFAULT|bounded repair 2026-09-04]:
+Typed nested accessor defaults were rejected before the existing ivar/default
+pipeline could consume them. Preserve the default ExprId and macro-definition
+arena in AccessorSpec; remove only the default guard. Five no-prelude runtime
+cases pass, including nonzero struct and Pointer(self) defaults and initializer
+override; untyped/bang guards remain red. Two cross-arena HIR cases pass. The
+same-file assumption that every expansion has a distinct arena was refuted.
+Default-only HIR/MIR is 615/0 with two pending. See TODO for DoD and residuals;
+refresh after macro arena, accessor storage, or allocator initialization changes.
+
 ## Current macro-yield boundary
 
 [LM-MACRO-YIELD-ACCUMULATOR|bounded repair 2026-09-04]:
