@@ -1,6 +1,6 @@
 # Crystal V2 Compiler Refactor Architecture Plan
 
-> Status: runner, bounded MIR, and selected-ancestor and constructor-shape HIR repairs implemented; pre-HIR combined baseline 33/37; B4-F open (2026-09-04).
+> Status: runner and bounded MIR repairs, plus selected-ancestor, constructor-shape, and macro-yield HIR repairs implemented; pre-HIR combined baseline 33/37; B4-F open (2026-09-04).
 > Section 0 integrates the current reliability and architecture work. Its
 > implementation steps are not completed by this document. Sections 1-9 retain
 > the original staged refactor design (2026-04) as a deferred reference;
@@ -102,9 +102,19 @@ passes both smokes. A separate 420s diagnostic produces stage2 in about 312s
 according to its phase profile. That stage now passes the no-prelude enum-macro
 reducer and exact interpolation smoke; generated LLVM preserves all four Parser
 initializer parameters. Full plain compilation instead reaches a Path#join block
-that calls Thread#join. Reduce that receiver/target mismatch next, retaining the
-separate HIR Phi stub and the >300s build cost as open obligations. See `TODO.md`
-for exact provenance and claim boundaries.
+that calls Thread#join. This successor is now narrowed to a missing yield in
+the AST collector: Tuple#reduce generates it inside a macro loop. Shared macro
+expansion before proc inference restores the accumulator type. Six focused HIR
+checks pass, including a clean-HEAD ablation; the full HIR/MIR set is 613/0 with
+two pending. The no-prelude runtime reducer changes 134 to 0. A frozen normal
+build with a 420s diagnostic allowance produces stage2 in 317.26s. Its exact
+no-prelude smoke passes; plain compilation now reports an unsupported nested
+`property` accessor in Crystal::Once::Operation. Reduce that successor next.
+The produced proc calls Path#join(Pointer), so class-union argument typing remains
+open; an Int32 sentinel rejects the misleading empty-class control. The separate
+forced-proc reducer still crashes compiling under both old and new stage2. Keep
+these residuals, the HIR Phi stub, and the >300s build cost as open obligations.
+See `TODO.md` for exact provenance and claim boundaries.
 The genuine-union operator return pointer also remains: the ordinary-call
 control splits union arguments, while `emit_binary_call` selects once with the
 unsplit union. Direct helper reuse is refuted as sufficient: it retains the

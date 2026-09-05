@@ -61658,12 +61658,6 @@ module Adamas::HIR
           param_map_dbg = param_map ? param_map.not_nil!.map { |key, value| "#{key}=#{value}" }.join(",") : "nil"
           STDERR.puts "[TRACE_EWI] infer_yield_param_types func=#{func_name} base=#{base_method_name} recv=#{recv_name} yields=#{lists.size} call_args=#{call_args_dbg} map=#{param_map_dbg}"
         end
-        return nil if lists.empty?
-
-        if lists.all?(&.empty?)
-          return [] of TypeRef
-        end
-
         self_type_name = if receiver_type != TypeRef::VOID
                            get_type_name_from_ref(receiver_type)
                          elsif owner_override
@@ -61674,7 +61668,7 @@ module Adamas::HIR
 
         if param_map && !param_map.empty?
           return with_type_param_map(param_map) do
-            compute_yield_types_with_preinferred_locals(
+            compute_yield_types_with_macro_bodies(
               body,
               lists,
               self_type_name,
@@ -61685,7 +61679,7 @@ module Adamas::HIR
             )
           end
         end
-        compute_yield_types_with_preinferred_locals(
+        compute_yield_types_with_macro_bodies(
           body,
           lists,
           self_type_name,
@@ -61702,6 +61696,87 @@ module Adamas::HIR
         # The restored caller locals are a distinct inference context too.
         # Reject cache entries produced while the callee map was installed.
         @infer_type_cache_version += 1
+      end
+    end
+
+    private def compute_yield_types_with_macro_bodies(
+      body : Array(ExprId),
+      lists : Array(Array(ExprId)),
+      self_type_name : String?,
+      local_map : Hash(String, TypeRef),
+      name_map : Hash(String, String),
+      debug_trace_each : Bool,
+      flow_narrowed_args : Set(ExprId)?,
+    ) : Array(TypeRef)?
+      merged = if lists.empty?
+                 nil
+               elsif lists.all?(&.empty?)
+                 [] of TypeRef
+               else
+                 compute_yield_types_with_preinferred_locals(
+                   body, lists, self_type_name, local_map, name_map, debug_trace_each, flow_narrowed_args,
+                 )
+               end
+
+      # Method-level macro loops (notably Tuple#reduce) hide their yields from
+      # the AST collector. Use the same expansion as lowering, in the callee's
+      # type context, before falling back to collection element types.
+      definition_arena = @arena
+      body.each do |expr_id|
+        node = node_for_expr(expr_id)
+        next unless node.is_a?(Adamas::Compiler::Frontend::MacroForNode)
+        vars = macro_vars_for_type_context(local_map["self"]?, self_type_name)
+        owner_type = self_type_name ? macro_owner_type_for(self_type_name) : nil
+        expanded = expand_macro_for_body(node, vars, owner_type)
+        next unless expanded && !expanded.strip.empty?
+        parsed = parse_macro_literal_method_body(expanded)
+        next unless parsed
+        parsed_arena, parsed_body = parsed
+        inferred = with_arena(parsed_arena) do
+          # ExprIds are arena-local. Collect, preinfer and consume the expanded
+          # arguments here; only TypeRefs may cross back to the definition.
+          @infer_type_cache_version += 1
+          expanded_lists = [] of Array(ExprId)
+          collect_yield_arg_lists(parsed_body, expanded_lists)
+          referenced_names = Set(String).new
+          expanded_lists.each do |args|
+            args.each { |arg| collect_proc_body_ident_walk(arg, referenced_names) }
+          end
+          with_arena(definition_arena) do
+            referenced_names.each do |name|
+              next if local_map.has_key?(name)
+              if local_type = infer_local_type_from_body(body, name, self_type_name)
+                next if local_type == TypeRef::VOID
+                local_map[name] = local_type
+                name_map[name] = get_type_name_from_ref(local_type)
+              end
+            end
+          end
+          @infer_type_cache_version += 1
+          expanded_flow = Set(ExprId).new
+          collect_flow_narrowed_yield_args(parsed_body, expanded_flow)
+          compute_yield_types_with_preinferred_locals(
+            parsed_body, expanded_lists, self_type_name, local_map, name_map, debug_trace_each, expanded_flow,
+          )
+        end
+        @infer_type_cache_version += 1
+        merged = merge_yield_param_types(merged, inferred)
+      end
+      merged
+    end
+
+    private def merge_yield_param_types(left : Array(TypeRef)?, right : Array(TypeRef)?) : Array(TypeRef)?
+      return left unless right
+      return right unless left && !left.empty?
+      return left unless left.size == right.size
+      left.zip(right).map do |a, b|
+        if a == TypeRef::VOID
+          b
+        elsif b == TypeRef::VOID
+          a
+        else
+          union_type_for_values(a, b)
+        end
       end
     end
 
@@ -61775,19 +61850,7 @@ module Adamas::HIR
           STDERR.puts "[TRACE_EWI] yield_args=#{arg_nodes.join(",")} inferred=#{inferred_dbg}"
         end
         next if inferred.all? { |t| t == TypeRef::VOID }
-        if merged_types.nil?
-          merged_types = inferred
-        elsif (mt = merged_types) && mt.size == inferred.size
-          merged_types = mt.zip(inferred).map do |left, right|
-            if left == TypeRef::VOID
-              right
-            elsif right == TypeRef::VOID
-              left
-            else
-              union_type_for_values(left, right)
-            end
-          end
-        end
+        merged_types = merge_yield_param_types(merged_types, inferred)
       end
       if debug_trace_each && merged_types
         merged_dbg = merged_types.not_nil!.map { |t| get_type_name_from_ref(t) }.join(",")
@@ -71256,6 +71319,11 @@ module Adamas::HIR
     end
 
     private def macro_vars_for_current_context(ctx : LoweringContext) : Hash(String, Adamas::Compiler::Semantic::MacroValue)
+      self_type = ctx.lookup_local("self").try { |self_id| ctx.type_of(self_id) }
+      macro_vars_for_type_context(self_type, @current_class)
+    end
+
+    private def macro_vars_for_type_context(self_type : TypeRef?, owner_name : String?) : Hash(String, Adamas::Compiler::Semantic::MacroValue)
       vars = {} of String => Adamas::Compiler::Semantic::MacroValue
       @type_param_map.each do |param, actual|
         next if actual.empty?
@@ -71273,8 +71341,8 @@ module Adamas::HIR
         end
       end
 
-      if self_id = ctx.lookup_local("self")
-        if desc = @module.get_type_descriptor(ctx.type_of(self_id))
+      if self_type
+        if desc = @module.get_type_descriptor(self_type)
           if desc.kind == TypeKind::Tuple || desc.name.starts_with?("Tuple(")
             args = desc.type_params.reject { |t| t == TypeRef::VOID }.map { |ref| get_type_name_from_ref(ref) }
             if args.empty?
@@ -71293,7 +71361,7 @@ module Adamas::HIR
         end
       end
 
-      if current = @current_class
+      if current = owner_name
         if info = split_generic_base_and_args(current)
           base = info.base
           args = split_generic_type_args(info.args).map(&.strip)
@@ -71593,31 +71661,19 @@ module Adamas::HIR
       nil_lit.id
     end
 
-    private def lower_macro_for(
-      ctx : LoweringContext,
+    private def expand_macro_for_body(
       node : Adamas::Compiler::Frontend::MacroForNode,
-    ) : ValueId
+      vars : Hash(String, Adamas::Compiler::Semantic::MacroValue),
+      owner_type : Adamas::Compiler::Semantic::ClassSymbol?,
+    ) : String?
       iter_vars = macro_for_iter_var_names(node)
-      if iter_vars.empty?
-        nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
-        ctx.emit(nil_lit)
-        return nil_lit.id
-      end
-
-      vars = macro_vars_for_current_context(ctx)
-      owner_type = @current_class ? macro_owner_type_for(@current_class.not_nil!) : nil
+      return nil if iter_vars.empty?
       expander = macro_expander_for_current_context
-      values = macro_for_iterable_values(node.iterable)
-      if values.nil?
-        values = macro_for_iterable_values_with_context(node.iterable, vars, owner_type, expander)
-      end
-      unless values
-        nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
-        ctx.emit(nil_lit)
-        return nil_lit.id
-      end
+      values = macro_for_iterable_values(node.iterable) ||
+               macro_for_iterable_values_with_context(node.iterable, vars, owner_type, expander)
+      return nil unless values
 
-      expanded = String.build do |io|
+      String.build do |io|
         values.each_with_index do |value, idx|
           loop_vars = vars.dup
           assign_macro_iter_vars(loop_vars, iter_vars, value, idx)
@@ -71626,6 +71682,20 @@ module Adamas::HIR
             io << "\n"
           end
         end
+      end
+    end
+
+    private def lower_macro_for(
+      ctx : LoweringContext,
+      node : Adamas::Compiler::Frontend::MacroForNode,
+    ) : ValueId
+      vars = macro_vars_for_current_context(ctx)
+      owner_type = @current_class ? macro_owner_type_for(@current_class.not_nil!) : nil
+      expanded = expand_macro_for_body(node, vars, owner_type)
+      unless expanded
+        nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+        ctx.emit(nil_lit)
+        return nil_lit.id
       end
 
       if expanded.strip.empty?

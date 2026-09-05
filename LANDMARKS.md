@@ -10,6 +10,23 @@ checkpoint remain recoverable from git history, especially:
 - archived full-file SHA256:
   `d43826fdcc2277b6075026244764a84d0069d1a30b675642b603f3511b14a1e5`
 
+## Current macro-yield boundary
+
+[LM-MACRO-YIELD-ACCUMULATOR|bounded repair 2026-09-04]:
+Direct method MacroFor bodies hide yields from the AST collector. Before proc
+materialization, expand them through the shared lowering helper in the callee's
+type context, infer inside the parsed arena, and return only merged TypeRefs.
+Six focused HIR tests pass, including clean-HEAD ablation, mixed yields and a
+surrounding local alias. The no-prelude accumulator reducer changes 134 to 0.
+Full HIR/MIR is 613/0 with two pending. See `TODO.md` for exact commands and scope.
+The produced stage2 proc now calls Path#join instead of Thread#join, but its
+class-union element remains Pointer: an empty alternative masked that defect;
+an Int32 sentinel exposes runtime 100. Nested macros and general union dispatch
+remain outside the repair. The 317.26s diagnostic stage2 passes its no-prelude
+smoke and reaches a nested `property` accessor error in Crystal::Once::Operation
+on the plain smoke. Reduce that successor next; B4-F time/resources/full plain
+semantics remain open. Refresh after macro expansion or block inference changes.
+
 ## Current constructor boundary
 
 [LM-CONSTRUCTOR-NAMED-SHAPE|bounded repair 2026-09-04]:

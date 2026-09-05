@@ -3,8 +3,70 @@
 Current action order: [integrated execution plan](docs/compiler_refactor_architecture_plan.md#0-current-execution-plan).
 Both regression runners now reject failed processes and compile into fresh,
 supervised outputs. The matched combined baseline is 33/37 on both sides;
-next: reduce the produced-stage Path#join -> Thread#join target mismatch;
-retain the genuine-union argument probe and measured build-cost frontier. B4-F is open.
+next: reduce the produced-stage nested `property` accessor failure in
+Crystal::Once::Operation; retain the class-union argument probe and measured
+build-cost frontier. B4-F is open.
+
+2026-09-04 MACRO YIELDS: RETAIN THE ACCUMULATOR BEFORE PROC LOWERING.
+`Path#join` reduces a Tuple through a macro-generated `yield memo, self[i]`.
+The yield collector saw no AST yields inside the MacroFor body, so proc fallback
+used the collection element as the accumulator type. This is already wrong in
+HIR, before MIR's target search: the full pre-fix compiler has Pointer/Pointer
+parameters and a Thread#join call in `__crystal_block_proc_664`.
+
+Expand direct method-body MacroFor nodes using the same helper as ordinary
+macro lowering, with the callee's receiver/type-parameter map. Collect and infer
+expanded ExprIds inside their parsed arena, carry surrounding local types in,
+and merge only TypeRefs back with ordinary yields. No method-name allowlist,
+forced inlining, arena bounds masking, or new registry is involved.
+
+DoD: `CRYSTAL_WORKERS=1 scripts/run_safe.sh /opt/homebrew/bin/crystal 180 12288 spec spec/hir/ast_to_hir_spec.cr spec/hir/macro_yield_param_types_spec.cr spec/mir/hir_to_mir_spec.cr`.
+Observed: 613 examples, zero failures/errors, two existing pending. The six
+focused no-prelude HIR examples changed from four failures to zero; mixed
+ordinary/macro positions and a method-local alias are included. All six also
+pass on Git HEAD plus only this repair, excluding the user's 37 source lines.
+`regression_tests/macro_yield_accumulator_types.sh <fresh-compiler>` forces proc
+fallback, compiles with `--no-prelude`, and checks the resulting accumulator.
+It changes runtime 134 (Int32#join(Pointer) stub) to 0; original Crystal with
+`--prelude=empty` is the semantic control. Manually unrolled yields, an explicit
+block signature, ordinary Pair yields, and the default inline path stay green.
+
+Adversary: ROBUST for direct method MacroFor yields and the tested positional
+merges; nested macro forms and general union argument dispatch are not admitted.
+The class-union reducer changes its accumulator from Pointer to Path and stops
+calling Thread#join, but its second parameter remains Pointer. An empty
+OtherPart misleadingly passed; an Int32 field initialized to 100 makes that
+wrong overload observable (runtime 100); rerun the regression with
+`--class-union` to reproduce this intentionally open falsifier. Explicit class-union block typing
+instead reaches runtime 139. Original Crystal's empty prelude returns 0 for
+the sentinel. Preserve this residual; it is not a union-preservation certificate.
+The initial `struct Tuple(*T)` reducer was discarded: the actual builtin is
+reopened with `struct Tuple`.
+
+Source SHA256: `02b7deeca2f5868edc83edd7e3f945343f3bded459d3dbebd49b4014f5cab684`.
+Evidence: `/private/tmp/adamas-join-frontier.mz7awod9/` and the frozen candidate
+`/private/tmp/adamas-macro-yield-fix.mybnicdv/`. A frozen normal-flags bootstrap
+with an explicit 420s diagnostic allowance builds stage1 in 19.64s and stage2
+in 317.26s; this exceeds the 300s B4-F target. Source start/end hashes match.
+Stage1 passes both smokes. Stage2 passes the exact no-prelude interpolation
+smoke, while the plain smoke now exits 1 with `unsupported nested accessor macro
+output in Crystal::Once::Operation: property`. Its LLVM block proc 664 calls
+Path#join(Pointer), replacing the previous Thread#join call; the union argument
+is still unresolved. The separate forced-proc reducer crashes compiling under
+both old and new stage2 (139), so its host-stage success is not produced-stage
+closure. RSS/FD observations remain unknown; the manifest remains rejected.
+Next falsifier: reduce the nested `property` call without prelude, compare
+source-backed accessor arguments/arena identity at registration and lowering,
+and keep the declared class-union sentinel as the separate return pointer.
+For that branch, inspect `element_type_for_type_name`: it treats any embedded
+`|` as a union, then returns nil when the top-level splitter yields only one
+variant, before reaching Tuple argument extraction. Direct IndexNode inference
+uses this helper, while lower_index retains the concrete element TypeRef.
+A direct helper probe is the next discriminator; typed-union runtime still
+requires its own consumer check.
+Recheck after macro expansion, callee inference scope, tuple indexing, or
+block-proc materialization changes. No default architecture promotion or B4-F
+closure follows from this repair.
 
 2026-09-04 CONSTRUCTOR SHAPE: PRESERVE NAMED SELECTION AFTER ABI BINDING.
 The stage2 plain-smoke crash reduces to a no-prelude enum with a macro `if`.
