@@ -3,9 +3,75 @@
 Current action order: [integrated execution plan](docs/compiler_refactor_architecture_plan.md#0-current-execution-plan).
 Both regression runners reject failed processes and compile into fresh,
 supervised outputs. The matched combined baseline is 33/37 on both sides.
-Next: repair explicit-initializer argument transport, absolute Pointer null
-defaults, and the Path#join/forced-proc successors. Captured nullable Tuple
+Next: repair initializer name/context transport and the raw-yield union ABI
+behind Path#join, retaining the forced-proc successor. Captured nullable Tuple
 destructuring now preserves element pointers; B4-F remains open.
+
+2026-09-05 ABSOLUTE POINTER NULL MEMBER (BOUNDED REPAIR).
+Owner: lower_static_member_access_call. The requested ::Pointer(Probe).null
+selected the exact same ordinary method, but bypassed the existing Pointer-null
+intrinsic because its prefix check accepted only Pointer(. Generated defaults
+then retained a pending call with no body. Accept both builtin root spellings
+and use the already normalized lookup_class_name for the pointer descriptor and
+generic fallback. User::Pointer is excluded. Original Crystal pointer.cr:518
+defines null as new 0_u64; this is existing builtin semantics, not a new API.
+Risk: CAUTION (intrinsic/type identity); rollback is this isolated member hunk.
+DoD: typed zero casts, preserved pointee identity, no residual ordinary null call,
+two emitted defaults, relative/nonzero/namespaced controls, then produced runtime.
+
+Refuted route: changing lower_call's similarly named intrinsic alone left the
+produced runtime at 134. HIR guards also stayed red (3 examples / 2 failures).
+The actual static-member repair makes all three HIR tests pass. Removing the
+lower_call change leaves all tests green, including parentheses spellings; that
+unsupported hunk was dropped. These source cases do not establish coverage of
+two distinct consumers. General pending-demand completion is still open.
+Final source HIR/MIR: 646 examples, no failures/errors, two pending; 25 focused
+guards pass without the user's source changes. Exact-HEAD HIR ablation fails
+2/3 examples; the fixed namespace control and four syntax/identity forms pass.
+All four Pointer runtime cases pass on fresh host and stage2 (absolute default
+was runtime 134). Host accessor 7/7 and captured-tuple regression pass; produced
+accessor is now 6/7, with only explicit override exit 225 remaining. Six grouped
+nullable cases and the produced empty initializer still pass. Adversary: ROBUST
+for this static-member intrinsic; no general pending-demand or bootstrap closure.
+
+Final fresh stage2 builds in 284.85s under the 420s diagnostic allowance.
+Exact no-prelude smoke passes; plain smoke still exits 139. Concurrent activity
+and unavailable RSS/FD coverage preclude a performance/resource certificate.
+Commands: the HIR/MIR command below plus spec/hir/absolute_pointer_null_spec.cr;
+bash regression_tests/absolute_pointer_null_default.sh <fresh-s1-or-s2>;
+bash regression_tests/nested_accessor_defaults.sh <fresh-s1-or-s2>;
+bash regression_tests/grouped_nullable_union.sh <fresh-s2>;
+bash regression_tests/nullable_tuple_destructure_capture_repro.sh <fresh-s1>;
+scripts/build_bootstrap_stages.sh --out <fresh> --stages 2 --timeout 420 --mem 12288.
+Matching HIR source SHA256 (including preserved user edits):
+767da504fc4e0703044d4cd2ea97e2e0c04c1e0c0ec45d7bf45fbf052f245def;
+MIR cbeeb71f70d8b36d30f35262926520fa0808fe14ff25ed099007f70ec63ba1eb;
+binary d8f3e46dbd31b36cda0ff0c945baec3341cf8c74e263659fe048008d14d7dc65.
+Refresh on static-member resolution, pointer descriptor, or macro-default changes.
+Evidence: /private/tmp/adamas-pointer-null-final/;
+refutation and ablation: adamas-pointer-null/ and adamas-pointer-null-complete/.
+
+2026-09-05 NEXT PRODUCED BOUNDARIES (LOCALIZED, NOT REPAIRED).
+- Initializer: the exact class_explicit_override fixture passes argument 73 and
+  emits the expected initializer call in both stages. Produced initialization
+  writes offset 0, while allocation/getter use offset 4; the header is clobbered
+  and the getter retains default 42 (exit 225). LLDB confirms get_ivar_offset
+  receives @t, not @count, and returns 0. Its current-class slot reads
+  Probe#initialize, not Probe. This refutes missing argument/call as the root;
+  inspect the preceding parameter-name and scope transport, not a default-offset
+  guard. Evidence: /private/tmp/adamas-initializer-override/ (s1/s2.bin.ll,
+  offset.lldb.log, offset-inputs.lldb.log). Explicit/required argument reducers
+  separately hit a Pointer#any? block stub before target IR; keep them distinct.
+- Plain smoke: produced Tuple#reduce loads Path | String, extracts only payload,
+  and invokes its raw callback with ptr. block_proc_664 expects the full tagged
+  union, then forwards it to Path#join. The tag and ABI width are already lost
+  at the indirect call. Owner: lower_yield / IndirectCall.unwrap_union_args,
+  before LLVM's payload extraction. Check formal callback argument types; a
+  global flag flip is unsafe for callbacks that expect payloads. Actual produced
+  IR is the falsifier; small custom reducers also hit the separate Pointer#any?
+  stub. Evidence: /private/tmp/adamas-tuple-destructure/bootstrap/cv2_s2.ll
+  at 1579519 and 557581; plain.lldb.log in its parent evidence directory and
+  /private/tmp/adamas-path-join-analysis/.
 
 2026-09-05 CAPTURED NULLABLE TUPLE DESTRUCTURING (BOUNDED REPAIR).
 A supervised LLDB run now localizes the empty-initializer crash: DefNode#params

@@ -60,14 +60,35 @@ this root without evidence. Existing nested_accessor_defaults.sh retains the
 larger regression. See TODO for artifacts and the unsuccessful LLDB attempt.
 Refresh after constructor dispatch/lowering or produced compiler changes.
 
-[LM-S2-POINTER-DEFAULT-DEMAND|OPEN 2026-09-05]:
+[LM-S2-POINTER-DEFAULT-DEMAND|static-member repair 2026-09-05]:
 Direct relative/absolute Pointer(Probe).null calls run 0; the absolute call has
 the same symbol with a real body. Both nested and direct property defaults
-instead compile to its abort stub (runtime 134). Trace selects the exact def
-but leaves it pending/body=0 before backend emission. Leading :: and nested
-macro replay are insufficient explanations. Next inspect allocator field-default
-demand completion; preserve direct-call and nonzero-marker controls. See TODO
-for evidence. Refresh after default generation or pending-method processing.
+previously compiled to its abort stub (134). The actual static-member intrinsic
+accepted only relative Pointer(. Accept the root-qualified spelling and use
+normalized pointer lookup. Changing lower_call alone failed; its extra hunk
+was removed after ablation, including parentheses controls. Three typed-zero/
+identity guards pass (HEAD ablation fails two); HIR/MIR 646/0, two pending,
+25 clean owned-source guards. Fresh host and stage2 pass all four Pointer
+runtimes, including nonzero marker and user namespace. Produced accessor is
+6/7: explicit override remains wrong. Stage2 284.85s diagnostic, no-prelude
+green/plain crash; no general pending-drain or B4-F closure. See TODO for
+hashes/commands. Refresh after static-member, descriptor, or default changes.
+
+[LM-S2-INITIALIZER-NAME-TRANSPORT|OPEN 2026-09-05]:
+Both stages pass 73 to the same initializer, but produced @param assignment
+writes offset 0 instead of 4. LLDB sees @t at get_ivar_offset and its current
+class slot reads Probe#initialize; return is 0. Getter retains 42 (exit 225).
+Trace the preceding name/scope transport; do not fix this with a fallback
+offset or assume stale ClassInfo. See TODO and initializer-override evidence.
+
+[LM-S2-RAW-YIELD-UNION-ABI|OPEN 2026-09-05]:
+Produced Tuple#reduce extracts Path | String payload and passes ptr to an
+opaque callback expecting the full tagged union. The callback then calls
+Path#join; tag/ABI width loss precedes String#bytesize crash. Inspect raw
+lower_yield argument/formal compatibility before IndirectCall union unwrapping.
+Do not flip the global unwrap default: payload-form callbacks also exist.
+The produced IR is the falsifier; custom reducers hit a separate Pointer#any?
+stub. See TODO for anchors. Refresh after callback ABI or union representation changes.
 
 ## Current Tuple reduction boundary
 

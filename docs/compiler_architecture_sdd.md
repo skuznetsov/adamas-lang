@@ -33,9 +33,11 @@ repairs literal defaults; the Phi cross-block pre-scan now uses the existing
 indexed API and all six produced grouped-nullable runtimes pass. Nullable Tuple
 multiple assignment now retains positional pointer types across captured-block
 spills; the produced empty initializer compiles/runs. Explicit override reaches
-runtime but retains its default value; Pointer(self) still reaches a null stub.
-Plain compilation still crashes in Path#join/tuple reduction. The latest stage2
-takes 322.19s under a 420s diagnostic allowance. B-NULLABLE-TUPLE-DESTRUCTURE,
+runtime but retains its default value. Absolute Pointer(self).null now uses the
+static-member intrinsic and passes produced runtime controls. Plain compilation
+still crashes: raw Tuple#reduce callback transport drops the Path | String tag.
+The latest stage2 takes 284.85s under a 420s diagnostic allowance.
+B-ABSOLUTE-POINTER-NULL, B-NULLABLE-TUPLE-DESTRUCTURE,
 B-GROUPED-NULLABLE and B-PHI-PRESCAN guard positional typing, type identity,
 Proc/generic boundaries, and ARC input lifetime. This is not canonical
 B4-F/resource promotion. Older R0

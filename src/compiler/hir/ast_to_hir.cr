@@ -112364,13 +112364,14 @@ module Adamas::HIR
         end
       end
 
-      if member_name == "null" && full_method_name.starts_with?("Pointer(")
+      if member_name == "null" &&
+         (full_method_name.starts_with?("Pointer(") || full_method_name.starts_with?("::Pointer("))
         zero = Literal.new(ctx.next_id, TypeRef::INT64, 0_i64)
         ctx.emit(zero)
         ctx.register_type(zero.id, TypeRef::INT64)
-        pointer_type_ref = type_ref_for_name(class_name_str)
+        pointer_type_ref = type_ref_for_name(lookup_class_name)
         if pointer_type_ref == TypeRef::VOID
-          if pointer_info = split_generic_base_and_args(class_name_str)
+          if pointer_info = split_generic_base_and_args(lookup_class_name)
             if pointer_info.base == "Pointer"
               if element_name = split_generic_type_args(pointer_info.args).first?
                 element_type = type_ref_for_name(element_name.strip)

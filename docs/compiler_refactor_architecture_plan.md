@@ -129,9 +129,13 @@ Nullable Tuple multiple assignment now recovers concrete positional types before
 captured-block spills. Host regression changes 139 -> 0; 643 HIR/MIR examples
 have no failures (two pending), with 22 clean owned-source guards. Fresh stage2
 takes 322.19s and repairs the empty-initializer crash. Explicit override reaches
-runtime but keeps 42 instead of 73. Next repair that transport boundary and
-Pointer-null intrinsic/demand handling; localize the remaining Path#join and
-forced-proc successors. Diagnostic timings do not close canonical B4-F/resource obligations.
+runtime but keeps 42 instead of 73. Absolute Pointer null now uses the existing
+static-member intrinsic; four produced runtime controls pass. Final HIR/MIR is
+646/0 with two pending, and 25 owned-source guards pass. Stage2 takes 284.85s;
+plain compilation still fails. Next repair initializer name/scope transport
+(@count becomes @t before offset lookup) and raw-yield union ABI (Tuple#reduce
+passes payload to a callback expecting Path | String). Retain the separate
+Pointer#any? forced-proc stub. Diagnostic timings do not close canonical B4-F/resource obligations.
 See `TODO.md` for exact provenance and claim boundaries.
 The genuine-union operator return pointer also remains: the ordinary-call
 control splits union arguments, while `emit_binary_call` selects once with the
