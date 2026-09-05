@@ -12,6 +12,17 @@ checkpoint remain recoverable from git history, especially:
 
 ## Current produced-stage successor
 
+[LM-YIELD-TYPE-MERGE-INDEXED|bounded repair 2026-09-05]:
+The produced merge_yield_param_types zip/map destructures pointer-backed Tuple
+values as Array buffers and crashes on a null load. Use paired indexed reads
+and a fresh TypeRef array; two host examples cover nil/empty/arity identity,
+VOID/union order and non-mutation. Combined fresh stage2 (310.32s diagnostic)
+passes this site and reaches a later Hash#[]? stack-boundary fault from
+substitute_type_params_in_type_name. NP still prints blank interpolations;
+stage3 remains unbuilt. This is a compiler-source workaround, not general zip
+closure. See TODO for exact combined-source identity and evidence.
+Refresh after this merge, tuple inference, TypeRef or indexed Array changes.
+
 [LM-SHORT-CIRCUIT-LOCAL-JOIN|host verified; produced open 2026-09-05]:
 An RHS-only ternary narrowing escaped a short-circuit join because the
 assignment-filtered merge inherited the RHS locals map. The skipped path read

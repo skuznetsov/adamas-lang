@@ -7,6 +7,32 @@ Next: resolve the remaining produced initializer-body mismatch and carry
 untyped callback signatures to the raw-yield boundary behind Path#join. The user objective is a fresh stage2 that can build stage3.
 B4-F remains open.
 
+2026-09-05 INDEXED YIELD TYPE MERGE (BOUNDED COMPILER-SOURCE REPAIR).
+A fresh callback candidate reaches merge_yield_param_types and crashes while
+reading Array#zip's Tuple elements as Array buffers. LLDB localizes the null
+load in that helper; emitted IR uses i32 element loads for pointer-backed
+TypeRef values. Replace this one zip/map with paired indexed reads and a fresh
+result array. Preserve nil/empty/arity behavior, input identity on early return,
+VOID selection, ordered union construction, and non-mutation of both inputs.
+This avoids the unsupported tuple destructuring corridor; it does not repair
+Array#zip generally. Rollback: isolated helper hunk and its spec.
+
+DoD: scripts/run_safe.sh crystal 120 8192 spec
+spec/hir/merge_yield_param_types_spec.cr: two examples, zero failures/errors.
+A fresh combined --stages 3 --timeout 900 --mem 12288 build produces stage2 in
+310.32s. Plain compilation passes the old null-buffer site but stops later with
+exit138 in substitute_type_params_in_type_name -> Hash#[]? near the stack guard.
+No-prelude compilation/runtime exits0 but still prints blank interpolations;
+stage3 is not attempted. These are remaining callback-candidate frontiers.
+The helper is ROBUST within its indexed merge contract; no bootstrap closure.
+The combined snapshot includes the uncommitted callback work and preserved user
+changes; it is not an isolated causal certificate for that callback work.
+HIR SHA256: 5c909a4fbe6691a164159754ee22d5ca3f230ddbf48de3c3ebb4e49bd778ccdc.
+Evidence: /private/tmp/adamas-stage3-drive/merge-unit-final.log,
+callback-plain-lldb.log, merged-plain-lldb.log, merged-work, merged-bootstrap.
+The helper differs from that snapshot only in its comment. Refresh after yield merging,
+TypeRef representation, generic tuple inference, or indexed Array lowering.
+
 2026-09-05 SHORT-CIRCUIT LOCAL JOIN (HOST VERIFIED; PRODUCED STILL OPEN).
 A nested ternary on the RHS of `label || (selected ? ... : nil)` narrows
 `selected`. The outer join filters its local merge to real assignments, but

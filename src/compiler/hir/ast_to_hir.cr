@@ -62042,16 +62042,30 @@ module Adamas::HIR
     private def merge_yield_param_types(left : Array(TypeRef)?, right : Array(TypeRef)?) : Array(TypeRef)?
       return left unless right
       return right unless left && !left.empty?
-      return left unless left.size == right.size
-      left.zip(right).map do |a, b|
-        if a == TypeRef::VOID
-          b
-        elsif b == TypeRef::VOID
-          a
-        else
-          union_type_for_values(a, b)
-        end
+      left_values = left.not_nil!
+      right_values = right.not_nil!
+      return left_values unless left_values.size == right_values.size
+
+      # Avoid Array#zip here.  Bootstrap lowering currently mishandles the
+      # pointer-backed Tuple array at its destructuring boundary (the generated
+      # buffer is null in the failing path).  Indexing the two TypeRef arrays
+      # preserves the same arity/VOID rules without creating an intermediate
+      # tuple value.
+      merged = Array(TypeRef).new(left_values.size, TypeRef::VOID)
+      index = 0
+      while index < left_values.size
+        a = left_values[index]
+        b = right_values[index]
+        merged[index] = if a == TypeRef::VOID
+                          b
+                        elsif b == TypeRef::VOID
+                          a
+                        else
+                          union_type_for_values(a, b)
+                        end
+        index += 1
       end
+      merged
     end
 
     private def compute_yield_types_with_preinferred_locals(
