@@ -115,12 +115,15 @@ passes after nested collection-union extraction, literal Tuple position inferenc
 (including nullable concrete Tuples), and reachable detached-block return typing.
 The full HIR/MIR set is 634/0 with two pending; 20 focused examples pass without
 the user's source edits. A fresh 420s diagnostic builds stage2 in 284.96s and
-passes no-prelude interpolation, but plain compilation still crashes. Produced
-literal defaults expose the next precise mismatch: default 42 becomes an i32
-store of 180388626438 (low bits 6); the ordinary method-call default passes.
-Reduce that representation boundary next. Forced-proc compilation and the HIR
-Phi stub remain open. One sub-300s diagnostic timing does not establish a cost
-improvement or close canonical B4-F/resource obligations.
+passes no-prelude interpolation, but plain compilation still crashes. The default corruption is now traced to nested `(Int64 | Nil)?` descriptors.
+Flatten enclosing union groups while preserving generic and arrow Proc boundaries.
+Six identity/layout guards and six no-prelude host runtimes pass; HIR/MIR is
+640/0 with two pending. Fresh stage2 builds in 295.82s under the diagnostic
+allowance and passes both original literal-default cases. The next internal
+consumer is hir_to_mir's cross-block Phi pre-scan, which still calls a bare
+HIR::Phi#incoming stub. Test its existing indexed API without weakening ARC
+lifetime protection; then classify the plain and initializer crashes. Diagnostic
+timings do not close canonical B4-F/resource obligations.
 See `TODO.md` for exact provenance and claim boundaries.
 The genuine-union operator return pointer also remains: the ordinary-call
 control splits union arguments, while `emit_binary_call` selects once with the

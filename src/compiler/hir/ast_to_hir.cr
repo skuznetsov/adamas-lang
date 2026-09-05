@@ -43331,6 +43331,58 @@ module Adamas::HIR
       false
     end
 
+    # Remove every pair of parentheses that encloses the complete type name.
+    # This deliberately does not inspect parentheses inside a generic/Proc arm;
+    # those delimiters protect unions such as `Array(Int32 | Nil)`.
+    @[AlwaysInline]
+    private def strip_fully_grouped_type_name(type_name : String) : String
+      current = strip_ascii_edge_whitespace(type_name)
+      loop do
+        break if current.bytesize < 2 ||
+                 current.byte_at(0) != '('.ord ||
+                 current.byte_at(current.bytesize - 1) != ')'.ord
+
+        depth = 0
+        outer_matches_end = true
+        i = 0
+        while i < current.bytesize
+          ch = current.byte_at(i)
+          if ch == '('.ord
+            depth += 1
+          elsif ch == ')'.ord
+            depth -= 1 if depth > 0
+            if depth == 0 && i < current.bytesize - 1
+              outer_matches_end = false
+              break
+            end
+          end
+          i += 1
+        end
+        break unless outer_matches_end && depth == 0
+
+        inner = strip_ascii_edge_whitespace(current.byte_slice(1, current.bytesize - 2))
+        break if inner.empty?
+        # Parentheses around arrow syntax are significant when this arm is
+        # later joined to another union arm: `Nil | (A -> B)` must not become
+        # `Nil | A -> B`, which the proc parser reads as one larger Proc.
+        break if find_top_level_arrow(inner)
+        current = inner
+      end
+      current
+    end
+
+    private def append_flattened_union_parts(dedup : Array(String), part : String) : Nil
+      trimmed = strip_fully_grouped_type_name(part)
+      if has_top_level_union_separator?(trimmed)
+        nested = normalize_union_type_name(trimmed)
+        split_union_type_name(nested).each do |nested_part|
+          append_flattened_union_parts(dedup, nested_part)
+        end
+      else
+        dedup << trimmed unless trimmed.empty? || dedup.includes?(trimmed)
+      end
+    end
+
     # Normalize union type names to "A | B" spacing (handles legacy "A___B" too).
     @[AlwaysInline]
     private def normalize_union_type_name(type_name : String) : String
@@ -43338,11 +43390,7 @@ module Adamas::HIR
       parts = split_union_type_name(type_name)
       return type_name if parts.empty?
       dedup = [] of String
-      parts.each do |part|
-        trimmed = part.strip
-        next if trimmed.empty?
-        dedup << trimmed unless dedup.includes?(trimmed)
-      end
+      parts.each { |part| append_flattened_union_parts(dedup, part) }
       nil_variants = [] of String
       other_variants = [] of String
       dedup.each do |name|

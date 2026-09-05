@@ -1,11 +1,52 @@
 # Adamas Bootstrap TODO
 
 Current action order: [integrated execution plan](docs/compiler_refactor_architecture_plan.md#0-current-execution-plan).
-Both regression runners now reject failed processes and compile into fresh,
-supervised outputs. The matched combined baseline is 33/37 on both sides;
-next: reduce the produced-stage accessor literal payload mismatch (42 becomes
-180388626438 in an i32 store), then the plain/forced-proc compile crashes. The
-host Tuple union/return and nested-default regressions are green; B4-F is open.
+Both regression runners reject failed processes and compile into fresh,
+supervised outputs. The matched combined baseline is 33/37 on both sides.
+Next: remove the produced-stage HIR::Phi#incoming stub at the cross-block
+pre-scan, then classify the plain/explicit-initializer/forced-proc crashes.
+The accessor literal payload defect is closed on a fresh stage2; B4-F is open.
+
+2026-09-05 GROUPED NULLABLE UNION: PRESERVE ONE RUNTIME TAG.
+A no-prelude function returning `(Int64 | Nil)?` compared guarded `42_i64`
+incorrectly (exit 71), while flat `Int64?` returned 0. Generated LLVM represented
+`Nil | (Nil | Int64)` and loaded the inner tag plus payload as an Int64,
+producing 42 * 2^32 + 6. Original Crystal 1.21 returns 0; its
+semantic/type_merge.cr removes redundant Nil and recursively flattens union arms.
+Owner: AstToHir union-name normalization before create_union_type registers the
+runtime descriptor. Flatten fully enclosing union groups, deduplicate Nil, and
+preserve generic interiors and arrow Proc grouping. Grouped and flat spellings
+now select and materialize the same TypeRef and emit one union tag.
+
+Risk: CAUTION (type identity/layout); rollback is the isolated fix commit.
+DoD: regression_tests/grouped_nullable_union.sh <fresh-host> plus focused HIR
+identity/layout guards, then original literal-default cases on fresh stage2.
+Six HIR guards are baseline 3 failures -> current 0; six host runtime controls
+are 4 failures -> 0. Array/Tuple union interiors and arrow Proc arms stay intact.
+Removing only the arrow guard fails its HIR test (Union becomes Proc); restoring
+it passes. Full HIR/MIR: 640 examples, no failures/errors, two existing pending.
+Clean owned source excluding 37 user lines passes 19 focused examples and all
+six final grouped-union guards. Host passes all seven accessor controls.
+
+Fresh stage2 builds in 295.82s under a 420s diagnostic allowance. Matching source
+hashes: ast_to_hir SHA256 03749caa43c693276ba498ef7c756004a82c68544a515f08b981fcf3eacd450a;
+produced binary 8b8263906c9caecc10aa49fc92b5a8fe77673af049c4c9b1f75c263dfbde2ec0.
+Produced class/struct defaults now pass, as do method-call/rejection controls.
+Explicit initializer still crashes (139); Pointer(self) and the grouped runtime
+suite reach the existing HIR::Phi#incoming stub (134). Exact no-prelude smoke
+passes; plain compilation crashes. This closes the literal corruption, not
+all produced-stage semantics. Concurrent local checks and unavailable RSS/FD
+coverage prevent a timing/resource promotion claim.
+
+Adversary: ROBUST for grouped union identity and the original literal-default
+boundary. Simple namespaced is_a? getter control emits the canonical getter and
+runs 0, so the Phi stub is not proven to be a general narrowing failure.
+Evidence: /private/tmp/adamas-nested-nullable/ (grouped-hir-red/green.log,
+runtime-red.log, runtime-final-host.log, final-suite.log, arrow-guard-red.log,
+bootstrap-final/bootstrap_chain.manifest, accessor-final-produced.log).
+Refresh after union-name normalization, descriptor identity, or alias/Proc
+annotation changes. Earlier unguarded bootstrap was interrupted at 160s when
+the arrow guard was added; it is not a build failure or timing measurement.
 
 2026-09-04 TUPLE REDUCTION: PRESERVE ELEMENT POSITIONS AND BLOCK RETURNS.
 `element_type_for_type_name` treated any `|` as a top-level union, returning nil

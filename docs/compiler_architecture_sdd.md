@@ -28,9 +28,13 @@ Document contract (hard rules):
 ### 0.1 Frontier
 
 The [current execution plan](compiler_refactor_architecture_plan.md#0-current-execution-plan)
-integrates reliability and architecture priorities. This refresh did not run a
-new bootstrap. The older R0 source/artifact rows below retain their historical
-scope; their "current-source" labels refer to those runs, not this checkout.
+integrates reliability and architecture priorities. The current grouped-union
+repair produces stage2 in 295.82s under a 420s diagnostic allowance and fixes
+literal defaults; plain compilation and the HIR::Phi#incoming pre-scan remain
+open. B-GROUPED-NULLABLE in the falsifier matrix guards type identity and Proc /
+generic boundaries. This is not canonical B4-F/resource promotion. Older R0
+source/artifact rows below retain historical scope; their "current-source"
+labels refer to those runs, not this checkout.
 
 - **B4-H (historical generated artifact): HISTORICAL.** A previously generated
   `s2` passed the downstream full-prelude classifier and printed `42` under

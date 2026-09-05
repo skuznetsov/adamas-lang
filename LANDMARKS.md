@@ -1,6 +1,6 @@
 # LANDMARKS
 
-Updated: 2026-09-04
+Updated: 2026-09-05
 Context: compiler/bootstrap/stage2-stability
 
 This file is the active working set only. Historical landmarks before this
@@ -12,17 +12,25 @@ checkpoint remain recoverable from git history, especially:
 
 ## Current produced-stage successor
 
-[LM-S2-ACCESSOR-LITERAL-PAYLOAD|OPEN 2026-09-04]:
-The combined host repairs produce stage2 in 284.96s under a 420s diagnostic
-allowance, with matching source hashes. Exact no-prelude interpolation passes;
-plain compilation crashes (139). The produced accessor reducer emits
-`store i32 180388626438` for default 42 (42 * 2^32 + 6), causing runtime 220;
-ordinary default method-call control passes. This suggests payload/tag confusion
-but does not prove its origin. Preserve produced-default.cr/.ll in the TODO
-artifact directory; compare allocator literal representation with ordinary
-method lowering next. Forced-proc union compilation still crashes, and the
-Pointer(self) control reaches the existing HIR::Phi#incoming stub. Host tests
-are not produced-stage certificates; B4-F semantics/resources remain open.
+[LM-S2-ACCESSOR-LITERAL-PAYLOAD|bounded repair 2026-09-05]:
+`(Int64 | Nil)?` materialized a nested tagged union; extraction consumed tag 6
+and payload 42 as 42 * 2^32 + 6. Flatten enclosing union groups before descriptor
+registration; preserve Array/Tuple interiors and arrow Proc grouping. Grouped
+and flat spellings share TypeRef identity. Six HIR guards change 3 failures to 0;
+six host runtimes change 4 failures to 0. Removing the arrow guard fails its test.
+Full HIR/MIR is 640/0 with two pending; clean owned-source guards pass.
+Fresh stage2 (295.82s diagnostic) passes both original literal-default runtimes.
+See TODO for source/binary hashes and commands. Refresh on normalization,
+annotation, or descriptor-identity changes; no general ABI or B4-F closure.
+
+[LM-S2-PHI-INCOMING-PRESCAN|OPEN 2026-09-05]:
+Produced `HIR::Phi#incoming` aborts from hir_to_mir's cross-block pre-scan.
+The sibling pending-phi path already uses canonical incoming_size/value_at APIs.
+A tiny nullable-return function reaches the stub without macros or pointers.
+Simple namespaced is_a? getter control passes, refuting a general narrowing
+failure as established root. Next: test existing indexed API at this consumer,
+preserving every cross-block input and ARC lifetime protection. Plain and
+explicit-initializer compile crashes remain separate residuals.
 
 ## Current Tuple reduction boundary
 
