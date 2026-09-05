@@ -36905,10 +36905,11 @@ module Adamas::HIR
       params = def_node.params
       return false unless params
       found = false
+      # Keep this predicate local to the callback: a nonlocal break currently
+      # becomes unreachable when each_param is materialized during bootstrap.
       each_param(params) do |param|
         if named_only_separator?(param)
           found = true
-          break
         end
       end
       found

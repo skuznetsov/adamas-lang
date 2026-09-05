@@ -88,16 +88,17 @@ constructor reducers still hit separate traps/stubs (1/8 pass); no general
 stage2 or B4-F closure. See TODO for hashes, commands, and evidence.
 Refresh on allocator identity, named binding, or initializer materialization.
 
-[LM-S2-NAMED-ONLY-BREAK|OPEN 2026-09-05]:
-Fresh and prior tuple stage2 both trap in allocator_def_has_named_only?'s
-materialized each_param callback. Its `break` is emitted as `unreachable` after
-setting found=true. Current caller includes the new shape helpers; the prior
-caller enters generate_allocator_overload directly. This is an inherited
-nonlocal-break boundary, not Path/enum discovery. Next falsifier: a bounded
-no-break scan in this pure predicate, followed by the produced named-first and
-default matrix. Pointer#any? missing-demand cases remain separate. Evidence:
-call-contract-final/named-first.lldb.log and tuple-named-first-escalated.lldb.log.
-Refresh after raw block control flow or this helper changes.
+[LM-S2-NAMED-ONLY-BREAK|bounded helper repair 2026-09-05]:
+Fresh and prior tuple stage2 trapped in allocator_def_has_named_only?'s
+materialized each_param callback: break became reachable unreachable. Keep the
+safe iterator and sticky found flag but complete its pure scan. Fresh stage2
+now returns through the separator branch; named-first/default advance 133 ->
+Pointer#any? stub134. All seven blocked constructor cases now converge on that
+stub (matrix still 1/8); host 8/8 and produced accessor 7/7 remain green.
+HIR/MIR 659/0, two pending. General nonlocal-break lowering remains unsupported;
+this is a bounded compiler-source repair. Stage2 327.80s diagnostic,
+no-prelude green/plain139. See TODO for source hashes and evidence in
+/private/tmp/adamas-named-scan/. Refresh after this scan or block control flow changes.
 
 [LM-S2-RAW-YIELD-UNION-ABI|typed repair; untyped frontier OPEN 2026-09-05]:
 Known raw callback Proc signatures now govern each union argument: preserve the

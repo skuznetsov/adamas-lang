@@ -31,7 +31,9 @@ Synthesized allocator and initializer identities now preserve canonical named
 shape when runtime argument types coincide. Host guards cover both discovery
 orders, generic owners, ordinary named arguments, defaults, and explicit
 `self.new` authority. The joint fresh stage2 repairs the observed initializer
-name/context corruption; broader produced constructor reducers remain blocked.
+name/context corruption. The named-only predicate now completes its safe scan
+without a nonlocal break; broader produced constructor reducers converge on the
+Pointer#any? forced-proc stub and remain blocked.
 Raw-yield transport now preserves compatible known Proc formal ABIs using a
 complete per-argument plan, with scalar/payload and mixed-argument controls.
 Unknown/ambiguous signatures and unsupported layouts retain legacy behavior.
@@ -47,7 +49,7 @@ spills; the produced empty initializer compiles/runs. Explicit override now
 stores the supplied value at the correct field offset. Absolute Pointer(self).null now uses the
 static-member intrinsic and passes produced runtime controls. Plain compilation
 still crashes: raw Tuple#reduce callback transport drops the Path | String tag.
-The latest stage2 takes 317.77s under a 420s diagnostic allowance.
+The latest stage2 takes 327.80s under a 420s diagnostic allowance.
 B-RAW-YIELD-CALLBACK-ABI, B-ALLOCATOR-NAMED-SHAPE, B-ABSOLUTE-POINTER-NULL,
 B-NULLABLE-TUPLE-DESTRUCTURE,
 B-GROUPED-NULLABLE and B-PHI-PRESCAN guard positional typing, type identity,

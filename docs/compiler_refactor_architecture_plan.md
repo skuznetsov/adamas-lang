@@ -139,8 +139,11 @@ and positional bodies despite equal runtime types. The joint fresh stage2
 named/default/explicit-new contracts; broader produced constructor reducers
 remain blocked. Known Proc callback signatures now govern raw-yield union
 transport; ten MIR guards and two typed host runtimes pass. Final HIR/MIR is
-659/0 with two pending. Next address the measured nonlocal-break trap in the
-named-only helper, then carry untyped callback signatures through HIR:
+659/0 with two pending. The named-only helper now avoids its nonlocal break;
+fresh stage2 advances named-first/default to Pointer#any? stub134, shared by all
+seven blocked constructor cases (matrix still 1/8). Stage2 takes 327.80s with
+no-prelude green/plain139; accessor remains 7/7. Next resolve that forced-proc
+demand and carry untyped callback signatures through HIR:
 Tuple#reduce still passes payload to a callback expecting Path | String.
 The optional UNTYPED_CALLBACK=1 no-prelude regression is red (81), while original
 Crystal passes; use it before another bootstrap. Retain the separate Pointer#any?

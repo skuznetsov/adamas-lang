@@ -3,9 +3,42 @@
 Current action order: [integrated execution plan](docs/compiler_refactor_architecture_plan.md#0-current-execution-plan).
 Both regression runners reject failed processes and compile into fresh,
 supervised outputs. The matched combined baseline is 33/37 on both sides.
-Next: remove the observed nonlocal-break trap in the named-only helper, then
-carry untyped callback signatures to the raw-yield boundary behind Path#join. Constructor call-shape identity now repairs the
+Next: resolve the Pointer#any? forced-proc demand now reached by all seven
+blocked constructor cases, and carry untyped callback signatures to the raw-yield
+boundary behind Path#join. Constructor call-shape identity now repairs the
 produced initializer name/context corruption; B4-F remains open.
+
+2026-09-05 NAMED-ONLY SCAN NONLOCAL BREAK (BOUNDED REPAIR).
+allocator_def_has_named_only? retains the safe each_param iterator and a sticky
+found flag, but no longer leaves its callback with a nonlocal break. The
+predicate is pure, so scanning remaining parameters preserves the Boolean
+result and the existing raw-null-slot handling. Risk: local reversible helper
+change; rollback is the isolated scan hunk. General nonlocal block control flow
+is not repaired.
+
+The prior source-matched stage2 reproduces named-first compile trap133. Fresh
+stage2 replaces the separator branch's reachable unreachable with a branch to
+the callback return; an unreferenced dead block still contains unreachable.
+Named-first and named-default now reach Pointer#any? stub134, shared by the
+other five failing constructor cases. This removes the measured helper trap,
+but does not improve the broader produced constructor matrix (still 1/8).
+Host matrix 8/8; produced accessor 7/7; full HIR/MIR 659 examples, zero failures
+or errors, two existing pending. Adversary: ROBUST for the bounded helper scan;
+general constructor execution, raw callback ABI, and nonlocal break remain open.
+
+DoD: bash regression_tests/allocator_named_shape_repro.sh <host-or-stage2>;
+bash regression_tests/nested_accessor_defaults.sh <stage2>; the HIR/MIR suite
+from the preceding repair. Fresh bootstrap via build_bootstrap_stages.sh with
+--stages 2 --timeout 420 --mem 12288 builds stage2 in 327.80s, no-prelude smoke
+passes and plain compilation exits139. Source hash consistency passes; concurrent
+checks and unknown RSS/FD coverage preclude performance/resource promotion.
+HIR SHA256 including preserved user changes:
+fed8f559977f01a1c70d5557ff865e8ea7d74daed01e577f16e2f6af241bb3ca;
+stage2 SHA256 96be1f7fe79cd1a1968f0361804fc2b33a2efc70f04cb53996d7d53d8df3dab5.
+Evidence: /private/tmp/adamas-named-scan/ (baseline.log, named-scan-callback.ll,
+allocator-host.log, allocator-stage2.log, accessor-stage2.log, hir-mir.log,
+bootstrap/bootstrap_chain.manifest). Refresh after helper iteration, callback
+control flow, or constructor demand changes.
 
 2026-09-05 TYPED RAW-YIELD CALLBACK ABI (BOUNDED REPAIR).
 Raw yield previously stripped every union argument to its payload, even when
