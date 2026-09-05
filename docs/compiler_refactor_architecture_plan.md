@@ -140,10 +140,12 @@ named/default/explicit-new contracts; broader produced constructor reducers
 remain blocked. Known Proc callback signatures now govern raw-yield union
 transport; ten MIR guards and two typed host runtimes pass. Final HIR/MIR is
 659/0 with two pending. The named-only helper now avoids its nonlocal break;
-fresh stage2 advances named-first/default to Pointer#any? stub134, shared by all
-seven blocked constructor cases (matrix still 1/8). Stage2 takes 327.80s with
-no-prelude green/plain139; accessor remains 7/7. Next resolve that forced-proc
-demand and carry untyped callback signatures through HIR:
+the union-specialization predicate now uses an indexed scan, removing the
+Pointer#any? stub from allocator generation. All eight produced cases compile;
+four pass runtime and four now expose initializer body/arity mismatches.
+Stage2 takes 318.00s with no-prelude green/plain139; accessor remains 7/7.
+Host constructor 8/8 and 567 HIR examples pass (two pending). Next trace selected
+initializer DefNode/default transport and carry untyped callback signatures through HIR:
 Tuple#reduce still passes payload to a callback expecting Path | String.
 The optional UNTYPED_CALLBACK=1 no-prelude regression is red (81), while original
 Crystal passes; use it before another bootstrap. Retain the separate Pointer#any?

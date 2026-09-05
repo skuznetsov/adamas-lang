@@ -100,6 +100,21 @@ this is a bounded compiler-source repair. Stage2 327.80s diagnostic,
 no-prelude green/plain139. See TODO for source hashes and evidence in
 /private/tmp/adamas-named-scan/. Refresh after this scan or block control flow changes.
 
+[LM-S2-ALLOCATOR-ITERATOR|bounded indexed scan repair 2026-09-05]:
+generate_allocator_overload's each_with_index.any? emitted a Pointer#any? abort
+stub after erasing the iterator receiver. Use a paired indexed scan with the
+same first-match and bounds contract. Fresh stage2 has zero references to the
+stub; all eight constructor cases compile, runtime improves 1/8 -> 4/8. Host 8/8,
+produced accessor 7/7 and 567 HIR guards pass (two pending). Fresh stage2 takes
+318.00s diagnostic; no-prelude green/plain139. General iterator inference and
+callback return ABI remain open. Next: host positional ReaderShape initializer
+has (self,value,pos) and stores pos; produced initializer with the same
+String$arity2 name has (self,value) and stores 99 from the named-only definition.
+Both allocator symbols are distinct, so inspect selected-definition/default
+transport before changing names. See TODO for hashes and evidence in
+/private/tmp/adamas-allocator-indexed/. Refresh after allocator selection or
+iterator inference changes.
+
 [LM-S2-RAW-YIELD-UNION-ABI|typed repair; untyped frontier OPEN 2026-09-05]:
 Known raw callback Proc signatures now govern each union argument: preserve the
 full union, wrap a concrete variant, or unwrap for a payload formal. Build the

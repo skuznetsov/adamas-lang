@@ -38511,12 +38511,20 @@ module Adamas::HIR
           true,
         )
         init_name = matched_init_name || mangle_function_name(init_base_name, init_param_types, initializer_has_block)
-        specializes_declared_union = init_param_types.each_with_index.any? do |init_type, idx|
-          next false if idx >= init_params.size
-          declared_type = init_params[idx][1]
-          init_type != TypeRef::VOID && init_type != declared_type &&
-            is_union_or_nilable_type?(declared_type) &&
-            get_union_member_variant_id(declared_type, init_type) >= 0
+        specializes_declared_union = false
+        specialization_idx = 0
+        # Keep the paired scan on the arrays: the blockless each_with_index
+        # iterator currently loses its receiver type during self-host lowering.
+        while specialization_idx < init_param_types.size && specialization_idx < init_params.size
+          init_type = init_param_types[specialization_idx]
+          declared_type = init_params[specialization_idx][1]
+          if init_type != TypeRef::VOID && init_type != declared_type &&
+             is_union_or_nilable_type?(declared_type) &&
+             get_union_member_variant_id(declared_type, init_type) >= 0
+            specializes_declared_union = true
+            break
+          end
+          specialization_idx += 1
         end
         if matched_init_name &&
            (matched_init_name.not_nil!.includes?("$arity") || specializes_declared_union) &&

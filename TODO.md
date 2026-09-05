@@ -3,10 +3,55 @@
 Current action order: [integrated execution plan](docs/compiler_refactor_architecture_plan.md#0-current-execution-plan).
 Both regression runners reject failed processes and compile into fresh,
 supervised outputs. The matched combined baseline is 33/37 on both sides.
-Next: resolve the Pointer#any? forced-proc demand now reached by all seven
-blocked constructor cases, and carry untyped callback signatures to the raw-yield
-boundary behind Path#join. Constructor call-shape identity now repairs the
+Next: trace selected initializer definition/arity transport in produced stage2
+(the positional body receives the named-only definition), and carry untyped
+callback signatures to the raw-yield boundary behind Path#join. Constructor call-shape identity now repairs the
 produced initializer name/context corruption; B4-F remains open.
+
+2026-09-05 ALLOCATOR UNION SPECIALIZATION INDEXED SCAN (BOUNDED REPAIR).
+The exact generate_allocator_overload call chain emitted blockless
+Array(TypeRef)#each_with_index as a pointer, then called Pointer#any? and hit
+its abort stub. Replace this one existential predicate with an indexed paired
+array scan. Preserve short-circuit order, stop at the first match, and only
+read indices below both array sizes. No iterator object or callback is needed.
+This is a compiler-source workaround for an unsupported inference corridor,
+not a global iterator or missing-demand repair. Rollback: isolated scan hunk.
+
+Fresh stage2 contains zero references to Pointer#any?$$block (previous dump had
+two calls plus its abort stub). All eight constructor regressions now compile;
+produced runtime improves 1/8 -> 4/8. Named positional spelling, named-only
+constructor, explicit-new authority, and named defaults pass. Both discovery
+orders fail runtime 71, generic shapes fail 74, and distinct named-only bodies
+fail 77. Host runtime 8/8 and produced accessor 7/7 pass. HIR suite: 567 examples,
+zero failures/errors, two existing pending, including union specialization and
+named-tail argument-preservation guards at ast_to_hir_spec.cr:12225 and 12280.
+The preceding helper-only source passed the broader 659-example HIR/MIR suite;
+that full set was not repeated after this HIR-only change. Adversary: ROBUST
+for the indexed existential predicate and measured constructor advancement.
+
+Next semantic falsifier: named_first.cr exits 0 on host but 99 when built by the
+fresh stage2. Both outputs distinguish named and positional allocator names.
+Host ReaderShape#initialize$String$arity2 has (self, value, pos), receives 0,
+and stores pos; stage2 gives that name a (self, value) body storing 99. Inspect
+selected DefNode and arity/default materialization before changing naming again.
+A separate full-prelude Array(Int32).each_with_index.any? reducer still fails
+compilation at a
+malformed ItemIterator owner. Its no-prelude form stops earlier at an absent
+Array#each_with_index body and cannot establish the same cause.
+
+DoD: bash regression_tests/allocator_named_shape_repro.sh <host-or-stage2>;
+bash regression_tests/nested_accessor_defaults.sh <stage2>;
+safe Crystal spec spec/hir/ast_to_hir_spec.cr spec/hir/allocator_named_shape_spec.cr.
+Fresh isolated bootstrap --stages 2 --timeout 420 --mem 12288 builds stage2 in
+318.00s; no-prelude smoke passes, plain compilation exits 139. Source consistency
+passes; concurrent checks and unknown RSS/FD coverage preclude B4-F promotion.
+HIR SHA256 including preserved user edits:
+1be52d446689d57a68ba6c5c486084ab13ab2987f5f1e75d92eda9ed9773dd3c;
+stage2 SHA256 175ad63480553bfe23324d9be74fd77b6368a055958dc8e3f99a9d5144d0ce0a.
+Evidence: /private/tmp/adamas-allocator-indexed/ (hir.log, allocator-*.log,
+accessor-stage2.log, named-first{,-host}.{ll,run.log}, iterator-full.compile.log,
+old-pointer-any-call.ll, bootstrap). Refresh after specialization selection,
+parameter iteration, generated callback return ABI, or iterator inference changes.
 
 2026-09-05 NAMED-ONLY SCAN NONLOCAL BREAK (BOUNDED REPAIR).
 allocator_def_has_named_only? retains the safe each_param iterator and a sticky
@@ -30,7 +75,7 @@ DoD: bash regression_tests/allocator_named_shape_repro.sh <host-or-stage2>;
 bash regression_tests/nested_accessor_defaults.sh <stage2>; the HIR/MIR suite
 from the preceding repair. Fresh bootstrap via build_bootstrap_stages.sh with
 --stages 2 --timeout 420 --mem 12288 builds stage2 in 327.80s, no-prelude smoke
-passes and plain compilation exits139. Source hash consistency passes; concurrent
+passes and plain compilation exits 139. Source hash consistency passes; concurrent
 checks and unknown RSS/FD coverage preclude performance/resource promotion.
 HIR SHA256 including preserved user changes:
 fed8f559977f01a1c70d5557ff865e8ea7d74daed01e577f16e2f6af241bb3ca;
