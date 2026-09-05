@@ -137,9 +137,13 @@ and positional bodies despite equal runtime types. The joint fresh stage2
 (317.77s diagnostic) passes all seven accessor cases: %count is stored at offset
 4 and lstrip preserves its input. Three HIR and eight host runtime guards retain
 named/default/explicit-new contracts; broader produced constructor reducers
-remain blocked. Next address the measured nonlocal-break trap in the named-only
-helper, then raw-yield union ABI (Tuple#reduce passes payload to a callback
-expecting Path | String), retaining the separate Pointer#any?
+remain blocked. Known Proc callback signatures now govern raw-yield union
+transport; ten MIR guards and two typed host runtimes pass. Final HIR/MIR is
+659/0 with two pending. Next address the measured nonlocal-break trap in the
+named-only helper, then carry untyped callback signatures through HIR:
+Tuple#reduce still passes payload to a callback expecting Path | String.
+The optional UNTYPED_CALLBACK=1 no-prelude regression is red (81), while original
+Crystal passes; use it before another bootstrap. Retain the separate Pointer#any?
 forced-proc stub. Diagnostic timings do not close canonical B4-F/resource obligations.
 See `TODO.md` for exact provenance and claim boundaries.
 The genuine-union operator return pointer also remains: the ordinary-call

@@ -7,6 +7,44 @@ Next: remove the observed nonlocal-break trap in the named-only helper, then
 carry untyped callback signatures to the raw-yield boundary behind Path#join. Constructor call-shape identity now repairs the
 produced initializer name/context corruption; B4-F remains open.
 
+2026-09-05 TYPED RAW-YIELD CALLBACK ABI (BOUNDED REPAIR).
+Raw yield previously stripped every union argument to its payload, even when
+an available Proc formal required the full tagged union. Recover the complete
+callback signature, plan every argument before emitting bridges, and preserve,
+wrap, or unwrap each argument according to that known contract. Direct Proc and
+a unique nullable Proc variant are supported. Unknown/ambiguous signatures,
+arity mismatches, and unsupported distinct unions retain the legacy behavior;
+that fallback is not a safety guarantee. Risk: CAUTION (callback ABI); rollback
+is the isolated MIR change and its regression guards.
+
+Ten MIR guards cover full unions, payload formals, mixed arguments, wrapping,
+missing/ambiguous descriptors, and rejection without partial argument rewriting.
+The typed numeric no-prelude runtime changes 81 -> 0; both Int32 and Int64 arms
+and an explicit mixed Proc callback pass on the fresh host compiler. The final
+HIR/MIR suite has 659 examples, no failures/errors, two existing pending. The
+joint frozen source and bootstrap hashes are recorded in the allocator entry.
+Adversary: ROBUST for known compatible callback signatures; no general callback
+or produced plain-smoke closure. Multiargument arrow syntax still has a separate
+HIR signature/arity mismatch. Produced typed-reducer compilation still crashes.
+
+Actual Tuple#reduce has an untyped &block carrier without a Proc descriptor, so
+its produced call still passes ptr where block_proc_668 expects Path | String.
+The Path#join/String#bytesize crash remains. A cheap next falsifier now preserves
+an Int32 | Int64 union through a producer method and uses an untyped callback:
+original Crystal exits 0; the fresh host exits 81. Passing plain literals had
+specialized concrete calls and produced a false green for this boundary. Carry
+the actual callback signature through HIR specialization/materialization before
+widening MIR conversion; do not infer the formal ABI from yielded values alone.
+
+DoD: safe Crystal spec spec/mir/raw_yield_union_callback_abi_spec.cr;
+bash regression_tests/raw_yield_union_callback_abi_repro.sh <fresh-host> (two PASS).
+Open falsifier: UNTYPED_CALLBACK=1 bash
+regression_tests/raw_yield_union_callback_abi_repro.sh <fresh-host> (currently RED).
+Evidence: /private/tmp/adamas-call-contract-final/ (hir-mir-green.log,
+union-host-final.log, untyped-union-regression.log, untyped-union-reference.run.log,
+plain.lldb.log, bootstrap/cv2_s2.ll).
+Refresh after Proc signature propagation, raw yield lowering, or union layout changes.
+
 2026-09-05 ALLOCATOR CALL-SHAPE IDENTITY (BOUNDED REPAIR).
 The previous stage2 String#lstrip(Char) received "count" and '@' but returned
 "t": Char::Reader.new(String) reused the named-only at_end initializer body.

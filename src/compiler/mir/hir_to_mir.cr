@@ -55,6 +55,15 @@ module Adamas
         HeapProcObject
       end
 
+      # Per-argument action used to bridge a yielded value to a known raw
+      # callback formal. The indirect-call node only has a call-wide union flag,
+      # so mixed signatures need these explicit MIR operations first.
+      private enum RawYieldArgAction : UInt8
+        Preserve
+        Unwrap
+        Wrap
+      end
+
       # Mapping from HIR ValueId to MIR ValueId per function
       @value_map : ::Hash(HIR::ValueId, ValueId)
 
@@ -69,7 +78,7 @@ module Adamas
       # type. HIR type descriptors and registered union descriptors are fixed
       # before body lowering, so caching avoids repeating the registry scan for
       # every yield in a helper with a materialized block.
-      @proc_callback_return_hir_cache : ::Hash(HIR::TypeRef, HIR::TypeRef?)
+      @proc_callback_hir_signature_cache : ::Hash(HIR::TypeRef, ::Array(HIR::TypeRef)?)
 
       # Proc carrier provenance that escapes through class variables. This is
       # module-scoped because a raw C callback can be stored in one function and
@@ -216,7 +225,7 @@ module Adamas
         STDERR.puts "[MIR_INIT] value_map" if trace
         @hir_value_types = {} of HIR::ValueId => HIR::TypeRef
         @hir_value_carriers = {} of HIR::ValueId => ProcCarrier
-        @proc_callback_return_hir_cache = {} of HIR::TypeRef => HIR::TypeRef?
+        @proc_callback_hir_signature_cache = {} of HIR::TypeRef => ::Array(HIR::TypeRef)?
         @hir_classvar_carriers = {} of String => ProcCarrier
         @hir_constant_values = ::Set(HIR::ValueId).new
         STDERR.puts "[MIR_INIT] hir_value_types" if trace
@@ -10123,81 +10132,195 @@ module Adamas
       # wider nullable result type than the function pointer we call.  Recover
       # the Proc descriptor from the registered union variant instead of using
       # the yield expression type as the indirect-call return ABI.
-      private def proc_callback_return_hir_type(block_type : HIR::TypeRef) : HIR::TypeRef?
-        if @proc_callback_return_hir_cache.has_key?(block_type)
-          return @proc_callback_return_hir_cache[block_type]?
+      #
+      # The same descriptor is the contract for arguments passed to the raw
+      # callback. Keeping the lookup here (rather than inferring from yielded
+      # values) is important: a union payload and a full union have the same HIR
+      # value only at the call boundary, while their LLVM ABIs differ.
+      private def proc_callback_hir_signature(block_type : HIR::TypeRef) : Array(HIR::TypeRef)?
+        if @proc_callback_hir_signature_cache.has_key?(block_type)
+          return @proc_callback_hir_signature_cache[block_type]?
         end
 
-        block_desc = @hir_module.get_type_descriptor(block_type)
-        unless block_desc
-          @proc_callback_return_hir_cache[block_type] = nil
-          return nil
-        end
-
-        if hir_proc_type?(block_type)
-          result = block_desc.type_params.last?
-          @proc_callback_return_hir_cache[block_type] = result
-          return result
-        end
-        unless block_desc.kind == HIR::TypeKind::Union
-          @proc_callback_return_hir_cache[block_type] = nil
-          return nil
-        end
-
-        # Union descriptors are kept in MIR because HIR union TypeDescriptors
-        # intentionally contain only the display name.  Invert the canonical
-        # HIR→MIR type mapping to find the Proc variant without parsing names or
-        # assuming that primitive/user type ids are identical across IRs.
-        union_desc = @mir_module.get_union_descriptor(convert_type(block_type))
-        unless union_desc
-          @proc_callback_return_hir_cache[block_type] = nil
-          return nil
-        end
-        matching_return : HIR::TypeRef? = nil
-        matching_count = 0
-        idx = 0
-        while idx < @hir_module.types.size
-          candidate = @hir_module.types.unsafe_fetch(idx)
-          candidate_ref = HIR::TypeRef.new(HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
-          if hir_proc_type?(candidate_ref)
-            candidate_mir_ref = convert_type(candidate_ref)
-            variant_match = false
-            variant_idx = 0
-            while variant_idx < union_desc.variants.size
-              if union_desc.variants.unsafe_fetch(variant_idx).type_ref == candidate_mir_ref
-                variant_match = true
-                break
-              end
-              variant_idx += 1
-            end
-            if variant_match
-              candidate_return = candidate.type_params.last?
-              unless candidate_return
-                @proc_callback_return_hir_cache[block_type] = nil
-                return nil
-              end
-              matching_count += 1
-              # A second Proc variant is ABI-ambiguous even when its return
-              # type matches: argument layouts may differ, and this raw call
-              # path has no runtime tag dispatch.
-              if previous = matching_return
-                unless previous == candidate_return
-                  @proc_callback_return_hir_cache[block_type] = nil
-                  return nil
+        result : Array(HIR::TypeRef)? = nil
+        if block_desc = @hir_module.get_type_descriptor(block_type)
+          if hir_proc_type?(block_type)
+            result = block_desc.type_params unless block_desc.type_params.empty?
+          elsif block_desc.kind == HIR::TypeKind::Union
+            # Union descriptors are kept in MIR because HIR union
+            # TypeDescriptors intentionally contain only the display name.
+            # Invert the canonical HIR→MIR type mapping to find the unique Proc
+            # variant without parsing names or assuming that primitive/user
+            # type ids are identical across IRs.
+            if union_desc = @mir_module.get_union_descriptor(convert_type(block_type))
+              matching : Array(HIR::TypeRef)? = nil
+              matching_count = 0
+              ambiguous = false
+              idx = 0
+              while idx < @hir_module.types.size
+                candidate = @hir_module.types.unsafe_fetch(idx)
+                candidate_ref = HIR::TypeRef.new(HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
+                if hir_proc_type?(candidate_ref)
+                  candidate_mir_ref = convert_type(candidate_ref)
+                  variant_idx = 0
+                  variant_match = false
+                  while variant_idx < union_desc.variants.size
+                    if union_desc.variants.unsafe_fetch(variant_idx).type_ref == candidate_mir_ref
+                      variant_match = true
+                      break
+                    end
+                    variant_idx += 1
+                  end
+                  if variant_match
+                    if candidate.type_params.empty?
+                      ambiguous = true
+                      break
+                    end
+                    matching_count += 1
+                    # A second Proc variant is ABI-ambiguous even when its
+                    # return type matches: argument layouts may differ, and
+                    # this raw call path has no runtime tag dispatch.
+                    if matching_count > 1
+                      ambiguous = true
+                      break
+                    end
+                    matching = candidate.type_params
+                  end
                 end
-              else
-                matching_return = candidate_return
+                idx += 1
               end
+              result = matching if !ambiguous && matching_count == 1
             end
           end
+        end
+
+        @proc_callback_hir_signature_cache[block_type] = result
+        result
+      end
+
+      private def proc_callback_return_hir_type(block_type : HIR::TypeRef) : HIR::TypeRef?
+        signature = proc_callback_hir_signature(block_type)
+        signature ? signature.not_nil!.last? : nil
+      end
+
+      # `IndirectCall#unwrap_union_args` is a call-wide backend switch. A known
+      # raw callback signature gets an explicit argument plan first: a full
+      # union formal keeps or receives a union value, while a concrete formal
+      # receives a MIR UnionUnwrap payload. The indirect call then preserves
+      # unions globally, so a mixed callback cannot strip a different full-union
+      # argument by accident. Unknown signatures retain the legacy payload ABI.
+      private def prepare_raw_yield_callback_args(
+        block_type : HIR::TypeRef,
+        hir_args : Array(HIR::ValueId),
+        mir_args : Array(ValueId),
+        builder : MIR::Builder,
+      ) : {Array(ValueId), Bool}
+        signature = proc_callback_hir_signature(block_type)
+        return {mir_args, true} unless signature
+
+        callback_params = signature.not_nil!
+        return {mir_args, true} if callback_params.empty? || hir_args.size != callback_params.size - 1
+
+        # Each tuple entry stores the HIR actual, HIR formal, action, and (when
+        # an explicit union bridge needs it) the union discriminator. Build the
+        # whole plan before emitting any bridge instructions so an unresolved
+        # later argument cannot leave a partially rewritten call behind.
+        plans = [] of {HIR::TypeRef, HIR::TypeRef, RawYieldArgAction, Int32?}
+        has_union_arg = false
+        arg_idx = 0
+        while arg_idx < hir_args.size
+          actual_type = @hir_value_types[hir_args.unsafe_fetch(arg_idx)]?
+          return {mir_args, true} unless actual_type
+          formal_type = callback_params.unsafe_fetch(arg_idx)
+          actual_is_union = hir_union_type?(actual_type)
+          formal_is_union = hir_union_type?(formal_type)
+          unless actual_is_union || formal_is_union
+            plans << {actual_type, formal_type, RawYieldArgAction::Preserve, nil}
+            arg_idx += 1
+            next
+          end
+
+          has_union_arg = true
+          if actual_is_union && formal_is_union && same_hir_type?(actual_type, formal_type)
+            plans << {actual_type, formal_type, RawYieldArgAction::Preserve, nil}
+            arg_idx += 1
+            next
+          end
+
+          if actual_is_union && !formal_is_union
+            variant_type_id = raw_yield_union_variant_id(actual_type, formal_type)
+            return {mir_args, true} unless variant_type_id
+            plans << {actual_type, formal_type, RawYieldArgAction::Unwrap, variant_type_id}
+          elsif !actual_is_union && formal_is_union
+            variant_type_id = raw_yield_union_variant_id(formal_type, actual_type)
+            return {mir_args, true} unless variant_type_id
+            plans << {actual_type, formal_type, RawYieldArgAction::Wrap, variant_type_id}
+          else
+            # Two distinct union descriptors need a layout conversion, which
+            # this raw callback bridge cannot prove from a type id alone.
+            return {mir_args, true}
+          end
+          arg_idx += 1
+        end
+
+        return {mir_args, true} unless has_union_arg
+
+        prepared_args = mir_args.dup
+        plans.each_with_index do |plan, idx|
+          variant_type_id = plan[3]
+          case plan[2]
+          when RawYieldArgAction::Preserve
+            next
+          when RawYieldArgAction::Unwrap
+            formal_mir_type = convert_type(plan[1])
+            unwrap = UnionUnwrap.new(
+              builder.next_id,
+              formal_mir_type,
+              prepared_args.unsafe_fetch(idx),
+              variant_type_id.not_nil!,
+              false
+            )
+            builder.emit(unwrap)
+            prepared_args[idx] = unwrap.id
+          when RawYieldArgAction::Wrap
+            prepared_args[idx] = builder.union_wrap(
+              prepared_args.unsafe_fetch(idx),
+              variant_type_id.not_nil!,
+              convert_type(plan[1])
+            )
+          end
+        end
+
+        {prepared_args, false}
+      end
+
+      private def raw_yield_union_variant_id(
+        union_type : HIR::TypeRef,
+        concrete_type : HIR::TypeRef,
+      ) : Int32?
+        union_desc = @mir_module.get_union_descriptor(convert_type(union_type))
+        return nil unless union_desc
+
+        concrete_mir_type = convert_type(concrete_type)
+        idx = 0
+        while idx < union_desc.variants.size
+          variant = union_desc.variants.unsafe_fetch(idx)
+          return variant.type_id if variant.type_ref == concrete_mir_type
           idx += 1
         end
-        # A single concrete Proc variant is required. Even equal return types
-        # are not enough to merge multiple variants: their argument ABI may
-        # differ, and a raw indirect call has no runtime tag dispatch here.
-        result = matching_count == 1 ? matching_return : nil
-        @proc_callback_return_hir_cache[block_type] = result
-        result
+        nil
+      end
+
+      private def hir_union_type?(type : HIR::TypeRef) : Bool
+        desc = @hir_module.get_type_descriptor(type)
+        !!(desc && desc.kind == HIR::TypeKind::Union)
+      end
+
+      private def same_hir_type?(left : HIR::TypeRef, right : HIR::TypeRef) : Bool
+        # Descriptor equality is not enough to prove ABI identity: separately
+        # interned unions may share a display descriptor while their registered
+        # MIR layouts differ. Preserve only the canonical HIR reference.
+        left == right
       end
 
       private def lower_yield(yld : HIR::Yield) : ValueId
@@ -10223,12 +10346,14 @@ module Adamas
         # hybrid closure ABI. Do not switch this to heap Proc dispatch without
         # a coupled raw callback carrier/signature/yield rewrite.
         args = [] of ValueId
+        hir_args = [] of HIR::ValueId
         yld.args.each do |arg|
           arg_type = @hir_value_types[arg]?
           next unless @value_map.has_key?(arg)
           # Don't skip VOID-typed args — when yield args cross inlined block body
           # boundaries, the HIR type may not be propagated, but the MIR value still
           # carries the correct type (e.g. elem in Enumerable#join's each block).
+          hir_args << arg
           args << get_value(arg)
         end
         block_val = get_value(block_param_id)
@@ -10290,7 +10415,18 @@ module Adamas
         unless callback_return_type
           raise "MIR yield callback ABI unresolved for Proc block type #{block_type.id} in #{@current_lowering_func_name}"
         end
-        call_value = builder.call_indirect(block_val, args, convert_type(callback_return_type))
+        args, unwrap_union_args = prepare_raw_yield_callback_args(
+          block_type,
+          hir_args,
+          args,
+          builder
+        )
+        call_value = builder.call_indirect(
+          block_val,
+          args,
+          convert_type(callback_return_type),
+          unwrap_union_args
+        )
         # Preserve the HIR yield result contract (for example `Nil | Int32`)
         # after calling the raw callback with its concrete ABI return (`Int32`).
         # This emits the same canonical union wrap used by ordinary returns and

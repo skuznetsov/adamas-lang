@@ -99,14 +99,21 @@ default matrix. Pointer#any? missing-demand cases remain separate. Evidence:
 call-contract-final/named-first.lldb.log and tuple-named-first-escalated.lldb.log.
 Refresh after raw block control flow or this helper changes.
 
-[LM-S2-RAW-YIELD-UNION-ABI|OPEN 2026-09-05]:
-Produced Tuple#reduce extracts Path | String payload and passes ptr to an
-opaque callback expecting the full tagged union. The callback then calls
-Path#join; tag/ABI width loss precedes String#bytesize crash. Inspect raw
-lower_yield argument/formal compatibility before IndirectCall union unwrapping.
-Do not flip the global unwrap default: payload-form callbacks also exist.
-The produced IR is the falsifier; custom reducers hit a separate Pointer#any?
-stub. See TODO for anchors. Refresh after callback ABI or union representation changes.
+[LM-S2-RAW-YIELD-UNION-ABI|typed repair; untyped frontier OPEN 2026-09-05]:
+Known raw callback Proc signatures now govern each union argument: preserve the
+full union, wrap a concrete variant, or unwrap for a payload formal. Build the
+entire plan before emitting it; unknown/ambiguous or incompatible signatures
+keep legacy behavior. Ten MIR guards and two typed no-prelude host runtimes
+pass (numeric baseline 81 -> 0); final HIR/MIR 659/0 with two pending.
+Produced Tuple#reduce's untyped carrier still lacks a Proc descriptor and passes
+ptr to block_proc_668 expecting Path | String, before the Path#join crash.
+The UNTYPED_CALLBACK=1 regression mode retains an actual numeric union through
+a producer: fresh host exits 81; original Crystal exits 0. Literal-only calls
+specialized concrete arguments and did not exercise this boundary. Next carry
+actual callback signatures through HIR, then rerun this fast falsifier before
+bootstrap. Multiargument arrow syntax has a separate HIR arity/type mismatch.
+See TODO for commands and source lineage. Refresh after callback signature
+propagation, raw yield lowering, or union representation changes.
 
 ## Current Tuple reduction boundary
 
