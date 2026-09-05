@@ -29370,6 +29370,13 @@ module Adamas::HIR
       node : Adamas::Compiler::Frontend::DefNode,
       arena : Adamas::Compiler::Frontend::ArenaLike? = @arena,
     ) : Bool
+      # Expansion-local spans do not index the arena's original source. A
+      # coincident original def header can invert class/instance identity.
+      # The retained parser receiver owns this fact for generated definitions.
+      if @macro_generated_parameter_def_ids.includes?(node.object_id.to_u64)
+        return node.receiver.try { |recv| safe_slice_to_string(recv) == "self" } || false
+      end
+
       if source = source_text_for_arena_or_file(arena)
         prefixes = [
           "private abstract def ",

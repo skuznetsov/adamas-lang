@@ -7,6 +7,27 @@ Next: resolve the remaining produced initializer-body mismatch and carry
 untyped callback signatures to the raw-yield boundary behind Path#join. The user objective is a fresh stage2 that can build stage3.
 B4-F remains open.
 
+2026-09-05 MACRO METHOD RECEIVER PROVENANCE (BOUNDED REPAIR).
+Expanded DefNode spans index generated text, but receiver classification read
+an unrelated original-source header first. IO::FileDescriptor's expanded
+self.new registered as #new; an instance caller then supplied its own self as
+fd. For definitions with the existing macro-generation mark, use the retained
+parser receiver. Ordinary source-backed recovery keeps its previous authority.
+Risk: class/instance dispatch identity. Opposite-direction span collisions and
+ordinary source-recovery controls guard against simply preferring every slice.
+DoD: macro_method_receiver_provenance_spec.cr plus
+regression_tests/macro_method_receiver_provenance_repro.sh <compiler>.
+Baseline fails both macro collision guards and runtime exits81; patched receiver suite
+passes61/61 and full HIR/MIR passes1221 examples, zero failures/errors, two
+pending. The original/Adamas runtime now preserves the opened descriptor.
+The regression closes through LibC: IO#close separately starts a worker with
+an invalid function pointer (LLDB GC_inner_start_routine), outside construction.
+Evidence: /private/tmp/adamas-stage3-drive/macro-receiver-{before,after,unit}.log,
+macro-receiver-runtime.log, fd-registration.log and fd-constructor-patched.ll.
+Generated stage validation and full bootstrap remain open. Rollback: receiver
+provenance helper hunk, focused spec and regression script. Refresh after macro
+retention, node provenance, receiver recovery or static-call identity changes.
+
 2026-09-05 TUPLE LITERAL RETURN SCOPE (BOUNDED REPAIR).
 A local tuple inherited the enclosing function's declared tuple return type
 whenever the arity matched. In module_fanout_owner_plan, a {String, String}
