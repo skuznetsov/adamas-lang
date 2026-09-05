@@ -28,11 +28,14 @@ Document contract (hard rules):
 ### 0.1 Frontier
 
 The [current execution plan](compiler_refactor_architecture_plan.md#0-current-execution-plan)
-integrates reliability and architecture priorities. The current grouped-union
-repair produces stage2 in 295.82s under a 420s diagnostic allowance and fixes
-literal defaults; plain compilation and the HIR::Phi#incoming pre-scan remain
-open. B-GROUPED-NULLABLE in the falsifier matrix guards type identity and Proc /
-generic boundaries. This is not canonical B4-F/resource promotion. Older R0
+integrates reliability and architecture priorities. Grouped-union normalization
+repairs literal defaults; the Phi cross-block pre-scan now uses the existing
+indexed API and all six produced grouped-nullable runtimes pass. Plain and
+explicit-initializer compilation still crash; Pointer(self) now reaches a
+runtime ::Pointer(Probe).null stub. The latest stage2 takes 318.59s under a 420s
+diagnostic allowance. B-GROUPED-NULLABLE and B-PHI-PRESCAN guard type identity,
+Proc/generic boundaries, and ARC input lifetime. This is not canonical
+B4-F/resource promotion. Older R0
 source/artifact rows below retain historical scope; their "current-source"
 labels refer to those runs, not this checkout.
 

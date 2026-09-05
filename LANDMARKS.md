@@ -23,14 +23,19 @@ Fresh stage2 (295.82s diagnostic) passes both original literal-default runtimes.
 See TODO for source/binary hashes and commands. Refresh on normalization,
 annotation, or descriptor-identity changes; no general ABI or B4-F closure.
 
-[LM-S2-PHI-INCOMING-PRESCAN|OPEN 2026-09-05]:
-Produced `HIR::Phi#incoming` aborts from hir_to_mir's cross-block pre-scan.
-The sibling pending-phi path already uses canonical incoming_size/value_at APIs.
-A tiny nullable-return function reaches the stub without macros or pointers.
-Simple namespaced is_a? getter control passes, refuting a general narrowing
-failure as established root. Next: test existing indexed API at this consumer,
-preserving every cross-block input and ARC lifetime protection. Plain and
-explicit-initializer compile crashes remain separate residuals.
+[LM-S2-PHI-INCOMING-PRESCAN|bounded repair 2026-09-05]:
+The cross-block pre-scan now uses existing incoming_size/incoming_value_at.
+Fresh stage2 removes both bare HIR::Phi#incoming calls and its abort stub; all
+six grouped nullable runtimes change compiler abort 134 to runtime 0.
+A registered managed-type MIR guard retains both Phi inputs while decrementing
+an unused reference in the same branch; an unregistered-type guard was vacuous
+and rejected. Fifty focused MIR/HIR checks pass. Simple namespaced is_a? getter
+control passes, so general narrowing failure is not established as the root.
+Stage2 builds in 318.59s (diagnostic); no-prelude passes, plain compilation
+crashes. Pointer(self) now compiles but runtime reaches ::Pointer(Probe).null
+stub. Explicit initializer and forced-proc compile crashes remain separate.
+See TODO for hashes/commands. Refresh on Phi storage/API, ARC, or method-target
+lowering changes; no general alias/demand or B4-F closure.
 
 ## Current Tuple reduction boundary
 

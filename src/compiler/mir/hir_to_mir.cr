@@ -4509,8 +4509,8 @@ module Adamas
           hir_block.instructions.each do |inst|
             if inst.is_a?(HIR::Phi)
               incoming_idx = 0
-              while incoming_idx < inst.incoming.size
-                _from_block, value_id = inst.incoming.unsafe_fetch(incoming_idx)
+              while incoming_idx < inst.incoming_size
+                value_id = inst.incoming_value_at(incoming_idx)
                 incoming_idx += 1
                 @cross_block_values << value_id
               end

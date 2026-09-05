@@ -119,11 +119,14 @@ passes no-prelude interpolation, but plain compilation still crashes. The defaul
 Flatten enclosing union groups while preserving generic and arrow Proc boundaries.
 Six identity/layout guards and six no-prelude host runtimes pass; HIR/MIR is
 640/0 with two pending. Fresh stage2 builds in 295.82s under the diagnostic
-allowance and passes both original literal-default cases. The next internal
-consumer is hir_to_mir's cross-block Phi pre-scan, which still calls a bare
-HIR::Phi#incoming stub. Test its existing indexed API without weakening ARC
-lifetime protection; then classify the plain and initializer crashes. Diagnostic
-timings do not close canonical B4-F/resource obligations.
+allowance and passes both original literal-default cases. The cross-block Phi
+pre-scan now reuses its existing indexed API. Fifty
+focused MIR/HIR checks pass, including an ARC positive cleanup control, and a
+fresh stage2 removes the bare Phi getter stub. All six produced grouped-nullable
+runtimes pass. That build takes 318.59s; no-prelude smoke passes, plain compilation
+still crashes. Pointer(self) advances to a runtime ::Pointer(Probe).null stub.
+Next classify that demand boundary and the plain/initializer/forced-proc compile
+crashes. Diagnostic timings do not close canonical B4-F/resource obligations.
 See `TODO.md` for exact provenance and claim boundaries.
 The genuine-union operator return pointer also remains: the ordinary-call
 control splits union arguments, while `emit_binary_call` selects once with the

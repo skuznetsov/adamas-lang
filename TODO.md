@@ -3,9 +3,55 @@
 Current action order: [integrated execution plan](docs/compiler_refactor_architecture_plan.md#0-current-execution-plan).
 Both regression runners reject failed processes and compile into fresh,
 supervised outputs. The matched combined baseline is 33/37 on both sides.
-Next: remove the produced-stage HIR::Phi#incoming stub at the cross-block
-pre-scan, then classify the plain/explicit-initializer/forced-proc crashes.
-The accessor literal payload defect is closed on a fresh stage2; B4-F is open.
+Next: classify the produced plain/explicit-initializer/forced-proc crashes and
+Pointer(Probe).null demand. Grouped nullable payloads and the Phi pre-scan stub
+are repaired on fresh stage2; B4-F remains open.
+
+2026-09-05 PHI CROSS-BLOCK PRE-SCAN: USE THE EXISTING INDEXED API.
+The produced grouped-nullable suite aborted even in its flat control:
+hir_to_mir's pre-scan emitted the bare HIR::Phi#incoming getter with no body.
+Reuse Phi.incoming_size/incoming_value_at, already used by the pending-phi
+consumer. Phi constructor/add_incoming maintain these indexed arrays. This
+preserves all incoming values in the cross-block set used by ARC cleanup.
+Scope: this internal compiler consumer, not general alias/narrowing resolution.
+Risk: CAUTION (ARC lifetime); rollback is the isolated two-line consumer patch.
+
+DoD executed: 50 MIR/grouped HIR examples pass, including the new ownership
+control. Both Phi inputs survive; an unused managed reference in the same branch
+is decremented. The initial guard without register_class_types was vacuous
+because no ARC cleanup ran; the positive cleanup control refuted it and the
+registered-type guard now passes. This test guards semantics, not unique
+execution of the dedicated pre-scan: the general used-values path also protects
+Phi inputs. The produced-stage abort is the regression's RED discriminator.
+
+Fresh frozen-source stage2 builds in 318.59s under a 420s diagnostic allowance.
+Bare HIR::Phi#incoming references change from 3 (two calls and the stub body) to
+0, with no replacement bare indexed-method stub. All six produced grouped
+nullable runtime cases now pass (previously all aborted 134). Host grouped six,
+accessor seven, and class-union accumulator controls pass. Produced accessor
+literal/method/rejection controls stay green; Pointer(self) now compiles but its
+binary reaches a distinct ::Pointer(Probe).null stub (134). Explicit initializer,
+plain smoke, and class-union accumulator still crash during compilation (139).
+Exact no-prelude smoke passes. Concurrent checks and unavailable RSS/FD sampling
+make this a diagnostic build, not a performance or resource certificate.
+
+Verification commands (all child binaries supervised by run_safe.sh):
+- crystal spec spec/mir/hir_to_mir_spec.cr spec/mir/phi_cross_block_prescan_spec.cr
+  spec/hir/grouped_union_type_spec.cr (CRYSTAL_WORKERS=1; 180s/12288MB envelope)
+- scripts/build_bootstrap_stages.sh --out <fresh> --stages 2 --timeout 420 --mem 12288
+- bash regression_tests/grouped_nullable_union.sh <fresh-s1-or-s2>
+- bash regression_tests/nested_accessor_defaults.sh <fresh-s1-or-s2>
+- bash regression_tests/macro_yield_accumulator_types.sh <fresh-s1-or-s2> --class-union
+
+Matching source endpoints: ast_to_hir SHA256
+03749caa43c693276ba498ef7c756004a82c68544a515f08b981fcf3eacd450a;
+hir_to_mir cbeeb71f70d8b36d30f35262926520fa0808fe14ff25ed099007f70ec63ba1eb.
+Produced binary 96d8ba4ff808c698478de44317f23b24b7744e9148e70f7da749b42065d618d3.
+Evidence: /private/tmp/adamas-nested-nullable/ (bootstrap-phi/,
+phi-mir-guard.log, grouped-phi-host/produced.log, accessor-phi-host/produced.log,
+accumulator-phi-host/produced.log). Adversary: ROBUST for this consumer and ARC
+guard; no general method-demand or B4-F closure. Refresh after Phi storage/API,
+pre-scan/ARC, or produced method-target lowering changes.
 
 2026-09-05 GROUPED NULLABLE UNION: PRESERVE ONE RUNTIME TAG.
 A no-prelude function returning `(Int64 | Nil)?` compared guarded `42_i64`
