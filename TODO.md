@@ -7,6 +7,20 @@ Next: resolve the remaining produced initializer-body mismatch and carry
 untyped callback signatures to the raw-yield boundary behind Path#join. The user objective is a fresh stage2 that can build stage3.
 B4-F remains open.
 
+2026-09-05 SIGNATURE CANDIDATE STRING TRANSPORT (BOUNDED REPAIR).
+Generated Set(String)#each erased a candidate to Pointer, and signature-name
+selection emitted Pointer#size. Bind each candidate to an explicit String
+local in both resolver scans; values and traversal order stay unchanged.
+DoD: spec/hir/signature_candidate_type_transport_spec.cr passes1/1, covering
+namespace selection, shortest-name choice and the empty-set fallback.
+Fresh signature-string stage2 builds286.76s, passes NP smoke and contains no
+Pointer#size target. Plain compilation advances to the independently repaired
+local-tuple scope failure. Evidence: /private/tmp/adamas-stage3-drive/
+signature-check.log, signature-string-bootstrap and signature-string-plain.lldb.log.
+This is a compiler-source type-preservation repair; general generic callback
+inference and stage3 remain open. Rollback: the two typed-local resolver hunks
+and focused spec. Refresh after callback typing or signature lookup changes.
+
 2026-09-05 MACRO METHOD RECEIVER PROVENANCE (BOUNDED REPAIR).
 Expanded DefNode spans index generated text, but receiver classification read
 an unrelated original-source header first. IO::FileDescriptor's expanded

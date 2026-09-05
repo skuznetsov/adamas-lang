@@ -58486,9 +58486,13 @@ module Adamas::HIR
       prefix = "#{namespace}::"
       best : String? = nil
       candidates.each do |candidate|
-        next unless candidate.starts_with?(prefix)
-        if best.nil? || candidate.size < best.not_nil!.size
-          best = candidate
+        # Generic Set#each can erase T to Pointer in bootstrap HIR even when
+        # this receiver is Set(String). The declaration restores String method
+        # dispatch without changing the value or iteration order.
+        candidate_name : String = candidate
+        next unless candidate_name.starts_with?(prefix)
+        if best.nil? || candidate_name.size < best.not_nil!.size
+          best = candidate_name
         end
       end
       best
@@ -58634,8 +58638,11 @@ module Adamas::HIR
         # their normal fallback path without a throwing collection operation.
         shortest : String? = nil
         candidates.each do |candidate|
-          if shortest.nil? || candidate.size < shortest.not_nil!.size
-            shortest = candidate
+          # Keep the final scan on the same explicit String path as the
+          # namespace scan above; no collection or allocation behavior changes.
+          candidate_name : String = candidate
+          if shortest.nil? || candidate_name.size < shortest.not_nil!.size
+            shortest = candidate_name
           end
         end
         return shortest
