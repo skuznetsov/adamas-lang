@@ -91190,6 +91190,9 @@ module Adamas::HIR
                                                      else
                                                        apply_default_args(ctx, args, method_name, arg_binding_full_method_name, has_block_call, has_named_args, receiver_id)
                                                      end
+      # Allocator calls use positional ABI slots after named/default binding,
+      # but selecting their initializer still requires the bound named shape.
+      allocator_has_named_args = has_named_args
       has_named_args = false if constructor_arg_binding_name
       debug_lower_call_trace(
         method_name,
@@ -93317,7 +93320,7 @@ module Adamas::HIR
               class_name,
               class_info,
               arg_types,
-              call_has_named_args: has_named_args,
+              call_has_named_args: allocator_has_named_args,
               call_has_block: !!has_block_call,
               call_named_arg_names: call_named_arg_names
             )

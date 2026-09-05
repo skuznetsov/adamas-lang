@@ -1,6 +1,6 @@
 # Crystal V2 Compiler Refactor Architecture Plan
 
-> Status: runner, bounded MIR, and selected-ancestor HIR repairs implemented; pre-HIR combined baseline 33/37; B4-F open (2026-09-04).
+> Status: runner, bounded MIR, and selected-ancestor and constructor-shape HIR repairs implemented; pre-HIR combined baseline 33/37; B4-F open (2026-09-04).
 > Section 0 integrates the current reliability and architecture work. Its
 > implementation steps are not completed by this document. Sections 1-9 retain
 > the original staged refactor design (2026-04) as a deferred reference;
@@ -88,6 +88,31 @@ The final same-source bootstrap builds stage2 in 302.57s and passes its
 no-prelude smoke, but stage2 crashes compiling the plain smoke (exit 139).
 The B4-F time, exact-smoke, and complete-resource obligations remain open;
 `TODO.md` records the manifest, observed RSS, unknown FD coverage, and next probe.
+
+The next reliability defect is now reduced and repaired at constructor
+selection. A no-prelude enum macro exposed Parser.new losing its named-call
+shape after argument binding, selecting an initializer that allocated a foreign
+arena. The narrow repair preserves the post-default shape for allocator
+selection while retaining positional ABI slots. The new HIR test passes both
+with the working-tree base and without the pre-existing user source patch;
+the full HIR suite is now 564/0 with two pending, and MIR is 43/0. A no-prelude
+runtime reducer checks alias identity and named Bool forwarding. Canonical stage2
+classification remains red: a 300s timeout produced no executable; fresh stage1
+passes both smokes. A separate 420s diagnostic produces stage2 in about 312s
+according to its phase profile. That stage now passes the no-prelude enum-macro
+reducer and exact interpolation smoke; generated LLVM preserves all four Parser
+initializer parameters. Full plain compilation instead reaches a Path#join block
+that calls Thread#join. Reduce that receiver/target mismatch next, retaining the
+separate HIR Phi stub and the >300s build cost as open obligations. See `TODO.md`
+for exact provenance and claim boundaries.
+The genuine-union operator return pointer also remains: the ordinary-call
+control splits union arguments, while `emit_binary_call` selects once with the
+unsplit union. Direct helper reuse is refuted as sufficient: it retains the
+unsplit receiver and emits only two argument branches even for larger unions;
+the existing receiver dispatcher excludes all-reference class unions. The next
+candidate must resolve concrete receiver/argument pairs without re-evaluating
+either operand and cover all three ArenaLike variants. Require a HIR check for
+receiver compatibility and complete coverage before a runtime promotion claim.
 
 ### 0.2 Causal model and alternatives
 

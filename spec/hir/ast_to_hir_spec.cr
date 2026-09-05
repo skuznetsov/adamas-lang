@@ -12222,6 +12222,54 @@ describe Adamas::HIR::AstToHir do
       allocator_text.should contain("Channel(Int32)#initialize$Int32(%0)")
     end
 
+    it "preserves all arguments of a union positional constructor with a named tail" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        module NamedTailConstructor
+          class Token
+          end
+          class First
+          end
+          class Second
+          end
+          alias Choice = First | Second
+
+          class Holder
+            @choice : Choice
+            @enabled : Bool
+
+            def initialize(token : Token, *, enabled : Bool = false)
+              @choice = First.new
+              @enabled = enabled
+            end
+
+            def initialize(token : Token, @choice : Choice, *, @enabled : Bool = false)
+            end
+          end
+        end
+
+        NamedTailConstructor::Holder.new(
+          NamedTailConstructor::Token.new,
+          NamedTailConstructor::Second.new,
+          enabled: true
+        )
+      CRYSTAL
+
+      allocator = converter.module.functions.find do |function|
+        function.name.starts_with?("NamedTailConstructor::Holder.new$") &&
+          function.params.size == 3
+      end.not_nil!
+      call = allocator.blocks.flat_map(&.instructions).compact_map do |instruction|
+        instruction.as?(Adamas::HIR::Call).try do |candidate|
+          candidate if candidate.method_name.starts_with?("NamedTailConstructor::Holder#initialize")
+        end
+      end.first
+      initializer = converter.module.function_by_name(call.method_name).not_nil!
+      initializer.params.map(&.name).should eq(["self", "token", "choice", "enabled"])
+      initializer.params.last.type.should eq(Adamas::HIR::TypeRef::BOOL)
+      call.args.size.should eq(3)
+      hir_text(initializer).should_not contain("NamedTailConstructor::First.new")
+    end
+
     it "keeps positional constructor overloads ahead of protected named-only initializers" do
       converter = lower_program_with_main(<<-CRYSTAL)
         class SetShape

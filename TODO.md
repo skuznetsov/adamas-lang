@@ -3,7 +3,95 @@
 Current action order: [integrated execution plan](docs/compiler_refactor_architecture_plan.md#0-current-execution-plan).
 Both regression runners now reject failed processes and compile into fresh,
 supervised outputs. The matched combined baseline is 33/37 on both sides;
-next: trace the genuine-union argument dispatch mismatch; B4-F remains open.
+next: reduce the produced-stage Path#join -> Thread#join target mismatch;
+retain the genuine-union argument probe and measured build-cost frontier. B4-F is open.
+
+2026-09-04 CONSTRUCTOR SHAPE: PRESERVE NAMED SELECTION AFTER ABI BINDING.
+The stage2 plain-smoke crash reduces to a no-prelude enum with a macro `if`.
+Its roots come from a Parser that allocated a different AstArena from the one
+returned by `parse_macro_literal_program`. Generated LLVM calls a three-parameter
+initializer through `Parser.new(Lexer, AstArena, recovery_mode: true)`, loading
+an i1 from the arena argument; the required initializer has four parameters
+including self. The failure starts at constructor selection, before AST access.
+
+`lower_call` reordered named/default values into positional allocator slots and
+cleared `has_named_args`. `generate_allocator_overload` recovered the correct
+named-only initializer on retry, then discarded it because its consumer still
+saw a positional call. Preserve the post-default named-call signal specifically
+for allocator selection; keep positional ABI lowering unchanged. No arena
+bounds fallback, general resolver change, or new registry is involved.
+
+The HIR regression was RED: initializer parameter names were self/token/enabled
+instead of self/token/choice/enabled. It now passes, including on Git HEAD plus
+only this repair, with all 37 pre-existing user source lines removed for that
+isolated ablation. The unchanged user patch plus no repair was the RED control;
+the compatibility branch alone did not solve the failure. The user's source
+and spec changes remain outside the implementation commit.
+
+DoD: `CRYSTAL_WORKERS=1 scripts/run_safe.sh /opt/homebrew/bin/crystal 180 12288 spec spec/hir/ast_to_hir_spec.cr`:
+564 examples, zero failures/errors, two existing pending. This also resolves the
+previously failing user constructor test. MIR: the same safe command with
+`spec/mir/hir_to_mir_spec.cr`, 43 examples, zero failures/errors/pending.
+`regression_tests/constructor_union_named_identity.sh <fresh-compiler>` compiles
+with `--no-prelude`, expands an enum macro through the real parser, and checks
+the supplied marker, named Bool, and shared identity after mutation. The final
+script is compile 0/runtime 7 on the old stage1, compile 139 on the old stage2,
+and compile 0/runtime 0 on fresh stage1 and original Crystal's empty prelude.
+Controls omitting the named tail, using a concrete annotation, qualifying the
+union alias, passing false, and removing the shorter overload all compile/run
+0/0. The existing sparse typed-inequality regression remains green.
+Adversary: ROBUST for retaining the bound constructor shape; unrelated union
+operator dispatch remains open. The full HIR suite covers positional optional,
+protected named-only collision, generic identity, and block-constructor guards.
+
+Source SHA256: `b5440cb3ff272c2c30cf586ab2fcaa4cf0ed8d3a1732d1638d49456baa525d9b`.
+Evidence: `/private/tmp/adamas-stage2-plain._vo851c6/`. Canonical bootstrap:
+`scripts/build_bootstrap_stages.sh --out <fresh-parent>/run --stages 2 --timeout 300 --mem 12288`.
+Source start/end hashes match. Stage1 builds in 19.14s and passes both smokes;
+stage2 is stopped by the 300s timeout (exit 143, measured wrapper wall 306.12s),
+with no binary or LLVM artifact. Neither stage2 smoke ran. The offline validator
+rejects with `reason=manifest_status`; observed RSS and FD coverage are unknown.
+Run: `/private/tmp/adamas-constructor-bootstrap.i8p78h66/run`. This classifies
+the repair without closing B4-F.
+
+A separate 420s diagnostic using this fresh stage1 and `--debug-profile` builds
+stage2 successfully (compiler-profile total 312.04s: HIR 199.37s, MIR phase
+34.57s, LLVM 58.31s, final compile 11.21s). This is a diagnostic observation,
+not a controlled performance comparison or the normal-build <=300s gate.
+Stage2 SHA256: `010f27d332c673ffc3a0c6d7e06b59d4224ab1781b85785828cf9bdad1e7765b`.
+Run: `/private/tmp/adamas-constructor-profile.u9qpjegh/`; source SHA256 unchanged.
+
+The generated Parser allocator now forwards `(self, lexer, arena, recovery_mode)`
+to the four-parameter initializer. The old `load i1, ptr %arena` mismatch is gone.
+`regression_tests/constructor_union_named_identity.sh <diagnostic-stage2> --enum-only`
+passes compile/runtime 0/0; the identical script on old stage2 fails compile139.
+This no-prelude case expands the macro and checks its exact member value without
+introducing a separate phi-lowering obligation. The exact no-prelude interpolation
+smoke also passes. The larger identity script still fails on produced stage2,
+and a ternary enum-value check reaches `STUB CALLED: HIR$CCPhi$Hincoming` (134).
+These results do not certify general produced-stage constructor compilation.
+
+The plain smoke still fails compile139, now in a different consumer. Supervised
+LLDB shows `Thread#join <- __crystal_block_proc_664 <- Tuple(Path|String,Path|String)#reduce
+<- Path#join <- Path.new <- File.join <- index_lazy_enum_candidates_for_dir`.
+Next: reduce that closure's Path receiver and join target against the original
+Crystal declaration before changing resolver fallback. The genuine-union binary
+operator investigation remains a separate return pointer; neither is closed by
+this constructor repair. Numeric resource coverage remains unknown for the
+profiled build, even though the separately supervised debugger observes its own
+bounded process tree.
+
+Union return-pointer audit: direct reuse of `try_emit_union_arg_dispatch` is
+insufficient. Its target lookup keeps one receiver family and its emitted calls
+reuse the unsplit receiver; it also emits only `vo[0]` and `vo[1]` despite
+accepting more than two argument variants. Existing receiver dispatch rejects
+all-reference class unions. A future repair must preserve both already-lowered
+operands, resolve concrete receiver/argument pairs, and cover every ArenaLike
+variant. The next HIR falsifier must check concrete receiver compatibility and
+complete branch coverage, not just the presence of warmed typed method bodies.
+These are source-backed constraints, not an implemented union repair.
+Temporary logs expire on cleanup/reboot. Constructor binding, initializer
+selection, declaration, or source changes require refreshing this evidence.
 
 2026-09-04 TYPED INEQUALITY: PRESERVE THE SELECTED ANCESTOR CONTRACT.
 The sparse no-prelude witness in

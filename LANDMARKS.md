@@ -1,6 +1,6 @@
 # LANDMARKS
 
-Updated: 2026-07-14
+Updated: 2026-09-04
 Context: compiler/bootstrap/stage2-stability
 
 This file is the active working set only. Historical landmarks before this
@@ -10,7 +10,28 @@ checkpoint remain recoverable from git history, especially:
 - archived full-file SHA256:
   `d43826fdcc2277b6075026244764a84d0069d1a30b675642b603f3511b14a1e5`
 
-## Active Bootstrap Gate
+## Current constructor boundary
+
+[LM-CONSTRUCTOR-NAMED-SHAPE|bounded repair 2026-09-04]:
+Named/default argument binding turns allocator values into positional ABI slots;
+it must not erase the named-call signal consumed by initializer selection.
+Otherwise the named retry can find the correct union initializer and its next
+consumer discards that result as a positional/named-only mismatch. The Parser
+then creates a different arena, pairing external-arena identity with foreign
+AST roots. The no-prelude identity reducer changes runtime exit 7 to 0; HIR
+preserves all initializer parameters, including in a patch-only clean-HEAD
+ablation. A produced diagnostic stage2 now passes the no-prelude enum-only
+macro reducer that crashed the old stage2; its LLVM forwards all four Parser
+initializer parameters. Arena bounds masking and the existing compatibility
+patch alone are refuted fixes for this shape. See the current `TODO.md` entry for commands,
+source identity, controls, and fresh bootstrap classification. Recheck after
+changes to default binding, initializer selection, or the declarations involved.
+This does not certify general union-operator dispatch or complete bootstrap.
+The successor plain-smoke stack is Path#join's closure calling Thread#join;
+retain it separately from the original NodeSlot/foreign-arena failure. The
+canonical 300s build times out; the larger diagnostic is not a B4-F certificate.
+
+## Historical bootstrap checkpoint (2026-07-14)
 
 [LM-S2-TUPLE-HASH-RECEIVER-ABI|narrow root CLOSED, bootstrap successor OPEN 2026-07-14 {F:0.94 G:0.61 R:0.86}]:
 `Hash#key_hash` selected a generic `Tuple#hash(Crystal::Hasher)` target by
