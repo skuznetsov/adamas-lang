@@ -3142,7 +3142,10 @@ module Adamas::HIR
       return nil if type_ref.null_ptr?
       return nil if type_ref.id < TypeRef::FIRST_USER_TYPE
       idx = (type_ref.id - TypeRef::FIRST_USER_TYPE).to_i32
-      @types[idx]?
+      # Keep descriptor identity when this lookup runs in a generated compiler;
+      # nullable generic Array lookup can select an unrelated fetch owner.
+      return nil unless 0 <= idx < @types.size
+      @types.unsafe_fetch(idx)
     end
 
     def to_s(io : IO) : Nil

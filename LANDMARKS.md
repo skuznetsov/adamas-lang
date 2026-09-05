@@ -12,6 +12,15 @@ checkpoint remain recoverable from git history, especially:
 
 ## Current produced-stage successor
 
+[LM-HIR-DESCRIPTOR-LOOKUP|bounded repair 2026-09-05]:
+Generated nullable descriptor-array fetch erased live user TypeRefs to Unknown.
+An explicitly bounded unsafe_fetch preserves descriptor identity and returns
+nil for primitive or OOB references. Focused guards pass2/2; the combined fresh
+stage2 retains concrete Proc union descriptors. Arithmetic-wide callback guards
+pass while direct wide literals remain separately wrong. No global Array fetch
+repair or stage3 closure is claimed. TODO records source identity and evidence.
+Refresh after descriptor indexing, TypeRef identity or Array lowering changes.
+
 [LM-INLINE-CALLER-FRAME-LOOKUP|bounded repair 2026-09-05]:
 Generated nullable caller-frame lookup returned null for a live frame and
 recursively lowered the same active yield block. Five reads now share a bounded

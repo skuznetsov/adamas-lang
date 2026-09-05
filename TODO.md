@@ -31,6 +31,24 @@ find-def-isolated-bootstrap, find-def-isolated-np.log, find-def-baseline-np.log
 and find-def-unit-final.log. Refresh on definition maps, instruction storage,
 indexed access or value_ref changes.
 
+2026-09-05 HIR DESCRIPTOR LOOKUP (BOUNDED REPAIR).
+Generated Module#get_type_descriptor used a nullable Array read whose wrongly
+specialized fetch returned unconditional null, erasing valid user TypeRefs to
+Unknown. Check the descriptor index explicitly and read with unsafe_fetch;
+primitive/null/out-of-range references retain nil. The same bad generated read
+exists before the callback changes, so this is not a callback-registry defect.
+DoD: scripts/run_safe.sh crystal 120 8192 spec spec/hir/type_descriptor_lookup_spec.cr
+passes2/2, including two live identities, builtin and out-of-range references.
+Frozen indexed-reads stage2 retains concrete Int32|Int64 callback descriptors;
+strict Proc validation passes. Numeric callback guards also pass when the wide
+value is formed arithmetically, isolating a separate wide-literal defect.
+Evidence: indexed-reads-descriptor-guards.log, callback-arithmetic-static.log,
+callback-arithmetic-typed.log under /private/tmp/adamas-stage3-drive.
+Module source SHA256: 6faa4242b715a1f78fdb679ed3c940d8fd116480adb3f8e510e93368c6964ebe.
+The snapshot includes other pending compiler changes. General Array#fetch owner
+selection and stage3 remain open. Rollback: this lookup hunk and focused spec.
+Refresh after descriptor indexing, TypeRef identity or Array lowering changes.
+
 2026-09-05 INLINE CALLER-FRAME LOOKUP (BOUNDED REPAIR).
 A generated nullable Array(Hash(String, UInt32)) read returned null for a live
 caller frame. The fallback re-lowered the same block with its yield context
