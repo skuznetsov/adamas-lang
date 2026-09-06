@@ -14,8 +14,6 @@ lib LibC
   fun strtol(text : UInt8*, end_ptr : UInt8**, base : Int32) : Int64
   fun getpid : Int32
   fun memset(buffer : Void*, value : Int32, size : UInt64) : Void*
-  fun getpid : Int32
-  fun memset(buffer : Void*, value : Int32, size : UInt64) : Void*
   fun exit(status : Int32) : NoReturn
 end
 

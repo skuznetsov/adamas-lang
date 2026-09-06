@@ -1,5 +1,15 @@
 # Adamas Bootstrap TODO
 
+2026-09-06 POINTEROF CANONICAL STORAGE (HOST AND CFG GUARDS).
+Address-taken SSA values are now seeded at their producer; parameters are
+seeded at entry and Phi results after the complete Phi group. Incoming Phi
+edges read the mutable address cell instead of a stale constant/spill.
+This removes the sibling-branch uninitialized Char#to_s(IO) load. Exact Char
+bytes, conditional mutation, parameters, loop/repeated address, two-Phi and
+external-writeback regressions pass with the fresh frozen S1. All 91 selected
+MIR/LLVM examples pass. Source S2/S3 validation is running; aggregate ABI
+adaptation beyond these scalar/pointer guards is not newly admitted.
+
 2026-09-06 NAMED COLLECTION LOWERING (HOST VERIFIED).
 Custom array-form literals now construct their named receiver and append each
 element instead of silently producing Array storage. Explicit and inferred

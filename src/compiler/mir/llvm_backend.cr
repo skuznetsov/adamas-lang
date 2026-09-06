@@ -15066,6 +15066,7 @@ module Adamas::MIR
       emit_raw "fn_entry:\n"
       STDERR.puts "[EMIT_FUNCTION_TRACE] func=#{func.name} phase=entry_hoisted_allocas" if emit_function_trace
       entry_hoisted_alloca_names = emit_hoisted_allocas(func)
+      seed_addressable_param_allocas(func)
       emit_dwarf_param_debug_values
       emit_dwarf_local_entry_debug_values
       emit_dwarf_local_debug_declares
@@ -15457,9 +15458,14 @@ module Adamas::MIR
           phi = inst
 
           phi.incoming.each do |(pred_block_id, val_id)|
-            # Check if value is cross-block (needs slot)
+            # Address-taken values have a canonical mutable alloca even when
+            # their SSA definition is in the entry block and therefore is
+            # intentionally excluded from cross_block_values.  A phi edge
+            # must read that canonical cell in the predecessor, otherwise
+            # phi mode inlines the pre-mutation SSA value.
             slot_name = @cross_block_slots[val_id]?
-            next unless slot_name
+            addressable = @addressable_allocas.has_key?(val_id)
+            next unless slot_name || addressable
 
             key = phi_predecessor_load_key(pred_block_id, val_id)
 
@@ -17123,6 +17129,16 @@ module Adamas::MIR
       end
       @in_phi_block = false
 
+      # Keep all phi nodes contiguous at the top of the block. Addressable
+      # phi results are seeded immediately after the phi group instead of
+      # from emit_instruction while another phi may still be pending.
+      phi_idx = 0
+      while phi_idx < phi_insts.size
+        phi_inst = phi_insts.unsafe_fetch(phi_idx)
+        seed_addressable_alloca(phi_inst, "%r#{phi_inst.id}")
+        phi_idx += 1
+      end
+
       # Now emit deferred stores for cross-block phi values
       set_default_dwarf_location
       deferred_idx = 0
@@ -17244,15 +17260,28 @@ module Adamas::MIR
         # Only emit loads for THIS block
         next unless pred_block_id == block.id
 
-        # Get the slot for this value
-        slot_name = @cross_block_slots[val_id]?
-        next unless slot_name
+        # Address-taken values use their canonical mutable cell.  Prefer it
+        # over a normal cross-block spill, whose copy is not updated by a
+        # pointerof(...).value write.
+        load_ptr = if @addressable_allocas.has_key?(val_id)
+                     @addressable_allocas[val_id]
+                   elsif slot_name = @cross_block_slots[val_id]?
+                     "%#{slot_name}"
+                   else
+                     next
+                   end
 
         # Emit load from slot - use the ALLOCATION type, not current @value_types
         # This is critical because @value_types may be updated during emission,
         # but the slot was allocated with the prepass type
-        llvm_type = @cross_block_slot_types[val_id]? || "i64"
-        emit "%#{load_name} = load #{llvm_type}, ptr %#{slot_name}"
+        llvm_type = if @addressable_allocas.has_key?(val_id)
+                      val_type = @value_types[val_id]?
+                      val_type ? @type_mapper.llvm_type(val_type) : "i64"
+                    else
+                      @cross_block_slot_types[val_id]? || "i64"
+                    end
+        llvm_type = "ptr" if llvm_type == "void"
+        emit "%#{load_name} = load #{llvm_type}, ptr #{load_ptr}"
         record_emitted_type("%#{load_name}", llvm_type)
         # Always emit an int->ptr view for int-typed cross-block loads.
         # V2 heap-allocates structs, so many Call/ExternCall results are
@@ -17802,6 +17831,13 @@ module Adamas::MIR
       ensure
         @emit_family_tag = previous_emit_family_tag
       end
+
+      # Address-taken locals need one canonical storage cell seeded when their
+      # SSA definition is emitted. Seeding lazily in emit_address_of is wrong
+      # when the address is first taken in a conditional block: a later join
+      # can be emitted before that block and otherwise observes the original
+      # SSA constant (or reloads an uninitialized shadow alloca).
+      seed_addressable_alloca(inst, name) if produces_value && !@in_phi_block
 
       if produces_value
         if inst.is_a?(Phi)
@@ -21769,6 +21805,16 @@ module Adamas::MIR
       end
       # Check for predecessor-loaded value (for cross-block SSA fix)
       if pred_load_name = @phi_predecessor_loads[phi_predecessor_load_key(block, val)]?
+        # An address-taken value is loaded from its canonical mutable alloca
+        # in the predecessor.  Do not let phi mode fall through to a direct
+        # SSA reference, which would discard a pointerof mutation on that
+        # edge.  For aggregate storage the existing type-specific paths below
+        # remain authoritative; the primitive case is the scoped repair.
+        if @addressable_allocas.has_key?(val)
+          addressable_type = @value_types[val]?
+          addressable_llvm_type = addressable_type ? @type_mapper.llvm_type(addressable_type) : nil
+          return "%#{pred_load_name}" if addressable_llvm_type == phi_type
+        end
         # CRITICAL: Use the SLOT ALLOCATION TYPE, not @value_types[val]
         # @value_types may be updated during emission (e.g., nil constant → ptr),
         # but the slot was allocated with the prepass type. The load will use the slot type.
@@ -25336,6 +25382,50 @@ module Adamas::MIR
         backend_function_undefined?(mangled_extern_name, extern_name)
       )
       @called_crystal_functions[mangled_extern_name] = {(return_type == "void" ? "ptr" : return_type), extern_arg_types.size, extern_arg_types}
+    end
+
+    private def seed_addressable_alloca(inst : Value, name : String) : Nil
+      # Keep the presence test separate from indexing. The generated compiler
+      # has previously confused nilable Hash#[]? results with missing entries.
+      return unless @addressable_allocas.has_key?(inst.id)
+      alloca_ref = @addressable_allocas[inst.id]
+      return if @addressable_alloca_initialized.includes?(inst.id)
+
+      llvm_type = if @emitted_value_types.has_key?(name)
+                    @emitted_value_types[name]
+                  elsif @value_types.has_key?(inst.id)
+                    @type_mapper.llvm_type(@value_types[inst.id])
+                  else
+                    @type_mapper.llvm_type(inst.type)
+                  end
+      return if llvm_type == "void"
+
+      store_val = name
+      store_val = "null" if llvm_type == "ptr" && store_val == "0"
+      emit "store #{llvm_type} #{store_val}, ptr #{alloca_ref}"
+      @addressable_alloca_initialized << inst.id
+    end
+
+    private def seed_addressable_param_allocas(func : Function) : Nil
+      func.params.each do |param|
+        value_id = param.index
+        next unless @addressable_allocas.has_key?(value_id)
+        next if @addressable_alloca_initialized.includes?(value_id)
+
+        alloca_ref = @addressable_allocas[value_id]
+        llvm_type = if @value_types.has_key?(value_id)
+                      @type_mapper.llvm_type(@value_types[value_id])
+                    else
+                      @type_mapper.llvm_type(param.type)
+                    end
+        llvm_type = "ptr" if llvm_type == "void"
+        next if llvm_type == "void"
+
+        param_name = @value_names.has_key?(value_id) ? @value_names[value_id] : "arg#{value_id}"
+        param_ref = param_name.starts_with?("%") ? param_name : "%#{param_name}"
+        emit "store #{llvm_type} #{param_ref}, ptr #{alloca_ref}"
+        @addressable_alloca_initialized << value_id
+      end
     end
 
     private def emit_address_of(inst : AddressOf, name : String)
