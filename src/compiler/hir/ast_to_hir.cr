@@ -24877,6 +24877,9 @@ module Adamas::HIR
         end
         return type_ref_for_name("NamedTuple(#{entries.join(", ")})")
       when Adamas::Compiler::Frontend::ArrayLiteralNode
+        if custom_name = expr_node.custom_name
+          return infer_named_collection_literal_type(custom_name, expr_node.elements)
+        end
         if of_type = expr_node.of_type
           if type_str = stringify_type_expr(of_type)
             element_name = normalize_declared_type_name(type_str)
@@ -24891,6 +24894,9 @@ module Adamas::HIR
         end
         return type_ref_for_name("Array(String)")
       when Adamas::Compiler::Frontend::HashLiteralNode
+        if custom_name = expr_node.custom_name
+          return infer_named_collection_literal_type(custom_name, [] of ExprId)
+        end
         key_type = if key_type_expr = expr_node.of_key_type
                      type_ref_for_name(normalize_declared_type_name((safe_slice_to_string(key_type_expr) || "")))
                    else
@@ -63646,6 +63652,9 @@ module Adamas::HIR
         # null separately on the lowered value via `mark_as_question_result`.
         return type_ref_for_name(target_name)
       when Adamas::Compiler::Frontend::ArrayLiteralNode
+        if custom_name = value_node.custom_name
+          return infer_named_collection_literal_type(custom_name, value_node.elements) || TypeRef::VOID
+        end
         trace_array_of = if current_class = @current_class
                            debug_env_filter_match?("ADAMAS_TRACE_ARRAY_OF_TYPE", current_class)
                          else
@@ -63691,6 +63700,9 @@ module Adamas::HIR
         end
         return type_ref_for_name("Array(String)") # Default
       when Adamas::Compiler::Frontend::HashLiteralNode
+        if custom_name = value_node.custom_name
+          return infer_named_collection_literal_type(custom_name, [] of ExprId) || TypeRef::VOID
+        end
         if key_type = value_node.of_key_type
           value_type = value_node.of_value_type
           if value_type
@@ -116276,6 +116288,43 @@ module Adamas::HIR
       )
     end
 
+    # Early constant/ivar inference must describe the same container that
+    # lowering constructs. A named literal never has Array/Hash storage just
+    # because its parser node uses an array/hash literal shape.
+    private def infer_named_collection_literal_type(
+      custom_name : ExprId,
+      elements : Array(ExprId),
+    ) : TypeRef?
+      receiver = node_for_expr(custom_name)
+      return nil unless receiver
+      if receiver.is_a?(Adamas::Compiler::Frontend::GenericNode)
+        if type_name = stringify_type_expr(custom_name)
+          return type_ref_for_name(normalize_declared_type_name(type_name))
+        end
+        return nil
+      end
+      return nil if elements.empty?
+      raw_base = resolve_path_like_name(custom_name)
+      return nil if raw_base.nil? || raw_base.empty?
+      lookup_base = raw_base.starts_with?("::") ? strip_absolute_name_prefix(raw_base) : raw_base
+      template_base = resolve_generic_template_base(lookup_base)
+      template = @generic_templates[template_base]?
+      return nil unless template && template.type_params.size == 1
+
+      element_types = [] of TypeRef
+      elements.each do |element_id|
+        return nil if named_collection_splat_element?(element_id)
+        element_type = infer_named_collection_element_type_from_expr(element_id)
+        return nil unless element_type
+        element_types << element_type
+      end
+      inferred_type = union_type_for_value_set(element_types)
+      return nil unless inferred_type
+      inferred_name = get_type_name_from_ref(inferred_type)
+      return nil if inferred_name.empty? || inferred_name == "Void" || inferred_name == "Unknown"
+      type_ref_for_name("#{template_base}(#{inferred_name})")
+    end
+
     private def infer_named_collection_element_type(
       ctx : LoweringContext,
       expr_id : ExprId,
@@ -116291,6 +116340,10 @@ module Adamas::HIR
         end
       end
 
+      infer_named_collection_element_type_from_expr(expr_id)
+    end
+
+    private def infer_named_collection_element_type_from_expr(expr_id : ExprId) : TypeRef?
       if inferred = infer_type_from_expr(expr_id, @current_class)
         return inferred if inferred != TypeRef::VOID
       end

@@ -1,5 +1,16 @@
 # Adamas Bootstrap TODO
 
+2026-09-06 EARLY NAMED COLLECTION IDENTITY (HOST VERIFIED).
+Early constant and ivar inference now preserves the custom receiver rather
+than assigning Array/Hash storage from the parser node shape. A Bag constant
+whose size method returns42 previously read77 from its field (exit11).
+The NP regression now passes explicit/inferred/empty constants, an ivar
+default and an ordinary Array control. Existing named literal, evaluation
+order, rejection and namespace guards pass, alongside26 HIR inference specs.
+The nonempty/ivar control agrees with original Crystal. The helper uses
+concrete expression arrays and shares context-free element inference;
+unknown types remain unknown. Fresh S2/S3 validation is still required.
+
 2026-09-06 POINTEROF CANONICAL STORAGE (HOST AND CFG GUARDS).
 Address-taken SSA values are now seeded at their producer; parameters are
 seeded at entry and Phi results after the complete Phi group. Incoming Phi
