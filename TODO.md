@@ -7,6 +7,21 @@ Next: resolve the remaining produced initializer-body mismatch and carry
 untyped callback signatures to the raw-yield boundary behind Path#join. The user objective is a fresh stage2 that can build stage3.
 B4-F remains open.
 
+2026-09-06 EXACT IEEE FLOAT LITERAL EMISSION (BOUNDED REPAIR).
+Emit Float32/Float64 MIR constants as LLVM hexadecimal IEEE values instead of
+unconstrained decimal to_s output. Integral floats previously produced invalid
+LLVM such as fneg double 7; non-exact Float32 decimals also need the rounded
+Float32-to-Float64 APFloat spelling. Pad hexadecimal digits with String writes:
+the generated IO Char path corrupted zero padding and remains a separate bug.
+DoD: regression_tests/float_literal_ieee_bits_repro.sh <compiler>.
+Host and fresh composite stage2 pass exact payloads for fractional, integral,
+negative and signed-zero Float32/Float64 constants; llvm-as accepts the output.
+All89 backend specs pass. Composite stage2 builds294.03s and passes NP smoke;
+plain smoke and stage3 remain open. Generated numeric conversion still exits11
+and is not covered by this literal representation repair. Rollback: the helper,
+two constant-emission callsites and regression. Refresh after constant storage,
+Float32 rounding, string transport or LLVM literal grammar changes.
+
 2026-09-06 HASH UNION REJECTION DIAGNOSTIC (BOUNDED REPAIR).
 The heterogeneous-hash rejection formatted its branch contracts through
 zip and nested tuple destructuring. Generated stage2 interpreted a tuple as

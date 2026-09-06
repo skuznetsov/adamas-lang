@@ -15947,7 +15947,7 @@ module Adamas::MIR
             type = @type_mapper.llvm_type(const_inst.type)
             value = case const_inst.type
                     when TypeRef::FLOAT32, TypeRef::FLOAT64
-                      const_inst.float_value.to_s
+                      llvm_float_literal(const_inst.type, const_inst.float_value)
                     when TypeRef::BOOL
                       const_inst.bool_value ? "1" : "0"
                     when TypeRef::STRING
@@ -18087,7 +18087,7 @@ module Adamas::MIR
 
       value = case inst.type
               when TypeRef::FLOAT32, TypeRef::FLOAT64
-                inst.float_value.to_s
+                llvm_float_literal(inst.type, inst.float_value)
               when TypeRef::BOOL
                 inst.bool_value ? "1" : "0"
               when TypeRef::NIL, TypeRef::VOID
@@ -29161,6 +29161,26 @@ module Adamas::MIR
       end
 
       val
+    end
+
+    # Emit the exact IEEE payload in LLVM's canonical hexadecimal form.  Plain
+    # decimal text can be rejected by LLVM for integral-valued floats and can
+    # lose signed-zero spelling; this preserves the value supplied by HIR/MIR.
+    # Float32 constants are rounded to Float32 before taking the 64-bit APFloat
+    # spelling required by LLVM for a `float` literal.
+    private def llvm_float_literal(type : TypeRef, value : Float64) : String
+      exact_value = type == TypeRef::FLOAT32 ? value.to_f32.to_f64 : value
+      bits = exact_value.unsafe_as(UInt64)
+      hex = bits.to_s(16).upcase
+      String.build do |io|
+        io << "0x"
+        zeros = 16 - hex.size
+        while zeros > 0
+          io << "0"
+          zeros -= 1
+        end
+        io << hex
+      end
     end
 
     private def union_variant_tokens_for_llvm_union(llvm_type : String) : Array(String)
