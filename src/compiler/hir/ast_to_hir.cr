@@ -75054,12 +75054,6 @@ module Adamas::HIR
 
       # Get argument types for mangling
       arg_types = args.map { |arg| ctx.type_of(arg) }
-      # Bootstrap stability guard: String#inspect (no-arg) super chain currently
-      # risks binding to inspect(io) overloads with nil io. Returning self preserves
-      # non-crashing behavior for error paths that only need a printable key.
-      if class_name == "String" && method_name == "inspect" && args.empty?
-        return emit_self(ctx)
-      end
       previous_base = "#{class_name}##{method_name}_previous"
       if entry = lookup_function_def_for_call(previous_base, args.size, false, arg_types)
         actual_prev_name, actual_prev_def = entry

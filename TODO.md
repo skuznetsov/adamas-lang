@@ -1,5 +1,22 @@
 # Adamas Bootstrap TODO
 
+2026-09-06 STRING INSPECT RESTORES ORDINARY SUPER CONTRACT (HOST VERIFIED).
+Remove the bootstrap super-lowering shortcut that returned String self from
+no-argument inspect. MacroStringValue consumes inspect as Crystal source syntax;
+returning Seven without quotes resolves an enum constant and turns its numeric
+value into a String pointer. Current ordinary Object#inspect -> String.build ->
+String#inspect(IO) passes the former overload/IO crash boundary.
+DoD: string_inspect_super_contract_repro passes on isolated 1dd1b892 minus the
+guard, covering ordinary/empty strings, newline/quote/backslash escaping and
+repeat. Original Crystal agrees; baseline returns11. Both enum reflection
+regression forms pass with the isolated host. Produced unsigned-shift S2 now
+selects member_label correctly, but its old inspect guard emits return Seven.
+Evidence: /private/tmp/adamas-stage3-drive/string-inspect-atomic-guards.log,
+string-inspect-atomic-enums.log, string-inspect-original.log and
+macro-successor-probes/enum_shift_trace.log. Fresh S2 propagation is running;
+S3 remains unbuilt. Refresh after super overload resolution, builder lowering,
+string escaping or macro source rendering changes. Stdlib is unchanged.
+
 2026-09-06 RIGHT SHIFT USES LEFT OPERAND SIGNEDNESS (HOST VERIFIED).
 UInt64 >> Int32 incorrectly selected arithmetic shift because the count was
 signed. Select lshr/ashr from the shifted value, as division/remainder already
