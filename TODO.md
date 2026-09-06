@@ -1,5 +1,20 @@
 # Adamas Bootstrap TODO
 
+2026-09-06 INCLUDED ANNOTATIONS KEEP CONCRETE TYPE IDENTITY (HOST VERIFIED).
+Resolve include arguments in the including owner's lexical namespace before
+lowering module bodies, and key annotation results by substitution generation.
+The first bug resolved record Potential to Comparable::Potential; the second
+reused the first includer's T in another namespace despite correct stored maps.
+DoD: annotation_type_param_cache and nested_module_relative_nullable_annotation
+specs pass (4 examples; baseline direct substitutions fail in both orders).
+The two-namespace record regression and four NP generic-module fetch guards
+pass on isolated ad202a86 plus these two changes. Include normalization alone
+still fails the second namespace, so it is insufficient by itself.
+Evidence: /private/tmp/adamas-stage3-drive/annotation-cache-fixed-spec.log,
+include-owner-cache-atomic-regression.log and include-owner-cache-atomic-generic.log.
+S2/S3 remain open; Comparable equality truthiness is a separate backend gap.
+Refresh after lexical resolution, annotation caching or substitution changes.
+
 2026-09-06 LITERAL MACRO YIELDS AND SOURCE GAPS (HOST VERIFIED).
 Evaluate a StringNode receiver in macro member expansion, so literal .id emits
 code instead of empty text. Preserve the source gap after interpolation in both

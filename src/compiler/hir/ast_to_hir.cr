@@ -20143,7 +20143,10 @@ module Adamas::HIR
               arg_strings << substitute_type_params_in_type_name(self_name)
             end
           elsif str = stringify_type_expr(arg)
-            arg_strings << substitute_type_params_in_type_name(str)
+            substituted = substitute_type_params_in_type_name(str)
+            # Include arguments belong to the including type's lexical context,
+            # before the module method's namespace becomes active during lowering.
+            arg_strings << normalize_declared_type_name(substituted, self_type)
           end
         end
       end
@@ -22284,6 +22287,10 @@ module Adamas::HIR
         io << @module_defs_cache_version
         io.write_byte(0_u8)
         io << @resolved_type_name_cache_epoch
+        io.write_byte(0_u8)
+        # The same lexical signature can be lowered for multiple includers.
+        # Its annotation depends on their active generic substitutions.
+        io << @subst_cache_gen
         io.write_byte(0_u8)
         io << type_name.bytesize
         io.write_byte(0_u8)
