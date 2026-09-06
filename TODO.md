@@ -1,5 +1,18 @@
 # Adamas Bootstrap TODO
 
+2026-09-06 COMPLETED TUPLE RETURN LAYOUT AUTHORITY (HOST VERIFIED).
+Keep the materialized return type of a completed tuple function authoritative
+and synchronize the existing cache before returning it. AST-only re-inference
+previously omitted an early Nil tuple member, so destructuring loaded a union
+tag as a pointer (runtime139). No extra eager lowering is needed.
+DoD: nullable_tuple_return_contract_repro passes Nil-first, value-first and
+explicitly annotated producers, each covering non-Nil, Nil, skipped assignment
+and repeated calls. Exact 0553aba7 baseline crashes; isolated HEAD plus the
+lookup change passes. Evidence: /private/tmp/adamas-stage3-drive/
+tuple-return-authority-baseline.log and tuple-return-authority-regression.log.
+S3 is still unbuilt; propagation through a fresh source-built S2 is in progress.
+Refresh after return inference, call typing or tuple/union layout changes.
+
 2026-09-06 LATE SCALAR BRANCHES PRESERVE CRYSTAL TRUTHINESS (HOST VERIFIED).
 LLVM Branch treated unlowered numeric conditions like C, making cmp0 false in
 Comparable#<= and #>=. Emit the truthy branch for non-Bool integer/floating

@@ -55862,6 +55862,13 @@ module Adamas::HIR
             @function_base_return_types[base_name] = func_rt if name == base_name
             existing_type = func_rt
           end
+          # A completed tuple body owns its element layout. A later AST-only
+          # guess can omit an early Nil return and narrow the caller's layout.
+          if function_state(name).completed? && @module.has_function_with_body?(name)
+            if descriptor = @module.get_type_descriptor(func_rt)
+              return func_rt if descriptor.kind == TypeKind::Tuple
+            end
+          end
         end
         # A concrete typed-symbol cache is identity-specific. Do not refresh it
         # through an arity-only lookup: equal-arity siblings can have different
