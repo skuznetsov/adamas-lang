@@ -1,5 +1,20 @@
 # Adamas Bootstrap TODO
 
+2026-09-06 NULLABLE VIRTUAL OVERRIDE SELECTION (HOST VERIFIED).
+An exact Nil specialization on an ancestor no longer hides a unique descendant
+method whose corresponding parameter accepts Nil through a union. Require equal
+remaining argument and result types; derive self compatibility from the class
+walk. Ignore arity aliases for ambiguity resolution. Incompatible or multiple
+compatible child methods retain the previous exact-ancestor behavior.
+DoD: 50 MIR examples pass, including a previously failing MacroValue-shaped
+selector, distinct self types, inherited Char vs String, other-argument/result
+conflicts and competing nullable child methods with an arity alias.
+macro_nullable_virtual_repro passes three NP runtime guards on isolated
+edbb6d67 plus this MIR patch. Produced S2 verification and S3 remain open.
+Evidence: /private/tmp/adamas-stage3-drive/nullable-baseline-spec.log,
+nullable-adversary-spec.log and nullable-atomic-regression.log.
+Refresh after virtual resolution, type contracts or call coercion changes.
+
 2026-09-06 SIZEOF USES VALUE LAYOUT (HOST VERIFIED).
 Resolve sizeof through the canonical type-expression and inline storage layout
 helpers instead of defaulting every non-primitive to pointer size. Complete

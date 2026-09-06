@@ -8448,6 +8448,14 @@ module Adamas
               end
               return lm
             end
+            # An exact ancestor specialization must not hide a compatible
+            # nullable override on a descendant. Compare parameter contracts,
+            # never just arity or the spelling of the mangled suffix.
+            if current != class_name
+              if override_func = nullable_virtual_override_before(class_name, current, base_method, func)
+                return override_func
+              end
+            end
             return func
           end
 
@@ -8552,6 +8560,58 @@ module Adamas
         end
 
         deferred_typed_fallback
+      end
+
+      private def nullable_virtual_override_before(
+        class_name : String,
+        ancestor : String,
+        base_method : String,
+        inherited : Adamas::MIR::Function,
+      ) : Adamas::MIR::Function?
+        current = class_name
+        seen = ::Set(String).new
+        while current != ancestor && !current.empty? && seen.add?(current)
+          selected = nil.as(Adamas::MIR::Function?)
+          prefix = "#{current}##{base_method}"
+          if functions = @functions_by_class[current]?
+            functions.each do |candidate|
+              next unless same_method_family_name?(candidate.name, prefix)
+              # Arity aliases discard overload identity and cannot break a tie.
+              next if candidate.name.includes?("$arity")
+              next unless compatible_nullable_virtual_override?(candidate, inherited)
+              return nil if selected
+              selected = candidate
+            end
+          end
+          return selected if selected
+          current = @hir_module.class_parents[current]? || ""
+        end
+        nil
+      end
+
+      private def compatible_nullable_virtual_override?(
+        candidate : Adamas::MIR::Function,
+        inherited : Adamas::MIR::Function,
+      ) : Bool
+        return false unless candidate.return_type == inherited.return_type
+        return false unless candidate.params.size == inherited.params.size
+        widened = false
+        # The class walk proves the self relation. Only ordinary arguments
+        # must have identical contracts or accept Nil through a union.
+        index = 1
+        while index < candidate.params.size
+          candidate_type = candidate.params.unsafe_fetch(index).type
+          inherited_type = inherited.params.unsafe_fetch(index).type
+          if candidate_type != inherited_type
+            return false unless inherited_type == TypeRef::NIL
+            descriptor = @mir_module.get_union_descriptor(candidate_type)
+            return false unless descriptor
+            return false unless descriptor.variants.any? { |variant| variant.type_ref == TypeRef::NIL }
+            widened = true
+          end
+          index += 1
+        end
+        widened
       end
 
       # Find a candidate function for a virtual dispatch method by looking at
