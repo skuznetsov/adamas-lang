@@ -21128,13 +21128,22 @@ module Adamas::MIR
             emit "%#{base_name}.bool = fcmp one #{operand_llvm_type} #{operand}, 0.0"
             emit "#{name} = xor i1 %#{base_name}.bool, 1"
           elsif operand_llvm_type.includes?(".union")
-            # For unions, check if type_id != 0 (0 = nil)
+            # For unions, Nil and Bool(false) are falsy; every other variant
+            # is truthy. Keep this in sync with Branch lowering.
             emit "%#{base_name}.union_ptr = alloca #{operand_llvm_type}, align 8"
             emit "store #{operand_llvm_type} #{normalize_union_value(operand, operand_llvm_type)}, ptr %#{base_name}.union_ptr"
             emit "%#{base_name}.type_id_ptr = getelementptr #{operand_llvm_type}, ptr %#{base_name}.union_ptr, i32 0, i32 0"
             emit "%#{base_name}.type_id = load i32, ptr %#{base_name}.type_id_ptr"
             nil_vid = nil_variant_id_for_union_type(operand_llvm_type) || 0
-            emit "%#{base_name}.bool = icmp ne i32 %#{base_name}.type_id, #{nil_vid}"
+            emit "%#{base_name}.non_nil = icmp ne i32 %#{base_name}.type_id, #{nil_vid}"
+            if bool_vid = bool_variant_id_for_union_type(operand_llvm_type)
+              emit "%#{base_name}.is_bool = icmp eq i32 %#{base_name}.type_id, #{bool_vid}"
+              emit "%#{base_name}.payload_ptr = getelementptr #{operand_llvm_type}, ptr %#{base_name}.union_ptr, i32 0, i32 1"
+              emit "%#{base_name}.bool_value = load i1, ptr %#{base_name}.payload_ptr, align 4"
+              emit "%#{base_name}.bool = select i1 %#{base_name}.is_bool, i1 %#{base_name}.bool_value, i1 %#{base_name}.non_nil"
+            else
+              emit "%#{base_name}.bool = add i1 %#{base_name}.non_nil, 0"
+            end
             emit "#{name} = xor i1 %#{base_name}.bool, 1"
           else
             emit "%#{base_name}.bool = icmp ne #{operand_llvm_type} #{operand}, 0"
@@ -28751,7 +28760,17 @@ module Adamas::MIR
           emit "%cond#{c}.type_id_ptr = getelementptr #{union_llvm_type}, ptr %cond#{c}.union_ptr, i32 0, i32 0"
           emit "%cond#{c}.type_id = load i32, ptr %cond#{c}.type_id_ptr"
           emit "%cond#{c}.is_not_nil = icmp ne i32 %cond#{c}.type_id, #{nil_vid}"
-          emit "br i1 %cond#{c}.is_not_nil, label %#{then_block}, label %#{else_block}"
+          truthy = "%cond#{c}.is_not_nil"
+          if bool_vid = bool_variant_id_for_union_type(union_llvm_type)
+            # Crystal truthiness treats Bool(false) like Nil. Other non-Nil
+            # union variants are truthy regardless of their payload.
+            emit "%cond#{c}.is_bool = icmp eq i32 %cond#{c}.type_id, #{bool_vid}"
+            emit "%cond#{c}.payload_ptr = getelementptr #{union_llvm_type}, ptr %cond#{c}.union_ptr, i32 0, i32 1"
+            emit "%cond#{c}.bool_value = load i1, ptr %cond#{c}.payload_ptr, align 4"
+            emit "%cond#{c}.truthy = select i1 %cond#{c}.is_bool, i1 %cond#{c}.bool_value, i1 %cond#{c}.is_not_nil"
+            truthy = "%cond#{c}.truthy"
+          end
+          emit "br i1 #{truthy}, label %#{then_block}, label %#{else_block}"
         elsif (actual_cond_type == "ptr") ||
               (cond_type && @type_mapper.llvm_type(cond_type) == "ptr" && (slot_llvm_type.nil? || slot_llvm_type == "ptr"))
           # Pointer type: compare against null
@@ -29425,6 +29444,30 @@ module Adamas::MIR
         # Strip generic args ($L...$R) and namespace separators ($CC)
         base = v.split("$L").first.split("$CC").last
         return 0 if base == "Nil" || base == "Void"
+      end
+      nil
+    end
+
+    # Return the global discriminator for Bool when a tagged union carries it.
+    # A union's truthiness is false for Nil and Bool(false), and true for every
+    # other variant. The discriminator is the global TypeRef id used by wraps.
+    private def bool_variant_id_for_union_type(llvm_type : String) : Int32?
+      union_ref = find_union_type_ref_for_llvm_string(llvm_type) ||
+                  find_type_ref_for_llvm_type(llvm_type)
+      if union_ref
+        if union_desc = @module.get_union_descriptor(union_ref)
+          if variant = union_desc.variants.find { |entry| entry.type_ref == TypeRef::BOOL }
+            return variant.type_ref.id.to_i32
+          end
+        end
+      end
+
+      # Fallback for an LLVM union emitted before its descriptor is registered.
+      union_variant_tokens_for_llvm_union(llvm_type).each do |variant|
+        # Match the primitive token exactly. A namespaced user type such as
+        # Foo::Bool must not be mistaken for the primitive Bool variant.
+        base = variant.split("$L").first.strip('"')
+        return TypeRef::BOOL.id.to_i32 if base == "Bool"
       end
       nil
     end

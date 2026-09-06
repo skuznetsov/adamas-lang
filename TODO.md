@@ -7,6 +7,24 @@ Next: resolve the remaining produced initializer-body mismatch and carry
 untyped callback signatures to the raw-yield boundary behind Path#join. The user objective is a fresh stage2 that can build stage3.
 B4-F remains open.
 
+2026-09-06 TAGGED UNION BOOL TRUTHINESS (BOUNDED REPAIR).
+LLVM Branch treated every non-Nil union tag as true, so Bool?(false) selected
+the ternary true arm. ClassNode#is_struct consequently chose a nested struct
+name for its enclosing class. Branch and unary Not now inspect the Bool
+payload while retaining Nil=false and every other variant=true, including0.
+Descriptor-free fallback matches the exact Bool token, never Foo::Bool.
+DoD: regression_tests/union_bool_truthiness_repro.sh <compiler> and
+regression_tests/nested_qualified_owner_repro.sh <compiler>.
+The old host/produced ternary oracle exits22; both regressions pass on the
+final host and fresh composite stage2. All89 backend specs pass on the final
+source. A descriptor-free structural adversary rejects the old namespaced
+fallback and passes the final helper. The generated candidate predates only
+that fallback tightening. Stage2 builds294.03s; plain smoke now reports the
+correct Time::Location owner but still rejects its bodyless Array#[]? target.
+Direct stage3 still rejects the Tuple hash Void/Hasher contract in34s.
+Rollback: the two union truthiness consumers, discriminator helper and guards.
+Refresh after discriminator, union payload or condition lowering changes.
+
 2026-09-06 EXACT IEEE FLOAT LITERAL EMISSION (BOUNDED REPAIR).
 Emit Float32/Float64 MIR constants as LLVM hexadecimal IEEE values instead of
 unconstrained decimal to_s output. Integral floats previously produced invalid
