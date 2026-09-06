@@ -1,5 +1,15 @@
 # Adamas Bootstrap TODO
 
+2026-09-06 NAMED COLLECTION LOWERING (HOST VERIFIED).
+Custom array-form literals now construct their named receiver and append each
+element instead of silently producing Array storage. Explicit and inferred
+one-parameter generic receivers, explicit empty collections, complex-expression
+evaluation order and nested namespace identity pass supervised regressions.
+Relative generic lookup no longer strips two bytes from non-absolute names.
+Empty inference, splats and nonempty custom hash literals remain rejected.
+The actual RTA Set literal is restored in the next bootstrap source snapshot;
+produced-stage transport is still pending the fresh ladder.
+
 2026-09-06 NAMED RECEIVER SOURCE SHAPE (HOST GUARDS).
 A bodyless exact receiver target can now use a unique source definition with
 its recorded named arguments. Ordinary signature validation still rejects

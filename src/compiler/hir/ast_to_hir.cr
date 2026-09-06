@@ -75714,7 +75714,11 @@ module Adamas::HIR
         resolved_base_name = resolve_type_alias_chain(resolved_base_name)
       end
 
-      lookup_base_name = strip_absolute_name_prefix(resolved_base_name)
+      lookup_base_name = if resolved_base_name.starts_with?("::")
+                           strip_absolute_name_prefix(resolved_base_name)
+                         else
+                           resolved_base_name
+                         end
       {resolved_base_name, lookup_base_name}
     end
 
@@ -116032,6 +116036,14 @@ module Adamas::HIR
     end
 
     private def lower_array_literal(ctx : LoweringContext, node : Adamas::Compiler::Frontend::ArrayLiteralNode) : ValueId
+      # A tuple-shaped literal with a type receiver (for example
+      # `Set(String){value}`) is represented by the frontend as an
+      # ArrayLiteralNode carrying `custom_name`. Lower named forms through
+      # ordinary calls so the receiver and generic collection type survive.
+      if custom_name = node.custom_name
+        return lower_named_collection_literal(ctx, node, custom_name)
+      end
+
       element_ids = node.elements.map { |e| lower_expr(ctx, e) }
 
       # Determine element type from explicit `of` type, or from elements (or Int32 default)
@@ -116077,7 +116089,345 @@ module Adamas::HIR
       arr.id
     end
 
+    # Lower T{...} as the equivalent sequence:
+    #
+    #   <complex element temporaries>
+    #   tmp = T.new
+    #   tmp << element
+    #   tmp
+    #
+    # Crystal evaluates complex element expressions before constructing T,
+    # while simple variables/literals are evaluated at their append position.
+    # Keep that ordering instead of lowering all elements eagerly. A bare
+    # generic receiver is specialized from the element types before these
+    # runtime expressions are emitted; splats remain fail closed below.
+    private def lower_named_collection_literal(
+      ctx : LoweringContext,
+      node : Adamas::Compiler::Frontend::ArrayLiteralNode,
+      custom_name : ExprId,
+    ) : ValueId
+      # Validate all references before emitting synthetic instructions.  This
+      # keeps a corrupt/foreign arena from leaving a partially expanded
+      # literal in the current function.
+      node.elements.each do |element_id|
+        element_node = node_for_expr(element_id)
+        unless element_node
+          raise LoweringError.new(
+            "cannot lower named collection literal: malformed element arena reference",
+            node,
+          )
+        end
+        if named_collection_splat_element?(element_id)
+          raise LoweringError.new(
+            "cannot lower named collection literal with splat elements yet",
+            node,
+          )
+        end
+      end
+
+      # Explicit receivers keep their source GenericNode. Bare generic names
+      # (for example Set{"module"} or Bag{value}) are specialized from the
+      # already-known AST element types, before any runtime lowering occurs.
+      receiver_id = resolve_named_collection_receiver(ctx, node, custom_name)
+
+      base_name = "__adamas_named_collection_#{node.span.start_offset}_#{ctx.next_id}"
+      temporary_names = Array(String?).new(node.elements.size, nil)
+
+      # Match Crystal's complex_elem_temp_vars: evaluate complex values before
+      # T.new, but leave variables and literals until their append expression.
+      node.elements.each_with_index do |element_id, index|
+        next if named_collection_simple_element?(ctx, element_id)
+
+        temp_name = "#{base_name}_element_#{index}"
+        target_id = named_collection_identifier(node.span, temp_name)
+        assignment_id = @arena.add_typed(
+          Adamas::Compiler::Frontend::AssignNode.new(node.span, target_id, element_id)
+        )
+        lower_expr(ctx, assignment_id)
+        temporary_names[index] = temp_name
+      end
+
+      # Keep construction in the normal call lowering path.  In particular,
+      # a GenericNode receiver such as Set(String) must reach the existing
+      # generic class materialization and allocator selection logic.
+      container_name = "#{base_name}_container"
+      constructor_member = named_collection_member(node.span, receiver_id, "new")
+      constructor_args = [] of Adamas::Compiler::Frontend::ExprId
+      constructor_call = @arena.add_typed(
+        Adamas::Compiler::Frontend::CallNode.new(node.span, constructor_member, constructor_args)
+      )
+      container_target = named_collection_identifier(node.span, container_name)
+      container_assignment = @arena.add_typed(
+        Adamas::Compiler::Frontend::AssignNode.new(node.span, container_target, constructor_call)
+      )
+      lower_expr(ctx, container_assignment)
+
+      node.elements.each_with_index do |element_id, index|
+        element_node = node_for_expr(element_id)
+        unless element_node
+          raise LoweringError.new(
+            "cannot lower named collection literal: malformed element arena reference",
+            node,
+          )
+        end
+        container_ref = named_collection_identifier(node.span, container_name)
+
+        value_id = if temp_name = temporary_names[index]
+                     named_collection_identifier(node.span, temp_name)
+                   else
+                     element_id
+                   end
+        append_member = named_collection_member(node.span, container_ref, "<<")
+        append_args = [] of Adamas::Compiler::Frontend::ExprId
+        append_args << value_id
+        append_call = @arena.add_typed(
+          Adamas::Compiler::Frontend::CallNode.new(node.span, append_member, append_args)
+        )
+        lower_expr(ctx, append_call)
+      end
+
+      lower_expr(ctx, named_collection_identifier(node.span, container_name))
+    end
+
+    # The brace parser can wrap a tuple splat in GroupingNode/TupleLiteralNode
+    # before parse_custom_literal attaches the receiver.  Inspect those
+    # transparent wrappers as well as the direct SplatNode form so the named
+    # collection path never silently treats a splat as one ordinary element.
+    private def named_collection_splat_element?(expr_id : Adamas::Compiler::Frontend::ExprId) : Bool
+      node = node_for_expr(expr_id)
+      return false unless node
+
+      case node
+      when Adamas::Compiler::Frontend::SplatNode
+        true
+      when Adamas::Compiler::Frontend::GroupingNode
+        named_collection_splat_element?(node.expression)
+      when Adamas::Compiler::Frontend::TupleLiteralNode
+        node.elements.any? { |element| named_collection_splat_element?(element) }
+      when Adamas::Compiler::Frontend::UnaryNode
+        operator = String.new(node.operator)
+        operator == "*" || operator == "**"
+      else
+        false
+      end
+    end
+
+    private def resolve_named_collection_receiver(
+      ctx : LoweringContext,
+      literal : Adamas::Compiler::Frontend::ArrayLiteralNode,
+      custom_name : ExprId,
+    ) : ExprId
+      receiver_node = require_named_collection_receiver(literal, custom_name)
+      return custom_name if receiver_node.is_a?(Adamas::Compiler::Frontend::GenericNode)
+
+      # Inference for an empty bare generic literal is ambiguous. Keep this
+      # fail closed rather than falling back to an arbitrary default type.
+      if literal.elements.empty?
+        raise LoweringError.new(
+          "cannot infer generic type arguments for an empty named collection literal (use T(E){})",
+          literal,
+        )
+      end
+
+      raw_base = resolve_path_like_name(custom_name)
+      if raw_base.nil? || raw_base.empty?
+        raise LoweringError.new(
+          "cannot infer generic type arguments for named collection literal: malformed receiver",
+          literal,
+        )
+      end
+      # Keep template discovery independent of the value-level type resolver.
+      # A bare receiver is a type spelling, and resolving it through the full
+      # contextual path can lose the spelling while the current generic table
+      # is being populated during self-hosting. Strip only an absolute prefix,
+      # then use the existing generic-template resolver.
+      lookup_base = raw_base.starts_with?("::") ? strip_absolute_name_prefix(raw_base) : raw_base
+      template_base = resolve_generic_template_base(lookup_base)
+      template = @generic_templates[template_base]?
+      unless template && template.type_params.size == 1
+        raise LoweringError.new(
+          "cannot infer generic type arguments for named collection literal #{raw_base} (use T(E){...})",
+          literal,
+        )
+      end
+
+      element_types = literal.elements.compact_map do |element_id|
+        inferred = infer_named_collection_element_type(ctx, element_id)
+        inferred
+      end
+      if element_types.size != literal.elements.size || element_types.empty?
+        raise LoweringError.new(
+          "cannot infer generic type arguments for named collection literal #{raw_base} (use T(E){...})",
+          literal,
+        )
+      end
+      inferred_type = union_type_for_value_set(element_types)
+      inferred_name = inferred_type ? get_type_name_from_ref(inferred_type) : ""
+      if inferred_name.empty? || inferred_name == "Void" || inferred_name == "Unknown"
+        raise LoweringError.new(
+          "cannot infer generic type arguments for named collection literal #{raw_base} (use T(E){...})",
+          literal,
+        )
+      end
+
+      type_arg = named_collection_identifier(literal.span, inferred_name)
+      @arena.add_typed(
+        Adamas::Compiler::Frontend::GenericNode.new(literal.span, custom_name, [type_arg])
+      )
+    end
+
+    private def infer_named_collection_element_type(
+      ctx : LoweringContext,
+      expr_id : ExprId,
+    ) : TypeRef?
+      # A local has already been lowered when this helper runs. Prefer that
+      # concrete context over re-inferring the identifier from its spelling.
+      if element_node = node_for_expr(expr_id)
+        if element_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
+          if local_id = ctx.lookup_local(identifier_name_text(element_node))
+            local_type = ctx.type_of(local_id)
+            return local_type if local_type != TypeRef::VOID
+          end
+        end
+      end
+
+      if inferred = infer_type_from_expr(expr_id, @current_class)
+        return inferred if inferred != TypeRef::VOID
+      end
+      if inferred_name = infer_type_name_from_expr_id(expr_id)
+        inferred_type = type_ref_for_name(inferred_name)
+        return inferred_type if inferred_type != TypeRef::VOID
+      end
+      nil
+    end
+
+    private def require_named_collection_receiver(
+      node : Adamas::Compiler::Frontend::Node,
+      custom_name : ExprId,
+    ) : Adamas::Compiler::Frontend::Node
+      if custom_name.invalid?
+        raise LoweringError.new(
+          "cannot lower named collection literal: malformed custom receiver arena reference",
+          node,
+        )
+      end
+
+      receiver_node = node_for_expr(custom_name)
+      unless receiver_node
+        raise LoweringError.new(
+          "cannot lower named collection literal: custom receiver is outside its source arena",
+          node,
+        )
+      end
+
+      if generic_node = receiver_node.as?(Adamas::Compiler::Frontend::GenericNode)
+        if generic_node.type_args.empty?
+          raise LoweringError.new(
+            "cannot lower named collection literal without explicit generic type arguments (use T(E){...})",
+            node,
+          )
+        end
+
+        unless node_for_expr(generic_node.base_type)
+          raise LoweringError.new(
+            "cannot lower named collection literal: malformed generic receiver base arena reference",
+            node,
+          )
+        end
+        generic_node.type_args.each do |type_arg|
+          unless node_for_expr(type_arg)
+            raise LoweringError.new(
+              "cannot lower named collection literal: malformed generic type argument arena reference",
+              node,
+            )
+          end
+        end
+      end
+      receiver_node
+    end
+
+    private def lower_named_empty_collection_literal(
+      ctx : LoweringContext,
+      node : Adamas::Compiler::Frontend::HashLiteralNode,
+      custom_name : ExprId,
+    ) : ValueId
+      receiver = require_named_collection_receiver(node, custom_name)
+      unless receiver.is_a?(Adamas::Compiler::Frontend::GenericNode)
+        raise LoweringError.new(
+          "cannot infer generic type arguments for an empty named collection literal (use T(E){})",
+          node,
+        )
+      end
+      constructor_member = named_collection_member(node.span, custom_name, "new")
+      constructor_call = @arena.add_typed(
+        Adamas::Compiler::Frontend::CallNode.new(
+          node.span,
+          constructor_member,
+          [] of Adamas::Compiler::Frontend::ExprId,
+        )
+      )
+      lower_expr(ctx, constructor_call)
+    end
+
+    private def named_collection_simple_element?(ctx : LoweringContext, expr_id : ExprId) : Bool
+      node = node_for_expr(expr_id)
+      return false unless node
+
+      case node
+      when Adamas::Compiler::Frontend::IdentifierNode
+        # A bare identifier can be either a local read or a zero-argument
+        # function call in the frontend. Only an already-bound local is a
+        # simple value; unresolved identifiers must be pre-evaluated like
+        # other complex expressions.
+        !ctx.lookup_local(identifier_name_text(node)).nil?
+      when Adamas::Compiler::Frontend::InstanceVarNode,
+           Adamas::Compiler::Frontend::ClassVarNode,
+           Adamas::Compiler::Frontend::SelfNode,
+           Adamas::Compiler::Frontend::ImplicitObjNode,
+           Adamas::Compiler::Frontend::NumberNode,
+           Adamas::Compiler::Frontend::NilNode,
+           Adamas::Compiler::Frontend::BoolNode,
+           Adamas::Compiler::Frontend::CharNode,
+           Adamas::Compiler::Frontend::StringNode,
+           Adamas::Compiler::Frontend::SymbolNode
+        true
+      else
+        false
+      end
+    end
+
+    private def named_collection_identifier(
+      span : Adamas::Compiler::Frontend::Span,
+      name : String,
+    ) : ExprId
+      @arena.retain_source(name)
+      @arena.add_typed(
+        Adamas::Compiler::Frontend::IdentifierNode.new(span, name.to_slice)
+      )
+    end
+
+    private def named_collection_member(
+      span : Adamas::Compiler::Frontend::Span,
+      object : ExprId,
+      member : String,
+    ) : ExprId
+      @arena.retain_source(member)
+      @arena.add_typed(
+        Adamas::Compiler::Frontend::MemberAccessNode.new(span, object, member.to_slice)
+      )
+    end
+
     private def lower_hash_literal(ctx : LoweringContext, node : Adamas::Compiler::Frontend::HashLiteralNode) : ValueId
+      if custom_name = node.custom_name
+        if node.entries.empty?
+          return lower_named_empty_collection_literal(ctx, node, custom_name)
+        end
+        raise LoweringError.new(
+          "cannot lower non-empty named hash collection literals yet",
+          node,
+        )
+      end
+
       # Lower key-value pairs first to infer types
       entries = [] of {ValueId, ValueId}
       node.entries.each do |entry|
