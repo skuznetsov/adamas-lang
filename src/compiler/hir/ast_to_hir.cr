@@ -95757,7 +95757,7 @@ module Adamas::HIR
                 ctx.register_type(unwrapped.id, unwrap_type)
                 if numeric_primitive?(unwrap_type)
                   return unwrapped.id if unwrap_type == target_type
-                  cast = Cast.new(ctx.next_id, target_type, unwrapped.id, target_type)
+                  cast = Cast.new(ctx.next_id, target_type, unwrapped.id, target_type, safe: true)
                   ctx.emit(cast)
                   ctx.register_type(cast.id, target_type)
                   return cast.id
@@ -95767,7 +95767,7 @@ module Adamas::HIR
           end
           if numeric_primitive?(receiver_type)
             return receiver_id if receiver_type == target_type
-            cast = Cast.new(ctx.next_id, target_type, receiver_id, target_type)
+            cast = Cast.new(ctx.next_id, target_type, receiver_id, target_type, safe: true)
             ctx.emit(cast)
             ctx.register_type(cast.id, target_type)
             return cast.id
@@ -110836,7 +110836,7 @@ module Adamas::HIR
             ctx.register_type(unwrapped.id, unwrap_type)
             if numeric_primitive?(unwrap_type)
               return unwrapped.id if unwrap_type == target_type
-              cast = Cast.new(ctx.next_id, target_type, unwrapped.id, target_type)
+              cast = Cast.new(ctx.next_id, target_type, unwrapped.id, target_type, safe: true)
               ctx.emit(cast)
               ctx.register_type(cast.id, target_type)
               return cast.id
@@ -110850,7 +110850,7 @@ module Adamas::HIR
             STDERR.puts "[KEY_HASH_CAST] receiver=#{recv_name}(#{receiver_type.id}) target=#{target_name}(#{target_type.id}) same=#{receiver_type == target_type} func=#{ctx.function.name}"
           end
           return object_id if receiver_type == target_type
-          cast = Cast.new(ctx.next_id, target_type, object_id, target_type)
+          cast = Cast.new(ctx.next_id, target_type, object_id, target_type, safe: true)
           ctx.emit(cast)
           ctx.register_type(cast.id, target_type)
           return cast.id
@@ -111067,7 +111067,8 @@ module Adamas::HIR
         when "to_i64"
           return object_id
         when "to_f", "to_f64", "to_f64!"
-          cast = Cast.new(ctx.next_id, TypeRef::FLOAT64, object_id, TypeRef::FLOAT64, safe: false)
+          # Numeric conversion must not use the same-width unsafe_as bitcast.
+          cast = Cast.new(ctx.next_id, TypeRef::FLOAT64, object_id, TypeRef::FLOAT64, safe: true)
           ctx.emit(cast)
           ctx.register_type(cast.id, TypeRef::FLOAT64)
           return cast.id

@@ -7,6 +7,22 @@ Next: resolve the remaining produced initializer-body mismatch and carry
 untyped callback signatures to the raw-yield boundary behind Path#join. The user objective is a fresh stage2 that can build stage3.
 B4-F remains open.
 
+2026-09-05 NUMERIC CONVERSION VS BIT REINTERPRETATION (BOUNDED REPAIR).
+The common numeric method paths emitted HIR Cast with unsafe semantics.
+Same-width Int64/Float64 and Int32/Float32 conversions consequently became
+LLVM bitcast; even 1_i64.to_f64 did not produce 1.0. Mark numeric conversions
+as value casts in call/member lowering and the Int64 fallback. Explicit
+unsafe_as retains its bit representation semantics.
+DoD: regression_tests/numeric_conversion_not_bitcast_repro.sh <compiler>.
+The baseline exits11; isolated HEAD plus this repair passes signed values,
+wide and unsigned-high-bit values, both float widths, to_f/to_f64! aliases,
+and unsafe_as in both directions. Original Crystal agrees. Seven existing
+LLVM cast guard examples pass. This establishes host conversion behavior;
+generated float literal parsing still needs pointerof writeback repair and
+stage3 is not yet built. Overflow checking is outside this repair.
+Rollback: the numeric Cast flags and regression script. Refresh after numeric
+method lowering or HIR-to-MIR Cast interpretation changes.
+
 2026-09-05 TUPLE CASE SUBJECT STORAGE (BOUNDED REPAIR).
 Tuple case matching loaded subject elements using the pattern literal type.
 A UInt64 subject matched against Int32 `0` consequently lost its upper bits;
