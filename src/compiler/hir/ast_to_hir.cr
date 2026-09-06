@@ -88789,6 +88789,11 @@ module Adamas::HIR
       else
         ivar_name = "@#{method_name}"
         if ivar_info = find_ivar_info(class_info.ivars, ivar_name)
+          # An explicit overload with the same method name must win over the
+          # zero-argument ivar accessor.  Keep the getter fallback symmetric
+          # with the setter path above; otherwise a call with arguments can be
+          # silently rebound to the synthetic getter.
+          return nil unless function_def_overload_keys("#{class_name}##{method_name}").empty?
           func_name = mangle_function_name("#{class_name}##{method_name}", [] of TypeRef)
           generate_getter_method_for_ivar(class_name, class_info, ivar_info) unless @module.has_function_with_body?(func_name)
           return {ivar_info.type, func_name}

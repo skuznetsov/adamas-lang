@@ -1,5 +1,16 @@
 # Adamas Bootstrap TODO
 
+2026-09-06 GETTER OVERLOAD DISPATCH (HOST AND PRODUCED GUARDS).
+The synthesized ivar getter no longer captures an explicit same-name method
+call and discards its arguments. Its fallback now respects existing overload
+keys, matching the setter boundary. The no-argument getter remains available.
+DoD: regression_tests/getter_overload_accessor_repro.sh <compiler>.
+All three cases pass on an isolated e81dcfbf plus this five-line fix; the old
+S1 fails the collision case and passes both controls. All three also pass on
+fresh numeric-stack-bootstrap/cv2_s2 (289.01s build). Different-arity,
+inherited and included-module controls pass on the isolated candidate.
+Scope: accessor dispatch; general generic fetch ownership and S3 remain open.
+
 2026-09-06 EARLY NAMED COLLECTION IDENTITY (HOST VERIFIED).
 Early constant and ivar inference now preserves the custom receiver rather
 than assigning Array/Hash storage from the parser node shape. A Bag constant
