@@ -73787,9 +73787,10 @@ module Adamas::HIR
       # sizeof(T) returns the size of type T in bytes
       # For basic types, we can compute this at compile time
       size = pointer_word_bytes_i64 # Default pointer size
-      if node.args.size > 0
-        type_node = @arena[node.args.first]
-        size = compute_type_size(type_node)
+      if arg = node.args.first?
+        if name = stringify_type_expr(arg)
+          size = size_for_type_name(name)
+        end
       end
       lit = Literal.new(ctx.next_id, TypeRef::INT32, size)
       ctx.emit(lit)
@@ -73809,35 +73810,6 @@ module Adamas::HIR
       lit.id
     end
 
-    private def compute_type_size(type_node : Adamas::Compiler::Frontend::Node) : Int64
-      case type_node
-      when Adamas::Compiler::Frontend::SelfNode
-        # sizeof(self) — resolve to current monomorphized class
-        if current = @current_class
-          return size_for_type_name(current)
-        end
-        pointer_word_bytes_i64
-      when Adamas::Compiler::Frontend::IdentifierNode
-        name = (safe_slice_to_string(type_node.name) || "")
-        # Resolve type parameters if present
-        name = @type_param_map[name]? || name
-        # sizeof(self) can also appear as IdentifierNode("self")
-        if name == "self"
-          if current = @current_class
-            return size_for_type_name(current)
-          end
-          return pointer_word_bytes_i64
-        end
-        size_for_type_name(name)
-      when Adamas::Compiler::Frontend::ConstantNode
-        name = (safe_slice_to_string(type_node.name) || "")
-        name = @type_param_map[name]? || name
-        size_for_type_name(name)
-      else
-        pointer_word_bytes_i64 # Default pointer size
-      end
-    end
-
     private def size_for_type_name(name : String) : Int64
       case name
       when "Nil"                                then 0_i64
@@ -73846,7 +73818,25 @@ module Adamas::HIR
       when "Int32", "UInt32", "Float32", "Char" then 4_i64
       when "Int64", "UInt64", "Float64"         then 8_i64
       when "Int128", "UInt128"                  then 16_i64
-      else                                           pointer_word_bytes_i64 # Pointer/reference size
+      else
+        # sizeof measures value storage, not the boxed carrier used by calls.
+        # Reuse the layout authority that also sizes inline struct fields.
+        resolved_name = resolve_type_name_in_context(name)
+        type_ref = type_ref_for_name(resolved_name)
+        canonical_name = get_type_name_from_ref(type_ref)
+        # A sizeof-only use may precede allocation and ordinary deferred
+        # monomorphization. Complete a concrete value template before reading
+        # its layout, just as inline field layout does on demand.
+        unless @class_info.has_key?(canonical_name)
+          if @layout_mono_in_progress.add?(canonical_name)
+            begin
+              try_monomorphize_layout_candidate(canonical_name)
+            ensure
+              @layout_mono_in_progress.delete(canonical_name)
+            end
+          end
+        end
+        type_size(type_ref).to_i64
       end
     end
 

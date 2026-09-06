@@ -1,5 +1,19 @@
 # Adamas Bootstrap TODO
 
+2026-09-06 SIZEOF USES VALUE LAYOUT (HOST VERIFIED).
+Resolve sizeof through the canonical type-expression and inline storage layout
+helpers instead of defaulting every non-primitive to pointer size. Complete
+concrete generic value layouts even before allocation; preserve reference size.
+DoD: regression_tests/sizeof_value_layout_repro.sh <compiler> passes core,
+cold generic/alias/self, Slice and scalar/StaticArray/Tuple controls on isolated
+fbd32383 plus this change. All four generic module fetch guards also pass.
+The previous baseline reports 8 for a 16-byte struct. This also explains the
+produced macro intern_name guard returning an empty name for Slice(UInt8).
+S3 remains open. Int32|Nil storage is still 12 here versus Crystal's 16;
+this change reuses that existing layout and does not repair union ABI padding.
+Evidence: /private/tmp/adamas-stage3-drive/sizeof-repair-regression.log and
+sizeof-generic-guard.log. Refresh after type-expression or layout changes.
+
 2026-09-06 INCLUDED BLOCK CALLS KEEP THEIR CONCRETE OWNER (HOST VERIFIED).
 Rebase a selected included-module block body to its concrete generic receiver
 only after matching definition identity or source-path plus span provenance.
