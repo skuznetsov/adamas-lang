@@ -62777,6 +62777,34 @@ module Adamas::HIR
       nil
     end
 
+    # Infer the element type for an Array.new call from the value producer.
+    # Filled and block forms have different producers from the enclosing
+    # method's return value, so keep this inference in one place and do not
+    # fall through to the constructor's size argument.
+    private def infer_array_constructor_type_arg(
+      args : Array(Adamas::Compiler::Frontend::ExprId)?,
+      block : Adamas::Compiler::Frontend::ExprId?,
+    ) : String?
+      if args && args.size >= 2
+        inferred = infer_type_name_from_expr_id(args[1])
+        return inferred unless inferred.nil? || inferred.empty? || inferred == "Void" || inferred == "Unknown"
+        return nil
+      end
+
+      if block
+        block_node = @arena[block]
+        if block_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
+          if body = block_node.body
+            if last_expr_id = body.last?
+              inferred = infer_type_name_from_expr_id(last_expr_id)
+              return inferred unless inferred.nil? || inferred.empty? || inferred == "Void" || inferred == "Unknown"
+            end
+          end
+        end
+      end
+      nil
+    end
+
     private def infer_generic_type_arg(
       class_name : String,
       args : Array(Adamas::Compiler::Frontend::ExprId)?,
@@ -62784,25 +62812,11 @@ module Adamas::HIR
       ctx : LoweringContext,
       named_args : Array(Adamas::Compiler::Frontend::NamedArgument)? = nil,
     ) : String?
-      # For Array.new(size, initial_value), infer from initial_value (second arg)
-      if class_name == "Array" && args && args.size >= 2
-        value_arg = @arena[args[1]]
-        return infer_type_name_from_node(value_arg)
-      end
-
-      # For Array.new(size) { block }, infer from block's return type
-      if class_name == "Array" && block
-        block_node = @arena[block]
-        if block_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
-          if body = block_node.body
-            # Look at last expression in block to infer return type
-            last_expr_id = body.last?
-            if last_expr_id
-              last_expr = @arena[last_expr_id]
-              return infer_type_name_from_node(last_expr)
-            end
-          end
-        end
+      # For filled and block Array.new forms, infer only from the value
+      # producer. An unsuccessful producer inference is final here: the
+      # generic fallback must not reinterpret `size` as Array's element type.
+      if class_name == "Array" && ((args && args.size >= 2) || block)
+        return infer_array_constructor_type_arg(args, block)
       end
 
       # For Atomic.new(value), infer from the value type.
@@ -63009,6 +63023,8 @@ module Adamas::HIR
     private def specialize_generic_new_receiver_from_expected_return(
       resolved : String,
       ctx : LoweringContext,
+      args : Array(Adamas::Compiler::Frontend::ExprId)?,
+      block : Adamas::Compiler::Frontend::ExprId?,
     ) : String?
       resolved = resolve_type_alias_chain(resolved)
       return nil if split_generic_base_and_args(resolved)
@@ -63016,6 +63032,15 @@ module Adamas::HIR
       template_base = resolve_generic_template_base(resolved)
       template = @generic_templates[template_base]?
       return nil unless template
+
+      # Filled and block Array constructors infer their element type from the
+      # value producer. The enclosing function's Array return is not evidence
+      # for an intermediate local array (for example an Int32 indegree table).
+      if template_base == "Array" && ((args && args.size >= 2) || block)
+        if inferred_type = infer_array_constructor_type_arg(args, block)
+          return nil
+        end
+      end
 
       return_type = ctx.function.return_type
       return nil if return_type == TypeRef::VOID || return_type == TypeRef::NIL
@@ -63055,7 +63080,7 @@ module Adamas::HIR
       return nil if template_base == resolved
       return nil unless @generic_templates.has_key?(template_base)
 
-      if expected_name = specialize_generic_new_receiver_from_expected_return(resolved, ctx)
+      if expected_name = specialize_generic_new_receiver_from_expected_return(resolved, ctx, args, block)
         return expected_name
       end
 
@@ -89921,7 +89946,7 @@ module Adamas::HIR
                 end
                 # Prefer type/module resolution for constant receivers that are actually types.
                 if class_name_str.nil? && @generic_templates.has_key?(resolved) && method_name == "new"
-                  if expected_name = specialize_generic_new_receiver_from_expected_return(resolved, ctx)
+                  if expected_name = specialize_generic_new_receiver_from_expected_return(resolved, ctx, call_args, block_expr)
                     class_name_str = expected_name
                   elsif resolved == "Range" && call_args && call_args.size >= 2
                     left_name = infer_type_name_from_expr_id(call_args[0])
@@ -90018,7 +90043,7 @@ module Adamas::HIR
                   STDERR.puts "[THREAD_RESOLVE] name=#{name} resolved=#{resolved_name} current=#{@current_class || "nil"} override=#{@current_namespace_override || "nil"}"
                 end
                 if class_name_str.nil? && @generic_templates.has_key?(resolved_name) && method_name == "new"
-                  if expected_name = specialize_generic_new_receiver_from_expected_return(resolved_name, ctx)
+                  if expected_name = specialize_generic_new_receiver_from_expected_return(resolved_name, ctx, call_args, block_expr)
                     class_name_str = expected_name
                   elsif resolved_name == "Range" && call_args && call_args.size >= 2
                     left_name = infer_type_name_from_expr_id(call_args[0])
@@ -90087,7 +90112,7 @@ module Adamas::HIR
                     elsif @generic_templates.has_key?(resolved_name) && method_name == "new"
                       # Calling .new on a generic template (e.g., Array.new, Hash.new, Pair.new)
                       # Try multi-param inference first, then single-param fallback
-                      if expected_name = specialize_generic_new_receiver_from_expected_return(resolved_name, ctx)
+                      if expected_name = specialize_generic_new_receiver_from_expected_return(resolved_name, ctx, call_args, block_expr)
                         class_name_str = expected_name
                       elsif multi_args = infer_generic_type_args_multi(resolved_name, call_args, ctx)
                         specialized_name = "#{resolved_name}(#{multi_args.join(", ")})"
@@ -90283,7 +90308,7 @@ module Adamas::HIR
               if class_name_str && method_name == "new"
                 resolved = resolve_type_alias_chain(class_name_str)
                 if @generic_templates.has_key?(resolved) && !resolved.includes?('(')
-                  if expected_name = specialize_generic_new_receiver_from_expected_return(resolved, ctx)
+                  if expected_name = specialize_generic_new_receiver_from_expected_return(resolved, ctx, call_args, block_expr)
                     class_name_str = expected_name
                     path_receiver_class_name = expected_name if path_receiver_class_name_found
                   elsif multi_args = infer_generic_type_args_multi(resolved, call_args, ctx)

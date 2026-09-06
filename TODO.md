@@ -7,6 +7,23 @@ Next: resolve the remaining produced initializer-body mismatch and carry
 untyped callback signatures to the raw-yield boundary behind Path#join. The user objective is a fresh stage2 that can build stage3.
 B4-F remains open.
 
+2026-09-05 ARRAY CONSTRUCTOR PRODUCER INFERENCE (BOUNDED REPAIR).
+Filled and block Array.new calls inherited an unrelated enclosing Array
+return type before their producer was inspected. Deferred constant sorting
+therefore created Array(DeferredConstantInit) for Int32 indegrees. Infer the
+filled value or block result through the expression resolver; do not use the
+size argument as an element-type fallback. Preserve expected-return inference
+for other generic constructors and Array calls without a resolved producer.
+DoD: regression_tests/p2_array_constructor_producer_inference_repro.sh <compiler>.
+The pre-repair registered-template probe fails at Entry#==$Int32. The composite
+host passes no-prelude Int32, Bool and nested-array HIR checks, their full-prelude
+runtime, absolute ::Array spelling and the legacy Bag(String) return guard.
+Fresh composite stage2 builds282.19s and passes the producer HIR checks; plain
+and direct stage3 pass constant sorting but crash later in Set construction.
+This does not close arbitrary generic inference or bootstrap. Rollback: the
+producer helper, expected-return callers and regression script. Refresh after
+constructor selection or expression-type inference changes.
+
 2026-09-05 ADDRESS-TAKEN LOCAL WRITEBACK (BOUNDED REPAIR).
 LLVM value_ref reloaded address-taken values only on its constant path and
 excluded pointer-typed values. External writes through pointerof(local)
