@@ -105330,6 +105330,11 @@ module Adamas::HIR
                 ctx.emit(eq_call)
                 ctx.register_type(eq_call.id, TypeRef::BOOL)
                 eq_call.id
+              elsif @module.get_type_descriptor(element_type).try(&.kind) == TypeKind::Struct
+                # Struct storage is pointer-carried, but equality belongs to
+                # the value type. Comparing the storage addresses breaks
+                # membership and the small-array path of Array#uniq.
+                emit_binary_call(ctx, elem.id, "==", value_id)
               else
                 eq_cmp = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Eq, elem.id, value_id)
                 ctx.emit(eq_cmp)

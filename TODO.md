@@ -7,6 +7,23 @@ Next: resolve the remaining produced initializer-body mismatch and carry
 untyped callback signatures to the raw-yield boundary behind Path#join. The user objective is a fresh stage2 that can build stage3.
 B4-F remains open.
 
+2026-09-05 ARRAY STRUCT VALUE MEMBERSHIP (BOUNDED REPAIR).
+The Array#includes? intrinsic compared pointer-carried struct storage addresses
+instead of calling value equality. The stdlib small-array uniq consequently
+retained distinct TypeRef boxes with the same id; generated Tuple(Char) and
+Tuple(Char, Char)#any? both reported Bool yet triggered heterogeneous-return
+rejection. Dispatch struct membership through the established binary == path;
+preserve String content equality and the existing scalar fast path.
+DoD: regression_tests/array_struct_value_membership_repro.sh <compiler>.
+The no-prelude baseline exits11, while the repaired host passes equal distinct
+boxes, unequal values, empty input and scalar controls. The actual stdlib uniq
+also preserves two ordered values from three boxes. Original Crystal agrees
+on membership; five existing String/Tuple membership HIR guards pass.
+Generated-stage validation is pending. This does not admit custom class or
+union equality, or repair Array#index, whose analogous struct case exits21.
+Rollback: the struct comparison branch and regression script. Refresh after
+array element storage or binary dispatch changes.
+
 2026-09-05 ARRAY CONSTRUCTOR PRODUCER INFERENCE (BOUNDED REPAIR).
 Filled and block Array.new calls inherited an unrelated enclosing Array
 return type before their producer was inspected. Deferred constant sorting
