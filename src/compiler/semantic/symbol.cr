@@ -86,6 +86,8 @@ module Adamas
       end
 
       class ClassSymbol < Symbol
+        # Concrete enum reflection supplied by HIR, without borrowing AST arenas.
+        property enum_members : Hash(String, Int64)? = nil
         getter scope : SymbolTable
         getter class_scope : SymbolTable
         getter superclass_name : String?

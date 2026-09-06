@@ -1182,7 +1182,7 @@ module Adamas
 
             # Handle annotation/annotations returning MacroAnnotationValue
             if member == "annotation" || member == "annotations"
-              return evaluate_annotation_to_macro_value(obj, node, member, context)
+              return evaluate_annotation_to_macro_value(obj_node, node, member, context)
             end
 
             # General MacroValue method calls (properties.map, kwargs.empty?, etc.)
@@ -2643,7 +2643,7 @@ module Adamas
 
           # Handle type-reflection and annotation helpers
           if callee.is_a?(Frontend::MemberAccessNode)
-            obj = callee.object
+            obj = @arena[callee.object]
             member = intern_name(callee.member)
 
             # Basic support for annotation queries:
@@ -2750,6 +2750,16 @@ module Adamas
                 class_symbol = context.owner_type.as(ClassSymbol)
 
                 case member
+                when "constant"
+                  if arg = node.args[0]?
+                    if members = class_symbol.enum_members
+                      key = evaluate_to_macro_value(arg, context).to_id
+                      if value = members[key]?
+                        return value.to_s
+                      end
+                    end
+                  end
+                  return ""
                 when "name"
                   # @type.name returns the full type name with generic parameters by default.
                   # @type.name(generic_args: false) strips generic parameters.
@@ -3663,7 +3673,11 @@ module Adamas
             when "methods"
               MacroArrayValue.new(symbol.methods.map { |method_name| MacroIdValue.new(method_name).as(MacroValue) })
             when "constants"
-              constants_for_scope(symbol.scope)
+              if members = symbol.enum_members
+                MacroArrayValue.new(members.keys.map { |key| MacroIdValue.new(key).as(MacroValue) })
+              else
+                constants_for_scope(symbol.scope)
+              end
             else
               nil
             end

@@ -1,5 +1,21 @@
 # Adamas Bootstrap TODO
 
+2026-09-06 ENUM METADATA REACHES MACRO LOWERING (HOST VERIFIED).
+Provide concrete enum members and Flags metadata to HIR-created macro owners.
+Evaluate the known enum Flags condition instead of silently emitting a Nil body;
+let macro loops enumerate members and direct @type.constant(member) emit their
+numeric values. Reflection and annotation handlers dereference receiver ExprIds
+before inspecting node kinds. Enum#to_s previously became a null-returning stub.
+DoD: enum_macro_reflection_repro passes NP Flags/non-Flags/member-name guards
+and full stdlib zero, duplicate-value, namespace and unknown-number to_s guards
+on isolated 62f9febb plus this change. Original Crystal agrees on full guards.
+38 macro examples pass, including concrete constants, annotations and sibling
+owners. Evidence: /private/tmp/adamas-stage3-drive/enum-reflection-atomic-runtime.log,
+enum-reflection-spec-final.log and enum-original.log. Baselines exit11 for Flags
+selection and12 for stock Enum#to_s. Full Flags string formatting and arbitrary
+class-annotation reconstruction are not certified; source-built S3 remains open.
+Refresh after enum registration, macro owner metadata or reflection evaluation.
+
 2026-09-06 COMPLETED TUPLE RETURN LAYOUT AUTHORITY (HOST VERIFIED).
 Keep the materialized return type of a completed tuple function authoritative
 and synchronize the existing cache before returning it. AST-only re-inference

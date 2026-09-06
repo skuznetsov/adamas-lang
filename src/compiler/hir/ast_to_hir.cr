@@ -10084,6 +10084,7 @@ module Adamas::HIR
     @enum_info : Hash(String, Hash(String, Int64))?
     # Enum base types: name -> underlying type
     @enum_base_types : Hash(String, TypeRef)?
+    @flags_enum_names = [] of String
     @resolved_enum_name_cache : Hash(String, String)
     @resolved_enum_name_negative_cache : Set(String)
     # Map enum value literals to their enum type names (for method resolution).
@@ -11598,6 +11599,7 @@ module Adamas::HIR
       # emits the annotation as a separate sibling node, so detect it from the
       # source window right before the enum keyword.
       flags_enum = enum_flags_annotation_before?(node, enum_source)
+      @flags_enum_names << full_enum_name if flags_enum && !@flags_enum_names.includes?(full_enum_name)
       have_prev_member = false
 
       node.members.each do |member|
@@ -14933,11 +14935,12 @@ module Adamas::HIR
         end
       end
 
-      return nil unless info || template
+      enum_members = @enum_info.try(&.[class_name]?)
+      return nil unless info || template || enum_members
 
       superclass_name = info.try(&.parent_name)
       type_parameters = template.try(&.type_params)
-      is_struct = info ? info.is_struct : template.not_nil!.is_struct
+      is_struct = info ? info.is_struct : (template ? template.is_struct : true)
 
       scope = Adamas::Compiler::Semantic::SymbolTable.new
       class_scope = Adamas::Compiler::Semantic::SymbolTable.new
@@ -14952,6 +14955,13 @@ module Adamas::HIR
         is_struct: is_struct,
         is_abstract: false
       )
+
+      if enum_members
+        symbol.enum_members = enum_members
+        if @flags_enum_names.includes?(class_name)
+          symbol.add_annotation(Adamas::Compiler::Semantic::AnnotationInfo.new("Flags", [] of ExprId, {} of String => ExprId))
+        end
+      end
 
       if info
         info.ivars.each do |ivar|
@@ -70725,6 +70735,15 @@ module Adamas::HIR
                   return evaluate_has_constant(lib_name, name_arg)
                 else
                   return evaluate_has_method(lib_name, name_arg)
+                end
+              end
+            end
+          elsif member_name == "annotation" && cond_node.args.size == 1
+            receiver = @arena[callee.object]
+            if receiver.is_a?(Adamas::Compiler::Frontend::InstanceVarNode) && safe_slice_to_string(receiver.name) == "@type"
+              if owner = @current_class
+                if @enum_info.try(&.has_key?(owner)) && resolve_path_like_name(cond_node.args[0]) == "Flags"
+                  return @flags_enum_names.includes?(owner)
                 end
               end
             end
