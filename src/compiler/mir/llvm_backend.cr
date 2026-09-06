@@ -28876,8 +28876,13 @@ module Adamas::MIR
           if cond_llvm_type == "void"
             emit "; void condition - treating as falsy"
             emit "br label %#{else_block}"
+          elsif cond_llvm_type != "i1" &&
+                (integer_scalar_llvm_type?(cond_llvm_type) || cond_llvm_type == "double" || cond_llvm_type == "float")
+            # Only Nil and Bool(false) are falsy in Crystal. Late MIR branches
+            # can retain scalar conditions, including zero and floating NaN.
+            emit "br label %#{then_block}"
           elsif cond_llvm_type != "i1"
-            # Non-bool type: compare against 0 to get boolean
+            # Preserve the existing fallback for non-scalar representations.
             c = @cond_counter
             @cond_counter += 1
             if cond_llvm_type == "double" || cond_llvm_type == "float"

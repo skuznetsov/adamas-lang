@@ -1,5 +1,17 @@
 # Adamas Bootstrap TODO
 
+2026-09-06 LATE SCALAR BRANCHES PRESERVE CRYSTAL TRUTHINESS (HOST VERIFIED).
+LLVM Branch treated unlowered numeric conditions like C, making cmp0 false in
+Comparable#<= and #>=. Emit the truthy branch for non-Bool integer/floating
+carriers; retain Bool, Nil, pointer and union paths.
+DoD: 92 scalar/LLVM examples pass. late_scalar_truthiness_repro passes numeric
+zero, Bool/Nil/union controls and stock Comparable equality/order checks on
+isolated 1430b0d7 plus this backend change. Baseline exits21 for a<=a.
+Evidence: /private/tmp/adamas-stage3-drive/scalar-branch-fixed-spec.log and
+scalar-branch-atomic-runtime.log. This does not repair enum name reflection or
+nullable tuple destructuring; fresh S2/S3 propagation remains under test.
+Refresh after MIR condition typing, branch emission or value representation changes.
+
 2026-09-06 INCLUDED ANNOTATIONS KEEP CONCRETE TYPE IDENTITY (HOST VERIFIED).
 Resolve include arguments in the including owner's lexical namespace before
 lowering module bodies, and key annotation results by substitution generation.
