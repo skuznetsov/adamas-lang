@@ -7,6 +7,22 @@ Next: resolve the remaining produced initializer-body mismatch and carry
 untyped callback signatures to the raw-yield boundary behind Path#join. The user objective is a fresh stage2 that can build stage3.
 B4-F remains open.
 
+2026-09-06 ARRAY INDEX VALUE EQUALITY (BOUNDED REPAIR).
+Array#index compared String and struct storage addresses, missing equal values
+stored in distinct boxes. Share the existing includes? element-equality helper:
+String content equality, struct == dispatch, and the scalar comparison path.
+DoD: regression_tests/array_index_value_equality_repro.sh <compiler>.
+The struct and String baselines exit21 and31 respectively. The repaired host
+and fresh composite stage2 pass first-match, missing, empty, scalar, dynamic
+String and custom cross-type == controls. Existing membership/stdlib uniq and
+five String/Tuple HIR guards pass on the host. A full-prelude cross-type struct
+comparison returns false, matching original Crystal; no-prelude must supply
+its own fallback method. The composite stage2 builds289.04s but plain smoke
+still fails at Time::Zone::ZoneTransition and stage3 remains unbuilt.
+This does not establish custom class or union equality. Rollback: the shared
+helper/index change and regression; refresh after element storage or operator
+dispatch changes.
+
 2026-09-05 ARRAY STRUCT VALUE MEMBERSHIP (BOUNDED REPAIR).
 The Array#includes? intrinsic compared pointer-carried struct storage addresses
 instead of calling value equality. The stdlib small-array uniq consequently

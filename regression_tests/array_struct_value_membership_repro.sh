@@ -38,6 +38,8 @@ fi
 # Exercise the actual stdlib small-array uniq consumer with the same values.
 sed '/^LibC.exit(0)$/d' "$WORK_DIR/repro.cr" >"$WORK_DIR/uniq.cr"
 cat >>"$WORK_DIR/uniq.cr" <<'CR'
+# The full prelude provides Struct#== for unrelated argument types.
+LibC.exit(18) if keys.includes?(1)
 unique = [MembershipKey.new(1_u32), MembershipKey.new(1_u32), MembershipKey.new(2_u32)].uniq
 LibC.exit(16) unless unique.size == 2
 LibC.exit(17) unless unique[0].id == 1_u32 && unique[1].id == 2_u32

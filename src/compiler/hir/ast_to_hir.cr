@@ -105280,6 +105280,24 @@ module Adamas::HIR
       new_array.id
     end
 
+    # Array membership and index share Crystal's element == semantics.
+    private def emit_array_value_equality(ctx : LoweringContext, element_id : ValueId, value_id : ValueId) : ValueId
+      element_type = ctx.type_of(element_id)
+      if element_type == TypeRef::STRING && ctx.type_of(value_id) == TypeRef::STRING
+        call = Call.with_receiver(ctx.next_id, TypeRef::BOOL, element_id, "__adamas_string_eq", [value_id])
+        ctx.emit(call)
+        ctx.register_type(call.id, TypeRef::BOOL)
+        call.id
+      elsif @module.get_type_descriptor(element_type).try(&.kind) == TypeKind::Struct
+        emit_binary_call(ctx, element_id, "==", value_id)
+      else
+        comparison = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Eq, element_id, value_id)
+        ctx.emit(comparison)
+        ctx.register_type(comparison.id, TypeRef::BOOL)
+        comparison.id
+      end
+    end
+
     # Lower Array#includes?(value) intrinsic — iterates elements, compares with ==
     private def lower_array_includes_dynamic(
       ctx : LoweringContext,
@@ -105323,23 +105341,7 @@ module Adamas::HIR
       ctx.emit(elem)
       ctx.register_type(elem.id, element_type)
 
-      eq_id = if element_type == TypeRef::STRING && ctx.type_of(value_id) == TypeRef::STRING
-                # This intrinsic bypasses lower_binary, whose String path
-                # normally replaces raw pointer equality with content equality.
-                eq_call = Call.with_receiver(ctx.next_id, TypeRef::BOOL, elem.id, "__adamas_string_eq", [value_id])
-                ctx.emit(eq_call)
-                ctx.register_type(eq_call.id, TypeRef::BOOL)
-                eq_call.id
-              elsif @module.get_type_descriptor(element_type).try(&.kind) == TypeKind::Struct
-                # Struct storage is pointer-carried, but equality belongs to
-                # the value type. Comparing the storage addresses breaks
-                # membership and the small-array path of Array#uniq.
-                emit_binary_call(ctx, elem.id, "==", value_id)
-              else
-                eq_cmp = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Eq, elem.id, value_id)
-                ctx.emit(eq_cmp)
-                eq_cmp.id
-              end
+      eq_id = emit_array_value_equality(ctx, elem.id, value_id)
       ctx.terminate(Branch.new(eq_id, found_block, incr_block))
 
       # Found block: return true
@@ -105425,9 +105427,8 @@ module Adamas::HIR
       ctx.emit(elem)
       ctx.register_type(elem.id, element_type)
 
-      eq_cmp = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Eq, elem.id, value_id)
-      ctx.emit(eq_cmp)
-      ctx.terminate(Branch.new(eq_cmp.id, found_block, incr_block))
+      eq_id = emit_array_value_equality(ctx, elem.id, value_id)
+      ctx.terminate(Branch.new(eq_id, found_block, incr_block))
 
       # Found block: return current index
       ctx.current_block = found_block
