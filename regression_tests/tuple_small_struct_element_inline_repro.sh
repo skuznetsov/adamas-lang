@@ -14,10 +14,9 @@
 #
 # Fix (hir_to_mir.cr): in lower_field_get and lower_field_store_to_ptr, detect a
 # Tuple/NamedTuple receiver (field_receiver_is_tuple? / obj_mir_type kind tuple?)
-# and suppress ONLY the step-4 small-struct flip (size <= pointer word) for it,
-# so a tuple element follows the container pointer-carrier regime that
-# register_tuple_types actually wrote. Large structs (> pointer word) are inline
-# in both regimes and are left unchanged.
+# and preserve the pointer carrier written by register_tuple_types. This also
+# applies to large struct elements; tuple_struct_carrier_coercion_repro.sh
+# covers their nullable coercion and ordinary inline parent-field control.
 #
 # The literal `{EId.new(..), a}` has element type `A`, but the array element type
 # is the union `AB`, so it goes through try_coerce_tuple_to_tuple -> the FieldGet

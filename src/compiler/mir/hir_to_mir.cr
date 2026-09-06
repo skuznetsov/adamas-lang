@@ -5603,7 +5603,7 @@ module Adamas
       end
 
       # A Tuple/NamedTuple element field is a *container* slot: register_tuple_types
-      # lays a (small) struct element out as a pointer-word carrier, NOT via the
+      # lays a struct element out as a pointer-word carrier, NOT via the
       # per-field step-4 small-struct inline regime. Detect a tuple receiver from
       # its recorded MIR type so field get/set read/write the carrier instead of
       # treating the slot as inline struct bytes (which corrupts under
@@ -5646,6 +5646,14 @@ module Adamas
         # field_offset is byte offset from object start
         field_ptr = builder.gep(obj_ptr, [field.field_offset.to_u32], TypeRef::POINTER)
 
+        # Tuple allocation stores struct pointers regardless of the struct's
+        # byte size. Resolve that slot contract before ordinary field inlining
+        # or propagation of a borrowed parent address can reinterpret the slot.
+        if hir_type_is_struct?(field_hir_type) && !hir_type_is_lib_struct?(field_hir_type) &&
+           field_receiver_is_tuple?(field.object)
+          return builder.load(field_ptr, convert_type(field_hir_type))
+        end
+
         if hir_type_is_inline_pointer_tuple?(field_hir_type) &&
            field_receiver_is_inline_container_struct?(field.object)
           @inline_struct_ptrs << field.id
@@ -5665,15 +5673,8 @@ module Adamas
           # matching the symmetric lower_field_store_to_ptr routing so a field is
           # read back exactly as it was written (no pointer-word-boundary flip).
           #
-          # Tuple/NamedTuple elements are the exception: register_tuple_types lays a
-          # small struct element out as a pointer-word carrier, so the step-4
-          # small-struct flip (≤ pointer word) must be suppressed for a tuple
-          # receiver or the carrier slot is misread as inline bytes. Large structs
-          # (> pointer word) are inline in both regimes, so leave them unchanged.
-          suppress_step4_tuple = inline_size.to_u64 <= pointer_word_bytes_u64 &&
-                                 field_receiver_is_tuple?(field.object)
-          if !suppress_step4_tuple &&
-             Adamas::LayoutContract.user_struct_inline?(inline_size.to_u64, hir_type_name(field_hir_type))
+          # Tuple/NamedTuple pointer carriers were handled above.
+          if Adamas::LayoutContract.user_struct_inline?(inline_size.to_u64, hir_type_name(field_hir_type))
             @inline_struct_ptrs << field.id
             if Adamas::LayoutProbe.enabled?
               probe_field_event("lower_field_get.inline_struct", "field-get", "consumer",
@@ -5825,7 +5826,7 @@ module Adamas
       #   - lib struct / StaticArray fields are always inline memcopy;
       #   - a user struct field is inline iff LayoutContract.user_struct_inline?
       #     (size > pointer word, OR step-4 gate, OR inline_container_family);
-      #   - EXCEPT a small (<= pointer word) struct in a Tuple/NamedTuple receiver
+      #   - EXCEPT a user struct of any size in a Tuple/NamedTuple receiver
       #     slot is a pointer-word carrier (register_tuple_types) → NOT inline.
       private def field_store_uses_inline_memcopy?(field_hir_type : HIR::TypeRef, obj_mir_type : TypeRef?) : Bool
         is_crystal_struct = hir_type_is_struct?(field_hir_type) && !hir_type_is_lib_struct?(field_hir_type)
@@ -5833,9 +5834,9 @@ module Adamas
         is_static_array = hir_type_is_static_array?(field_hir_type)
         inline_size = is_crystal_struct ? hir_type_inline_size(field_hir_type).to_u64 : 0_u64
         receiver_is_tuple = obj_mir_type.try { |t| @mir_module.type_registry.get(t).try(&.kind.tuple?) } || false
-        suppress_step4_tuple = is_crystal_struct && inline_size <= pointer_word_bytes_u64 && receiver_is_tuple
+        return false if is_crystal_struct && receiver_is_tuple
         is_lib || is_static_array ||
-          (is_crystal_struct && !suppress_step4_tuple &&
+          (is_crystal_struct &&
            Adamas::LayoutContract.user_struct_inline?(inline_size, hir_type_name(field_hir_type)))
       end
 

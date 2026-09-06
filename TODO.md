@@ -1,5 +1,32 @@
 # Adamas Bootstrap TODO
 
+2026-09-06 TUPLE STRUCT ELEMENTS PRESERVE POINTER CARRIERS (HOST AND PRODUCED GUARDS VERIFIED).
+Tuple allocation stores a struct pointer even when its value spans64 bytes.
+The old FieldGet excluded only small tuple structs from ordinary field inlining,
+so Parser#parse_def_receiver copied64 bytes from an8-byte Token pointer slot.
+ASan names the first invalid read; the NP runtime guard independently exits13.
+Read non-lib struct tuple elements through their carrier before inline-parent
+propagation, and apply the same any-size exception to field stores. Ordinary
+parent fields retain their inline layout; lib-struct tuple policy is unchanged.
+DoD: tuple_struct_carrier_coercion_repro.sh passes both small-inline settings,
+Nil/non-Nil, repeated calls and an inline Holder field on isolated c1e67ece plus
+this MIR change. Three nullable tuple forms and99 ABI/backend examples pass;
+original Crystal agrees. Read-only Luna review: ROBUST within the non-lib scope.
+The extra SmallId nilable ternary still exits138 on both old/new hosts with
+identical LLVM, so it is a separate open defect, not evidence of this repair.
+Evidence: /private/tmp/adamas-stage3-drive/tuple-carrier-baseline.log,
+tuple-carrier-atomic-guard.log, tuple-carrier-atomic-nullable.log,
+tuple-carrier-spec.log and union-wrap-asan-run.log. Matched S2 builds396s and
+passes both modes plus three nullable tuple forms. S3 traps133 after4s; ASan
+on the same input passes the former parse_def_receiver invalid read and finds
+a12-byte Hash initializer field write beyond a48-byte object body. Evidence:
+tuple-carrier-matched-chain.json, tuple-carrier-matched-s2-guard.log,
+tuple-carrier-matched-asan-run.log, tuple-carrier-baseline-asan-s3.log.
+The predecessor union-wrap-work contains retained HIR/macro candidates absent
+from the live tree; successor identity must differ only in hir_to_mir.cr.
+The abandoned live-composite S2 is not evidence for the predecessor corridor.
+Refresh after tuple layout, field load/store or struct representation changes.
+
 2026-09-06 UNION WRAP USES ACTUAL SOURCE REPRESENTATION (HOST VERIFIED).
 Parser#expect_operator wrapped Parser#advance's completed Nil|Int32 return
 using a stale Int32 variant hint. The backend recognized the actual union only

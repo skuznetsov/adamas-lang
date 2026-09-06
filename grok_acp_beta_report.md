@@ -14,6 +14,19 @@
 
 ## Сессии
 
+### Session 2026-09-06 — Tuple struct carrier review
+**Task:** bounded read-only review of the tuple-slot read/store contract after
+ASan identified a 64-byte Token copy from a pointer slot in parse_def_receiver.
+**Access:** sandbox session/new returned Permission denied; the approved
+outside-sandbox retry completed successfully.
+**Result:** identified matching layout, allocation, read and store sites, but
+reported no counterexample. Its prose incorrectly described the load as a full
+struct load and named x86_64 although this run targets arm64. Actual LLVM and
+runtime guards remain authoritative: the struct value is represented by ptr.
+**Evidence:** /private/tmp/adamas-stage3-drive/tuple-carrier-grok-escalated.log.
+No edits were delegated. Useful source navigation, limited adversarial value.
+
+
 ### Session 31 — 2026-05-01 — Qualified module namespace drift audit
 **Task:** read-only audit of why produced `s2` registered
 `Float::FastFloat::ParsedNumberStringT` as `Float::Float::ParsedNumberStringT`.

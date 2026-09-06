@@ -27,6 +27,19 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+Tuple/NamedTuple slots carry pointers for non-lib user structs of every size.
+Read/write lowering must preserve that contract before ordinary parent-field
+inlining or borrowed-address propagation. A64-byte Token coercion previously
+read beyond a16-byte tuple; ASan and the NP runtime baseline distinguish the
+producer/consumer mismatch. Both small-inline settings, Nil/repeat and ordinary
+inline Holder guards now pass, plus99 ABI/backend examples. Rollback is confined
+to HIR-to-MIR field access; tuple geometry and lib-struct policy are unchanged.
+The active continuation uses union-wrap-work's retained HIR/macro composite
+plus only the field-access correction; live-tree candidates are a different
+source state. Matched S2 builds396s and passes the runtime contract; actual S3
+traps133. ASan moves from the tuple read to a12-byte Hash initializer write
+beyond the allocated object body. Stage3 remains unbuilt.
+
 Synthesized allocator and initializer identities now preserve canonical named
 shape when runtime argument types coincide. Host guards cover both discovery
 orders, generic owners, ordinary named arguments, defaults, and explicit
