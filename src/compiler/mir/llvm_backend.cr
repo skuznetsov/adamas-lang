@@ -25814,6 +25814,10 @@ module Adamas::MIR
       # This handles cases where MIR has redundant UnionWrap(UnionWrap(x)).
       val_type = @value_types[inst.value]? || TypeRef::POINTER
       val_type_str = @type_mapper.llvm_type(val_type)
+      val = value_ref(inst.value)
+      if emitted_val_type = @emitted_value_types[val]?
+        val_type_str = emitted_val_type unless emitted_val_type == "void"
+      end
       if val_type_str == union_type
         # Store through alloca to create a named value (LLVM can't alias aggregates)
         val = value_ref(inst.value)
@@ -25825,20 +25829,37 @@ module Adamas::MIR
         return
       end
 
+      # A completed call can return a union despite a stale scalar MIR hint.
+      # Classify its actual representation before selecting the scalar store.
+      # An explicitly union-typed variant still denotes intentional nesting.
+      expected_variant_llvm : String? = nil
+      if union_desc = @module.get_union_descriptor(inst.union_type)
+        union_desc.variants.each do |variant_desc|
+          if variant_desc.type_id == inst.variant_type_id
+            expected_variant_llvm = @type_mapper.llvm_type(variant_desc.type_ref)
+            break
+          end
+        end
+      end
+      nested_union_variant = expected_variant_llvm.try(&.includes?(".union")) || false
+
       # Union -> union conversion (variant_type_id == -2 sentinel from HIR
       # coerce_value_to_type): the value is a differently-shaped union, e.g.
       # a Nil|A|B|C value stored into a declared A|B|C slot. Preserve the
       # payload and remap the positional type_id; storing the raw source
       # aggregate would carry the source union's variant index into the
       # target union and misdispatch later reads.
-      if inst.variant_type_id == -2
-        u2u_val = value_ref(inst.value)
+      if inst.variant_type_id == -2 || (val_type_str.includes?(".union") && !nested_union_variant)
+        u2u_val = val
         u2u_src_type = val_type_str
         if emitted_u2u_type = @emitted_value_types[u2u_val]?
           u2u_src_type = emitted_u2u_type unless emitted_u2u_type == "void"
         end
         if u2u_src_type.includes?(".union")
           src_union_ref = @value_types[inst.value]?
+          if !src_union_ref || @type_mapper.llvm_type(src_union_ref) != u2u_src_type
+            src_union_ref = find_union_type_ref_for_llvm_string(u2u_src_type)
+          end
           emit "%#{base_name}.u2u_src = alloca #{u2u_src_type}, align 8"
           emit "store #{u2u_src_type} #{normalize_union_value(u2u_val, u2u_src_type)}, ptr %#{base_name}.u2u_src"
           emit "%#{base_name}.u2u_src_tid_ptr = getelementptr #{u2u_src_type}, ptr %#{base_name}.u2u_src, i32 0, i32 0"
@@ -25963,19 +25984,6 @@ module Adamas::MIR
         # If the selected union variant is itself a union type, but the wrapped
         # value is a different union layout, normalize by bitcasting through a
         # temporary alloca so the store type matches the payload type exactly.
-        expected_variant_llvm : String? = nil
-        if union_desc = @module.get_union_descriptor(inst.union_type)
-          variants = union_desc.variants
-          variant_idx = 0
-          while variant_idx < variants.size
-            variant_desc = variants.unsafe_fetch(variant_idx)
-            if variant_desc.type_id == inst.variant_type_id
-              expected_variant_llvm = @type_mapper.llvm_type(variant_desc.type_ref)
-              break
-            end
-            variant_idx += 1
-          end
-        end
         if expected_union = expected_variant_llvm
           if expected_union.includes?(".union") && val_type_str.includes?(".union") && expected_union != val_type_str
             emit "%#{base_name}.payload_cast = alloca #{val_type_str}, align 8"

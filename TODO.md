@@ -1,5 +1,22 @@
 # Adamas Bootstrap TODO
 
+2026-09-06 UNION WRAP USES ACTUAL SOURCE REPRESENTATION (HOST VERIFIED).
+Parser#expect_operator wrapped Parser#advance's completed Nil|Int32 return
+using a stale Int32 variant hint. The backend recognized the actual union only
+at the scalar store, writing its 12-byte aggregate into an 8-byte payload.
+ASan on string-inspect-s2 identifies this stack overflow before the later AST
+Array heap corruption. UnionWrap now uses actual LLVM representation to select
+payload/tag transfer, resolves a matching source descriptor, and preserves
+explicitly nested union variants. No layout padding or guard relaxation.
+DoD: union_wrap_actual_representation_repro.sh passes; the pre-change MIR
+fixture contains the exact overflowing store. All 92 LLVM backend/focused
+examples pass, including identical layouts, nested variants and 16-byte
+payloads; matched host String#inspect and both enum reflection guards pass.
+Evidence: /private/tmp/adamas-stage3-drive/union-wrap-before.log,
+union-wrap-after.log and string-inspect-asan-run.log. Matched S2 builds282s and emits the corrected tag/payload transfer. Full
+prelude and S3 still trap (133); ASan follow-up is pending. S3 remains unbuilt. Recheck after call return representation,
+union descriptors, discriminator mapping or payload layout changes.
+
 2026-09-06 STRING INSPECT RESTORES ORDINARY SUPER CONTRACT (HOST VERIFIED).
 Remove the bootstrap super-lowering shortcut that returned String self from
 no-argument inspect. MacroStringValue consumes inspect as Crystal source syntax;
