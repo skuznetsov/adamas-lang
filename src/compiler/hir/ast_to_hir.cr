@@ -92427,7 +92427,7 @@ module Adamas::HIR
         end
       end
 
-      # Handle Array#includes?(value) intrinsic for non-String arrays
+      # Handle Array#includes?(value), including String content equality.
       if method_name == "includes?" && receiver_id && args.size == 1
         if array_intrinsic_receiver?(ctx, receiver_id)
           return lower_array_includes_dynamic(ctx, receiver_id, args[0])
@@ -105289,9 +105289,19 @@ module Adamas::HIR
       ctx.emit(elem)
       ctx.register_type(elem.id, element_type)
 
-      eq_cmp = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Eq, elem.id, value_id)
-      ctx.emit(eq_cmp)
-      ctx.terminate(Branch.new(eq_cmp.id, found_block, incr_block))
+      eq_id = if element_type == TypeRef::STRING && ctx.type_of(value_id) == TypeRef::STRING
+                # This intrinsic bypasses lower_binary, whose String path
+                # normally replaces raw pointer equality with content equality.
+                eq_call = Call.with_receiver(ctx.next_id, TypeRef::BOOL, elem.id, "__adamas_string_eq", [value_id])
+                ctx.emit(eq_call)
+                ctx.register_type(eq_call.id, TypeRef::BOOL)
+                eq_call.id
+              else
+                eq_cmp = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Eq, elem.id, value_id)
+                ctx.emit(eq_cmp)
+                eq_cmp.id
+              end
+      ctx.terminate(Branch.new(eq_id, found_block, incr_block))
 
       # Found block: return true
       ctx.current_block = found_block

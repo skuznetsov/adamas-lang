@@ -7,6 +7,23 @@ Next: resolve the remaining produced initializer-body mismatch and carry
 untyped callback signatures to the raw-yield boundary behind Path#join. The user objective is a fresh stage2 that can build stage3.
 B4-F remains open.
 
+2026-09-05 ARRAY STRING MEMBERSHIP (BOUNDED REPAIR).
+Array#includes? constructed raw BinaryOperation Eq even for String operands,
+bypassing lower_binary's content-equality path. Distinct allocations with equal
+contents therefore compared false, including registered generic instance names.
+Use the existing __adamas_string_eq helper only for exact String/String pairs;
+other element/needle shapes retain their existing behavior.
+DoD: regression_tests/array_string_includes_content_repro.sh <compiler>.
+The no-prelude baseline exits11; patched host passes first/last matches, missing
+and prefix-only names, empty arrays, and integer positive/negative controls.
+A full-prelude host union Hash immediate-return traversal also compiles/runs.
+The selected HIR/MIR suite passes1226 examples, zero failures/errors, two
+pending; the focused String/Int32 HIR comparison guards pass2/2.
+Evidence: array-string-includes-{before,after}.log under
+/private/tmp/adamas-stage3-drive; generated-stage membership is pending.
+Rollback: the isolated includes? comparison hunk and its regression guards.
+Refresh after Array intrinsic selection, String equality or operand typing changes.
+
 2026-09-05 HOMOGENEOUS TUPLE UNION INCLUDES (BOUNDED REPAIR).
 Tuple(Char) | Tuple(Char, Char)#includes? reached the generic receiver-return
 contract guard before the existing tuple dispatcher. Route it through that
