@@ -679,3 +679,23 @@ describe "Phase 87B-6: Macro Methods (.stringify, .id, .class_name)" do
     end
   end
 end
+
+describe "literal macro member expansion and following text" do
+  it "evaluates id on a literal String receiver" do
+    output, diagnostics = expand_first_top_level_macro_text(%({% if true %}\n{{ "yield current".id }}\n{% end %}\n))
+    diagnostics.select(&.level.error?).should be_empty
+    output.should eq("yield current")
+  end
+
+  it "retains source whitespace between an expression and a postfix keyword" do
+    output, diagnostics = expand_first_top_level_macro_text(%({% if true %}\n{{ "yield current".id }} if active\n{% end %}\n))
+    diagnostics.select(&.level.error?).should be_empty
+    output.should eq("yield current if active")
+  end
+
+  it "preserves intentional adjacent identifier concatenation" do
+    output, diagnostics = expand_first_top_level_macro_text(%({% if true %}\n{{ "prefix".id }}suffix\n{% end %}\n))
+    diagnostics.select(&.level.error?).should be_empty
+    output.should eq("prefixsuffix")
+  end
+end

@@ -2466,6 +2466,9 @@ module Adamas
                                          when Frontend::StringInterpolationNode
                                            mv = evaluate_to_macro_value(node.object, context)
                                            {mv.to_macro_output, mv.is_a?(MacroNilValue) ? nil : mv}
+                                         when Frontend::StringNode
+                                           mv = evaluate_to_macro_value(node.object, context)
+                                           {mv.to_macro_output, mv}
                                          when Frontend::CallNode
                                            mv = evaluate_call_to_macro_value(obj, context)
                                            {mv.to_macro_output, mv}

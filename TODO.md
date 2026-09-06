@@ -1,5 +1,22 @@
 # Adamas Bootstrap TODO
 
+2026-09-06 LITERAL MACRO YIELDS AND SOURCE GAPS (HOST VERIFIED).
+Evaluate a StringNode receiver in macro member expansion, so literal .id emits
+code instead of empty text. Preserve the source gap after interpolation in both
+buffered text and its span; otherwise restoring yield creates currentif.
+Explicit trim/newline escapes keep their prior path; adjacency stays adjacent.
+DoD: 104 macro/parser examples pass, including literal id, postfix whitespace,
+intentional concatenation and existing trim/escape guards. NP literal/postfix
+and full Range any? empty/nonempty/inclusive runtime checks pass on isolated
+9bd10e42 plus this change and agree with original Crystal (full prelude oracle).
+A span-less intermediate repair passed semantic text checks but failed runtime
+with currentif; it is rejected. Stock uniq! now yields size2 in the combined
+control, while Array#any? still omits capture updates (pre-existing separate gap).
+Evidence: /private/tmp/adamas-stage3-drive/macro-text-final-spec.log,
+macro-text-runtime-regression.log, macro-text-original-regression.log and
+macro-text-any-controls-runtime.log. S2/S3 propagation remains under test.
+Refresh after macro receiver evaluation, source spans or inline-yield changes.
+
 2026-09-06 NULLABLE VIRTUAL OVERRIDE SELECTION (HOST VERIFIED).
 An exact Nil specialization on an ancestor no longer hides a unique descendant
 method whose corresponding parameter accepts Nil through a union. Require equal

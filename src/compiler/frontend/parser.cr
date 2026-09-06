@@ -8931,6 +8931,21 @@ module Adamas
                 buffer_end_span = nil
                 piece, skip_whitespace = parse_macro_expression_piece(left_trim)
                 pieces << piece
+                # Keep the closing delimiter as the gap anchor: the lexer may
+                # omit spaces before the next text token. Preserve source gaps
+                # without inventing separators for intentional concatenation.
+                unless skip_whitespace
+                  if expression_span = piece.span
+                    buffer_end_span = expression_span
+                    # HIR can reconstruct text from source spans instead of the
+                    # buffered bytes. Both representations must include the gap.
+                    buffer_start_span = Span.new(
+                      expression_span.end_offset, expression_span.end_offset,
+                      expression_span.end_line, expression_span.end_column,
+                      expression_span.end_line, expression_span.end_column
+                    )
+                  end
+                end
 
                 trim_next_left = skip_whitespace
                 next
