@@ -20713,10 +20713,10 @@ module Adamas::MIR
           is_signed = false
         end
       else
-        # Division/remainder signedness follows the dividend. UInt64#remainder(Int32)
-        # is used by Int#to_s(base); treating the signed Int32 divisor as enough to
-        # select srem corrupts high-bit unsigned values.
-        is_signed = if inst.op.div? || inst.op.rem?
+        # Division/remainder and right shift follow the left operand's sign.
+        # A signed divisor or shift count must not make an unsigned dividend
+        # use srem/sdiv or an unsigned value use arithmetic right shift.
+        is_signed = if inst.op.div? || inst.op.rem? || inst.op.shr?
                       left_is_signed
                     else
                       left_is_signed || right_is_signed

@@ -1,5 +1,20 @@
 # Adamas Bootstrap TODO
 
+2026-09-06 RIGHT SHIFT USES LEFT OPERAND SIGNEDNESS (HOST VERIFIED).
+UInt64 >> Int32 incorrectly selected arithmetic shift because the count was
+signed. Select lshr/ashr from the shifted value, as division/remainder already
+do for their dividend. Source-built method-resolution key rotations contained
+ashr on UInt64, potentially collapsing distinct keys; propagation is pending.
+DoD: right_shift_signedness_repro passes on isolated 9634e394 plus the backend
+change, covering 8/16/32/64/128-bit values, zero and nonzero counts, signed values
+with unsigned counts, and repeated rotation. Baseline high-bit UInt64 test
+returns11. Original Crystal agrees; 89 LLVM backend examples pass.
+Evidence: /private/tmp/adamas-stage3-drive/unsigned-shift-atomic-guards.log,
+unsigned-shift-original-v2.log, unsigned-shift-mir-spec.log.
+Large UInt128 literal truncation is separate: the guard constructs its high bit
+at runtime. Negative/out-of-range shift counts are outside this certificate.
+S3 remains unbuilt; refresh after binary operand typing or code generation.
+
 2026-09-06 BARE TUPLE CALLS REFRESH COMPLETED LAYOUT (PRODUCED GUARD VERIFIED).
 Refresh tuple returns after lowering a bare instance method; use the existing
 bounded force helper when its body is pending. The parser otherwise snapshots
