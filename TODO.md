@@ -1,5 +1,20 @@
 # Adamas Bootstrap TODO
 
+2026-09-06 CONCRETE OBJECT-RESTRICTED PARAMETERS (HOST VERIFIED).
+Preserve each known call-site argument type while materializing a method
+restricted by Object. Erasing Descriptor to Object in a wrapper selected the
+wrong equality body instead of the Descriptor/Int32 overload at the inner call.
+DoD: regression_tests/object_restriction_repro.sh <compiler>.
+Isolated ed998b62 plus this rule passes direct equality, Slice includes? and
+Nil parity against original Crystal. The clean prior baseline returns false
+for the equal Descriptor wrapper. The NP attempt is not an oracle here: it
+reaches a separate bodyless compare$Descriptor before the corrected behavior.
+A mixed Descriptor|Int32 argument still reaches the same bodyless target on
+both baseline and candidate. Full S2 retains an orphan includes?$Object via
+virtual replay and still fails the MIR ambiguity guard; S3 remains open.
+Evidence: /private/tmp/adamas-stage3-drive/object-restriction-ed998-regression.log
+and object-typeof-trace-s2-build.log. Refresh after restriction/dispatch changes.
+
 2026-09-06 TYPEOF YIELD IS SEMANTIC-ONLY (HOST CORE VERIFIED).
 Runtime lowering evaluated typeof arguments and invoked an inline block before
 an empty range bound check. lower_typeof now infers argument types through

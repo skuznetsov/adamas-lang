@@ -16444,6 +16444,10 @@ module Adamas::HIR
       return true if param_name.empty? || param_name == "Void" || param_name == "Unknown"
       return false if param_name == call_name
 
+      # Object-restricted parameters still need a concrete call-site body
+      # when their implementation dispatches to an overload on that argument.
+      return true if param_name == "Object"
+
       # Preserve exact call-site specializations for typeof/local inference when the
       # runtime parameter type intentionally stays broader (for example `args : Array | Tuple`).
       return true if param_name.includes?('|') && exact_union_call_type_subset?(call_type, param_type)
