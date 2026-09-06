@@ -7,6 +7,20 @@ Next: resolve the remaining produced initializer-body mismatch and carry
 untyped callback signatures to the raw-yield boundary behind Path#join. The user objective is a fresh stage2 that can build stage3.
 B4-F remains open.
 
+2026-09-05 ADDRESS-TAKEN LOCAL WRITEBACK (BOUNDED REPAIR).
+LLVM value_ref reloaded address-taken values only on its constant path and
+excluded pointer-typed values. External writes through pointerof(local)
+therefore left later SSA/local reads stale. Move the existing reload ahead
+of constant and named-value lookup, including pointer storage; preserve the
+existing phi-mode boundary and alloca initialization tracking.
+DoD: regression_tests/pointerof_external_writeback_repro.sh <compiler>.
+The baseline exits1 after strtol writes end_ptr; the composite host passes
+pointer out-parameter, nonconstant Int32 memset writeback and unchanged-pointer
+controls. All 89 LLVM backend examples pass. The same three runtime controls
+also pass through fresh combined-repairs stage2 (built in 282.19s). This does
+not claim general alias or phi-edge repair. Rollback: value_ref reload hunk and regression script.
+Refresh after addressable alloca, SSA lookup or call operand emission changes.
+
 2026-09-05 NUMERIC CONVERSION VS BIT REINTERPRETATION (BOUNDED REPAIR).
 The common numeric method paths emitted HIR Cast with unsafe semantics.
 Same-width Int64/Float64 and Int32/Float32 conversions consequently became
