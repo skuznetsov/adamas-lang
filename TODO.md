@@ -7,6 +7,30 @@ Next: resolve the remaining produced initializer-body mismatch and carry
 untyped callback signatures to the raw-yield boundary behind Path#join. The user objective is a fresh stage2 that can build stage3.
 B4-F remains open.
 
+2026-09-05 TUPLE CASE SUBJECT STORAGE (BOUNDED REPAIR).
+Tuple case matching loaded subject elements using the pattern literal type.
+A UInt64 subject matched against Int32 `0` consequently lost its upper bits;
+stdlib UInt64#to_s uses this shape and formatted arithmetic 2^32 as zero.
+Read each known tuple slot at its descriptor type; preserve the existing
+fallback when the slot type is unknown. Comparison semantics are unchanged.
+DoD: regression_tests/tuple_case_subject_width_repro.sh <compiler> plus
+spec/hir/tuple_case_subject_width_spec.cr. The baseline runtime exits13;
+HEAD plus only this repair passes the runtime and 12 focused HIR examples.
+Runtime controls cover both tuple positions, small values, negative Int64 and
+direct wide literals; the original Crystal compiler agrees. HIR guards also
+assert Float64 slot types.
+The isolated factory-plus-tuple host also passes full-prelude wide formatting;
+the matched pre-tuple host exits11. This does not close generic factory return
+inference or bootstrap. Fresh composite stage2 builds293.02s, passes NP and
+the integer-width/wide-literal runtime regression; plain and direct stage3
+reach the existing DeferredConstantInit#+Int32 sorting stub. Generated float
+literals independently emit0.0 (including1.0); that runtime defect remains open.
+Evidence: tuple-case-{commit-guards,commit-runtime}.log and
+wide-format-{before,after}.log, tuple-case-s2-integer-runtime.log and
+tuple-case-{ladder,s3-probe}.log under /private/tmp/adamas-stage3-drive.
+Rollback: the tuple extraction hunk, focused spec and runtime regression.
+Refresh after tuple layout, case lowering or numeric comparison changes.
+
 2026-09-05 ARRAY STRING MEMBERSHIP (BOUNDED REPAIR).
 Array#includes? constructed raw BinaryOperation Eq even for String operands,
 bypassing lower_binary's content-equality path. Distinct allocations with equal

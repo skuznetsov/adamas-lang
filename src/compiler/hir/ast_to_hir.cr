@@ -81500,14 +81500,23 @@ module Adamas::HIR
             # Non-predicate: lower condition value and compare with equality
             cond_val = lower_expr(ctx, elem_expr)
             cond_type = ctx.type_of(cond_val)
+            # The pattern controls comparison, not the subject's storage.
+            # A UInt64 tuple element matched against `0` still needs an i64
+            # load; using the Int32 pattern type truncates its upper bits.
+            subject_elem_type = cond_type
+            if subject_desc = @module.get_type_descriptor(ctx.type_of(subject_id))
+              if param_type = subject_desc.type_params[idx]?
+                subject_elem_type = param_type unless param_type == TypeRef::VOID
+              end
+            end
 
             idx_lit = Literal.new(ctx.next_id, TypeRef::INT32, idx.to_i64)
             ctx.emit(idx_lit)
             ctx.register_type(idx_lit.id, TypeRef::INT32)
 
-            subject_elem = IndexGet.new(ctx.next_id, cond_type, subject_id, idx_lit.id)
+            subject_elem = IndexGet.new(ctx.next_id, subject_elem_type, subject_id, idx_lit.id)
             ctx.emit(subject_elem)
-            ctx.register_type(subject_elem.id, cond_type)
+            ctx.register_type(subject_elem.id, subject_elem_type)
 
             eq = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Eq, subject_elem.id, cond_val)
             ctx.emit(eq)
