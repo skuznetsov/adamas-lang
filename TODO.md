@@ -1,5 +1,21 @@
 # Adamas Bootstrap TODO
 
+2026-09-06 BARE TUPLE CALLS REFRESH COMPLETED LAYOUT (PRODUCED GUARD VERIFIED).
+Refresh tuple returns after lowering a bare instance method; use the existing
+bounded force helper when its body is pending. The parser otherwise snapshots
+Tuple(Array(String), Nil) before parse_macro_for_header finishes and discards
+the iterable. No recursion/yield/depth guard is bypassed.
+DoD: macro_for_parser_tuple_repro passes on isolated 2af48de9 plus this change
+and fresh composite tuple-pending-s2; two variables and empty loops are covered.
+The preceding tuple-authority-s2 returns11 for the minimal macro-for program.
+All three nullable tuple guards pass on both compilers. Produced IR now loads
+the second tuple element as Nil|ExprId instead of emitting literal Nil.
+Evidence: /private/tmp/adamas-stage3-drive/bare-tuple-atomic-guards.log,
+bare-tuple-produced-macro.log, tuple-pending-produced-tuples.log.
+S2 builds in279s; S3 still stops at generic Hash#index_for_entry_index.
+Enum reflection in the produced compiler remains open. Refresh after bare-call
+lowering, return discovery or parser tuple layout changes.
+
 2026-09-06 ENUM METADATA REACHES MACRO LOWERING (HOST VERIFIED).
 Provide concrete enum members and Flags metadata to HIR-created macro owners.
 Evaluate the known enum Flags condition instead of silently emitting a Nil body;

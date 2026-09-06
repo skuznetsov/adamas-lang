@@ -74478,7 +74478,12 @@ module Adamas::HIR
             full_name = mangle_function_name(class_method_base, [] of TypeRef)
             return_type = @function_types[full_name]? || TypeRef::VOID
             lower_function_if_needed(full_name)
-            if return_type == TypeRef::VOID
+            # Bare calls also need the completed tuple layout before extraction.
+            tuple_return = get_type_name_from_ref(return_type).starts_with?("Tuple(")
+            if tuple_return
+              force_lower_function_for_return_type(full_name)
+            end
+            if return_type == TypeRef::VOID || tuple_return
               return_type = get_function_return_type(full_name)
               if return_type == TypeRef::VOID && full_name != class_method_base
                 return_type = get_function_return_type(class_method_base)
