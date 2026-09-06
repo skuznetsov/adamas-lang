@@ -1,5 +1,20 @@
 # Adamas Bootstrap TODO
 
+2026-09-06 INCLUDED BLOCK CALLS KEEP THEIR CONCRETE OWNER (HOST VERIFIED).
+Rebase a selected included-module block body to its concrete generic receiver
+only after matching definition identity or source-path plus span provenance.
+This preserves module bindings, namespace, arena and the block overload while
+preventing Array(Wide)'s fetch body from serving Array(Bool). Explicit module-
+typed receivers now receive the same repair as implicit and explicit self.
+Unknown/empty argument types remain outside this bounded repair.
+DoD on isolated HEAD1068478a plus only this change: generic_module_fetch_owner
+repro passes all four NP cases; indexable_struct_virtual_dispatch_repro passes
+Array/Slice basic and default-block fetch compile/runtime against Crystal.
+Inherited ChildContainer materialization remains a separate bodyless-target
+failure. S3 remains open; these host checks do not certify the bootstrap.
+Evidence: /private/tmp/adamas-stage3-drive/generic-module-atomic-final-generic.log
+and generic-module-atomic-final-indexable.log. Refresh after owner/lookup changes.
+
 2026-09-06 CONCRETE OBJECT-RESTRICTED PARAMETERS (HOST VERIFIED).
 Preserve each known call-site argument type while materializing a method
 restricted by Object. Erasing Descriptor to Object in a wrapper selected the

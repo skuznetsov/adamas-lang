@@ -46292,6 +46292,70 @@ module Adamas::HIR
       {included_target_name, found[0]}
     end
 
+    private def same_rebase_def_origin?(
+      selected_target : SelectedCallTarget,
+      found : Tuple(Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike, String),
+    ) : Bool
+      # Object identity is definitive even when a generated/reparsed node has
+      # no source-path metadata. Span-only identity is safe here only after
+      # proving that both definitions came from the same source arena; two
+      # required files may legally reuse identical spans and method names.
+      return true if selected_target.def_node.same?(found[0])
+
+      selected_arena = @function_def_arenas[selected_target.symbol_name]?
+      return false unless selected_arena
+      selected_path = source_path_for(selected_arena)
+      found_path = source_path_for(found[1])
+      return false unless selected_path && found_path && selected_path == found_path
+
+      same_def_node?(selected_target.def_node, found[0])
+    end
+
+    # A block-bearing call from an included-module body can resolve through the
+    # module's lexical owner even after the body has been materialized for a
+    # concrete generic receiver. Rebase only when the selected DefNode is the
+    # same included origin proven for that concrete receiver; the registration
+    # helper preserves the module type map, namespace override, arena, and
+    # block suffix while giving the call its concrete owner.
+    private def rebase_selected_included_block_target_for_receiver(
+      receiver_name : String,
+      method_name : String,
+      arg_types : Array(TypeRef),
+      selected_target : SelectedCallTarget,
+    ) : SelectedCallTarget?
+      return nil if receiver_name.empty? || method_name.empty? || arg_types.empty?
+      return nil if arg_types.any? { |type_ref| type_ref == TypeRef::VOID }
+      return nil unless owner_info = generic_owner_info(receiver_name)
+      return nil unless concrete_type_args?(owner_info.args)
+
+      selected_owner = method_owner(selected_target.symbol_name)
+      return nil if selected_owner == receiver_name
+
+      found = find_included_module_def_for_owner(
+        receiver_name,
+        method_name,
+        arg_types,
+        true,
+      )
+      return nil unless found
+      return nil unless same_rebase_def_origin?(selected_target, found)
+
+      registered_name, registered_def = register_included_module_call_target(
+        receiver_name,
+        method_name,
+        arg_types,
+        true,
+        found,
+      )
+      if env_has?("DEBUG_CALL_REPAIR")
+        STDERR.puts(
+          "[CALL_REPAIR] rebased_included_block receiver=#{receiver_name} " \
+          "method=#{method_name} old=#{selected_target.symbol_name} new=#{registered_name}"
+        )
+      end
+      SelectedCallTarget.new(registered_name, registered_def)
+    end
+
     private def declared_module_type_param_names(module_owner : String) : Array(String)
       ensure_module_defs_stripped_lookup
       lookup_name = module_owner
@@ -93431,6 +93495,17 @@ module Adamas::HIR
         end
       end
       if selected_target
+        if has_block_call && receiver_id
+          receiver_name_for_block = normalize_method_owner_name(get_type_name_from_ref(ctx.type_of(receiver_id)))
+          if rebased_target = rebase_selected_included_block_target_for_receiver(
+               receiver_name_for_block,
+               method_name,
+               arg_types,
+               selected_target,
+             )
+            selected_target = rebased_target
+          end
+        end
         resolved_by_lookup = true
         entry_name = selected_target.symbol_name
         entry_def = selected_target.def_node
