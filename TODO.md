@@ -7,6 +7,23 @@ Next: resolve the remaining produced initializer-body mismatch and carry
 untyped callback signatures to the raw-yield boundary behind Path#join. The user objective is a fresh stage2 that can build stage3.
 B4-F remains open.
 
+2026-09-05 HOMOGENEOUS TUPLE UNION INCLUDES (BOUNDED REPAIR).
+Tuple(Char) | Tuple(Char, Char)#includes? reached the generic receiver-return
+contract guard before the existing tuple dispatcher. Route it through that
+dispatcher only when all exact variants have the needle's non-nil primitive
+element type. Reject mixed primitives and reference/custom equality shapes.
+DoD: spec/hir/tuple_union_includes_spec.cr passes3/3; the no-prelude runtime
+regression_tests/tuple_union_includes_guard_repro.sh passes on fresh stage2.
+The prior tuple-scope stage2 rejects this fixture; tuple-bridge stage2 builds
+in297.39s and passes both the fixture and NP smoke. The selected HIR/MIR suite
+passes1226 examples, zero failures/errors, two pending (legacy integration
+suites and the separate pending owner-filter spec excluded).
+Evidence: /private/tmp/adamas-stage3-drive/tuple-bridge-{ladder,unit,s2-regression}.log.
+Plain smoke now reaches an AST arena read crash; direct stage3 reaches Hash
+union registration admission, so full bootstrap remains open. Rollback: the
+three tuple admission/dispatch hunks plus focused spec and regression script.
+Refresh after tuple representation, primitive equality or union dispatch changes.
+
 2026-09-05 SIGNATURE CANDIDATE STRING TRANSPORT (BOUNDED REPAIR).
 Generated Set(String)#each erased a candidate to Pointer, and signature-name
 selection emitted Pointer#size. Bind each candidate to an explicit String

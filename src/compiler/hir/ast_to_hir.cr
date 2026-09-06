@@ -98693,7 +98693,8 @@ module Adamas::HIR
       # directly instead of dispatching to methods. Tuple methods like each/size
       # are macro-expanded per concrete type, and our compiler compiles them once
       # for one tuple size, so union dispatch to the same generic method fails.
-      if (mb == "includes?" || mb == "any?") && args.size >= 1
+      if (mb == "includes?" || mb == "any?") && args.size >= 1 &&
+         (mb != "includes?" || tuple_union_includes_primitive_safe?(recv_type, ctx.type_of(args[0])))
         all_tuples = true
         tuple_descs = [] of {TypeRef, Int32, Adamas::HIR::TypeDescriptor}
         variants.each do |vn|
@@ -116106,7 +116107,25 @@ module Adamas::HIR
       tuple_type : TypeRef,
       needle_id : ValueId,
     ) : ValueId?
-      return nil if is_union_or_nilable_type?(tuple_type)
+      if is_union_or_nilable_type?(tuple_type)
+        return nil unless tuple_union_includes_primitive_safe?(tuple_type, ctx.type_of(needle_id))
+        tuple_desc = @module.get_type_descriptor(tuple_type)
+        return nil unless tuple_desc
+        return try_emit_union_receiver_dispatch(
+          ctx,
+          tuple_id,
+          tuple_type,
+          tuple_desc,
+          "Tuple#includes?",
+          nil,
+          [needle_id],
+          [ctx.type_of(needle_id)],
+          TypeRef::BOOL,
+          false,
+          nil,
+        )
+      end
+
       tuple_name = get_type_name_from_ref(tuple_type)
       return nil unless tuple_name.starts_with?("Tuple(")
       tuple_size = tuple_size_from_type_name(tuple_name)
@@ -116141,6 +116160,37 @@ module Adamas::HIR
       end
 
       result_id || emit_bool_literal(ctx, false)
+    end
+
+    # The union tuple includes? dispatcher compares each element directly with
+    # the needle. Admit that shortcut only when every concrete variant has the
+    # same non-nil scalar element type; mixed/custom equality must continue
+    # through the established guarded path.
+    private def tuple_union_includes_primitive_safe?(
+      tuple_type : TypeRef,
+      needle_type : TypeRef,
+    ) : Bool
+      return false unless primitive_type?(needle_type)
+      return false if needle_type == TypeRef::VOID || needle_type == TypeRef::NIL
+
+      tuple_desc = @module.get_type_descriptor(tuple_type)
+      return false unless tuple_desc && tuple_desc.kind == TypeKind::Union
+      variants = split_union_type_name(tuple_desc.name)
+      return false if variants.size < 2
+
+      variants.all? do |variant|
+        variant_ref = type_ref_for_name(variant)
+        variant_id = get_union_variant_id(tuple_type, variant_ref)
+        variant_desc = @module.get_type_descriptor(variant_ref)
+        next false if variant_ref == TypeRef::VOID || variant_id < 0
+        next false unless variant_desc &&
+                          (variant_desc.kind == TypeKind::Tuple || variant_desc.name.starts_with?("Tuple("))
+
+        element_types = variant_desc.type_params
+        !element_types.empty? && element_types.all? do |element_type|
+          element_type == needle_type && primitive_type?(element_type)
+        end
+      end
     end
 
     private def concrete_tuple_element_types(tuple_type : TypeRef) : Array(TypeRef)?
