@@ -1,5 +1,17 @@
 # Adamas Bootstrap TODO
 
+2026-09-06 NUMERIC CAST CLASSIFICATION (HOST AND PRODUCED GUARDS).
+The float predicate in MIR cast lowering now uses the same typed case dispatch
+as the integer predicate. Produced S2 previously selected Object#== for the
+TypeRef equality closure and emitted a bitcast for an ordinary Int64 to Float64
+conversion. An intermediate id-accessor spelling was rejected after S2 called
+a bodyless HIR::TypeRef#id; the case spelling passes on fresh produced S2.
+DoD: numeric_conversion_not_bitcast_repro.sh and numeric_float_predicate_repro.sh.
+Both pass on an isolated ee1a1d12 plus this MIR change and on float-case S2
+(289.82s build). Float width changes, truncating conversion, signed/unsigned
+integer conversion and unsafe bit reinterpretation controls pass. Scope is
+numeric classification; generic fetch ownership still blocks the S3 attempt.
+
 2026-09-06 GETTER OVERLOAD DISPATCH (HOST AND PRODUCED GUARDS).
 The synthesized ivar getter no longer captures an explicit same-name method
 call and discards its arguments. Its fallback now respects existing overload

@@ -9775,7 +9775,12 @@ module Adamas
         end
 
         float_like = ->(t : HIR::TypeRef) do
-          t == HIR::TypeRef::FLOAT32 || t == HIR::TypeRef::FLOAT64
+          case t
+          when HIR::TypeRef::FLOAT32, HIR::TypeRef::FLOAT64
+            true
+          else
+            false
+          end
         end
 
         signed_int = ->(t : HIR::TypeRef) do
