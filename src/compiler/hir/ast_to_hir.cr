@@ -47389,6 +47389,8 @@ module Adamas::HIR
       target_name : String,
       base_name : String,
       arg_types : Array(TypeRef),
+      call_has_named_args : Bool = false,
+      call_named_arg_names : Array(String)? = nil,
     ) : Bool
       candidate_names = [base_name]
       candidate_names.concat(function_def_overloads(
@@ -47410,8 +47412,8 @@ module Adamas::HIR
                       definition,
                       arg_types,
                       false,
-                      false,
-                      nil,
+                      call_has_named_args,
+                      call_named_arg_names,
                     )
         seen_definitions << definition_id
         arena = @function_def_arenas[candidate_name]? ||
@@ -48487,24 +48489,37 @@ module Adamas::HIR
                 # repairs stale concrete suffixes without guessing among
                 # overloads.
                 current_shape_materializable = false
-                if current_shape_target != method_name_text &&
-                   !has_block_call &&
+                if !has_block_call &&
                    !receiver_repair_target_has_splat?(method_name_text) &&
-                   named_call_shape.nil? &&
                    !arg_types.empty? &&
                    arg_types.all? { |arg_type| arg_type != TypeRef::VOID }
-                  current_shape_materializable = if method_name_text.includes?("$arity")
-                                                   !function_def_overloads(
-                                                     base_name,
-                                                     strip_generic_receiver_for_lookup(base_name),
-                                                   ).empty?
-                                                 else
-                                                   register_receiver_repair_source_shape?(
-                                                     current_shape_target,
-                                                     base_name,
-                                                     arg_types,
-                                                   )
-                                                 end
+                  if current_shape_target != method_name_text && named_call_shape.nil?
+                    current_shape_materializable = if method_name_text.includes?("$arity")
+                                                     !function_def_overloads(
+                                                       base_name,
+                                                       strip_generic_receiver_for_lookup(base_name),
+                                                     ).empty?
+                                                   else
+                                                     register_receiver_repair_source_shape?(
+                                                       current_shape_target,
+                                                       base_name,
+                                                       arg_types,
+                                                     )
+                                                   end
+                  elsif current_shape_target == method_name_text && named_call_shape
+                    # Named-only parameters are part of the source call shape,
+                    # even though they do not enter the mangled ABI name. A
+                    # bodyless exact target can therefore be materialized from
+                    # a unique source DefNode only when the recorded names are
+                    # passed through ordinary parameter-shape validation.
+                    current_shape_materializable = register_receiver_repair_source_shape?(
+                      current_shape_target,
+                      base_name,
+                      arg_types,
+                      true,
+                      named_call_shape.not_nil!.names,
+                    )
+                  end
                 end
                 if env_has?("DEBUG_CALL_REPAIR")
                   STDERR.puts(

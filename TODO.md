@@ -1,5 +1,12 @@
 # Adamas Bootstrap TODO
 
+2026-09-06 NAMED RECEIVER SOURCE SHAPE (HOST GUARDS).
+A bodyless exact receiver target can now use a unique source definition with
+its recorded named arguments. Ordinary signature validation still rejects
+unknown names and incompatible positional types. Receiver repair HIR specs:
+60 examples, zero failures. Source-matched host plain smoke prints42. The
+produced Path#to_kind successor and stage3 remain open until a fresh ladder.
+
 Current action order: [integrated execution plan](docs/compiler_refactor_architecture_plan.md#0-current-execution-plan).
 Both regression runners reject failed processes and compile into fresh,
 supervised outputs. The matched combined baseline is 33/37 on both sides.

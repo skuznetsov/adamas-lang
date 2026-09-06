@@ -67,12 +67,20 @@ class Adamas::HIR::AstToHir
     target_name : String,
     base_name : String,
     arg_type_names : Array(String),
+    call_has_named_args : Bool = false,
+    call_named_arg_names : Array(String)? = nil,
   ) : Bool
     register_receiver_repair_source_shape?(
       target_name,
       base_name,
       arg_type_names.map { |name| type_ref_for_name(name) },
+      call_has_named_args,
+      call_named_arg_names,
     )
+  end
+
+  def __test_has_receiver_function_def?(name : String) : Bool
+    @function_defs.has_key?(name)
   end
 
   def __test_set_receiver_function_return_type(
@@ -281,6 +289,59 @@ class Adamas::HIR::AstToHir
     )
   end
 
+end
+
+describe "receiver named source-shape guards" do
+  source = <<-CRYSTAL
+    enum NamedShapeKind
+      First
+    end
+
+    class NamedShapeReceiver
+      def convert(kind : NamedShapeKind, *, mappings : Bool = true) : Int32
+        mappings ? 1 : 2
+      end
+    end
+  CRYSTAL
+
+  it "materializes a unique exact target for a compatible named call" do
+    converter, _ = parse_receiver_repair_source(source)
+    target = "NamedShapeReceiver#convert$NamedShapeKind_Bool"
+    base = "NamedShapeReceiver#convert"
+
+    converter.__test_register_receiver_repair_source_shape?(
+      target,
+      base,
+      ["NamedShapeKind", "Bool"],
+      true,
+      ["mappings"],
+    ).should be_true
+    converter.__test_has_receiver_function_def?(target).should be_true
+  end
+
+  it "rejects an unknown named argument" do
+    converter, _ = parse_receiver_repair_source(source)
+
+    converter.__test_register_receiver_repair_source_shape?(
+      "NamedShapeReceiver#convert$NamedShapeKind_Bool",
+      "NamedShapeReceiver#convert",
+      ["NamedShapeKind", "Bool"],
+      true,
+      ["unknown"],
+    ).should be_false
+  end
+
+  it "rejects an incompatible typed positional argument" do
+    converter, _ = parse_receiver_repair_source(source)
+
+    converter.__test_register_receiver_repair_source_shape?(
+      "NamedShapeReceiver#convert$String_Bool",
+      "NamedShapeReceiver#convert",
+      ["String", "Bool"],
+      true,
+      ["mappings"],
+    ).should be_false
+  end
 end
 
 private def parse_receiver_repair_source(
