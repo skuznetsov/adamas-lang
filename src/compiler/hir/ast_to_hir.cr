@@ -73691,11 +73691,14 @@ module Adamas::HIR
 
     private def lower_typeof(ctx : LoweringContext, node : Adamas::Compiler::Frontend::TypeofNode) : ValueId
       # typeof(x) returns the type of x at compile time
-      # At runtime, we evaluate the expressions for side effects and return a type placeholder
+      # The arguments are semantic-only.  In particular, lowering a yield here
+      # would invoke the caller's block once before the enclosing loop runs.
+      # Use the inference path, which preserves the inline-yield return stacks
+      # and switches to the argument's arena without emitting runtime HIR.
       semantic_type = TypeRef::VOID
       node.args.each do |arg_id|
-        lowered_arg_id = lower_expr(ctx, arg_id)
-        arg_type = ctx.type_of(lowered_arg_id)
+        arg_type = infer_type_from_expr(arg_id, @current_class)
+        next unless arg_type
         next if arg_type == TypeRef::VOID
         semantic_type = semantic_type == TypeRef::VOID ? arg_type : union_type_for_values(semantic_type, arg_type)
       end

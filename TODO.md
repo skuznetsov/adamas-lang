@@ -1,5 +1,19 @@
 # Adamas Bootstrap TODO
 
+2026-09-06 TYPEOF YIELD IS SEMANTIC-ONLY (HOST CORE VERIFIED).
+Runtime lowering evaluated typeof arguments and invoked an inline block before
+an empty range bound check. lower_typeof now infers argument types through
+the existing arena-aware inference and inline-yield return context.
+DoD: typeof_yield_compiletime_side_effect_repro.sh <compiler> (core default).
+Isolated HEAD603f820a plus only this change passes empty, nonempty and nested
+NP callback counters, and branch-local yield type identity (Int32/String).
+The core type-value identity oracle also matches original Crystal output.
+Optional TYPEOF_YIELD_STDLIB_CONTROLS=1 remains red: stock uniq! and the
+nested Handler fixture already fail on clean HEAD. This fixes the premature
+callback only; it does not claim Array#uniq!, record or bootstrap closure.
+Evidence: /private/tmp/adamas-stage3-drive/typeof-atomic-core-regression.log,
+typeof-atomic-core-identity.log. Refresh after typeof/inference/yield changes.
+
 2026-09-06 NUMERIC CAST CLASSIFICATION (HOST AND PRODUCED GUARDS).
 The float predicate in MIR cast lowering now uses the same typed case dispatch
 as the integer predicate. Produced S2 previously selected Object#== for the
