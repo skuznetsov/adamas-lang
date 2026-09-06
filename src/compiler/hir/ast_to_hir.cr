@@ -98926,12 +98926,21 @@ module Adamas::HIR
         end
         if concrete_returns.any? { |candidate| candidate == TypeRef::VOID } ||
            concrete_returns.uniq.size != 1
-          branch_contracts = vms.zip(concrete_returns).map do |(target, receiver, _), branch_return|
-            "#{get_type_name_from_ref(receiver)} -> #{target}: #{get_type_name_from_ref(branch_return)}"
-          end.join(", ")
+          # Keep rejection diagnostics off the bootstrap's unresolved nested
+          # zip/destructuring path; the branch and return arrays are co-indexed.
+          branch_contracts = [] of String
+          branch_index = 0
+          while branch_index < vms.size
+            branch = vms[branch_index]
+            target = branch[0]
+            receiver = branch[1]
+            branch_return = concrete_returns[branch_index]
+            branch_contracts << "#{get_type_name_from_ref(receiver)} -> #{target}: #{get_type_name_from_ref(branch_return)}"
+            branch_index += 1
+          end
           raise LoweringError.new(
             "cannot safely lower heterogeneous hash returns for union #{recv_desc.name} " +
-            "in #{ctx.function.name}: #{branch_contracts}"
+            "in #{ctx.function.name}: #{branch_contracts.join(", ")}"
           )
         end
         dispatch_return_type = concrete_returns.first

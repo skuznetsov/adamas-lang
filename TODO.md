@@ -7,6 +7,23 @@ Next: resolve the remaining produced initializer-body mismatch and carry
 untyped callback signatures to the raw-yield boundary behind Path#join. The user objective is a fresh stage2 that can build stage3.
 B4-F remains open.
 
+2026-09-06 HASH UNION REJECTION DIAGNOSTIC (BOUNDED REPAIR).
+The heterogeneous-hash rejection formatted its branch contracts through
+zip and nested tuple destructuring. Generated stage2 interpreted a tuple as
+Array storage and dereferenced a null buffer, hiding the actual ABI failure.
+Build the same ordered branch descriptions by indexing the co-indexed arrays;
+preserve the rejection predicate and both branch contracts.
+DoD: regression_tests/hash_union_rejection_diagnostic_repro.sh <compiler>.
+The old generated compiler segfaults on the no-prelude conflicting-hash probe.
+The host and fresh composite stage2 now reject with exit1 and both exact
+contracts, while the same-return control compiles and runs. Six existing
+hash-override HIR guards pass. Composite stage2 builds287.02s; direct stage3
+now rejects in33s at Tuple(DefNode, ArenaUnion)#hash returning Void versus
+Crystal::Hasher. Measured direct stage3 peak RSS is15475936KB. The change
+repairs the diagnostic, not zip, hash ABI inference, or bootstrap. Rollback:
+the formatting loop and regression. Refresh after branch ordering, tuple
+storage, or rejection contract changes.
+
 2026-09-06 ARRAY INDEX VALUE EQUALITY (BOUNDED REPAIR).
 Array#index compared String and struct storage addresses, missing equal values
 stored in distinct boxes. Share the existing includes? element-equality helper:
