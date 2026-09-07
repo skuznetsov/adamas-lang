@@ -27,6 +27,19 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+Early union field sizing must recognize Proc carriers in canonical, top-level
+arrow and parenthesized arrow syntax before falling back to reference storage.
+A Proc lacks the runtime object header required for an all-reference union.
+Nested nullable callback arguments do not change this rule; a reference class
+containing a Proc type argument keeps its pointer representation. Admission
+requires the early-layout spelling controls and the actual Hash re-registration
+ASan regression (both nullable tuple key spellings and a String key control).
+The host guards pass; matched S2 builds in 334s and emits the corrected ordinary
+Hash allocation. S3 ASan advances to a distinct hardcoded Hash literal allocation
+read; the produced full-prelude guard remains blocked. Rollback is
+local to hir_union_ivar_storage_size. General unknown arms, callback ABI changes
+and allocation padding are outside this repair.
+
 Tuple/NamedTuple slots carry pointers for non-lib user structs of every size.
 Read/write lowering must preserve that contract before ordinary parent-field
 inlining or borrowed-address propagation. A64-byte Token coercion previously

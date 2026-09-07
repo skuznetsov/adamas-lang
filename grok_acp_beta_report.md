@@ -14,6 +14,16 @@
 
 ## Сессии
 
+### Session 2026-09-06 — Early nullable Proc field layout
+**Task:** read-only challenge of the eight-line early HIR Proc classification
+repair, with exact source, patch and focused tests; no edits delegated.
+**Access:** sandbox session/new returned Permission denied. The approved retry
+outside the sandbox returned Authentication required before review started.
+**Result:** no review evidence. Local red/green Hash ASan and HIR/ABI tests are
+the available evidence; no external reviewer verdict is claimed.
+**Evidence:** /private/tmp/adamas-stage3-drive/proc-layout-grok.log and
+proc-layout-grok-reviewed.log. Retry only after Grok authentication changes.
+
 ### Session 2026-09-06 — Tuple struct carrier review
 **Task:** bounded read-only review of the tuple-slot read/store contract after
 ASan identified a 64-byte Token copy from a pointer slot in parse_def_receiver.

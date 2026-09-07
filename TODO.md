@@ -1,5 +1,28 @@
 # Adamas Bootstrap TODO
 
+2026-09-07 NULLABLE PROC FIELD LAYOUT (HOST VERIFIED, S2 PROPAGATED).
+Equivalent Hash key spellings can re-register a class with a callback expressed
+as an arrow type instead of Proc(...). Early HIR treated that arrow arm as a
+header-backed reference, shrinking the object body to48 bytes while MIR/LLVM
+still stored a12-byte tagged union at offset40. Recognize Proc carriers before
+the reference fallback, including nested union arguments; references containing
+Proc arguments remain pointer-sized. No allocation padding or stdlib edits.
+DoD: nullable_proc_field_layout_repro.sh COMPILER (full-prelude Hash + ASan)
+changes the exact predecessor failure to pass. Seven focused early-layout
+cases and99 ABI/backend cases pass in proc-layout-work; original Crystal
+accepts the Hash source. The matched source delta is only the8-line HIR fix.
+Evidence: /private/tmp/adamas-stage3-drive/proc-layout-{before,after,spec}.log,
+proc-layout-regression-{before,after}.log and proc-layout-source.json.
+Matched S2 builds in 334s and passes both no-prelude tuple-carrier modes.
+Its ordinary Hash allocator now reserves a56-byte body; ASan on S3 passes the
+former initializer write and finds a separate Hash literal helper allocating
+only48 bytes before a12-byte callback read at offset40. The produced full-prelude
+Hash guard and S3 are blocked there (133); neither is claimed green. Evidence:
+proc-layout-chain.json, proc-layout-produced-np.log and proc-layout-asan-run.log.
+General unknown union arms and
+callback representation redesign remain outside this slice. Refresh after
+Proc syntax normalization, early union sizing or class-layout publication.
+
 2026-09-06 TUPLE STRUCT ELEMENTS PRESERVE POINTER CARRIERS (HOST AND PRODUCED GUARDS VERIFIED).
 Tuple allocation stores a struct pointer even when its value spans64 bytes.
 The old FieldGet excluded only small tuple structs from ordinary field inlining,

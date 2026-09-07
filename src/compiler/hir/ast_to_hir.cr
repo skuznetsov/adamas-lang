@@ -50909,6 +50909,14 @@ module Adamas::HIR
           if ei = @enum_info
             next false if ei.has_key?(vname)
           end
+          # Proc carriers have no runtime object header. Both canonical and
+          # arrow spellings must reserve tagged storage before MIR registration,
+          # including callbacks whose input types contain nested unions.
+          next false if vname == "Proc" || vname.starts_with?("Proc(")
+          next false if find_top_level_arrow(vname)
+          if vname.starts_with?('(') && vname.ends_with?(')')
+            next false if find_top_level_arrow(vname[1, vname.size - 2])
+          end
           if info = @class_info[vname]?
             next !info.is_struct
           end
