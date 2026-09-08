@@ -1,5 +1,27 @@
 # Adamas Bootstrap TODO
 
+2026-09-08 TERNARY DECLARATION CONTEXT (HOST VERIFIED; BOOTSTRAP OPEN).
+Adversary review found that the arbitrary-callee declaration path accepted
+spaced declarations in ternary branches. Guarding shared no_type_declaration
+is refuted: it erases ordinary nested declarations and named fallback still
+accepts the invalid syntax. Separate ternary depth rejects before that fallback.
+Interpolation reparsing inherits this depth and surfaces local parse errors at
+the enclosing token. A second runtime falsifier found string concatenation
+looping on the unchanged invalid interpolation token; both initial and later
+literal failures now return before merging. The safe runner bounded the red run.
+DoD: declaration/named/type/accessor/ternary/postfix parser suites (52 pass),
+general parser/string suite (42 pass), NP imported macro/yield runtime (pass).
+Controls cover both branches, ordinary nested declarations, adjacent named
+arguments, nested-depth restoration and valid/invalid string interpolation.
+Evidence: /private/tmp/adamas-stage3-drive/paren-ternary-{before,final}.log,
+paren-interp-{before,debug}.log, paren-parser-general.log and
+ternary-final-{source.json,host.log,runtime.log}. Rollback is the ternary depth,
+interpolation context and invalid-literal guards. This does not claim general
+parser syntax equivalence or a produced S3. Final external S2 again fails after
+167s at DirectoryMatch#matches? with a Void callback argument; the direct method
+runtime passes. Trace argument production next. External record defaults and
+Hash#dup ASan controls remain green on the final host.
+
 2026-09-08 PARENTHESIZED DECLARATION ARGUMENTS (HOST VERIFIED).
 The parenthesized argument parser recognized TypeDeclaration only for accessor
 and record macro names. An arbitrary declare(value : Int32) or external

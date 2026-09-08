@@ -29,6 +29,9 @@ module Adamas
         # Phase 103: Type declaration control flag (like original Crystal parser)
         # When > 0, disables type annotation parsing (e.g., in ternary operator ? :)
         @no_type_declaration : Int32
+        # Ordinary call arguments also suppress declarations; ternary syntax
+        # needs a separate boundary that survives nested parenthesized calls.
+        @ternary_branch_depth : Int32
         @string_pool : StringPool  # Week 1 Day 2: for interning generic type annotations
         @debug_enabled : Bool      # Debug output control
         @parsing_call_args : Int32 # Prevent nested calls without parens during argument parsing
@@ -163,6 +166,7 @@ module Adamas
           @paren_depth = 0
           @bracket_depth = 0
           @brace_depth = 0
+          @ternary_branch_depth = 0
           @no_type_declaration = 0                     # Phase 103: Type annotations enabled by default
           @string_pool = lexer.string_pool             # Week 1 Day 2: share string pool for deduplication
           @debug_enabled = ::Adamas::Compiler::BootstrapEnv.get?("PARSER_DEBUG") == "1" # Enable debug via PARSER_DEBUG=1
@@ -330,7 +334,7 @@ module Adamas
 
         # Phase 87B-2: Constructor for reparsing with existing arena
         # Used by macro expander to add parsed nodes to existing arena
-        def initialize(lexer : Lexer, @arena : ArenaLike, *, recovery_mode : Bool = false)
+        def initialize(lexer : Lexer, @arena : ArenaLike, *, recovery_mode : Bool = false, ternary_branch_depth : Int32 = 0)
           @source = lexer.source
           @parser_init_trace_enabled = ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_PARSER_INIT_TRACE")
           @trace_abstract_char_enabled = ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_ABSTRACT_CHAR")
@@ -354,7 +358,8 @@ module Adamas
           @paren_depth = 0
           @bracket_depth = 0
           @brace_depth = 0
-          @no_type_declaration = 0                     # Phase 103: Type annotations enabled by default
+          @ternary_branch_depth = ternary_branch_depth
+          @no_type_declaration = ternary_branch_depth
           @string_pool = lexer.string_pool             # Week 1 Day 2: share string pool for deduplication
           @debug_enabled = ::Adamas::Compiler::BootstrapEnv.get?("PARSER_DEBUG") == "1" # Enable debug via PARSER_DEBUG=1
           @parsing_call_args = 0                       # Not parsing call args initially
@@ -1513,6 +1518,14 @@ module Adamas
           else
             false
           end
+        end
+
+        # Keep ternary declaration restrictions across nested call parsing.
+        private def inside_ternary_branch(&)
+          @ternary_branch_depth += 1
+          yield
+        ensure
+          @ternary_branch_depth -= 1
         end
 
         # Temporarily disable consumption of postfix modifiers inside nested expression contexts
@@ -10090,7 +10103,9 @@ module Adamas
               #
               # Example: `io << '0' if cond` should parse as `(io << '0') if cond`,
               # not `io << ('0' if cond)`.
-              right = without_postfix_modifiers { parse_expression(current_precedence + 1) }
+              right = inside_ternary_branch do
+                without_postfix_modifiers { parse_expression(current_precedence + 1) }
+              end
               @no_type_declaration -= 1
             else
               # Special-case endless ranges: `a..` or `a...` → missing right side
@@ -10137,7 +10152,9 @@ module Adamas
               # Parse false branch with same precedence (right-associative)
               # Disable type declarations (identifier: would conflict)
               @no_type_declaration += 1
-              false_branch = without_postfix_modifiers { parse_expression(current_precedence) }
+              false_branch = inside_ternary_branch do
+                without_postfix_modifiers { parse_expression(current_precedence) }
+              end
               @no_type_declaration -= 1
               if false_branch.invalid?
                 left = PREFIX_ERROR
@@ -10163,7 +10180,7 @@ module Adamas
               advance
               # Parse false branch with same precedence (right-associative)
               @no_type_declaration += 1
-              false_branch = parse_expression(current_precedence)
+              false_branch = inside_ternary_branch { parse_expression(current_precedence) }
               @no_type_declaration -= 1
               if false_branch.invalid?
                 left = PREFIX_ERROR
@@ -12207,6 +12224,7 @@ module Adamas
 
               expr_text = bytes_window_to_string(content, expr_start, i - expr_start)
               expr_id = parse_interpolation_expression(expr_text)
+              return PREFIX_ERROR if @ternary_branch_depth > 0 && expr_id.invalid?
               pieces_b << StringPiece.expression(expr_id)
               saw_expression = true
 
@@ -12251,6 +12269,7 @@ module Adamas
 
               expr_text = bytes_window_to_string(content, expr_start, i - expr_start)
               expr_id = parse_interpolation_expression(expr_text)
+              return PREFIX_ERROR if @ternary_branch_depth > 0 && expr_id.invalid?
               pieces_b << StringPiece.expression(expr_id)
               saw_expression = true
 
@@ -12283,6 +12302,7 @@ module Adamas
         # Gated off inside macro bodies, where a trailing `\` means output-newline
         # suppression rather than a lexer line-continuation.
         private def concat_adjacent_string_literals(first_id : ExprId) : ExprId
+          return PREFIX_ERROR if first_id.invalid?
           return first_id if macro_context?
           result = first_id
           loop do
@@ -12304,6 +12324,7 @@ module Adamas
             end
             next_id = parse_adjacent_string_literal_token(current_token)
             if next_id
+              return PREFIX_ERROR if next_id.invalid?
               result = merge_string_literal_nodes(result, next_id)
             else
               @index = checkpoint
@@ -12411,10 +12432,16 @@ module Adamas
           # Create sub-parser that adds nodes to OUR arena
           sub_lexer = Lexer.new(expr_text)
           @arena.retain_source(expr_text)
-          sub_parser = Parser.new(sub_lexer, @arena) # Share arena!
+          sub_parser = Parser.new(sub_lexer, @arena, ternary_branch_depth: @ternary_branch_depth)
 
           # Parse expression - nodes go directly into our arena
           expr_id = sub_parser.parse_expression(0)
+          if @ternary_branch_depth > 0 && (expr_id.invalid? || !sub_parser.diagnostics.empty?)
+            # Sub-parser offsets are relative to the interpolation payload.
+            # Report at the enclosing token instead of silently losing failure.
+            emit_unexpected(current_token)
+            return PREFIX_ERROR
+          end
 
           expr_id # Already in our arena
         end
@@ -12617,6 +12644,10 @@ module Adamas
                     # Allow immediate closing paren
                     next
                   end
+                end
+                if @ternary_branch_depth > 0 && next_comes_colon_space?
+                  emit_unexpected(current_token)
+                  return PREFIX_ERROR
                 end
                 # A spaced colon declares a positional AST argument regardless
                 # of the callee name; only an adjacent colon names an argument.

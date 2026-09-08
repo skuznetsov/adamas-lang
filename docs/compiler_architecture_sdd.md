@@ -28,11 +28,18 @@ Document contract (hard rules):
 ### 0.1 Frontier
 
 Parenthesized calls preserve spaced-colon type declarations as positional AST
-arguments for every callee, including arbitrary macros. A callee whitelist must
-not erase this syntax into named arguments. Preserve adjacent-colon named calls
-and existing accessor compatibility. Admission: parenthesized declaration,
+arguments for arbitrary callees, including nested macro calls outside ternary
+branches. Ternary branches reject spaced declarations before named fallback;
+a separate depth counter preserves ordinary nested declarations. Reusing the
+shared no_type_declaration counter is refuted because ordinary call arguments
+also increment it. Interpolation subparsers inherit the ternary context and
+surface their errors at the enclosing token; invalid initial/adjacent literal
+results must not enter string merging or repeat parsing without progress.
+Preserve adjacent-colon named calls and existing accessor compatibility.
+Admission: parenthesized declaration, ternary/interpolation/restoration,
 named/type/accessor specs and the NP imported-macro/yielded-constructor guard.
-Rollback is the additional spaced-colon check in parse_parenthesized_call_body.
+Rollback covers the spaced-colon admission, ternary depth propagation and
+invalid interpolation/literal guards.
 External thread_local expansion and File.tempname compilation now pass; the
 separate Time::Location.local runtime stub and bootstrap propagation remain open.
 
@@ -45,7 +52,8 @@ NP byte forms and external --stdlib mode (empty/filled dup and copy mutation).
 The exact predecessor is ASan-red; the backend-only successor passes these
 host gates. Rollback is local to the helper and its ExternCall emission path.
 Class-metadata refresh, constructor dispatch and bootstrap propagation remain
-separate obligations; File.tempname currently blocks external S2 before emission.
+separate obligations; external S2 currently blocks on DirectoryMatch#matches?
+with a Void argument from the directory callback before emission.
 
 Macro nil? evaluates the receiver as a MacroValue even in text conditions.
 Absent values and explicit NilNode are nil-like; false, zero and empty strings
@@ -55,6 +63,15 @@ Admission: predicate/condition specs and external_record_nil_predicate_repro.sh
 with the external CRYSTAL_PATH, including the mandatory/no-default field.
 Rollback is confined to macro_value.cr and the nil? member-access path in
 macro_expander.cr. Host admission passes; bootstrap propagation is separate.
+
+Bootstrap verification requires external original Crystal stdlib via
+CRYSTAL_PATH=/Users/sergey/Projects/Crystal/crystal/src. Snapshot src/stdlib
+results are diagnostic only. The macro fix passes the old Handler/Proc frontier;
+the parenthesized declaration fix passes File.tempname compilation and advances
+external S2 to DirectoryMatch#matches? with a Void argument. Its direct external
+record/method runtime guard passes; trace callback argument production before
+changing lookup. Preserve the heterogeneous-return and bodyless-target guards.
+Never edit stdlib. These host gates do not establish a produced S3.
 
 Early union field sizing must recognize Proc carriers in canonical, top-level
 arrow and parenthesized arrow syntax before falling back to reference storage.

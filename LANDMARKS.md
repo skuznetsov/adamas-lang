@@ -10,6 +10,77 @@ checkpoint remain recoverable from git history, especially:
 - archived full-file SHA256:
   `d43826fdcc2277b6075026244764a84d0069d1a30b675642b603f3511b14a1e5`
 
+## Active stage3 continuation
+
+Goal: a source-built stage2 must build and smoke stage3. Base c0a29a5e plus
+the scoped ternary declaration guard (see latest git commit).
+Stage3 is still unbuilt. Evidence root: /private/tmp/adamas-stage3-drive.
+
+Use external original Crystal stdlib at /Users/sergey/Projects/Crystal/crystal/src
+for every full-prelude compiler run (explicit CRYSTAL_PATH). External checkout
+is clean at da5a348c6, verified 2026-09-08. No stdlib edits. Old 334s/396s S2 results
+used snapshot src/stdlib and are diagnostic history, not external bootstrap.
+Old /tmp snapshots were wiped; do not claim their composite HIR was reconstructed.
+
+Exact-source fixes:
+- c01eaaf2 fixes macro nil? value/condition handling and explicit nil spelling.
+  External record mandatory/default NP controls change abort134 to pass;
+  40 macro specs pass. This repairs the missing OptionParser::Handler record.
+- 66803f9d replaces hardcoded 48-byte Hash literal allocation with final MIR
+  body/type ID/Int8-or-UInt8 offset facts plus GC8 prefix. Exact predecessor
+  external Hash#dup ASan READ12 is red; backend-only successor passes external
+  dup/mutation and both wide/relocated NP byte forms. 97 backend/layout specs pass.
+  No broad class-layout refresh or guessed padding; invalid metadata rejects.
+- c0a29a5e preserves spaced declaration arguments in arbitrary parenthesized
+  macro calls. 40 parser specs and imported NP macro/yield controls pass.
+  External thread_local expands its named typed getter; File.tempname now
+  compiles. The next runtime stub is Time::Location.local, not Float64#to_s.
+- Follow-up separates ternary declaration depth from ordinary call parsing.
+  The shared @no_type_declaration guard is refuted: it erases valid nested
+  declarations and still accepts the invalid ternary via named fallback.
+  Both ternary branches now reject; nested calls, adjacent named arguments and
+  depth restoration pass. Interpolation subparsers inherit the depth; invalid
+  initial/adjacent interpolation literals return before string merging. The
+  intermediate missing error-consumer guard hung until run_safe terminated it.
+  Final parser suites pass 52 + 42 examples; NP macro runtime guard passes.
+  General parser equivalence is not claimed.
+
+Active bootstrap frontier: exact c0a29a5e external S2 fails after 167s with
+bodyless Dir::Globber::DirectoryMatch#matches?$arity1, args=Void, called from
+Dir::Globber#run(Array(PatternType))_block. No fresh S2 binary exists.
+Evidence: paren-decl-external-s2.log. Direct external DirectoryMatch.new("abc")
+and matches? positive/negative runtime controls pass (dir-match.cr/log).
+NP record methods also pass directly and through a two-record union.
+Therefore missing record block/body is not established; inspect the producing
+entry.name/callback type before changing method lookup or weakening guards.
+A Dir.glob small probe instead fails Tuple#<=>(Int32), a distinct reduction.
+Narrow same-source S2 trace reproduces the same failure in 168s
+(dir-match-trace-s2.log); selected hooks do not expose the Void producer.
+NP nullable-entry callback plus record union also passes. Next: instrument the
+unresolved request caller/argument producers in a separate exact-source snapshot.
+
+Separate confirmed reduction: class_property(value : Int32) { 73 } compiles but
+aborts on Example.value; identical bare class_property value : Int32 { 73 }
+passes. Parenthesized calls skip native accessor parsing; HIR call recovery
+explicitly rejects class accessors and blocks. No storage/lazy-init repair yet.
+
+Frozen macro-nil-work/src equals c01eaaf2; hash-literal-work/src equals 66803f9d;
+paren-decl-work/src equals c0a29a5e. Hosts were built with external Crystal.
+Manifests: macro-nil-work-source.json, hash-literal-work-source.json and
+paren-decl-source.json (last two record exact predecessor plus intended file).
+ternary-final-work/src is exact c0a29a5e plus only the final parser delta;
+manifest ternary-final-source.json. Earlier ternary-only S2 fails at the same
+DirectoryMatch Void argument in 168s (ternary-decl-external-s2.log). The final
+interpolation/error-consumer successor reproduces the same error in 167s
+(ternary-final-external-s2.log): no S2 artifact, no S3 claim. External record
+defaults and Hash#dup ASan controls also pass on this final host
+(final-record-runtime.log, final-hash-stdlib.log). Do not confuse this source
+with the earlier incomplete interpolation candidate (ternary-interp-work).
+Keep unrelated live HIR changes out of successors. Return to S2/S3 after the
+callback type falsifier. All binaries via run_safe; RSS/FD telemetry is unknown.
+Standing authority: local fixes, supervised tests, exact atomic commits;
+no stdlib edits, pushes or unrelated dirty-tree staging.
+
 ## Current produced-stage successor
 
 [LM-HIR-DESCRIPTOR-LOOKUP|bounded repair 2026-09-05]:
