@@ -27,6 +27,17 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+Hash literal allocation consumes final MIR body size, type ID and indices-width
+field offset. The field must be Int8 or UInt8 and lie after the type header and
+inside the body. Preserve the8-byte GC prefix and initialize the complete body;
+missing or invalid facts fail compilation rather than select a guessed size.
+Admission: eight layout controls and hash_literal_allocation_repro.sh in both
+NP byte forms and external --stdlib mode (empty/filled dup and copy mutation).
+The exact predecessor is ASan-red; the backend-only successor passes these
+host gates. Rollback is local to the helper and its ExternCall emission path.
+Class-metadata refresh, constructor dispatch and bootstrap propagation remain
+separate obligations; File.tempname currently blocks external S2 before emission.
+
 Macro nil? evaluates the receiver as a MacroValue even in text conditions.
 Absent values and explicit NilNode are nil-like; false, zero and empty strings
 are not. Explicit nil retains the source spelling "nil", while absence emits

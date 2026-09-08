@@ -8781,28 +8781,19 @@ module Adamas::MIR
       emit_raw "  ret i1 %is_deleted\n"
       emit_raw "}\n\n"
 
-      # Hash object allocator — bypasses broken constructor overload chains
-      # Hash layout (48 bytes total):
-      #   offset 0:  type_id (i32)
-      #   offset 4:  @size (i32)
-      #   offset 8:  @entries (ptr)
-      #   offset 16: @indices (ptr)
-      #   offset 24: @first (i32)
-      #   offset 28: @deleted_count (i32)
-      #   offset 32: @indices_bytesize (i8)
-      #   offset 33: @indices_size_pow2 (i8)
-      #   offset 34: @compare_by_identity (i1)
-      #   offset 35-47: padding / @block (ptr)
-      emit_raw "define ptr @__adamas_hash_new(i32 %type_id) {\n"
+      # Hash literal allocation uses the final MIR layout supplied by the caller.
+      # Keep the same prefix as GC Alloc so reference counting can inspect it.
+      emit_raw "define ptr @__adamas_hash_new(i32 %type_id, i64 %body_size, i32 %indices_offset) {\n"
       emit_raw "entry:\n"
-      emit_raw "  %raw = call ptr @__adamas_malloc64(i64 48)\n"
-      emit_raw "  call void @llvm.memset.p0.i64(ptr %raw, i8 0, i64 48, i1 false)\n"
-      emit_raw "  store i32 %type_id, ptr %raw\n"
-      # Hash requires @indices_bytesize = 1 for empty state (offset 32, i8).
-      # Without this, indices_malloc_size returns 0 and first resize crashes.
-      emit_raw "  %ibs_ptr = getelementptr i8, ptr %raw, i32 32\n"
+      emit_raw "  %total = add i64 %body_size, 8\n"
+      emit_raw "  %raw = call ptr @__adamas_malloc64(i64 %total)\n"
+      emit_raw "  store i64 9223372036854775807, ptr %raw, align 8\n"
+      emit_raw "  %body = getelementptr i8, ptr %raw, i64 8\n"
+      emit_raw "  call void @llvm.memset.p0.i64(ptr %body, i8 0, i64 %body_size, i1 false)\n"
+      emit_raw "  store i32 %type_id, ptr %body\n"
+      emit_raw "  %ibs_ptr = getelementptr i8, ptr %body, i32 %indices_offset\n"
       emit_raw "  store i8 1, ptr %ibs_ptr\n"
-      emit_raw "  ret ptr %raw\n"
+      emit_raw "  ret ptr %body\n"
       emit_raw "}\n\n"
 
       # Pointer copy helper — memcpy with element-size-aware byte count
@@ -24543,6 +24534,26 @@ module Adamas::MIR
     end
 
     private def emit_extern_call(inst : ExternCall, name : String)
+      if inst.extern_name == "__adamas_hash_new"
+        # The HIR literal's type ID argument can precede class re-registration.
+        # Resolve allocation facts from the final result type, never an early size.
+        hash_type = @module.type_registry.get(inst.type)
+        unless hash_type && hash_type.kind.reference? && hash_type.name.starts_with?("Hash(")
+          raise "Hash literal missing concrete reference layout for type #{inst.type.id}"
+        end
+        indices_field = hash_type.fields.try &.find { |field| field.name == "@indices_bytesize" }
+        unless indices_field &&
+               (indices_field.type_ref == TypeRef::INT8 || indices_field.type_ref == TypeRef::UINT8) &&
+               indices_field.offset >= 4 && indices_field.offset.to_u64 < hash_type.size &&
+               hash_type.size <= UInt64::MAX - 8
+          raise "Hash literal invalid indices field layout for #{hash_type.name}"
+        end
+        emit "#{name} = call ptr @__adamas_hash_new(i32 #{hash_type.id}, i64 #{hash_type.size}, i32 #{indices_field.offset})"
+        @value_types[inst.id] = inst.type
+        record_emitted_type(name, "ptr")
+        return
+      end
+
       # A' BEHAVIOR: an Array(C) @buffer bulk op with an inline stride fact — rebuild
       # the byte count / size as logical_count * inline_stride (NEVER trusting the old
       # const), or substitute the explicit elem_size arg. Pure fact consumer.

@@ -1,5 +1,24 @@
 # Adamas Bootstrap TODO
 
+2026-09-08 HASH LITERAL USES REGISTERED MIR LAYOUT (HOST VERIFIED).
+The literal helper reserved48 bytes and omitted the GC allocation prefix even
+when Hash's final callback-containing body required more space. Pass final MIR
+body size, type ID and indices-width offset; reserve the8-byte GC prefix, zero
+the body and initialize the actual signed/unsigned byte field. Reject missing,
+non-byte, header-overlapping and out-of-body layout instead of guessing.
+DoD: hash_literal_allocation_repro.sh COMPILER np (UInt8 and Int8), and --stdlib
+with CRYSTAL_PATH=/Users/sergey/Projects/Crystal/crystal/src. Exact c01eaaf2 host
+fails the external Hash dup ASan guard with READ12 beyond a48-byte region;
+a frozen successor differing only in llvm_backend.cr passes both NP layouts
+and external empty/filled Hash dup plus independent copy mutation under ASan.
+Eight focused layout cases and the existing backend suite pass. Read-only Luna
+review found no further concrete defect; producer source equality was separately
+checked against the exact commit. No general class-metadata refresh is admitted.
+Evidence: /private/tmp/adamas-stage3-drive/hash-exact-*.log,
+hash-backend-spec.log and hash-literal-work-source.json. External bootstrap is
+still blocked earlier by File.tempname lowering Float64#to_s(Int32); S3 is unbuilt.
+Refresh after Hash field publication, literal construction or GC prefix changes.
+
 2026-09-08 EXTERNAL RECORD NIL PREDICATE (HOST VERIFIED).
 Modern external macros.cr tests property.value.nil? before emitting a getter
 initializer. MacroValue had no nil? method, and the text member-access path
