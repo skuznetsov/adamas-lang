@@ -24538,7 +24538,9 @@ module Adamas::MIR
         # The HIR literal's type ID argument can precede class re-registration.
         # Resolve allocation facts from the final result type, never an early size.
         hash_type = @module.type_registry.get(inst.type)
-        unless hash_type && hash_type.kind.reference? && hash_type.name.starts_with?("Hash(")
+        # Global qualification names the same Hash runtime class.
+        unless hash_type && hash_type.kind.reference? &&
+               (hash_type.name.starts_with?("Hash(") || hash_type.name.starts_with?("::Hash("))
           raise "Hash literal missing concrete reference layout for type #{inst.type.id}"
         end
         indices_field = hash_type.fields.try &.find { |field| field.name == "@indices_bytesize" }

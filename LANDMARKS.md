@@ -12,8 +12,8 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active stage3 continuation
 
-Goal: a source-built stage2 must build and smoke stage3. Base 0c96d132 plus
-the scoped nested callback inference repair (see latest git commit).
+Goal: a source-built stage2 must build and smoke stage3. Base e28801e6 plus
+the scoped root-qualified Hash literal guard repair (see latest git commit).
 Stage3 is still unbuilt. Evidence root: /private/tmp/adamas-stage3-drive.
 
 Use external original Crystal stdlib at /Users/sergey/Projects/Crystal/crystal/src
@@ -66,12 +66,26 @@ the platform require nested inside a macro. No missing-callee conclusion stands.
 Source: callback-specialized-source.json, all 1919 src files at base0c96d132
 plus only the intended HIR delta. Actual external probe evidence lives in
 external-dir-yield-probe/{specialized-build,specialized-run}.log.
-Active bootstrap frontier: the specialization-aware candidate exits1 after322s at Hash literal missing concrete reference layout for type977; --emit mir preserved 78569215 bytes before LLVM rejection (callback-specialized-s2.log).
-The preceding node-guard candidate passed DirectoryMatch but stopped at Hash
-literal missing concrete reference layout for type977 after355s; that is a
-failed-build observation, not a successful S2 performance result. S3 is unbuilt.
-Next falsifier: identify the failing Hash result type, its final MIR metadata
-and its HIR-to-MIR producer without weakening the allocation layout guard.
+The callback candidate passed DirectoryMatch but exited1 after322s at the
+Hash literal guard (callback-specialized-s2.log). This was a false name
+rejection: final type977 is ::Hash(String, Int32), Reference, size56, with
+valid Int8 indices metadata at byte32. Both registry lookups find the type.
+Refuted as this failure's cause: a missing registry ID or absent layout.
+A separate by-name-placeholder probe loses a requested ID, but that independent
+registry issue is deferred; the observed duplicate indices fields agree.
+The backend now admits exactly Hash( and ::Hash( at this guard while retaining
+reference-kind, field-type, offset and size checks. Lookalike names still reject.
+Evidence: 12 backend examples, both --no-prelude declaration orders in
+hash_literal_global_qualification_repro.sh and the existing wide/relocated
+allocation ASan regression pass. The qualified fixture rejects on the predecessor.
+Source: hash-qualified-source.json, all 1919 src files at e28801e6 plus only
+this backend delta. Logs: hash-qualified-{spec-run,regression,allocation-guard,s2}.log.
+Active bootstrap frontier: The exact-source S2 build exits0 after415s; its --no-prelude exit0 compile
+and S3 attempt both abort134 immediately in Crystal::DWARF::Info#type.
+This is a successful binary build, not a working stage2 compiler.
+Next falsifier: expose the first S2 runtime exception before DWARF backtrace
+rendering, then compile and run an exit0 --no-prelude smoke before retrying S3.
+Refresh these results on name resolution, layout producer or allocator changes.
 Required named parameters may fail arity lookup before reaching callsite
 inference (also nil on the predecessor); the named guard control uses a
 default parameter to isolate accepted callsite inference.

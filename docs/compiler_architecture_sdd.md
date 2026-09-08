@@ -27,6 +27,13 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+The Hash literal allocator recognizes both root-class spellings Hash(...) and
+::Hash(...). Other namespaces merely ending in Hash remain rejected. Admission
+still requires reference kind, a one-byte indices field beyond the type header,
+an in-body field offset and a representable allocation size. The qualified-name
+NP regression and backend invalid-kind/geometry/lookalike controls establish
+this boundary; no class-registry or duplicate-field normalization is implied.
+
 Nested callback parameter inference uses the selected callee's body, formal
 parameters, local map and declaration namespace. Unannotated bare readers may
 infer their result from concrete call arguments without populating a shared

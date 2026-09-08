@@ -4,9 +4,9 @@ require "../../src/compiler/mir/hir_to_mir"
 require "../../src/compiler/mir/optimizations"
 require "../../src/compiler/mir/llvm_backend"
 
-private def hash_literal_allocation_ir(size : UInt64, offset : UInt32?, field_type : Adamas::MIR::TypeRef = Adamas::MIR::TypeRef::UINT8)
+private def hash_literal_allocation_ir(size : UInt64, offset : UInt32?, field_type : Adamas::MIR::TypeRef = Adamas::MIR::TypeRef::UINT8, type_name : String = "Hash(String, Int32)", type_kind : Adamas::MIR::TypeKind = Adamas::MIR::TypeKind::Reference)
   mod = Adamas::MIR::Module.new("hash_literal_layout")
-  type = mod.type_registry.create_type(Adamas::MIR::TypeKind::Reference, "Hash(String, Int32)", size, 8)
+  type = mod.type_registry.create_type(type_kind, type_name, size, 8)
   type.add_field("@indices_bytesize", field_type, offset) if offset
   ref = Adamas::MIR::TypeRef.new(type.id)
   func = mod.create_function("hash_literal_probe", ref)
@@ -69,4 +69,29 @@ describe "Hash literal allocation" do
       hash_literal_allocation_ir(32_u64, 32_u32)
     end
   end
+  it "accepts the globally qualified Hash class name" do
+    output, id = hash_literal_allocation_ir(56_u64, 32_u32, type_name: "::Hash(String, Int32)")
+    output.should contain("call ptr @__adamas_hash_new(i32 #{id}, i64 56, i32 32)")
+  end
+
+  it "still rejects invalid layout for a globally qualified Hash" do
+    expect_raises(Exception, /Hash literal invalid indices field layout/) do
+      hash_literal_allocation_ir(32_u64, 32_u32, type_name: "::Hash(String, Int32)")
+    end
+  end
+
+  it "does not admit a namespaced class merely named Hash" do
+    ["Other::Hash(String, Int32)", "::Other::Hash(String, Int32)", "HashLike(String, Int32)"].each do |name|
+      expect_raises(Exception, /Hash literal missing concrete reference layout/) do
+        hash_literal_allocation_ir(56_u64, 32_u32, type_name: name)
+      end
+    end
+  end
+
+  it "does not admit a non-reference globally qualified Hash" do
+    expect_raises(Exception, /Hash literal missing concrete reference layout/) do
+      hash_literal_allocation_ir(56_u64, 32_u32, type_name: "::Hash(String, Int32)", type_kind: Adamas::MIR::TypeKind::Struct)
+    end
+  end
+
 end

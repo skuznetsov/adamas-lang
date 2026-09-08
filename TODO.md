@@ -1,5 +1,26 @@
 # Adamas Bootstrap TODO
 
+2026-09-08 ROOT-QUALIFIED HASH LITERAL (HOST VERIFIED; BOOTSTRAP OPEN).
+The type977 S2 failure was a name guard, not missing layout: final MIR held
+::Hash(String, Int32), Reference, size56, with valid Int8 indices metadata at
+byte32. A regular Hash literal followed by ::Hash(...).new reproduces it in
+--no-prelude. The backend now admits Hash( and ::Hash( as the root Hash class;
+namespace lookalikes, non-reference kinds and invalid geometry still reject.
+DoD: 12 backend examples, both NP declaration orders and the existing NP
+wide/relocated allocation ASan regression pass. The exact predecessor rejects
+the qualified-name fixture. The exact-source S2 build exits0 after415s; its --no-prelude exit0 compile
+and S3 attempt both abort134 immediately in Crystal::DWARF::Info#type.
+This is a successful binary build, not a working stage2 compiler.
+Evidence root: /private/tmp/adamas-stage3-drive; hash-qualified-{spec-run,
+regression,allocation-guard,s2}.log. Source: hash-qualified-source.json, exact
+e28801e6 plus only this backend delta; external stdlib remains untouched.
+Refuted root cause: absent registry ID. The full trace finds type977 by ID and
+name. A separate ClassInfo/by-name-placeholder probe does lose a requested ID,
+but that independent issue is deferred. Duplicate field metadata is also open;
+the observed two indices fields agree, and this fix does not rewrite layouts.
+Rollback: the scoped backend admission and tests. Refresh on name resolution,
+Hash layout producer or allocator contract changes. S3 remains unbuilt.
+
 2026-09-08 NESTED CALLBACK RETURN OWNERSHIP (HOST VERIFIED; BOOTSTRAP OPEN).
 The raw callback for Dir::Globber#each_child inherited caller locals and formal
 annotations; read_entry(dir) then lost its concrete Handle argument. Callee
