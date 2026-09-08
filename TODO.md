@@ -1,5 +1,24 @@
 # Adamas Bootstrap TODO
 
+2026-09-08 PARENTHESIZED DECLARATION ARGUMENTS (HOST VERIFIED).
+The parenthesized argument parser recognized TypeDeclaration only for accessor
+and record macro names. An arbitrary declare(value : Int32) or external
+thread_local(thread_default : Random::PCG32) became a named argument, leaving
+macro decl.var/type empty. The missing Random.thread_default later produced a
+constant Float64 Random.rand(Int64) and a bodyless Float64#to_s(Int32) demand.
+Use the existing same-line spaced-colon discriminator for arbitrary callees;
+adjacent named arguments and existing accessor syntax retain their behavior.
+DoD: parenthesized_macro_declaration_repro.sh COMPILER (--no-prelude), plus
+parser_parenthesized_declaration_arg_spec.cr and named/type/accessor suites.
+The exact66803f9d host aborts134; a parser-only frozen successor passes imported
+macro arguments, bare control and yielded constructor.40 parser examples pass.
+Actual external thread_local changes invalid expansion to a typed getter;
+File.tempname changes compilation failure to success. Its runtime still aborts
+at the separate Time::Location.local stub, so no full File.tempname claim.
+Evidence: /private/tmp/adamas-stage3-drive/paren-decl-*.log,
+thread-local-np-after.log and file-tempname-after{-run,}.log. External S2/S3
+propagation is separate. Refresh after call argument parsing or macro binding.
+
 2026-09-08 HASH LITERAL USES REGISTERED MIR LAYOUT (HOST VERIFIED).
 The literal helper reserved48 bytes and omitted the GC allocation prefix even
 when Hash's final callback-containing body required more space. Pass final MIR

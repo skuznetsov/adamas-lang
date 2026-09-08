@@ -12618,7 +12618,9 @@ module Adamas
                     next
                   end
                 end
-                if typed_macro_callee && (current_token.kind == Token::Kind::Identifier || is_keyword_identifier?(current_token))
+                # A spaced colon declares a positional AST argument regardless
+                # of the callee name; only an adjacent colon names an argument.
+                if (typed_macro_callee || next_comes_colon_space?) && (current_token.kind == Token::Kind::Identifier || is_keyword_identifier?(current_token))
                   save_idx = @index
                   name_tok = current_token
                   advance

@@ -27,6 +27,15 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+Parenthesized calls preserve spaced-colon type declarations as positional AST
+arguments for every callee, including arbitrary macros. A callee whitelist must
+not erase this syntax into named arguments. Preserve adjacent-colon named calls
+and existing accessor compatibility. Admission: parenthesized declaration,
+named/type/accessor specs and the NP imported-macro/yielded-constructor guard.
+Rollback is the additional spaced-colon check in parse_parenthesized_call_body.
+External thread_local expansion and File.tempname compilation now pass; the
+separate Time::Location.local runtime stub and bootstrap propagation remain open.
+
 Hash literal allocation consumes final MIR body size, type ID and indices-width
 field offset. The field must be Int8 or UInt8 and lie after the type header and
 inside the body. Preserve the8-byte GC prefix and initialize the complete body;
