@@ -117,4 +117,26 @@ describe "nested-module relative nullable annotations" do
     text.should contain("Outer::MIR::Type#kind")
     text.should_not contain(".tuple?()")
   end
+  it "refreshes a nullable annotation after its owner's nested type is registered" do
+    code = <<-CRYSTAL
+      module Other
+        struct Info
+        end
+      end
+      class File
+        struct Info
+        end
+      end
+    CRYSTAL
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(code))
+    result = parser.parse_program
+    converter = Adamas::HIR::AstToHir.new(result.arena)
+    converter.register_module(result.arena[result.roots[0]].as(Adamas::Compiler::Frontend::ModuleNode))
+    converter.__test_resolve_nested_nullable_annotation("Info?", "File")
+    converter.register_class(result.arena[result.roots[1]].as(Adamas::Compiler::Frontend::ClassNode))
+
+    resolved = converter.__test_resolve_nested_nullable_annotation("Info?", "File")
+    converter.__test_type_name_for_nested_nullable(resolved).should eq("Nil | File::Info")
+  end
+
 end

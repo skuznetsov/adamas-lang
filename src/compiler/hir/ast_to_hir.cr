@@ -16253,7 +16253,7 @@ module Adamas::HIR
     end
 
     private def normalize_declared_type_name(type_name : String, context : String? = nil) : String
-      # Fast cache keyed on (type_name, effective_context, subst_cache_gen).
+      # Include the declaration frontier: later nested types can change lookup.
       # Avoids redundant type_param substitution + context resolution calls.
       effective_context = context || @current_class
       trace_normalize_decl = debug_env_filter_match?(
@@ -16262,7 +16262,7 @@ module Adamas::HIR
         effective_context || "",
       )
       cache_context = effective_context || ""
-      cache_key = "#{type_name}\0#{cache_context}\0#{@subst_cache_gen}"
+      cache_key = "#{type_name}\0#{cache_context}\0#{@subst_cache_gen}\0#{@resolved_type_name_cache_epoch}"
       if cached = @normalize_decl_cache[cache_key]?
         if trace_normalize_decl
           STDERR.puts "[NORM_DECL] phase=cached raw=#{type_name.inspect} context=#{effective_context || "(nil)"} cached=#{cached.inspect}"
@@ -34231,7 +34231,7 @@ module Adamas::HIR
                                 STDERR.puts "[DEBUG_ENUM_RETURN] class=#{class_name} rt=#{rt_name} resolved=#{resolved_rt_name} enum=#{enum_return_name || "(nil)"}"
                               end
                               inferred = module_like_type_name?(rt_name) ? infer_concrete_return_type_from_body(member, class_name, member_arena, node_expr_id: expr_id) : nil
-                              resolved = inferred || type_ref_for_name(resolved_rt_name)
+                              resolved = inferred || annotation_type_ref(rt_name, class_name)
                               if resolved == TypeRef::VOID && method_name.ends_with?('?')
                                 self_type = type_ref
                                 resolved = infer_unannotated_query_return_type(method_name, self_type) || resolved
@@ -61568,13 +61568,6 @@ module Adamas::HIR
       if owner_override.empty?
         owner_override = method_owner(normalized_mangled)
       end
-      qualified_return_type = return_type_name
-      if !owner_override.empty? && !return_type_name.includes?("::")
-        candidate = "#{owner_override}::#{return_type_name}"
-        if @class_info.has_key?(candidate) || @generic_templates.has_key?(candidate) || @module_defs.has_key?(candidate)
-          qualified_return_type = candidate
-        end
-      end
 
       if cached = @function_types[mangled_method_name]? || @function_types[base_method_name]? ||
                   @function_types[normalized_mangled]? || @function_types[normalized_base]?
@@ -61588,17 +61581,7 @@ module Adamas::HIR
            !return_type_name.ends_with?('?') &&
            !return_type_name.ends_with?('*') &&
            !(type_param_like?(return_type_name) && !@type_param_map.has_key?(return_type_name))
-          resolved = if qualified_return_type == return_type_name && !owner_override.empty? && !return_type_name.includes?("::")
-                       old_class = @current_class
-                       @current_class = owner_override
-                       begin
-                         type_ref_for_name(return_type_name)
-                       ensure
-                         @current_class = old_class
-                       end
-                     else
-                       type_ref_for_name(qualified_return_type)
-                     end
+          resolved = annotation_type_ref(return_type_name, owner_override.empty? ? nil : owner_override)
           if resolved != TypeRef::VOID && resolved != TypeRef::NIL && resolved != cached
             return resolved
           end
@@ -61650,17 +61633,7 @@ module Adamas::HIR
       end
 
       if merged.empty?
-        resolved = if qualified_return_type == return_type_name && !owner_override.empty? && !return_type_name.includes?("::")
-                     old_class = @current_class
-                     @current_class = owner_override
-                     begin
-                       type_ref_for_name(return_type_name)
-                     ensure
-                       @current_class = old_class
-                     end
-                   else
-                     type_ref_for_name(qualified_return_type)
-                   end
+        resolved = annotation_type_ref(return_type_name, owner_override.empty? ? nil : owner_override)
         if debug_env_filter_match?("DEBUG_RETURN_DEF", mangled_method_name, base_method_name)
           STDERR.puts "[RETURN_DEF] name=#{mangled_method_name} base=#{base_method_name} rt=#{return_type_name} map=none resolved=#{get_type_name_from_ref(resolved)}"
         end
@@ -61668,17 +61641,7 @@ module Adamas::HIR
       end
 
       with_type_param_map(merged) do
-        resolved = if qualified_return_type == return_type_name && !owner_override.empty? && !return_type_name.includes?("::")
-                     old_class = @current_class
-                     @current_class = owner_override
-                     begin
-                       type_ref_for_name(return_type_name)
-                     ensure
-                       @current_class = old_class
-                     end
-                   else
-                     type_ref_for_name(qualified_return_type)
-                   end
+        resolved = annotation_type_ref(return_type_name, owner_override.empty? ? nil : owner_override)
         if debug_env_filter_match?("DEBUG_RETURN_DEF", mangled_method_name, base_method_name)
           params_str = merged.map { |k, v| "#{k}=#{v}" }.join(",")
           STDERR.puts "[RETURN_DEF] name=#{mangled_method_name} base=#{base_method_name} rt=#{return_type_name} map=#{params_str} resolved=#{get_type_name_from_ref(resolved)}"

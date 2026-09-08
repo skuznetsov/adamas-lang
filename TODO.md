@@ -1,5 +1,31 @@
 # Adamas Bootstrap TODO
 
+2026-09-08 LATE NESTED RETURN NAMESPACE (HOST VERIFIED; BOOTSTRAP OPEN).
+File.info? declared Info? before File::Info registration. The unrelated DWARF
+Info contaminated its return; generated Dir.exists? then called DWARF::Info#type
+directly. LLDB refutes the exception-rendering hypothesis. Explicit return
+registration and refresh now use annotation_type_ref with the declaration owner.
+Normalization cache identity includes the declaration epoch; using only the
+richer resolver was insufficient because it consumed the stale normalization.
+DoD: 576 HIR examples pass (2 existing pending), late-registration cache red/green,
+NP bare/relative/absolute returns with present/Nil values, and real external
+File.info?/Dir.exists? present/absent runtime. Original Crystal passes the latter.
+The exact-source S2 build exits0 after418s. Its --no-prelude exit0 program compiles and runs with exit0. The S3 attempt passes the former DWARF stub and reaches lower_main, then segfaults139 after35s; S3 remains unbuilt.
+LLDB stops earlier in allocator internals during Array(NodeSlot) growth from
+AstArena#add(IdentifierNode) while reparsing a class. This is a separate memory
+corruption hypothesis; the last normal-run lower_main marker does not identify
+the cause. Log: info-namespace-s3-lldb.log (debugger exit0 is not target success).
+Evidence root: /private/tmp/adamas-stage3-drive, info-namespace-{np-baseline,
+np-final,external-final,spec-final-run,cache-red-run,s2}.log;
+source identity: info-namespace-source.json, exact8d94b7bf plus HIR delta only.
+The actual external probe refutes missing declarations: reversing registration
+restores File::Info. Direct declared-return resolution is corrected, but its
+registration-only typed signature still stays stale. A proposed function-body
+cache guard did not change that signal and was removed; do not claim broad
+signature cache coherence. Runtime checks cover the demonstrated compiler path.
+Refresh on registration, annotation lookup or substitution changes. Rollback:
+the scoped HIR delta and these regressions. External stdlib is untouched.
+
 2026-09-08 ROOT-QUALIFIED HASH LITERAL (HOST VERIFIED; BOOTSTRAP OPEN).
 The type977 S2 failure was a name guard, not missing layout: final MIR held
 ::Hash(String, Int32), Reference, size56, with valid Int8 indices metadata at
@@ -18,6 +44,10 @@ Refuted root cause: absent registry ID. The full trace finds type977 by ID and
 name. A separate ClassInfo/by-name-placeholder probe does lose a requested ID,
 but that independent issue is deferred. Duplicate field metadata is also open;
 the observed two indices fields agree, and this fix does not rewrite layouts.
+Runtime follow-up: the exception-rendering hypothesis is refuted by LLDB.
+Dir.exists? calls DWARF::Info#type directly. File.info? has the wrong declared
+Nil|Crystal::DWARF::Info union although its body receives Nil|File::Info.
+Next: reproduce nullable return namespace binding in --no-prelude.
 Rollback: the scoped backend admission and tests. Refresh on name resolution,
 Hash layout producer or allocator contract changes. S3 remains unbuilt.
 

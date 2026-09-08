@@ -12,8 +12,8 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active stage3 continuation
 
-Goal: a source-built stage2 must build and smoke stage3. Base e28801e6 plus
-the scoped root-qualified Hash literal guard repair (see latest git commit).
+Goal: a source-built stage2 must build and smoke stage3. Base8d94b7bf plus
+the scoped late nested return annotation repair (see latest git commit).
 Stage3 is still unbuilt. Evidence root: /private/tmp/adamas-stage3-drive.
 
 Use external original Crystal stdlib at /Users/sergey/Projects/Crystal/crystal/src
@@ -80,11 +80,33 @@ hash_literal_global_qualification_repro.sh and the existing wide/relocated
 allocation ASan regression pass. The qualified fixture rejects on the predecessor.
 Source: hash-qualified-source.json, all 1919 src files at e28801e6 plus only
 this backend delta. Logs: hash-qualified-{spec-run,regression,allocation-guard,s2}.log.
-Active bootstrap frontier: The exact-source S2 build exits0 after415s; its --no-prelude exit0 compile
+Predecessor bootstrap frontier: The exact-source S2 build exits0 after415s; its --no-prelude exit0 compile
 and S3 attempt both abort134 immediately in Crystal::DWARF::Info#type.
 This is a successful binary build, not a working stage2 compiler.
-Next falsifier: expose the first S2 runtime exception before DWARF backtrace
-rendering, then compile and run an exit0 --no-prelude smoke before retrying S3.
+The backtrace-rendering hypothesis is REFUTED: LLDB stops at a direct
+Dir.exists? -> DWARF::Info#type call, without hitting either raise entry.
+File.info? declares Info? in File, yet generated LLVM returns
+Nil|Crystal::DWARF::Info. Its body calls System::File.info? with the correct
+Nil|File::Info, then converts to the wrong declared union. Anchors:
+hash-qualified-s2-lldb.log; hash-qualified-work/bin/adamas_s2.ll:167422,1190431.
+Explicit return registration and refresh now use annotation_type_ref with the
+owner. The normalization cache also keys the declaration epoch: the first
+resolver-only candidate still consumed a stale normalization. A focused cache
+falsifier changes post-registration Other::Info to File::Info; 576 HIR examples
+pass with2 existing pending. NP bare/relative/absolute nullable return controls
+and external present/absent File.info?/Dir.exists? runtime guards pass.
+Refuted: changing function-body cache precedence was needed for this runtime;
+the final candidate removes that extra guard and still passes both regressions.
+The registration-only external typed signature stays stale, so general cache
+coherence is open. Epoch-keyed cache retention is an unmeasured memory-growth
+risk; no cache performance claim is made. Scoped adversary verdict: ROBUST for
+the tested declaration/nullable/generic/self behavior, not broad bootstrap.
+Source: info-namespace-source.json (1919files, base8d94b7bf plus HIR delta only).
+Logs: info-namespace-{np-baseline,np-final,external-final,spec-final-run,
+cache-red-run,s2,s2-smoke-build,s2-smoke-run,s3}.log; regression scripts carry the rerunnable assertions.
+The generated S2 LLVM now declares both File.info? overloads as Nil|File::Info.
+Latest bootstrap result: The exact-source S2 build exits0 after418s. Its --no-prelude exit0 program compiles and runs with exit0. The S3 attempt passes the former DWARF stub and reaches lower_main, then segfaults139 after35s; S3 remains unbuilt.
+Next falsifier: Run the ASan-instrumented S2 against S3 sources to locate the first invalid access. A diagnostic LLDB run stops earlier in malloc/realloc during AstArena IdentifierNode insertion; the varying failure site indicates that the normal-run lower_main marker does not locate the cause.
 Refresh these results on name resolution, layout producer or allocator changes.
 Required named parameters may fail arity lookup before reaching callsite
 inference (also nil on the predecessor); the named guard control uses a

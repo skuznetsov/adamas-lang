@@ -27,6 +27,18 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+Explicit method return annotations use the owner-aware annotation resolver at
+registration and selected-definition refresh. Composite names such as Info?
+retain the declaration namespace; normalization cache entries also depend on
+the declaration epoch so a later nested type can supersede an early lookup.
+Admission: late_nested_return_namespace_repro.sh (bare, relative and absolute
+nullable returns, present and Nil values), the late-registration cache spec,
+and file_info_declared_return_namespace_repro.sh against external stdlib.
+Do not promote the pre-lowering signature cache to a completed runtime contract:
+the external registration-only probe still exposes a stale typed signature,
+while selected annotation resolution and generated runtime are checked separately.
+Rollback is this HIR resolver/cache delta; no stdlib or layout changes.
+
 The Hash literal allocator recognizes both root-class spellings Hash(...) and
 ::Hash(...). Other namespaces merely ending in Hash remain rejected. Admission
 still requires reference kind, a one-byte indices field beyond the type header,
@@ -75,9 +87,9 @@ Admission: eight layout controls and hash_literal_allocation_repro.sh in both
 NP byte forms and external --stdlib mode (empty/filled dup and copy mutation).
 The exact predecessor is ASan-red; the backend-only successor passes these
 host gates. Rollback is local to the helper and its ExternCall emission path.
-Class-metadata refresh, constructor dispatch and bootstrap propagation remain
-separate obligations; external S2 currently blocks on DirectoryMatch#matches?
-with a Void argument from the directory callback before emission.
+Class-metadata refresh and constructor dispatch remain separate obligations.
+The callback and root-qualified Hash repairs pass the prior emission blockers;
+The namespace-repaired S2 builds in418s and compiles/runs the NP exit0 smoke. S3 reaches lower_main but segfaults139 after35s; bootstrap closure remains open.
 
 Macro nil? evaluates the receiver as a MacroValue even in text conditions.
 Absent values and explicit NilNode are nil-like; false, zero and empty strings
@@ -90,11 +102,11 @@ macro_expander.cr. Host admission passes; bootstrap propagation is separate.
 
 Bootstrap verification requires external original Crystal stdlib via
 CRYSTAL_PATH=/Users/sergey/Projects/Crystal/crystal/src. Snapshot src/stdlib
-results are diagnostic only. The macro fix passes the old Handler/Proc frontier;
-the parenthesized declaration fix passes File.tempname compilation and advances
-external S2 to DirectoryMatch#matches? with a Void argument. Its direct external
-record/method runtime guard passes; trace callback argument production before
-changing lookup. Preserve the heterogeneous-return and bodyless-target guards.
+results are diagnostic only. The macro and parenthesized declaration fixes pass the former Handler/Proc
+and File.tempname boundaries. Callback inference and qualified Hash admission
+permit S2 emission; declared-return namespace repair permits its NP smoke.
+The current S3 runtime failure follows lower_main; localize that frame before
+widening semantic or layout changes. Preserve the heterogeneous-return and bodyless-target guards.
 Never edit stdlib. These host gates do not establish a produced S3.
 
 Early union field sizing must recognize Proc carriers in canonical, top-level
