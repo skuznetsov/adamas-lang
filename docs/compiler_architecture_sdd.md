@@ -27,6 +27,15 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+Macro nil? evaluates the receiver as a MacroValue even in text conditions.
+Absent values and explicit NilNode are nil-like; false, zero and empty strings
+are not. Explicit nil retains the source spelling "nil", while absence emits
+no text, allowing external record defaults to preserve their declaration.
+Admission: predicate/condition specs and external_record_nil_predicate_repro.sh
+with the external CRYSTAL_PATH, including the mandatory/no-default field.
+Rollback is confined to macro_value.cr and the nil? member-access path in
+macro_expander.cr. Host admission passes; bootstrap propagation is separate.
+
 Early union field sizing must recognize Proc carriers in canonical, top-level
 arrow and parenthesized arrow syntax before falling back to reference storage.
 A Proc lacks the runtime object header required for an all-reference union.

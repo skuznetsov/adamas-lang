@@ -35,6 +35,9 @@ module Adamas
         # Call a method on this value
         def call_method(name : String, args : Array(MacroValue), named_args : Hash(String, MacroValue)?) : MacroValue
           case name
+          when "nil?"
+            # Missing AST values are nil-like, but false and empty values are not.
+            MacroBoolValue.new(is_a?(MacroNilValue))
           when "stringify"
             MacroStringValue.new(stringify)
           when "id"
@@ -516,6 +519,9 @@ module Adamas
         def call_method(name : String, args : Array(MacroValue), named_args : Hash(String, MacroValue)?) : MacroValue
           node = @arena[@node_id]
           case name
+          when "nil?"
+            # Keep explicit nil's source spelling distinct from an absent value.
+            MacroBoolValue.new(node.is_a?(Frontend::NilNode))
           when "id"
             if id_name = node_identifier_name(node)
               MacroIdValue.new(id_name)
@@ -811,6 +817,8 @@ module Adamas
 
         private def stringify_node(node) : String
           case node
+          when Frontend::NilNode
+            "nil"
           when Frontend::NumberNode
             String.new(node.value)
           when Frontend::StringNode

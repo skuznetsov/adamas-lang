@@ -2417,6 +2417,13 @@ module Adamas
           obj = @arena[node.object]
           member = intern_name(node.member)
 
+          # The text fallback discards nil-like receivers. Predicates must use
+          # the actual macro value, including an absent TypeDeclaration default.
+          if member == "nil?"
+            receiver = evaluate_to_macro_value(node.object, context)
+            return receiver.call_method(member, [] of MacroValue, nil).to_macro_output
+          end
+
           # Phase 87B-6: Handle .class_name before evaluating base
           # Need to know the AST node type, not the evaluated value
           if member == "class_name"

@@ -1,5 +1,24 @@
 # Adamas Bootstrap TODO
 
+2026-09-08 EXTERNAL RECORD NIL PREDICATE (HOST VERIFIED).
+Modern external macros.cr tests property.value.nil? before emitting a getter
+initializer. MacroValue had no nil? method, and the text member-access path
+also discarded absent receivers. Preserve typed predicate evaluation and the
+literal spelling of explicit nil; absent values still stringify to empty text.
+DoD: CRYSTAL_PATH=/Users/sergey/Projects/Crystal/crystal/src bash
+regression_tests/external_record_nil_predicate_repro.sh COMPILER.
+The exact 6ab787a7 host aborts134 at Owner::Handler#value; a frozen successor
+with only macro_value.cr and macro_expander.cr changed passes absent, numeric,
+false and explicit nil defaults with --no-prelude. Seven new predicate/condition
+cases plus33 existing macro cases pass. The condition test separately exposed
+the receiver-discard path after the value-method repair alone proved insufficient.
+No stdlib changes or heterogeneous return guard weakening. Evidence is in
+/private/tmp/adamas-stage3-drive/macro-nil-*.log, external-record-*.log and
+macro-nil-source.json. Temporary predecessors were wiped; this is an exact-HEAD
+successor, not a reconstruction of the previous composite HIR snapshot.
+Stage2/Stage3 propagation remains a separate gate. Refresh after macro value,
+member-access, AST default representation or external record macro changes.
+
 2026-09-07 NULLABLE PROC FIELD LAYOUT (HOST VERIFIED, S2 PROPAGATED).
 Equivalent Hash key spellings can re-register a class with a callback expressed
 as an arrow type instead of Proc(...). Early HIR treated that arrow arm as a
