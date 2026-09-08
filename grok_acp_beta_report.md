@@ -14,6 +14,13 @@
 
 ## Сессии
 
+### Session 2026-09-08 — Nested callback return inference
+**Task:** bounded read-only review of the frozen HIR callsite inference delta.
+**Access:** `session/new` returned Permission denied before review began;
+request/prompt limits were 15/30 seconds. No review evidence was produced.
+**Continuation:** local reductions, frozen-source checks and a Luna review.
+Evidence: `/private/tmp/adamas-stage3-drive/callback-grok-review.log`.
+
 ### Session 2026-09-06 — Early nullable Proc field layout
 **Task:** read-only challenge of the eight-line early HIR Proc classification
 repair, with exact source, patch and focused tests; no edits delegated.

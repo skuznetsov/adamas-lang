@@ -1,5 +1,42 @@
 # Adamas Bootstrap TODO
 
+2026-09-08 NESTED CALLBACK RETURN OWNERSHIP (HOST VERIFIED; BOOTSTRAP OPEN).
+The raw callback for Dir::Globber#each_child inherited caller locals and formal
+annotations; read_entry(dir) then lost its concrete Handle argument. Callee
+body inference now owns its body/formals/local map, with cache invalidation on
+entry and restoration. Concrete unannotated bare calls infer a local return;
+no shared base-return entry is installed. A specialization-keyed guard prevents
+substitution generations from reopening the same recursive inference walk.
+The node-only guard is REFUTED: nested Int32-to-String calls lost the String
+return branch. Definition, owner and argument types now distinguish re-entry.
+Static declared returns use exact overload selection and declaration namespace.
+Explicit receiver ivars read registered receiver fields; unresolved arguments
+do not pick a sibling overload. The first static-lookup candidate is REFUTED:
+with an unknown ivar it chose String instead of the entry overload. The field
+lookup and unknown-overload guard pass that counterexample.
+DoD: 574 HIR examples pass (0 failures, 2 pending); nested_yield_callsite_return_repro.sh
+passes inline/raw --no-prelude output checks. Exact HEAD baseline aborts134 on
+Pointer#name in raw mode; the successor emits both callback values (73,94).
+Controls cover caller local/formal collisions, nullable paths, module Entry?
+namespace collisions, typed and untyped overloads, alternating concrete calls,
+and unknown-argument rejection. Source manifest: callback-specialized-source.json
+(all 1919 files, base0c96d132 plus only the intended HIR delta).
+Evidence root: /private/tmp/adamas-stage3-drive; callback-specialized-spec-final-run.log,
+callback-baseline-runtime.log, callback-specialized-runtime.log and
+callback-specialized-s2.log. The actual five-file external Dir probe registers
+platform next_entry$arity2 and infers Crystal::System::Dir::Entry in all four
+each_child queries (external-dir-yield-probe/specialized-run.log).
+Open: source-built S2/S3, raw callback captured scalar mutation, and general
+recursive fixed-point return discovery. Required named parameters can fail
+lookup before callsite inference (pre-existing); the named re-entry control
+uses a default parameter so lookup admits the call. the specialization-aware candidate exits1 after322s at Hash literal missing concrete reference layout for type977; --emit mir preserved 78569215 bytes before LLVM rejection (callback-specialized-s2.log). Simple recursion reductions did not reproduce the full
+substitution-generation overflow; the frozen unguarded57s and guarded266s S2
+runs are historical guard discriminators. The final specialization-aware
+run also reaches LLVM Hash layout rejection without overflow; none of these
+measurements is a successful build timing.
+Rollback: the scoped HIR delta and matching tests. Refresh on changes to call
+selection, body/local context, namespace resolution or recursion boundaries.
+
 2026-09-08 TERNARY DECLARATION CONTEXT (HOST VERIFIED; BOOTSTRAP OPEN).
 Adversary review found that the arbitrary-callee declaration path accepted
 spaced declarations in ternary branches. Guarding shared no_type_declaration

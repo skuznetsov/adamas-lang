@@ -12,8 +12,8 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active stage3 continuation
 
-Goal: a source-built stage2 must build and smoke stage3. Base c0a29a5e plus
-the scoped ternary declaration guard (see latest git commit).
+Goal: a source-built stage2 must build and smoke stage3. Base 0c96d132 plus
+the scoped nested callback inference repair (see latest git commit).
 Stage3 is still unbuilt. Evidence root: /private/tmp/adamas-stage3-drive.
 
 Use external original Crystal stdlib at /Users/sergey/Projects/Crystal/crystal/src
@@ -45,19 +45,38 @@ Exact-source fixes:
   Final parser suites pass 52 + 42 examples; NP macro runtime guard passes.
   General parser equivalence is not claimed.
 
-Active bootstrap frontier: exact c0a29a5e external S2 fails after 167s with
-bodyless Dir::Globber::DirectoryMatch#matches?$arity1, args=Void, called from
-Dir::Globber#run(Array(PatternType))_block. No fresh S2 binary exists.
-Evidence: paren-decl-external-s2.log. Direct external DirectoryMatch.new("abc")
-and matches? positive/negative runtime controls pass (dir-match.cr/log).
-NP record methods also pass directly and through a two-record union.
-Therefore missing record block/body is not established; inspect the producing
-entry.name/callback type before changing method lookup or weakening guards.
-A Dir.glob small probe instead fails Tuple#<=>(Int32), a distinct reduction.
-Narrow same-source S2 trace reproduces the same failure in 168s
-(dir-match-trace-s2.log); selected hooks do not expose the Void producer.
-NP nullable-entry callback plus record union also passes. Next: instrument the
-unresolved request caller/argument producers in a separate exact-source snapshot.
+Nested callback inference now owns the callee body, formal annotations and
+local map. Concrete unannotated readers keep their argument types; static
+returns resolve the selected definition in its declaration namespace, and
+explicit receiver ivars use the receiver's registered field type. An unknown
+argument cannot discriminate distinct static overloads. No shared base-return
+cache entry is added by the new bare-call inference path.
+Refuted: the first static candidate selected a String sibling after dropping
+an unresolved ivar argument; the field lookup plus ambiguity guard passes this
+counterexample. A node-only recursion guard also lost String from a nested
+Int32-to-String call. The current guard keys definition, owner and positional/
+named argument types, independent of substitution-cache generations.
+Evidence: 574 HIR examples pass (0 failures, 2 pending); callback-specialized-runtime.log passes inline
+and raw --no-prelude value checks. Exact HEAD baseline aborts134 on Pointer#name;
+the successor emits both Entry values. The five-file actual external Dir probe
+asserts unix/dir.cr and next_entry$arity2 were registered; all four each_child
+queries infer Crystal::System::Dir::Entry (previous candidate returned nil).
+The initial four-file probe is REFUTED as incomplete: FileLoader did not load
+the platform require nested inside a macro. No missing-callee conclusion stands.
+Source: callback-specialized-source.json, all 1919 src files at base0c96d132
+plus only the intended HIR delta. Actual external probe evidence lives in
+external-dir-yield-probe/{specialized-build,specialized-run}.log.
+Active bootstrap frontier: the specialization-aware candidate exits1 after322s at Hash literal missing concrete reference layout for type977; --emit mir preserved 78569215 bytes before LLVM rejection (callback-specialized-s2.log).
+The preceding node-guard candidate passed DirectoryMatch but stopped at Hash
+literal missing concrete reference layout for type977 after355s; that is a
+failed-build observation, not a successful S2 performance result. S3 is unbuilt.
+Next falsifier: identify the failing Hash result type, its final MIR metadata
+and its HIR-to-MIR producer without weakening the allocation layout guard.
+Required named parameters may fail arity lookup before reaching callsite
+inference (also nil on the predecessor); the named guard control uses a
+default parameter to isolate accepted callsite inference.
+Raw callback captured scalar mutation remains separate: a counter-only raw
+fixture still returns a wrong total even though the value-output guard passes.
 
 Separate confirmed reduction: class_property(value : Int32) { 73 } compiles but
 aborts on Example.value; identical bare class_property value : Int32 { 73 }
@@ -77,7 +96,7 @@ defaults and Hash#dup ASan controls also pass on this final host
 (final-record-runtime.log, final-hash-stdlib.log). Do not confuse this source
 with the earlier incomplete interpolation candidate (ternary-interp-work).
 Keep unrelated live HIR changes out of successors. Return to S2/S3 after the
-callback type falsifier. All binaries via run_safe; RSS/FD telemetry is unknown.
+Hash layout producer falsifier. All binaries via run_safe; RSS/FD telemetry is unknown.
 Standing authority: local fixes, supervised tests, exact atomic commits;
 no stdlib edits, pushes or unrelated dirty-tree staging.
 

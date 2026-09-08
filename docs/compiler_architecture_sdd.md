@@ -27,6 +27,23 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+Nested callback parameter inference uses the selected callee's body, formal
+parameters, local map and declaration namespace. Unannotated bare readers may
+infer their result from concrete call arguments without populating a shared
+base-method return cache. An active callsite key uses the definition, owner, positional and named
+argument types, independently of substitution-cache generations. Re-entering
+the same definition with a different specialization may add a return branch;
+a node-only guard is rejected by the Int32-to-String recursive-call control.
+Static calls resolve declared returns through the selected overload and its
+namespace; explicit receiver ivars consume that receiver's registered fields.
+Unknown positional arguments must not select among distinct static overloads.
+Admission: nested_yield_callsite_inference_spec.cr and
+nested_yield_callsite_return_repro.sh (both inline and raw callback modes).
+Same-name locals/types, inherited declarations, alternating concrete calls,
+nullable paths and conflicting overloads are controls. A recursive unknown
+remains unknown; raw callback captured scalar mutation and S3 remain open.
+Rollback is the scoped HIR delta and its tests; no layout or stdlib edits.
+
 Parenthesized calls preserve spaced-colon type declarations as positional AST
 arguments for arbitrary callees, including nested macro calls outside ternary
 branches. Ternary branches reject spaced declarations before named fallback;

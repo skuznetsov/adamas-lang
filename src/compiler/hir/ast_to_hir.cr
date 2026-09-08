@@ -6242,6 +6242,7 @@ module Adamas::HIR
     @current_typeof_locals : Hash(String, TypeRef)?
     # Optional body context for local-type inference when resolving identifiers.
     @infer_body_context : Array(ExprId)?
+    @infer_callsite_return_stack : Set({UInt64, String?, Array(TypeRef), Array({String, TypeRef})})
     # Guard against recursive inference loops (arena object_id + expr index,
     # substitution generation, and receiver context).
     @infer_expr_stack : Set({UInt64, UInt64, String?})
@@ -6818,6 +6819,7 @@ module Adamas::HIR
       @current_def_node = nil
       @current_typeof_locals = nil
       @infer_body_context = nil
+      @infer_callsite_return_stack = Set({UInt64, String?, Array(TypeRef), Array({String, TypeRef})}).new
       @infer_expr_stack = Set({UInt64, UInt64, String?}).new
       @infer_type_cache = {} of {UInt64, UInt64, String?} => {Int32, TypeRef}
       @infer_type_cache_version = 0
@@ -25180,6 +25182,16 @@ module Adamas::HIR
         if obj_type = infer_type_from_expr(expr_node.object, self_type_name)
           if obj_type != TypeRef::VOID
             class_name = get_type_name_from_ref(obj_type)
+            # Explicit receiver ivars use that receiver's registered fields.
+            # Treating dir.@dir as a method leaves its positional argument Void.
+            if member_name.starts_with?('@')
+              if info = @class_info[class_name]?
+                if ivar = find_ivar_info(info.ivars, member_name)
+                  return ivar.type if ivar.type != TypeRef::VOID
+                end
+              end
+              return nil
+            end
             # Pointer#value is an intrinsic dereference. Its concrete descriptor
             # is the ownership authority for the element type and must win
             # before generic method-return resolution. Otherwise an unrelated
@@ -25817,6 +25829,29 @@ module Adamas::HIR
             if obj_name = stringify_type_expr(callee_node.object)
               obj_name = resolve_type_name_in_context(obj_name)
               base_method = "#{obj_name}.#{member_name}"
+              if (type_name_exists?(obj_name) || @module_defs.has_key?(obj_name)) &&
+                 !expr_node.named_args &&
+                 !expr_node.args.any? { |arg| node_for_expr(arg).is_a?(Adamas::Compiler::Frontend::SplatNode) }
+                call_arg_types = infer_arg_types_for_call(expr_node.args, self_type_name)
+                selected_base = resolve_class_method_with_inheritance(obj_name, member_name) || base_method
+                if selected = lookup_function_def_for_call(selected_base, call_arg_types.size, false, call_arg_types)
+                  # Unknown positional types cannot discriminate overloaded
+                  # declarations. An arity-only match is sufficient only when
+                  # all registered variants belong to this same definition.
+                  if call_arg_types.any? { |type| type == TypeRef::VOID || type == TypeRef::POINTER }
+                    variants = function_def_overloads(selected_base)
+                    return nil if variants.any? do |name|
+                      candidate = @function_defs[name]?
+                      candidate && candidate.object_id != selected[1].object_id
+                    end
+                  end
+                  declared_base = strip_type_suffix(selected[0])
+                  inferred = with_namespace_override(method_owner(declared_base)) do
+                    resolve_return_type_from_def(selected[0], declared_base, type_ref_for_name(obj_name), call_arg_types.size, selected[1])
+                  end
+                  return inferred if inferred && inferred != TypeRef::VOID
+                end
+              end
               # When there are args, try to find the specific overload matching arg types.
               # This avoids returning the wrong type when multiple overloads exist
               # (e.g., Math.sqrt(Float32):Float32 vs Math.sqrt(Float64):Float64).
@@ -25974,6 +26009,11 @@ module Adamas::HIR
                      arg_types.size,
                    )
                   return inferred if inferred != TypeRef::VOID
+                end
+                if exact[1].return_type.nil? && !arg_types.empty? && arg_types.all? { |type| type != TypeRef::VOID && type != TypeRef::POINTER }
+                  if inferred = infer_return_type_from_callsite(exact[1], self_type_name, expr_node.args, expr_node.named_args, self_type_name)
+                    return inferred if inferred != TypeRef::VOID
+                  end
                 end
               end
             end
@@ -27039,7 +27079,11 @@ module Adamas::HIR
         receiver_type = infer_type_from_expr(callee_node.object, self_type_name)
         return nil if receiver_type.nil? || receiver_type == TypeRef::VOID
         receiver_name = get_type_name_from_ref(receiver_type)
-        resolved = resolve_method_with_inheritance(receiver_name, member_name) || "#{receiver_name}##{member_name}"
+        resolved = if type_owner = infer_type_literal_name_from_expr(callee_node.object)
+                     resolve_class_method_with_inheritance(type_owner, member_name) || "#{type_owner}.#{member_name}"
+                   else
+                     resolve_method_with_inheritance(receiver_name, member_name) || "#{receiver_name}##{member_name}"
+                   end
         return block_param_types_for_call(resolved, resolved, receiver_type, call_arg_types)
       elsif callee_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
         method_name = (safe_slice_to_string(callee_node.name) || "")
@@ -61220,6 +61264,32 @@ module Adamas::HIR
         end
         inferred
       end
+      named_types = [] of {String, TypeRef}
+      if named_args
+        named_args.each do |arg|
+          named_types << {(safe_slice_to_string(arg.name) || ""), infer_type_from_expr(arg.value, self_type_name) || TypeRef::VOID}
+        end
+      end
+      # Cache generations change during recursive inference; the active key
+      # instead follows the selected definition and its concrete specialization.
+      # A different argument type may contribute a different return branch.
+      key = {node.object_id.to_u64, owner_name, call_types, named_types}
+      return nil if @infer_callsite_return_stack.includes?(key)
+      @infer_callsite_return_stack.add(key)
+      begin
+        infer_return_type_from_callsite_inner(node, owner_name, call_types, named_args, self_type_name)
+      ensure
+        @infer_callsite_return_stack.delete(key)
+      end
+    end
+
+    private def infer_return_type_from_callsite_inner(
+      node : Adamas::Compiler::Frontend::DefNode,
+      owner_name : String?,
+      call_types : Array(TypeRef),
+      named_args : Array(Adamas::Compiler::Frontend::NamedArgument)?,
+      self_type_name : String?,
+    ) : TypeRef?
       local_map = {} of String => TypeRef
       name_map = {} of String => String
 
@@ -61265,6 +61335,7 @@ module Adamas::HIR
       old_names = @current_typeof_local_names
       @current_typeof_locals = local_map
       @current_typeof_local_names = name_map
+      @infer_type_cache_version += 1
       begin
         inferred = infer_concrete_return_type_from_body(node, owner_name)
         if env_get("DEBUG_INFER_CALLSITE")
@@ -61279,6 +61350,7 @@ module Adamas::HIR
       ensure
         @current_typeof_locals = old_locals
         @current_typeof_local_names = old_names
+        @infer_type_cache_version += 1
       end
     end
 
@@ -61996,14 +62068,16 @@ module Adamas::HIR
       return nil unless body && !body.empty?
 
       def_arena = @function_def_arenas[func_name]? || @function_def_arenas[base_method_name]? || @arena
+      old_def_node = @current_def_node
+      old_body_context = @infer_body_context
       old_arena = @arena
       old_locals = @current_typeof_locals
       old_names = @current_typeof_local_names
       old_namespace = @current_namespace_override
       owner_override = function_context_from_name(func_name) || function_context_from_name(base_method_name)
       owner_override = strip_generic_args(owner_override) if owner_override
-      local_map = old_locals ? old_locals.dup : {} of String => TypeRef
-      name_map = old_names ? old_names.dup : {} of String => String
+      local_map = {} of String => TypeRef
+      name_map = {} of String => String
 
       params = function_param_infos(func_def)
       unless params.empty?
@@ -62047,6 +62121,8 @@ module Adamas::HIR
         local_map["self"] = receiver_type
       end
 
+      @current_def_node = func_def
+      @infer_body_context = body
       @arena = def_arena
       @current_typeof_locals = local_map
       @current_typeof_local_names = name_map
@@ -62098,6 +62174,8 @@ module Adamas::HIR
           flow_narrowed_args,
         )
       ensure
+        @current_def_node = old_def_node
+        @infer_body_context = old_body_context
         @current_typeof_locals = old_locals
         @current_typeof_local_names = old_names
         @current_namespace_override = old_namespace
