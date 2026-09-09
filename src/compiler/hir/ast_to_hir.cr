@@ -2160,6 +2160,7 @@ module Adamas::HIR
     @classes_with_subclasses : Set(String)
     @children_by_parent : Hash(String, Set(String))
     # Module-level class vars (modules don't have ClassInfo entries)
+    getter module_class_vars : Hash(String, Array(ClassVarInfo))
     @module_class_vars : Hash(String, Array(ClassVarInfo))
     # Track lib struct/union types for field access lowering.
     @lib_structs : Set(String)

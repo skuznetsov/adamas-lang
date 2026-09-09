@@ -3034,6 +3034,17 @@ module Adamas
             globals << {global_name, global_type, cvar.initial_value, debug_info.try(&.display_name), debug_info.try(&.location)}
           end
         end
+        # Modules do not have ClassInfo entries, but their @@ variables still
+        # need concrete MIR globals so nullable/union access uses the declared
+        # storage type instead of the backend's pointer fallback.
+        hir_converter.module_class_vars.each do |module_name, class_vars|
+          class_vars.each do |cvar|
+            global_name = MIR::HIRToMIRLowering.class_var_global_name(module_name, cvar.name)
+            debug_info = hir_converter.global_debug_infos[global_name]?
+            global_type = runtime_top_level_constant_global_type(hir_converter, module_name, cvar.name, cvar.type)
+            globals << {global_name, global_type, cvar.initial_value, debug_info.try(&.display_name), debug_info.try(&.location)}
+          end
+        end
         bootstrap_trace_puts "[MIR_SETUP] class_vars scan done globals=#{globals.size}" if mir_setup_trace
 
         # Register lib/module/class constants as globals with initial values

@@ -27,6 +27,15 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+MIR global registration consumes both class-owned and module-owned class
+variables from the HIR registries. Module ownership does not imply ClassInfo;
+a missing class entry must not erase a module variable's declared storage type.
+The module registry supplies the same name, type, initial value and debug
+metadata contract as class variables. Admission requires nullable Bool module
+and class controls to retain union storage through initialization/read/write,
+including an ASan red/green check. Backend unknown-global fallback is unchanged.
+Rollback is the module registry exposure and CLI consumer; stdlib is untouched.
+
 A call result authorizes unconditional ARC cleanup only when every return path
 and every Copy/Cast/Phi origin proves owned. Missing parameter definitions and
 unknown calls reject this proof; direct allocations and calls to already proven

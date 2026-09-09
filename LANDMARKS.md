@@ -12,8 +12,8 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active stage3 continuation
 
-Goal: a source-built stage2 must build and smoke stage3. Base17effcc0 plus
-the scoped mixed-return ownership repair (see latest git commit).
+Goal: a source-built stage2 must build and smoke stage3. Base13372b8a plus
+the scoped module class-variable registration repair (see latest git commit).
 Stage3 is still unbuilt. Evidence root: /private/tmp/adamas-stage3-drive.
 
 Use external original Crystal stdlib at /Users/sergey/Projects/Crystal/crystal/src
@@ -105,7 +105,7 @@ Source: info-namespace-source.json (1919files, base8d94b7bf plus HIR delta only)
 Logs: info-namespace-{np-baseline,np-final,external-final,spec-final-run,
 cache-red-run,s2,s2-smoke-build,s2-smoke-run,s3}.log; regression scripts carry the rerunnable assertions.
 The generated S2 LLVM now declares both File.info? overloads as Nil|File::Info.
-Latest bootstrap result: The exact-source S2 build exits0 after418s. Its --no-prelude exit0 program compiles and runs with exit0. The S3 attempt passes the former DWARF stub and reaches lower_main, then segfaults139 after35s; S3 remains unbuilt.
+Namespace-only bootstrap result: The exact-source S2 build exits0 after418s. Its --no-prelude exit0 program compiles and runs with exit0. The S3 attempt passes the former DWARF stub and reaches lower_main, then segfaults139 after35s; S3 remains unbuilt.
 ASan resolves the allocator hypothesis to an earlier MacroValue use-after-free:
 evaluate_to_macro_value returns a context alias, then evaluate_expression emits
 an unconditional rc_dec. Hash::Entry does rc_inc its stored value, refuting the
@@ -126,8 +126,26 @@ stops at the independent LayoutProbe@@enabled READ12 from an8-byte global
 owned-return-s2-summary.log, owned-return-s2-link.log, owned-return-s3.log,
 owned-return-s3-asan.log. The suspect evaluate_expression rc_dec is absent in
 fresh emitted LLVM; ordinary factory cleanup is retained by the MIR consumer test.
-Next falsifier: register module class-variable metadata at the MIR global
-boundary; module/class Bool? ASan controls must pass before another S2/S3 run.
+Module-global producer/consumer gap is reproduced: record_class_var_type stores
+module variables in @module_class_vars, while CLI consumed only class_info.
+A no-prelude module Bool? has globals=0 and ptr storage; identical class has
+globals=1 and correct union storage. Both ordinary binaries return0, refuting
+unsanitized success as a sufficient check. The candidate exposes the existing
+module registry and registers its declared types before MIR lowering.
+Source: module-globals-source.json, base13372b8a plus CLI/HIR getter only.
+DoD: module_classvar_storage_repro.sh CANDIDATE BASELINE reproduces baseline
+ASan READ12 and passes getter-only plus cached/setter module/class controls.
+The setter fixture passes the baseline too and is only a guard. Uniform LLVM
+sanitize_address attributes are required; no manual poisoning is used.
+Fresh S2 builds in 422s, with the LayoutProbe global now a Nil|Bool union; NP
+exit0 compiles/runs successfully. Normal S3 exits 133 after 5s. ASan passes
+both earlier MacroValue and LayoutProbe accesses and finds Path tuple READ4
+beyond a 12-byte allocation (exit 134 after 8s). S3 is still unbuilt. Logs:
+module-globals-{regression,s2,s3,s3-asan}.log. Direct module storage is ROBUST
+within these controls; no general included-module/global-initialization claim.
+Next falsifier: match Path.separators POSIX/Windows runtime tuple variants to
+IndexGet lowering. The union backend selects the largest tuple layout; prove
+the valid iteration path before choosing dispatch, bounds handling or HIR repair.
 Refresh these results on name resolution, layout producer or allocator changes.
 Required named parameters may fail arity lookup before reaching callsite
 inference (also nil on the predecessor); the named guard control uses a

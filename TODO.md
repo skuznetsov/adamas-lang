@@ -1,5 +1,33 @@
 # Adamas Bootstrap TODO
 
+2026-09-09 MODULE CLASS-VARIABLE GLOBALS (HOST VERIFIED; BOOTSTRAP OPEN).
+LayoutProbe@@enabled declared Bool? occupied a fallback ptr global (8 bytes),
+while enabled? loaded the 12-byte nullable union. HIR records module variables
+outside ClassInfo, but CLI registered only ClassInfo-owned variables. Expose
+and consume the existing module registry through the same MIR global boundary.
+The module/class NP discriminator has globals=0/1 before the fix and 1/1 after.
+DoD: module_classvar_storage_repro.sh CANDIDATE BASELINE, with external
+CRYSTAL_PATH and LLVM CLANG, reproduces the baseline ASan READ12 and passes
+all four candidate getter-only and cached/setter module/class controls, both
+normally and under ASan. Unsanitized baseline success is insufficient. The
+expanded setter fixture also passes before the fix; it is a guard, not the red.
+The exact-source S2 build exits 0 in 422s and compiles/runs the NP exit0 smoke.
+Normal S3 still exits 133 after 5s. ASan S3 passes the former MacroValue and
+LayoutProbe accesses, then reports a separate Path tuple READ4 beyond a
+12-byte allocation (exit 134 after 8s). S3 remains unbuilt. Evidence root:
+/private/tmp/adamas-stage3-drive; module-globals-{regression,s2,s3,s3-asan}.log.
+Adversary: module/class source-order probes emit one global; original Crystal
+rejects those mixed-kind declarations. No duplicate valid-input global was
+reproduced. Direct module storage is ROBUST within these controls; included
+module ownership and general global initialization are not closed.
+Rejected verification route: -fsanitize=address alone does not instrument
+pre-emitted LLVM function bodies; asymmetric manual poisoning is not a matched
+red/green oracle. The final check adds sanitize_address identically to baseline and candidate
+definitions and preserves their original memory accesses.
+Source: module-globals-source.json, HEAD13372b8a plus CLI/HIR getter delta only.
+Rollback: those two scoped changes and their regressions. Refresh on owner
+registration, initializer lowering or global layout changes. No stdlib edits.
+
 2026-09-08 MIXED RETURN OWNERSHIP (HOST VERIFIED; BOOTSTRAP OPEN).
 Caller ARC cleanup now requires an owned origin on every return and every Phi
 alternative. Parameters, unresolved definitions and unknown calls reject; Copy
