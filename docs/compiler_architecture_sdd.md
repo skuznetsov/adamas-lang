@@ -27,6 +27,14 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+A call result authorizes unconditional ARC cleanup only when every return path
+and every Copy/Cast/Phi origin proves owned. Missing parameter definitions and
+unknown calls reject this proof; direct allocations and calls to already proven
+owned producers are admitted. Mixed owned/borrowed producers remain conservative
+and may retain new allocations longer. This is not a complete ownership ABI or
+a bounded-memory claim. Admission: owned_return_provenance_repro.sh and adjacent
+MIR cleanup/phi regressions. Rollback is the universal return-proof delta.
+
 Explicit method return annotations use the owner-aware annotation resolver at
 registration and selected-definition refresh. Composite names such as Info?
 retain the declaration namespace; normalization cache entries also depend on

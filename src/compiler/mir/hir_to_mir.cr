@@ -5323,7 +5323,7 @@ module Adamas
           func_inst_map[func.name] = inst_map
         end
 
-        # Phase 1: Seed with functions that return direct Allocate results
+        # Phase 1: Seed with functions whose every return origin is an Allocate
         @hir_module.functions.each do |func|
           next if @owned_return_funcs.includes?(func.name)
           unless inst_map = lookup_hir_inst_map(func_inst_map, func.name)
@@ -5333,13 +5333,13 @@ module Adamas
             end
             next
           end
-          if returns_allocated_value?(func, inst_map)
+          if returns_owned_value?(func, inst_map, allow_owned_calls: false)
             @owned_return_funcs << func.name
           end
         end
 
-        # Phase 2: Transitive closure — if a function returns a Call result from
-        # an "owned return" function, it's also "owned return".
+        # Phase 2: Transitive closure through calls with proven owned returns.
+        # Every alternative must still satisfy the same ownership contract.
         changed = true
         while changed
           changed = false
@@ -5352,7 +5352,7 @@ module Adamas
               end
               next
             end
-            if returns_owned_call_result?(func, inst_map)
+            if returns_owned_value?(func, inst_map, allow_owned_calls: true)
               @owned_return_funcs << func.name
               changed = true
             end
@@ -5380,40 +5380,52 @@ module Adamas
         end
       end
 
-      # Check if a function returns a direct Allocate (with ARC strategy) result.
-      # Exclude functions where the return value is also stored via ClassVarSet/PointerStore/IndexSet
-      # (these consume ownership without rc_inc, so the return is borrowed).
-      private def returns_allocated_value?(func : HIR::Function, inst_map : ::Hash(HIR::ValueId, HIR::Value)) : Bool
+      # Caller cleanup requires +1 ownership on every return path. A function
+      # which sometimes allocates and sometimes returns a borrowed reference
+      # must not authorize an unconditional rc_dec of its result.
+      private def returns_owned_value?(
+        func : HIR::Function,
+        inst_map : ::Hash(HIR::ValueId, HIR::Value),
+        allow_owned_calls : Bool,
+      ) : Bool
+        saw_return = false
         func.blocks.each do |block|
-          if ret = block.terminator.as?(HIR::Return)
-            if val_id = ret.value
-              origins = trace_value_origins(val_id, inst_map)
-              if origins.any? { |o| o.is_a?(HIR::Allocate) && !o.is_value_type }
-                # Check if the return value is also stored in a persistent location
-                return false if value_ownership_consumed?(val_id, func, inst_map)
-                return true
-              end
-            end
-          end
-        end
-        false
-      end
+          next unless ret = block.terminator.as?(HIR::Return)
+          saw_return = true
+          return false unless val_id = ret.value
+          return false if value_ownership_consumed?(val_id, func, inst_map)
 
-      # Check if a function returns a Call result from a function in @owned_return_funcs.
-      # Uses exact name matching only — fuzzy matching causes false positives.
-      private def returns_owned_call_result?(func : HIR::Function, inst_map : ::Hash(HIR::ValueId, HIR::Value)) : Bool
-        func.blocks.each do |block|
-          if ret = block.terminator.as?(HIR::Return)
-            if val_id = ret.value
-              origins = trace_value_origins(val_id, inst_map)
-              if origins.any? { |o| o.is_a?(HIR::Call) && @owned_return_funcs.includes?(o.method_name) }
-                return false if value_ownership_consumed?(val_id, func, inst_map)
-                return true
-              end
+          pending = [val_id]
+          visited = ::Set(HIR::ValueId).new
+          saw_owned_origin = false
+          while id = pending.pop?
+            next if visited.includes?(id)
+            visited << id
+            # Parameters and unresolved definitions are not owned origins.
+            # Do not silently drop them from mixed Phi alternatives.
+            return false unless origin = inst_map[id]?
+            case origin
+            when HIR::Copy
+              pending << origin.source
+            when HIR::Cast
+              pending << origin.value
+            when HIR::Phi
+              return false if origin.incoming.empty?
+              origin.incoming.each { |(_, value)| pending << value }
+            when HIR::Allocate
+              return false if origin.is_value_type
+              saw_owned_origin = true
+            when HIR::Call
+              return false unless allow_owned_calls && @owned_return_funcs.includes?(origin.method_name)
+              saw_owned_origin = true
+            else
+              return false
             end
           end
+          # A cycle without an ownership-producing leaf proves nothing.
+          return false unless saw_owned_origin
         end
-        false
+        saw_return
       end
 
       # Check if a value (or any Copy/Cast alias of it) is stored via ClassVarSet,

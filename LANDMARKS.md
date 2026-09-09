@@ -12,8 +12,8 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active stage3 continuation
 
-Goal: a source-built stage2 must build and smoke stage3. Base8d94b7bf plus
-the scoped late nested return annotation repair (see latest git commit).
+Goal: a source-built stage2 must build and smoke stage3. Base17effcc0 plus
+the scoped mixed-return ownership repair (see latest git commit).
 Stage3 is still unbuilt. Evidence root: /private/tmp/adamas-stage3-drive.
 
 Use external original Crystal stdlib at /Users/sergey/Projects/Crystal/crystal/src
@@ -106,7 +106,28 @@ Logs: info-namespace-{np-baseline,np-final,external-final,spec-final-run,
 cache-red-run,s2,s2-smoke-build,s2-smoke-run,s3}.log; regression scripts carry the rerunnable assertions.
 The generated S2 LLVM now declares both File.info? overloads as Nil|File::Info.
 Latest bootstrap result: The exact-source S2 build exits0 after418s. Its --no-prelude exit0 program compiles and runs with exit0. The S3 attempt passes the former DWARF stub and reaches lower_main, then segfaults139 after35s; S3 remains unbuilt.
-Next falsifier: Run the ASan-instrumented S2 against S3 sources to locate the first invalid access. A diagnostic LLDB run stops earlier in malloc/realloc during AstArena IdentifierNode insertion; the varying failure site indicates that the normal-run lower_main marker does not locate the cause.
+ASan resolves the allocator hypothesis to an earlier MacroValue use-after-free:
+evaluate_to_macro_value returns a context alias, then evaluate_expression emits
+an unconditional rc_dec. Hash::Entry does rc_inc its stored value, refuting the
+missing-container-retain hypothesis. A diagnostic-only removal of that exact
+cleanup passes the first error and exposes LayoutProbe@@enabled: an 8-byte ptr
+global is consumed as a 12-byte Nil|Bool union. No production cleanup bypass.
+The ownership classifier now requires all return origins to prove +1, including
+all Phi alternatives; missing parameters and unknown calls reject. Four focused
+predecessor failures become eight passes; 49 adjacent MIR examples also pass.
+Mixed-return allocations may be retained longer; no bounded-memory claim.
+Source: owned-return-source.json (17effcc0 plus MIR delta). Evidence:
+owned-return-{baseline-spec,regression}.log, info-namespace-s3-asan.log and
+macro-assignment-retain-s3.log under the same evidence root.
+The exact-source candidate emits S2 LLVM in415s; LLVM clang links it in12s.
+Its S3 run exits133 after4s. ASan S3 passes the former MacroValue access and
+stops at the independent LayoutProbe@@enabled READ12 from an8-byte global
+(exit134 after8s). This local ownership fix does not close S3. Logs:
+owned-return-s2-summary.log, owned-return-s2-link.log, owned-return-s3.log,
+owned-return-s3-asan.log. The suspect evaluate_expression rc_dec is absent in
+fresh emitted LLVM; ordinary factory cleanup is retained by the MIR consumer test.
+Next falsifier: register module class-variable metadata at the MIR global
+boundary; module/class Bool? ASan controls must pass before another S2/S3 run.
 Refresh these results on name resolution, layout producer or allocator changes.
 Required named parameters may fail arity lookup before reaching callsite
 inference (also nil on the predecessor); the named guard control uses a

@@ -1,5 +1,35 @@
 # Adamas Bootstrap TODO
 
+2026-09-08 MIXED RETURN OWNERSHIP (HOST VERIFIED; BOOTSTRAP OPEN).
+Caller ARC cleanup now requires an owned origin on every return and every Phi
+alternative. Parameters, unresolved definitions and unknown calls reject; Copy
+and Cast preserve provenance. Direct, transitive and all-owned Phi factories
+still qualify. The old existential scan silently dropped parameter origins.
+DoD: owned_return_provenance_repro.sh changes four mixed-return cases from red
+to green; all eight focused examples and 49 adjacent MIR examples pass. The MIR consumer test rejects a mixed caller
+cleanup while retaining one decrement for a pure factory.
+Original S2 ASan reports MacroValue use-after-free: evaluate_to_macro_value can
+return a context alias, but evaluate_expression decrements that borrowed result.
+Hash::Entry initialization does retain its value, refuting a missing-container-
+retain explanation. Removing only that cleanup in diagnostic LLVM passes the
+first error and exposes a separate LayoutProbe Bool? global width mismatch.
+That intervention is diagnostic only; production retains normal ARC cleanup.
+Source: owned-return-source.json (17effcc0 plus MIR ownership delta only).
+Evidence: /private/tmp/adamas-stage3-drive/owned-return-{baseline-spec,regression}.log,
+ownership-adjacent-spec-run.log, info-namespace-s3-asan.log. The tiny macro
+lifetime fixture passes on both hosts; it is not a discriminating runtime test.
+The exact-source candidate emits S2 LLVM in415s; LLVM clang links it in12s.
+Its S3 run exits133 after4s. ASan S3 passes the former MacroValue access and
+stops at the independent LayoutProbe@@enabled READ12 from an8-byte global
+(exit134 after8s). This local ownership fix does not close S3. Logs:
+owned-return-s2-summary.log, owned-return-s2-link.log, owned-return-s3.log,
+owned-return-s3-asan.log. The suspect evaluate_expression rc_dec is absent in
+fresh emitted LLVM; ordinary factory cleanup is retained by the MIR consumer test.
+Residual: mixed producers may retain allocations longer; bounded memory and
+complete ownership normalization are not established. Refresh on return
+provenance, persistent-store ownership or ARC lowering changes. Rollback the
+scoped MIR delta and its focused regressions.
+
 2026-09-08 LATE NESTED RETURN NAMESPACE (HOST VERIFIED; BOOTSTRAP OPEN).
 File.info? declared Info? before File::Info registration. The unrelated DWARF
 Info contaminated its return; generated Dir.exists? then called DWARF::Info#type
