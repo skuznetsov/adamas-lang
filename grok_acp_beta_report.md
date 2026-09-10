@@ -14,6 +14,14 @@
 
 ## Сессии
 
+### Session 2026-09-10 — Tuple union predicate resume
+**Task:** bounded read-only audit of the tuple union `includes?`/`any?` fast path.
+**Access:** `session/new` returned Permission denied before source review;
+request/prompt limits were 10/30 seconds. No review evidence was produced.
+**Continuation:** matched external Path normal/ASan controls and a Luna source audit.
+**Evidence:** `/private/tmp/adamas-stage3-drive/grok-path-resume.log`.
+
+
 ### Session 2026-09-08 — Nested callback return inference
 **Task:** bounded read-only review of the frozen HIR callsite inference delta.
 **Access:** `session/new` returned Permission denied before review began;

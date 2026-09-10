@@ -3,6 +3,34 @@
 Updated: 2026-09-05
 Context: compiler/bootstrap/stage2-stability
 
+
+## Tuple union inline dispatch — 2026-09-10
+
+The external Path ASan READ4 comes from expanding two Tuple#each slots for
+both Tuple(Char) and Tuple(Char, Char), not from arena lifetime. Runtime union
+dispatch before macro expansion and final receiver-map precedence preserve
+the actual shape. Normal each completion returns Nil; break values remain
+separate incoming edges. Unconditional Nil coercion is refuted by break 73.
+The exact predecessor fails the current Path script under ASan; the candidate
+passes normal/ASan output and 12 prelude callback/shape/return controls.
+Seven adjacent specs pass. Full HIR: 934 examples, one failure, two pending;
+the same inspect-specialization expectation fails against the predecessor.
+Source: 10f22971 plus the scoped HIR delta, isolated from the main dirty tree.
+Evidence root: /private/tmp/adamas-s3b-resume-evidence; path-{baseline,final},
+semantics-stdlib, adjacent-final, hir-full-final and hir-failure-* logs.
+Fresh chain S2 builds in432.87s, NP smoke passes, plain smoke exits133.
+Direct S3 exits139 after36s; ASan passes Path and stops on stack READ16 in
+infer_type_from_expr_inner, r1385.fromslot.u2u.320 (exit134 after9s).
+The chain manifest source hashes agree. S3 remains unbuilt. Next falsifier:
+match that union-conversion load with its source and destination storage.
+A separate NP control fails before its tests in Slice(Float64).literal:
+16-byte allocation receives a pointer store at offset16; the prelude version
+allocates24. This is not a tuple iteration regression or a stale-artifact claim.
+Scope verdict: ROBUST for the demonstrated Path and inline semantics controls.
+Refresh on tuple layout, callback exits or specialization-map ownership changes.
+Rollback the scoped HIR change and tests; stdlib remains untouched.
+
+
 This file is the active working set only. Historical landmarks before this
 checkpoint remain recoverable from git history, especially:
 

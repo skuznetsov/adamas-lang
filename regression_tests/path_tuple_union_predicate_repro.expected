@@ -1,0 +1,14 @@
+posix.plain|foo|end=0
+posix.slash|foo/|end=1
+posix.backslash|foo\|end=0
+windows.plain|foo|end=0
+windows.slash|foo/|end=1
+windows.backslash|foo\|end=1
+posix.join.plain|root/leaf|end=0
+posix.join.slash|root/leaf|end=0
+posix.join.backslash|root/\leaf|end=0
+windows.join.plain|root\leaf|end=0
+windows.join.slash|root/leaf|end=0
+windows.join.backslash|root\leaf|end=0
+posix.join.tuple|root/mid/leaf|end=0
+windows.join.tuple|root\mid\leaf|end=0

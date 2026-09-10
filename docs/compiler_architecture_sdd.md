@@ -27,6 +27,22 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+Inline tuple iteration over a union selects its concrete runtime variant
+before expanding the iterator body. The active receiver supplies the tuple
+element map after shared specialization maps are merged. Each branch may read
+only its own tuple slots; caller locals and callback exits merge at the common
+continuation. Normal Tuple#each completion returns Nil, while callback break
+values retain their separate incoming edges. Admission is bounded to concrete
+tuple unions through each/any?/all? and the external Path regression under
+normal execution and ASan. The semantic guard also covers non-local return,
+next, break values, heterogeneous tuples and empty tuples with the prelude.
+The same combined guard without the prelude still exposes a separate
+Slice(Float64).literal allocation WRITE8 before the tests and is not admitted.
+Fresh S2 builds and passes NP smoke; ordinary smoke and S3 remain red.
+The current S3 ASan frontier is a stack READ16 during a union conversion in
+infer_type_from_expr_inner, after the former Path access. Rollback is the inline union dispatch,
+receiver-map precedence and normal-fallthrough result changes; stdlib is untouched.
+
 MIR global registration consumes both class-owned and module-owned class
 variables from the HIR registries. Module ownership does not imply ClassInfo;
 a missing class entry must not erase a module variable's declared storage type.

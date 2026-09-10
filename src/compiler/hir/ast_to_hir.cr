@@ -107486,6 +107486,157 @@ module Adamas::HIR
       descriptor.type_params.all? { |type_ref| type_ref != TypeRef::VOID }
     end
 
+    # Tuple iteration is macro-expanded against the receiver's concrete type.
+    # A union receiver must therefore be split before entering the inline body;
+    # otherwise the first tuple shape selected for T is reused for every runtime
+    # variant and a shorter tuple reads past its allocation.
+    private def concrete_tuple_inline_type?(type_ref : TypeRef) : Bool
+      descriptor = @module.get_type_descriptor(type_ref)
+      return false unless descriptor
+      tuple_descriptor = descriptor.kind == TypeKind::Tuple ||
+                         (descriptor.kind == TypeKind::Struct &&
+                          (descriptor.name == "Tuple" || descriptor.name.starts_with?("Tuple(")))
+      return false unless tuple_descriptor
+      return false if descriptor.name != "Tuple" && unresolved_generic_receiver?(descriptor.name)
+      descriptor.type_params.all? { |param| param != TypeRef::VOID }
+    end
+
+    private def tuple_union_inline_receiver?(ctx : LoweringContext, receiver_id : ValueId?, base_inline_name : String) : Bool
+      return false unless receiver_id
+      parts = parse_method_name(base_inline_name)
+      return false unless parts.separator == '#'
+      return false unless parts.method == "any?" || parts.method == "all?" || parts.method == "each"
+
+      receiver_type = ctx.type_of(receiver_id.not_nil!)
+      receiver_desc = @module.get_type_descriptor(receiver_type)
+      return false unless receiver_desc && receiver_desc.kind == TypeKind::Union
+      variants = split_union_type_name(receiver_desc.name)
+      return false if variants.size < 2
+      variants.all? do |variant_name|
+        variant_type = type_ref_for_name(variant_name)
+        variant_type != TypeRef::VOID && concrete_tuple_inline_type?(variant_type)
+      end
+    end
+
+    # Inline the iterator once per concrete tuple variant. The recursive calls
+    # retain the existing Tuple#each expansion, including callback `return` /
+    # `next` handling; this wrapper only supplies the runtime union branch and
+    # merges the branch value and caller locals at the continuation.
+    private def inline_tuple_union_yield(
+      ctx : LoweringContext,
+      func_def : Adamas::Compiler::Frontend::DefNode,
+      inline_key : String,
+      receiver_id : ValueId,
+      call_args : Array(ValueId),
+      block : Adamas::Compiler::Frontend::BlockNode,
+      block_param_types : Array(TypeRef)?,
+      callee_arena : Adamas::Compiler::Frontend::ArenaLike,
+      base_inline_name : String,
+    ) : ValueId?
+      return nil unless tuple_union_inline_receiver?(ctx, receiver_id, base_inline_name)
+
+      receiver_type = ctx.type_of(receiver_id)
+      receiver_desc = @module.get_type_descriptor(receiver_type)
+      return nil unless receiver_desc
+      variants = split_union_type_name(receiver_desc.name)
+      variant_info = [] of {TypeRef, Int32}
+      variants.each do |variant_name|
+        variant_type = type_ref_for_name(variant_name)
+        variant_id = get_union_variant_id(receiver_type, variant_type)
+        return nil if variant_type == TypeRef::VOID || variant_id < 0
+        variant_info << {variant_type, variant_id}
+      end
+
+      pre_branch = ctx.save_locals
+      pre_inline_caller_locals = @inline_caller_locals_stack.map(&.dup)
+      merge_block = ctx.create_block
+      incoming = [] of {BlockId, ValueId}
+      branch_locals = [] of {BlockId, Hash(String, ValueId)}
+      branch_inline_locals = [] of {BlockId, Array(Hash(String, ValueId))}
+
+      variant_info.each_with_index do |(variant_type, variant_id), idx|
+        next_test_block : BlockId? = nil
+        unless idx == variant_info.size - 1
+          is_check = UnionIs.new(ctx.next_id, receiver_id, variant_id, receiver_type)
+          ctx.emit(is_check)
+          ctx.register_type(is_check.id, TypeRef::BOOL)
+          true_block = ctx.create_block
+          next_test_block = ctx.create_block
+          ctx.terminate(Branch.new(is_check.id, true_block, next_test_block.not_nil!))
+          ctx.current_block = true_block
+          ctx.restore_locals(pre_branch)
+          @inline_caller_locals_stack = pre_inline_caller_locals.map(&.dup)
+        end
+
+        unwrapped = UnionUnwrap.new(ctx.next_id, variant_type, receiver_id, variant_id, false)
+        ctx.emit(unwrapped)
+        ctx.register_type(unwrapped.id, variant_type)
+        branch_value = inline_yield_function(
+          ctx,
+          func_def,
+          inline_key,
+          unwrapped.id,
+          call_args,
+          block,
+          block_param_types,
+          callee_arena,
+        )
+        branch_exit = ctx.current_block
+        branch_local_snapshot = ctx.save_locals.locals
+        branch_inline_snapshot = @inline_caller_locals_stack.map(&.dup)
+        if ctx.terminate_if_open(Jump.new(merge_block))
+          incoming << {branch_exit, branch_value}
+          branch_locals << {branch_exit, branch_local_snapshot}
+          branch_inline_locals << {branch_exit, branch_inline_snapshot}
+        end
+
+        if next_block = next_test_block
+          ctx.current_block = next_block
+          ctx.restore_locals(pre_branch)
+          @inline_caller_locals_stack = pre_inline_caller_locals.map(&.dup)
+        end
+      end
+
+      ctx.current_block = merge_block
+      ctx.restore_locals(pre_branch)
+      @inline_caller_locals_stack = pre_inline_caller_locals.map(&.dup)
+      merge_if_branch_locals(ctx, pre_branch.locals, branch_locals)
+      merge_inline_caller_locals_after_if(ctx, pre_inline_caller_locals, branch_inline_locals)
+      if incoming.empty?
+        # Every variant terminated inside the callback (for example, a
+        # non-local return). Keep the synthetic continuation disconnected;
+        # otherwise later lowering treats this unreachable merge as a live
+        # fall-through path.
+        @control_flow_dead_blocks.add({ctx.function.id, merge_block})
+        return nil_value(ctx)
+      end
+
+      value_types = incoming.map { |(_, value)| ctx.type_of(value) }.reject { |type| type == TypeRef::VOID }.uniq
+      return nil_value(ctx) if value_types.empty? || value_types.all? { |type| type == TypeRef::NIL }
+      phi_type = value_types.first
+      if value_types.size > 1
+        phi_type = find_covering_union_type(value_types) || create_union_type(value_types.map { |type| get_type_name_from_ref(type) }.join(" | "))
+      end
+      return incoming.first[1] if incoming.size == 1
+
+      phi = Phi.new(ctx.next_id, phi_type)
+      incoming.each do |(block_id, value_id)|
+        value_type = ctx.type_of(value_id)
+        if value_type != phi_type && is_union_type?(phi_type)
+          variant_id = get_union_variant_id(phi_type, value_type)
+          if variant_id >= 0
+            wrap = UnionWrap.new(ctx.next_id, phi_type, value_id, variant_id)
+            ctx.emit_to_block(block_id, wrap)
+            value_id = wrap.id
+          end
+        end
+        phi.add_incoming(block_id, value_id)
+      end
+      ctx.emit(phi)
+      ctx.register_type(phi.id, phi_type)
+      phi.id
+    end
+
     # Inline a yield-function call with block
     # Transforms: func(args) { |params| block_body }
     # Into: inline func body, replacing yield with block_body
@@ -107511,6 +107662,21 @@ module Adamas::HIR
       force_inline_with_next = inline_key.includes?("with_brace_newlines_skipped") || inline_key.includes?("with_brace_newlines_as_separators")
       debug_with_brace = env_get("DEBUG_WITH_BRACE_CALL") && force_inline_with_next
       base_inline_name = strip_type_suffix(inline_key)
+      if receiver_id && tuple_union_inline_receiver?(ctx, receiver_id, base_inline_name)
+        if specialized = inline_tuple_union_yield(
+          ctx,
+          func_def,
+          inline_key,
+          receiver_id,
+          call_args,
+          block,
+          block_param_types,
+          callee_arena,
+          base_inline_name,
+        )
+          return specialized
+        end
+      end
       concrete_tuple_each_inline = concrete_tuple_each_inline?(ctx, base_inline_name, receiver_id)
       if debug_with_brace
         STDERR.puts "[WITH_BRACE_INLINE] stage=enter callee=#{inline_key} caller=#{ctx.function.name} block_contains_return=#{block_contains_return} fallback_allowed=#{fallback_allowed}"
@@ -107823,6 +107989,15 @@ module Adamas::HIR
         inline_param_map = inline_param_map.merge(pending)
         store_function_type_param_map(inline_key, base_inline_name, pending)
       end
+      # Registered/pending maps can carry the first tuple instantiation's T
+      # binding. For a concrete tuple receiver, the current receiver shape is
+      # authoritative and must be re-applied after those maps are merged.
+      if receiver_id && concrete_tuple_inline_type?(ctx.type_of(receiver_id))
+        receiver_type_map = type_param_map_for_receiver_type(ctx.type_of(receiver_id))
+        unless receiver_type_map.empty?
+          inline_param_map = inline_param_map.merge(receiver_type_map)
+        end
+      end
       if type_param_name = block_return_type_param_name(inline_key, base_inline_name)
         if inferred = inferred_block_return || inline_block_return_type_name(block, block_param_types, old_current_class)
           # The Proc return type parameter is call-site local. Prefer the
@@ -107987,6 +108162,10 @@ module Adamas::HIR
       end
 
       if ctx.get_block(ctx.current_block).terminator.is_a?(Unreachable)
+        # Tuple#each declares Nil on normal completion. A callback break has
+        # already contributed its own value to inline_return.incoming and must
+        # retain that value rather than inherit this fall-through contract.
+        result_value = nil_value(ctx) if concrete_tuple_each_inline
         ctx.terminate(Jump.new(inline_return.exit_block))
         inline_return.incoming << {ctx.current_block, result_value}
         if return_locals = @inline_yield_return_caller_locals_stack.last?

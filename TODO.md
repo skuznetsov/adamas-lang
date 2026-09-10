@@ -1,5 +1,38 @@
 # Adamas Bootstrap TODO
 
+2026-09-10 TUPLE UNION INLINE DISPATCH (HOST VERIFIED; BOOTSTRAP OPEN).
+The previous S3 ASan READ4 is reproduced by the external Path predicate:
+Tuple#each expanded two slots for both Tuple(Char) and Tuple(Char, Char).
+The shorter runtime tuple has only one slot. Inline lowering now dispatches
+on the union tag before expanding each concrete body and reapplies the active
+receiver's element map after shared specialization maps. Normal each completion
+returns Nil; break values remain separate return edges. Unconditional Nil
+coercion was rejected because it would erase break 73.
+DoD: path_tuple_union_predicate_repro.sh CANDIDATE with external CRYSTAL_PATH
+passes original Crystal, candidate normal and candidate ASan exact stdout.
+tuple_union_each_semantics_repro.sh passes 12 prelude controls, including
+return/next/break, break value, Nil completion, heterogeneous and empty tuples.
+Seven adjacent inline-yield/tuple specs pass. The full HIR run has 934
+examples, one failure and two pending; the failing nested-struct inspect
+specialization expectation also fails against the exact predecessor host
+(hir-failure-{baseline,candidate}.log). The same combined fixture under
+--no-prelude still reports a Slice(Float64).literal allocation WRITE8 before
+the tests; that mode is not
+covered by the passing semantic claim. The earlier includes?/any? guard-only
+candidate did not change the actual Path ASan failure and was rejected.
+Evidence: /private/tmp/adamas-s3b-resume-evidence/{path-final,semantics-stdlib,
+adjacent-final,hir-full-final,path-baseline}.log. Source: isolated 10f22971 plus the HIR delta; the
+main checkout's pre-existing edits are preserved. The source-matched chain builds S2 in 432.87s; its NP smoke passes but
+plain smoke exits133. A direct S3 attempt reaches lower_main then exits139
+after36s. ASan passes Path and exposes stack READ16 in
+infer_type_from_expr_inner (r1385.fromslot.u2u.320), exit134 after9s.
+S3 remains unbuilt. Logs: chain.log, s3.log, s3-asan.log. The chain manifest
+confirms equal source hashes before/after. The Path/inline semantic claim is
+ROBUST within its controls; general union conversion and NP Slice layout
+remain open. Refresh on tuple representation, inline return control
+flow or specialization-map ownership changes. Rollback the scoped HIR delta
+and matching regressions. External and bundled stdlib remain unchanged.
+
 2026-09-09 MODULE CLASS-VARIABLE GLOBALS (HOST VERIFIED; BOOTSTRAP OPEN).
 LayoutProbe@@enabled declared Bool? occupied a fallback ptr global (8 bytes),
 while enabled? loaded the 12-byte nullable union. HIR records module variables
