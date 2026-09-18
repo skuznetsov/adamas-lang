@@ -72409,6 +72409,8 @@ module Adamas::HIR
             parsed_type = ctx.type_of(parsed_value.not_nil!)
             STDERR.puts "[MACRO_BODY_DUMP] func=#{ctx.function.name} parsed value id=#{parsed_value.not_nil!} type=#{get_type_name_from_ref(parsed_type)}"
           end
+          # Expanded expressions obey the same fallthrough boundary as source bodies.
+          break if should_stop_sequential_lowering?(ctx)
         end
       end
       parsed_value || begin
@@ -98917,8 +98919,8 @@ module Adamas::HIR
       # directly instead of dispatching to methods. Tuple methods like each/size
       # are macro-expanded per concrete type, and our compiler compiles them once
       # for one tuple size, so union dispatch to the same generic method fails.
-      if (mb == "includes?" || mb == "any?") && args.size >= 1 &&
-         (mb != "includes?" || tuple_union_includes_primitive_safe?(recv_type, ctx.type_of(args[0])))
+      if (mb == "includes?" || mb == "any?") && !has_block_call && block_id.nil? &&
+         args.size >= 1 && tuple_union_includes_primitive_safe?(recv_type, ctx.type_of(args[0]))
         all_tuples = true
         tuple_descs = [] of {TypeRef, Int32, Adamas::HIR::TypeDescriptor}
         variants.each do |vn|
@@ -107486,6 +107488,97 @@ module Adamas::HIR
       descriptor.type_params.all? { |type_ref| type_ref != TypeRef::VOID }
     end
 
+    # Tuple#each's macro arity belongs to a concrete receiver, not to the
+    # largest member of a union. Narrow before expanding its element accesses.
+    private def inline_union_tuple_each(
+      ctx : LoweringContext,
+      inline_key : String,
+      func_def : Adamas::Compiler::Frontend::DefNode,
+      receiver_id : ValueId?,
+      call_args : Array(ValueId),
+      block : Adamas::Compiler::Frontend::BlockNode,
+      block_param_types : Array(TypeRef)?,
+      callee_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : ValueId?
+      return nil unless receiver_id
+      parts = parse_method_name(strip_type_suffix(inline_key))
+      return nil unless parts.separator == '#' && parts.method == "each"
+      return nil unless strip_generic_args(parts.owner) == "Tuple"
+      receiver_type = ctx.type_of(receiver_id)
+      descriptor = @module.get_type_descriptor(receiver_type)
+      return nil unless descriptor && descriptor.kind == TypeKind::Union
+
+      variants = [] of {TypeRef, Int32}
+      split_union_type_name(descriptor.name).each do |name|
+        type_ref = type_ref_for_name(name)
+        variant = @module.get_type_descriptor(type_ref)
+        return nil unless variant && (variant.kind == TypeKind::Tuple ||
+                                      (variant.kind == TypeKind::Struct && variant.name == "Tuple"))
+        return nil if unresolved_generic_receiver?(variant.name)
+        return nil unless variant.type_params.all? { |param| param != TypeRef::VOID }
+        variant_id = get_union_variant_id(receiver_type, type_ref)
+        return nil if variant_id < 0
+        variants << {type_ref, variant_id}
+      end
+      return nil if variants.size < 2
+
+      pre_locals = ctx.save_locals
+      pre_inline_locals = @inline_caller_locals_stack.map(&.dup)
+      merge_block = ctx.create_block
+      incoming = [] of {BlockId, ValueId}
+      branch_locals = [] of {BlockId, Hash(String, ValueId)}
+      branch_inline_locals = [] of {BlockId, Array(Hash(String, ValueId))}
+      variants.each_with_index do |(type_ref, variant_id), index|
+        next_variant : BlockId? = nil
+        if index < variants.size - 1
+          test = UnionIs.new(ctx.next_id, receiver_id, variant_id, receiver_type)
+          ctx.emit(test)
+          ctx.register_type(test.id, TypeRef::BOOL)
+          variant_block = ctx.create_block
+          next_variant = ctx.create_block
+          ctx.terminate(Branch.new(test.id, variant_block, next_variant))
+          ctx.current_block = variant_block
+        end
+        ctx.restore_locals(pre_locals)
+        @inline_caller_locals_stack = pre_inline_locals.map(&.dup)
+        concrete = UnionUnwrap.new(ctx.next_id, type_ref, receiver_id, variant_id, false)
+        ctx.emit(concrete)
+        ctx.register_type(concrete.id, type_ref)
+        value = inline_yield_function(ctx, func_def, inline_key, concrete.id,
+          call_args, block, block_param_types, callee_arena)
+        exit_block = ctx.current_block
+        if ctx.get_block(exit_block).terminator.is_a?(Unreachable) &&
+           !control_flow_dead_block?(ctx, exit_block)
+          incoming << {exit_block, value}
+          branch_locals << {exit_block, ctx.save_locals.locals}
+          branch_inline_locals << {exit_block, @inline_caller_locals_stack.map(&.dup)}
+          ctx.terminate(Jump.new(merge_block))
+        end
+        if next_variant
+          ctx.current_block = next_variant
+        end
+      end
+      ctx.current_block = merge_block
+      ctx.restore_locals(pre_locals)
+      merge_if_branch_locals(ctx, pre_locals.locals, branch_locals)
+      merge_inline_caller_locals_after_if(ctx, pre_inline_locals, branch_inline_locals)
+      if incoming.empty?
+        @control_flow_dead_blocks.add({ctx.function.id, merge_block})
+        return nil_value(ctx)
+      end
+      return incoming.first[1] if incoming.size == 1
+
+      result_type = union_type_for_value_set(incoming.map { |entry| ctx.type_of(entry[1]) }) || TypeRef::NIL
+      return nil_value(ctx) if result_type == TypeRef::NIL || result_type == TypeRef::VOID
+      result = Phi.new(ctx.next_id, result_type)
+      incoming.each do |(predecessor, value)|
+        result.add_incoming(predecessor, coerce_branch_local_for_phi(ctx, predecessor, value, result_type))
+      end
+      ctx.emit(result)
+      ctx.register_type(result.id, result_type)
+      result.id
+    end
+
     # Inline a yield-function call with block
     # Transforms: func(args) { |params| block_body }
     # Into: inline func body, replacing yield with block_body
@@ -107502,6 +107595,10 @@ module Adamas::HIR
       if debug_env_filter_match?("DEBUG_INLINE_PICK", inline_key)
         stats = function_param_stats(inline_key, func_def)
         STDERR.puts "[INLINE_PICK] key=#{inline_key} named_required=#{stats.named_required} has_named_only=#{stats.has_named_only} params=#{stats.param_count} required=#{stats.required} caller=#{ctx.function.name}"
+      end
+      if tuple_result = inline_union_tuple_each(ctx, inline_key, func_def, receiver_id,
+           call_args, block, block_param_types, callee_arena)
+        return tuple_result
       end
       block_arena = @block_node_arenas[block.object_id]? ||
                     resolve_arena_for_block(block, @arena) ||
@@ -107823,6 +107920,10 @@ module Adamas::HIR
         inline_param_map = inline_param_map.merge(pending)
         store_function_type_param_map(inline_key, base_inline_name, pending)
       end
+      if concrete_tuple_each_inline && receiver_id
+        # Cached maps cannot replace the concrete branch's tuple macro arity.
+        inline_param_map = inline_param_map.merge(type_param_map_for_receiver_type(ctx.type_of(receiver_id)))
+      end
       if type_param_name = block_return_type_param_name(inline_key, base_inline_name)
         if inferred = inferred_block_return || inline_block_return_type_name(block, block_param_types, old_current_class)
           # The Proc return type parameter is call-site local. Prefer the
@@ -107986,7 +108087,7 @@ module Adamas::HIR
         @inline_active_caller_locals_index_stack.pop?
       end
 
-      if ctx.get_block(ctx.current_block).terminator.is_a?(Unreachable)
+      unless should_stop_sequential_lowering?(ctx)
         ctx.terminate(Jump.new(inline_return.exit_block))
         inline_return.incoming << {ctx.current_block, result_value}
         if return_locals = @inline_yield_return_caller_locals_stack.last?
@@ -108003,6 +108104,7 @@ module Adamas::HIR
 
       begin
         if inline_return.incoming.empty?
+          @control_flow_dead_blocks.add({ctx.function.id, inline_return.exit_block})
           nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
           ctx.emit(nil_lit)
           nil_lit.id

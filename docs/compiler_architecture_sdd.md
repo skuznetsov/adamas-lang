@@ -27,6 +27,27 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+Tuple-union iteration dispatches on the runtime tag before expanding each
+concrete Tuple#each macro arity. Admission requires an exhaustively known tuple
+union with correct producer tags; unknown/generic alternatives retain their
+existing lowering. Per-variant caller locals and next/break/nonlocal-return
+edges merge only from live exits. Parsed top-level macro expression sequences
+stop at the ordinary sequential-lowering boundary; empty inline-return exits
+remain dead. Scalar includes?/any? shortcuts exclude callbacks and require the
+existing homogeneous primitive contract. Custom scalar method overrides and
+nested macro BlockNode sequences are outside this closure.
+
+Admission: tuple_union_iteration_repro.sh CANDIDATE BASELINE uses external
+stdlib, original-Crystal output parity, a mandatory baseline ASan READ4 when
+supplied, and candidate normal/ASan controls (including separate-return empty
+tuples). macro_sequence_return_repro.sh provides an NP baseline91/candidate0
+falsifier plus conditional-fallthrough/dead-merge guards. A ternary joining
+Tuple.new with a nonempty tuple still loses its producer tag before iteration;
+nested captured accumulators and tuple-splat Path constructors also remain
+separate boundaries. Rollback is this HIR dispatch/fallthrough/shortcut delta.
+Fresh S2 builds and smokes; S3 now reaches a distinct union stack-slot width
+mismatch in infer_type_from_expr_inner. Full S3 closure remains open.
+
 MIR global registration consumes both class-owned and module-owned class
 variables from the HIR registries. Module ownership does not imply ClassInfo;
 a missing class entry must not erase a module variable's declared storage type.

@@ -12,13 +12,28 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active stage3 continuation
 
-Goal: a source-built stage2 must build and smoke stage3. Base13372b8a plus
-the scoped module class-variable registration repair (see latest git commit).
-Stage3 is still unbuilt. Evidence root: /private/tmp/adamas-stage3-drive.
+Goal: a source-built stage2 must build and smoke stage3. Base 10f22971 plus
+the scoped tuple dispatch and macro-return repair (see latest commit). S2 builds
+in 431s and compiles/runs NP exit0; S3 remains unbuilt (normal133 after 4s).
+Current frontier: ASan stack READ16 in infer_type_from_expr_inner, storing
+Nil|Bool into a 12-byte fromslot.u2u temporary then loading Nil|Bool|String.
+The generated S2 LLVM sites are 499067 and 503049 in the retained artifact.
+Path tuple iteration now tests runtime tags; matched baseline READ4 and
+candidate normal/ASan controls are recorded by tuple_union_iteration_repro.sh.
+The helper-only dead-merge remedy was insufficient: parsed macro sequences also
+continued past return, and empty inline exits needed dead marking. NP return
+falsifier and conditional/dead-merge guards now pass. Do not reopen this route
+without a new failing shape. Empty-tuple ternary producer tags, custom scalar
+any? overrides, nested macro BlockNode termination and nested capture gaps are
+separate open surfaces; separate-return empty tuples pass.
+Evidence root: /private/tmp/adamas-tuple-resume, source manifest
+candidate-source.json and tuple-{s2,s3,s3-asan}.log. Next: bounded union-slot
+conversion falsifier, repair, fresh S2/S3. Existing unrelated dirty HIR/docs/spec
+work is preserved; isolate changes and stage only exact patches.
 
 Use external original Crystal stdlib at /Users/sergey/Projects/Crystal/crystal/src
 for every full-prelude compiler run (explicit CRYSTAL_PATH). External checkout
-is clean at da5a348c6, verified 2026-09-08. No stdlib edits. Old 334s/396s S2 results
+is clean at da5a348c6, verified 2026-09-18. No stdlib edits. Old 334s/396s S2 results
 used snapshot src/stdlib and are diagnostic history, not external bootstrap.
 Old /tmp snapshots were wiped; do not claim their composite HIR was reconstructed.
 

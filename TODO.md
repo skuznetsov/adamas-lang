@@ -1,5 +1,29 @@
 # Adamas Bootstrap TODO
 
+2026-09-18 TUPLE UNION ITERATION (LOCAL VERIFIED; S3 UNION SLOT FRONTIER).
+Dispatch the runtime tuple variant before Tuple#each macro expansion; preserve
+concrete type-parameter maps and caller-local merges. Block callbacks no longer
+enter the scalar any? equality shortcut. The all-return counterexample exposed
+a prerequisite: parsed macro sequences lowered the second yield after return,
+overwriting the first terminator. Apply the existing sequential-stop predicate
+and propagate dead inline exits; helper-only dead marking was insufficient.
+DoD: tuple_union_iteration_repro.sh CANDIDATE BASELINE with external CRYSTAL_PATH,
+plus macro_sequence_return_repro.sh CANDIDATE BASELINE (--no-prelude). Original,
+candidate normal and candidate ASan agree; baseline ASan READ4 in sum_each and
+NP semantic exit91 reproduce. Empty-tuple separate-return controls pass.
+Adjacent tuple-depth specs: 3/3; NP includes and next/nonlocal-return pass.
+Adversary: ROBUST within these shapes. A ternary empty/nonempty tuple producer
+writes one tag for both branches in baseline and candidate; separate returns
+work. Custom scalar any? overrides and nested macro BlockNode termination are
+not covered. Nested accumulator and Path tuple-splat constructor gaps remain.
+Exact-source S2 builds in 431s and compiles/runs the NP exit0 smoke. S3 exits 133
+in 4s; instrumented S2 reports a NEW stack READ16 from a 12-byte Nil|Bool slot
+loaded as Nil|Bool|String inside infer_type_from_expr_inner. Path now has runtime
+tag discrimination. Next: repair union slot storage/conversion, then rebuild S2
+and retry S3. Evidence: /private/tmp/adamas-tuple-resume, candidate-source.json,
+tuple-{union-final,s2,s3,s3-asan}.log and tuple-s3-asan-symbols.log. Source hashes
+were unchanged through S2. Resource telemetry remains unknown, not a budget proof.
+
 2026-09-09 MODULE CLASS-VARIABLE GLOBALS (HOST VERIFIED; BOOTSTRAP OPEN).
 LayoutProbe@@enabled declared Bool? occupied a fallback ptr global (8 bytes),
 while enabled? loaded the 12-byte nullable union. HIR records module variables
