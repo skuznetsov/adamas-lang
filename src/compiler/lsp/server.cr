@@ -3902,7 +3902,8 @@ module Adamas
 
           existing = @documents[uri]?
           base_text = existing.try(&.text_document.text) || ""
-          new_text = apply_content_changes(base_text, changes)
+          base_line_offsets = existing.try(&.line_offsets) || [0]
+          new_text = apply_content_changes(base_text, base_line_offsets, changes)
           language_id = existing.try(&.text_document.language_id) || "crystal"
 
           doc_path = uri_to_path(uri)
@@ -3965,21 +3966,23 @@ module Adamas
 
         # Apply LSP content changes to document text.
         # Supports both full-sync updates (no range) and incremental range edits.
-        private def apply_content_changes(base_text : String, changes : Array(JSON::Any)) : String
+        private def apply_content_changes(base_text : String, base_line_offsets : Array(Int32), changes : Array(JSON::Any)) : String
           text = base_text
+          line_offsets = base_line_offsets
 
-          changes.each do |change|
+          changes.each_with_index do |change, index|
             replacement = change["text"].as_s
             range = change["range"]?
             unless range
               text = replacement
+              line_offsets = build_line_offsets(text) unless index == changes.size - 1
               next
             end
 
             start_pos = range["start"]?
             end_pos = range["end"]?
             unless start_pos && end_pos
-              text = replacement
+              debug("Ignoring didChange entry with an incomplete range")
               next
             end
 
@@ -3988,8 +3991,12 @@ module Adamas
             end_line = end_pos["line"].as_i
             end_char = end_pos["character"].as_i
 
-            start_offset = position_to_offset(text, start_line, start_char) || 0
-            end_offset = position_to_offset(text, end_line, end_char) || text.bytesize
+            start_offset = position_to_offset(text, start_line, start_char, line_offsets)
+            end_offset = position_to_offset(text, end_line, end_char, line_offsets)
+            unless start_offset && end_offset
+              debug("Ignoring didChange entry with a range outside the document")
+              next
+            end
 
             start_offset = start_offset.clamp(0, text.bytesize)
             end_offset = end_offset.clamp(0, text.bytesize)
@@ -4000,6 +4007,7 @@ module Adamas
             prefix = text.byte_slice(0, start_offset)
             suffix = text.byte_slice(end_offset, text.bytesize - end_offset)
             text = "#{prefix}#{replacement}#{suffix}"
+            line_offsets = build_line_offsets(text) unless index == changes.size - 1
           end
 
           text
@@ -4156,57 +4164,28 @@ module Adamas
 
         private def position_to_offset(text : String, line : Int32, character : Int32, line_offsets : Array(Int32)? = nil) : Int32?
           return nil if line < 0 || character < 0
-          if line_offsets && line < line_offsets.size
-            line_start = line_offsets[line]
-            line_end = if line + 1 < line_offsets.size
-                         line_offsets[line + 1]
-                       else
-                         text.bytesize
-                       end
-            line_text = text.byte_slice(line_start, line_end - line_start)
-            byte_index = 0
-            char_index = 0
-            line_text.each_char do |ch|
-              break if char_index == character
-              byte_index += ch.bytesize
-              char_index += 1
-            end
-            if character > char_index
-              byte_index = line_text.bytesize
-              byte_index -= 1 if byte_index > 0
-            end
-            return line_start + byte_index
+          offsets = line_offsets || build_line_offsets(text)
+          return nil if line >= offsets.size
+
+          line_start = offsets[line]
+          line_end = line + 1 < offsets.size ? offsets[line + 1] : text.bytesize
+          content_end = line_end
+          content_end -= 1 if content_end > line_start && text.byte_at(content_end - 1) == '\n'.ord
+          content_end -= 1 if content_end > line_start && text.byte_at(content_end - 1) == '\r'.ord
+
+          byte_offset = line_start
+          utf16_offset = 0
+          text.byte_slice(line_start, content_end - line_start).each_char do |char|
+            break if utf16_offset == character
+
+            width = char.ord > 0xFFFF ? 2 : 1
+            break if utf16_offset + width > character
+
+            byte_offset += char.bytesize
+            utf16_offset += width
           end
 
-          offset = 0
-          current_line = 0
-
-          text.each_line(chomp: false) do |line_text|
-            if current_line == line
-              byte_index = 0
-              char_index = 0
-              line_text.each_char do |ch|
-                break if char_index == character
-                byte_index += ch.bytesize
-                char_index += 1
-              end
-              # If requested column runs past end of line, clamp to end
-              if character > char_index
-                # Clamp to the last character of the line (before newline, if present)
-                byte_index = line_text.bytesize
-                byte_index -= 1 if byte_index > 0
-              end
-              return offset + byte_index
-            end
-
-            offset += line_text.bytesize
-            current_line += 1
-          end
-
-          # Position exactly at EOF
-          return offset if line == current_line && character == 0
-
-          nil
+          byte_offset
         end
 
         private def position_from_offset(text : String, offset : Int32, line_offsets : Array(Int32)? = nil) : Position
@@ -8414,14 +8393,24 @@ module Adamas
         # Find call context: returns {paren_position, method_name, active_parameter} or nil
         # Note: Public for testing, but considered internal implementation
         def find_call_context(text : String, line : Int32, character : Int32) : {Int32, String, Int32}?
-          lines = text.split('\n')
-          return nil if line < 0 || line >= lines.size
+          return nil if line < 0 || character < 0
+          line_offsets = build_line_offsets(text)
+          return nil if line >= line_offsets.size
 
-          current_line = lines[line]
-          return nil if character < 0 || character > current_line.size
+          line_start = line_offsets[line]
+          line_end = line + 1 < line_offsets.size ? line_offsets[line + 1] : text.bytesize
+          content_end = line_end
+          content_end -= 1 if content_end > line_start && text.byte_at(content_end - 1) == '\n'.ord
+          content_end -= 1 if content_end > line_start && text.byte_at(content_end - 1) == '\r'.ord
+          current_line = text.byte_slice(line_start, content_end - line_start)
+          return nil if character > utf16_code_units(current_line)
+
+          cursor_offset = position_to_offset(text, line, character, line_offsets)
+          return nil unless cursor_offset
+          cursor_prefix = current_line.byte_slice(0, cursor_offset - line_start)
 
           # Look backwards from cursor to find opening '('
-          idx = character - 1
+          idx = cursor_prefix.size - 1
           paren_count = 0
           active_param = 0
 
@@ -8434,7 +8423,8 @@ module Adamas
               if paren_count == 0
                 # Found opening paren! Now find method name before it
                 method_name = extract_method_name_before(current_line, idx)
-                return {idx, method_name, active_param} if method_name
+                paren_position = utf16_code_units(current_line[0, idx])
+                return {paren_position, method_name, active_param} if method_name
                 return nil
               else
                 paren_count -= 1

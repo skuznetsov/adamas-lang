@@ -74,7 +74,7 @@ module Adamas
         include JSON::Serializable
 
         @[JSON::Field(key: "textDocumentSync")]
-        property text_document_sync : Int32? = 1 # Full sync
+        property text_document_sync : Int32? = 2 # Incremental sync
 
         @[JSON::Field(key: "hoverProvider")]
         property hover_provider : Bool? = true
@@ -128,7 +128,7 @@ module Adamas
         property call_hierarchy_provider : Bool? = true
 
         def initialize(
-          @text_document_sync = 1,
+          @text_document_sync = 2,
           @hover_provider = true,
           @definition_provider = true,
           @references_provider = true,

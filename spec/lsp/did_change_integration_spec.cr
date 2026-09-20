@@ -19,6 +19,13 @@ describe Adamas::Compiler::LSP::Server do
     end
   end
 
+  it "advertises incremental document synchronization" do
+    capabilities = Adamas::Compiler::LSP::ServerCapabilities.new
+
+    capabilities.text_document_sync.should eq(2)
+    JSON.parse(capabilities.to_json)["textDocumentSync"].as_i.should eq(2)
+  end
+
   it "applies incremental range edits from didChange" do
     dir = File.join(Dir.tempdir, "lsp_did_change_#{Random::Secure.hex(6)}")
     FileUtils.mkdir_p(dir)
@@ -38,6 +45,76 @@ describe Adamas::Compiler::LSP::Server do
     server.spec_did_change(uri, 2, changes)
 
     server.spec_document_text(uri).should eq("x = 2\ny = x + 1\n")
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
+  it "applies UTF-16 range edits without disturbing CRLF line endings" do
+    dir = File.join(Dir.tempdir, "lsp_did_change_utf16_#{Random::Secure.hex(6)}")
+    FileUtils.mkdir_p(dir)
+    path = File.join(dir, "main.cr")
+    source = "😀 = 1\r\nvalue = 2\r\n"
+    File.write(path, source)
+
+    server = Adamas::Compiler::LSP::Server.new(
+      IO::Memory.new,
+      IO::Memory.new,
+      Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+    )
+    uri = server.spec_store_document(source, dir, path)
+
+    # The emoji occupies two UTF-16 code units, so "1" is [5, 6).
+    changes = %([{"range":{"start":{"line":0,"character":5},"end":{"line":0,"character":6}},"text":"9"}])
+    server.spec_did_change(uri, 2, changes)
+
+    server.spec_document_text(uri).should eq("😀 = 9\r\nvalue = 2\r\n")
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
+  it "applies multiple incremental changes against each preceding snapshot" do
+    dir = File.join(Dir.tempdir, "lsp_did_change_sequence_#{Random::Secure.hex(6)}")
+    FileUtils.mkdir_p(dir)
+    path = File.join(dir, "main.cr")
+    source = "a😀b\n"
+    File.write(path, source)
+
+    server = Adamas::Compiler::LSP::Server.new(
+      IO::Memory.new,
+      IO::Memory.new,
+      Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+    )
+    uri = server.spec_store_document(source, dir, path)
+
+    changes = %([
+      {"range":{"start":{"line":0,"character":1},"end":{"line":0,"character":1}},"text":"x"},
+      {"range":{"start":{"line":0,"character":4},"end":{"line":0,"character":5}},"text":"c"}
+    ])
+    server.spec_did_change(uri, 2, changes)
+
+    server.spec_document_text(uri).should eq("ax😀c\n")
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
+  it "ignores an incremental change whose range is outside the document" do
+    dir = File.join(Dir.tempdir, "lsp_did_change_invalid_range_#{Random::Secure.hex(6)}")
+    FileUtils.mkdir_p(dir)
+    path = File.join(dir, "main.cr")
+    source = "value = 1\n"
+    File.write(path, source)
+
+    server = Adamas::Compiler::LSP::Server.new(
+      IO::Memory.new,
+      IO::Memory.new,
+      Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+    )
+    uri = server.spec_store_document(source, dir, path)
+
+    changes = %([{"range":{"start":{"line":99,"character":0},"end":{"line":99,"character":1}},"text":"corrupted"}])
+    server.spec_did_change(uri, 2, changes)
+
+    server.spec_document_text(uri).should eq(source)
   ensure
     FileUtils.rm_rf(dir) if dir
   end

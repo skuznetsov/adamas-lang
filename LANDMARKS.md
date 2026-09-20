@@ -17407,3 +17407,48 @@ separate non-acceptance 300-second diagnostic also timed out at 2,048,080 KB
 RSS without `cv2_s2`. This landmark verifies host/HIR constructor binding, not
 produced-stage behavior or B4-F. {F/G/R: 0.95/0.52/0.92} [host/HIR constructor
 binding verified; produced-stage successor open]
+
+## LM-688 — LSP ordinary edits use incremental document synchronization
+
+Status: VERIFIED for Adamas/Adamantine `didChange` transport and coordinate
+fidelity on 2026-09-20.
+
+Adamas accepted ranged `textDocument/didChange` messages but advertised
+`textDocumentSync = 1`. Adamantine therefore took its standards-compliant full
+fallback and synchronously materialized and JSON-serialized the entire
+5,494,646-byte `src/compiler/hir/ast_to_hir.cr` document for every ordinary
+edit. Simply advertising kind `2` was unsafe: incoming positions counted
+Unicode scalar values instead of LSP UTF-16 code units and could consume CRLF
+terminators.
+
+The server now advertises incremental synchronization after converting
+incoming UTF-16 positions to UTF-8 byte offsets. Conversion excludes `LF` and
+`CRLF` terminators, never splits a UTF-8 scalar, and reuses the current document
+line-offset table for the common one-change notification. Multiple changes are
+applied in order and rebuild offsets only between produced snapshots.
+Range-less full-document changes remain supported.
+Ranges outside the document are ignored instead of falling back to a
+whole-document replacement.
+
+Falsifier and evidence:
+
+- Before production changes, the focused binary failed three independent
+  checks: advertised kind `1`, emoji/CRLF corruption (`"😀 = 19\n"`), and a
+  sequential range edit that consumed the final newline.
+- `regression_tests/lsp_incremental_sync_repro.sh` passes 12 examples through
+  `scripts/run_safe.sh`.
+- The complete `spec/lsp/*_spec.cr` pack passes 271 examples through the same
+  safety wrapper.
+- The focused signature-help pack passes 16 examples, including the
+  astral-character internal-position counterexample.
+- Adamantine's capability and change-materialization specs pass 55 examples;
+  kind `2` selects a ranged notification without reading full editor text.
+- `src/lsp_main.cr` builds; Crystal formatting, shell syntax validation and
+  `git diff --check` pass.
+
+Boundary: this removes avoidable full-document client transport from ordinary
+edits. Adamas still constructs a new immutable source string for a ranged edit
+and performs foreground parse/analysis work. It is not a key-to-render SLA,
+incremental parser, or bounded server-memory claim. Refresh this certificate
+when coordinate conversion, line-offset ownership, `didChange` ordering, or
+sync capability changes. Rollback is the isolated incremental-sync commit.
