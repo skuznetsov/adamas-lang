@@ -2960,6 +2960,13 @@ module Adamas::MIR
     # Track emitted union type definitions to avoid duplicates and ensure forward declarations
     @emitted_union_type_names : ::Set(String) = ::Set(String).new
 
+    # Total byte width of each emitted union type, keyed exactly like
+    # @emitted_union_type_names ("Nil$_$OR$_Int32.union", no leading '%').
+    # Recorded at emission time because union_payload_byte_width recomputes the
+    # width from a single TypeRef and misses the cross-mangled-name maximum the
+    # emitter applies, so it can report less than what is really in the module.
+    @emitted_union_byte_widths : Hash(String, Int32) = {} of String => Int32
+
     # Global zero-filled struct sentinels for struct-typed cross-block alloca slots.
     # V2 heap-allocates structs as pointers; null init causes SIGSEGV on unexecuted paths.
     @zero_struct_globals : ::Set(String) = ::Set(String).new
@@ -7317,6 +7324,7 @@ module Adamas::MIR
       # Round up to multiple of 4 bytes for i32 element array
       payload_i32s = (payload_bytes + 3) // 4
       emit_raw "%#{name}.union = type { i32, [#{payload_i32s} x i32] }\n"
+      record_emitted_union_byte_width("#{name}.union", (4 + payload_i32s * 4).to_i32)
     end
 
     private def emit_runtime_declarations
@@ -12944,6 +12952,7 @@ module Adamas::MIR
           unless @emitted_union_type_names.includes?(type_base)
             emit_raw "%#{type_base} = type { i32, [12 x i8] }\n"
             @emitted_union_type_names << type_base
+            record_emitted_union_byte_width(type_base, 16)
           end
         end
 
@@ -17954,9 +17963,12 @@ module Adamas::MIR
           # what the type mapper reports (e.g., from a fromslot cast).
           actual_llvm_type = @emitted_value_types[name]? || llvm_type
           actual_llvm_type = llvm_type unless actual_llvm_type.includes?(".union")
-          # Alloca with source type so store matches, then load as slot type
-          emit "%#{base}.u2u.slot.alloca = alloca #{actual_llvm_type}, align 8"
-          emit "store #{actual_llvm_type} #{name}, ptr %#{base}.u2u.slot.alloca"
+          # Alloca the wider of the two layouts so the load stays in bounds,
+          # zero it so a widening reinterpret sees zero payload beyond the source.
+          u2u_slot_buffer = union_reinterpret_buffer_type(actual_llvm_type, slot_llvm_type)
+          emit "%#{base}.u2u.slot.alloca = alloca #{u2u_slot_buffer}, align 8"
+          emit "store #{u2u_slot_buffer} zeroinitializer, ptr %#{base}.u2u.slot.alloca"
+          emit "store #{actual_llvm_type} #{normalize_union_value(name, actual_llvm_type)}, ptr %#{base}.u2u.slot.alloca"
           emit "%#{base}.u2u.slot.val = load #{slot_llvm_type}, ptr %#{base}.u2u.slot.alloca"
           store_val = "%#{base}.u2u.slot.val"
           store_type = slot_llvm_type
@@ -25741,7 +25753,9 @@ module Adamas::MIR
           # Both unions but different — reinterpret through memory
           c = @cond_counter
           @cond_counter += 1
-          emit "%gs_decl_u2u.#{c}.ptr = alloca #{llvm_type}, align 8"
+          gs_decl_u2u_buffer = union_reinterpret_buffer_type(llvm_type, declared_type)
+          emit "%gs_decl_u2u.#{c}.ptr = alloca #{gs_decl_u2u_buffer}, align 8"
+          emit "store #{gs_decl_u2u_buffer} zeroinitializer, ptr %gs_decl_u2u.#{c}.ptr"
           emit "store #{llvm_type} #{normalize_union_value(val, llvm_type)}, ptr %gs_decl_u2u.#{c}.ptr"
           emit "%gs_decl_u2u.#{c}.val = load #{declared_type}, ptr %gs_decl_u2u.#{c}.ptr"
           val = "%gs_decl_u2u.#{c}.val"
@@ -26824,7 +26838,9 @@ module Adamas::MIR
               end
             elsif is_elem_union && actual_elem_type_str.includes?(".union")
               # union → union (different types, same physical layout): reinterpret through memory
-              emit "%#{base_name}.elem#{idx}_u2u_ptr = alloca #{actual_elem_type_str}, align 8"
+              elem_u2u_buffer = union_reinterpret_buffer_type(actual_elem_type_str, element_type)
+              emit "%#{base_name}.elem#{idx}_u2u_ptr = alloca #{elem_u2u_buffer}, align 8"
+              emit "store #{elem_u2u_buffer} zeroinitializer, ptr %#{base_name}.elem#{idx}_u2u_ptr"
               emit "store #{actual_elem_type_str} #{normalize_union_value(elem_val, actual_elem_type_str)}, ptr %#{base_name}.elem#{idx}_u2u_ptr"
               emit "%#{base_name}.elem#{idx}_u2u = load #{element_type}, ptr %#{base_name}.elem#{idx}_u2u_ptr"
               elem_val = "%#{base_name}.elem#{idx}_u2u"
@@ -27695,7 +27711,9 @@ module Adamas::MIR
         value = "%#{base_name}.val_ptr"
       elsif actual_value_type.includes?(".union") && element_type.includes?(".union") && element_type != actual_value_type
         # Union → different union type (same physical layout): reinterpret through memory
-        emit "%#{base_name}.val_u2u_ptr = alloca #{actual_value_type}, align 8"
+        val_u2u_buffer = union_reinterpret_buffer_type(actual_value_type, element_type)
+        emit "%#{base_name}.val_u2u_ptr = alloca #{val_u2u_buffer}, align 8"
+        emit "store #{val_u2u_buffer} zeroinitializer, ptr %#{base_name}.val_u2u_ptr"
         emit "store #{actual_value_type} #{normalize_union_value(value, actual_value_type)}, ptr %#{base_name}.val_u2u_ptr"
         emit "%#{base_name}.val_u2u = load #{element_type}, ptr %#{base_name}.val_u2u_ptr"
         value = "%#{base_name}.val_u2u"
@@ -29117,11 +29135,15 @@ module Adamas::MIR
             # (LLVM doesn't allow bitcast between aggregate types)
             u2u_ptr = "%r#{id}.fromslot.u2u.#{@cond_counter}"
             @cond_counter += 1
-            # Allocate storage in the source union type, then reinterpret-load as expected type.
-            # Storing a source-union value into an alloca typed as destination union emits
-            # invalid IR when names differ (same layout, different nominal type).
-            emit_from_value_ref "#{u2u_ptr} = alloca #{llvm_type}, align 8"
-            emit_from_value_ref "store #{llvm_type} #{temp_name}, ptr #{u2u_ptr}"
+            # Allocate the wider of the two layouts, zero it, then store the source
+            # and reinterpret-load the expected type. The layouts share the
+            # { i32 tid, [N x i32] payload } shape but not the payload width, so a
+            # source-sized buffer would be read out of bounds when the expected type
+            # is wider.
+            u2u_buffer_type = union_reinterpret_buffer_type(llvm_type, expected_type)
+            emit_from_value_ref "#{u2u_ptr} = alloca #{u2u_buffer_type}, align 8"
+            emit_from_value_ref "store #{u2u_buffer_type} zeroinitializer, ptr #{u2u_ptr}"
+            emit_from_value_ref "store #{llvm_type} #{normalize_union_value(temp_name, llvm_type)}, ptr #{u2u_ptr}"
             emit_from_value_ref "#{cast_name} = load #{expected_type}, ptr #{u2u_ptr}"
             record_emitted_type(cast_name, expected_type)
             return track_value_ref_dynamic(cast_name)
@@ -29368,6 +29390,41 @@ module Adamas::MIR
     private def null_like_union_variant_token?(token : String) : Bool
       base = token.split("$L").first.split("$CC").last
       base == "Nil" || base == "Void"
+    end
+
+    # Remember how wide a union type really is in the emitted module.
+    private def record_emitted_union_byte_width(name : String, bytes : Int32) : Nil
+      previous = @emitted_union_byte_widths[name]?
+      @emitted_union_byte_widths[name] = bytes if previous.nil? || previous < bytes
+    end
+
+    # Emitted byte width of a union LLVM type string, or nil when the type was
+    # never emitted by this module.
+    private def emitted_union_byte_width(type_str : String) : Int32?
+      key = type_str.starts_with?('%') ? type_str[1..] : type_str
+      @emitted_union_byte_widths[key]?
+    end
+
+    # Buffer type for a union -> union reinterpret through memory.
+    #
+    # Both layouts share the `{ i32 tid, [N x i32] payload }` shape but not the
+    # payload width. Allocating the source layout and loading the destination
+    # layout out of it reads past the end of the slot whenever the destination
+    # is wider: a stack out-of-bounds read whose surplus payload bytes are
+    # whatever the frame happened to hold. Size the buffer by the wider of the
+    # two so neither the store of the source nor the load of the destination
+    # leaves the allocation; callers zero the buffer first so a widening
+    # reinterpret reads the surplus bytes as zero rather than as stack garbage.
+    #
+    # Falls back to the source layout (the historical behaviour) when either
+    # width is unknown, which means the type was never emitted and the module is
+    # already malformed.
+    private def union_reinterpret_buffer_type(src_type : String, dst_type : String) : String
+      src_bytes = emitted_union_byte_width(src_type)
+      return src_type unless src_bytes
+      dst_bytes = emitted_union_byte_width(dst_type)
+      return src_type unless dst_bytes
+      dst_bytes > src_bytes ? dst_type : src_type
     end
 
     # Byte width of a union's payload region ([N x i32] after the i32 tid).
