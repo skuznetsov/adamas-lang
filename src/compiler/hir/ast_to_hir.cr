@@ -60528,10 +60528,51 @@ module Adamas::HIR
         final_missing_fixed_point_snapshot == snapshot
     end
 
-    private def final_missing_should_stop?(snapshot, pass_count : Int32) : Bool
+    # A demand-driven closure needs as many passes as the call graph it walks is
+    # deep, so a fixed pass budget bounds the program, not the loop. Bound the
+    # unproductive passes instead: a pass that materializes a function or a body
+    # advanced a finite closure, while passes that only churn revisions without
+    # materializing anything are the real non-convergence signal. The absolute
+    # ceiling stays as a second backstop against runaway monomorphization, which
+    # can keep materializing forever.
+    FINAL_MISSING_MAX_UNPRODUCTIVE_PASSES = 4
+    FINAL_MISSING_PASS_CEILING            = 64
+
+    # Name the fields that still differ so a non-convergence failure points at
+    # the churning state instead of only reporting a pass count.
+    private def final_missing_snapshot_churn(snapshot) : String
+      current = final_missing_fixed_point_snapshot
+      churn = [] of String
+      churn << "function_def_revision" if current[:function_def_revision] != snapshot[:function_def_revision]
+      churn << "function_type_revision" if current[:function_type_revision] != snapshot[:function_type_revision]
+      churn << "class_info_version" if current[:class_info_version] != snapshot[:class_info_version]
+      churn << "module_includers_version" if current[:module_includers_version] != snapshot[:module_includers_version]
+      churn << "module_defs_cache_version" if current[:module_defs_cache_version] != snapshot[:module_defs_cache_version]
+      churn << "authority_revision" if current[:authority_revision] != snapshot[:authority_revision]
+      churn << "function_set_revision" if current[:function_set_revision] != snapshot[:function_set_revision]
+      churn << "hir_body_revision" if current[:hir_body_revision] != snapshot[:hir_body_revision]
+      churn << "monomorphized_size" if current[:monomorphized_size] != snapshot[:monomorphized_size]
+      churn << "pending_queue" if current[:pending_queue] != snapshot[:pending_queue]
+      churn << "pending_fanout_targets" if current[:pending_fanout_targets] != snapshot[:pending_fanout_targets]
+      churn.empty? ? "none" : churn.join(",")
+    end
+
+    private def final_missing_should_stop?(
+      snapshot,
+      pass_count : Int32,
+      unproductive_passes : Int32,
+    ) : Bool
       return true if final_missing_fixed_point_reached?(snapshot)
-      if pass_count >= 4
-        raise "final missing lowering did not converge after #{pass_count} passes"
+      if unproductive_passes >= FINAL_MISSING_MAX_UNPRODUCTIVE_PASSES
+        raise "final missing lowering did not converge: #{unproductive_passes} consecutive passes " \
+              "changed state without materializing a function or body " \
+              "(passes=#{pass_count} queue=#{@pending_function_queue.size} " \
+              "churn=#{final_missing_snapshot_churn(snapshot)})"
+      end
+      if pass_count >= FINAL_MISSING_PASS_CEILING
+        raise "final missing lowering did not converge after #{pass_count} passes " \
+              "(queue=#{@pending_function_queue.size} " \
+              "churn=#{final_missing_snapshot_churn(snapshot)})"
       end
       false
     end
@@ -66228,6 +66269,7 @@ module Adamas::HIR
       # point so calls introduced by the final pending pass (for example
       # SmallVec#push -> Array#<<) do not survive as LLVM abort stubs.
       final_missing_passes = 0
+      final_missing_unproductive_passes = 0
       loop do
         before_final_missing = @module.function_count
         before_final_missing_bodies = hir_function_body_count
@@ -66256,10 +66298,23 @@ module Adamas::HIR
           end
         end
         final_missing_passes += 1
-        if phase_stats
-          STDERR.puts "[PHASE_STATS] final_missing_pass=#{final_missing_passes} funcs=#{before_final_missing}->#{@module.function_count} bodies_before=#{before_final_missing_bodies} fanout_attempts=#{fanout_repair_attempts}"
+        # Progress is materialization, not churn. Retrying unresolved targets
+        # bumps revisions on every pass, so only a new function or body proves
+        # the closure actually advanced.
+        if @module.function_count > before_final_missing ||
+           hir_function_body_count > before_final_missing_bodies
+          final_missing_unproductive_passes = 0
+        else
+          final_missing_unproductive_passes += 1
         end
-        break if final_missing_should_stop?(before_final_missing_snapshot, final_missing_passes)
+        if phase_stats
+          STDERR.puts "[PHASE_STATS] final_missing_pass=#{final_missing_passes} funcs=#{before_final_missing}->#{@module.function_count} bodies_before=#{before_final_missing_bodies} fanout_attempts=#{fanout_repair_attempts} unproductive=#{final_missing_unproductive_passes}"
+        end
+        break if final_missing_should_stop?(
+                   before_final_missing_snapshot,
+                   final_missing_passes,
+                   final_missing_unproductive_passes,
+                 )
       end
       discarded_fanout_targets, unresolved_fanout_targets =
         discard_terminal_module_virtual_fanout_pending_targets

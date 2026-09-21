@@ -1250,8 +1250,12 @@ class Adamas::HIR::AstToHir
     final_missing_fixed_point_reached?(snapshot)
   end
 
-  def __test_final_missing_should_stop?(snapshot, pass_count : Int32) : Bool
-    final_missing_should_stop?(snapshot, pass_count)
+  def __test_final_missing_should_stop?(
+    snapshot,
+    pass_count : Int32,
+    unproductive_passes : Int32 = 0,
+  ) : Bool
+    final_missing_should_stop?(snapshot, pass_count, unproductive_passes)
   end
 
   def __test_terminal_fanout_preserves_concrete_bodyless_target(
@@ -3931,7 +3935,7 @@ describe Adamas::HIR::AstToHir do
       converter.__test_final_missing_fixed_point_reached?(snapshot).should be_false
     end
 
-    it "fails closed when final missing lowering exceeds its pass budget" do
+    it "keeps lowering while passes still materialize functions" do
       converter = lower_program_with_main("1")
 
       stable_snapshot = converter.__test_final_missing_fixed_point_snapshot
@@ -3942,9 +3946,56 @@ describe Adamas::HIR::AstToHir do
         "final_missing_budget_probe",
         Adamas::HIR::TypeRef::VOID,
       )
-      converter.__test_final_missing_should_stop?(changed_snapshot, 3).should be_false
-      expect_raises(Exception, /final missing lowering did not converge after 4 passes/) do
-        converter.__test_final_missing_should_stop?(changed_snapshot, 4)
+
+      # Deep call graphs need more passes than any fixed constant can predict,
+      # so productive passes must never hit a budget.
+      converter.__test_final_missing_should_stop?(changed_snapshot, 3, 0).should be_false
+      converter.__test_final_missing_should_stop?(changed_snapshot, 12, 0).should be_false
+      converter.__test_final_missing_should_stop?(
+        changed_snapshot,
+        Adamas::HIR::AstToHir::FINAL_MISSING_PASS_CEILING - 1,
+        0,
+      ).should be_false
+    end
+
+    it "fails closed when final missing lowering churns without materializing" do
+      converter = lower_program_with_main("1")
+
+      changed_snapshot = converter.__test_final_missing_fixed_point_snapshot
+      converter.module.create_function(
+        "final_missing_churn_probe",
+        Adamas::HIR::TypeRef::VOID,
+      )
+
+      converter.__test_final_missing_should_stop?(
+        changed_snapshot,
+        9,
+        Adamas::HIR::AstToHir::FINAL_MISSING_MAX_UNPRODUCTIVE_PASSES - 1,
+      ).should be_false
+      expect_raises(Exception, /did not converge: .* without materializing a function or body/) do
+        converter.__test_final_missing_should_stop?(
+          changed_snapshot,
+          10,
+          Adamas::HIR::AstToHir::FINAL_MISSING_MAX_UNPRODUCTIVE_PASSES,
+        )
+      end
+    end
+
+    it "fails closed at the absolute pass ceiling even while materializing" do
+      converter = lower_program_with_main("1")
+
+      changed_snapshot = converter.__test_final_missing_fixed_point_snapshot
+      converter.module.create_function(
+        "final_missing_ceiling_probe",
+        Adamas::HIR::TypeRef::VOID,
+      )
+
+      expect_raises(Exception, /did not converge after \d+ passes/) do
+        converter.__test_final_missing_should_stop?(
+          changed_snapshot,
+          Adamas::HIR::AstToHir::FINAL_MISSING_PASS_CEILING,
+          0,
+        )
       end
     end
 
