@@ -181,6 +181,11 @@ end
 
 # Test-only access to private parsing helpers (keeps production API small).
 class Adamas::HIR::AstToHir
+  def __test_lazy_enum_candidates_in(dir : String, name : String) : Array(String)
+    index_lazy_enum_candidates_for_dir(dir, Set(String).new)
+    @lazy_enum_candidate_files[name]? || [] of String
+  end
+
   def __test_substitute_type_params_in_type_name(
     name : String,
     type_params : Hash(String, String),
@@ -3304,6 +3309,27 @@ private def hir_text(func : Adamas::HIR::Function) : String
 end
 
 describe Adamas::HIR::AstToHir do
+  describe "lazy enum candidate indexing" do
+    it "ignores directories with a .cr suffix while indexing source files" do
+      arena, _ = parse("")
+      converter = Adamas::HIR::AstToHir.new(arena)
+      directory = File.join(Dir.tempdir, "adamas_enum_candidates_#{Process.pid}_#{Random.rand(1_000_000)}")
+      nested_directory = File.join(directory, "nested.cr")
+      source_file = File.join(directory, "ready.cr")
+      Dir.mkdir(directory)
+      begin
+        Dir.mkdir(nested_directory)
+        File.write(source_file, "enum Ready\n  Item\nend\n")
+
+        converter.__test_lazy_enum_candidates_in(directory, "Ready").should eq([source_file])
+      ensure
+        File.delete(source_file) if File.file?(source_file)
+        Dir.delete(nested_directory) if Dir.exists?(nested_directory)
+        Dir.delete(directory) if Dir.exists?(directory)
+      end
+    end
+  end
+
   describe "lowering demand ledger" do
     it "records raw demand across queue sources without collapsing shape" do
       previous_filter = ENV["ADAMAS_HIR_DEMAND_LEDGER"]?

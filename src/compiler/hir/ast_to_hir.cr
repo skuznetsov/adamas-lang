@@ -11702,7 +11702,7 @@ module Adamas::HIR
         next if loaded_paths.includes?(cr_file)
 
         # Parse the file (skip if unreadable)
-        next unless File.exists?(cr_file)
+        next unless File.file?(cr_file)
         source = File.read(cr_file)
         lexer = Adamas::Compiler::Frontend::Lexer.new(source)
         parser = Adamas::Compiler::Frontend::Parser.new(lexer)
@@ -11733,7 +11733,7 @@ module Adamas::HIR
         next unless entry.ends_with?(".cr")
         cr_file = File.join(dir, entry)
         next if loaded_paths.includes?(cr_file)
-        next unless File.exists?(cr_file)
+        next unless File.file?(cr_file)
         source = File.read(cr_file)
 
         source.each_line do |line|
