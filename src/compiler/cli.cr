@@ -824,6 +824,44 @@ module Adamas
         end
       end
 
+      private def delete_file_if_present(path : String)
+        File.delete(path) if File.exists?(path)
+      rescue
+        nil
+      end
+
+      # Shared cache entries are keyed by content hash, so concurrent compiles
+      # write the same path. Copying in place lets a reader observe a truncated
+      # file (existence plus a non-zero size is the only readiness check), so
+      # publish through a private staging file and rename it into place.
+      private def publish_file_atomically(src : String, dst : String) : Bool
+        staging = "#{dst}.tmp.#{Process.pid}"
+        unless copy_file_raw(src, staging)
+          delete_file_if_present(staging)
+          return false
+        end
+
+        begin
+          File.rename(staging, dst)
+          true
+        rescue
+          delete_file_if_present(staging)
+          false
+        end
+      end
+
+      private def write_file_atomically(dst : String, content : String) : Bool
+        staging = "#{dst}.tmp.#{Process.pid}"
+        begin
+          File.write(staging, content)
+          File.rename(staging, dst)
+          true
+        rescue
+          delete_file_if_present(staging)
+          false
+        end
+      end
+
       private def write_text(io : IO, text : String, newline : Bool = false) : Nil
         if fd_io = io.as?(IO::FileDescriptor)
           write_all_fd(fd_io.fd, text.to_slice)
@@ -2651,6 +2689,16 @@ module Adamas
           bootstrap_trace_puts "[PHASE_STATS] AST analysis: #{ast_result[:defs].size}/#{hir_converter.function_defs_count} defs reachable, #{ast_result[:method_names].size} method names (analysis-only, #{(Time.instant - ast_filter_start).total_milliseconds.round(1)}ms)"
         end
 
+        # Diagnostic: dump every registered function_def key, then stop.
+        if BootstrapEnv.enabled?("ADAMAS_DUMP_FUNCTION_DEFS_AND_STOP")
+          hir_converter.each_function_def_name do |fdef_name|
+            fdef_line = "[FDEF] #{fdef_name}\n"
+            LibC.write(2, fdef_line.to_unsafe, fdef_line.bytesize)
+          end
+          STDERR.flush
+          LibC._exit(0)
+        end
+
         # Ensure top-level `fun main` is lowered as a real entrypoint (C ABI).
         did_flush = false
         fun_main_index = -1
@@ -2816,6 +2864,12 @@ module Adamas
         else
           log_codepath_status("cli.gate", "stop_after_hir_rta", "not_taken", "CLI")
         end
+
+        # Virtual included-forall return sets are provisional during lowering.
+        # Validate their exact targets and ABI only after deferred allocators
+        # and RTA have finalized the HIR that MIR will consume.
+        hir_converter.validate_included_forall_virtual_return_certificates!(hir_module)
+
         if debug_profile
           timings["dbg_count_hir_reachable_names"] = reachable.size.to_f
           timings["dbg_count_hir_funcs_after_rta"] = hir_module.functions.size.to_f
@@ -3061,16 +3115,26 @@ module Adamas
             bootstrap_trace_puts "[MIR_SETUP] constant_literal idx=#{const_literal_idx} key_class=#{full_name.class.name} key_bytes=#{full_name.bytesize} value_class=#{macro_value.class.name} is_num=#{macro_value.is_a?(Adamas::Compiler::Semantic::MacroNumberValue) ? 1 : 0} is_bool=#{macro_value.is_a?(Adamas::Compiler::Semantic::MacroBoolValue) ? 1 : 0}"
           end
           const_literal_idx += 1
-          next unless macro_value.is_a?(Adamas::Compiler::Semantic::MacroNumberValue)
-          # Skip float constants — they can't be stored as Int64 initial values
-          next if macro_value.value.is_a?(Float64)
+          # Bool literals are not deferred by the HIR (record_constant_definition),
+          # so they must get a static 0/1 initializer here like integers do.
+          static_value = case macro_value
+                         when Adamas::Compiler::Semantic::MacroBoolValue
+                           macro_value.value ? 1_i64 : 0_i64
+                         when Adamas::Compiler::Semantic::MacroNumberValue
+                           # Skip float constants — they can't be stored as Int64 initial values
+                           number = macro_value.value
+                           number.is_a?(Float64) ? nil : number.as(Int64)
+                         else
+                           nil
+                         end
+          next unless static_value
           owner = hir_converter.constant_literal_owners[full_name]? || "Object"
           const_name = hir_converter.constant_literal_names[full_name]? || full_name
           global_name = constant_class_var_global_name(owner, const_name)
           next if registered_globals.includes?(global_name)
           const_type = hir_converter.constant_types[full_name]? || HIR::TypeRef::INT32
           debug_info = hir_converter.global_debug_infos[global_name]?
-          globals << {global_name, const_type, macro_value.value.as(Int64), debug_info.try(&.display_name), debug_info.try(&.location)}
+          globals << {global_name, const_type, static_value, debug_info.try(&.display_name), debug_info.try(&.location)}
           registered_globals.add(global_name)
         end
         bootstrap_trace_puts "[MIR_SETUP] constant_literals scan done globals=#{globals.size}" if mir_setup_trace
@@ -3414,12 +3478,23 @@ module Adamas
         const_init = {} of String => (Float64 | Int64)
         hir_converter.constant_literal_values.each_key do |name|
           value = hir_converter.constant_literal_values[name]
-          if value.is_a?(Adamas::Compiler::Semantic::MacroNumberValue)
+          init_value = case value
+                       when Adamas::Compiler::Semantic::MacroNumberValue
+                         value.value
+                       when Adamas::Compiler::Semantic::MacroBoolValue
+                         value.value ? 1_i64 : 0_i64
+                       else
+                         nil
+                       end
+          if init_value
             # Convert constant name (Math::PI) to global name (Math__classvar__PI)
             owner = hir_converter.constant_literal_owners[name]? || "Object"
             const_name = hir_converter.constant_literal_names[name]? || name
             global_name = constant_class_var_global_name(owner, const_name)
-            const_init[global_name] = value.value
+            const_init[global_name] = init_value
+            if BootstrapEnv.enabled?("DEBUG_CONST_LIT_WRITE")
+              STDERR.puts "[CONST_INIT] #{global_name} = #{init_value} int=#{init_value.is_a?(Int64)}"
+            end
           end
         end
         bootstrap_trace_puts "[STAGE2_TRACE] step5: const_init done count=#{const_init.size}"; STDERR.flush
@@ -3522,8 +3597,8 @@ module Adamas
             # Child: save cache and exit
             begin
               safe_mkdir_p(safe_dirname(pipeline_cache_file))
-              copy_file_raw(ll_file, pipeline_cache_file)
-              File.write(pipeline_cache_file + ".libs", options.link_libraries.join("\n") + "\n")
+              publish_file_atomically(ll_file, pipeline_cache_file)
+              write_file_atomically(pipeline_cache_file + ".libs", options.link_libraries.join("\n") + "\n")
             rescue
             end
             LibC._exit(0)
@@ -3533,8 +3608,8 @@ module Adamas
           else
             # Fork failed — save synchronously
             safe_mkdir_p(safe_dirname(pipeline_cache_file))
-            copy_file_raw(ll_file, pipeline_cache_file)
-            File.write(pipeline_cache_file + ".libs", options.link_libraries.join("\n") + "\n")
+            publish_file_atomically(ll_file, pipeline_cache_file)
+            write_file_atomically(pipeline_cache_file + ".libs", options.link_libraries.join("\n") + "\n")
             @pipeline_cache_misses += 1
             log(options, out_io, "  Pipeline cache MISS → saved")
           end
@@ -3611,7 +3686,10 @@ module Adamas
       end
 
       private def temp_command_output_path(path : String) : String
-        "#{path}.cmdtmp"
+        # Concurrent compiles share output directories (the repo-root runtime
+        # stub above all), so a fixed suffix lets one process delete or rename
+        # another's in-flight temp file. Key the temp name by process.
+        "#{path}.cmdtmp.#{Process.pid}"
       end
 
       private def debug_info_requested?(options : Options) : Bool
@@ -3738,7 +3816,8 @@ module Adamas
         output, command_success = run_command_capture_output(command_args, log_file)
         ready = command_success && command_output_ready?(temp_output)
         if ready
-          File.delete(final_output) if File.exists?(final_output)
+          # rename(2) replaces the destination atomically; deleting it first
+          # only opens a window where a concurrent reader sees no output.
           File.rename(temp_output, final_output)
         else
           File.delete(temp_output) if File.exists?(temp_output)
@@ -3859,7 +3938,7 @@ module Adamas
               return 1
             end
             if options.llvm_cache
-              @llvm_cache_misses += 1 if copy_file_raw(opt_ll_file, opt_cache_file)
+              @llvm_cache_misses += 1 if publish_file_atomically(opt_ll_file, opt_cache_file)
             end
           end
           timings["opt"] = (Time.instant - opt_start).total_milliseconds if options.stats
@@ -3933,7 +4012,7 @@ module Adamas
               end
             end
             if options.llvm_cache && !llc_used_fallback
-              @llvm_cache_misses += 1 if copy_file_raw(obj_file, obj_cache_file)
+              @llvm_cache_misses += 1 if publish_file_atomically(obj_file, obj_cache_file)
             end
             timings["llc"] = (Time.instant - llc_start).total_milliseconds if options.stats
           end
@@ -4881,7 +4960,7 @@ module Adamas
 
         cache_path = require_cache_path(file_path)
         safe_mkdir_p(safe_dirname(cache_path))
-        File.write(cache_path, unique.join("\n") + "\n")
+        write_file_atomically(cache_path, unique.join("\n") + "\n")
       rescue ex
         nil
       end
@@ -5118,7 +5197,15 @@ module Adamas
         when Frontend::RequireNode
           # Skip - already processed
         when Frontend::MacroExpressionNode
-          collect_top_level_nodes(arena, arena_index, node.expression, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena)
+          # Statement-position `{% expr %}` (output=false) is compile-time only; it emits no runtime code.
+          if node.output
+            collect_top_level_nodes(arena, arena_index, node.expression, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena)
+          elsif collect_main_exprs && macro_statement_may_raise?(arena, node.expression)
+            # A top-level `{% raise ... %}` must still abort compilation. Lowering
+            # a statement macro runs its compile-time effects and emits only nil,
+            # so routing it through main is runtime-neutral.
+            main_exprs << ((arena_index.to_u64 << 32) | expr_id.index.to_u64)
+          end
         when Frontend::VisibilityModifierNode
           unless node.expression.null_ptr? || node.expression.invalid?
             validate_top_level_visibility_modifier!(node, arena[node.expression], arena)
@@ -5503,6 +5590,34 @@ module Adamas
         return nil if length <= 0 || start < 0 || start >= source.bytesize
         length = source.bytesize - start if start + length > source.bytesize
         source.byte_slice(start, length)
+      end
+
+      private def macro_statement_may_raise?(arena : Frontend::ArenaLike, expr_id : Frontend::ExprId, depth : Int32 = 0) : Bool
+        return false if expr_id.invalid? || depth > 8
+        node = arena[expr_id]
+        case node
+        when Frontend::RaiseNode
+          true
+        when Frontend::BeginNode
+          node.body.any? { |stmt| macro_statement_may_raise?(arena, stmt, depth + 1) }
+        when Frontend::IfNode
+          return true if node.then_body.any? { |stmt| macro_statement_may_raise?(arena, stmt, depth + 1) }
+          if elsifs = node.elsifs
+            return true if elsifs.any? { |branch| branch.body.any? { |stmt| macro_statement_may_raise?(arena, stmt, depth + 1) } }
+          end
+          if else_body = node.else_body
+            return true if else_body.any? { |stmt| macro_statement_may_raise?(arena, stmt, depth + 1) }
+          end
+          false
+        when Frontend::UnlessNode
+          return true if node.then_branch.any? { |stmt| macro_statement_may_raise?(arena, stmt, depth + 1) }
+          if else_branch = node.else_branch
+            return true if else_branch.any? { |stmt| macro_statement_may_raise?(arena, stmt, depth + 1) }
+          end
+          false
+        else
+          false
+        end
       end
 
       # Resolve a macro for-loop iterable to a list of string values

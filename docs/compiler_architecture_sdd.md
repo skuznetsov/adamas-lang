@@ -1,6 +1,8 @@
 # Compiler Architecture SDD
 
 > Status: ACTIVE spec; fresh B4-F and broad semantic promotion remain open.
+> AN ordinary S1 -> S2 -> S3 -> S4 reaches a complete raw-IR and code/data
+> fixed point; see bootstrap_an_verification.md (2026-10-13).
 > T1 has an opt-in single-active-unit selected-definition consumer; broader
 > identity continuity remains open (source-routing refresh 2026-09-04).
 > Scope: target ownership architecture for the Adamas compiler
@@ -919,6 +921,864 @@ Key falsifiers:
   collide through a shared block target;
 - `Array(UInt32)#join(io, sep) { ... }` must not fall back to a one-argument
   non-block `join`.
+
+Bounded macro lookup correction (2026-10-12, host-built candidate verified): an explicitly
+qualified type call must search that owner's macros and inherited macros,
+without falling through to a Program-level macro of the same short name.
+An owner method stops the search before an ancestor macro can intercept it;
+an owner macro still takes precedence at that scope. Unqualified calls retain
+their existing lexical/global lookup. The source
+anchor is `Process#initialize` calling `Crystal::System::Process.spawn` with
+seven positional arguments: the current lowering instead expands the global
+`spawn` macro and reads a Fiber type id as a process id. A no-prelude collision
+fixture returns 99 through the global macro and 42 with that macro removed.
+The acceptance check is the paired original-Crystal/Adamas collision oracle,
+plus qualified owner/inherited/included-macro, child-method shadowing, and
+unqualified global-macro controls. All seven controls pass in
+`regression_tests/qualified_macro_owner_lookup_repro.sh`; individual upstream
+Crystal 1.21 empty-prelude LLVM oracles establish their expected values.
+Missing qualified macros must continue to ordinary method resolution; they
+must not authorize cross-owner expansion. This does not admit arbitrary macro
+arity recovery or certify Process runtime initialization, fork, exec, or wait.
+Rollback is the isolated lookup-policy delta. Source or lookup changes require
+rerunning these controls and the Process fixture before reusing its evidence.
+
+The direct `Object#tap` shortcut may bind a zero/one-parameter block to its
+whole receiver. Blocks with multiple parameters must use ordinary yield
+lowering so a single yielded tuple is destructured. The old shortcut bound
+each parameter to the tuple itself and sent `close_on_finalize=` to the tuple
+instead of its second element. The host-built S1E candidate passes
+`regression_tests/tap_tuple_block_destructure_repro.sh` for two-parameter blocks
+over two- and three-element tuples, plus a one-parameter whole-tuple control.
+The original failing candidate aborts at the tuple setter stub; disabling yield
+inlining passes the same fixture. The real Process fixture now passes that
+site and reaches a separate runtime crash. Generic yield arity overflow remains
+an existing compatibility gap; no general block-arity claim is admitted.
+Rollback is the tap call-site gate. Refresh after tap dispatch, tuple binding,
+or inline-yield lowering changes.
+
+Two adjacent bounded corrections are admitted at the same host-built boundary.
+An N-way branch merge may canonicalize an enum's integer carrier to the named
+enum only when every incoming value proves the same enum identity and has
+either the enum type or its exact declared integer base. Independent integer,
+nil, and unrelated enum arms retain their union representation. The runtime
+guard is `regression_tests/enum_carrier_branch_merge_repro.sh`; the structural
+guards are `spec/hir/enum_carrier_branch_merge_spec.cr` (3/3). Both regex literal
+regressions pass. This does not certify enum identity for all raw literal
+assignment shapes, loops, or ternary merges.
+
+Macro unary numeric evaluation retains the operand's kind for signed minus,
+unary plus, and width-bounded integer complement. Float32 minus must narrow and
+serialize through Float32's shortest decimal representation, matching Crystal's
+`NumberLiteral.new(Number)`, before equality or further macro operations.
+`regression_tests/macro_unary_numeric_equality_repro.sh` tests direct/nested
+equality, kind distinctions, complements, arithmetic, interpolation, rounding,
+and signed zero with complete result comparisons before process exit. The
+original-Crystal valid-fixture oracle agrees. Unparseable i128/u128 values and
+unsupported unary operands retain the existing opaque fallback; that fallback
+is not a claim of Crystal compatibility. Source changes require rerunning the
+paired oracles and these guards. Rollback is each isolated producer delta.
+
+When the first yielded value is a tuple, a generic block annotation that has
+not resolved to a Tuple must not suppress destructuring. Use the concrete
+yielded value's Tuple type in that case, then retain the remaining yielded
+arguments as their own bindings. The old path bound `memo` as void and emitted
+an unspecialized setter. `regression_tests/generic_tuple_yield_receiver_repro.sh`
+uses a Crystal-valid generic module producer and checks five writes, with
+typed-tuple, concrete, whole-tuple, and scalar guards. Original Crystal 1.21 and
+host-built S1F both exit 0; S1E loses a write and fails the HIR guard. A previous
+free-`T` reducer was rejected by Crystal and has been replaced; it is not a
+compatibility oracle. Rollback is the first-yield Tuple type fallback. Refresh
+after block type substitution, destructuring, or yield binding changes.
+
+An additional included-method shadowing boundary is measured red on S1L.
+The original-valid `Flow(T)#carry(obj : U, & : T, U ->) forall U`, included by
+`GenericFlow(U)`, must bind T from the include site and method U from the
+positional Int32 argument even when the receiver is GenericFlow(Int64). The
+same requirement applies with an explicit return annotation. Original Crystal
+1.21 compiles and runs both forms with exit 0; S1L compiles them but exits 9,
+with HIR casting the argument to Int64 and choosing the Int64 overload. The
+ordinary receiver-generic control retains Int64 correctly. The include-chain
+candidate is the selected DefNode, but the registered map is absent, so the
+existing fallback skips exact include provenance. Parser consumption also
+discards forall names when no return annotation is present.
+
+The admitted repair retains parsed forall metadata in DefNode and transports
+it through relevant node reconstruction and both AstCache directions. Bump
+the cache schema version so pre-metadata caches cannot silently erase semantic
+names; a round-trip guard must preserve the parsed names. Synthesized accessor
+and C-function definitions retain empty metadata. Exact selected-DefNode identity and
+the concrete receiver's include chain may establish module bindings without a
+registered map. For positional calls, bare method-forall parameter annotations
+bind from actual call types and exclude same-name receiver aliases. Positional calls
+with repeated bare method-forall annotations use the first positional
+occurrence, matching the paired original-Crystal order-sensitive controls;
+an unknown first actual remains unbound rather than selecting a later type.
+Named calls retain their existing guard. This slice does not establish
+general reordered, splatted, or nested generic argument inference. A paired
+static Tuple-splat control passes after positional expansion; the dynamic
+Array-splat variant is rejected by upstream Crystal. Multiline headers and default strings are
+guards against reconstructing semantic names from header text. Rollback is the
+metadata transport and exact include-map/type-binding change together. The DoD
+is the paired upstream/S1 fixture, typed HIR producer checks, the strengthened
+generic yield regression, and the focused owner/type suite. Full regressions
+and fresh bootstrap smokes remain separate propagation obligations. This is
+CAUTION semantic work; no general compatibility or bootstrap closure is
+admitted. At immutable S1M3, the current manifest passes 152/152 with 553
+supervised child calls and no resource abnormality. The strengthened repeated
+parameter test also passes separately; both stage smokes and all five enum-HIR
+and AST-cache specs pass. The scoped read-only adversary verdict is ROBUST for
+included-method callback input inference, including exact selected-definition
+provenance and first-actual binding. Enclosing-call result typing remains a
+separate path and is not certified by these checks. Refresh after parser, cache,
+include-map, argument expansion, or block parameter inference changes.
+
+The single-parameter Hash#each intrinsic is a separate measured-red boundary.
+Original Crystal's `Hash#each(& : {K, V} ->)` yields a key/value Tuple, while
+`lower_hash_each_dynamic` binds a one-parameter block to the key alone. Once
+the exact Enumerable include-map and method-forall accumulator bindings are
+restored in S1K, the nested Hash reject fixture therefore indexes a String key
+as a Tuple and exits 139. The old memo-type guard also assumes an out-of-line
+reject function; successful inlining requires an equivalent scoped guard,
+not acceptance of the corrupted payload.
+
+The bounded repair is design-sealed: materialize a Tuple(K, V) for a single
+Hash#each block parameter and expose that same type to loop-local inference.
+Keep two-parameter key/value destructuring and empty blocks consistent with
+the existing iteration path. Seal with the original-valid nested Hash reject
+runtime fixture, a whole-pair one-parameter control, two-parameter controls,
+and mutable-loop/next/empty guards, followed by the focused and full manifests.
+Rollback is the single-parameter intrinsic binding plus its regression guards.
+This does not admit arbitrary yield-arity packing or raw Pointer(Struct) ABI.
+Refresh after Hash iteration, tuple storage, inline block binding, or mutable
+loop inference changes.
+
+An exact, non-void TypeRef match for a collection-module argument is sufficient
+before checking whether a concrete class includes that module. The old early
+module gate rejected `Enumerable(String)` against the identical argument type,
+so a nested constructor callback selected a competing String initializer.
+`regression_tests/process_nested_callback_constructor_repro.sh` checks the
+callback marker, the String initializer, and an unmatched scalar rejection;
+the valid callback fixture agrees with original Crystal. This host-built fix
+does not certify OS process creation. Rollback is the exact-match early return.
+Refresh on collection-module restriction resolution or constructor selection.
+
+An inherited method using macro `@type` must retain the concrete receiver for
+that macro while resolving unqualified constants in its declaring namespace.
+The first receiver-only correction failed the parent lexical-constant guard;
+the corrected S1H path passes all 15 inherited-method controls and the valid
+original-Crystal oracle. `regression_tests/inherited_macro_type_receiver_repro.sh`
+covers receiver identity, lexical constants, ordinary inherited methods,
+shadowing, and multi-level inheritance. Generic-parent method discovery is a
+separate open boundary: direct generic-parent and child-owned calls pass,
+but inherited calls from a generic child still reach an unresolved stub.
+Rollback is the receiver/namespace context delta. Refresh after macro owner,
+method discovery, arena, or lexical lookup changes.
+
+S1K exposes a second lexical-namespace case after generic parent discovery is
+restored. An ordinary inherited wrapper that calls an inherited type-aware
+method returns 105 instead of original Crystal's 22: the receiver macro returns
+the correct child value, but the wrapper resolves TOKEN to the child's 90
+instead of the declaring parent's 7. The current namespace fallback is gated
+on a direct macro type use in the body, so that ordinary wrapper has no lexical
+override. The bounded repair uses the resolved declaring definition's owner
+for a requested inherited instance wrapper when no explicit namespace override
+exists, while retaining the concrete receiver for method dispatch. Seal with
+the generic inherited-method fixture, a plain inherited constant control,
+and a child-owned constant shadow control before focused/full regressions.
+Rollback is that wrapper namespace fallback. This does not authorize guessing
+the declaring owner from the receiver or a short method name.
+
+Generic superclass applications are a measured-red boundary in S1J. The
+upstream-valid inherited-method fixture aborts at a child method stub; parent
+traces resolve `GenericChild(Int32) < GenericParent(V)` to bare `GenericParent`,
+and `Grandchild` likewise loses its parent's arguments. The class-header parser
+currently stores only the constant path in `ClassNode.super_name`, discarding
+the generic application before concrete parent registration can substitute it.
+Searching generic ancestor templates alone does not repair that loss.
+
+The bounded repair is design-sealed: retain the explicit superclass type
+application in arena-owned AST storage, substitute the concrete child's type
+map, and register the resulting concrete parent edge before method discovery.
+Do not infer parent arguments from the child's position or parameter names:
+fixed, renamed, nested, and permuted applications must retain their source
+meaning. Non-generic parents and `< self` remain guards. The executable seal is
+`regression_tests/generic_ancestor_inherited_method_repro.sh`, expanded with
+fixed and permuted parent arguments and compared with original Crystal, plus
+the focused owner-resolution regressions and full regression manifest.
+Rollback comprises the class-header AST/parser, concrete parent registration,
+and ancestor-template lookup changes together. Arbitrary generic compatibility
+and bootstrap usability remain non-guarantees until their own checks pass.
+
+Multiple assignment from a concrete StaticArray must retain its element type,
+matching direct indexing. The old tuple-only element lookup bound both file
+descriptors from `StaticArray(Int32, 2)` as void and selected a FileDescriptor
+allocator without the intended initializer. S1H passes
+`regression_tests/static_array_multiple_assign_element_type_repro.sh`, including
+Int64 width/overload and Tuple guards; original Crystal agrees. Fresh Process
+HIR now selects the explicit Int32 FileDescriptor constructor. Process runtime
+still crashes at Polling::Arena's raw Pointer(Entry)#value/SpinLock access; this
+fix does not admit raw struct storage or OS process execution. Rollback is the
+StaticArray element fallback. Refresh after tuple/array element inference or
+constructor argument typing changes.
+
+The raw Pointer(Struct) boundary is independently refuted by four valid
+original-Crystal controls. Zeroed nested Entry reads and lock-alias mutation
+exit 139 in S1H; wide direct writes and indexed stride fail byte-alias checks
+with exits 33 and 32. All four upstream runs exit 0. A typed Pointer(DeltaWide)
+control passes only because allocation and accesses agree on pointer slots:
+LLVM allocates two 8-byte slots for a struct whose inline width is 32 bytes.
+The same pointer-slot storage policy drives malloc, load/store, and indexing.
+Normal struct fields also use heap carriers, so a pointer-only load change
+would leave the nested field representation inconsistent. Coordinated size,
+stride, raw conversion, alias mutation, and reference-ownership guards are
+required before admitting a repair. The byte-alias probes establish behavior
+without relying on allocator slack or sampled resource telemetry.
+
+Bootstrap propagation remains separate. S1L passes 151/151 manifest scripts
+with 550 supervised child calls and builds ordinary S2 from an immutable
+1,919-file source snapshot (maximum observed RSS 6,106,288 KiB, FD count 21).
+That S2 compiles and runs both the no-prelude exit fixture and a full-stdlib
+puts/Array/arithmetic fixture with exact output. The previous S2F/S2H stdlib
+compile crash is closed within these smokes. Their nested Hash setter received
+an alloca i8/void memo; the earlier producer confused include-site and method
+type parameters, and the one-parameter Hash iterator supplied a key instead
+of its key/value Tuple. Correcting those producers changes S2L's generated
+nested setter receivers to loaded Hash pointers. The earlier unresolved-only
+yield-tail fallback failed the target and was removed rather than promoted.
+
+Ordinary S2L to S3 is still red: run_safe terminates compilation for memory at
+12,906,864 KiB under a 12,288 MiB cap (41.54s wall time). S2L already links
+Boehm GC, so inspect the actual allocation/lifetime consumers before changing
+an allocator or retrying the same cap. No unmodified S3 or fixed-point claim
+is admitted. Raw Pointer(Struct) remains independently red, and the new
+included-method forall shadowing fixture is outside the 151-script L manifest
+until its repair passes. Refresh with an exact-source rebuild, the complete
+manifest, and both stage smokes after dependent compiler changes.
+
+The allocation-family discriminator now has paired runtime evidence. The same
+full-prelude fixture reports GC membership for Pointer.malloc, Array storage,
+an escaped class instance, explicit scanned/atomic GC allocations, and dynamic
+String storage under original Crystal 1.21 (membership mask 63). S1L reports
+only the explicit scanned GC allocation (mask 8). Explicit LibC.malloc stays
+outside Boehm in both; zeroed Pointer/scanned allocations and a default ivar
+agree. MemoryStrategy::GC currently calls the libc-backed managed allocation
+helper and writes an immortal RC sentinel. That violates its reclamation
+contract, but the measured mismatch alone does not establish how much of
+S3's peak is unmanaged churn rather than deliberately retained arenas.
+
+The proposed CAUTION repair is a coherent managed-heap boundary in GC-linked
+full-prelude mode. Collector-visible storage must include the emitted owners,
+their pointer-bearing container/tuple/closure buffers, and their managed
+children together. Moving GC-strategy objects alone would leave references
+hidden in native parents. Internal managed allocation helpers may use scanned
+Boehm allocation; atomic byte storage uses the atomic family. Preserve the
+existing zero-initialization and byte-buffer terminator allowance. Explicit
+LibC allocation calls remain native. No-prelude/no-GC paths retain their
+existing allocator boundary. Realloc and free must discriminate ownership;
+GC-owned storage must never reach libc realloc/free. ARC header validation
+must recognize a GC base without treating headerless or static pointers as
+RC objects, and Slab's current individual blocks need the same visible-owner
+and release contract. Audit direct native emitters before admitting the graph.
+
+The first managed-heap candidate N passes all six membership families and the
+realloc/value guards, but its original-valid raw-root graph still crashes.
+Generated `build_graph_root` decrements the inferred ARC graph at scope exit;
+its destructor releases both container fields and explicitly frees the Boehm
+block before collection. Supervised LLDB then faults in
+`container_liveness_mode + 572` while loading the released graph's Array.
+A scanned raw root is sufficient under Crystal's collector semantics, so
+compiler-inferred ARC ownership cannot override that root. Collector-owned
+storage must bypass implicit RC destruction and release; explicit GC.free
+remains an explicit release operation. The same rule must cover atomic RC and
+implicit Slab release, while native/no-prelude/no-GC ownership remains native.
+This is a conservative collector fallback: eager ARC reclamation of these
+blocks is not admitted, and membership alone does not establish safe liveness
+or actual collection. Candidate N is VULNERABLE until the graph and release
+guards pass without adding an artificial typed keepalive.
+
+Candidate O leaves collector-owned storage intact through all four RC helpers
+and compiler-emitted Slab release. Its original-valid fixture now passes all
+six membership families (mask 63), value/zero and realloc guards, headerless
+interior storage, explicit GC.free completion, StringBuilder capacity edges,
+and the raw-root Array/Hash graph after two collections. The same source
+passed under original Crystal 1.21; N still faults at the final graph probe.
+O also passes the no-prelude and full-prelude stage smokes, five enum/AST
+cache examples, 90 backend examples, and 20 focused scripts. Its complete
+153-script manifest passes with 555 supervised child calls and no resource
+abnormality. The separate allocator-gating script passes all eight supervised
+compiler/runtime calls: no-prelude programs, including the explicit no-GC
+variant, emit no collector calls and run natively; a dynamic String::Builder remains atomic
+collector storage in the GC-linked mode. Read-only adversary inspection finds
+the four GC-owned RC release guards and implicit Slab no-op before header
+mutation or destruction, while native RC and explicit GC.free remain active.
+The verdict is ROBUST within this observed allocation/liveness boundary.
+
+The backend Thread::Mutex unit test previously required a removed raw
+initializer override and failed before the GC repair. It now places a distinct
+MIR call in that initializer and requires the emitted body to preserve it;
+the real inline pthread lock/unlock/neighbor-field regression also passes.
+The same body-probe test fails on the historical raw-override backend because
+the override discards that call. A separate MIR allocator-mode guard forces
+collector demand in all three cases and proves the no-GC and no-prelude gates
+independently; only the managed case calls Boehm allocation/realloc helpers.
+The atomic RC test follows the managed-free helper and independently verifies
+that its no-GC branch still calls libc free.
+
+Ordinary S1O builds S2O from the same immutable 1,919-file source in 583.10s,
+with maximum observed RSS 5,883,440 KiB and FD 21. Both exact-output S2 smokes
+and the two allocator/native-gating scripts pass. Ordinary S2O-to-S3 is still
+red after 444.72s: receiver repair leaves a bodyless
+`Int32#includes?$Regex::MatchOptions` target in
+`Regex#pcre2_match_options$Regex::MatchOptions`. Maximum observed RSS is
+3,037,104 KiB under the unchanged 12,288 MiB cap (FD 8); the former early
+memory failure is bypassed. Isolate the enum semantic/carrier boundary on
+the same S1O and S2O binaries before another bootstrap attempt.
+This is scoped liveness evidence,
+not a proof of reclamation, finalizer completeness, raw Pointer(Struct)
+compatibility, or S3 convergence. Fresh S1O reproduces all four original-valid
+raw-pointer failures unchanged: nested read/alias 139, wide direct store 33,
+and stride 32; its typed-pointer control remains green. A separate recursive
+raw-pointee layout and alias-preserving access contract is required, including
+method calls and reference ownership; widening the inline-container allowlist
+does not reconcile nested carrier offsets with Crystal's native inline layout.
+
+The remaining raw-struct receiver contract has a paired runtime discriminator.
+In the installed original 1.21 host, direct pointer.value.bump_leaf mutates
+the pointee, but snapshot = pointer.value followed by snapshot.bump_leaf
+changes only the copied local. The nested-POD/wide-field fixture returns mask
+15/exit 0 upstream and mask 13/exit 2 on S1Q: its nested local mutation changes
+the pointee. Both an aliased outer carrier and an outer copy sharing the nested
+field fit that observation; do not select one mechanism from this fixture.
+The inspected upstream source checkout is 1.20.1-derived and must not be
+presented as 1.21 source. This original-valid failure is a separate diagnostic,
+outside the passing bootstrap manifest. A future repair must preserve direct
+receiver mutation, recursively independent value copies, raw byte layout and
+stride, and live reference ownership together. A scalar-only or carrier-only
+control cannot certify that boundary. Evidence lives in raw_receiver_contract_q
+under the session output directory.
+
+A subsequent scalar-only receiver fixture removes the nested-sharing
+ambiguity. Original Crystal 1.21 returns mask 7/exit 0; S1Q returns mask
+3/exit 1. Direct pointer.value.bump! mutates the pointee in both, but a
+mutation through snapshot = pointer.value changes the scalar pointee only
+in S1Q. This is evidence of failed independent outer value copying in the
+tested shape. Two separate wide fixtures use Pointer(Struct) allocation and
+Array(Struct).to_unsafe, then inspect UInt64 offsets 0/24/32/56 through the
+pointer address. Both return typed/raw masks 3/15 upstream and 3/0 in S1Q;
+both report sizeof 32. Thus typed access can remain internally consistent
+while raw storage disagrees with Crystal. These do not yet distinguish
+backing storage from raw-address lowering. Evidence: raw_receiver_scalar_q
+and raw_array_pointer_q, with source hashes and supervised child receipts.
+
+The enum bootstrap frontier has a small discriminator. Four full-prelude
+fixtures (Int32/UInt8 flag loops, Regex::MatchOptions iteration and actual
+Regex#match) compile and run under original Crystal 1.21 and S1O, but fail
+under ordinary S2O with the same integer-owned includes? target. Paired
+diagnostic traces show the initial enum receiver is preserved; after a bitwise
+update the S2 branch merge instead introduces Enum | Int32. The emitted S2
+track_enum_operator_result guard compares String object addresses for
+operator_name.in?(...). A directly constructed String equals the literal but
+fails the same variadic in? call under S1O; original Crystal returns true.
+
+The bounded P repair preserves exact String value equality in variadic and
+concrete Tuple in? lowering, using the existing string-equality intrinsic.
+S1P passes its 154-script snapshot suite; its ordinary S2 passes all four
+enum/Regex fixtures and three exact-output stage smokes. These measurements
+establish propagation of this enum guard repair. Ordinary S2P also builds
+S3P from the same source without IR rewriting or GCX (exit 0, 674.69s,
+maximum observed RSS 6,461,936 KiB). S3P passes all three exact-output stage
+smokes. Final Q propagation remains a separate requirement.
+
+P leaves a mixed primitive counterexample: a String and its UInt64 object_id
+are unequal under the original 1.21 host, yet both raw membership shortcuts
+compare their matching pointer/integer bits as equal. Independent P variadic
+and Tuple runtime falsifiers exit 28 and 29. Q admits false equality for an
+exact String receiver and a statically known Nil/Bool/Char/numeric primitive;
+Void, unions and other reference types retain the existing path. The
+String/String branch remains content equality, and an unequal primitive must
+not stop a later equal String candidate. S1Q passes the expanded regression,
+the three stage smokes and five HIR/cache examples, including genuine
+enum/integer and enum/nil controls. Read-only adversary review is ROBUST within
+the enumerated helper set; paired original/Q Symbol controls also agree,
+though Symbol bypasses this explicit false guard. S1Q's selected 154-script
+manifest passes with 559 supervised child calls, no abnormal resources and
+no script drift. Ordinary S1Q builds S2Q from the same sealed source in 656.40s
+(maximum observed RSS 5,823,200 KiB, FD 21). S2Q passes all four enum/Regex
+fixtures, three exact-output stage smokes and all three managed/native/String
+contract scripts (14 supervised child calls). Ordinary S2Q builds S3Q from the
+same immutable source without IR rewriting or GCX (exit 0, 562.26s, maximum
+observed RSS 6,434,832 KiB, FD 18). S3Q passes all four enum/Regex fixtures,
+three exact-output stage smokes and all eight managed/native-gating child
+calls. The same selected 154-script suite finishes 152/154 with 551 supervised
+child calls and no resource abnormality. It is red on generic ancestor
+inheritance and included-module parameter shadowing: successful compilation
+produces incorrect runtime values, including 23 instead of 33 for the latter.
+The corresponding S1Q passes do not certify their bootstrap propagation.
+Reopen the concrete ancestor/include binding claims and require the exact
+original-valid fixtures on each ordinary stage before closure. Rollback is
+the HIR lowering delta and its fixture. DoD:
+P must fail the colliding address controls, Q must pass both negatives and
+later-String positives, and ordinary S2Q must pass the four enum/Regex fixtures.
+These guards do not admit general custom or union equality dispatch or
+certify S3 convergence. The trace-only S2 enables debug guards in LLVM; it is
+diagnostic evidence only. Refresh this evidence after changes to membership
+dispatch, String representation/equality, primitive classification or source
+state; sealed stage receipts identify the tested source.
+
+The next generic repair has two bounded source invariants. Deferred included
+module parameters must be authoritative over same-named owner parameters
+when store_function_type_param_map consumes a DeferredModuleContext snapshot.
+Q's emitted/stored map T=UInt64 is observed wrong for include Cmp(self) on
+Pt(UInt64); the intended snapshot binding is inferred from the include-site
+producer. Preserve owner-method T and explicit module UInt64 controls.
+The new deferred binding fixture returns status 97 on old S2Q (failed bits
+1/32/64), while original Crystal, S1Q and S1R return 0. The bit-64 control
+specifically includes Cmp(UInt64) on an Int64 owner, proving that same-name
+owner filtering breaks an explicit binding too; same-type controls could
+mask that failure. Evidence: regressions_s2_q_deferred_red/measured_receipt.json
+and regressions_r_generics/verified_receipt.json in the session output directory.
+For a generic ancestor source body using @type, a registered ancestor name
+must not preempt the requested receiver's specialization. S1/S2 HIR shows
+the first divergent call target before MIR, with the receiver type preserved;
+the early exact-name return is a source-order hypothesis, not a measured
+dynamic branch. Keep child-owned exact methods first and retain the ancestor
+lexical namespace. Risk is CAUTION because lookup and binding affect other
+methods. Rollback is only the two function hunks and owned regression additions.
+DoD is the same original-valid generic fixture and opposite controls on fresh
+S1/S2/S3 from one immutable source, plus the selected bootstrap regression
+manifest. Passing host-stage evidence alone cannot close this transition.
+
+R tests that limit directly. S1R passes 155/155 selected scripts with 561
+supervised child calls, five HIR/cache examples and all three exact-output
+smokes. Ordinary S1R builds S2R from one sealed source in 571.32s, exit 0
+(maximum observed RSS 6,016,368 KiB, FD 21). Both included-module binding
+scripts pass on S2R. The included-method forall-shadow and generic module
+MRO guards also pass (five supervised calls, no resource abnormality or
+script drift; s2_r_module_guards/verified_receipt.json). The generic ancestor
+fixture remains red. Thus the
+two guarded resolver early returns are refuted as a sufficient macro repair.
+Do not infer that this call executes that resolver path from source order.
+Fresh S2R LLDB resolves the measured call to DirectChild(Int32)#inherited_macro,
+then observes lookup_function_def_for_call return the selected source tuple
+GenericRoot(Int32)#inherited_macro. Late receiver repair adopts that parent
+symbol. This refutes the prior resolver-return attribution for this call.
+The ineffective R guards are removed. The initial replacement preserves the requested
+receiver only for zero call arguments, no block, no named-call shape, an exact
+selected definition with zero formals, and an @type body macro from a generic
+ancestor. The selected DefNode and registered lexical source arena remain the
+macro provenance; defaulted, splatted and block-formal signatures use their
+normal selected symbol. The expanded ancestor fixture passes original Crystal
+1.21.0 with system ld. Host-built S and T pass the expanded ancestor fixture
+and the overload adversary; ordinary S2/S3 propagation remains unmeasured.
+Evidence: generic_ancestor_q_audit_s3_r/s2_repair_entry.lldb,
+s2_lookup_target2.lldb, s2_resolve_call_unfiltered.lldb, and
+original_ancestor_s_oracle/receipt.json in the session output directory.
+The overload adversary prints its full failure mask and exits 1 for any
+nonzero mask, avoiding false green results from process-status truncation.
+Original Crystal, S1R and S2R report mask 0; a forced high bit of 1024 exits 1.
+No ordinary S3R
+build is admitted as closure evidence until that failing runtime signal is
+addressed. Evidence: regressions_r/verified_receipt.json, s2_r.receipt.json,
+and s2_r_generics/results.json in the session output directory.
+
+A separate original-valid control exposes an older same-name method-forall
+gap: Flow(T)#echo(value : T) : T forall T, included with module T = UInt64
+and owner U = Int64, must infer method T independently for Int32 and Float64.
+Original Crystal 1.21.0 compiles and runs the fixture with exit 0; S1Q, S2Q,
+S1R and S2R all reject its explicit arguments. This is not introduced by R.
+Module and owner binding methods in the same fixture remain required controls.
+A stronger original-valid body oracle also reads T.binding_code inside the
+forall body: Int32 and Float64 must produce 11 and 12, while the module and
+owner methods retain 20 and 40. Passing call admission without these body
+bindings does not close this gap.
+Evidence: module_forall_t_guard_r/attempt_bj0hni2h/results.json and its
+source SHA-256 507b25b77e6c8cef1fdabe7411520b95a6be6fd20ce82bdbca629275aefa9d69
+in the session output directory. A repair must distinguish selected-method
+forall keys from module keys, preserve non-forall module bindings, and pass
+the existing included-method, module-binding and MRO scripts on each ordinary
+compiler stage. Until then this same-name formulation remains rejected.
+
+Two host falsifiers narrow that repair. S excludes method-forall keys only
+from the stored included-method map and remains red at explicit-argument
+compatibility (6/7 focused scripts). T additionally excludes those keys from
+the exact candidate's isolated compatibility map. T admits the call, but its
+runtime aborts at tag$Int64 (6/7). Fresh T HIR shows echo$Int32 and
+echo$Float64 already have the correct signatures and call-result types;
+enclosing expression inference still selects tag$Int64 for both. The two
+method_binding bodies independently call UInt64.binding_code and
+Int64.binding_code instead of the method's actual Int32/Float64 binding.
+Neither attempt closes the formulation. The non-forall module
+UInt64/String mismatch remains rejected in original Crystal and T. A numeric
+literal mismatch is not a valid rejection oracle because original Crystal
+contextually converts the literal. The next discriminator is the actual
+signature/body binding before materialization, including the case where
+method-forall exclusion leaves no registered module key. Evidence:
+regressions_s_generics/results.json, regressions_t_generics/results.json,
+concrete_module_original_string/receipt.json, and
+concrete_module_s1_t_string/receipt.json in the session output directory.
+
+A host-only u_body probe isolates the next producer seam. Storing the
+method-forall actual map on the exact selected target fixes both body calls:
+method_binding$Int32 calls Int32.binding_code and the Float64 specialization
+calls Float64.binding_code. Neighboring module/owner methods still select
+UInt64 and Int64. The echo signatures and call-result types also remain
+correct, while enclosing tag(...) inference still selects tag$Int64. No
+additional body-map merge filter is justified by this observed state.
+Evidence: source_hashes_s1_u_body.json, s1_u_body.receipt.json, and
+forall_u_body_diagnostic/receipt.json plus repro.hir in the session output
+directory. This HIR probe does not establish the complete runtime fixture or
+ordinary bootstrap propagation.
+
+U's runtime remains red (6/7 focused scripts). Safe LLDB breakpoints at the
+new AST return helper and all three infer_arg_types_for_call overload entries
+receive no hits for the exact fixture. The existing emit trace discriminates
+the actual producer: lower_call initially emits both echo$Int32 and
+echo$Float64 with return type Int64. Later HIR repair corrects those call
+types, after both enclosing calls have already selected tag$Int64. The AST
+pre-inference sees an unresolved owner local, so the proposed helper placement
+cannot repair this formulation. Move authority to the exact selected included
+method's call-specific return annotation before emission; do not infer that
+late type correction also repairs an already chosen outer overload.
+Evidence: forall_u_lldb/helper_entry.log, infer_args_entry.log,
+echo_emit_trace.log and forall_u_diagnostic/repro.hir in the session output
+directory. These observations refute the placement, not the separate body-map
+repair or the ordinary ancestor/module fixes.
+
+V removes that unused AST inference path. At final call emission it consumes
+only the exact emitted specialization map, requires the selected, emitted and
+include-origin DefNodes to be identical, and resolves the referenced method
+forall return parameters from concrete stored bindings. Blocks, named calls,
+splats, unresolved bindings and changed emit targets remain outside the
+override. S1V passes all seven focused scripts (23 supervised child calls,
+no resource abnormality); the strict non-forall UInt64/String rejection also
+passes. This proves the host-stage runtime formulation, not propagation.
+Evidence: source_hashes_s1_v.json, regressions_v_generics/verified_receipt.json,
+concrete_module_s1_v_string/receipt.json and forall_v_diagnostic/receipt.json.
+
+Ordinary S1U builds S2U from sealed U source in 580.70s, exit 0, maximum
+observed RSS 6,441,792 KiB. S2U passes the five neighboring module/overload
+guards but remains red on the expanded ancestor macro and same-name forall
+scripts (5/7). The forall failure predates V's emission repair; the ancestor
+failure refutes host-only evidence as sufficient for the macro replacement.
+Identify the exact failing runtime assertions and branch before widening it.
+Evidence: s2_u.receipt.json and s2_u_generics/results.json.
+
+The S2U assertion-reporting oracle localizes the ancestor failure to checks
+2, 4, 6-12 and 44-50 of the unchanged 58-check fixture. DirectChild(Int32)'s
+zero-argument macro returns the parent's 10 instead of 15. S2U HIR targets
+GenericRoot for the child calls and has no child wrappers; S1V HIR targets
+DirectChild and materializes those wrappers. The replacement guard still
+derived its requested owner from resolved_base, which S2U had already resolved
+to the parent. Use the actual HIR receiver owner, retain the selected source
+DefNode/arena, and preserve its selected overload contract. The defaulted call
+already carries an explicit Int32 actual with the same receiver-plus-Int32
+ABI on both stages. The splat call carries one Tuple(Int32): its parent
+source-shaped suffix is Int32_splat, while the child wrapper is named for the
+packed Tuple ABI. These forms require distinct target canonicalization checks.
+Evidence: generic_ancestor_macro_s2u_diag/print_repro.cr, print_hir.hir,
+s1_v_hir.hir and results. A failed diagnostic trace is not branch evidence.
+
+The final forall override is narrowed further to nonvirtual calls. A concrete
+base-class virtual probe has an included forall method and a child override
+returning String. Original Crystal takes the String branch (exit 42); both
+pre-final S1U and S1V incorrectly expose Int32 and exit 40. Thus this is an
+existing virtual-return gap, not a demonstrated regression from V. Exact
+static DefNode/map provenance does not establish the complete runtime target
+set, and the override could replace a class-target union inferred earlier.
+Exclude call_virtual from this bounded repair; do not promote that exclusion
+to closure of virtual return inference. Evidence: virtual_return_adversary/
+source and original/S1U/S1V logs, source SHA-256
+293e15e8e3bb52d9f919b4d30a2f9b2c18714c946d12867c98903e6cecaae1e4.
+
+The durable virtual-return reproducer is
+regression_tests/virtual_included_forall_return_union_repro.sh. Its runtime
+guard converts the expected route value 42 to exit 0 and all other values to
+exit 1. A fresh paired run compiles/runs successfully under original Crystal
+1.21; S1X compiles successfully but the runtime guard exits 1. Both supervised
+child processes finish normally, so this is a semantic failure rather than a
+resource-limit abort. This known-open script stays outside the selected green
+manifest. Evidence: original_virtual_gap_boolean/receipt.json and
+virtual_gap_s1_x/measured_receipt.json in the session output directory.
+
+X replaces the resolved-base-derived requested owner with the actual HIR
+receiver owner at the late inherited-macro seam. It requires the exact selected
+source DefNode, its registered lexical arena, a generic ancestor in the actual
+parent chain, and an @type reference in that source body. Ordinary positional
+and defaulted signatures retain their selected suffix only after exact
+call-shape compatibility. Packed splats additionally require the selected
+splat signature and actual Tuple shape to agree; the child target is mangled
+from the actual packed Tuple ABI rather than copying the source _splat suffix.
+Own child overloads retain precedence. Macro receiver identity and lexical
+constant namespace remain separate authorities.
+
+The strengthened 64-check ancestor fixture consumes splat values for Tuple
+lengths 1, 2 and 3, including both first and second elements, and passes both
+the original Crystal 1.21 full-prelude oracle and S1X. A first strengthening
+attempt used runtime Tuple#size and aborted at a no-prelude stub; that result
+does not falsify the receiver repair or establish a full-stdlib Tuple failure.
+The corrected fixture avoids that unrelated helper while retaining argument
+consumption. S1X passes all seven focused generic scripts (23 supervised calls,
+no resource abnormality or script drift) and the strict UInt64/String rejection.
+Ordinary S2X and S3X from the same sealed source remain required evidence.
+Evidence: source_hashes_s1_x.json, s1_x.receipt.json,
+regressions_x_generics/verified_receipt.json,
+concrete_module_s1_x_string/receipt.json,
+macro_recheck_x_original/receipt.json and macro_recheck_x_s1x/ in the session
+output directory. Fixture source SHA-256:
+00ee48940bb907b1b6a348b376b7d2b0b97f5355eb57ba3fb2addf4cdba95211.
+
+A further read-only adversary invalidates X's nonvirtual return-binding
+claim for class actuals with a namespace collision. A top-level ::Token
+passed to Scope::Flow(UInt64)#bounce(value : U) : U forall U must select
+classify(::Token), even when Scope::Token exists. Original Crystal safely
+compiles/runs with exit 0; the pre-guard S1V compiles but exits 1. Its HIR
+calls Host#bounce$Token with result type Scope::Token and selects the wrong
+classify overload. Both the current and pre-guard helper stringify the actual
+TypeRef, substitute its short name, and re-resolve it under the source module
+namespace. Exact DefNode/map provenance therefore does not prove preservation
+of actual-type identity. Bare built-in examples remain useful but do not close
+this class-actual formulation. The ordinary X S2 build was deliberately
+stopped after this counterexample (exit 143, signal; not a compiler failure),
+and no X S3 result is claimed. Repair actual-binding identity;
+source-written return names must retain their lexical namespace. Add top-level,
+namespaced and nested actual-type controls before rebuilding ordinary stages.
+Probe source SHA-256:
+2457638158d019b5e2a48239dffbf4171e372369814539448efdd55db96605ea.
+
+Y preserves positional forall bindings in a parallel TypeRef map. Final
+nonvirtual return reconstruction accepts a bare forall actual or recursively
+composed Tuple; forall leaves use the original TypeRef, while ordinary source
+leaves resolve under the exact include-origin namespace. Other forall-dependent
+composites remain outside this bounded override. The legacy body map qualifies
+bare root nominal names, without claiming generic-name serialization is safe.
+Original Crystal 1.21 passes the new eight-check namespace fixture. Fresh S1Y
+passes all seven neighboring scripts and the strict UInt64/String rejection,
+but the namespace fixture still exits 1. A bounded eight-bit diagnostic returns
+mask 4: only identity_marker(::Token.new) is wrong; both direct return identities,
+both lexical Tuple cases and the module/owner controls pass.
+
+The surviving body failure is a zero-argument member-access route, not the
+ordinary CallNode or lower_path route. Z's absolute nominal literal helper and
+AA's ordinary-call receiver helper both leave the diagnostic at mask 4; their
+experimental hunks are removed. Unconditional marker-scoped tracing in a sealed
+AA clone shows an Identifier receiver with map binding T=::Token and the correct
+include-origin namespace. The initial static owner is nil; lowering the
+identifier then recaptures Scope::Token, and the later type-literal dispatch
+selects Scope::Token.marker. A separate T.marker() fixture passes original
+Crystal, S1Y and S1AA, with positive ordinary-call trace output. Empty earlier
+trace output only establishes that those instrumented branches were absent;
+it does not establish their hypothesized static-owner normalization failure.
+
+The repair therefore belongs to the MemberAccess Identifier branch, after its
+runtime-local precedence check. AB preserved ::Token verbatim and still failed:
+static lookup derived a rootless query name but passed the original ::Token to
+the method resolver, which has Token.marker registered. AC strips only that
+representation prefix after accepting the producer-backed absolute bare
+Class/Struct/Module binding. It neither re-resolves the actual under the source
+namespace nor changes ordinary lexical names or other mapped forms. The bare
+name predicate is syntactic; nominal provenance comes from the actual-binding
+producer. Generic, union, nullable, pointer and whitespace-bearing forms are
+outside this receiver override.
+
+The durable namespace regression checks both call forms and prints all ten
+failure bits before returning only 0 or 1. Original Crystal 1.21 and fresh S1AC
+pass it. S1AC passes all eight focused scripts (25 supervised child calls, no
+resource abnormality or script drift), the strict UInt64/String rejection and
+five HIR/AST-cache examples. A source-sealed diagnostic HIR also calls
+Token.marker for the root actual and Scope::Token.marker for the scoped actual.
+The read-only adversary returns ROBUST within the producer-backed bare nominal
+route, supported by these paired controls. S1AC's full selected suite also
+passes 158/158 (567 supervised calls, no abnormal resources or script drift).
+Ordinary S1AC-to-S2AC compilation exits 0, but S2AC's focused suite is 7/8.
+The generic ancestor fixture fails checks 50-56: an inherited wrapper calling
+a self macro loses the requested child owner. A minimized twelve-control
+fixture passes original Crystal and S1AC, but S2AC returns mask 382/exit 1.
+All three self-call forms, additive wrappers and the Int32 macro overload fail;
+the String overload and an unrelated parent-object call pass. Source-order
+masking is refuted. Initial call-target logs match, but S1 materialization
+requests Child#wrap_bare through inherited_bare_exact, while S2 already requests
+Root#wrap_bare through direct lookup. The downstream direct @type predicate is
+false for both source wrappers and cannot explain that stage difference.
+Late owner selection/replay is the open diagnostic frontier; no transitive
+predicate widening or S3AC result is admitted before it is resolved. The
+existing ADAMAS_TRACE_REPAIR hook itself crashes S2 on this fixture; the
+materialization ledger alone does not crash and is diagnostic evidence only.
+An unconditional static-tag clone reproduces the same mask after an ordinary
+S1-to-S2 build. Both stages reach the child receiver with nonvirtual calls,
+type-literal false, a passing string-header guard and a different target owner.
+Those gates are therefore refuted as the stage divergence in this fixture.
+S1 enqueues six Child wrapper bodies with inherited_bare_exact and a concrete
+U=Int32,T=Int32 map; S2 omits those requests while still materializing Child's
+String overload and peer wrapper. A second sealed selection-corridor clone
+refutes a different definition or generic-binding selection at that repair
+boundary: both stages select GenericRoot(Float64)#inherited_macro with
+T=Float64, identical positional shape and a true macro-receiver predicate.
+Top-level child calls enqueue the same child wrapper. Inside the inherited
+lexical-and-macro body, however, S1 reaches repair with a Child receiver and
+Root target, while S2 already has a Root receiver and target and takes the
+same-owner fast path. The open frontier is the earlier body materialization:
+requested owner, captured substitutions and the self type passed to lower_def.
+Repairing that downstream fast path without establishing its supplier would
+not restore the lost receiver context.
+The next paired materialization clone selects the same exact wrapper DefNode,
+arena and concrete T/V/U=Float64 map, but S2 reports preserve_value=false where
+S1 reports true. A consolidated owner-predicate clone changes that result to
+true and passes the exact S2 runtime fixture. It also rewrites nested predicate
+calls into local Booleans and adds predicate observations; this is a confounded
+probe, not a production fix or proof of a return-carrier bug. A trace-free clone
+changes only the outer call to a local Boolean: its ordinary S2 selfbuild exits
+0, but the same fixture still exits 1. The normalized outer helper and all five
+Enumerable#any? bodies match AC; the nested generic-source helper is byte-identical.
+This refutes the local-Boolean/control-shape explanation for this case.
+The nested helper instead calls Enumerable(T)#any?$block, whose reachable LLVM
+path unconditionally returns false without invoking its predicate. The callback
+itself tests the captured key/value bindings correctly.
+
+Two selected-target rebase guards reject empty positional lists even when the
+call has a block. The bounded repair admits arity zero only for block-bearing
+included lookups; concrete receiver, known arguments, compatible source Def,
+include-site bindings, lexical namespace and collision checks remain required.
+A source-sealed AF scratch clone with only those guards changed compiles and
+runs the six-control Hash.any? fixture with mask 0. Its HIR calls the concrete
+Hash(String, String)#any?$block and iterates entries; older AC S1/S2 crash on the
+same fixture. This is a host-stage discriminator, not yet a bootstrap closure.
+Other zero-argument inference paths are outside this measured rebase scope.
+Its ordinary S2 selfbuild reaches LLVM but exits 1 at llc: Array(String)#join_strings
+contains an add i1 fed by an i32 extension and an i32 bytesize result. The
+earlier Array(String)#additive_identity specialization calls
+String::Formatter::Flags#zero after Reflect(Int32).type, whereas AC calls
+Int32#zero. A paired original-valid Hash.any?-then-join_strings probe passes
+original Crystal and aborts at the Int32#zero stub on S1; it does not select
+Flags#zero. The immediate adjacent-block leakage hypothesis is refuted.
+Type-literal/class-method receiver provenance remains the diagnostic frontier.
+This is a measured build blocker, not S2 runtime evidence.
+No owner-predicate widening is justified by the earlier confounded traces. Evidence:
+ancestor_materialization_diag/trace_receipt.json and paired matdiag logs;
+ancestor_materialization_diag/ownerpred_trace/generic_s2.hir and its compile
+and runtime logs; ancestor_ownerpred_s2_final.resources.json under
+/private/tmp/adamas-sol-review-20261013/.
+Additional evidence: ancestor_materialization_diag/local_bool_shape/run/receipt.json,
+its paired fixture IR, zero_block_rebase_probe/delta.json and host.receipt.json,
+hash_any_zero_rebase_s1/receipt.json and capture.hir, source_hashes_s1_ag_any.json,
+s2_ag_any.receipt.json and s2_ag_any.ll:4555946.
+Evidence: source_hashes_s1_y.json, s1_y.receipt.json,
+original_forall_namespace_y/receipt.json, regressions_y_generics/results.json,
+namespace_y_diagnostic/receipt.json and capture.hir;
+namespace_z_diagnostic/receipt.json, namespace_aa_diagnostic/receipt.json,
+aa_member_trace_lineage.json, namespace_aa_member_trace_diagnostic/hir.log,
+namespace_parenthesized_aa/receipt.json, namespace_parenthesized_y/receipt.json,
+original_forall_namespace_ab/receipt.json, ab_member_trace_lineage.json,
+namespace_ab_member_trace_diagnostic/hir.log, source_hashes_s1_ac.json,
+s1_ac.receipt.json, regressions_ac_generics/verified_receipt.json,
+concrete_module_s1_ac_string/receipt.json, ac_ast_specs.log,
+namespace_ac_diagnostic/receipt.json and capture.hir,
+regressions_ac_full/verified_receipt.json, s2_ac.receipt.json,
+s2_ac_generics/results.json, ancestor_s2_ac_diagnostic/receipt.json,
+ancestor_controls_original_ac/receipt.json, ancestor_controls_s1_ac/receipt.json,
+ancestor_controls_s2_ac/receipt.json, ancestor_controls_s2_ac_ledger_only/.
+Additional boundary evidence: ancestor_gate_diag/run_receipt.json,
+ancestor_gate_diag/s1_fixture_compile_mat.log,
+ancestor_gate_diag/s2_fixture_compile_mat.log and static-tag compile logs;
+original_ancestor_wrapper_ac/receipt.json;
+ancestor_gate_diag/selection_trace/selection_trace_setup.json,
+ancestor_gate_diag/selection_trace/run/receipt.json and its paired generic
+compile logs (instrumented HIR 791edb0e66b98e963372e4c014cae58d0ca55740c28d3b62bade056224cb5a2d).
+Instrumented clones are
+diagnostic evidence only, not production candidates.
+
+Virtual included-forall return frontier (design-sealed, measured-red): fresh
+S1AC and S2AC both compile the Boolean fixture but exit 1. HIR marks echo as
+virtual while giving its result Int32 and choosing tag$Int32. LLVM dispatch
+includes the child String implementation but bridges it through an i32 return
+ABI. The existing MIR UnionWrap path already handles heterogeneous concrete
+returns when the callsite carries the full union; changing target selection
+is not indicated by this evidence.
+
+The proposed bounded repair accepts an exact included-method forall origin,
+plain positional concrete arguments, and a complete compatible concrete class
+target set with known per-target returns. Infer the inner virtual result before
+its enclosing overload is selected. Keep method-forall actual TypeRefs distinct
+from include-site names, keep Nil when it is a real return, and keep each
+concrete method's registered return contract separate from the callsite union.
+Block, named, splat, unresolved/unsupported return forms, module/union receivers
+and incomplete target evidence remain outside this widening. Existing VOID
+fallback behavior is a separate legacy path, not evidence of complete coverage.
+Current-owner enumeration alone is insufficient: generic class declarations
+enter the template registry without a superclass edge; on-demand specialization
+can publish that edge during body lowering, after an earlier Call TypeRef was
+stored. Deferred macro output and nested class-body lowering can also register
+new classes or templates after initial registration, so scanning the current
+template registry cannot establish a closed world. Subclass-cache invalidation
+only repairs future queries; it does not widen an existing call result. The
+current-set-only guard and a registry-only ancestry guard are VULNERABLE by
+source inspection; no runtime counterexample is claimed here.
+
+The accepted revision records the early union as a provisional callsite
+certificate: canonical receiver/method, exact actual TypeRefs and include
+origin, and every concrete dispatch owner's selected target, parameter ABI and
+return TypeRef. After type-parameter refresh, the final deferred allocator flush
+and RTA pruning, but before MIR consumption, re-resolve that same contract
+against the surviving HIR functions and require exact equality. The earlier
+pending-function flush is not the final materialization boundary. A new,
+missing or unresolved owner, changed target ABI or changed return set rejects
+compilation with a specific LoweringError. This is a guard-only unsupported
+case; repairing enclosing overload selection after hierarchy changes is outside
+this patch. Only unchanged final certificates admit the early callsite union.
+
+The first implementation seal AE builds with the original host, and nine of
+ten focused controls pass. The strengthened virtual fixture fails early with
+`cannot certify virtual return targets`: the include registers
+Base#echo$UInt64, while the concrete forall call needs Base#echo$Int32. Exact
+source-backed target materialization is still under repair; no virtual success
+is claimed for AE. Final revalidation must remain read-only after RTA. For a
+same-Def forall target, its emitted static return must equal the inferred
+effective return before that return contributes to the dispatch union; MIR's
+ABI wrappers do not establish semantic equality for mismatched returns.
+An original-valid Flow/Base/Array(Base) oracle creates a later Late(String)
+specialization and observes (Int32 | String) before and after insertion.
+AE and AF reject that input explicitly; this supports the declared
+generic-descendant guard boundary, not the missing capability. AF materializes
+exact selected include targets only during provisional call lowering and
+requires emitted/inferred return equality. Its host build exits 0, but the
+strengthened virtual fixture still rejects before MIR: focused controls remain
+9/10. Nine HIR/AST examples pass against sealed AF source, including the exact
+Int32 | String certificate and rejection after a published descendant, changed
+override return ABI, or a selected forall body whose static return differs from
+the actual inferred binding. The strict UInt64/String incompatibility control still
+rejects. Evidence: source_hashes_s1_af.json, s1_af.receipt.json,
+s1_af_focused/results.json, af_static_return_spec_ast_specs.log and its source/spec
+manifests, virtual_late_s1_af/receipt.json and
+concrete_module_rejection_s1_af/receipt.json. No AF virtual runtime success or
+ordinary AF bootstrap propagation is claimed.
+
+Risk is CAUTION at HIR/MIR ABI composition. The strongest failure is a partial
+return set that still emits an incompatible dispatcher; a second guard checks
+that direct base/child calls retain their concrete result types. DoD: the same
+original-valid virtual fixture passes original Crystal and every repaired
+stage, with base/child, Nil, same-return and incompatible-overload controls, and HIR
+exposes the heterogeneous return set before tag dispatch. Re-run the focused
+generic suite and selected full bootstrap suites on the final source seal.
+Rollback the virtual return-inference hunks and their regression changes
+together; refresh after hierarchy, selected-def, actual binding or dispatch ABI
+changes. Evidence: virtual_forall_s1_ac_control/receipt.json and capture.hir,
+virtual_forall_s2_ac_control/receipt.json and capture.hir, and their repro.ll;
+original_virtual_gap_boolean/receipt.json.
+
+The installed Boehm 8.2.12 header is the API anchor: scanned malloc clears
+storage, GC_base recognizes interiors, and GC_realloc/free require appropriate
+GC-owned allocations. The strongest failure mode is premature collection of
+a live nested reference, followed by allocator-family mixing or unsafe header
+probes. DoD: the original-valid managed_gc_allocator_repro.sh must reproduce
+the old membership failure and pass membership, zero/value, realloc/null,
+interior/reference, Array/Hash, and exact-capacity StringBuilder guards after
+the repair. Check generated allocation/release consumers and both existing
+stage smokes, then run focused/full regressions. Rollback the coordinated
+managed allocator, realloc/free, header-validation, and direct-owner changes
+together. Ordinary S2-to-S3 under the unchanged cap remains a separate
+propagation falsifier; no heap repair or bootstrap closure is admitted before
+these checks execute. Refresh after allocator, ownership, collector startup,
+linker demand, or reference-storage changes.
 
 The semantic producer for this record is post-resolution, after semantic
 literal/autocast normalization if applicable, and before Adamas HIR/value/ABI
@@ -2055,3 +2915,333 @@ classifiers.
 Retired process machinery (do not resurrect): `SliceReceipt`,
 `BootstrapPotential`, per-slice admission checkpoints, dated board
 refinements. Rationale: `docs/sdd_process_review_2026_07_03.md`.
+
+The fresh lazy certificate regression skips eager module, class and top-level
+definition lowering. Against frozen AF it rejects CertificateBase#echo$Int32
+during a nested demand from lower_main; the previous eager fixture did not
+exercise that seam. Evidence: af_lazy_demand_before_ast_specs.log and its
+unchanged source/spec manifests. This is a pre-fix falsifier.
+
+AG records exact-demand inherited-body provenance in a separate sidecar,
+including the source Def/Arena, emitted Function identity, concrete self
+and full parameter ABI. Source-only adversary review is ROBUST within that
+path, but fresh AG tests still reject nested lazy demand: ten of eleven
+focused scripts and nine of ten HIR/AST examples pass. Its UInt64/String
+and late generic-descendant guards reject as expected. Increasing forced
+lowering depth alone does not fix the rejection: AH must recognize the exact
+registered direct override and materialize that Def through ordinary lookup.
+AH passes the ten-example snapshot, but a fresh lazy unrelated-overload
+control rejects the inherited Int32 target beside a child's String-only
+overload. The requesting child also loses the supplying base owner's concrete
+include bindings. These are distinct origin and overload-precedence seams;
+the full virtual capability remains open. Evidence:
+source_hashes_s1_ag.json, s1_ag.receipt.json, ag_ast_specs.log,
+s1_ag_focused/results.json, concrete_module_rejection_s1_ag/receipt.json,
+virtual_late_s1_ag/receipt.json, ah_ast_specs.log,
+ah_other_overload_before_ast_specs.log, and s2_ag_any_audit/.
+
+The AH direct type-return fixture is green, but ordinary S2AH still fails at
+LLVM emission. The stdlib helper passes a type-valued Reflect(Int32) argument,
+assigns reflect.type to a local, then chooses an instance zero method rather
+than the Int32 class method. Source inspection finds literal flags on the
+argument, module-method parameter and local-copy paths. Lazy return inference
+does not merge the specialized owner's generic map, unlike concrete return
+type inference. This is the next producer-side hypothesis; the LLVM excerpt
+establishes the wrong selected target, not which inference attempt lost the
+mark. Exact-selected overload provenance must also prevent a type-valued
+sibling method from marking an instance-valued return. Evidence:
+s2_ah.receipt.json and s2_ah_audit/receipt.json.
+
+The small owner-generic argument/member/local controls, including a nested
+included-module owner, pass both original Crystal and S1AH. They therefore do
+not establish the missing-owner-map hypothesis as the selfbuild cause; a
+trace-only full AH build uses DEBUG_TYPE_LITERAL_RETURN=Reflect to inspect
+that actual context. In contrast, the sibling-definition falsifier is red:
+pick(Int32) returns T, pick(String) returns T.new, and the latter is wrongly
+followed by a class zero call. Removing only the type-returning sibling
+restores the instance call and runtime result. Both combined call orders
+fail AH and pass original Crystal. The name-only return cache admits a base
+mark written by the sibling without checking the selected Def/Arena. A
+provenance cache repair is admitted independently of the unproven owner-map
+hypothesis; its DoD includes both call orders and the prior direct controls.
+
+The expanded eleven-control fixture passes original Crystal and returns 1
+with S1AH. Its fixture hash is
+240dfa48ae211ef682200385dc8a73d853ad3bbe563de75d21512186baef7891;
+paired receipts are in type_literal_overload_alias_probe/final_receipts/.
+The repair keys each fact by the exact registered symbol, source Def identity
+and arena identity. Def plus arena alone is insufficient because one source
+body can be registered under different owner/include specializations. All
+three eager registration sites and the lazy exact-target path record this
+triple; stripped/base aliases cannot supply another overload's mark.
+Source adversary review is ROBUST within that provenance boundary; runtime
+verification against the combined candidate is pending. Reusing one exact
+symbol, Def and arena under divergent maps remains a registry identity
+boundary, not a separately verified cache capability.
+
+The logging-only full AH build reports exact Reflect definitions present,
+but lazy inference returns nil for both Enumerable::Reflect(Int32).type and
+Enumerable(T)::Reflect(Int32).type. It then fails at the same join_strings
+LLVM add. Evidence: s2_ah_literal_trace.receipt.json and its build log. This
+confirms the loss at the actual selfbuild inference context. A separate
+logging-only derivative records active, registered and receiver type maps;
+it is diagnostic evidence and cannot substitute for an ordinary final build.
+
+A direct original-valid MacroIf reducer now separates the hypotheses: its
+Reflect-like generic type method tests X.union? and otherwise returns X.
+Original Crystal builds/runs with 0; AH builds but aborts with 134. The exact
+registered and receiver maps already contain X=Int32 or X=Float64, while the
+tail is MacroIf and literal inference returns nil. The limited condition
+evaluator has no union? arm; ordinary macro lowering already falls back to
+the contextual interpreter. Admit the same contextual fallback only for
+type-literal return inference, preserving an unevaluable result and inspecting
+only the actually selected branch. No global condition semantics, stdlib or
+backend coercion is changed. DoD adds the direct and argument/local forms to
+the static-receiver regression, an instance-valued opposite branch, and the
+ordinary frozen stage chain. Rollback is this inference hunk.
+Evidence: reflect_macro_type_literal_original/receipt.json and
+reflect_macro_type_literal_ah/receipt.json (fixture
+a6afdf8684adf1f4948a99df9274fd65e9518d2f4c3d481d09b864ce3b5e63c0).
+
+The logging-only full AH map probe confirms X=Int32 in both the registered
+and receiver maps at the actual Enumerable Reflect call sites. Their tail is
+MacroIf and literal inference is nil; the build repeats the same LLVM error.
+Thus missing generic receiver bindings are refuted as the cause of those
+measured occurrences. Do not widen owner-map propagation on that hypothesis.
+Evidence: s2_ah_reflect_map.receipt.json, s2_ah_reflect_map.build.log and
+ah_reflect_map.diagnostic_scope.json. The final static-receiver fixture adds
+direct and argument/local MacroIf cases plus an instance-valued opposite
+branch; all sixteen controls pass original Crystal. Its final fixture hash is
+66ea0d34d3cc2ab9a5aa06f69ff950bba9bc732bb254c4f07e7bf6956bedcf3a;
+receipt: type_literal_bootstrap_reduce/macro_if_final/receipt.json.
+
+The virtual-origin scratch repair exposes a second counterexample: the HIR
+return is correctly Nil | Int32 | String, but union-argument overload dispatch
+drops Nil and emits only two arms. The full eight-control fixture then returns
+failure bit 32; its Nil-only subfixture passes. Admit a bounded repair that
+retains every registered variant, selects an applicable overload for every
+arm before emission, evaluates receiver and arguments once, and joins the
+actual branch return ABI. Preserve the existing block, splat and named-argument
+guards and allocator restrictions. DoD is the original-valid full virtual
+fixture plus explicit three-variant order and single-evaluation controls,
+followed by the frozen HIR and stage suites. Until those checks pass this is
+an observed runtime bug and a proposed repair, not virtual closure. Rollback
+is the session-owned helper hunk; no stdlib change is admitted.
+
+The complete virtual fixture now has fifteen controls: inherited and direct
+owners, an unrelated child overload, same and differing returns, Nil in a
+three-member union, mixed Int32/String/Nil return joins, typed plus untyped
+fallback arms, and one evaluation of the source argument. Original Crystal
+passes that exact fixture (hash
+301e139525c7872f994d80799d551055d826e2624fa0de1e09f681b26e2a1015;
+virtual_ai_original_15/receipt.json). The dispatcher preserves each resolver's
+exact selected name, preflights every callable target and its actual return
+type before CFG emission, then coerces branch values to a compatible complete
+join. Named and block call forms remain on the ordinary call path. Source
+AI is sealed at HIR hash
+b45457fa23f4a90c4baebd0d6881c5f6fbeeb7baad739c6310b028e848abe325;
+its ordinary host build passes. Runtime, HIR and same-source stage verification
+are pending; no instrumented build or scratch compiler closes this claim.
+
+AI refutes unconditional rejection of incomplete dispatch arms: ordinary
+prelude programs reject Int32.from_io, and its S2 attempt rejects Parser.new
+before LLVM emission. The full suite was stopped after this repeated
+discriminator; it is not a completed suite. AJ instead declines unsupported
+fanout before caller CFG creation and leaves ordinary resolution authoritative.
+It also applies exact per-arm parameter coercion after unwrapping/packing.
+Fifteen of sixteen focused/preflight scripts pass, including the sixteen
+static-receiver controls, but the virtual fixture still aborts at the union
+tag stub. Its emitted HIR lacks the required concrete Nil tag target, so a
+safe decline is not capability closure. The active falsifier is exact selected
+target materialization during nested demand, not removal of the preflight.
+Evidence: s1_ai_full/cancellation.json, s2_ai.receipt.json,
+s1_aj_preflight/results.json and virtual_aj_preflight_hir/receipt.json.
+
+The virtual fixture additionally covers a String | Nil formal parameter whose
+body tests nil? and String.size. All eighteen controls pass original Crystal
+(fixture ea201030265709be5d2274e7053398cb694079442bb6d2463277f651bbd1d9e4;
+virtual_aj_original_union_formal/receipt.json). A pre-CFG check that the current
+argument HIR type equals the discriminator's union type is admitted as the
+stale-tag guard; ordinary call coercion may have widened the argument after
+the earlier arg_types snapshot. AK includes that narrow guard. Source-only
+adversary review is ROBUST for the helper's admitted shapes and MacroIf
+inference; the eighteen-control runtime capability remains open.
+
+AL closes that host-stage runtime counterexample within the admitted fixture.
+The logging-only AK derivative records all arm Defs present but nested lowering
+at depth 1 deferring their bodies; preflight then declines at the missing Nil
+target. Later queue processing cannot repair the already-emitted union call.
+AL uses the existing guarded force-return lowering for only the already-resolved
+targets whose bodies remain absent after normal demand. Force recursion,
+inline-yield, helper suppression and depth limits remain authoritative; no
+pending-queue deletion or caller CFG mutation is introduced before complete
+body/return/ABI preflight. Its frozen HIR hash is
+b2143931ebd7481688812b496440bb4274a390a83234aad3cbfde750f42c3e73.
+The ordinary original-Crystal host build exits 0. All sixteen preflight scripts
+pass with 53 supervised calls; the eighteen virtual and sixteen static controls
+are included. Eleven HIR/AST examples and both explicit rejection guards pass.
+The full S1 suite passes 162/162 with 577 supervised calls, no resource
+abnormality and no script drift. Ordinary S2 and S3 build from this same sealed
+source; their sampled peak RSS is 5,744,832 and 6,379,008 KiB respectively. S2
+passes twelve focused scripts, three exact-output smokes and both explicit
+rejection guards. S3 passes three exact-output smokes, four enum/Regex probes,
+both rejection guards and the extra native-realloc contract. The completed full
+S3 suite passes 161/162; its sole failure is an inherited struct-field call
+returning 40 instead of the expected 7. The same script passes S1. This
+stage-dependent gap remains open, so the built chain does not establish runtime
+closure. Evidence:
+virtual_dispatch_preflight_probe/
+trace3.log, s1_al.receipt.json, s1_al_preflight/verified_receipt.json,
+al_ast_specs.log, concrete_module_rejection_s1_al/receipt.json and
+virtual_late_s1_al/receipt.json, s1_al_full/verified_receipt.json,
+s2_al.receipt.json, s3_al.receipt.json, s2_al_focused/verified_receipt.json
+and s3_al_full/failure_receipt.json.
+Any source, target registry or guard change
+invalidates this scoped result and requires the affected checks again.
+
+The full AH definition imports plus Array(Int32)#sum and Array(String)#join
+pass original Crystal and S1AK after the contextual MacroIf fix. Keeping
+Hash#sum in that same fixture instead aborts at Pointer(Void).zero. This
+discriminates a separate callback-return/type inference boundary and does not
+restore the refuted missing Reflect receiver-map hypothesis. Evidence:
+reflect_array_registration_no_hash_sum_original/receipt.json,
+reflect_array_registration_no_hash_sum_s1ak/receipt.json and
+reflect_full_registration_ak/receipt.json. No Hash or raw-pointer capability
+closure is claimed from the array-only control.
+
+The Hash failure does not require the full compiler-definition imports.
+Standalone Hash(String, Int32).sum { |_, value| value } compiles and then aborts
+at Pointer(Void).zero on S1AL and S2AL (fixture
+bdc32a96af90ff66cdfb37c07896b6c6db36f57e16e441b6e73aba6f37441672).
+Changing only the block to |entry| entry[1] passes S1AL and original Crystal.
+Adding value + 1_i32 inside the destructured block also masks the failure;
+keep post-sum arithmetic outside the identity-return regression. This is a
+measured binding-shape boundary, not evidence for a broad Reflect or Hash
+layout repair. Evidence: hash_sum_min_original/receipt.json,
+hash_sum_min_s1al/receipt.json, hash_sum_min_s2al/receipt.json,
+hash_sum_single_tuple_s1al/receipt.json and the original-valid paired fixtures
+hash_sum_tuple_original_single/receipt.json and
+hash_sum_tuple_original_destructured/receipt.json. The initial semantic-engine
+binder hypothesis is not adopted: its filtered trace never fires for this pair.
+A subsequent scratch trace follows the HIR typeof-yield inference path and
+measures positional seeding of one Tuple(String, Int32) hint into multiple
+block parameters, retaining a wrong Tuple binding for value. Runtime yield
+lowering instead unpacks that tuple and binds value as Int32. A type-only
+single-tuple, multiple-plain-parameter expansion is being tested in scratch;
+no production correction has yet been admitted.
+
+
+### 2026-10-13: AM ordinary bootstrap candidate
+
+AL builds the ordinary chain but its S3 runtime suite exposes an inherited
+class-method struct-ivar layout failure. The exact renamed PayloadBox fixtures
+are original-valid: upstream compiles and returns 7, while S2AL compiles but
+returns 40. DEBUG_IVAR_INFER shows the fields inferred as Void; dependent Outer
+layout is fixed before later lowering supplies the missing Inner fields.
+The early class-method guess had an exact-owner-only prescan fallback and
+stopped registered ancestry on a name before checking the call's arity.
+AM combines registered and prescanned defs across ordinary class ancestors,
+retains each def's source arena, filters block/arity, and requires all annotated
+returns to agree in their declaring namespaces. Generic owners remain excluded.
+A nearest-applicable-owner stop was rejected: original Crystal's lookup_defs
+collects applicable parent annotations too. initialize remains exact-owner;
+new stays on the existing constructor path.
+
+The separate Hash identity-return failure comes from HIR typeof-yield inference
+binding one Tuple(String, Int32) hint to positional block params, while runtime
+yield lowering expands the tuple. AM expands this one hint only for multiple
+plain named unannotated required parameters, preserves fallback for other
+shapes, and leaves Proc inference unchanged. It uses the mixed-storage TypeRef
+array accessors. Their pointer classifier now returns valid zero-extended IDs
+before dereferencing aligned values such as UInt16's ID 8, and rejects pointer
+addresses below 4096. The block-inference ensure starts before arena switching
+and param seeding, so setup and inference both restore context. S1AM passes the
+Int32 and UInt16 identity-return/control pair; the new original-valid inherited
+layout script and prior struct script also pass. An initial strict end-of-line
+EXIT check in the new script was invalid because run_safe appends elapsed time;
+the corrected script checks actual child status and the EXIT prefix.
+
+AM HIR SHA:
+9356c8debc5ac06277fec25a3e52ad6fe1d22c0cc35d735ed46c18cc8e4cf491.
+The host build and eleven HIR/AST examples pass. The ordinary S2 build passes,
+but its focused runtime suite is 13/15: both inherited-layout scripts still
+return 40, while all four Hash cases and the twelve prior focused controls pass.
+DEBUG_CLASS_PARENT_TRACE resolves Derived -> Base, yet DEBUG_IVAR_INFER still
+shows Inner's fields as Void. This refutes stage propagation of the source fix.
+The S3 build succeeds, but both inherited scripts still fail. The full S1
+suite passes 164/164; a separate logging-only self-hosted guess-path probe
+narrows the failed gate. Source-only adversary reviews are
+ROBUST within these bounded ordinary annotation and plain-param tuple paths;
+they do not certify general metaclass/module/generic inference or corrupted
+carriers. Evidence: bootstrap_rescue_am_causal_capsule.json,
+source_adversary_am.json, am_new_fixture_original_oracles.json,
+am_before_inherited_s2al/receipt.json,
+am_before_child_different_arity_s2al/receipt.json,
+s1_am_struct_script_corrected/verified_receipt.json and am_ast_specs.log.
+General block-splat and multiple-yield typeof inference remain separately red
+(hash_sum_tuple_destructure_guards/evidence_capsule.json). Raw-pointer struct
+storage/value-copy and collector/finalizer capabilities remain outside this
+rescue. Any relevant source, registry, representation, arena or fixture change
+reopens these scoped claims.
+
+### 2026-10-13: AN recorded-parent lookup correction
+
+AM's ordinary S3 build also succeeds, but both inherited-layout scripts still
+return 40. Its S1 selected suite passes 164/164; this does not establish stage
+propagation. The logging-only S2 probe reproduces the failure and measures the
+actual annotation-guess consumption point: owner Derived, positional count 1,
+no exact-owner registered/prescanned candidates, absent ClassInfo lookup, nil
+parent and zero collected candidates. Earlier Derived registration messages
+therefore did not certify retrievability in this path.
+
+AN uses the existing parent_name_for_hierarchy_lookup(current), which falls
+back from ClassInfo to recorded HIR class parents. The cycle guard, exact-owner
+initialize rule, full ancestor collection, source arenas and annotation/arity
+checks remain intact. The narrow expected signal is the exact original-valid
+inherited pair changing from runtime 40 on S2AM to 7 on ordinary S2AN, followed
+by the complete declared selected gates on the same immutable source.
+The reason ClassInfo is unavailable here remains a separate lifecycle or
+representation question; no generic loop, capture or tuple-carrier repair is
+inferred. Synthetic controls for those mechanisms pass S1/S2, and the LLVM
+parent field read and initializer agree on offset 40.
+
+AN HIR SHA: df501fd7e6cf9ceb697705730eac351ffda60c8fd88413427eaa0290de61ac31.
+The ordinary S1 -> S2 -> S3 chain builds from the same 1,919 sealed source
+files without IR rewriting or GCX. Both inherited layout scripts pass S2AN;
+the exact original-valid inherited pair now returns 7. S1/S3 pass all 164
+selected scripts, S2 passes all fifteen focused scripts, and the eleven HIR/AST
+examples pass. Both strict rejection guards pass each stage. S2/S3 pass three
+exact-output smokes; S3 passes four enum/Regex checks and the extra native-
+realloc contract. All binaries run through run_safe.sh. Scoped source review
+is ROBUST; it remains correlated same-lineage evidence. This admits only the
+declared selected bootstrap/runtime claim, with the exclusions above.
+Evidence: .landmark/evidence/2026-10-13-claude-bootstrap-rescue.json,
+source_adversary_an.json, bootstrap_rescue_an_causal_capsule.json,
+s1_an_full/verified_receipt.json, s2_an_focused/verified_receipt.json,
+s3_an_full/verified_receipt.json, s2_an_struct_gate/verified_receipt.json,
+am_ivar_guess_trace_s2/receipt.json and build.log,
+s2_am_ivar_trace.receipt.json, struct_ivar_am_loop_probe/evidence_capsule.json,
+s2_am_focused/failure_receipt.json and s1_am_full/verified_receipt.json.
+Rollback is the single parent-lookup replacement against the sealed AM source.
+Any relevant hierarchy registry, source, runtime or fixture change reopens this
+correction's measured scope.
+
+
+### 2026-10-13: AN S3/S4 fixed point
+
+The ordinary S3 compiler builds S4 from the unchanged AN source and runtime
+seals with LLVM caching disabled, no IR rewriting and no GCX. The build exits
+0 in 589.59 s. Complete raw emitted LLVM IR is byte-identical under both cmp
+and full diff, without normalization. All 11 Mach-O sections match in layout
+and contents; the only 53 differing executable bytes belong to UUID and
+ad-hoc signature metadata. This admits the pair-specific raw-IR and code/data
+fixed point. Strict whole-file executable identity remains false.
+
+All three S4 exact-output runtime smokes pass. Commit preparation additionally
+runs all six changed/new spec files successfully. The source and executable
+adversary checks are ROBUST within their bounded scopes and remain correlated
+same-lineage evidence. General Crystal compatibility, collector/finalizer
+capability and the previously stated raw-pointer/typeof exclusions remain open.
+Evidence: bootstrap_an_verification.md and
+../.landmark/evidence/2026-10-13-an-s4-fixed-point.json. Relevant source, runtime,
+toolchain, environment or fixture changes reopen the affected certificate.

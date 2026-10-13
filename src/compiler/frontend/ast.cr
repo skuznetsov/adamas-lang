@@ -663,6 +663,9 @@ module Adamas
           ControlElse
           ControlEnd
           MacroVar
+          # Body expression of an inline `{% if c; expr; end %}`: evaluated for
+          # its compile-time effects only (e.g. `raise`), never emitted.
+          Statement
         end
 
         getter kind : Kind
@@ -690,6 +693,10 @@ module Adamas
 
         def self.macro_var(name : String, span : Span? = nil)
           new(Kind::MacroVar, nil, nil, nil, false, false, nil, nil, span, name)
+        end
+
+        def self.statement(expr : ExprId, span : Span? = nil)
+          new(Kind::Statement, nil, expr, nil, false, false, nil, nil, span, nil)
         end
 
         def initialize(
@@ -1065,8 +1072,10 @@ module Adamas
         end
 
         getter pattern : Slice(UInt8)
+        # Literal flag letters after the closing delimiter (i, m, x).
+        getter flags : Slice(UInt8)
 
-        def initialize(@span : Span, @pattern : Slice(UInt8))
+        def initialize(@span : Span, @pattern : Slice(UInt8), @flags : Slice(UInt8) = Slice(UInt8).new(0))
         end
       end
 
@@ -1732,11 +1741,13 @@ module Adamas
         getter visibility : Visibility?
         @receiver_storage : Slice(UInt8)
         @has_receiver : Bool # Phase PERCENT_LITERALS: self or object name for class/singleton methods
+        getter forall_type_params : Array(Slice(UInt8))
 
         def initialize(@span : Span, @name : Slice(UInt8), params : Array(Parameter),
                        return_type : Slice(UInt8)?, body : Array(ExprId)?,
                        @is_abstract : Bool? = nil, @visibility : Visibility? = nil,
-                       receiver : Slice(UInt8)? = nil)
+                       receiver : Slice(UInt8)? = nil,
+                       @forall_type_params : Array(Slice(UInt8)) = [] of Slice(UInt8))
           @params_storage = params
           @has_params = true
           if return_type
@@ -1765,7 +1776,8 @@ module Adamas
         def initialize(@span : Span, @name : Slice(UInt8), params : Nil,
                        return_type : Slice(UInt8)?, body : Array(ExprId)?,
                        @is_abstract : Bool? = nil, @visibility : Visibility? = nil,
-                       receiver : Slice(UInt8)? = nil)
+                       receiver : Slice(UInt8)? = nil,
+                       @forall_type_params : Array(Slice(UInt8)) = [] of Slice(UInt8))
           @params_storage = [] of Parameter
           @has_params = false
           if return_type
@@ -2222,9 +2234,14 @@ module Adamas
           NodeKind::Super
         end
 
+        # `args` keeps every explicit argument value in source order, named
+        # values included, so generic walkers see all argument expressions.
+        # `named_args` only annotates which of those values were passed by
+        # name (each `value` id is also present in `args`).
         getter args : Array(ExprId)?
+        getter named_args : Array(NamedArgument)?
 
-        def initialize(@span : Span, @args : Array(ExprId)? = nil)
+        def initialize(@span : Span, @args : Array(ExprId)? = nil, @named_args : Array(NamedArgument)? = nil)
         end
       end
 
@@ -2443,8 +2460,11 @@ module Adamas
         end
 
         getter expression : ExprId
+        # false for a statement-position `{% expr %}`: evaluated at compile time
+        # for side effects (raise, macro var assignment); emits no text/code.
+        getter output : Bool
 
-        def initialize(@span : Span, @expression : ExprId)
+        def initialize(@span : Span, @expression : ExprId, @output : Bool = true)
         end
       end
 

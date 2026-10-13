@@ -2532,6 +2532,7 @@ module Adamas
 
           # Parse optional return type annotation: : ReturnType
           return_type = nil
+          forall_type_params = [] of Slice(UInt8)
           skip_trivia
           if operator_token?(current_token, Token::Kind::Colon)
             advance # consume ':'
@@ -2570,12 +2571,14 @@ module Adamas
             skip_trivia
             # Parse one or more identifiers separated by commas
             if current_token.kind == Token::Kind::Identifier
+              forall_type_params << current_token.slice
               advance
               skip_trivia
               while current_token.kind == Token::Kind::Comma
                 advance
                 skip_trivia
                 break unless current_token.kind == Token::Kind::Identifier
+                forall_type_params << current_token.slice
                 advance
                 skip_trivia
               end
@@ -2664,7 +2667,8 @@ module Adamas
               body_ids,
               is_abstract,
               visibility,
-              receiver_slice
+              receiver_slice,
+              forall_type_params
             )
           )
         end
@@ -5020,8 +5024,7 @@ module Adamas
 
           # Check if there's a return value
           # return without value if: newline, EOF, end, else, elsif, if (for postfix)
-          token = current_token
-          if token.kind.in?(Token::Kind::Newline, Token::Kind::EOF, Token::Kind::End, Token::Kind::Else, Token::Kind::Elsif, Token::Kind::If, Token::Kind::Unless, Token::Kind::While, Token::Kind::Until)
+          if control_value_absent?(current_token)
             # Return without value (implicit nil)
             @arena.add_typed(ReturnNode.new(return_token.span, nil))
           else
@@ -5062,6 +5065,28 @@ module Adamas
 
         # (removed duplicate parse_raise; unified earlier implementation supports no-parens calls and named args)
 
+        # A `return`/`break`/`next` has no value when the next token closes the
+        # enclosing construct (Crystal's `end_token?` plus `;`, newline, `)` and
+        # postfix modifiers). Without `}` here, `foo { break }` parsed `}` as the
+        # value, failed, and error recovery silently dropped the whole call.
+        # The colon check handles ternaries: `flag ? break : other`.
+        private def control_value_absent?(token : Token) : Bool
+          case token.kind
+          when Token::Kind::Newline, Token::Kind::Semicolon, Token::Kind::EOF,
+               Token::Kind::RBrace, Token::Kind::RBracket, Token::Kind::RParen,
+               Token::Kind::PercentRBrace, Token::Kind::MacroExprEnd,
+               Token::Kind::End, Token::Kind::Else, Token::Kind::Elsif, Token::Kind::When,
+               Token::Kind::In, Token::Kind::Then, Token::Kind::Do,
+               Token::Kind::Rescue, Token::Kind::Ensure,
+               Token::Kind::If, Token::Kind::Unless, Token::Kind::While, Token::Kind::Until
+            true
+          when Token::Kind::Colon
+            @no_type_declaration > 0
+          else
+            false
+          end
+        end
+
         # Phase 12: Parse break expression
         # Grammar: break [value]
         private def parse_break : ExprId
@@ -5071,9 +5096,7 @@ module Adamas
 
           # Check if there's a break value
           # break without value if: newline, EOF, end, else, elsif, postfix modifiers
-          token = current_token
-          if token.kind.in?(Token::Kind::Newline, Token::Kind::EOF, Token::Kind::End, Token::Kind::Else, Token::Kind::Elsif, Token::Kind::If, Token::Kind::Unless, Token::Kind::While, Token::Kind::Until) ||
-             (token.kind == Token::Kind::Colon && @no_type_declaration > 0)
+          if control_value_absent?(current_token)
             # Break without value (colon check handles ternary: flag ? break : else_val)
             @arena.add_typed(BreakNode.new(break_token.span, nil))
           else
@@ -5096,9 +5119,7 @@ module Adamas
           skip_trivia
 
           # next without value if: newline, EOF, end, else, elsif, postfix modifiers
-          token = current_token
-          if token.kind.in?(Token::Kind::Newline, Token::Kind::EOF, Token::Kind::End, Token::Kind::Else, Token::Kind::Elsif, Token::Kind::If, Token::Kind::Unless, Token::Kind::While, Token::Kind::Until) ||
-             (token.kind == Token::Kind::Colon && @no_type_declaration > 0)
+          if control_value_absent?(current_token)
             # next without value (colon check handles ternary: flag ? next : else_val)
             @arena.add_typed(NextNode.new(next_token.span, nil))
           else
@@ -5225,6 +5246,7 @@ module Adamas
             skip_trivia
 
             args_b = ExprIdBuffer.new(2)
+            named_b = [] of NamedArgument
 
             # Check for empty parens: super()
             if current_token.kind == Token::Kind::RParen
@@ -5277,6 +5299,7 @@ module Adamas
                   @no_type_declaration -= 1
                   return PREFIX_ERROR if value.invalid?
                   args_b << value
+                  named_b << NamedArgument.new(name_token.slice, value, name_token.span, @arena[value].span)
                 else
                   # Fallback: treat name as expression
                   @no_type_declaration += 1
@@ -5320,19 +5343,23 @@ module Adamas
             @arena.add_typed(
               SuperNode.new(
                 super_token.span.cover(rparen_token.span),
-                args_b.to_a
+                args_b.to_a,
+                named_b.empty? ? nil : named_b
               )
             )
           else
             # No parentheses: either bare `super` (implicit args) or `super arg1, name: value`
             args_b = ExprIdBuffer.new(2)
+            named_b = [] of NamedArgument
 
             skip_trivia
             arg_token = current_token
             arg_starter = named_arg_start? || arg_token.kind.in?(
               Token::Kind::Identifier, Token::Kind::InstanceVar, Token::Kind::ClassVar, Token::Kind::GlobalVar,
               Token::Kind::Number, Token::Kind::String, Token::Kind::Char, Token::Kind::Symbol, Token::Kind::Regex,
-              Token::Kind::LParen, Token::Kind::LBrace, Token::Kind::LBracket,
+              # No LBrace: like Crystal, `super { ... }` attaches a block to the
+              # implicit-args super call instead of passing a hash/tuple literal.
+              Token::Kind::LParen, Token::Kind::LBracket,
               Token::Kind::True, Token::Kind::False, Token::Kind::Nil,
               Token::Kind::Self, Token::Kind::Typeof, Token::Kind::Yield,
               Token::Kind::Plus, Token::Kind::Minus, Token::Kind::Not, Token::Kind::Tilde,
@@ -5365,6 +5392,7 @@ module Adamas
                   break if shorthand.invalid?
                   args_b << shorthand
                 elsif named_arg_start?
+                  name_token = current_token
                   advance # name
                   skip_trivia
                   if current_token.kind == Token::Kind::Colon
@@ -5375,6 +5403,7 @@ module Adamas
                     @no_type_declaration -= 1
                     break if value.invalid?
                     args_b << value
+                    named_b << NamedArgument.new(name_token.slice, value, name_token.span, @arena[value].span)
                   end
                 elsif current_token.kind == Token::Kind::Star
                   star_token = current_token
@@ -5402,7 +5431,8 @@ module Adamas
             @arena.add_typed(
               SuperNode.new(
                 args_b.empty? ? super_token.span : super_token.span.cover(node_span(args_b.last)),
-                args_b.empty? ? nil : args_b.to_a # nil = implicit args (pass all)
+                args_b.empty? ? nil : args_b.to_a, # nil = implicit args (pass all)
+                named_b.empty? ? nil : named_b
               )
             )
           end
@@ -6964,8 +6994,12 @@ module Adamas
               super_name_slice = current_token.slice
               advance
             else
-              super_name_slice = parse_constant_name_slice
-              return PREFIX_ERROR unless super_name_slice
+              # Retain the whole parent type expression (including generic
+              # arguments) in ClassNode#super_name. `parse_type_annotation`
+              # keeps the source slice arena-backed and handles qualified,
+              # absolute, and nested generic names without adding AST storage.
+              super_name_slice = parse_type_annotation
+              return PREFIX_ERROR if super_name_slice.empty?
             end
             skip_trivia
           end
@@ -8108,7 +8142,7 @@ module Adamas
           # Type parameters only apply to the innermost module
           type_params = parse_type_parameters
 
-          consume_newlines
+          skip_statement_end
 
           body_id_indexes = Array(Int32).new(16)
           loop do
@@ -8222,7 +8256,7 @@ module Adamas
               expr = parse_statement
             end
             body_id_indexes << expr.index unless expr.invalid?
-            consume_newlines
+            skip_statement_end
           end
 
           # In rare cases (particularly in files with complex macros and
@@ -10489,7 +10523,16 @@ module Adamas
             end
           when Token::Kind::Regex
             # Phase 57: Regex literals
-            id = @arena.add_typed(RegexNode.new(token.span, token.slice))
+            regex_slice = token.slice
+            regex_sep = regex_slice.size - 1
+            while regex_sep >= 0 && regex_slice[regex_sep] != '/'.ord.to_u8
+              regex_sep -= 1
+            end
+            id = if regex_sep >= 0
+                   @arena.add_typed(RegexNode.new(token.span, regex_slice[0, regex_sep], regex_slice[regex_sep + 1, regex_slice.size - regex_sep - 1]))
+                 else
+                   @arena.add_typed(RegexNode.new(token.span, regex_slice))
+                 end
             advance
             id
           when Token::Kind::StringInterpolation
@@ -10748,6 +10791,23 @@ module Adamas
           parse_op_assign
         end
 
+        # True when a Newline token separates the current token from the
+        # previous non-trivia token.
+        private def newline_before_current_token? : Bool
+          i = @index - 1
+          while i >= 0
+            case @tokens[i].kind
+            when Token::Kind::Newline
+              return true
+            when Token::Kind::Whitespace, Token::Kind::Comment
+              i -= 1
+            else
+              return false
+            end
+          end
+          false
+        end
+
         # Phase 103H: Grouping (parentheses) - supports assignments like (x = y)
         # and tolerates newlines inside parentheses
         private def parse_grouping : ExprId
@@ -10775,7 +10835,24 @@ module Adamas
           saw_comma = false
 
           loop do
-            skip_whitespace_and_optional_newlines
+            # Newlines inside parentheses are skipped as trivia, but like `;` they
+            # separate statements of a parenthesized expression sequence `(a\nb)`.
+            saw_newline = false
+            loop do
+              case current_token.kind
+              when Token::Kind::Whitespace, Token::Kind::Comment
+                advance
+              when Token::Kind::Newline
+                saw_newline = true
+                advance
+              else
+                break
+              end
+            end
+            # The element parser may already have consumed the newline while
+            # looking for an operator continuation (newlines are trivia at
+            # paren_depth > 0), so also look behind the current token.
+            saw_newline ||= newline_before_current_token?
 
             if current_token.kind == Token::Kind::Comma
               saw_comma = true
@@ -10793,9 +10870,12 @@ module Adamas
               next
             end
 
-            if current_token.kind == Token::Kind::Semicolon
-              advance
+            if current_token.kind == Token::Kind::Semicolon ||
+               (saw_newline && !saw_comma && current_token.kind != Token::Kind::RParen && current_token.kind != Token::Kind::EOF)
+              advance if current_token.kind == Token::Kind::Semicolon
               skip_whitespace_and_optional_newlines
+              # `(a;)` / `(a\n)`: a trailing separator ends the sequence.
+              break if current_token.kind == Token::Kind::RParen
               next_expr = parse_grouping_element
               if next_expr.invalid?
                 emit_unexpected(current_token)
@@ -10814,8 +10894,14 @@ module Adamas
           closing_span = previous_token.try(&.span)
           grouping_span = cover_optional_spans(lparen.span, node_span(elements.last), closing_span)
 
-          if saw_comma || elements.size > 1
+          if saw_comma
             return @arena.add_typed(TupleLiteralNode.new(grouping_span, elements))
+          end
+
+          # `(a; b)` is an expression sequence whose value is its last expression
+          # (Crystal: Expressions with keyword :paren), not a tuple.
+          if elements.size > 1
+            return @arena.add_typed(BeginNode.new(grouping_span, elements))
           end
 
           # Unwrap nested Grouping nodes to see the real inner expression
@@ -15689,63 +15775,73 @@ current_token.kind == Token::Kind::Identifier &&
             start_span = consume_macro_control_start
             return {MacroPiece.text("", start_token.span), MACRO_EFFECT_NONE, false} unless start_span
 
-            if macro_trim_token?(current_token)
-              left_trim = true
-              advance
-            end
-
-            skip_macro_whitespace
-
-            # Set flag to enable newline skipping in macro expressions (like original parser)
-            previous_context = @expect_context
-            previous_in_macro = @in_macro_expression
-            @expect_context = "macro expression"
-            @in_macro_expression = true # Enable newline skipping
-
-            # Parse one or more statements until the closing `%}`. A single
-            # `{% ... %}` directive may hold multiple statements separated by
-            # newlines or semicolons (e.g. the stdlib `String::CHAR_TO_DIGIT`
-            # table builder). Parse them all instead of keeping only the first
-            # and fast-forwarding (dropping) the rest.
-            stmts = [] of ExprId
-            stmts << parse_macro_control_assign_with_recovery(start_token)
-
-            loop do
-              skip_statement_end
-              break if macro_closing_sequence?(current_token)
-              break if current_token.kind == Token::Kind::EOF
-              before_parse = @index
-              stmts << parse_macro_control_assign_with_recovery(start_token)
-              # Advance guard: if a malformed statement made no progress, stop to
-              # avoid an infinite loop (the fast-forward below cleans up to `%}`).
-              break if @index == before_parse
-            end
-
-            # CRITICAL: Skip whitespace BEFORE resetting @in_macro_expression flag
-            # This allows newlines to be skipped (matching original parser behavior)
-            skip_macro_whitespace
-
-            # Now restore context and flag
-            @expect_context = previous_context
-            @in_macro_expression = previous_in_macro
-
-            # Tolerate parse quirks by fast-forwarding to the closing sequence if not positioned there
-            fast_forward_macro_expression unless macro_closing_sequence?(current_token)
-
-            right_trim = macro_trim_operator?
-            closing_span = consume_macro_close_span("Expected '%}' after macro expression")
-            closing_span ||= start_span
-            newline_escape = consume_macro_newline_escape?
-            skip_whitespace = newline_escape || right_trim
-
-            macro_span = start_span.cover(closing_span)
-            # Wrap multiple statements in a BeginNode so the macro evaluator runs
-            # each in sequence; a single statement is emitted directly.
-            expr = stmts.size == 1 ? stmts.first : @arena.add_typed(BeginNode.new(macro_span, stmts))
-            macro_expr_id = @arena.add_typed(MacroExpressionNode.new(macro_span, expr))
-            piece = MacroPiece.expression(macro_expr_id, left_trim, right_trim, macro_span)
-            {piece, MACRO_EFFECT_NONE, skip_whitespace}
+            parsed = parse_macro_statement_expression(start_token, start_span, left_trim, true)
+            piece = MacroPiece.expression(parsed[0], parsed[1], parsed[2], parsed[3])
+            {piece, MACRO_EFFECT_NONE, parsed[4]}
           end
+        end
+
+        # Parses the body of a non-control `{% ... %}` after the opener has been
+        # consumed: optional trim, one or more statements, and the closing `%}`.
+        # Returns {MacroExpressionNode id, left_trim, right_trim, span, skip_whitespace}.
+        # `output` is false for a statement-position `{% expr %}` (evaluated for
+        # side effects only; never emits text), true for macro-body pieces.
+        private def parse_macro_statement_expression(start_token : Token, start_span : Span, left_trim : Bool, output : Bool) : {ExprId, Bool, Bool, Span, Bool}
+          if macro_trim_token?(current_token)
+            left_trim = true
+            advance
+          end
+
+          skip_macro_whitespace
+
+          # Set flag to enable newline skipping in macro expressions (like original parser)
+          previous_context = @expect_context
+          previous_in_macro = @in_macro_expression
+          @expect_context = "macro expression"
+          @in_macro_expression = true # Enable newline skipping
+
+          # Parse one or more statements until the closing `%}`. A single
+          # `{% ... %}` directive may hold multiple statements separated by
+          # newlines or semicolons (e.g. the stdlib `String::CHAR_TO_DIGIT`
+          # table builder). Parse them all instead of keeping only the first
+          # and fast-forwarding (dropping) the rest.
+          stmts = [] of ExprId
+          stmts << parse_macro_statement_with_modifier(start_token, output)
+
+          loop do
+            skip_statement_end
+            break if macro_closing_sequence?(current_token)
+            break if current_token.kind == Token::Kind::EOF
+            before_parse = @index
+            stmts << parse_macro_statement_with_modifier(start_token, output)
+            # Advance guard: if a malformed statement made no progress, stop to
+            # avoid an infinite loop (the fast-forward below cleans up to `%}`).
+            break if @index == before_parse
+          end
+
+          # CRITICAL: Skip whitespace BEFORE resetting @in_macro_expression flag
+          # This allows newlines to be skipped (matching original parser behavior)
+          skip_macro_whitespace
+
+          # Now restore context and flag
+          @expect_context = previous_context
+          @in_macro_expression = previous_in_macro
+
+          # Tolerate parse quirks by fast-forwarding to the closing sequence if not positioned there
+          fast_forward_macro_expression unless macro_closing_sequence?(current_token)
+
+          right_trim = macro_trim_operator?
+          closing_span = consume_macro_close_span("Expected '%}' after macro expression")
+          closing_span ||= start_span
+          newline_escape = consume_macro_newline_escape?
+          skip_whitespace = newline_escape || right_trim
+
+          macro_span = start_span.cover(closing_span)
+          # Wrap multiple statements in a BeginNode so the macro evaluator runs
+          # each in sequence; a single statement is emitted directly.
+          expr = stmts.size == 1 ? stmts.first : @arena.add_typed(BeginNode.new(macro_span, stmts))
+          macro_expr_id = @arena.add_typed(MacroExpressionNode.new(macro_span, expr, output))
+          {macro_expr_id, left_trim, right_trim, macro_span, skip_whitespace}
         end
 
         private def expect_identifier(expected : String)
@@ -15801,10 +15897,16 @@ current_token.kind == Token::Kind::Identifier &&
           end
           saved_index = @index
           saved_previous = @previous_token
+          saved_previous_start_token = current_token
 
           start_span = consume_macro_control_start
-          return PREFIX_ERROR unless start_span
+          unless start_span
+            @index = saved_index
+            @previous_token = saved_previous
+            return PREFIX_ERROR
+          end
 
+          start_token = saved_previous_start_token
           if macro_trim_token?(current_token)
             advance
           end
@@ -15813,7 +15915,17 @@ current_token.kind == Token::Kind::Identifier &&
 
           keyword_token = current_token
           keyword_kind = macro_control_keyword(keyword_token)
-          return PREFIX_ERROR unless keyword_kind
+          unless keyword_kind
+            # Not a control keyword: a statement-position `{% expr %}` such as
+            # `{% raise "x" unless T == Int32 %}` or `{% n = 5 %}`. Like original
+            # Crystal this is a MacroExpression with output=false: evaluated at
+            # compile time for side effects, never lowered as runtime code.
+            @index = saved_index
+            @previous_token = saved_previous
+            consume_macro_control_start
+            parsed = parse_macro_statement_expression(start_token, start_span, false, false)
+            return parsed[0]
+          end
           keyword = macro_control_keyword_name(keyword_kind)
           if ENV["DEBUG_MACRO_CTRL"]?
             STDERR.puts "[MACRO_CTRL_MATCH] start=#{start_span.start_offset} keyword_token=#{keyword_token.kind}:#{keyword.inspect}"
@@ -16207,10 +16319,12 @@ current_token.kind == Token::Kind::Identifier &&
 
         # Wrap inline body expressions as a MacroLiteralNode (empty text if no exprs)
         private def wrap_macro_inline_body(span : Span, exprs : Array(ExprId)) : ExprId
-          # Create a MacroLiteralNode with expression pieces
+          # Inline `{% if c; a; b; end %}` bodies are macro statements, as in
+          # Crystal (MacroExpression output: false): evaluated for effects,
+          # never emitted as code.
           pieces = [] of MacroPiece
           exprs.each do |expr|
-            pieces << MacroPiece.expression(expr, span: span)
+            pieces << MacroPiece.statement(expr, span: span)
           end
           if pieces.empty?
             pieces << MacroPiece.text("", span: span)
@@ -16366,6 +16480,15 @@ current_token.kind == Token::Kind::Identifier &&
           @diagnostics << Diagnostic.new("Recovered from macro control parse index error", error_token.span)
           fast_forward_macro_expression
           @arena.add_typed(NilNode.new(error_token.span))
+        end
+
+        # Statement-position `{% ... %}` (output=false) accepts Crystal postfix
+        # modifiers (`raise "x" unless cond`); macro-body pieces keep the
+        # historical modifier-free parse.
+        private def parse_macro_statement_with_modifier(start_token : Token, output : Bool) : ExprId
+          stmt = parse_macro_control_assign_with_recovery(start_token)
+          return stmt if output || stmt.invalid?
+          parse_postfix_if_modifier(stmt)
         end
 
         private def parse_macro_control_assign_with_recovery(error_token : Token) : ExprId

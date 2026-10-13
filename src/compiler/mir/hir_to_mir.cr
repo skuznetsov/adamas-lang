@@ -247,6 +247,13 @@ module Adamas
           next unless parent
           (@class_children[parent] ||= [] of String) << name
         end
+        @strict_resolve_mode = case ENV["ADAMAS_STRICT_RESOLVE"]?
+                                when "2" then 2
+                                when "1" then 1
+                                else          0
+                                end
+        @strict_fallback_counts = {"suffix" => 0, "arity" => 0, "sole" => 0, "legacy" => 0, "unqualified" => 0}
+        @strict_fallback_entries = ::Set(String).new
         STDERR.puts "[MIR_INIT] class_parents_indexed" if trace
       end
 
@@ -256,8 +263,32 @@ module Adamas
       end
 
       # ─────────────────────────────────────────────────────────────────────────
-      # Main Entry Point
+      # Strict MIR call-resolution diagnostics (ADAMAS_STRICT_RESOLVE)
+      #
+      # Exact-match `@mir_module.get_function(name)` lookups are the fast path and
+      # are never touched by this instrumentation. Only the fuzzy fallback chain
+      # below (suffix / arity / sole / legacy / unqualified) is counted, so the
+      # cost when ADAMAS_STRICT_RESOLVE is unset is a single cached Int32 compare
+      # per fallback attempt (there is none on the fast path).
       # ─────────────────────────────────────────────────────────────────────────
+
+      private def strict_resolve_note(kind : String, requested : String, resolved : String) : Nil
+        return if @strict_resolve_mode == 0
+        @strict_fallback_counts[kind] += 1
+        if @strict_fallback_entries.size < 200
+          @strict_fallback_entries << "#{kind} #{requested} -> #{resolved} in #{@current_lowering_func_name}"
+        end
+        if @strict_resolve_mode == 2 && (kind == "sole" || kind == "legacy")
+          raise "[STRICT] #{kind} fallback: requested=#{requested} resolved=#{resolved} in #{@current_lowering_func_name}"
+        end
+      end
+
+      private def print_strict_resolve_summary : Nil
+        return if @strict_resolve_mode == 0
+        c = @strict_fallback_counts
+        STDERR.puts "[STRICT] fuzzy suffix=#{c["suffix"]} arity=#{c["arity"]} sole=#{c["sole"]} legacy=#{c["legacy"]} unqualified=#{c["unqualified"]}"
+        @strict_fallback_entries.each { |entry| STDERR.puts "[STRICT] #{entry}" }
+      end
 
       private def hir_proc_type?(type : HIR::TypeRef) : Bool
         desc = @hir_module.get_type_descriptor(type)
@@ -271,6 +302,14 @@ module Adamas
         name.includes?("$block") || name.includes?("_block")
       end
 
+      # A `&blk` param the def invokes via `blk.call` (and never yields to)
+      # receives a heap Proc object from its callers (HIR lowers the block
+      # with make_proc), so its carrier must agree; see coerce_call_args for
+      # raw arguments forwarded into such a param.
+      private def heap_block_param?(func : HIR::Function, param : HIR::Parameter) : Bool
+        param.is_block && func.heap_block_param && !function_contains_yield?(func)
+      end
+
       private def classvar_carrier_key(class_name : String, var_name : String) : String
         HIRToMIRLowering.class_var_global_name(class_name, var_name)
       end
@@ -281,7 +320,9 @@ module Adamas
         @hir_module.functions.each do |func|
           local_carriers = {} of HIR::ValueId => ProcCarrier
           func.params.each do |param|
-            if param.is_block || raw_block_callback_param?(func, param)
+            if heap_block_param?(func, param)
+              local_carriers[param.id] = ProcCarrier::HeapProcObject
+            elsif param.is_block || raw_block_callback_param?(func, param)
               local_carriers[param.id] = ProcCarrier::RawFnptrCallback
             end
           end
@@ -595,6 +636,13 @@ module Adamas
         end
 
         STDERR.puts "    Pass 3: synthesized #{generated} abstract dispatchers" if progress && generated > 0
+
+        # The real CLI pipeline (cli.cr) calls prepare / lower_all_bodies /
+        # synthesize_abstract_method_dispatchers directly and never calls the
+        # `lower` convenience wrapper below, so the strict-mode summary must be
+        # emitted here — the last step of that actual call sequence — or it is
+        # dead code in every real compile.
+        print_strict_resolve_summary
       end
 
       private def synthesize_class_dispatch_for_abstract(
@@ -3373,11 +3421,17 @@ module Adamas
             # Ensure payload is at least pointer-sized (8 bytes) to match LLVM type
             # emission and prevent overflow from `store ptr` codegen patterns.
             max_variant_size = {max_variant_size, 8}.max
-            alignment = descriptor.alignment.to_u32
+            # Crystal MixedUnion layout: alignment = max(pointer word, widest
+            # variant alignment) and the payload starts at that alignment, so
+            # pointers in the payload are naturally aligned (a conservative GC
+            # only scans aligned words). Must agree with emit_union_type.
+            payload_offset = descriptor.payload_offset.to_u32
+            payload_offset = 16_u32 if payload_offset > 16_u32
+            alignment = payload_offset
 
-            # Total size: 4 bytes for type_id + padding + max payload
-            payload_offset = ((4 + alignment - 1) // alignment) * alignment
-            total_size = payload_offset + max_variant_size
+            # Total size: aligned header + payload rounded up to the alignment.
+            payload_bytes = ((max_variant_size.to_u32 + alignment - 1) // alignment) * alignment
+            total_size = (payload_offset + payload_bytes).to_u64
           end
 
           # Create union type in TypeRegistry with the SAME TypeRef id
@@ -3848,6 +3902,7 @@ module Adamas
       # needs to materialise a user-visible Proc value. See invariant I2.
       private def allocate_proc_object(fn_ptr : ValueId, env_ptr : ValueId) : ValueId
         builder = @builder.not_nil!
+        @mir_module.uses_gc = true
         obj_ptr = builder.alloc(
           MemoryStrategy::ARC,
           TypeRef::POINTER,
@@ -4362,7 +4417,9 @@ module Adamas
         # Record HIR value types for cast lowering
         hir_func.params.each do |param|
           @hir_value_types[param.id] = param.type
-          if param.is_block || raw_block_callback_param?(hir_func, param)
+          if heap_block_param?(hir_func, param)
+            @hir_value_carriers[param.id] = ProcCarrier::HeapProcObject
+          elsif param.is_block || raw_block_callback_param?(hir_func, param)
             @hir_value_carriers[param.id] = ProcCarrier::RawFnptrCallback
           end
         end
@@ -4534,6 +4591,9 @@ module Adamas
         end
         # Trace backward: if a cross-block value is produced by Copy/Cast, the source
         # must also be excluded from cleanup (it feeds the cross-block value).
+        # A reference returned by a call without proven +1 ownership is borrowed
+        # and may alias its receiver or arguments (`def me; self; end`), so an
+        # escaping borrowed result keeps those operands alive as well.
         changed = true
         while changed
           changed = false
@@ -4544,6 +4604,16 @@ module Adamas
                         when HIR::Copy then [inst.source]
                         when HIR::Cast then [inst.value]
                         when HIR::UnionWrap then [inst.value]
+                        when HIR::Call
+                          if !callee_returns_owned?(inst.method_name) && type_needs_rc?(convert_type(inst.type))
+                            call_sources = inst.args.dup
+                            if recv = inst.receiver
+                              call_sources << recv
+                            end
+                            call_sources
+                          else
+                            [] of HIR::ValueId
+                          end
                         else                [] of HIR::ValueId
                         end
               sources.each do |src|
@@ -5219,6 +5289,7 @@ module Adamas
         case strategy
         when MemoryStrategy::ARC, MemoryStrategy::AtomicARC
           @stats.arc_allocations += 1
+          @mir_module.uses_gc = true
           # Store pointer into pre-allocated cleanup slot for rc_dec at return
           if arc_slot = @arc_slot_map[alloc.id]?
             builder.store(arc_slot, ptr)
@@ -5227,6 +5298,7 @@ module Adamas
           @stats.stack_allocations += 1
         when MemoryStrategy::Slab
           @stats.slab_allocations += 1
+          @mir_module.uses_gc = true
         when MemoryStrategy::GC
           @stats.gc_allocations += 1
           @mir_module.uses_gc = true
@@ -5781,9 +5853,8 @@ module Adamas
                                 field_mir_type, found_field.type_ref)
                             end
                             # GEP past the union header to the payload and load from there.
-                            # The LLVM union type is {i32, [N x i32]} with payload at offset 4
-                            # (sizeof(i32) header).
-                            field_ptr = builder.gep(obj_ptr, [(field.field_offset.to_u32 + 4_u32)], TypeRef::POINTER)
+                            # The payload starts at the union alignment (Crystal layout).
+                            field_ptr = builder.gep(obj_ptr, [(field.field_offset.to_u32 + actual_descriptor.payload_offset.to_u32)], TypeRef::POINTER)
                           end
                         end
                       end
@@ -6381,6 +6452,14 @@ module Adamas
       private def lower_hir_extern_call(extern_call : HIR::ExternCall) : ValueId
         builder = @builder.not_nil!
 
+        # These stdlib entry points are redirected to the selected managed
+        # allocator family by LLVM emission. Record their demand here so the
+        # full-prelude output initializes and links Boehm when enabled.
+        case extern_call.extern_name
+        when "GC_malloc", "GC_malloc_atomic", "GC_realloc", "GC_free"
+          @mir_module.uses_gc = true
+        end
+
         # Get arguments
         args = extern_call.args.map { |arg| get_value(arg) }
         materialization_tx_id = @hir_module.materialization_transaction_id_for_call_symbol(extern_call.extern_name)
@@ -6763,12 +6842,26 @@ module Adamas
           if recv_type
             if recv_desc && (recv_desc.kind == HIR::TypeKind::Proc || recv_desc.name == "Proc" || recv_desc.name.starts_with?("Proc("))
               filtered_args = [] of ValueId
+              # Proc type params are the parameter types followed by the return type.
+              proc_param_count = recv_desc.type_params.size - 1
               call.args.each_with_index do |arg_id, idx|
                 arg_type = @hir_value_types[arg_id]?
                 in_map = @value_map.has_key?(arg_id)
                 next if arg_type == HIR::TypeRef::VOID
                 next unless in_map
-                filtered_args << args[idx + 1]
+                mir_arg = args[idx + 1]
+                # The callee takes union params by value, so a concrete arg must be
+                # wrapped exactly like a direct call (see coerce_call_args).
+                if idx < proc_param_count
+                  param_type = convert_type(recv_desc.type_params[idx])
+                  arg_mir_type = get_mir_value_type_or_void(mir_arg)
+                  arg_mir_type = convert_type(arg_type) if arg_mir_type == TypeRef::VOID && arg_type
+                  if arg_mir_type != param_type && is_union_type?(param_type) && !is_union_type?(arg_mir_type)
+                    variant_id = get_union_variant_id(arg_mir_type, param_type)
+                    mir_arg = builder.union_wrap(mir_arg, variant_id, param_type)
+                  end
+                end
+                filtered_args << mir_arg
               end
               return_type = proc_call_return_type(recv_desc, call.type)
               case @hir_value_carriers[call.receiver_value]?
@@ -6883,6 +6976,7 @@ module Adamas
                   f_dollar = f.name.index('$')
                   f_dollar && f.name[(f_dollar + 1)..] == suffix
                 }
+                strict_resolve_note("suffix", method_name_str, func.name) if func
               end
               # Unsuffixed calls to untyped generic methods should bind to the
               # owner-correct arity specialization. Falling back to the first
@@ -6892,6 +6986,7 @@ module Adamas
                 source_arg_count = call.has_receiver? ? args.size - 1 : args.size
                 arity_name = "#{base_name}$arity#{source_arg_count}"
                 func = all_overloads.find { |f| f.name == arity_name }
+                strict_resolve_note("arity", method_name_str, func.name) if func
               end
 
               # A sole family member is an unambiguous legacy fallback. With
@@ -6900,6 +6995,7 @@ module Adamas
               unless func
                 if all_overloads.size == 1
                   func = all_overloads.first
+                  strict_resolve_note("sole", method_name_str, func.name)
                 elsif all_overloads.size > 1
                   candidate_names = all_overloads.map(&.name).sort.join(", ")
                   raise "Ambiguous MIR call target #{method_name_str}: candidates #{candidate_names}"
@@ -6908,6 +7004,7 @@ module Adamas
             else
               # O(1) lookup via pre-computed index (legacy fallback)
               func = @function_by_base_name[base_name]?
+              strict_resolve_note("legacy", method_name_str, func.name) if func
             end
           else
             # For unqualified method names with a receiver, try to qualify based on receiver type
@@ -6921,12 +7018,14 @@ module Adamas
                   # Try qualified name with type prefix
                   qualified_name = "#{type_name}##{method_name_str}"
                   func = @mir_module.get_function(qualified_name)
+                  strict_resolve_note("unqualified", method_name_str, func.name) if func
 
                   # If not found, try fuzzy matching via index
                   unless func
                     q_dollar = qualified_name.index('$')
                     q_base = q_dollar ? qualified_name[0, q_dollar] : qualified_name
                     func = @function_by_base_name[q_base]?
+                    strict_resolve_note("unqualified", method_name_str, func.name) if func
                   end
                 end
               end
@@ -7325,6 +7424,7 @@ module Adamas
         kind : VDispatchKind,
         method_suffix : String?,
         hir_call : HIR::Call?,
+        nil_func : Adamas::MIR::Function? = nil,
       ) : Phi?
         # 1. Get type ID based on dispatch kind.
         # For class dispatch, guard against null receiver (Nil in V2 is null).
@@ -7359,7 +7459,12 @@ module Adamas
         # Wire up nil block for class dispatch (needs end_block + phi)
         if (nb = class_nil_block)
           dispatch_builder.current_block = nb
-          if phi
+          if nf = nil_func
+            # A nilable all-reference receiver stores Nil as a null pointer, so
+            # the null branch is the Nil variant: call Nil's own implementation
+            # (Nil#inspect -> "nil", Nil#==, Nil#hash, ...).
+            emit_vdispatch_candidate_call(dispatch_func, dispatch_builder, param_values.dup, nf, hir_call, phi, nb, end_block)
+          elsif phi
             # Return first argument if present (pass-through for hash(hasher) etc),
             # otherwise return zero. This matches Nil's behavior: most Nil methods
             # that take an accumulator return it unchanged.
@@ -7369,8 +7474,10 @@ module Adamas
                         dispatch_builder.const_int(0_i64, dispatch_func.return_type)
                       end
             phi.add_incoming(from: nb, value: nil_ret)
+            dispatch_func.get_block(nb).terminator = Jump.new(end_block)
+          else
+            dispatch_func.get_block(nb).terminator = Jump.new(end_block)
           end
-          dispatch_func.get_block(nb).terminator = Jump.new(end_block)
         end
 
         # 3. Create default block and case blocks.
@@ -7456,111 +7563,7 @@ module Adamas
           end
 
           if call_func
-            callee_param_count = call_func.params.size
-            coerced_args = cand_args
-            if hir_call
-              hir_call_has_receiver = hir_call.has_receiver?
-              recv_id = hir_call_has_receiver ? hir_call.receiver_value : 0_u32
-              hir_args_with_receiver = hir_call_has_receiver ? [hir_call.receiver_value] + hir_call.args : hir_call.args
-              # Module/class dispatch can route to static methods whose signature
-              # does not include receiver `self`. Also guard against leaked
-              # dispatch receivers where only shifted arg alignment matches ABI.
-              drop_dispatch_receiver = should_drop_dispatch_receiver?(
-                hir_call_has_receiver,
-                recv_id,
-                call_func.name,
-                cand_args,
-                call_func,
-                hir_args_with_receiver
-              )
-              effective_args = cand_args
-              effective_hir_args = hir_args_with_receiver
-              if drop_dispatch_receiver
-                effective_args = cand_args[1, callee_param_count]
-                effective_hir_args = hir_call.args
-              end
-
-              if callee_param_count == effective_args.size
-                # Same param count — pass all args including receiver
-                coerced_args = coerce_call_args(dispatch_builder, effective_args, effective_hir_args, call_func)
-              elsif callee_param_count < effective_args.size
-                # Callee has fewer params (e.g. optional arg dropped by overload).
-                # Truncate effective dispatch args to match callee's arity.
-                truncated_args = effective_args[0, callee_param_count]
-                truncated_hir = effective_hir_args[0, callee_param_count]? || effective_hir_args
-                coerced_args = coerce_call_args(dispatch_builder, truncated_args, truncated_hir, call_func)
-              else
-                # Callee expects more args than dispatch provides — pass all, let coercion handle it
-                coerced_args = coerce_call_args(dispatch_builder, effective_args, effective_hir_args, call_func)
-              end
-            else
-              drop_dispatch_receiver = callee_param_count <= cand_args.size - 1 &&
-                                       call_func.name.includes?('.') &&
-                                       !call_func.name.includes?('#')
-              effective_args = drop_dispatch_receiver ? cand_args[1, callee_param_count] : cand_args
-              if callee_param_count < effective_args.size
-                coerced_args = effective_args[0, callee_param_count]
-              else
-                coerced_args = effective_args
-              end
-            end
-
-            # Type the branch call with the CALLEE's return type and wrap the
-            # result into the dispatch union explicitly. Typing the call as
-            # the wrapper's (often wide) union loses the concrete type: the
-            # backend then stamps a wrong static type_id when wrapping
-            # bare-ptr results (first variant with a matching LLVM type). An
-            # explicit UnionWrap keeps the phi union-typed, and emit_union_wrap
-            # reads the object header at runtime for ptr payloads with
-            # multiple reference variants, stamping the correct global id.
-            branch_ret = call_func.return_type
-            target_ret = dispatch_func.return_type
-            wrap_variant_id = nil.as(Int32?)
-            if branch_ret != target_ret && branch_ret != TypeRef::VOID &&
-               (target_desc = @mir_module.get_union_descriptor(target_ret))
-              target_desc.variants.each do |v|
-                if v.type_ref == branch_ret
-                  wrap_variant_id = v.type_id
-                  break
-                end
-              end
-              if wrap_variant_id.nil?
-                # Callee returns a type that is not itself a variant: either a
-                # header-backed sub-union (e.g. Nil|String inside a wider
-                # union) or a subclass of a class variant. Both lower to a
-                # bare ptr whose object header carries the type id. Pick any
-                # reference variant as the static fallback; the backend's
-                # runtime header read overrides it for non-matching objects.
-                # Pointer(T) variants are excluded: they have no header.
-                branch_header_backed =
-                  if branch_desc = @mir_module.get_union_descriptor(branch_ret)
-                    Adamas::MIR.union_storage_kind(@mir_module.type_registry, branch_desc).runtime_header?
-                  else
-                    Adamas::MIR.runtime_header_backed_type?(@mir_module.type_registry.get(branch_ret))
-                  end
-                if branch_header_backed
-                  target_desc.variants.each do |v|
-                    next if v.type_ref == TypeRef::NIL || v.type_ref == TypeRef::VOID
-                    vt = @mir_module.type_registry.get(v.type_ref)
-                    if Adamas::MIR.runtime_header_backed_type?(vt)
-                      wrap_variant_id = v.type_id
-                      break
-                    end
-                  end
-                end
-              end
-            end
-
-            if wrap_id = wrap_variant_id
-              raw_val = dispatch_builder.call(call_func.id, coerced_args, branch_ret)
-              call_val = dispatch_builder.union_wrap(raw_val, wrap_id, target_ret)
-            else
-              call_val = dispatch_builder.call(call_func.id, coerced_args, target_ret)
-            end
-            if phi && call_val != 0_u32
-              phi.add_incoming(from: case_block, value: call_val)
-            end
-            dispatch_func.get_block(case_block).terminator = Jump.new(end_block)
+            emit_vdispatch_candidate_call(dispatch_func, dispatch_builder, cand_args, call_func, hir_call, phi, case_block, end_block)
           else
             # No implementation found - jump to default (unreachable)
             dispatch_func.get_block(case_block).terminator = Jump.new(default_block)
@@ -7593,6 +7596,126 @@ module Adamas
         end
 
         phi
+      end
+
+      # Emits one dispatch branch: coerces the dispatcher params to the callee
+      # ABI, calls it, merges the (union-wrapped) result into `phi`, and jumps
+      # from `case_block` to `end_block`.
+      private def emit_vdispatch_candidate_call(
+        dispatch_func : Adamas::MIR::Function,
+        dispatch_builder : Builder,
+        cand_args : ::Array(ValueId),
+        call_func : Adamas::MIR::Function,
+        hir_call : HIR::Call?,
+        phi : Phi?,
+        case_block : BlockId,
+        end_block : BlockId,
+      ) : Nil
+        callee_param_count = call_func.params.size
+        coerced_args = cand_args
+        if hir_call
+          hir_call_has_receiver = hir_call.has_receiver?
+          recv_id = hir_call_has_receiver ? hir_call.receiver_value : 0_u32
+          hir_args_with_receiver = hir_call_has_receiver ? [hir_call.receiver_value] + hir_call.args : hir_call.args
+          # Module/class dispatch can route to static methods whose signature
+          # does not include receiver `self`. Also guard against leaked
+          # dispatch receivers where only shifted arg alignment matches ABI.
+          drop_dispatch_receiver = should_drop_dispatch_receiver?(
+            hir_call_has_receiver,
+            recv_id,
+            call_func.name,
+            cand_args,
+            call_func,
+            hir_args_with_receiver
+          )
+          effective_args = cand_args
+          effective_hir_args = hir_args_with_receiver
+          if drop_dispatch_receiver
+            effective_args = cand_args[1, callee_param_count]
+            effective_hir_args = hir_call.args
+          end
+
+          if callee_param_count == effective_args.size
+            # Same param count — pass all args including receiver
+            coerced_args = coerce_call_args(dispatch_builder, effective_args, effective_hir_args, call_func)
+          elsif callee_param_count < effective_args.size
+            # Callee has fewer params (e.g. optional arg dropped by overload).
+            # Truncate effective dispatch args to match callee's arity.
+            truncated_args = effective_args[0, callee_param_count]
+            truncated_hir = effective_hir_args[0, callee_param_count]? || effective_hir_args
+            coerced_args = coerce_call_args(dispatch_builder, truncated_args, truncated_hir, call_func)
+          else
+            # Callee expects more args than dispatch provides — pass all, let coercion handle it
+            coerced_args = coerce_call_args(dispatch_builder, effective_args, effective_hir_args, call_func)
+          end
+        else
+          drop_dispatch_receiver = callee_param_count <= cand_args.size - 1 &&
+                                   call_func.name.includes?('.') &&
+                                   !call_func.name.includes?('#')
+          effective_args = drop_dispatch_receiver ? cand_args[1, callee_param_count] : cand_args
+          if callee_param_count < effective_args.size
+            coerced_args = effective_args[0, callee_param_count]
+          else
+            coerced_args = effective_args
+          end
+        end
+
+        # Type the branch call with the CALLEE's return type and wrap the
+        # result into the dispatch union explicitly. Typing the call as
+        # the wrapper's (often wide) union loses the concrete type: the
+        # backend then stamps a wrong static type_id when wrapping
+        # bare-ptr results (first variant with a matching LLVM type). An
+        # explicit UnionWrap keeps the phi union-typed, and emit_union_wrap
+        # reads the object header at runtime for ptr payloads with
+        # multiple reference variants, stamping the correct global id.
+        branch_ret = call_func.return_type
+        target_ret = dispatch_func.return_type
+        wrap_variant_id = nil.as(Int32?)
+        if branch_ret != target_ret && branch_ret != TypeRef::VOID &&
+           (target_desc = @mir_module.get_union_descriptor(target_ret))
+          target_desc.variants.each do |v|
+            if v.type_ref == branch_ret
+              wrap_variant_id = v.type_id
+              break
+            end
+          end
+          if wrap_variant_id.nil?
+            # Callee returns a type that is not itself a variant: either a
+            # header-backed sub-union (e.g. Nil|String inside a wider
+            # union) or a subclass of a class variant. Both lower to a
+            # bare ptr whose object header carries the type id. Pick any
+            # reference variant as the static fallback; the backend's
+            # runtime header read overrides it for non-matching objects.
+            # Pointer(T) variants are excluded: they have no header.
+            branch_header_backed =
+              if branch_desc = @mir_module.get_union_descriptor(branch_ret)
+                Adamas::MIR.union_storage_kind(@mir_module.type_registry, branch_desc).runtime_header?
+              else
+                Adamas::MIR.runtime_header_backed_type?(@mir_module.type_registry.get(branch_ret))
+              end
+            if branch_header_backed
+              target_desc.variants.each do |v|
+                next if v.type_ref == TypeRef::NIL || v.type_ref == TypeRef::VOID
+                vt = @mir_module.type_registry.get(v.type_ref)
+                if Adamas::MIR.runtime_header_backed_type?(vt)
+                  wrap_variant_id = v.type_id
+                  break
+                end
+              end
+            end
+          end
+        end
+
+        if wrap_id = wrap_variant_id
+          raw_val = dispatch_builder.call(call_func.id, coerced_args, branch_ret)
+          call_val = dispatch_builder.union_wrap(raw_val, wrap_id, target_ret)
+        else
+          call_val = dispatch_builder.call(call_func.id, coerced_args, target_ret)
+        end
+        if phi && call_val != 0_u32
+          phi.add_incoming(from: case_block, value: call_val)
+        end
+        dispatch_func.get_block(case_block).terminator = Jump.new(end_block)
       end
 
       private def lower_virtual_dispatch(call : HIR::Call, args : ::Array(ValueId)) : ValueId?
@@ -7813,6 +7936,19 @@ module Adamas
 
         candidates = old_candidates
 
+        # All-reference nilable unions (e.g. String | Nil) keep Nil as null and
+        # dispatch through the object header; the null guard then stands for the
+        # Nil variant and must run Nil's own method rather than a placeholder.
+        nil_func = nil.as(Adamas::MIR::Function?)
+        if kind.class? && is_union_type &&
+           (nil_desc = @mir_module.get_union_descriptor(generic_union_ref || recv_mir)) &&
+           nil_desc.variants.any? { |v| v.type_ref == TypeRef::NIL }
+          if (nf = resolve_virtual_method_for_class("Nil", method_suffix, call.args.size)) &&
+             nf.name.starts_with?("Nil#")
+            nil_func = nf
+          end
+        end
+
         # Use unified generator
         generate_vdispatch_body(
           dispatch_func,
@@ -7821,7 +7957,8 @@ module Adamas
           candidates,
           kind,
           method_suffix,
-          call
+          call,
+          nil_func
         )
 
         # For Generic-wrapped unions, the caller passes a ptr but the dispatch function
@@ -8863,6 +9000,16 @@ module Adamas
       ) : ::Array(ValueId)
         params = func.params
         result = [] of ValueId
+        # Raw fn-pointer block args (e.g. a yield-style `&blk` forwarded on)
+        # reaching a heap block param get boxed with a null env; call_heap_proc
+        # then calls fn(args) directly. Carriers are only known for the
+        # function being lowered, so skip foreign builders.
+        heap_block_callee = nil
+        if builder.same?(@builder)
+          if (hir_callee = @hir_module.function_by_name(func.name)) && hir_callee.heap_block_param
+            heap_block_callee = hir_callee
+          end
+        end
 
         mir_arg_count = uint32_array_size_or_zero(mir_args)
         hir_arg_count = uint32_array_size_or_zero(hir_args)
@@ -8879,6 +9026,18 @@ module Adamas
             # Parameter is a struct carrier; use explicit bounds + unsafe_fetch
             # instead of []? to keep the generated path monomorphic.
             param = params.unsafe_fetch(idx)
+
+            if (hir_callee = heap_block_callee) && idx < hir_arg_count
+              hir_params = hir_callee.params
+              hir_arg = uint32_array_fetch_or_zero(hir_args, idx)
+              if hir_params.size == params.size &&
+                 heap_block_param?(hir_callee, hir_params.unsafe_fetch(idx)) &&
+                 @hir_value_carriers[hir_arg]? == ProcCarrier::RawFnptrCallback
+                result << allocate_proc_object(mir_arg, builder.const_nil_typed(TypeRef::POINTER))
+                idx += 1
+                next
+              end
+            end
 
             arg_type = get_mir_value_type_or_void(mir_arg)
             if arg_type == TypeRef::VOID && idx < hir_arg_count
@@ -9049,6 +9208,7 @@ module Adamas
         visited : ::Set(HIR::ValueId),
         depth : Int32,
         allow_return : Bool,
+        interior_fields : Bool = false,
       ) : StackWalkStatus
         return StackWalkStatus::Unsafe if visited.includes?(value_id)
         visited << value_id
@@ -9060,17 +9220,41 @@ module Adamas
 
             case inst
             when HIR::Copy
-              status = hir_value_stack_safety(func, inst.id, visited, depth, allow_return)
+              status = hir_value_stack_safety(func, inst.id, visited, depth, allow_return, interior_fields)
               return StackWalkStatus::Unsafe if status.unsafe?
               returned = true if status.safe_returned?
             when HIR::FieldGet
               return StackWalkStatus::Unsafe unless inst.object == value_id
+              # Inline storage (detached inline-container copies): a struct
+              # field read is an interior address into the tracked slot, so
+              # its uses must stay safe too.
+              if interior_fields && stack_alias_capable_type?(inst.type)
+                status = hir_value_stack_safety(func, inst.id, visited, depth, allow_return, interior_fields)
+                return StackWalkStatus::Unsafe if status.unsafe?
+                returned = true if status.safe_returned?
+              end
+            when HIR::IndexGet
+              # Element read from inline storage (e.g. an inline-container
+              # entry's Tuple key compared element-wise). Same contract as the
+              # interior FieldGet read above; outside interior mode the index
+              # path keeps its conservative verdict.
+              return StackWalkStatus::Unsafe unless interior_fields && inst.object == value_id
+              if stack_alias_capable_type?(inst.type)
+                status = hir_value_stack_safety(func, inst.id, visited, depth, allow_return, interior_fields)
+                return StackWalkStatus::Unsafe if status.unsafe?
+                returned = true if status.safe_returned?
+              end
             when HIR::FieldSet
               return StackWalkStatus::Unsafe unless inst.object == value_id
             when HIR::Call
-              status = stack_safety_at_call_use(func, inst, value_id, visited, depth, allow_return)
+              status = stack_safety_at_call_use(func, inst, value_id, visited, depth, allow_return, interior_fields)
               return StackWalkStatus::Unsafe if status.unsafe?
               returned = true if status.safe_returned?
+            when HIR::UnionWrap
+              # The backend stores an independent clone of a struct/tuple
+              # payload (emit_union_payload_value_clone), so the union never
+              # aliases the tracked storage.
+              return StackWalkStatus::Unsafe unless union_wrap_clones_payload?(func, inst)
             else
               return StackWalkStatus::Unsafe
             end
@@ -9097,6 +9281,29 @@ module Adamas
       # return value (`def me; self; end`, `hash(hasher)` returning the
       # hasher); when it can, the call result is an alias of the struct and
       # its uses are walked with the same rules.
+      # Mirrors the backend's union_variant_value_clone_size gate: true when
+      # wrapping `wrap.value` copies the payload bytes instead of storing the
+      # pointer itself.
+      private def union_wrap_clones_payload?(func : HIR::Function, wrap : HIR::UnionWrap) : Bool
+        hir_type = if def_inst = hir_function_defs(func)[wrap.value]?
+                     def_inst.type
+                   elsif param = func.params.find { |p| p.id == wrap.value }
+                     param.type
+                   end
+        return false unless hir_type
+        value_type = convert_type(hir_type)
+        descriptor = @mir_module.get_union_descriptor(convert_type(wrap.type))
+        return false unless descriptor
+        return false unless descriptor.variants.any? { |variant| variant.type_ref == value_type }
+        mir_type = @mir_module.type_registry.get(value_type)
+        return false unless mir_type && mir_type.size > 0
+        if mir_type.name.starts_with?("Tuple(")
+          mir_type.kind.tuple? || mir_type.kind.struct?
+        else
+          mir_type.kind.struct? && (mir_type.fields.try(&.size) || 0) > 0
+        end
+      end
+
       private def stack_safety_at_call_use(
         func : HIR::Function,
         call : HIR::Call,
@@ -9104,6 +9311,7 @@ module Adamas
         visited : ::Set(HIR::ValueId),
         depth : Int32,
         allow_return : Bool,
+        interior_fields : Bool = false,
       ) : StackWalkStatus
         result_alias = false
 
@@ -9118,7 +9326,7 @@ module Adamas
 
           call.args.each_with_index do |arg, idx|
             next unless arg == value_id
-            status = callee_param_stack_safety(callee, idx + receiver_offset, depth)
+            status = callee_param_stack_safety(callee, idx + receiver_offset, depth, interior_fields)
             return StackWalkStatus::Unsafe if status.unsafe?
             result_alias = true if status.safe_returned?
           end
@@ -9139,18 +9347,19 @@ module Adamas
 
         return StackWalkStatus::Safe unless result_alias
 
-        hir_value_stack_safety(func, call.id, visited, depth, allow_return)
+        hir_value_stack_safety(func, call.id, visited, depth, allow_return, interior_fields)
       end
 
       private def callee_param_stack_safety(
         func : HIR::Function,
         param_idx : Int32,
         depth : Int32,
+        interior_fields : Bool = false,
       ) : StackWalkStatus
         param = func.params[param_idx]?
         return StackWalkStatus::Unsafe unless param
 
-        key = "#{func.name}|#{param_idx}"
+        key = interior_fields ? "#{func.name}|#{param_idx}|interior" : "#{func.name}|#{param_idx}"
         if cached = @stack_safe_callee_param_cache[key]?
           return cached
         end
@@ -9161,7 +9370,8 @@ module Adamas
         @stack_safe_callee_in_progress << key
         begin
           result = hir_value_stack_safety(
-            func, param.id, ::Set(HIR::ValueId).new, depth - 1, allow_return: true)
+            func, param.id, ::Set(HIR::ValueId).new, depth - 1, allow_return: true,
+            interior_fields: interior_fields)
         ensure
           @stack_safe_callee_in_progress.delete(key)
         end
@@ -10147,7 +10357,39 @@ module Adamas
           builder = @builder.not_nil!
           return builder.load(source, slot_type)
         end
+        if detached = detach_inline_container_borrow(copy, source)
+          return detached
+        end
         source
+      end
+
+      # A struct read out of inline container storage (`get_entry(i)` ->
+      # `@entries[i]`, InlineAddress) is an interior pointer into that storage.
+      # Binding it to a local (`entry = get_entry(i)`) must give the local value
+      # semantics: the slot may be overwritten before the local is read again
+      # (Hash#delete / #upsert return the OLD entry after clearing / replacing
+      # the slot). Copy the bytes into a stack slot when every use of the local
+      # provably stays inside this function; otherwise keep the borrow.
+      private def detach_inline_container_borrow(copy : HIR::Copy, source : ValueId) : ValueId?
+        hir_func = @current_hir_func
+        return nil unless hir_func
+        src_inst = hir_function_defs(hir_func)[copy.source]?
+        return nil unless src_inst.is_a?(HIR::Call)
+        return nil if generated_struct_allocator_hir_call?(src_inst)
+        mir_type_ref = convert_type(copy.type)
+        mir_type = @mir_module.type_registry.get(mir_type_ref)
+        return nil unless mir_type && mir_type.kind.struct? && mir_type.size > 0
+        return nil unless Adamas::LayoutContract.inline_container_family?(mir_type.name)
+        status = hir_value_stack_safety(
+          hir_func, copy.id, ::Set(HIR::ValueId).new,
+          STACK_STRUCT_ARG_SAFETY_MAX_DEPTH, allow_return: false, interior_fields: true)
+        return nil unless status.safe?
+
+        builder = @builder.not_nil!
+        slot = builder.alloc(MemoryStrategy::Stack, mir_type_ref, mir_type.size, mir_type.alignment)
+        @stats.stack_allocations += 1
+        builder.memcopy(slot, source, mir_type.size)
+        slot
       end
 
       # ─────────────────────────────────────────────────────────────────────────
@@ -10174,6 +10416,7 @@ module Adamas
 
         # Allocate byte-addressed environment object with naturally aligned slots.
         env_ptr = builder.alloc(strategy, TypeRef::POINTER, env_size.to_u64, pointer_word_align_u32)
+        @mir_module.uses_gc = true
 
         # Insert RC increment based on strategy
         if strategy == MemoryStrategy::AtomicARC
@@ -10480,8 +10723,13 @@ module Adamas
                                  # instruction is the local callback ABI contract in
                                  # that case; using the stale Nil descriptor discards
                                  # the callback return register before a later wrap.
+                                 # When both the descriptor and the HIR yield itself say Nil,
+                                 # they agree: the callback really returns Nil. A wider type
+                                 # recovered from users (e.g. `return yield` in a `Nil | T`
+                                 # method) is only the post-call wrap target.
                                  if declared_return &&
                                     (declared_return == HIR::TypeRef::VOID || declared_return == HIR::TypeRef::NIL) &&
+                                    !(declared_return == HIR::TypeRef::NIL && yld.type == HIR::TypeRef::NIL) &&
                                     yield_type != HIR::TypeRef::VOID && yield_type != HIR::TypeRef::NIL
                                    yield_type
                                  else
@@ -10912,7 +11160,7 @@ module Adamas
           elements,
           strategy
         )
-        @mir_module.uses_gc = true if strategy == MIR::MemoryStrategy::GC
+        @mir_module.uses_gc = true
         builder.emit(mir_arr)
       end
 
@@ -11044,6 +11292,7 @@ module Adamas
 
       private def lower_pointer_malloc(malloc : HIR::PointerMalloc) : ValueId
         builder = @builder.not_nil!
+        @mir_module.uses_gc = true
 
         count = get_value(malloc.count)
         elem_size = if hir_type_is_lib_struct?(malloc.element_type)
@@ -11231,6 +11480,7 @@ module Adamas
 
       private def lower_pointer_realloc(realloc : HIR::PointerRealloc) : ValueId
         builder = @builder.not_nil!
+        @mir_module.uses_gc = true
 
         ptr = get_value(realloc.pointer)
         new_size = get_value(realloc.new_size)

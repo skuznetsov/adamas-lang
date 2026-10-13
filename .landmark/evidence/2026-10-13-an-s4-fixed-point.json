@@ -1,0 +1,92 @@
+{
+  "scope": "Sealed AN ordinary S3 -> S4; exact raw LLVM IR and executable code/data fixed point; six changed/new specs pass during commit preparation.",
+  "level": "VERIFIED",
+  "adversary_verdict": "ROBUST within the pair-specific fixed-point and selected test scope; correlated same-lineage reviews.",
+  "source_files": 1919,
+  "source_manifest_sha256": "8994a713ac889fccbadfdc0c44fae3583ec760f281a1ceae3bc4d9c634d55a1c",
+  "runtime_manifest_sha256": "4fa3ee9b09ea00079af693d7589504b17855ee0fa5d323380e152b07b4cd76e3",
+  "llvm_ir_sha256": "a4abf17e54303af30027f5b4a16fdf447869e28f1c7683f5b6783cfbd79a2ee3",
+  "llvm_ir_bytes": 261848465,
+  "llvm_normalization": false,
+  "strict_executable_byte_identity": false,
+  "all_macho_sections_equal": true,
+  "different_bytes": {
+    "uuid": 16,
+    "signature": 37,
+    "outside_these_ranges": 0
+  },
+  "s4_smokes_pass": 3,
+  "changed_specs_summary": "119 examples, 0 failures, 0 errors, 0 pending",
+  "packaging_source_changes": false,
+  "historical_base_head": "09d6ef6c49646629c245f70a7e2f6f32544f700e",
+  "evidence": [
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/source_hashes_s1_an.json",
+      "sha256": "8994a713ac889fccbadfdc0c44fae3583ec760f281a1ceae3bc4d9c634d55a1c"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/source_runtime_s1_an.json",
+      "sha256": "4fa3ee9b09ea00079af693d7589504b17855ee0fa5d323380e152b07b4cd76e3"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s4_an.receipt.json",
+      "sha256": "dd809d3f32ac4660a092db87b4dfb5c1fb0bda0278eadbd9586471a07b214496"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s3_s4_an.comparison.json",
+      "sha256": "ee9a9efdbee494a93be199ddd620fe22a2ce244255e6dfea5b27161f25245305"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s3_s4_an.ll.diff",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s3_s4_an.byte_differences.json",
+      "sha256": "51d1ade23cf393bd6ae28b7f4861f6d01027ca23568d1616a21c4a43ffba89f3"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s4_an_smokes/results.json",
+      "sha256": "3929dfe7e9403718989220b3eae8b0770f2168dd95fda2e12edf438b71e805ca"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s3_an_full/verified_receipt.json",
+      "sha256": "2a360e7fb2de01da13aecbb14c8b5dc761a3253a682c367cb7cc1b00eab857e6"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s3_an_full/script_hashes.json",
+      "sha256": "ef8129aa873d8867cd8b1751bc21a0b295b62c0104e72a0d60426335eaff4c7f"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s3_an_missing_contract/verified_receipt.json",
+      "sha256": "cd11a1924397dac17f420d10ea0e3384252322701076a09c0b06eb5bafa20671"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/integration_an/changed_specs.receipt.json",
+      "sha256": "e1fb7a52c55632588a27fe9b471c7a0278a4b8400f8a1dda1ff1e061e2c4809c"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/integration_an/changed_specs.invocation.json",
+      "sha256": "787bd9f31d60b8193296c2a7e133972a2061a96f664bc5ab4b369eeb61e3e115"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/integration_an/changed_specs.log",
+      "sha256": "c96992d610e226c5cf1c3ed96b159c15412a1e35629208f7bfea59ddd8628315"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/integration_an/changed_specs.resources",
+      "sha256": "ea4de0124212942e2393178c5b89ea7abc5e5299ca151741942694badc5d413a"
+    }
+  ],
+  "previous_checkpoint": {
+    "path": ".landmark/evidence/2026-10-13-claude-bootstrap-rescue.json",
+    "sha256": "a2b85565745712a82e27bb26dec351f38b13b3d2ae63772d50b6383e8639c87a",
+    "scope": "Immutable prior S1-S3 checkpoint; its S4 exclusion is superseded by this follow-up."
+  },
+  "scope_exclusions": [
+    "full Crystal compatibility",
+    "general block-splat and multiple-yield typeof inference",
+    "raw-pointer struct storage/value copying",
+    "collector/finalizer capability"
+  ],
+  "decay_trigger": "Relevant source, hierarchy registry, runtime, toolchain, environment or fixture changes require dependent checks again."
+}

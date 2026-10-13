@@ -19,6 +19,8 @@ private def lower_raw_yield_case(
   callback_union_args : Array(Bool),
   block_mode : RawYieldBlockMode = RawYieldBlockMode::NullableProc,
   callback_concrete_types : Array(Adamas::HIR::TypeRef)? = nil,
+  callback_return_type : Adamas::HIR::TypeRef = Adamas::HIR::TypeRef::INT32,
+  yield_type : Adamas::HIR::TypeRef = Adamas::HIR::TypeRef::INT32,
 ) : {Adamas::MIR::IndirectCall, Array(Adamas::MIR::Value)}
   actual_union_args.size.should eq(callback_union_args.size)
   if concrete_types = callback_concrete_types
@@ -37,7 +39,7 @@ private def lower_raw_yield_case(
     callback_params << (is_union ? union_ref : concrete_type)
   end
   proc_type_params = callback_params.dup
-  proc_type_params << Adamas::HIR::TypeRef::INT32
+  proc_type_params << callback_return_type
   proc_ref = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
     Adamas::HIR::TypeKind::Proc,
     "Proc(raw_yield_callback)",
@@ -74,7 +76,7 @@ private def lower_raw_yield_case(
                 ))
               end
 
-  func = hir_mod.create_function("invoke$raw_yield_case", Adamas::HIR::TypeRef::INT32)
+  func = hir_mod.create_function("invoke$raw_yield_case", yield_type)
   block_param = func.add_param("block", block_ref, true)
   actual_params = actual_union_args.map_with_index do |is_union, index|
     type = is_union ? union_ref : Adamas::HIR::TypeRef::INT32
@@ -83,7 +85,7 @@ private def lower_raw_yield_case(
   block = func.get_block(func.entry_block)
   yld = Adamas::HIR::Yield.new(
     func.next_value_id,
-    Adamas::HIR::TypeRef::INT32,
+    yield_type,
     actual_params.map(&.id),
     block_param.id
   )
@@ -243,6 +245,51 @@ describe Adamas::MIR::HIRToMIRLowering do
     instructions.any? do |instruction|
       instruction.is_a?(Adamas::MIR::UnionUnwrap) &&
         instruction.variant_type_id == Adamas::MIR::TypeRef::INT32.id.to_i32
+    end.should be_false
+  end
+
+  it "keeps missing-signature fallback for a Nil callback return" do
+    indirect, instructions = lower_raw_yield_case(
+      [true],
+      [true],
+      block_mode: RawYieldBlockMode::MissingSignature,
+      callback_return_type: Adamas::HIR::TypeRef::NIL,
+      yield_type: Adamas::HIR::TypeRef::NIL
+    )
+    indirect.unwrap_union_args.should be_true
+    instructions.any? do |instruction|
+      instruction.is_a?(Adamas::MIR::UnionUnwrap) &&
+        instruction.variant_type_id == Adamas::MIR::TypeRef::INT32.id.to_i32
+    end.should be_false
+  end
+
+  it "uses a direct Proc descriptor when the callback returns Nil" do
+    indirect, instructions = lower_raw_yield_case(
+      [true],
+      [true],
+      block_mode: RawYieldBlockMode::DirectProc,
+      callback_return_type: Adamas::HIR::TypeRef::NIL,
+      yield_type: Adamas::HIR::TypeRef::NIL
+    )
+    indirect.unwrap_union_args.should be_false
+    instructions.any? do |instruction|
+      instruction.is_a?(Adamas::MIR::UnionUnwrap) &&
+        indirect.args.includes?(instruction.id)
+    end.should be_false
+  end
+
+  it "uses a nullable Proc descriptor when the callback returns Nil" do
+    indirect, instructions = lower_raw_yield_case(
+      [true],
+      [true],
+      block_mode: RawYieldBlockMode::NullableProc,
+      callback_return_type: Adamas::HIR::TypeRef::NIL,
+      yield_type: Adamas::HIR::TypeRef::NIL
+    )
+    indirect.unwrap_union_args.should be_false
+    instructions.any? do |instruction|
+      instruction.is_a?(Adamas::MIR::UnionUnwrap) &&
+        indirect.args.includes?(instruction.id)
     end.should be_false
   end
 

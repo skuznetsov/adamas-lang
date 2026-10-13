@@ -1,5 +1,237 @@
 # Adamas Bootstrap TODO
 
+2026-10-13 CLAUDE BOOTSTRAP RESCUE (AN VERIFIED WITHIN THE DECLARED SCOPE).
+The ordinary same-source S1 -> S2 -> S3 -> S4 chain builds without IR rewriting
+or GCX. S1 and S3 pass the selected 164-script suites; S2 passes all fifteen
+focused scripts. All stage rejection guards pass. Three exact-output smokes
+pass on S2/S3; four enum/Regex checks and the extra native-realloc contract
+pass on S3. Eleven HIR/AST examples pass. The full-suite receipts report no
+resource abnormality or script drift. Every compiler and runtime invocation
+uses scripts/run_safe.sh.
+
+The final correction uses the established recorded-parent fallback when an
+early class-method annotation guess cannot retrieve ClassInfo. Both inherited
+layout scripts now pass ordinary S2, closing the AM stage-propagation falsifier.
+The earlier one-tuple typeof-yield correction also passes its Int32 and UInt16
+identity-return controls across the declared stages. Source reviews are ROBUST
+within these bounded paths; same-lineage reviews remain correlated.
+
+AN freezes 1,919 source files. HIR SHA:
+df501fd7e6cf9ceb697705730eac351ffda60c8fd88413427eaa0290de61ac31.
+S1 SHA: d9fc4c3e999ea442e3f028bc4d61897509707b3400a3f10f5f6173526bf8c3e4.
+S2 SHA: a58558722b20f088a898d739fcf101201afe8115e04861f97709dd241453afc0.
+S3 SHA: f9482f8e77e3419db7f506446e6d02d89bee75bb9eefc7db16e90af55a570e8d.
+Evidence: .landmark/evidence/2026-10-13-claude-bootstrap-rescue.json;
+referenced receipts live in /Users/sergey/Projects/Adamas/sol_help_20261012.
+S4 builds in 589.59 s. Complete raw S3/S4 LLVM IR is byte-identical without
+normalization; all Mach-O code/data sections match. The 53 differing executable
+bytes are confined to UUID and ad-hoc signature metadata. Three S4 runtime
+smokes pass. All six changed/new spec files pass during commit preparation.
+Evidence: docs/bootstrap_an_verification.md and
+.landmark/evidence/2026-10-13-an-s4-fixed-point.json.
+This is selected bootstrap/runtime closure with a raw-IR and code/data fixed
+point. General block-splat and multiple-yield typeof inference, raw-pointer
+struct storage/value copying, collector/finalizer capability and full Crystal
+compatibility remain open.
+The reason ClassInfo was unavailable in the AM guess path is not established.
+Relevant source, hierarchy registry, runtime, environment or fixture changes
+invalidate the dependent checks and require a bounded refresh.
+
+Previous AM evidence and refuted stage propagation:
+2026-10-13 CLAUDE BOOTSTRAP RESCUE (AM SELF-HOSTED LAYOUT GAP OPEN).
+AM adopts two bounded HIR corrections after AL's runtime failures: expand a
+single tuple yield hint when typeof-yield inference binds multiple plain
+required block parameters, and gather registered plus prescanned ordinary
+class-method annotations across inherited owners before guessing struct ivars.
+The TypeRef accessor now classifies zero-extended inline IDs before pointer
+reads; the block-inference ensure also covers arena switching and param setup.
+The frozen HIR SHA is
+9356c8debc5ac06277fec25a3e52ad6fe1d22c0cc35d735ed46c18cc8e4cf491.
+S1AM builds, eleven HIR/AST examples pass, and the new Int32/UInt16 Hash and
+two inherited-layout cases pass S1. The original-Crystal oracles pass; the exact
+inherited fixtures return 40 on S2AL before the correction, versus 7 upstream.
+Both S1/S2 rejection guards and three S2 smokes pass. The ordinary S2 build
+passes, but its focused suite is 13/15: both inherited-layout scripts still
+return 40 instead of 7. The new Hash cases pass S2. S2 resolves Derived's parent
+as Base but still guesses Inner's fields as Void. A separate logging-only
+self-hosted probe is narrowing the failed annotation-guess gate; source-only
+review does not close this measured stage gap. AM's ordinary S3 build passes,
+but both inherited scripts still fail; its full S1 suite passes 164/164 with
+589 supervised calls and no abnormality or script drift.
+The final declared gates are full selected 164-script suites
+on S1/S3 and all fifteen focused scripts on S2, plus smokes and rejection guards.
+General splat and multiple-yield typeof inference remain separately red;
+raw-pointer struct storage/value copying and collector/finalizer closure also
+remain outside this rescue. No S4 or full Crystal compatibility claim.
+
+Prior AL evidence and refutations:
+Keep imported Claude WIP separate from the session-owned delta. Repairs cover
+enum carriers, exact String membership, macro numeric unary evaluation,
+qualified macro ownership, tap/Hash tuple yield typing, fully applied generic
+ancestor discovery/layout, include-site and method-forall binding separation,
+StaticArray multiple assignment, and coordinated managed allocation/ownership.
+No stdlib files are changed. Rejected routes and their falsifiers are recorded
+in docs/compiler_architecture_sdd.md.
+
+AL freezes 1,919 source files after the exact-symbol/Def/arena type-literal
+ledger, contextual MacroIf literal inference, supplying-owner virtual origin
+lookup, and complete union-argument dispatch repairs. Its ordinary host build
+passes. The static-receiver fixture has sixteen controls, including both
+sibling overload orders, direct and argument/local MacroIf returns, and an
+instance-valued opposite branch. The virtual fixture has eighteen controls,
+including Nil, mixed return types, untyped fallback, String | Nil formal ABI
+and one argument evaluation. Both final fixtures pass original Crystal. AL
+passes all eleven HIR/AST examples and all sixteen preflight scripts, including
+both final fixtures. A logging-only AK probe establishes the prior virtual
+stub cause: nested lowering queues each resolved arm, then body preflight
+declines before queue processing. AL reuses guarded force lowering only for
+those exact selected targets whose bodies are still absent. No force-depth
+limit or pending queue policy changes. Both the UInt64/String restriction and
+unsupported late generic virtual descendant still reject before output.
+AI's unconditional incomplete-arm rejection was refuted by ordinary prelude
+calls; unsupported fanout now declines before CFG creation. AK additionally
+checks the current argument type against its discriminator descriptor. The
+final S1 suite passes all 162 scripts with 577 supervised calls and no resource
+abnormality or script drift. Ordinary S1 -> S2 -> S3 builds from the same sealed
+source without IR rewriting or GCX; peak sampled RSS is 5,744,832 KiB for S2
+and 6,379,008 KiB for S3. S2 passes all twelve focused scripts, three exact-output
+smokes and both rejection guards. S3 passes its three exact-output smokes, four
+enum/Regex probes, both rejection guards and the extra native-realloc contract.
+Its completed selected suite passes 161/162. The sole failure is a stage-dependent
+inherited struct-field call: struct_ivar_call_return_layout_repro.sh returns 40
+instead of 7 on S3, although the same script passes S1. This runtime gap prevents
+bootstrap closure.
+A full-definition-registration Array sum/join fixture passes
+original Crystal and S1AK. Adding Hash#sum instead exposes Pointer(Void).zero;
+that separate callback/type inference boundary remains open. A standalone
+Hash(String, Int32).sum { |_, value| value } reproduces the abort on S1AL and
+S2AL; the equivalent one-parameter entry[1] control passes S1AL and original
+Crystal. Adding arithmetic inside the block masks this local-type failure.
+The new hash_sum_tuple_destructure_typeof_repro.sh retains the identity-return
+pair; its original-Crystal oracle passes and its S1AL destructured case is red.
+A logging-only scratch probe measures an inference-only HIR binder retaining a
+wrong Tuple binding for value, while runtime lowering binds value as Int32.
+Tuple-hint expansion is under test in scratch; no production Hash repair is
+yet admitted.
+
+The last full host baseline AC has 1,919 sealed source files. S1AC is built by the installed
+original Crystal 1.21 host and passes all eight focused generic scripts with
+25 supervised child calls, no resource abnormality and no script drift. The
+namespace fixture prints a complete ten-bit failure mask and returns only 0
+or 1; it checks exact root/scoped actual returns, lexical Tuple leaves, both
+T.marker and T.marker() forms, and module/owner bindings. Original Crystal
+passes the same fixture. S1AC also passes the full 158-script selected suite
+with 567 supervised calls, no resource abnormality and no script drift. Its
+two high exit codes are explicit controls: allocator value 142 and the
+Enumerable/String mismatch abort stub. The concrete UInt64 module still
+rejects a String argument. Five HIR/AST-cache examples pass on AC. Backend/MIR sources are
+unchanged since Q; earlier 90-example backend evidence is reused only under
+those source hashes.
+
+The late inherited-macro repair uses the actual HIR receiver owner, exact
+selected DefNode and lexical arena. It preserves compatible ordinary/defaulted
+and packed-Tuple splat shapes, including argument consumption for Tuple lengths
+1, 2 and 3. Include-site parameter keys are authoritative independently of the
+owner-name filter. Positional method-forall bindings retain concrete TypeRefs;
+final exact-selected nonvirtual call emission reconstructs bare or Tuple
+returns before the enclosing expression chooses its overload. Ordinary source
+annotation leaves retain their include-origin namespace. The no-parens
+MemberAccess Identifier route now strips only the representation prefix from
+a producer-backed absolute bare nominal map name before static lookup. This
+avoids both Scope::Token recapture and the unregistered ::Token.marker target.
+Block, named, unresolved, changed-target and other forall-dependent composite
+returns remain outside the bounded override. AG adds an exact-demand body
+provenance sidecar for inherited virtual targets. Its host build exits 0, but
+the new nested lazy-demand example still rejects: nine of ten HIR/AST tests
+and ten of eleven focused scripts pass. The existing late-hierarchy and
+return-ABI negative tests pass; generic-late-descendant and UInt64/String
+guards reject explicitly. This is not virtual capability closure.
+
+AH materializes the registered direct override and passes the ten-example
+HIR/AST snapshot. A new unrelated-overload lazy control remains red, making
+the current eleven-example frontier explicit. AG's full selected suite is
+160/161, with the virtual return fixture as its sole rejection. Direct generic
+type-valued returns now preserve the type-literal mark: the final seven-control
+Int32/Float64/class-versus-instance fixture passes AH and original Crystal;
+the earlier AG fixture aborts at Int32#zero. Ordinary S2AH still fails in LLVM
+at Array(String)#join_strings: its additive_identity selects the instance
+String::Formatter::Flags#zero after Reflect(Int32).type. A separate Hash
+helper still selects the instance Int32#zero. The active probe follows the
+type-valued argument through reflect.type, local assignment, and exact overload
+metadata; a green direct static call does not establish that propagation.
+
+DoD: S1 builds S2, then S2 builds S3 from the same final immutable source
+without IR rewriting or GCX; all fifteen focused scripts and strict rejection pass
+at each stage. Both S1 and S3 must pass the 164-script selected suite. S3 must
+pass three exact-output smokes, four enum/Regex falsifiers and
+managed/native/String contracts. Eleven HIR/AST examples must pass against the
+same final source. All binaries use run_safe.sh.
+S1AC builds S2AC without IR rewriting or GCX, but S2AC passes only seven of the
+eight focused scripts. The generic ancestor fixture fails its seven transitive
+self-macro wrapper assertions (checks 50-56); direct macros, layouts and splat
+consumption still pass. A separate twelve-control fixture passes original
+Crystal and S1AC but returns mask 382/exit 1 with S2AC. Bare, parenthesized and
+explicit-self macro calls lose the child owner, while the ordinary String
+overload and the call on a separate parent object pass. S1 HIR creates child
+wrappers; S2 requests the parent wrapper before materialization. Initial call
+lookup traces match, so late owner selection/replay remains the active
+diagnostic frontier. S3AC is not started. S1 success alone does not establish
+stage propagation. A trace-free local-Boolean-only selfbuild refutes that
+control-shape explanation. The generic-source helper called an abstract
+Enumerable#any? whose reachable body returned false. Admitting zero positional
+arguments only for selected included block calls restores the concrete Hash
+iteration; its exact six-control fixture passes AG and original Crystal,
+where the prior host compiler crashed. The isolated two-guard S2 selfbuild
+now reaches LLVM but fails: Array(String)#additive_identity selects
+String::Formatter::Flags#zero after Reflect(Int32).type, contaminating the
+sum accumulator and emitting invalid add i1 with i32 operands. A simple
+adjacent Hash.any? does not reproduce that target drift. Type-literal receiver
+provenance is the next diagnostic boundary. The previous completed
+ordinary Q chain was buildable, but S3Q's selected suite was 152/154 with two
+runtime generic failures. The last full host suite, S1V, passed 157/157 before
+the final namespace fixture and strengthened splat assertions.
+
+Rollback is the exported session delta, without discarding or committing
+imported Claude WIP. Risk is CAUTION at lookup, type-map and ownership seams.
+The live Claude source is checked against the imported full-source hashes
+before a guarded backport; canonical adamas remains untouched.
+
+Separate architectural gaps remain open. Real stdlib Process.run is blocked
+by raw Pointer(Struct) layout, stride and value-copy semantics. Typed-pointer
+access masks the raw representation mismatch; a scalar paired probe
+returns mask 7/exit 0 with original Crystal, but mask 3/exit 1 with S1Q. A late
+generic virtual descendant remains guard-only; the admitted nongeneric
+included-forall lazy-demand controls pass S1AL and require stage propagation.
+Actual GC
+reclamation/finalizer completeness and broader compatibility remain unmeasured.
+
+Evidence: /Users/sergey/Projects/Adamas/sol_help_20261012,
+source_hashes_s1_ah.json, s1_ah.receipt.json, ah_ast_specs.log,
+ah_other_overload_before_ast_specs.log, s2_ah.receipt.json, s2_ah_audit/receipt.json,
+s1_ah_static_type_return/verified_receipt.json,
+original_static_type_return_final/receipt.json,
+source_hashes_s1_ag.json, s1_ag.receipt.json, ag_ast_specs.log,
+s1_ag_focused/results.json, concrete_module_rejection_s1_ag/receipt.json,
+virtual_late_s1_ag/receipt.json, source_hashes_s1_ag_any.json,
+s2_ag_any.receipt.json, hash_any_zero_rebase_s1/receipt.json,
+af_lazy_demand_before_ast_specs.log, s2_ag_any_audit/,
+ancestor_materialization_diag/local_bool_shape/run/receipt.json,
+source_hashes_s1_ac.json, s1_ac.receipt.json,
+regressions_ac_generics/verified_receipt.json,
+regressions_ac_full/verified_receipt.json, s2_ac.receipt.json,
+s2_ac_generics/results.json, ancestor_s2_ac_diagnostic/receipt.json,
+ancestor_controls_original_ac/receipt.json, ancestor_controls_s1_ac/receipt.json,
+ancestor_controls_s2_ac/receipt.json, ancestor_controls_s2_ac_ledger_only/,
+concrete_module_s1_ac_string/receipt.json, ac_ast_specs.log,
+backend_source_reuse_ac.json, original_forall_namespace_ab/receipt.json,
+namespace_ac_diagnostic/, regressions_v/verified_receipt.json,
+s3_q.receipt.json, s3_q_regressions/measured_receipt.json,
+original_virtual_gap_boolean/receipt.json, virtual_gap_s1_x/measured_receipt.json,
+raw_receiver_scalar_q/ and raw_array_pointer_q/.
+Refresh exact-source builds after semantic, allocator, ownership, receiver or
+reference-storage changes. The inspected original source checkout is
+1.20.1-derived; paired runtime oracles use the installed original 1.21 host.
+
 2026-09-18 TUPLE UNION ITERATION (LOCAL VERIFIED; S3 UNION SLOT FRONTIER).
 Dispatch the runtime tuple variant before Tuple#each macro expansion; preserve
 concrete type-parameter maps and caller-local merges. Block callbacks no longer

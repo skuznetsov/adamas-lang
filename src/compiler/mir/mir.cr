@@ -1449,7 +1449,7 @@ module Adamas::MIR
       idx = 0
       while idx < variants.size
         alignment = variants.unsafe_fetch(idx).alignment
-        max_align = alignment if alignment > max_align
+        max_align = alignment if alignment > max_align && alignment <= 16
         idx += 1
       end
       ((header_size + max_align - 1) // max_align) * max_align
@@ -2471,9 +2471,10 @@ module Adamas::MIR
     getter union_storage_entries : ::Array(UnionStorageEntry)
     getter module_type_refs : ::Set(TypeRef)
     property source_file : String?
-    # Set during HIR->MIR lowering when any allocation is assigned MemoryStrategy::GC.
-    # The entry point reads this to decide whether to emit GC_init (hybrid memory
-    # model): pure stack/ARC programs never touch the Boehm collector and skip it.
+    # Set during HIR->MIR lowering when managed heap allocation needs the collector.
+    # Full-prelude ARC/Slab/GC owners and Pointer allocation share the managed heap;
+    # the backend consumes this demand for allocator routing and GC_init. Pure
+    # stack programs skip it; no-prelude/no-GC modes retain their native boundary.
     property uses_gc : Bool = false
 
     @next_function_id : FunctionId = 0_u32

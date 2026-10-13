@@ -34,10 +34,26 @@ module Adamas
 
         # Call a method on this value
         def call_method(name : String, args : Array(MacroValue), named_args : Hash(String, MacroValue)?) : MacroValue
+          macro_node_call_method(name, args, named_args)
+        end
+
+        # The ASTNode-level methods shared by every value. Subclasses that must
+        # bypass an intermediate parent's overrides call this directly.
+        def macro_node_call_method(name : String, args : Array(MacroValue), named_args : Hash(String, MacroValue)?) : MacroValue
           case name
           when "nil?"
             # Missing AST values are nil-like, but false and empty values are not.
             MacroBoolValue.new(is_a?(MacroNilValue))
+          when "==", "!="
+            # ASTNode#== is structural equality: same node class, same contents.
+            # Without this arm `{% if "a" == "a" %}` evaluated to nil (falsy).
+            if arg = args[0]?
+              result = macro_equal?(arg)
+              result = !result if name == "!="
+              MacroBoolValue.new(result)
+            else
+              MacroNilValue.new
+            end
           when "stringify"
             MacroStringValue.new(stringify)
           when "id"
@@ -57,6 +73,13 @@ module Adamas
 
         # Get the macro type name (for .class_name)
         abstract def class_name : String
+
+        # ASTNode#== (structural): same node class, same contents. Subclasses
+        # override where the rendered output does not identify the contents
+        # (number kind, nested collection elements).
+        def macro_equal?(other : MacroValue) : Bool
+          class_name == other.class_name && to_macro_output == other.to_macro_output
+        end
 
         # Get the Crystal type name (for typeof())
         # Returns the actual Crystal type of the value
@@ -150,7 +173,7 @@ module Adamas
           value ? MacroNumberValue.new(value, literal) : nil
         end
 
-        private def self.numeric_suffix(literal : String) : String?
+        def self.numeric_suffix(literal : String) : String?
           return "_i8" if literal.ends_with?("_i8")
           return "_i16" if literal.ends_with?("_i16")
           return "_i32" if literal.ends_with?("_i32")
@@ -212,6 +235,107 @@ module Adamas
 
         def class_name : String
           "NumberLiteral"
+        end
+
+        # NumberLiteral kind as the lexer assigns it: the explicit suffix, else
+        # f64 for floats, i32 for integers that fit Int32, i64 otherwise.
+        def number_kind : String
+          if (literal = @source_literal) && (suffix = MacroNumberValue.numeric_suffix(literal.gsub("_", "")))
+            return suffix.lchop('_')
+          end
+          value = @value
+          return "f64" if value.is_a?(Float64)
+          value >= Int32::MIN && value <= Int32::MAX ? "i32" : "i64"
+        end
+
+        # Original NumberLiteral: `def_equals value.to_f64, kind` — the
+        # spelling (`1_000` vs `1000`) is irrelevant, the kind is not.
+        def macro_equal?(other : MacroValue) : Bool
+          return false unless other.is_a?(MacroNumberValue)
+          return false unless number_kind == other.number_kind
+          lhs = @value
+          rhs = other.value
+          # Same integer kind: compare the stored bits so unsigned values
+          # (kept via unsafe_as(Int64)) stay exact.
+          return lhs == rhs if lhs.is_a?(Int64) && rhs.is_a?(Int64)
+          to_f == other.to_f
+        end
+
+        # Apply the numeric unary methods implemented by Crystal's
+        # NumberLiteral macro interpreter. A nil result means the operator or
+        # number kind is unsupported here, so the caller can preserve the
+        # original opaque-AST fallback.
+        def unary_operation(operator : String) : MacroNumberValue?
+          if literal = @source_literal
+            # macro_number_value_from_literal keeps an opaque zero for literals
+            # this numeric model cannot parse (for example, i128/u128). Never
+            # turn such a fallback into an evaluated unary number.
+            return nil unless MacroNumberValue.from_literal(literal)
+          end
+
+          kind = number_kind
+          case operator
+          when "+"
+            self
+          when "-"
+            return nil if unsigned_number_kind?(kind)
+
+            result = case kind
+                     when "i8"  then (-to_i.to_i8).to_i64
+                     when "i16" then (-to_i.to_i16).to_i64
+                     when "i32" then (-to_i.to_i32).to_i64
+                     when "i64" then -to_i
+                     when "f32"
+                       # Crystal's NumberLiteral unary minus narrows to Float32,
+                       # then stores Float32#to_s in the result AST. Reparse
+                       # that decimal spelling to match its equality semantics.
+                       (-to_f.to_f32).to_s.to_f64
+                     when "f64" then -to_f
+                     else return nil
+                     end
+            unary_result(result, kind)
+          when "~"
+            result = case kind
+                     when "i8"  then (~to_i.to_i8).to_i64
+                     when "i16" then (~to_i.to_i16).to_i64
+                     when "i32" then (~to_i.to_i32).to_i64
+                     when "i64" then ~to_i
+                     when "u8"  then (~to_i.to_u8).to_i64
+                     when "u16" then (~to_i.to_u16).to_i64
+                     when "u32" then (~to_i.to_u32).to_i64
+                     when "u64" then (~to_i.unsafe_as(UInt64)).unsafe_as(Int64)
+                     else return nil
+                     end
+            unary_result(result, kind)
+          else
+            nil
+          end
+        end
+
+        private def unsigned_number_kind?(kind : String) : Bool
+          kind == "u8" || kind == "u16" || kind == "u32" || kind == "u64"
+        end
+
+        private def unary_result(value : Int64 | Float64, kind : String) : MacroNumberValue
+          literal_value = if kind == "u64" && value.is_a?(Int64)
+                            value.unsafe_as(UInt64).to_s
+                          else
+                            value.to_s
+                          end
+
+          default_kind = case value
+                         when Float64
+                           "f64"
+                         when Int64
+                           value >= Int32::MIN && value <= Int32::MAX ? "i32" : "i64"
+                         end
+          has_suffix = if literal = @source_literal
+                         MacroNumberValue.numeric_suffix(literal.gsub("_", "")) != nil
+                       else
+                         false
+                       end
+          suffix = has_suffix || default_kind != kind ? "_#{kind}" : ""
+          MacroNumberValue.new(value, "#{literal_value}#{suffix}")
         end
 
         def type_name : String
@@ -292,7 +416,11 @@ module Adamas
               end
             end
             MacroNilValue.new
-          when ">", ">=", "<", "<=", "==", "!="
+          when "==", "!="
+            # Structural (base arm → macro_equal?): kind-aware, so
+            # `1_i32 == 1_i64` is false while `1_000 == 1000` is true.
+            super
+          when ">", ">=", "<", "<="
             if arg = args[0]?
               if arg.is_a?(MacroNumberValue)
                 result = case name
@@ -300,8 +428,6 @@ module Adamas
                          when ">=" then to_f >= arg.to_f
                          when "<"  then to_f < arg.to_f
                          when "<=" then to_f <= arg.to_f
-                         when "==" then to_f == arg.to_f
-                         when "!=" then to_f != arg.to_f
                          else           false
                          end
                 return MacroBoolValue.new(result)
@@ -343,6 +469,15 @@ module Adamas
 
         def call_method(name : String, args : Array(MacroValue), named_args : Hash(String, MacroValue)?) : MacroValue
           case name
+          when "==", "!="
+            # A StringLiteral compares to a MacroId by value; anything else is
+            # structural equality (base arm).
+            if (arg = args[0]?) && arg.is_a?(MacroIdValue)
+              result = @value == arg.value
+              result = !result if name == "!="
+              return MacroBoolValue.new(result)
+            end
+            super
           when "size", "bytesize"
             MacroNumberValue.new(@value.size.to_i64)
           when "empty?"
@@ -403,6 +538,40 @@ module Adamas
         end
       end
 
+      # Char value (CharLiteral). Subclasses MacroStringValue so string helpers
+      # that take a char argument (`ends_with?('=')`, `split(' ')`) keep working
+      # on the raw value, but it is a distinct node class: `'x' == "x"` is false.
+      class MacroCharValue < MacroStringValue
+        def to_macro_output : String
+          @value.size == 1 ? @value[0].inspect : "'#{@value}'"
+        end
+
+        def stringify : String
+          to_macro_output
+        end
+
+        def class_name : String
+          "CharLiteral"
+        end
+
+        def type_name : String
+          "Char"
+        end
+
+        def call_method(name : String, args : Array(MacroValue), named_args : Hash(String, MacroValue)?) : MacroValue
+          case name
+          when "==", "!=", "stringify", "id", "class_name", "is_a?", "nil?"
+            # CharLiteral has none of StringLiteral's by-value MacroId equality
+            # or string methods: go straight to the ASTNode arms.
+            macro_node_call_method(name, args, named_args)
+          when "ord"
+            MacroNumberValue.new(@value.empty? ? 0_i64 : @value[0].ord.to_i64)
+          else
+            MacroNilValue.new
+          end
+        end
+      end
+
       # Symbol value
       class MacroSymbolValue < MacroValue
         getter value : String
@@ -424,6 +593,22 @@ module Adamas
 
         def type_name : String
           "Symbol"
+        end
+
+        def call_method(name : String, args : Array(MacroValue), named_args : Hash(String, MacroValue)?) : MacroValue
+          case name
+          when "==", "!="
+            # A SymbolLiteral compares to a MacroId by value; anything else is
+            # structural equality (base arm).
+            if (arg = args[0]?) && arg.is_a?(MacroIdValue)
+              result = @value == arg.value
+              result = !result if name == "!="
+              return MacroBoolValue.new(result)
+            end
+            super
+          else
+            super
+          end
         end
       end
 
@@ -454,6 +639,16 @@ module Adamas
           case name
           when "==", "!="
             if arg = args[0]?
+              # Original MacroId#==: by value against String/Symbol literals,
+              # structural otherwise. Literal nodes (numbers, chars, bools,
+              # nil, collections) therefore never equal an id (`1.id == 1` is
+              # false). Type/path-like values keep the by-value comparison
+              # because this interpreter may model them as ids or strings.
+              case arg
+              when MacroCharValue, MacroNumberValue, MacroBoolValue, MacroNilValue,
+                   MacroArrayValue, MacroTupleValue, MacroHashValue, MacroNamedTupleValue
+                return super
+              end
               result = @value == arg.to_id
               result = !result if name == "!="
               return MacroBoolValue.new(result)
@@ -488,8 +683,18 @@ module Adamas
             MacroArrayValue.new(parts)
           when "symbolize"
             MacroSymbolValue.new(@value)
-          else
+          when "nil?", "stringify", "id", "class_name", "is_a?"
             super
+          else
+            # Original MacroId#interpret delegates every other method to
+            # StringLiteral and re-wraps string results as MacroId. Without
+            # this, `{{ @type.name.size }}` yielded nil (expanded to nothing).
+            result = MacroStringValue.new(@value).call_method(name, args, named_args)
+            if result.is_a?(MacroStringValue) && !result.is_a?(MacroCharValue)
+              MacroIdValue.new(result.value)
+            else
+              result
+            end
           end
         end
       end
@@ -926,6 +1131,17 @@ module Adamas
           "ArrayLiteral"
         end
 
+        # Elementwise structural equality (original `def_equals_and_hash`):
+        # nested numbers compare by value and kind, not by spelling.
+        def macro_equal?(other : MacroValue) : Bool
+          return false unless other.is_a?(MacroArrayValue)
+          return false unless @elements.size == other.elements.size
+          @elements.each_with_index do |element, index|
+            return false unless element.macro_equal?(other.elements[index])
+          end
+          true
+        end
+
         def call_method(name : String, args : Array(MacroValue), named_args : Hash(String, MacroValue)?) : MacroValue
           case name
           when "size"
@@ -1022,6 +1238,17 @@ module Adamas
           "TupleLiteral"
         end
 
+        # Elementwise structural equality (original `def_equals_and_hash`):
+        # nested numbers compare by value and kind, not by spelling.
+        def macro_equal?(other : MacroValue) : Bool
+          return false unless other.is_a?(MacroTupleValue)
+          return false unless @elements.size == other.elements.size
+          @elements.each_with_index do |element, index|
+            return false unless element.macro_equal?(other.elements[index])
+          end
+          true
+        end
+
         def call_method(name : String, args : Array(MacroValue), named_args : Hash(String, MacroValue)?) : MacroValue
           case name
           when "size"
@@ -1058,6 +1285,20 @@ module Adamas
 
         def class_name : String
           "NamedTupleLiteral"
+        end
+
+        # Ordered entrywise structural equality.
+        def macro_equal?(other : MacroValue) : Bool
+          return false unless other.is_a?(MacroNamedTupleValue)
+          return false unless @entries.size == other.entries.size
+          other_entries = other.entries.to_a
+          index = 0
+          @entries.each do |key, value|
+            other_key, other_value = other_entries[index]
+            return false unless key == other_key && value.macro_equal?(other_value)
+            index += 1
+          end
+          true
         end
 
         def call_method(name : String, args : Array(MacroValue), named_args : Hash(String, MacroValue)?) : MacroValue
@@ -1105,6 +1346,17 @@ module Adamas
 
         def class_name : String
           "HashLiteral"
+        end
+
+        # Ordered entrywise structural equality.
+        def macro_equal?(other : MacroValue) : Bool
+          return false unless other.is_a?(MacroHashValue)
+          return false unless @entries.size == other.entries.size
+          @entries.each_with_index do |(key, value), index|
+            other_key, other_value = other.entries[index]
+            return false unless key.macro_equal?(other_key) && value.macro_equal?(other_value)
+          end
+          true
         end
 
         def assign(key : MacroValue, value : MacroValue) : MacroValue
@@ -1215,6 +1467,8 @@ module Adamas
             MacroBoolValue.new(@is_abstract)
           when "nilable?"
             MacroBoolValue.new(@name.ends_with?("?") || @name == "Nil" || @name.includes?("| Nil") || @name.includes?("Nil |"))
+          when "union?"
+            MacroBoolValue.new(top_level_union_name?)
           when "superclass"
             if sc = @superclass_name
               MacroTypeValue.new(sc)
@@ -1275,6 +1529,23 @@ module Adamas
           else
             super
           end
+        end
+      end
+
+      class MacroTypeValue
+        # A union type name: `A | B` at paren depth 0, or the `T?` shorthand.
+        # `Foo(A | B)` is a generic instance, not a union.
+        private def top_level_union_name? : Bool
+          return true if @name.ends_with?('?')
+          depth = 0
+          @name.each_char do |char|
+            case char
+            when '(' then depth += 1
+            when ')' then depth -= 1
+            when '|' then return true if depth == 0
+            end
+          end
+          false
         end
       end
 

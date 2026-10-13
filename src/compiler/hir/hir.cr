@@ -718,6 +718,24 @@ module Adamas::HIR
     @block_value : BlockId = NO_BLOCK
     getter virtual : Bool
 
+
+    # DEBUG PROBE (remove before commit): report every attachment of a method
+    # name matching ADAMAS_TRACE_CALL_NAME, with the constructing backtrace.
+    # This is the true chokepoint: every HIR Call name is set by a configure_*.
+    private def trace_name_attach(kind : String) : Nil
+      filter = ::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_TRACE_CALL_NAME")
+      return unless filter
+      return unless @method_name.includes?(filter)
+      STDERR.puts "[CALL_ATTACH] kind=#{kind} id=#{@id} name=#{@method_name} args=#{@args.size} virtual=#{@virtual} recv=#{@receiver_value} block=#{@block_value}"
+      frames = caller
+      limit = frames.size < 20 ? frames.size : 20
+      i = 0
+      while i < limit
+        STDERR.puts "[CALL_ATTACH_AT]   #{frames[i]}"
+        i += 1
+      end
+    end
+
     def self.with_receiver(
       id : ValueId,
       type : TypeRef,
@@ -805,6 +823,7 @@ module Adamas::HIR
       @args = args
       @block_value = NO_BLOCK
       @virtual = false
+      trace_name_attach("without_receiver2")
     end
 
     def configure_without_receiver(
@@ -817,6 +836,7 @@ module Adamas::HIR
       @args = args
       @block_value = NO_BLOCK
       @virtual = virtual
+      trace_name_attach("without_receiver3")
     end
 
     def configure_without_receiver_block(
@@ -830,6 +850,7 @@ module Adamas::HIR
       @args = args
       @block_value = block
       @virtual = virtual
+      trace_name_attach("without_receiver_block")
     end
 
     def configure_with_receiver(
@@ -843,6 +864,7 @@ module Adamas::HIR
       @args = args
       @block_value = NO_BLOCK
       @virtual = virtual
+      trace_name_attach("with_receiver")
     end
 
     def configure_with_receiver_block(
@@ -857,6 +879,7 @@ module Adamas::HIR
       @args = args
       @block_value = block
       @virtual = virtual
+      trace_name_attach("with_receiver_block")
     end
 
     def initialize(
@@ -1890,6 +1913,10 @@ module Adamas::HIR
     @param_names : Array(String)
     @param_default_literals : Array(String?)
     @param_is_blocks : Array(Bool)
+    # The def calls its block parameter (`blk.call`), so callers hand it a
+    # heap Proc object; yield-style block params stay raw fn pointers.
+    # Lives on Function because `params` rebuilds Parameter objects.
+    property heap_block_param : Bool = false
     @revision_ledger : FunctionRevisionLedger
 
     def initialize(
@@ -1964,6 +1991,19 @@ module Adamas::HIR
 
     def rewrite_call_method_name(call : Call, method_name : String) : Bool
       return false if call.method_name == method_name
+      # DEBUG PROBE (remove before commit)
+      if filter = ::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_TRACE_CALL_NAME")
+        if method_name.includes?(filter) || call.method_name.includes?(filter)
+          STDERR.puts "[CALL_NAME] phase=rewrite id=#{call.id} old=#{call.method_name} new=#{method_name} args=#{call.args.size} virtual=#{call.virtual}"
+          frames = caller
+          limit = frames.size < 16 ? frames.size : 16
+          i = 0
+          while i < limit
+            STDERR.puts "[CALL_NAME_AT]   #{frames[i]}"
+            i += 1
+          end
+        end
+      end
       call.method_name = method_name # missing-revision-owner
       @revision_ledger.note_demand_mutation
       true
@@ -2016,6 +2056,15 @@ module Adamas::HIR
       @param_is_blocks << param.is_block
       @revision_ledger.note_demand_mutation
       param
+    end
+
+    # Retype a trailing block formal once the callsite's callback ABI is known.
+    def set_block_param_type(param_id : ValueId, type : TypeRef) : Nil
+      index = @param_ids.index(param_id)
+      return unless index
+      @param_type_ids[index] = type.id
+      @param_is_blocks[index] = true
+      @revision_ledger.note_demand_mutation
     end
 
     def set_param_default_literal(index : Int32, default_literal : String?) : Nil

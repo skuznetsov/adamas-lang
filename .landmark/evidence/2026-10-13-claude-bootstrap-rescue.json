@@ -1,0 +1,676 @@
+{
+  "schema_version": "landmark-evidence-packet/v1",
+  "id": "adamas-claude-bootstrap-rescue-an-20261013",
+  "created_at_utc": "2026-10-13T18:13:13.154308+00:00",
+  "claim": {
+    "level": "VERIFIED",
+    "statement": "Ordinary same-source S1 -> S2 -> S3 and the declared selected runtime gates pass.",
+    "scope": "Immutable source an; 1919 source files; selected 164-script suite."
+  },
+  "verification": {
+    "dod_passed": true,
+    "source_equal_candidate": true,
+    "stages": [
+      {
+        "stage": 1,
+        "binary_sha256": "d9fc4c3e999ea442e3f028bc4d61897509707b3400a3f10f5f6173526bf8c3e4",
+        "wall_seconds": 18.84,
+        "resources": "[RUN_SAFE_RESOURCE] schema=run_safe_resource_v1 outcome=exit reason=exit exit_code=0 max_rss_kb=5638400 max_fd=unknown rss_samples=22 fd_samples=21 rss_available=yes fd_available=unknown process_tree_mode=ps_ancestry_snapshot tree_coverage=all_scheduled_snapshots fd_tree_coverage=unknown tree_samples=22 fd_topology_stable_samples=21 fd_topology_unstable_samples=1 max_tree_pids=2"
+      },
+      {
+        "stage": 2,
+        "binary_sha256": "a58558722b20f088a898d739fcf101201afe8115e04861f97709dd241453afc0",
+        "wall_seconds": 491.13,
+        "resources": "[RUN_SAFE_RESOURCE] schema=run_safe_resource_v1 outcome=exit reason=exit exit_code=0 max_rss_kb=5788240 max_fd=21 rss_samples=607 fd_samples=607 rss_available=yes fd_available=yes process_tree_mode=ps_ancestry_snapshot tree_coverage=all_scheduled_snapshots fd_tree_coverage=all_stable_pairs tree_samples=607 fd_topology_stable_samples=607 fd_topology_unstable_samples=0 max_tree_pids=2"
+      },
+      {
+        "stage": 3,
+        "binary_sha256": "f9482f8e77e3419db7f506446e6d02d89bee75bb9eefc7db16e90af55a570e8d",
+        "wall_seconds": 545.59,
+        "resources": "[RUN_SAFE_RESOURCE] schema=run_safe_resource_v1 outcome=exit reason=exit exit_code=0 max_rss_kb=6516336 max_fd=18 rss_samples=673 fd_samples=673 rss_available=yes fd_available=yes process_tree_mode=ps_ancestry_snapshot tree_coverage=all_scheduled_snapshots fd_tree_coverage=all_stable_pairs tree_samples=673 fd_topology_stable_samples=673 fd_topology_unstable_samples=0 max_tree_pids=2"
+      }
+    ],
+    "suites": [
+      {
+        "stage": 1,
+        "suite": "full",
+        "scripts": 164,
+        "supervised_calls": 589
+      },
+      {
+        "stage": 2,
+        "suite": "focused",
+        "scripts": 15,
+        "supervised_calls": 63
+      },
+      {
+        "stage": 3,
+        "suite": "full",
+        "scripts": 164,
+        "supervised_calls": 589
+      },
+      {
+        "stage": 3,
+        "suite": "missing_contract",
+        "scripts": 1,
+        "supervised_calls": 8
+      }
+    ],
+    "exact_output_smokes": 3,
+    "enum_regex_checks": 4,
+    "hir_ast_examples": 11,
+    "strict_guards_per_stage": 2
+  },
+  "adversary": {
+    "verdict": "ROBUST",
+    "scope": "Bounded union-argument fanout/guarded exact-target demand, one-tuple block-return inference, and ordinary inherited class-method ivar annotation guessing. Direct class-parent fallback added in AN.",
+    "source_manifest_sha256": "8994a713ac889fccbadfdc0c44fae3583ec760f281a1ceae3bc4d9c634d55a1c",
+    "reviewed_at_utc": "2026-10-13T17:41:03.254623+00:00",
+    "reviewers": [
+      "GPT 6 Luna Max delta_recheck (AL exact-demand review reused for byte-identical methods)",
+      "GPT 6 Luna Max regression_audit (Hash/type-ref/ensure)",
+      "GPT 6 Luna Max macro_recheck (class-method prescan ancestry)",
+      "GPT 6 Luna Max delta_recheck (fresh AN hierarchy fallback)"
+    ],
+    "review_lineage": "Same-lineage source reviews are correlated; executed stage/runtime gates are separate measured evidence.",
+    "reuse_basis": "AN differs from AM only at the measured parent lookup. Hash and union methods are byte-identical; prior ancestry review is reused only for unchanged collection and guards.",
+    "byte_identical_am_method_reuse": {
+      "try_emit_union_arg_dispatch": "3dafff97578821d14dbe1b59f43060ab266ae9fba60725693ad6b6133537cebe",
+      "force_lower_function_for_return_type": "1e9b6b25b55912bc4e295d70ee0fe0883b9329c99093a7bc9b72b98938bfe84d",
+      "lower_function_if_needed": "d09189a7b8f8a8a09752f6804e240a2e457caed452e1f959ffdfe4d2ab664907",
+      "type_ref_array_id_or_void": "6c3fc2ae547b023ed2e178765ac5db8d88c5b9130814f9254c457255890011b5",
+      "inline_block_return_type_name_unchecked": "af5829d029d8948763ab887e4899195c06064075d26b2518e3a948cfdc135546",
+      "seed_inline_yield_block_param_type_map": "98a0ccac41227b7c6815776a70dd4c56e4b3bfefa16561788bf364c4c52421ee",
+      "parent_name_for_hierarchy_lookup": "220b07b4a7edbc4cf7fca81330a9d2b61c899598d7166c87862009cb74885660"
+    },
+    "review_records": [
+      {
+        "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/source_adversary_al.json",
+        "sha256": "a0b1539c19925378cbda184308d052d63dd703ec821dbca7699165932673663c"
+      },
+      {
+        "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/hash_tuple_source_adversary_am.json",
+        "sha256": "2e1f79f160384ebd7a3a47146495586aab638cbdb57e7a046ea6d190fbc3b569"
+      },
+      {
+        "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/struct_prescan_source_adversary_am.json",
+        "sha256": "82dd4cf6d1cf3bcf2e16768f9f75d1332eb711a26f1a26d106b8ea380c605318"
+      },
+      {
+        "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/parent_fallback_source_adversary_an.json",
+        "sha256": "ad734a6eede9a9149ea5d3f42352e98645032d4f7803915398b9e3f072da1539"
+      }
+    ],
+    "findings": [
+      "Valid zero-extended inline IDs are returned before pointer dereference; pointer path excludes addresses below4096.",
+      "Only one Tuple hint is expanded for multiple plain required params; all other shapes use the old binder.",
+      "Slot access uses existing mixed-storage helpers; Proc binding is unchanged.",
+      "Saved arena and type/local maps are restored even if setup raises.",
+      "Collect all applicable parent/child annotations rather than stopping at a nearer owner.",
+      "Keep block/arity/forall/owner-namespace and all-return agreement checks.",
+      "Use each source def arena; dedupe owner plus DefNode identity.",
+      "initialize remains exact-owner; new is handled by the constructor caller.",
+      "The established hierarchy helper reads ClassInfo.parent_name or HIR::Module.class_parents.",
+      "The fallback registry records direct class-parent edges; it does not introduce include/module traversal.",
+      "Generic-owner exclusions precede traversal; visited owners bound cycles.",
+      "initialize stopping, all-ancestor collection, source arena provenance, arity/block guards and declaring-owner annotation normalization remain intact."
+    ],
+    "residual_risks": [
+      "AL exact-demand residual queue-risk is unchanged; missing bodies still decline before CFG.",
+      "Dedup assumes one authoritative arena for a Def node and owner; conflicting same-node/same-owner registration was not observed.",
+      "The underlying cause of missing ClassInfo at this consumption point remains unresolved."
+    ],
+    "limits": [
+      "Source-only review; does not certify full Crystal compatibility, arbitrary corrupted carriers, or unsupported generic/metaclass shapes."
+    ],
+    "decay_trigger": "Relevant source, parent registry, registration ordering, or fixture change."
+  },
+  "packet_composition_review": {
+    "created_at_utc": "2026-10-13T18:12:19.635088+00:00",
+    "reviewer": "GPT 6 Luna Max /root/regression_audit",
+    "verdict": "ROBUST",
+    "scope": "The audited packet-helper provenance delta; read-only metadata review, no binary reruns or runtime certification.",
+    "source_manifest_sha256": "8994a713ac889fccbadfdc0c44fae3583ec760f281a1ceae3bc4d9c634d55a1c",
+    "helper_sha256": "3d37a63682691a98e305984e6ce8dee4e587eca5e49b078c6387e1ad7dcc6a30",
+    "raw_report": "ROBUST for the audited packet-helper delta. The full, focused, and missing-contract manifests match their pinned counts and SHA-256 digests (164/15/1). The AST invocation is pinned to the exact safe host command and source/spec paths, and the four original-oracle rows now bind fixture names, hashes, expected exits, copies, receipts, and compiler. I found no remaining material gap within those checks. This was a read-only metadata review; I did not rerun tests or certify the pending S3 full-suite execution. The packet builder still requires that receipt before it can emit the claim.",
+    "parent_followup": "After the review, the root added only indexing of this review and helper/source digest guards; the audited runtime and provenance checks were unchanged.",
+    "independence": "Correlated same-lineage review; agreement is not independent evidence."
+  },
+  "trust": {
+    "F": {
+      "scope": "Executed commands, fixture assertions, source and binary digests; no formal compiler proof."
+    },
+    "G": {
+      "scope": "Selected suite and explicit rejection shapes; broader Crystal compatibility is unknown."
+    },
+    "R": {
+      "scope": "Fresh local S1/S2/S3 measurements under run_safe.sh; no numeric score assigned."
+    }
+  },
+  "environment": {
+    "host": "macOS arm64",
+    "sdk": "MacOSX27.0.sdk",
+    "bootstrap_memory_limit_mib": 12288,
+    "compiler": "/opt/homebrew/bin/crystal",
+    "compiler_sha256": "40cffa1b29b572c064b4a397c6b82c7a84c55a146685d0971dab816f855eb836"
+  },
+  "scope_exclusions": [
+    "No S4 or fixed-point claim",
+    "No full Crystal compatibility claim",
+    "No raw-pointer struct storage or collector/finalizer capability closure",
+    "No general block-splat or multiple-yield typeof inference closure"
+  ],
+  "decay": {
+    "trigger": "Any relevant source/runtime, target registry, guard, environment, or fixture change.",
+    "refresh": "Rebuild the immutable ordinary chain and rerun the affected declared gates.",
+    "failure_policy": "Reopen dependent claims if a digest differs or referenced evidence is unavailable."
+  },
+  "evidence": [
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/source_hashes_s1_an.json",
+      "sha256": "8994a713ac889fccbadfdc0c44fae3583ec760f281a1ceae3bc4d9c634d55a1c",
+      "purpose": "All compiler and bundled source file digests"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/source_runtime_s1_an.json",
+      "sha256": "4fa3ee9b09ea00079af693d7589504b17855ee0fa5d323380e152b07b4cd76e3",
+      "purpose": "Runtime C/object digests"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s1_an.receipt.json",
+      "sha256": "99b11a6e5bbde58be419e7ec51cd21d69b2990637ce79334dc1edeb12669ef5e",
+      "purpose": "Executed S1 build"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s2_an.receipt.json",
+      "sha256": "7110c1b1e54270d073fbb8c02c06728c51161b38b156776fb49d6570341405bc",
+      "purpose": "Executed S2 build"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s3_an.receipt.json",
+      "sha256": "e6a210c5948dba8a975e4ff7ce6a032241ccccfb440388e9ca9dc97ce977cf78",
+      "purpose": "Executed S3 build"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s1_an_full/verified_receipt.json",
+      "sha256": "77a10e52f66843b54b78b90c568e89abbf83bcd31ba7f28d8be87b9132b531eb",
+      "purpose": "S1 full supervised suite"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s1_an_full/invocation.json",
+      "sha256": "4c84af4fcd15e69c7a56ae19c772ef0e70e6035e9eed4af288645d304864f58f",
+      "purpose": "Executed S1 full suite command"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/regression_manifest_rescue_full.txt",
+      "sha256": "557e4b77415d1a3caf8e762e87bd24cd875e3e873c87d08e2af9f7dd76344427",
+      "purpose": "Declared full script selection"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s1_an_full/script_hashes.json",
+      "sha256": "ef8129aa873d8867cd8b1751bc21a0b295b62c0104e72a0d60426335eaff4c7f",
+      "purpose": "Exact tested S1 full script body digests"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s1_an_full/manifest.txt",
+      "sha256": "557e4b77415d1a3caf8e762e87bd24cd875e3e873c87d08e2af9f7dd76344427",
+      "purpose": "Exact S1 full script selection"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s1_an_full/results.json",
+      "sha256": "f0e944342e2cd3221dd80bf332f2723558ab5d7571e3490423ae5ada48f6cb00",
+      "purpose": "Executed S1 full script outcomes"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s2_an_focused/verified_receipt.json",
+      "sha256": "a4299440248d757caf8f3817bd031cc7329a85f34faf4a90026b4e0d0182d5a9",
+      "purpose": "S2 focused supervised suite"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s2_an_focused/invocation.json",
+      "sha256": "4775b9edc634b2dca9cf0f0c9c2ce5f1a750c35dd55f866cf6f2d8172d9d725c",
+      "purpose": "Executed S2 focused suite command"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/regression_manifest_rescue_generics.txt",
+      "sha256": "9bf7485896368a3b624aa107126d171b2ae85338c245ce7ce478944e6b239b71",
+      "purpose": "Declared focused script selection"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s2_an_focused/script_hashes.json",
+      "sha256": "25f7bab98b721e0fe3386e9d7420d01460ae6ffc2a2d3cf69c8e30302eb7019d",
+      "purpose": "Exact tested S2 focused script body digests"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s2_an_focused/manifest.txt",
+      "sha256": "9bf7485896368a3b624aa107126d171b2ae85338c245ce7ce478944e6b239b71",
+      "purpose": "Exact S2 focused script selection"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s2_an_focused/results.json",
+      "sha256": "fe122f0ff1b62d8f66a321d1ef49951d9dbe96b69ee3712dd23b0cbda5f5b63d",
+      "purpose": "Executed S2 focused script outcomes"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s3_an_full/verified_receipt.json",
+      "sha256": "2a360e7fb2de01da13aecbb14c8b5dc761a3253a682c367cb7cc1b00eab857e6",
+      "purpose": "S3 full supervised suite"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s3_an_full/invocation.json",
+      "sha256": "816b54c3be0bbad6f0dd1c743ab7265b79cc48d11a6b1311fefa4274d8c47cf0",
+      "purpose": "Executed S3 full suite command"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s3_an_full/script_hashes.json",
+      "sha256": "ef8129aa873d8867cd8b1751bc21a0b295b62c0104e72a0d60426335eaff4c7f",
+      "purpose": "Exact tested S3 full script body digests"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s3_an_full/manifest.txt",
+      "sha256": "557e4b77415d1a3caf8e762e87bd24cd875e3e873c87d08e2af9f7dd76344427",
+      "purpose": "Exact S3 full script selection"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s3_an_full/results.json",
+      "sha256": "1d2d3db60807fcbb4749a7bc426d3d8d048b7ddc2312a9d23d89795fa1731ee8",
+      "purpose": "Executed S3 full script outcomes"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s3_an_missing_contract/verified_receipt.json",
+      "sha256": "cd11a1924397dac17f420d10ea0e3384252322701076a09c0b06eb5bafa20671",
+      "purpose": "S3 missing_contract supervised suite"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s3_an_missing_contract/invocation.json",
+      "sha256": "3f7ff38103dba52154c9452adfa31ac48b9e9fd19da18a253df0187b49eeb762",
+      "purpose": "Executed S3 missing_contract suite command"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/regression_manifest_al_missing_contract.txt",
+      "sha256": "b1f4aa4c000a3285fe05b42f15ae8ee254ec0fa1679fe11d316947decb915924",
+      "purpose": "Declared missing_contract script selection"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s3_an_missing_contract/script_hashes.json",
+      "sha256": "b44cfca6cb7ab6b0508d13cb0dcdff56f60c57694bc50d5324e7025414430bb0",
+      "purpose": "Exact tested S3 missing_contract script body digests"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s3_an_missing_contract/manifest.txt",
+      "sha256": "b1f4aa4c000a3285fe05b42f15ae8ee254ec0fa1679fe11d316947decb915924",
+      "purpose": "Exact S3 missing_contract script selection"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s3_an_missing_contract/results.json",
+      "sha256": "c54c738fa4d89656b7ec364ad7554bcb8c6255775046fe49f54e2f022ee3f0aa",
+      "purpose": "Executed S3 missing_contract script outcomes"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s2_an_smokes/results.json",
+      "sha256": "06db53da63d3a061d9f2c307b00ca5f7f1caf8fd6b54c929b8dadc2397cb0413",
+      "purpose": "S2 exact-output runtime smokes"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s3_an_smokes/results.json",
+      "sha256": "79feafdfcd7266f1d26fe8ca4a3c1fd60efe2a932b384ab1b19d1f9a8f829f93",
+      "purpose": "S3 exact-output runtime smokes"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s3_an_enum/results.json",
+      "sha256": "509ce77e336d0ccad8fffe57c0cba42ade9a5687c18ccdd4c79af657b60680ce",
+      "purpose": "Original-valid enum and Regex runtime checks"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/concrete_module_rejection_s1_an/receipt.json",
+      "sha256": "9b79312ef9a89c11475274656679b65f46281885c57762e360a4be1582b11097",
+      "purpose": "S1 strict rejection guard"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/concrete_module_rejection_s1_an/repro.cr",
+      "sha256": "ce8647a9d840f39b2a6c050b50ae28ab5796e9accb1e4c6f8be24da813e8f599",
+      "purpose": "Exact S1 concrete_module_rejection rejection fixture"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/concrete_module_rejection_s1_an/compile.log",
+      "sha256": "c6e72863a887c62c1e717aa7605086812d0600274567e515cb6cdd59fac5b02c",
+      "purpose": "Observed S1 concrete_module_rejection diagnostic"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/concrete_module_rejection_s1_an/compile.resources",
+      "sha256": "a9fa16f4d46949a79d3d6be505fed5283e292cefe4ade98a1d5a4fba99b22609",
+      "purpose": "Supervised S1 concrete_module_rejection rejection"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/virtual_late_s1_an/receipt.json",
+      "sha256": "4de1a22651c629782f0b9898ccc26aafaabccc6bf9a7990fdff626a857f23475",
+      "purpose": "S1 strict rejection guard"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/virtual_late_s1_an/repro.cr",
+      "sha256": "bed135032c21c51cf40a2249612b257dabd31f6833434a70ae9df517876bf583",
+      "purpose": "Exact S1 virtual_late rejection fixture"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/virtual_late_s1_an/compile.log",
+      "sha256": "b0e564c4e4a110b35485c88cc85dadc0ad609e1d3debea3a2ea08f1a1568a6f9",
+      "purpose": "Observed S1 virtual_late diagnostic"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/virtual_late_s1_an/compile.resources",
+      "sha256": "a9fa16f4d46949a79d3d6be505fed5283e292cefe4ade98a1d5a4fba99b22609",
+      "purpose": "Supervised S1 virtual_late rejection"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/concrete_module_rejection_s2_an/receipt.json",
+      "sha256": "d16c51d284b1965d55501e2f68856794db447f254a21e12699a79f780535f9ec",
+      "purpose": "S2 strict rejection guard"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/concrete_module_rejection_s2_an/repro.cr",
+      "sha256": "ce8647a9d840f39b2a6c050b50ae28ab5796e9accb1e4c6f8be24da813e8f599",
+      "purpose": "Exact S2 concrete_module_rejection rejection fixture"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/concrete_module_rejection_s2_an/compile.log",
+      "sha256": "c6e72863a887c62c1e717aa7605086812d0600274567e515cb6cdd59fac5b02c",
+      "purpose": "Observed S2 concrete_module_rejection diagnostic"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/concrete_module_rejection_s2_an/compile.resources",
+      "sha256": "a9fa16f4d46949a79d3d6be505fed5283e292cefe4ade98a1d5a4fba99b22609",
+      "purpose": "Supervised S2 concrete_module_rejection rejection"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/virtual_late_s2_an/receipt.json",
+      "sha256": "a625845271dc451a21793c6f8b3db6ffbc8e8b3117d98af748b79c432b201a29",
+      "purpose": "S2 strict rejection guard"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/virtual_late_s2_an/repro.cr",
+      "sha256": "bed135032c21c51cf40a2249612b257dabd31f6833434a70ae9df517876bf583",
+      "purpose": "Exact S2 virtual_late rejection fixture"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/virtual_late_s2_an/compile.log",
+      "sha256": "b0e564c4e4a110b35485c88cc85dadc0ad609e1d3debea3a2ea08f1a1568a6f9",
+      "purpose": "Observed S2 virtual_late diagnostic"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/virtual_late_s2_an/compile.resources",
+      "sha256": "a9fa16f4d46949a79d3d6be505fed5283e292cefe4ade98a1d5a4fba99b22609",
+      "purpose": "Supervised S2 virtual_late rejection"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/concrete_module_rejection_s3_an/receipt.json",
+      "sha256": "6b7057b9990cc9f44177c7f9ad0a60e4ca36816d20626c341fefc391e2b0471a",
+      "purpose": "S3 strict rejection guard"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/concrete_module_rejection_s3_an/repro.cr",
+      "sha256": "ce8647a9d840f39b2a6c050b50ae28ab5796e9accb1e4c6f8be24da813e8f599",
+      "purpose": "Exact S3 concrete_module_rejection rejection fixture"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/concrete_module_rejection_s3_an/compile.log",
+      "sha256": "914896fabec9c6e5324f73f7d01f1dd487bcc986b7ace8ce4ce000143f7b42ee",
+      "purpose": "Observed S3 concrete_module_rejection diagnostic"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/concrete_module_rejection_s3_an/compile.resources",
+      "sha256": "f2282d6208c96df186f7c125b5769a4af567db7f6c439802af6226e6641b0cf9",
+      "purpose": "Supervised S3 concrete_module_rejection rejection"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/virtual_late_s3_an/receipt.json",
+      "sha256": "8f0a6066724c6367f3285305aaae6cf99b8b5b11402e2459b291feca5f77f193",
+      "purpose": "S3 strict rejection guard"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/virtual_late_s3_an/repro.cr",
+      "sha256": "bed135032c21c51cf40a2249612b257dabd31f6833434a70ae9df517876bf583",
+      "purpose": "Exact S3 virtual_late rejection fixture"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/virtual_late_s3_an/compile.log",
+      "sha256": "fa448b966007a3e4582e6901919bd87fb462d2ae12fa6c8aa8c19b2dff2d09c2",
+      "purpose": "Observed S3 virtual_late diagnostic"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/virtual_late_s3_an/compile.resources",
+      "sha256": "f2282d6208c96df186f7c125b5769a4af567db7f6c439802af6226e6641b0cf9",
+      "purpose": "Supervised S3 virtual_late rejection"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/an_ast_specs.log",
+      "sha256": "ed15465652713cb486d89588d3a7f880cc380f4479bdf16d8436c3e94db4089b",
+      "purpose": "Frozen eleven-example HIR/AST suite"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/an_ast_specs.invocation.json",
+      "sha256": "b3467ba8275bdc90203ffdd3a67a54add1a2da94114a113a98b0007911d398c5",
+      "purpose": "Executed HIR/AST command and source binding"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/an_ast_specs.spec_hashes.json",
+      "sha256": "bce1d5b5690c3ed7638dfe7299771c4725248db3b78dc536d3d47010212fba8c",
+      "purpose": "Frozen spec file digests"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/an_ast_specs.resources",
+      "sha256": "26e6f97513421b82a5794c33c8249326a2e3e8f612fb87bb0bf495dde49e9f05",
+      "purpose": "Supervised HIR/AST suite resource receipt"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/source_adversary_an.json",
+      "sha256": "9307e218cec9cf107c032b4b2ee37db853349876a4f026cec57b153409e5edbc",
+      "purpose": "Scoped source adversary review"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/source_adversary_al.json",
+      "sha256": "a0b1539c19925378cbda184308d052d63dd703ec821dbca7699165932673663c",
+      "purpose": "Referenced scoped source review"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/hash_tuple_source_adversary_am.json",
+      "sha256": "2e1f79f160384ebd7a3a47146495586aab638cbdb57e7a046ea6d190fbc3b569",
+      "purpose": "Referenced scoped source review"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/struct_prescan_source_adversary_am.json",
+      "sha256": "82dd4cf6d1cf3bcf2e16768f9f75d1332eb711a26f1a26d106b8ea380c605318",
+      "purpose": "Referenced scoped source review"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/parent_fallback_source_adversary_an.json",
+      "sha256": "ad734a6eede9a9149ea5d3f42352e98645032d4f7803915398b9e3f072da1539",
+      "purpose": "Referenced scoped source review"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/packet_adversary_an.json",
+      "sha256": "cecf7eb056c41908bd5bb4ae3b03c0310f749a6b1cc40d3f6d1abf72ce372726",
+      "purpose": "Scoped packet-helper provenance adversary review"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/bootstrap_rescue_an_causal_capsule.json",
+      "sha256": "4f844b0ff320fc3accc2b9f431689d5d05ada4981e5b62d4e127de484e72bc1b",
+      "purpose": "Measured failure causes, rejected routes and bounded fixes"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/hash_sum_binding_probe/receipts/destructured_typeof_trace.log",
+      "sha256": "5b3bb8697714ffafe8107f23a8c2c8897452ff207b26ad5a0a17c4aa7f4e565e",
+      "purpose": "Measured wrong Tuple local binding in typeof-yield inference"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/hash_sum_min_s1al/receipt.json",
+      "sha256": "183321fa6092f7f6ecda4e6bc340188041e80cc790b646cbfdd86e22997ae571",
+      "purpose": "Before-fix S1 Hash identity-return abort"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/hash_sum_min_s2al/receipt.json",
+      "sha256": "a1eb3f2da996aa65d5729cd487f508070aa7042280352a4b29b3823a39a59a6f",
+      "purpose": "Before-fix S2 Hash identity-return abort"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/hash_sum_tuple_original_single/receipt.json",
+      "sha256": "9e7eefc0f2d0cd95f8b84959396f425fa07d1ff932e26642a26f9edd07c644b7",
+      "purpose": "Original-valid Int32 single-param control"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/hash_sum_tuple_original_destructured/receipt.json",
+      "sha256": "cefa132599c966df25b0c85f170ea9f4529bd3ba7c2a48b56b5f5bb1e57d978d",
+      "purpose": "Original-valid Int32 destructured identity block"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/am_new_fixture_original_oracles.json",
+      "sha256": "3474f73b9f6e14c953469fddabcb401adaf0f3f5f6012d6e585fbd99f7b4e90b",
+      "purpose": "Exact new UInt16 and renamed inherited fixtures on original Crystal"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/am_before_inherited_s2al/receipt.json",
+      "sha256": "a37c583296827da90d31d7210e1904eca0b1936374e63f8b402e44d88247ae98",
+      "purpose": "Exact inherited fixture before fix: compile0/run40"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/am_before_child_different_arity_s2al/receipt.json",
+      "sha256": "c25ab067735bac48e33928128ce76700b041ace596f92f965a259ce11daf3afb",
+      "purpose": "Exact arity fixture before fix: compile0/run40"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s1_am_struct_script_corrected/verified_receipt.json",
+      "sha256": "15bd9d9cbed09159f3a5d990039303cf99a5ff2b9e0ecb0af39b2d23a4bf009c",
+      "purpose": "Corrected harness sees two inherited runtime7 controls on S1AM"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s1_am_new_fixes/results.json",
+      "sha256": "6cd35c3be6f3abb246ff09c57dc5c043214b7dc12a0a3645175bc3d718768189",
+      "purpose": "Hash and prior struct script results; new script initially rejected valid runtime7 due an invalid log-line anchor"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s1_am_new_fixes/invalid_script_check.json",
+      "sha256": "fbe5fe09887ef11d9407e353ccab509157e95c36bb652f67d4f5a26245a242af",
+      "purpose": "Record why the first new-script failure is invalid"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/hash_sum_tuple_destructure_guards/evidence_capsule.json",
+      "sha256": "f47a36add951a5010c61409485f65de941d495ad30373b9ff56fa60b04c13cac",
+      "purpose": "General block-splat/multiple-yield typeof remain separately red"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s2_am_focused/failure_receipt.json",
+      "sha256": "50a28dca59808fc00f7da829c800e04f9c238d745c8ec7b1c8cb958a03efe73a",
+      "purpose": "Fresh S2 AM falsifier: both inherited scripts fail, Hash passes"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/am_ivar_trace_s1/receipt.json",
+      "sha256": "22772b06a622d6a8b2e0f0f1e30580b59eefe6d9af528da7f3e51c635a224fdf",
+      "purpose": "Exact S1 AM inherited runtime7 and type trace"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/am_ivar_trace_s2/receipt.json",
+      "sha256": "64ce0350b4df92e814fa1da6704c71498e6f168b7813809d17a300c3ca2a5cc7",
+      "purpose": "Exact S2 AM inherited runtime40 and Void guesses"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/am_class_info_s2/receipt.json",
+      "sha256": "e8b4c28616dab525affd3d5992f12bf54c0fee2f67181b83bb864ff110192e5f",
+      "purpose": "S2 resolves Derived parentBase but Inner stays undersized"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/am_ivar_guess_trace_s2/receipt.json",
+      "sha256": "2ae356794311845cd9458f21ba1f0cfdc3510f7b7d29904ca7f2a194fb0c86ed",
+      "purpose": "Exact logging-only S2AM fixture: missing ClassInfo, zero candidates, runtime40"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/am_ivar_guess_trace_s2/build.log",
+      "sha256": "4b3e29d703b3220138dc72062a073b44f56848de27ff821803e32f304057fb52",
+      "purpose": "Measured parent lookup and Void-guess trace"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s2_am_ivar_trace.receipt.json",
+      "sha256": "bc5517aabdb38a0f48f1b2f08cdf67986c31217b504295ceebafb2f21a08f3e9",
+      "purpose": "Logging-only scratch compiler build receipt"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/struct_ivar_am_loop_probe/evidence_capsule.json",
+      "sha256": "aae0a519c20bb4fe5dbf0325546f14f79d81315f54fd60e3abd929de76057866",
+      "purpose": "Bounded loop, capture and tuple controls with recorded invalid first harness"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s2_an_struct_gate/verified_receipt.json",
+      "sha256": "977dfb6133b758f0336d40b6344a81a138fd4d9e2d2070063f498544d7092ff9",
+      "purpose": "Both inherited-layout scripts pass S2AN"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/s3_an_new_fixes/verified_receipt.json",
+      "sha256": "357beb7fb66242769aa617a341453a509a2878837ff92c3ac11615d3e73a1f0b",
+      "purpose": "Hash and both inherited-layout S3AN scripts pass"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/an_new_fixture_original_oracles.json",
+      "sha256": "3474f73b9f6e14c953469fddabcb401adaf0f3f5f6012d6e585fbd99f7b4e90b",
+      "purpose": "Exact new regression fixtures on original Crystal"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/am_original_destructured_tuple_u16/receipt.json",
+      "sha256": "a96a42dafc4e26fae819a3254a54289ad8f4c7eb136776e5e2f48c45bce74e66",
+      "purpose": "Executed original-Crystal fixture oracle"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/final_new_fixtures/destructured_tuple_u16.cr",
+      "sha256": "d6ec5436ec51887522329ef556c40360993e52913b63cf26937f16ebb3863e10",
+      "purpose": "Exact original-oracle input fixture"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/am_original_destructured_tuple_u16/repro.cr",
+      "sha256": "d6ec5436ec51887522329ef556c40360993e52913b63cf26937f16ebb3863e10",
+      "purpose": "Executed original-oracle source copy"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/am_original_single_tuple_u16/receipt.json",
+      "sha256": "0a091747b003cbf9855bf0dcde3602943bc006cf2a8ee9420e833d1522d2ccf8",
+      "purpose": "Executed original-Crystal fixture oracle"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/final_new_fixtures/single_tuple_u16.cr",
+      "sha256": "2fd45966832c57476e2f275fd2ff6e8124c1069c48c4284f06003533fcf5912e",
+      "purpose": "Exact original-oracle input fixture"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/am_original_single_tuple_u16/repro.cr",
+      "sha256": "2fd45966832c57476e2f275fd2ff6e8124c1069c48c4284f06003533fcf5912e",
+      "purpose": "Executed original-oracle source copy"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/am_original_inherited/receipt.json",
+      "sha256": "3da5e27e42c5a145d7b95634bd53e59017df5de1358de961a7174d10ab246aac",
+      "purpose": "Executed original-Crystal fixture oracle"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/final_new_fixtures/inherited.cr",
+      "sha256": "a7232b3b5d8b8f61323756ec7280e590d7a1b7beb8de4576195bbb635495316f",
+      "purpose": "Exact original-oracle input fixture"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/am_original_inherited/repro.cr",
+      "sha256": "a7232b3b5d8b8f61323756ec7280e590d7a1b7beb8de4576195bbb635495316f",
+      "purpose": "Executed original-oracle source copy"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/am_original_child_different_arity/receipt.json",
+      "sha256": "254d31babcd505e037df1dd8afdade279ea66b1b0a1c1a0f2c92a5897277c7b0",
+      "purpose": "Executed original-Crystal fixture oracle"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/final_new_fixtures/child_different_arity.cr",
+      "sha256": "d8a66e45d54115ae216005659e7909ed1ea1dab0ca8443b5fc1ac7017891ab7a",
+      "purpose": "Exact original-oracle input fixture"
+    },
+    {
+      "path": "/Users/sergey/Projects/Adamas/sol_help_20261012/am_original_child_different_arity/repro.cr",
+      "sha256": "d8a66e45d54115ae216005659e7909ed1ea1dab0ca8443b5fc1ac7017891ab7a",
+      "purpose": "Executed original-oracle source copy"
+    }
+  ],
+  "structural_validation_scope": "JSON parsing and referenced artifact digest checks only; Adamas has no graph validator."
+}

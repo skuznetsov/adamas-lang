@@ -121,7 +121,7 @@ module Adamas
         MAGIC   = "CV2A"
         # Bump this version whenever the parser, AST format, or cache header changes
         # to invalidate all cached ASTs
-        VERSION = 4_u32
+        VERSION = 5_u32
 
         getter arena : Frontend::AstArena
         getter roots : Array(Frontend::ExprId)
@@ -427,6 +427,7 @@ module Adamas
               p.type_annotation.try { |t| yield String.new(t) }
             end
             def_node.receiver.try { |r| yield String.new(r) }
+            def_node.forall_type_params.each { |name| yield String.new(name) }
           when Frontend::NodeKind::Module
             mod_node = node.as(Frontend::ModuleNode)
             yield String.new(mod_node.name)
@@ -908,6 +909,7 @@ module Adamas
             write_optional_visibility(io, def_node.visibility)
             io.write_byte(def_node.is_abstract ? 1_u8 : 0_u8)
             write_optional_string_ref(io, def_node.receiver.try { |r| String.new(r) }, string_table)
+            write_optional_string_array(io, def_node.forall_type_params.map { |name| String.new(name) }, string_table)
 
           when Frontend::NodeKind::Module
             mod_node = node.as(Frontend::ModuleNode)
@@ -1780,7 +1782,8 @@ module Adamas
             visibility = read_optional_visibility(io)
             is_abstract = io.read_byte.not_nil! == 1_u8
             receiver = read_optional_string(io, strings, pool)
-            Frontend::DefNode.new(span, name, params, return_type, body, is_abstract, visibility, receiver)
+            forall_type_params = read_optional_string_array(io, strings, pool).not_nil!
+            Frontend::DefNode.new(span, name, params, return_type, body, is_abstract, visibility, receiver, forall_type_params)
 
           when .class_node?
             span = read_span(io)

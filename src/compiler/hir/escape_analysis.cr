@@ -330,6 +330,45 @@ module Adamas::HIR
       when UnionUnwrap
         # If unwrapped value escapes, the source union must too
         mark_escape(value.union_value, lifetime)
+      when Call
+        # The callee may return its receiver or an argument unchanged
+        # (`def wrap(x); x; end`). No callee summary is applied here, so an
+        # escaping result makes each operand OF THE RESULT'S OWN TYPE escape
+        # with it; otherwise an inline tuple/NamedTuple literal passed through
+        # such a call stays a stack slot and is returned dangling. Operands of
+        # another type (e.g. a lib struct copied into `Info.new(stat)`) cannot
+        # be the returned value, and a scalar result aliases nothing.
+        if lifetime.escapes_more_than?(LifetimeTag::StackLocal) && !scalar_type?(value.type)
+          result_type = value.type
+          if recv = value.receiver
+            mark_escape(recv, lifetime) if operand_type_equals?(recv, result_type)
+          end
+          value.args.each do |arg|
+            mark_escape(arg, lifetime) if operand_type_equals?(arg, result_type)
+          end
+        end
+      end
+    end
+
+    private def operand_type_equals?(value_id : ValueId, type : TypeRef) : Bool
+      if definition = @definitions[value_id]?
+        return definition.type == type
+      end
+      if param_index = @param_index_by_id[value_id]?
+        return @function.params[param_index].type == type
+      end
+      false
+    end
+
+    private def scalar_type?(type : TypeRef) : Bool
+      case type
+      when TypeRef::VOID, TypeRef::NIL, TypeRef::BOOL,
+           TypeRef::INT8, TypeRef::INT16, TypeRef::INT32, TypeRef::INT64, TypeRef::INT128,
+           TypeRef::UINT8, TypeRef::UINT16, TypeRef::UINT32, TypeRef::UINT64, TypeRef::UINT128,
+           TypeRef::FLOAT32, TypeRef::FLOAT64, TypeRef::CHAR, TypeRef::SYMBOL
+        true
+      else
+        false
       end
     end
 

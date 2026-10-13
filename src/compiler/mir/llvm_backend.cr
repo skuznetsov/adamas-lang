@@ -2597,6 +2597,9 @@ module Adamas::MIR
     @ptr_passthrough : Hash(ValueId, String) = {} of ValueId => String
     @addressable_allocas : Hash(ValueId, String) = {} of ValueId => String  # operand_id -> alloca SSA name
     @addressable_alloca_initialized : ::Set(ValueId) = ::Set(ValueId).new  # Track which addressable allocas have been stored to
+    # Heap/slab Allocs of inline value aggregates whose address is taken.
+    # The Alloc SSA value already IS the data pointer, so pointerof returns it.
+    @addressof_direct_allocs : ::Set(ValueId) = ::Set(ValueId).new
     @pending_allocas : Array({String, String, Int32}) = [] of {String, String, Int32}  # name, type, align
     @string_counter : Int32 = 0
     @cond_counter : Int32 = 0  # For unique branch condition variable names
@@ -3079,6 +3082,31 @@ module Adamas::MIR
       @function_block_output = IO::Memory.new
       @debug_emit_anchors = bootstrap_env_enabled?("ADAMAS_DEBUG_EMIT", "ADAMAS_DEBUG_EMIT")
       @dwarf_debug = DwarfDebugContext.new(@module, @type_mapper)
+      @strict_resolve_mode = case ENV["ADAMAS_STRICT_RESOLVE"]?
+                              when "2" then 2
+                              when "1" then 1
+                              else          0
+                              end
+      @strict_stub_count = 0
+      @strict_stub_names = ::Set(String).new
+    end
+
+    # ───────────────────────────────────────────────────────────────────────
+    # Strict codegen diagnostics (ADAMAS_STRICT_RESOLVE) — counts "ABORT stub
+    # for unlowered method" emissions (the true dead-code `STUB CALLED:` path
+    # in emit_dead_code_stub). Zero cost when ADAMAS_STRICT_RESOLVE is unset.
+    # ───────────────────────────────────────────────────────────────────────
+
+    private def strict_stub_note(name : String) : Nil
+      return if @strict_resolve_mode == 0
+      @strict_stub_count += 1
+      @strict_stub_names << name if @strict_stub_names.size < 200
+    end
+
+    private def print_strict_stub_summary : Nil
+      return if @strict_resolve_mode == 0
+      STDERR.puts "[STRICT] stubs=#{@strict_stub_count}"
+      @strict_stub_names.each { |name| STDERR.puts "[STRICT] #{name}" }
     end
 
     @[AlwaysInline]
@@ -3351,7 +3379,9 @@ module Adamas::MIR
       return 4 if llvm_type == "i32" || llvm_type == "float"
       return 8 if llvm_type == "i64" || llvm_type == "double" || llvm_type == "ptr"
       return 16 if llvm_type == "i128"
-      return 16 if llvm_type.includes?(".union")
+      if llvm_type.includes?(".union")
+        return emitted_union_byte_width(llvm_type) || 16
+      end
 
       # Opaque aggregate values that reach this late Array#<< fallback are rare;
       # pointer stride is the least-corrupt choice for V2's heap-object ABI.
@@ -3873,7 +3903,7 @@ module Adamas::MIR
       STDERR.puts "  [LLVM] finalizing output..." if @progress
       log_generated_stage_llvm_generate_phase("finalize_enter", output_mode)
       bootstrap_trace_puts "[LLVM_TAIL_GEN] phase=finalize_enter out=#{@output.pos}" if tail_stats
-      if generated_in_memory
+      result = if generated_in_memory
         log_generated_stage_llvm_generate_phase("finalize_to_s_enter", output_mode)
         log_generated_stage_memory_phase(
           "llvm.finalize_to_s_enter",
@@ -4016,6 +4046,8 @@ module Adamas::MIR
         log_generated_stage_llvm_generate_phase("finalize_external_done", output_mode)
         ""
       end
+      print_strict_stub_summary
+      result
     end
 
     # Pre-compute return types for all functions.
@@ -4188,7 +4220,7 @@ module Adamas::MIR
         "perror", "dprintf", "fwrite", "fflush", "fclose", "fopen", "fileno", "fdopen",
         "strlen", "strcpy", "strcat", "sprintf", "strstr", "strchr", "strtod", "snprintf",
         "strcmp", "memcmp", "qsort", "strerror", "memset", "memcpy", "memmove", "strncmp",
-        "strtol", "strtoull", "setjmp", "longjmp",
+        "strtol", "strtoull", "setjmp", "longjmp", "gets", "fgets", "fputs",
         # file/syscalls
         "write", "open", "lseek", "read", "close", "getcwd", "realpath",
         "stat", "stat$INODE64", "lstat", "lstat$INODE64", "fstat", "fstat$INODE64",
@@ -4207,16 +4239,22 @@ module Adamas::MIR
         "mmap", "munmap", "mprotect", "kqueue", "kevent", "dlopen", "dlsym", "dlclose", "dlerror",
         "pthread_create", "pthread_join", "pthread_self", "pthread_sigmask",
         "pthread_attr_init", "pthread_attr_destroy", "pthread_attr_setstack", "pthread_attr_getstacksize",
+        "pthread_mutex_init", "pthread_mutex_destroy", "pthread_mutex_trylock",
+        "pthread_mutexattr_init", "pthread_mutexattr_settype", "pthread_mutexattr_destroy",
         "gethostname", "socket", "connect", "bind", "listen", "accept",
         "setsockopt", "getsockopt", "send", "recv", "shutdown",
         "getaddrinfo", "freeaddrinfo", "gai_strerror",
         # GC and platform hooks
-        "GC_init", "GC_malloc", "GC_malloc_atomic", "GC_realloc",
+        "GC_init", "GC_malloc", "GC_malloc_atomic", "GC_realloc", "GC_base",
         "GC_set_handle_fork", "GC_set_start_callback", "GC_set_warn_proc",
         "GC_get_push_other_roots", "GC_set_push_other_roots",
         "GC_push_all_eager", "GC_get_my_stackbottom",
         "_NSGetExecutablePath",
       ] of String
+      # Mirrors the host-flag-gated declaration in emit_runtime_declarations.
+      {% if flag?(:darwin) %}
+        names << "malloc_size"
+      {% end %}
       if @emit_regex_runtime
         names.concat([
           "pcre2_compile_8", "pcre2_match_8", "pcre2_match_data_create_from_pattern_8",
@@ -4293,6 +4331,7 @@ module Adamas::MIR
       already_declared << "__adamas_raise" << "__adamas_int_to_string"
       already_declared << "__adamas_string_concat" << "__adamas_string_interpolate" << "__adamas_f64_to_string"
       already_declared << "__adamas_char_to_string" << "__adamas_malloc64"
+      already_declared << "__adamas_gc_atomic_malloc"
       already_declared << "__adamas_init_buffer" << "__adamas_string_repeat"
       already_declared << "__adamas_string_index_string" << "__adamas_string_index_char"
       already_declared << "__adamas_string_gsub" << "__adamas_string_gsub_char" << "__adamas_string_byte_slice"
@@ -4302,6 +4341,7 @@ module Adamas::MIR
       already_declared << "__adamas_array_new_filled_i32" << "__adamas_array_new_filled_bool"
       already_declared << "__adamas_array_concat"
       already_declared << "__adamas_runtime_string_from_cstr" << "__adamas_runtime_program_name" << "__adamas_runtime_argv"
+      already_declared << "__adamas_type_name"
       already_declared << "__adamas_hash_new"
       already_declared << "__adamas_ptr_copy" << "__adamas_ptr_move"
       already_declared << "__adamas_sort_i32_array" << "__adamas_sort_string_array"
@@ -6057,14 +6097,14 @@ module Adamas::MIR
         if has_init
           return "; allocator stub for: #{name} (with init call)\n" \
                  "define ptr @#{name}(#{param_list}) {\n" \
-                 "  %mem = call ptr @calloc(i64 1, i64 #{alloc_size})\n" \
+                 "  %mem = call ptr @__adamas_malloc64(i64 #{alloc_size})\n" \
                  "  call void @#{init_name}(#{init_arg_list})\n" \
                  "  ret ptr %mem\n" \
                  "}\n"
         else
           return "; allocator stub for: #{name}\n" \
                  "define ptr @#{name}(#{param_list}) {\n" \
-                 "  %mem = call ptr @calloc(i64 1, i64 #{alloc_size})\n" \
+                 "  %mem = call ptr @__adamas_malloc64(i64 #{alloc_size})\n" \
                  "  ret ptr %mem\n" \
                  "}\n"
         end
@@ -6222,6 +6262,7 @@ module Adamas::MIR
         end
       else
         # Emit abort stub with method name printed to stderr
+        strict_stub_note(name)
         escaped_name = name.gsub("\\", "\\\\").gsub("\"", "\\\"")
         str_size = escaped_name.bytesize + 15  # "STUB CALLED: " (13) + \n (1) + \0 (1)
         str_hash_text = name.hash.to_s
@@ -6947,6 +6988,9 @@ module Adamas::MIR
         @global_declared_types[mangled_name] = llvm_type
         # Check for constant initial value override
         const_val = @constant_initial_values[mangled_name]?
+        if const_val && !::Adamas::Compiler::BootstrapEnv.get?("DEBUG_CONST_LIT_WRITE").nil?
+          STDERR.puts "[CONST_EMIT] #{mangled_name} = #{const_val} int=#{const_val.is_a?(Int64)} initial=#{initial} type=#{llvm_type}"
+        end
         # Avoid conflict with function names by prefixing with .global
         if function_names.includes?(mangled_name)
           actual_name = ".global.#{mangled_name}"
@@ -6959,16 +7003,15 @@ module Adamas::MIR
         elsif llvm_type == "ptr"
           emit_raw "@#{actual_name} = global #{llvm_type} null#{debug_attachment}\n"
         elsif llvm_type == "float" || llvm_type == "double"
+          # Hex IEEE spelling: exact for every value (inf/nan/-0.0 included)
+          # and independent of how the host compiler formats Float#to_s.
+          float_type = llvm_type == "float" ? TypeRef::FLOAT32 : TypeRef::FLOAT64
           if const_val && initial == 0_i64
             raw_f64 = const_val.is_a?(Float64) ? const_val : const_val.to_f64
-            # For float32 globals, round through f32 so the string is exactly
-            # representable — LLVM rejects decimals that don't round-trip exactly.
-            float_value = llvm_type == "float" ? raw_f64.to_f32.to_f64.to_s : raw_f64.to_s
+            float_value = llvm_float_literal(float_type, raw_f64)
           else
-            float_value = initial.to_f.to_s
+            float_value = llvm_float_literal(float_type, initial.to_f)
           end
-          float_value = "0.0" if float_value == "0"
-          float_value = "#{float_value}.0" if float_value.matches?(/^-?\d+$/)
           emit_raw "@#{actual_name} = global #{llvm_type} #{float_value}#{debug_attachment}\n"
         else
           if const_val && initial == 0_i64
@@ -6996,8 +7039,7 @@ module Adamas::MIR
         elsif llvm_type == "float" || llvm_type == "double"
           if const_val
             raw_f64 = const_val.is_a?(Float64) ? const_val : const_val.to_f64
-            float_value = llvm_type == "float" ? raw_f64.to_f32.to_f64.to_s : raw_f64.to_s
-            float_value = "#{float_value}.0" if float_value.matches?(/^-?\d+$/)
+            float_value = llvm_float_literal(llvm_type == "float" ? TypeRef::FLOAT32 : TypeRef::FLOAT64, raw_f64)
           else
             float_value = "0.0"
           end
@@ -7296,15 +7338,44 @@ module Adamas::MIR
 
     private def emit_union_type(type : Type, payload_size : UInt64? = nil)
       name = @type_mapper.mangle_name(type.name)
-      # Union = { i32 discriminator, [N x i32] data }
-      # Use i32 elements instead of i8 to prevent LLVM's ARM64 ABI lowering from
-      # decomposing the payload into individual byte arguments when passed by value.
-      # With [N x i8], a 24-byte union gets decomposed into 20 separate i8 register
-      # args, corrupting pointer values. With [N x i32], it stays as a few i32 args.
-      #
-      # Use variant sizes directly — the LLVM type { i32, [N x i32] } has no
-      # alignment padding between discriminator and payload, so we can't derive
-      # payload size from type.size which may include alignment padding.
+      # Union = { i32 discriminator, [N x iA] data }, matching original Crystal
+      # (codegen/unions.cr): the payload element is as wide as the union's
+      # alignment (at least a pointer word), so the payload starts at offset A
+      # and every pointer stored in it is naturally aligned. A 4-aligned payload
+      # hides pointers from a conservative GC and diverges from Crystal's
+      # sizeof/offset layout. Integer elements (not [N x i8]) keep ARM64
+      # by-value lowering from decomposing the payload into byte arguments.
+      payload_bytes = union_payload_byte_width_for(type, payload_size)
+      align = union_payload_alignment_for(type)
+      elem_count = payload_bytes // align
+      emit_raw "%#{name}.union = type { i32, [#{elem_count} x i#{align * 8}] }\n"
+      record_emitted_union_byte_width("#{name}.union", (align + payload_bytes).to_i32)
+    end
+
+    # Payload offset of a union whose LLVM type is unknown at the use site:
+    # the pointer word, which is the union alignment unless a variant needs 16.
+    private def union_payload_offset_default : Int32
+      pointer_word_bytes_u64.to_i32
+    end
+
+    # Alignment (and payload element width) of a tagged union: the widest
+    # variant alignment, at least a pointer word, as in Crystal's MixedUnionType.
+    private def union_payload_alignment_for(type : Type) : UInt64
+      align = pointer_word_bytes_u64
+      if variants = type.variants
+        variants.each do |v|
+          next if v.name == "Nil" || v.name == "Void"
+          a = v.alignment.to_u64
+          align = a if a > align && a <= 16_u64
+        end
+      end
+      align
+    end
+
+    # Payload byte width of a tagged union: widest variant (pointer-sized for
+    # heap-boxed structs), at least a pointer word, rounded up to the union
+    # alignment so the emitted array has no partial element.
+    private def union_payload_byte_width_for(type : Type, payload_size : UInt64? = nil) : UInt64
       payload_bytes = payload_size || type.variants.try(&.map(&.size).max) || 8_u64
       # V2 ABI: non-primitive structs are heap-allocated and stored as pointers
       # in union payloads. If any variant's LLVM type is "ptr" (8 bytes), ensure
@@ -7321,10 +7392,40 @@ module Adamas::MIR
       # Ensure minimum pointer-sized payload (8 bytes) so all store ptr
       # patterns are safe (union-to-union copies, phi wraps, etc.)
       payload_bytes = {payload_bytes, 8_u64}.max
-      # Round up to multiple of 4 bytes for i32 element array
-      payload_i32s = (payload_bytes + 3) // 4
-      emit_raw "%#{name}.union = type { i32, [#{payload_i32s} x i32] }\n"
-      record_emitted_union_byte_width("#{name}.union", (4 + payload_i32s * 4).to_i32)
+      align = union_payload_alignment_for(type)
+      ((payload_bytes + align - 1) // align) * align
+    end
+
+    # Internal managed allocations join Boehm only for modules whose full-prelude
+    # lowering requested the collector. Explicit native and no-GC paths stay libc.
+    private def managed_gc_enabled? : Bool
+      !@no_prelude && !@no_gc && @module.uses_gc
+    end
+
+    # Validate an ARC header before any pointer-minus-eight load. In collector
+    # mode, a GC allocation is header-bearing only when the user pointer is
+    # exactly eight bytes past the Boehm block base; headerless GC buffers must
+    # never be mistaken for ARC objects. Native allocations retain the existing
+    # malloc_size guard.
+    private def emit_rc_header_validation
+      emit_raw "  %raw = getelementptr i8, ptr %ptr, i64 -8\n"
+      if managed_gc_enabled?
+        emit_raw "  %gc_base = call ptr @GC_base(ptr %ptr)\n"
+        emit_raw "  %gc_owned = icmp ne ptr %gc_base, null\n"
+        emit_raw "  br i1 %gc_owned, label %gc_header, label %native_header\n"
+        emit_raw "gc_header:\n"
+        emit_raw "  %gc_payload = getelementptr i8, ptr %gc_base, i64 8\n"
+        emit_raw "  %gc_has_header = icmp eq ptr %gc_payload, %ptr\n"
+        emit_raw "  br i1 %gc_has_header, label %check, label %done\n"
+        emit_raw "native_header:\n"
+        emit_raw "  %raw_size = call i64 @malloc_size(ptr %raw)\n"
+        emit_raw "  %native_has_header = icmp ne i64 %raw_size, 0\n"
+        emit_raw "  br i1 %native_has_header, label %check, label %done\n"
+      else
+        emit_raw "  %raw_size = call i64 @malloc_size(ptr %raw)\n"
+        emit_raw "  %has_header = icmp ne i64 %raw_size, 0\n"
+        emit_raw "  br i1 %has_header, label %check, label %done\n"
+      end
     end
 
     private def emit_runtime_declarations
@@ -7415,28 +7516,119 @@ module Adamas::MIR
       emit_raw "@__adamas_realloc_fn = global ptr @realloc\n\n"
 
       emit_raw "define ptr @__adamas_malloc64(i64 %size) noinline {\n"
-      emit_raw "  %fn = load volatile ptr, ptr @__adamas_calloc_fn\n"
-      emit_raw "  %ptr = call ptr %fn(i64 1, i64 %size)\n"
+      if managed_gc_enabled?
+        # Scanned allocations keep managed owners and pointer-bearing buffers
+        # visible to Boehm. GC_malloc also preserves the zero-initialization
+        # contract of the previous calloc-backed helper.
+        emit_raw "  %ptr = call ptr @GC_malloc(i64 %size)\n"
+      else
+        emit_raw "  %fn = load volatile ptr, ptr @__adamas_calloc_fn\n"
+        emit_raw "  %ptr = call ptr %fn(i64 1, i64 %size)\n"
+      end
+      emit_raw "  ret ptr %ptr\n"
+      emit_raw "}\n\n"
+
+      # NUL-terminator slack for the GC.malloc_atomic byte-buffer family.
+      #
+      # String::Builder#to_s stores the trailing zero at @buffer[real_bytesize],
+      # but increase_capacity_by only guarantees real_bytesize <= @capacity:
+      # calculate_new_capacity is Math.pw2ceil(new_bytesize), which returns
+      # new_bytesize unchanged whenever it is already a power of two, and the
+      # spare byte reserved in #initialize is consumed as soon as the caller
+      # writes more than `capacity` bytes. When @capacity == real_bytesize the
+      # terminator lands exactly one byte past the end of the allocation.
+      #
+      # Retain the stdlib's spare terminator byte while keeping this family
+      # atomic in collector mode. Explicit clearing preserves the old calloc
+      # initialization behavior because GC_malloc_atomic need not clear memory.
+      emit_raw "define ptr @__adamas_gc_atomic_malloc(i64 %size) noinline {\n"
+      emit_raw "  %slack = add i64 %size, 1\n"
+      if managed_gc_enabled?
+        emit_raw "  %ptr = call ptr @GC_malloc_atomic(i64 %slack)\n"
+        emit_raw "  %is_null = icmp eq ptr %ptr, null\n"
+        emit_raw "  br i1 %is_null, label %done, label %clear\n"
+        emit_raw "clear:\n"
+        emit_raw "  call void @llvm.memset.p0.i64(ptr %ptr, i8 0, i64 %slack, i1 false)\n"
+        emit_raw "  br label %done\n"
+        emit_raw "done:\n"
+      else
+        emit_raw "  %fn = load volatile ptr, ptr @__adamas_calloc_fn\n"
+        emit_raw "  %ptr = call ptr %fn(i64 1, i64 %slack)\n"
+      end
       emit_raw "  ret ptr %ptr\n"
       emit_raw "}\n\n"
 
       emit_raw "define ptr @__adamas_realloc64(ptr %old_ptr, i64 %size) noinline {\n"
-      emit_raw "  %fn = load volatile ptr, ptr @__adamas_realloc_fn\n"
-      emit_raw "  %ptr = call ptr %fn(ptr %old_ptr, i64 %size)\n"
-      emit_raw "  ret ptr %ptr\n"
+      if managed_gc_enabled?
+        emit_raw "entry:\n"
+        emit_raw "  %is_null = icmp eq ptr %old_ptr, null\n"
+        emit_raw "  br i1 %is_null, label %use_gc, label %check\n"
+        emit_raw "check:\n"
+        emit_raw "  %base = call ptr @GC_base(ptr %old_ptr)\n"
+        emit_raw "  %is_gc = icmp ne ptr %base, null\n"
+        emit_raw "  br i1 %is_gc, label %check_gc_base, label %use_libc\n"
+        emit_raw "check_gc_base:\n"
+        emit_raw "  %is_base = icmp eq ptr %old_ptr, %base\n"
+        emit_raw "  br i1 %is_base, label %use_gc, label %invalid_gc_ptr\n"
+        emit_raw "use_gc:\n"
+        emit_raw "  %gc_ptr = call ptr @GC_realloc(ptr %old_ptr, i64 %size)\n"
+        emit_raw "  ret ptr %gc_ptr\n"
+        emit_raw "invalid_gc_ptr:\n"
+        # Boehm realloc requires the allocation base. Returning null for an
+        # interior managed pointer avoids passing it to either allocator.
+        emit_raw "  ret ptr null\n"
+        emit_raw "use_libc:\n"
+        emit_raw "  %fn = load volatile ptr, ptr @__adamas_realloc_fn\n"
+        emit_raw "  %libc_ptr = call ptr %fn(ptr %old_ptr, i64 %size)\n"
+        emit_raw "  ret ptr %libc_ptr\n"
+      else
+        emit_raw "  %fn = load volatile ptr, ptr @__adamas_realloc_fn\n"
+        emit_raw "  %ptr = call ptr %fn(ptr %old_ptr, i64 %size)\n"
+        emit_raw "  ret ptr %ptr\n"
+      end
       emit_raw "}\n\n"
 
       emit_raw "define ptr @__crystal_malloc_atomic64(i64 %size) noinline {\n"
-      emit_raw "  %fn = load volatile ptr, ptr @__adamas_malloc_fn\n"
-      emit_raw "  %ptr = call ptr %fn(i64 %size)\n"
+      if managed_gc_enabled?
+        emit_raw "  %ptr = call ptr @GC_malloc_atomic(i64 %size)\n"
+      else
+        emit_raw "  %fn = load volatile ptr, ptr @__adamas_malloc_fn\n"
+        emit_raw "  %ptr = call ptr %fn(i64 %size)\n"
+      end
       emit_raw "  ret ptr %ptr\n"
       emit_raw "}\n\n"
       bootstrap_trace_puts "  [RT_DECL] after alloc wrappers" if runtime_decl_trace
 
       emit_raw "define ptr @__crystal_realloc64(ptr %ptr, i64 %size) noinline {\n"
-      emit_raw "  %fn = load volatile ptr, ptr @__adamas_realloc_fn\n"
-      emit_raw "  %new_ptr = call ptr %fn(ptr %ptr, i64 %size)\n"
+      if managed_gc_enabled?
+        emit_raw "  %new_ptr = call ptr @__adamas_realloc64(ptr %ptr, i64 %size)\n"
+      else
+        emit_raw "  %fn = load volatile ptr, ptr @__adamas_realloc_fn\n"
+        emit_raw "  %new_ptr = call ptr %fn(ptr %ptr, i64 %size)\n"
+      end
       emit_raw "  ret ptr %new_ptr\n"
+      emit_raw "}\n\n"
+
+      emit_raw "define void @__adamas_managed_free(ptr %ptr) noinline {\n"
+      if managed_gc_enabled?
+        emit_raw "entry:\n"
+        emit_raw "  %is_null = icmp eq ptr %ptr, null\n"
+        emit_raw "  br i1 %is_null, label %done, label %check\n"
+        emit_raw "check:\n"
+        emit_raw "  %base = call ptr @GC_base(ptr %ptr)\n"
+        emit_raw "  %is_gc = icmp ne ptr %base, null\n"
+        emit_raw "  br i1 %is_gc, label %free_gc, label %free_libc\n"
+        emit_raw "free_gc:\n"
+        emit_raw "  call void @GC_free(ptr %base)\n"
+        emit_raw "  br label %done\n"
+        emit_raw "free_libc:\n"
+        emit_raw "  call void @free(ptr %ptr)\n"
+        emit_raw "  br label %done\n"
+        emit_raw "done:\n"
+      else
+        emit_raw "  call void @free(ptr %ptr)\n"
+      end
+      emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
       # Two-heap GC hazard fix (D): the GC-base-aware realloc wrapper
@@ -7454,18 +7646,24 @@ module Adamas::MIR
       # allocation before touching the header: malloc_size(raw) is non-zero for the
       # managed raw pointer, and zero both for headerless runtime objects (raw points
       # 8 bytes before the allocation) and for stack/static pointers. This avoids the
-      # old unsafe ptr-8 probe while letting true ARC objects reclaim memory again.
+      # old unsafe ptr-8 probe while letting native ARC objects reclaim memory.
       {% if flag?(:darwin) %}
+        # In collector mode, Boehm owns the reachability decision for GC blocks.
+        # Treating an RC decrement as proof of death can run a destructor and
+        # free children even while a conservative/raw root still reaches them.
+        # Keep ordinary native ARC behavior below; collector-owned blocks are
+        # left intact for the collector to reclaim when they become unreachable.
         # rc_inc (non-atomic): null-safe increment with raw-base validation.
         emit_raw "define void @__adamas_rc_inc(ptr %ptr) {\n"
         emit_raw "  %is_null = icmp eq ptr %ptr, null\n"
         emit_raw "  br i1 %is_null, label %done, label %guard\n"
         emit_raw "guard:\n"
-        emit_raw "  %raw = getelementptr i8, ptr %ptr, i64 -8\n"
-        emit_raw "  %raw_size = call i64 @malloc_size(ptr %raw)\n"
-        emit_raw "  %has_header = icmp ne i64 %raw_size, 0\n"
-        emit_raw "  br i1 %has_header, label %check, label %done\n"
+        emit_rc_header_validation
         emit_raw "check:\n"
+        if managed_gc_enabled?
+          emit_raw "  br i1 %gc_owned, label %done, label %native_check\n"
+          emit_raw "native_check:\n"
+        end
         emit_raw "  %old = load i64, ptr %raw, align 8\n"
         emit_raw "  %is_static = icmp uge i64 %old, 4611686018427387904\n"
         emit_raw "  br i1 %is_static, label %done, label %inc\n"
@@ -7482,11 +7680,12 @@ module Adamas::MIR
         emit_raw "  %is_null = icmp eq ptr %ptr, null\n"
         emit_raw "  br i1 %is_null, label %done, label %guard\n"
         emit_raw "guard:\n"
-        emit_raw "  %raw = getelementptr i8, ptr %ptr, i64 -8\n"
-        emit_raw "  %raw_size = call i64 @malloc_size(ptr %raw)\n"
-        emit_raw "  %has_header = icmp ne i64 %raw_size, 0\n"
-        emit_raw "  br i1 %has_header, label %check, label %done\n"
+        emit_rc_header_validation
         emit_raw "check:\n"
+        if managed_gc_enabled?
+          emit_raw "  br i1 %gc_owned, label %done, label %native_check\n"
+          emit_raw "native_check:\n"
+        end
         emit_raw "  %old = load i64, ptr %raw, align 8\n"
         emit_raw "  %is_static = icmp uge i64 %old, 4611686018427387904\n"
         emit_raw "  br i1 %is_static, label %done, label %dec\n"
@@ -7502,7 +7701,7 @@ module Adamas::MIR
         emit_raw "  call void %destructor(ptr %ptr)\n"
         emit_raw "  br label %free_only\n"
         emit_raw "free_only:\n"
-        emit_raw "  call void @free(ptr %raw)\n"
+        emit_raw "  call void @__adamas_managed_free(ptr %raw)\n"
         emit_raw "  br label %done\n"
         emit_raw "done:\n"
         emit_raw "  ret void\n"
@@ -7513,11 +7712,12 @@ module Adamas::MIR
         emit_raw "  %is_null = icmp eq ptr %ptr, null\n"
         emit_raw "  br i1 %is_null, label %done, label %guard\n"
         emit_raw "guard:\n"
-        emit_raw "  %raw = getelementptr i8, ptr %ptr, i64 -8\n"
-        emit_raw "  %raw_size = call i64 @malloc_size(ptr %raw)\n"
-        emit_raw "  %has_header = icmp ne i64 %raw_size, 0\n"
-        emit_raw "  br i1 %has_header, label %check, label %done\n"
+        emit_rc_header_validation
         emit_raw "check:\n"
+        if managed_gc_enabled?
+          emit_raw "  br i1 %gc_owned, label %done, label %native_check\n"
+          emit_raw "native_check:\n"
+        end
         emit_raw "  %old = load i64, ptr %raw, align 8\n"
         emit_raw "  %is_static = icmp uge i64 %old, 4611686018427387904\n"
         emit_raw "  br i1 %is_static, label %done, label %inc\n"
@@ -7533,11 +7733,12 @@ module Adamas::MIR
         emit_raw "  %is_null = icmp eq ptr %ptr, null\n"
         emit_raw "  br i1 %is_null, label %done, label %guard\n"
         emit_raw "guard:\n"
-        emit_raw "  %raw = getelementptr i8, ptr %ptr, i64 -8\n"
-        emit_raw "  %raw_size = call i64 @malloc_size(ptr %raw)\n"
-        emit_raw "  %has_header = icmp ne i64 %raw_size, 0\n"
-        emit_raw "  br i1 %has_header, label %check, label %done\n"
+        emit_rc_header_validation
         emit_raw "check:\n"
+        if managed_gc_enabled?
+          emit_raw "  br i1 %gc_owned, label %done, label %native_check\n"
+          emit_raw "native_check:\n"
+        end
         emit_raw "  %peek = load i64, ptr %raw, align 8\n"
         emit_raw "  %is_static = icmp uge i64 %peek, 4611686018427387904\n"
         emit_raw "  br i1 %is_static, label %done, label %dec\n"
@@ -7552,7 +7753,7 @@ module Adamas::MIR
         emit_raw "  call void %destructor(ptr %ptr)\n"
         emit_raw "  br label %free_only\n"
         emit_raw "free_only:\n"
-        emit_raw "  call void @free(ptr %raw)\n"
+        emit_raw "  call void @__adamas_managed_free(ptr %raw)\n"
         emit_raw "  br label %done\n"
         emit_raw "done:\n"
         emit_raw "  ret void\n"
@@ -7582,16 +7783,29 @@ module Adamas::MIR
         bootstrap_trace_puts "  [RT_DECL] after rc stubs" if runtime_decl_trace
       {% end %}
 
-      # Slab allocator - use calloc for zero-init
+      # Slab pages use the managed scanned family in collector mode and keep
+      # calloc's zero-initialization contract on the native fallback.
       emit_raw "define ptr @__adamas_slab_alloc(i32 %size_class) {\n"
       emit_raw "  %size = sext i32 %size_class to i64\n"
       emit_raw "  %shift = shl i64 16, %size\n"
-      emit_raw "  %ptr = call ptr @calloc(i64 1, i64 %shift)\n"
+      if managed_gc_enabled?
+        emit_raw "  %ptr = call ptr @__adamas_malloc64(i64 %shift)\n"
+      else
+        emit_raw "  %ptr = call ptr @calloc(i64 1, i64 %shift)\n"
+      end
       emit_raw "  ret ptr %ptr\n"
       emit_raw "}\n\n"
 
       emit_raw "define void @__adamas_slab_free(ptr %ptr, i32 %size_class) {\n"
-      emit_raw "  call void @free(ptr %ptr)\n"
+      if managed_gc_enabled?
+        # Slab pages use collector-owned scanned storage in this mode. A
+        # compiler-emitted region release must not override a still-reachable
+        # raw/interior pointer; let Boehm reclaim the page after it becomes
+        # unreachable. Explicit GC.free continues to use __adamas_managed_free.
+        nil
+      else
+        emit_raw "  call void @__adamas_managed_free(ptr %ptr)\n"
+      end
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
@@ -7959,6 +8173,7 @@ module Adamas::MIR
       emit_raw "declare ptr @GC_malloc_atomic(i64)\n"
       emit_raw "declare ptr @GC_realloc(ptr, i64)\n"
       emit_raw "declare ptr @GC_base(ptr)\n"
+      emit_raw "declare void @GC_free(ptr)\n"
       emit_raw "declare void @GC_set_handle_fork(i32)\n"
       emit_raw "declare void @GC_set_start_callback(ptr)\n"
       emit_raw "declare void @GC_set_warn_proc(ptr)\n"
@@ -10104,35 +10319,44 @@ module Adamas::MIR
 
     end
 
-    # Two-heap GC hazard fix (D): realloc must use the SAME allocator family
-    # that allocated a block. V2's object graph lives in the libc heap
-    # (emit_alloc → __adamas_malloc64), and we additionally redirect the atomic
-    # byte-buffer family (GC.malloc_atomic) to libc so no live String survives
-    # only on the Boehm heap (Boehm cannot scan libc interiors → premature
-    # free → byte_at SIGSEGV). But the scanned family (GC.malloc, e.g. GMP's
-    # custom allocator and the EventLoop arena) stays on Boehm, and those blocks
-    # are realloc'd via the same GC.realloc method. GC_base(ptr) is non-null only
-    # for Boehm-heap pointers, so it tells the two families apart at runtime:
-    # Boehm blocks → GC_realloc, libc blocks → libc realloc.
+    # Select the realloc family from allocator provenance. In full-prelude GC
+    # mode, compiler-managed allocations use Boehm; native allocations still use
+    # libc. GC_realloc requires the exact allocation base, so reject an interior
+    # pointer rather than passing it to either allocator. The libc fallback
+    # keeps one byte of String::Builder terminator slack.
     #
     # Emitted only when a reachable function actually calls GC_realloc (the same
     # condition under which libgc is linked), so trivial programs that never
     # touch the GC do not pull in the unresolved @GC_base/@GC_realloc symbols.
     private def emit_gc_aware_realloc_wrapper
       emit_raw "define ptr @__adamas_gc_aware_realloc(ptr %ptr, i64 %size) noinline {\n"
-      emit_raw "entry:\n"
-      emit_raw "  %is_null = icmp eq ptr %ptr, null\n"
-      emit_raw "  br i1 %is_null, label %use_libc, label %check\n"
-      emit_raw "check:\n"
-      emit_raw "  %base = call ptr @GC_base(ptr %ptr)\n"
-      emit_raw "  %is_gc = icmp ne ptr %base, null\n"
-      emit_raw "  br i1 %is_gc, label %use_gc, label %use_libc\n"
-      emit_raw "use_gc:\n"
-      emit_raw "  %gc_ptr = call ptr @GC_realloc(ptr %ptr, i64 %size)\n"
-      emit_raw "  ret ptr %gc_ptr\n"
-      emit_raw "use_libc:\n"
-      emit_raw "  %libc_ptr = call ptr @__adamas_realloc64(ptr %ptr, i64 %size)\n"
-      emit_raw "  ret ptr %libc_ptr\n"
+      if managed_gc_enabled?
+        emit_raw "entry:\n"
+        emit_raw "  %is_null = icmp eq ptr %ptr, null\n"
+        emit_raw "  br i1 %is_null, label %use_gc, label %check\n"
+        emit_raw "check:\n"
+        emit_raw "  %base = call ptr @GC_base(ptr %ptr)\n"
+        emit_raw "  %is_gc = icmp ne ptr %base, null\n"
+        emit_raw "  br i1 %is_gc, label %check_gc_base, label %use_libc\n"
+        emit_raw "check_gc_base:\n"
+        emit_raw "  %is_base = icmp eq ptr %ptr, %base\n"
+        emit_raw "  br i1 %is_base, label %use_gc, label %invalid_gc_ptr\n"
+        emit_raw "use_gc:\n"
+        emit_raw "  %gc_ptr = call ptr @GC_realloc(ptr %ptr, i64 %size)\n"
+        emit_raw "  ret ptr %gc_ptr\n"
+        emit_raw "invalid_gc_ptr:\n"
+        emit_raw "  ret ptr null\n"
+        emit_raw "use_libc:\n"
+        # String::Builder needs one spare terminator byte on its native fallback.
+        emit_raw "  %libc_slack = add i64 %size, 1\n"
+        emit_raw "  %libc_ptr = call ptr @__adamas_realloc64(ptr %ptr, i64 %libc_slack)\n"
+        emit_raw "  ret ptr %libc_ptr\n"
+      else
+        # Preserve the established terminator slack without linking Boehm.
+        emit_raw "  %libc_slack = add i64 %size, 1\n"
+        emit_raw "  %libc_ptr = call ptr @__adamas_realloc64(ptr %ptr, i64 %libc_slack)\n"
+        emit_raw "  ret ptr %libc_ptr\n"
+      end
       emit_raw "}\n\n"
     end
 
@@ -10644,6 +10868,9 @@ module Adamas::MIR
       # is `__adamas_main`; forward `__crystal_main` to it so the stdlib ABI keeps
       # resolving without modifying stdlib. Emitted whenever `__adamas_main` exists,
       # independent of whether a native `main` is also emitted below.
+      # Register the definition so the undefined-extern pass does not also emit a
+      # conflicting `declare @__crystal_main(...)` for the stdlib `fun main` call site.
+      @emitted_functions << "__crystal_main"
       emit_raw "; Crystal stdlib ABI compat shim (__crystal_main -> __adamas_main)\n"
       emit_raw "define void @__crystal_main(i32 %argc, ptr %argv) {\n"
       emit_raw "  call void @__adamas_main(i32 %argc, ptr %argv)\n"
@@ -10655,14 +10882,10 @@ module Adamas::MIR
       has_user_main = functions_to_emit.any? { |f| f.name == "main" }
       return if has_user_main
 
-      # Initialize the Boehm GC at startup (matches Crystal's own `GC.init` before
-      # main) so stdlib paths that call into LibGC — e.g. Thread.current's lazy init
-      # -> GC.current_thread_stack_bottom -> GC_get_my_stackbottom — don't crash on
-      # an unregistered main thread. Under the hybrid memory model the GC is only
-      # actually used when some allocation was assigned MemoryStrategy::GC during
-      # lowering (@module.uses_gc, set at assignment time — no per-function scan), so
-      # skip GC_init for pure stack/ARC programs. Also skipped under --no-gc (by
-      # contract there are no GC allocations) and --no-prelude (does not link libgc).
+      # Initialize Boehm before main whenever lowering selected any managed heap
+      # path, including ARC, Slab, closures, or Pointer allocation. Stack-only
+      # programs do not need it. --no-gc and --no-prelude retain their native
+      # allocator boundary and do not link libgc.
       emit_gc_init = !no_prelude && !no_gc && @module.uses_gc
 
       # Entry point: main() calls __adamas_main()
@@ -10997,45 +11220,6 @@ module Adamas::MIR
            func.params.map { |param| emitted_param_llvm_type(param) }
          )
         emit_raw inline_pop_ir
-        return true
-      end
-      # Thread::Mutex in V2 allocates only 12 bytes (8-byte prefix + 4-byte type_id), but
-      # pthread_mutex_t needs 64 bytes. Also Hinitialize inits a STACK-local mutex instead of
-      # %self, so the heap object is never properly initialized. Fix both: allocate 72 bytes
-      # and initialize the mutex AT %self so pthread_mutex_lock(%self) works correctly.
-      if mangled == "Thread$CCMutex$Dnew"
-        emit_raw "; Thread$CCMutex$Dnew — fixed: allocate 72 bytes so pthread_mutex_t fits\n"
-        emit_raw "define ptr @Thread$CCMutex$Dnew() {\n"
-        emit_raw "entry:\n"
-        emit_raw "  %raw = call ptr @__adamas_malloc64(i64 72)\n"
-        emit_raw "  store i64 9223372036854775807, ptr %raw, align 8\n"
-        emit_raw "  %obj = getelementptr i8, ptr %raw, i64 8\n"
-        emit_raw "  store i32 479, ptr %obj\n"
-        emit_raw "  call void @Thread$CCMutex$Hinitialize(ptr %obj)\n"
-        emit_raw "  ret ptr %obj\n"
-        emit_raw "}\n\n"
-        return true
-      end
-      if mangled == "Thread$CCMutex$Hinitialize"
-        emit_raw "; Thread$CCMutex$Hinitialize — fixed: init pthread_mutex AT %self (not stack copy)\n"
-        emit_raw "define void @Thread$CCMutex$Hinitialize(ptr %self) {\n"
-        emit_raw "entry:\n"
-        emit_raw "  %attr = alloca [16 x i8], align 8\n"
-        emit_raw "  call i32 @pthread_mutexattr_init(ptr %attr)\n"
-        # Keep this raw override self-contained. The LibC classvar is optional
-        # in a target module (and may not be emitted when this override is the
-        # only demand), while the pthread mutex error-checking constant is a
-        # target ABI value: Darwin/BSD use 1 and Linux/Android use 2.
-        mutex_errorcheck = if @target_triple.includes?("linux") || @target_triple.includes?("android")
-                            2
-                          else
-                            1
-                          end
-        emit_raw "  call i32 @pthread_mutexattr_settype(ptr %attr, i32 #{mutex_errorcheck})\n"
-        emit_raw "  call i32 @pthread_mutex_init(ptr %self, ptr %attr)\n"
-        emit_raw "  call i32 @pthread_mutexattr_destroy(ptr %attr)\n"
-        emit_raw "  ret void\n"
-        emit_raw "}\n\n"
         return true
       end
       # spawn(..., &block) — V2 type-inference bug: when spawn's argument types match a
@@ -11608,7 +11792,7 @@ module Adamas::MIR
         emit_raw "entry:\n"
         emit_raw "  %bs_alloca = alloca #{union_llvm}, align 8\n"
         emit_raw "  store #{union_llvm} %bytesize, ptr %bs_alloca\n"
-        emit_raw "  %payload_ptr = getelementptr i8, ptr %bs_alloca, i32 4\n"
+        emit_raw "  %payload_ptr = getelementptr #{union_llvm}, ptr %bs_alloca, i32 0, i32 1\n"
         emit_raw "  %bs32 = load i32, ptr %payload_ptr\n"
         emit_raw "  %result = call ptr @String$Dnew$$Pointer$LUInt8$R_Int32_Int32(ptr %chars, i32 %bs32, i32 %size)\n"
         emit_raw "  ret ptr %result\n"
@@ -11751,9 +11935,9 @@ module Adamas::MIR
         emit_raw "found:\n"
         emit_raw "  %f_u = alloca #{union_type}, align 8\n"
         emit_raw "  store #{union_type} zeroinitializer, ptr %f_u\n"
-        emit_raw "  %f_tid = getelementptr {i32, [8 x i8]}, ptr %f_u, i32 0, i32 0\n"
+        emit_raw "  %f_tid = getelementptr #{union_type}, ptr %f_u, i32 0, i32 0\n"
         emit_raw "  store i32 #{int32_disc}, ptr %f_tid\n"
-        emit_raw "  %f_pay = getelementptr {i32, [8 x i8]}, ptr %f_u, i32 0, i32 1\n"
+        emit_raw "  %f_pay = getelementptr #{union_type}, ptr %f_u, i32 0, i32 1\n"
         emit_raw "  store i32 %i, ptr %f_pay, align 4\n"
         emit_raw "  %f_val = load #{union_type}, ptr %f_u\n"
         emit_raw "  ret #{union_type} %f_val\n"
@@ -11805,9 +11989,9 @@ module Adamas::MIR
         # Return Int32 (tag=int32_disc, payload=i)
         emit_raw "  %f_u = alloca #{union_type}, align 8\n"
         emit_raw "  store #{union_type} zeroinitializer, ptr %f_u\n"
-        emit_raw "  %f_tid = getelementptr {i32, [8 x i8]}, ptr %f_u, i32 0, i32 0\n"
+        emit_raw "  %f_tid = getelementptr #{union_type}, ptr %f_u, i32 0, i32 0\n"
         emit_raw "  store i32 #{int32_disc}, ptr %f_tid\n"
-        emit_raw "  %f_pay = getelementptr {i32, [8 x i8]}, ptr %f_u, i32 0, i32 1\n"
+        emit_raw "  %f_pay = getelementptr #{union_type}, ptr %f_u, i32 0, i32 1\n"
         emit_raw "  store i32 %i, ptr %f_pay, align 4\n"
         emit_raw "  %f_val = load #{union_type}, ptr %f_u\n"
         emit_raw "  ret #{union_type} %f_val\n"
@@ -11853,9 +12037,9 @@ module Adamas::MIR
         emit_raw "found:\n"
         emit_raw "  %f_u = alloca #{union_type}, align 8\n"
         emit_raw "  store #{union_type} zeroinitializer, ptr %f_u\n"
-        emit_raw "  %f_tag = getelementptr {i32, [8 x i8]}, ptr %f_u, i32 0, i32 0\n"
+        emit_raw "  %f_tag = getelementptr #{union_type}, ptr %f_u, i32 0, i32 0\n"
         emit_raw "  store i32 #{int32_disc}, ptr %f_tag\n"
-        emit_raw "  %f_pay = getelementptr {i32, [8 x i8]}, ptr %f_u, i32 0, i32 1\n"
+        emit_raw "  %f_pay = getelementptr #{union_type}, ptr %f_u, i32 0, i32 1\n"
         emit_raw "  store i32 %i, ptr %f_pay, align 4\n"
         emit_raw "  %f_val = load #{union_type}, ptr %f_u\n"
         emit_raw "  ret #{union_type} %f_val\n"
@@ -12313,7 +12497,7 @@ module Adamas::MIR
               emit_raw "; #{mangled} — direct enum hash override (bypass vdispatch)\n"
               emit_raw "define i32 @#{mangled}(ptr %self, #{key_llvm_type} %key) {\n"
               emit_raw "entry:\n"
-              emit_inline_zeroed_hasher_allocation("hasher")
+              emit_inline_local_permute_hasher("hasher")
               if key_llvm_type == "i64"
                 emit_raw "  %key64 = add i64 %key, 0\n"
               else
@@ -12346,7 +12530,7 @@ module Adamas::MIR
         emit_raw "; #{mangled} — direct Int32 hash override (bypass vdispatch)\n"
         emit_raw "define i32 @#{mangled}(ptr %self, i32 %key) {\n"
         emit_raw "entry:\n"
-        emit_inline_zeroed_hasher_allocation("hasher")
+        emit_inline_local_permute_hasher("hasher")
         emit_raw "  %key64 = sext i32 %key to i64\n"
         emit_raw "  %hasher2 = call ptr @Crystal$CCHasher$Hpermute$$UInt64(ptr %hasher, i64 %key64)\n"
         emit_inline_hasher_result("hasher2", "hash64")
@@ -12367,7 +12551,7 @@ module Adamas::MIR
         emit_raw "; #{mangled} — direct UInt64 hash override (bypass vdispatch)\n"
         emit_raw "define i32 @#{mangled}(ptr %self, i64 %key) {\n"
         emit_raw "entry:\n"
-        emit_inline_zeroed_hasher_allocation("hasher")
+        emit_inline_local_permute_hasher("hasher")
         emit_raw "  %hasher2 = call ptr @Crystal$CCHasher$Hpermute$$UInt64(ptr %hasher, i64 %key)\n"
         emit_inline_hasher_result("hasher2", "hash64")
         emit_raw "  %hash32 = trunc i64 %hash64 to i32\n"
@@ -12386,7 +12570,7 @@ module Adamas::MIR
         emit_raw "; #{mangled} — direct Int64 hash override (bypass vdispatch)\n"
         emit_raw "define i32 @#{mangled}(ptr %self, i64 %key) {\n"
         emit_raw "entry:\n"
-        emit_inline_zeroed_hasher_allocation("hasher")
+        emit_inline_local_permute_hasher("hasher")
         emit_raw "  %hasher2 = call ptr @Crystal$CCHasher$Hpermute$$UInt64(ptr %hasher, i64 %key)\n"
         emit_inline_hasher_result("hasher2", "hash64")
         emit_raw "  %hash32 = trunc i64 %hash64 to i32\n"
@@ -12405,7 +12589,7 @@ module Adamas::MIR
         emit_raw "; #{mangled} — direct UInt32 hash override (bypass vdispatch)\n"
         emit_raw "define i32 @#{mangled}(ptr %self, i32 %key) {\n"
         emit_raw "entry:\n"
-        emit_inline_zeroed_hasher_allocation("hasher")
+        emit_inline_local_permute_hasher("hasher")
         emit_raw "  %key64 = zext i32 %key to i64\n"
         emit_raw "  %hasher2 = call ptr @Crystal$CCHasher$Hpermute$$UInt64(ptr %hasher, i64 %key64)\n"
         emit_inline_hasher_result("hasher2", "hash64")
@@ -12425,7 +12609,7 @@ module Adamas::MIR
         emit_raw "; #{mangled} — direct Symbol hash override (bypass vdispatch)\n"
         emit_raw "define i32 @#{mangled}(ptr %self, i32 %key) {\n"
         emit_raw "entry:\n"
-        emit_inline_zeroed_hasher_allocation("hasher")
+        emit_inline_local_permute_hasher("hasher")
         emit_raw "  %key64 = sext i32 %key to i64\n"
         emit_raw "  %hasher2 = call ptr @Crystal$CCHasher$Hpermute$$UInt64(ptr %hasher, i64 %key64)\n"
         emit_inline_hasher_result("hasher2", "hash64")
@@ -12454,7 +12638,7 @@ module Adamas::MIR
         emit_raw "ret_null_hash:\n"
         emit_raw "  ret i32 0\n"
         emit_raw "do_hash:\n"
-        emit_inline_zeroed_hasher_allocation("hasher")
+        emit_inline_local_permute_hasher("hasher")
         emit_raw "  %bs_ptr = getelementptr i8, ptr %key, i32 4\n"
         emit_raw "  %bytesize = load i32, ptr %bs_ptr\n"
         emit_raw "  %data = getelementptr i8, ptr %key, i32 12\n"
@@ -12512,7 +12696,9 @@ module Adamas::MIR
         emit_raw "ret_null_hash:\n"
         emit_raw "  ret i32 0\n"
         emit_raw "do_hash:\n"
-        emit_inline_zeroed_hasher_allocation("hasher")
+        # Hasher#bytes only calls read_u*/permute and returns self (stdlib
+        # crystal/hasher.cr), so the hasher stays function-local.
+        emit_inline_local_permute_hasher("hasher")
         emit_raw "  %hasher2 = call ptr @Crystal$CCHasher$Hbytes$$Slice$LUInt8$R(ptr %hasher, ptr %key)\n"
         emit_inline_hasher_result("hasher2", "hash64")
         emit_raw "  %hash32 = trunc i64 %hash64 to i32\n"
@@ -12539,7 +12725,7 @@ module Adamas::MIR
         emit_raw "ret_null_hash:\n"
         emit_raw "  ret i32 0\n"
         emit_raw "do_hash:\n"
-        emit_inline_zeroed_hasher_allocation("hasher")
+        emit_inline_local_permute_hasher("hasher")
         emit_raw "  %id = load i32, ptr %key\n"
         emit_raw "  %id64 = zext i32 %id to i64\n"
         emit_raw "  %hasher2 = call ptr @Crystal$CCHasher$Hpermute$$UInt64(ptr %hasher, i64 %id64)\n"
@@ -12566,7 +12752,7 @@ module Adamas::MIR
         emit_raw "ret_null_hash:\n"
         emit_raw "  ret i32 0\n"
         emit_raw "do_hash:\n"
-        emit_inline_zeroed_hasher_allocation("hasher")
+        emit_inline_local_permute_hasher("hasher")
         emit_raw "  %id = load i32, ptr %key\n"
         emit_raw "  %id64 = zext i32 %id to i64\n"
         emit_raw "  %hasher2 = call ptr @Crystal$CCHasher$Hpermute$$UInt64(ptr %hasher, i64 %id64)\n"
@@ -12950,7 +13136,9 @@ module Adamas::MIR
         if nil_or_entry_union.starts_with?('%') && nil_or_entry_union.ends_with?(".union")
           type_base = nil_or_entry_union[1..]  # strip leading %
           unless @emitted_union_type_names.includes?(type_base)
-            emit_raw "%#{type_base} = type { i32, [12 x i8] }\n"
+            # Nil | Entry: Entry is heap-boxed (ptr payload) -> Crystal layout
+            # { i32, [1 x i64] }, payload at +8.
+            emit_raw "%#{type_base} = type { i32, [1 x i64] }\n"
             @emitted_union_type_names << type_base
             record_emitted_union_byte_width(type_base, 16)
           end
@@ -13334,7 +13522,7 @@ module Adamas::MIR
         emit_raw "ret_zero:\n"
         emit_raw "  ret i64 0\n"
         emit_raw "do_hash:\n"
-        emit_inline_zeroed_hasher_allocation("hasher")
+        emit_inline_local_permute_hasher("hasher")
         emit_raw "  %bs_ptr = getelementptr i8, ptr %self, i32 4\n"
         emit_raw "  %bytesize = load i32, ptr %bs_ptr\n"
         emit_raw "  %data = getelementptr i8, ptr %self, i32 12\n"
@@ -14241,6 +14429,21 @@ module Adamas::MIR
       emit_raw "  call void @llvm.memset.p0.i64(ptr %#{result_name}, i8 0, i64 #{payload_size}, i1 false)\n"
     end
 
+    # Stack Hasher for key_hash intrinsics whose hasher only flows through
+    # Crystal::Hasher#permute (which returns self and stores nothing) and the
+    # inline result mix. It never escapes the function, so it must not leak a
+    # heap block per hash call. The header slot keeps the RC layout; RC
+    # helpers skip it because malloc_size(raw) is 0 for stack memory.
+    # Callers must not emit this inside a loop body.
+    private def emit_inline_local_permute_hasher(result_name : String) : Nil
+      payload_size = @module.type_registry.get_by_name("Crystal::Hasher").try(&.size.to_i64) || 16_i64
+      alloc_size = payload_size + 8_i64
+      emit_raw "  %#{result_name}.raw = alloca [#{alloc_size} x i8], align 8\n"
+      emit_raw "  store i64 9223372036854775807, ptr %#{result_name}.raw, align 8\n"
+      emit_raw "  %#{result_name} = getelementptr i8, ptr %#{result_name}.raw, i64 8\n"
+      emit_raw "  call void @llvm.memset.p0.i64(ptr %#{result_name}, i8 0, i64 #{payload_size}, i1 false)\n"
+    end
+
     private def emit_inline_hasher_result(hasher_name : String, result_name : String) : Nil
       emit_raw "  %#{result_name}.a_ptr = getelementptr i8, ptr %#{hasher_name}, i32 0\n"
       emit_raw "  %#{result_name}.a0 = load i64, ptr %#{result_name}.a_ptr\n"
@@ -14267,7 +14470,7 @@ module Adamas::MIR
       emit_raw "; #{mangled} — #{note}\n"
       emit_raw "define i32 @#{mangled}(ptr %self, #{key_llvm_type} %key) {\n"
       emit_raw "entry:\n"
-      emit_inline_zeroed_hasher_allocation("hasher")
+      emit_inline_local_permute_hasher("hasher")
       key_bits = key_llvm_type[1..].to_i? || 32
       if key_bits < 64
         cast_op = signed ? "sext" : "zext"
@@ -14302,7 +14505,7 @@ module Adamas::MIR
       emit_raw "value:\n"
       emit_raw "  %payload.ptr = getelementptr #{key_llvm_type}, ptr %key.slot, i32 0, i32 1\n"
       emit_raw "  %payload = load #{payload_llvm_type}, ptr %payload.ptr, align 4\n"
-      emit_inline_zeroed_hasher_allocation("hasher")
+      emit_inline_local_permute_hasher("hasher")
       if payload_llvm_type == "i64"
         emit_raw "  %key64 = add i64 %payload, 0\n"
       else
@@ -14325,7 +14528,7 @@ module Adamas::MIR
       emit_raw "; #{mangled} — #{note}\n"
       emit_raw "define i32 @#{mangled}(ptr %self, #{key_llvm_type} %key) {\n"
       emit_raw "entry:\n"
-      emit_inline_zeroed_hasher_allocation("hasher")
+      emit_inline_local_permute_hasher("hasher")
       key_i32 = emit_struct_i32_field0_cast(key_llvm_type)
       emit_raw "  %key64 = sext i32 #{key_i32} to i64\n"
       emit_raw "  %hasher2 = call ptr @Crystal$CCHasher$Hpermute$$UInt64(ptr %hasher, i64 %key64)\n"
@@ -14409,11 +14612,23 @@ module Adamas::MIR
       true
     end
 
+    # Delegate targets whose stdlib body is proven not to let the hasher escape.
+    # Slice(UInt8)#hash is `hasher.bytes(self)` (slice.cr), and Hasher#bytes only
+    # calls read_u*/permute and returns self (crystal/hasher.cr). Exact names
+    # only: generic fallbacks (e.g. stripped `Slice#hash` -> super) are unproven.
+    private def key_hash_delegate_keeps_hasher_local?(target : String) : Bool
+      target == "Slice$LUInt8$R$Hhash$$Crystal$CCHasher"
+    end
+
     private def emit_concrete_key_hash_delegate_override(mangled : String, key_llvm_type : String, target : String, *, note : String) : Nil
       emit_raw "; #{mangled} — #{note}\n"
       emit_raw "define i32 @#{mangled}(ptr %self, #{key_llvm_type} %key) {\n"
       emit_raw "entry:\n"
-      emit_inline_zeroed_hasher_allocation("hasher")
+      if key_hash_delegate_keeps_hasher_local?(target)
+        emit_inline_local_permute_hasher("hasher")
+      else
+        emit_inline_zeroed_hasher_allocation("hasher")
+      end
       emit_raw "  %hasher2 = call ptr @#{target}(#{key_llvm_type} %key, ptr %hasher)\n"
       emit_inline_hasher_result("hasher2", "hash64")
       emit_raw "  %hash32 = trunc i64 %hash64 to i32\n"
@@ -14619,6 +14834,19 @@ module Adamas::MIR
 
         emitted_ret_type = ret_type
 
+        # Integer ops only apply to integer operands. A non-integer `other`
+        # (e.g. Bool#==(Pointer)) is a cross-type comparison: equality is
+        # statically false, never an int<->ptr extension.
+        unless actual_self_llvm.matches?(/\Ai\d+\z/) && other_llvm.matches?(/\Ai\d+\z/)
+          next unless ir_op == "icmp eq" || ir_op == "icmp ne"
+          emit_raw "; #{type_name}##{rest.split("$$").first} cross-type primitive override\n"
+          emit_raw "define i1 @#{mangled}(#{self_llvm} %self, #{other_llvm} %other) {\n"
+          emit_raw "  ret i1 #{ir_op == "icmp ne" ? "true" : "false"}\n}\n\n"
+          @emitted_functions << mangled
+          @emitted_function_return_types[mangled] = "i1"
+          return true
+        end
+
         emit_raw "; #{type_name}##{rest.split("$$").first} primitive override\n"
         emit_raw "define #{emitted_ret_type} @#{mangled}(#{self_llvm} %self, #{other_llvm} %other) {\n"
 
@@ -14703,6 +14931,7 @@ module Adamas::MIR
       @emitted_allocas.clear
       @addressable_allocas.clear
       @addressable_alloca_initialized.clear
+      @addressof_direct_allocs.clear
       @value_def_block.clear
       @cross_block_values.clear
       @cross_block_slots.clear
@@ -15260,6 +15489,14 @@ module Adamas::MIR
       type
     end
 
+    private def direct_alloc_addressof_operand?(func : Function, id : ValueId) : Bool
+      def_inst = find_def_inst_in_function(func, id)
+      return false unless def_inst.is_a?(Alloc)
+      return false if def_inst.strategy == MemoryStrategy::Stack
+      return false unless mir_type = @module.type_registry.get(def_inst.alloc_type)
+      mir_type.kind.struct? || mir_type.kind.tuple? || mir_type.name.starts_with?("StaticArray(")
+    end
+
     private def find_def_inst_in_function(func : Function, id : ValueId)
       func.blocks.each do |block|
         block.instructions.each do |inst|
@@ -15304,6 +15541,15 @@ module Adamas::MIR
           next if @emitted_allocas.includes?(operand_id)
           next if seen_addressof_operands.includes?(operand_id)
           seen_addressof_operands << operand_id
+
+          # A non-stack Alloc of a struct/tuple/StaticArray is represented by
+          # the pointer to its storage, exactly like a stack alloca. Taking its
+          # address must yield that storage, not the address of a spill slot
+          # holding the pointer (pointerof(s) of a heap-promoted struct local).
+          if direct_alloc_addressof_operand?(func, operand_id)
+            @addressof_direct_allocs << operand_id
+            next
+          end
 
           operand_type = @value_types[operand_id]? || TypeRef::POINTER
           alloca_type = stack_alloc_storage_type(operand_type)
@@ -16848,13 +17094,21 @@ module Adamas::MIR
         end
       end
 
+      # A shared incoming must be defined in the very predecessor block it
+      # flows from (@value_def_block, filled by prepass_detect_cross_block_values).
+      # Otherwise its live range spans other arms (e.g. a loop-invariant default
+      # defined before the loop reaches the merge every iteration), and their
+      # def-site stores into the shared slot clobber it — the `else ptr_value`
+      # arm of a 4-arm `case` inside a loop yielded the previous iteration's
+      # arm value.
       func.blocks.each do |block|
         block.instructions.each do |inst|
           next unless inst.is_a?(Phi)
           # Count how many incoming values are cross-block AND die at this phi.
           cross_block_incoming = [] of ValueId
-          inst.incoming.each do |(_, val_id)|
+          inst.incoming.each do |(from_block, val_id)|
             next unless @cross_block_values.includes?(val_id)
+            next unless @value_def_block[val_id]? == from_block
             if apply_veto
               next if (phi_use_counts[val_id]? || 0) > 1
               next if nonphi_used.includes?(val_id)
@@ -17420,8 +17674,7 @@ module Adamas::MIR
           if check_ref == "null"
             # Known null at compile time → Nil discriminator (already 0 from zeroinit)
             # Skip payload store — zeroinitializer already zeroed everything.
-            # Storing ptr null (8 bytes) would overflow small payloads like Nil|Char
-            # where payload is [1 x i32] = 4 bytes.
+            # Storing ptr null (8 bytes) is unnecessary here.
             emit "%#{wrap_name} = load #{union_type}, ptr %#{base_name}.ptr"
             next
           else
@@ -17440,26 +17693,15 @@ module Adamas::MIR
           val_ref = "null" if val_llvm_type == "ptr" && val_ref == "0"
           if val_ref == "null"
             # Nil: skip payload store — zeroinitializer already zeroed everything.
-            # Storing ptr null (8 bytes) would overflow small payloads like Nil|Char
-            # where payload is [1 x i32] = 4 bytes.
+            # Storing ptr null (8 bytes) is unnecessary here.
           else
-            # For tuple types (stack-allocated value types), copy data instead of storing pointer
-            phi_variant_vt = false
-            phi_variant_size = 0_u64
+            # Struct/Tuple variants: clone the pointee (see emit_union_wrap).
+            phi_clone_size = 0_u64
             if val_llvm_type == "ptr"
-              union_mir = @module.type_registry.get(union_type_ref)
-              if union_mir && (uvars = union_mir.variants)
-                if variant_type_id >= 0 && variant_type_id < uvars.size
-                  vtype = uvars[variant_type_id]
-                  if vtype.name.starts_with?("Tuple(") && vtype.is_value_type? && vtype.size > 0
-                    phi_variant_vt = true
-                    phi_variant_size = vtype.size
-                  end
-                end
-              end
+              phi_clone_size = union_variant_value_clone_size(union_type_ref, variant_type_id)
             end
-            if phi_variant_vt
-              emit "call void @llvm.memcpy.p0.p0.i64(ptr %#{base_name}.payload_ptr, ptr #{val_ref}, i64 #{phi_variant_size}, i1 false)"
+            if phi_clone_size > 0
+              emit_union_payload_value_clone(base_name, val_ref, phi_clone_size)
             else
               emit "store #{val_llvm_type} #{val_ref}, ptr %#{base_name}.payload_ptr, align 4"
             end
@@ -17588,10 +17830,15 @@ module Adamas::MIR
 
         extract_name, load_name, target_type = info
         # The load_name loaded the full union struct from the slot.
-        # Extract the payload (offset 4 after the type_id i32) as the target primitive type.
+        # Extract the payload (field 1 after the type_id i32) as the target primitive type.
         slot_name = @cross_block_slots[val_id]?
         next unless slot_name
-        emit "%#{extract_name}.pay_ptr = getelementptr i8, ptr %#{slot_name}, i32 4"
+        slot_type = @cross_block_slot_types[val_id]?
+        if slot_type && slot_type.includes?(".union")
+          emit "%#{extract_name}.pay_ptr = getelementptr #{slot_type}, ptr %#{slot_name}, i32 0, i32 1"
+        else
+          emit "%#{extract_name}.pay_ptr = getelementptr i8, ptr %#{slot_name}, i32 #{union_payload_offset_default}"
+        end
         emit "%#{extract_name} = load #{target_type}, ptr %#{extract_name}.pay_ptr, align 4"
       end
     end
@@ -23172,16 +23419,20 @@ module Adamas::MIR
           # Call helper: returns i32 (-1 = not found, else byte index)
           idx_name = "%str_idx.#{inst.id}"
           emit "#{idx_name} = call i32 @__adamas_string_index_string(ptr #{self_val}, ptr #{search_val}, i32 #{offset_val})"
-          # Build Nil|Int32 union: {i32 type_id, [8 x i8] payload}
+          # Build Nil|Int32 union: {i32 type_id, [N x i64] payload} (payload at +8,
+          # Crystal MixedUnion layout).
           # type_id=0 for Nil, type_id=1 for Int32 (local convention)
           cmp_name = "%str_idx_nil.#{inst.id}"
           emit "#{cmp_name} = icmp eq i32 #{idx_name}, -1"
+          ret_type = @type_mapper.llvm_type(inst.type)
+          slot_type = ret_type.ends_with?(".union") ? ret_type : "{i32, [1 x i64]}"
           union_ptr = "%str_idx_union.#{inst.id}"
-          emit "#{union_ptr} = alloca {i32, [8 x i8]}, align 8"
+          emit "#{union_ptr} = alloca #{slot_type}, align 8"
+          emit "store #{slot_type} zeroinitializer, ptr #{union_ptr}"
           tid_ptr = "%str_idx_tid.#{inst.id}"
-          emit "#{tid_ptr} = getelementptr {i32, [8 x i8]}, ptr #{union_ptr}, i32 0, i32 0"
+          emit "#{tid_ptr} = getelementptr #{slot_type}, ptr #{union_ptr}, i32 0, i32 0"
           payload_ptr = "%str_idx_pay.#{inst.id}"
-          emit "#{payload_ptr} = getelementptr {i32, [8 x i8]}, ptr #{union_ptr}, i32 0, i32 1"
+          emit "#{payload_ptr} = getelementptr #{slot_type}, ptr #{union_ptr}, i32 0, i32 1"
           # Store nil (0) or non-nil (1) type_id
           tid_val = "%str_idx_tidv.#{inst.id}"
           emit "#{tid_val} = select i1 #{cmp_name}, i32 0, i32 1"
@@ -23189,7 +23440,6 @@ module Adamas::MIR
           # Store payload (the index value) — only meaningful when non-nil
           emit "store i32 #{idx_name}, ptr #{payload_ptr}, align 4"
           # Load as the expected return type
-          ret_type = @type_mapper.llvm_type(inst.type)
           if ret_type == "ptr"
             emit "#{name} = bitcast ptr #{union_ptr} to ptr"
           else
@@ -24535,7 +24785,7 @@ module Adamas::MIR
         record_emitted_type(name, "ptr")
         return true
       elsif ename == "__adamas_malloc64" || ename == "malloc" || ename == "GC_malloc" || ename == "GC_malloc_atomic"
-        fn = (ename == "GC_malloc_atomic") ? "__adamas_malloc64" : ename
+        fn = (ename == "GC_malloc_atomic") ? "__adamas_gc_atomic_malloc" : ename
         emit "#{name} = call ptr @#{fn}(i64 #{bytes}) ; ivc_raw bulk-stride"
         @value_types[inst.id] = TypeRef::POINTER
         record_emitted_type(name, "ptr")
@@ -24779,20 +25029,19 @@ module Adamas::MIR
         mangled_extern_name = inst.extern_name
       end
 
-      # Two-heap GC hazard fix (D): redirect the atomic byte-buffer family from
-      # the Boehm heap to the libc allocator family. The boehm.cr GC.malloc_atomic
-      # / GC.realloc method bodies lower their LibGC.* calls to these C symbols;
-      # String/Builder/IO buffers flow through here. Routing them to libc keeps
-      # live Strings off the Boehm heap (Boehm cannot scan libc-resident
-      # containers that hold the only ref → premature free → byte_at SIGSEGV).
-      # __adamas_malloc64 is calloc-based (zeroes, matching Boehm). realloc goes
-      # through the GC-base-aware wrapper so scanned GC.malloc blocks (GMP, arena)
-      # still realloc via GC_realloc. The scanned GC_malloc itself is left alone.
+      # Keep Crystal's explicit GC allocator family inside the same managed
+      # allocation boundary as compiler-emitted objects. The helpers select
+      # Boehm only for full-prelude GC modules and retain libc for --no-gc and
+      # --no-prelude builds.
       case mangled_extern_name
-      when "GC_malloc_atomic"
+      when "GC_malloc"
         mangled_extern_name = "__adamas_malloc64"
+      when "GC_malloc_atomic"
+        mangled_extern_name = "__adamas_gc_atomic_malloc"
       when "GC_realloc"
         mangled_extern_name = "__adamas_gc_aware_realloc"
+      when "GC_free"
+        mangled_extern_name = "__adamas_managed_free"
       end
       @gc_aware_realloc_helper_needed = true if mangled_extern_name == "__adamas_gc_aware_realloc"
 
@@ -25466,6 +25715,14 @@ module Adamas::MIR
         return
       end
 
+      # Case 1b: Heap/slab Alloc of an inline value aggregate → its storage pointer
+      if @addressof_direct_allocs.includes?(inst.operand)
+        operand_ref = value_ref(inst.operand)
+        emit "#{name} = getelementptr i8, ptr #{operand_ref}, i64 0"
+        @value_types[inst.id] = TypeRef::POINTER
+        return
+      end
+
       # Case 2: Hoisted addressable alloca exists (from pre-scan in emit_hoisted_allocas)
       if alloca_ref = @addressable_allocas[inst.operand]?
         # Store the operand value on first use (subsequent uses reuse same alloca)
@@ -25918,8 +26175,7 @@ module Adamas::MIR
         # fall through to the standard wrap path.
       end
       emit "%#{base_name}.ptr = alloca #{union_type}, align 8"
-      # Zero-init the alloca to prevent overflow when storing Nil (ptr null = 8 bytes)
-      # into small union payloads (e.g. [1 x i32] = 4 bytes).
+      # Zero-init the alloca so Nil (and narrow variants) leave no stale payload bytes.
       emit "store #{union_type} zeroinitializer, ptr %#{base_name}.ptr"
 
       # Resolve value early so we can check for null before storing type_id
@@ -26021,73 +26277,20 @@ module Adamas::MIR
           end
         end
 
-        # For tuple types (stack-allocated value types stored via ptr), copy data instead of storing pointer.
-        variant_is_value_type = false
-        # For non-tuple struct variants the payload stays a pointer, but the
-        # pointee must be a fresh clone: a struct read out of container storage
-        # (e.g. a Hash entry slot) is an interior pointer, and the slot can be
-        # rewritten in place or reallocated after the wrap. Crystal value
-        # semantics require the wrapped struct to be an independent copy.
-        variant_is_heap_struct = false
-        variant_size = 0_u64
+        # Struct and Tuple variants keep a pointer payload (readers `load ptr`),
+        # but the pointee must be a fresh clone: a struct read out of container
+        # storage (e.g. a Hash entry slot) is an interior pointer, and a Tuple
+        # argument is a borrowed pointer into the caller's stack frame. Storing
+        # either directly lets the union (e.g. an ivar) outlive or alias its
+        # source. Crystal value semantics require an independent copy.
+        clone_size = 0_u64
         if val_type_str == "ptr" && val != "null"
-          union_mir_type = @module.type_registry.get(inst.union_type)
-          if union_mir_type && (uvariants = union_mir_type.variants)
-            if inst.variant_type_id >= 0 && inst.variant_type_id < uvariants.size
-              vtype = uvariants[inst.variant_type_id]
-              if vtype.name.starts_with?("Tuple(") && vtype.is_value_type? && vtype.size > 0
-                variant_is_value_type = true
-                variant_size = vtype.size
-              end
-            end
-          end
-          unless variant_is_value_type
-            # Match the variant by its type_id in the union descriptor (the
-            # variant_type_id is NOT a positional index into Type#variants).
-            if union_desc = @module.get_union_descriptor(inst.union_type)
-              dvariants = union_desc.variants
-              dvariant_idx = 0
-              while dvariant_idx < dvariants.size
-                dvariant = dvariants.unsafe_fetch(dvariant_idx)
-                if dvariant.type_id == inst.variant_type_id
-                  if vt = @module.type_registry.get(dvariant.type_ref)
-                    if vt.kind.struct? && vt.size > 0 && !vt.name.starts_with?("Tuple(") &&
-                       (vt.fields.try(&.size) || 0) > 0
-                      variant_is_heap_struct = true
-                      variant_size = vt.size
-                    end
-                  end
-                  break
-                end
-                dvariant_idx += 1
-              end
-            end
-          end
+          clone_size = union_variant_value_clone_size(inst.union_type, inst.variant_type_id)
         end
         if val == "null"
           # Nil: skip payload store — zeroinitializer already zeroed everything.
-          # Storing `ptr null` (8 bytes) into a small payload (e.g. [1 x i32] = 4 bytes)
-          # would overflow the stack buffer.
-        elsif variant_is_value_type
-          emit "call void @llvm.memcpy.p0.p0.i64(ptr %#{base_name}.payload_ptr, ptr #{val}, i64 #{variant_size}, i1 false)"
-        elsif variant_is_heap_struct
-          # INTERIM (PLAN_INLINE_STRUCTS.md Phase 6): the target repr stores
-          # the struct INLINE in the payload (copy value, not pointer), like
-          # the original compiler's store_in_union. Until wrap+unwrap+size
-          # flip together, the payload stays a pointer — but it must point at
-          # an independent COPY, never at source storage (a Hash entry slot
-          # can be rewritten in place or reallocated after the wrap).
-          # Clone shape matches $Dnew: 8-byte immortal RC header + fields.
-          # Runtime-null guarded via selects so a stray null payload degrades
-          # to storing null instead of faulting.
-          emit "%#{base_name}.sv_raw = call ptr @__adamas_malloc64(i64 #{variant_size + 8})"
-          emit "store i64 9223372036854775807, ptr %#{base_name}.sv_raw, align 8"
-          emit "%#{base_name}.sv_new = getelementptr i8, ptr %#{base_name}.sv_raw, i64 8"
-          emit "%#{base_name}.sv_is_null = icmp eq ptr #{val}, null"
-          emit "%#{base_name}.sv_src = select i1 %#{base_name}.sv_is_null, ptr %#{base_name}.sv_new, ptr #{val}"
-          emit "call void @llvm.memmove.p0.p0.i64(ptr %#{base_name}.sv_new, ptr %#{base_name}.sv_src, i64 #{variant_size}, i1 false)"
-          emit "%#{base_name}.sv_val = select i1 %#{base_name}.sv_is_null, ptr null, ptr %#{base_name}.sv_new"
-          emit "store ptr %#{base_name}.sv_val, ptr %#{base_name}.payload_ptr, align 4"
+        elsif clone_size > 0
+          emit_union_payload_value_clone(base_name, val, clone_size)
         else
           emit "store #{val_type_str} #{val}, ptr %#{base_name}.payload_ptr, align 4"
         end
@@ -26292,8 +26495,8 @@ module Adamas::MIR
           end
         elsif (result_type == "float" || result_type == "double") && actual_union_val_type == "ptr"
           # Union passed as ptr pointing to {i32 type_id, payload} in memory.
-          # Load the value type from the payload area at byte offset 4.
-          emit "%#{base_name}.pay_ptr = getelementptr i8, ptr #{union_val}, i32 4"
+          # Load the value type from the payload area (after the aligned tid).
+          emit "%#{base_name}.pay_ptr = getelementptr i8, ptr #{union_val}, i32 #{union_payload_offset_default}"
           emit "#{name} = load #{result_type}, ptr %#{base_name}.pay_ptr, align 4"
         else
           # Fallback: bitcast — record as ptr since that's what bitcast ptr→ptr produces
@@ -28115,58 +28318,29 @@ module Adamas::MIR
             emit "%#{base_name}.tid#{idx} = load i32, ptr %#{base_name}.tid_ptr#{idx}"
             emit "%#{base_name}.payload_ptr#{idx} = getelementptr #{part_llvm_type}, ptr %#{base_name}.union_ptr#{idx}, i32 0, i32 1"
 
-            # Determine payload types from union variant tokens.
-            # Check ALL variants (not just the last one) to find int/bool variants.
-            union_tokens = union_variant_tokens_for_llvm_union(part_llvm_type)
-            has_int32 = union_tokens.any? { |t| t == "Int32" || t == "UInt32" }
-            has_int64 = union_tokens.any? { |t| t == "Int64" || t == "UInt64" }
-            has_bool = union_tokens.any? { |t| t == "Bool" }
-            has_ptr = union_tokens.any? { |t| t == "String" || t == "Pointer" || (!t.in?("Nil", "Bool", "Int8", "UInt8", "Int16", "UInt16", "Int32", "UInt32", "Int64", "UInt64", "Int128", "UInt128", "Float32", "Float64", "Char") && t != "Nil") }
-
             interp_nil_vid = nil_variant_id_for_union_type(part_llvm_type) || 0
             emit "%#{base_name}.is_nil#{idx} = icmp eq i32 %#{base_name}.tid#{idx}, #{interp_nil_vid}"
 
-            if has_int32 && has_ptr
-              # Mixed union (e.g., Int32 | String): dispatch based on discriminator.
-              # Find the Int32 variant discriminator to select the right conversion.
-              int_vid = find_variant_id_by_type_name(part_llvm_type, part_type, "Int32") ||
-                        find_variant_id_by_type_name(part_llvm_type, part_type, "UInt32")
-              if int_vid
-                emit "%#{base_name}.is_int#{idx} = icmp eq i32 %#{base_name}.tid#{idx}, #{int_vid}"
-                emit "%#{base_name}.i32_val#{idx} = load i32, ptr %#{base_name}.payload_ptr#{idx}, align 4"
-                emit "%#{base_name}.i32_str#{idx} = call ptr @__adamas_int_to_string(i32 %#{base_name}.i32_val#{idx})"
-                emit "%#{base_name}.str_ptr#{idx} = load ptr, ptr %#{base_name}.payload_ptr#{idx}, align 4"
-                # Int32 variant → i32_str, String/ptr variant → str_ptr, Nil → empty
-                emit "%#{base_name}.non_nil#{idx} = select i1 %#{base_name}.is_int#{idx}, ptr %#{base_name}.i32_str#{idx}, ptr %#{base_name}.str_ptr#{idx}"
-                emit "%#{base_name}.conv#{idx} = select i1 %#{base_name}.is_nil#{idx}, ptr @.str.empty, ptr %#{base_name}.non_nil#{idx}"
-              else
-                # Fallback: load as ptr
-                emit "%#{base_name}.str_ptr#{idx} = load ptr, ptr %#{base_name}.payload_ptr#{idx}, align 4"
-                emit "%#{base_name}.conv#{idx} = select i1 %#{base_name}.is_nil#{idx}, ptr @.str.empty, ptr %#{base_name}.str_ptr#{idx}"
-              end
-              string_parts << "%#{base_name}.conv#{idx}"
-            elsif has_int32
-              emit "%#{base_name}.i32_val#{idx} = load i32, ptr %#{base_name}.payload_ptr#{idx}, align 4"
-              emit "%#{base_name}.i32_str#{idx} = call ptr @__adamas_int_to_string(i32 %#{base_name}.i32_val#{idx})"
-              emit "%#{base_name}.conv#{idx} = select i1 %#{base_name}.is_nil#{idx}, ptr @.str.empty, ptr %#{base_name}.i32_str#{idx}"
-              string_parts << "%#{base_name}.conv#{idx}"
-            elsif has_int64
-              emit "%#{base_name}.i64_val#{idx} = load i64, ptr %#{base_name}.payload_ptr#{idx}, align 4"
-              emit "%#{base_name}.i64_str#{idx} = call ptr @__adamas_int64_to_string(i64 %#{base_name}.i64_val#{idx})"
-              emit "%#{base_name}.conv#{idx} = select i1 %#{base_name}.is_nil#{idx}, ptr @.str.empty, ptr %#{base_name}.i64_str#{idx}"
-              string_parts << "%#{base_name}.conv#{idx}"
-            elsif has_bool
-              emit "%#{base_name}.bool_val#{idx} = load i8, ptr %#{base_name}.payload_ptr#{idx}, align 4"
-              emit "%#{base_name}.bool_i1#{idx} = trunc i8 %#{base_name}.bool_val#{idx} to i1"
-              emit "%#{base_name}.bool_str#{idx} = call ptr @__adamas_bool_to_string(i1 %#{base_name}.bool_i1#{idx})"
-              emit "%#{base_name}.conv#{idx} = select i1 %#{base_name}.is_nil#{idx}, ptr @.str.empty, ptr %#{base_name}.bool_str#{idx}"
-              string_parts << "%#{base_name}.conv#{idx}"
-            else
-              # Payload is ptr (String, Array, or class instance) — load always safe from alloca
-              emit "%#{base_name}.str_ptr#{idx} = load ptr, ptr %#{base_name}.payload_ptr#{idx}, align 4"
-              emit "%#{base_name}.conv#{idx} = select i1 %#{base_name}.is_nil#{idx}, ptr @.str.empty, ptr %#{base_name}.str_ptr#{idx}"
-              string_parts << "%#{base_name}.conv#{idx}"
+            # Convert each variant by its own payload type and select the
+            # result by discriminator. Picking a single conversion from the
+            # union's token set loaded a UInt64 payload as i32, and treated
+            # every variant other than Int32/Nil as a String pointer when the
+            # union also held a reference type.
+            conv_name = "%#{base_name}.conv#{idx}"
+            variant_convs = interpolation_union_variant_conversions(part_llvm_type, part_type, base_name, idx)
+            ptr_default = "%#{base_name}.str_ptr#{idx}"
+            emit "#{ptr_default} = load ptr, ptr %#{base_name}.payload_ptr#{idx}, align 4"
+            current = ptr_default
+            variant_convs.each_with_index do |(vid, value), vidx|
+              next if value == ptr_default
+              is_name = "%#{base_name}.is_v#{vidx}_#{idx}"
+              sel_name = "%#{base_name}.sel_v#{vidx}_#{idx}"
+              emit "#{is_name} = icmp eq i32 %#{base_name}.tid#{idx}, #{vid}"
+              emit "#{sel_name} = select i1 #{is_name}, ptr #{value}, ptr #{current}"
+              current = sel_name
             end
+            emit "#{conv_name} = select i1 %#{base_name}.is_nil#{idx}, ptr @.str.empty, ptr #{current}"
+            string_parts << conv_name
           else
             # Check if this is an Array type — build "[elem, elem, ...]" string
             arr_type_name = part_type ? (@module.type_registry.get(part_type).try(&.name) || "") : ""
@@ -28211,6 +28385,101 @@ module Adamas::MIR
 
     # Ensure interpolation operand is materialized as i32 for int/char conversion
     # helpers (ptr-encoded scalar slots, widened ints, etc.).
+    # Per-variant string conversions for a tagged-union interpolation part.
+    # Returns {discriminator, converted ptr} pairs for every non-Nil variant;
+    # variants read as a String pointer map to `%base.str_ptrN` (emitted by the
+    # caller). Requires `%base.payload_ptrN` to be emitted already.
+    private def interpolation_union_variant_conversions(part_llvm_type : String, part_type : TypeRef?, base_name : String, idx : Int32) : Array({Int32, String})
+      variants = [] of {Int32, TypeRef?, String}
+      union_ref = find_type_ref_for_llvm_type(part_llvm_type) || part_type
+      if union_ref && (union_desc = @module.get_union_descriptor(union_ref))
+        union_desc.variants.each do |variant|
+          vref = variant.type_ref
+          next if vref == TypeRef::NIL || vref == TypeRef::VOID
+          next if variant.full_name == "Nil" || variant.full_name == "Void"
+          variants << {vref.id.to_i32, vref, variant.full_name}
+        end
+      else
+        union_variant_tokens_for_llvm_union(part_llvm_type).each do |token|
+          base = token.split("$L").first.split("$CC").last
+          next if base == "Nil" || base == "Void"
+          if vid = type_ref_id_for_type_name(base)
+            variants << {vid, nil, base}
+          end
+        end
+      end
+
+      ptr_value = "%#{base_name}.str_ptr#{idx}"
+      payload = "%#{base_name}.payload_ptr#{idx}"
+      result = [] of {Int32, String}
+      variants.each_with_index do |(vid, vref, name), vidx|
+        kind = vref ? interpolation_scalar_kind(vref) : name
+        prefix = "%#{base_name}.v#{vidx}_#{idx}"
+        value = case kind
+                when "Int8", "Int16", "Int32", "UInt8", "UInt16"
+                  scalar = {"Int8" => "i8", "Int16" => "i16", "Int32" => "i32", "UInt8" => "i8", "UInt16" => "i16"}[kind]
+                  emit "#{prefix}.raw = load #{scalar}, ptr #{payload}, align 4"
+                  arg = "#{prefix}.raw"
+                  unless scalar == "i32"
+                    op = kind.starts_with?("U") ? "zext" : "sext"
+                    emit "#{prefix}.ext = #{op} #{scalar} #{prefix}.raw to i32"
+                    arg = "#{prefix}.ext"
+                  end
+                  emit "#{prefix}.str = call ptr @__adamas_int_to_string(i32 #{arg})"
+                  "#{prefix}.str"
+                when "UInt32"
+                  emit "#{prefix}.raw = load i32, ptr #{payload}, align 4"
+                  emit "#{prefix}.ext = zext i32 #{prefix}.raw to i64"
+                  emit "#{prefix}.str = call ptr @__adamas_int64_to_string(i64 #{prefix}.ext)"
+                  "#{prefix}.str"
+                when "Int64", "UInt64"
+                  emit "#{prefix}.raw = load i64, ptr #{payload}, align 4"
+                  emit "#{prefix}.str = call ptr @__adamas_int64_to_string(i64 #{prefix}.raw)"
+                  "#{prefix}.str"
+                when "Bool"
+                  emit "#{prefix}.raw = load i8, ptr #{payload}, align 4"
+                  emit "#{prefix}.bit = trunc i8 #{prefix}.raw to i1"
+                  emit "#{prefix}.str = call ptr @__adamas_bool_to_string(i1 #{prefix}.bit)"
+                  "#{prefix}.str"
+                when "Char"
+                  emit "#{prefix}.raw = load i32, ptr #{payload}, align 4"
+                  emit "#{prefix}.str = call ptr @__adamas_char_to_string(i32 #{prefix}.raw)"
+                  "#{prefix}.str"
+                when "Float64"
+                  emit "#{prefix}.raw = load double, ptr #{payload}, align 4"
+                  emit "#{prefix}.str = call ptr @__adamas_f64_to_string(double #{prefix}.raw)"
+                  "#{prefix}.str"
+                when "Float32"
+                  emit "#{prefix}.raw = load float, ptr #{payload}, align 4"
+                  emit "#{prefix}.ext = fpext float #{prefix}.raw to double"
+                  emit "#{prefix}.str = call ptr @__adamas_f64_to_string(double #{prefix}.ext)"
+                  "#{prefix}.str"
+                else
+                  ptr_value
+                end
+        result << {vid, value}
+      end
+      result
+    end
+
+    private def interpolation_scalar_kind(type_ref : TypeRef) : String
+      case type_ref
+      when TypeRef::INT8    then "Int8"
+      when TypeRef::INT16   then "Int16"
+      when TypeRef::INT32   then "Int32"
+      when TypeRef::INT64   then "Int64"
+      when TypeRef::UINT8   then "UInt8"
+      when TypeRef::UINT16  then "UInt16"
+      when TypeRef::UINT32  then "UInt32"
+      when TypeRef::UINT64  then "UInt64"
+      when TypeRef::BOOL    then "Bool"
+      when TypeRef::CHAR    then "Char"
+      when TypeRef::FLOAT32 then "Float32"
+      when TypeRef::FLOAT64 then "Float64"
+      else                       ""
+      end
+    end
+
     private def interpolation_i32_arg(part_ref : String, part_id : ValueId, base_name : String, idx : Int32, hint_llvm_type : String?, *, signed : Bool) : String
       return part_ref unless part_ref.starts_with?('%')
 
@@ -29387,11 +29656,6 @@ module Adamas::MIR
       name == "Nil" || name == "Void"
     end
 
-    private def null_like_union_variant_token?(token : String) : Bool
-      base = token.split("$L").first.split("$CC").last
-      base == "Nil" || base == "Void"
-    end
-
     # Remember how wide a union type really is in the emitted module.
     private def record_emitted_union_byte_width(name : String, bytes : Int32) : Nil
       previous = @emitted_union_byte_widths[name]?
@@ -29427,21 +29691,15 @@ module Adamas::MIR
       dst_bytes > src_bytes ? dst_type : src_type
     end
 
-    # Byte width of a union's payload region ([N x i32] after the i32 tid).
-    # Mirrors emit_union_type's payload sizing so a raw payload copy matches the
-    # emitted `{ i32, [N x i32] }` layout exactly (widest variant, ptr-min 8,
-    # rounded up to a 4-byte i32 array).
+    # Byte width of a union's payload region (the [N x iA] array after the tid).
+    # Shares emit_union_type's sizing so a raw payload copy matches the emitted
+    # layout exactly.
     private def union_payload_byte_width(type_ref : TypeRef) : Int32
       t = @module.type_registry.get(type_ref)
-      variants = t.try(&.variants)
+      return 8 unless t
+      variants = t.variants
       return 8 unless variants && !variants.empty?
-      payload_bytes = variants.map(&.size).max
-      variants.each do |v|
-        next if v.kind.primitive? || v.name == "Nil" || v.name == "Void"
-        payload_bytes = 8_u64 if @type_mapper.llvm_type(v) == "ptr" && payload_bytes < 8_u64
-      end
-      payload_bytes = {payload_bytes, 8_u64}.max
-      (((payload_bytes + 3) // 4) * 4).to_i32
+      union_payload_byte_width_for(t).to_i32
     end
 
     # Bytes to copy when transferring a union payload from one union layout to
@@ -29478,27 +29736,18 @@ module Adamas::MIR
       if remap_pairs.nil?
         return src_type_id_value if src_union_type == dst_union_type
 
-        src_variants = union_variant_tokens_for_llvm_union(src_union_type)
-        dst_variants = union_variant_tokens_for_llvm_union(dst_union_type)
-        return src_type_id_value if src_variants.empty? || dst_variants.empty?
-
-        dst_index_by_name = {} of String => Int32
-        dst_variants.each_with_index do |variant, idx|
-          dst_index_by_name[variant] = idx.to_i32 unless dst_index_by_name.has_key?(variant)
+        # Stored discriminators are global (Nil/Void -> 0, otherwise type_ref.id),
+        # never positions in a union's variant list, so a remap must come from
+        # the descriptors. Remapping by variant index rewrote live discriminators
+        # that happened to equal an index (Bool = 2 became 3 when merging
+        # Bool | Int32 | String into Nil | Bool | Int32 | String).
+        src_ref = src_union_ref || find_union_type_ref_for_llvm_string(src_union_type)
+        dst_ref = dst_union_ref || find_union_type_ref_for_llvm_string(dst_union_type)
+        if src_ref && dst_ref
+          remap_pairs = union_type_id_remap_pairs_from_descriptors(src_ref, dst_ref)
         end
-
-        pairs = [] of {Int32, Int32}
-        src_variants.each_with_index do |variant, src_idx|
-          dst_idx = dst_index_by_name[variant]?
-          if dst_idx.nil? && null_like_union_variant_token?(variant)
-            if null_dst = dst_variants.index { |v| null_like_union_variant_token?(v) }
-              dst_idx = null_dst.to_i32
-            end
-          end
-          dst_idx ||= src_idx.to_i32
-          pairs << {src_idx.to_i32, dst_idx}
-        end
-        remap_pairs = pairs
+        # No descriptors: global discriminators already agree across unions.
+        return src_type_id_value unless remap_pairs
       end
 
       return src_type_id_value if remap_pairs.all? { |(src_idx, dst_idx)| src_idx == dst_idx }
@@ -29535,6 +29784,41 @@ module Adamas::MIR
         end
       end
       variant_type_id  # fallback
+    end
+
+    # Byte size of the value-type pointee that a union payload of this variant
+    # must own, or 0 when the payload is stored as-is. `variant_type_id` is the
+    # descriptor-local id (same index space as variant_global_id), NOT a
+    # position in the type registry's `variants` list.
+    private def union_variant_value_clone_size(union_type_ref : TypeRef, variant_type_id : Int32) : UInt64
+      return 0_u64 unless union_desc = @module.get_union_descriptor(union_type_ref)
+      union_desc.variants.each do |dvariant|
+        next unless dvariant.type_id == variant_type_id
+        return 0_u64 unless vt = @module.type_registry.get(dvariant.type_ref)
+        return 0_u64 unless vt.size > 0
+        if vt.name.starts_with?("Tuple(")
+          return (vt.kind.tuple? || vt.kind.struct?) ? vt.size : 0_u64
+        end
+        if vt.kind.struct? && (vt.fields.try(&.size) || 0) > 0
+          return vt.size
+        end
+        return 0_u64
+      end
+      0_u64
+    end
+
+    # Store a fresh copy of the value at `src` into `%base.payload_ptr`.
+    # The copy gets an immortal RC header (rc_dec is a no-op) so it never
+    # aliases the source's lifetime; it adopts the source's field references.
+    private def emit_union_payload_value_clone(base_name : String, src : String, size : UInt64)
+      emit "%#{base_name}.sv_raw = call ptr @__adamas_malloc64(i64 #{size + 8})"
+      emit "store i64 9223372036854775807, ptr %#{base_name}.sv_raw, align 8"
+      emit "%#{base_name}.sv_new = getelementptr i8, ptr %#{base_name}.sv_raw, i64 8"
+      emit "%#{base_name}.sv_is_null = icmp eq ptr #{src}, null"
+      emit "%#{base_name}.sv_src = select i1 %#{base_name}.sv_is_null, ptr %#{base_name}.sv_new, ptr #{src}"
+      emit "call void @llvm.memmove.p0.p0.i64(ptr %#{base_name}.sv_new, ptr %#{base_name}.sv_src, i64 #{size}, i1 false)"
+      emit "%#{base_name}.sv_val = select i1 %#{base_name}.sv_is_null, ptr null, ptr %#{base_name}.sv_new"
+      emit "store ptr %#{base_name}.sv_val, ptr %#{base_name}.payload_ptr, align 4"
     end
 
     private def union_variant_global_id_for_value_type(union_type_ref : TypeRef, value_type_ref : TypeRef?) : Int32

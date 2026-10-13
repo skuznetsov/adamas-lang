@@ -219,7 +219,10 @@ module Adamas
           source_provider : Proc(ExprId, String?)? = nil,
           macro_source : String? = nil,
           macro_source_path : String? = nil,
-          source_sink : Proc(String, Nil)? = nil
+          source_sink : Proc(String, Nil)? = nil,
+          type_value_resolver : Proc(String, MacroValue?)? = nil,
+          constant_value_resolver : Proc(String, MacroValue?)? = nil,
+          type_relation_resolver : Proc(String, String, Bool)? = nil
         )
           @diagnostics = [] of Diagnostic
           @depth = 0
@@ -232,6 +235,9 @@ module Adamas
           @macro_source_path = macro_source_path
           @macro_source_provider = nil.as(Proc(Frontend::ExprId, String?)?)
           @source_sink = source_sink
+          @type_value_resolver = type_value_resolver
+          @constant_value_resolver = constant_value_resolver
+          @type_relation_resolver = type_relation_resolver
           @string_pool = @program.string_pool
           @macro_body_output_stats = ENV["ADAMAS_MACRO_BODY_OUTPUT_STATS"]? == "1"
           @macro_body_stat_single_threshold = ENV["ADAMAS_MACRO_BODY_STAT_THRESHOLD"]?.try(&.to_i64?) || 100_000_i64
@@ -452,6 +458,48 @@ module Adamas
               end
             end
             result
+          ensure
+            @depth -= 1
+          end
+        end
+
+        # Evaluate a `{% if %}` condition to its truthiness with the full macro
+        # interpreter (structural `==`, kind-aware numbers, short-circuit
+        # `&&`/`||`, literal method calls). The HIR lowering path keeps its own
+        # evaluator for type-parameter and flag conditions and delegates
+        # literal-only conditions here. Returns nil (diagnostics rolled back) when
+        # the interpreter reported an error while evaluating the expression.
+        def evaluate_condition_truthiness(
+          expr_id : ExprId,
+          *,
+          variables : Hash(String, MacroValue),
+          owner_type : ClassSymbol? = nil,
+        ) : Bool?
+          evaluate_value(expr_id, variables: variables, owner_type: owner_type).try(&.truthy?)
+        end
+
+        # Evaluates an expression as a macro value; nil when evaluation
+        # reported a diagnostic (the expression is not a macro value).
+        def evaluate_value(
+          expr_id : ExprId,
+          *,
+          variables : Hash(String, MacroValue),
+          owner_type : ClassSymbol? = nil,
+        ) : MacroValue?
+          return nil if @depth >= MAX_DEPTH
+
+          diag_mark = @diagnostics.size
+          @depth += 1
+          begin
+            context = Context.new(variables, {} of String => String, owner_type, @depth, @flags, nil)
+            value = evaluate_to_macro_value(expr_id, context)
+            if @diagnostics.size > diag_mark
+              while @diagnostics.size > diag_mark
+                @diagnostics.pop
+              end
+              return nil
+            end
+            value
           ensure
             @depth -= 1
           end
@@ -716,7 +764,10 @@ module Adamas
             source_provider: @source_provider,
             macro_source: wrapped,
             macro_source_path: @macro_source_path,
-            source_sink: @source_sink
+            source_sink: @source_sink,
+            type_value_resolver: @type_value_resolver,
+            constant_value_resolver: @constant_value_resolver,
+            type_relation_resolver: @type_relation_resolver
           )
           expander.macro_source_provider = @macro_source_provider
           STDERR.puts "[MACRO_RAW_TOPLEVEL] phase=before_nested_expand" if debug_top_level
@@ -788,16 +839,19 @@ module Adamas
             raw_sym = Frontend.node_literal_string(node) || ""
             MacroSymbolValue.new(raw_sym.lchop(':'))
           when .char?
-            literal = Frontend.node_literal_string(node) || ""
-            MacroStringValue.new(literal) # Treat char as string for simplicity
+            MacroCharValue.new(Frontend.node_literal_string(node) || "")
           when .bool?
             literal = Frontend.node_literal_string(node)
             MacroBoolValue.new(literal == "true")
           when Frontend::NodeKind::Nil
             macro_nil_value
           when .identifier?, .constant?
+            # A macro argument is an unevaluated AST node (original Crystal binds
+            # the Path itself), so a bare type name must not become a TypeNode:
+            # `record ProfStats` inside `module GC` resolved `ProfStats` to
+            # `LibGC::ProfStats` and `{{name.id}}` declared `GC::LibGC::ProfStats`.
             name = Frontend.node_literal_string(node) || ""
-            resolve_scoped_macro_value(name, Context.new) || MacroIdValue.new(name)
+            resolve_scoped_macro_value(name, Context.new, resolve_types: false) || MacroIdValue.new(name)
           else
             if node.is_a?(Frontend::ArrayLiteralNode)
               MacroArrayValue.new(node.elements.map { |elem_id| expr_to_macro_value(elem_id).as(MacroValue) })
@@ -855,6 +909,15 @@ module Adamas
             return MacroIdValue.new(literal || "")
           end
 
+          # Original interpreter: `@type` is the current TypeNode. Without this
+          # arm a value-position `@type` (e.g. `"#{@type}"` in a raise message)
+          # became an opaque MacroNodeValue whose text is the source "@type".
+          if node.is_a?(Frontend::InstanceVarNode) && (owner = context.owner_type) &&
+             intern_name(node.name) == "@type"
+            return MacroTypeValue.new(owner.name, owner, owner.is_struct?, false, owner.is_abstract?,
+              owner.superclass_name, owner.type_parameters)
+          end
+
           case Frontend.node_kind(node)
           when .number?
             literal = Frontend.node_literal_string(node) || "0"
@@ -870,7 +933,7 @@ module Adamas
             raw_sym = Frontend.node_literal_string(node) || ""
             MacroSymbolValue.new(raw_sym.lchop(':'))
           when .char?
-            MacroStringValue.new(Frontend.node_literal_string(node) || "")
+            MacroCharValue.new(Frontend.node_literal_string(node) || "")
           when .bool?
             literal = Frontend.node_literal_string(node)
             MacroBoolValue.new(literal == "true")
@@ -920,6 +983,21 @@ module Adamas
               return macro_nil_value
             elsif node.is_a?(Frontend::BinaryNode)
               return evaluate_binary_to_macro_value(node, context)
+            elsif node.is_a?(Frontend::UnaryNode)
+              operator = String.new(node.operator)
+              if operator == "!"
+                # Original visit(Not): BoolLiteral of the negated truthiness. The
+                # parser also lowers `{% unless c %}` to `!c`, so without this arm
+                # the node fell through to an always-truthy MacroNodeValue.
+                return MacroBoolValue.new(!evaluate_to_macro_value(node.operand, context).truthy?)
+              elsif operator == "+" || operator == "-" || operator == "~"
+                operand = evaluate_to_macro_value(node.operand, context)
+                if operand.is_a?(MacroNumberValue)
+                  if result = operand.unary_operation(operator)
+                    return result
+                  end
+                end
+              end
             elsif node.is_a?(Frontend::TernaryNode)
               condition_value = evaluate_to_macro_value(node.condition, context)
               branch = condition_value.truthy? ? node.true_branch : node.false_branch
@@ -1093,7 +1171,16 @@ module Adamas
           obj = @arena[node.object]
           member = intern_name(node.member)
 
-          base_value = if obj.is_a?(Frontend::IdentifierNode)
+          # `@type` has no MacroValue form here (it would become an opaque
+          # MacroNodeValue whose members are all nil), so `@type.name` inside a
+          # longer chain such as `@type.name.stringify` must use the
+          # owner-type-aware text evaluation.
+          type_ivar_receiver = obj.is_a?(Frontend::InstanceVarNode) && intern_name(obj.name) == "@type"
+          base_value = if type_ivar_receiver
+                         nil
+                       elsif type_value = macro_type_value_for_path_receiver(obj, context)
+                         type_value
+                       elsif obj.is_a?(Frontend::IdentifierNode)
                          name = Frontend.node_literal_string(obj)
                          name ? context.variables[name]? : nil
                        else
@@ -1112,10 +1199,68 @@ module Adamas
           fallback.empty? ? macro_nil_value : MacroIdValue.new(fallback)
         end
 
+        # A constant path naming a type (`Foo.name`, `A::B.name`) is a TypeNode
+        # receiver, not an identifier: without this the member access fell back
+        # to text evaluation, which only knows macro variables, and expanded to "".
+        # Macro variables of the same name keep precedence. Without a semantic
+        # symbol table (HIR lowering), the type is resolved by the owner-supplied
+        # `type_value_resolver` in the lowering context.
+        private def macro_type_value_for_path_receiver(obj, context : Context) : MacroValue?
+          name = case obj
+                 when Frontend::IdentifierNode, Frontend::ConstantNode
+                   Frontend.node_literal_string(obj)
+                 when Frontend::PathNode
+                   path_to_string(obj)
+                 else
+                   nil
+                 end
+          return nil if name.nil? || !constant_like_name?(name)
+          return nil if context.variables.has_key?(name)
+          return nil if substitute_macro_path_head(name, context)
+
+          case symbol = resolve_named_type_symbol(obj, context)
+          when ClassSymbol
+            type_params = symbol.type_parameters
+            full_name = if type_params && !type_params.empty?
+                          "#{symbol.name}(#{type_params.join(", ")})"
+                        else
+                          symbol.name
+                        end
+            MacroTypeValue.new(full_name, symbol, symbol.is_struct?, false, symbol.is_abstract?,
+              symbol.superclass_name, type_params)
+          when ModuleSymbol
+            MacroTypeValue.new(symbol.name, nil, false, true, false, nil, symbol.type_parameters)
+          when EnumSymbol
+            MacroTypeValue.new(symbol.name, nil, true, false, false, nil, nil)
+          else
+            @type_value_resolver.try(&.call(name))
+          end
+        end
+
         private def evaluate_binary_to_macro_value(node : Frontend::BinaryNode, context : Context) : MacroValue
-          left = evaluate_to_macro_value(node.left, context)
-          right = evaluate_to_macro_value(node.right, context)
           op = String.new(node.operator)
+          left = evaluate_to_macro_value(node.left, context)
+          # Original interpreter visit(And)/visit(Or): short-circuit and yield
+          # the deciding operand (not a Bool), right side evaluated lazily.
+          case op
+          when "&&"
+            return left.truthy? ? evaluate_to_macro_value(node.right, context) : left
+          when "||"
+            return left.truthy? ? left : evaluate_to_macro_value(node.right, context)
+          end
+          right = evaluate_to_macro_value(node.right, context)
+
+          # TypeNode#< / <= / > / >= (subtype relation). The hierarchy lives in
+          # the owner, so it is supplied by `type_relation_resolver`.
+          if left.is_a?(MacroTypeValue) && right.is_a?(MacroTypeValue) &&
+             (relation = @type_relation_resolver)
+            case op
+            when "<"  then return MacroBoolValue.new(left.name != right.name && relation.call(left.name, right.name))
+            when "<=" then return MacroBoolValue.new(relation.call(left.name, right.name))
+            when ">"  then return MacroBoolValue.new(left.name != right.name && relation.call(right.name, left.name))
+            when ">=" then return MacroBoolValue.new(relation.call(right.name, left.name))
+            end
+          end
 
           if ENV["DEBUG_MACRO_ASSIGN"]? && (op == "**" || op == "//")
             STDERR.puts "[MACRO_BIN] op=#{op} left=#{left.class_name} right=#{right.class_name}"
@@ -1186,7 +1331,7 @@ module Adamas
             end
 
             # General MacroValue method calls (properties.map, kwargs.empty?, etc.)
-            receiver = evaluate_to_macro_value(obj, context)
+            receiver = macro_type_value_for_path_receiver(obj_node, context) || evaluate_to_macro_value(obj, context)
             if !receiver.is_a?(MacroNilValue)
               args = node.args.map { |arg| evaluate_to_macro_value(arg, context) }
               named_arg_values = node.named_args.try do |named|
@@ -1912,6 +2057,12 @@ module Adamas
                     end
                   end
                   str << value
+                end
+                index += 1
+              when .statement?
+                # Inline `{% if c; expr; end %}` body: effects only, no output.
+                if expr_id = piece.expr
+                  evaluate_to_macro_value(expr_id, context)
                 end
                 index += 1
               when .macro_var?
@@ -3027,8 +3178,16 @@ module Adamas
               left_result, left_ctx = evaluate_condition(node.left, context)
               return {true, left_ctx} if left_result
               return evaluate_condition(node.right, context)
+            when "==", "!="
+              # ASTNode equality is structural (node class, number kind,
+              # elementwise collections). The Int64/string-to_i shortcuts below
+              # are kind-blind (`1_i32 == 1_i64`, `1.id == 1`), so equality
+              # always goes through the macro value.
+              left_value = evaluate_to_macro_value(node.left, context)
+              right_value = evaluate_to_macro_value(node.right, context)
+              return {left_value.call_method(op, [right_value], nil).truthy?, context}
             else
-              # Lightweight numeric comparison support (i > 0, i == 0, etc.).
+              # Lightweight numeric ordering support (i > 0, i <= n, etc.).
               left_number = macro_condition_number_value(node.left, context)
               right_number = macro_condition_number_value(node.right, context)
               if left_number && right_number
@@ -3037,8 +3196,6 @@ module Adamas
                          when ">=" then left_number >= right_number
                          when "<"  then left_number < right_number
                          when "<=" then left_number <= right_number
-                         when "==" then left_number == right_number
-                         when "!=" then left_number != right_number
                          else           false
                          end
                 return {result, context}
@@ -3052,8 +3209,6 @@ module Adamas
                          when ">=" then left_int >= right_int
                          when "<"  then left_int < right_int
                          when "<=" then left_int <= right_int
-                         when "==" then left_int == right_int
-                         when "!=" then left_int != right_int
                          else           false
                          end
                 return {result, context}
@@ -3753,11 +3908,11 @@ module Adamas
           table.lookup(name)
         end
 
-        private def resolve_scoped_macro_value(name : String, context : Context) : MacroValue?
+        private def resolve_scoped_macro_value(name : String, context : Context, resolve_types : Bool = true) : MacroValue?
           return nil if name.empty?
 
           if substituted = substitute_macro_path_head(name, context)
-            if value = resolve_scoped_macro_value(substituted, context)
+            if value = resolve_scoped_macro_value(substituted, context, resolve_types)
               return value
             end
           end
@@ -3781,6 +3936,21 @@ module Adamas
               if value = macro_value_for_symbol(symbol, context)
                 return value
               end
+            end
+          end
+
+          # Without a semantic symbol table (HIR lowering), constant values come
+          # from the owner-supplied `constant_value_resolver`.
+          if value = @constant_value_resolver.try(&.call(name))
+            return value
+          end
+
+          # Original interpreter visit(Path): a path naming a type evaluates to
+          # a TypeNode. Without this, a bare `Bool` became MacroId("Bool") and
+          # `T == Bool` compared a TypeNode with a MacroId (always false).
+          if resolve_types && constant_like_name?(name)
+            if value = @type_value_resolver.try(&.call(name))
+              return value
             end
           end
 

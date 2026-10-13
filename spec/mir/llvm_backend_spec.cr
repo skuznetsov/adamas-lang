@@ -182,10 +182,37 @@ describe Adamas::MIR::LLVMIRGenerator do
       output.should contain("define void @__adamas_slab_frame_pop()")
     end
 
-    it "keeps the raw Thread::Mutex initializer target-local" do
-      mod = Adamas::MIR::Module.new("thread_mutex_override")
+    it "keeps no-GC and no-prelude allocation helpers native independently of collector demand" do
+      {"managed", "no_gc", "no_prelude"}.each do |mode|
+        mod = Adamas::MIR::Module.new("allocator_mode_#{mode}")
+        mod.uses_gc = true
+        gen = Adamas::MIR::LLVMIRGenerator.new(mod)
+        gen.emit_type_metadata = false
+        gen.no_gc = mode == "no_gc"
+        gen.no_prelude = mode == "no_prelude"
+        output = gen.generate
+
+        collector_calls = output.scan(/call [^\n]*@GC_(?:malloc|malloc_atomic|base|realloc|free)\(/)
+        if mode == "managed"
+          collector_calls.should_not be_empty
+          output.should contain("call ptr @GC_malloc(i64 %size)")
+          output.should contain("call ptr @GC_malloc_atomic(i64 %slack)")
+          output.should contain("call ptr @GC_realloc(ptr %old_ptr, i64 %size)")
+        else
+          collector_calls.should be_empty
+          output.should_not contain("call void @GC_init()")
+          output.should contain("call void @free(ptr %ptr)")
+        end
+      end
+    end
+
+    it "preserves the Thread::Mutex initializer MIR instead of replacing it with a raw override" do
+      mod = Adamas::MIR::Module.new("thread_mutex_body")
       func = mod.create_function("Thread::Mutex#initialize", Adamas::MIR::TypeRef::VOID)
       func.add_param("self", Adamas::MIR::TypeRef::POINTER)
+      builder = Adamas::MIR::Builder.new(func)
+      builder.extern_call("thread_mutex_body_probe", [0_u32], Adamas::MIR::TypeRef::VOID)
+      builder.ret
 
       gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
@@ -195,7 +222,9 @@ describe Adamas::MIR::LLVMIRGenerator do
       body = output[/define void @Thread\$CCMutex\$Hinitialize\(ptr %self\) \{.*?\n\}/m]
       body.should_not be_nil
       body = body.not_nil!
-      body.should contain("call i32 @pthread_mutexattr_settype(ptr %attr, i32 1)")
+      body.should contain("call void @thread_mutex_body_probe(ptr %self)")
+      body.should_not contain("call i32 @pthread_mutexattr_settype")
+      body.should_not contain("call i32 @pthread_mutex_init")
       body.should_not contain("@LibC__classvar__PTHREAD_MUTEX_ERRORCHECK")
     end
 
@@ -2051,6 +2080,7 @@ describe Adamas::MIR::LLVMIRGenerator do
       helper_ir = output[/define void @__adamas_rc_dec_atomic\(ptr %ptr, ptr %destructor\)\s*\{.*?\n\}/m]
       helper_ir.should_not be_nil
       helper = helper_ir.not_nil!
+      free_helper = output[/define void @__adamas_managed_free\(ptr %ptr\) noinline\s*\{.*?\n\}/m]
       {% if flag?(:darwin) %}
         helper.should contain("%is_null = icmp eq ptr %ptr, null")
         helper.should contain("%raw = getelementptr i8, ptr %ptr, i64 -8")
@@ -2062,7 +2092,10 @@ describe Adamas::MIR::LLVMIRGenerator do
         helper.should contain("label %do_free")
         helper.should contain("%has_dtor = icmp ne ptr %destructor, null")
         helper.should contain("call void %destructor(ptr %ptr)")
-        helper.should contain("call void @free(ptr %raw)")
+        helper.should contain("call void @__adamas_managed_free(ptr %raw)")
+        free_helper.should_not be_nil
+        free_helper.not_nil!.should contain("call void @free(ptr %ptr)")
+        free_helper.not_nil!.should_not contain("@GC_free")
       {% else %}
         helper.should contain("ret void")
         helper.should_not contain("malloc_size")

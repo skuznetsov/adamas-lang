@@ -14,6 +14,16 @@
 
 ## Сессии
 
+### Session 2026-10-12 — Enum/carrier branch-merge regression
+**Task:** bounded read-only challenge of the regex bootstrap failure, with
+receiver-repair source anchors, the exact bodyless target and explicit guards.
+**Access:** ACP `session/new` returned `Authentication required` before review
+began. No tools or edits were delegated, and no review evidence was produced.
+**Continuation:** local debug-hook traces and a no-prelude enum branch oracle.
+The oracle aborts on the baseline integer-owned stub; original Crystal exits 0.
+**Evidence:** `/Users/sergey/Projects/Adamas/sol_help_20261012/grok_enum_launch.log`.
+Retry only after authentication changes.
+
 ### Session 2026-09-08 — Nested callback return inference
 **Task:** bounded read-only review of the frozen HIR callsite inference delta.
 **Access:** `session/new` returned Permission denied before review began;

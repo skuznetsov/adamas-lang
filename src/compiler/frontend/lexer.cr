@@ -1699,17 +1699,16 @@ module Adamas
             advance
           end
 
-          # Read optional flags (i, m, x, s, etc.)
-          # Include flags in the buffer as well
-          if @offset < @rope.size && ascii_letter?(current_byte)
-            buffer.write_byte '/'.ord.to_u8 # Separator between pattern and flags
-            while @offset < @rope.size && ascii_letter?(current_byte)
-              buffer.write_byte current_byte
-              advance
-            end
+          # Read optional flags (i, m, x). The separator is always written so
+          # the parser can split pattern and flags at the LAST '/' (flags are
+          # letters only, while %r patterns may contain unescaped '/').
+          buffer.write_byte '/'.ord.to_u8
+          while @offset < @rope.size && ascii_letter?(current_byte)
+            buffer.write_byte current_byte
+            advance
           end
 
-          # Store pattern + flags together
+          # Store "pattern/flags" together
           processed_bytes = retain_processed_slice(buffer.to_slice)
 
           Token.new(
@@ -2501,13 +2500,11 @@ module Adamas
               end
             end
 
-            # Optional flags (i, m, x, s, etc.)
-            if @offset < @rope.size && ascii_letter?(current_byte)
-              regex_buffer.write_byte '/'.ord.to_u8
-              while @offset < @rope.size && ascii_letter?(current_byte)
-                regex_buffer.write_byte current_byte
-                advance
-              end
+            # Optional flags (i, m, x); separator always written (see lex_regex).
+            regex_buffer.write_byte '/'.ord.to_u8
+            while @offset < @rope.size && ascii_letter?(current_byte)
+              regex_buffer.write_byte current_byte
+              advance
             end
 
             processed = retain_processed_slice(regex_buffer.to_slice)
