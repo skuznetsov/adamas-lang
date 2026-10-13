@@ -105,3 +105,14 @@ variants, historical frontier notes, scratch sources, and caches remain in
 the preserved original WIP. Raw-pointer struct storage remains a separate
 open regression. Changes to relevant compiler/runtime source, fixtures,
 scripts, toolchain or environment require the affected checks again.
+
+## Darwin debug build follow-up
+
+The remaining `debug.sh` change is a separate build-script correction. With
+Crystal 1.21.0 on this Darwin host, the old script exits 1 in `ld64.lld` with
+unresolved libc symbols. Selecting `/usr/bin/ld` via `--link-flags` produces
+the debug compiler, which compiles and runs a no-prelude smoke under
+`scripts/run_safe.sh`. The script applies the linker argument only on Darwin;
+the non-Darwin path is untested. Commands and resource receipts are indexed by
+`debug_receipt.json` in the same evidence directory. Generated debug binaries,
+symbols and caches are excluded from Git.
