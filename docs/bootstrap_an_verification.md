@@ -49,6 +49,7 @@ fixed-point result.
 - S3: four enum/Regex checks and the separately receipted native-realloc contract.
 - S2/S3/S4: three exact-output runtime smokes each; both strict rejection guards pass S1/S2/S3.
 - Commit preparation: all six changed/new HIR, LSP and MIR spec files pass: 119 examples, 0 failures, 0 errors, 0 pending.
+- Follow-up WIP coverage: eleven additional regression entry points pass fourteen S4 cases, and two additional HIR spec files pass seven examples. See the [follow-up coverage and receipts](bootstrap_an_wip_regressions.md); this does not widen the earlier S1/S3 suite claim.
 
 Every compiler and test binary was supervised by `scripts/run_safe.sh`.
 The source bytes were preserved during packaging; documentation updates do

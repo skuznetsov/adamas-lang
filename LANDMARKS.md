@@ -1,7 +1,7 @@
 # LANDMARKS
 
-Updated: 2026-09-05
-Context: compiler/bootstrap/stage2-stability
+Updated: 2026-10-13
+Context: compiler/bootstrap/ordinary-AN-fixed-point
 
 This file is the active working set only. Historical landmarks before this
 checkpoint remain recoverable from git history, especially:
@@ -10,7 +10,19 @@ checkpoint remain recoverable from git history, especially:
 - archived full-file SHA256:
   `d43826fdcc2277b6075026244764a84d0069d1a30b675642b603f3511b14a1e5`
 
-## Active stage3 continuation
+## Current AN checkpoint
+
+Main's AN checkpoint is `60d09f3`: the sealed ordinary S1 -> S2 -> S3 -> S4
+chain builds; complete raw S3/S4 LLVM IR and executable code/data match.
+See docs/bootstrap_an_verification.md for hashes, metadata differences and scope.
+The follow-up imports focused WIP regressions: fourteen S4 cases and seven
+HIR examples pass on unchanged source, with four NUL-guard IR mutations rejected.
+See docs/bootstrap_an_wip_regressions.md for the exact cases and receipts.
+This evidence uses the bundled AN stdlib; external-stdlib substitution requires
+fresh checks. Relevant source, runtime, toolchain, fixture or environment changes
+invalidate dependent evidence. The historical continuation below is superseded.
+
+## Historical stage3 continuation
 
 Goal: a source-built stage2 must build and smoke stage3. Base 10f22971 plus
 the scoped tuple dispatch and macro-return repair (see latest commit). S2 builds

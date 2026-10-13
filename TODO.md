@@ -1,5 +1,13 @@
 # Adamas Bootstrap TODO
 
+2026-10-13 AN WIP REGRESSION FOLLOW-UP.
+The unchanged AN S4 passes fourteen additional cases across eleven focused
+regression scripts, including real File.join tuple reduction, generic record
+ownership in both orders, and three callback shapes. Two additional HIR spec
+files pass seven examples. The NUL-slack IR guard rejects four seeded mutations
+and accepts genuine AN output. Source/runtime seals remain unchanged.
+Coverage, harness repairs and scoped receipts: docs/bootstrap_an_wip_regressions.md.
+
 2026-10-13 CLAUDE BOOTSTRAP RESCUE (AN VERIFIED WITHIN THE DECLARED SCOPE).
 The ordinary same-source S1 -> S2 -> S3 -> S4 chain builds without IR rewriting
 or GCX. S1 and S3 pass the selected 164-script suites; S2 passes all fifteen
