@@ -3383,3 +3383,24 @@ block_forall_receiver_binding_repro.sh (both runtimes exit 0, six calls).
 Refresh after call-map ordering, selected block signature, owner registration,
 or macro numeric parsing changes. Full LavinMQ compilation/parity and multiple
 block-result specialization identity remain open.
+
+
+### NamedTuple union indexing and structural arguments (2026-10-15)
+
+Admitted: preserve each key/value boundary through complete union-owner
+normalization; literal Symbol/String `[]` and `[]?` over concrete NamedTuple
+unions; target-order reconstruction with compatible field coercion; exact
+union member priority followed by first-compatible selection; final direct-call
+argument repair when deferred HIR publication changes the required layout.
+Rejected: a required key absent from any arm, or an incompatible structural
+NamedTuple conversion. A mixed NamedTuple/non-NamedTuple receiver remains on
+the existing general call path rather than a partially emitted intrinsic path.
+
+DoD: named_tuple_union_field_owner_spec.cr,
+named_tuple_union_literal_index_spec.cr, and
+named_tuple_structural_coercion_spec.cr plus block-forall, concrete-kind, and
+shared-union neighbors (31 passing examples); original-first
+named_tuple_union_literal_index_repro.sh (22 value checks and missing-key
+rejection). The deferred repair is idempotent and inserts reconstruction before
+the call. Virtual calls, union-to-union fields, returns/casts, rooted field
+names, and full LavinMQ parity require separate evidence.

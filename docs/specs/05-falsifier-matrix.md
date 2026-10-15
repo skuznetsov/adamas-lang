@@ -188,3 +188,6 @@ diagnostic meanings.
 
 
 | B-BLOCK-FORALL-NUMERIC-MACRO | Call-local method forall shadows receiver maps; numeric generic arguments preserve macro literal kinds | ast_to_hir.cr lower_call; lower_method; macro_value_for_type_name | block_forall_receiver_binding_spec.cr; block_forall_receiver_binding_repro.sh | current | [FALSIFIABLE] union258 has 5 errors in 7 new HIR examples; sort279 passes all 13 focused examples and six original-first native calls. Concrete owner U and wrong-value rejection survive. Wider numeric syntax, multi-result specialization, and LavinMQ parity remain open. |
+
+
+| B-NAMED-TUPLE-UNION-LAYOUT | Preserve keys and per-arm literal indexes; structurally rebuild direct-call arguments before union embedding | ast_to_hir.cr normalize_method_owner_name; lower_named_tuple_literal_index; repair_named_tuple_call_arguments | named_tuple_union_field_owner_spec.cr; named_tuple_union_literal_index_spec.cr; named_tuple_structural_coercion_spec.cr; named_tuple_union_literal_index_repro.sh | current | [FALSIFIABLE] Pre-fix union owners fail 2/6 examples and source-layout wrapping exits 6; namedtuple298 passes 31 focused examples and 22 original-first native checks plus missing-key rejection. Virtual calls, union-to-union widening, rooted names, returns/casts, and LavinMQ parity remain open. |

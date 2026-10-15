@@ -19013,3 +19013,24 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   and reaches unresolved NamedTuple-union returns. Once callback transport,
   Pointer::Appender body publication, and abstract numeric overload identity
   remain separately tracked blockers.
+
+
+### 2026-10-15: structural NamedTuple indexing and argument layout
+
+- [x] Preserve field keys while normalizing each complete union owner, and lower
+  literal Symbol/String `[]` and `[]?` against every NamedTuple arm's own layout.
+- [x] Rebuild compatible NamedTuple arguments in target key order, coercing each
+  field before union embedding. Prefer an exact member, otherwise Crystal's first
+  compatible member. Repair direct calls after deferred callees publish their
+  final parameter layouts; repeating the pass must not duplicate conversion.
+- [x] namedtuple298 passes 31 focused HIR examples and the original-first native
+  regression's 22 value checks plus missing-required-key rejection.
+- [ ] Audit the same structural conversion obligation for virtual arguments,
+  union-to-union field widening, returns, and casts. The late direct-call repair
+  does not establish those boundaries.
+- [ ] Resolve rooted NamedTuple field types and context qualification without
+  treating keys as names. namedtuple293_context_red independently exposes two
+  adjacent failures; its plain body/signature/declared-type controls pass.
+- [ ] Continue LavinMQ compilation and runtime/test parity against original
+  Crystal. Once callback transport, Pointer::Appender body publication, and
+  abstract numeric overload identity remain separately tracked blockers.

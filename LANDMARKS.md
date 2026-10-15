@@ -17541,3 +17541,39 @@ numeric syntax need separate guards. Replay after pending-map ordering, owner
 registration, block signature selection, or macro literal parsing changes.
 LavinMQ runtime parity remains open; the integrated build advances to a
 NamedTuple-union return inference error.
+
+
+### 2026-10-15: NamedTuple union syntax and structural call arguments
+
+Generic-owner normalization must split a top-level union before parsing any
+member's generic arguments. Within NamedTuple arguments, keys are syntax:
+resolve/canonicalize the value side only. Otherwise the last arm can acquire
+previous arms in its generic base and field keys move into union variants.
+New dispatch and structural conversion read authoritative append-only union
+descriptors, preserving the established bootstrap sidecar boundary.
+Literal Symbol/String indexing now dispatches against each NamedTuple arm's
+field position and type. Optional absence contributes Nil; required absence
+is rejected before emitting a partial dispatch graph.
+
+A pointer-preserving union wrap cannot implement structural NamedTuple
+conversion: source Int32 storage and a target Int32|Int64 field have different
+layouts. Rebuild fields in target key order before embedding. Deferred callees
+may publish parameters after callers are emitted, so repair exact direct calls
+after HIR demand closure. Preserve exact-member priority; otherwise Crystal
+selects the first compatible member (compiler/crystal/codegen/cast.cr).
+
+Lineage: c2bf4924 plus the namedtuple283/285/287/289/296/298 atomic overlays, HIR
+SHA256 b092862a41d25442d9a1b9b1b07a659bffef811db99f1c335e5fe632824fa183.
+Receipts: namedtuple295_union_owner_red has 2 failures in 6 examples;
+namedtuple287_index_native exits 6 in the candidate while original exits 0;
+namedtuple298_sidecar_hir_verified passes 31 examples;
+namedtuple298_native passes all 22 native checks and rejection controls.
+Compiler SHA256:
+326536ea277396b05759e4097dde521bf42017204cdc97871103e5f251309cfe.
+The committed native script
+tests 22 values plus original/candidate rejection of a missing required key.
+Adversary verdict: ROBUST within these syntax/index/direct-call contracts;
+virtual calls, union-to-union conversions, and broader return/cast transport
+remain open. Refresh after type-name parsing, NamedTuple layout, final callee
+publication, union member selection, or literal index lowering changes.
+Full LavinMQ compilation and runtime parity remain open.

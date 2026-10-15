@@ -44126,6 +44126,107 @@ module Adamas::HIR
       nil
     end
 
+    # Crystal treats a literal NamedTuple key as a compiler indexer. For a
+    # union receiver, choose the concrete layout before reading the field;
+    # field positions and field types may differ between variants.
+    private def lower_named_tuple_literal_index(
+      ctx : LoweringContext,
+      receiver_id : ValueId,
+      key_name : String,
+      nilable : Bool,
+    ) : ValueId?
+      receiver_type = ctx.type_of(receiver_id)
+      descriptor = @module.get_type_descriptor(receiver_type)
+      return nil unless descriptor
+
+      unless descriptor.kind == TypeKind::Union
+        return nil unless descriptor.kind == TypeKind::NamedTuple
+        element = named_tuple_element_for_key(receiver_type, key_name)
+        if element.nil? && !nilable
+          raise LoweringError.new("missing key '#{key_name}' for named tuple #{descriptor.name}")
+        end
+        return emit_named_tuple_literal_element(ctx, receiver_id, element)
+      end
+
+      return nil unless ensure_union_descriptor_for_type_ref(receiver_type)
+      union_descriptor = union_descriptor_from_sidecar(receiver_type)
+      return nil unless union_descriptor && !union_descriptor.variants.empty?
+      # Reject the corridor before emitting CFG if any arm has another kind.
+      # A method on String, Nil, or a custom receiver must use normal resolution.
+      members = union_descriptor.variants.map do |variant|
+        {mir_to_hir_type_ref(variant.type_ref), variant.type_id}
+      end
+      return nil unless members.all? do |member|
+        @module.get_type_descriptor(member[0]).try(&.kind) == TypeKind::NamedTuple
+      end
+
+      elements = members.map do |member|
+        element = named_tuple_element_for_key(member[0], key_name)
+        if element.nil? && !nilable
+          name = get_type_name_from_ref(member[0])
+          raise LoweringError.new("missing key '#{key_name}' for named tuple #{name}")
+        end
+        element
+      end
+      result_type = union_type_for_value_set(elements.map { |element| element ? element[1] : TypeRef::NIL })
+      return nil unless result_type
+
+      saved_locals = ctx.save_locals
+      merge = ctx.create_block
+      incoming = [] of {BlockId, ValueId}
+      members.each_with_index do |(member_type, variant_id), index|
+        next_block : BlockId? = nil
+        unless index == members.size - 1
+          check = UnionIs.new(ctx.next_id, receiver_id, variant_id, receiver_type)
+          ctx.emit(check)
+          ctx.register_type(check.id, TypeRef::BOOL)
+          selected = ctx.create_block
+          next_block = ctx.create_block
+          ctx.terminate(Branch.new(check.id, selected, next_block))
+          ctx.current_block = selected
+          ctx.restore_locals(saved_locals)
+        end
+
+        unwrapped = UnionUnwrap.new(ctx.next_id, member_type, receiver_id, variant_id, false)
+        ctx.emit(unwrapped)
+        ctx.register_type(unwrapped.id, member_type)
+        value = emit_named_tuple_literal_element(ctx, unwrapped.id, elements[index])
+        value = coerce_value_to_type(ctx, value, result_type)
+        incoming << {ctx.current_block, value}
+        ctx.terminate(Jump.new(merge))
+        if following = next_block
+          ctx.current_block = following
+          ctx.restore_locals(saved_locals)
+        end
+      end
+      ctx.current_block = merge
+      ctx.restore_locals(saved_locals)
+      result = Phi.new(ctx.next_id, result_type, incoming)
+      ctx.emit(result)
+      ctx.register_type(result.id, result_type)
+      result.id
+    end
+
+    private def emit_named_tuple_literal_element(
+      ctx : LoweringContext,
+      receiver_id : ValueId,
+      element : {Int32, TypeRef}?,
+    ) : ValueId
+      unless element
+        missing = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+        ctx.emit(missing)
+        ctx.register_type(missing.id, TypeRef::NIL)
+        return missing.id
+      end
+      index = Literal.new(ctx.next_id, TypeRef::INT32, element[0].to_i64)
+      ctx.emit(index)
+      ctx.register_type(index.id, TypeRef::INT32)
+      value = IndexGet.new(ctx.next_id, element[1], receiver_id, index.id)
+      ctx.emit(value)
+      ctx.register_type(value.id, element[1])
+      value.id
+    end
+
     private def tuple_return_type_for_method(receiver_type : TypeRef, method_name : String) : TypeRef?
       if env_get("DEBUG_TUPLE_RETURN") && (method_name == "first" || method_name == "last" || method_name == "first?" || method_name == "last?")
         desc = @module.get_type_descriptor(receiver_type)
@@ -46610,6 +46711,14 @@ module Adamas::HIR
           end
         end
       end
+      # A union is a collection of complete owners, never one generic owner
+      # whose base happens to contain the preceding union arms.
+      if union_type_name?(normalized)
+        variants = split_union_type_name(normalized)
+        if variants.size > 1
+          return normalize_union_type_name(variants.map { |variant| normalize_method_owner_name(variant) }.join(" | "))
+        end
+      end
       STDERR.puts "[OWNER_NORM] before_generic_split" if trace_owner_normalize
       STDERR.flush if trace_owner_normalize
       if info = split_generic_base_and_args(normalized)
@@ -46617,8 +46726,14 @@ module Adamas::HIR
         STDERR.flush if trace_owner_normalize
         normalized_base = normalize_compiler_collection_owner_name(info.base)
         normalized_args = split_generic_type_args(info.args).map do |arg|
-          resolved_arg = resolve_type_alias_chain(resolve_type_name_in_context(arg.strip))
-          normalize_compiler_collection_owner_name(resolved_arg)
+          # A NamedTuple key is syntax, not part of the field's union type.
+          # Resolve and canonicalize only the value side of each entry.
+          named_entry = normalized_base == "NamedTuple" ? split_named_tuple_entry(arg) : nil
+          value_name = named_entry ? named_entry[1] : arg.strip
+          resolved_arg = resolve_type_alias_chain(resolve_type_name_in_context(value_name))
+          resolved_arg = normalize_union_type_name(resolved_arg) if named_entry && union_type_name?(resolved_arg)
+          normalized_arg = normalize_compiler_collection_owner_name(resolved_arg)
+          named_entry ? "#{named_entry[0]}: #{normalized_arg}" : normalized_arg
         end
         normalized = "#{normalized_base}(#{normalized_args.join(", ")})"
       end
@@ -50001,6 +50116,56 @@ module Adamas::HIR
               end
             end
             idx += 1
+          end
+        end
+      end
+    end
+
+    # Deferred callees can acquire their parameter layout after callers are emitted.
+    # Rebuild named tuple arguments against the final exact callee before MIR can
+    # apply its representation-only union wrapping fallback.
+    private def repair_named_tuple_call_arguments : Nil
+      @module.functions.each do |function|
+        value_types = collect_function_value_types(function)
+        context : LoweringContext? = nil
+        function.blocks.each do |block|
+          affected = block.instructions.any? do |instruction|
+            next false unless instruction.is_a?(Call) && !instruction.virtual
+            target = @module.function_by_name(instruction.method_name)
+            next false unless target
+            offset = target.params.first?.try(&.name) == "self" ? 1 : 0
+            instruction.args.each_with_index.any? do |argument, index|
+              parameter = target.params[index + offset]?
+              source_type = value_types[argument]? || TypeRef::VOID
+              parameter && source_type != parameter.type &&
+                @module.get_type_descriptor(source_type).try(&.kind) == TypeKind::NamedTuple &&
+                (@module.get_type_descriptor(parameter.type).try(&.kind) == TypeKind::NamedTuple || is_union_type?(parameter.type))
+            end
+          end
+          next unless affected
+          unless context
+            context = LoweringContext.new(function, @module, @arena)
+            value_types.each { |id, type| context.not_nil!.register_type(id, type) }
+          end
+          ctx = context.not_nil!
+          ctx.current_block = block.id
+          previous = block.instructions.dup
+          block.instructions.clear
+          previous.each do |instruction|
+            if instruction.is_a?(Call) && !instruction.virtual &&
+               (target = @module.function_by_name(instruction.method_name))
+              offset = target.params.first?.try(&.name) == "self" ? 1 : 0
+              instruction.args.each_with_index do |argument, index|
+                parameter = target.params[index + offset]?
+                next unless parameter
+                source_type = ctx.type_of(argument)
+                next if source_type == parameter.type
+                next unless @module.get_type_descriptor(source_type).try(&.kind) == TypeKind::NamedTuple
+                next unless @module.get_type_descriptor(parameter.type).try(&.kind) == TypeKind::NamedTuple || is_union_type?(parameter.type)
+                instruction.args[index] = coerce_value_to_type(ctx, argument, parameter.type)
+              end
+            end
+            ctx.emit(instruction)
           end
         end
       end
@@ -71681,6 +71846,7 @@ module Adamas::HIR
       # lowered as `x != nullptr`. That inverts the check for the zero value
       # (integer 0 is a valid non-nil scalar). The value type is authoritative
       # once lowering settles, so fix it here over the finalized HIR.
+      repair_named_tuple_call_arguments
       sanitize_scalar_pointer_nil_checks
 
       if phase_stats
@@ -104152,6 +104318,16 @@ module Adamas::HIR
         end
       end
 
+      if receiver_id && (method_name == "[]" || method_name == "[]?") && args.size == 1
+        if argument = call_args.first?
+          if key_name = named_tuple_literal_key_name(call_arena[argument])
+            if indexed = lower_named_tuple_literal_index(ctx, receiver_id, key_name, method_name == "[]?")
+              return indexed
+            end
+          end
+        end
+      end
+
       if receiver_id && (method_name == "[]" || method_name == "at") && args.size == 1
         receiver_type = ctx.type_of(receiver_id)
         recv_type_desc = @module.get_type_descriptor(receiver_type)
@@ -108482,6 +108658,10 @@ module Adamas::HIR
 
         # Check if we need to coerce: arg is concrete type, param is union containing that type
         if needs_union_coercion?(arg_type, param_type)
+          if @module.get_type_descriptor(arg_type).try(&.kind) == TypeKind::NamedTuple
+            result << coerce_value_to_type(ctx, arg_id, param_type)
+            next
+          end
           # Determine variant id: 0 for the concrete type, 1 for Nil typically
           variant_id = get_union_variant_id(param_type, arg_type)
           wrap = UnionWrap.new(ctx.next_id, param_type, arg_id, variant_id)
@@ -108579,6 +108759,10 @@ module Adamas::HIR
       end
 
       return value_id if value_type == target_type || value_type == TypeRef::VOID
+
+      if @module.get_type_descriptor(value_type).try(&.kind) == TypeKind::NamedTuple && is_union_type?(target_type)
+        return coerce_named_tuple_into_union(ctx, value_id, value_type, target_type)
+      end
 
       if needs_union_coercion?(value_type, target_type)
         variant_id = get_union_variant_id(target_type, value_type)
@@ -108834,6 +109018,107 @@ module Adamas::HIR
       end
     end
 
+    # NamedTuple assignment is structural by key, including reordered keys.
+    # Validate the complete layout before emitting any field loads or stores.
+    private def named_tuple_coercion_indices(source_type : TypeRef, target_type : TypeRef, depth : Int32 = 0) : Array(Int32)?
+      return nil if depth > 32
+      source = @module.get_type_descriptor(source_type)
+      target = @module.get_type_descriptor(target_type)
+      return nil unless source && target && source.kind == TypeKind::NamedTuple && target.kind == TypeKind::NamedTuple
+      source_info = split_generic_base_and_args(source.name)
+      target_info = split_generic_base_and_args(target.name)
+      return nil unless source_info && target_info
+      source_keys = split_generic_type_args(source_info.args).compact_map { |entry| split_named_tuple_entry(entry).try(&.[0]) }
+      target_keys = split_generic_type_args(target_info.args).compact_map { |entry| split_named_tuple_entry(entry).try(&.[0]) }
+      return nil unless source_keys.size == source.type_params.size && target_keys.size == target.type_params.size
+      return nil unless source_keys.size == target_keys.size
+      indices = [] of Int32
+      target_keys.each_with_index do |key, target_index|
+        source_index = source_keys.index(key)
+        return nil unless source_index
+        return nil unless named_tuple_field_assignable?(source.type_params[source_index], target.type_params[target_index], depth + 1)
+        indices << source_index
+      end
+      indices
+    end
+
+    private def named_tuple_field_assignable?(source : TypeRef, target : TypeRef, depth : Int32) : Bool
+      return true if source == target
+      return false if depth > 32
+      source_descriptor = @module.get_type_descriptor(source)
+      target_descriptor = @module.get_type_descriptor(target)
+      if source_descriptor.try(&.kind) == TypeKind::Union
+        return false unless ensure_union_descriptor_for_type_ref(source)
+        descriptor = union_descriptor_from_sidecar(source)
+        return false unless descriptor
+        return descriptor.variants.all? do |variant|
+          named_tuple_field_assignable?(mir_to_hir_type_ref(variant.type_ref), target, depth + 1)
+        end
+      end
+      if target_descriptor.try(&.kind) == TypeKind::Union
+        return false unless ensure_union_descriptor_for_type_ref(target)
+        descriptor = union_descriptor_from_sidecar(target)
+        return false unless descriptor
+        return descriptor.variants.any? do |variant|
+          named_tuple_field_assignable?(source, mir_to_hir_type_ref(variant.type_ref), depth + 1)
+        end
+      end
+      if source_descriptor.try(&.kind) == TypeKind::NamedTuple && target_descriptor.try(&.kind) == TypeKind::NamedTuple
+        return !named_tuple_coercion_indices(source, target, depth + 1).nil?
+      end
+      statically_is_a_type?(source, target) == true
+    end
+
+    private def coerce_named_tuple_into_union(ctx : LoweringContext, value_id : ValueId, source_type : TypeRef, target_type : TypeRef) : ValueId
+      ensure_union_descriptor_for_type_ref(target_type)
+      descriptor = union_descriptor_from_sidecar(target_type)
+      raise LoweringError.new("missing union descriptor for named tuple conversion") unless descriptor
+      selected : {TypeRef, Int32}? = nil
+      exact_id = strict_union_member_variant_id(target_type, source_type)
+      if exact_id >= 0
+        selected = {source_type, exact_id}
+      else
+        descriptor.variants.each do |variant|
+          member = mir_to_hir_type_ref(variant.type_ref)
+          next unless named_tuple_coercion_indices(source_type, member)
+          # Crystal selects the first compatible member when no exact member exists.
+          selected = {member, variant.type_id}
+          break
+        end
+      end
+      unless selected
+        raise LoweringError.new("cannot convert #{get_type_name_from_ref(source_type)} to #{get_type_name_from_ref(target_type)}")
+      end
+      member, variant_id = selected
+      converted = try_coerce_named_tuple_to_named_tuple(ctx, value_id, source_type, member) || value_id
+      wrapped = UnionWrap.new(ctx.next_id, target_type, converted, variant_id)
+      ctx.emit(wrapped)
+      ctx.register_type(wrapped.id, target_type)
+      wrapped.id
+    end
+
+    private def try_coerce_named_tuple_to_named_tuple(ctx : LoweringContext, value_id : ValueId, source_type : TypeRef, target_type : TypeRef) : ValueId?
+      return nil if source_type == target_type
+      indices = named_tuple_coercion_indices(source_type, target_type)
+      return nil unless indices
+      source = @module.get_type_descriptor(source_type).not_nil!
+      target = @module.get_type_descriptor(target_type).not_nil!
+      values = [] of ValueId
+      indices.each_with_index do |source_index, target_index|
+        index = Literal.new(ctx.next_id, TypeRef::INT32, source_index.to_i64)
+        ctx.emit(index)
+        ctx.register_type(index.id, TypeRef::INT32)
+        field = IndexGet.new(ctx.next_id, source.type_params[source_index], value_id, index.id)
+        ctx.emit(field)
+        ctx.register_type(field.id, field.type)
+        values << coerce_value_to_type(ctx, field.id, target.type_params[target_index])
+      end
+      converted = Allocate.new(ctx.next_id, target_type, values)
+      ctx.emit(converted)
+      ctx.register_type(converted.id, target_type)
+      converted.id
+    end
+
     # Attempt to coerce one tuple type to another by wrapping individual elements.
     # Returns nil if the types are not compatible tuples.
     private def try_coerce_tuple_to_tuple(
@@ -108845,6 +109130,10 @@ module Adamas::HIR
       source_desc = @module.get_type_descriptor(source_type)
       target_desc = @module.get_type_descriptor(target_type)
       return nil unless source_desc && target_desc
+
+      if source_desc.kind == TypeKind::NamedTuple || target_desc.kind == TypeKind::NamedTuple
+        return try_coerce_named_tuple_to_named_tuple(ctx, value_id, source_type, target_type)
+      end
 
       source_is_tuple = source_desc.kind == TypeKind::Tuple || source_desc.name.starts_with?("Tuple(")
       target_is_tuple = target_desc.kind == TypeKind::Tuple || target_desc.name.starts_with?("Tuple(")
@@ -117986,6 +118275,14 @@ module Adamas::HIR
                   else
                     node.indexes.map { |idx| lower_expr(ctx, idx) }
                   end
+
+      if index_ids.size == 1
+        if key_name = named_tuple_literal_key_name(@arena[node.indexes.first])
+          if indexed = lower_named_tuple_literal_index(ctx, object_id, key_name, false)
+            return indexed
+          end
+        end
+      end
 
       # Check if this is an array by looking at the object node (ArrayLiteral check)
       # This is necessary because arrays are typed as POINTER but should use IndexGet
