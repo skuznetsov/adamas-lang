@@ -194,3 +194,6 @@ diagnostic meanings.
 
 
 | B-NAMED-TUPLE-SUBSTITUTION | Preserve keys and substitute/canonicalize field values recursively | ast_to_hir.cr substitute_type_params_in_type_name | named_tuple_type_substitution_spec.cr; named_tuple_type_substitution_repro.sh | current | [FALSIFIABLE] namedtuple301 fails 5/6; namedtuple302 passes 6 substitution and 31 neighboring HIR examples. Generic-owner lexical aliases and full LavinMQ parity remain open. |
+
+
+| B-NAMED-TUPLE-CONTEXT | Resolve field values in their lexical context and resolve each rooted union member independently | ast_to_hir.cr resolve_type_name_in_context; resolve_named_tuple_type_name_in_context; qualify_alias_target_in_context | named_tuple_type_context_spec.cr; named_tuple_type_context_repro.sh | current | [FALSIFIABLE] The pre-fix context suite fails 6/10 and the generic-owner native consumer fails lowering. namedtuple311 passes 47 HIR examples and the same three native value checks as Crystal. Full LavinMQ parity remains open. |

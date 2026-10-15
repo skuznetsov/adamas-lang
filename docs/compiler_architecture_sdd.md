@@ -3404,3 +3404,15 @@ named_tuple_union_literal_index_repro.sh (22 value checks and missing-key
 rejection). The deferred repair is idempotent and inserts reconstruction before
 the call. Virtual calls, union-to-union fields, returns/casts, rooted field
 names, and full LavinMQ parity require separate evidence.
+
+
+### NamedTuple field context resolution (2026-10-15)
+
+Admitted: resolve each field value through body/signature lexical lookup, keeping
+keys intact, including nested generic containers, self/type-parameter keys, and
+qualified alias identities. Top-level union members resolve before root-prefix
+stripping. Alias qualification likewise treats NamedTuple keys as syntax.
+DoD: named_tuple_type_context_spec.cr and seven neighboring suites (47 examples),
+plus named_tuple_type_context_repro.sh (three original/candidate native checks).
+This closes the rooted-field and generic-owner alias obligations recorded above;
+virtual structural transport and complete LavinMQ outcome parity remain open.

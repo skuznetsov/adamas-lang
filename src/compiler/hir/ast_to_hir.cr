@@ -17535,6 +17535,11 @@ module Adamas::HIR
                           qualify_alias_target_in_context(base, context)
                         end
         resolved_args = split_generic_type_args(info.args).map do |arg|
+          if base == "NamedTuple"
+            if entry = split_named_tuple_entry(arg)
+              next "#{entry[0]}: #{qualify_alias_target_in_context(entry[1], context)}"
+            end
+          end
           qualify_alias_target_in_context(arg.strip, context)
         end.join(", ")
         return "#{resolved_base}(#{resolved_args})"
@@ -60923,6 +60928,10 @@ module Adamas::HIR
           result_name = name[arrow_index + 2, name.size - arrow_index - 2].strip
           result = result_name.empty? ? "" : resolve_type_name_in_context(result_name)
           "#{inputs} -> #{result}".strip
+        elsif has_top_level_union_separator?(name)
+          split_union_type_name(name).map { |part| resolve_type_name_in_context(part) }.join(" | ")
+        elsif named_tuple = resolve_named_tuple_type_name_in_context(name)
+          named_tuple
         elsif @signature_scan_mode
           resolve_type_name_in_signature_context_impl(name)
         else
@@ -60931,6 +60940,22 @@ module Adamas::HIR
       ensure
         @resolve_type_name_stack.delete(name)
       end
+    end
+
+    # A NamedTuple field is key/value syntax in every context. Resolve only
+    # its type value, including lexical aliases, self and rooted union members.
+    private def resolve_named_tuple_type_name_in_context(name : String) : String?
+      info = split_generic_base_and_args(name)
+      return nil unless info && (info.base == "NamedTuple" || info.base == "::NamedTuple")
+      args = split_generic_type_args(info.args).map do |arg|
+        if entry = split_named_tuple_entry(arg)
+          value = normalize_tuple_literal_type_name(resolve_type_name_in_context(entry[1]))
+          "#{entry[0]}: #{value}"
+        else
+          resolve_type_name_in_context(arg.strip)
+        end
+      end
+      "NamedTuple(#{args.join(", ")})"
     end
 
     # V2 stage2 safe wrapper: avoids rescue (broken setjmp) by returning nil on failure indicators.

@@ -17597,3 +17597,28 @@ nested containers, complete union arms, rooted values and ordinary generic
 controls. Refresh when type substitution, union canonicalization or NamedTuple
 parsing changes. Lexical field-alias resolution and full LavinMQ parity remain
 open; the original-first generic-owner native probe still fails lowering.
+
+
+### 2026-10-15: lexical NamedTuple fields and rooted type unions
+
+Resolve a NamedTuple field's value in its lexical type context before entering
+ordinary generic-argument handling. Keys are syntax even when spelled self or
+T; lexical aliases in the value retain their qualified alias identity for later
+type materialization. Apply the same separation to alias qualification. Split
+top-level unions before root-prefix handling so each absolute member resolves
+independently. The original-first generic Metrics::Reader(T) consumer previously
+failed because three metric arms retained bare MetricValue/MetricLabels names;
+it now builds and passes the same three value checks as original Crystal.
+
+Lineage: 9ea21a9e plus namedtuple311_context_atomic, HIR SHA256
+2b1e56553df7af69cba5758475f0e8bf9ce3e7989d3b296baca469b1adc52a1d.
+Receipts: namedtuple310_context_red fails 6/10;
+namedtuple313_context_hir_corrected_contract passes 47/47 (the resolver qualifies
+alias identities; it need not eagerly replace each alias with its target);
+namedtuple311_context_script and namedtuple311_generic_context_native pass.
+Host SHA256
+65e3745769d386dbbc6124f69c8862e0923118b96a7bb5ca4042a76a7395c17e.
+Adversary verdict: ROBUST for tested keys, nested aliases, body/signature and
+rooted union contexts, with ordinary generic/structural/index controls. Refresh
+after type context resolution, namespace lookup or NamedTuple parsing changes.
+Full LavinMQ parity remains open.

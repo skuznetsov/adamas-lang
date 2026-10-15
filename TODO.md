@@ -19047,3 +19047,16 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   but candidate lowering still retains MetricValue/MetricLabels in three arms.
 - [ ] Complete macro type receiver recursion diagnosis: the full LavinMQ probe
   advances past the corrupted field union and now overflows that validator.
+
+
+### 2026-10-15: NamedTuple field types in lexical contexts
+
+- [x] Resolve NamedTuple field values in body/signature contexts without resolving
+  keys as identifiers. Preserve keys matching self/type parameters and qualify
+  nested field aliases from their generic owner's lexical namespace.
+- [x] Split top-level type unions before stripping root qualification. Rooted
+  fields and complete rooted NamedTuple union members now resolve independently.
+- [x] namedtuple310_context_red fails 6/10; namedtuple313 passes all 47 focused
+  examples. namedtuple311_context_script passes three original-first native
+  generic-owner checks, closing the earlier MetricValue/MetricLabels reducer.
+- [ ] Continue the full LavinMQ frontier and original Crystal outcome comparison.
