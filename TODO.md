@@ -1,5 +1,20 @@
 # Adamas Bootstrap TODO
 
+2026-10-15 MACRO CALL / STATEMENT BOUNDARY: a parenthesized call may
+attach a trailing block only on its closing-parenthesis line, including inside
+macro expressions whose trivia parser consumes newlines. Native164 fails two
+focused parser cases and the original-valid annotation-map runtime reducer;
+native165 passes all 17 focused/neighboring parser examples and both explicit
+and fallback annotation transforms at runtime. Evidence:
+macro_block_boundary164_red, macro_block_boundary165_green, and
+macro_block_boundary165_runtime. Refresh after call span, macro trivia, or
+trailing-block parsing changes; full LavinMQ parity remains open.
+- [ ] Audit other trailing-block consumers that explicitly consume newlines
+  (notably no-parens calls and accessors) against Crystal statement boundaries.
+- [ ] Repair nilable metaclass overload selection: config_metaclass_dispatch164
+  prints 42/43/44/42 where Crystal prints 42/43/44/44 for Int32, Bool, String,
+  and String? arguments. This is separate from macro argument loss.
+
 2026-10-15 EXPLICIT PROC INPUT ARITY: retain a present zero-input annotation
 and merge resolved callback types by parameter index. Native164 passes two HIR
 examples plus the original-first expected-arity and captured -> Bool runtime

@@ -13054,9 +13054,11 @@ module Adamas
           end
 
           # Parse optional block after parenthesized call: foo(args) do ... end
-          # Keep newline as a statement boundary (match Crystal parser behavior).
+          # Macro trivia skipping may already have consumed a newline. Check
+          # the call span so a following tuple remains a separate statement.
           skip_trivia
-          if current_token.kind == Token::Kind::Do || current_token.kind == Token::Kind::LBrace
+          if (current_token.kind == Token::Kind::Do || current_token.kind == Token::Kind::LBrace) &&
+             current_token.span.start_line == node_span(result).end_line
             # Temporarily release the call-args guard to allow nested DSL calls inside the block.
             trace_call_args_depth("paren-before-block-pop")
             @parsing_call_args -= 1

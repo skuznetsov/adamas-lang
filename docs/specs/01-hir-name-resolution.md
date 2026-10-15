@@ -1,5 +1,24 @@
 # HIR Name Resolution Contract
 
+## Macro call and statement boundary (2026-10-15)
+
+Macro trivia skipping does not authorize a parenthesized call to consume a
+brace or do block starting on a later line. The call's final source span,
+including its closing parenthesis, determines trailing-block eligibility.
+A named tuple following an annotation call must remain a separate map-body
+statement, preserving its transform value when generating overload arguments.
+Same-line brace and do blocks remain attached to the call.
+
+Falsifiers: spec/parser/parser_macro_block_statement_boundary_spec.cr (five
+examples) with the neighboring macro argument and named argument/block specs
+(17 total), and regression_tests/macro_block_statement_boundary_repro.sh
+(original-first explicit annotation and fallback-type runtime checks).
+Native164 fails both newline parser cases and the runtime reducer; native165
+passes these guards. Refresh after call-span, trivia, or block-attachment
+changes. Other explicit newline-consuming call consumers and nilable
+metaclass overload resolution remain separate open obligations in TODO.md.
+
+
 ## Explicit Proc input arity (2026-10-15)
 
 An explicitly empty Proc input list is present type information. It must not
