@@ -8439,7 +8439,11 @@ module Adamas::HIR
         end
 
         effective_param_types = expand_flat_block_param_types(params, param_types)
-        resolved = [] of TypeRef
+        # The callback ABI comes from the expected Proc/yield signature, not
+        # from the number of names the source block chooses to bind. A block
+        # may ignore any or all yielded values, but the generated function
+        # still has to accept those ABI slots.
+        resolved = param_types.dup
         each_param_with_index(params) do |param, idx|
           next unless param.name
           param_type = if ta = param.type_annotation
@@ -22513,6 +22517,10 @@ module Adamas::HIR
             existing_desc = @module.get_type_descriptor(ivar.type)
             next unless existing_desc && proc_type_ref?(ivar.type)
             next if existing_desc.type_params.empty?
+            # The callback has already normalized its result to the declared
+            # Nil ABI. Its discarded body value does not change that contract.
+            next if existing_desc.type_params == proc_desc.type_params &&
+                    existing_desc.type_params.last == TypeRef::NIL
             if observed_return_type &&
                observed_return_type != TypeRef::VOID &&
                existing_desc.type_params.last != observed_return_type
@@ -22531,6 +22539,10 @@ module Adamas::HIR
             existing_desc = @module.get_type_descriptor(entry[1])
             next unless existing_desc && proc_type_ref?(entry[1])
             next if existing_desc.type_params.empty?
+            # The callback has already normalized its result to the declared
+            # Nil ABI. Its discarded body value does not change that contract.
+            next if existing_desc.type_params == proc_desc.type_params &&
+                    existing_desc.type_params.last == TypeRef::NIL
             if observed_return_type &&
                observed_return_type != TypeRef::VOID &&
                existing_desc.type_params.last != observed_return_type
@@ -65692,7 +65704,27 @@ module Adamas::HIR
         # the receiver class, which then poisons the type-param map through
         # `implicit_block_as_type_param` and degenerates the owner
         # (`Array(String)` -> `Array(Array)`).
-        if declared_block_input_type_names(func_def, resolved_mangled).nil?
+        # A registered `self.new` can be stale for this call's argument shape
+        # (for example, a previous lowering may have published a one-argument
+        # overload before an allocator call that forwards two arguments to
+        # `initialize`). Do not let that unrelated block signature mask the
+        # initializer's declared block contract. Only make this decision when
+        # positional argument types are known; unknown or named calls retain
+        # the existing conservative behavior.
+        stale_registered_constructor = if func_def && !call_has_named_args && call_arg_types_for_infer &&
+                                           call_arg_types_for_infer.not_nil!.all? { |type| type != TypeRef::VOID }
+                                         !function_def_accepts_call_shape?(
+                                           resolved_mangled,
+                                           func_def,
+                                           call_arg_types_for_infer.not_nil!,
+                                           true,
+                                           false,
+                                           nil,
+                                         )
+                                       else
+                                         false
+                                       end
+        if declared_block_input_type_names(func_def, resolved_mangled).nil? || stale_registered_constructor
           owner = method_owner(resolved_base)
           if owner.empty?
             owner = method_owner(resolved_mangled)
@@ -65703,7 +65735,7 @@ module Adamas::HIR
           # receiver shortcut typed `x` in `K.new { |x| x == 5 }` as `K`, so
           # the block compared a K with 5 (Reference#==, always false).
           init_entry = nil
-          if !func_def && !owner.empty?
+          if (!func_def || stale_registered_constructor) && !owner.empty?
             if init_base = resolve_method_with_inheritance(owner, "initialize")
               init_entry = lookup_function_def_for_call(init_base, arg_count_for_infer, true, call_arg_types_for_infer, false, call_has_named_args)
               # A bare-`yield` initialize (no `&block` slot) yields its own
@@ -105577,6 +105609,27 @@ module Adamas::HIR
                 constructor_observed_return_type = observed_type unless observed_type == TypeRef::VOID
               end
             end
+            if method_name == "new" && !allocator_explicit_new_call
+              constructor_owner = static_class_name
+              if constructor_owner.nil? && base_method_name.includes?('.')
+                candidate_owner = method_owner(base_method_name)
+                constructor_owner = candidate_owner if type_name_exists?(candidate_owner)
+              end
+              if constructor_owner
+                init_base = resolve_method_with_inheritance(constructor_owner, "initialize") || "#{constructor_owner}#initialize"
+                init_name = mangle_function_name(init_base, callsite_arg_types, true)
+                if selected_init = allocator_initializer_def_for(
+                     init_base, init_name, callsite_arg_types, true,
+                     has_named_args, call_named_arg_names,
+                   )
+                  # Generated allocators inherit their block contract from the
+                  # selected initializer, including a discarded Nil result.
+                  block_proc_expected_return_type = with_arena(selected_init[2]) do
+                    expected_nil_block_return_type_for_def(selected_init[0], selected_init[1])
+                  end
+                end
+              end
+            end
             callback_return_hint = raw_callback_abi_for(mangled_method_name).try(&.return_type)
             hint_return_type = block_proc_expected_return_type || callback_return_hint || proc_materialize_hint_return_type(ctx)
             proc_id = lower_block_to_proc(ctx, blk_node, block_param_types_for_proc, block_arena_for_proc, heap_block_proc, hint_return_type)
@@ -125031,10 +125084,22 @@ module Adamas::HIR
           end
         else
           effective_param_types = expand_flat_block_param_types(params, proc_param_types)
-          each_param_with_index(params) do |param, idx|
+          proc_param_types.each_with_index do |expected_type, idx|
+            param = params[idx]?
+            unless param && param.name
+              # The block omits this source binding, but callers still pass
+              # the expected Proc argument. Give the standalone callback an
+              # unnamed ABI slot so its machine signature remains compatible.
+              name = "__arg#{idx}"
+              hir_param = proc_func.add_param(name, expected_type)
+              proc_ctx.register_local(name, hir_param.id)
+              proc_ctx.register_type(hir_param.id, expected_type)
+              next
+            end
+
             if pname = param.name
               name = (safe_slice_to_string(pname) || "")
-              param_type = effective_param_types[idx]? || TypeRef::VOID
+              param_type = effective_param_types.try(&.[idx]?) || expected_type
               hir_param = proc_func.add_param(name, param_type)
               proc_ctx.register_local(name, hir_param.id)
               proc_ctx.mark_block_parameter_binding(name, hir_param.id)
@@ -125053,7 +125118,7 @@ module Adamas::HIR
         end
       elsif param_types
         # No named params but we know the types — create synthetic params
-        param_types.each_with_index do |param_type, idx|
+        proc_param_types.each_with_index do |param_type, idx|
           name = "__arg#{idx}"
           hir_param = proc_func.add_param(name, param_type)
           proc_ctx.register_local(name, hir_param.id)

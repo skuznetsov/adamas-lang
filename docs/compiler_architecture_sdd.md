@@ -29,6 +29,20 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+Expected Proc inputs define callback ABI slots even when source block
+bindings omit some or all arguments. Generated allocators consume the selected
+initializer's input and declared Nil-result contracts before materializing the
+callback; a registered self.new rejected by the known positional call shape
+cannot supply that contract. Named, splatted and unknown shapes retain their
+existing conservative selection boundary. A discarded body value can preserve
+a captured Nil field only after the actual Proc inputs and return type match
+the field exactly; incompatible inputs or actual non-Nil callbacks still fail.
+Ignored/trailing inputs, side effects, explicit-new selection and negative
+capture guards are the discriminators. Rollback is the bounded expected-input,
+constructor-hint and normalized-Nil refinement changes. Mixed raw/retained
+yield, Void-result erasure and full MT/application parity require separate
+native evidence.
+
 When a late nested declaration resolves a simple lexical return annotation,
 the new type must reach the signature cache before later consumers use it.
 Refresh only aliases whose explicit-return contract still owns that exact Def;

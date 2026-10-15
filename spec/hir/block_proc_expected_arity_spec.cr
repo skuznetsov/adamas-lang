@@ -3,6 +3,12 @@ require "../../src/compiler/hir/ast_to_hir"
 require "../../src/compiler/frontend/parser"
 require "../../src/compiler/frontend/lexer"
 
+class Adamas::HIR::AstToHir
+  def __test_refine_arity_proc_capture(owner : String, proc_name : String, observed_return : String) : Nil
+    refine_captured_initializer_proc_type(owner, type_ref_for_name(proc_name), type_ref_for_name(observed_return))
+  end
+end
+
 private def lower_block_proc_expected_arity(source : String) : Adamas::HIR::AstToHir
   parser = Adamas::Compiler::Frontend::Parser.new(
     Adamas::Compiler::Frontend::Lexer.new(source)
@@ -67,6 +73,32 @@ describe "block Proc expected argument ABI" do
     signatures.count { |signature| signature == [Adamas::HIR::TypeRef::INT32] }.should eq(2)
     signatures.should contain([Adamas::HIR::TypeRef::INT32, Adamas::HIR::TypeRef::STRING])
     signatures.count { |signature| signature == [Adamas::HIR::TypeRef::INT32, Adamas::HIR::TypeRef::STRING] }.should eq(2)
+    callbacks = converter.module.functions.select { |function| function.name.starts_with?("__crystal_block_proc_") }
+    callbacks.map(&.return_type).should eq(Array.new(4, Adamas::HIR::TypeRef::NIL))
+  end
+
+  it "does not erase incompatible arguments or an actual non-Nil return contract" do
+    converter = lower_block_proc_expected_arity(<<-CRYSTAL)
+      class ArityNilDestination
+        def initialize(&@callback : Int32 -> Nil)
+        end
+      end
+      class ArityValueDestination
+        def initialize(&@callback : Int32 -> Bool)
+        end
+      end
+    CRYSTAL
+
+    converter.__test_refine_arity_proc_capture("ArityNilDestination", "Proc(Int32, Nil)", "Float64")
+    expect_raises(Exception, /captured initializer Proc ABI conflict/) do
+      converter.__test_refine_arity_proc_capture("ArityNilDestination", "Proc(String, Nil)", "Nil")
+    end
+    expect_raises(Exception, /captured initializer Proc ABI conflict/) do
+      converter.__test_refine_arity_proc_capture("ArityNilDestination", "Proc(Int32, Float64)", "Float64")
+    end
+    expect_raises(Exception, /captured initializer Proc ABI conflict/) do
+      converter.__test_refine_arity_proc_capture("ArityValueDestination", "Proc(Int32, Int32)", "Int32")
+    end
   end
 
   it "preserves an explicitly empty Proc input list for captured callbacks" do

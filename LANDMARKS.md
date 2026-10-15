@@ -1,5 +1,24 @@
 # LANDMARKS
 
+Expected block Proc ABI contract (2026-10-15): source blocks may ignore
+expected inputs without changing their machine signature. An allocator must
+use its selected initializer's input and Nil-result contracts before callback
+materialization; a stale incompatible self.new entry has no authority over
+that initializer. Captured-field refinement accepts a discarded body value
+only when the actual Proc signature already exactly matches the declared Nil
+contract. Arity245 passes 27 HIR cases and the original-first native regression;
+strong negative guards reject argument mismatch and actual non-Nil callbacks.
+The previous full240 integration fails two strengthened guards, refuting broad
+Nil erasure. Scoped verdict: ROBUST for these expected-input, allocator and
+normalized-Nil transitions. Source manifest:
+source_hashes_s1_arity245_allocator_return_contract.json; compiler SHA256
+0bc2e214d453d1295c9f5c6ab2513566bcb88d73173e5aa3c6bdd3ca82ef69a6.
+Receipts: arity245_strengthened_contract_guards,
+arity245_native_omitted_binding_regression, arity245_full240_adversary_red.
+Refresh after expected-Proc inputs, constructor routing, return hints or ABI
+lowering changes. Named/splat constructor routing, Void erasure, mixed raw and
+retained yield, self-hosting and LavinMQ runtime/spec parity remain open.
+
 Explicit return cache contract (2026-10-15): late nested registration may
 correct the resolved return without updating a concrete placeholder protected
 by the explicit-return write guard. Publish the lexical correction only to

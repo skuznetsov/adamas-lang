@@ -1,5 +1,25 @@
 # Adamas Bootstrap TODO
 
+2026-10-15 EXPECTED BLOCK PROC ABI: omitted source bindings do not remove
+expected callback arguments. Generated allocators inherit both the selected
+initializer's inputs and its declared Nil result; an unrelated registered
+self.new overload cannot mask that initializer's contract. Normalize the
+callback itself before accepting a discarded result. Exact Proc arguments and
+actual return contracts remain guarded. Arity245 passes 27 focused HIR cases
+and the original-first native regression, including ignored trailing arguments,
+Float64/String result discard, side effects, and compatible explicit new.
+The earlier full240 integration fails two strengthened ABI guards; its broad
+Nil-return erasure is rejected. Evidence: arity245_strengthened_contract_guards,
+arity245_native_omitted_binding_regression, arity245_full240_adversary_red.
+Refresh after expected-input derivation, constructor selection, callback result
+hints, captured-field refinement, or ABI lowering changes.
+- [ ] Audit named/splat and unknown-shape constructor block contracts; the
+  stale-new correction admits known positional shapes only.
+- [ ] Repair mixed yield/retained-block consumers separately. The atomic243
+  raw_yield_capture_carrier_spec still reports one callback-entry mismatch;
+  Void-result erasure and raw captured forwarding are not certified here.
+- [ ] Continue MT Once/Fiber startup and real LavinMQ broker/spec parity.
+
 2026-10-15 EXPLICIT RETURN CACHE REFRESH: a late nested declaration can
 resolve an annotated method's return while its signature cache retains the old
 placeholder. Refresh cache aliases only while the exact annotated Def owns
@@ -28,10 +48,9 @@ arrow238_annotation_neighbors_green, arrow238_native_red,
 arrow238_native_trial, and arrow238_grouped_zero_native. Refresh after type
 resolution, annotation normalization, Proc interning, or owner lookup changes.
 Full MT startup and LavinMQ parity remain open.
-- [ ] Isolate and verify the existing block arity WIP: omitted/trailing expected
-  inputs and stale self.new-shape controls raise the same two errors on the
-  committed base and arrow238 (arrow238_neighbor_arity_baseline and
-  arrow238_annotation_and_neighbors). They are not repaired by arrow parsing.
+- [x] Isolate and verify omitted/trailing expected block inputs and stale
+  self.new-shape controls. Arity245 closes this bounded contract with 27 HIR
+  guards and an original-first native regression; see the entry above.
 - [ ] Recheck the actual MT Fiber initializer with the separate explicit-return
   cache refresh; a local empty-arrow result does not certify its Stack lookup.
 

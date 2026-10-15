@@ -15,6 +15,7 @@ CRYSTAL_STDLIB="${CRYSTAL_PATH:-/Users/sergey/Projects/Crystal/crystal/src}"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/block-proc-expected-arity.XXXXXX")"
 cleanup() {
   local status=$?
+  rm -rf "$WORK_DIR/original.cache" "$WORK_DIR/candidate.cache"
   if [[ "$status" -ne 0 || "${KEEP_ARTIFACTS:-0}" == 1 ]]; then
     printf 'kept_artifacts=%s\n' "$WORK_DIR" >&2
   else
@@ -63,7 +64,12 @@ class StaleShapeAllocator
   end
 end
 
-OneArgumentCallbackHolder.new { }.fire
+def require_nil(value : Nil)
+end
+
+require_nil(OneArgumentCallbackHolder.new { }.fire)
+require_nil(OneArgumentCallbackHolder.new { |value| verify(value, 42, 6); 1.5 }.fire)
+require_nil(OneArgumentCallbackHolder.new { |value| verify(value, 42, 7); "discarded" }.fire)
 OneArgumentCallbackHolder.new { |value| verify(value, 42, 1) }.fire
 TwoArgumentCallbackHolder.new { |value| verify(value, 7, 2) }.fire
 TwoArgumentCallbackHolder.new { |value, suffix| verify(value, 7, 3) }.fire
