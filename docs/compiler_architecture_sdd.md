@@ -3520,3 +3520,17 @@ prior full359 fails four of five new context cases. Rollback is this atomic
 commit; refresh on local binding/boxing or inference epoch changes. Type-valued
 local provenance and flow-widened closure-cell unions remain untested here.
 LavinMQ compilation and runtime equivalence remain separate open obligations.
+
+
+### Generated getter identity beside source overloads (2026-10-15)
+Admitted: a declared getter retains its visibility and FieldGet body beside a
+same-named source overload that requires arguments. A source definition that
+admits the actual call arity retains its visibility. Rejected: borrowing a
+positive-arity family alias's private visibility or lowering its body under a
+zero-argument getter symbol. Ordinary private/protected access rules remain.
+DoD: atomic source378 passes 13 focused HIR cases and the original-first native
+accessor_overload_identity regression. Visibility-only source375 fails the
+lazy-body falsifier and exits 81 on the native getter control. Rollback is the
+atomic commit; refresh after registration or call/body resolution changes.
+Setter collisions, lazy defaults, and inherited/class accessor combinations
+remain separate untested surfaces; this does not close LavinMQ runtime parity.

@@ -251,3 +251,16 @@ diagnostic meanings.
   receive exits 91 if executed, while both binaries output * and exit zero.
   The native control also passes the prior implementation and is not the RED
   discriminator. LavinMQ end-to-end parity is not established by these checks.
+
+
+### Generated getter versus positive-arity source family alias (2026-10-15)
+- RED: full369 rejects a public generated getter as private. Visibility-only
+  source375 compiles it but the native probe exits 81 because the bare getter
+  symbol contains the one-argument source body and receives a synthesized zero.
+- GREEN: atomic source378 passes 13 HIR examples and the original-first native
+  getter/property regression with identical output * and zero exit status.
+- Guards: reverse declarations, explicit empty calls, private getter versus
+  public overload, private positive-arity call rejection, and private zero-arg
+  and default-argument source definitions. Original Crystal confirms the latter
+  overlap is private. Body assertions require one self parameter and FieldGet,
+  with no FieldSet. Refresh after accessor or source-family resolution changes.

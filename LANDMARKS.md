@@ -17789,3 +17789,25 @@ Guards cover same-name stale boxes, repeated AST inference under different
 local types, no emitted runtime Call/FieldGet, and caller-context restoration.
 Refresh on typeof inference, local boxing ownership, or inference cache changes.
 This slice does not certify full LavinMQ compilation or runtime parity.
+
+
+### Declared getter and source overload keep distinct identities (2026-10-15)
+The pinned LavinMQ spec build reaches an external Link#state read while its
+class declares both `getter state` and `private def state(state)`. A bare
+function-family alias retains the latter DefNode. Reusing that alias first
+rejects the public read; changing visibility alone then lowers the setter-like
+body as the getter and passes a synthesized zero argument at runtime.
+Retain accessor visibility by arity. Before source body lookup, materialize an
+explicit getter when the aliased source requires arguments; source definitions
+that admit zero arguments retain precedence and visibility.
+Evidence: visibility-only source375 passes the initial 10-case suite but the
+native getter check exits 81. The strengthened lazy-body tests fail on 375;
+atomic source378 passes 13 focused cases and original-first native output *.
+Native guards cover explicit state(), declaration order, property read/write,
+and a public positive-arity overload beside a private getter. Crystal also
+rejects the private default-argument overlap control. Atomic HIR SHA
+64bd43e3a181d0c69eca00e4e932128a3b8aca6dc8eeb3242e87a44c1827b230.
+Receipts: accessor378_atomic_hir, accessor378_atomic_native, and
+accessor378_body_falsifier_base in the external macro_fix evidence directory.
+Refresh on accessor registration, source-family aliasing, call arity, or body
+materialization changes. LavinMQ end-to-end test parity remains open.

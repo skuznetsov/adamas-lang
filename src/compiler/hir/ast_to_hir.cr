@@ -2586,6 +2586,7 @@ module Adamas::HIR
     # complete signature without mutating the foreign AST.
     @source_recovered_defs : Hash(UInt64, Adamas::Compiler::Frontend::DefNode)
     @function_visibilities : Hash(String, Adamas::Compiler::Frontend::Visibility)
+    @accessor_visibilities : Hash(Tuple(String, Int32), Adamas::Compiler::Frontend::Visibility)
     @function_def_arenas : Hash(String, Adamas::Compiler::Frontend::ArenaLike)
     # Class-method defs seen by the Pass 1 scoped-macro prescan, keyed by
     # "Owner.method". Pass 1 registers path-named and nested types inside the
@@ -6309,9 +6310,28 @@ module Adamas::HIR
       set_function_visibility(name, visibility)
       base = strip_type_suffix(name)
       set_function_visibility(base, visibility) if base != name
+      arity = base.ends_with?('=') ? 1 : 0
+      effective_visibility = visibility || Adamas::Compiler::Frontend::Visibility::Public
+      @accessor_visibilities[{name, arity}] = effective_visibility
+      @accessor_visibilities[{base, arity}] = effective_visibility
     end
 
-    private def function_visibility(name : String) : Adamas::Compiler::Frontend::Visibility?
+    private def function_visibility(name : String, call_arg_count : Int32? = nil) : Adamas::Compiler::Frontend::Visibility?
+      if call_arg_count
+        if accessor_visibility = @accessor_visibilities[{name, call_arg_count}]?
+          # A bare family key can refer to a positive-arity source overload,
+          # while the emitted zero-argument body is a generated getter.
+          # Prefer a source definition only when it admits this call shape.
+          if def_node = @function_defs[name]?
+            stats = function_param_stats(name, def_node)
+            if call_arg_count >= stats.required &&
+               (call_arg_count <= stats.param_count || stats.has_splat || stats.has_double_splat)
+              return def_node.visibility
+            end
+          end
+          return accessor_visibility
+        end
+      end
       if visibility = @function_visibilities[name]?
         return visibility
       end
@@ -7606,6 +7626,7 @@ module Adamas::HIR
       @included_forall_virtual_body_demands = [] of IncludedForallVirtualBodyDemand
       @included_forall_virtual_body_provenance = {} of String => IncludedForallVirtualBodyProvenance
       @function_visibilities = Hash(String, Adamas::Compiler::Frontend::Visibility).new(initial_capacity: 4096)
+      @accessor_visibilities = {} of Tuple(String, Int32) => Adamas::Compiler::Frontend::Visibility
       @function_def_arenas = Hash(String, Adamas::Compiler::Frontend::ArenaLike).new(initial_capacity: 32768)
       @prescanned_class_method_defs = {} of String => Array({Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike})
       @function_def_overloads = Hash(String, Array(String)).new(initial_capacity: 8192)
@@ -10605,12 +10626,13 @@ module Adamas::HIR
       method_name : String,
       target_name : String,
       explicit_self_receiver : Bool,
+      call_arg_count : Int32,
     ) : Nil
       return unless receiver_id
       return unless callee_node.is_a?(Adamas::Compiler::Frontend::MemberAccessNode)
       return if explicit_self_receiver
 
-      visibility = function_visibility(target_name)
+      visibility = function_visibility(target_name, call_arg_count)
       return unless visibility
 
       target_base = strip_type_suffix(target_name)
@@ -93994,6 +94016,13 @@ module Adamas::HIR
         STDERR.puts "[LOWER_FUNC_TRACE] early=bare_generic_dispatch_signature name=#{name}" if debug_lower_func
         return
       end
+      # An overload-family alias may refer to a source method that requires
+      # arguments even when this exact zero-argument demand is a declared getter.
+      # Materialize the accessor before consuming that alias as its source body.
+      if registered_generated_accessor_request?(name, base_name) &&
+         maybe_generate_accessor_for_name(name)
+        return
+      end
       primitive_template_map : Hash(String, String)? = nil
       debug_hook("function.lookup.start", name)
       if env_get("DEBUG_TRACE_FUNC") && name.includes?("trace")
@@ -96874,7 +96903,13 @@ module Adamas::HIR
 
     private def registered_generated_accessor_request?(name : String, base_name : String) : Bool
       return false unless has_method_separator?(base_name)
-      return false if @function_defs.has_key?(name) || @function_defs.has_key?(base_name)
+      if def_node = @function_defs[name]? || @function_defs[base_name]?
+        # Source definitions that admit the getter's arity retain precedence.
+        # Positive-arity family aliases do not define a declared getter body.
+        return false unless name == base_name && @accessor_visibilities.has_key?({name, 0})
+        stats = function_param_stats(name, def_node)
+        return false if stats.required == 0
+      end
 
       @function_types.has_key?(name) || @function_types.has_key?(base_name)
     end
@@ -106622,7 +106657,8 @@ module Adamas::HIR
         receiver_id,
         method_name,
         emit_method_name,
-        explicit_self_receiver
+        explicit_self_receiver,
+        args.size,
       )
 
       # Concrete collection lookups carry their result type on the receiver,
@@ -121829,7 +121865,8 @@ module Adamas::HIR
         object_id,
         member_name,
         actual_name,
-        explicit_self_receiver
+        explicit_self_receiver,
+        args.size,
       )
       if debug_env_filter_match?("DEBUG_MEMBER_CALL", member_name, actual_name)
         STDERR.puts "[MEMBER_CALL] name=#{actual_name} return_id=#{return_type.id} return=#{get_type_name_from_ref(return_type)}"

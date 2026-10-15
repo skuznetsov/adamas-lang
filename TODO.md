@@ -19157,3 +19157,13 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   `typeof(msgs.receive)` despite a known captured Channel receiver type.
 - [ ] Extend typeof coverage to type-valued local provenance and flow-widened
   closure-cell unions; these are adjacent untested surfaces, not proven bugs.
+
+
+### Generated accessor overload identity (2026-10-15)
+- [x] Preserve declared getter visibility by call arity and materialize its
+  body before consuming an incompatible positive-arity source family alias.
+  Atomic source378 passes 13 focused cases and original-first native getter,
+  explicit-empty-call, reverse-order, property, and public-overload checks.
+- [ ] Extend accessor-family coverage to lazy defaults, inherited generic
+  accessors, class accessors, and setter overload collisions. These adjacent
+  combinations are untested here, not established failures.
