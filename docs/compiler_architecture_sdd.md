@@ -29,6 +29,14 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+Proc arrow punctuation is structural syntax in both signature scans and body
+lowering. Resolve actual input/result type expressions in their lexical owner;
+an empty input list cannot acquire the owner's name as a phantom input. The
+declared result retains generic substitutions. Empty/explicit-Nil arrow,
+canonical Proc, typed-input, grouped-arrow, and generic-result controls are
+the discriminators. Rollback is the shared structural arrow-resolution branch;
+full MT initialization and application parity require separate native evidence.
+
 Tuple-union iteration dispatches on the runtime tag before expanding each
 concrete Tuple#each macro arity. Admission requires an exhaustively known tuple
 union with correct producer tags; unknown/generic alternatives retain their

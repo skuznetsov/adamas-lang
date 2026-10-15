@@ -1,5 +1,22 @@
 # LANDMARKS
 
+Proc arrow annotation contract (2026-10-15): empty inputs are structural syntax.
+Qualifying the whole `->` string in a namespaced owner minted a phantom Proc
+input during body lowering. Resolve actual inputs and the result before
+ordinary nominal lookup, in the shared signature/body resolver. The six-example
+namespace falsifier has two failures on committed-base source232 and passes on
+arrow238; sixteen existing annotation/layout neighbors also pass. Original-first
+native controls match 41/42/43/47/48, and grouped empty arrows match 42. Scoped
+verdict: ROBUST for these annotation/carrier consumers. Two neighboring block
+arity errors are unchanged on the committed base and the trial; their separate
+WIP remains open. Source: source_hashes_s1_arrow238_proc_annotation.json;
+compiler SHA256 5ee144f11489c328ee5df7aefd2ecc85ef987838db74f334b27c6216661a6b50.
+Receipts: arrow238_annotation_namespace_red,
+arrow238_annotation_neighbors_green, arrow238_native_trial.log, and
+arrow238_grouped_zero_native. Refresh after annotation/Proc/owner-resolution
+changes. This does not certify MT Fiber construction, Once startup, fresh
+self-hosting, or LavinMQ functionality/spec parity.
+
 Updated: 2026-10-13
 Context: compiler/bootstrap/ordinary-AN-fixed-point
 

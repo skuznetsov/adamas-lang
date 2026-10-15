@@ -1,5 +1,23 @@
 # Adamas Bootstrap TODO
 
+2026-10-15 EMPTY-INPUT PROC ANNOTATIONS: resolve arrow syntax structurally
+before nominal owner qualification. Empty inputs stay empty; actual input and
+result types retain their lexical owner and generic substitutions in signature
+scans and body lowering. The committed-base namespace falsifier fails two of
+six HIR examples; arrow238 passes all six plus sixteen annotation/layout
+neighbors. Its original-first native matrix matches 41/42/43/47/48; grouped
+empty arrows separately match 42. Evidence: arrow238_annotation_namespace_red,
+arrow238_annotation_neighbors_green, arrow238_native_red,
+arrow238_native_trial, and arrow238_grouped_zero_native. Refresh after type
+resolution, annotation normalization, Proc interning, or owner lookup changes.
+Full MT startup and LavinMQ parity remain open.
+- [ ] Isolate and verify the existing block arity WIP: omitted/trailing expected
+  inputs and stale self.new-shape controls raise the same two errors on the
+  committed base and arrow238 (arrow238_neighbor_arity_baseline and
+  arrow238_annotation_and_neighbors). They are not repaired by arrow parsing.
+- [ ] Recheck the actual MT Fiber initializer with the separate explicit-return
+  cache refresh; a local empty-arrow result does not certify its Stack lookup.
+
 2026-10-15 NAMED MODULE BLOCK FANOUT: preserve supplied labels and the raw
 positional prefix through virtual lookup, fanout cache identity, and pending
 body materialization. Retain the selected Def, arena, source path, and receiver

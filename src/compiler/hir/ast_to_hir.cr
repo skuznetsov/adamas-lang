@@ -60714,7 +60714,17 @@ module Adamas::HIR
       end
       @resolve_type_name_stack << name
       begin
-        if @signature_scan_mode
+        # Arrow punctuation is structural syntax, not a name in the owner.
+        # Resolve only the actual input/result types; an empty input list must
+        # remain empty in both signature scans and body lowering.
+        arrow_index = name.includes?("->") ? find_top_level_arrow(name) : nil
+        if arrow_index
+          input_names = split_proc_type_inputs(name[0, arrow_index].strip)
+          inputs = input_names.map { |input| resolve_type_name_in_context(input) }.join(", ")
+          result_name = name[arrow_index + 2, name.size - arrow_index - 2].strip
+          result = result_name.empty? ? "" : resolve_type_name_in_context(result_name)
+          "#{inputs} -> #{result}".strip
+        elsif @signature_scan_mode
           resolve_type_name_in_signature_context_impl(name)
         else
           resolve_type_name_in_context_impl(name)
