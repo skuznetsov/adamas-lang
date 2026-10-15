@@ -59386,8 +59386,9 @@ module Adamas::HIR
         STDERR.puts "[DEFERRED_CONST_SORT] topo_index idx=#{idx}" if trace_sort
         full_name = deferred_constant_full_name(entry.owner, entry.name)
         names << full_name
-        node = entry.arena[entry.value_id]
-        source_order << {"", node.span.start_line, node.span.start_column, idx}
+        # Registration follows expanded require/declaration order. Line numbers
+        # from unrelated source arenas cannot order their runtime initializers.
+        source_order << {"", idx, 0, idx}
       end
       STDERR.puts "[DEFERRED_CONST_SORT] topo_index_done" if trace_sort
 
@@ -59591,6 +59592,9 @@ module Adamas::HIR
         end
       when Adamas::Compiler::Frontend::MemberAccessNode
         collect_constant_dependencies(node.object, deps)
+      when Adamas::Compiler::Frontend::IndexNode
+        collect_constant_dependencies(node.object, deps)
+        node.indexes.each { |index| collect_constant_dependencies(index, deps) }
       when Adamas::Compiler::Frontend::SafeNavigationNode
         collect_constant_dependencies(node.object, deps)
       when Adamas::Compiler::Frontend::ArrayLiteralNode
@@ -59617,7 +59621,8 @@ module Adamas::HIR
         collect_constant_dependencies(node.expression, deps)
       when Adamas::Compiler::Frontend::AsQuestionNode
         collect_constant_dependencies(node.expression, deps)
-      when Adamas::Compiler::Frontend::ConstantNode
+      when Adamas::Compiler::Frontend::ConstantNode,
+           Adamas::Compiler::Frontend::IdentifierNode
         raw_name = (safe_slice_to_string(node.name) || "")
         if resolved = resolve_constant_name_in_context(raw_name)
           deps << resolved
@@ -59916,6 +59921,8 @@ module Adamas::HIR
         needs_deferred = true if val_node.is_a?(Adamas::Compiler::Frontend::CallNode)
         # Dot-call chains: '#'.ord.to_u8, Char::MAX_CODEPOINT.to_i32, etc.
         needs_deferred = true if val_node.is_a?(Adamas::Compiler::Frontend::MemberAccessNode)
+        # An indexed constant is a runtime read/call, even without call syntax.
+        needs_deferred = true if val_node.is_a?(Adamas::Compiler::Frontend::IndexNode)
         # Collection literals need runtime allocation
         needs_deferred = true if val_node.is_a?(Adamas::Compiler::Frontend::TupleLiteralNode)
         needs_deferred = true if val_node.is_a?(Adamas::Compiler::Frontend::ArrayLiteralNode)
@@ -59928,12 +59935,10 @@ module Adamas::HIR
         needs_deferred = true if val_node.is_a?(Adamas::Compiler::Frontend::UnaryNode)
         # Begin blocks (multi-expression initializers)
         needs_deferred = true if val_node.is_a?(Adamas::Compiler::Frontend::BeginNode)
-        # Bare `new` (receiverless constructor: `INSTANCE = new` inside the
-        # class body) parses as an IdentifierNode but needs a runtime
-        # constructor call; without it the global stays null.
-        if val_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
-          needs_deferred = true if (safe_slice_to_string(val_node.name) || "") == "new"
-        end
+        # Bare method calls (`VALUE = read`) and nonliteral constant aliases
+        # also parse as IdentifierNode. Lower them with ordinary name resolution;
+        # limiting this to bare `new` silently leaves their globals uninitialized.
+        needs_deferred = true if val_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
         if env_has?("DEBUG_DEFERRED_CONST")
           STDERR.puts "[DEFERRED_CONST] #{needs_deferred ? "Added" : "Skipped"} #{full_name} val_node=#{val_node.class.name}"
         end

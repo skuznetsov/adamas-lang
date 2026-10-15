@@ -1,5 +1,16 @@
 # Adamas Bootstrap TODO
 
+2026-10-15 DEFERRED CONSTANT REGISTRATION ORDER: retain expanded declaration
+order across source arenas, admit runtime indexed reads and bare identifier
+initializers, and include index/identifier dependencies in the sort. The old
+imported-method consumer crashes; native113 matches original 42/42/7, passes
+three registration/dependency HIR cases and the once-only side-effect guard.
+Evidence: native113_const_registration_order_green,
+native113_imported_indexed_runtime, native113_constant_once_guard receipts.
+A forward read hidden inside a method still crashes on native113; implementing
+Crystal's read-before-initialization once contract remains required. This
+bounded repair does not certify LavinMQ runtime/spec parity.
+
 2026-10-13 AN WIP REGRESSION FOLLOW-UP.
 The unchanged AN S4 passes fourteen additional cases across eleven focused
 regression scripts, including real File.join tuple reduction, generic record
