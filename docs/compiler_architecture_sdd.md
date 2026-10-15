@@ -3562,3 +3562,20 @@ falsifier, existing ancestor-loop guard, and original-first native class/module/
 ancestor-module checks. Rollback is the atomic commit. Refresh on arena or
 super target registration changes. This contract covers source ownership,
 not additional lexical/default-parameter binding rules.
+
+
+### Literal Tuple range indexing contract (2026-10-15)
+Admitted: concrete Tuple instance IndexNode ranges with literal Int32 or omitted
+endpoints preserve element types/order and evaluate the receiver once. Negative
+bounds normalize to the Tuple size, the end clamps, empty results retain Tuple(),
+and an invalid start raises the original category of diagnostic. Runtime and
+non-Int32 ranges retain ordinary source dispatch. Both scalar Tuple IndexGet and
+Range-to-Int32 overload repair must honor the index's semantic Range type.
+DoD: source432 passes 16 HIR examples and original-first native values/rejection
+checks; full source433 passes the native checks with full prelude. Baseline
+source399 fails literal HIR cases; source422 independently fails the typed-Range
+guard. Full sources407/416/423 pass humanize.cr's authenticated yield_result[0..1]
+and reach the separate pointer-union blocker. Rollback is the atomic commit;
+refresh on AST, Tuple layout/descriptors, or index dispatch changes. Tuple
+metaclass indexing, []?, constant-held ranges, union receivers, and broker parity
+remain separate obligations.

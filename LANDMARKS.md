@@ -17854,3 +17854,25 @@ are in the external macro_fix directory. Refresh on super target selection,
 DefNode arena registration, or default argument lowering changes. Lexical and
 parameter-binding semantics of defaults need separate probes; LavinMQ parity
 is still open.
+
+
+### Tuple literal ranges and semantic Range dispatch (2026-10-15)
+LavinMQ reaches humanize.cr's yield_result[0..1]. Original Crystal intercepts
+literal Int32 Tuple ranges before its stdlib rejection body. Source432 lowers
+only concrete instance Tuple shapes to typed field loads and an allocated
+result, preserving a single receiver evaluation, negative/omitted endpoints,
+end clamping, and empty results. Non-Int32 or runtime ranges use source dispatch.
+Two pre-existing scalar paths also needed guards: Tuple IndexGet accepted any
+single index, and a later overload repair rewrote a semantically typed Range
+identifier to Int32 merely because its AST was not a RangeNode. Source422 passes
+literal cases but the new typed-Range HIR case still chooses []$Int32; source432
+passes all 16 cases. Original-first native tests verify A* output and matching
+runtime-range, Int64-endpoint, and out-of-bounds-start rejection. Both atomic
+source432 and full-prelude source433 pass. Earlier full sources407/416/423 pass
+the authenticated humanize site and reach the separate unresolved pointer
+receiver union. Source432 HIR SHA ca0263eff2cfb5d1c5c37bfa1b3352d97b11cb8bb1b6f202c320ff32e18c3c3c.
+External receipts: tuple428_atomic_hir_red, tuple443_typed_range_dispatch_red,
+tuple434_atomic_hir, tuple437_atomic_native, tuple438_full_native,
+lavinmq420_broker_tuple_once. Refresh on AST range shape, index overload repair,
+Tuple descriptors or layout changes. Metaclass/[]?/constant/union cases and
+LavinMQ runtime/test parity remain open.

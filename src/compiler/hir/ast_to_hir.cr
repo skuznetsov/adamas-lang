@@ -118547,6 +118547,72 @@ module Adamas::HIR
       nil
     end
 
+    private def tuple_range_int32_literal(expr_id : ExprId) : Int64?
+      node = @arena[expr_id]
+      if node.is_a?(Adamas::Compiler::Frontend::NumberNode)
+        return nil unless node.kind.i32?
+        return node.parsed_int
+      end
+      if node.is_a?(Adamas::Compiler::Frontend::UnaryNode)
+        operand = @arena[node.operand]
+        return nil unless operand.is_a?(Adamas::Compiler::Frontend::NumberNode)
+        return nil unless operand.kind.i32?
+        case unary_operator_text(node)
+        when "-" then return -operand.parsed_int
+        when "+" then return operand.parsed_int
+        end
+      end
+      nil
+    end
+
+    private def lower_tuple_literal_range(
+      ctx : LoweringContext,
+      object_id : ValueId,
+      range : Adamas::Compiler::Frontend::RangeNode,
+    ) : ValueId?
+      descriptor = @module.get_type_descriptor(ctx.type_of(object_id))
+      return nil unless descriptor && descriptor.kind == TypeKind::Tuple
+      return nil unless descriptor.name.starts_with?("Tuple(")
+      types = descriptor.type_params
+      return nil if types.any? { |type| type == TypeRef::VOID }
+
+      # Only literal Int32 endpoints have the compiler-level Tuple contract.
+      # Other Range values must still reach the stdlib's rejection body.
+      first = @arena[range.begin_expr].is_a?(Adamas::Compiler::Frontend::NilNode) ? 0_i64 : tuple_range_int32_literal(range.begin_expr)
+      last = @arena[range.end_expr].is_a?(Adamas::Compiler::Frontend::NilNode) ? types.size.to_i64 - 1 : tuple_range_int32_literal(range.end_expr)
+      return nil unless first && last
+      first += types.size if first < 0
+      unless 0 <= first <= types.size
+        raise LoweringError.new("begin index out of bounds for #{descriptor.name}", range)
+      end
+      unless @arena[range.end_expr].is_a?(Adamas::Compiler::Frontend::NilNode)
+        last += types.size if last < 0
+        last -= 1 if range.exclusive
+      end
+      last = last.clamp(-1_i64, types.size.to_i64 - 1)
+
+      elements = [] of ValueId
+      selected_types = [] of TypeRef
+      if first <= last
+        (first..last).each do |offset|
+          element_type = types[offset.to_i]
+          index = Literal.new(ctx.next_id, TypeRef::INT32, offset)
+          ctx.emit(index)
+          value = IndexGet.new(ctx.next_id, element_type, object_id, index.id)
+          ctx.emit(value)
+          ctx.register_type(value.id, element_type)
+          elements << value.id
+          selected_types << element_type
+        end
+      end
+      shape = selected_types.map { |type| get_type_name_from_ref(type) }.join(", ")
+      result_type = type_ref_for_name("Tuple(#{shape})")
+      result = Allocate.new(ctx.next_id, result_type, elements)
+      ctx.emit(result)
+      ctx.register_type(result.id, result_type)
+      result.id
+    end
+
     private def lower_index(ctx : LoweringContext, node : Adamas::Compiler::Frontend::IndexNode) : ValueId
       object_id = lower_expr(ctx, node.object)
       obj_node = @arena[node.object]
@@ -118782,6 +118848,9 @@ module Adamas::HIR
       if node.indexes.size == 1
         idx_node = @arena[node.indexes.first]
         if idx_node.is_a?(Adamas::Compiler::Frontend::RangeNode)
+          if tuple_slice = lower_tuple_literal_range(ctx, object_id, idx_node)
+            return tuple_slice
+          end
           # String#[](Range) intercept: extract begin/end from range, call byte_slice helper
           obj_type = ctx.type_of(object_id)
           if obj_type == TypeRef::STRING || obj_type == TypeRef::POINTER
@@ -119117,7 +119186,7 @@ module Adamas::HIR
         ctx.register_type(index_get.id, element_type)
         index_get.id
       elsif type_desc && type_desc.kind != TypeKind::Union && (type_desc.kind == TypeKind::Tuple || type_desc.name.starts_with?("Tuple(") ||
-            type_desc.name == "Tuple") && index_ids.size == 1
+            type_desc.name == "Tuple") && index_ids.size == 1 && !index_is_range
         td = type_desc.not_nil!
         type_params = td.type_params.reject { |p| p == TypeRef::VOID }
         # When the descriptor is bare "Tuple" (generic), resolve concrete type params
@@ -119293,7 +119362,7 @@ module Adamas::HIR
         # index is NOT a RangeNode, the selection is wrong (VOID arg matched Range
         # parameter). Re-resolve with Int32 to pick the correct element-access overload.
         # This prevents the inttoptr crash where a raw integer is passed as Range ptr.
-        if method_name.includes?("Range") && node.indexes.size == 1
+        if !index_is_range && method_name.includes?("Range") && node.indexes.size == 1
           idx_node_fixup = @arena[node.indexes.first]
           unless idx_node_fixup.is_a?(Adamas::Compiler::Frontend::RangeNode)
             fixed_arg_types = [TypeRef::INT32]

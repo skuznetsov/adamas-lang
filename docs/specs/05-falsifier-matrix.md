@@ -292,3 +292,17 @@ diagnostic meanings.
   Previous-definition and module-super chains, lexical constant shadowing,
   parameter-referential defaults, and named-only combinations remain untested.
   Refresh on selected definition ownership or omitted argument lowering changes.
+
+
+### Tuple literal slices and runtime Range dispatch (2026-10-15)
+- RED: source399 fails 14 of 16 early HIR checks. Source422 passes literal slices
+  but the typed-Range guard selects Tuple#[]$Int32 instead of Range dispatch;
+  native builds accept a runtime range that original Crystal rejects.
+- GREEN: source432 passes 16 focused HIR examples, positive heterogeneous Int64/
+  Bool native slices, negative/exclusive/omitted/clamped/empty ranges, and a
+  side-effecting receiver evaluated once. Original-first native controls also
+  match runtime/non-Int32 Range and invalid-start rejection. Source433 repeats
+  native success with full prelude and composed fixes.
+- Scope guard: ordinary runtime/non-Int32 range source rejection is preserved.
+  Metaclass, []?, constant-held and union-receiver ranges are still untested.
+  Refresh after Tuple layout, AST range, or scalar overload repair changes.

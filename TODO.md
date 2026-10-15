@@ -19187,3 +19187,13 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Probe lexical constant shadowing, defaults referring to earlier parameters,
   named-only/default combinations, and retained previous-definition/module-super
   chains. Arena ownership alone does not establish these adjacent contracts.
+
+
+### Literal Tuple range indexing (2026-10-15)
+- [x] Lower concrete Tuple instance literal Int32 ranges with original Crystal
+  bounds, clamping, empty shape, field types/order, and one receiver evaluation.
+  Preserve semantic Range dispatch through both existing scalar-index fast paths.
+  Source432 passes 16 HIR checks and original-first native checks; source433
+  passes the same native checks with full prelude and composed compiler fixes.
+- [ ] Probe Tuple metaclass ranges, []?, constant-held ranges, and union tuple
+  receivers. These compiler contracts must not be implemented as stdlib edits.
