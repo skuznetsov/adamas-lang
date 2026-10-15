@@ -1,5 +1,23 @@
 # HIR Name Resolution Contract
 
+## Source positions and namespace arena ownership (2026-10-15)
+
+Multiline literal scanning must advance source line and column positions once
+per consumed byte. A heredoc, percent string, or percent regex inside a nested
+class must not invalidate its parser-owned namespace arena. Bind the source
+map when testing this boundary: arena checks without source text do not test
+the end-line bound used by real file compilation.
+
+Falsifiers: spec/lexer/lexer_multiline_literal_position_spec.cr,
+spec/hir/multiline_literal_namespace_registration_spec.cr, and
+regression_tests/multiline_literal_namespace_repro.sh. The baseline fails four
+lexical position checks and three source-bound HIR cases. Native188 passes
+22 focused/neighboring examples and produces the same ABC output as original
+Crystal in the native control. The actual Launcher module's end line changes
+from 419 to 409 in its unchanged 410-line source file. Refresh after scanner,
+span, source-map, or arena validation changes. Cross-file arena fallback
+soundness and full LavinMQ runtime parity remain separate obligations.
+
 ## Late module reopening exports and lexical context (2026-10-15)
 
 When a module class-method lookup misses its parsed definitions, export only

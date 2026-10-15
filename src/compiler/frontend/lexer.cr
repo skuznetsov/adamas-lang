@@ -2484,8 +2484,6 @@ module Adamas
               elsif byte == NEWLINE
                 regex_buffer.write_byte byte
                 advance
-                @line += 1
-                @column = 1
               else
                 # Preserve escapes as-is
                 if byte == '\\'.ord.to_u8 && @offset + 1 < @rope.size
@@ -2581,8 +2579,6 @@ module Adamas
             elsif byte == NEWLINE
               buffer.write_byte byte
               advance
-              @line += 1
-              @column = 1
               # Regular character
             else
               buffer.write_byte byte
@@ -2896,8 +2892,6 @@ module Adamas
             debug { "[HEREDOC] consumed line, adding newline" }
             content.write_byte('\n'.ord.to_u8)
             advance
-            @line += 1
-            @column = 0
           end
 
           # Emit diagnostic if content indent is less than closing delimiter indent

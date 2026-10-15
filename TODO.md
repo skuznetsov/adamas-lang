@@ -1,5 +1,27 @@
 # Adamas Bootstrap TODO
 
+2026-10-15 MULTILINE LITERAL POSITIONS: let Lexer#advance own newline and
+column updates in heredocs, percent strings, and percent regexes. Counting
+those newlines twice made the parser-owned LavinMQ Launcher module end on
+line 419 in a 410-line file. Arena validation then substituted client.cr,
+whose same-numbered slot was an Identifier instead of the Launcher class.
+Native188 corrects the module end to line 409. Four lexical position checks
+and all three source-bound HIR arena checks fail before the fix; native188
+passes 22 focused/neighboring examples and the original-first ABC native
+namespace control. Evidence: multiline_literal188_red,
+multiline_literal188b_hir_red, multiline_literal188b_sealed_green,
+multiline_literal188b_atomic_native, and launcher188_spans_green. Refresh
+after literal scanning, source span construction, or arena validation changes.
+Full LavinMQ broker/spec parity remains open.
+- [ ] Replace cross-file module-arena guesses with producer identity evidence.
+  The Launcher trace demonstrates that an unrelated Identifier can satisfy
+  the current module-body heuristic; correcting lexer spans does not prove
+  that fallback sound for other malformed or mismatched AST producers.
+- [ ] Audit heredoc delimiter-probe rewind columns on unterminated input and
+  quoted/interpolating heredoc source spans. The current controls cover
+  ordinary LF/CRLF heredocs, delimiter prefixes, percent literals, and plain
+  multiline strings; they do not establish those other scanner paths.
+
 2026-10-15 LATE MODULE EXPORTS / LEXICAL CONTEXT: on a class-method lookup
 miss, register only the requested method from retained extend targets and
 recorded extend self declarations. A source module reopened after its consumer
