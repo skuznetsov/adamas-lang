@@ -3461,3 +3461,17 @@ virtual structural transport and complete LavinMQ outcome parity remain open.
 - Open: positional block arguments, distinct included-module bodies, and
   impossible case branches are separate obligations. Generic-union virtual
   return guards remain unchanged; LavinMQ runtime parity is not established.
+
+
+#### Case body instantiation after comparison admission (2026-10-15)
+
+- Admitted: a body is skipped when all emitted comparisons are constant false
+  or every known union member is provably disjoint from its IsA target.
+- Guards: unknown descendants, matching generic bases, predefined builtin
+  ancestors and effectful value comparisons keep their existing lowering.
+  Builtin TypeRefs need nominal reasoning because they lack descriptors.
+- DoD: case_unreachable_body_spec.cr and ten committed neighboring suites
+  (65 examples), plus case_unreachable_body_repro.sh's original-first runtime
+  comparison and explicit dead-HIR rejection, pass on isolated case341.
+- Open: builtin ancestor proof completeness, unrelated fallback method lookup,
+  recursive macro value projection and full LavinMQ runtime/test parity.

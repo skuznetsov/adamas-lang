@@ -17704,3 +17704,32 @@ or inline caller-state merging changes. Positional arguments and distinct
 module bodies need separate evidence. Full union333 advances LavinMQ to an
 impossible Nil | Bool case branch, where an unrelated enum each is selected;
 complete compilation and runtime/test parity remain open.
+
+
+### 2026-10-15: skip proven-disjoint case bodies before instantiation
+
+AMQ::Protocol::Table#write_field(Nil | Bool) instantiated its Array/Hash arms
+without a matching union member. The block fallback then selected unrelated
+LibPCRE2::Error#each and raised its non-Flags iteration macro. Trace336 records
+the impossible caller, source body and selected Enum fallback. Case339's first
+union proof missed Bool because builtin TypeRefs have no descriptors.
+
+Case conditions now lower before body admission. Constant false comparisons or
+union members proven disjoint from an emitted IsA reject the body; unknown
+hierarchy relations, predefined builtin ancestors and effectful comparisons
+remain live. This is instantiation control, not an Enum iteration workaround.
+
+RED: the previous isolated HEAD fails two new HIR cases and the native/HIR
+script's dead-call check, despite matching runtime results. Isolated case341
+passes 65 HIR examples and case_unreachable_body_repro.sh (two runtime values
+against original Crystal plus absence of disjoint Nil/Bool#each HIR). The
+expanded 40-example suite has eight pre-existing failures both before and after
+the fix; the prior source has two additional new failures. Full case340 passes
+all 40 but depends on separate preserved WIP.
+HIR SHA ef2ce3770a8c3c340b7092eb5978306adcd377281e17e3ab2146c6b891449d42;
+host SHA 5f30aac9381e743813740a2d9efc4e1e847c69a16e14a7977a7401c38046cdfa.
+ROBUST for tested disjoint bodies and conservative guards. Refresh both probes
+after case comparisons, builtin identities, class hierarchy or union descriptors
+change. Full case340 advances LavinMQ to recursive macro value projection;
+compilation and runtime/test parity remain open. Receiver-less fallback lookup
+and builtin ancestor proof completeness remain separate audit obligations.

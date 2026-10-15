@@ -206,3 +206,6 @@ diagnostic meanings.
 
 
 | Distinct instance bodies on union block receivers | distinct_owner_union_yield_spec.cr; distinct_owner_union_yield_repro.sh | Prior compiler executes the first body for both arms; isolated union335 passes 59 HIR examples and four original-first native value/non-local-return checks | Only zero-positional-argument instance block calls admitted; positional arguments and distinct module bodies remain open |
+
+
+| Proven-disjoint case body admission | case_unreachable_body_spec.cr; case_unreachable_body_repro.sh | Prior HEAD fails two new HIR cases and emits dead Nil/Bool#each; isolated case341 passes 65 HIR examples and original-first runtime/HIR checks | Unknown hierarchy, predefined roots and effectful conditions preserved; recursive macro projection and full LavinMQ parity remain open |

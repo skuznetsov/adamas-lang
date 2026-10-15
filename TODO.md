@@ -19106,3 +19106,21 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Continue LavinMQ: union333 passes the Prometheus Hash | NamedTuple each
   boundary, then lowers Array#each in an impossible Nil | Bool case branch and
   selects unrelated LibPCRE2::Error#each. Probe case reachability before lookup.
+
+
+### 2026-10-15: proven-disjoint case bodies
+
+- [x] Do not instantiate a case body when every emitted type comparison is
+  provably false. Preserve mixed comma conditions, possible descendants, generic
+  bases, predefined builtin ancestors, and effectful value comparisons.
+- [x] Isolated case341 passes 65 focused HIR examples and the original-first
+  native/HIR regression. The prior HEAD passes runtime but leaks Nil/Bool#each
+  into dead HIR; the regression rejects that leak.
+- [ ] Audit builtin ancestor relations in statically_is_a_type?: Nil and numeric
+  primitive fast paths do not establish every Object/Value/Number relationship.
+  The case guard conservatively preserves those roots instead of trusting them.
+- [ ] Audit receiver-less block fallback lookup: impossible AMQ Table branches
+  previously selected unrelated LibPCRE2::Error#each for Nil | Bool.
+- [ ] Continue LavinMQ at recursive macro type-value projection. Full case340
+  passes the old Enum#each failure, then overflows macro_value_for_type_name.
+  Receiver validation termination does not establish projection termination.

@@ -89530,6 +89530,53 @@ module Adamas::HIR
       end
     end
 
+    # Only an emitted type check or an already constant false comparison is
+    # evidence that a case body is unreachable. Unknown hierarchy members keep
+    # the branch; an ancestor carrier can still hold the checked descendant.
+    private def case_condition_proven_false?(
+      ctx : LoweringContext,
+      subject_id : ValueId,
+      condition_id : ValueId,
+    ) : Bool
+      condition = ctx.value_for(condition_id)
+      if condition.is_a?(Literal)
+        return condition.type == TypeRef::BOOL && condition.value == false
+      end
+      return false unless condition.is_a?(IsA) && condition.value == subject_id
+
+      subject_desc = @module.get_type_descriptor(ctx.type_of(subject_id))
+      return false unless subject_desc && subject_desc.kind == TypeKind::Union
+      members = split_union_type_name(subject_desc.name)
+      return false if members.empty?
+      members.all? do |name|
+        case_union_member_disjoint?(type_ref_for_name(name), condition.check_type)
+      end
+    end
+
+    private def case_union_member_disjoint?(member_type : TypeRef, check_type : TypeRef) : Bool
+      return false if member_type == TypeRef::VOID || check_type == TypeRef::VOID
+      check_name = get_type_name_from_ref(check_type)
+      # Builtin TypeRefs have no descriptors. Their predefined ancestors must
+      # remain possible even if a no-prelude compilation has no hierarchy yet.
+      # Source: Crystal::Program's predefined Object/Value/Reference tree.
+      if primitive_class_name(member_type)
+        return false if {"Object", "Reference", "Value", "Struct", "Number", "Int", "UInt", "Float", "Enum"}.includes?(check_name)
+        return member_type != check_type if check_type.primitive?
+        check_desc = @module.get_type_descriptor(check_type)
+        return false unless check_desc
+        case check_desc.kind
+        when TypeKind::Class, TypeKind::Struct, TypeKind::Array, TypeKind::Hash,
+             TypeKind::Tuple, TypeKind::NamedTuple, TypeKind::Primitive
+          return true
+        else
+          # Module inclusion and erased pointer/proc carriers need their own
+          # proof; absence from the descriptor table is not disjointness.
+          return false
+        end
+      end
+      statically_is_a_type?(member_type, check_type) == false
+    end
+
     private def lower_case(ctx : LoweringContext, node : Adamas::Compiler::Frontend::CaseNode) : ValueId
       # Save locals state before case for proper phi merging
       pre_case_locals = ctx.save_locals
@@ -89569,20 +89616,25 @@ module Adamas::HIR
 
       # Process each when/in branch
       all_branches.each_with_index do |when_branch, idx|
+        # Instantiate a body only when at least one comparison can succeed.
+        # Keep comparison lowering first: enum values and user-defined ===
+        # must retain their existing semantics and evaluation effects.
+        conds = if sid = subject_id
+                  when_branch.conditions.map do |cond_expr|
+                    emit_case_comparison(ctx, sid, cond_expr, node.value)
+                  end
+                else
+                  nil
+                end
+        if sid = subject_id
+          next if conds && !conds.empty? && conds.all? { |condition| case_condition_proven_false?(ctx, sid, condition) }
+        end
+
         when_block = ctx.create_block
         next_block = ctx.create_block
 
         # Build condition (any match)
-        if subject_id
-          # Match subject against when values using appropriate === semantics.
-          # `node.value` is the case subject ExprId; parse_case substitutes it
-          # into `.method` shortcut nodes, so emit_case_comparison can detect
-          # the `when .>=(N)` / `when .<(N)` shortcut via ExprId identity.
-          case_subject_expr = node.value
-          conds = when_branch.conditions.map do |cond_expr|
-            emit_case_comparison(ctx, subject_id.not_nil!, cond_expr, case_subject_expr)
-          end
-
+        if conds
           # Combine with OR
           combined = conds.reduce do |acc, c|
             or_op = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Or, acc, c)
