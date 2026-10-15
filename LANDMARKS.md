@@ -17622,3 +17622,30 @@ Adversary verdict: ROBUST for tested keys, nested aliases, body/signature and
 rooted union contexts, with ordinary generic/structural/index controls. Refresh
 after type context resolution, namespace lookup or NamedTuple parsing changes.
 Full LavinMQ parity remains open.
+
+
+### 2026-10-15: recursive alias validation for macro receivers
+
+AMQ::Protocol::Field is a valid recursive alias through Array and Hash. The
+full303 receiver validator revisited the expanded union through those generic
+arguments until stack overflow. A source-sealed diagnostic304 captured that
+cycle. Original Crystal marks AliasType as processed before resolving its value
+(types.cr:2747-2813), retaining the alias object on recursive back-edges.
+
+The validator now shares a path-local active set across unions, suffix forms,
+and generic values. An active back-edge shares the existing obligation; it does
+not skip unrelated union members or NamedTuple field values. Unknown bases,
+unknown members after cycles, and unbound arguments remain rejected.
+
+Evidence: macro305's recursive receiver spec overflowed before the repair.
+The prior isolated HEAD rejects the original-valid recursive union observation.
+The isolated macro315 source passes 55 HIR examples, including eight graph
+cases and negative controls. Its original-first native regression passes three
+macro observations through named alias receivers. Its HIR SHA is
+433557398c8bbc3364d044fc83127583cfeaa19968a9a5a38c9256fbd36bea30;
+host SHA 5f1ec7a1c166a7341468026e83eef39b092b13ed011ec0c99f20d73e0a5e9de3.
+ROBUST within these builtin/registered-generic graph checks. Refresh the safe
+spec/native commands if receiver lookup, alias resolution, or type syntax
+changes. Full312 advances LavinMQ to an unrelated inherited receiver inference
+error; full compilation and test parity remain open. Generic-module active-set
+propagation and nested AliasType reflection are separate obligations.

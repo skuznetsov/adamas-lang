@@ -3416,3 +3416,18 @@ DoD: named_tuple_type_context_spec.cr and seven neighboring suites (47 examples)
 plus named_tuple_type_context_repro.sh (three original/candidate native checks).
 This closes the rooted-field and generic-owner alias obligations recorded above;
 virtual structural transport and complete LavinMQ outcome parity remain open.
+
+
+#### Recursive macro receiver graph validation (2026-10-15)
+
+- Admitted: registered recursive aliases through unions and Array/Hash/ordinary
+  generics, including NamedTuple field values, terminate receiver validation.
+- Rejected: unknown generic bases, unbound generic arguments, and unknown union
+  or field values remain invalid even after an accepted recursive back-edge.
+- Guard: the active set is scoped to the current validation path and is removed
+  on return; a cycle does not publish a global known-type cache entry.
+- Falsifiers: macro_recursive_type_receiver_spec.cr (eight cases) plus the
+  original-first macro_recursive_type_receiver_repro.sh. Isolated macro315 has
+  55/55 HIR examples and three native macro observations passing.
+- Open: the separate generic-module WIP may reset validation context. No global
+  recursive-type or full LavinMQ parity claim follows from this boundary.

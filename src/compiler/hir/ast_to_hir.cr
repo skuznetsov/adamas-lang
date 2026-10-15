@@ -77906,15 +77906,62 @@ module Adamas::HIR
           )
         end
       end
-      # Builtin hierarchy types (`Enum`, `Struct`, `Value`, `Object`) exist in
-      # the original Program even when no-prelude source never reopens them.
-      unless known_type_name?(resolved) || resolved == "Object" || builtin_hierarchy_parent(resolved)
-        # Original interpreter `resolve?(Path)` applies `remove_alias`: an alias
-        # of a union (`Int::Primitive`) evaluates to the union TypeNode.
-        members = split_union_type_names(resolved)
-        return nil unless members.size > 1 && members.all? { |member| known_type_name?(member) }
-      end
+      return nil unless known_macro_type_receiver_name?(resolved)
       macro_value_for_type_name(resolved)
+    end
+
+    # Validate each reachable type once on the current recursion path. Aliases
+    # may refer back through reference containers without unfolding forever.
+    private def known_macro_type_receiver_name?(name : String, active : Set(String) = Set(String).new) : Bool
+      resolved = resolve_type_alias_chain(resolve_type_name_in_context(name.strip))
+      return false if resolved.empty?
+      # Recursive aliases form a type graph. A back-edge shares the current
+      # validation obligation; every other reachable member must still pass.
+      return true if active.includes?(resolved)
+      active << resolved
+      begin
+        known_macro_type_receiver_shape?(resolved, active)
+      ensure
+        active.delete(resolved)
+      end
+    end
+
+    private def known_macro_type_receiver_shape?(resolved : String, active : Set(String)) : Bool
+      generic_info = split_generic_base_and_args(resolved)
+      return true if generic_info.nil? && known_type_name?(resolved)
+
+      members = split_union_type_names(resolved)
+      if members.size > 1
+        return members.all? { |member| known_macro_type_receiver_name?(member, active) }
+      end
+      if resolved.ends_with?('?') || resolved.ends_with?('*')
+        return known_macro_type_receiver_name?(resolved.byte_slice(0, resolved.bytesize - 1), active)
+      end
+      if info = generic_info
+        base = resolve_generic_base_name_in_context(info.base)
+        args = split_generic_type_args(info.args)
+        if args.empty?
+          return base == "Tuple" || base == "NamedTuple"
+        end
+        return false unless known_type_name?(base) || @generic_templates.has_key?(base) ||
+                            BUILTIN_GENERIC_BASES.includes?(base) || base == "Union" || base == "::Union"
+        return args.all? do |arg|
+          if base == "NamedTuple"
+            if entry = split_named_tuple_entry(arg)
+              known_macro_type_receiver_name?(entry[1], active)
+            else
+              false
+            end
+          else
+            value_literal_name?(arg.strip) || known_macro_type_receiver_name?(arg, active)
+          end
+        end
+      end
+
+      # These hierarchy types exist in the original Program even when
+      # no-prelude source never reopens them. Keep this atomic: the parent
+      # helper strips generic arguments and cannot validate their identities.
+      resolved == "Object" || !builtin_hierarchy_parent(resolved).nil?
     end
 
     private def macro_block_text(block_id : Adamas::Compiler::Frontend::ExprId) : String?

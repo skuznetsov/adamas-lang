@@ -19060,3 +19060,18 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   examples. namedtuple311_context_script passes three original-first native
   generic-owner checks, closing the earlier MetricValue/MetricLabels reducer.
 - [ ] Continue the full LavinMQ frontier and original Crystal outcome comparison.
+
+
+### 2026-10-15: recursive macro type receiver graph validation
+
+- [x] Validate recursive alias graphs with a per-path active set rather than
+  unfolding Array/Hash/union members indefinitely. Check all other reachable
+  members, including each NamedTuple value, after encountering a back-edge.
+- [x] macro315 passes 55 HIR examples and the original-first native regression's
+  union, aliased generic class, and type-argument count checks.
+- [ ] Audit active-set propagation through generic-module concreteness checks:
+  the separate module WIP currently starts another validation context.
+- [ ] Keep nested recursive AliasType identity separate from root union
+  reflection; original Crystal preserves alias back-edges in generic arguments.
+- [ ] Continue the full LavinMQ receiver/return inference failure at inherited
+  BaseUser#details_tuple: the user_details receiver is Void before merge lookup.
