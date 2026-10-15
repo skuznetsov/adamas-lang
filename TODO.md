@@ -1,5 +1,23 @@
 # Adamas Bootstrap TODO
 
+2026-10-15 NAMED MODULE BLOCK FANOUT: preserve supplied labels and the raw
+positional prefix through virtual lookup, fanout cache identity, and pending
+body materialization. Retain the selected Def, arena, source path, and receiver
+shape, and revalidate that identity before admitting a pending RTA target.
+Length-prefixed named-only labels distinguish same-ABI overloads and must not
+be interpreted as runtime type or block flags. Atomic native232 passes fifteen
+focused HIR examples and matches original Crystal's 41/99/42/102/41/99 runtime
+output. Controls reject changed labels, positional shape, Def identity, and
+producer path, and cover labels containing block/super metadata spellings.
+Evidence: rta232_named_fanout_all_spec and rta232_named_forwarding_atomic_native.
+Refresh after RTA admission, virtual fanout identity, source registration,
+call-shape transport, or mangled-suffix parsing changes. Full MT startup and
+LavinMQ broker/spec parity remain open.
+- [ ] Audit named+splat and named+double-splat virtual fanout separately. The
+  admitted pending-target proof requires named/block calls without splats.
+- [ ] Test pending-target replay after generic owner substitution and source
+  registry changes; current controls cover ordinary included module owners.
+
 2026-10-15 RETAINED BLOCK CARRIERS: select a block representation from the
 selected Def/arena or its materialized HIR signature. A named block that is
 forwarded, returned, or captured remains a Proc pair; raw-yield parameters

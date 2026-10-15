@@ -510,3 +510,28 @@ pass on native234. This covers the retained-block cases and existing raw Proc
 constructor contract. Mixed yield/retention and stdlib Once raw/heap variants
 remain separate obligations; full LavinMQ parity is open. Refresh after block
 selection, forwarding, HIR signature materialization, or Proc coercion changes.
+
+## Named module block fanout identity (2026-10-15)
+
+Virtual fanout must retain supplied named labels and the raw positional prefix
+independently of the normalized runtime argument vector. Its cache key includes
+that source shape, with length-prefixed canonical labels. Pending named/block
+RTA targets retain the exact selected Def, arena, source path, module owner, and
+receiver shape. Revalidate those facts and the current overload lookup before
+admitting a deferred body; a matching method spelling alone is insufficient.
+
+Named-only labels distinguish overloads that share runtime argument types.
+Their encoded suffix is source metadata, so runtime type/block-flag parsers
+must remove a valid named tail before interpreting ABI flags. Labels containing
+`block`, `id`, or `super` must not introduce a block slot or become runtime types.
+
+Falsifiers: `spec/hir/module_named_block_fanout_pending_spec.cr`,
+`spec/hir/named_block_forwarding_shape_spec.cr`,
+`spec/hir/named_block_suffix_shape_spec.cr`, and
+`regression_tests/named_block_forwarding_shape_repro.sh`. Atomic native232
+passes fifteen examples and matches original Crystal's 41/99/42/102/41/99.
+Negative controls change labels, raw positional count, selected Def, and
+producer source path. This admission covers nonsplat named/block module calls;
+named+splat and substituted generic owners remain separate obligations. Full
+LavinMQ parity remains open. Refresh after fanout/RTA registration, call-shape
+transport, source identity, or mangled-suffix parsing changes.

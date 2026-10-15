@@ -1445,7 +1445,15 @@ module Adamas::HIR
       method_name : String,
       arg_types : Array(TypeRef),
       has_block : Bool,
-      has_splat : Bool
+      has_splat : Bool,
+      has_named_args : Bool = false,
+      named_arg_names : Array(String)? = nil,
+      raw_positional_count : Int32? = nil,
+      selected_def : Adamas::Compiler::Frontend::DefNode? = nil,
+      selected_arena : Adamas::Compiler::Frontend::ArenaLike? = nil,
+      selected_source_path : String? = nil,
+      module_base : String? = nil,
+      receiver_shape : String? = nil
 
     private record ReceiverRepairFallback,
       exact_target : String,
@@ -5235,6 +5243,53 @@ module Adamas::HIR
       false
     end
 
+    private def module_virtual_pending_target_matches_rta?(name : String, owner_name : String) : Bool
+      requested_owner = strip_generics_simple(owner_name)
+      @module_virtual_fanout_pending_targets.each_value do |targets|
+        target = targets[name]?
+        next unless target
+        next unless target.name == name
+        next unless target.has_named_args && target.has_block && !target.has_splat
+        next unless names = target.named_arg_names
+        next if names.empty?
+        next unless target.raw_positional_count
+        next unless module_base = target.module_base
+        next unless receiver_shape = target.receiver_shape
+        next unless selected_def = target.selected_def
+        next unless selected_arena = target.selected_arena
+        next unless selected_path = target.selected_source_path
+        next if selected_path.empty?
+
+        owner = strip_generics_simple(target.owner)
+        next unless owner == requested_owner
+        next unless strip_generics_simple(method_owner(strip_type_suffix(name))) == owner
+        next unless rta_method_name_from_part(target.method_name) == target.method_name
+        next unless method_part(strip_type_suffix(name)) == target.method_name
+        next unless class_includes_module_transitively?(owner, module_base)
+        next unless module_fanout_owner_shape_compatible?(target.owner, receiver_shape)
+        next unless @function_defs[name]?.try(&.same?(selected_def))
+
+        current_arena = @function_def_arenas[name]?
+        next unless current_arena && current_arena.same?(selected_arena)
+        next unless source_path_for(current_arena) == selected_path
+
+        base_name = "#{target.owner}##{target.method_name}"
+        resolved = lookup_function_def_for_call(
+          base_name,
+          target.arg_types.size,
+          target.has_block,
+          target.arg_types,
+          target.has_splat,
+          target.has_named_args,
+          names,
+          target.raw_positional_count,
+        )
+        next unless resolved && resolved[0] == name && resolved[1].same?(selected_def)
+        return true
+      end
+      false
+    end
+
     private def rta_method_name_from_part(mpart : String) : String?
       return nil if mpart.empty?
       if dollar = mpart.index('$')
@@ -5755,7 +5810,8 @@ module Adamas::HIR
                            # Owner type is live — but only undefer if this method is actually called
                            # (match by method part for virtual dispatch across subtypes)
                            if mpart = extract_method_part_for_rta(name)
-                             rta_method_part_matches_owner?(mpart, owner_base.not_nil!)
+                             rta_method_part_matches_owner?(mpart, owner_base.not_nil!) ||
+                             module_virtual_pending_target_matches_rta?(name, owner_base.not_nil!)
                            else
                              true # Can't extract method part, be safe
                            end
@@ -9925,8 +9981,27 @@ module Adamas::HIR
       arg_types : Array(TypeRef),
       has_block : Bool,
       has_splat : Bool,
+      has_named_args : Bool = false,
+      named_arg_names : Array(String)? = nil,
+      raw_positional_count : Int32? = nil,
     ) : String
-      "#{parent_name}|#{method_name}|#{arg_types.map(&.id).join(",")}|#{has_block ? 1 : 0}|#{has_splat ? 1 : 0}"
+      source_shape = virtual_target_source_shape_key(has_named_args, named_arg_names, raw_positional_count)
+      "#{parent_name}|#{method_name}|#{arg_types.map(&.id).join(",")}|#{has_block ? 1 : 0}|#{has_splat ? 1 : 0}|#{source_shape}"
+    end
+
+    private def virtual_target_source_shape_key(
+      has_named_args : Bool,
+      named_arg_names : Array(String)?,
+      raw_positional_count : Int32?,
+    ) : String
+      return "" unless has_named_args
+
+      names = canonical_named_arg_names(named_arg_names) || [] of String
+      count = raw_positional_count ? raw_positional_count.to_s : "?"
+      # Length-prefix labels so the cache identity cannot conflate e.g.
+      # ["ab", "c"] with ["a", "bc"].
+      encoded_names = names.map { |name| "#{name.bytesize}:#{name}" }.join
+      "named:#{count}:#{names.size}:#{encoded_names}"
     end
 
     private def virtual_target_caller_token(ctx : LoweringContext) : {String, FunctionId}?
@@ -10384,11 +10459,33 @@ module Adamas::HIR
       has_block_call : Bool,
       has_splat : Bool,
       pending_targets : Hash(String, ModuleVirtualFanoutPendingTarget)? = nil,
+      has_named_args : Bool = false,
+      named_arg_names : Array(String)? = nil,
+      raw_positional_count : Int32? = nil,
+      pending_module_base : String? = nil,
+      pending_receiver_shape : String? = nil,
     ) : Bool
       base_name = "#{owner}##{method_name}"
       candidate = mangle_function_name(base_name, arg_types, has_block_call)
-      if resolved = lookup_function_def_for_call(base_name, arg_types.size, has_block_call, arg_types, has_splat)
+      selected_name : String? = nil
+      selected_def : Adamas::Compiler::Frontend::DefNode? = nil
+      selected_arena : Adamas::Compiler::Frontend::ArenaLike? = nil
+      selected_source_path : String? = nil
+      if resolved = lookup_function_def_for_call(
+           base_name,
+           arg_types.size,
+           has_block_call,
+           arg_types,
+           has_splat,
+           has_named_args,
+           named_arg_names,
+           raw_positional_count,
+         )
         resolved_name = resolved[0]
+        selected_name = resolved_name
+        selected_def = resolved[1]
+        selected_arena = @function_def_arenas[resolved_name]?
+        selected_source_path = selected_arena.try { |arena| source_path_for(arena) }
         if preserve_requested_value_owner_specialization?(candidate, resolved_name) ||
            preserve_requested_value_owner_specialization?(base_name, resolved_name)
           # Same rule as lower_virtual_target_owner: a value owner (Int32 in
@@ -10413,15 +10510,32 @@ module Adamas::HIR
                    arg_types,
                    has_block_call,
                    has_splat,
+                   has_named_args,
+                   named_arg_names,
+                   raw_positional_count,
                  )
       if !complete && pending_targets
-        pending_targets[candidate] = ModuleVirtualFanoutPendingTarget.new(
-          candidate,
+        authenticated_named_block = has_named_args && has_block_call && !has_splat &&
+                                     pending_module_base && pending_receiver_shape &&
+                                     selected_name && selected_def && selected_arena &&
+                                     selected_source_path && !selected_source_path.empty? &&
+                                     method_owner(strip_type_suffix(selected_name.not_nil!)) == owner
+        pending_name = authenticated_named_block ? selected_name.not_nil! : candidate
+        pending_targets[pending_name] = ModuleVirtualFanoutPendingTarget.new(
+          pending_name,
           owner,
           method_name,
           arg_types.dup,
           has_block_call,
           has_splat,
+          has_named_args,
+          canonical_named_arg_names(named_arg_names),
+          raw_positional_count,
+          authenticated_named_block ? selected_def : nil,
+          authenticated_named_block ? selected_arena : nil,
+          authenticated_named_block ? selected_source_path : nil,
+          authenticated_named_block ? pending_module_base : nil,
+          authenticated_named_block ? pending_receiver_shape : nil,
         )
       end
       complete
@@ -45612,6 +45726,7 @@ module Adamas::HIR
       typed_param_count = 0
       has_splat = false
       has_double_splat = false
+      named_only_names = [] of String
       has_untyped = param_types.any? { |t| t == TypeRef::VOID }
       i = 0
       buf = params.to_unsafe
@@ -45624,6 +45739,14 @@ module Adamas::HIR
           next
         end
         next if param.is_block || named_only_separator?(param)
+        if has_named_only && !param.is_splat && !param.is_double_splat
+          label = param.external_name || param.name
+          if label
+            if label_name = safe_slice_to_string(label)
+              named_only_names << label_name.lstrip('@')
+            end
+          end
+        end
         param_count += 1
         typed_param_count += 1 unless param_types[param_count - 1]? == TypeRef::VOID
         has_splat = true if param.is_splat
@@ -45671,6 +45794,13 @@ module Adamas::HIR
       is_method = base_name.includes?('#') || base_name.includes?('.')
       if @function_defs.has_key?(full_name) && (full_name == base_name || has_untyped) && (param_count > 0 || is_method)
         full_name = "#{base_name}$arity#{param_count}"
+      end
+
+      # Named-only labels distinguish source overloads with the same ABI.
+      if has_named_only
+        if shape_suffix = allocator_named_shape_suffix(named_only_names)
+          full_name = full_name.includes?('$') ? "#{full_name}_#{shape_suffix}" : "#{base_name}$#{shape_suffix}"
+        end
       end
 
       if existing = @function_defs[full_name]?
@@ -63877,6 +64007,9 @@ module Adamas::HIR
         target.arg_types,
         target.has_block,
         target.has_splat,
+        target.has_named_args,
+        target.named_arg_names,
+        target.raw_positional_count,
       )
     end
 
@@ -63890,6 +64023,9 @@ module Adamas::HIR
            target.has_block,
            target.arg_types,
            target.has_splat,
+           target.has_named_args,
+           target.named_arg_names,
+           target.raw_positional_count,
          )
         return !resolved[1].is_abstract
       end
@@ -71744,8 +71880,27 @@ module Adamas::HIR
       end
     end
 
-    private def repair_resolved_body_available?(owner : String, base_name : String, candidate : String, arg_types : Array(TypeRef), has_block : Bool, has_splat : Bool) : Bool
-      resolved = lookup_function_def_for_call(base_name, arg_types.size, has_block, arg_types, has_splat)
+    private def repair_resolved_body_available?(
+      owner : String,
+      base_name : String,
+      candidate : String,
+      arg_types : Array(TypeRef),
+      has_block : Bool,
+      has_splat : Bool,
+      has_named_args : Bool = false,
+      named_arg_names : Array(String)? = nil,
+      raw_positional_count : Int32? = nil,
+    ) : Bool
+      resolved = lookup_function_def_for_call(
+        base_name,
+        arg_types.size,
+        has_block,
+        arg_types,
+        has_splat,
+        has_named_args,
+        named_arg_names,
+        raw_positional_count,
+      )
       return false unless resolved
 
       resolved_name = resolved[0]
@@ -72086,7 +72241,8 @@ module Adamas::HIR
             if owner_base && !@rta_called_methods.includes?(name)
               if rta_live_owner?(owner_base)
                 if mpart = extract_method_part_for_rta(name)
-                  unless rta_method_part_matches_owner?(mpart, owner_base)
+                  unless rta_method_part_matches_owner?(mpart, owner_base) ||
+                         module_virtual_pending_target_matches_rta?(name, owner_base)
                     skipped_rta += 1 if debug_emit
                     next
                   end
@@ -72169,7 +72325,8 @@ module Adamas::HIR
               if owner_base && !@rta_called_methods.includes?(name)
                 if rta_live_owner?(owner_base)
                   if mpart = extract_method_part_for_rta(name)
-                    unless rta_method_part_matches_owner?(mpart, owner_base)
+                    unless rta_method_part_matches_owner?(mpart, owner_base) ||
+                           module_virtual_pending_target_matches_rta?(name, owner_base)
                       skipped_rta += 1 if debug_emit
                       next
                     end
@@ -73844,7 +74001,8 @@ module Adamas::HIR
                             true
                           elsif rta_live_owner?(owner_base)
                             if mpart = extract_method_part_for_rta(name)
-                              if rta_method_part_matches_owner?(mpart, owner_base)
+                              if rta_method_part_matches_owner?(mpart, owner_base) ||
+                                 module_virtual_pending_target_matches_rta?(name, owner_base)
                                 rta_reason = "keep:live_owner_method_part"
                                 true
                               else
@@ -99116,6 +99274,7 @@ module Adamas::HIR
       # `call_args` belong to `call_arena`; direct indexing avoids an otherwise
       # unnecessary block capture of call-resolution locals in generated stage2.
       has_splat = call_args.any? { |arg_id| call_arena[arg_id].is_a?(Adamas::Compiler::Frontend::SplatNode) }
+      raw_call_positional_count : Int32? = has_splat ? nil : call_args.size
       lexical_method_name = if callee_kind == Adamas::Compiler::Frontend::NodeKind::Identifier
                               identifier_call_name_text(node, call_arena)
                             else
@@ -104672,6 +104831,8 @@ module Adamas::HIR
           has_splat,
           has_named_args,
           splat_packed,
+          call_named_arg_names,
+          raw_call_positional_count,
         )
       end
 
@@ -105542,12 +105703,13 @@ module Adamas::HIR
         # the unreadable-name -> nil guard, and canonical named args; one call.
         m3i_input = v2_string_readable?(base_method_name) ? CallResolutionInput.new(
           func_name: base_method_name,
-          arg_count: call_args.size,
+          arg_count: lookup_arg_types.size,
           arg_types: lookup_arg_types,
           has_block: true,
           has_splat: false,
           has_named: has_named_args,
           named_names: canonical_named_arg_names(call_named_arg_names),
+          raw_positional_count: raw_call_positional_count,
         ) : nil
         if direct_block_entry = (m3i_input ? resolve_call_input(m3i_input) : nil)
           # Per-shape block specialization (4th / emit-time site, see
@@ -105913,6 +106075,8 @@ module Adamas::HIR
       has_splat : Bool,
       has_named_args : Bool,
       splat_packed : Bool,
+      named_arg_names : Array(String)? = nil,
+      raw_positional_count : Int32? = nil,
     ) : Nil
       return unless type_desc = @module.get_type_descriptor(ctx.type_of(receiver_id))
 
@@ -106047,8 +106211,11 @@ module Adamas::HIR
           arg_types,
           has_block_call,
           has_splat,
+          has_named_args,
+          named_arg_names,
+          raw_positional_count,
         )
-        fanout_cacheable = !has_named_args && !has_splat && !splat_packed
+        fanout_cacheable = !has_splat && !splat_packed
         fanout_registry_version = module_virtual_fanout_registry_version(module_base)
         fanout_cached = fanout_cacheable &&
                         @module_virtual_fanout_versions[fanout_key]? == fanout_registry_version
@@ -106093,6 +106260,11 @@ module Adamas::HIR
               has_block_call,
               has_splat,
               fanout_pending_targets,
+              has_named_args,
+              named_arg_names,
+              raw_positional_count,
+              module_base,
+              fanout_receiver_shape,
             )
             if started = owner_start
               owner_ms = (Time.instant - started).total_milliseconds
@@ -109022,7 +109194,11 @@ module Adamas::HIR
     # lookup_function_def_for_call wrapper.
     private def resolve_call_tuple(input : CallResolutionInput) : Tuple(String, Adamas::Compiler::Frontend::DefNode)?
       func_name = input.func_name
-      arg_count = input.arg_count
+      arg_count = if input.has_named && input.named_names && input.raw_positional_count
+                    input.raw_positional_count.not_nil! + input.named_names.not_nil!.size
+                  else
+                    input.arg_count
+                  end
       has_block = input.has_block
       arg_types = input.arg_types
       call_has_splat = input.has_splat
@@ -127655,6 +127831,10 @@ module Adamas::HIR
     end
 
     private def suffix_part_count(suffix : String) : Int32
+      # Source labels are not runtime type or block ABI components.
+      if named_start = named_shape_suffix_start(suffix)
+        suffix = suffix.byte_slice(0, named_start)
+      end
       return 0 if suffix.empty?
 
       count = 0
@@ -127691,6 +127871,10 @@ module Adamas::HIR
     # stage2, Array(TypeRef) is still an active small-struct storage corridor;
     # carrying ids avoids losing the TypeRef payload before the merge consumes it.
     private def parse_type_ids_from_suffix(suffix : String) : Array(TypeId)
+      # Source labels are not runtime type or block ABI components.
+      if named_start = named_shape_suffix_start(suffix)
+        suffix = suffix.byte_slice(0, named_start)
+      end
       part_count = suffix_part_count(suffix)
       result = Array(TypeId).new(part_count, 0_u32)
       return result if suffix.empty?
@@ -127763,6 +127947,10 @@ module Adamas::HIR
 
     # Parse types from mangled name suffix (e.g., "Pointer(LibC::Kevent)_Int32" -> [Pointer(LibC::Kevent), Int32])
     private def parse_types_from_suffix(suffix : String) : Array(TypeRef)
+      # Source labels are not runtime type or block ABI components.
+      if named_start = named_shape_suffix_start(suffix)
+        suffix = suffix.byte_slice(0, named_start)
+      end
       part_count = suffix_part_count(suffix)
       result = Array(TypeRef).new(part_count, TypeRef::VOID)
       return result if suffix.empty?
@@ -128111,6 +128299,10 @@ module Adamas::HIR
     end
 
     private def strip_mangled_suffix_flags(suffix : String) : String
+      # Source labels are not runtime type or block ABI components.
+      if named_start = named_shape_suffix_start(suffix)
+        suffix = suffix.byte_slice(0, named_start)
+      end
       stripped = suffix
       flags = ["_block", "_named", "_splat", "_double_splat", "_super"]
       loop do
@@ -128135,12 +128327,102 @@ module Adamas::HIR
       stripped
     end
 
+    private def named_shape_suffix_start(suffix : String) : Int32?
+      # First parse the complete suffix. A source label may itself end in
+      # `_super` (for example, the encoded label `block_super`), so removing
+      # that spelling before validating the length-prefixed tail would turn
+      # label bytes into ABI metadata.
+      if start = named_shape_suffix_start_in(suffix)
+        return start
+      end
+
+      # lower_super appends one `_super` tag after the complete method key.
+      # Only retry without it when the complete suffix was not itself a valid
+      # named-only tail.
+      return nil unless suffix.ends_with?("_super")
+      tag_start = suffix.bytesize - "_super".bytesize
+      named_shape_suffix_start_in(suffix[0, tag_start])
+    end
+
+    private def named_shape_suffix_start_in(suffix : String) : Int32?
+      return nil if suffix.bytesize < 6
+
+      i = 0
+      while i < suffix.bytesize
+        payload_start : Int32? = nil
+        if i == 0 && suffix.starts_with?("named_")
+          payload_start = 6
+        elsif i + 7 <= suffix.bytesize && suffix.byte_slice(i, 7) == "_named_"
+          payload_start = i + 7
+        end
+
+        if payload_start
+          return i if length_prefixed_named_shape_tail?(suffix, payload_start.not_nil!)
+        end
+        i += 1
+      end
+      nil
+    end
+
+    private def length_prefixed_named_shape_tail?(suffix : String, start : Int32) : Bool
+      bytesize = suffix.bytesize
+      return false if start >= bytesize
+
+      idx = start
+      loop do
+        length = 0
+        digit_count = 0
+        while idx < bytesize
+          byte = suffix.to_unsafe[idx]
+          break unless byte >= '0'.ord.to_u8 && byte <= '9'.ord.to_u8
+          digit = byte.to_i - '0'.ord
+          return false if digit > bytesize || length > (bytesize - digit) // 10
+          length = length * 10 + digit
+          digit_count += 1
+          idx += 1
+        end
+        return false if digit_count == 0 || idx >= bytesize
+        return false unless suffix.to_unsafe[idx] == '_'.ord.to_u8
+        return false if length == 0
+
+        idx += 1
+        return false if length > bytesize - idx
+        idx += length
+        return true if idx == bytesize
+        return false unless suffix.to_unsafe[idx] == '_'.ord.to_u8
+        idx += 1
+        return false if idx >= bytesize
+      end
+    end
+
     private def suffix_has_block_flag?(suffix : String) : Bool
-      return true if suffix == "block"
-      return true if suffix.ends_with?("_block")
-      return true if suffix.includes?("_block_")
-      return true if strip_mangled_suffix_flags(suffix) == "block"
-      false
+      named_start = named_shape_suffix_start(suffix)
+      abi_suffix = if named_start
+                     suffix[0, named_start.not_nil!]
+                   elsif suffix.ends_with?("_super")
+                     suffix[0, suffix.bytesize - "_super".bytesize]
+                   else
+                     suffix
+                   end
+      return false if abi_suffix.empty?
+      return true if abi_suffix == "block" || abi_suffix.ends_with?("_block")
+
+      # For partially typed splat definitions, `$arityN` may precede the
+      # trailing splat flag while the ABI block marker precedes `$arityN`.
+      stripped_splat = abi_suffix
+      if stripped_splat.ends_with?("_double_splat")
+        stripped_splat = stripped_splat[0, stripped_splat.size - "_double_splat".size]
+      elsif stripped_splat.ends_with?("_splat")
+        stripped_splat = stripped_splat[0, stripped_splat.size - "_splat".size]
+      end
+
+      return true if stripped_splat == "block" || stripped_splat.ends_with?("_block")
+      arity_idx = suffix_marker_last_index(stripped_splat, "$arity")
+      return false unless arity_idx
+      return false unless decimal_suffix_from?(stripped_splat, arity_idx.not_nil! + 6)
+
+      block_prefix = stripped_splat[0, arity_idx.not_nil!]
+      block_prefix == "block" || block_prefix.ends_with?("_block")
     end
 
     private def map_suffix_for_primitive_template(suffix : String, template_owner : String) : String?
