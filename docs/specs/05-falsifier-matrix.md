@@ -191,3 +191,6 @@ diagnostic meanings.
 
 
 | B-NAMED-TUPLE-UNION-LAYOUT | Preserve keys and per-arm literal indexes; structurally rebuild direct-call arguments before union embedding | ast_to_hir.cr normalize_method_owner_name; lower_named_tuple_literal_index; repair_named_tuple_call_arguments | named_tuple_union_field_owner_spec.cr; named_tuple_union_literal_index_spec.cr; named_tuple_structural_coercion_spec.cr; named_tuple_union_literal_index_repro.sh | current | [FALSIFIABLE] Pre-fix union owners fail 2/6 examples and source-layout wrapping exits 6; namedtuple298 passes 31 focused examples and 22 original-first native checks plus missing-key rejection. Virtual calls, union-to-union widening, rooted names, returns/casts, and LavinMQ parity remain open. |
+
+
+| B-NAMED-TUPLE-SUBSTITUTION | Preserve keys and substitute/canonicalize field values recursively | ast_to_hir.cr substitute_type_params_in_type_name | named_tuple_type_substitution_spec.cr; named_tuple_type_substitution_repro.sh | current | [FALSIFIABLE] namedtuple301 fails 5/6; namedtuple302 passes 6 substitution and 31 neighboring HIR examples. Generic-owner lexical aliases and full LavinMQ parity remain open. |

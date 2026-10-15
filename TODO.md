@@ -19034,3 +19034,16 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Continue LavinMQ compilation and runtime/test parity against original
   Crystal. Once callback transport, Pointer::Appender body publication, and
   abstract numeric overload identity remain separately tracked blockers.
+
+
+### 2026-10-15: NamedTuple field substitution
+
+- [x] Preserve field keys while substituting generic parameters; normalize each
+  field's value union independently, including nested NamedTuple containers.
+- [x] The six-case substitution regression fails five cases before the fix and
+  passes all six after it; 31 neighboring HIR checks also pass (namedtuple302).
+- [ ] Resolve lexical aliases within NamedTuple fields in generic owners. The
+  original-first namedtuple302_generic_context_native consumer passes Crystal
+  but candidate lowering still retains MetricValue/MetricLabels in three arms.
+- [ ] Complete macro type receiver recursion diagnosis: the full LavinMQ probe
+  advances past the corrupted field union and now overflows that validator.

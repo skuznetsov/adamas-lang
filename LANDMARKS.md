@@ -17577,3 +17577,23 @@ virtual calls, union-to-union conversions, and broader return/cast transport
 remain open. Refresh after type-name parsing, NamedTuple layout, final callee
 publication, union member selection, or literal index lowering changes.
 Full LavinMQ compilation and runtime parity remain open.
+
+
+### 2026-10-15: NamedTuple keys are not substitution operands
+
+The generic substitution loop must split a NamedTuple argument into key/value
+syntax before recursively substituting or normalizing a union. Treating the
+whole `value: UInt16 | Int32 | Float64` as a type moves `value:` into one union
+arm, producing the malformed type observed while compiling LavinMQ.
+
+Lineage: 229a9ad8 plus namedtuple302_field_substitution_atomic, HIR SHA256
+d19bef398ac8f4d278c13cb36339500f0948e9df45987d8b60e378a0551133d8.
+Receipts: namedtuple301_substitution_red fails 5/6;
+namedtuple302_field_substitution_hir passes all 37 examples (6 substitution
+and 31 neighbors). Host SHA256
+6e1041beeecfeae8f5f840b093286df8e8251baec571f77cdc0b264870400039.
+Adversary verdict: ROBUST for preserving field keys, parameter/self bindings,
+nested containers, complete union arms, rooted values and ordinary generic
+controls. Refresh when type substitution, union canonicalization or NamedTuple
+parsing changes. Lexical field-alias resolution and full LavinMQ parity remain
+open; the original-first generic-owner native probe still fails lowering.

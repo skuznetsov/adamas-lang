@@ -63325,6 +63325,15 @@ module Adamas::HIR
           new_args = [] of String
           args.each do |raw_arg|
             arg = raw_arg.strip
+            # NamedTuple keys belong to the type syntax. In particular, a
+            # field union must not include its key as the first union arm.
+            if info.base == "NamedTuple" || info.base == "::NamedTuple"
+              if entry = split_named_tuple_entry(arg)
+                value = substitute_type_params_in_type_name(entry[1])
+                new_args << "#{entry[0]}: #{normalize_tuple_literal_type_name(value)}"
+                next
+              end
+            end
             # Splat type-param: `*T` splices T's tuple-element types in place.
             # Tuple class is declared `class Tuple(*T)` so T binds to a tuple of
             # element types; `Union(*T)` inside Tuple#to_static_array etc. must
