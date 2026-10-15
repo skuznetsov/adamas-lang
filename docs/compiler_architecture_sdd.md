@@ -29,6 +29,15 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+When a late nested declaration resolves a simple lexical return annotation,
+the new type must reach the signature cache before later consumers use it.
+Refresh only aliases whose explicit-return contract still owns that exact Def;
+a same-name sibling cannot authorize replacement. Contextual type-parameter
+substitutions must remain local to their specialization. The natural late-type
+falsifier, sibling cache guard, and competing generic binding are the admitted
+checks. Rollback is the bounded write-through in resolve_return_type_from_def.
+Compound annotations and full MT/application startup remain separate frontiers.
+
 Proc arrow punctuation is structural syntax in both signature scans and body
 lowering. Resolve actual input/result type expressions in their lexical owner;
 an empty input list cannot acquire the owner's name as a phantom input. The

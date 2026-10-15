@@ -65464,6 +65464,19 @@ module Adamas::HIR
            !(type_param_like?(return_type_name) && !@type_param_map.has_key?(return_type_name))
           resolved = annotation_type_ref(return_type_name, owner_override.empty? ? nil : owner_override)
           if resolved != TypeRef::VOID && resolved != TypeRef::NIL && resolved != cached
+            # A nested declaration may resolve after the signature was cached.
+            # Refresh only entries owned by this exact annotated Def. Contextual
+            # type-parameter bindings belong to their individual specializations.
+            unless @type_param_map.has_key?(return_type_name)
+              cache_names = [mangled_method_name, base_method_name, normalized_mangled, normalized_base].uniq
+              cache_names.each do |cache_name|
+                next unless @function_explicit_return_defs[cache_name]?.try(&.same?(func_def))
+                set_function_type_entry(cache_name, resolved, allow_explicit_replacement: true)
+                if cache_name == normalized_base
+                  set_function_base_return_type(cache_name, resolved)
+                end
+              end
+            end
             return resolved
           end
           return cached

@@ -1,5 +1,22 @@
 # Adamas Bootstrap TODO
 
+2026-10-15 EXPLICIT RETURN CACHE REFRESH: a late nested declaration can
+resolve an annotated method's return while its signature cache retains the old
+placeholder. Refresh cache aliases only while the exact annotated Def owns
+them, and exclude contextual type-parameter substitutions. The unguarded
+refresh fails the generic substitution adversary; the guarded atomic239 passes
+all three focused cases and 25 annotation/overload neighbors. The safe regression
+runner passes independently; the native nested-owner control matches Crystal's
+42. Evidence: cache239_nested_return_red_v2, cache239_unguarded_generic_adversary,
+cache239_guarded_refresh_green, cache239_regression_runner.log, and
+cache239_native_nested_namespace. Refresh after declaration registration,
+explicit-return ownership, annotation resolution, or cache write changes.
+- [ ] Verify MT Fiber startup and LavinMQ with the guarded cache repair. The
+  earlier full-source Arrow+unguarded-cache trial reaches a separate missing
+  Pointer::Appender(UInt8)#<< body in Char#to_s; it does not certify startup.
+- [ ] Audit late resolution of compound, nullable, self, and generic return
+  annotations separately; this repair changes simple lexical annotations only.
+
 2026-10-15 EMPTY-INPUT PROC ANNOTATIONS: resolve arrow syntax structurally
 before nominal owner qualification. Empty inputs stay empty; actual input and
 result types retain their lexical owner and generic substitutions in signature

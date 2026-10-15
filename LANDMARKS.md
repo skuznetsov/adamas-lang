@@ -1,5 +1,22 @@
 # LANDMARKS
 
+Explicit return cache contract (2026-10-15): late nested registration may
+correct the resolved return without updating a concrete placeholder protected
+by the explicit-return write guard. Publish the lexical correction only to
+aliases still owned by the same annotated Def; do not cache a contextual type
+parameter across specializations. Natural late registration is RED before the
+repair, and the unguarded repair is RED under a competing generic substitution.
+Atomic239 passes three direct guards plus 25 annotation/overload neighbors;
+the safe runner passes, and a native nested-owner control matches Crystal's
+42. Scoped verdict: ROBUST for these cache and ownership transitions. Source:
+source_hashes_s1_cache239_explicit_return_refresh.json; compiler SHA256
+b6206b22d510f320c5bb828912ef2bc5b9a384b997ae60d67c6dfc3e90b28745.
+Receipts: cache239_nested_return_red_v2, cache239_unguarded_generic_adversary,
+cache239_guarded_refresh_green, cache239_regression_runner.log, and
+cache239_native_nested_namespace. Refresh after declaration/annotation/cache
+ownership changes. Compound annotations, MT startup, self-hosting, and LavinMQ
+runtime/spec parity require separate evidence.
+
 Proc arrow annotation contract (2026-10-15): empty inputs are structural syntax.
 Qualifying the whole `->` string in a namespaced owner minted a phantom Proc
 input during body lowering. Resolve actual inputs and the result before
