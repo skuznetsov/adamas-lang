@@ -1,5 +1,24 @@
 # Adamas Bootstrap TODO
 
+2026-10-15 GENERATED MODULE EXPORTS: extend registration now includes retained
+macro-generated definitions and producer arenas, including private overloads
+and source modules with extend self. Native175j passes nine focused/neighboring
+HIR examples and the original-first runtime reducer (six assertions; identical
+PQRSTU output). Evidence: module_generated175j_hir and
+module_generated175j_runtime. The preliminary lookup/materialization fallbacks
+were unnecessary and removed; the repair is confined to export registration.
+Refresh after module registration, method indexing, or source-arena changes.
+LavinMQ startup/spec parity remains open.
+- [ ] Repair ordinary included-method forwarding for a module with
+  `include Source; extend self`: generated_included175h exits zero with Crystal
+  but the candidate aborts in GeneratedIncludedConsumer.narrow before reaching
+  its generated private callee. The corresponding included class probe passes.
+- [ ] Preserve concrete generic arguments under an abstract Range restriction:
+  Random::PCG32.new creates Range(UInt64, UInt64), but startup lowers its Secure
+  rand call to Range(Int32, Int32), raising before application main. Use the
+  original-valid random_secure175d_checkpoints reducer and a minimal abstract
+  Range argument-selection oracle; do not change the stdlib.
+
 2026-10-15 OMITTED CONSTRUCTOR DEFAULTS / EARLY FIELD TYPES: emit a distinct
 zero-argument allocator wrapper, evaluate omitted defaults once, and retain
 their concrete types when lowering initialize. Refresh unresolved deferred

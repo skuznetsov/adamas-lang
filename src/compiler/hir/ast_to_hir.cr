@@ -24454,88 +24454,120 @@ module Adamas::HIR
         with_arena(mod_arena) do
           extra_map = include_type_param_map(mod_node, extend_target, include_arena, class_name)
           with_type_param_map(extra_map) do
+            members = [] of Tuple(Adamas::Compiler::Frontend::DefNode | Adamas::Compiler::Frontend::IncludeNode, Adamas::Compiler::Frontend::ArenaLike, ExprId?)
             if body = mod_node.body
-              body_ids = body.not_nil!
-              with_namespace_override(module_full_name) do
-                body_ids.each do |member_id|
-                  member = unwrap_visibility_member(@arena[member_id])
-                  case member
-                  when Adamas::Compiler::Frontend::IncludeNode
+              body.each do |member_id|
+                member = unwrap_visibility_member(@arena[member_id])
+                case member
+                when Adamas::Compiler::Frontend::IncludeNode, Adamas::Compiler::Frontend::DefNode
+                  members << {member, mod_arena, member_id}
+                end
+              end
+            end
+
+            # Macro expansion retains definitions in the method registry, while
+            # the source module body still contains only the macro expression.
+            # Export those same DefNode/arena pairs without expanding it again.
+            seen = Set(UInt64).new
+            members.each { |entry| seen << entry[0].object_id.to_u64 }
+            source_owner = strip_generic_args(module_full_name)
+            ensure_method_index_built
+            if methods = @method_index[method_index_owner_key(source_owner)]?
+              methods.each_value do |bucket|
+                bucket.all_candidates.each do |key|
+                  parts = parse_method_name_compact(key)
+                  next unless strip_generic_args(parts.owner) == source_owner
+                  member = @function_defs[key]? || next
+                  member_id = member.object_id.to_u64
+                  next unless @macro_generated_parameter_def_ids.includes?(member_id)
+                  next if seen.includes?(member_id)
+                  member_arena = @function_def_arenas[key]? || next
+                  seen << member_id
+                  members << {member, member_arena, nil}
+                end
+              end
+            end
+
+            with_namespace_override(module_full_name) do
+              members.each do |member, producer_arena, member_id|
+                with_arena(producer_arena) do
+                  if member.is_a?(Adamas::Compiler::Frontend::IncludeNode)
                     register_module_class_methods_for(class_name, member.target, defined_full_names, visited)
-                  when Adamas::Compiler::Frontend::DefNode
-                    next if (recv = member.receiver) && class_method_receiver_text?(safe_slice_to_string(recv) || "")
-                    next if member.is_abstract
-
-                    method_name = (safe_slice_to_string(member.name) || "")
-                    base_name = "#{class_name}.#{method_name}"
-                    member_arena = registration_member_arena_for(base_name, member)
-
-                    param_types = [] of TypeRef
-                    has_block = false
-                    if params = member.params
-                      each_param(params) do |param|
-                        next if named_only_separator?(param)
-                        if param.is_block
-                          has_block = true
-                          next
-                        end
-                        param_type = if ta = param.type_annotation
-                                       annotation_type_ref((safe_slice_to_string(ta) || ""), class_name)
-                                     elsif param.is_double_splat
-                                       type_ref_for_name("NamedTuple")
-                                     else
-                                       TypeRef::VOID
-                                     end
-                        param_types << param_type
-                      end
-                    end
-                    contains_yield = has_block || def_contains_yield?(member, member_arena)
-                    has_block = true if contains_yield
-
-                    type_literal_name = infer_type_literal_return_name_from_body(member, class_name)
-                    return_type = if rt = member.return_type
-                                    rt_name = (safe_slice_to_string(rt) || "")
-                                    inferred = module_like_type_name?(rt_name) ? infer_concrete_return_type_from_body(member, class_name, member_arena, node_expr_id: member_id) : nil
-                                    inferred || type_ref_for_name(rt_name)
-                                  elsif method_name.ends_with?('?')
-                                    provisional_query_return_type_for_registration(
-                                      method_name,
-                                      type_ref_for_name(class_name),
-                                      member,
-                                      class_name,
-                                      member_arena,
-                                      contains_yield,
-                                      node_expr_id: member_id
-                                    )
-                                  else
-                                    inferred = infer_concrete_return_type_from_body(member, class_name, member_arena, node_expr_id: member_id)
-                                    inferred ||= infer_unannotated_search_return_type(method_name, type_ref_for_name(class_name))
-                                    inferred || TypeRef::VOID
-                                  end
-                    if type_literal_name
-                      literal_ref = type_ref_for_name(type_literal_name)
-                      if return_type == TypeRef::VOID || return_type == TypeRef::NIL
-                        return_type = literal_ref if literal_ref != TypeRef::VOID
-                      end
-                    end
-
-                    full_name = function_full_name_for_def(base_name, param_types, member.params, has_block)
-                    next if defined_full_names.includes?(full_name)
-                    next if @function_types.has_key?(full_name)
-
-                    store_function_type_param_map(full_name, base_name, extra_map, extra_map.keys)
-                    store_function_namespace_override(full_name, base_name, module_full_name)
-                    debug_hook("module.class_method.register", "class=#{class_name} module=#{module_full_name} method=#{method_name} full=#{full_name}")
-                    if type_literal_name
-                      literal_ref = type_ref_for_name(type_literal_name)
-                      if literal_ref != TypeRef::VOID
-                        record_type_literal_return(full_name, member, member_arena)
-                      end
-                    end
-                    register_function_type(full_name, return_type)
-                    set_function_def_entry(full_name, member)
-                    set_function_def_arena(full_name, member_arena)
+                    next
                   end
+                  next unless member.is_a?(Adamas::Compiler::Frontend::DefNode)
+                  next if (recv = member.receiver) && class_method_receiver_text?(safe_slice_to_string(recv) || "")
+                  next if member.is_abstract
+
+                  method_name = (safe_slice_to_string(member.name) || "")
+                  base_name = "#{class_name}.#{method_name}"
+                  member_arena = member_id ? registration_member_arena_for(base_name, member) : producer_arena
+
+                  param_types = [] of TypeRef
+                  has_block = false
+                  if params = member.params
+                    each_param(params) do |param|
+                      next if named_only_separator?(param)
+                      if param.is_block
+                        has_block = true
+                        next
+                      end
+                      param_type = if ta = param.type_annotation
+                                     annotation_type_ref((safe_slice_to_string(ta) || ""), class_name)
+                                   elsif param.is_double_splat
+                                     type_ref_for_name("NamedTuple")
+                                   else
+                                     TypeRef::VOID
+                                   end
+                      param_types << param_type
+                    end
+                  end
+                  contains_yield = has_block || def_contains_yield?(member, member_arena)
+                  has_block = true if contains_yield
+
+                  type_literal_name = infer_type_literal_return_name_from_body(member, class_name)
+                  return_type = if rt = member.return_type
+                                  rt_name = (safe_slice_to_string(rt) || "")
+                                  inferred = module_like_type_name?(rt_name) ? infer_concrete_return_type_from_body(member, class_name, member_arena, node_expr_id: member_id) : nil
+                                  inferred || type_ref_for_name(rt_name)
+                                elsif method_name.ends_with?('?')
+                                  provisional_query_return_type_for_registration(
+                                    method_name,
+                                    type_ref_for_name(class_name),
+                                    member,
+                                    class_name,
+                                    member_arena,
+                                    contains_yield,
+                                    node_expr_id: member_id
+                                  )
+                                else
+                                  inferred = infer_concrete_return_type_from_body(member, class_name, member_arena, node_expr_id: member_id)
+                                  inferred ||= infer_unannotated_search_return_type(method_name, type_ref_for_name(class_name))
+                                  inferred || TypeRef::VOID
+                                end
+                  if type_literal_name
+                    literal_ref = type_ref_for_name(type_literal_name)
+                    if return_type == TypeRef::VOID || return_type == TypeRef::NIL
+                      return_type = literal_ref if literal_ref != TypeRef::VOID
+                    end
+                  end
+
+                  full_name = function_full_name_for_def(base_name, param_types, member.params, has_block)
+                  next if defined_full_names.includes?(full_name)
+                  next if @function_types.has_key?(full_name)
+
+                  store_function_type_param_map(full_name, base_name, extra_map, extra_map.keys)
+                  store_function_namespace_override(full_name, base_name, module_full_name)
+                  debug_hook("module.class_method.register", "class=#{class_name} module=#{module_full_name} method=#{method_name} full=#{full_name}")
+                  if type_literal_name
+                    literal_ref = type_ref_for_name(type_literal_name)
+                    if literal_ref != TypeRef::VOID
+                      record_type_literal_return(full_name, member, member_arena)
+                    end
+                  end
+                  register_function_type(full_name, return_type)
+                  set_function_def_entry(full_name, member)
+                  set_function_def_arena(full_name, member_arena)
                 end
               end
             end

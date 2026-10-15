@@ -1,5 +1,25 @@
 # HIR Name Resolution Contract
 
+## Generated module methods exported by extend (2026-10-15)
+
+Extending a module must register its retained macro-generated instance methods
+on the receiving class or module, including private methods called from an
+ordinary exported method. Preserve each generated definition's producer arena,
+overload restrictions, return annotation, and lexical namespace. A source
+module with `extend self` retains the same export obligation even when its
+method index uses class-form keys. Register retained definitions without
+executing their macro expansion again; preserve the existing source order of
+parsed definitions and includes.
+
+Falsifiers: spec/hir/module_generated_method_lookup_spec.cr and
+regression_tests/module_generated_method_lookup_repro.sh. Native175j passes two
+focused HIR examples, seven neighboring examples, and six original-first
+runtime assertions with identical `PQRSTU` output. Included class consumers
+also pass a separate runtime probe. A module using `include Source; extend self`
+still loses ordinary forwarding bodies; that separate gap remains in TODO.md.
+Refresh after module registration, method indexing, or source-arena changes.
+LavinMQ startup and broker/spec parity remain downstream obligations.
+
 ## Omitted constructor defaults and inherited field types (2026-10-15)
 
 A zero-argument call selecting an initializer with optional parameters must
