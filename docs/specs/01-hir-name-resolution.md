@@ -1,5 +1,23 @@
 # HIR Name Resolution Contract
 
+## Macro-emitted module extend self (2026-10-15)
+
+A selected conditional or named macro can declare `extend self` without leaving
+an ExtendNode in the parsed module body. Consume the recorded declaration after
+all local module members are registered, then export included methods once via
+the ordinary registrar. A recorded self export needs no foreign-arena AST
+lookup or generic include argument map. Nested modules use the same operation.
+
+Falsifiers: spec/hir/module_macro_extend_self_spec.cr and
+regression_tests/module_macro_extend_self_repro.sh. Native178c fails all three
+focused HIR cases and aborts on the original-valid conditional reducer.
+Native179 passes fourteen focused/neighboring HIR examples and four
+original-first runtime assertions with identical `MNOG` output, covering a
+selected else branch, a named macro, a nested module, and an Int64 generic
+include control. Refresh after module macro discovery, registration order, or
+extend export changes. Macro-emitted includes and multiple generic use sites
+remain separate guards in TODO.md; LavinMQ parity remains open.
+
 ## Included module methods under extend self (2026-10-15)
 
 `extend self` exports included instance methods through the same class-method
@@ -16,8 +34,8 @@ those but fails the nested case. Native178c passes three focused plus nine
 neighboring HIR examples and eight original-first runtime assertions with
 matching `PQRSTUVW` output, including a local-method precedence guard.
 Refresh after extend-self discovery, nested registration order, or module name
-resolution changes. Macro-emitted extend-self declarations and generic module
-instantiations need separate guards; full LavinMQ parity remains open.
+resolution changes. The macro-emitted declaration contract above adds selected
+macro and concrete generic include guards; full LavinMQ parity remains open.
 
 ## Generated module methods exported by extend (2026-10-15)
 

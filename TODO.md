@@ -1,5 +1,19 @@
 # Adamas Bootstrap TODO
 
+2026-10-15 MACRO EXTEND SELF EXPORTS: consume the recorded selected declaration
+after module members are registered, including conditional/named macro output
+and nested modules. Export no longer depends on a raw ExtendNode remaining in
+the parsed module body. Native178c fails all three focused HIR cases and aborts
+on the original-valid conditional reducer. Native179 passes fourteen
+focused/neighboring HIR examples and four original-first runtime assertions
+with matching MNOG output, including a concrete generic include control.
+Evidence: module_macro_self179_hir_red, module_macro_self179_hir_green, and
+module_macro_self179_runtime. Refresh after module macro discovery, member
+registration, or extend export ordering; LavinMQ parity remains open.
+- [ ] Audit macro-emitted include declarations and generic modules instantiated
+  at multiple use sites. The Int64 include control does not establish those
+  wider declaration/instantiation paths.
+
 2026-10-15 INCLUDED MODULE EXTEND SELF: export included definitions through the
 ordinary extend registrar, resolve enclosing namespaces, and export nested
 module mixins after their local methods are registered. Native177 fails the
@@ -10,9 +24,9 @@ local-method precedence. Evidence: module_included177_red,
 module_included178_nested_hir, module_included178c_hir, and
 module_included178c_runtime. Refresh after extend-self discovery, module name
 resolution, or nested registration ordering; LavinMQ parity remains open.
-- [ ] Add original-backed guards for macro-emitted extend-self declarations
-  and generic module instantiations; parsed top-level/nested declarations and
-  scalar overloads do not establish those broader paths.
+- [x] Guard macro-emitted extend-self declarations: native179 covers selected
+  conditionals, named macros, and nested modules. A concrete Int64 generic
+  include is also guarded; broader generic instantiations remain above.
 
 2026-10-15 GENERATED MODULE EXPORTS: extend registration now includes retained
 macro-generated definitions and producer arenas, including private overloads

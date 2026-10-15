@@ -24418,15 +24418,16 @@ module Adamas::HIR
 
     private def register_module_class_methods_for(
       class_name : String,
-      extend_target : ExprId,
+      extend_target : ExprId?,
       defined_full_names : Set(String),
       visited : Set(String),
     ) : Nil
       class_name = sanitize_type_name(class_name)
 
       # `extend self` exports the module's included instance methods as well as
-      # its own definitions. SelfNode is intentionally not a path-like name.
-      module_full_name = if !extend_target.invalid? && @arena[extend_target].is_a?(Adamas::Compiler::Frontend::SelfNode)
+      # its own definitions. A nil target uses an already recorded extend-self
+      # declaration, including one whose AST belongs to a macro expansion.
+      module_full_name = if extend_target.nil? || (!extend_target.invalid? && @arena[extend_target].is_a?(Adamas::Compiler::Frontend::SelfNode))
                            class_name
                          else
                            target_name = resolve_path_like_name(extend_target)
@@ -24463,7 +24464,7 @@ module Adamas::HIR
       include_arena = @arena
       defs.each do |mod_node, mod_arena|
         with_arena(mod_arena) do
-          extra_map = include_type_param_map(mod_node, extend_target, include_arena, class_name)
+          extra_map = extend_target ? include_type_param_map(mod_node, extend_target, include_arena, class_name) : {} of String => String
           with_type_param_map(extra_map) do
             members = [] of Tuple(Adamas::Compiler::Frontend::DefNode | Adamas::Compiler::Frontend::IncludeNode, Adamas::Compiler::Frontend::ArenaLike, ExprId?)
             if body = mod_node.body
@@ -29561,6 +29562,9 @@ module Adamas::HIR
               visited_extends
             )
           end
+          if @module_extend_self.includes?(module_name)
+            register_module_class_methods_for(module_name, nil, defined_class_method_full_names, visited_extends)
+          end
           if module_name == "Enum"
             if enum_info = @enum_info
               enum_info.each_key do |enum_name|
@@ -33982,15 +33986,7 @@ module Adamas::HIR
         if @module_extend_self.includes?(full_name)
           defined = collect_defined_class_method_full_names(full_name, body, @arena)
           visited = Set(String).new
-          body.each do |expr_id|
-            next if expr_id.null_ptr? || expr_id.invalid?
-            member = unwrap_visibility_member(@arena[expr_id])
-            next unless member.is_a?(Adamas::Compiler::Frontend::ExtendNode)
-            target = @arena[member.target]
-            next unless target.is_a?(Adamas::Compiler::Frontend::SelfNode) ||
-                        (target.is_a?(Adamas::Compiler::Frontend::IdentifierNode) && (safe_slice_to_string(target.name) || "") == "self")
-            register_module_class_methods_for(full_name, member.target, defined, visited)
-          end
+          register_module_class_methods_for(full_name, nil, defined, visited)
         end
       end
     end
