@@ -1,5 +1,22 @@
 # HIR Name Resolution Contract
 
+## Module default argument result inference (2026-10-15)
+
+An omitted positional argument binds its default in the selected callee's
+source arena and lexical environment. Earlier actual/default bindings are
+visible to later defaults. An explicit argument whose type is unknown stays
+unknown; an explicit named argument is not overwritten by an omitted-position
+default. Both CallNode and bare zero-argument MemberAccessNode consumers may
+use those bindings to infer an unannotated module method's return type.
+
+Falsifiers: spec/hir/module_default_argument_return_spec.cr (eleven examples)
+and regression_tests/module_default_argument_return_repro.sh (three
+original-first runtime cases), green on sealed native156. This evidence covers
+default result inference only; it does not certify captured callback ABI,
+Signal startup specialization, or LavinMQ parity. Refresh after default or
+selected-definition context changes.
+
+
 ## Select action expansion (2026-10-15)
 
 The legacy HIR path admits select conditions represented by calls, including

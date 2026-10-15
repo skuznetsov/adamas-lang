@@ -1,5 +1,18 @@
 # Adamas Bootstrap TODO
 
+2026-10-15 MODULE DEFAULT RESULT INFERENCE: infer unannotated module call
+results from the selected definition's omitted defaults in its own arena and
+lexical environment. Earlier argument/default bindings remain visible to later
+defaults; explicit unknown arguments are not replaced by defaults and named
+actuals win. Apply the same rule to bare zero-argument member calls. Eleven
+focused HIR examples and the original-first three-case runtime guard pass on
+native156. Evidence: native156_module_default_focused,
+module_default_source156_focused, native156_module_default_runtime, and
+module_default_native156_original_first. Captured Proc ABI, Signal startup
+specialization, and unchanged LavinMQ runtime/spec parity remain open. Refresh
+these guards when selected-def arena, default, or call-site binding changes.
+
+
 2026-10-15 SELECT ACTION LOWERING: native162 expands SelectNode to the same
 Channel actions and indexed case as Crystal, retaining branch assignments,
 empty else clauses, global operation paths, and single evaluation of arguments.

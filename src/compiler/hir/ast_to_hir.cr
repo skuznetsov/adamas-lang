@@ -26412,6 +26412,15 @@ module Adamas::HIR
                 if type_name_exists?(owner_q)
                   rt = get_function_return_type("#{owner_q}.#{member_name}")
                   return rt if rt != TypeRef::VOID
+                  # A bare member access is a real zero-argument call. Infer
+                  # an unannotated result from this selected def's defaults.
+                  if selected = lookup_function_def_for_call("#{owner_q}.#{member_name}", 0, false, [] of TypeRef)
+                    if selected[1].return_type.nil?
+                      if inferred = infer_return_type_from_callsite(selected[1], owner_q, [] of ExprId, nil, self_type_name)
+                        return inferred if inferred != TypeRef::VOID
+                      end
+                    end
+                  end
                   # Generic modules register class methods under the declared
                   # key ("Iterator(T).stop") — consult it for bare-owner requests.
                   owner_base = strip_generic_args(owner_q)
@@ -27121,6 +27130,11 @@ module Adamas::HIR
                     resolve_return_type_from_def(selected[0], declared_base, type_ref_for_name(obj_name), call_arg_types.size, selected[1])
                   end
                   return inferred if inferred && inferred != TypeRef::VOID
+                  if selected[1].return_type.nil?
+                    if inferred = infer_return_type_from_callsite(selected[1], obj_name, expr_node.args, expr_node.named_args, self_type_name)
+                      return inferred if inferred != TypeRef::VOID
+                    end
+                  end
                 end
               end
               # When there are args, try to find the specific overload matching arg types.
@@ -64584,6 +64598,34 @@ module Adamas::HIR
       old_infer_cache_version = @infer_type_cache_version
       @infer_type_cache_version = next_infer_env_epoch
       begin
+        # Omitted arguments bind their defaults in the callee's environment.
+        # Actual unknown values must stay unknown, and earlier bindings are
+        # visible to later defaults (for example b = a).
+        if params = node.params
+          with_arena(resolve_arena_for_def(node, @arena)) do
+            call_index = 0
+            each_param(params) do |param|
+              next if named_only_separator?(param) || param.is_block || param.is_double_splat
+              if !param.is_splat && call_index >= call_types.size
+                if default_value = param.default_value
+                  if param_name_slice = param.name
+                    param_name = safe_slice_to_string(param_name_slice) || "_"
+                    supplied_by_name = named_args.try(&.any? { |named| slice_eq?(named.name, param_name) }) || false
+                    unless supplied_by_name
+                      if default_type = infer_type_from_expr(default_value, owner_name)
+                        if default_type != TypeRef::VOID
+                          local_map[param_name] = default_type
+                          name_map[param_name] = get_type_name_from_ref(default_type)
+                        end
+                      end
+                    end
+                  end
+                end
+              end
+              call_index += 1
+            end
+          end
+        end
         inferred = infer_concrete_return_type_from_body(node, owner_name)
         if env_get("DEBUG_INFER_CALLSITE")
           method_name = (safe_slice_to_string(node.name) || "")
