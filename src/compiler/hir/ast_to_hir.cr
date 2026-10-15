@@ -30961,8 +30961,14 @@ module Adamas::HIR
         register_function_def(enum_full_name, def_node, arena)
         # The copy shares the yielding DefNode: keep it inline-only like the source.
         add_yield_function(enum_full_name) if @yield_functions.includes?(full_name)
-        if return_type = @function_types[full_name]?
-          register_function_type(enum_full_name, return_type) unless @function_types.has_key?(enum_full_name)
+        inherited_self_return = inherited_enum_self_return_type_for_attachment(enum_name, full_name, def_node)
+        if return_type = inherited_self_return || @function_types[full_name]?
+          if inherited_self_return || !@function_types.has_key?(enum_full_name)
+            register_function_type(enum_full_name, return_type, allow_explicit_replacement: !inherited_self_return.nil?)
+          end
+          if inherited_self_return && strip_type_suffix_uncached(enum_full_name) == enum_full_name
+            set_function_base_return_type(enum_full_name, return_type)
+          end
         end
       end
       return if has_enum_methods
@@ -30982,6 +30988,23 @@ module Adamas::HIR
           end
         end
       end
+    end
+
+    # `: self` in an inherited Enum body denotes the receiving concrete enum.
+    # Project the physical return type before lazy body lowering; carrying the
+    # shared Enum type here invalidates otherwise-correct nominal provenance.
+    private def inherited_enum_self_return_type_for_attachment(
+      enum_name : String,
+      source_full_name : String,
+      node : Adamas::Compiler::Frontend::DefNode,
+    ) : TypeRef?
+      return nil unless @enum_info.try(&.has_key?(enum_name))
+      return nil unless enum_attached_method_name(source_full_name, enum_name)
+      return nil unless @function_defs[source_full_name]?.try(&.same?(node))
+      return nil unless node.return_type.try { |return_slice| safe_slice_to_string(return_slice).try(&.strip) } == "self"
+
+      enum_base = enum_base_type(enum_name)
+      enum_base unless enum_base == TypeRef::VOID
     end
 
     # Name under which an `Enum#m` / `Enum.m` def is attached to enum_name, or
@@ -31017,8 +31040,14 @@ module Adamas::HIR
           arena = @function_def_arenas[full_name]? || @arena
           register_function_def(enum_full_name, def_node, arena)
           add_yield_function(enum_full_name) if @yield_functions.includes?(full_name)
-          if return_type = @function_types[full_name]?
-            register_function_type(enum_full_name, return_type) unless @function_types.has_key?(enum_full_name)
+          inherited_self_return = inherited_enum_self_return_type_for_attachment(enum_name, full_name, def_node)
+          if return_type = inherited_self_return || @function_types[full_name]?
+            if inherited_self_return || !@function_types.has_key?(enum_full_name)
+              register_function_type(enum_full_name, return_type, allow_explicit_replacement: !inherited_self_return.nil?)
+            end
+            if inherited_self_return && strip_type_suffix_uncached(enum_full_name) == enum_full_name
+              set_function_base_return_type(enum_full_name, return_type)
+            end
           end
         end
       end

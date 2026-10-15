@@ -264,3 +264,18 @@ diagnostic meanings.
   and default-argument source definitions. Original Crystal confirms the latter
   overlap is private. Body assertions require one self parameter and FieldGet,
   with no FieldSet. Refresh after accessor or source-family resolution changes.
+
+
+### Inherited Enum self return before lazy body lowering (2026-10-15)
+- RED: source377 has four failures in the eight-case attachment suite; the
+  native source386 and atomic-baseline regression choose Enum instead of the
+  concrete enum and exit 81, while original Crystal succeeds.
+- GREEN: atomic source389 passes eight HIR cases and native output * with the
+  same zero exit as original Crystal. Full source388 compiles the previous
+  Log.setup_from_env named-overload blocker; runtime hits the separate Once ABI
+  failure and is not counted as a runtime pass.
+- Guards: UInt8/UInt64 carriers, both declaration orders, class and instance
+  self returns, different enum owners, explicit Enum/Int64 contracts, unrelated
+  struct owners, and source overrides. Nullable/composite self, aliases, and
+  post-attachment redefinition remain untested. Refresh on enum return caches,
+  attachment, provenance consumption, or layout changes.

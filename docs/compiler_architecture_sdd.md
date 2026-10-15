@@ -3534,3 +3534,17 @@ lazy-body falsifier and exits 81 on the native getter control. Rollback is the
 atomic commit; refresh after registration or call/body resolution changes.
 Setter collisions, lazy defaults, and inherited/class accessor combinations
 remain separate untested surfaces; this does not close LavinMQ runtime parity.
+
+
+### Attached Enum self return contract (2026-10-15)
+Admitted: an exact source Enum instance or class method annotated `: self`
+projects to the concrete receiving enum's declared physical carrier before its
+body is lowered. The existing semantic enum ledger retains nominal identity
+for overload selection. Both immediate and batch attachment apply the same
+projection and refresh the bare base return cache. Rejected: copying the root
+Enum physical return into a concrete enum demand. Explicit Enum and numeric
+return annotations, unrelated owners, and user overrides retain their source
+contracts. No generic rule for nullable or composite self returns is admitted.
+DoD: atomic source389 passes eight HIR cases and the original-first native
+inherited-enum regression; the baseline fails the latter. Rollback is the
+atomic commit. Refresh after attachment, lazy return-cache, or enum ABI changes.

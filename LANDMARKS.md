@@ -17811,3 +17811,25 @@ Receipts: accessor378_atomic_hir, accessor378_atomic_native, and
 accessor378_body_falsifier_base in the external macro_fix evidence directory.
 Refresh on accessor registration, source-family aliasing, call arity, or body
 materialization changes. LavinMQ end-to-end test parity remains open.
+
+
+### Inherited Enum self returns need concrete storage before lowering (2026-10-15)
+The full LavinMQ spec build rejected Log.setup(String, Enum, Backend, Builder)
+although its source expects Log::Severity. A no-prelude falsifier returns from
+an inherited Enum class method annotated `: self`, then chooses between the
+concrete enum and Enum overloads. Original Crystal chooses the concrete enum;
+the baseline chooses Enum and exits 81. Diagnostic source387 proves nominal
+return provenance resolves correctly, but the attached signature still copies
+Enum's physical TypeRef. That type fails the enum ledger compatibility guard.
+Project only exact attached Enum DefNodes with the literal self annotation to
+the receiving enum's declared carrier, before lazy lowering. Keep explicit
+Enum/numeric contracts and user overrides. Both registration orders matter.
+Atomic source389 HIR SHA da5ecab6fab5034ba7153b4d06cb10f285f129d66c0379e714a3b5333e20d16f
+passes eight focused HIR examples and the original-first native regression;
+the same regression fails on baseline accessor378. Full source388 also compiles
+the original Log.setup_from_env consumer, whose runtime remains blocked by the
+separate Once callback ABI defect. Receipts: enum389_atomic_hir,
+enum389_atomic_native, enum389_atomic_baseline_native, enum388_log_setup_consumer
+in the external macro_fix directory. Refresh on enum attachment, return caches,
+nominal provenance, source replacement, or carrier layout changes. LavinMQ
+runtime and upstream test parity remain open.

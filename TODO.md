@@ -19167,3 +19167,13 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Extend accessor-family coverage to lazy defaults, inherited generic
   accessors, class accessors, and setter overload collisions. These adjacent
   combinations are untested here, not established failures.
+
+
+### Inherited Enum self return specialization (2026-10-15)
+- [x] Project inherited Enum `: self` return signatures to the receiving enum's
+  declared carrier before lazy body lowering, in both attachment orders.
+  Atomic source389 passes eight HIR cases and original-first native narrow,
+  wide, foreign-enum, instance-return, and user-override controls.
+- [ ] Probe inherited nullable `self?`, composite `Array(self)`/union returns,
+  alias annotations, and source redefinition after attachment. These adjacent
+  combinations are untested, not established failures.
