@@ -18692,3 +18692,19 @@ A/B via `--no-ltp` / `--no-mir-opt` / `--no-llvm-opt`; only then optimize:
 
 Healthy as-is (do not touch without a profile): hint-gated passes, DCE-2 only
 after DCE-1 progress, `optimize_with_potential` monotone-potential break.
+
+
+### 2026-10-15: Tuple hash intrinsic allocator materialization
+
+`lower_tuple_hash_result_intrinsic` constructs a fresh `Crystal::Hasher` with
+both `UInt64` seed arguments. Its direct mangled call did not guarantee that
+the exact full-arity allocator body existed alongside default-filled
+initializer wrappers. The intrinsic now requests that exact allocator through
+the shared generator and selected-overload naming path. The dedicated HIR
+regression checks the materialized body and the emitted two-argument call;
+the sealed171 spec overlay passes. Both tuple-hash entry paths converge on this
+helper. The existing-hasher intrinsic does not allocate and remains unchanged.
+This is scoped to the tuple hash intrinsic; other synthesized constructor
+calls need their own exact-signature evidence. A later MT runtime run still
+stops at a separate bodyless `Scheduler#spawn` target, so this HIR result does
+not certify full-prelude startup.

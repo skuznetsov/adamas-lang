@@ -125946,6 +125946,9 @@ module Adamas::HIR
 
       hasher_type = type_ref_for_name("Crystal::Hasher")
       hasher_type = TypeRef::POINTER if hasher_type == TypeRef::VOID
+      hasher_info = class_info_for_type(hasher_type)
+      return nil unless hasher_info
+      hasher_class_name = hasher_info.name
       zero_a = Literal.new(ctx.next_id, TypeRef::UINT64, 0_i64)
       ctx.emit(zero_a)
       ctx.register_type(zero_a.id, TypeRef::UINT64)
@@ -125953,8 +125956,13 @@ module Adamas::HIR
       ctx.emit(zero_b)
       ctx.register_type(zero_b.id, TypeRef::UINT64)
 
-      ctor_name = mangle_function_name("Crystal::Hasher.new", [TypeRef::UINT64, TypeRef::UINT64])
-      remember_callsite_arg_types(ctor_name, [TypeRef::UINT64, TypeRef::UINT64])
+      # The intrinsic supplies both seed values, so materialize the exact
+      # full-arity allocator body instead of leaving a direct mangled call
+      # ambiguous beside the default-filled initializer wrappers.
+      ctor_arg_types = [TypeRef::UINT64, TypeRef::UINT64]
+      generate_allocator(hasher_class_name, hasher_info, ctor_arg_types, force: true)
+      ctor_name = allocator_overload_name_for_call(hasher_class_name, ctor_arg_types)
+      remember_callsite_arg_types(ctor_name, ctor_arg_types)
       lower_function_if_needed(ctor_name)
       hasher = Call.without_receiver(ctx.next_id, hasher_type, ctor_name, [zero_a.id, zero_b.id])
       ctx.emit(hasher)

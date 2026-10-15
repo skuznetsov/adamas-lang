@@ -3264,3 +3264,19 @@ AMQP client method to unsupported SelectNode. This admits the tested loader
 contract only. Parser-recovery source fallback misses and cross-target C-binding
 selection remain open. Rollback is the isolated CLI loader delta; changes to
 search roots, loader traversal or macro branch admission reopen these checks.
+
+
+### 2026-10-15: Tuple hash intrinsic allocator materialization
+
+The tuple hash result intrinsic creates `Crystal::Hasher` with both `UInt64`
+seed arguments. A direct mangled call did not ensure that exact full-arity
+allocator body existed beside the default-filled initializer wrappers. The
+intrinsic now requests the exact allocator through the shared generator and
+selected-overload naming path. Its dedicated HIR regression verifies the body
+and one emitted two-argument call; the sealed171 spec overlay passes. Both
+tuple-hash entry paths use this helper, while the existing-hasher intrinsic
+does not allocate. This remains scoped to tuple hash. Other synthesized
+constructor calls need their own exact-signature evidence. The subsequent MT
+startup probe reaches a separate bodyless `Scheduler#spawn` target, so the HIR
+result does not certify full-prelude startup. Changes to tuple hashing,
+allocator selection, or the intrinsic's call shape reopen this check.
