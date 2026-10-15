@@ -19090,3 +19090,19 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Audit physical-newline consumption inside block shorthand postfix parsing.
 - [ ] Continue LavinMQ at Hash#get_entry inferred on a Hash | NamedTuple receiver
   union; establish the producer before changing dispatch guards.
+
+
+### 2026-10-15: per-owner union block inlining
+
+- [x] Select each concrete instance block method and its authenticated source
+  arena before expanding a zero-positional-argument union call. Narrow self
+  per branch and merge caller locals using the existing union dispatcher.
+- [x] union335 passes 59 focused HIR checks, including source-order controls,
+  missing-method/required-named guards, and existing module-body checks. The
+  original-first native script passes four value/non-local-return checks; the
+  prior HEAD fails the same script at the second receiver's return check.
+- [ ] Extend per-arm source selection to positional block arguments and distinct
+  included-module definitions only with separate overload/arena falsifiers.
+- [ ] Continue LavinMQ: union333 passes the Prometheus Hash | NamedTuple each
+  boundary, then lowers Array#each in an impossible Nil | Bool case branch and
+  selects unrelated LibPCRE2::Error#each. Probe case reachability before lookup.

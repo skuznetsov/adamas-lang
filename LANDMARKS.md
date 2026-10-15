@@ -17676,3 +17676,31 @@ full WIP snapshot passes 96 examples and advances LavinMQ to a separate
 Hash#get_entry receiver-union error. Two nested do-binding WIP tests fail
 identically on the previous HEAD and the isolated projection; that separate
 WIP is preserved. This is not full LavinMQ compilation or runtime parity.
+
+
+### 2026-10-15: distinct source bodies for union block receivers
+
+LavinMQ's PrometheusWriter#write_labels inlined Hash#each with self still typed
+as Hash(String, String) | seven NamedTuple variants. The private Hash#get_entry
+call then reached the generic-union guard with receivers that cannot implement
+that method. Trace329 authenticates the caller, source hash.cr:922, and union
+self. Weakening that guard would hide the earlier invalid body selection.
+
+Zero-positional-argument instance block calls now look up a source Def and arena
+for every concrete arm before emitting dispatch. The existing dispatcher narrows
+self, expands each arm's own body, and merges caller state. Existing tuple/shared
+module routes retain their guards. No partial branch instructions are emitted
+when an arm lacks a callable block overload or requires unsatisfied named args.
+
+RED: union332 returns exit 2 with the full previous compiler; the prior isolated
+HEAD fails the four-check native script at exit 4. Isolated union335 passes 59
+HIR examples and the original-first native script's four checks, including
+caller mutation and non-local returns through both different source bodies.
+HIR SHA bf74e04cba1b0f084a69335bd7aa49d8f08586f42b67fe1a829343f203eb928a;
+host SHA f6543a6860051165f295c558a0e78cb0e7d0a4e89825ce1211f6095fe54e98cb.
+ROBUST within the admitted no-positional-argument instance-body boundary.
+Refresh these probes after receiver lookup, Def/arena registration, union tags,
+or inline caller-state merging changes. Positional arguments and distinct
+module bodies need separate evidence. Full union333 advances LavinMQ to an
+impossible Nil | Bool case branch, where an unrelated enum each is selected;
+complete compilation and runtime/test parity remain open.

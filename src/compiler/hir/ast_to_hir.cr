@@ -116358,6 +116358,57 @@ module Adamas::HIR
         receiver_type, variants, call_args, block, block_param_types, callee_arena)
     end
 
+    # A union block call must select its source body for every concrete arm.
+    # Reusing the first instance Def with an unnarrowed self makes private
+    # helper calls and receiver-dependent macros observe the whole union.
+    private def inline_union_instance_yield(
+      ctx : LoweringContext,
+      inline_key : String,
+      receiver_id : ValueId?,
+      call_args : Array(ValueId),
+      block : Adamas::Compiler::Frontend::BlockNode,
+      block_param_types : Array(TypeRef)?,
+    ) : ValueId?
+      return nil unless receiver_id && call_args.empty?
+      parts = parse_method_name(strip_type_suffix(inline_key))
+      return nil unless parts.separator == '#' && parts.method
+      return nil if module_like_type_name?(parts.owner)
+      receiver_type = ctx.type_of(receiver_id)
+      descriptor = @module.get_type_descriptor(receiver_type)
+      return nil unless descriptor && descriptor.kind == TypeKind::Union
+      names = split_union_type_name(descriptor.name)
+      return nil if names.size < 2
+
+      definitions = {} of String => Tuple(Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike)
+      variants = names.map do |name|
+        type_ref = type_ref_for_name(name)
+        ensure_monomorphized_type(type_ref)
+        variant = @module.get_type_descriptor(type_ref)
+        return nil unless variant && {TypeKind::Class, TypeKind::Struct, TypeKind::Array,
+                                      TypeKind::Hash, TypeKind::Tuple, TypeKind::NamedTuple}.includes?(variant.kind)
+        return nil if unresolved_generic_receiver?(variant.name)
+        variant_id = get_union_variant_id(receiver_type, type_ref)
+        return nil if variant_id < 0
+        receiver_base = yield_receiver_base_name(type_ref)
+        return nil unless receiver_base
+        entry = lookup_block_function_def_for_call("#{name}##{parts.method}", 0,
+          [] of TypeRef, receiver_base)
+        return nil unless entry
+        key, definition = entry
+        owner = method_owner_from_name(key)
+        return nil if module_like_type_name?(owner)
+        arena = registered_arena_for_def(definition) || @function_def_arenas[key]?
+        return nil unless arena
+        return nil unless def_contains_yield?(definition, arena) || def_contains_block_call?(definition, arena)
+        definitions[key] = {definition, arena}
+        {type_ref, variant_id, key}
+      end
+      first_definition = definitions[variants.first[2]]
+      inline_union_yield_variants(ctx, inline_key, first_definition[0], receiver_id,
+        receiver_type, variants, call_args, block, block_param_types,
+        first_definition[1], definitions)
+    end
+
     private def inline_union_yield_variants(
       ctx : LoweringContext,
       inline_key : String,
@@ -116369,6 +116420,7 @@ module Adamas::HIR
       block : Adamas::Compiler::Frontend::BlockNode,
       block_param_types : Array(TypeRef)?,
       callee_arena : Adamas::Compiler::Frontend::ArenaLike,
+      variant_definitions : Hash(String, Tuple(Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike))? = nil,
     ) : ValueId
       pre_locals = ctx.save_locals
       pre_inline_locals = @inline_caller_locals_stack.map(&.dup)
@@ -116397,8 +116449,11 @@ module Adamas::HIR
                                else
                                  block_param_types_for_call(concrete_key, strip_type_suffix(concrete_key), type_ref, call_args.map { |arg| ctx.type_of(arg) })
                                end
-        value = inline_yield_function(ctx, func_def, concrete_key, concrete.id,
-          call_args, block, concrete_block_types, callee_arena)
+        definition = variant_definitions.try(&.[concrete_key]?)
+        concrete_def = definition ? definition[0] : func_def
+        concrete_arena = definition ? definition[1] : callee_arena
+        value = inline_yield_function(ctx, concrete_def, concrete_key, concrete.id,
+          call_args, block, concrete_block_types, concrete_arena)
         exit_block = ctx.current_block
         if ctx.get_block(exit_block).terminator.is_a?(Unreachable) &&
            !control_flow_dead_block?(ctx, exit_block)
@@ -116456,6 +116511,10 @@ module Adamas::HIR
       if module_result = inline_union_shared_module_yield(ctx, inline_key, func_def, receiver_id,
            call_args, block, block_param_types, callee_arena)
         return module_result
+      end
+      if instance_result = inline_union_instance_yield(ctx, inline_key, receiver_id,
+           call_args, block, block_param_types)
+        return instance_result
       end
       block_arena = @block_node_arenas[block.object_id]? ||
                     resolve_arena_for_block(block, @arena) ||

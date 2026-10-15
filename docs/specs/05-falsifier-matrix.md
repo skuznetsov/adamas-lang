@@ -203,3 +203,6 @@ diagnostic meanings.
 
 
 | Terminal no-parentheses block argument | parser_multiline_named_tuple_body_spec.cr; block_argument_collection_boundary_repro.sh | Six of nine initial cases fail before repair; isolated parser325 passes 90 parser examples and three original-first native checks; binary ampersand remains positional | Parenthesized extra-block diagnostics and newline handling remain separate |
+
+
+| Distinct instance bodies on union block receivers | distinct_owner_union_yield_spec.cr; distinct_owner_union_yield_repro.sh | Prior compiler executes the first body for both arms; isolated union335 passes 59 HIR examples and four original-first native value/non-local-return checks | Only zero-positional-argument instance block calls admitted; positional arguments and distinct module bodies remain open |

@@ -3445,3 +3445,19 @@ virtual structural transport and complete LavinMQ outcome parity remain open.
   checks). Isolated parser325 has 90 parser examples passing.
 - Open: parenthesized extra-block diagnostics, shorthand newline handling, and
   the separate nested do-block WIP are not widened by this change.
+
+
+#### Per-arm instance-body selection for union block calls (2026-10-15)
+
+- Admitted: zero-positional-argument instance block calls whose concrete class,
+  struct, collection, tuple, or NamedTuple arms each supply a callable source
+  Def/arena. Select all arms before emitting CFG; each receives narrowed self.
+- Guards: missing methods, unresolved receivers, missing source arenas, and
+  unsatisfied required named arguments do not authorize partial dispatch.
+  Existing tuple and shared included-module routes remain first.
+- Evidence: distinct_owner_union_yield_spec.cr plus 55 neighboring HIR cases
+  (59 total) and distinct_owner_union_yield_repro.sh (four original-first
+  native value/non-local-return checks) pass on isolated union335.
+- Open: positional block arguments, distinct included-module bodies, and
+  impossible case branches are separate obligations. Generic-union virtual
+  return guards remain unchanged; LavinMQ runtime parity is not established.
