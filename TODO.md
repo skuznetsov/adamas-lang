@@ -1,5 +1,25 @@
 # Adamas Bootstrap TODO
 
+2026-10-15 SELECTED OVERLOAD SPECIALIZATION: inspect the selected overload's
+restriction before an unsuffixed sibling, then bind that exact DefNode/arena
+when an abstract numeric restriction receives a concrete callsite symbol.
+A zero-argument sibling previously suppressed specialization or supplied its
+body under the new typed symbol. Atomic native201 passes four HIR examples
+and the original-first ABC runtime guard; the preceding native188 exits 7 on
+the first wide UInt64 assertion. Controls cover extend self, foreign module
+extension, and a concrete Int32 overload beside a differently shaped abstract
+sibling. Evidence: selected201_spec_green, selected201_native_red, and
+selected201_native_green. Refresh after overload selection, callsite naming,
+or deferred source-definition binding changes. LavinMQ parity remains open.
+- [ ] Audit abstract generic restriction lookup separately from body ABI
+  specialization: WidthConsumer.extract(WidthCarrier(UInt64)) currently misses
+  its WidthCarrier(Int) source overload in native198, despite the scalar guard
+  passing. Evidence: numeric198b_selected_trace; preserve the selected source
+  restriction before alias normalization and test nullable/nested carriers.
+- [ ] Audit same-owner deferred overload fallback for arity/type/block
+  compatibility. Its first-sibling fallback can otherwise bind a zero-argument
+  body under an unrelated typed target when no selected Def was retained.
+
 2026-10-15 MULTILINE LITERAL POSITIONS: let Lexer#advance own newline and
 column updates in heredocs, percent strings, and percent regexes. Counting
 those newlines twice made the parser-owned LavinMQ Launcher module end on

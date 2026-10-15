@@ -48264,7 +48264,10 @@ module Adamas::HIR
       return nil if arg_types.empty?
       return nil if arg_types.all? { |t| t == TypeRef::VOID }
 
-      def_node = @function_defs[base_method_name]? || @function_defs[resolved_name]?
+      # The selected overload owns the source restrictions. A sibling retained
+      # at the unsuffixed name may have a different arity or annotation and
+      # cannot decide whether this call needs a concrete body specialization.
+      def_node = @function_defs[resolved_name]? || @function_defs[base_method_name]?
       return nil unless def_node
 
       needs_callsite_specialization = semantic_state_scope_prefer_callsite_specialization_shadow_untyped_regular_param?(
@@ -102382,7 +102385,7 @@ module Adamas::HIR
         STDERR.puts "[CALL_TARGET_EARLY] caller=#{ctx.function.name} method=#{method_name} base=#{base_method_name} mangled=#{mangled_method_name} recv=#{recv_name} block_expr=#{block_expr_flag} block_pass=#{block_pass_flag} args=#{args.size}"
       end
       # The overload resolver has already selected the authoritative DefNode.
-      # Preserve that binding when an untyped definition is specialized to an
+      # Preserve that binding when an untyped or abstract restriction uses an
       # exact call-site symbol; late materialization must not rediscover a
       # different included or inherited body from the serialized name alone.
       if selected_def = selected_call_entry_def
@@ -102393,7 +102396,13 @@ module Adamas::HIR
              arg_types,
              has_block_call,
            ) &&
-           def_has_untyped_regular_param?(selected_def)
+           (def_has_untyped_regular_param?(selected_def) ||
+            !prefer_callsite_specialization(
+              base_method_name,
+              selected_call_entry_name || base_method_name,
+              arg_types,
+              false,
+            ).nil?)
           if existing_def = @function_defs[mangled_method_name]?
             if !same_def_node?(existing_def, selected_def) &&
                @module.has_function_with_body?(mangled_method_name)

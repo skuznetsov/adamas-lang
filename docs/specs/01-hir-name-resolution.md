@@ -1,5 +1,22 @@
 # HIR Name Resolution Contract
 
+## Selected overload specialization and source binding (2026-10-15)
+
+The selected overload owns the restriction used to decide concrete callsite
+specialization. An unsuffixed sibling with another arity or annotation must
+not replace that source contract. If an abstract restriction requires an exact
+callsite symbol, retain its selected DefNode and producer arena before return
+probing or deferred materialization can rediscover a different overload.
+
+Falsifiers: spec/hir/selected_overload_callsite_specialization_spec.cr and
+regression_tests/selected_overload_callsite_specialization_repro.sh. Atomic
+native201 passes four focused/neighboring HIR examples and the original-first
+ABC native guard. Native188 exits 7 on its first wide UInt64 assertion. Controls
+cover extend self, a foreign extended producer, and a concrete Int32 overload
+beside an abstract sibling of another arity. Refresh after selected-definition
+lookup, callsite naming, or deferred materialization changes. Abstract generic
+lookup, overlapping normalized overload keys, and LavinMQ parity remain open.
+
 ## Source positions and namespace arena ownership (2026-10-15)
 
 Multiline literal scanning must advance source line and column positions once
