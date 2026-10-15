@@ -1,5 +1,23 @@
 # Adamas Bootstrap TODO
 
+2026-10-15 MODULE PROPERTY TARGETS / REOPENINGS: module-typed property
+assignments use virtual dispatch and demand concrete accessor bodies, including
+chained assignments. The declaration prescan retains all module reopenings
+before nested includer layout registration, so properties in a later reopening
+contribute fields and accessors to early nested classes. Native166 fails both
+setter HIR cases; native167 passes those but fails both nested-layout cases;
+native168 passes 17 focused/neighboring HIR examples and original-first direct
+and nested-reopening runtime guards on two concrete layouts. Evidence:
+module_setter166_red, module_setter167_first, nested_module_layout167_red,
+nested_module_layout168_neighbors, and module_setter168_runtime. The minimal
+MT prelude passes the previous= stub and reaches a separate null default
+argument in Monitor#initialize (stdlib_init168_candidate_lldb). Broker/spec
+parity remains open. Refresh after module prescan, layout, or virtual-demand
+changes.
+- [ ] Audit macro-generated and conditional module reopenings that become
+  visible after the initial declaration prescan; the current guards cover
+  parsed top-level and recursively nested module reopenings only.
+
 2026-10-15 CLASS MACRO IVAR DECLARATIONS: retain explicit nullable field
 annotations in selected conditional, begin, and threaded class macro branches.
 The declaration nodes now reach the existing member-registration path before

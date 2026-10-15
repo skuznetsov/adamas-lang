@@ -1,5 +1,29 @@
 # HIR Name Resolution Contract
 
+## Module property dispatch and early nested includers (2026-10-15)
+
+An assignment through a module, union, or virtual class receiver must use the
+same concrete-target demand and virtual dispatch classification as an ordinary
+instance call. A module accessor has no independent object layout. Direct and
+chained property assignments therefore require concrete accessor bodies before
+MIR dispatch consumes them.
+
+The module declaration prescan retains parsed reopenings before registering
+nested classes. An early nested includer must see fields and accessors from a
+later reopening. This scan records declarations and cache dependencies; normal
+registration continues to own effects. Macro-generated or conditional reopenings
+outside that scan remain a separate obligation in TODO.md.
+
+Falsifiers: spec/hir/module_setter_virtual_dispatch_spec.cr and
+spec/hir/module_reopening_nested_layout_spec.cr (four focused examples), with
+five neighboring HIR suites (17 examples total), and
+regression_tests/module_setter_virtual_dispatch_repro.sh (original-first direct
+and nested-reopening runtime checks with different layouts and nullable chains).
+Native166 fails the setter cases, native167 fails the nested-layout cases, and
+native168 passes these guards. Minimal MT prelude startup advances to a separate
+Monitor default-argument crash; full LavinMQ parity remains open. Refresh after
+module declaration ordering, layout, or concrete-target demand changes.
+
 ## Class macro layout declarations (2026-10-15)
 
 A selected class macro branch must register explicit

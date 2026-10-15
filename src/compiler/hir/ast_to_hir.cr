@@ -12889,6 +12889,18 @@ module Adamas::HIR
       node : Adamas::Compiler::Frontend::ModuleNode,
       module_name : String,
     ) : Nil
+      # Nested classes are registered while visiting their enclosing module.
+      # Retain every module reopening before that visit, so an early nested
+      # includer sees fields/accessors declared by a later reopening. This
+      # prescan retains declarations only; normal registration owns effects.
+      unless class_like_namespace?(module_name)
+        existing_defs = @module_defs.has_key?(module_name)
+        if record_module_def_entry(module_name, node, @arena)
+          record_module_def_indexes(module_name)
+          bump_module_defs_cache_version
+          invalidate_type_cache_for_namespace(module_name) if existing_defs
+        end
+      end
       pre_register_type_body_macros(module_name, node.body)
     end
 
@@ -117048,7 +117060,7 @@ module Adamas::HIR
           if return_type == TypeRef::VOID
             return_type = TypeRef::POINTER
           end
-          call_virtual = index_call_virtual?(ctx, object_id, call_target_name)
+          call_virtual = instance_call_virtual?(ctx, object_id, call_target_name)
           if call_virtual
             ensure_index_union_virtual_targets_lowered(ctx, object_id, [range_type], "[]")
           end
@@ -117328,7 +117340,7 @@ module Adamas::HIR
           if return_type == TypeRef::VOID
             return_type = TypeRef::POINTER
           end
-          call_virtual = index_call_virtual?(ctx, object_id, method_name)
+          call_virtual = instance_call_virtual?(ctx, object_id, method_name)
           if call_virtual
             ensure_index_union_virtual_targets_lowered(ctx, object_id, arg_types, "[]")
           end
@@ -117506,7 +117518,7 @@ module Adamas::HIR
         if return_type == TypeRef::VOID
           return_type = TypeRef::POINTER
         end
-        call_virtual = index_call_virtual?(ctx, object_id, call_target_name)
+        call_virtual = instance_call_virtual?(ctx, object_id, call_target_name)
         if call_virtual
           ensure_index_union_virtual_targets_lowered(ctx, object_id, arg_types, "[]")
         end
@@ -117539,7 +117551,7 @@ module Adamas::HIR
       TypeRef::VOID
     end
 
-    private def index_call_virtual?(ctx : LoweringContext, receiver_id : ValueId, method_name : String) : Bool
+    private def instance_call_virtual?(ctx : LoweringContext, receiver_id : ValueId, method_name : String) : Bool
       call_virtual = false
       if type_desc = @module.get_type_descriptor(ctx.type_of(receiver_id))
         call_virtual = type_desc.kind.in?(TypeKind::Union, TypeKind::Module)
@@ -120702,23 +120714,7 @@ module Adamas::HIR
         end
 
         # Fallback to setter method call: obj.field=(value)
-        setter_name = "#{field_name}="
-        arg_types = [ctx.type_of(value_id)]
-        method_name = resolve_method_call(ctx, object_id, setter_name, arg_types, false)
-        return_type = get_function_return_type(method_name)
-        if !@module.has_function?(method_name)
-          if accessor = ensure_accessor_method(ctx, object_id, setter_name)
-            return_type = accessor[0]
-            method_name = accessor[1]
-          end
-        end
-        # Ensure the setter method is lowered
-        remember_callsite_arg_types(method_name, arg_types)
-        lower_function_if_needed(method_name)
-        call = Call.with_receiver(ctx.next_id, return_type, object_id, method_name, [value_id])
-        ctx.emit(call)
-        ctx.register_type(call.id, return_type)
-        call.id
+        lower_property_setter_call(ctx, object_id, field_name, value_id)
       when Adamas::Compiler::Frontend::NodeKind::Global
         target_global = target_node.unsafe_as(Adamas::Compiler::Frontend::GlobalNode)
         # Global variable assignment: $name = value
@@ -120730,6 +120726,45 @@ module Adamas::HIR
       else
         raise LoweringError.new("Unsupported assignment target: #{target_node.class}", target_node)
       end
+    end
+
+    # Assignment receivers can be modules, unions, or class hierarchies just
+    # like ordinary calls. Reuse their target-demand path instead of emitting a
+    # direct call to a module accessor that has no standalone implementation.
+    private def lower_property_setter_call(
+      ctx : LoweringContext,
+      object_id : ValueId,
+      field_name : String,
+      value_id : ValueId,
+    ) : ValueId
+      setter_name = "#{field_name}="
+      arg_types = [ctx.type_of(value_id)]
+      method_name = resolve_method_call(ctx, object_id, setter_name, arg_types, false)
+      return_type = get_function_return_type(method_name)
+      call_virtual = instance_call_virtual?(ctx, object_id, method_name)
+      unless call_virtual || @module.has_function?(method_name)
+        if accessor = ensure_accessor_method(ctx, object_id, setter_name)
+          return_type = accessor[0]
+          method_name = accessor[1]
+        end
+      end
+      remember_callsite_arg_types(method_name, arg_types)
+      lower_function_if_needed(method_name)
+      if call_virtual
+        ensure_virtual_call_targets_lowered(ctx, object_id, setter_name, arg_types,
+          false, false, false, false)
+        if return_type == TypeRef::VOID
+          owner = get_type_name_from_ref(ctx.type_of(object_id))
+          if inferred = infer_return_type_from_includers(owner, setter_name, arg_types, false)
+            return_type = inferred
+          end
+        end
+      end
+      call = Call.with_receiver_virtual(ctx.next_id, return_type, object_id,
+        method_name, [value_id], call_virtual)
+      ctx.emit(call)
+      ctx.register_type(call.id, return_type)
+      call.id
     end
 
     private def lower_static_member_access_call(
@@ -121686,22 +121721,7 @@ module Adamas::HIR
           end
         end
 
-        setter_name = "#{field_name}="
-        arg_types = [ctx.type_of(value_id)]
-        method_name = resolve_method_call(ctx, object_id, setter_name, arg_types, false)
-        return_type = get_function_return_type(method_name)
-        if !@module.has_function?(method_name)
-          if accessor = ensure_accessor_method(ctx, object_id, setter_name)
-            return_type = accessor[0]
-            method_name = accessor[1]
-          end
-        end
-        remember_callsite_arg_types(method_name, arg_types)
-        lower_function_if_needed(method_name)
-        call = Call.with_receiver(ctx.next_id, return_type, object_id, method_name, [value_id])
-        ctx.emit(call)
-        ctx.register_type(call.id, return_type)
-        call.id
+        lower_property_setter_call(ctx, object_id, field_name, value_id)
       when Adamas::Compiler::Frontend::NodeKind::Global
         target_global = target_node.unsafe_as(Adamas::Compiler::Frontend::GlobalNode)
         name = (safe_slice_to_string(target_global.name) || "")
