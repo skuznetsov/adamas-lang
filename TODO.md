@@ -18708,3 +18708,14 @@ This is scoped to the tuple hash intrinsic; other synthesized constructor
 calls need their own exact-signature evidence. A later MT runtime run still
 stops at a separate bodyless `Scheduler#spawn` target, so this HIR result does
 not certify full-prelude startup.
+
+### 2026-10-15: authenticated raw Proc pair construction
+
+The exact stdlib `Proc.new(Void*, Void*) : self` definition now lowers to
+`MakeProc` only when the selected Def and its arena prove stdlib ownership,
+both pointer annotations match, the return annotation is `self`, and no
+block/splat/named shape is present. The five-case HIR guard passes. Original
+Crystal and the matching no-prelude compiler both preserve null and non-null
+callback contexts in the runtime guard (`status=2,1,1,0`, exit 0). This does
+not prove GC retention or lifetime of captured context memory; add a separate
+collector/lifetime guard before claiming that behavior.

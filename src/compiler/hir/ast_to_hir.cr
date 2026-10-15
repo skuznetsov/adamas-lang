@@ -105461,6 +105461,21 @@ module Adamas::HIR
       uncoerced_args = args
       args = coerce_raw_proc_call_args_to_function_params(ctx, args, emit_method_name)
       track_call_argument_enum_values(ctx, args, callsite_arg_enum_names)
+      if proc_constructor_result = lower_stdlib_raw_proc_pair_constructor(
+           ctx,
+           receiver_id,
+           selected_call_entry_name,
+           selected_call_entry_def,
+           args,
+           return_type,
+           has_block_call,
+           block_id,
+           has_splat,
+           has_named_args,
+           call_virtual,
+         )
+        return proc_constructor_result
+      end
       included_virtual_plan = nil.as(IncludedForallVirtualReturnPlan?)
       if call_virtual && receiver_id && !ctx.type_literal?(receiver_id) && !has_block_call && block_id.nil? &&
          !has_splat && !splat_packed && !has_named_args
@@ -108105,6 +108120,60 @@ module Adamas::HIR
     private def proc_type_ref?(type_ref : TypeRef) : Bool
       desc = @module.get_type_descriptor(type_ref)
       !!(desc && (desc.kind == TypeKind::Proc || desc.name == "Proc" || desc.name.starts_with?("Proc(")))
+    end
+
+    # Crystal's stdlib Proc.new(Void*, Void*) returns the two-pointer Proc
+    # value. Lower that exact, authenticated source overload as MakeProc so the
+    # returned value owns a heap carrier instead of pointing at the callee's
+    # expired stack temporary. Keep user-defined Proc.new overloads on the
+    # ordinary call path.
+    private def lower_stdlib_raw_proc_pair_constructor(
+      ctx : LoweringContext,
+      receiver_id : ValueId?,
+      selected_name : String?,
+      selected_def : Adamas::Compiler::Frontend::DefNode?,
+      args : Array(ValueId),
+      result_type : TypeRef,
+      has_block_call : Bool,
+      block_id : ValueId?,
+      has_splat : Bool,
+      has_named_args : Bool,
+      call_virtual : Bool,
+    ) : ValueId?
+      # In Crystal's `Proc(Nil).new(...)`, the specialization path is carried
+      # by the selected class-method Def; the call's receiver ValueId is nil.
+      # If a receiver ValueId exists, it must still be a type literal.
+      return nil if receiver_id && !ctx.type_literal?(receiver_id.not_nil!)
+      return nil if has_block_call || block_id || has_splat || has_named_args || call_virtual
+      return nil unless args.size == 2 && proc_type_ref?(result_type)
+      return nil unless pointer_like_type_ref?(ctx.type_of(args.unsafe_fetch(0)))
+      return nil unless pointer_like_type_ref?(ctx.type_of(args.unsafe_fetch(1)))
+
+      name = selected_name
+      def_node = selected_def
+      return nil unless name && def_node
+      return nil unless method_owner(name.not_nil!) == "Proc"
+      return nil unless method_part(name.not_nil!) == "new"
+
+      base_name = strip_type_suffix(name.not_nil!)
+      return nil unless class_method?(base_name)
+      return nil unless stdlib_definition_authoritative?(name.not_nil!, base_name, def_node.not_nil!)
+
+      params = def_node.not_nil!.params
+      return nil unless params && params.size == 2
+      params.each do |param|
+        return nil if param.is_splat || param.is_double_splat || param.is_block || param.is_instance_var
+        return nil if param.default_value
+        type_annotation = param.type_annotation
+        return nil unless type_annotation && safe_slice_to_string(type_annotation).try(&.strip) == "Void*"
+      end
+      return_annotation = def_node.not_nil!.return_type
+      return nil unless return_annotation && safe_slice_to_string(return_annotation).try(&.strip) == "self"
+
+      make_proc = MakeProc.new(ctx.next_id, result_type, args.unsafe_fetch(0), args.unsafe_fetch(1))
+      ctx.emit(make_proc)
+      ctx.register_type(make_proc.id, result_type)
+      make_proc.id
     end
 
     private def raw_block_callback_param?(function : Function, param : Parameter) : Bool

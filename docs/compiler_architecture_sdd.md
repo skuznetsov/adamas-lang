@@ -3280,3 +3280,22 @@ constructor calls need their own exact-signature evidence. The subsequent MT
 startup probe reaches a separate bodyless `Scheduler#spawn` target, so the HIR
 result does not certify full-prelude startup. Changes to tuple hashing,
 allocator selection, or the intrinsic's call shape reopen this check.
+
+### 2026-10-15: authenticated raw Proc pair construction
+
+The selected stdlib `Proc.new(Void*, Void*) : self` overload must preserve both
+the callback pointer and its closure-context pointer when the resulting Proc
+escapes the constructor call. HIR lowers only that exact, source-authenticated
+stdlib definition to `MakeProc`; same-shaped user overloads and definitions
+with different parameter, return, or block shape stay on ordinary call
+lowering.
+
+The focused HIR guard passes five cases, including the authenticated stdlib
+shape and four negative shape/ownership controls. The original Crystal and the
+matching no-prelude compiler both pass the runtime guard for null context with
+`void(void)` and non-null context with `void(void*)`; both report two calls,
+one null-context call, one expected non-null context call, and no unexpected
+context. This does not certify captured-context lifetime/GC retention,
+repeated calls after owner collection, or other raw Proc constructor
+signatures. Changes to selected-Def provenance, Proc carrier layout, or
+callback ABI reopen this bounded contract.
