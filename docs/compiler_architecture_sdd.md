@@ -3475,3 +3475,23 @@ virtual structural transport and complete LavinMQ outcome parity remain open.
   comparison and explicit dead-HIR rejection, pass on isolated case341.
 - Open: builtin ancestor proof completeness, unrelated fallback method lookup,
   recursive macro value projection and full LavinMQ runtime/test parity.
+
+
+### Finite recursive macro TypeNode projection (2026-10-15)
+Admitted: concrete generic reflection retains recursive AliasType identity at
+the declaration-order graph back-edge, resolves ordinary aliases in their
+declaration namespace, and projects canonical union members and Nil acceptance.
+Union display names are distinct from HIR specialization identity. Generic
+formal names remain MacroIds; concrete type arguments become reflected values.
+Receiver validation consumes the same finite projection and an active graph
+guard. Alias cache invalidation is required for every changed registration.
+
+Rejected: treating nominal `Name -> Name` entries as alias recursion, eagerly
+hydrating recursive generic arguments, or restarting eager expansion during
+receiver validation. Unknown nested types still fail validation. Guard-only:
+these checks do not establish arbitrary recursive Proc/pointer projection or
+LavinMQ execution. Rollback is this atomic commit; source358's 27 focused cases
+and the original-first native projection regression are the DoD. The strongest
+observed falsifiers are the old hydration stack overflow and a namespaced alias
+resolving through a global same-name alias. Both have dedicated regression
+coverage. Refresh when alias resolution or macro value construction changes.

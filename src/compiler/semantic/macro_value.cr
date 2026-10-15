@@ -1416,6 +1416,8 @@ module Adamas
         getter? is_abstract : Bool
         getter superclass_name : String?
         getter type_vars : Array(String)?
+        getter union_members : Array(MacroValue)?
+        getter type_var_values : Array(MacroValue)?
 
         def initialize(
           @name : String,
@@ -1424,11 +1426,60 @@ module Adamas
           @is_module : Bool = false,
           @is_abstract : Bool = false,
           @superclass_name : String? = nil,
-          @type_vars : Array(String)? = nil
+          @type_vars : Array(String)? = nil,
+          @union_members : Array(MacroValue)? = nil,
+          @accepts_nil : Bool? = nil,
+          @type_var_values : Array(MacroValue)? = nil,
+          @is_alias : Bool = false
         )
         end
 
         def to_macro_output : String
+          display_name
+        end
+
+        def stringify : String
+          display_name
+        end
+
+        # Reflection spelling differs from canonical HIR identity: unions have
+        # outer parentheses and put Nil last, except inside generic arguments.
+        # Keep @name intact for type relations and specialization keys.
+        def display_name(generic_args : Bool = true, skip_union_parens : Bool = false) : String
+          members = @union_members
+          if members.nil? && (names = union_member_names)
+            members = names.map { |name| MacroTypeValue.new(name).as(MacroValue) }
+          end
+          if members && members.size > 1
+            ordered = members.reject { |member| member.as?(MacroTypeValue).try(&.name) == "Nil" }
+            # Crystal's UnionType formatter uses each arm's default generic_args
+            # option even when the union itself receives generic_args: false.
+            # Canonical generic keys may contain Nil-first nested unions; sort
+            # reflected arm names so recursive formatting preserves Crystal order.
+            names = ordered.map do |member|
+              member.is_a?(MacroTypeValue) ? member.display_name : member.to_id
+            end.sort
+            names << "Nil" if members.any? { |member| member.as?(MacroTypeValue).try(&.name) == "Nil" }
+            result = names.join(" | ")
+            return skip_union_parens ? result : "(#{result})"
+          end
+
+          if start = @name.index('(')
+            if start > 0 && @name.ends_with?(')')
+              base = @name.byte_slice(0, start)
+              return base unless generic_args
+              values = @type_var_values || @type_vars.try do |vars|
+                vars.map { |var| MacroTypeValue.new(var).as(MacroValue) }
+              end
+              values ||= split_type_display_arguments(@name.byte_slice(start + 1, @name.bytesize - start - 2)).map do |var|
+                MacroTypeValue.new(var).as(MacroValue)
+              end
+              args = values.map do |value|
+                value.is_a?(MacroTypeValue) ? value.display_name(skip_union_parens: true) : value.to_id
+              end
+              return "#{base}(#{args.join(", ")})"
+            end
+          end
           @name
         end
 
@@ -1438,27 +1489,38 @@ module Adamas
 
         def call_method(name : String, args : Array(MacroValue), named_args : Hash(String, MacroValue)?) : MacroValue
           case name
+          when "nilable?", "union?", "union_types", "type_vars", "resolve", "resolve?"
+            unless args.empty?
+              raise ArgumentError.new("wrong number of arguments for macro 'TypeNode##{name}' (given #{args.size}, expected 0)")
+            end
+            if key = named_args.try(&.keys.first?)
+              raise ArgumentError.new("no parameter named '#{key}' for macro 'TypeNode##{name}'")
+            end
+          end
+          case name
+          when "resolve", "resolve?"
+            self
           when "name"
-            # Check for generic_args named argument
+            unless args.empty?
+              raise ArgumentError.new("wrong number of arguments for macro 'TypeNode#name' (given #{args.size}, expected 0)")
+            end
             generic_args = true
             if na = named_args
+              na.each_key do |key|
+                unless key == "generic_args"
+                  raise ArgumentError.new("no parameter named '#{key}' for macro 'TypeNode#name'")
+                end
+              end
               if ga = na["generic_args"]?
-                generic_args = ga.truthy?
+                unless ga.is_a?(MacroBoolValue)
+                  raise ArgumentError.new("named argument 'generic_args' to TypeNode#name must be a BoolLiteral, not #{ga.class_name}")
+                end
+                generic_args = ga.value
               end
             end
-            result_name = if generic_args
-                            @name
-                          else
-                            # Strip generic args: Foo(T, U) → Foo
-                            if idx = @name.index('(')
-                              @name[0, idx]
-                            else
-                              @name
-                            end
-                          end
-            MacroIdValue.new(result_name)
+            MacroIdValue.new(display_name(generic_args: generic_args))
           when "class?"
-            MacroBoolValue.new(!@is_struct && !@is_module)
+            MacroBoolValue.new(!@is_struct && !@is_module && !@is_alias)
           when "struct?"
             MacroBoolValue.new(@is_struct)
           when "module?"
@@ -1466,9 +1528,18 @@ module Adamas
           when "abstract?"
             MacroBoolValue.new(@is_abstract)
           when "nilable?"
-            MacroBoolValue.new(@name.ends_with?("?") || @name == "Nil" || @name.includes?("| Nil") || @name.includes?("Nil |"))
+            accepts_nil = @accepts_nil
+            MacroBoolValue.new(accepts_nil.nil? ? lexical_nilable_type? : accepts_nil.not_nil!)
           when "union?"
             MacroBoolValue.new(top_level_union_name?)
+          when "union_types"
+            if members = @union_members
+              MacroArrayValue.new(members.dup)
+            elsif members = union_member_names
+              MacroArrayValue.new(members.map { |member| MacroTypeValue.new(member).as(MacroValue) })
+            else
+              MacroArrayValue.new([self.as(MacroValue)])
+            end
           when "superclass"
             if sc = @superclass_name
               MacroTypeValue.new(sc)
@@ -1476,7 +1547,11 @@ module Adamas
               MacroNilValue.new
             end
           when "type_vars"
-            if tv = @type_vars
+            if values = @type_var_values
+              MacroArrayValue.new(values.dup)
+            elsif tv = @type_vars
+              # Bare generic templates expose formal-name MacroIds. HIR supplies
+              # resolved values separately for concrete generic instances.
               MacroArrayValue.new(tv.map { |v| MacroIdValue.new(v).as(MacroValue) })
             else
               MacroArrayValue.new
@@ -1533,6 +1608,76 @@ module Adamas
       end
 
       class MacroTypeValue
+        private def split_type_display_arguments(args : String) : Array(String)
+          values = [] of String
+          depth = 0
+          start = 0
+          index = 0
+          while index < args.bytesize
+            case args.byte_at(index)
+            when '('.ord.to_u8, '['.ord.to_u8, '{'.ord.to_u8
+              depth += 1
+            when ')'.ord.to_u8, ']'.ord.to_u8, '}'.ord.to_u8
+              depth -= 1
+            when ','.ord.to_u8
+              if depth == 0
+                values << args.byte_slice(start, index - start).strip
+                start = index + 1
+              end
+            end
+            index += 1
+          end
+          values << args.byte_slice(start, args.bytesize - start).strip unless args.empty?
+          values
+        end
+
+        # HIR supplies Nil ancestry for canonical types. A standalone value can
+        # still recognize builtin Nil ancestors and top-level union spellings.
+        # Nil inside an outer generic argument does not make that type nilable.
+        private def lexical_nilable_type? : Bool
+          return true if nil_accepting_builtin_name?(@name)
+          if members = @union_members
+            return members.any? { |member| member.call_method("nilable?", [] of MacroValue, nil).truthy? }
+          end
+          if members = union_member_names
+            return members.any? { |member| nil_accepting_builtin_name?(member) }
+          end
+          false
+        end
+
+        private def nil_accepting_builtin_name?(name : String) : Bool
+          name == "Nil" || name == "Value" || name == "Object" || name.ends_with?('?')
+        end
+
+        # HIR supplies canonical members for aliases. This fallback handles a
+        # concrete union spelling while preserving nested generic arguments.
+        private def union_member_names : Array(String)?
+          if @name.ends_with?('?')
+            return [@name.byte_slice(0, @name.bytesize - 1), "Nil"]
+          end
+          members = [] of String
+          depth = 0
+          start = 0
+          index = 0
+          while index < @name.bytesize
+            case @name.byte_at(index)
+            when '('.ord.to_u8, '['.ord.to_u8, '{'.ord.to_u8
+              depth += 1
+            when ')'.ord.to_u8, ']'.ord.to_u8, '}'.ord.to_u8
+              depth -= 1
+            when '|'.ord.to_u8
+              if depth == 0
+                members << @name.byte_slice(start, index - start).strip
+                start = index + 1
+              end
+            end
+            index += 1
+          end
+          return nil if members.empty?
+          members << @name.byte_slice(start, @name.bytesize - start).strip
+          members
+        end
+
         # A union type name: `A | B` at paren depth 0, or the `T?` shorthand.
         # `Foo(A | B)` is a generic instance, not a union.
         private def top_level_union_name? : Bool

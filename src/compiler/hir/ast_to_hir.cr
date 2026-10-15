@@ -7027,6 +7027,7 @@ module Adamas::HIR
 
     # Type aliases (alias_name -> target_type_name)
     @type_aliases : Hash(String, String)
+    @macro_recursive_alias_names : Set(String)? = nil
     @resolved_type_alias_cache : Hash(String, String)
     @type_alias_keys_by_suffix : Hash(String, Array(String))
 
@@ -14464,6 +14465,7 @@ module Adamas::HIR
       alias_changed = @type_aliases[alias_name]? != target_name
       @type_aliases[alias_name] = target_name
       if alias_changed
+        @macro_recursive_alias_names = nil
         @call_resolution_authority_revision = @call_resolution_authority_revision &+ 1_u64
         # Module lookup follows aliases through include paths. A cached miss is
         # stale as soon as a new alias makes another module reachable.
@@ -77476,6 +77478,147 @@ module Adamas::HIR
       false
     end
 
+    # Crystal retains AliasType identity at recursive generic back-edges. Mark
+    # only the alias where declaration-order traversal closes the cycle; aliases
+    # that merely refer to it still expand normally (remove_alias_if_simple).
+    private def macro_recursive_alias_names : Set(String)
+      if names = @macro_recursive_alias_names
+        return names
+      end
+      names = Set(String).new
+      active = Set(String).new
+      complete = Set(String).new
+      @type_aliases.each_key do |key|
+        macro_visit_alias_projection(key, active, complete, names)
+      end
+      @macro_recursive_alias_names = names
+      names
+    end
+
+    private def macro_projection_alias_key(name : String, namespace : String? = nil) : String?
+      raw = name.strip
+      if raw.starts_with?("::")
+        key = raw.byte_slice(2, raw.bytesize - 2)
+        target = @type_aliases[key]?
+        return target && target != key ? key : nil
+      end
+      if namespace
+        scope = namespace
+        until scope.empty?
+          candidate = "#{scope}::#{raw}"
+          if target = @type_aliases[candidate]?
+            return target == candidate ? nil : candidate
+          end
+          separator = scope.rindex("::")
+          break unless separator
+          scope = scope.byte_slice(0, separator)
+        end
+      else
+        alias_context_namespaces.each do |scope|
+          candidate = "#{scope}::#{raw}"
+          if target = @type_aliases[candidate]?
+            return target == candidate ? nil : candidate
+          end
+          return nil if type_name_exists?(candidate) || @class_info.has_key?(candidate)
+        end
+      end
+      target = @type_aliases[raw]?
+      target && target != raw ? raw : nil
+    end
+
+    private def macro_visit_alias_projection(
+      key : String, active : Set(String), complete : Set(String), recursive : Set(String),
+    ) : Nil
+      if active.includes?(key)
+        recursive << key
+        return
+      end
+      return if complete.includes?(key)
+      active << key
+      namespace = key.rindex("::").try { |index| key.byte_slice(0, index) } || ""
+      macro_visit_alias_type_shape(@type_aliases[key], namespace, active, complete, recursive)
+      active.delete(key)
+      complete << key
+    end
+
+    private def macro_visit_alias_type_shape(
+      name : String, namespace : String, active : Set(String), complete : Set(String), recursive : Set(String),
+    ) : Nil
+      raw = normalize_tuple_literal_type_name(name.strip)
+      if key = macro_projection_alias_key(raw, namespace)
+        macro_visit_alias_projection(key, active, complete, recursive)
+      elsif (members = split_union_type_name(raw)).size > 1
+        members.each { |member| macro_visit_alias_type_shape(member, namespace, active, complete, recursive) }
+      elsif arrow = find_top_level_arrow(raw)
+        split_proc_type_inputs(raw[0, arrow]).each do |input|
+          macro_visit_alias_type_shape(input, namespace, active, complete, recursive)
+        end
+        macro_visit_alias_type_shape(raw[arrow + 2..], namespace, active, complete, recursive)
+      elsif raw.ends_with?('?') || raw.ends_with?('*')
+        macro_visit_alias_type_shape(raw[0, raw.size - 1], namespace, active, complete, recursive)
+      elsif info = split_generic_base_and_args(raw)
+        split_generic_type_args(info.args).each do |arg|
+          if info.base == "NamedTuple" || info.base == "::NamedTuple"
+            if entry = split_named_tuple_entry(arg)
+              macro_visit_alias_type_shape(entry[1], namespace, active, complete, recursive)
+            end
+          else
+            macro_visit_alias_type_shape(arg, namespace, active, complete, recursive)
+          end
+        end
+      end
+    end
+
+    # Resolve the outer alias while preserving recursive AliasType nodes inside
+    # concrete generic arguments. The ordinary HIR resolver eagerly expands
+    # those arguments and therefore cannot supply macro reflection identity.
+    private def macro_projection_type_name(
+      name : String, preserve_alias : Bool = false, namespace : String? = nil,
+    ) : String
+      raw = name.strip
+      if mapped = @type_param_map[raw]?
+        return macro_projection_type_name(mapped, preserve_alias, namespace) if mapped != raw
+      end
+      if key = macro_projection_alias_key(raw, namespace)
+        return key if preserve_alias && macro_recursive_alias_names.includes?(key)
+        # An alias target belongs to its declaration, not to the consumer's
+        # lexical scope or to the namespace of a different referring alias.
+        owner = key.rindex("::").try { |index| key.byte_slice(0, index) } || ""
+        return macro_projection_type_name(@type_aliases[key], false, owner)
+      end
+      if (members = split_union_type_name(raw)).size > 1
+        return members.map { |member| macro_projection_type_name(member, false, namespace) }.join(" | ")
+      end
+      if info = split_generic_base_and_args(raw)
+        base_name = macro_projection_name_in_namespace(info.base, namespace)
+        base = resolve_generic_base_name_in_context(base_name)
+        args = split_generic_type_args(info.args).map do |arg|
+          if base == "NamedTuple" && (entry = split_named_tuple_entry(arg))
+            "#{entry[0]}: #{macro_projection_type_name(entry[1], true, namespace)}"
+          else
+            macro_projection_type_name(arg, true, namespace)
+          end
+        end
+        return "#{base}(#{args.join(", ")})"
+      end
+      qualified = macro_projection_name_in_namespace(raw, namespace)
+      resolve_type_alias_chain(resolve_type_name_in_context(qualified))
+    end
+
+    private def macro_projection_name_in_namespace(name : String, namespace : String?) : String
+      return name unless namespace
+      return name if name.starts_with?("::")
+      scope = namespace
+      until scope.empty?
+        qualified = qualify_unqualified_type_in_namespace(name, scope)
+        return qualified if qualified != name
+        separator = scope.rindex("::")
+        break unless separator
+        scope = scope.byte_slice(0, separator)
+      end
+      name
+    end
+
     private def macro_value_for_type_name(type_name : String) : Adamas::Compiler::Semantic::MacroValue
       # Generic arguments may be literal values (for example StaticArray's N).
       # Preserve their macro node kind instead of manufacturing a TypeNode.
@@ -77484,9 +77627,11 @@ module Adamas::HIR
           return number
         end
       end
-      resolved = resolve_type_alias_chain(resolve_type_name_in_context(type_name))
+      resolved = macro_projection_type_name(type_name)
       type_vars = nil
-      if info = split_generic_base_and_args(resolved)
+      # A union may end in a generic arm, but its trailing parentheses do
+      # not make the outer type generic. Only project the outer arguments.
+      if !union_type_name?(resolved) && (info = split_generic_base_and_args(resolved))
         type_vars = split_generic_type_args(info.args).map(&.strip)
         if template = @generic_templates[info.base]?
           expected_arity = template.type_params.size
@@ -77538,8 +77683,36 @@ module Adamas::HIR
       end
       type_ref = type_ref_for_name(resolved)
       desc = type_ref == TypeRef::VOID ? nil : @module.get_type_descriptor(type_ref)
+      if type_ref != TypeRef::VOID && (desc.try(&.kind) == TypeKind::Union || union_type_name?(resolved) ||
+         generic_union_type_name?(resolved) || resolved.ends_with?('?') || resolved.ends_with?('*'))
+        # A union spelling may resolve to a scalar after duplicate arms collapse.
+        # Publish the canonical name so union? and the singleton union_types
+        # fallback agree with the same type used by HIR predicate fast paths.
+        resolved = get_type_name_from_ref(type_ref)
+        type_vars = if desc.try(&.kind) != TypeKind::Union && (info = split_generic_base_and_args(resolved))
+                      split_generic_type_args(info.args).map(&.strip)
+                    end
+      end
       is_struct = desc ? desc.kind == TypeKind::Struct : false
       is_module = desc ? desc.kind == TypeKind::Module : false
+      union_members = if desc && desc.kind == TypeKind::Union
+                        # HIR keeps union arms in the canonical descriptor name,
+                        # not in generic type_params. Project those concrete arms
+                        # after type_ref_for_name has flattened aliases.
+                        split_union_type_name(desc.name).map do |member|
+                          macro_value_for_type_name(member).as(Adamas::Compiler::Semantic::MacroValue)
+                        end
+                      end
+      type_var_values = type_vars.try do |vars|
+        vars.map do |var|
+          if macro_recursive_alias_names.includes?(var)
+            Adamas::Compiler::Semantic::MacroTypeValue.new(var, accepts_nil: macro_type_accepts_nil?(var), is_alias: true).as(Adamas::Compiler::Semantic::MacroValue)
+          else
+            macro_type_value_for_path_name(var) ||
+              Adamas::Compiler::Semantic::MacroIdValue.new(var).as(Adamas::Compiler::Semantic::MacroValue)
+          end
+        end
+      end
       Adamas::Compiler::Semantic::MacroTypeValue.new(
         resolved,
         nil,
@@ -77547,8 +77720,203 @@ module Adamas::HIR
         is_module,
         false,
         nil,
-        type_vars
+        type_vars,
+        union_members: union_members,
+        accepts_nil: macro_type_accepts_nil?(resolved),
+        type_var_values: type_var_values
       )
+    end
+
+    # Match Crystal's `Nil.implements?(type)` test using the HIR's canonical
+    # hierarchy and include records. Generic module instances must remain
+    # distinct here: `Nil` implementing `Marker(Int32)` does not imply that it
+    # implements `Marker(String)` merely because both share a module template.
+    private def macro_type_accepts_nil?(type_name : String) : Bool
+      resolved = resolve_type_alias_chain(resolve_type_name_in_context(type_name))
+      return false if resolved.empty?
+
+      type_ref = type_ref_for_name(resolved)
+      descriptor = type_ref == TypeRef::VOID ? nil : @module.get_type_descriptor(type_ref)
+      if descriptor && descriptor.kind == TypeKind::Union
+        return split_union_type_name(descriptor.name).any? do |member|
+          macro_type_accepts_nil?(member)
+        end
+      end
+
+      if has_top_level_union_separator?(resolved)
+        members = split_union_type_name(resolved)
+        return members.any? { |member| macro_type_accepts_nil?(member) }
+      end
+
+      identity = if type_ref == TypeRef::VOID
+                   resolved
+                 else
+                   get_type_name_from_ref(type_ref)
+                 end
+      identity = resolve_type_alias_chain(resolve_type_name_in_context(identity))
+      return true if identity == "Nil"
+
+      nil_lineage = get_parent_chain("Nil")
+      return true if nil_lineage.includes?(identity)
+
+      owners = [] of String
+      owners << "Nil"
+      owners.concat(nil_lineage)
+      macro_nil_lineage_includes_type?(owners, identity)
+    end
+
+    private def macro_type_identity_name(type_name : String) : String
+      resolved = resolve_type_alias_chain(resolve_type_name_in_context(type_name))
+      type_ref = type_ref_for_name(resolved)
+      type_ref == TypeRef::VOID ? resolved : get_type_name_from_ref(type_ref)
+    end
+
+    private def macro_nil_lineage_includes_type?(owners : Array(String), target : String) : Bool
+      pending = [] of String
+      owners.each do |owner|
+        if instantiated = @class_include_instantiations[owner]?
+          instantiated.each do |name|
+            pending << name if macro_concrete_module_instance?(name, owner)
+          end
+        end
+        if included = @class_included_modules[owner]?
+          included.each do |name|
+            resolved = macro_resolve_included_module_name(name, owner)
+            pending << resolved if resolved && macro_concrete_module_instance?(resolved, owner)
+          end
+        end
+      end
+      visited = Set(String).new
+      while instance = pending.shift?
+        identity = macro_type_identity_name(instance)
+        return true if identity == target
+        next if visited.includes?(identity)
+        visited << identity
+        macro_transitive_module_includes(instance).each { |nested| pending << nested }
+      end
+      false
+    end
+
+    private def macro_resolve_included_module_name(name : String, owner : String) : String?
+      info = split_generic_base_and_args(name)
+      base = info.try(&.base) || name
+      unless base.includes?("::")
+        base = macro_resolve_module_name_in_owner(owner, base)
+      end
+      resolved = info ? "#{base}(#{info.args})" : base
+      resolve_module_alias_for_include(resolved)
+    end
+
+    private def macro_resolve_module_name_in_owner(owner : String, module_name : String) : String
+      scan_end = owner.bytesize
+      while scan_end > 0
+        index = owner.rindex("::", scan_end - 1)
+        break unless index
+        prefix = owner.byte_slice(0, index)
+        candidate = "#{prefix}::#{module_name}"
+        return candidate if @module_defs.has_key?(candidate) || !macro_module_definition_key(candidate).nil?
+        scan_end = index
+      end
+      module_name
+    end
+
+    private def macro_module_definition_key(instance : String) : String?
+      info = split_generic_base_and_args(instance)
+      base = info.try(&.base) || instance
+      return base if @module_defs.has_key?(base)
+      return instance if @module_defs.has_key?(instance)
+
+      ensure_module_defs_stripped_lookup
+      module_defs_stripped_lookup(base)
+    end
+
+    private def macro_concrete_module_instance?(instance : String, owner : String) : Bool
+      resolved = macro_resolve_included_module_name(instance, owner)
+      return false unless resolved
+      key = macro_module_definition_key(resolved)
+      return false unless key
+      defs = @module_defs[key]?
+      return false unless defs
+
+      module_node = defs.not_nil!.first?.try(&.[0])
+      return false unless module_node
+      params = module_type_param_names(module_node)
+      info = split_generic_base_and_args(resolved)
+      return info.nil? if params.empty?
+      return false unless info
+
+      args = split_generic_type_args(info.args)
+      return false unless args.size == params.size
+      params.each_with_index do |param, index|
+        arg = args[index].strip
+        # A type argument can legitimately have the same spelling as a
+        # module's formal parameter when that name resolves to a concrete type
+        # in the current owner (for example `class T; end; module M(T); end;
+        # M(T)`). Reject only unresolved formal references; a textual match
+        # alone loses the owner-aware constant lookup for ordinary type names.
+        return false if type_name_includes_param?(arg, param) && !known_macro_type_receiver_name?(arg)
+      end
+      true
+    end
+
+    private def macro_transitive_module_includes(instance : String) : Array(String)
+      result = [] of String
+      key = macro_module_definition_key(instance)
+      return result unless key
+      defs = @module_defs[key]?
+      return result unless defs
+
+      module_node = defs.not_nil!.first?.try(&.[0])
+      namespace = macro_module_definition_namespace(key)
+      param_map = macro_module_instance_type_param_map(instance, key, module_node)
+      defs.not_nil!.each do |module_node, module_arena|
+        next unless body = module_node.body
+        body.not_nil!.each do |member_id|
+          member = unwrap_visibility_member_in_arena(module_arena[member_id], module_arena)
+          next unless member.is_a?(Adamas::Compiler::Frontend::IncludeNode)
+
+          target = with_arena(module_arena) do
+            with_namespace_override(namespace) do
+              with_type_param_map(param_map) do
+                stringify_type_expr_in_current_arena(member.target)
+              end
+            end
+          end
+          next unless target
+          resolved = macro_resolve_included_module_name(target.not_nil!, namespace)
+          next unless resolved
+          next unless macro_concrete_module_instance?(resolved, namespace)
+          result << resolved unless result.includes?(resolved)
+        end
+      end
+      result
+    end
+
+    private def macro_module_definition_namespace(key : String) : String
+      split_generic_base_and_args(key).try(&.base) || key
+    end
+
+    private def macro_module_instance_type_param_map(
+      instance : String,
+      key : String,
+      module_node : Adamas::Compiler::Frontend::ModuleNode?,
+    ) : Hash(String, String)
+      mapping = {} of String => String
+      return mapping unless module_node
+      params = module_type_param_names(module_node.not_nil!)
+      return mapping if params.empty?
+      info = split_generic_base_and_args(instance)
+      return mapping unless info
+      args = split_generic_type_args(info.args)
+      return mapping unless args.size == params.size
+      params.each_with_index { |param, index| mapping[param] = args[index].strip }
+      mapping
+    end
+
+    private def generic_union_type_name?(type_name : String) : Bool
+      info = split_generic_base_and_args(type_name)
+      return false unless info
+      info.base == "Union" || info.base == "::Union"
     end
 
     private def macro_vars_for_current_context(ctx : LoweringContext) : Hash(String, Adamas::Compiler::Semantic::MacroValue)
@@ -77891,7 +78259,7 @@ module Adamas::HIR
     # so type lookup must go through the HIR type context instead. A bare generic
     # template path keeps its type parameters, like original Crystal (`Gx(T)`).
     private def macro_type_value_for_path_name(name : String) : Adamas::Compiler::Semantic::MacroValue?
-      resolved = resolve_type_alias_chain(resolve_type_name_in_context(name))
+      resolved = macro_projection_type_name(name)
       return nil if resolved.empty?
       if template = @generic_templates[resolved]?
         unless template.type_params.empty?
@@ -77913,7 +78281,7 @@ module Adamas::HIR
     # Validate each reachable type once on the current recursion path. Aliases
     # may refer back through reference containers without unfolding forever.
     private def known_macro_type_receiver_name?(name : String, active : Set(String) = Set(String).new) : Bool
-      resolved = resolve_type_alias_chain(resolve_type_name_in_context(name.strip))
+      resolved = macro_projection_type_name(name)
       return false if resolved.empty?
       # Recursive aliases form a type graph. A back-edge shares the current
       # validation obligation; every other reachable member must still pass.

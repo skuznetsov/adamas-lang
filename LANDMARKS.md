@@ -17733,3 +17733,26 @@ after case comparisons, builtin identities, class hierarchy or union descriptors
 change. Full case340 advances LavinMQ to recursive macro value projection;
 compilation and runtime/test parity remain open. Receiver-less fallback lookup
 and builtin ancestor proof completeness remain separate audit obligations.
+
+
+### Finite recursive macro reflection (2026-10-15)
+Crystal retains the alias where declaration-order traversal closes a recursive
+type graph; aliases referring to that alias can still expand. Its outer alias
+resolves to the union, while a recursive generic argument remains an AliasType:
+`union? == false`, `class? == false`, and `nilable?` follows the aliased type.
+Primary anchors: original Crystal `types.cr` AliasType/remove_alias_if_simple and
+`macros/methods.cr` TypeNode type_vars. HIR now separates finite macro projection
+from eager type-name expansion and preserves an alias target's declaration
+namespace. Nominal self-mappings are not recursive aliases.
+
+Evidence: source358 HIR SHA e0acfd25d30adafb0774b224771de141004078afb22015a7f196dffb350ee3e5;
+27 focused HIR/semantic examples pass, and
+`regression_tests/macro_recursive_type_projection_repro.sh` passes original-first
+native compilation/execution. Pre-fix source340 overflows on the recursive
+projection fixture; source349 fails the added namespace HIR example. Source357
+reaches LavinMQ's next protected-method error in 55.1 seconds without that stack
+overflow. Receipts live under sol_help_20261012/lavinmq_compare_20261013_201959/
+macro_fix (`macro358_atomic_projection_specs`, `macro358_atomic_projection_native`,
+`lavinmq357_finite_macro_projection`). Refresh after alias registration, macro
+projection, type resolver, or the Crystal reference version changes. These
+checks certify this reflection slice only; LavinMQ runtime parity remains open.

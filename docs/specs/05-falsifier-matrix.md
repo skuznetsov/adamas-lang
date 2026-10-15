@@ -209,3 +209,23 @@ diagnostic meanings.
 
 
 | Proven-disjoint case body admission | case_unreachable_body_spec.cr; case_unreachable_body_repro.sh | Prior HEAD fails two new HIR cases and emits dead Nil/Bool#each; isolated case341 passes 65 HIR examples and original-first runtime/HIR checks | Unknown hierarchy, predefined roots and effectful conditions preserved; recursive macro projection and full LavinMQ parity remain open |
+
+
+### Recursive macro TypeNode projection (2026-10-15)
+- Positive/identity: recursive Array/Hash and NamedTuple arguments preserve the
+  actual cycle-closing alias; a referring ordinary alias expands; a mutual
+  cycle preserves the same boundary as original Crystal. Alias leaves retain
+  nil acceptance without becoming unions or classes.
+- Namespace/caching: a namespaced alias target uses its declaration scope even
+  when a global same-name alias exists; adding a later alias invalidates the
+  discovered boundary set; nominal self-mappings are not recursion.
+- DoD: source358's 27 focused HIR/semantic cases pass; run
+  `regression_tests/macro_recursive_type_projection_repro.sh <compiler>` for
+  original-first safe native compilation/execution. The native fixture checks
+  recursive generic reflection plus namespace ownership.
+- Refutation: source340 overflows during native TypeNode hydration; source349
+  gives `Array(Int32)` instead of `Array(Array(Outer::Field) | Nil)` in the
+  namespace case. A private trace also exposed eager re-entry from receiver
+  validation; finite projection at that entry removes the repeated expansion.
+- Residual: recursive Proc/pointer shorthand value projection is untested;
+  LavinMQ source357 still rejects protected `DefinitionsStore#load_apply`.

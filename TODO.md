@@ -19124,3 +19124,18 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Continue LavinMQ at recursive macro type-value projection. Full case340
   passes the old Enum#each failure, then overflows macro_value_for_type_name.
   Receiver validation termination does not establish projection termination.
+
+
+### Recursive macro TypeNode projection (2026-10-15)
+- [x] Preserve Crystal's recursive AliasType back-edge in concrete generic
+  `type_vars`, including nil acceptance and non-class alias identity; expand
+  ordinary aliases in their declaration namespace and invalidate the boundary
+  cache when an alias is added or changed.
+- [x] Keep recursive receiver validation on the finite projection, avoiding a
+  second eager generic expansion. Atomic source358: 27 focused HIR/semantic
+  examples and original-first native regression pass.
+- [ ] Probe recursive Proc input/result and pointer shorthand projection. The
+  boundary discovery visits those forms, but finite value projection has only
+  been exercised for unions, generic instances, and NamedTuple field values.
+- [ ] LavinMQ parity remains open: full source357 reaches the protected
+  `DefinitionsStore#load_apply` check; this does not establish runtime parity.
