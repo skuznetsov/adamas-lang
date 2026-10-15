@@ -91,4 +91,77 @@ describe "block Proc expected argument ABI" do
     end
     empty_input_functions.count { |function| function.return_type == Adamas::HIR::TypeRef::BOOL }.should eq(2)
   end
+
+  it "uses initialize's block contract when a registered self.new has no matching call shape" do
+    converter = lower_block_proc_expected_arity(<<-CRYSTAL)
+      class DirectShapeAllocator
+        def self.new(label : String, &block : Int32 -> Int32)
+          self
+        end
+      end
+
+      class ShapeAwareAllocator
+        def self.new(label : String? = nil, &block : Int32 -> Int32)
+          self
+        end
+
+        def initialize(label : String, count : Int32, &@proc : -> Bool)
+        end
+      end
+
+      DirectShapeAllocator.new("compatible") { |value| value }
+      ShapeAwareAllocator.new("fiber", 3) { true }
+    CRYSTAL
+
+    block_functions = converter.module.functions.select do |function|
+      function.name.starts_with?("__crystal_block_proc_")
+    end
+    block_functions.any? do |function|
+      function.params.reject { |param| param.name == "__closure_env" }.map(&.type) == [Adamas::HIR::TypeRef::INT32] &&
+        function.return_type == Adamas::HIR::TypeRef::INT32
+    end.should be_true
+    block_functions.any? do |function|
+      function.params.reject { |param| param.name == "__closure_env" }.empty? &&
+        function.return_type == Adamas::HIR::TypeRef::BOOL
+    end.should be_true
+  end
+
+  it "uses initialize only when a registered self.new does not match the current call shape" do
+    converter = lower_block_proc_expected_arity(<<-CRYSTAL)
+      class StaleShapeAllocator
+        def self.new(label : String? = nil, &block : String -> Int32)
+          self
+        end
+
+        def initialize(label : String, count : Int32, &@proc : Int32 -> Bool)
+        end
+      end
+
+      class MatchingShapeAllocator
+        def self.new(label : String, &block : Char -> String)
+          self
+        end
+      end
+
+      StaleShapeAllocator.new("warmup") { |label| 42 }
+      StaleShapeAllocator.new("fiber", 3) { true }
+      MatchingShapeAllocator.new("direct") { |char| char.to_s }
+    CRYSTAL
+
+    block_functions = converter.module.functions.select do |function|
+      function.name.starts_with?("__crystal_block_proc_")
+    end
+    block_functions.any? do |function|
+      function.params.reject { |param| param.name == "__closure_env" }.map(&.type) == [Adamas::HIR::TypeRef::INT32] &&
+        function.return_type == Adamas::HIR::TypeRef::BOOL
+    end.should be_true
+    block_functions.any? do |function|
+      function.params.reject { |param| param.name == "__closure_env" }.map(&.type) == [Adamas::HIR::TypeRef::STRING] &&
+        function.return_type == Adamas::HIR::TypeRef::INT32
+    end.should be_true
+    block_functions.any? do |function|
+      function.params.reject { |param| param.name == "__closure_env" }.map(&.type) == [Adamas::HIR::TypeRef::CHAR] &&
+        function.return_type == Adamas::HIR::TypeRef::STRING
+    end.should be_true
+  end
 end

@@ -102,6 +102,12 @@ captured_proc_zero_input_native164_bool_guard. The unchanged application passes
 its former Fiber ABI conflict and reaches Config#parse_value; full specs still
 fail the separate generic Fiber return-R case. Refresh when callback binding,
 return generics, or capture transport changes.
+Native176 also verifies that a compatible explicit self.new block is not
+compared against unrelated captured initialize Proc fields, while a call with
+no matching explicit allocator shape uses the initializer's block contract.
+Evidence: block_proc_expected_arity_post_guard and
+block_proc_expected_arity_native176_runtime. These focused checks do not claim
+full LavinMQ parity; refresh after integration into the current source seal.
 
 
 2026-10-15 PROGRAM MIXIN LEXICAL CONTEXT: materialized bare Program methods

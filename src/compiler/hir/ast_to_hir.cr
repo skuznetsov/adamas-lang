@@ -105196,7 +105196,13 @@ module Adamas::HIR
                 candidate_owner = method_owner(base_method_name)
                 constructor_owner = candidate_owner if type_name_exists?(candidate_owner)
               end
-              if constructor_owner && type_name_exists?(constructor_owner)
+              if constructor_owner && type_name_exists?(constructor_owner) && !allocator_explicit_new_call
+                # Refine captured `initialize` Proc storage only when this call
+                # follows the compiler-generated allocator route. A compatible
+                # explicit `self.new` overload owns its block contract and may
+                # consume the block without constructing an instance; comparing
+                # that Proc against unrelated captured initializer fields gives
+                # a false ABI conflict.
                 refine_captured_initializer_proc_type(
                   constructor_owner,
                   ctx.type_of(proc_id),

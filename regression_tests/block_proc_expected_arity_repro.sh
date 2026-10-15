@@ -50,10 +50,26 @@ class TwoArgumentCallbackHolder
   end
 end
 
+class StaleShapeAllocator
+  def self.new(label : String? = nil, &block : String -> Int32)
+    block.call(label || "")
+  end
+
+  def initialize(label : String, count : Int32, &@proc : Int32 -> Bool)
+  end
+
+  def ready? : Bool
+    @proc.call(3)
+  end
+end
+
 OneArgumentCallbackHolder.new { }.fire
 OneArgumentCallbackHolder.new { |value| verify(value, 42, 1) }.fire
 TwoArgumentCallbackHolder.new { |value| verify(value, 7, 2) }.fire
 TwoArgumentCallbackHolder.new { |value, suffix| verify(value, 7, 3) }.fire
+C.exit(4) unless StaleShapeAllocator.new("warmup") { |label| 42 } == 42
+instance = StaleShapeAllocator.new("fiber", 3) { |count| count == 3 }
+C.exit(5) unless instance.ready?
 C.exit(0)
 CRYSTAL
 
