@@ -1,5 +1,31 @@
 # HIR Name Resolution Contract
 
+## Omitted constructor defaults and inherited field types (2026-10-15)
+
+A zero-argument call selecting an initializer with optional parameters must
+evaluate its defaults exactly once and call the selected initializer with their
+concrete types. Its allocator symbol must distinguish the empty caller ABI from
+the full initializer ABI. Explicit user-defined `.new` retains precedence.
+
+Before inherited-field fixup and final alignment, refresh unresolved deferred
+constant types against the complete method registry, then retry unresolved
+fields of a zero-argument-compatible initializer. Refresh inference caches
+between successful refinements without evaluating any constant at runtime.
+Propagate both inherited field types and offsets before body lowering. Do not
+introduce a mid-lowering dependent-layout cascade: in-progress bodies can retain
+old offsets. Fields depending on required callsite argument types remain a
+separate layout-inference obligation.
+
+Falsifiers: spec/hir/zero_argument_constructor_defaults_spec.cr and
+regression_tests/zero_argument_constructor_defaults_repro.sh. The runtime guard
+checks a forward-defined struct-valued default, first getter reads, inheritance,
+explicit arguments, side effects, dependent defaults, and a scalar-returning
+explicit `.new`. Native170n passes all 45 focused/neighboring HIR examples and
+the original-first runtime guard (exit zero and identical `XXY` output).
+The unchanged multithreaded prelude and LavinMQ are downstream checks; reducer
+success alone does not certify broker parity. Refresh after constructor
+selection, default inference, inheritance, or layout-order changes.
+
 ## Module property dispatch and early nested includers (2026-10-15)
 
 An assignment through a module, union, or virtual class receiver must use the

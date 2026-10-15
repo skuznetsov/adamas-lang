@@ -37313,6 +37313,8 @@ module Adamas::HIR
     # has its ivars populated. This pass ensures all classes include their parent's
     # ivars with correct offsets.
     def fixup_inherited_ivars : Nil
+      refresh_deferred_constant_types
+      refresh_optional_initializer_ivars
       fixed = Set(String).new
       fixup_count = 0
       class_names = @class_info.keys
@@ -37340,6 +37342,97 @@ module Adamas::HIR
       reevaluate_alias_constants
       # Generate any allocators that were deferred because class had empty ivars
       flush_deferred_allocators
+    end
+
+    # Registration can cache Void before a constant's callee is registered.
+    # Re-infer its retained expression without executing the initializer. Only
+    # unresolved entries participate, so each successful iteration shrinks the
+    # pending set and known constant types retain their existing authority.
+    private def refresh_deferred_constant_types : Nil
+      old_class = @current_class
+      old_method = @current_method
+      old_method_is_class = @current_method_is_class
+      old_override = @current_namespace_override
+      pending = @deferred_constant_inits.select do |entry|
+        @constant_types[deferred_constant_full_name(entry.owner, entry.name)]? == TypeRef::VOID
+      end
+      @current_method = nil
+      @current_method_is_class = false
+      @current_namespace_override = nil
+      bump_infer_type_cache_version
+      loop do
+        progress = false
+        pending.reject! do |entry|
+          @current_class = entry.owner == "$" ? nil : entry.owner
+          inferred = with_arena(entry.arena) do
+            unless contains_inline_block_or_yield_in_expr?(entry.value_id, entry.arena)
+              infer_type_from_expr(entry.value_id, @current_class)
+            end
+          end
+          if inferred && inferred != TypeRef::VOID
+            @constant_types[deferred_constant_full_name(entry.owner, entry.name)] = inferred
+            bump_infer_type_cache_version
+            progress = true
+            true
+          else
+            false
+          end
+        end
+        break unless progress && !pending.empty?
+      end
+    ensure
+      @current_class = old_class
+      @current_method = old_method
+      @current_method_is_class = old_method_is_class || false
+      @current_namespace_override = old_override
+    end
+
+    # Initial registration may precede methods used by constant defaults. Retry
+    # only unresolved fields of a zero-argument-compatible initializer before
+    # inheritance copies and alignment freeze those fields into caller layouts.
+    private def refresh_optional_initializer_ivars : Nil
+      old_class = @current_class
+      old_override = @current_namespace_override
+      @class_info.keys.each do |class_name|
+        info = @class_info[class_name]?
+        next unless info && info.ivars.any? { |ivar| ivar.type == TypeRef::VOID }
+        init_base = "#{class_name}#initialize"
+        selected = allocator_initializer_def_for(
+          init_base, init_base, [] of TypeRef, false, false, nil,
+        )
+        next unless selected
+        init_name, init_def = selected
+        next unless function_def_accepts_call_shape?(
+          init_name, init_def, [] of TypeRef, false, false, nil,
+        )
+        params = init_def.params
+        next unless params && params.any? { |param| !param.default_value.nil? }
+        init_arena = @function_def_arenas[init_name]? || resolve_arena_for_def(init_def, @arena)
+        @current_class = class_name
+        @current_namespace_override = @function_namespace_overrides[init_name]?
+        ivars = info.ivars.dup
+        offset = info.size
+        with_arena(init_arena) do
+          provenance = parameter_provenance_for_def(init_def, init_arena)
+          capture_initialize_params(
+            params, ivars, pointerof(offset), class_name, init_arena,
+            ivar_param_entries_for_def(init_def, init_arena, provenance),
+            parameter_provenance: provenance,
+          )
+          if body = init_def.body
+            infer_ivars_from_body(body, ivars, pointerof(offset))
+          end
+        end
+        next if ivars == info.ivars
+        realign_class_info_ivars(class_name, info, ivars)
+        ivars.each do |ivar|
+          update_getter_return_types_for_ivar(class_name, ivar.name, ivar.type)
+        end
+        bump_infer_type_cache_version
+      end
+    ensure
+      @current_class = old_class
+      @current_namespace_override = old_override
     end
 
     # Re-evaluate offsetof constants that couldn't be computed during scanning
@@ -37787,7 +37880,7 @@ module Adamas::HIR
         if !parent_info.ivars.empty?
           # Check if child already has all parent ivars at correct offsets
           has_all = parent_info.ivars.all? do |piv|
-            info.ivars.any? { |iv| iv.name == piv.name && iv.offset == piv.offset }
+            info.ivars.any? { |iv| iv.name == piv.name && iv.offset == piv.offset && iv.type == piv.type }
           end
 
           unless has_all
@@ -37796,13 +37889,15 @@ module Adamas::HIR
             own_ivars = info.ivars.reject { |iv| parent_ivar_names.includes?(iv.name) }
 
             # Compute offset adjustment:
-            # Parent ivars occupy 8..parent_size-1 (8 = type_id header)
-            # Child's own ivars currently start at 8
+            # Parent ivars start after the four-byte type-id header.
             # Need to shift to start at parent_size
-            own_start = own_ivars.first?.try(&.offset) || 8
+            own_start = own_ivars.first?.try(&.offset) || 4
             offset_adjust = parent_info.size - own_start
 
-            if offset_adjust > 0
+            # Types can change while offsets stay equal. Copy authoritative
+            # parent fields even when no positive size adjustment is needed;
+            # the final alignment pass recomputes all offsets and total sizes.
+            if !has_all
               # Build new ivar list: parent ivars + adjusted child ivars
               new_ivars = [] of IVarInfo
               parent_info.ivars.each { |piv| new_ivars << piv }
@@ -37814,7 +37909,7 @@ module Adamas::HIR
                 own_idx += 1
               end
 
-              new_size = info.size + offset_adjust
+              new_size = Math.max(parent_info.size, info.size + offset_adjust)
 
               new_info = ClassInfo.new(
                 info.name, info.type_ref, new_ivars, info.class_vars,
@@ -37823,6 +37918,9 @@ module Adamas::HIR
               probe_class_info_write("fixup_class_inherited_ivars", class_name, new_info)
               @class_info[class_name] = new_info
               @class_info_by_type_id[info.type_ref.id] = new_info
+              parent_info.ivars.each do |ivar|
+                update_getter_return_types_for_ivar(class_name, ivar.name, ivar.type)
+              end
             end
           end
         end
@@ -39109,6 +39207,24 @@ module Adamas::HIR
     ) : String
       base_name = allocator_new_name_for(class_name)
       overload_name = mangle_function_name(base_name, call_arg_types, call_has_block)
+      # A default-filled zero-argument wrapper has a different ABI from the
+      # full initializer signature stored at the bare allocator symbol.
+      if call_arg_types.empty? && !call_has_block
+        if init_base = resolve_method_with_inheritance(class_name, "initialize")
+          if selected = allocator_initializer_def_for(
+               init_base, init_base, call_arg_types, false,
+               call_has_named_args, call_named_arg_names,
+             )
+            if function_param_stats(selected[0], selected[1]).param_count > 0 &&
+               function_def_accepts_call_shape?(
+                 selected[0], selected[1], call_arg_types, false,
+                 call_has_named_args, call_named_arg_names,
+               )
+              return "#{base_name}$arity0"
+            end
+          end
+        end
+      end
       return overload_name unless call_has_named_args
 
       named_arg_names = canonical_named_arg_names(call_named_arg_names)
@@ -39456,6 +39572,18 @@ module Adamas::HIR
       # instance variables.  This is a one-shot upgrade tracked by
       # @stale_empty_allocators so the remove+regenerate happens at most once.
       func_name = allocator_new_name_for(class_name)
+      if declared_new = @function_defs[func_name]?
+        declared_stats = function_param_stats(func_name, declared_new)
+        if declared_stats.param_count == 0 && !declared_stats.has_block &&
+           !declared_stats.has_splat && !declared_stats.has_double_splat
+          # A declared zero-argument .new owns the unsuffixed symbol. Creating
+          # a base allocator here would hide its body before the source call
+          # reaches overload resolution. Other initialize-backed call shapes
+          # can still materialize their own typed allocator overloads.
+          generate_allocator_overload(class_name, class_info, call_arg_types, call_has_named_args, call_has_block, call_named_arg_names, call_block_node, call_block_param_types, call_block_return_name)
+          return
+        end
+      end
       if @generated_allocators.includes?(class_name)
         if !@module.has_function_with_body?(func_name)
           # Layout invalidation can remove a concrete generic allocator body
@@ -39510,8 +39638,8 @@ module Adamas::HIR
                 lower_function_if_needed(init_name)
               end
             end
-            generate_allocator_overload(class_name, class_info, call_arg_types, call_has_named_args, call_has_block, call_named_arg_names, call_block_node, call_block_param_types, call_block_return_name)
           end
+          generate_allocator_overload(class_name, class_info, call_arg_types, call_has_named_args, call_has_block, call_named_arg_names, call_block_node, call_block_param_types, call_block_return_name)
           return
         end
       end
@@ -40041,7 +40169,6 @@ module Adamas::HIR
       call_block_return_name : String? = nil,
     ) : Nil
       return unless call_arg_types
-      return if call_arg_types.empty?
 
       # Allocator generation is downstream of lower_call's complete callsite
       # facts. Keep the canonical names when this is a named call; internal
@@ -40049,7 +40176,7 @@ module Adamas::HIR
       # names.
       allocator_named_arg_names = call_has_named_args ? canonical_named_arg_names(call_named_arg_names) : nil
 
-      return if call_arg_types.all? { |t| t == TypeRef::VOID }
+      return if !call_arg_types.empty? && call_arg_types.all? { |t| t == TypeRef::VOID }
 
       # Re-lookup class_info to get the latest version with all ivars
       if latest = @class_info[class_name]?
@@ -40057,7 +40184,10 @@ module Adamas::HIR
       end
 
       base_name = allocator_new_name_for(class_name)
-      overload_name = mangle_function_name(base_name, call_arg_types, call_has_block)
+      overload_name = allocator_overload_name_for_call(
+        class_name, call_arg_types, call_has_named_args, call_has_block,
+        allocator_named_arg_names,
+      )
       return if overload_name == base_name
 
       debug_string_new = env_get("DEBUG_STRING_NEW_OVERLOAD") &&
@@ -40729,6 +40859,31 @@ module Adamas::HIR
           init_type_names = init_param_types.map { |t| "#{get_type_name_from_ref(t)}(#{t.id})" }
           STDERR.puts "[ALLOC_OVERLOAD_TRACE] emit_init base=#{init_base_name} init=#{init_name} types=#{init_type_names.join(",")} matched=#{matched_init_name || "nil"} has_def=#{@function_defs.has_key?(init_name)} has_func=#{@module.has_function?(init_name)}"
         end
+        # Expand defaults before lowering initialize so an untyped @param
+        # receives the computed default's type before publishing field layout
+        # and getter signatures. The wrapper evaluates each default once.
+        forwarded_init_param_ids = if forwarded_block_index = forwarded_initializer_block_index
+                                     param_ids[0, forwarded_block_index]
+                                   else
+                                     param_ids.dup
+                                   end
+        init_call_args, _, _ = apply_default_args(
+          ctx,
+          forwarded_init_param_ids,
+          init_base_name,
+          init_name,
+          initializer_has_block,
+          call_has_named_args,
+          alloc.id
+        )
+        init_call_args.each_with_index do |arg_id, index|
+          actual_type = ctx.type_of(arg_id)
+          if index >= init_param_types.size
+            init_param_types << actual_type
+          elsif init_param_types[index] == TypeRef::VOID && actual_type != TypeRef::VOID
+            init_param_types[index] = actual_type
+          end
+        end
         remember_callsite_arg_types(init_name, init_param_types, nil, nil, initializer_has_block) unless init_param_types.empty?
         # A raw untyped block carrier (`&block` or bare `yield`) has no ABI of
         # its own: bind the callsite block shape to the initializer target so
@@ -40781,24 +40936,6 @@ module Adamas::HIR
             end
           end
         end
-        # Original Crystal expands `.new` from `#initialize`, so missing defaults are
-        # materialized in the wrapper before the body forwards to `initialize`.
-        # If we skip that here, the LLVM backend pads missing args with 0/null and
-        # object defaults like `Ctx.new` silently degrade to `ptr null`.
-        forwarded_init_param_ids = if forwarded_block_index = forwarded_initializer_block_index
-                                     param_ids[0, forwarded_block_index]
-                                   else
-                                     param_ids.dup
-                                   end
-        init_call_args, _, _ = apply_default_args(
-          ctx,
-          forwarded_init_param_ids,
-          init_base_name,
-          init_name,
-          initializer_has_block,
-          call_has_named_args,
-          alloc.id
-        )
         init_call_args << block_param_id.not_nil! if block_param_id
         init_call_args = coerce_args_to_types(ctx, init_call_args, init_param_types)
         init_call = Call.with_receiver(ctx.next_id, TypeRef::VOID, alloc.id, init_name, init_call_args)
@@ -42440,6 +42577,34 @@ module Adamas::HIR
               "name=#{base_name} param=#{param_name} literal=#{param_literal}"
             )
           end
+        end
+      end
+      # Registration can precede methods used by an initializer default.
+      # Once lowering discovers an implicit @param's concrete type, publish
+      # it to layout before emitting stores or retaining getter return types.
+      if is_initialize_method
+        current_info = @class_info[class_name]? || class_info
+        refined_ivars = current_info.ivars.dup
+        refined_ivar_types = false
+        param_info_names.each_with_index do |param_name, index|
+          next unless param_info_instance_vars[index]
+          param_type = param_info_types[index]
+          next if param_type == TypeRef::VOID
+          ivar_name = "@#{param_name}"
+          refined_ivars.each_with_index do |ivar, ivar_index|
+            next unless ivar.name == ivar_name && ivar.type == TypeRef::VOID
+            refined_ivars[ivar_index] = IVarInfo.new(
+              ivar.name, param_type, ivar.offset,
+              default_expr_id: ivar.default_expr_id,
+              default_arena: ivar.default_arena,
+            )
+            refined_ivar_types = true
+            break
+          end
+        end
+        if refined_ivar_types
+          class_info = realign_class_info_ivars(class_name, current_info, refined_ivars)
+          bump_infer_type_cache_version
         end
       end
       stop_after_pending_target_lower_method_phase(
@@ -102461,7 +102626,10 @@ module Adamas::HIR
         end
       end
       base_signature_exists = @function_types.has_key?(base_method_name)
-      if base_signature_exists && !@function_types.has_key?(mangled_method_name) && mangled_method_name != base_method_name
+      # A generated allocator body is already a concrete call target even if
+      # it has no source-level return signature in @function_types.
+      if base_signature_exists && !@function_types.has_key?(mangled_method_name) &&
+         mangled_method_name != base_method_name && !@module.has_function_with_body?(mangled_method_name)
         unless block_return_name || has_typed_args
           return_type = get_function_return_type(base_method_name, return_def_arg_count)
           mangled_method_name = base_method_name unless has_typed_args
@@ -120799,9 +120967,23 @@ module Adamas::HIR
                          else
                            resolve_class_method_with_inheritance(class_name_str, member_name) || "#{class_name_str}.#{member_name}"
                          end
+      generated_allocator_target : String? = nil
       if member_name == "new"
         if class_info = @class_info[class_name_str]? || @class_info[lookup_class_name]?
-          generate_allocator(class_name_str, class_info, force: true)
+          zero_arg_types = [] of TypeRef
+          explicit_new = lookup_function_def_for_call(
+            full_method_name, 0, false, zero_arg_types, false, false,
+          )
+          generate_allocator(class_name_str, class_info, zero_arg_types, force: true)
+          # Bare `Type.new` is the same zero-argument source call as
+          # `Type.new()`. Retain an explicit wrapper when one was selected.
+          unless explicit_new
+            zero_arg_target = allocator_overload_name_for_call(class_name_str, zero_arg_types)
+            if @module.has_function_with_body?(zero_arg_target)
+              full_method_name = zero_arg_target
+              generated_allocator_target = zero_arg_target
+            end
+          end
         end
       end
 
@@ -120858,7 +121040,9 @@ module Adamas::HIR
       end
 
       arg_types = args.map { |arg_id| ctx.type_of(arg_id) }
-      mangled_name = mangle_function_name(full_method_name, arg_types)
+      # Runtime mangling strips source arity suffixes. Keep the generated
+      # zero-argument wrapper whose ABI differs from the bare allocator.
+      mangled_name = generated_allocator_target || mangle_function_name(full_method_name, arg_types)
       # DEBUG: Catch short names being used for method calls
       if env_has?("DEBUG_SHORT_NAMES") && full_method_name &&
          (full_method_name.starts_with?("Seek#") || full_method_name.starts_with?("Seek.") ||

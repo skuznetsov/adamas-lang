@@ -1,5 +1,24 @@
 # Adamas Bootstrap TODO
 
+2026-10-15 OMITTED CONSTRUCTOR DEFAULTS / EARLY FIELD TYPES: emit a distinct
+zero-argument allocator wrapper, evaluate omitted defaults once, and retain
+their concrete types when lowering initialize. Refresh unresolved deferred
+constant and optional-initializer field types before inheritance/alignment;
+propagate inherited types as well as offsets. A declared zero-argument self.new
+owns its symbol instead of being hidden by a generated allocator. Native168
+crashes on the original-valid default/inheritance reducer; native170m passes
+those assertions but bypasses explicit self.new. Native170n passes 45 HIR
+examples and the original-first runtime reducer with matching XXY output,
+including scalar-returning self.new. Evidence: constructor_default170h_virtualgetter_red,
+constructor_default170n_layout_neighbors, and
+constructor_default170n_scalar_new_runtime. Refresh after constructor selection,
+default inference, inheritance, or layout-order changes. Unchanged MT prelude
+and LavinMQ broker/spec parity remain downstream obligations.
+- [ ] Resolve fields whose type depends on a required callsite argument before
+  freezing inherited layouts. The current early retry covers only initializers
+  callable without positional arguments; do not restore the refuted broad
+  mid-lowering layout cascade (docs/layout_freeze_proposal.md).
+
 2026-10-15 MODULE PROPERTY TARGETS / REOPENINGS: module-typed property
 assignments use virtual dispatch and demand concrete accessor bodies, including
 chained assignments. The declaration prescan retains all module reopenings
