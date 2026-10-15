@@ -1,5 +1,21 @@
 # HIR Name Resolution Contract
 
+## Explicit Proc input arity (2026-10-15)
+
+An explicitly empty Proc input list is present type information. It must not
+fall through to yield/body inference as though no annotation existed. Expected
+callback arguments remain in the emitted ABI even when the source block binds
+fewer names. Resolved block parameter types replace corresponding expected
+entries by index and append only previously absent positions.
+
+Falsifiers: spec/hir/block_proc_expected_arity_spec.cr (two examples),
+regression_tests/block_proc_expected_arity_repro.sh and
+regression_tests/captured_proc_zero_input_repro.sh (original-first isolated
+runtimes), green on sealed native164. The full LavinMQ spec build still rejects
+a separate generic Fiber return-R initializer. Refresh after callback type or
+capture ABI changes; no full LavinMQ parity claim follows from these guards.
+
+
 ## Program mixin lexical context (2026-10-15)
 
 A top-level include or extend may materialize an instance method as a bare

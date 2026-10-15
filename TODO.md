@@ -1,5 +1,16 @@
 # Adamas Bootstrap TODO
 
+2026-10-15 EXPLICIT PROC INPUT ARITY: retain a present zero-input annotation
+and merge resolved callback types by parameter index. Native164 passes two HIR
+examples plus the original-first expected-arity and captured -> Bool runtime
+guards. Evidence: block_proc_expected_arity_hir_final_bool,
+block_proc_expected_arity_native164, and
+captured_proc_zero_input_native164_bool_guard. The unchanged application passes
+its former Fiber ABI conflict and reaches Config#parse_value; full specs still
+fail the separate generic Fiber return-R case. Refresh when callback binding,
+return generics, or capture transport changes.
+
+
 2026-10-15 PROGRAM MIXIN LEXICAL CONTEXT: materialized bare Program methods
 consume their registered declaring module during body lowering and protected
 access checks. Native162 rejects the original-valid include reducer; native163

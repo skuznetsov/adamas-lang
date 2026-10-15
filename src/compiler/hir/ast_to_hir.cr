@@ -8297,7 +8297,11 @@ module Adamas::HIR
                        end
           # This matches lower_block_to_proc's untyped block carrier fallback.
           param_type = TypeRef::POINTER if param_type == TypeRef::VOID
-          resolved << param_type
+          if idx < resolved.size
+            resolved[idx] = param_type
+          else
+            resolved << param_type
+          end
         end
         return resolved
       end
@@ -64994,7 +64998,7 @@ module Adamas::HIR
       end
       return nil if type_text.nil?
       names = proc_input_type_names(type_text.not_nil!)
-      return nil unless names && !names.empty?
+      return nil unless names
       names
     end
 
@@ -65435,7 +65439,7 @@ module Adamas::HIR
       if debug_block_params
         STDERR.puts "[BLOCK_PARAMS] inputs=#{input_names ? input_names.join(",") : "nil"}"
       end
-      unless input_names && !input_names.empty?
+      unless input_names
         if inferred = infer_yield_param_types_from_body(
              func_def,
              resolved_mangled,
