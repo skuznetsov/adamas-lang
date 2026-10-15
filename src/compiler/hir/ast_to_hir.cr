@@ -32278,7 +32278,9 @@ module Adamas::HIR
                     record_constant_definition(class_name, expr_node, @arena)
                   when Adamas::Compiler::Frontend::AssignNode
                     register_class_assign_from_expansion(expr_id, expr_node, class_name)
-                  when Adamas::Compiler::Frontend::CallNode
+                  when Adamas::Compiler::Frontend::CallNode,
+                       Adamas::Compiler::Frontend::InstanceVarDeclNode,
+                       Adamas::Compiler::Frontend::TypeDeclarationNode
                     register_class_members_from_expansion(
                       class_name,
                       expr_id,
@@ -32355,7 +32357,9 @@ module Adamas::HIR
         record_constant_definition(class_name, body_node, @arena)
       when Adamas::Compiler::Frontend::AssignNode
         register_class_assign_from_expansion(body_id, body_node, class_name)
-      when Adamas::Compiler::Frontend::CallNode
+      when Adamas::Compiler::Frontend::CallNode,
+           Adamas::Compiler::Frontend::InstanceVarDeclNode,
+           Adamas::Compiler::Frontend::TypeDeclarationNode
         register_class_members_from_expansion(
           class_name,
           body_id,
@@ -32439,7 +32443,9 @@ module Adamas::HIR
                 record_constant_definition(class_name, expr_node, @arena)
               when Adamas::Compiler::Frontend::AssignNode
                 register_class_assign_from_expansion(expr_id, expr_node, class_name)
-              when Adamas::Compiler::Frontend::CallNode
+              when Adamas::Compiler::Frontend::CallNode,
+                   Adamas::Compiler::Frontend::InstanceVarDeclNode,
+                   Adamas::Compiler::Frontend::TypeDeclarationNode
                 register_class_members_from_expansion(
                   class_name,
                   expr_id,
@@ -32501,7 +32507,9 @@ module Adamas::HIR
               record_constant_definition(class_name, expr_node, @arena)
             when Adamas::Compiler::Frontend::AssignNode
               register_class_assign_from_expansion(expr_id, expr_node, class_name)
-            when Adamas::Compiler::Frontend::CallNode
+            when Adamas::Compiler::Frontend::CallNode,
+                 Adamas::Compiler::Frontend::InstanceVarDeclNode,
+                 Adamas::Compiler::Frontend::TypeDeclarationNode
               register_class_members_from_expansion(
                 class_name,
                 expr_id,
@@ -32564,7 +32572,9 @@ module Adamas::HIR
                 register_accessors_in_class(expr_node, class_name, ivars, offset_ref)
               when Adamas::Compiler::Frontend::PropertyNode
                 register_accessors_in_class(expr_node, class_name, ivars, offset_ref)
-              when Adamas::Compiler::Frontend::CallNode
+              when Adamas::Compiler::Frontend::CallNode,
+                   Adamas::Compiler::Frontend::InstanceVarDeclNode,
+                   Adamas::Compiler::Frontend::TypeDeclarationNode
                 register_class_members_from_expansion(
                   class_name,
                   expr_id,
@@ -32728,7 +32738,9 @@ module Adamas::HIR
         record_constant_definition(class_name, expr_node, @arena)
       when Adamas::Compiler::Frontend::AssignNode
         register_class_assign_from_expansion(expr_id, expr_node, class_name)
-      when Adamas::Compiler::Frontend::CallNode
+      when Adamas::Compiler::Frontend::CallNode,
+           Adamas::Compiler::Frontend::InstanceVarDeclNode,
+           Adamas::Compiler::Frontend::TypeDeclarationNode
         register_class_members_from_expansion(
           class_name,
           expr_id,
@@ -33065,7 +33077,9 @@ module Adamas::HIR
           if target.is_a?(Adamas::Compiler::Frontend::ConstantNode)
             record_constant_definition(class_name, (safe_slice_to_string(target.name) || ""), expr_node.value, @arena)
           end
-        when Adamas::Compiler::Frontend::CallNode
+        when Adamas::Compiler::Frontend::CallNode,
+             Adamas::Compiler::Frontend::InstanceVarDeclNode,
+             Adamas::Compiler::Frontend::TypeDeclarationNode
           STDERR.puts "[BEGIN_MACRO_CLASS] class=#{class_name} phase=body_call idx=#{begin_idx}" if trace_begin_macro
           register_class_members_from_expansion(
             class_name,
@@ -33190,7 +33204,9 @@ module Adamas::HIR
           if target.is_a?(Adamas::Compiler::Frontend::ConstantNode)
             record_constant_definition(class_name, (safe_slice_to_string(target.name) || ""), expr_node.value, @arena)
           end
-        when Adamas::Compiler::Frontend::CallNode
+        when Adamas::Compiler::Frontend::CallNode,
+             Adamas::Compiler::Frontend::InstanceVarDeclNode,
+             Adamas::Compiler::Frontend::TypeDeclarationNode
           register_class_members_from_expansion(
             class_name,
             expr_id,

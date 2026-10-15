@@ -1,5 +1,23 @@
 # HIR Name Resolution Contract
 
+## Class macro layout declarations (2026-10-15)
+
+A selected class macro branch must register explicit
+instance-variable declarations before method-body inference and layout sizing.
+Both InstanceVarDeclNode and TypeDeclarationNode use the existing declaration
+registration path, retaining the declared nullable type and source arena.
+Conditional, begin, and threaded branch consumers share this obligation. An
+inactive branch must not contribute fields. Named-macro and macro-for output
+that loses declarations during standalone fragment parsing remains open in
+TODO.md; dispatch repair does not recover an already lost declaration.
+
+Falsifiers: spec/hir/macro_class_ivar_declaration_spec.cr and
+regression_tests/nullable_struct_field_take_repro.sh (original-first nullable
+value-struct read, clear, and repeated take). The unchanged LavinMQ startup is
+the downstream check. Refresh after class macro dispatch or layout registration
+changes; passing the reducer alone does not certify scheduler or broker parity.
+
+
 ## Macro call and statement boundary (2026-10-15)
 
 Macro trivia skipping does not authorize a parenthesized call to consume a

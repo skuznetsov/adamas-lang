@@ -1,5 +1,27 @@
 # Adamas Bootstrap TODO
 
+2026-10-15 CLASS MACRO IVAR DECLARATIONS: retain explicit nullable field
+annotations in selected conditional, begin, and threaded class macro branches.
+The declaration nodes now reach the existing member-registration path before
+method-body inference. Native165 loses seven of nine exploratory declarations
+and segfaults on the original-valid nullable struct take/clear reducer;
+native166 passes seven focused plus nine neighboring HIR examples and the
+original-first runtime reducer. Evidence: macro_ivar_decl165_red,
+macro_ivar_decl166_green, nullable_struct_field165_macro_red, and
+nullable_struct_field166_runtime. Unchanged LavinMQ builds and passes the
+Thread#dead_fiber_stack? crash, then aborts on the separate
+Fiber::ExecutionContext#previous= missing target. Refresh after class macro
+dispatch or field-layout registration changes; broker/spec parity remains open.
+- [ ] Repair class fragments emitted by named macros and macro-for loops:
+  `@stack : StackValue?` is reparsed as InstanceVarNode + IdentifierNode, so
+  even the shared declaration dispatcher cannot recover the nullable field.
+  Exploratory falsifiers: macro_ivar_decl165_red and macro_ivar_decl166_first;
+  named-macro HIR: nullable_struct_field165_named_macro_hir. Preserve class
+  parsing context rather than inferring a nonnullable field from a later write.
+- [ ] Audit other duplicated class/module macro dispatch tables for layout
+  declarations, class-variable declarations, aliases, and source-arena retention.
+
+
 2026-10-15 MACRO CALL / STATEMENT BOUNDARY: a parenthesized call may
 attach a trailing block only on its closing-parenthesis line, including inside
 macro expressions whose trivia parser consumes newlines. Native164 fails two
