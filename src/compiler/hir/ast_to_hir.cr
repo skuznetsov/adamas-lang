@@ -35871,6 +35871,16 @@ module Adamas::HIR
                    end
                  end
 
+      # A nested generic spelling may have been interned as a placeholder
+      # before its owning template was resolved. This concrete declaration is
+      # authoritative; promote the descriptor in place so existing value and
+      # union references keep their identity and gain the declared layout kind.
+      if descriptor = @module.get_type_descriptor(type_ref)
+        if descriptor.kind == TypeKind::Generic
+          type_ref = @module.intern_type(TypeDescriptor.new(type_kind, descriptor.name, descriptor.type_params))
+        end
+      end
+
       # Also find initialize to get constructor parameters
       init_capture = InitParamsCapture.new
       init_params = init_capture.params

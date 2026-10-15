@@ -3330,3 +3330,15 @@ context. This does not certify captured-context lifetime/GC retention,
 repeated calls after owner collection, or other raw Proc constructor
 signatures. Changes to selected-Def provenance, Proc carrier layout, or
 callback ABI reopen this bounded contract.
+
+### Cached generic descriptor materialization (2026-10-15)
+
+When concrete declaration registration reuses a Generic placeholder, it must
+publish the declaration's Class or Struct kind through stable-ID type
+interning. The same TypeRef and type parameters must remain visible to cached
+annotations and union arms. This promotion is admitted only after a concrete
+ClassNode has been selected; it must not turn unknown generic owners into
+classes or change Array/Hash descriptors. The three-case regression is
+`regression_tests/concrete_generic_placeholder_kind_repro.sh`. A manually
+interned placeholder without an annotation cache entry has a separate lookup
+obligation; this rule does not certify that producer.

@@ -17472,3 +17472,20 @@ separate non-acceptance 300-second diagnostic also timed out at 2,048,080 KB
 RSS without `cv2_s2`. This landmark verifies host/HIR constructor binding, not
 produced-stage behavior or B4-F. {F/G/R: 0.95/0.52/0.92} [host/HIR constructor
 binding verified; produced-stage successor open]
+
+### 2026-10-15: cached nested Generic descriptors need declaration kind publication
+
+Concrete class registration reused the cached TypeRef for names such as
+`PlaceholderScope(T)::Nested(Int32)` without publishing the declared kind.
+ClassInfo existed while the descriptor remained Generic, so concrete union
+dispatch rejected the receiver. Promote only that Generic descriptor through
+the existing stable-ID interner after selecting the concrete declaration.
+Atomic255 passes Class, Struct, and unknown-owner guards; the baseline fails
+the first two. Its 18-case neighboring comparison removes exactly those two
+failures; eight unrelated uncommitted namespace/Union tests fail on both source
+states. Verdict: ROBUST for cached-placeholder kind publication. This does not
+certify uncached manually interned names or LavinMQ runtime parity.
+Evidence: kind255_cached_placeholder_red, kind255_cached_placeholder_contract,
+kind255_placeholder_neighbors, kind255_placeholder_neighbors_baseline.
+Refresh after declaration selection, type-cache lookup, or kind interning
+changes; reopen the scoped claim if identity or unknown-owner guards fail.

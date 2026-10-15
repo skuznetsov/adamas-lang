@@ -18960,3 +18960,16 @@ Crystal and the matching no-prelude compiler both preserve null and non-null
 callback contexts in the runtime guard (`status=2,1,1,0`, exit 0). This does
 not prove GC retention or lifetime of captured context memory; add a separate
 collector/lifetime guard before claiming that behavior.
+
+2026-10-15 CACHED GENERIC DECLARATION KIND: concrete class/struct registration
+must promote an already cached Generic descriptor in place. The annotation's
+TypeRef and generic arguments remain stable; unknown owners remain Generic.
+The atomic255 regression has two baseline failures and three passing cases.
+Evidence: kind255_cached_placeholder_red, kind255_cached_placeholder_contract.
+Refresh after concrete registration, kind interning, or type-cache changes.
+- [x] Preserve the declared class/struct kind of cached nested generic names.
+- [ ] Audit uncached, manually interned nested placeholders separately: that
+  artificial producer reaches a Void ClassInfo before kind promotion and is
+  outside this cache-backed declaration contract.
+- [ ] Continue external-stdlib Iterator union and full LavinMQ parity; the
+  integration passes the former unresolved-return frontier but is not complete.
