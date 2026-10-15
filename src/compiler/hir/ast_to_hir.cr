@@ -68550,9 +68550,17 @@ module Adamas::HIR
         if key_type = value_node.of_key_type
           value_type = value_node.of_value_type
           if value_type
-            key_name = normalize_declared_type_name((safe_slice_to_string(key_type) || ""))
-            value_name = normalize_declared_type_name((safe_slice_to_string(value_type) || ""))
-            return type_ref_for_name("Hash(#{key_name}, #{value_name})")
+            key_name = safe_slice_to_string(key_type) || ""
+            value_name = safe_slice_to_string(value_type) || ""
+            key_ref = annotation_type_ref(key_name, @current_class)
+            value_ref = annotation_type_ref(value_name, @current_class)
+            return TypeRef::VOID if key_ref == TypeRef::VOID || value_ref == TypeRef::VOID
+
+            type_params = [key_ref, value_ref]
+            hash_name = builtin_generic_type_name("Hash", type_params)
+            hash_ref = @module.intern_type(TypeDescriptor.new(TypeKind::Hash, hash_name, type_params))
+            register_runtime_reference_parent(hash_name)
+            return hash_ref
           end
         end
         if entries = value_node.entries

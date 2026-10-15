@@ -128,8 +128,10 @@ cases and neighboring named-block specs; original-first runtime regression
 matches 42/44/42/42, including dependent defaults and nested callback fallback.
 Evidence: native141_default_double_splat_registered and
 native141_default_double_splat_runtime receipts. Full LavinMQ specs still stop
-at an unresolved AMQP channel receiver; captured Proc ABI and Signal handler
-specialization remain separate open compiler defects. Changes to default,
+at an unresolved AMQP channel receiver; captured Proc ABI remains an open
+compiler defect. Signal class-variable Hash annotation identity is fixed by
+native169 (see `classvar_hash_annotation_owner_repro.sh`), but MT LavinMQ
+startup still crashes in `Monitor.initialize`. Changes to default,
 keyword-rest, or callback binding require refreshing these guards.
 
 2026-10-15 METHOD POINTER ARGUMENT TRANSPORT: lower explicit input types

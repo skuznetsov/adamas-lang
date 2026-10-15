@@ -289,3 +289,20 @@ real terminator. An initial `Unreachable` terminator on an empty entry block is
 not evidence of a body.
 
 Downstream stages MAY use this to avoid trusting stale stubs.
+
+## Class-variable Hash annotation identity (2026-10-15)
+
+For an explicitly typed class-variable initializer such as `{} of K => V`,
+resolve both annotation names in the declaring owner and retain their TypeRefs
+when constructing `Hash(K, V)`. Converting names to short strings first can bind
+`::Signal` to an unrelated nested `Crystal::System::Signal` module and produce
+a different Hash specialization. This contract covers explicit Hash annotations;
+other class-variable initializer forms remain separate.
+
+Falsifiers: `spec/hir/classvar_absolute_hash_type_ref_spec.cr` and
+`regression_tests/classvar_hash_annotation_owner_repro.sh` compare the stdlib
+`Signal::Handler` alias with direct Proc and explicit alias annotations.
+Native168 reproduces a missing Hash specialization; native169 matches original
+Crystal's three successful writes. The concurrency-flagged LavinMQ startup remains blocked
+by a separate null Monitor initializer; this guard does not certify app startup.
+Refresh after class-variable inference or annotation owner resolution changes.
