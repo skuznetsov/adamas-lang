@@ -3507,3 +3507,16 @@ Pointer::Appender outputs pass. The prior HIR fallback-selection assertion
 fails without the one-hunk change. Native agreement alone does not prove that
 the fallback seam ran. Rollback is this atomic commit; refresh on owner lookup
 or mangling changes. Full-prelude/LavinMQ runtime remains outside this slice.
+
+
+### Semantic typeof over already-lowered locals (2026-10-15)
+Admitted: nested receiver inference uses current lexical HIR binding types,
+including the payload of an owner-matched capture. Rejected: evaluating typeof
+arguments, borrowing a shadowed binding's box, or reusing cached inference
+across temporary local-type contexts. Existing direct-identifier fallback and
+runtime type-identity handling remain in place. DoD: atomic source368 passes
+16 focused cases and the original-first native typeof_bound_locals script;
+prior full359 fails four of five new context cases. Rollback is this atomic
+commit; refresh on local binding/boxing or inference epoch changes. Type-valued
+local provenance and flow-widened closure-cell unions remain untested here.
+LavinMQ compilation and runtime equivalence remain separate open obligations.

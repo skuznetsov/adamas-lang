@@ -240,3 +240,14 @@ diagnostic meanings.
   checks direct/captured UInt8 and Int32 outputs W/B/* on both compilers.
 - Scope: native base also passes; the HIR assertion, rather than the native
   guard, is the discriminator. Full-prelude startup still depends on Once ABI.
+
+
+### Bound local receiver in semantic typeof (2026-10-15)
+- RED: full359 reports Void for four of five typeof_bound_locals context cases,
+  matching the pinned LavinMQ spec failure at typeof(msgs.receive).
+- GREEN: atomic source368 passes 16 focused cases. Stale box ownership, a reused
+  AST with Int32/Int64 receivers, and inference-state restoration are guards.
+- Runtime guard: typeof_bound_locals_repro.sh compares Crystal and Adamas;
+  receive exits 91 if executed, while both binaries output * and exit zero.
+  The native control also passes the prior implementation and is not the RED
+  discriminator. LavinMQ end-to-end parity is not established by these checks.

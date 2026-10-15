@@ -80216,40 +80216,62 @@ module Adamas::HIR
     end
 
     private def lower_typeof(ctx : LoweringContext, node : Adamas::Compiler::Frontend::TypeofNode) : ValueId
-      # typeof(x) returns the type of x at compile time
-      # The arguments are semantic-only.  In particular, lowering a yield here
-      # would invoke the caller's block once before the enclosing loop runs.
-      # Use the inference path, which preserves the inline-yield return stacks
-      # and switches to the argument's arena without emitting runtime HIR.
-      semantic_type = TypeRef::VOID
-      node.args.each do |arg_id|
-        arg_type = infer_type_from_expr(arg_id, @current_class)
-        if arg_type.nil? || arg_type == TypeRef::VOID
-          # AST inference has no view of already-lowered top-level locals
-          # (`y = h; typeof(y)` printed Void); the bound value carries the type.
-          arg_node = @arena[arg_id]
-          if arg_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
-            local_name = safe_slice_to_string(arg_node.name)
-            if local_name && !ctx.local_boxed?(local_name) && (local_id = ctx.lookup_local(local_name))
-              arg_type = ctx.type_of(local_id)
+      # Typeof never evaluates its arguments. Inlined blocks can nevertheless
+      # bind locals that AST-only inference cannot rediscover from a def body.
+      # Expose the active lexical bindings, using the payload of an owner-bound
+      # capture rather than its box carrier, for nested receiver inference.
+      old_locals = @current_typeof_locals
+      old_names = @current_typeof_local_names
+      old_version = @infer_type_cache_version
+      local_map = old_locals ? old_locals.dup : {} of String => TypeRef
+      name_map = old_names ? old_names.dup : {} of String => String
+      ctx.all_locals.each do |name, value|
+        next if ctx.runtime_type_identity?(value)
+        local_type = if boxed = ctx.lookup_boxed_local_for_local(name, value)
+                       boxed.payload_type
+                     else
+                       ctx.type_of(value)
+                     end
+        next if local_type == TypeRef::VOID
+        local_map[name] = local_type
+        name_map[name] = get_type_name_from_ref(local_type)
+      end
+      @current_typeof_locals = local_map
+      @current_typeof_local_names = name_map
+      bump_infer_type_cache_version
+      begin
+        semantic_type = TypeRef::VOID
+        node.args.each do |arg_id|
+          arg_type = infer_type_from_expr(arg_id, @current_class)
+          if arg_type.nil? || arg_type == TypeRef::VOID
+            arg_node = @arena[arg_id]
+            if arg_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
+              local_name = safe_slice_to_string(arg_node.name)
+              if local_name && !ctx.local_boxed?(local_name) && (local_id = ctx.lookup_local(local_name))
+                arg_type = ctx.type_of(local_id)
+              end
             end
           end
+          next unless arg_type
+          next if arg_type == TypeRef::VOID
+          semantic_type = semantic_type == TypeRef::VOID ? arg_type : union_type_for_values(semantic_type, arg_type)
         end
-        next unless arg_type
-        next if arg_type == TypeRef::VOID
-        semantic_type = semantic_type == TypeRef::VOID ? arg_type : union_type_for_values(semantic_type, arg_type)
+        nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+        ctx.emit(nil_lit)
+        mark_runtime_type_identity(
+          ctx,
+          nil_lit.id,
+          semantic_type,
+          TypeValueOrigin::Typeof,
+          runtime_stringification_required: true,
+          display_name: typeof_type_value_display_name(semantic_type)
+        )
+        nil_lit.id
+      ensure
+        @current_typeof_locals = old_locals
+        @current_typeof_local_names = old_names
+        @infer_type_cache_version = old_version
       end
-      nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
-      ctx.emit(nil_lit)
-      mark_runtime_type_identity(
-        ctx,
-        nil_lit.id,
-        semantic_type,
-        TypeValueOrigin::Typeof,
-        runtime_stringification_required: true,
-        display_name: typeof_type_value_display_name(semantic_type)
-      )
-      nil_lit.id
     end
 
     private def lower_sizeof(ctx : LoweringContext, node : Adamas::Compiler::Frontend::SizeofNode) : ValueId

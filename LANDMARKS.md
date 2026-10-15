@@ -17771,3 +17771,21 @@ and the fallback-selection HIR test is the actual falsifier. Source360 HIR SHA
 e2b2cd1eecaa8fab4d7f29a0208a252fe80be0946258968784a3fa732141f67a.
 Refresh when receiver-repair fallback naming, owner authentication, or symbol
 mangling changes. This does not certify full-prelude startup or LavinMQ parity.
+
+
+### Typeof inference consumes lexical HIR binding types (2026-10-15)
+A semantic-only typeof expression can be lowered after an inlined block binds
+locals that AST return inference cannot rediscover. The pinned LavinMQ spec
+build exposes this at delayed_message_exchange_spec.cr:278: msgs is an
+owner-bound captured Channel(AMQP::Client::DeliverMessage), while ambient
+inference maps are nil. Seed temporary local/name maps from LoweringContext;
+read an authenticated box's payload type rather than its pointer carrier.
+Use a fresh inference epoch and restore the caller maps/epoch in ensure.
+Evidence: full359 has 5 context examples/4 failures; source367 has 15/0.
+Exact-HEAD atomic source368 has 16/0, plus original-first native Int32/Int64
+receiver checks that exit 91 if typeof evaluates receive (both output * and
+exit 0). Atomic HIR SHA 1b899d896fff582746481ddb76d774822f3607f904bfaf307df7c3953864e7f7.
+Guards cover same-name stale boxes, repeated AST inference under different
+local types, no emitted runtime Call/FieldGet, and caller-context restoration.
+Refresh on typeof inference, local boxing ownership, or inference cache changes.
+This slice does not certify full LavinMQ compilation or runtime parity.

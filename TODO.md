@@ -19146,3 +19146,14 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   authenticated bare generic owner, including Pointer::Appender(UInt8/Int32).
   The exact fallback-selection HIR example is RED before the hunk and GREEN
   after it; source360 passes 29 focused cases and original-first native outputs.
+
+
+### Semantic typeof sees active local bindings (2026-10-15)
+- [x] Seed semantic-only typeof inference from current HIR lexical locals,
+  including owner-matched boxed capture payloads, and restore inference maps
+  and cache epoch afterward. Atomic source368 passes 16 focused cases and an
+  original-first native side-effect guard. The prior source fails four of five
+  new context tests. LavinMQ's pinned spec input previously failed on
+  `typeof(msgs.receive)` despite a known captured Channel receiver type.
+- [ ] Extend typeof coverage to type-valued local provenance and flow-widened
+  closure-cell unions; these are adjacent untested surfaces, not proven bugs.
