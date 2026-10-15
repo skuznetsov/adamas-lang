@@ -1,5 +1,22 @@
 # Adamas Bootstrap TODO
 
+2026-10-15 CONTROL-FLOW STATEMENT SEPARATORS: leave newlines and semicolons
+after an expression's closing end for its enclosing parser. Consuming them
+inside if/unless/select or loop/spawn/begin parsers joined a following negative
+literal as binary subtraction from the preceding expression. The atomic
+baseline fails 11 of 23 boundary controls. Native215 passes 69 focused/neighbor
+parser examples and matches original Crystal's ABCDEFGHI native output.
+Controls preserve same-line subtraction, next-line method chains, semicolons,
+and the already-correct case expression path. Evidence: parser215_boundary_red,
+parser215_boundary_neighbors_green, and parser216_boundary_durable_native.
+Refresh after prefix/infix parsing or separator ownership changes. Full MT
+startup and LavinMQ parity remain open.
+- [ ] Audit separator ownership in declaration parsers, extension-only for
+  syntax, and delimiter-nested control-flow expressions with original-first
+  parser oracles. The existing unrelated semicolon-unless branch fixture
+  remains RED in both atomic211 and atomic215 (parser215_neighbor_baseline);
+  its separate body-separator WIP is preserved outside this change.
+
 2026-10-15 ABSTRACT NUMERIC RETURN CONTRACTS: treat Int, Float, and Number
 as membership constraints while inferring the concrete ABI carrier from the
 reachable body returns. Preserve wide free-function arguments and materialize

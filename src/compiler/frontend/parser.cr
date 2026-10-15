@@ -3911,8 +3911,6 @@ module Adamas
 
             expect_identifier("end")
             end_token = previous_token
-            # Allow separators after header (supports one-liners like `struct X; end`)
-            skip_statement_end
 
             if_span = if end_token
                         if_token.span.cover(end_token.span)
@@ -3998,8 +3996,6 @@ module Adamas
 
             expect_identifier("end")
             end_token = previous_token
-            # Allow separators after header (supports one-liners like `struct X; end`)
-            skip_statement_end
 
             unless_span = if end_token
                             unless_token.span.cover(end_token.span)
@@ -4377,8 +4373,6 @@ module Adamas
 
           expect_identifier("end")
           end_token = previous_token
-          # Allow separators after header (supports one-liners like `struct X; end`)
-          skip_statement_end
 
           select_span = if end_token
                           select_token.span.cover(end_token.span)
@@ -4435,7 +4429,6 @@ module Adamas
 
           expect_identifier("end")
           end_token = previous_token
-          consume_newlines
 
           while_span = if end_token
                          while_token.span.cover(end_token.span)
@@ -4492,7 +4485,6 @@ module Adamas
 
             expect_identifier("end")
             end_token = previous_token
-            consume_newlines
 
             loop_span = if end_token
                           loop_token.span.cover(end_token.span)
@@ -4551,7 +4543,6 @@ module Adamas
 
               expect_identifier("end")
               end_token = previous_token
-              consume_newlines
 
               spawn_span = end_token ? spawn_token.span.cover(end_token.span) : spawn_token.span
               return @arena.add_typed(
@@ -4596,7 +4587,6 @@ module Adamas
 
             expect_identifier("end")
             end_token = previous_token
-            consume_newlines
 
             spawn_span = if end_token
                            spawn_token.span.cover(end_token.span)
@@ -4669,7 +4659,6 @@ module Adamas
 
           expect_identifier("end")
           end_token = previous_token
-          consume_newlines
 
           until_span = if end_token
                          until_token.span.cover(end_token.span)
@@ -4773,7 +4762,6 @@ module Adamas
 
           expect_identifier("end")
           end_token = previous_token
-          consume_newlines
 
           begin_span = if end_token
                          begin_token.span.cover(end_token.span)

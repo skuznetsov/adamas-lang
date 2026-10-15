@@ -1,5 +1,23 @@
 # HIR Name Resolution Contract
 
+## Control-flow expression statement boundaries (2026-10-15)
+
+A prefix parser consumes its own closing end token and leaves subsequent
+statement separators to its enclosing expression/statement parser. Otherwise
+an operator beginning the next statement can become an infix operator on the
+previous conditional, loop, spawn, select, or begin expression. Preserve the
+ordinary infix path when the operator is on the same line, and preserve the
+existing newline-dot method continuation rule.
+
+Falsifiers: spec/parser/parser_control_flow_statement_boundary_spec.cr and
+regression_tests/control_flow_statement_boundary_repro.sh. Atomic native211
+fails 11 of 23 boundary examples; native215 passes those and adjacent parser
+controls (69 examples total) and matches original Crystal's ABCDEFGHI runtime
+output. Case and semicolon controls detect overbroad changes; same-line
+subtraction and next-line chaining guard valid continuations. Refresh after
+prefix/infix parsing or separator ownership changes. Declaration/extension
+syntax and delimiter-nested expressions remain separate audits in TODO.md.
+
 ## Abstract numeric return contracts (2026-10-15)
 
 A direct Int, Float, or Number return annotation constrains membership; it does
