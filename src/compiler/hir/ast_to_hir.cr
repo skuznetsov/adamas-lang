@@ -24421,6 +24421,7 @@ module Adamas::HIR
       extend_target : ExprId?,
       defined_full_names : Set(String),
       visited : Set(String),
+      method_filter : String? = nil,
     ) : Nil
       class_name = sanitize_type_name(class_name)
 
@@ -24504,7 +24505,7 @@ module Adamas::HIR
               members.each do |member, producer_arena, member_id|
                 with_arena(producer_arena) do
                   if member.is_a?(Adamas::Compiler::Frontend::IncludeNode)
-                    register_module_class_methods_for(class_name, member.target, defined_full_names, visited)
+                    register_module_class_methods_for(class_name, member.target, defined_full_names, visited, method_filter)
                     next
                   end
                   next unless member.is_a?(Adamas::Compiler::Frontend::DefNode)
@@ -24512,6 +24513,7 @@ module Adamas::HIR
                   next if member.is_abstract
 
                   method_name = (safe_slice_to_string(member.name) || "")
+                  next if method_filter && method_name != method_filter
                   base_name = "#{class_name}.#{method_name}"
                   member_arena = member_id ? registration_member_arena_for(base_name, member) : producer_arena
 
@@ -92012,6 +92014,57 @@ module Adamas::HIR
       name
     end
 
+    # An extend may be registered before the source module is reopened. Replay
+    # only the requested export from retained definitions; macro expressions
+    # must not run again while resolving a later call.
+    private def find_late_module_class_export(
+      module_name : String,
+      method_base : String,
+      expected_param_count : Int32,
+      call_arg_types : Array(TypeRef)?,
+    ) : Tuple(Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike)?
+      entries = @module_defs[module_name]? || return nil
+      defined_full_names = Set(String).new
+      entries.each do |mod_node, mod_arena|
+        if body = mod_node.body
+          defined_full_names.concat(collect_defined_class_method_full_names(module_name, body, mod_arena))
+        end
+      end
+      visited = Set(String).new
+      entries.each do |mod_node, mod_arena|
+        with_arena(mod_arena) do
+          if body = mod_node.body
+            body.each do |expr_id|
+              member = unwrap_visibility_member(@arena[expr_id])
+              next unless member.is_a?(Adamas::Compiler::Frontend::ExtendNode)
+              register_module_class_methods_for(module_name, member.target, defined_full_names, visited, method_base)
+            end
+          end
+        end
+      end
+      if @module_extend_self.includes?(module_name)
+        register_module_class_methods_for(module_name, nil, defined_full_names, visited, method_base)
+      end
+
+      base_name = "#{module_name}.#{method_base}"
+      function_def_overload_keys(base_name).each do |key|
+        parts = parse_method_name_compact(key)
+        next unless parts.separator == '.' && parts.base == base_name
+        member = @function_defs[key]? || next
+        member_arena = @function_def_arenas[key]? || next
+        stats = function_param_stats(key, member)
+        next if stats.named_required > 0
+        next unless expected_param_count >= stats.positional_required &&
+                    (stats.positional_has_splat || expected_param_count <= stats.positional_count)
+        if call_arg_types
+          infos = function_param_infos(key, member)
+          next unless params_compatible_with_args?(member, call_arg_types, module_name, infos)
+        end
+        return {member, member_arena}
+      end
+      nil
+    end
+
     private def find_module_class_def(
       module_name : String,
       method_base : String,
@@ -92140,7 +92193,9 @@ module Adamas::HIR
         end
       end
 
-      return nil if best_member.nil? || best_arena.nil?
+      if best_member.nil? || best_arena.nil?
+        return find_late_module_class_export(module_name, method_base, expected_param_count, call_arg_types)
+      end
 
       if is_math_min_debug
         best_param_types = if params = best_member.not_nil!.params
@@ -95490,6 +95545,20 @@ module Adamas::HIR
               else
                 # Apply type param map for generic module methods
                 materialization_producer_path = "class_module_lower_method"
+                with_namespace_override_or_clear(namespace_override) do
+                  if extra_type_params && !extra_type_params.empty?
+                    with_isolated_type_param_map(extra_type_params) do
+                      lower_module_method(owner, resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, target_for_lower)
+                    end
+                  else
+                    lower_module_method(owner, resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, target_for_lower)
+                  end
+                end
+              end
+            else
+              # Apply type param map for generic module methods
+              materialization_producer_path = "class_module_lower_method"
+              with_namespace_override_or_clear(namespace_override) do
                 if extra_type_params && !extra_type_params.empty?
                   with_isolated_type_param_map(extra_type_params) do
                     lower_module_method(owner, resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, target_for_lower)
@@ -95497,16 +95566,6 @@ module Adamas::HIR
                 else
                   lower_module_method(owner, resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, target_for_lower)
                 end
-              end
-            else
-              # Apply type param map for generic module methods
-              materialization_producer_path = "class_module_lower_method"
-              if extra_type_params && !extra_type_params.empty?
-                with_isolated_type_param_map(extra_type_params) do
-                  lower_module_method(owner, resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, target_for_lower)
-                end
-              else
-                lower_module_method(owner, resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, target_for_lower)
               end
             end
           else

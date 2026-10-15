@@ -1,5 +1,27 @@
 # HIR Name Resolution Contract
 
+## Late module reopening exports and lexical context (2026-10-15)
+
+When a module class-method lookup misses its parsed definitions, export only
+the requested method from retained extend targets and recorded extend-self
+declarations. A source module reopened after its consumer still owns its
+generated private overloads. Reuse their DefNode/arena pairs without executing
+macro expansion again, preserve explicit consumer definitions, and keep the
+receiverless class-call ABI. Deferred module class-method materialization must
+apply the registered producer namespace just as class materialization does.
+A same-spelled consumer constant must not replace the source's lexical one.
+
+Falsifiers: spec/hir/module_late_extend_spec.cr and
+regression_tests/module_late_extend_repro.sh. Native179 aborts on the late
+reopening reducer; native181a passes that reducer but fails its lexical
+constant control. Native181c passes twelve focused/neighboring HIR examples and
+six original-first runtime assertions with identical `ABCDEF` output. Guards
+cover disjoint Int32/Int64 private overloads, explicit consumer precedence,
+nested modules, late extend self, and a shadowed source constant. Refresh after
+module registration order, export lookup, or namespace propagation changes.
+Late macro-emitted foreign targets, late class consumers, and overlapping
+restrictions remain separate audits in TODO.md; LavinMQ parity remains open.
+
 ## Macro-emitted module extend self (2026-10-15)
 
 A selected conditional or named macro can declare `extend self` without leaving

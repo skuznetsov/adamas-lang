@@ -1,5 +1,24 @@
 # Adamas Bootstrap TODO
 
+2026-10-15 LATE MODULE EXPORTS / LEXICAL CONTEXT: on a class-method lookup
+miss, register only the requested method from retained extend targets and
+recorded extend self declarations. A source module reopened after its consumer
+must preserve static dispatch for private generated overloads. Apply the
+registered producer namespace while materializing module class methods.
+Native179 aborts on the original-valid late reopening reducer; native181a
+repairs it but fails the shadowed source-constant control. Native181c passes
+twelve focused/neighboring HIR examples and six original-first runtime
+assertions with matching ABCDEF output, including Int32/Int64 overloads,
+explicit consumer precedence, nested lexical lookup, and late extend self.
+Evidence: module_late_extend180_red, module_late_extend180_hir_red,
+module_late_extend181a_controls, module_late_extend181c_hir, and
+module_late_extend181c_controls. Refresh after module reopening order, export
+registration, deferred materialization, or namespace propagation changes.
+Unchanged MT Random startup and LavinMQ broker/spec parity remain open.
+- [ ] Audit late macro-emitted extend targets other than self, late class
+  consumers, and overlapping abstract/concrete overload restrictions. The
+  current reducer establishes parsed module extensions and disjoint widths.
+
 2026-10-15 MACRO EXTEND SELF EXPORTS: consume the recorded selected declaration
 after module members are registered, including conditional/named macro output
 and nested modules. Export no longer depends on a raw ExtendNode remaining in
