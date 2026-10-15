@@ -3342,3 +3342,22 @@ classes or change Array/Hash descriptors. The three-case regression is
 `regression_tests/concrete_generic_placeholder_kind_repro.sh`. A manually
 interned placeholder without an annotation cache entry has a separate lookup
 obligation; this rule does not certify that producer.
+
+
+### Shared module yield bodies on union receivers (2026-10-15)
+
+For a zero-argument block call selected from a module, HIR may branch over a
+union receiver only after all arms resolve to concrete class/struct descriptors
+and the exact selected included-module Def. Direct overrides and distinct source
+Defs reject this transformation before any dispatch instruction. Nested generic
+owners retain every namespace component. Each admitted branch unwraps self,
+registers the source-backed target for that concrete includer, and recomputes
+block parameter types before inlining. The shared tuple-union merger preserves
+caller locals, inline caller locals, result phis, and nonlocal exits.
+
+DoD: shared_module_union_yield_spec.cr (3 passing examples) and
+regression_tests/shared_module_union_yield_repro.sh with the atomic258 compiler
+(original and candidate exit 0). Nonzero/named/splat calls and unresolved arms
+need separate admission proofs. Full LavinMQ compilation and runtime parity are
+not established by this local contract. Refresh the guards after namespace,
+module-origin, union-layout, or yield-inlining changes.

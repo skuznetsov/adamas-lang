@@ -17489,3 +17489,28 @@ Evidence: kind255_cached_placeholder_red, kind255_cached_placeholder_contract,
 kind255_placeholder_neighbors, kind255_placeholder_neighbors_baseline.
 Refresh after declaration selection, type-cache lookup, or kind interning
 changes; reopen the scoped claim if identity or unknown-owner guards fail.
+
+
+### 2026-10-15: authenticate and narrow shared union module bodies
+
+Union method fallback stripped the entire nested generic namespace, and a
+selected common module body subsequently received the whole union as self.
+The original-valid two-arm fixture compiled but crashed with SIGSEGV on the
+pre-fix compiler. Resolve the balanced namespace path, prove that all concrete
+arms select the same source Def (including override precedence), and inline
+that Def separately with each concrete self and generic block parameter map.
+Reuse the tuple-union branch/phi merger so caller locals and nonlocal returns
+retain their control-flow meaning. Validate every arm before emitting dispatch.
+
+The clean atomic258 source passes three focused HIR examples, including direct
+override and distinct-Def rejection. union259_native_regression matches original
+Crystal with two/three arms, caller accumulation, and nonlocal returns, exit 0.
+HIR SHA256: 5ddbfd874f3e92444a1db82c0154981f49c000f556249efc3b01163d5b287cb5.
+Compiler SHA256: ebf71a8134a9511faa895d3cd442145cbfce5fa3586c7845fff80c28ca87bd44.
+Lineage: kind255_atomic plus union258_shared_module_atomic.overlay.json only.
+Receipts: union258_focused_hir_contract and union259_native_regression.
+Verdict: ROBUST for zero-argument shared module blocks on resolved concrete
+class/struct arms. Nonzero/named/splat calls, the separate existing block-metadata
+failure, and LavinMQ parity remain open. Replay after module-origin selection,
+namespace lookup, union layout, or yield-inliner changes; reopen if a source
+identity, override, branch-state, or nonlocal-return guard fails.

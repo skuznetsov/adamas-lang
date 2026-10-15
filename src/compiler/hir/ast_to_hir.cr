@@ -46442,7 +46442,7 @@ module Adamas::HIR
           if resolved = resolve_untyped_overload(base_name, arg_types.size, has_block_call, call_has_named_args, arg_types)
             return resolved
           end
-          base_owner = strip_generic_args(candidate)
+          base_owner = strip_generic_args_from_namespace_path(candidate)
           if base_owner != candidate
             # The generic-stripped owner only locates the template def; the
             # result must stay bound to this candidate instantiation. A bare
@@ -115917,13 +115917,76 @@ module Adamas::HIR
       end
       return nil if variants.size < 2
 
+      inline_union_yield_variants(ctx, inline_key, func_def, receiver_id,
+        receiver_type, variants.map { |(type_ref, variant_id)| {type_ref, variant_id, inline_key} },
+        call_args, block, block_param_types, callee_arena)
+    end
+
+    # A module body uses the concrete includer's self and generic bindings.
+    # Prove one shared source definition for every union arm before expanding
+    # that body separately; an enclosing namespace or a direct override must
+    # never authorize this transformation.
+    private def inline_union_shared_module_yield(
+      ctx : LoweringContext,
+      inline_key : String,
+      func_def : Adamas::Compiler::Frontend::DefNode,
+      receiver_id : ValueId?,
+      call_args : Array(ValueId),
+      block : Adamas::Compiler::Frontend::BlockNode,
+      block_param_types : Array(TypeRef)?,
+      callee_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : ValueId?
+      return nil unless receiver_id && call_args.empty?
+      parts = parse_method_name(strip_type_suffix(inline_key))
+      return nil unless parts.separator == '#' && parts.method
+      return nil unless module_like_type_name?(parts.owner)
+      receiver_type = ctx.type_of(receiver_id)
+      descriptor = @module.get_type_descriptor(receiver_type)
+      return nil unless descriptor && descriptor.kind == TypeKind::Union
+      names = split_union_type_name(descriptor.name)
+      return nil if names.size < 2
+
+      origins = names.map do |name|
+        type_ref = type_ref_for_name(name)
+        ensure_monomorphized_type(type_ref)
+        variant = @module.get_type_descriptor(type_ref)
+        return nil unless variant && (variant.kind == TypeKind::Class || variant.kind == TypeKind::Struct)
+        return nil if unresolved_generic_receiver?(variant.name)
+        variant_id = get_union_variant_id(receiver_type, type_ref)
+        return nil if variant_id < 0
+        found = find_included_module_def_origin_for_owner(
+          name, parts.method.not_nil!, 0, true, compatible_arg_types: [] of TypeRef)
+        return nil unless found && func_def.same?(found[0])
+        {type_ref, variant_id, name, found}
+      end
+      variants = origins.map do |(type_ref, variant_id, name, found)|
+        target, _def_node = register_included_module_call_target(
+          name, parts.method.not_nil!, [] of TypeRef, true, found)
+        {type_ref, variant_id, target}
+      end
+      inline_union_yield_variants(ctx, inline_key, func_def, receiver_id,
+        receiver_type, variants, call_args, block, block_param_types, callee_arena)
+    end
+
+    private def inline_union_yield_variants(
+      ctx : LoweringContext,
+      inline_key : String,
+      func_def : Adamas::Compiler::Frontend::DefNode,
+      receiver_id : ValueId,
+      receiver_type : TypeRef,
+      variants : Array(Tuple(TypeRef, Int32, String)),
+      call_args : Array(ValueId),
+      block : Adamas::Compiler::Frontend::BlockNode,
+      block_param_types : Array(TypeRef)?,
+      callee_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : ValueId
       pre_locals = ctx.save_locals
       pre_inline_locals = @inline_caller_locals_stack.map(&.dup)
       merge_block = ctx.create_block
       incoming = [] of {BlockId, ValueId}
       branch_locals = [] of {BlockId, Hash(String, ValueId)}
       branch_inline_locals = [] of {BlockId, Array(Hash(String, ValueId))}
-      variants.each_with_index do |(type_ref, variant_id), index|
+      variants.each_with_index do |(type_ref, variant_id, concrete_key), index|
         next_variant : BlockId? = nil
         if index < variants.size - 1
           test = UnionIs.new(ctx.next_id, receiver_id, variant_id, receiver_type)
@@ -115939,8 +116002,13 @@ module Adamas::HIR
         concrete = UnionUnwrap.new(ctx.next_id, type_ref, receiver_id, variant_id, false)
         ctx.emit(concrete)
         ctx.register_type(concrete.id, type_ref)
-        value = inline_yield_function(ctx, func_def, inline_key, concrete.id,
-          call_args, block, block_param_types, callee_arena)
+        concrete_block_types = if concrete_key == inline_key
+                                 block_param_types
+                               else
+                                 block_param_types_for_call(concrete_key, strip_type_suffix(concrete_key), type_ref, call_args.map { |arg| ctx.type_of(arg) })
+                               end
+        value = inline_yield_function(ctx, func_def, concrete_key, concrete.id,
+          call_args, block, concrete_block_types, callee_arena)
         exit_block = ctx.current_block
         if ctx.get_block(exit_block).terminator.is_a?(Unreachable) &&
            !control_flow_dead_block?(ctx, exit_block)
@@ -115994,6 +116062,10 @@ module Adamas::HIR
       if tuple_result = inline_union_tuple_each(ctx, inline_key, func_def, receiver_id,
            call_args, block, block_param_types, callee_arena)
         return tuple_result
+      end
+      if module_result = inline_union_shared_module_yield(ctx, inline_key, func_def, receiver_id,
+           call_args, block, block_param_types, callee_arena)
+        return module_result
       end
       block_arena = @block_node_arenas[block.object_id]? ||
                     resolve_arena_for_block(block, @arena) ||

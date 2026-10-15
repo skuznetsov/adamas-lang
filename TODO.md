@@ -18973,3 +18973,21 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   outside this cache-backed declaration contract.
 - [ ] Continue external-stdlib Iterator union and full LavinMQ parity; the
   integration passes the former unresolved-return frontier but is not complete.
+
+
+### 2026-10-15: shared included-module blocks on union receivers
+
+- [x] Preserve every namespace component when finding a nested generic union
+  method, and narrow each receiver arm before inlining one authenticated shared
+  module Def. The atomic258 HIR contract passes three cases; the original-first
+  union259 runtime guard passes two/three arms, caller assignments, and nonlocal
+  returns (exit 0). Direct overrides and different source Defs are rejected
+  before dispatch instructions are emitted.
+- [ ] Handle nonzero-argument/named/splat union module calls with a separate
+  source-and-argument proof; the new path deliberately admits only zero args.
+- [ ] Repair the existing uncommitted union_receiver_block_metadata_spec
+  metadata expectation: one of its two cases fails identically on kind255 and
+  union258, independently of this shared-module body repair.
+- [ ] Continue the full LavinMQ build and runtime parity. The integrated build
+  now stops at a StaticArray comparator block whose forall U becomes 2; the
+  macro rejection is retained. This commit does not certify that consumer.

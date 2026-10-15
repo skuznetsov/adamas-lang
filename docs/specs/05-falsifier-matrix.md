@@ -182,3 +182,6 @@ diagnostic meanings.
 | P3 | Sidecar model output is candidate evidence, not acceptance evidence. | LM-565 | A fix adopts Cursor/Grok/Spark claims without local reproduction or a guard. Review condition; no script. | current | [MISSING-FALSIFIER] |
 | P4 | Bootstrap cache/IO/hash code is runtime surface, not harmless infrastructure. | LM-564, LM-565 | A cache or filesystem-tail change lacks a produced-stage guard covering the path that consumes the cache/hash result. Review condition; no script. | next-touch | [MISSING-FALSIFIER] |
 | P5 | A gate-local root fix must name deeper roots that remain open. | LM-564, LM-565 | LANDMARK/TODO wording claims a subsystem is fixed when the evidence only clears a current bootstrap gate. Review condition; no script. | current | [MISSING-FALSIFIER] |
+
+
+| B-SHARED-MODULE-UNION-YIELD | Zero-argument shared module blocks use each concrete union self and preserve caller state | ast_to_hir.cr resolve_union_method_call; inline_union_shared_module_yield; inline_union_yield_variants | shared_module_union_yield_spec.cr; shared_module_union_yield_repro.sh | current | [FALSIFIABLE] Atomic258 passes 3 HIR cases and union259 original-first native guard. Overrides and distinct Defs reject before IR. Nonzero args, separate block metadata failure, and LavinMQ parity remain open. |
