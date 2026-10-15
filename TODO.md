@@ -1,5 +1,17 @@
 # Adamas Bootstrap TODO
 
+2026-10-15 DEFAULTS BEFORE KEYWORD REST: omit the **options declaration from
+positional default matching and consume the resolved nilable Tuple as a typed
+value when packing its named tuple. The previous pointer-address guard rejected
+valid inline resolver results. Sealed native141 passes the two call-shape HIR
+cases and neighboring named-block specs; original-first runtime regression
+matches 42/44/42/42, including dependent defaults and nested callback fallback.
+Evidence: native141_default_double_splat_registered and
+native141_default_double_splat_runtime receipts. Full LavinMQ specs still stop
+at an unresolved AMQP channel receiver; captured Proc ABI and Signal handler
+specialization remain separate open compiler defects. Changes to default,
+keyword-rest, or callback binding require refreshing these guards.
+
 2026-10-15 METHOD POINTER ARGUMENT TRANSPORT: lower explicit input types
 through ordinary typed Proc parameters and bind object receivers at creation.
 Three registered-class HIR cases pass on sealed native134; original-first

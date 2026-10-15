@@ -107208,15 +107208,11 @@ module Adamas::HIR
       ) : nil
       entry = m3n_input ? resolve_call_input(m3n_input) : nil
       return args unless entry
-      # V2 workaround: validate tuple pointer before accessing elements.
-      # V2's nilable tuple handling can pass nil check with corrupted data.
-      entry_raw = pointerof(entry).as(Pointer(UInt64)).value
-      return args unless readable_address?(entry_raw)
-
+      # A nilable Tuple is an inline tagged value, not a reference. Reading
+      # its first machine word as an address rejects valid resolver results.
+      # Consume the typed, non-nil result just like default-argument binding.
       func_name = entry[0]
       func_def = entry[1]
-      func_def_raw = pointerof(func_def).as(Pointer(UInt64)).value
-      return args unless readable_address?(func_def_raw)
       params = function_param_infos(func_name, func_def)
       return args if params.empty?
 
@@ -109811,7 +109807,9 @@ module Adamas::HIR
       param_type_names = [] of String?
 
       params.each do |p|
-        next if p.is_block
+        # The keyword-rest slot is packed after positional defaults. It has
+        # no default expression and must not make those defaults inapplicable.
+        next if p.is_block || p.is_double_splat
         next if named_only_separator?(p)
         local_name = p.name || ""
         param_local_names << local_name
