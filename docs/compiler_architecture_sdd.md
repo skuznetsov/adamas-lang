@@ -3245,3 +3245,22 @@ capability and the previously stated raw-pointer/typeof exclusions remain open.
 Evidence: bootstrap_an_verification.md and
 ../.landmark/evidence/2026-10-13-an-s4-fixed-point.json. Relevant source, runtime,
 toolchain, environment or fixture changes reopen the affected certificate.
+
+### 2026-10-15: ordered require roots and shard layouts
+
+An unqualified require searches the ordered CRYSTAL_PATH roots, including
+Crystal's flat, namespaced and nested shard source layouts. Relative paths
+remain relative to the requiring file. Prelude selection uses the same roots.
+An existing empty wildcard directory succeeds; recursive wildcard traversal
+visits sorted files before sorted subdirectories and follows directory symlinks.
+A missing active RequireNode or macro-literal dependency raises a lowering
+error rather than leaving an incomplete declaration registry.
+
+Native157 passes sixteen focused CLI examples and the original-first
+shard_require_search_path_repro.sh guard: eleven output lines match, including
+load order and symlink traversal, and both compilers reject the missing active
+require. Native155's unchanged LavinMQ spec build advances from the absent
+AMQP client method to unsupported SelectNode. This admits the tested loader
+contract only. Parser-recovery source fallback misses and cross-target C-binding
+selection remain open. Rollback is the isolated CLI loader delta; changes to
+search roots, loader traversal or macro branch admission reopen these checks.

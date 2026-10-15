@@ -1660,10 +1660,11 @@ module Adamas
         unless options.no_prelude
           stage2_debug("[STAGE2_DEBUG] loading prelude branch", err_io)
           prelude_path = if options.prelude_file.empty?
-                           path_join(stdlib_path, "prelude.cr")
+                           resolve_require_path("prelude", input_base_dir, input_base_dir).as?(String) ||
+                             raise HIR::LoweringError.new("can't find \"prelude\" in CRYSTAL_PATH")
                          elsif !options.prelude_file.includes?(File::SEPARATOR) && !options.prelude_file.ends_with?(".cr")
-                           # Short name like "prelude" -> resolve to stdlib path
-                           path_join(stdlib_path, "#{options.prelude_file}.cr")
+                           resolve_require_path(options.prelude_file, input_base_dir, input_base_dir).as?(String) ||
+                             raise HIR::LoweringError.new("can't find #{options.prelude_file.inspect} in CRYSTAL_PATH")
                          else
                            options.prelude_file
                          end
@@ -4679,20 +4680,7 @@ module Adamas
                 requires_out << file
               end
             else
-              if req_path.includes?('*')
-                if glob_files = resolve_wildcard_require(req_path, base_dir)
-                  if options.verbose
-                    log(options, out_io, "    [req-resolved] glob count=#{glob_files.size}")
-                  end
-                  glob_files.each do |file|
-                    requires_out << file
-                  end
-                else
-                  log(options, out_io, "  Warning: Could not resolve require '#{req_path}'")
-                end
-              else
-                log(options, out_io, "  Warning: Could not resolve require '#{req_path}'")
-              end
+              raise HIR::LoweringError.new("can't find #{req_path.inspect} relative to #{base_dir.inspect}", node)
             end
           end
         when Frontend::MacroIfNode
@@ -4750,6 +4738,8 @@ module Adamas
                 resolved.each do |file|
                   requires_out << file
                 end
+              else
+                raise HIR::LoweringError.new("can't find #{req_path.inspect} relative to #{base_dir.inspect}", node)
               end
             end
           end
@@ -7141,155 +7131,136 @@ module Adamas
         end
       end
 
-      private def resolve_require_path(req_path : String, base_dir : String, input_base_dir : String) : String | Array(String) | Nil
-        # V2 guard: string args may be null in stage2
-        return nil if pointerof(req_path).as(Pointer(UInt64)).value == 0_u64
-        return nil if pointerof(base_dir).as(Pointer(UInt64)).value == 0_u64
-        return nil if req_path.bytesize == 0
-        if req_path.starts_with?("/")
-          result = try_require_path(req_path)
-          return result if result
+      # Match CrystalPath's ordered search roots and shard source layouts.
+      # Prelude selection and ordinary requires use the same path authority.
+      private def require_search_paths : Array(String)
+        paths = [] of String
+        if configured = BootstrapEnv.get?("CRYSTAL_PATH")
+          configured.split(Process::PATH_DELIMITER).each do |entry|
+            next if entry.empty?
+            if entry.starts_with?("$ORIGIN/")
+              if executable = Process.executable_path
+                entry = path_join(File.dirname(executable), entry.byte_slice(8))
+              end
+            end
+            paths << entry
+          end
+        else
+          paths << "lib"
+          paths << stdlib_path
         end
 
-        # Handle wildcards (/* and /**)
+        # Keep the existing target choice until cross-target CLI support lands.
+        # Crystal appends its target C bindings after all configured roots.
+        paths.each do |entry|
+          target = path_join(entry, "lib_c", "aarch64-darwin")
+          if Dir.exists?(target)
+            paths << target unless paths.includes?(target)
+            break
+          end
+        end
+        paths
+      end
+
+      private def resolve_require_path(req_path : String, base_dir : String, input_base_dir : String) : String | Array(String) | Nil
+        return nil if pointerof(req_path).as(Pointer(UInt64)).value == 0_u64
+        return nil if pointerof(base_dir).as(Pointer(UInt64)).value == 0_u64
+        return nil if req_path.empty?
+
         if req_path.ends_with?("/*") || req_path.ends_with?("/**")
           return resolve_wildcard_require(req_path, base_dir)
         end
-
-        # Handle special "c/*" requires that map to lib_c/TARGET/c/*.cr
-        # This is Crystal's way of handling platform-specific C library bindings
-        if req_path.starts_with?("c/")
-          # On macOS aarch64, resolve to lib_c/aarch64-darwin/c/*
-          # TODO: Detect actual platform
-          platform = "aarch64-darwin"
-          platform_path = path_join(stdlib_path, "lib_c", platform, req_path)
-          result = try_require_path(platform_path)
-          return result if result
+        if req_path.starts_with?("/")
+          return try_require_path(req_path)
+        end
+        if req_path.starts_with?(".")
+          return try_require_path(File.expand_path(req_path, base_dir))
         end
 
-        # Relative paths
-        if req_path.starts_with?("./") || req_path.starts_with?("../")
-          full_path = if req_path.starts_with?("./")
-                        rel_size = req_path.bytesize - 2
-                        rel_size > 0 ? path_join(base_dir, req_path.byte_slice(2, rel_size)) : base_dir
-                      else
-                        File.expand_path(req_path, base_dir)
-                      end
-          result = try_require_path(full_path)
-          return result if result
-        else
-          # Try relative to current file
-          rel_path = path_join(base_dir, req_path)
-          result = try_require_path(rel_path)
-          return result if result
-
-          # Try relative to input file. Cache its base dir once per top-level
-          # compile instead of recomputing it on every recursive require step.
-          input_dir_ref = pointerof(input_base_dir).as(Pointer(UInt64)).value
-          if input_dir_ref != 0_u64
-            input_rel = path_join(input_base_dir, req_path)
-            result = try_require_path(input_rel)
-            return result if result
-          end
-
-          # Try stdlib
-          sl = stdlib_path
-          sl_ref = pointerof(sl).as(Pointer(UInt64)).value
-          if sl_ref != 0_u64
-            resolved_stdlib = path_join(sl, req_path)
-            result = try_require_path(resolved_stdlib)
-            return result if result
-          end
-
-          # Try original Crystal compiler source (for compiler modules like lexer/parser)
-          csp = CRYSTAL_SRC_PATH
-          csp_ref = pointerof(csp).as(Pointer(UInt64)).value
-          if csp_ref != 0_u64 && File.directory?(csp)
-            crystal_src = path_join(csp, req_path)
-            result = try_require_path(crystal_src)
-            return result if result
+        require_search_paths.each do |root|
+          if resolved = try_search_root_require(req_path, root)
+            return resolved
           end
         end
         nil
       end
 
-      # Try to resolve a require path, handling both files and directories
-      # Crystal convention: require "foo" looks for foo.cr, then foo/foo.cr
-      private def try_require_path(path : String) : String | Nil
-        # V2 guard: File.expand_path may return corrupted/null string in stage2.
-        # path is a reference type (pointer in V2). We use pointerof trick to read
-        # the pointer value WITHOUT dereferencing it.
-        path_ref = pointerof(path).as(Pointer(UInt64)).value
-        return nil if path_ref == 0_u64
-        return nil if path.bytesize <= 0
-        # Try with .cr extension first
-        cr_path = path + ".cr"
-        if File.exists?(cr_path)
-          # Return the carrier file only. Platform-specific files are loaded by
-          # scanning its active macro-if branch; returning Array(String) here is
-          # a generated-stage2 hazard for ordinary direct requires.
-          return cr_path
-        end
+      private def require_file_path(path : String) : String?
+        File.file?(path) ? File.expand_path(path) : nil
+      end
 
-        # Directory convention fallback: foo/foo.cr
-        # Inline basename to avoid V2 Path.new overload dispatch bug
+      private def require_path_basename(path : String) : String
         last_sep = path.rindex('/')
         basename = last_sep ? path.byte_slice(last_sep + 1) : path
-        inner_path = path_join(path, basename + ".cr")
-        if File.exists?(inner_path)
-          return inner_path
+        basename.ends_with?(".cr") ? basename.byte_slice(0, basename.bytesize - 3) : basename
+      end
+
+      private def try_require_path(path : String) : String?
+        direct = path.ends_with?(".cr") ? path : path + ".cr"
+        found = require_file_path(direct)
+        return found if found
+        require_file_path(path_join(path, require_path_basename(path) + ".cr"))
+      end
+
+      private def try_search_root_require(req_path : String, root : String) : String?
+        relative_filename = path_join(root, req_path)
+        direct = relative_filename.ends_with?(".cr") ? relative_filename : relative_filename + ".cr"
+        found = require_file_path(direct)
+        return found if found
+
+        slash = req_path.index('/')
+        if slash
+          shard_name = req_path.byte_slice(0, slash)
+          shard_path = req_path.byte_slice(slash + 1)
+          shard_stem = shard_path.ends_with?(".cr") ? shard_path.byte_slice(0, shard_path.bytesize - 3) : shard_path
+          shard_src = path_join(root, shard_name, "src")
+          found = require_file_path(path_join(shard_src, shard_stem + ".cr"))
+          return found if found
+          found = require_file_path(path_join(shard_src, shard_name, shard_stem + ".cr"))
+          return found if found
+          found = require_file_path(path_join(relative_filename, require_path_basename(relative_filename) + ".cr"))
+          return found if found
+          found = require_file_path(path_join(shard_src, shard_path, shard_stem + ".cr"))
+          return found if found
+          found = require_file_path(path_join(shard_src, shard_name, shard_path, shard_stem + ".cr"))
+          return found if found
+        else
+          basename = require_path_basename(relative_filename)
+          found = require_file_path(path_join(relative_filename, basename + ".cr"))
+          return found if found
+          found = require_file_path(path_join(relative_filename, "src", basename + ".cr"))
+          return found if found
         end
-
-        # Try exact path if it's a file
-        return path if File.exists?(path)
-
         nil
       end
 
-      # Resolve wildcard require patterns like ./io/* or ./io/**
       private def resolve_wildcard_require(req_path : String, base_dir : String) : Array(String)?
-        star_index = -1
-        i = 0
-        size = req_path.bytesize
-        while i < size
-          if req_path.byte_at(i) == '*'.ord.to_u8
-            star_index = i
-            break
-          end
-          i += 1
+        recursive = req_path.ends_with?("/**")
+        suffix_size = recursive ? 3 : 2
+        return nil if req_path.bytesize <= suffix_size
+        pattern = req_path.byte_slice(0, req_path.bytesize - suffix_size)
+        directories = if req_path.starts_with?(".")
+                        [File.expand_path(pattern, base_dir)]
+                      elsif req_path.starts_with?("/")
+                        [pattern]
+                      else
+                        require_search_paths.map { |root| path_join(root, pattern) }
+                      end
+        directories.each do |directory|
+          next unless Dir.exists?(directory)
+          files = [] of String
+          gather_crystal_files(directory, files, recursive)
+          return files.map { |file| File.expand_path(file) }
         end
-        return nil if star_index < 0
-
-        recursive = star_index + 1 < size && req_path.byte_at(star_index + 1) == '*'.ord.to_u8
-        pattern_size = star_index
-        if pattern_size > 0 && req_path.byte_at(pattern_size - 1) == '/'.ord.to_u8
-          pattern_size -= 1
-        end
-        return nil if pattern_size <= 0
-        pattern = req_path.byte_slice(0, pattern_size)
-
-        # Handle relative paths
-        if pattern.starts_with?("./")
-          rel_size = pattern.bytesize - 2
-          return nil if rel_size <= 0
-          full_dir = path_join(base_dir, pattern.byte_slice(2, rel_size))
-        elsif pattern.starts_with?("../")
-          full_dir = File.expand_path(pattern, base_dir)
-        else
-          full_dir = path_join(stdlib_path, pattern)
-        end
-
-        return nil unless Dir.exists?(full_dir)
-
-        files = [] of String
-        gather_crystal_files(full_dir, files, recursive)
-        files.empty? ? nil : files.sort  # Sort for deterministic order
+        nil
       end
 
       # Gather all .cr files in a directory
       private def gather_crystal_files(dir : String, accumulator : Array(String), recursive : Bool)
         dirp = LibC.opendir(dir.to_unsafe)
         return unless dirp
+        files = [] of String
+        directories = [] of String
 
         begin
           while entry_ptr = LibC.readdir(dirp)
@@ -7298,15 +7269,18 @@ module Adamas
             next if name == "." || name == ".."
 
             full_path = path_join(dir, name)
-            if entry.d_type == LibC::DT_DIR
-              gather_crystal_files(full_path, accumulator, true) if recursive
+            # Stat the path so symlinked shard directories have Crystal's behavior.
+            if File.directory?(full_path)
+              directories << full_path if recursive
             elsif name.ends_with?(".cr")
-              accumulator << full_path
+              files << full_path
             end
           end
         ensure
           LibC.closedir(dirp)
         end
+        files.sort.each { |file| accumulator << file }
+        directories.sort.each { |child| gather_crystal_files(child, accumulator, true) }
       end
 
       private def pending_annotation_has?(

@@ -1,5 +1,20 @@
 # Adamas Bootstrap TODO
 
+2026-10-15 CRYSTAL REQUIRE SEARCH ROOTS: native157 searches all CRYSTAL_PATH
+entries in order, supports the standard shard source layouts, resolves the
+prelude through the same roots, and rejects missing active dependencies.
+Recursive wildcard loading follows Crystal's files-before-directories order,
+including symlinked directories and existing empty directories. Sixteen CLI
+examples pass; the original-first runtime regression matches all eleven output
+lines and both compilers reject an active missing require. Evidence:
+native157_shard_require_registered and native157_shard_require_runtime receipts.
+The previous AMQP::Client#connect failure was caused by silently skipping the
+installed amqp-client shard, not by loss of its parsed method. Full LavinMQ
+specs on native155 now reach unsupported SelectNode; parity remains open.
+- [ ] Implement select action/case lowering against Crystal's actual expansion.
+- [ ] Audit unresolved require handling in parser-recovery source fallbacks.
+- [ ] Replace the inherited aarch64-darwin C-binding choice when adding cross-target CLI support.
+
 2026-10-15 DEFAULTS BEFORE KEYWORD REST: omit the **options declaration from
 positional default matching and consume the resolved nilable Tuple as a typed
 value when packing its named tuple. The previous pointer-address guard rejected
