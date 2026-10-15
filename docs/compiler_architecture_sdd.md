@@ -3495,3 +3495,15 @@ and the original-first native projection regression are the DoD. The strongest
 observed falsifiers are the old hydration stack overflow and a namespaced alias
 resolving through a global same-name alias. Both have dedicated regression
 coverage. Refresh when alias resolution or macro value construction changes.
+
+
+### Generic receiver fallback signature preservation (2026-10-15)
+Admitted: once the existing owner-definition check authenticates a receiver
+repair fallback, specialize the exact target's bare generic owner and retain
+its concrete argument suffix. Rejected: applying a foreign receiver owner to
+an unrelated ancestor fallback. Existing concrete-target fallback behavior is
+unchanged. DoD: source360's 29 focused examples and original-first native
+Pointer::Appender outputs pass. The prior HIR fallback-selection assertion
+fails without the one-hunk change. Native agreement alone does not prove that
+the fallback seam ran. Rollback is this atomic commit; refresh on owner lookup
+or mangling changes. Full-prelude/LavinMQ runtime remains outside this slice.

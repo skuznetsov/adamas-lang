@@ -229,3 +229,14 @@ diagnostic meanings.
   validation; finite projection at that entry removes the repeated expansion.
 - Residual: recursive Proc/pointer shorthand value projection is untested;
   LavinMQ source357 still rejects protected `DefinitionsStore#load_apply`.
+
+
+### Generic receiver fallback overload suffix (2026-10-15)
+- RED/GREEN: `pointer_appender_owner_context_spec.cr` requires a bare generic
+  exact target with `$UInt8`/`$Int32` to become a concrete-owner target with the
+  same suffix. Case341 base fails one of two examples; the one-hunk fix passes.
+- Guard: unrelated ancestor and existing concrete-target fallbacks retain their
+  behavior; source360 passes 29 focused cases. The original-first native script
+  checks direct/captured UInt8 and Int32 outputs W/B/* on both compilers.
+- Scope: native base also passes; the HIR assertion, rather than the native
+  guard, is the discriminator. Full-prelude startup still depends on Once ABI.

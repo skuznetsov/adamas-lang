@@ -51059,6 +51059,13 @@ module Adamas::HIR
       fallback_owner_base = method_index_owner_key(fallback_parts.owner)
       return request.fallback_base unless request_owner_base == fallback_owner_base
 
+      # A callsite can retain a bare generic owner even though its receiver
+      # repair record has the concrete receiver. When the exact symbol already
+      # carries argument types, specialize only that authenticated owner and
+      # retain the original signature suffix.
+      concrete_exact = specialize_method_owner_name(request.exact_target, request.owner)
+      return concrete_exact unless concrete_exact == request.exact_target
+
       "#{request.owner}#{separator}#{method}"
     end
 

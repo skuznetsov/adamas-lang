@@ -17756,3 +17756,18 @@ macro_fix (`macro358_atomic_projection_specs`, `macro358_atomic_projection_nativ
 `lavinmq357_finite_macro_projection`). Refresh after alias registration, macro
 projection, type resolver, or the Crystal reference version changes. These
 checks certify this reflection slice only; LavinMQ runtime parity remains open.
+
+
+### Generic receiver fallback retains the overload signature (2026-10-15)
+After authenticating that the fallback and concrete receiver share the same
+owner definition, specialize the owner of the exact target before constructing
+a bare fallback name. This retains `$UInt8`/`$Int32` in Pointer::Appender call
+targets. Unrelated ancestor fallbacks retain their previous behavior.
+Evidence: case341 base has 2 HIR examples/1 failure; its one-hunk overlay has
+2/0. Atomic source360 passes the expanded 29-case HIR/semantic suite and the
+original-first native Pointer::Appender probe (direct/captured UInt8 and Int32,
+output W/B/*). The base native probe also passes: native agreement is a guard,
+and the fallback-selection HIR test is the actual falsifier. Source360 HIR SHA
+e2b2cd1eecaa8fab4d7f29a0208a252fe80be0946258968784a3fa732141f67a.
+Refresh when receiver-repair fallback naming, owner authentication, or symbol
+mangling changes. This does not certify full-prelude startup or LavinMQ parity.

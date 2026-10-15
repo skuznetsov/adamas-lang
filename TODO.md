@@ -19139,3 +19139,10 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   been exercised for unions, generic instances, and NamedTuple field values.
 - [ ] LavinMQ parity remains open: full source357 reaches the protected
   `DefinitionsStore#load_apply` check; this does not establish runtime parity.
+
+
+### Authenticated generic receiver fallback (2026-10-15)
+- [x] Preserve concrete argument suffixes when receiver repair specializes an
+  authenticated bare generic owner, including Pointer::Appender(UInt8/Int32).
+  The exact fallback-selection HIR example is RED before the hunk and GREEN
+  after it; source360 passes 29 focused cases and original-first native outputs.
