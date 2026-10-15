@@ -3431,3 +3431,17 @@ virtual structural transport and complete LavinMQ outcome parity remain open.
   55/55 HIR examples and three native macro observations passing.
 - Open: the separate generic-module WIP may reset validation context. No global
   recursive-type or full LavinMQ parity claim follows from this boundary.
+
+
+#### Terminal block-argument call boundary (2026-10-15)
+
+- Admitted: a shorthand/captured block finishes a no-parentheses call; commas
+  remain available to its enclosing collection or call, including trailing
+  commas in multiline NamedTuples.
+- Guard: binary `&` expressions still allow later positional arguments;
+  parenthesized argument parsing retains its own boundary.
+- Falsifiers: parser_multiline_named_tuple_body_spec.cr (16 cases) and
+  block_argument_collection_boundary_repro.sh (three original-first native
+  checks). Isolated parser325 has 90 parser examples passing.
+- Open: parenthesized extra-block diagnostics, shorthand newline handling, and
+  the separate nested do-block WIP are not widened by this change.

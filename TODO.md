@@ -19075,3 +19075,18 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   reflection; original Crystal preserves alias back-edges in generic arguments.
 - [ ] Continue the full LavinMQ receiver/return inference failure at inherited
   BaseUser#details_tuple: the user_details receiver is Void before merge lookup.
+
+
+### 2026-10-15: terminal block arguments preserve enclosing commas
+
+- [x] End no-parentheses calls after shorthand or captured block arguments in
+  bare, ordinary member, and keyword-member parsing. Preserve the enclosing
+  NamedTuple, tuple, array, or outer-call comma.
+- [x] Isolated parser325 passes 90 parser examples and three original-first
+  native collection checks; full parser323 passes 96 examples and advances
+  LavinMQ beyond the dropped User#user_details body / Hash#merge error.
+- [ ] Audit diagnostics for extra arguments after a block argument in the
+  separate parenthesized path, whose current tests permit consecutive blocks.
+- [ ] Audit physical-newline consumption inside block shorthand postfix parsing.
+- [ ] Continue LavinMQ at Hash#get_entry inferred on a Hash | NamedTuple receiver
+  union; establish the producer before changing dispatch guards.

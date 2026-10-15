@@ -200,3 +200,6 @@ diagnostic meanings.
 
 
 | Recursive macro receiver graph | macro_recursive_type_receiver_spec.cr; macro_recursive_type_receiver_repro.sh | macro305 overflows before repair; isolated macro315 passes 55 HIR examples and three original-first native macro observations; unknown members after recursive edges remain rejected | Generic-module validation context and nested AliasType identity remain separate |
+
+
+| Terminal no-parentheses block argument | parser_multiline_named_tuple_body_spec.cr; block_argument_collection_boundary_repro.sh | Six of nine initial cases fail before repair; isolated parser325 passes 90 parser examples and three original-first native checks; binary ampersand remains positional | Parenthesized extra-block diagnostics and newline handling remain separate |

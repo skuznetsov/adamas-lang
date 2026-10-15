@@ -9745,6 +9745,10 @@ module Adamas
               end
             end
 
+            # A no-parens block argument finishes this call. Any following
+            # comma belongs to the enclosing call or collection.
+            break if terminal_call_block_argument?(arg)
+
             # Check for comma (more arguments)
             if current_token.kind == Token::Kind::Comma
               advance          # consume comma
@@ -13509,6 +13513,10 @@ current_token.kind == Token::Kind::Identifier &&
                     args_b << arg
                   end
 
+                  # A block argument is terminal even when this call is nested
+                  # in a tuple, array, or an outer argument list.
+                  break if terminal_call_block_argument?(arg)
+
                   # Check for comma
                   if current_token.kind == Token::Kind::Comma
                     advance
@@ -13657,6 +13665,10 @@ current_token.kind == Token::Kind::Identifier &&
                     skip_trivia
                     args_b << arg
                   end
+
+                  # A block argument is terminal even when this call is nested
+                  # in a tuple, array, or an outer argument list.
+                  break if terminal_call_block_argument?(arg)
 
                   # Check for comma
                   if current_token.kind == Token::Kind::Comma
@@ -16933,6 +16945,12 @@ current_token.kind == Token::Kind::Identifier &&
           else
             nil
           end
+        end
+
+        private def terminal_call_block_argument?(expr_id : ExprId) : Bool
+          node = @arena[expr_id]
+          return true if node.is_a?(BlockNode)
+          node.is_a?(UnaryNode) && slice_eq?(node.operator, "&")
         end
 
         private def parse_block_shorthand(amp_token : Token) : ExprId

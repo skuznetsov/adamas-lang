@@ -17649,3 +17649,30 @@ spec/native commands if receiver lookup, alias resolution, or type syntax
 changes. Full312 advances LavinMQ to an unrelated inherited receiver inference
 error; full compilation and test parity remain open. Generic-module active-set
 propagation and nested AliasType reflection are separate obligations.
+
+
+### 2026-10-15: enclosing commas after terminal block arguments
+
+The LavinMQ User#user_details body was empty without a parser diagnostic. Its
+multiline NamedTuple contains `@password.try &.hash_algorithm,` followed by
+another field. No-parentheses argument parsing consumed that outer comma and
+absorbed the next field as a named argument (or lost the tuple at its closing
+brace). Original Crystal parse_call_block_arg returns CallArgs immediately
+for either shorthand or captured blocks (syntax/parser.cr:1572-1605).
+
+The three no-parentheses call loops now stop after BlockNode / unary-ampersand
+arguments. Parenthesized calls and binary ampersand expressions keep their
+existing path. RED: parser322b had six failures in nine focused cases; the
+previous committed compiler fails the native reducer with missing key after.
+Isolated parser325 passes 90 parser examples, including 16 focused boundary
+cases, and block_argument_collection_boundary_repro.sh passes three native
+checks against original Crystal. Parser SHA:
+73f2dc6b779196fa6ae57d3708e87f0e8efd6c4c9af3f2691bae34d396bd3153;
+host SHA e6ea77edffbea8ac2a1aacd48e9f20c4f48fca9ddb846da126781bcb7ffe8cf3.
+
+ROBUST for these argument/collection boundaries; refresh the spec and native
+script after call parsing or BlockNode/UnaryNode representation changes. The
+full WIP snapshot passes 96 examples and advances LavinMQ to a separate
+Hash#get_entry receiver-union error. Two nested do-binding WIP tests fail
+identically on the previous HEAD and the isolated projection; that separate
+WIP is preserved. This is not full LavinMQ compilation or runtime parity.
