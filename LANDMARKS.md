@@ -17896,3 +17896,32 @@ Tuple consumer, which previously crashed during Once startup. This producer
 fix does not certify raw callback formal transport, captured lifetime, general
 MT startup, or LavinMQ parity. Refresh after Proc receiver AST, selected-Def
 provenance, type descriptor, or raw constructor lowering changes.
+
+
+### Selected raw-yield callback carrier (2026-10-15)
+MIR body lowering already consumes a non-heap Yield block formal as a raw
+function pointer. Its stub and a direct typed MakeProc call argument must use
+that same carrier. Unwrap only the exact selected formal with an actual
+Yield target, a proven null environment, and a matching concrete Proc
+signature. Direct function pointers must match their function's signature;
+opaque formals must match every targeted Yield. Bounded transparent copies
+of raw pointer parameters preserve the explicit unsafe constructor contract.
+Pointer(Void) needs a representation bitcast at that selected raw formal.
+Captured/non-null environments, copied Proc objects, heap block formals,
+unknown provenance, and mismatched signatures retain the object carrier;
+this refusal is not a complete implementation of captured raw-yield calls.
+Source440 fails six of 18 focused MIR cases. Atomic source450 passes all 18,
+plus original-first native raw callback and raw Proc-pair context controls.
+The native raw-yield fixture also passes source440 and is a compatibility
+control, not the discriminating RED. Source450 MIR SHA is
+6f26cd533aeb244da9d78529bd2a6307e871d82cf2cf22699c48f6a842790bd6.
+Receipts: once446_consumer_carrier_red, once451_consumer_stub_mir,
+once452_native_raw_yield, once462_consumer_raw_pair_control.
+Composed source457 passes the same MIR suite and full-prelude Random::Secure
+before/after checkpoints (once459_full_consumer_mir and
+once458_full_random_checkpoints). Atomic source450 instead raises during
+PCG32.new startup through Secure.rand(Range(Int32, Int32)), before the first
+checkpoint; LLDB captured that separate overload-identity defect in
+once461_atomic_prelude_raise_backtrace. Whole-prelude and LavinMQ parity are
+not certified by this carrier fix. Refresh after HIR block ABI, MakeProc,
+Yield signatures, pointer provenance, or selected callee lowering changes.

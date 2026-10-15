@@ -295,11 +295,48 @@ module Adamas
         !!(desc && (desc.kind == HIR::TypeKind::Proc || desc.name == "Proc" || desc.name.starts_with?("Proc(")))
       end
 
+      # The raw callback ABI accepts the generic pointer sentinel and the
+      # explicit Pointer(Void) carrier used by Pointer(Void).null. Keep other
+      # typed pointers out of this representation-only adaptation.
+      private def raw_callback_pointer_void_type?(type : HIR::TypeRef) : Bool
+        descriptor = @hir_module.get_type_descriptor(type)
+        !!(descriptor && descriptor.kind == HIR::TypeKind::Pointer &&
+          descriptor.type_params == [HIR::TypeRef::VOID])
+      end
+
+      private def raw_callback_pointer_carrier_type?(type : HIR::TypeRef) : Bool
+        type == HIR::TypeRef::POINTER || raw_callback_pointer_void_type?(type)
+      end
+
       private def raw_block_callback_param?(func : HIR::Function, param : HIR::Parameter) : Bool
-        return false unless param.name == "block"
-        return false unless hir_proc_type?(param.type)
+        return false unless param.is_block
+        # An unannotated block can be lowered to the generic Pointer sentinel
+        # even though its body later yields through it (Crystal::Once.exec is
+        # one such stdlib definition). The explicit block marker and the
+        # selected function's block ABI suffix carry that source information;
+        # raw_yield_block_param? additionally requires an actual Yield use.
+        return false unless hir_proc_type?(param.type) || param.type == HIR::TypeRef::POINTER
         name = func.name
         name.includes?("$block") || name.includes?("_block")
+      end
+
+      # Yielded `&block` parameters use the raw callback ABI in MIR: the call
+      # target receives a function pointer, while the HIR descriptor retains
+      # the Proc signature used to lower the indirect yield call.
+      private def raw_yield_block_param?(func : HIR::Function, param : HIR::Parameter) : Bool
+        return false unless param.is_block
+        return false unless raw_block_callback_param?(func, param)
+        return false if func.heap_block_param
+
+        func.blocks.any? do |block|
+          block.instructions.any? do |instruction|
+            if yield_value = instruction.as?(HIR::Yield)
+              yield_value.target == param.id
+            else
+              false
+            end
+          end
+        end
       end
 
       # A `&blk` param the def invokes via `blk.call` (and never yields to)
@@ -308,6 +345,205 @@ module Adamas
       # raw arguments forwarded into such a param.
       private def heap_block_param?(func : HIR::Function, param : HIR::Parameter) : Bool
         param.is_block && func.heap_block_param && !function_contains_yield?(func)
+      end
+
+      # A zero-capture Proc can be passed directly to a raw yield callback
+      # formal: its code pointer is the callback and its environment is null.
+      # Keep this adaptation tied to the exact selected callee/formal and the
+      # direct typed MakeProc producer. The fn operand may be a raw pointer
+      # parameter copied by HIR while constructing that Proc; function-pointer
+      # casts, captured
+      # closures, copied Proc values, and heap `&block` formals remain objects.
+      private def null_env_proc_fnptr_for_raw_yield(
+        caller : HIR::Function,
+        callee : HIR::Function,
+        param : HIR::Parameter,
+        arg_id : HIR::ValueId,
+      ) : Tuple(HIR::ValueId, HIR::TypeRef)?
+        unless raw_yield_block_param?(callee, param)
+          return nil
+        end
+
+        defs = hir_function_defs(caller)
+        make_proc = defs[arg_id]?.as?(HIR::MakeProc)
+        unless make_proc
+          return nil
+        end
+
+        actual_proc_descriptor = @hir_module.get_type_descriptor(make_proc.type)
+        unless actual_proc_descriptor && actual_proc_descriptor.kind == HIR::TypeKind::Proc
+          return nil
+        end
+        proc_signature = actual_proc_descriptor.type_params
+        if proc_signature.empty?
+          return nil
+        end
+
+        formal_proc_descriptor = @hir_module.get_type_descriptor(param.type)
+        if formal_proc_descriptor && formal_proc_descriptor.kind == HIR::TypeKind::Proc
+          if formal_proc_descriptor.type_params.empty?
+            # An unparameterized Proc formal carries no signature itself. It
+            # is safe to adapt only when every Yield on this exact formal
+            # agrees with the direct MakeProc's authenticated signature.
+            unless proc_signature_matches_raw_yields?(callee, param, proc_signature)
+              return nil
+            end
+          else
+            # Preserve exact matching for typed Proc formals.
+            unless make_proc.type == param.type
+              return nil
+            end
+          end
+        elsif param.type == HIR::TypeRef::POINTER
+          # Some untyped `&block` formals are represented as Pointer in HIR.
+          # In that case the MakeProc's Proc descriptor is the only retained
+          # signature, so verify it against every Yield that consumes this
+          # exact formal before adapting the object to the raw callback ABI.
+          unless proc_signature_matches_raw_yields?(callee, param, proc_signature)
+            return nil
+          end
+        else
+          return nil
+        end
+
+        source_id = make_proc.fn_ptr
+        callback_func_pointer = nil.as(HIR::FuncPointer?)
+        raw_callback_param = nil.as(HIR::Parameter?)
+        depth = 0
+        while callback_func_pointer.nil? && raw_callback_param.nil? && depth < 16
+          if source = defs[source_id]?
+            case source
+            when HIR::FuncPointer
+              callback_func_pointer = source
+            when HIR::Copy
+              return nil unless raw_callback_pointer_carrier_type?(source.type)
+              source_id = source.source
+            else
+              return nil
+            end
+          else
+            raw_callback_param = caller.params.find { |candidate| candidate.id == source_id }
+            return nil unless raw_callback_param && raw_callback_pointer_carrier_type?(raw_callback_param.type)
+          end
+          depth += 1
+        end
+        unless callback_func_pointer || raw_callback_param
+          return nil
+        end
+
+        unless null_env_pointer_provenance?(defs, make_proc.env_ptr)
+          return nil
+        end
+
+        if direct_callback = callback_func_pointer
+          callback_func = @hir_module.function_by_name(direct_callback.func_name)
+          unless callback_func
+            return nil
+          end
+          unless callback_func.params.size == proc_signature.size - 1
+            return nil
+          end
+          callback_func.params.each_with_index do |callback_param, index|
+            unless callback_param.type == proc_signature.unsafe_fetch(index)
+              return nil
+            end
+          end
+          unless callback_func.return_type == proc_signature.unsafe_fetch(proc_signature.size - 1)
+            return nil
+          end
+        end
+
+        source_type = if raw_param = raw_callback_param
+                        raw_param.type
+                      else
+                        callback_func_pointer.not_nil!.type
+                      end
+        {source_id, source_type}
+      end
+
+      # HIR materializes `Pointer(Void).null` as an integer zero followed by
+      # an unsafe cast to Pointer. Accept only that transparent representation
+      # chain (plus pointer copies); never infer nullness from an arbitrary
+      # dynamic value or from a nonzero/captured environment.
+      private def null_env_pointer_provenance?(
+        defs : Hash(HIR::ValueId, HIR::Value),
+        env_id : HIR::ValueId,
+      ) : Bool
+        current_id = env_id
+        saw_pointer_cast = false
+        depth = 0
+
+        while depth < 16
+          value = defs[current_id]?
+          return false unless value
+
+          case value
+          when HIR::Copy
+            return false unless raw_callback_pointer_carrier_type?(value.type)
+            current_id = value.source
+          when HIR::Cast
+            return false if value.safe
+            return false unless raw_callback_pointer_carrier_type?(value.type)
+            return false unless raw_callback_pointer_carrier_type?(value.target_type)
+            saw_pointer_cast = true
+            current_id = value.value
+          when HIR::Literal
+            return false unless raw_callback_pointer_carrier_type?(value.type) || saw_pointer_cast
+            return case value.value
+                   when Nil
+                     raw_callback_pointer_carrier_type?(value.type)
+                   when Int64
+                     value.value == 0_i64
+                   when UInt64
+                     value.value == 0_u64
+                   else
+                     false
+                   end
+          else
+            return false
+          end
+
+          depth += 1
+        end
+
+        false
+      end
+
+      private def proc_signature_matches_raw_yields?(
+        callee : HIR::Function,
+        param : HIR::Parameter,
+        proc_signature : Array(HIR::TypeRef),
+      ) : Bool
+        return false if proc_signature.empty?
+
+        proc_arg_count = proc_signature.size - 1
+        saw_targeted_yield = false
+        defs = hir_function_defs(callee)
+        callee.blocks.each do |block|
+          block.instructions.each do |instruction|
+            next unless yielded = instruction.as?(HIR::Yield)
+            next unless yielded.target == param.id
+
+            saw_targeted_yield = true
+            return false unless yielded.args.size == proc_arg_count
+            yielded.args.each_with_index do |arg_id, index|
+              arg_type = if formal = callee.params.find { |candidate| candidate.id == arg_id }
+                           formal.type
+                         else
+                           defs[arg_id]?.try(&.type)
+                         end
+              return false unless arg_type == proc_signature.unsafe_fetch(index)
+            end
+
+            # Void means the yield result is deliberately erased by this
+            # lowering path. Otherwise keep the callsite Proc return contract
+            # aligned with the selected callee's actual yielded result.
+            proc_return_type = proc_signature.unsafe_fetch(proc_signature.size - 1)
+            return false unless yielded.type == HIR::TypeRef::VOID || yielded.type == proc_return_type
+          end
+        end
+
+        saw_targeted_yield
       end
 
       private def classvar_carrier_key(class_name : String, var_name : String) : String
@@ -4174,7 +4410,10 @@ module Adamas
 
         # Add parameter types (needed for call site type checking)
         hir_func.params.each do |param|
-          mir_func.add_param(param.name, convert_type(param.type), param.default_literal)
+          # A targeted Yield consumes this formal as a raw callback address.
+          # Keep the stub and its callsites on the same MIR pointer carrier.
+          param_type = raw_yield_block_param?(hir_func, param) ? TypeRef::POINTER : convert_type(param.type)
+          mir_func.add_param(param.name, param_type, param.default_literal)
         end
         if filter = ENV["DEBUG_MIR_DEFAULT_ARGS"]?
           if filter == "1" || hir_func.name.includes?(filter)
@@ -9005,9 +9244,11 @@ module Adamas
         # then calls fn(args) directly. Carriers are only known for the
         # function being lowered, so skip foreign builders.
         heap_block_callee = nil
+        exact_hir_callee = nil
         if builder.same?(@builder)
-          if (hir_callee = @hir_module.function_by_name(func.name)) && hir_callee.heap_block_param
-            heap_block_callee = hir_callee
+          if hir_callee = @hir_module.function_by_name(func.name)
+            exact_hir_callee = hir_callee
+            heap_block_callee = hir_callee if hir_callee.heap_block_param
           end
         end
 
@@ -9026,6 +9267,30 @@ module Adamas
             # Parameter is a struct carrier; use explicit bounds + unsafe_fetch
             # instead of []? to keep the generated path monomorphic.
             param = params.unsafe_fetch(idx)
+
+            if (hir_callee = exact_hir_callee) && (hir_caller = @current_hir_func) && idx < hir_arg_count
+              hir_params = hir_callee.params
+              if hir_params.size == params.size
+                hir_param = hir_params.unsafe_fetch(idx)
+                hir_arg = uint32_array_fetch_or_zero(hir_args, idx)
+                if raw_fnptr_info = null_env_proc_fnptr_for_raw_yield(hir_caller, hir_callee, hir_param, hir_arg)
+                  raw_fnptr_id, raw_source_hir_type = raw_fnptr_info
+                  raw_fnptr = get_value(raw_fnptr_id)
+                  raw_type = get_mir_value_type_or_void(raw_fnptr)
+                  if raw_type == param.type
+                    result << raw_fnptr
+                    idx += 1
+                    next
+                  elsif raw_callback_pointer_void_type?(raw_source_hir_type) &&
+                        param.type == TypeRef::POINTER && hir_param.is_block &&
+                        raw_yield_block_param?(hir_callee, hir_param)
+                    result << builder.bitcast(raw_fnptr, param.type)
+                    idx += 1
+                    next
+                  end
+                end
+              end
+            end
 
             if (hir_callee = heap_block_callee) && idx < hir_arg_count
               hir_params = hir_callee.params

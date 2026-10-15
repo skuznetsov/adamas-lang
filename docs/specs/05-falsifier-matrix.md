@@ -318,3 +318,20 @@ diagnostic meanings.
 - Scope: only authenticated raw-pair constructor production. Raw callback
   consumers, captured lifetime, MT startup, and LavinMQ parity stay open.
   Refresh on constructor receiver AST, selected definition, or Proc descriptors.
+
+
+### Raw yield callback consumes a direct null-environment Proc (2026-10-15)
+- RED: source440 fails six of 18 MIR carrier cases. The typed raw formal keeps
+  an object type, and direct MakeProc values reach raw callbacks boxed.
+- GREEN: source450 passes all 18 cases, including opaque/typed formals,
+  copied raw pointer and Pointer(Void) carriers, and negative non-null,
+  heap, copied-object, no-Yield, and signature controls. Native raw callback
+  and raw Proc-pair context controls pass both compilers; the former also
+  passes source440 and is not a behavioral RED.
+- Composition: source457 passes the same MIR suite plus full-prelude
+  Random::Secure checkpoints. Atomic source450 still fails before the first
+  checkpoint in separately traced PCG32/Secure.rand overload selection.
+- Scope: selected null-environment raw callback adaptation only. Captured
+  raw-yield transport, lifetime, general MT startup, and LavinMQ parity stay
+  open. Refresh on block ABI, Proc/Yield signatures, pointer provenance, or
+  selected-callee lowering changes.

@@ -19207,3 +19207,17 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Close the separate raw callback consumer/Once transport and MT startup
   contracts. Full-prelude source433 passes the Tuple consumer, while complete
   broker startup and LavinMQ's upstream suite are not yet established.
+
+
+### Null-environment Proc to raw yield callback carrier (2026-10-15)
+- [x] Align the selected raw-yield formal and a directly constructed typed
+  null-environment Proc on the MIR function-pointer carrier. Atomic source450
+  passes 18 MIR cases (source440: six failures) and original-first native
+  callback controls, including a non-null context compatibility check.
+- [ ] Generalize captured/copied Proc transport only with a complete lifetime
+  and callback ABI contract. Retaining an unsupported object is not support
+  for passing that object through a raw-yield callback formal.
+- [ ] Repair the separate overload-identity loss in atomic full-prelude startup:
+  PCG32.new calls Secure.rand(Range(Int32, Int32)) before the first checkpoint.
+  Composed source457 passes that Random::Secure checkpoint control; the
+  atomic source450 does not. LavinMQ parity remains open.

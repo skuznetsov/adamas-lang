@@ -3592,3 +3592,21 @@ source440 passes seven HIR checks and original-first native null/non-null
 callback-context checks. Rollback is the atomic commit. Refresh after receiver
 AST or selected-Def/type registration changes. Consumer-side raw callback ABI,
 lifetime, MT startup, and whole-broker parity require their own evidence.
+
+
+### Direct null-environment Proc at a selected raw-yield formal (2026-10-15)
+The non-heap Yield block ABI receives a raw callback address. Normalize that
+formal in its MIR stub, then adapt a direct typed MakeProc only after proving
+null environment, exact selected formal/Yield use, and callback signature.
+Opaque Proc/Pointer formals must agree with every targeted Yield; a direct
+FuncPointer must also agree with its function definition. Accept only the
+pointer sentinel or Pointer(Void) as transparent raw pointer carriers.
+Heap, captured, non-null, copied-object, unknown, and mismatched cases are
+excluded from adaptation. This guard does not implement captured raw-yield
+transport or lifetime management. Rollback is this atomic MIR change.
+DoD observed: source440 has six failures in 18 MIR cases; source450 has zero,
+with original-first native null/non-null context compatibility controls.
+Full-prelude checkpoints pass only in composed source457; atomic source450
+has a separately traced PCG32/Secure.rand overload-identity startup defect.
+LavinMQ startup and upstream parity remain open. Refresh on block ABI,
+MakeProc/Yield, pointer provenance, or selected-callee representation changes.
