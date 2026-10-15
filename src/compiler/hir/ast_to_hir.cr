@@ -84740,76 +84740,52 @@ module Adamas::HIR
       safe_unary_operator_string(node)
     end
 
-    # Lower the method-pointer shorthand `->Foo.bar` (and `->obj.method`).
-    # The operand is a method-call expression that we wrap in a synthesized
-    # thunk function so it isn't invoked eagerly in the outer context.
-    # The resulting Proc has the method's return type and (currently) no
-    # parameters — sufficient for the 0-arity callbacks used by stdlib (e.g.
-    # Process.after_fork_child_callbacks).
+    # Method-pointer arguments denote input types, not values to evaluate.
+    # Build an ordinary typed Proc so argument and closure transport share the
+    # same lowering as literal callbacks. Bind an object receiver at creation,
+    # before a later assignment can change the variable naming that object.
     private def lower_method_pointer(
       ctx : LoweringContext,
       node : Adamas::Compiler::Frontend::UnaryNode,
     ) : ValueId
-      proc_func_name = "__crystal_method_ptr_#{@proc_function_counter}"
-      @proc_function_counter += 1
-
-      # Create the thunk function (return type is updated after lowering)
-      proc_func = @module.create_function(proc_func_name, TypeRef::VOID)
-      proc_ctx = LoweringContext.new(proc_func, @module, @arena)
-
-      # Save and isolate inline-yield/loop state — thunk body is its own function.
-      saved_return_stack = @inline_yield_return_stack
-      saved_override_stack = @inline_yield_return_override_stack
-      saved_block_body_depth = @inline_yield_block_body_depth
-      @inline_yield_return_stack = [] of InlineReturnContext
-      @inline_yield_return_override_stack = [] of InlineReturnOverride
-      @inline_yield_block_body_depth = 0
-
-      saved_loop_exit_stack = @loop_exit_stack
-      saved_loop_cond_stack = @loop_cond_stack
-      saved_loop_inline_next_depth_stack = @loop_inline_next_depth_stack
-      saved_loop_phi_stack = @loop_phi_stack
-      saved_loop_break_info_stack = @loop_break_info_stack
-      saved_loop_break_inline_locals_stack = @loop_break_inline_locals_stack
-      saved_loop_break_value_stack = @loop_break_value_stack
-      @loop_exit_stack = [] of BlockId
-      @loop_cond_stack = [] of BlockId
-      @loop_inline_next_depth_stack = [] of Int32
-      @loop_phi_stack = [] of Hash(String, Phi)
-      @loop_break_info_stack = [] of Array({BlockId, Hash(String, ValueId)})
-      @loop_break_inline_locals_stack = [] of {BlockId, Array({BlockId, Array(Hash(String, ValueId))})}
-      @loop_break_value_stack = [] of {BlockId, Array({BlockId, ValueId})}
-
-      # Lower the operand (method call) inside the thunk's context.
-      call_value_id = lower_expr(proc_ctx, node.operand)
-      return_type = proc_ctx.type_of(call_value_id)
-
-      if return_type != TypeRef::VOID
-        proc_func.return_type = return_type
+      operand = safe_node(node.operand)
+      target_callee = operand.is_a?(Adamas::Compiler::Frontend::CallNode) ? operand.callee : node.operand
+      target_types = operand.is_a?(Adamas::Compiler::Frontend::CallNode) ? operand.args : [] of ExprId
+      proc_params = [] of Adamas::Compiler::Frontend::Parameter
+      call_args = [] of ExprId
+      target_types.each_with_index do |type_expr, index|
+        type_name = stringify_type_expr(type_expr)
+        raise "Cannot resolve method pointer input type" unless type_name && !type_name.empty?
+        type_name = resolve_type_name_in_context(type_name)
+        type_name = resolve_type_alias_chain(type_name)
+        param_name = "__method_pointer_arg_#{index}"
+        proc_params << Adamas::Compiler::Frontend::Parameter.new(
+          param_name.to_slice, type_annotation: type_name.to_slice, span: node.span,
+        )
+        call_args << @arena.add(Adamas::Compiler::Frontend::IdentifierNode.new(node.span, param_name.to_slice))
       end
 
-      # Restore outer state.
-      @inline_yield_return_stack = saved_return_stack
-      @inline_yield_return_override_stack = saved_override_stack
-      @inline_yield_block_body_depth = saved_block_body_depth
-      @loop_exit_stack = saved_loop_exit_stack
-      @loop_cond_stack = saved_loop_cond_stack
-      @loop_inline_next_depth_stack = saved_loop_inline_next_depth_stack
-      @loop_phi_stack = saved_loop_phi_stack
-      @loop_break_info_stack = saved_loop_break_info_stack
-      @loop_break_inline_locals_stack = saved_loop_break_inline_locals_stack
-      @loop_break_value_stack = saved_loop_break_value_stack
-
-      # Terminate the thunk with `return <call_value>`.
-      block = proc_func.get_block(proc_ctx.current_block)
-      unless block.terminator.is_a?(Return)
-        proc_ctx.terminate(Return.new(call_value_id))
+      if member = safe_node(target_callee).as?(Adamas::Compiler::Frontend::MemberAccessNode)
+        receiver_node = safe_node(member.object)
+        type_receiver = receiver_node.is_a?(Adamas::Compiler::Frontend::PathNode) ||
+                        receiver_node.is_a?(Adamas::Compiler::Frontend::ConstantNode) ||
+                        receiver_node.is_a?(Adamas::Compiler::Frontend::GenericNode)
+        if identifier = receiver_node.as?(Adamas::Compiler::Frontend::IdentifierNode)
+          name = safe_slice_to_string(identifier.name) || ""
+          type_receiver = !name.empty? && name[0].ascii_uppercase?
+        end
+        unless type_receiver
+          receiver_value = lower_expr(ctx, member.object)
+          receiver_name = "__method_pointer_receiver_#{@proc_function_counter}"
+          ctx.register_local(receiver_name, receiver_value)
+          receiver_expr = @arena.add(Adamas::Compiler::Frontend::IdentifierNode.new(node.span, receiver_name.to_slice))
+          target_callee = @arena.add(Adamas::Compiler::Frontend::MemberAccessNode.new(member.span, receiver_expr, member.member))
+        end
       end
 
-      # Proc type is `Proc(ReturnType)` — no parameters for the 0-arity case.
-      proc_type = @module.intern_type(TypeDescriptor.new(TypeKind::Proc, "Proc", [return_type]))
-
-      emit_make_proc_value(ctx, proc_type, proc_func_name, proc_func, [] of CapturedVar)
+      call = @arena.add(Adamas::Compiler::Frontend::CallNode.new(node.span, target_callee, call_args))
+      proc_node = Adamas::Compiler::Frontend::ProcLiteralNode.new(node.span, proc_params, nil, [call])
+      lower_proc_literal(ctx, proc_node)
     end
 
     # ═══════════════════════════════════════════════════════════════════════

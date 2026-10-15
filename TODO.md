@@ -1,5 +1,16 @@
 # Adamas Bootstrap TODO
 
+2026-10-15 METHOD POINTER ARGUMENT TRANSPORT: lower explicit input types
+through ordinary typed Proc parameters and bind object receivers at creation.
+Three registered-class HIR cases pass on sealed native134; original-first
+isolated guards match 42/7/8/12/23 (including implicit self) and callable
+annotation consumers match 42/7/Array(Int32). Evidence:
+native134_method_pointer_inputs_registered,
+native137_method_pointer_implicit_self_runtime and native134_annotation_ast_runtime.
+These integration checks use the sealed compiler sources named by their
+receipts. Full LavinMQ runtime/spec parity remains IN_PROGRESS; pointer
+block/overload interactions require separate guards.
+
 2026-10-15 DEFERRED CONSTANT REGISTRATION ORDER: retain expanded declaration
 order across source arenas, admit runtime indexed reads and bare identifier
 initializers, and include index/identifier dependencies in the sort. The old
