@@ -1,5 +1,16 @@
 # Adamas Bootstrap TODO
 
+2026-10-15 PROGRAM MIXIN LEXICAL CONTEXT: materialized bare Program methods
+consume their registered declaring module during body lowering and protected
+access checks. Native162 rejects the original-valid include reducer; native163
+passes eight focused/neighboring HIR examples and the original-first runtime
+guard (include, extend, relative type, unrelated protected, explicit private).
+Evidence: native163_program_mixin_lexical_context_hir and
+native163_program_mixin_lexical_context_runtime. Unchanged LavinMQ specs pass
+the Spec::Methods#around_each visibility failure and reach the separate captured
+Fiber Proc ABI conflict. Refresh after namespace override or visibility changes.
+
+
 2026-10-15 MODULE DEFAULT RESULT INFERENCE: infer unannotated module call
 results from the selected definition's omitted defaults in its own arena and
 lexical environment. Earlier argument/default bindings remain visible to later
@@ -21,7 +32,7 @@ lines, including an effectful argument called once. Evidence:
 native162_select_expansion_hir and native162_select_argument_effect_runtime.
 Full unchanged LavinMQ specs pass the former SelectNode rejection and reach a
 separate protected Spec::Context#around_each lexical-context failure.
-- [ ] Repair the missing lexical owner of the materialized Spec.around_each body.
+- [x] Repair the lexical owner of materialized Spec::Methods#around_each (native163).
 - [ ] Replace semantic infer_select's Nil placeholder with branch result joining.
 - [ ] Verify the unchanged stdlib Channel scheduler with blocking, nonblocking,
   timeout, closed-channel, receive?, and competing-action runtime cases.

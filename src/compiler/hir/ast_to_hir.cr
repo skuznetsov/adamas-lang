@@ -10402,7 +10402,9 @@ module Adamas::HIR
         STDERR.puts "[VIS_RAISE] target=#{target_name} recv=#{receiver_type} func=#{ctx.function.name} cur_class=#{@current_class || ""} cur_method=#{@current_method || ""} span=#{node.span.start_offset}:#{node.span.end_offset}" if env_get("DEBUG_VIS_RAISE")
         raise LoweringError.new("private method '#{method_name}' called for #{receiver_type}", node)
       when Adamas::Compiler::Frontend::Visibility::Protected
-        if current = @current_class
+        # Included bodies retain their declaring module's lexical access even
+        # when materialized as Program functions or another receiver's method.
+        if current = @current_namespace_override || @current_class
           return if has_protected_access_to?(current, owner_name)
         end
         receiver_type = get_type_name_from_ref(ctx.type_of(receiver_id.not_nil!))
@@ -95291,14 +95293,19 @@ module Adamas::HIR
               log_call_materialization_transaction_ledger(def_transaction)
             end
 
-            if extra_type_params && !extra_type_params.empty?
-              materialization_producer_path = "def_lower_def"
-              with_isolated_type_param_map(extra_type_params) do
+            # Program mixins use bare emitted symbols, but their registered
+            # lexical module still owns constant lookup and protected access.
+            namespace_override = function_namespace_override_for(target_name, base_target_name, name)
+            with_namespace_override_or_clear(namespace_override) do
+              if extra_type_params && !extra_type_params.empty?
+                materialization_producer_path = "def_lower_def"
+                with_isolated_type_param_map(extra_type_params) do
+                  lower_def(resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, override_name)
+                end
+              else
+                materialization_producer_path = "def_lower_def"
                 lower_def(resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, override_name)
               end
-            else
-              materialization_producer_path = "def_lower_def"
-              lower_def(resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, override_name)
             end
           end
         end

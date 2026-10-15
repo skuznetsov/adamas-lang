@@ -1,5 +1,24 @@
 # HIR Name Resolution Contract
 
+## Program mixin lexical context (2026-10-15)
+
+A top-level include or extend may materialize an instance method as a bare
+Program function. Its emitted symbol does not replace its declaring module's
+lexical namespace. Body lowering consumes the registered namespace override,
+including type lookup and protected access. Protected checks use that lexical
+owner before the receiver owner; unrelated modules remain rejected, and an
+explicit receiver does not acquire permission to call a private method.
+
+Falsifiers: spec/hir/program_mixin_lexical_context_spec.cr (five examples)
+with spec/hir/top_level_program_mixin_spec.cr (three neighboring examples),
+and regression_tests/program_mixin_lexical_context_repro.sh (three allowed
+runtime cases and two rejected cases, original-first). Native162 fails the
+three positive HIR cases; native163 passes all eight and the runtime guard.
+The unchanged LavinMQ spec build passes Spec::Methods#around_each and reaches
+the separate Fiber Proc ABI conflict. Refresh after lexical namespace or
+visibility changes; this evidence does not certify LavinMQ parity.
+
+
 ## Module default argument result inference (2026-10-15)
 
 An omitted positional argument binds its default in the selected callee's
@@ -33,8 +52,8 @@ Falsifiers: spec/hir/select_expansion_spec.cr (nine examples) and
 regression_tests/select_action_dispatch_repro.sh (ten identical original-first
 output lines). Native162 uses a deterministic Channel adapter to isolate the
 language expansion; it does not certify stdlib scheduler behavior. Semantic
-infer_select still returns its earlier Nil placeholder. Full LavinMQ specs now
-stop at a separate protected-call lexical-owner defect. Refresh these guards
+infer_select still returns its earlier Nil placeholder. Native163 repairs the
+subsequent protected-call lexical-owner defect. Refresh these guards
 when action construction, branch result joining, or type-query lowering changes.
 
 
