@@ -185,3 +185,6 @@ diagnostic meanings.
 
 
 | B-SHARED-MODULE-UNION-YIELD | Zero-argument shared module blocks use each concrete union self and preserve caller state | ast_to_hir.cr resolve_union_method_call; inline_union_shared_module_yield; inline_union_yield_variants | shared_module_union_yield_spec.cr; shared_module_union_yield_repro.sh | current | [FALSIFIABLE] Atomic258 passes 3 HIR cases and union259 original-first native guard. Overrides and distinct Defs reject before IR. Nonzero args, separate block metadata failure, and LavinMQ parity remain open. |
+
+
+| B-BLOCK-FORALL-NUMERIC-MACRO | Call-local method forall shadows receiver maps; numeric generic arguments preserve macro literal kinds | ast_to_hir.cr lower_call; lower_method; macro_value_for_type_name | block_forall_receiver_binding_spec.cr; block_forall_receiver_binding_repro.sh | current | [FALSIFIABLE] union258 has 5 errors in 7 new HIR examples; sort279 passes all 13 focused examples and six original-first native calls. Concrete owner U and wrong-value rejection survive. Wider numeric syntax, multi-result specialization, and LavinMQ parity remain open. |

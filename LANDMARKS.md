@@ -17514,3 +17514,30 @@ class/struct arms. Nonzero/named/splat calls, the separate existing block-metada
 failure, and LavinMQ parity remain open. Replay after module-origin selection,
 namespace lookup, union layout, or yield-inliner changes; reopen if a source
 identity, override, branch-state, or nonlocal-return guard fails.
+
+
+### 2026-10-15: preserve call-local block forall and numeric macro kinds
+
+Receiver aliases overwrote an inferred block result in the pending map; owner
+registration could overwrite it again at method materialization. Record the
+block result after receiver maps and reapply it after owner registration only
+when the selected Def declares that block result as a method forall. A concrete
+block annotation must leave the owner's same-named parameter unchanged.
+Numeric generic names previously became macro TypeNodes; retain NumberLiteral
+values, source integer kinds, and numeric equality/arithmetic instead.
+
+Lineage: union258 plus sort279_forall_numeric_atomic.overlay.json, three HIR
+hunks only. HIR SHA256:
+8837db7f34ab8b60efa79534fa6e6ecbba09dd5dc17d38a0d373d5a3c4f9aa49.
+Compiler SHA256:
+d5bd5d8a18f5014a3a89b68a0eb344bf5d4b26a6a6e42febc8bdb6fe57c95880.
+Receipts: sort280_forall_numeric_red (7 examples, 5 errors),
+sort279_forall_numeric_hir (13 examples, all passing), and
+sort279_forall_numeric_native (original and candidate exit 0, six calls).
+Adversary verdict: ROBUST for the tested inferred/declared-owner shadowing,
+concrete block annotations, decimal/hex/typed numeric values, and rejection of
+a different value. Multiple block-result specialization identity and wider
+numeric syntax need separate guards. Replay after pending-map ordering, owner
+registration, block signature selection, or macro literal parsing changes.
+LavinMQ runtime parity remains open; the integrated build advances to a
+NamedTuple-union return inference error.

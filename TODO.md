@@ -18991,3 +18991,25 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Continue the full LavinMQ build and runtime parity. The integrated build
   now stops at a StaticArray comparator block whose forall U becomes 2; the
   macro rejection is retained. This commit does not certify that consumer.
+
+
+### 2026-10-15: block forall precedence and numeric generic macro values
+
+- [x] Record the selected block result after receiver aliases and restore a
+  declared method-forall result after owner registration. Keep concrete block
+  annotations from rebinding a same-named owner parameter.
+- [x] Expose numeric generic arguments as NumberLiteral macro values, preserving
+  hexadecimal values and integer kinds. sort279 passes 13 HIR examples and the
+  original-first six-call native regression; union258 has five errors in the
+  seven new HIR examples.
+- [ ] Audit call-local specialization identity when the same block-taking method
+  is called with different block result types; this change establishes binding
+  precedence, not a new specialization key.
+- [ ] Extend numeric macro literal coverage to signed values, full-width integer
+  boundaries, and hexadecimal spellings containing E before claiming that
+  entire parser family. Bare boolean generic literals are rejected by the
+  original compiler and are outside this repair.
+- [ ] Continue LavinMQ: integrated sort275 passes the StaticArray macro rejection
+  and reaches unresolved NamedTuple-union returns. Once callback transport,
+  Pointer::Appender body publication, and abstract numeric overload identity
+  remain separately tracked blockers.

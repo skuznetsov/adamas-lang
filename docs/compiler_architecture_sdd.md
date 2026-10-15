@@ -3361,3 +3361,25 @@ regression_tests/shared_module_union_yield_repro.sh with the atomic258 compiler
 need separate admission proofs. Full LavinMQ compilation and runtime parity are
 not established by this local contract. Refresh the guards after namespace,
 module-origin, union-layout, or yield-inlining changes.
+
+
+### Block forall precedence and numeric generic macro kinds (2026-10-15)
+
+The selected block's inferred result has priority over synthetic receiver
+aliases and a same-named generic owner parameter only when the selected Def
+declares that result as a method forall. Apply this priority both when recording
+the call and after owner registration during materialization. Concrete block
+annotations do not introduce method forall bindings.
+
+Numeric generic arguments entering macro context are NumberLiteral values,
+preserving their source integer kind. They support numeric equality and
+arithmetic rather than TypeNode comparison. The sort279 contract covers decimal,
+hexadecimal, and explicit Int64 literals plus a wrong-value rejection. Bare
+boolean generic literals are not admitted by this change.
+
+DoD: block_forall_receiver_binding_spec.cr plus the existing concrete-kind and
+shared-union contracts (13 passing examples), and the original-first
+block_forall_receiver_binding_repro.sh (both runtimes exit 0, six calls).
+Refresh after call-map ordering, selected block signature, owner registration,
+or macro numeric parsing changes. Full LavinMQ compilation/parity and multiple
+block-result specialization identity remain open.

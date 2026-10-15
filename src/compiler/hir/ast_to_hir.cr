@@ -43103,6 +43103,18 @@ module Adamas::HIR
         end
       end
 
+      # The selected block's method-forall result is call-local. Reapply it
+      # after the owner registration map, which can contain the same name.
+      if block_formal = block_return_type_param_name(full_name, base_name)
+        if forall_type_param_names(node).includes?(block_formal)
+          if block_result = @type_param_map["__block_return__"]?
+            if stable_result = stable_block_return_type_name(block_result)
+              extra_type_params[block_formal] = stable_result
+            end
+          end
+        end
+      end
+
       # Re-resolve annotated return type after type-param map merge.
       # Generic signatures like `: T*` may resolve to VOID before the lazy
       # specialization map is attached.
@@ -77265,6 +77277,13 @@ module Adamas::HIR
     end
 
     private def macro_value_for_type_name(type_name : String) : Adamas::Compiler::Semantic::MacroValue
+      # Generic arguments may be literal values (for example StaticArray's N).
+      # Preserve their macro node kind instead of manufacturing a TypeNode.
+      if value_literal_name?(type_name)
+        if number = Adamas::Compiler::Semantic::MacroNumberValue.from_literal(type_name)
+          return number
+        end
+      end
       resolved = resolve_type_alias_chain(resolve_type_name_in_context(type_name))
       type_vars = nil
       if info = split_generic_base_and_args(resolved)
@@ -104983,13 +105002,6 @@ module Adamas::HIR
         end
       end
 
-      # Lazily lower target function bodies (avoid full stdlib lowering).
-      if block_return_name
-        record_block_return_type_for_call(primary_mangled_name, base_method_name, block_return_name)
-        if mangled_method_name != primary_mangled_name
-          record_block_return_type_for_call(mangled_method_name, base_method_name, block_return_name)
-        end
-      end
       remember_callsite_arg_types(primary_mangled_name, callsite_arg_types, callsite_arg_literals, callsite_arg_enum_names, has_block_call, has_named_args, call_named_arg_names)
       if mangled_method_name != primary_mangled_name
         remember_callsite_arg_types(mangled_method_name, callsite_arg_types, callsite_arg_literals, callsite_arg_enum_names, has_block_call, has_named_args, call_named_arg_names)
@@ -105015,6 +105027,14 @@ module Adamas::HIR
               record_pending_type_param_map(mangled_method_name, pending_map)
             end
           end
+        end
+      end
+      # Receiver aliases are only a fallback: the selected block return formal
+      # belongs to this call and must shadow a same-spelled owner binding.
+      if block_return_name
+        record_block_return_type_for_call(primary_mangled_name, base_method_name, block_return_name)
+        if mangled_method_name != primary_mangled_name
+          record_block_return_type_for_call(mangled_method_name, base_method_name, block_return_name)
         end
       end
       debug_lower_call_trace(
