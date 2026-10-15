@@ -1,5 +1,19 @@
 # Adamas Bootstrap TODO
 
+2026-10-15 INCLUDED MODULE EXTEND SELF: export included definitions through the
+ordinary extend registrar, resolve enclosing namespaces, and export nested
+module mixins after their local methods are registered. Native177 fails the
+top-level reducer; native178 repairs that but fails the nested control.
+Native178c passes twelve focused/neighboring HIR examples and eight
+original-first runtime assertions with matching PQRSTUVW output, including
+local-method precedence. Evidence: module_included177_red,
+module_included178_nested_hir, module_included178c_hir, and
+module_included178c_runtime. Refresh after extend-self discovery, module name
+resolution, or nested registration ordering; LavinMQ parity remains open.
+- [ ] Add original-backed guards for macro-emitted extend-self declarations
+  and generic module instantiations; parsed top-level/nested declarations and
+  scalar overloads do not establish those broader paths.
+
 2026-10-15 GENERATED MODULE EXPORTS: extend registration now includes retained
 macro-generated definitions and producer arenas, including private overloads
 and source modules with extend self. Native175j passes nine focused/neighboring
@@ -9,10 +23,9 @@ module_generated175j_runtime. The preliminary lookup/materialization fallbacks
 were unnecessary and removed; the repair is confined to export registration.
 Refresh after module registration, method indexing, or source-arena changes.
 LavinMQ startup/spec parity remains open.
-- [ ] Repair ordinary included-method forwarding for a module with
-  `include Source; extend self`: generated_included175h exits zero with Crystal
-  but the candidate aborts in GeneratedIncludedConsumer.narrow before reaching
-  its generated private callee. The corresponding included class probe passes.
+- [x] Repair ordinary included-method forwarding for a module with
+  `include Source; extend self`: module_included178c covers top-level and nested
+  consumers, private/public generated overloads, and local-method precedence.
 - [ ] Preserve concrete generic arguments under an abstract Range restriction:
   Random::PCG32.new creates Range(UInt64, UInt64), but startup lowers its Secure
   rand call to Range(Int32, Int32), raising before application main. Use the

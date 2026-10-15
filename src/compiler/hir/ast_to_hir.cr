@@ -24424,13 +24424,24 @@ module Adamas::HIR
     ) : Nil
       class_name = sanitize_type_name(class_name)
 
-      module_full_name = resolve_path_like_name(extend_target)
+      # `extend self` exports the module's included instance methods as well as
+      # its own definitions. SelfNode is intentionally not a path-like name.
+      module_full_name = if !extend_target.invalid? && @arena[extend_target].is_a?(Adamas::Compiler::Frontend::SelfNode)
+                           class_name
+                         else
+                           target_name = resolve_path_like_name(extend_target)
+                           target_name == "self" ? class_name : target_name
+                         end
       return unless module_full_name
       # Prefer nested modules under the extending class.
       if !module_full_name.includes?("::")
         base_owner = strip_generic_args(class_name)
         nested_name = "#{base_owner}::#{module_full_name}"
-        module_full_name = nested_name if @module_defs.has_key?(nested_name)
+        if @module_defs.has_key?(nested_name)
+          module_full_name = nested_name
+        elsif lexical_name = resolve_module_name_in_owner_namespaces(class_name, module_full_name)
+          module_full_name = lexical_name
+        end
       end
       # Generic modules are registered under their declared key (for example
       # `Container(T)`), while a generic extend target resolves to its stripped
@@ -24444,7 +24455,7 @@ module Adamas::HIR
         end
       end
       module_full_name = resolve_module_alias_for_include(module_full_name)
-      record_module_inclusion(module_full_name, class_name, already_resolved: true)
+      record_module_inclusion(module_full_name, class_name, already_resolved: true) unless module_full_name == class_name
       return if visited.includes?(module_full_name)
       visited << module_full_name
 
@@ -33964,6 +33975,21 @@ module Adamas::HIR
             end
           ensure
             @current_class = old_class
+          end
+        end
+        # Export nested-module includes after its own class-form methods have
+        # been registered, so local definitions keep precedence over mixins.
+        if @module_extend_self.includes?(full_name)
+          defined = collect_defined_class_method_full_names(full_name, body, @arena)
+          visited = Set(String).new
+          body.each do |expr_id|
+            next if expr_id.null_ptr? || expr_id.invalid?
+            member = unwrap_visibility_member(@arena[expr_id])
+            next unless member.is_a?(Adamas::Compiler::Frontend::ExtendNode)
+            target = @arena[member.target]
+            next unless target.is_a?(Adamas::Compiler::Frontend::SelfNode) ||
+                        (target.is_a?(Adamas::Compiler::Frontend::IdentifierNode) && (safe_slice_to_string(target.name) || "") == "self")
+            register_module_class_methods_for(full_name, member.target, defined, visited)
           end
         end
       end

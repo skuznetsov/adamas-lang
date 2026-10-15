@@ -1,5 +1,24 @@
 # HIR Name Resolution Contract
 
+## Included module methods under extend self (2026-10-15)
+
+`extend self` exports included instance methods through the same class-method
+registration path as ordinary module extension. Resolve its SelfNode against
+the current module without recording a self-inclusion edge. For a nested
+module, perform this export after registering its own definitions, preserving
+their precedence. Resolve an unqualified include target in enclosing owner
+namespaces before falling back to a global module.
+
+Falsifiers: spec/hir/module_included_extend_self_spec.cr and
+regression_tests/module_included_extend_self_repro.sh. Native177 fails the two
+top-level HIR cases and aborts on the first ordinary wrapper. Native178 repairs
+those but fails the nested case. Native178c passes three focused plus nine
+neighboring HIR examples and eight original-first runtime assertions with
+matching `PQRSTUVW` output, including a local-method precedence guard.
+Refresh after extend-self discovery, nested registration order, or module name
+resolution changes. Macro-emitted extend-self declarations and generic module
+instantiations need separate guards; full LavinMQ parity remains open.
+
 ## Generated module methods exported by extend (2026-10-15)
 
 Extending a module must register its retained macro-generated instance methods
@@ -15,8 +34,8 @@ Falsifiers: spec/hir/module_generated_method_lookup_spec.cr and
 regression_tests/module_generated_method_lookup_repro.sh. Native175j passes two
 focused HIR examples, seven neighboring examples, and six original-first
 runtime assertions with identical `PQRSTU` output. Included class consumers
-also pass a separate runtime probe. A module using `include Source; extend self`
-still loses ordinary forwarding bodies; that separate gap remains in TODO.md.
+also pass a separate runtime probe. The follow-up included-module contract above
+repairs the separate `include Source; extend self` forwarding gap.
 Refresh after module registration, method indexing, or source-arena changes.
 LavinMQ startup and broker/spec parity remain downstream obligations.
 
