@@ -1,5 +1,24 @@
 # Adamas Bootstrap TODO
 
+2026-10-15 RETAINED BLOCK CARRIERS: select a block representation from the
+selected Def/arena or its materialized HIR signature. A named block that is
+forwarded, returned, or captured remains a Proc pair; raw-yield parameters
+retain their callback representation. Carry the existing block value until
+the emitted callee signature settles, including allocator Proc slots, and do
+not wrap an existing heap Proc as a function pointer. Atomic native215 prints
+202/202/405/405 in the repeated-capture reducer; native234 matches original
+Crystal's 101/202/304/405. Seven focused HIR examples and the original-first
+raw Proc pair constructor guard pass. Evidence: heap234_block_carrier_spec,
+heap234_forwarded_capture_baseline_red, heap234_forwarded_capture_atomic_native,
+and heap234_raw_proc_constructor_atomic_native. Refresh after block carrier
+selection, forwarding, callee signature materialization, or Proc coercion changes.
+Full Random/MT startup and LavinMQ broker/spec parity remain open.
+- [ ] Reconcile heap block-pass arguments with raw-yield callee variants in
+  stdlib Crystal::Once.exec; the current full candidate still crashes before
+  Random::Secure enters main. Preserve raw Proc constructor semantics.
+- [ ] Audit methods that both yield and retain their named block, plus multi-hop
+  forwarding through virtual, generic, and splat/default call boundaries.
+
 2026-10-15 CONTROL-FLOW STATEMENT SEPARATORS: leave newlines and semicolons
 after an expression's closing end for its enclosing parser. Consuming them
 inside if/unless/select or loop/spawn/begin parsers joined a following negative

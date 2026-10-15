@@ -486,3 +486,27 @@ Native168 reproduces a missing Hash specialization; native169 matches original
 Crystal's three successful writes. The concurrency-flagged LavinMQ startup remains blocked
 by a separate null Monitor initializer; this guard does not certify app startup.
 Refresh after class-variable inference or annotation owner resolution changes.
+
+## Retained block carrier agreement (2026-10-15)
+
+The selected source Def and its arena determine whether a named block escapes
+as a Proc value before HIR signature materialization. Once a real HIR body and
+block parameter exist, their carrier metadata is authoritative. A provisional
+function's default metadata is not a carrier decision. Method names and sibling
+overloads do not establish the callback representation.
+
+A forwarded, returned, or captured block must retain its code/environment pair.
+Forward the existing value after choosing the emitted target, including plain
+allocator names whose trailing parameter is an ordinary Proc. Raw callback
+coercion must consult the caller's actual block carrier; an existing Proc must
+not be wrapped as a code pointer.
+
+Falsifiers: `spec/hir/block_carrier_selection_spec.cr`,
+`spec/hir/forwarded_block_carrier_spec.cr`, and
+`regression_tests/forwarded_block_capture_repro.sh`. Atomic native215 prints
+202/202/405/405; native234 and original Crystal print 101/202/304/405. Seven
+focused examples and `regression_tests/raw_proc_pair_constructor_contract_repro.sh`
+pass on native234. This covers the retained-block cases and existing raw Proc
+constructor contract. Mixed yield/retention and stdlib Once raw/heap variants
+remain separate obligations; full LavinMQ parity is open. Refresh after block
+selection, forwarding, HIR signature materialization, or Proc coercion changes.

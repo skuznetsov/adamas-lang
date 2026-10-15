@@ -2649,6 +2649,7 @@ module Adamas::HIR
     @return_after_yield_check_cache : Hash({Int32, Int32, UInt64}, Bool) = {} of {Int32, Int32, UInt64} => Bool
     # Cache for def_contains_block_call? keyed by {DefNode object_id, resolved arena object_id} → Bool.
     @block_call_check_cache : Hash({UInt64, UInt64}, Bool) = {} of {UInt64, UInt64} => Bool
+    @heap_block_check_cache : Hash({UInt64, UInt64}, Bool) = {} of {UInt64, UInt64} => Bool
     # Registration-time body arena of each DefNode, keyed by DefNode object_id.
     # Recorded whenever a function name is bound to an arena while that name
     # holds the def, so body inference can use the arena the def was parsed in
@@ -7845,6 +7846,7 @@ module Adamas::HIR
       @yield_check_cache = {} of {Int32, Int32, UInt64} => Bool
       @return_after_yield_check_cache = {} of {Int32, Int32, UInt64} => Bool
       @block_call_check_cache = {} of {UInt64, UInt64} => Bool
+      @heap_block_check_cache = {} of {UInt64, UInt64} => Bool
       # Arena caches
       @arena_for_def_cache = {} of {UInt64, UInt64, UInt64} => Adamas::Compiler::Frontend::ArenaLike
       @unique_def_arenas = {} of UInt64 => Adamas::Compiler::Frontend::ArenaLike
@@ -34660,9 +34662,8 @@ module Adamas::HIR
               # `&@capture` receives the already materialized Proc object from an
               # allocator wrapper. Treating it as a raw callback pointer causes
               # auto-assignment to wrap the object address as a function pointer.
-              # Ordinary `&block` parameters keep their raw callback ABI.
-              captured_proc_type = is_ivar_param ? type_ref_for_name("Proc") : TypeRef::VOID
-              param_type = captured_proc_type == TypeRef::VOID ? TypeRef::POINTER : captured_proc_type
+              # Retained named blocks also keep their heap Proc identity.
+              param_type = untyped_block_parameter_type(node, is_ivar_param)
             end
           end
           if type_ann_str && bare_generic_annotation?(type_ann_str)
@@ -35029,7 +35030,7 @@ module Adamas::HIR
       # Lower explicit parameters.
       param_infos.each_with_index do |(param_name, param_type, is_block), idx|
         hir_param = func.add_param(param_name, param_type, is_block: is_block)
-        func.heap_block_param = true if is_block && def_contains_block_call?(node, @arena)
+        func.heap_block_param = true if is_block && def_requires_heap_block?(node, @arena)
         if default_lit = param_default_literals[idx]?
           hir_param.default_literal = default_lit
           func.set_param_default_literal(hir_param.index, default_lit)
@@ -40761,7 +40762,7 @@ module Adamas::HIR
         # takes a Proc value instead, so that slot stays a plain Proc param.
         hir_param = func.add_param(block_name, block_type, is_block: block_param_raw_callback)
         if block_param_raw_callback && (heap_init_def = matched_init_def) && (heap_init_arena = matched_init_arena)
-          func.heap_block_param = true if def_contains_block_call?(heap_init_def, heap_init_arena)
+          func.heap_block_param = true if def_requires_heap_block?(heap_init_def, heap_init_arena)
         end
         ctx.register_local(block_name, hir_param.id)
         ctx.register_type(hir_param.id, block_type)
@@ -42541,8 +42542,7 @@ module Adamas::HIR
               # Allocator wrappers pass a materialized Proc to `&@capture`.
               # Preserve that object (and its closure environment) instead of
               # re-wrapping its address as a raw callback pointer.
-              captured_proc_type = is_ivar_param ? type_ref_for_name("Proc") : TypeRef::VOID
-              param_type = captured_proc_type == TypeRef::VOID ? TypeRef::POINTER : captured_proc_type
+              param_type = untyped_block_parameter_type(node, is_ivar_param)
             end
           end
           if type_ann_value = type_ann_str
@@ -43157,7 +43157,7 @@ module Adamas::HIR
         end
 
         hir_param = func.add_param(param_name, param_type, is_block: param_info_is_blocks.unsafe_fetch(idx))
-        func.heap_block_param = true if param_info_is_blocks.unsafe_fetch(idx) && def_contains_block_call?(node, @arena)
+        func.heap_block_param = true if param_info_is_blocks.unsafe_fetch(idx) && def_requires_heap_block?(node, @arena)
         if default_lit = param_default_literals[idx]?
           hir_param.default_literal = default_lit
           func.set_param_default_literal(hir_param.index, default_lit)
@@ -55144,36 +55144,78 @@ module Adamas::HIR
       false
     end
 
+    private def def_requires_heap_block?(
+      node : Adamas::Compiler::Frontend::DefNode,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Bool
+      resolved_arena = arena_fits_def?(arena, node) ? arena : resolve_arena_for_def(node, arena)
+      cache_key = def_contains_block_call_cache_key(node, resolved_arena)
+      if @heap_block_check_cache.has_key?(cache_key)
+        return @heap_block_check_cache[cache_key]
+      end
+      result = false
+      if params = node.params
+        if block_param = find_param(params) { |param| param.is_block }
+          unless def_contains_yield?(node, resolved_arena)
+            result = block_param.is_instance_var
+            unless result
+              if (name_slice = block_param.name) && (body = node.body)
+                block_name = safe_slice_to_string(name_slice) || ""
+                unless block_name.empty?
+                  result = with_arena(resolved_arena) do
+                    collect_proc_body_identifiers(body).includes?(block_name)
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+      @heap_block_check_cache[cache_key] = result
+      result
+    end
+
+    private def untyped_block_parameter_type(
+      node : Adamas::Compiler::Frontend::DefNode,
+      captured_ivar : Bool = false,
+    ) : TypeRef
+      return TypeRef::POINTER unless captured_ivar || def_requires_heap_block?(node, @arena)
+      proc_type = type_ref_for_name("Proc")
+      return proc_type unless proc_type == TypeRef::VOID
+      @module.intern_type(TypeDescriptor.new(TypeKind::Proc, "Proc", [] of TypeRef))
+    end
+
     private def block_arg_requires_heap_proc?(
       target_name : String,
-      base_name : String? = nil,
-      method_name : String? = nil,
+      selected_def : Adamas::Compiler::Frontend::DefNode? = nil,
+      selected_arena : Adamas::Compiler::Frontend::ArenaLike? = nil,
     ) : Bool
-      return true if target_name.includes?("Fiber") ||
-                     base_name.try(&.includes?("Fiber")) ||
-                     method_name == "spawn" ||
-                     base_name.try(&.starts_with?("spawn")) ||
-                     target_name.starts_with?("spawn")
-
-      candidates = [] of String
-      candidates << target_name unless target_name.empty?
-      stripped = strip_type_suffix(target_name)
-      candidates << stripped if stripped != target_name
-      if base_name && !base_name.empty?
-        candidates << base_name
-        base_stripped = strip_type_suffix(base_name)
-        candidates << base_stripped if base_stripped != base_name
+      if function = @module.function_by_name(target_name)
+        # Placeholder HIR functions can exist before their selected signature is
+        # materialized, and a body can be present before its block parameter is
+        # admitted. In either case heap_block_param's default false is not an ABI
+        # decision. Use HIR metadata only after both the body and block slot exist.
+        if @module.has_function_with_body?(target_name) && function.params.any?(&.is_block)
+          return function.heap_block_param && !hir_function_contains_yield?(function)
+        end
       end
 
-      candidates.each do |candidate|
-        next unless def_node = @function_defs[candidate]?
-        arena = @function_def_arenas[candidate]? ||
-                @function_def_arenas[strip_type_suffix(candidate)]? ||
-                @arena
-        return true if def_contains_block_call?(def_node, arena)
+      # Before a usable HIR signature exists, fall back only to the definition
+      # selected by call resolution and its producer arena. Never infer the
+      # caller ABI from a same-base overload found by name.
+      if def_node = selected_def
+        if arena = selected_arena
+          return def_requires_heap_block?(def_node, arena)
+        end
       end
 
       false
+    end
+
+    private def hir_function_contains_yield?(function : Adamas::HIR::Function) : Bool
+      function.blocks.any? do |block|
+        block.instructions.any?(&.is_a?(Adamas::HIR::Yield))
+      end
     end
 
     private def def_accepts_block_param?(node : Adamas::Compiler::Frontend::DefNode) : Bool
@@ -70065,10 +70107,7 @@ module Adamas::HIR
               if callback_abi = raw_callback_contract
                 param_type = callback_abi.proc_type
               else
-                # Keep implicit &block callback as a real runtime value.
-                # Using VOID here lets later MIR lowering erase the argument,
-                # which can turn call_indirect into a null call target.
-                param_type = TypeRef::POINTER
+                param_type = untyped_block_parameter_type(node)
               end
             end
             if param_type == TypeRef::VOID && has_type_ann_str && type_ann_str.includes?('|')
@@ -70437,7 +70476,7 @@ module Adamas::HIR
 
       param_infos.each_with_index do |(param_name, param_type, is_block), idx|
         hir_param = func.add_param(param_name, param_type, is_block: is_block)
-        func.heap_block_param = true if is_block && def_contains_block_call?(node, @arena)
+        func.heap_block_param = true if is_block && def_requires_heap_block?(node, @arena)
         if default_lit = param_default_literals[idx]?
           hir_param.default_literal = default_lit
           func.set_param_default_literal(hir_param.index, default_lit)
@@ -102260,6 +102299,7 @@ module Adamas::HIR
 
       # Check for block (ExprId -> must lower to BlockNode) - for non-inline calls only
       # This is after yield function check so we don't emit dead block code
+      block_pass_callback_value : ValueId? = nil
       block_id = if block_expr
                    blk_node = node_for_call_expr(call_arena, block_expr)
                    if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
@@ -102301,7 +102341,9 @@ module Adamas::HIR
                        block_param_types = [ctx.type_of(receiver_id)]
                      end
                    end
-                   lower_block_pass_proc(ctx, block_pass_expr, block_param_types)
+                   block_pass_result = lower_block_pass_proc(ctx, block_pass_expr, block_param_types)
+                   block_pass_callback_value = block_pass_result[1]
+                   block_pass_result[0]
                  else
                    nil
                  end
@@ -105315,7 +105357,12 @@ module Adamas::HIR
           if block_id
             owner_arena = call_arena
             block_arena_for_proc : Adamas::Compiler::Frontend::ArenaLike = @block_node_arenas[blk_node.object_id]? || resolve_arena_for_block(blk_node, owner_arena) || owner_arena
-            heap_block_proc = block_arg_requires_heap_proc?(mangled_method_name, base_method_name, method_name)
+            selected_call_arena = selected_call_entry_name.try do |entry_name|
+              function_def_arena_or_current(entry_name)
+            end || call_arena
+            heap_block_proc = block_arg_requires_heap_proc?(
+              mangled_method_name, selected_call_entry_def, selected_call_arena,
+            )
             if block_return_name.nil?
               block_return_name = inline_block_return_type_name(blk_node, block_param_types_for_proc, @current_class)
             end
@@ -105473,29 +105520,6 @@ module Adamas::HIR
         end
       end
 
-      # Block forwarding: when the caller has &block and the callee expects a
-      # block parameter, forward the raw callback value as the last argument.
-      # Proc materialization is reserved for ordinary Proc parameters; wrapping
-      # here would double-wrap chains such as Array#sort!(&block) -> Slice#sort!(&block).
-      # Accept the same block suffix forms as the resolver/mangler:
-      # bare `$block`, typed `_block`, and arity/splat variants.
-      block_suffix = method_suffix(mangled_method_name)
-      if block_pass_expr && block_suffix && suffix_has_block_flag?(block_suffix)
-        block_pass_node = @arena[block_pass_expr]
-        block_local_name = case block_pass_node
-                           when Adamas::Compiler::Frontend::IdentifierNode
-                             s = safe_slice_to_string(block_pass_node.name)
-                             s ? s.lstrip('@') : nil
-                           else
-                             nil
-                           end
-        if block_local_name
-          if block_val = ctx.lookup_local(block_local_name)
-            args = args + [block_val] unless args.includes?(block_val)
-          end
-        end
-      end
-
       # Block call sites must use the same symbol as `function_full_name_for_def` for `def ... &`.
       # Upstream lowering can leave a bare `Owner#m`, a weak `$block` mangle when some args
       # were still VOID, or a virtual/repair artifact — MIR then emits the wrong LLVM name and
@@ -105592,6 +105616,28 @@ module Adamas::HIR
           mangled_method_name = resolved_emit
           primary_mangled_name = resolved_emit
           lower_function_if_needed(resolved_emit)
+        end
+      end
+
+      # Forward the existing callback carrier after the emitted target settles.
+      # Allocator wrappers can have a plain `new` name and an ordinary Proc slot
+      # for `&@ivar`; the name suffix alone does not describe that signature.
+      # Passing the value unchanged also preserves heap environments and avoids
+      # double-wrapping raw callbacks in chains such as Array#sort! -> Slice#sort!.
+      if block_pass_expr
+        block_suffix = method_suffix(emit_method_name)
+        forward_callback = block_suffix && suffix_has_block_flag?(block_suffix)
+        if callee = @module.function_by_name(emit_method_name)
+          expected_args = callee.params.size - (receiver_id ? 1 : 0)
+          if trailing = callee.params.last?
+            forward_callback = args.size + 1 == expected_args &&
+                               (trailing.is_block || proc_type_ref?(trailing.type))
+          end
+        end
+        if forward_callback
+          if callback_value = block_pass_callback_value
+            args = args + [callback_value]
+          end
         end
       end
 
@@ -108334,6 +108380,13 @@ module Adamas::HIR
       !raw_proc_callback_source(ctx, value_id).nil?
     end
 
+    private def raw_proc_parameter?(function : Function, param : Parameter) : Bool
+      if param.is_block
+        return !function.heap_block_param || hir_function_contains_yield?(function)
+      end
+      raw_block_callback_param?(function, param)
+    end
+
     private def raw_proc_callback_source(ctx : LoweringContext, value_id : ValueId) : ValueId?
       current = value_id
       depth = 0
@@ -108343,7 +108396,7 @@ module Adamas::HIR
         while param_idx < params.size
           param = params.unsafe_fetch(param_idx)
           if param.id == current
-            return current if param.is_block || raw_block_callback_param?(ctx.function, param)
+            return current if raw_proc_parameter?(ctx.function, param)
             return nil
           end
           param_idx += 1
@@ -108352,7 +108405,7 @@ module Adamas::HIR
         value = ctx.value_for(current)
         case value
         when Parameter
-          return current if value.is_block || raw_block_callback_param?(ctx.function, value)
+          return current if raw_proc_parameter?(ctx.function, value)
           return nil
         when FuncPointer
           return current
@@ -115312,6 +115365,8 @@ module Adamas::HIR
       receiver_id : ValueId?,
       call_args : Array(ValueId),
       block : Adamas::Compiler::Frontend::BlockNode,
+      selected_def : Adamas::Compiler::Frontend::DefNode,
+      selected_arena : Adamas::Compiler::Frontend::ArenaLike,
       block_param_types : Array(TypeRef)? = nil,
     ) : ValueId
       if env_get("DEBUG_WITH_BRACE_CALL") && inline_key.includes?("with_brace_newlines_skipped")
@@ -115421,7 +115476,7 @@ module Adamas::HIR
         # Heuristic param-count checks are insufficient because hidden block-callback plumbing
         # is not reliably represented in lowered function params for all yield paths.
         block_arena_for_proc : Adamas::Compiler::Frontend::ArenaLike = @block_node_arenas[block.object_id]? || resolve_arena_for_block(block, caller_arena) || caller_arena
-        heap_block_proc = block_arg_requires_heap_proc?(inline_key, base_inline_name)
+        heap_block_proc = block_arg_requires_heap_proc?(inline_key, selected_def, selected_arena)
         expected_block_proc_return_type = nil.as(TypeRef?)
         if inline_def = @function_defs[inline_key]?
           expected_block_proc_return_type = expected_nil_block_return_type_for_def(inline_key, inline_def)
@@ -115696,7 +115751,7 @@ module Adamas::HIR
 
       if env_has?("ADAMAS_DISABLE_INLINE_YIELD") && fallback_allowed && !concrete_tuple_each_inline
         STDERR.puts "[WITH_BRACE_INLINE] stage=disabled_inline callee=#{inline_key} caller=#{ctx.function.name}" if debug_with_brace
-        return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, block_param_types)
+        return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types)
       end
       ctx.push_scope(ScopeKind::Block)
 
@@ -115713,7 +115768,7 @@ module Adamas::HIR
           STDERR.puts "[INLINE_YIELD] skipping inline: #{inline_key} (depth=#{@inline_yield_name_stack.size}, max=#{max_depth}, repeat=#{repeat_count}, max_repeat=#{max_repeat})"
         end
         if fallback_allowed
-          return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, block_param_types)
+          return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types)
         end
       end
       # Nested inline-yield inside an inlined block body is the main source of
@@ -115729,7 +115784,7 @@ module Adamas::HIR
           STDERR.puts "[INLINE_YIELD] skipping nested block-body inline: #{inline_key} depth=#{@inline_yield_block_body_depth}"
         end
         if fallback_allowed
-          return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, block_param_types)
+          return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types)
         end
       end
       namespace_override = function_namespace_override_for(inline_key, base_inline_name)
@@ -115752,7 +115807,7 @@ module Adamas::HIR
               STDERR.puts "[WITH_BRACE_INLINE] stage=unresolved_generic_receiver callee=#{inline_key} caller=#{ctx.function.name}" if debug_with_brace
               debug_hook("inline.yield.skip", "callee=#{inline_key} receiver=#{receiver} reason=unresolved_generic")
               if fallback_allowed
-                return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, block_param_types)
+                return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types)
               end
               # Block has non-local return — proc materialization cannot represent it.
               # Force inline despite unresolved generic receiver.
@@ -115762,7 +115817,7 @@ module Adamas::HIR
             STDERR.puts "[WITH_BRACE_INLINE] stage=missing_receiver_for_generic callee=#{inline_key} caller=#{ctx.function.name}" if debug_with_brace
             debug_hook("inline.yield.skip", "callee=#{inline_key} receiver=#{receiver} reason=unresolved_generic")
             if fallback_allowed
-              return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, block_param_types)
+              return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types)
             end
             debug_hook("inline.yield.force_inline_for_return", "callee=#{inline_key} reason=missing_receiver_for_generic_with_return")
           end
@@ -115784,7 +115839,7 @@ module Adamas::HIR
         STDERR.puts "[WITH_BRACE_INLINE] stage=block_arena_missing callee=#{inline_key} caller=#{ctx.function.name}" if debug_with_brace
         debug_hook("inline.yield.block_arena_missing", "callee=#{inline_key} caller=#{ctx.function.name}")
         if fallback_allowed
-          return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, block_param_types)
+          return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types)
         end
         # Block has non-local return — proc materialization cannot represent it.
         # Use caller_arena as a fallback to allow inline lowering.
@@ -115801,7 +115856,7 @@ module Adamas::HIR
           )
           STDERR.puts "[WITH_BRACE_INLINE] stage=block_arena_mismatch callee=#{inline_key} caller=#{ctx.function.name} max=#{max_index} arena=#{block_arena.size}" if debug_with_brace
           if fallback_allowed
-            return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, block_param_types)
+            return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types)
           end
           # Block has non-local return — proceed with inline despite arena mismatch.
           debug_hook("inline.yield.force_inline_for_return", "callee=#{inline_key} reason=block_arena_mismatch_with_return")
@@ -115812,7 +115867,7 @@ module Adamas::HIR
           STDERR.puts "[WITH_BRACE_INLINE] stage=block_contains_next callee=#{inline_key} caller=#{ctx.function.name}" if debug_with_brace
           debug_hook("inline.yield.skip", "callee=#{inline_key} reason=block_contains_next")
           if fallback_allowed
-            return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, block_param_types)
+            return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types)
           end
           # Block has non-local return — proc materialization cannot represent it.
           # Force inline despite the next inside body.
@@ -115832,7 +115887,7 @@ module Adamas::HIR
             STDERR.puts "[WITH_BRACE_INLINE] stage=callee_arena_mismatch callee=#{inline_key} caller=#{ctx.function.name} max=#{max_index} arena=#{callee_arena.size}" if debug_with_brace
             debug_hook("inline.yield.arena_mismatch", "callee=#{inline_key} max=#{max_index} arena=#{callee_arena.size}")
             if fallback_allowed
-              return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, block_param_types)
+              return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types)
             end
             # Block has non-local return — proceed with inline despite callee arena mismatch.
             debug_hook("inline.yield.force_inline_for_return", "callee=#{inline_key} reason=callee_arena_mismatch_with_return")
@@ -116169,7 +116224,7 @@ module Adamas::HIR
                   # while materializing the Proc so capture detection sees outer writes.
                   saved_inline_locals = ctx.save_locals
                   ctx.restore_locals(caller_locals)
-                  heap_block_proc = block_arg_requires_heap_proc?(inline_key, base_inline_name, method_name)
+                  heap_block_proc = block_arg_requires_heap_proc?(inline_key, func_def, callee_arena)
                   # Hint: when the proc body is a yield-forwarding shape, its yields
                   # delegate through a captured POINTER whose original Proc type was
                   # erased. The forwarder typically returns whatever the enclosing
@@ -122571,7 +122626,7 @@ module Adamas::HIR
       ctx : LoweringContext,
       proc_expr : ExprId,
       param_types : Array(TypeRef)? = nil,
-    ) : BlockId
+    ) : Tuple(BlockId, ValueId)
       @inline_yield_proc_depth += 1
       proc_node = @arena[proc_expr]
       if env_get("DEBUG_BLOCK_PARAMS") && proc_node.is_a?(Adamas::Compiler::Frontend::ProcLiteralNode) == false
@@ -122645,7 +122700,7 @@ module Adamas::HIR
       ctx.restore_locals(saved_locals)
       @current_typeof_locals = old_typeof_locals
       @current_typeof_local_names = old_typeof_local_names
-      body_block
+      {body_block, proc_id}
     ensure
       @inline_yield_proc_depth -= 1
     end
