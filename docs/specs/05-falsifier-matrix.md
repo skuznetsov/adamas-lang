@@ -306,3 +306,15 @@ diagnostic meanings.
 - Scope guard: ordinary runtime/non-Int32 range source rejection is preserved.
   Metaclass, []?, constant-held and union-receiver ranges are still untested.
   Refresh after Tuple layout, AST range, or scalar overload repair changes.
+
+
+### Explicit raw Proc constructor signature (2026-10-15)
+- RED: source432 emits Struct Proc for authenticated Proc(Nil).new and
+  Proc(Int32, Nil).new when selected generic Proc.new returns self.
+- GREEN: source440 emits Proc descriptors with exact argument/result type
+  parameters. All seven HIR cases pass, preserving the existing four negative
+  ownership/shape controls. Original-first native null/non-null callback
+  context behavior remains equal with explicit PASS and exit zero.
+- Scope: only authenticated raw-pair constructor production. Raw callback
+  consumers, captured lifetime, MT startup, and LavinMQ parity stay open.
+  Refresh on constructor receiver AST, selected definition, or Proc descriptors.

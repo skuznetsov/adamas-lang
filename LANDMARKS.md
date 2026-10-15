@@ -17876,3 +17876,23 @@ tuple434_atomic_hir, tuple437_atomic_native, tuple438_full_native,
 lavinmq420_broker_tuple_once. Refresh on AST range shape, index overload repair,
 Tuple descriptors or layout changes. Metaclass/[]?/constant/union cases and
 LavinMQ runtime/test parity remain open.
+
+
+### Raw Proc construction preserves the explicit concrete signature (2026-10-15)
+A selected generic stdlib Proc.new definition returns self but can carry the
+unspecialized Struct Proc descriptor. The explicit Proc(Nil).new receiver
+still carries the precise callback contract. After all existing definition
+source, pointer parameter, return, and block guards pass, derive the Proc
+signature from that call's type-literal receiver and use it for MakeProc and
+context type registration. Do not infer callback ABI from the bare Struct.
+Source432 fails both new HIR cases: Proc(Nil) and Proc(Int32, Nil) become Struct
+Proc. Atomic source440 passes all seven HIR cases, including the four existing
+negative provenance/shape controls, and the original-first null/non-null
+callback-context native test. Its HIR SHA is
+04a1b94b58667a0599fa7e7546f55accdd972518496fe2f7ac6d816c1c17a7ee.
+External receipts: once441_constructor_signature_red, once442_constructor_hir,
+once444_atomic_native. Full source433 additionally passes the full-prelude
+Tuple consumer, which previously crashed during Once startup. This producer
+fix does not certify raw callback formal transport, captured lifetime, general
+MT startup, or LavinMQ parity. Refresh after Proc receiver AST, selected-Def
+provenance, type descriptor, or raw constructor lowering changes.

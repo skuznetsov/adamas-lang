@@ -106817,6 +106817,7 @@ module Adamas::HIR
       track_call_argument_enum_values(ctx, args, callsite_arg_enum_names)
       if proc_constructor_result = lower_stdlib_raw_proc_pair_constructor(
            ctx,
+           node,
            receiver_id,
            selected_call_entry_name,
            selected_call_entry_def,
@@ -109508,6 +109509,7 @@ module Adamas::HIR
     # ordinary call path.
     private def lower_stdlib_raw_proc_pair_constructor(
       ctx : LoweringContext,
+      call_node : Adamas::Compiler::Frontend::CallNode,
       receiver_id : ValueId?,
       selected_name : String?,
       selected_def : Adamas::Compiler::Frontend::DefNode?,
@@ -109549,10 +109551,31 @@ module Adamas::HIR
       return_annotation = def_node.not_nil!.return_type
       return nil unless return_annotation && safe_slice_to_string(return_annotation).try(&.strip) == "self"
 
-      make_proc = MakeProc.new(ctx.next_id, result_type, args.unsafe_fetch(0), args.unsafe_fetch(1))
+      # The selected generic `Proc.new` Def returns `self`, but its attached
+      # return contract can be the unspecialized `Struct Proc`. Preserve the
+      # concrete Proc signature written on the call's type-literal receiver.
+      concrete_proc_type = proc_constructor_receiver_type(call_node)
+      make_proc_type = concrete_proc_type || result_type
+      make_proc = MakeProc.new(ctx.next_id, make_proc_type, args.unsafe_fetch(0), args.unsafe_fetch(1))
       ctx.emit(make_proc)
-      ctx.register_type(make_proc.id, result_type)
+      ctx.register_type(make_proc.id, make_proc_type)
       make_proc.id
+    end
+
+    private def proc_constructor_receiver_type(
+      call_node : Adamas::Compiler::Frontend::CallNode,
+    ) : TypeRef?
+      return nil if call_node.callee.invalid? || call_node.callee.index < 0 || call_node.callee.index >= @arena.size
+      callee = @arena[call_node.callee]
+      return nil unless callee.is_a?(Adamas::Compiler::Frontend::MemberAccessNode)
+      return nil unless member_access_name_text(callee) == "new"
+
+      receiver_name = stringify_type_expr(callee.object)
+      return nil unless receiver_name && !receiver_name.not_nil!.empty?
+      receiver_type = type_ref_for_name(receiver_name.not_nil!)
+      descriptor = @module.get_type_descriptor(receiver_type)
+      return nil unless descriptor && descriptor.kind == TypeKind::Proc && !descriptor.type_params.empty?
+      receiver_type
     end
 
     private def raw_block_callback_param?(function : Function, param : Parameter) : Bool

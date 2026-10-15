@@ -19197,3 +19197,13 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   passes the same native checks with full prelude and composed compiler fixes.
 - [ ] Probe Tuple metaclass ranges, []?, constant-held ranges, and union tuple
   receivers. These compiler contracts must not be implemented as stdlib edits.
+
+
+### Concrete raw Proc constructor signatures (2026-10-15)
+- [x] Preserve the explicit Proc type-literal receiver's argument/result types
+  when authenticated stdlib Proc.new(Void*, Void*) : self has a generic Struct
+  Proc return contract. Source440 passes seven HIR cases and original-first
+  null/non-null callback-context native controls.
+- [ ] Close the separate raw callback consumer/Once transport and MT startup
+  contracts. Full-prelude source433 passes the Tuple consumer, while complete
+  broker startup and LavinMQ's upstream suite are not yet established.

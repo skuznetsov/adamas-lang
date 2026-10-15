@@ -3579,3 +3579,16 @@ and reach the separate pointer-union blocker. Rollback is the atomic commit;
 refresh on AST, Tuple layout/descriptors, or index dispatch changes. Tuple
 metaclass indexing, []?, constant-held ranges, union receivers, and broker parity
 remain separate obligations.
+
+
+### Concrete signature on authenticated raw Proc construction (2026-10-15)
+The authenticated Proc.new(Void*, Void*) : self lowering retains the concrete
+Proc type named on the call's type-literal receiver. A generic selected Def's
+bare Struct Proc return metadata must not erase explicit argument/result types.
+The existing source authentication and exact parameter/return/block guards
+remain prerequisites. No ordinary user constructor or instance receiver gains
+intrinsic treatment. DoD: source432 fails both new descriptor checks; atomic
+source440 passes seven HIR checks and original-first native null/non-null
+callback-context checks. Rollback is the atomic commit. Refresh after receiver
+AST or selected-Def/type registration changes. Consumer-side raw callback ABI,
+lifetime, MT startup, and whole-broker parity require their own evidence.

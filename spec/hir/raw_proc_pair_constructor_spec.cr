@@ -156,4 +156,26 @@ describe "authenticated stdlib raw Proc pair constructor" do
     instructions.compact_map(&.as?(Adamas::HIR::Call))
       .any? { |call| call.method_name.starts_with?("Proc.new$") }.should be_true
   end
+
+  {"Proc(Nil)" => ["Nil"], "Proc(Int32, Nil)" => ["Int32", "Nil"]}.each do |signature, parameters|
+    it "preserves the concrete signature written on a generic Proc constructor #{signature}" do
+      source = raw_proc_pair_fixture(
+        "fn_ptr : Void*, env_ptr : Void*",
+        "#{signature}.new(fn_ptr, env_ptr)",
+        construct_return_annotation: "",
+      )
+      probe = lower_raw_proc_pair_probe(source, "/fixture/stdlib/proc.cr")
+      constructed = raw_proc_pair_instructions(probe).select(Adamas::HIR::MakeProc).first
+      descriptor = probe.converter.module.get_type_descriptor(constructed.type).not_nil!
+      descriptor.kind.should eq(Adamas::HIR::TypeKind::Proc)
+      descriptor.name.should eq("Proc")
+      descriptor.type_params.map do |parameter|
+        probe.converter.module.get_type_descriptor(parameter).try(&.name) || case parameter
+        when Adamas::HIR::TypeRef::NIL then "Nil"
+        when Adamas::HIR::TypeRef::INT32 then "Int32"
+        else "unexpected"
+        end
+      end.should eq(parameters)
+    end
+  end
 end
