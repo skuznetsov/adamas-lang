@@ -17833,3 +17833,24 @@ enum389_atomic_native, enum389_atomic_baseline_native, enum388_log_setup_consume
 in the external macro_fix directory. Refresh on enum attachment, return caches,
 nominal provenance, source replacement, or carrier layout changes. LavinMQ
 runtime and upstream test parity remain open.
+
+
+### Super defaults retain the selected definition arena (2026-10-15)
+Full source392 recursively lowers Exchange::AccessRefused#initialize's super
+7295 times. Its omitted Exception#initialize cause default belongs to another
+file; reading that ExprId in exchange.cr finds the caller SuperNode again.
+A two-arena falsifier deliberately maps every producer ExprId to caller literal
+99. Both class and included-module defaults become 99 instead of 42 before the
+fix. Resolve the exact selected DefNode arena before lowering each omitted
+argument. Preserve the arena returned by ancestor included-module discovery;
+restore the caller arena before continuing explicit-expression lowering.
+Atomic source399 HIR SHA 455abc5a749ba3049ded1403065e0642cefa36b8ab84ff62815be212f0203045
+passes three HIR examples and an original-first native three-path regression.
+The same native script exits 81 on source389; original Crystal exits zero.
+Full source396 passes the previous LavinMQ stack overflow and reaches Tuple
+range indexing. Receipts super395_default_arena_red, super399_atomic_hir,
+super399_atomic_native, super399_baseline_native, lavinmq398_broker_super_default_arena
+are in the external macro_fix directory. Refresh on super target selection,
+DefNode arena registration, or default argument lowering changes. Lexical and
+parameter-binding semantics of defaults need separate probes; LavinMQ parity
+is still open.

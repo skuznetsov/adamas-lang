@@ -279,3 +279,16 @@ diagnostic meanings.
   struct owners, and source overrides. Nullable/composite self, aliases, and
   post-attachment redefinition remain untested. Refresh on enum return caches,
   attachment, provenance consumption, or layout changes.
+
+
+### Cross-file super defaults (2026-10-15)
+- RED: source392 gives caller literal 99 instead of producer literal 42 in both
+  two-arena HIR cases. The native script exits 81 on source389 after original
+  Crystal succeeds. Full LavinMQ repeats its AccessRefused SuperNode to overflow.
+- GREEN: source399 passes three HIR examples and native class, direct included
+  module, and ancestor included-module checks with output * and exit zero,
+  matching original Crystal. Explicit caller arithmetic remains effective.
+- Guards: caller arena restoration and existing ancestor-loop resolution.
+  Previous-definition and module-super chains, lexical constant shadowing,
+  parameter-referential defaults, and named-only combinations remain untested.
+  Refresh on selected definition ownership or omitted argument lowering changes.

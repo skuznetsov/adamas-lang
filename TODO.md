@@ -19177,3 +19177,13 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Probe inherited nullable `self?`, composite `Array(self)`/union returns,
   alias annotations, and source redefinition after attachment. These adjacent
   combinations are untested, not established failures.
+
+
+### Super default argument source arenas (2026-10-15)
+- [x] Lower omitted super arguments in the selected definition's AST arena,
+  retaining the arena when an ancestor target comes from an included module.
+  Atomic source399 passes three focused HIR examples and original-first native
+  class, direct-module, ancestor-module, and caller-expression controls.
+- [ ] Probe lexical constant shadowing, defaults referring to earlier parameters,
+  named-only/default combinations, and retained previous-definition/module-super
+  chains. Arena ownership alone does not establish these adjacent contracts.

@@ -82032,6 +82032,19 @@ module Adamas::HIR
       end
     end
 
+    private def lower_super_default_argument(
+      ctx : LoweringContext,
+      def_node : Adamas::Compiler::Frontend::DefNode,
+      default_value : ExprId,
+      def_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : ValueId
+      # Default ExprIds belong to the selected definition, not the caller.
+      # Equal numeric ids in another file can name unrelated expressions.
+      with_arena(resolve_arena_for_def(def_node, def_arena)) do
+        lower_expr(ctx, default_value)
+      end
+    end
+
     # Lower super call - calls parent class method with same name
     private def lower_super(ctx : LoweringContext, node : Adamas::Compiler::Frontend::SuperNode) : ValueId
       invocation_context = invocation_context_for_current_method(ctx)
@@ -82086,7 +82099,7 @@ module Adamas::HIR
               next if param.is_block || named_only_separator?(param)
               if param_idx >= args.size
                 if default_val = param.default_value
-                  default_id = lower_expr(ctx, default_val)
+                  default_id = lower_super_default_argument(ctx, actual_prev_def, default_val, function_def_arena_or_current(actual_prev_name))
                   args << default_id
                 else
                   nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
@@ -82147,7 +82160,7 @@ module Adamas::HIR
                     next if param.is_block || named_only_separator?(param)
                     if param_idx >= args.size
                       if default_val = param.default_value
-                        default_id = lower_expr(ctx, default_val)
+                        default_id = lower_super_default_argument(ctx, actual_func_def, default_val, def_arena)
                         args << default_id
                       else
                         nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
@@ -82221,7 +82234,7 @@ module Adamas::HIR
                 next if param.is_block || named_only_separator?(param)
                 if param_idx >= args.size
                   if default_val = param.default_value
-                    default_id = lower_expr(ctx, default_val)
+                    default_id = lower_super_default_argument(ctx, actual_func_def, default_val, def_arena)
                     args << default_id
                   else
                     nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
@@ -82293,6 +82306,8 @@ module Adamas::HIR
           end
         end
 
+        candidate_arena = function_def_arena_or_current(candidate_name)
+
         # Also search included modules of this ancestor for the method.
         # This handles cases where super resolution walks past Array → Reference
         # but the method (e.g. join) lives in Enumerable, included by Array.
@@ -82304,6 +82319,7 @@ module Adamas::HIR
               visited_mods = Set(String).new
               if found = find_module_def_recursive(mod_base, method_name, args.size, visited_mods)
                 candidate_def = found[0]
+                candidate_arena = found[1]
                 candidate_name = base_method_name
                 break
               end
@@ -82325,7 +82341,7 @@ module Adamas::HIR
                 next if param.is_block || named_only_separator?(param)
                 if param_idx >= candidate_args.size
                   if default_val = param.default_value
-                    default_id = lower_expr(ctx, default_val)
+                    default_id = lower_super_default_argument(ctx, candidate_def, default_val, candidate_arena)
                     candidate_args << default_id
                   else
                     callable = false

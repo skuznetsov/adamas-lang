@@ -3548,3 +3548,17 @@ contracts. No generic rule for nullable or composite self returns is admitted.
 DoD: atomic source389 passes eight HIR cases and the original-first native
 inherited-enum regression; the baseline fails the latter. Rollback is the
 atomic commit. Refresh after attachment, lazy return-cache, or enum ABI changes.
+
+
+### Selected super default source ownership (2026-10-15)
+Admitted: omitted arguments of a selected super definition are lowered under
+that exact definition's resolved AST arena. Explicit argument expressions stay
+in the caller arena. Previous, direct included-module, module-super, and
+ancestor lookup paths carry their selected source arena to the shared helper;
+ancestor module discovery must retain its returned arena. No inference from
+numeric ExprId equality is allowed across files. Required-argument and source
+visibility behavior are unchanged. DoD: source399 passes the two-arena HIR
+falsifier, existing ancestor-loop guard, and original-first native class/module/
+ancestor-module checks. Rollback is the atomic commit. Refresh on arena or
+super target registration changes. This contract covers source ownership,
+not additional lexical/default-parameter binding rules.
