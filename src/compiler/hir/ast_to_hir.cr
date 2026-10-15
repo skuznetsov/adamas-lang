@@ -3897,6 +3897,102 @@ module Adamas::HIR
       @current_def_return_type = snapshot.current_def_return_type
     end
 
+    # An abstract numeric annotation constrains the result; it is not an ABI
+    # carrier. Resolving Int through the built-in Int32 alias before lowering
+    # the body would truncate valid UInt64 returns, including Random#rand.
+    private def abstract_numeric_return_constraint(node : Adamas::Compiler::Frontend::DefNode) : String?
+      return nil unless source_annotation = node.return_type
+      return nil unless text = safe_slice_to_string(source_annotation)
+      return nil unless abstract_numeric_return_constraint_name?(text)
+      direct_name = strip_fully_grouped_type_name(text)
+      direct_name = direct_name[2..] if direct_name.starts_with?("::")
+      unless direct_name == "Int" || direct_name == "Float" || direct_name == "Number"
+        raise LoweringError.new("abstract numeric types are not allowed in return unions: #{text}")
+      end
+      direct_name
+    end
+
+    private def abstract_numeric_return_constraint_for_function(name : String) : String?
+      return nil unless definition = @function_defs[name]?
+      return nil unless definition_arena = @function_def_arenas[name]?
+      with_arena(definition_arena) { abstract_numeric_return_constraint(definition) }
+    end
+
+    private def abstract_numeric_return_constraint_name?(name : String) : Bool
+      name = strip_fully_grouped_type_name(name)
+      name = name[2..] if name.starts_with?("::")
+      return true if name == "Int" || name == "Float" || name == "Number"
+      if name.ends_with?('?')
+        return abstract_numeric_return_constraint_name?(name[0...-1])
+      end
+      parts = split_union_type_names(name)
+      parts.size > 1 && parts.any? { |part| abstract_numeric_return_constraint_name?(part) }
+    end
+
+    private def abstract_numeric_return_admits?(constraint : String, actual_name : String) : Bool
+      actual_name = strip_fully_grouped_type_name(actual_name)
+      actual_parts = split_union_type_names(actual_name)
+      if actual_parts.size > 1
+        return actual_parts.all? { |part| abstract_numeric_return_admits?(constraint, part) }
+      end
+
+      constraint = strip_fully_grouped_type_name(constraint)
+      constraint = constraint[2..] if constraint.starts_with?("::")
+      if constraint.ends_with?('?')
+        return actual_name == "Nil" || abstract_numeric_return_admits?(constraint[0...-1], actual_name)
+      end
+      parts = split_union_type_names(constraint)
+      if parts.size > 1
+        return parts.any? { |part| abstract_numeric_return_admits?(part, actual_name) }
+      end
+
+      integer = actual_name == "Int8" || actual_name == "Int16" || actual_name == "Int32" ||
+                actual_name == "Int64" || actual_name == "Int128" || actual_name == "UInt8" ||
+                actual_name == "UInt16" || actual_name == "UInt32" || actual_name == "UInt64" ||
+                actual_name == "UInt128"
+      floating = actual_name == "Float32" || actual_name == "Float64"
+      case constraint
+      when "Int"    then integer || class_inherits_from?(actual_name, "Int")
+      when "Float"  then floating || class_inherits_from?(actual_name, "Float")
+      when "Number" then integer || floating || class_inherits_from?(actual_name, "Number")
+      else
+        actual_name == get_type_name_from_ref(annotation_type_ref(constraint, @current_class))
+      end
+    end
+
+    private def finalize_abstract_numeric_return(
+      ctx : LoweringContext,
+      constraint : String,
+      last_value : ValueId?,
+    ) : TypeRef
+      types = [] of TypeRef
+      reachable = reachable_blocks(ctx.function)
+      reachable.each do |block|
+        next unless term = block.terminator.as?(Return)
+        types << (term.value.try { |value| ctx.type_of(value) } || TypeRef::NIL)
+      end
+
+      tail = ctx.get_block(ctx.current_block)
+      if tail.terminator.is_a?(Unreachable) &&
+         !block_has_raise_instruction?(tail) &&
+         !control_flow_dead_block?(ctx, ctx.current_block) &&
+         reachable.any? { |block| block.id == tail.id }
+        types << (last_value.try { |value| ctx.type_of(value) } || TypeRef::NIL)
+      end
+      types.reject! { |type| type == TypeRef::VOID }
+      types.each do |type|
+        actual_name = get_type_name_from_ref(type)
+        unless abstract_numeric_return_admits?(constraint, actual_name)
+          raise LoweringError.new("return type #{actual_name} does not satisfy #{constraint} in #{ctx.function.name}")
+        end
+      end
+      inferred = merge_return_types(types) || TypeRef::VOID
+      ctx.function.return_type = inferred
+      # This replaces only the exact symbol after checking its source contract.
+      register_function_type(ctx.function.name, inferred, allow_explicit_replacement: true)
+      inferred
+    end
+
     private record InlineCalleeLocalScanScopeSnapshot,
       arena : Adamas::Compiler::Frontend::ArenaLike,
       inline_yield_block_stack : Array(Adamas::Compiler::Frontend::BlockNode),
@@ -9442,7 +9538,7 @@ module Adamas::HIR
         new_name = get_type_name_from_ref(return_type)
         # If existing type is a union/nilable (contains "|") and new type is a plain type
         # that doesn't match the container type, keep the existing type.
-        if old_name.includes?(" | ") && !new_name.includes?(" | ")
+        if !allow_explicit_replacement && old_name.includes?(" | ") && !new_name.includes?(" | ")
           # Extract owner from full_name (e.g., "Hash(...)" from "Hash(...)#method$args")
           owner = method_owner_from_name(base_name)
           # If the new type is unrelated to the owner (e.g., IO for Hash method), skip update
@@ -34882,6 +34978,8 @@ module Adamas::HIR
 
       register_pending_method_effects(full_name, param_types.size)
 
+      abstract_return_constraint = abstract_numeric_return_constraint(node)
+      return_type = TypeRef::VOID if abstract_return_constraint
       func = @module.create_function(full_name, return_type)
       if path = source_path_for(@arena)
         func.definition_location = SourceLocation.new(path.not_nil!, node.span.start_line, node.span.start_column)
@@ -34982,6 +35080,9 @@ module Adamas::HIR
       ensure
         @assigned_vars_stack.pop? if body_exprs
         restore_method_body_lowering_scope(body_scope_snapshot)
+      end
+      if constraint = abstract_return_constraint
+        return_type = finalize_abstract_numeric_return(ctx, constraint, last_value)
       end
       # Coerce return value to match declared return type if needed.
       if return_type != TypeRef::VOID
@@ -42972,6 +43073,10 @@ module Adamas::HIR
         return
       end
 
+      abstract_return_constraint = if !is_initialize_method && !(method_name == "value" && !enum_base_type_by_name?(class_name).nil?)
+                                     abstract_numeric_return_constraint(node)
+                                   end
+      return_type = TypeRef::VOID if abstract_return_constraint
       func = @module.create_function(full_name, return_type)
       stop_after_pending_target_lower_method_phase(
         "lower_method_function_created",
@@ -43419,6 +43524,9 @@ module Adamas::HIR
         effective_full_name_override
       )
 
+      if constraint = abstract_return_constraint
+        return_type = finalize_abstract_numeric_return(ctx, constraint, last_value)
+      end
       # Coerce return value to match declared return type if needed.
       # This handles cases like returning {nil, 0} (Tuple(Nil, Int32))
       # from a function with return type {Int32?, Int32?} (Tuple(Int32|Nil, Int32|Nil)).
@@ -65139,6 +65247,16 @@ module Adamas::HIR
       return_type_name = (safe_slice_to_string(return_type_slice) || "")
       return nil if return_type_name.empty?
 
+      if return_type_name == "Int" || return_type_name == "Float" || return_type_name == "Number"
+        if function = @module.function_by_name(normalized_mangled)
+          if @module.has_function_with_body?(normalized_mangled) &&
+             function.return_type != TypeRef::VOID &&
+             abstract_numeric_return_admits?(return_type_name, get_type_name_from_ref(function.return_type))
+            return function.return_type
+          end
+        end
+      end
+
       owner_override = method_owner(normalized_base)
       if owner_override.empty?
         owner_override = method_owner(normalized_mangled)
@@ -70022,7 +70140,8 @@ module Adamas::HIR
 
             exact_runtime_param_type = if use_specialized_runtime_param_types &&
                                           !param.is_block && !param.is_splat && !param.is_double_splat &&
-                                          should_use_exact_call_type_for_local_inference?(param_type, call_type_for_param)
+                                          (should_use_exact_call_type_for_local_inference?(param_type, call_type_for_param) ||
+                                           should_use_exact_call_type_for_annotation?(has_type_ann_str ? type_ann_str : nil, call_type_for_param))
                                          call_type_for_param
                                        else
                                          param_type
@@ -70308,6 +70427,8 @@ module Adamas::HIR
       # Lower a guessed predicate body without the Bool contract so its
       # returns are neither coerced to Bool nor skip inference below.
       return_type = TypeRef::VOID if predicate_return_guess && return_type == TypeRef::BOOL
+      abstract_return_constraint = abstract_numeric_return_constraint(node)
+      return_type = TypeRef::VOID if abstract_return_constraint
       func = @module.create_function(full_name, return_type)
       if path = source_path_for(@arena)
         func.definition_location = SourceLocation.new(path.not_nil!, node.span.start_line, node.span.start_column)
@@ -70382,6 +70503,9 @@ module Adamas::HIR
       # Re-entered def lowering can overwrite the captured local return type
       # while the function object retains the authoritative value.
       return_type = ctx.function.return_type
+      if constraint = abstract_return_constraint
+        return_type = finalize_abstract_numeric_return(ctx, constraint, last_value)
+      end
 
       # Coerce return value to match declared return type if needed.
       # This handles cases like returning {nil, 1} (Tuple(Nil, Int32))
@@ -104730,7 +104854,8 @@ module Adamas::HIR
       # force it now before we freeze the call instruction type.
       force_return_type_needed = return_type == TypeRef::VOID ||
                                  is_union_type?(return_type) ||
-                                 unresolved_generic_return_type?(return_type)
+                                 unresolved_generic_return_type?(return_type) ||
+                                 !abstract_numeric_return_constraint_for_function(mangled_method_name).nil?
       if force_return_type_needed && debug_env_filter_match?("DEBUG_CALL_LOOKUP", ctx.function.name, primary_mangled_name, mangled_method_name, base_method_name)
         selected_identity = if def_node = selected_return_def
                               selected_arena = selected_call_entry_name.try { |entry_name| @function_def_arenas[entry_name]? }
@@ -120328,7 +120453,9 @@ module Adamas::HIR
         lower_function_if_needed(actual_name)
       end
 
-      if (return_type == TypeRef::VOID || is_union_type?(return_type) || unresolved_generic_return_type?(return_type)) &&
+      if (return_type == TypeRef::VOID || is_union_type?(return_type) ||
+          unresolved_generic_return_type?(return_type) ||
+          !abstract_numeric_return_constraint_for_function(actual_name).nil?) &&
          force_pending_call_targets_for_return_type(actual_name, primary_name, base_method_name, context: "member_access")
         refreshed = get_function_return_type(actual_name, 0)
         if refreshed == TypeRef::VOID && actual_name != primary_name
@@ -121282,6 +121409,11 @@ module Adamas::HIR
       lower_function_if_needed(mangled_name)
       if actual_name != mangled_name
         lower_function_if_needed(actual_name)
+      end
+      if !abstract_numeric_return_constraint_for_function(actual_name).nil? &&
+         force_pending_call_targets_for_return_type(actual_name, mangled_name, full_method_name, context: "static_member_access")
+        refreshed = get_function_return_type(actual_name)
+        return_type = refreshed unless refreshed == TypeRef::VOID
       end
 
       args = coerce_args_to_param_types(ctx, args, actual_name)

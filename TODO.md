@@ -1,5 +1,25 @@
 # Adamas Bootstrap TODO
 
+2026-10-15 ABSTRACT NUMERIC RETURN CONTRACTS: treat Int, Float, and Number
+as membership constraints while inferring the concrete ABI carrier from the
+reachable body returns. Preserve wide free-function arguments and materialize
+pending numeric bodies before emitting ordinary, member, or static calls.
+Atomic native211 passes 31 focused/neighboring HIR examples and the durable
+original-first ABCDEFGHI native guard. Controls include UInt64 module/class/free
+results, explicit returns with dead tails, Float32/Float64 and integer/floating
+union results, nonnumeric rejection, and concrete annotation preservation.
+Evidence: numeric213_return_hir and numeric214_return_durable_native. Refresh
+after return inference, result caching, or deferred call materialization changes.
+Full Random/MT startup and LavinMQ broker/spec parity remain open.
+- [ ] Preserve statement boundaries after if/unless expressions: a following
+  negative literal is currently parsed as subtraction from the conditional.
+  Original Crystal accepts numeric208_return_mixed_carriers; Adamas rejects
+  the resulting false Nil return. Audit other control-flow parsers with the
+  same separator consumption and retain a same-line subtraction control.
+- [ ] Audit generic return restrictions and custom Number descendants with
+  original-first oracles. These controls cover direct abstract annotations;
+  Crystal 1.21 rejects abstract numeric types inside explicit return unions.
+
 2026-10-15 SELECTED OVERLOAD SPECIALIZATION: inspect the selected overload's
 restriction before an unsuffixed sibling, then bind that exact DefNode/arena
 when an abstract numeric restriction receives a concrete callsite symbol.

@@ -1,5 +1,27 @@
 # HIR Name Resolution Contract
 
+## Abstract numeric return contracts (2026-10-15)
+
+A direct Int, Float, or Number return annotation constrains membership; it does
+not prescribe an Int32, Float64, or abstract object ABI. Infer the concrete
+carrier from reachable explicit and implicit returns, validate every member,
+and publish it only under the exact selected function symbol. A dead nil tail
+after an explicit return contributes no result. Finish a pending numeric body
+before a call instruction freezes its result type, including zero-argument
+static calls. Free-function parameters preserve the same concrete numeric
+callsite carrier as module and class methods.
+
+Falsifiers: spec/hir/abstract_numeric_return_contract_spec.cr and
+regression_tests/abstract_numeric_return_contract_repro.sh. Atomic native211
+passes 31 focused/neighboring HIR examples and matches original Crystal's
+ABCDEFGHI native output. Guards cover wide UInt64 results and arguments,
+explicit returns, mixed integer widths, Float32/Float64 and Number results,
+invalid String results, and a concrete annotation control. Crystal 1.21 rejects
+abstract numeric return unions; the HIR rejection follows that oracle. Refresh
+after return inference, cache replacement, or deferred call materialization
+changes. Generic return restrictions, negative literals after conditionals,
+full MT startup, and LavinMQ broker/spec parity remain separate obligations.
+
 ## Selected overload specialization and source binding (2026-10-15)
 
 The selected overload owns the restriction used to decide concrete callsite
