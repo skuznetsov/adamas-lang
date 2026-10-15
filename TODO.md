@@ -1,5 +1,20 @@
 # Adamas Bootstrap TODO
 
+2026-10-15 SELECT ACTION LOWERING: native162 expands SelectNode to the same
+Channel actions and indexed case as Crystal, retaining branch assignments,
+empty else clauses, global operation paths, and single evaluation of arguments.
+Nine focused HIR examples pass; the original-first runtime guard matches ten
+lines, including an effectful argument called once. Evidence:
+native162_select_expansion_hir and native162_select_argument_effect_runtime.
+Full unchanged LavinMQ specs pass the former SelectNode rejection and reach a
+separate protected Spec::Context#around_each lexical-context failure.
+- [ ] Repair the missing lexical owner of the materialized Spec.around_each body.
+- [ ] Replace semantic infer_select's Nil placeholder with branch result joining.
+- [ ] Verify the unchanged stdlib Channel scheduler with blocking, nonblocking,
+  timeout, closed-channel, receive?, and competing-action runtime cases.
+- [ ] Replay full unchanged LavinMQ runtime/spec parity after the compiler fixes.
+
+
 2026-10-15 CRYSTAL REQUIRE SEARCH ROOTS: native157 searches all CRYSTAL_PATH
 entries in order, supports the standard shard source layouts, resolves the
 prelude through the same roots, and rejects missing active dependencies.

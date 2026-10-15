@@ -1,5 +1,26 @@
 # HIR Name Resolution Contract
 
+## Select action expansion (2026-10-15)
+
+The legacy HIR path admits select conditions represented by calls, including
+member access, global calls, and assignment from a call. It constructs each
+receiver and argument once, preserving named arguments and blocks, then calls
+::Channel.select or ::Channel.non_blocking_select with the action tuple.
+The returned zero-based index selects the original branch body; assignments
+cast the returned value using semantic typeof of the original operation.
+Type queries must not execute that operation. An existing empty else is a
+nonblocking fallback; an absent else raises on an invalid selected index.
+Generated locals are inaccessible to source identifiers.
+
+Falsifiers: spec/hir/select_expansion_spec.cr (nine examples) and
+regression_tests/select_action_dispatch_repro.sh (ten identical original-first
+output lines). Native162 uses a deterministic Channel adapter to isolate the
+language expansion; it does not certify stdlib scheduler behavior. Semantic
+infer_select still returns its earlier Nil placeholder. Full LavinMQ specs now
+stop at a separate protected-call lexical-owner defect. Refresh these guards
+when action construction, branch result joining, or type-query lowering changes.
+
+
 > Status: Draft v0.1, 2026-05-08.
 > Scope: HIR ownership, nested names, type literals, and source-backed recovery.
 

@@ -74051,6 +74051,8 @@ module Adamas::HIR
         nil_lit.id
       when Adamas::Compiler::Frontend::SpawnNode
         lower_spawn(ctx, node)
+      when Adamas::Compiler::Frontend::SelectNode
+        lower_select(ctx, node)
       else
         if env_has?("DEBUG_LOWER_UNSUPPORTED")
           STDERR.puts "[LOWER_UNSUPPORTED] #{node.class.name}"
@@ -95566,6 +95568,93 @@ module Adamas::HIR
       nil
     end
 
+    # Match Crystal's literal expansion: construct each action once, then let
+    # Channel own synchronization and dispatch the returned index through case.
+    private def expand_select(node : Adamas::Compiler::Frontend::SelectNode) : Adamas::Compiler::Frontend::BeginNode
+      span = node.span
+      suffix = @arena.size
+      index_id = @arena.add_typed(Adamas::Compiler::Frontend::IdentifierNode.new(span, "$select_index_#{suffix}".to_slice))
+      value_id = @arena.add_typed(Adamas::Compiler::Frontend::IdentifierNode.new(span, "$select_value_#{suffix}".to_slice))
+      actions = [] of Adamas::Compiler::Frontend::ExprId
+      branches = [] of Adamas::Compiler::Frontend::WhenBranch
+      node.branches.each_with_index do |branch, index|
+        condition = @arena[branch.condition]
+        original_call = condition.is_a?(Adamas::Compiler::Frontend::AssignNode) ? condition.value : branch.condition
+        actions << select_action_call(original_call)
+        body = branch.body.dup
+        if condition.is_a?(Adamas::Compiler::Frontend::AssignNode)
+          # typeof is semantic-only: the receive/send expression must not run
+          # a second time merely to recover this branch's result type.
+          type_id = @arena.add_typed(Adamas::Compiler::Frontend::TypeofNode.new(span, [original_call]))
+          as_id = @arena.add_typed(Adamas::Compiler::Frontend::MemberAccessNode.new(span, value_id, "as".to_slice))
+          cast_id = @arena.add_typed(Adamas::Compiler::Frontend::CallNode.new(span, as_id, [type_id]))
+          body.unshift(@arena.add_typed(Adamas::Compiler::Frontend::AssignNode.new(span, condition.target, cast_id)))
+        end
+        number_id = @arena.add_typed(Adamas::Compiler::Frontend::NumberNode.new(span, index.to_s.to_slice, Adamas::Compiler::Frontend::NumberKind::I32))
+        branches << Adamas::Compiler::Frontend::WhenBranch.new([number_id], body, branch.span)
+      end
+      channel_id = @arena.add_typed(Adamas::Compiler::Frontend::IdentifierNode.new(span, "Channel".to_slice))
+      global_channel_id = @arena.add_typed(Adamas::Compiler::Frontend::PathNode.new(span, nil, channel_id))
+      method_name = node.else_branch ? "non_blocking_select" : "select"
+      callee_id = @arena.add_typed(Adamas::Compiler::Frontend::MemberAccessNode.new(span, global_channel_id, method_name.to_slice))
+      actions_id = @arena.add_typed(Adamas::Compiler::Frontend::TupleLiteralNode.new(span, actions))
+      call_id = @arena.add_typed(Adamas::Compiler::Frontend::CallNode.new(span, callee_id, [actions_id]))
+      multi_id = @arena.add_typed(Adamas::Compiler::Frontend::MultipleAssignNode.new(span, [index_id, value_id], call_id))
+      fallback = node.else_branch
+      unless fallback
+        message_id = @arena.add_typed(Adamas::Compiler::Frontend::StringNode.new(span, "BUG: invalid select index".to_slice))
+        fallback = [@arena.add_typed(Adamas::Compiler::Frontend::RaiseNode.new(span, message_id))]
+      end
+      case_id = @arena.add_typed(Adamas::Compiler::Frontend::CaseNode.new(span, index_id, branches, fallback))
+      Adamas::Compiler::Frontend::BeginNode.new(span, [multi_id, case_id])
+    end
+
+    private def select_action_call(expression : Adamas::Compiler::Frontend::ExprId) : Adamas::Compiler::Frontend::ExprId
+      node = @arena[expression]
+      call = node.as?(Adamas::Compiler::Frontend::CallNode)
+      span = node.span
+      action_callee = select_action_callee(call ? call.callee : expression)
+      args = call ? call.args : [] of Adamas::Compiler::Frontend::ExprId
+      block = call.try(&.block)
+      action = if named_args = call.try(&.named_args)
+                 block ? Adamas::Compiler::Frontend::CallNode.new(span, action_callee, args, block, named_args) : Adamas::Compiler::Frontend::CallNode.new(span, action_callee, args, nil, named_args)
+               else
+                 block ? Adamas::Compiler::Frontend::CallNode.new(span, action_callee, args, block) : Adamas::Compiler::Frontend::CallNode.new(span, action_callee, args)
+               end
+      @arena.add_typed(action)
+    end
+
+    private def select_action_callee(expression : Adamas::Compiler::Frontend::ExprId) : Adamas::Compiler::Frontend::ExprId
+      callee = @arena[expression]
+      span = callee.span
+      if callee.is_a?(Adamas::Compiler::Frontend::PathNode)
+        return @arena.add_typed(Adamas::Compiler::Frontend::PathNode.new(span, callee.left, select_action_callee(callee.right)))
+      end
+      name = case callee
+             when Adamas::Compiler::Frontend::IdentifierNode
+               safe_slice_to_string(callee.name) || ""
+             when Adamas::Compiler::Frontend::MemberAccessNode
+               member_access_name_text(callee)
+             else
+               raise LoweringError.new("select condition must be a call or an assignment from a call")
+             end
+      action_name = if name.ends_with?('!') || name.ends_with?('?')
+                      "#{name[0...-1]}_select_action#{name[-1]}"
+                    else
+                      "#{name}_select_action"
+                    end
+      case callee
+      when Adamas::Compiler::Frontend::MemberAccessNode
+        @arena.add_typed(Adamas::Compiler::Frontend::MemberAccessNode.new(span, callee.object, action_name.to_slice))
+      else
+        @arena.add_typed(Adamas::Compiler::Frontend::IdentifierNode.new(span, action_name.to_slice))
+      end
+    end
+
+    private def lower_select(ctx : LoweringContext, node : Adamas::Compiler::Frontend::SelectNode) : ValueId
+      lower_begin(ctx, expand_select(node))
+    end
+
     private def lower_spawn(ctx : LoweringContext, node : Adamas::Compiler::Frontend::SpawnNode) : ValueId
       body_exprs = if body = node.body
                      body
@@ -96381,6 +96470,17 @@ module Adamas::HIR
           # materializes bogus Tuple#as wrappers in generated-stage compilers.
           if method_name == "as" && node.named_args.nil? && block_expr.nil? && block_pass_expr.nil?
             if arg = call_args.first?
+              # The select expansion carries the original operation as a typeof
+              # AST instead of printing and reparsing it in a different arena.
+              if typeof_node = @arena[arg].as?(Adamas::Compiler::Frontend::TypeofNode)
+                type_value = lower_typeof(ctx, typeof_node)
+                target_type = ctx.runtime_type_identity?(type_value).try(&.semantic_type) || TypeRef::VOID
+                if target_type == TypeRef::VOID
+                  raise LoweringError.new("cannot infer select operation result type")
+                end
+                cast_node = Adamas::Compiler::Frontend::AsNode.new(node.span, obj_expr, get_type_name_from_ref(target_type).to_slice)
+                return lower_as(ctx, cast_node)
+              end
               if type_str = stringify_type_expr(arg)
                 in_block_cast_context = @inline_yield_block_body_depth > 0 || @inline_yield_proc_depth > 0
                 if type_param_like?(type_str) || in_block_cast_context
