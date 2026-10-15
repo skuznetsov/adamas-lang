@@ -335,3 +335,18 @@ diagnostic meanings.
   raw-yield transport, lifetime, general MT startup, and LavinMQ parity stay
   open. Refresh on block ABI, Proc/Yield signatures, pointer provenance, or
   selected-callee lowering changes.
+
+
+### Block-signature aliases carry lexical inputs and Nil results (2026-10-15)
+- RED: source457 loses Int32/UInt64 callback inputs (two HIR failures); source477
+  repairs inputs but reports an ABI conflict for an aliased Nil constructor
+  callback. Source450's indexed native callback aborts at Pointer#[]?.
+- GREEN: source492 passes 16 HIR examples and original-first indexed dispatch.
+  Source488 additionally passes the same HIR suite and full-prelude router
+  callback fixture. The simpler integer-return native fixture passes the old
+  compiler too and must not be reported as a discriminating RED.
+- Guard: included-module aliases beat conflicting receiver aliases; alias chains,
+  zero inputs, omitted callback parameters, and literal signatures are covered.
+- Scope: selected block-annotation alias consumers. Refresh on declaration
+  namespace, alias parsing, or callback ABI changes. The real upstream build now
+  exposes a separate Hash#map NamedTuple element-type error; parity stays open.

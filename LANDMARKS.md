@@ -17925,3 +17925,30 @@ checkpoint; LLDB captured that separate overload-identity defect in
 once461_atomic_prelude_raise_backtrace. Whole-prelude and LavinMQ parity are
 not certified by this carrier fix. Refresh after HIR block ABI, MakeProc,
 Yield signatures, pointer provenance, or selected callee lowering changes.
+
+
+### Block aliases preserve lexical inputs and Nil ABI (2026-10-15)
+The call-side block signature reader recognized only literal Proc/arrow syntax.
+An alias such as Router::Action therefore yielded no expected input types and
+materialized Pointer callback parameters. Resolve the alias under the selected
+definition's namespace override, then consume its inputs under that same owner.
+The declaration-input reader and Nil-result reader use the same normalization;
+otherwise an aliased constructor callback retains its incidental Int32 result
+instead of its declared Nil ABI. Restore both lexical context fields afterward.
+Literal signatures and the existing yield-body Nil exclusion retain their paths.
+Source457 fails two new input cases. Input-only source477 exposes the constructor
+Nil-contract conflict. Atomic source492 passes all 16 focused HIR examples and
+the native indexed-callback fixture with exactly original Crystal's output.
+Source450 builds that fixture but aborts in Pointer#[]?; the simpler integer-only
+callback also passes source450 and is a compatibility control, not the RED.
+Composed source488 passes the same HIR checks and the full-prelude stored-router
+callback fixture. Source474 advances the real 1,634-example suite build to a
+separate Hash#map element-type/missing-vhost-key failure; no parity claim follows.
+Atomic HIR SHA fa46eafd783387d999de8ac68de149bb1b3c1011d6f8d4726cd14319be466c56.
+Receipts: block473_alias_red, block481_constructor_alias_guard,
+block487_atomic_alias_index_red, block494_atomic_alias_contract_hir,
+block495_atomic_alias_native, block490_full_alias_contract_hir,
+block491_full_route_alias_green, upstream480.
+Refresh on selected-Def namespace, alias normalization, block signature parsing,
+or callback ABI changes. Generic alias substitution and outer Proc unions need
+separate evidence; rollback is this atomic HIR commit.

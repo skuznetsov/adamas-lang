@@ -3610,3 +3610,19 @@ Full-prelude checkpoints pass only in composed source457; atomic source450
 has a separately traced PCG32/Secure.rand overload-identity startup defect.
 LavinMQ startup and upstream parity remain open. Refresh on block ABI,
 MakeProc/Yield, pointer provenance, or selected-callee representation changes.
+
+
+### Lexical alias expansion at block-signature consumers (2026-10-15)
+Admitted: normalize a non-literal block annotation in the selected declaration's
+lexical namespace before reading its Proc input list or Nil-result contract.
+Included-module source namespace overrides outrank the receiving class namespace.
+Restore both current class and namespace override after expansion. Use that same
+declaration owner when resolving the resulting input names. Literal Proc/arrow
+signatures keep their existing path; retain the Nil ABI reader's yield exclusion.
+DoD: source492 passes 16 HIR cases and original-first native indexed dispatch;
+source450 aborts at Pointer#[]?. Source488 passes the same HIR suite plus the
+full-prelude stored-router callback. Strong guards cover conflicting receiver
+aliases, alias chains, empty and omitted inputs, and concrete annotations.
+General generic/union alias semantics, raw-yield lifetimes, and whole LavinMQ
+parity remain separate obligations. Rollback is the atomic HIR change; refresh
+after selected declaration context, alias/signature parsing, or block ABI changes.

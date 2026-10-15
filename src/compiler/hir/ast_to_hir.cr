@@ -63665,7 +63665,10 @@ module Adamas::HIR
       function_param_infos(function_name, def_node).each do |param|
         next unless param.is_block
         if type_text = param.type_annotation
-          if nil_returning_proc_annotation?(type_text)
+          declaration_owner = function_namespace_override_for(function_name) ||
+                              function_context_from_name(function_name)
+          resolved_annotation = resolved_block_annotation_type_name(type_text, declaration_owner)
+          if nil_returning_proc_annotation?(resolved_annotation)
             # A nil-annotated block (`& : T ->`) pins the proc ABI to Nil only
             # on the `block.call` route, where the callee types the call from
             # the annotation-derived Proc param. A callee that `yield`s does
@@ -65841,6 +65844,30 @@ module Adamas::HIR
       end
     end
 
+    # A block annotation may name an alias instead of spelling Proc/arrow syntax.
+    # Resolve that alias in the selected declaration's lexical namespace: an
+    # included method's receiver and caller may both define different aliases.
+    private def resolved_block_annotation_type_name(
+      type_name : String,
+      owner_name : String?,
+    ) : String
+      return type_name if proc_input_type_names(type_name)
+
+      old_class = @current_class
+      old_override = @current_namespace_override
+      if owner_name
+        @current_class = owner_name
+        @current_namespace_override = nil
+      end
+      begin
+        normalized = normalize_declared_type_name(type_name, owner_name)
+        resolve_type_alias_chain(normalized)
+      ensure
+        @current_class = old_class
+        @current_namespace_override = old_override
+      end
+    end
+
     # Declared block-input type names of a def, or nil when the def declares no
     # block signature we can read. Used to tell a builder-style constructor
     # (no declared block signature) from one that names its own yield types.
@@ -65861,9 +65888,9 @@ module Adamas::HIR
         end
       end
       return nil if type_text.nil?
-      names = proc_input_type_names(type_text.not_nil!)
-      return nil unless names
-      names
+      declaration_owner = function_namespace_override_for(mangled_name) ||
+                          function_context_from_name(mangled_name)
+      proc_input_type_names(resolved_block_annotation_type_name(type_text.not_nil!, declaration_owner))
     end
 
     # True for a def that yields without declaring a `&block` slot.
@@ -66319,7 +66346,10 @@ module Adamas::HIR
         return fallback_block_param_types(resolved_base, receiver_type_value)
       end
 
-      input_names = proc_input_type_names(type_text.not_nil!)
+      definition_owner = function_namespace_override_for(resolved_mangled, resolved_base) ||
+                         function_context_from_name(resolved_mangled) ||
+                         function_context_from_name(resolved_base)
+      input_names = proc_input_type_names(resolved_block_annotation_type_name(type_text.not_nil!, definition_owner))
       if debug_block_params
         STDERR.puts "[BLOCK_PARAMS] inputs=#{input_names ? input_names.join(",") : "nil"}"
       end
@@ -66444,8 +66474,6 @@ module Adamas::HIR
         )
       end
 
-      definition_owner = function_context_from_name(resolved_mangled) ||
-                         function_context_from_name(resolved_base)
       resolved_names.map do |name|
         if definition_owner
           annotation_type_ref(name, definition_owner)

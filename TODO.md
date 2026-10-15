@@ -19221,3 +19221,16 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   PCG32.new calls Secure.rand(Range(Int32, Int32)) before the first checkpoint.
   Composed source457 passes that Random::Secure checkpoint control; the
   atomic source450 does not. LavinMQ parity remains open.
+
+
+### Aliased block signatures retain declaration context (2026-10-15)
+- [x] Expand block aliases in the selected definition's lexical namespace before
+  consuming input types or the Nil-result ABI contract. Preserve included-module
+  aliases despite receiver/caller alias collisions, alias chains, empty inputs,
+  omitted caller parameters, and existing concrete Proc/arrow annotations.
+  Atomic source492 passes 16 HIR examples and the original-first native indexed
+  callback regression; the old source450 aborts at Pointer#[]?.
+- [ ] Probe generic block alias substitutions, aliases containing outer Proc
+  unions, and inline-yield result contracts separately. These combinations are
+  adjacent untested surfaces; the Proc outer-union annotation defect is being
+  investigated independently. Whole LavinMQ runtime/test parity remains open.
