@@ -4275,3 +4275,17 @@ union1593 130 HIR examples. Scoped ROBUST. Manifest 3f3f824e6a14973dcc9fc9bc908a
 Descendant return erasure, integrated extra enum demand, a fresh bootstrap and
 produced-stage LavinMQ parity remain open. Refresh after effect, selected-source
 identity, dispatch, union ABI or demand changes.
+
+
+### Evaluate intercepted print arguments once with their lowered types (2026-10-16)
+Direct single-positional puts/print interception consumes one already
+lowered argument and its HIR type. It must retain that ValueId if binding falls
+through, preserve certified dead flow, and register every concrete union
+to_s(IO) target through the normal virtual-target demand mechanism. It may
+not infer the printing ABI from an independent stale AST guess. Named/splat
+binding remains outside interception.
+print1603 parent RED; print1599 six original-first native fixtures GREEN;
+print1600 130 HIR examples GREEN. Scoped ROBUST. Manifest 406d797dd63957b34631b1f62631ef4f0af11e88566b3e78af6df54a0d69e93c.
+The bare-only LavinMQ enum-each failure, fresh bootstrap and produced-stage
+functional/upstream parity remain open. Expiry: print interception, argument
+binding, virtual demand or return ABI changes.

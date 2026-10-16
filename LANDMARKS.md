@@ -18860,3 +18860,23 @@ The historical fixed point does not certify this revision. Final delivery
 requires fresh bootstrap plus produced-stage functional/upstream parity.
 Manifest 3f3f824e6a14973dcc9fc9bc908a58f09e5ae8002a35008b2416100a3ccf74dc; host e769970217ad128a55abd0c111bd0f2e1c281103118b4950ac0a750a1f79955f. Refresh after effects, selected-source
 identity, dispatch, generic union ABI or demand changes.
+
+
+### Evaluate intercepted print arguments once with their lowered types (2026-10-16)
+Direct puts/print interception previously mixed AST return guesses with
+repeated argument lowering. A side-effecting Int32 | String call ran twice;
+the numeric arm could also print a blank line because synthetic union to_s(IO)
+dispatch bypassed concrete-variant demand registration. Lower the sole
+positional argument once, use its HIR type, preserve the value through ordinary
+fallback, and use the existing virtual-target demand operation for union to_s.
+Named/splat calls retain ordinary binding. Preserve certified bottom flow.
+DoD: print_argument_single_evaluation_repro.sh. print1603 parent RED;
+print1599 GREEN on six original-first fixtures covering both union arms,
+effects, Nil, Void, NoReturn and Int64. print1600 passes 130 HIR examples.
+Scoped adversary ROBUST: the first single-arm trial was insufficient;
+print1583/1584 exposed missing numeric dispatch demand before promotion.
+The integrated enum-each regression is separately reproduced without this
+print change (lavin1601); it remains open in bare-call/dispatch processing.
+Fresh bootstrap is in progress; produced-stage LavinMQ functional/upstream
+parity is still required. Manifest 406d797dd63957b34631b1f62631ef4f0af11e88566b3e78af6df54a0d69e93c; host 770de54048a7347eea6bbac61490c7bbf6594748c75155d448c06d18bf098b13. Refresh after
+print interception, argument binding, virtual demands or return ABI changes.

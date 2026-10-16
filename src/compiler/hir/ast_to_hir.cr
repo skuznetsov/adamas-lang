@@ -101214,13 +101214,17 @@ module Adamas::HIR
         # V2 bootstrap diagnostic: check if TypeRef constants have correct ids in s2b
         STDERR.puts "[PUTS_CONST] VOID_id=#{TypeRef::VOID.id} INT32_id=#{TypeRef::INT32.id} STRING_id=#{TypeRef::STRING.id}"
       end
-      if _puts_recv_nil && call_args.size == 1 && _puts_no_block && _puts_fmn_ok
+      prelowered_puts_arg_id : ValueId? = nil
+      _puts_single_positional = call_args.size == 1 && node.named_args.nil? &&
+                                !call_arena[call_args[0]].is_a?(Adamas::Compiler::Frontend::SplatNode)
+      if _puts_recv_nil && _puts_single_positional && _puts_no_block && _puts_fmn_ok
         # V2 bootstrap NumberNode fast path: use NumberKind.value (raw enum int) to select extern.
         # Avoids TypeRef constant comparison entirely — TypeRef constants may be broken in s2b.
         _puts_arg0_node = with_arena(call_arena) { @arena[call_args[0]] }
         if _puts_arg0_node.is_a?(Adamas::Compiler::Frontend::NumberNode)
           _puts_nk = _puts_arg0_node.kind.value # 0=I8,1=I16,2=I32,3=I64,4=I128,5=U8,6=U16,7=U32,8=U64,9=U128,10=F32,11=F64
           _puts_arg0_id = with_arena(call_arena) { lower_expr(ctx, call_args[0]) }
+          prelowered_puts_arg_id = _puts_arg0_id
           _puts_ext0 : String? = if _puts_nk == 2 || _puts_nk == 0 || _puts_nk == 1 # I32,I8,I16
             method_name == "puts" ? "__adamas_print_int32_ln" : "__adamas_print_int32"
           elsif _puts_nk == 3 # I64
@@ -101256,51 +101260,17 @@ module Adamas::HIR
             return _puts_xcall.id
           end
         end
-        arg_type = with_arena(call_arena) { infer_type_from_expr(call_args[0], @current_class) }
+        # A lowered value carries the selected call's actual result type. AST
+        # inference may be unknown or stale and must not select the printing ABI.
+        # Retain this value if interception falls through to ordinary binding.
+        arg_id = prelowered_puts_arg_id || with_arena(call_arena) { lower_expr(ctx, call_args[0]) }
+        prelowered_puts_arg_id = arg_id
+        return arg_id if control_flow_dead_block?(ctx, ctx.current_block)
+        arg_type = ctx.type_of(arg_id)
         if env_has?("DEBUG_PUTS_INTERCEPT")
-          _at_nil = arg_type.nil?
-          _at_id = arg_type ? arg_type.id : 9999_u32
-          _at_void = arg_type == TypeRef::VOID
-          STDERR.puts "[PUTS_BODY1] arg_type_nil=#{_at_nil} arg_type_id=#{_at_id} arg_type_void=#{_at_void}"
+          STDERR.puts "[PUTS_VALUE] arg_id=#{arg_id} type_id=#{arg_type.id}"
         end
-        # Fallback: if AST-level inference fails, try lowering context for local vars
-        _fb1_cond = (arg_type.nil? || arg_type == TypeRef::VOID) && call_arena
-        if env_has?("DEBUG_PUTS_INTERCEPT")
-          STDERR.puts "[PUTS_FB1] cond=#{_fb1_cond}"
-        end
-        if _fb1_cond
-          arg_node = with_arena(call_arena) { @arena[call_args[0]] }
-          if arg_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
-            var_name = (safe_slice_to_string(arg_node.name) || "")
-            if vid = ctx.lookup_local(var_name)
-              arg_type = ctx.type_of(vid)
-            end
-          end
-        end
-        # Fallback 2: for method calls (arr.sum, arr.size, etc.) lower eagerly and check type
-        eager_arg_id : ValueId? = nil
-        _fb2_cond = (arg_type.nil? || arg_type == TypeRef::VOID) && call_arena
-        if env_has?("DEBUG_PUTS_INTERCEPT")
-          _at1b_nil = arg_type.nil?
-          _at1b_id = arg_type ? arg_type.id : 9999_u32
-          _at1b_void = arg_type == TypeRef::VOID
-          STDERR.puts "[PUTS_FB2] cond=#{_fb2_cond} arg_nil=#{_at1b_nil} arg_id=#{_at1b_id} arg_void=#{_at1b_void}"
-        end
-        if _fb2_cond
-          eager_arg_id = with_arena(call_arena) { lower_expr(ctx, call_args[0]) }
-          arg_type = ctx.type_of(eager_arg_id)
-          if env_has?("DEBUG_PUTS_INTERCEPT")
-            _at_fb2_id = ctx.type_of(eager_arg_id).id
-            STDERR.puts "[PUTS_FB2_RESULT] eager_type_id=#{_at_fb2_id} arg_type_direct_id=#{arg_type ? arg_type.id : 9999_u32}"
-          end
-        end
-        if env_has?("DEBUG_PUTS_INTERCEPT")
-          _at2_nil = arg_type.nil?
-          _at2_id = arg_type ? arg_type.id : 9999_u32
-          STDERR.puts "[PUTS_BODY2] after_fallbacks arg_type_nil=#{_at2_nil} arg_type_id=#{_at2_id}"
-        end
-        if arg_type && arg_type != TypeRef::VOID
-          arg_id = eager_arg_id || with_arena(call_arena) { lower_expr(ctx, call_args[0]) }
+        if arg_type != TypeRef::VOID
           if type_string_id = materialize_runtime_type_identity_string(ctx, arg_id)
             arg_id = type_string_id
             arg_type = TypeRef::STRING
@@ -101313,9 +101283,12 @@ module Adamas::HIR
             is_union = type_suffix.includes?('|') || type_suffix.starts_with?("Union(")
             if is_union
               # Union types: emit x.to_s(STDOUT) via vdispatch + newline
-              arg_id = eager_arg_id || with_arena(call_arena) { lower_expr(ctx, call_args[0]) }
               stdout_id = emit_runtime_deferred_stdio_get(ctx, "STDOUT")
-              # Call x.to_s(STDOUT) via virtual dispatch on the union
+              # Interception bypasses ordinary receiver lowering. Preserve the
+              # same concrete variant demands before emitting virtual dispatch.
+              ensure_virtual_call_targets_lowered(
+                ctx, arg_id, "to_s", [ctx.type_of(stdout_id)], false, false, false, false,
+              )
               to_s_call = Call.with_receiver_virtual(ctx.next_id, TypeRef::NIL, arg_id, "Object#to_s$IO", [stdout_id], true)
               ctx.emit(to_s_call)
               ctx.register_type(to_s_call.id, TypeRef::NIL)
@@ -101504,6 +101477,8 @@ module Adamas::HIR
                         reorder_named_args(ctx, call_args, named_args, method_name, arg_binding_full_method_name, has_block_call, call_arena)
                       elsif has_splat
                         expand_splat_args(ctx, call_args, call_arena)
+                      elsif lowered_arg = prelowered_puts_arg_id
+                        [lowered_arg]
                       else
                         lower_args_with_expected_types(ctx, call_args, method_name, arg_binding_full_method_name, has_block_call, arg_lowering_arena)
                       end

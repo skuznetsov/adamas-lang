@@ -989,3 +989,18 @@ diagnostic meanings.
 - OPEN final gate: fresh source-revision bootstrap and produced-stage LavinMQ
   runtime/upstream parity. Manifest 3f3f824e6a14973dcc9fc9bc908a58f09e5ae8002a35008b2416100a3ccf74dc. Expiry: effect, selected-source
   identity, dispatch, union ABI or demand changes.
+
+
+### Evaluate intercepted print arguments once with their lowered types (2026-10-16)
+- RED print1603/union1582: union_puts duplicates each effect and loses the
+  numeric value. GREEN print1599/print1596: six matching original-first
+  outputs cover both union arms, effects, Nil, Void, NoReturn and Int64.
+- GREEN print1600: 130 focused HIR examples. Scoped ROBUST.
+- REFUTED print1575 single-arm sufficiency: print1583/1584 found the numeric
+  union arm still missing. print1586 adds ordinary virtual-target demands;
+  print1596 composes the completed bare-call and wholly-bottom changes.
+- OPEN lavin1601: the bare-call delta alone reproduces extra non-Flags enum
+  each materialization. The print delta is not a necessary cause.
+- OPEN fresh bootstrap and produced-stage LavinMQ functional/upstream parity.
+  Manifest 406d797dd63957b34631b1f62631ef4f0af11e88566b3e78af6df54a0d69e93c. Expiry: print interception, argument binding,
+  virtual demand or return ABI changes.

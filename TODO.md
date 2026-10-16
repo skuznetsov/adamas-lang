@@ -19809,3 +19809,15 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   IR, then compile LavinMQ and rerun functional/upstream parity with the
   produced compiler. Host S1 results and the historical fixed point do not
   satisfy this source-revision-scoped final gate.
+
+
+### Evaluate intercepted print arguments once with their lowered types (2026-10-16)
+- [x] Evaluate direct puts/print arguments once with their lowered HIR
+  types; retain the value through fallback and register union to_s targets.
+  print1599 matches six original-first fixtures, print1603 parent is RED,
+  print1600 passes 130 HIR examples. Both union arms are required controls.
+- [ ] Repair the independent enum-each overmaterialization: lavin1601 fails
+  with the bare-call delta alone, excluding the print change as a necessary
+  cause. Identify the first incorrect receiver/demand without stdlib edits.
+- [ ] Complete fresh source-scoped bootstrap and produced-stage LavinMQ
+  runtime/upstream parity; local printing checks do not establish these gates.
