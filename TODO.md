@@ -19741,3 +19741,23 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Audit source restriction consumers that compare type spellings before
   TypeRef construction for other grammar/context divergence. The Proc parser
   is now shared; this evidence does not certify unrelated syntax families.
+
+
+### Prove builtin/container case disjointness without target descriptors (2026-10-16)
+- [x] Prove known containers disjoint from concrete descriptorless builtins.
+  case1527 parent RED; case1526 candidate GREEN on ten original-first native
+  outputs; case1519 GREEN on 115 HIR examples. Unknown carriers remain unknown.
+- [ ] Repair source restriction admission for restricted free functions:
+  case1521 (String) and case1525 (Array(Int32)) show proc1491 and case1509 both
+  accept UInt8 where Crystal rejects. Reachable LLVM calls array_only$UInt8;
+  investigate where declaration restrictions are lost during specialization.
+  Immutable reproducers: macro_fix/case1521_scalar_restriction_reproducer.cr
+  and macro_fix/case1525_array_restriction_reproducer.cr in the comparison run.
+- [ ] Resolve the five pre-existing implicit-Nil/Phi case failures reproduced
+  by case1516 candidate and case1517 parent; container disjointness closes none.
+- [ ] Trace JSON::Any.new(17_i64).to_json: original prints 17, channel1493 and
+  channel1510 build but native execution exits 132 (json1500/json1524).
+- [ ] Trace JSON.parse roundtrip's Float::FastFloat.large_mul alias/forall
+  mismatch: expected LimbSpan, got Slice(UInt32) (json1501).
+- [ ] Complete LavinMQ build/runtime/upstream parity after case pruning.
+  Lavin1515/channel1510 is a probe, not evidence of a usable broker.

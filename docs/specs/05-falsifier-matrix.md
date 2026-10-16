@@ -932,3 +932,17 @@ diagnostic meanings.
   IO::Memory#write_byte receiving a JSON value union instead of UInt8.
 - No broker executable/parity claim. Expiry: Proc grammar, alias/context or
   restriction changes require replay of the original-first controls.
+
+
+### Prove builtin/container case disjointness without target descriptors (2026-10-16)
+- RED case1511/proc1491: four known container kinds yield unknown versus
+  descriptorless builtins. RED case1527: impossible UInt8 arm rejects Array|Int64.
+- GREEN case1526/case1509: ten original-first native outputs across four
+  container kinds and a reachable UInt8 arm. GREEN case1519: 115 HIR examples.
+  Scoped disjointness adversary ROBUST; conservative unknown/hierarchy cases
+  and effectful case-condition controls retain their previous behavior.
+- Surviving parent failures: five implicit-Nil/Phi examples (case1516/1517),
+  restricted free functions accepting UInt8 for String/Array(Int32)
+  (case1521/1525), JSON scalar runtime exit 132 (json1500/json1524).
+- No broker or test-parity claim. Expiry: changes to builtin identity,
+  container representation or static case proofs require replay.

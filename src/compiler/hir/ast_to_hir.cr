@@ -86244,6 +86244,17 @@ module Adamas::HIR
         return false if check_name == "Hash" || check_name == "NamedTuple"
       end
 
+      # Builtin targets have no ordinary descriptors. Container kinds still
+      # prove disjointness from those concrete builtins; requiring both
+      # descriptors first kept impossible case bodies alive for JSON unions.
+      # Ancestor, module and unknown carriers retain the conservative path.
+      if primitive_class_name(check_type) && value_desc
+        case value_desc.kind
+        when TypeKind::Array, TypeKind::Hash, TypeKind::Tuple, TypeKind::NamedTuple
+          return false
+        end
+      end
+
       return nil unless value_desc && check_desc
       return nil if value_desc.kind == TypeKind::Union || check_desc.kind == TypeKind::Union
       return false if value_desc.kind == TypeKind::Primitive && check_desc.kind == TypeKind::Primitive

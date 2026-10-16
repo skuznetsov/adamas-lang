@@ -4219,3 +4219,17 @@ Scoped delta verdict ROBUST. Lavin1497 advances to a JSON-value/UInt8 mismatch
 at IO::Memory#write_byte; broker/runtime parity remains open. Manifest
 f184063e73f27bbce92260ec3329eb94783c95b33ddc992b09b1698269099159.
 Refresh after grammar, alias/context normalization or restriction-rule changes.
+
+
+### Prove builtin/container case disjointness without target descriptors (2026-10-16)
+A concrete builtin target may lack a TypeDescriptor. For value descriptors
+whose exact kind is Array, Hash, Tuple or NamedTuple, builtin identity proves
+the static is-a result false before requiring a descriptor pair. The rule does
+not widen to arbitrary Class, Struct, Module, Generic, Union or unknown carriers.
+Case lowering still evaluates conditions before pruning a body, and a possible
+condition keeps its body. case1526 matches ten Crystal native outputs, including
+the reachable UInt8 branch; case1519 passes 115 HIR examples. Scoped verdict
+ROBUST; source restriction rejection and implicit-Nil/Phi correctness remain
+separate obligations with parent-reproduced failures (case1521/1525,1516/1517).
+Manifest a7a515e90f1725bdf4c93c7be3b7eccc57c728807725e885b7dfde74e8e3cee5.
+Refresh after builtin identity, container representation or static proof changes.

@@ -18766,3 +18766,27 @@ union where UInt8 is required. No broker binary or test parity exists.
 Manifest f184063e73f27bbce92260ec3329eb94783c95b33ddc992b09b1698269099159;
 host c6d1e8ad2ca5bd1abb11a02c97dd64ce2c799c12132c103db49178c32060b87a.
 Refresh after Proc grammar, alias/context normalization or restriction changes.
+
+
+### Prove builtin/container case disjointness without target descriptors (2026-10-16)
+Concrete builtin TypeRefs have no ordinary type descriptor. The static is-a
+proof previously demanded descriptors on both sides, so Array/Hash/Tuple/
+NamedTuple versus UInt8 stayed unknown and impossible case bodies were lowered.
+Use the known container kind plus concrete builtin identity as a disjointness
+proof before the descriptor-pair guard. Unknown, module and ancestor carriers
+retain the conservative path. This is not a general negative hierarchy rule.
+DoD: builtin_container_case_disjoint_repro.sh; case1527/proc1491 RED,
+case1526/case1509 GREEN on ten original-first native outputs, including a
+reachable UInt8 arm. case1511 parent has four failing container checks;
+case1519 candidate passes 115 HIR examples, including effectful conditions,
+ancestor carriers, comma conditions and matching generic branches. Scoped
+delta adversary ROBUST. Five broader implicit-Nil/Phi failures reproduce on
+the parent (case1516/1517) and remain open.
+Source-admission adversary found a separate pre-existing defect: both parent
+and candidate accept UInt8 for String or Array(Int32). The latter LLVM retains
+the reachable arm and calls array_only$UInt8. case1521/1525 preserve the parent
+controls and immutable reproducers. Do not claim rejection coverage from this
+change. Lavin1515/channel1510 and JSON runtime parity remain open.
+Manifest a7a515e90f1725bdf4c93c7be3b7eccc57c728807725e885b7dfde74e8e3cee5;
+host 1af7249bf18ff310cd84f37d508513f0c82f0547ddcd4dc62f206b2f45e8b5b9.
+Refresh after builtin identity, container representation or case-proof changes.
