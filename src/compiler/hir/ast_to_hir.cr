@@ -103666,6 +103666,21 @@ module Adamas::HIR
         else
           mangled_method_name = entry_name
         end
+        # Preserve the runtime receiver for already-admitted Object wrappers.
+        # The selected source definition remains ancestor-owned so its arena and
+        # lexical namespace survive the handoff to concrete-body materialization.
+        if receiver_id && !ctx.type_literal?(receiver_id)
+          reference_owner = normalize_method_owner_name(get_type_name_from_ref(ctx.type_of(receiver_id)))
+          reference_base = "#{reference_owner}##{method_name}"
+          if preserve_requested_runtime_reference_wrapper_owner?(reference_base, entry_name, entry_def)
+            mangled_parts = parse_method_name(mangled_method_name)
+            mangled_method_name = reference_base
+            if reference_suffix = mangled_parts.suffix
+              mangled_method_name = "#{reference_base}$#{reference_suffix}"
+            end
+            base_method_name = reference_base
+          end
+        end
         if debug_env_filter_match?("DEBUG_CALL_LOOKUP", ctx.function.name, lookup_name, entry_name, mangled_method_name)
           stats = function_param_stats(entry_name, entry_def)
           selected_arena = @function_def_arenas[entry_name]? ||

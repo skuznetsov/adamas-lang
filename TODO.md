@@ -19900,3 +19900,15 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   zero failures/errors and one existing pending case.
 - [ ] Continue basic JSON and LavinMQ serialization checks after the parser
   ordering correction; the isolated yield contract does not establish parity.
+
+
+### Retain concrete receivers through selected Object wrapper calls (2026-10-16)
+- [x] Retain an already-admitted concrete reference receiver when selected
+  Object wrapper calls materialize their body. json1786 three original-first
+  native fixtures GREEN; exact parent json1787 runtime bus error 138 RED.
+  json1788/json1789 each pass nine of ten tracked Object-filter HIR examples.
+- [ ] Repair the existing nilable-enum case-equality HIR guard independently;
+  both exact parent and wrapper candidate name the nilable receiver CaseKind.
+- [ ] Continue full JSON execution and LavinMQ serialization: private channel
+  composition json1783 still exits 132. General inherited cross-method dispatch,
+  known-argument rejection revived by arity fallback and bootstrap stay open.

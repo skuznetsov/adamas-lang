@@ -1098,3 +1098,18 @@ diagnostic meanings.
   Scoped ROBUST. Manifest 3e01ac0eb917a7c9ce2147c6a61ca147ba338ea2499dc76968718477261f91b1; host eab90be1b7514d6368b60e624a05dc87978888bc2d58a219e833f037f05757a1.
 - OPEN JSON, buffering, current bootstrap and produced-stage LavinMQ parity.
   Refresh after yield arguments, postfix members, trivia or block binding.
+
+
+### Retain concrete receivers through selected Object wrapper calls (2026-10-16)
+- GREEN json1786 on sealed json1777: three original-first native families
+  compare exact stdout/stderr for direct/yielded self dispatch, interleaved
+  sibling receivers and a lexical Token shadow at the concrete caller.
+- RED json1787 exact yield1759 parent: direct/yielded fixture exits 138.
+- BASELINE FAILURE json1788 candidate and json1789 exact parent: the same
+  nine tracked Object-filter HIR examples pass; the existing nilable-enum
+  case-equality guard fails identically. No full-suite green claim.
+  Scoped ROBUST for reference-wrapper receiver transport. Manifest df8894909e1a9f52804c3158c76e2a18b2809bd80aa3e76865509c50dc4cdc60; host 6b6c06abd9bd310f5514918b62030550b282f01bf7210da6c299a53f1246b806.
+- OPEN generic inherited cross-method dispatch, typed-to-arity fallback,
+  nilable enum guards, full JSON, current bootstrap and LavinMQ parity.
+  Refresh after wrapper admission, selected-call ownership, arena, namespace
+  or specialization suffix changes.

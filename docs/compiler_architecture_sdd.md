@@ -29,6 +29,19 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+**Concrete reference wrapper receiver handoff.** The selected-call path may
+resolve an inherited Object wrapper to its source Def without erasing the
+runtime receiver used by the existing structural wrapper-owner policy.
+Retain the selected Def, source arena, lexical namespace and overload suffix;
+materialize only the receiver-specific body already admitted by that policy.
+DoD: `regression_tests/reference_wrapper_receiver_handoff_repro.sh` compares
+original-first direct/yielded self dispatch, sibling receivers and a shadowed
+lexical token; require exact stdout/stderr and normal exit. Exact parent must
+fail the direct/yielded runtime case. Guard against source-namespace loss and
+sharing the first sibling's body. Rollback is the bounded selected-call prefix
+handoff. General cross-method inherited dispatch, incompatible typed lookup
+followed by arity fallback, full JSON and current bootstrap remain open.
+
 A postfix member separator after an argumentless yield belongs to a call on
 that yield's result. It cannot become an implicit-self call passed as a yield
 argument. Whitespace and newline continuation retain that ownership, while

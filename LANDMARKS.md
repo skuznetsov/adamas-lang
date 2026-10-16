@@ -19019,3 +19019,24 @@ native ordering boundary. Manifest 3e01ac0eb917a7c9ce2147c6a61ca147ba338ea2499dc
 Refresh after yield argument, postfix member, trivia or block-binding changes.
 JSON serialization, IO buffering, current bootstrap and produced-stage LavinMQ
 parity remain open. Rollback is the bounded parse_yield delimiter change.
+
+
+### Retain concrete receivers through selected Object wrapper calls (2026-10-16)
+Selected-call lookup resolved an inherited Object wrapper to its source Def
+and erased the concrete receiver before the existing structural wrapper-owner
+policy could materialize its body. Pass that policy's admitted reference owner
+through the call name while retaining the source Def, arena, lexical namespace
+and overload suffix. Ordinary ancestor bodies and value receivers keep their
+existing path. json1786 matches original Crystal stdout/stderr for direct and
+yielded self dispatch, sibling receiver isolation and a shadowed lexical token;
+json1787 exact parent terminates with bus error 138 on the first native case.
+The ten tracked Object-filter HIR examples have the same nine passes and one
+nilable-enum case-equality failure on candidate json1788 and exact parent
+json1789. This is not a green full HIR suite. Scoped adversary ROBUST for the
+reference-wrapper handoff. Manifest df8894909e1a9f52804c3158c76e2a18b2809bd80aa3e76865509c50dc4cdc60; host 6b6c06abd9bd310f5514918b62030550b282f01bf7210da6c299a53f1246b806.
+Refresh after selected-call owner transport, wrapper admission, source arena,
+namespace or specialization suffix changes. General inherited cross-method
+dispatch, typed rejection followed by arity fallback, the existing nilable-enum
+guard, full JSON execution, current bootstrap and LavinMQ parity remain open.
+The private channel-consumer composition json1783 still exits 132 in basic JSON.
+Rollback is the bounded selected-call receiver prefix handoff.
