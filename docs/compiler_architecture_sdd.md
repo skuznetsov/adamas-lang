@@ -3799,3 +3799,19 @@ Scoped adversary verdict: ROBUST for these concrete recursive projections.
 Eight broader failures are unchanged in the macro713 paired baseline. Nullable
 source forms, unresolved-type identity and top-level macro-for omission remain
 separate obligations. Refresh on alias registration or representation changes.
+
+
+### Block lexical namespace is owner metadata (2026-10-16)
+A block lowered inside a yielding callee retains its caller's lexical access
+scope. BlockOwner carries namespace_override alongside class, method and class
+method status. Registration captures it; inline block entry and standalone Proc
+lowering restore it and then restore their enclosing namespace. A nil caller
+override clears a callee override rather than inheriting it. Visibility checking
+continues to prefer the lexical namespace for included-module access; no access
+check is bypassed or reordered.
+Full-prelude native checks protected726/727 match Crystal for class and included
+module owners. protected729 rejects a foreign owner on both compilers. Portable
+protected732 checks combined AB output and that negative guard. Scoped adversary
+verdict: ROBUST for these nested collection/method-reference boundaries.
+The paired protected734 HIR controls retain one existing Proc-forwarding failure;
+this does not certify all callback lowering. Refresh on owner/context changes.

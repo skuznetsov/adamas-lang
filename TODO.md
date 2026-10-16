@@ -19388,3 +19388,16 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   observed gap, not the recursive union regression's positive control.
 - [ ] Preserve lexical access context for protected method references: integrated
   LavinMQ macro715 now rejects DefinitionsStore#load_apply at &->self.load_apply.
+
+
+### Callback lexical context follow-up (2026-10-16)
+- [x] Preserve the caller namespace across nested collection blocks and Proc
+  materialization. protected726/727 match Crystal; protected729 retains foreign
+  protected-access rejection; full-prelude portable protected732 prints PASS.
+- [ ] Audit synthetic callback context transport beyond the exercised paths:
+  namespace, source arena, generic bindings, self and lexical method must retain
+  their own provenance. Avoid changing visibility precedence to mask lost context.
+- [ ] Include a full-prelude discriminator for stdlib callback regressions;
+  no-prelude protected callback checks also pass on the affected parent.
+- [ ] Repair the separate typed Proc forwarding HIR expectation: protected734
+  records the same bare_invocation-is-nil failure on parent and candidate.

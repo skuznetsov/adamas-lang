@@ -7371,8 +7371,9 @@ module Adamas::HIR
       getter class_name : String?
       getter method_name : String?
       getter is_class : Bool
+      getter namespace_override : String?
 
-      def initialize(@class_name : String?, @method_name : String?, @is_class : Bool)
+      def initialize(@class_name : String?, @method_name : String?, @is_class : Bool, @namespace_override : String? = nil)
       end
     end
 
@@ -117429,7 +117430,7 @@ module Adamas::HIR
       # making `block_owned_by_current_fn` false for subsequent instantiations, which
       # broke non-local returns (return inside block jumped to inline exit instead of
       # doing a real method return).
-      @block_owner[block.object_id] = BlockOwner.new(old_current_class, old_current_method, old_current_method_is_class || false)
+      @block_owner[block.object_id] = BlockOwner.new(old_current_class, old_current_method, old_current_method_is_class || false, @current_namespace_override)
       @block_owner_function_ids[block.object_id] = ctx.function.id
       prev_block_owner_frame_index = @block_owner_caller_frame_index[block.object_id]?
       @block_owner_caller_frame_index[block.object_id] = @inline_caller_locals_stack.size - 1
@@ -118234,12 +118235,16 @@ module Adamas::HIR
                    old_inline_class = @current_class
                    old_inline_method = @current_method
                    old_inline_method_is_class = @current_method_is_class
+                   old_inline_namespace = @current_namespace_override
                    old_type_param_map = @type_param_map
                    old_inline_def_frame_for_block = @current_inline_def_frame
                    old_super_source_for_block = @current_super_source_module
                    @current_class = caller_class
                    @current_method = caller_method
                    @current_method_is_class = caller_is_class
+                   # A yielded block belongs to the caller's lexical namespace,
+                   # including nil; the callee's override must not leak into it.
+                   @current_namespace_override = owner.try(&.namespace_override)
                    # The block body belongs to the caller's def; restore its inline
                    # def frame (nil when the caller is the host function itself).
                    caller_def_frame = @inline_caller_def_frame_stack.last?
@@ -118490,6 +118495,7 @@ module Adamas::HIR
                      @current_class = old_inline_class
                      @current_method = old_inline_method
                      @current_method_is_class = old_inline_method_is_class || false
+                     @current_namespace_override = old_inline_namespace
                      @current_inline_def_frame = old_inline_def_frame_for_block
                      @current_super_source_module = old_super_source_for_block
                      @type_param_map = old_type_param_map
@@ -124026,7 +124032,7 @@ module Adamas::HIR
                     saved_arena_for_block
       @arena = block_arena
       store_block_arena(node.object_id, block_arena)
-      @block_owner[node.object_id] = BlockOwner.new(@current_class, @current_method, @current_method_is_class)
+      @block_owner[node.object_id] = BlockOwner.new(@current_class, @current_method, @current_method_is_class, @current_namespace_override)
       @block_owner_function_ids[node.object_id] = ctx.function.id
       if ctx.lookup_local("self").nil?
         param = find_self_param(ctx.function)
@@ -125916,10 +125922,12 @@ module Adamas::HIR
       saved_class = @current_class
       saved_method = @current_method
       saved_method_is_class = @current_method_is_class
+      saved_proc_namespace = @current_namespace_override
       if owner = @block_owner[node.object_id]?
         @current_class = owner.class_name
         @current_method = owner.method_name
         @current_method_is_class = owner.is_class
+        @current_namespace_override = owner.namespace_override
       end
       saved_typeof_locals = @current_typeof_locals
       saved_typeof_local_names = @current_typeof_local_names
@@ -126030,6 +126038,7 @@ module Adamas::HIR
       @current_class = saved_class
       @current_method = saved_method
       @current_method_is_class = saved_method_is_class
+      @current_namespace_override = saved_proc_namespace
       @current_typeof_locals = saved_typeof_locals
       @current_typeof_local_names = saved_typeof_local_names
       @type_param_map = saved_type_param_map
@@ -126136,6 +126145,7 @@ module Adamas::HIR
       owner_class = @current_class
       owner_method = @current_method
       owner_is_class = @current_method_is_class
+      owner_namespace = @current_namespace_override
       if previous_owner = @block_owner[block_node.object_id]?
         # Prefer lexical owner metadata when available.
         # In inline lowering, @current_class/@current_method may temporarily point
@@ -126148,11 +126158,13 @@ module Adamas::HIR
           owner_class = lexical_owner_class
           owner_method = lexical_owner_method
           owner_is_class = previous_owner.is_class
+          owner_namespace = previous_owner.namespace_override
         elsif owner_class.nil? && owner_method.nil?
           owner_is_class = previous_owner.is_class
+          owner_namespace = previous_owner.namespace_override
         end
       end
-      @block_owner[block_node.object_id] = BlockOwner.new(owner_class, owner_method, owner_is_class)
+      @block_owner[block_node.object_id] = BlockOwner.new(owner_class, owner_method, owner_is_class, owner_namespace)
       @block_owner_function_ids[block_node.object_id] = ctx.function.id
       owner_self_id = ctx.lookup_local("self") || @block_owner_self_ids[block_node.object_id]?
       if owner_self_id.nil?
@@ -126447,10 +126459,12 @@ module Adamas::HIR
       saved_class = @current_class
       saved_method = @current_method
       saved_method_is_class = @current_method_is_class
+      saved_proc_namespace = @current_namespace_override
       if owner = @block_owner[block_node.object_id]?
         @current_class = owner.class_name
         @current_method = owner.method_name
         @current_method_is_class = owner.is_class
+        @current_namespace_override = owner.namespace_override
       end
       saved_typeof_locals = @current_typeof_locals
       saved_typeof_local_names = @current_typeof_local_names
@@ -126642,6 +126656,7 @@ module Adamas::HIR
       @current_class = saved_class
       @current_method = saved_method
       @current_method_is_class = saved_method_is_class
+      @current_namespace_override = saved_proc_namespace
       @current_typeof_locals = saved_typeof_locals
       @current_typeof_local_names = saved_typeof_local_names
 

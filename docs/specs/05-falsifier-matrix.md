@@ -542,3 +542,18 @@ diagnostic meanings.
 - Integrated macro715 reaches protected load_apply access rejection in LavinMQ.
   This closes the observed recursive projection frontier, not LavinMQ parity.
   Refresh after alias registry, runtime canonicalization or reflection changes.
+
+
+### Full-prelude protected callbacks retain lexical scope (2026-10-16)
+- RED protected720: nested Hash/Array method reference; Crystal emits A/0,
+  parent compiler rejects protected load_apply in the caller's own method.
+- GREEN protected726/727: class A/0 and included-module B/0 match Crystal.
+- Guard protected729: both compilers reject a protected method reference from
+  an unrelated class. Visibility precedence and rejection remain enforced.
+- Portable protected732: explicit PASS for full-prelude AB output plus the
+  foreign-owner rejection. All binaries execute through scripts/run_safe.sh.
+- protected734: parent/candidate retain the identical Proc-forwarding failure
+  among four HIR controls. Existing no-prelude protected callback checks pass
+  on both and cannot stand in for this full-prelude discriminator.
+- Certificate scope is callback lexical namespace transport, not application
+  parity; refresh after block owner, Proc lowering or namespace changes.

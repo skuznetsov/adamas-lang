@@ -18176,3 +18176,22 @@ The macro713 paired baseline retains the same eight broader projection failures.
 Integrated macro715 advances LavinMQ to protected load_apply access checking;
 this is not application parity. Refresh after alias registry, canonicalization
 or macro projection changes. Revert both HIR hunks and their tests together.
+
+
+### Lexical namespace transport through yielded callbacks (2026-10-16)
+BlockOwner transported class/method identity but omitted namespace_override.
+Full-prelude Hash#each_value -> Array#each lowering therefore retained the
+callee namespace when restoring the caller's class/method, and rejected the
+caller's protected &->self.load_apply reference. protected720 is RED against
+original Crystal A/0. Transport the namespace with BlockOwner at registration,
+inline block entry and standalone Proc lowering; nil is a meaningful override.
+protected726 class and protected727 included-module consumers match A/0 and B/0.
+protected729 confirms both compilers still reject an unrelated protected caller;
+portable protected732 prints its explicit PASS with the full prelude.
+Source: protected722 HIR 2ed1f33333408a8f58f39a2f957522ed0ce9fd40ef8ac29eff01e4ad6d21b166;
+host 02aae1f9c9e1d24a2bdad905f1acf7cdca96aec3d4f6221d77c8bf9bf14b33a4.
+protected734 pairs the same existing Proc-forwarding failure on parent/candidate
+(four HIR examples, three passes, one failure). The older no-prelude protected
+callback checks pass on the parent and do not discriminate this stdlib boundary.
+Refresh after lexical-owner, namespace override or block/Proc lowering changes.
+Rollback the context transport and its full-prelude regression together.
