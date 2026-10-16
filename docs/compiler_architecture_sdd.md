@@ -4319,3 +4319,18 @@ examples GREEN. Scoped ROBUST, not a certificate for all block constructs.
 Named/splat binding, current bootstrap and produced-stage LavinMQ parity stay
 open. Source manifest adf2bf5f78f5acca641b592c705f23a564cf073b40d0331751a0e8c1a38ea43e; host 0524de0ea8d18853f57f891e9e25b10c6ff8b5a6297d7d8446897691559e9ef0. Expiry: lexical-scope,
 branch-merge, inline-caller capture, or external stdlib changes.
+
+
+### Compare initialize allocator and explicit new source priority (2026-10-16)
+A matching explicit new is not sufficient to suppress a generated
+initialize allocator. For the admitted single typed positional argument,
+compare candidate compatibility and restriction specificity. Same-arena
+equivalent restrictions select the later declaration; incomparable ones keep
+the first. Reuse this comparison at allocator generation and call selection.
+Do not change global ordinary-method ranking. Named, block, splat, tuple and
+multi-argument constructor shapes remain excluded; cross-arena ties are open.
+Evidence: ctor1689 original-first constructor selection GREEN; ctor1690 exact
+parent RED; ctor1687 current 130 HIR examples GREEN. Scoped ROBUST. JSON scalar,
+current bootstrap and produced-stage LavinMQ parity remain open. Manifest
+6c1df4d1076a51cad95c203404d64b531b3dac373ccc50024c243adce1a0daf5; host 0f9c09db1ec1d2664724535c43ea2f0b7dc1d1d6efbac29a9d78445715faf649. Expiry: source restriction, overload order,
+definition arena, constructor selection, or external stdlib changes.

@@ -19849,3 +19849,13 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   admission. args1676 parent silently loses a typed argument; args1667 packing
   trial emits a stub. args1674 also exposes empty typed splat acceptance that
   Crystal rejects. Keep raw/packed provenance explicit.
+
+
+### Compare initialize allocator and explicit new source priority (2026-10-16)
+- [x] Compare a single typed initialize allocator against explicit new before
+  suppressing it. ctor1689 matches Crystal for broad/exact restrictions,
+  declaration order and a cross-arena exact wrapper; ctor1690 parent RED;
+  ctor1687 passes 130 focused HIR examples.
+- [ ] Extend constructor source-order evidence to cross-arena equivalent or
+  incomparable ties and broader call shapes before widening this helper.
+  JSON::Any scalar construction/serialization remains separately RED.

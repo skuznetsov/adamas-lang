@@ -41072,6 +41072,86 @@ module Adamas::HIR
       end
     end
 
+    # A generated allocator is a real overload sourced from initialize. If its
+    # declared restriction accepts the concrete argument more specifically than
+    # an explicit class-level new wrapper, preserve that source selection. An
+    # equivalent or incomparable restriction follows declaration-order rules.
+    # Keep this comparison
+    # to one typed positional argument until broader constructor shapes have
+    # matching falsifiers.
+    private def allocator_initializer_precedes_explicit_new?(
+      class_name : String,
+      call_arg_types : Array(TypeRef),
+      explicit_name : String,
+      explicit_def : Adamas::Compiler::Frontend::DefNode,
+      call_has_named_args : Bool = false,
+      call_has_block : Bool = false,
+      call_named_arg_names : Array(String)? = nil,
+    ) : Bool
+      return false if call_arg_types.size != 1 || call_has_named_args || call_has_block
+      actual_type = call_arg_types[0]
+      return false if actual_type == TypeRef::VOID
+      if actual_desc = @module.get_type_descriptor(actual_type)
+        return false if actual_desc.kind == TypeKind::Tuple || actual_desc.name.starts_with?("Tuple(")
+      end
+
+      explicit_params = function_param_infos(explicit_name, explicit_def)
+      return false unless explicit_params.size == 1
+      explicit_param = explicit_params[0]
+      return false if explicit_param.is_block || explicit_param.is_splat || explicit_param.is_double_splat ||
+                      named_only_separator?(explicit_param) || explicit_param.type_annotation.nil?
+
+      init_base = resolve_method_with_inheritance(class_name, "initialize")
+      return false unless init_base
+      init_name = if class_name.starts_with?("::") && !init_base.starts_with?("::")
+                    "::#{init_base}"
+                  else
+                    init_base
+                  end
+      initializer = allocator_initializer_def_for(
+        init_base, init_name, call_arg_types, false, call_has_named_args, call_named_arg_names,
+      )
+      return false unless initializer
+      selected_init_name, init_def, _init_arena = initializer.not_nil!
+      init_params = function_param_infos(selected_init_name, init_def)
+      return false unless init_params.size == 1
+      init_param = init_params[0]
+      return false if init_param.is_block || init_param.is_splat || init_param.is_double_splat ||
+                      named_only_separator?(init_param) || init_param.type_annotation.nil?
+
+      explicit_context = function_context_for_lookup_candidate(allocator_new_name_for(class_name), explicit_name)
+      init_context = function_context_for_lookup_candidate(init_base, selected_init_name)
+      return false unless params_compatible_with_args?(explicit_def, call_arg_types, explicit_context)
+      return false unless params_compatible_with_args?(init_def, call_arg_types, init_context)
+
+      init_score = params_match_score(init_def, call_arg_types, init_context, init_params)
+      explicit_score = params_match_score(explicit_def, call_arg_types, explicit_context, explicit_params)
+      return init_score > explicit_score unless init_score == explicit_score
+
+      init_arena = @function_def_arenas[selected_init_name]? || resolve_arena_for_def(init_def, @arena)
+      explicit_arena = @function_def_arenas[explicit_name]? || resolve_arena_for_def(explicit_def, @arena)
+      same_arena = init_arena.object_id == explicit_arena.object_id
+
+      # Crystal's overload list inserts a strictly narrower restriction before
+      # a broader one, replaces an equivalent restriction with the later def,
+      # and leaves incomparable restrictions in declaration order. Mirror that
+      # rule here instead of treating every equal callsite score as a tie.
+      relation = source_restriction_specificity(
+        init_param.type_annotation.not_nil!, init_context,
+        explicit_param.type_annotation.not_nil!, explicit_context,
+      )
+      case relation
+      when 1
+        true
+      when -1
+        false
+      when 0
+        same_arena && init_def.span.start_offset > explicit_def.span.start_offset
+      else
+        same_arena && init_def.span.start_offset < explicit_def.span.start_offset
+      end
+    end
+
     private def generate_allocator_overload(
       class_name : String,
       class_info : ClassInfo,
@@ -41136,9 +41216,12 @@ module Adamas::HIR
       # In that case, keep generating the allocator overload for this concrete shape.
       if explicit_match = lookup_function_def_for_call(base_name, call_arg_types.size, call_has_block, call_arg_types, false, call_has_named_args, allocator_named_arg_names)
         explicit_name, explicit_def = explicit_match
-        allow_allocator_overload = false
+        allow_allocator_overload = allocator_initializer_precedes_explicit_new?(
+          class_name, call_arg_types, explicit_name, explicit_def,
+          call_has_named_args, call_has_block, allocator_named_arg_names,
+        )
 
-        if base_name.ends_with?(".new") && def_has_untyped_regular_param?(explicit_def)
+        if !allow_allocator_overload && base_name.ends_with?(".new") && def_has_untyped_regular_param?(explicit_def)
           has_proc_arg = call_arg_types.any? do |arg_type|
             if arg_desc = @module.get_type_descriptor(arg_type)
               arg_desc.kind == TypeKind::Proc ||
@@ -103825,6 +103908,20 @@ module Adamas::HIR
                            ) : nil
                            m3h_input ? resolve_call_input(m3h_input) : nil
                          end
+        if explicit_match && !prefer_allocator_new_call && allocator_call_shape_target
+          if class_name = method_owner(full_method_name)
+            explicit_name, explicit_def = explicit_match.not_nil!
+            if allocator_initializer_precedes_explicit_new?(
+                 class_name, arg_types, explicit_name, explicit_def,
+                 allocator_has_named_args, has_block_call, call_named_arg_names,
+               )
+              # Drop only this selected explicit candidate; the generated
+              # allocator is materialized from the better-matching initializer.
+              explicit_match = nil
+              prefer_allocator_new_call = true
+            end
+          end
+        end
         explicit_new = !!explicit_match
         allocator_explicit_new_call = explicit_new
         if explicit_new && explicit_match

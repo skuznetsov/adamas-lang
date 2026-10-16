@@ -18922,3 +18922,25 @@ argument, while args1667 candidate emits a stub. Current bootstrap and
 produced-stage LavinMQ functional/upstream parity remain open.
 Source manifest adf2bf5f78f5acca641b592c705f23a564cf073b40d0331751a0e8c1a38ea43e; host 0524de0ea8d18853f57f891e9e25b10c6ff8b5a6297d7d8446897691559e9ef0. Refresh after lexical scope, branch
 merge, inline-caller capture, or external stdlib changes.
+
+
+### Compare initialize allocator and explicit new source priority (2026-10-16)
+An explicit class-level new that happened to accept the argument suppressed
+the initialize-derived allocator before comparing source overload priority.
+Compare the selected initializer and wrapper for the admitted single typed
+positional shape. Narrower restrictions win; equivalent restrictions use the
+later same-arena declaration, while incomparable restrictions preserve the
+first declaration. Keep ordinary method ranking and excluded constructor
+shapes unchanged.
+DoD: initializer_explicit_new_source_order_repro.sh. ctor1689 matches original
+Crystal on broad Int/Number wrappers, exact Int64 priority, reversed source
+order, equivalent alias restrictions in both orders and a cross-arena exact
+wrapper. ctor1690 exact parent fails broad and equivalent-alias selection.
+ctor1687 passes 130 focused HIR examples. Scoped adversary ROBUST for these
+admitted shapes. Cross-arena equal/incomparable ties, multi-argument, tuple,
+block, splat and named constructors are not certified by this slice.
+JSON::Any scalar oracle remains RED (json_ctor_relation_20261016); constructor
+selection is not JSON completion. Current bootstrap and produced-stage
+LavinMQ functional/upstream parity remain open. Source manifest 6c1df4d1076a51cad95c203404d64b531b3dac373ccc50024c243adce1a0daf5;
+host 0f9c09db1ec1d2664724535c43ea2f0b7dc1d1d6efbac29a9d78445715faf649. Refresh after source restriction, overload ordering, definition
+arena, constructor selection, or external stdlib changes.

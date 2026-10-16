@@ -1035,3 +1035,16 @@ diagnostic meanings.
 - OPEN args1676/args1667: parent typed splat loses an argument; packing trial
   emits a stub. Current bootstrap and produced-stage LavinMQ parity stay open.
   Manifest adf2bf5f78f5acca641b592c705f23a564cf073b40d0331751a0e8c1a38ea43e. Expiry: scope, branch-merge, capture, or stdlib changes.
+
+
+### Compare initialize allocator and explicit new source priority (2026-10-16)
+- GREEN ctor1689/ctor1684: original-first broad Int/Number wrapper cases,
+  exact Int64 wrapper, reversed incomparable declaration order, equivalent
+  alias restrictions in both orders, and a cross-arena exact wrapper.
+- RED ctor1690/capture1679: broad wrapper and alias-wrapper-first selected
+  instead of initialize-derived allocator. GREEN ctor1687: 130 HIR examples.
+- Scoped adversary ROBUST. OPEN: cross-arena equal/incomparable ties and
+  excluded named, block, splat, tuple or multi-argument constructor shapes.
+- RED json_ctor_relation_20261016: JSON::Any scalar is not closed by this fix.
+  Current bootstrap and produced-stage LavinMQ parity remain open. Manifest
+  6c1df4d1076a51cad95c203404d64b531b3dac373ccc50024c243adce1a0daf5. Expiry: restriction/order, arena, selection, or stdlib changes.
