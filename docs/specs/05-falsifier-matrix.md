@@ -363,6 +363,22 @@ diagnostic meanings.
 - Guard: signature scans and body lowering, aliases/chains, reversed arms,
   nested Arrays, and genuine inner input/result unions. Bare unknown Proc stays
   on the unchanged descriptor fallback. Inner unions are structural guards only:
-  the extended covariance/demand runtime path still has a missing stub.
+  the extended Proc-result inference/demand path still has a missing stub.
 - Scope: type parsing and concrete Proc specialization identity. Refresh on these
   consumers or union ABI changes. Whole broker/test parity remains open.
+
+
+### Proc semantic result union before body optimization (2026-10-15)
+- RED: source510 has five missing-union descriptor errors in six initial cases
+  (proc527), and the original-valid typed consumer aborts at Proc(Nil) demand
+  (proc537). The original infers a Nil | Int32 result from both literal branches.
+- GREEN: source533 passes 28 focused HIR examples (proc538), five typed-call
+  outputs (proc539), and the seven-output native regression with both dynamic
+  branch payloads (proc540). All native outputs equal original Crystal.
+- Guard: a same-type branch stays Int32; a typed static guard retains Int32 |
+  String; return values carry the function's retained union ABI. Unknown or
+  incompatible inference is not widened. Actual Proc(Nil) covariance is rejected
+  by Crystal (proc520) and must not become an admission rule.
+- Scope: unannotated Proc result inference and emitted return normalization.
+  Proc signature predicates remain a separate observed defect (proc535).
+  Refresh after inference/pruning/ABI changes; whole LavinMQ parity stays open.

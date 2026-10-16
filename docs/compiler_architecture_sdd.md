@@ -3638,6 +3638,20 @@ DoD: atomic source510 passes 21 HIR examples and original-first native direct an
 aliased dispatch with true/false/true/false. The parser-only source496 fails the
 Proc-positive native cases, demonstrating why the call-key companion is required.
 Signature scans, alias chains, reversed arms, nested containers, and genuine
-inner Proc unions are structural guards. Proc result covariance and its demand
-materialization remain separate runtime obligations. Refresh after Proc parsing,
+inner Proc unions are structural guards. Proc literal result inference and its
+demand materialization require separate runtime evidence. Refresh after Proc parsing,
 specialization, or union ABI changes; rollback is the bounded atomic HIR change.
+
+
+### Proc result inference precedes branch pruning (2026-10-15)
+Admitted: retain a source-inferred union result for an unannotated Proc literal
+when every emitted return and the actual last value are members of that union.
+Normalize the emitted returns to that result ABI. Unknown or incompatible
+inference retains the previous lowering path; concrete and explicit signatures
+are not widened. Branch pruning remains enabled and creates no dead-code demand.
+DoD: atomic source533 passes 28 HIR examples and seven native outputs equal to
+Crystal, including Nil/Int32 and Int32/String payloads through typed formals.
+This preserves the literal's inferred signature; it does not admit covariance
+between distinct Proc instances. Signature predicates, explicit-return joins,
+and ordinary local typing remain separate obligations. Refresh on inference,
+pruning, or return-ABI changes; rollback is the bounded HIR change.

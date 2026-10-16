@@ -19243,8 +19243,21 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   a Proc value can enter a union-typed callee without the matching representation.
   Atomic source510 passes 21 focused HIR examples and original-first native
   dispatch (true/false/true/false); source492 returns true for both tuple cases.
-- [ ] Close the adjacent runtime demand/covariance gap for passing `Proc(Nil)`
-  to `Proc(Nil | Int32) | Tuple(...)`: a composed compiler still emits a missing
-  `inner_union_form$Proc(Nil)` stub. Descriptor-level inner-union guards pass but
-  do not prove this runtime path. Also retain generic alias substitutions and
-  inline-yield result contracts as separate obligations. LavinMQ parity is open.
+- [x] Preserve the semantic result union of a Proc literal before lowering folds
+  its branches. The earlier inner-union demand probe was misclassified as a
+  covariance gap: Crystal rejects an actual `Proc(Nil)` for a `Proc(Nil | Int32)`
+  formal, but infers `Proc(Nil | Int32)` for `-> { if true; nil; else; 1; end }`.
+  Adamas had narrowed that literal to Proc(Nil), causing the missing stub.
+- [ ] Repair concrete Proc `is_a?` signature comparison, and probe explicit Proc
+  returns, generic alias substitutions, and inline-yield result contracts.
+  Ordinary expression/local types after branch pruning also need separate
+  evidence. LavinMQ parity remains open.
+
+
+### Preserve semantic Proc results before optimization (2026-10-15)
+- [x] Retain a source-level result union across constant branch pruning and
+  normalize emitted returns to it. Atomic source533 passes 28 focused HIR cases
+  plus seven original-first native checks; source510 aborts at a typed consumer.
+- [ ] Close the separate Proc signature-predicate defect (proc535), then probe
+  explicit-return joins and ordinary expression/local type preservation across
+  constant pruning. These are distinct from admitting Proc result covariance.

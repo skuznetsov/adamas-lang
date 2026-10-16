@@ -125875,6 +125875,16 @@ module Adamas::HIR
         @explicit_yield_target_stack << explicit_yield_target_id
         pushed_explicit_yield_target = true
       end
+      # Lowering may prune a constant branch, but a Proc's public result
+      # signature still includes both source branches. Preserve that semantic
+      # union independently of the optimized body representation.
+      semantic_return_type = nil.as(TypeRef?)
+      if proc_return_type == TypeRef::VOID
+        if semantic_name = inline_proc_return_type_name(node, proc_param_types, @current_class)
+          semantic_type = type_ref_for_name(semantic_name)
+          semantic_return_type = semantic_type if is_union_type?(semantic_type)
+        end
+      end
       last_value = begin
         lower_body(proc_ctx, node.body)
       ensure
@@ -125899,12 +125909,27 @@ module Adamas::HIR
         proc_ctx.terminate(Return.new(last_value))
       end
 
-      # Update return type from actual lowered body type
+      # Update return type from actual lowered body type. A source union
+      # may be wider than the optimized last value; retain it only when every
+      # actual return is an admitted member, then normalize the return ABI.
       if proc_return_type == TypeRef::VOID
         actual_return_type = proc_ctx.type_of(last_value)
+        preserved_semantic_union = false
+        if semantic_type = semantic_return_type
+          compatible_returns = proc_func.blocks.all? do |return_block|
+            return_node = return_block.terminator.as?(Return)
+            return_value = return_node.try(&.value)
+            !return_value || exact_union_call_type_subset?(proc_ctx.type_of(return_value), semantic_type)
+          end
+          if compatible_returns && exact_union_call_type_subset?(actual_return_type, semantic_type)
+            actual_return_type = semantic_type
+            preserved_semantic_union = true
+          end
+        end
         if actual_return_type != TypeRef::VOID
           proc_return_type = actual_return_type
           proc_func.return_type = proc_return_type
+          normalize_function_return_terminators(proc_ctx, proc_return_type) if preserved_semantic_union
         end
       end
 

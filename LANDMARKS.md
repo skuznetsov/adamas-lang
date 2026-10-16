@@ -17977,3 +17977,25 @@ Receipts: proc500, proc501, proc503, proc504, proc513, proc514, proc517, proc518
 Early proc497/498 and proc511/512 used faulty test instrumentation; exclude their
 failing totals from claims. Refresh on Proc parsing, type naming, specialization,
 or union ABI changes. Rollback is this bounded HIR commit.
+
+
+### Proc result types survive constant branch pruning (2026-10-15)
+Crystal visits both source branches before cleanup folds a constant condition.
+Adamas instead inferred a Proc's public result only from the lowered last value.
+Retain the source-inferred union when every emitted return belongs to it, then
+normalize those returns to the union ABI. Keep the old path when inference is
+unknown or any emitted value falls outside that union. Do not demand dead code.
+The earlier inner-union "covariance" hypothesis was refuted: Crystal rejects
+an actual Proc(Nil) for Proc(Nil | Int32). The original-valid literal has both
+Nil and Int32 source branches; folding must not erase its semantic result.
+Source510 aborts at nil_or_int_result$Proc(Nil); atomic source533 passes 28 HIR
+examples and seven native checks against original Crystal, including both dynamic
+branch payloads, typed formals, an Int32 | String result, and a monomorphic guard.
+HIR SHA a0d641035031afed9ff8f0a8e16052d9817aea95cea6f6ab4c0a682207b3c29e.
+Receipts: proc527, proc537, proc538, proc539, proc540. Original restrictions:
+../crystal/src/compiler/crystal/semantic/restrictions.cr ProcInstanceType.
+A separate signature predicate probe (proc535) finds concrete Proc is_a? checks
+comparing only the erased display name; it remains open and is not certified
+by this result-ABI fix. Explicit returns and non-Proc branch/local typing are
+adjacent unproven surfaces. Whole LavinMQ parity remains open. Refresh after
+Proc inference, branch pruning, or return ABI changes; rollback is this commit.
