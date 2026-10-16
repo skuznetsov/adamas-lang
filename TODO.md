@@ -19690,3 +19690,22 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Repair mixed Int64|String stdio dispatch/demand: union1399 builds on
   committed1376 but prints a blank line for the integer arm; track the separate
   side-effect-once risk when synthetic puts lowers its source argument twice.
+
+
+### Propagate proven completed direct-call NoReturn effects (2026-10-16)
+- [x] Propagate bottom through exact completed unannotated direct raise wrappers;
+  preserve guard continuation narrowing without treating VOID as NoReturn.
+  noreturn1464/1412 RED; noreturn1463/1432 GREEN on two positive output corpora
+  and three Hash rejection controls; noreturn1466 GREEN on 82 HIR examples.
+- [ ] Repair the pre-existing nullable-flow admission gaps separately: returning,
+  conditional, rescuing and nil-returning String guard negatives are accepted
+  by parent1412 and candidate1432; a rescuing Hash negative is also accepted.
+  Do not widen inferred bottom to rescue/ensure, dynamic or recursive CFGs
+  without an original-first distinguishing test and exceptional-edge proof.
+- [ ] Preserve source provenance for initialize-backed synthetic allocators in
+  complete union argument dispatch. Lavin1443 rejects IO::Memory.new on
+  Slice(UInt8)|String; union1453 reproduces this using "ab".to_slice (original
+  sizes 4/2). Materialized allocator presence alone is not source admission.
+- [ ] Diagnose the separate Bytes[] return-inference/constructor gap:
+  union1451 builds on1432 but produces buffer sizes 0/0 instead of Crystal's
+  4/2; LLVM uses String|UInt8 and the capacity allocator, not Slice|String.

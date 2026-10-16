@@ -26423,6 +26423,54 @@ module Adamas::HIR
       normalize_declared_type_name(safe_slice_to_string(return_type) || "") == "NoReturn"
     end
 
+    # Bottom is a control-flow effect, not the unresolved/void ABI type.
+    # Follow only exact completed direct targets; incomplete bodies, cycles,
+    # virtual dispatch and local exception handling provide no such proof.
+    private def selected_call_noreturn?(
+      name : String,
+      selected_def : Adamas::Compiler::Frontend::DefNode?,
+    ) : Bool
+      return false unless selected_def
+      return true if def_declared_noreturn?(selected_def)
+      return false unless @function_defs[name]?.try(&.same?(selected_def))
+      materialized_function_noreturn?(name, Set(String).new)
+    end
+
+    private def materialized_function_noreturn?(name : String, visiting : Set(String)) : Bool
+      return false if visiting.includes?(name)
+      source_def = @function_defs[name]?
+      return false unless source_def
+      return true if def_declared_noreturn?(source_def)
+      target = @module.function_by_name(name)
+      return false unless target && function_state(name).completed? && hir_function_body_emitted?(target)
+      # Rescue/ensure can recover a raised exception or replace its result.
+      # Until their exceptional edges have a separate effect certificate,
+      # keep these methods outside the ordinary-CFG proof.
+      return false if target.blocks.any? do |block|
+        block.instructions.any? { |instruction| instruction.is_a?(TryBegin) }
+      end
+      exits = reachable_blocks(target).select { |block| block.terminator.successors.empty? }
+      return false if exits.empty?
+      visiting.add(name)
+      begin
+        exits.all? do |block|
+          block.instructions.any? do |instruction|
+            case instruction
+            when Raise
+              true
+            when Call
+              !instruction.virtual && !instruction.has_block? &&
+                materialized_function_noreturn?(instruction.method_name, visiting)
+            else
+              false
+            end
+          end
+        end
+      ensure
+        visiting.delete(name)
+      end
+    end
+
     @[AlwaysInline]
     private def active_lower_method_stats_index : Int32?
       size = @lower_method_stats_stack.size
@@ -82196,9 +82244,8 @@ module Adamas::HIR
         call = Call.without_receiver(ctx.next_id, return_type, full_name, call_args)
         ctx.emit(call)
         ctx.register_type(call.id, return_type)
-        # VOID is also used for unresolved calls. Only the exact selected Def's
-        # explicit NoReturn annotation proves that this continuation is dead.
-        if selected_def && def_declared_noreturn?(selected_def)
+        # The exact selected body can prove bottom independently of its ABI.
+        if selected_call_noreturn?(full_name, selected_def)
           @control_flow_dead_blocks.add({ctx.function.id, ctx.current_block})
         end
         if function_returns_type_literal?(full_name, name)
@@ -98390,7 +98437,7 @@ module Adamas::HIR
       call.configure_without_receiver(target_name, coerced_args)
       ctx.emit(call)
       ctx.register_type(call.id, return_type)
-      if selected_def && def_declared_noreturn?(selected_def)
+      if selected_call_noreturn?(target_name, selected_def)
         @control_flow_dead_blocks.add({ctx.function.id, ctx.current_block})
       end
       if function_returns_type_literal?(target_name, base_name)
@@ -108056,14 +108103,11 @@ module Adamas::HIR
         end
       end
       write_back_block_proc_captures(ctx, uncoerced_args)
-      # TypeRef::VOID also represents unresolved calls, so it cannot prove
-      # bottom by itself. Only the exact structured-resolver Def with an
-      # explicit NoReturn annotation makes the current continuation dead.
+      # Keep the selected target's bottom effect separate from VOID, which
+      # also represents an unresolved ABI. A virtual call needs every target.
       unless call_virtual
-        if selected_def = selected_call_entry_def
-          if def_declared_noreturn?(selected_def)
-            @control_flow_dead_blocks.add({ctx.function.id, ctx.current_block})
-          end
+        if selected_call_noreturn?(emit_method_name, selected_call_entry_def)
+          @control_flow_dead_blocks.add({ctx.function.id, ctx.current_block})
         end
       end
       if function_returns_type_literal?(mangled_method_name, base_method_name)

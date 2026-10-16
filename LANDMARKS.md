@@ -18696,3 +18696,28 @@ narrowing to an unannotated raise wrapper. Broker compatibility remains open.
 Mixed-union stdio formatting is separately RED on committed1376 (union1399).
 Refresh this certificate after source admission, queue scheduling, declaration
 registration, RTA call repair or ABI changes; roll back this slice with its tests.
+
+
+### Propagate proven completed direct-call NoReturn effects (2026-10-16)
+Unannotated raise wrappers had a completed HIR body but only an explicit
+NoReturn source annotation killed the caller continuation. Consequently LavinMQ's
+bad_request -> halt_request chain left Nil in guarded pattern/definition values.
+Keep bottom separate from VOID. For the exact selected registered Def, inspect
+only completed emitted direct targets and prove every reachable terminal block
+contains a raise or another certified direct NoReturn call. Reject cycles,
+incomplete bodies, virtual/block calls and local TryBegin/rescue/ensure bodies.
+Apply the effect at the three existing selected-call continuation sites without
+changing force-lowering guards, ABI types or source overload restrictions.
+DoD: materialized_noreturn_guard_flow_repro.sh against pinned Crystal 1.21;
+noreturn1464/1412 RED on the original guard, noreturn1463/1432 GREEN on two exact
+positive output corpora and three nullable Hash rejection controls. noreturn1466:
+82 HIR examples GREEN. Scoped delta adversary ROBUST for these direct-call cases.
+This is not general nullable-flow closure: both parent and candidate already
+admit four String negatives and a rescuing Hash negative. Broader CFG probes
+were inconclusive because both hit an unrelated stdlib sort-block type error.
+Lavin1443/channel1441 passes VHost#add_policy, then rejects IO::Memory.new with
+Slice(UInt8)|String; no broker binary or upstream parity claim exists.
+Source manifest 4203eda30b83bec54978515438345ddecf875333a31cfece5f8692e45b858c93;
+host a1e48fefdd6c3b999eea45836a352783e9762b510a05251ddb00c5cd4793916b.
+Refresh after call selection, completion state, HIR CFG/exception edges or
+continuation narrowing changes. Roll back this slice with its portable test.

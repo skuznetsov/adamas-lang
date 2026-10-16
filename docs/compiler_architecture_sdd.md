@@ -4166,3 +4166,23 @@ return drift and call retargeting rejection). Scoped adversary ROBUST within
 these tested boundaries. NoReturn wrapper narrowing, mixed-union stdio and
 full LavinMQ remain open. Refresh after admission, scheduling, context, RTA or
 ABI changes. Source manifest 48bff14e8d9812736d81a8019bb46287b66f95aabfd42f97658f0ce203897acd.
+
+
+### Propagate proven completed direct-call NoReturn effects (2026-10-16)
+Bottom is a control-flow effect distinct from unresolved VOID ABI types.
+The exact selected source Def may kill a call continuation when it explicitly
+declares NoReturn, or when its completed emitted direct target proves bottom
+on every reachable terminal block via Raise or certified direct non-block calls.
+Require exact registered source identity. Incomplete bodies, cycles, virtual
+targets and any local TryBegin/rescue/ensure body remain outside this proof.
+The effect does not force body materialization or alter target ABI/source
+restrictions. Use it only at existing selected-call dead-continuation sites.
+DoD: noreturn1464 parent RED; noreturn1463 candidate GREEN for original-first
+guard and overload/conditional/rescue/nil runtime controls plus three nullable
+Hash compile rejections. noreturn1466 GREEN on 82 HIR examples. Scoped delta
+adversary ROBUST. General nullable rejection remains open: String negatives
+and rescuing Hash were already accepted by both parent and candidate.
+Lavin1443 advances to synthetic IO::Memory.new union source provenance; the
+broker has not compiled. Source manifest
+4203eda30b83bec54978515438345ddecf875333a31cfece5f8692e45b858c93.
+Refresh on source selection, body completion, CFG/exception or flow changes.

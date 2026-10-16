@@ -887,3 +887,20 @@ diagnostic meanings.
   Int64|String printing loses the integer arm. Neither is union feature closure.
 - Refresh on source admission, deferred queue, retained contexts, RTA call repair
   or ABI changes. Broader/default/named/splat/block deferred shapes remain open.
+
+
+### Propagate proven completed direct-call NoReturn effects (2026-10-16)
+- RED noreturn1464/1412: unannotated bad_request -> halt_request -> raise
+  does not exclude the failing guard continuation; consume receives Nil|Hash.
+- GREEN noreturn1463/1432: guard output and overload/conditional/rescue/nil
+  runtime controls match pinned Crystal 1.21; returning, conditional and nil
+  Hash guard negatives reject with concrete type diagnostics on both compilers.
+- GREEN noreturn1466: 82 HIR examples. Delta adversary ROBUST within these
+  selected direct-call boundaries. Four String negatives and rescuing Hash
+  remain pre-existing admission gaps on parent and candidate; complex CFG
+  probes are inconclusive due an unrelated shared stdlib sort-block failure.
+- Frontier lavin1443/channel1441: VHost#add_policy passes; synthetic
+  IO::Memory.new rejects Slice(UInt8)|String. union1453 is the same short
+  rejection, while Bytes[] variant union1451 separately produces 0/0 vs 4/2
+  after incorrectly inferring String|UInt8 and selecting a capacity allocator.
+- Refresh after selection, body state, exception/CFG or narrowing changes.
