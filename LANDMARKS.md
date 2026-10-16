@@ -19093,3 +19093,19 @@ Scoped ROBUST for exact admitted wrapper target retention. Manifest cb17812b3f04
 Refresh after overload rematching, wrapper admission or missing-target demand
 changes. Full JSON on the normal prelude, fresh bootstrap and LavinMQ parity
 remain open; the private prelude-helper composition is diagnostic only.
+
+
+### Retain class references published by synthesized Array append (2026-10-16)
+The late synthesized Array#<<(T) body stored a class pointer without retaining
+the value. Caller-local release could therefore invalidate an element already
+published in the Array. Emit one rc_inc immediately before the common slot
+store when the concrete append value is MIR TypeKind.Reference and the slot
+uses ptr. Both ordinary append and buffer growth reach that store.
+Agent original-first ordinary/growth reducers: baseline A/X, candidate A/A;
+growth LLVM also shows caller-local release before the read. Root array1845
+passes all three original-first native cases (direct, growth, scalar), exact
+stdout/stderr; exact current parent array1842 prints X instead of A.
+Scoped ROBUST for this class-reference publication boundary. Manifest aea7f1ea28c80b7803398deeb834985b6d1b152ae3ea3d969809ca5738b50950; host cc7d89542be7a77df8d362da257bcf738acfbb26a23e8e15a8b6a9130e7581ce.
+Array-kind and inline/aggregate child ownership remain open. Refresh after
+synthesized append, type classification or RC convention changes. This does
+not establish fresh bootstrap or LavinMQ test parity.

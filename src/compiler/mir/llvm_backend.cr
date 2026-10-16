@@ -3419,6 +3419,16 @@ module Adamas::MIR
       elem_llvm == "void" ? "ptr" : elem_llvm
     end
 
+    private def array_append_value_mir_type_from_mangled_method(name : String) : Type?
+      match = name.match(/\$H\$SHL\$\$(.+)\z/)
+      return nil unless match
+
+      value_mangled = match[1]
+      @module.type_registry.types.find do |type|
+        @type_mapper.mangle_name(type.name) == value_mangled
+      end
+    end
+
     private def build_llvm_emission_session : LLVMEmissionSession
       requested_workers, effective_workers, sequential_reason_code = build_llvm_emission_worker_plan
       LLVMEmissionSession.new(
@@ -5376,6 +5386,15 @@ module Adamas::MIR
         # on grow (the s2b Globber PatternType append crash).
         elem_mir = array_element_mir_type_from_mangled_method(name)
         stride = elem_mir ? container_elem_storage_size_u64(elem_mir).to_i64 : llvm_store_size_bytes(elem_type).to_i64
+        append_value_mir = array_append_value_mir_type_from_mangled_method(name)
+        retain_append_value = false
+        if append_value_mir && elem_type == "ptr"
+          retain_append_value = append_value_mir.kind.reference?
+        end
+        append_store_ir = String.build do |io|
+          io << "  call void @__adamas_rc_inc(ptr %value)\n" if retain_append_value
+          io << "  store #{elem_type} %value, ptr %slot\n"
+        end
         return "; #{name} — primitive Array#<<(T) for late generic append bodies\n" \
                "define ptr @#{name}(ptr %self, #{elem_type} %value) {\n" \
                "entry:\n" \
@@ -5403,7 +5422,7 @@ module Adamas::MIR
                "  %idx64 = sext i32 %size to i64\n" \
                "  %byte_off = mul i64 %idx64, #{stride}\n" \
                "  %slot = getelementptr i8, ptr %buf, i64 %byte_off\n" \
-               "  store #{elem_type} %value, ptr %slot\n" \
+               "#{append_store_ir}" \
                "  %new_size = add i32 %size, 1\n" \
                "  store i32 %new_size, ptr %size_ptr\n" \
                "  ret ptr %self\n" \

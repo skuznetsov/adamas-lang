@@ -1153,3 +1153,14 @@ diagnostic meanings.
   Manifest cb17812b3f04f58039ab270bac08f557b1d8a8ef06f6ea35c26d6d54f41d1836; host d9ea1ea8fd01c3b6d1aac56c0c0b3a4a0adc10e7153ea4f7a8c59e44740da817.
 - OPEN normal-prelude full JSON, current bootstrap and LavinMQ parity. Refresh
   after selection, wrapper admission or missing-target demand changes.
+
+
+### Retain class references published by synthesized Array append (2026-10-16)
+- GREEN array1845 sealed array1841: direct class append, capacity-growth class
+  append after caller-local release, and scalar guard; original-first exact
+  stdout/stderr. RED array1842 exact json1834 parent: direct prints X, not A.
+- Agent's isolated direct and growth parents also print X; class-only candidate
+  prints A. LLVM has one retain at the common slot store. Scoped ROBUST for
+  TypeKind.Reference values in ptr-backed synthesized append. Manifest aea7f1ea28c80b7803398deeb834985b6d1b152ae3ea3d969809ca5738b50950; host cc7d89542be7a77df8d362da257bcf738acfbb26a23e8e15a8b6a9130e7581ce.
+- OPEN Array-kind and aggregate child ownership, fresh bootstrap and LavinMQ
+  parity. Refresh after append synthesis, type classification or RC changes.

@@ -29,6 +29,13 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+Synthesized Array append retains a concrete class-reference value exactly
+once at its common ptr slot store, including after buffer growth. This repairs
+publication ownership when a caller releases its local reference. DoD:
+array_reference_append_publication_repro.sh, direct/growth/scalar native cases
+matching original Crystal stdout/stderr. Rollback is the bounded retain guard.
+Array-kind and aggregate child ownership are separate open obligations.
+
 A structurally admitted source-selected reference wrapper retains its exact
 target through final overload fallback even if body filtering deferred queue
 admission. Missing emitted-call demand is handled by the existing sweep, not

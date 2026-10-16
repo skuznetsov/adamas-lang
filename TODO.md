@@ -19940,3 +19940,11 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   parent json1839 passes six and exits 138 on helper_filtered_zero_arg.
 - [ ] Repair normal-prelude binding after flattened rest arguments; then
   recheck full JSON, fresh bootstrap and LavinMQ build/test parity.
+
+
+### Retain class references published by synthesized Array append (2026-10-16)
+- [x] Retain concrete class references once at the synthesized Array#<< slot
+  store. array1845 direct/growth/scalar original-first native cases GREEN;
+  exact current parent array1842 rejects the direct case (A versus X).
+- [ ] Audit aggregate and Array-kind child ownership separately; a nested-Array
+  control passed on the parent and does not establish coverage for those cases.
