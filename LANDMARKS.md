@@ -1,5 +1,22 @@
 # LANDMARKS
 
+Forwarded typed Proc ABI (2026-10-16): the descriptor retained the exact
+UInt64/tuple inputs and Int32 result, but lower_block_pass_proc resolved the
+generic stdlib Proc#call$*T_splat first and used its unresolved R. A known Proc
+descriptor now selects the same intrinsic call and bound result as ordinary
+proc.call; unknown/bare receivers keep their fallback. Original-first native
+forwarded_proc_bound_abi_repro.sh matches 123123321123 for comparator/key/reverse
+sorts and ABC for Int64/Float64/Nil forwarding. The exact parent fails the sort
+macro; expected-input guards pass. Scoped verdict: ROBUST for this concrete
+forwarding consumer. Source HIR SHA256:
+79b8ab9ffd8116939441d16c6e9caabbe8b1c6cfb8091d2afc073a2a09fbd4e6;
+host SHA256: 1df5c01b761e7521547910edd45c5b4a007755eb2ba5cfb06b23c9d3ce0312cd.
+Receipts: sort2077/2078, sort2081/2083/2084. Refresh after Proc descriptor,
+forwarding, dispatch or callback ABI changes. The combined ordinary S2
+s2_sort2082 passes sorting and stops at FastFloat ParseOptionsT(UC) versus
+ParseOptionsT(UInt8). Bare Proc, dynamic callback-result SSA, complete bootstrap
+and LavinMQ runtime/spec parity remain open.
+
 Inferred block result ownership (2026-10-16): a deferred declaration snapshot
 owns generic bindings, while only the exact selected call owns transient
 block-result and callback-ABI hints. A concrete generic receiver must register

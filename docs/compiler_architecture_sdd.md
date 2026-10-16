@@ -29,6 +29,16 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+A forwarded block whose value already has a concrete Proc descriptor consumes
+that descriptor's bound result and the intrinsic Proc call, as an ordinary
+proc.call does. Generic stdlib Proc#call lookup cannot replace the bound result
+with an unresolved declaration parameter. Bare/unknown Proc receivers retain
+their fallback. DoD: forwarded_proc_bound_abi_repro.sh, original-first native
+UInt64 comparator/key, Float64 key, reverse-sort and Int64/Float64/Nil forwarding
+checks; the exact parent fails the sort fixture and expected-input guards pass.
+Rollback is the bounded lower_block_pass_proc call selection. Dynamic local
+Proc SSA, complete current bootstrap and LavinMQ parity remain open.
+
 Deferred included-module snapshots own declaration generic substitutions;
 only the exact selected call may contribute transient block-result and
 callback-ABI hints. Register an included source Def before classifying a

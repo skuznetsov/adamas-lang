@@ -126352,14 +126352,16 @@ module Adamas::HIR
       end
 
       arg_types = param_ids.map { |param_id| ctx.type_of(param_id) }
-      actual_name = resolve_method_call(ctx, proc_id, "call", arg_types, false)
-      return_type = get_function_return_type(actual_name)
-      if return_type == TypeRef::VOID
-        if type_desc = @module.get_type_descriptor(ctx.type_of(proc_id))
-          if type_desc.kind == TypeKind::Proc && type_desc.type_params.size > 1
-            return_type = type_desc.type_params.last
-          end
-        end
+      proc_descriptor = @module.get_type_descriptor(ctx.type_of(proc_id))
+      if proc_descriptor && proc_descriptor.kind == TypeKind::Proc && !proc_descriptor.type_params.empty?
+        # A forwarded Proc uses the same intrinsic ABI as an ordinary proc.call.
+        # Looking up the generic stdlib Proc#call first loses its bound result
+        # in the unresolved R of Proc#call(*args : *T).
+        actual_name = "Proc#call"
+        return_type = proc_descriptor.type_params.last
+      else
+        actual_name = resolve_method_call(ctx, proc_id, "call", arg_types, false)
+        return_type = get_function_return_type(actual_name)
       end
 
       call = Call.with_receiver(ctx.next_id, return_type, proc_id, actual_name, param_ids)

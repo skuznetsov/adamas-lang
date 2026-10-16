@@ -1,5 +1,21 @@
 # Adamas Bootstrap TODO
 
+2026-10-16 FORWARDED TYPED PROC ABI: use the concrete Proc descriptor before
+resolving generic stdlib Proc#call when constructing a forwarded block. The
+signature was retained; the old consumer chose Proc#call$*T_splat and published
+its unresolved R instead of the bound result. The original-first native
+forwarded_proc_bound_abi_repro.sh matches 123123321123 for UInt64 comparator,
+UInt64/Float64 key and reverse sorts, plus ABC for Int64/Float64/Nil result
+forwarding. The exact parent fails the sort macro; expected-input guards pass.
+Evidence: sort2077/2078, sort2081/2083/2084. Refresh after Proc descriptor,
+forwarded-block construction, call dispatch or callback ABI changes.
+- [ ] Repair the fresh ordinary S2 ParseOptionsT(UC) versus ParseOptionsT(UInt8)
+  restriction mismatch in Float::FastFloat::BinaryFormat_Float64#from_chars_advanced
+  (s2_sort2082). This run passed the previous comparator failure; S2 is not built.
+- [ ] Retain bare/unresolved Proc and dynamic callback-result SSA as separate
+  obligations; this fix consumes an existing concrete descriptor only.
+- [ ] Complete fresh bootstrap and unchanged LavinMQ runtime/spec parity.
+
 2026-10-16 INFERRED BLOCK RESULT SPECIALIZATION: deferred included-module
 snapshots retain only the exact selected call's block-result/callback-ABI
 hints, while declaration generic bindings remain authoritative. Resolve the
@@ -16,9 +32,10 @@ dependency traversal changes.
 - [ ] Local Proc variables passed through `&proc` to the same case fixture
   still produce an undefined callback-result SSA value (flat2043/2044).
   Audit the return carrier and the separate yield-discovery walkers together.
-- [ ] Repair the next S2 sorting-comparator UInt64 inference failure
-  (s2_flat2051). The bundled-stdlib Hash#any? neighbor hits the same failure on
-  both the parent and candidate (flat2056/2059); it is not a passing guard.
+- [x] Repair the S2 sorting-comparator failure at the typed Proc forwarding
+  consumer (sort2081/2084); fresh S2 passes it and reaches a FastFloat generic
+  restriction mismatch (s2_sort2082). The bundled-stdlib Hash#any? neighbor
+  failed on both the earlier parent and candidate (flat2056/2059).
 - [ ] Complete fresh bootstrap and unchanged LavinMQ runtime/spec parity.
 
 2026-10-15 EXPECTED BLOCK PROC ABI: omitted source bindings do not remove
