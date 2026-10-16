@@ -772,3 +772,14 @@ diagnostic meanings.
 - GREEN equality1104-1106: typed !=, class-argument and union-receiver guards.
   Scoped adversary ROBUST for declared call shapes; pending Proc materialization
   and LavinMQ parity remain open. Refresh after union/lookup/virtual ABI changes.
+
+
+### Preserve call shape when local overload lookup reaches ancestors (2026-10-16)
+- RED ancestor1138 on equality1098: inherited named permissions call reaches a
+  native bus error after local overload lookup loses the applicable ancestor.
+- GREEN ancestor1135 on isolated ancestor1133: ten no-prelude outputs plus full
+  Hash permissions agree with Crystal; default/named ordering, splat, block,
+  local narrow/broad overrides and later ancestor reopening are guarded.
+- GREEN ancestor1139: all 44 original-first union equality outputs match under
+  full/no prelude. Scoped adversary ROBUST for these shapes; no LavinMQ closure.
+  Refresh after lookup, self-call inference, numeric hierarchy or shape changes.

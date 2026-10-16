@@ -18501,3 +18501,25 @@ Manifest 83abfb2cb46238dc3ffa38afbbf04b6f596f9fafafb20451dec904c551dcae16;
 host 96d3d6ac348781122eff6ecd3c62b0e57075df91df8a1275652e61d15026b580.
 Refresh on receiver lookup, union fanout, virtual target replay or return ABI
 changes. Roll back source and its portable regression together.
+
+
+### Preserve call shape when local overload lookup reaches ancestors (2026-10-16)
+A local method name previously stopped lookup even when no local overload
+accepted the call. Unqualified-self return inference also omitted named labels
+and counted only positional arguments. After a local applicability miss, walk
+ordinary instance ancestors with the same arity, block, splat and named metadata;
+retain compatible local overrides. Pass named-call shape and the selected Def
+into self-call return inference. Applicability consults the built-in numeric
+parent chain even when Int32 has no class_info entry, preserving local priority.
+Parent 7ca2eb7d/equality1098 is RED in ancestor1138 (native bus error). Isolated
+ancestor1133 is GREEN in ancestor1135: ten no-prelude native outputs plus the
+full-prelude Hash permissions map agree with original Crystal. Default/named
+ordering, splat, block, local override and later ancestor reopening are covered.
+ancestor1139 also preserves all 44 full/no-prelude union equality results.
+Scoped adversary ROBUST for these shapes; generic Proc ranking, named-label
+rejection, pending materialization and LavinMQ parity remain separate open work.
+Manifest 60d626815685fd9627027d0860211d855a197023301f7fc7b7cbafed6ab21b5c;
+host 62ec19c274e6a92b6d6f5e08d933638400b0826f5573f9b19b22232403bf5ed4.
+Refresh after lookup, self-call inference, call-shape or numeric hierarchy changes.
+Roll back source and regression together. Mixed splat inference remains outside
+the stated native oracle; do not treat transported metadata as universal closure.

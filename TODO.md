@@ -19581,3 +19581,12 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   before recording [Proc(Nil)]; whole-call fallback then writes Proc|Tuple into
   the shared target demand, and queue draining fails at the union's #pointer.
   Repair the demand transport without bypassing the unresolved-pointer guard.
+
+
+### Preserve call shape when local overload lookup reaches ancestors (2026-10-16)
+- [x] Preserve ancestor fallback call shape after a local overload miss, including
+  named/default/splat/block cases and local numeric priority. ancestor1138 RED;
+  ancestor1135 GREEN (11 original-first native cases), ancestor1139 GREEN (44
+  full/no-prelude union equality outputs).
+- [ ] Audit unqualified-self inference of mixed splat/named calls: this fix covers
+  the declared native shapes, not a universal expansion-aware call-shape builder.

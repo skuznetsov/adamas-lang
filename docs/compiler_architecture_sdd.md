@@ -4039,3 +4039,17 @@ Scoped adversary ROBUST includes subclasses that reverse operator results and
 return Int32/Char through a base-typed receiver. Pending Proc arm materialization
 is a separate open producer/consumer defect; LavinMQ parity remains unverified.
 Refresh after lookup, union fanout, virtual replay or return ABI changes.
+
+
+### Preserve call shape when local overload lookup reaches ancestors (2026-10-16)
+Ordinary instance overload lookup may continue through ancestors only after
+local applicability fails. Forward arity, block presence, argument types, splat
+and named-label metadata unchanged; a compatible local overload retains priority.
+Unqualified-self return inference forwards named labels/counts and the selected
+Def. Numeric built-in ancestry participates even without class_info registration.
+DoD: ancestor_overload_call_shape_repro.sh, 11 original-first native cases;
+parent ancestor1138 RED, isolated ancestor1133/ancestor1135 GREEN. The 44-result
+full/no-prelude union dispatch guard is GREEN in ancestor1139. Scoped adversary
+ROBUST for the declared cases, including reopened ancestor versus local override.
+Proc match phases, wrong external-label rejection and mixed-splat inference are
+not certified by this boundary. Refresh on lookup/call-shape/hierarchy changes.

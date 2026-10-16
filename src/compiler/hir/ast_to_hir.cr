@@ -27702,13 +27702,40 @@ module Adamas::HIR
             # through a nested yield.
             unless block_expr || block_pass_expr
               arg_types = infer_arg_types_for_call(expr_node.args, self_type_name)
+              call_arg_count = arg_types.size
+              call_has_named_args = false
+              named_arg_names = nil.as(Array(String)?)
+              raw_positional_count = nil.as(Int32?)
+              if named_args = expr_node.named_args
+                unless named_args.empty?
+                  call_has_named_args = true
+                  call_arg_count += named_args.size
+                  named_arg_names = named_arg_names_for(named_args)
+                  raw_positional_count = expr_node.args.size
+                  expr_node.args.each do |arg_id|
+                    arg_node = node_for_expr(arg_id)
+                    if arg_node.is_a?(Adamas::Compiler::Frontend::SplatNode)
+                      raw_positional_count = nil
+                      break
+                    elsif arg_node.is_a?(Adamas::Compiler::Frontend::UnaryNode)
+                      splat_op = String.new(arg_node.operator)
+                      if splat_op == "*" || splat_op == "**"
+                        raw_positional_count = nil
+                        break
+                      end
+                    end
+                  end
+                end
+              end
               if exact = lookup_function_def_for_call(
                    base,
-                   arg_types.size,
+                   call_arg_count,
                    false,
                    arg_types,
                    false,
-                   !expr_node.named_args.nil?,
+                   call_has_named_args,
+                   named_arg_names,
+                   raw_positional_count,
                  )
                 exact_name = exact[0]
                 receiver_ref = type_ref_for_name(self_type_name)
@@ -27716,7 +27743,8 @@ module Adamas::HIR
                      exact_name,
                      strip_type_suffix(exact_name),
                      receiver_ref,
-                     arg_types.size,
+                     call_arg_count,
+                     exact[1],
                    )
                   return inferred if inferred != TypeRef::VOID
                 end
@@ -53191,11 +53219,10 @@ module Adamas::HIR
               else
                 resolve_type_alias_chain(get_type_name_from_ref(arg_type))
               end
-              if @class_info.has_key?(arg_class) && @class_info.has_key?(param_resolved_name)
-                if class_inherits_from?(arg_class, param_resolved_name)
-                  arg_idx += 1
-                  next
-                end
+              if class_inherits_from?(arg_class, param_resolved_name) ||
+                 (!builtin_hierarchy_parent(arg_class).nil? && get_parent_chain(arg_class).includes?(param_resolved_name))
+                arg_idx += 1
+                next
               end
             end
             # A union of reference subclasses has the same pointer ABI as its
@@ -111179,6 +111206,32 @@ module Adamas::HIR
 
       STDERR.puts "[OVL] PICK func=#{func_name} -> #{best_name.inspect} score=#{best_score}" if ovl_trace
       unless best && best_name
+        # A local method name can exist without an overload that accepts this
+        # call shape. Continue ordinary instance lookup through ancestors in
+        # that case; a compatible local override has already won above.
+        if parts = method_parts
+          if parts.separator == '#' && (method = parts.method)
+            get_parent_chain(parts.owner).each do |parent|
+              inherited_lookup = "#{parent}##{method}"
+              next if inherited_lookup == func_name
+              if inherited_entry = lookup_function_def_for_call(
+                   inherited_lookup,
+                   arg_count,
+                   has_block,
+                   arg_types,
+                   call_has_splat,
+                   call_has_named_args,
+                   named_arg_names,
+                   input.raw_positional_count,
+                 )
+                if debug_call_lookup
+                  STDERR.puts "[CALL_LOOKUP_INHERITED_AFTER_LOCAL_MISS] func=#{func_name} target=#{inherited_lookup}"
+                end
+                return inherited_entry
+              end
+            end
+          end
+        end
         if parts = method_parts
           if parts.separator && (inherited_method = parts.method) && parts.owner.includes?('(')
             inherited_lookup = resolve_method_with_inheritance(parts.owner, inherited_method)
