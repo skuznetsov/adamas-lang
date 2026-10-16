@@ -18790,3 +18790,23 @@ change. Lavin1515/channel1510 and JSON runtime parity remain open.
 Manifest a7a515e90f1725bdf4c93c7be3b7eccc57c728807725e885b7dfde74e8e3cee5;
 host 1af7249bf18ff310cd84f37d508513f0c82f0547ddcd4dc62f206b2f45e8b5b9.
 Refresh after builtin identity, container representation or case-proof changes.
+
+
+### Preserve nullable Proc and unknown branch inference (2026-10-16)
+AST return inference could not identify explicitly typed Proc literals and
+silently dropped unknown branch types. A nullable Proc producer was therefore
+inferred as Nil and its non-nil value lost through Box.capture. Infer plain
+explicit Proc signatures; keep unknown nonterminal branches unknown; include
+Nil for empty if/elsif/else bodies. A terminal Return contributes no fallthrough
+value. Case, ternary and rescue joins follow the same unknown-branch rule.
+DoD: nullable_proc_branch_inference_repro.sh. nullable1532/case1509 RED;
+nullable1542/nullable1529 GREEN on seven original-first native fixtures and
+producer/callsite HIR checks. nullable1539 parent fails eight of ten unit
+examples; nullable1538 candidate passes all ten. nullable1533 passes 115 related
+HIR examples. Scoped adversary ROBUST: recursive unknown arms, terminal returns,
+empty branches, missing else, and untyped Proc inputs were exercised. A prior
+unknown-only proposal lost empty-branch Nil and was rejected before publication.
+Manifest 949fc005ff0cf5a6bcc0e7bc3636a520983a73055863d41b2eb563172e93a6be;
+host 891793bc58e1b05874056f7bb9e988a0bccccb0ef5c85aa4d2362b81dde6cb25.
+Refresh after AST branch inference, Proc signature or terminal-return changes.
+This does not close LavinMQ build/runtime parity or constructor recursion.

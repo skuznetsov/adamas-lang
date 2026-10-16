@@ -19761,3 +19761,17 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   mismatch: expected LimbSpan, got Slice(UInt32) (json1501).
 - [ ] Complete LavinMQ build/runtime/upstream parity after case pruning.
   Lavin1515/channel1510 is a probe, not evidence of a usable broker.
+
+
+### Preserve nullable Proc and unknown branch inference (2026-10-16)
+- [x] Preserve nullable Proc signatures and unknown branches during AST return
+  inference. Seven native Crystal comparisons, ten new unit examples and 115
+  related HIR examples pass on nullable1529; case1509 has eight unit failures.
+- [ ] Extend explicit Proc inference beyond plain fully annotated parameters
+  only with source-compatible call-shape and nested-signature evidence.
+- [ ] Keep inferred NoReturn effects separate from Void/unknown in concrete
+  generic receiver unions. Lavin1515 reaches Channel SendAction/StrictReceiveAction
+  default_result: both raise, but the current return join rejects Void.
+- [ ] Repair JSON::Any.new(Int64) constructor binding. json1524 LLVM contains an
+  immediate recursive new(Int64) call; its SAFE-wrapped LLDB trace repeats that
+  frame. This fails before JSON serialization, and broker parity remains open.

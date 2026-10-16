@@ -4233,3 +4233,16 @@ ROBUST; source restriction rejection and implicit-Nil/Phi correctness remain
 separate obligations with parent-reproduced failures (case1521/1525,1516/1517).
 Manifest a7a515e90f1725bdf4c93c7be3b7eccc57c728807725e885b7dfde74e8e3cee5.
 Refresh after builtin identity, container representation or static proof changes.
+
+
+### Preserve nullable Proc and unknown branch inference (2026-10-16)
+Expression return inference must not discard an unknown nonterminal arm when
+joining known values. If/elsif/else empty bodies contribute Nil; a syntactic
+terminal Return has no fallthrough value. Case, ternary and rescue joins retain
+the same unknown boundary. A plain explicitly annotated Proc literal may provide
+its complete interned signature; unsupported input shapes remain unknown.
+nullable1542 matches seven Crystal native outputs and producer/callsite HIR;
+nullable1538 passes ten unit examples; nullable1533 passes 115 related HIR
+examples. Scoped verdict ROBUST. This is an inference rule, not a constructor,
+virtual NoReturn or full-stdlib compatibility certificate. Refresh on branch
+inference, Proc signature or terminal-return changes.

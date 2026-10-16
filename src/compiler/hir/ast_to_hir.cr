@@ -26851,6 +26851,8 @@ module Adamas::HIR
             return type_ref_for_name(inferred)
           end
         end
+      when Adamas::Compiler::Frontend::ProcLiteralNode
+        return infer_proc_literal_type_ref(expr_node, self_type_name)
       when Adamas::Compiler::Frontend::PathNode
         raw_path = collect_path_string(expr_node)
         absolute = raw_path.starts_with?("::")
@@ -28306,6 +28308,7 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::IfNode
         types = [] of TypeRef
         branch_sensitive_failure = false
+        unknown_branch = false
         if env_has?("DEBUG_L9_INFER_IF")
           l9_ctx = (@current_class || "?") + "#" + (@current_method || "?")
           direct_then = infer_type_from_branch(expr_node.then_body, self_type_name)
@@ -28327,6 +28330,11 @@ module Adamas::HIR
             STDERR.puts "[L9_INFER_IF] ctx=" + l9_ctx2 + " then_dropped=assign_local"
           end
         else
+          if expr_node.then_body.empty?
+            types << TypeRef::NIL
+          else
+            unknown_branch = true unless branch_ends_with_return?(expr_node.then_body)
+          end
           if env_has?("DEBUG_L9_INFER_IF")
             l9_ctx2 = (@current_class || "?") + "#" + (@current_method || "?")
             STDERR.puts "[L9_INFER_IF] ctx=" + l9_ctx2 + " then_dropped=nil_infer"
@@ -28340,17 +28348,27 @@ module Adamas::HIR
               types << inferred
             elsif condition_has_assignment_local?(branch.condition)
               branch_sensitive_failure = true
+            else
+              if branch.body.empty?
+                types << TypeRef::NIL
+              else
+                unknown_branch = true unless branch_ends_with_return?(branch.body)
+              end
             end
           end
         end
         if else_body = expr_node.else_body
           if inferred = infer_type_from_branch(else_body, self_type_name)
             types << inferred
+          elsif else_body.empty?
+            types << TypeRef::NIL
+          else
+            unknown_branch = true unless branch_ends_with_return?(else_body)
           end
         else
           types << TypeRef::NIL
         end
-        if branch_sensitive_failure
+        if branch_sensitive_failure || unknown_branch
           return nil
         end
         if types.any?
@@ -28358,23 +28376,31 @@ module Adamas::HIR
         end
       when Adamas::Compiler::Frontend::CaseNode
         types = [] of TypeRef
+        unknown_branch = false
         expr_node.when_branches.each do |branch|
           if inferred = infer_type_from_branch(branch.body, self_type_name)
             types << inferred
+          else
+            unknown_branch = true unless branch_ends_with_return?(branch.body)
           end
         end
         if else_branch = expr_node.else_branch
           if inferred = infer_type_from_branch(else_branch, self_type_name)
             types << inferred
+          else
+            unknown_branch = true unless branch_ends_with_return?(else_branch)
           end
         end
         if in_branches = expr_node.in_branches
           in_branches.each do |branch|
             if inferred = infer_type_from_branch(branch.body, self_type_name)
               types << inferred
+            else
+              unknown_branch = true unless branch_ends_with_return?(branch.body)
             end
           end
         end
+        return nil if unknown_branch
         if types.any?
           return merge_return_types(types)
         end
@@ -28390,24 +28416,36 @@ module Adamas::HIR
             end
           end
         end
-        if true_type && true_type != TypeRef::VOID && false_type && false_type != TypeRef::VOID
-          return union_type_for_values(true_type, false_type)
+        true_known = true_type && true_type != TypeRef::VOID
+        false_known = false_type && false_type != TypeRef::VOID
+        if true_known && false_known
+          return union_type_for_values(true_type.not_nil!, false_type.not_nil!)
         end
-        return true_type if true_type && true_type != TypeRef::VOID
-        return false_type if false_type && false_type != TypeRef::VOID
+        if true_known && expr_is_terminal_return?(expr_node.false_branch)
+          return true_type
+        end
+        if false_known && expr_is_terminal_return?(expr_node.true_branch)
+          return false_type
+        end
+        return nil
       when Adamas::Compiler::Frontend::BeginNode
         types = [] of TypeRef
+        unknown_branch = false
         old_body_context = @infer_body_context
         begin
           if else_body = expr_node.else_body
             @infer_body_context = else_body
             if inferred = infer_type_from_branch(else_body, self_type_name)
               types << inferred
+            else
+              unknown_branch = true unless branch_ends_with_return?(else_body)
             end
           elsif body = expr_node.body
             @infer_body_context = body
             if inferred = infer_type_from_branch(body, self_type_name)
               types << inferred
+            else
+              unknown_branch = true unless branch_ends_with_return?(body)
             end
           end
           if clauses = expr_node.rescue_clauses
@@ -28415,12 +28453,15 @@ module Adamas::HIR
               @infer_body_context = clause.body
               if inferred = infer_type_from_branch(clause.body, self_type_name)
                 types << inferred
+              else
+                unknown_branch = true unless branch_ends_with_return?(clause.body)
               end
             end
           end
         ensure
           @infer_body_context = old_body_context
         end
+        return nil if unknown_branch
         if types.any?
           return merge_return_types(types)
         end
@@ -28429,6 +28470,93 @@ module Adamas::HIR
       end
 
       nil
+    end
+
+    private def infer_proc_literal_type_ref(
+      proc_node : Adamas::Compiler::Frontend::ProcLiteralNode,
+      self_type_name : String?,
+    ) : TypeRef?
+      param_types = [] of TypeRef
+      param_names = [] of String
+      if params = proc_node.params
+        params.each do |param|
+          # Only infer Proc signatures when every input has an explicit, plain
+          # type. Defaults, splats, block params, and instance-var params need
+          # call-shape semantics that this return-inference path does not model.
+          return nil unless param.name
+          return nil if param.default_value
+          return nil if param.is_splat || param.is_double_splat || param.is_block || param.is_instance_var
+          param_annotation = parameter_type_annotation_string(param, @arena)
+          return nil unless param_annotation
+          normalized = normalize_declared_type_name(param_annotation)
+          return nil if normalized.empty?
+          param_type = type_ref_for_name(normalized)
+          return nil if param_type == TypeRef::VOID
+          param_name = get_type_name_from_ref(param_type)
+          return nil if param_name.empty? || param_name == "Unknown" || param_name == "Void"
+          param_types << param_type
+          param_names << param_name
+        end
+      else
+        return nil
+      end
+
+      return_name = nil.as(String?)
+      if proc_annotation = proc_node.return_type
+        raw_name = safe_slice_to_string(proc_annotation) || ""
+        normalized = normalize_declared_type_name(raw_name)
+        return nil if normalized.empty?
+        return_type = type_ref_for_name(normalized)
+        return nil if return_type == TypeRef::VOID
+        return_name = get_type_name_from_ref(return_type)
+      else
+        return_name = inline_proc_return_type_name(proc_node, param_types, self_type_name)
+        return_name = "Nil" if return_name.nil? && proc_literal_body_is_nil?(proc_node)
+      end
+      return nil unless return_name
+      return_type = type_ref_for_name(return_name.not_nil!)
+      return nil if return_type == TypeRef::VOID
+      resolved_return_name = get_type_name_from_ref(return_type)
+      return nil if resolved_return_name.empty? || resolved_return_name == "Unknown" || resolved_return_name == "Void"
+
+      intern_proc_type(param_names + [resolved_return_name])
+    end
+
+    private def proc_literal_body_is_nil?(proc_node : Adamas::Compiler::Frontend::ProcLiteralNode) : Bool
+      return false if proc_node.body.empty?
+      expr_id = proc_node.body.last
+      loop do
+        case expr = @arena[expr_id]
+        when Adamas::Compiler::Frontend::GroupingNode
+          expr_id = expr.expression
+        when Adamas::Compiler::Frontend::MacroExpressionNode
+          expr_id = expr.expression
+        when Adamas::Compiler::Frontend::NilNode
+          return true
+        else
+          return false
+        end
+      end
+    end
+
+    private def expr_is_terminal_return?(expr_id : ExprId) : Bool
+      loop do
+        case expr = @arena[expr_id]
+        when Adamas::Compiler::Frontend::GroupingNode
+          expr_id = expr.expression
+        when Adamas::Compiler::Frontend::MacroExpressionNode
+          expr_id = expr.expression
+        when Adamas::Compiler::Frontend::ReturnNode
+          return true
+        else
+          return false
+        end
+      end
+    end
+
+    private def branch_ends_with_return?(body : Array(ExprId)) : Bool
+      return false if body.empty?
+      expr_is_terminal_return?(body.last)
     end
 
     private def infer_type_from_branch(

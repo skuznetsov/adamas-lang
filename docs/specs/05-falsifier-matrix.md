@@ -946,3 +946,17 @@ diagnostic meanings.
   (case1521/1525), JSON scalar runtime exit 132 (json1500/json1524).
 - No broker or test-parity claim. Expiry: changes to builtin identity,
   container representation or static case proofs require replay.
+
+
+### Preserve nullable Proc and unknown branch inference (2026-10-16)
+- RED nullable1532/case1509: nullable Box.capture emits FF instead of TF.
+  RED nullable1539: eight of ten focused inference examples fail.
+- GREEN nullable1542/nullable1529: seven original-first native fixtures, with
+  HIR evidence for nullable Proc producers and their callsites. GREEN
+  nullable1538: ten unit examples; nullable1533: 115 related HIR examples.
+- Adversaries include recursive unknown arms, empty elsif/else, missing else,
+  terminal returns, unknown case/ternary/rescue arms, and untyped Proc inputs.
+  Scoped verdict ROBUST. The earlier unknown-only proposal failed the empty
+  branch oracle and was superseded, not accepted as a partial solution.
+- No LavinMQ parity claim. Expiry: branch-inference, Proc-signature or terminal
+  Return changes require replay of these controls.
