@@ -23737,7 +23737,7 @@ module Adamas::HIR
       return nil unless changed
 
       canonical_name = normalize_union_type_name(resolved_parts.join(" | "))
-      canonical_ref = type_ref_for_name(canonical_name)
+      canonical_ref = canonical_bound_type_ref(canonical_name)
       return nil if canonical_ref == TypeRef::VOID
 
       canonical_ref
@@ -23752,6 +23752,9 @@ module Adamas::HIR
       return name if name.includes?('(') || name.includes?('{') || name.includes?('[')
       return name if BUILTIN_TYPE_NAMES.includes?(name) || builtin_alias_target?(name)
       return name if type_param_like?(name) && short_type_param_name?(name)
+      # A registered nominal variant already has a canonical identity. Only
+      # unresolved forward declarations may be repaired in the owner namespace.
+      return name if @class_info.has_key?(name) || @module_defs.has_key?(name) || @enum_info.try(&.has_key?(name))
 
       nested_type_full_name_in_namespace_chain(owner_name, name) || name
     end
@@ -23826,6 +23829,72 @@ module Adamas::HIR
       end
     end
 
+    # Applied owner and formal bindings contain canonical type identities.
+    # Source annotation fragments still use their declaration namespace.
+    private def canonical_bound_type_ref(name : String) : TypeRef
+      old_class = @current_class
+      @current_class = nil
+      with_namespace_override_or_clear(nil) do
+        with_isolated_type_param_map(EMPTY_DEFERRED_TYPE_PARAM_SNAPSHOT) do
+          type_ref_for_name(name)
+        end
+      end
+    ensure
+      @current_class = old_class
+    end
+
+    private def bound_annotation_type_ref(
+      source_name : String,
+      owner_name : String?,
+      bindings : Hash(String, String),
+    ) : TypeRef?
+      name = normalize_tuple_literal_type_name(source_name.strip)
+      return nil unless bindings.any? { |formal, actual| actual != formal && contains_type_param_token?(name, formal) }
+      if actual = bindings[name]?
+        ref = canonical_bound_type_ref(actual)
+        return ref == TypeRef::VOID ? nil : ref
+      end
+
+      if name.ends_with?('?')
+        inner = name[0, name.bytesize - 1].strip
+        inner_ref = bound_annotation_type_ref(inner, owner_name, bindings) || annotation_type_ref(inner, owner_name)
+        return nil if inner_ref == TypeRef::VOID
+        return canonical_bound_type_ref("#{generic_param_type_name_from_ref(inner_ref)} | Nil")
+      end
+      if has_top_level_union_separator?(name)
+        parts = split_union_type_name(name).map do |part|
+          ref = bound_annotation_type_ref(part, owner_name, bindings) || annotation_type_ref(part, owner_name)
+          return nil if ref == TypeRef::VOID
+          generic_param_type_name_from_ref(ref)
+        end
+        return canonical_bound_type_ref(parts.join(" | "))
+      end
+      if name.ends_with?('*')
+        inner = name[0, name.bytesize - 1].strip
+        inner_ref = bound_annotation_type_ref(inner, owner_name, bindings) || annotation_type_ref(inner, owner_name)
+        return nil if inner_ref == TypeRef::VOID
+        return canonical_bound_type_ref("Pointer(#{generic_param_type_name_from_ref(inner_ref)})")
+      end
+      generic = split_generic_base_and_args(name)
+      return nil unless generic
+      base = normalize_declared_type_name(generic.base, owner_name, specialize_bare_generics: false)
+      args = split_generic_type_args(generic.args).map do |part|
+        if value_literal_name?(part.strip)
+          part.strip
+        elsif entry = split_named_tuple_entry(part)
+          ref = bound_annotation_type_ref(entry[1], owner_name, bindings) || annotation_type_ref(entry[1], owner_name)
+          return nil if ref == TypeRef::VOID
+          "#{entry[0]}: #{generic_param_type_name_from_ref(ref)}"
+        else
+          ref = bound_annotation_type_ref(part, owner_name, bindings) || annotation_type_ref(part, owner_name)
+          return nil if ref == TypeRef::VOID
+          generic_param_type_name_from_ref(ref)
+        end
+      end
+      ref = canonical_bound_type_ref("#{base}(#{args.join(", ")})")
+      ref == TypeRef::VOID ? nil : ref
+    end
+
     private def annotation_type_ref(type_name : String, owner_name : String? = nil) : TypeRef
       cache_key = annotation_type_ref_cache_key(type_name, owner_name)
       if cached = @annotation_type_ref_cache[cache_key]?
@@ -23846,6 +23915,16 @@ module Adamas::HIR
         owner_name || "",
       )
       absolute_annotation = ascii_strip(type_name).starts_with?("::")
+      bindings = @type_param_map
+      if owner_name
+        if owner_map = type_param_map_for_receiver_name("#{owner_name}#_")
+          bindings = owner_map unless owner_map.empty?
+        end
+      end
+      if bound_ref = bound_annotation_type_ref(type_name, owner_name, bindings)
+        @annotation_type_ref_cache[cache_key] = bound_ref
+        return bound_ref
+      end
       resolved_name = normalize_declared_type_name(type_name, owner_name)
       # A nullable annotation can be cached before its inner type exists. This
       # happens in the bootstrap require order where layout_contract.cr mentions
@@ -36092,7 +36171,10 @@ module Adamas::HIR
                      # For generic instantiations, reuse type_ref_for_name so the TypeRef id
                      # matches annotations and preserves Hash/Array kinds.
                      if class_name.includes?('(')
-                       type_ref_for_name(class_name)
+                       # This is an applied canonical owner, not annotation text.
+                       # Re-entering its declaration namespace can capture an
+                       # already-bound top-level argument with a nested homonym.
+                       canonical_bound_type_ref(class_name)
                      else
                        if upgraded = upgrade_module_type_for_class(class_name, type_kind)
                          store_type_cache(type_cache_key(class_name), upgraded)

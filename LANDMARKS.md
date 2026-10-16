@@ -18588,3 +18588,29 @@ host 6d71b8c05e74225885c9ddb1abc5612a6cf97a1f25231810d47b03729cbcd70a.
 Refresh after contextual generic/name resolution or its caches change. Roll back
 source and rooted_generic_argument_resolution_repro.sh together. LavinMQ parity
 is not established by this regression.
+
+
+### Keep canonical generic identities through annotations and storage (2026-10-16)
+Generic registration and bound annotations re-entered the declaration namespace
+with canonical argument names. A root Payload was captured by Scope::Payload;
+the nullable layout repair could repeat this substitution for classes and enums.
+Resolve canonical owners without ambient class, namespace or formal bindings.
+Resolve bound annotation leaves canonically while unbound source fragments keep
+their declaration context, including mixed NamedTuple fields. Repair nullable
+forward names only when no class, module or enum identity is registered.
+DoD: generic_bound_annotation_identity_repro.sh, pinned Crystal 1.21 original
+first. generic1293 on parent rooted1250 is RED (8 checks); generic1294 on
+generic1292 is GREEN (5 fixtures, 22 native output lines). Direct and nested
+owners, Array, Tuple, Pointer, NamedTuple, StaticArray, nullable, enum, lexical
+homonyms and late nested declarations are covered. generic1295 preserves the
+old nilable-forward layout regression; generic1296 has 43 HIR examples GREEN;
+generic1297 preserves absolute paths and rejects the unrelated namespace.
+Scoped adversary ROBUST for registration, annotations and field storage. Argument
+admission is a separate open boundary: generic1282/1290 still accepts a lexical
+decoy in Box(Payload).new and traces T being re-resolved before compatibility.
+LavinMQ remains unbuilt; included forall, transitive binding transport and Proc
+union dispatch are open. Source manifest
+97d098cc8dc06e1f544c337a53452570c0eb6b65fb3b59323086543f5f9c8f7a;
+host 437bdfc487bae3a3d06bac5dfaf6a4f2b1b614da73a9db531ea1fac0d468ce37.
+Refresh after generic binding, annotation caching or nullable layout changes.
+Rollback this source slice and its regression together.

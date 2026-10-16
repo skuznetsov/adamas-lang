@@ -4096,3 +4096,20 @@ pinned Crystal 1.21 and requires unrelated-namespace rejection on both compilers
 Parent rooted1253 RED; isolated rooted1250/rooted1254 GREEN. Scoped adversary
 ROBUST for this corridor; signature recovery and included forall identity remain
 outside this certificate. Refresh after name resolution or cache changes.
+
+
+### Keep canonical generic identities through annotations and storage (2026-10-16)
+An applied owner name and a bound formal denote canonical identities. Their
+TypeRefs must be materialized without the declaration's ambient namespace or
+formal substitutions. Source annotation fragments retain lexical lookup; a
+bound T and an unbound Payload in the same composite can name different types.
+Composite reconstruction covers nullable, union, pointer, generic arguments,
+named fields and literal value arguments. Nullable forward repair must preserve
+registered class, module and enum identities; unresolved names may still be
+refreshed after the declaration frontier advances.
+DoD: generic_bound_annotation_identity_repro.sh compares original-first native
+behavior against Crystal 1.21. generic1293 parent RED; generic1294/generic1292
+GREEN on five fixtures and 22 native lines. Forward-layout, absolute-name and
+43 HIR example guards pass. Scoped adversary ROBUST for annotation/storage
+identity; restriction admission, included forall and LavinMQ are outside this
+certificate. Refresh when binding, annotation caches or layout repair change.

@@ -821,3 +821,18 @@ diagnostic meanings.
 - Scoped adversary ROBUST for contextual generic arguments. Signature-recovery
   colon handling, included forall identity and LavinMQ remain open. Refresh
   after contextual name resolution or cache changes.
+
+
+### Keep canonical generic identities through annotations and storage (2026-10-16)
+- RED generic1293 on rooted1250: canonical root arguments are captured by
+  lexical class/enum homonyms in direct and composite bound annotations.
+- GREEN generic1294 on generic1292: five original-first fixtures match Crystal
+  1.21 on 22 native lines, including mixed bound/source fields and late nested
+  declarations. generic1295 keeps the old forward-nilable layout behavior;
+  generic1296 passes 43 HIR examples; generic1297 retains absolute-name controls
+  and rejects an unrelated namespace on both compilers.
+- Scoped adversary ROBUST for generic registration, annotation and field storage.
+  Residual falsifier generic1282/1290: Box(Payload).new(Scope::Payload.new) must
+  reject as Crystal does; compatibility still loses bound identity. Ordinary
+  typed fallback after PICK=nil and LavinMQ SelectContext union admission remain
+  open. Refresh after binding, name-cache or nullable layout changes.

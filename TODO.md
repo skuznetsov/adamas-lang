@@ -19623,3 +19623,18 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   contextual generic resolution alone.
 - [ ] Trace canonical generic argument identity through included forall demand
   binding; a nested user class still resolves to a same-name lexical decoy.
+
+
+### Keep canonical generic identities through annotations and storage (2026-10-16)
+- [x] Preserve canonical generic owner and bound annotation identities through
+  composite field storage; generic1293 parent RED, generic1294 GREEN against
+  pinned Crystal 1.21 (5 fixtures, 22 native lines); 43 HIR examples and old
+  nilable-forward/absolute-path regressions pass on generic1292.
+- [ ] Carry canonical bound TypeRefs into argument restriction admission too:
+  generic1282 wrongly accepts Scope::Payload for Box(Payload).new; generic1290
+  shows the compatibility normalizer capturing T in the declaration namespace.
+- [ ] Audit the handoff after all overload candidates reject an ordinary typed
+  argument (forall1260): a later fallback still emits an unadmitted call.
+- [ ] Admit a union against a bare generic restriction member by member, with
+  wrong-family negatives, before rerunning LavinMQ Channel::SelectAction#unwait
+  (lavin1266 rejects a union of two valid SelectContext instantiations).
