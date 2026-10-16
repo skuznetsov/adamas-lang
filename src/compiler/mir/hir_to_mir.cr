@@ -5973,6 +5973,7 @@ module Adamas
         end
 
         obj_ptr = get_value(field.object)
+        obj_mir_type = @hir_value_types[field.object]?.try { |t| convert_type(t) }
 
         # GEP to field address
         # field_offset is byte offset from object start
@@ -6015,7 +6016,10 @@ module Adamas
             return field_ptr
           end
         end
-        if @inline_struct_ptrs.includes?(field.object) && hir_type_is_struct?(field_hir_type)
+        # A borrowed parent address does not imply that each child field is inline.
+        # Keep nested reads symmetric with lower_field_store_to_ptr's slot policy.
+        if @inline_struct_ptrs.includes?(field.object) && hir_type_is_struct?(field_hir_type) &&
+           field_store_uses_inline_memcopy?(field_hir_type, obj_mir_type)
           @inline_struct_ptrs << field.id
           if Adamas::LayoutProbe.enabled?
             probe_field_event("lower_field_get.propagated", "field-get", "consumer",

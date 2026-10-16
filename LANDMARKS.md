@@ -19125,3 +19125,16 @@ parser1868 aborts with `STUB CALLED: expect_two$ParenBox` on the same fixture.
 Scoped ROBUST for the tested command-argument grammar. Manifest 1ec5f1d623f9820756a525127e83f1ad54611f22bc7e017b130f731f4a659fe7; host cbc7a0f65770f957e1d08f68619c61e7cb5abb5e0c48e2deefd0760d089d9bc2.
 Refresh after command-call, parenthesis or postfix parsing changes. This does
 not establish IO runtime, fresh bootstrap or LavinMQ parity.
+
+
+### Match nested field reads to the field storage policy (2026-10-16)
+A borrowed inline parent address does not make every nested struct field inline.
+lower_field_store_to_ptr uses field_store_uses_inline_memcopy? per child slot;
+lower_field_get must use that same policy before propagating the borrowed address.
+Otherwise a small nested struct pointer is read as its first scalar field.
+file1877 original-first regression is GREEN for small pointer-carried and large
+inline children; exact parent file1878 is RED at the first stdout byte. Scoped
+ROBUST for this representation boundary. Source manifest 6cb6e3bdbc808d8c9867532929d513dafb4e754c622efda52c41679a1df947e6; host d4ef999c6408f3cee2d95279403d96781d169a6c37dd3f7b49b6f1b01e2e3a64.
+Refresh after field layout, store/read policy, or borrowed-address changes.
+The matching File/FdLock LLVM mismatch is a consumer lead; File.close runtime
+verification remains blocked by the existing named/rest frontend failure.

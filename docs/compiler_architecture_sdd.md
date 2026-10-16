@@ -29,6 +29,11 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+Nested struct field reads use the same child-slot inline-versus-carrier policy
+as field stores; a borrowed parent address alone is insufficient. DoD:
+nested_struct_field_slot_policy_repro.sh, original-first pointer-child and
+inline-child native checks. Rollback is the bounded lower_field_get predicate.
+
 A same-line spaced parenthesized command argument owns its postfix chain in
 bare and member calls. Adjacent explicit parentheses and newline statement
 boundaries keep their existing semantics. DoD:

@@ -1175,3 +1175,13 @@ diagnostic meanings.
   `expect_two$ParenBox`. Scoped ROBUST for this grammar boundary. Manifest 1ec5f1d623f9820756a525127e83f1ad54611f22bc7e017b130f731f4a659fe7; host cbc7a0f65770f957e1d08f68619c61e7cb5abb5e0c48e2deefd0760d089d9bc2.
 - Refresh after command-call, parenthesis or postfix parsing changes. IO
   runtime, fresh bootstrap and LavinMQ test parity remain open.
+
+
+### Match nested field reads to the field storage policy (2026-10-16)
+- GREEN file1877: sealed file1869_nested_field_slot_policy_candidate,
+  nested_struct_field_slot_policy_repro.sh compares exact stdout AB and empty
+  stderr against original Crystal for pointer-carried and inline child structs.
+- RED file1878: exact parser-fixed parent differs at the first stdout byte.
+- Scoped ROBUST for child-slot read/store symmetry. Source manifest 6cb6e3bdbc808d8c9867532929d513dafb4e754c622efda52c41679a1df947e6; host d4ef999c6408f3cee2d95279403d96781d169a6c37dd3f7b49b6f1b01e2e3a64.
+  Refresh after layout or field-lowering changes. File.close, bootstrap, and
+  LavinMQ parity remain open.

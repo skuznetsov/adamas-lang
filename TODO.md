@@ -19955,3 +19955,12 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   chains in bare and identifier/keyword member calls. parser1867 original-first
   native matrix GREEN; exact parent parser1868 RED. Explicit-call and newline
   guards included; no stdlib or application edits.
+
+
+### Match nested field reads to the field storage policy (2026-10-16)
+- [x] Require nested field reads to match the per-slot field-store policy.
+  file1877 original-first small/large child regression GREEN; exact parent
+  file1878 RED. No stdlib/application edits.
+- [ ] Re-run File.close after the named/rest frontend blocker is repaired;
+  the nested FdLock/Atomic and PointerLinkedList consumer mismatch is now covered
+  by a minimal representation regression, not a File.close completion claim.
