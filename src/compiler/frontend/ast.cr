@@ -839,10 +839,25 @@ module Adamas
 
           if i >= 0 && i < text.bytesize - 1
             byte = text.byte_at(i)
-            return i if byte == 'i'.ord.to_u8 || byte == 'u'.ord.to_u8 || byte == 'f'.ord.to_u8
+            return i if numeric_suffix_marker_matches_kind?(byte)
           end
 
           text.bytesize
+        end
+
+        # A hexadecimal f digit followed by decimal digits is not a float
+        # suffix. The lexer has already decided which suffix kind is present.
+        private def numeric_suffix_marker_matches_kind?(byte : UInt8) : Bool
+          case byte
+          when 'i'.ord.to_u8
+            @kind.i8? || @kind.i16? || @kind.i32? || @kind.i64? || @kind.i128?
+          when 'u'.ord.to_u8
+            @kind.u8? || @kind.u16? || @kind.u32? || @kind.u64? || @kind.u128?
+          when 'f'.ord.to_u8
+            @kind.f32? || @kind.f64?
+          else
+            false
+          end
         end
 
         private def parse_float_literal_value(text : String) : Float64

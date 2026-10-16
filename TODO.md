@@ -19550,3 +19550,12 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Audit known native contracts omitted from missing-function synthesis
   before widening recovery. A generic .new allocator is not evidence that a
   source constructor ran; require identity/ABI guards and a native falsifier.
+
+
+### Preserve hexadecimal f digits during numeric normalization (2026-10-16)
+
+- [x] Make NumberNode suffix stripping respect the lexed NumberKind, preserving
+  lowercase hex f digits. Parser RED/GREEN number1054/1055; native full/no-prelude
+  values match Crystal in number1056.
+- [ ] Audit suffix-like text consumers outside NumberNode and the independent
+  full-width integer WIP. This fix does not certify integer overflow handling.

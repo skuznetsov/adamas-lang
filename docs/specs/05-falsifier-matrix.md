@@ -737,3 +737,14 @@ diagnostic meanings.
   Scoped adversary ROBUST for these byte contracts.
 - Open: UTF-8 character-count metadata, broad native-contract coverage and full
   LavinMQ parity. Refresh after method lookup or native/missing-body changes.
+
+
+### Preserve hexadecimal f digits during numeric normalization (2026-10-16)
+
+- RED number1054 on String1040: 0xf0 parses as zero, one of three examples fails.
+- GREEN number1055 on number1053: parser hex digits, signed/unsigned suffixes
+  and float suffix controls all pass.
+- GREEN original-first number1056: 17 native values agree with Crystal under
+  full/no prelude; includes hexadecimal f32/f64 tails and arithmetic.
+  Scoped adversary ROBUST for suffix identity; refresh after numeric parsing
+  changes. Overflow/range correctness and LavinMQ parity remain open.

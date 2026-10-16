@@ -18447,3 +18447,17 @@ Source manifest ef3e98b11f145d052765a2c66d70d6ef9fe95a6e2ce04eb0ea51cd36d288b179
 host 36d5be46d924b722a416fd6b6ba2f8201335fa008aa4e49c73f84a5d95be9922.
 Refresh on method lookup, native String contracts or missing-body emission
 changes; roll back source and regressions together.
+
+
+### Preserve hexadecimal f digits during numeric normalization (2026-10-16)
+
+NumberNode stripped any trailing f plus digits as a float suffix, independently
+of the lexer's NumberKind. Thus integer 0xf0/0xf4/0xf5 became zero; this also
+broke the original stdlib UTF-8 width checks. Admit suffix markers only for the
+lexed signed, unsigned or float kind. Keep existing numeric widths unchanged.
+RED number1054: one of three parser examples fails on String1040. GREEN
+number1055: all three pass. GREEN original-first number1056: 17 values agree
+in full/no prelude, including f32/f64-shaped hex tails, explicit suffixes,
+radices and arithmetic. Float normalization remains covered by parser guards.
+Scoped adversary ROBUST for suffix identity; 128-bit range handling is open.
+Refresh after lexing or numeric normalization changes; roll back with tests.

@@ -4001,3 +4001,13 @@ guards), all GREEN. Parent failures are string1035/string1044; string1036 isolat
 the lost-byte allocator failure. Scoped adversary ROBUST for this corridor.
 UTF-8 codepoint metadata, general constructor recovery and LavinMQ parity remain
 open. Refresh after lookup, native String contracts or missing-body changes.
+
+
+### Preserve hexadecimal f digits during numeric normalization (2026-10-16)
+
+The lexer owns numeric suffix identity. NumberNode may remove i/u/f plus width
+only when that marker matches the lexed signed/unsigned/float NumberKind.
+Hexadecimal f digits remain digits, even for 0xf32 or 0xf64. The scoped DoD is
+number1055 (three parser examples) and number1056 (original-first native values,
+full/no prelude), both GREEN; parent number1054 is RED. Scoped adversary ROBUST.
+Refresh on lexing/normalization changes. Full-width range handling remains open.
