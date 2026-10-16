@@ -18667,3 +18667,32 @@ passes Box admission then rejects HTTP::Headers#concat's String|Array(String).
 This local certificate does not establish broker compatibility. Refresh after
 owner inference, source ordering, generic registration or ABI changes. Roll back
 this source slice and regression together.
+
+
+### Admit complete union argument source variants with deferred ABI contracts (2026-10-16)
+The final single-overload source check rejected a valid union argument before
+its scalar overloads could be dispatched. Validate every declared arm under the
+selected Def's retained arena, declaration namespace and isolated generic map;
+require complete, distinct source targets before emitting the branch CFG.
+Nested yield lowering can leave exact scalar bodies queued under the existing
+force-lowering guard. For full positional calls with exact annotated scalar ABI,
+infer the provisional return under that declaration context, retain the exact
+source/call contract, and validate materialized bodies, operands, parameters,
+return and declaration identity after deferred lowering/RTA and before MIR.
+No recursion guard or source restriction is relaxed. Other incomplete shapes
+continue to require a body before fanout.
+DoD: union_argument_source_admission_repro.sh against pinned Crystal 1.21.
+union1440/1376 RED: all three positive corpora reject; union1423/1412 GREEN:
+26 native results, both overload orders, Nil arms, mixed return values, inherited
+and generic declarations, single argument evaluation, inline yield/fetch and
+uncovered-arm rejection. union1439: 82 HIR examples GREEN, including exact
+contract validation and rejection of target-return drift and call retargeting.
+Scoped adversary ROBUST for those source/ABI boundaries. Manifest
+48bff14e8d9812736d81a8019bb46287b66f95aabfd42f97658f0ce203897acd;
+host c3a6d899995900ba53c71b2c8c91c4bfc0ea362d1569751bb5f602317317ea5f.
+Lavin composition1415 passes HTTP::Headers#concat, then lavin1418 rejects
+VHost#add_policy with Nil|Hash. noreturn1422 reduces its missing continuation
+narrowing to an unannotated raise wrapper. Broker compatibility remains open.
+Mixed-union stdio formatting is separately RED on committed1376 (union1399).
+Refresh this certificate after source admission, queue scheduling, declaration
+registration, RTA call repair or ABI changes; roll back this slice with its tests.

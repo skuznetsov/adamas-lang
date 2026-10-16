@@ -2900,6 +2900,7 @@ module Adamas
         # Validate their exact targets and ABI only after deferred allocators
         # and RTA have finalized the HIR that MIR will consume.
         hir_converter.validate_included_forall_virtual_return_certificates!(hir_module)
+        hir_converter.validate_deferred_union_variant_contracts!(hir_module)
 
         if debug_profile
           timings["dbg_count_hir_reachable_names"] = reachable.size.to_f

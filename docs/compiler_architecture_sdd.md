@@ -4147,3 +4147,22 @@ generic1381/1376 GREEN on 15 native results and two compile-negative cases.
 these shapes. Named/splat/block/forall inference, two existing alias-precedence
 HIR failures, optional Proc storage and full LavinMQ remain open. Refresh after
 owner binding, signature ordering, registration or ABI changes.
+
+
+### Admit complete union argument source variants with deferred ABI contracts (2026-10-16)
+A final source-overload rejection may be replaced by union argument fanout only
+when every declared scalar arm has a distinct applicable original declaration
+under its retained arena, namespace and isolated formal map. Prove the complete
+arm set before mutating CFG; evaluate the source argument once and coerce each
+arm to its own target ABI, joining all admitted return types.
+For an exact, full positional source signature whose scalar body is queued,
+provisional declaration inference may supply its return without bypassing force
+limits. Retain source, arena, namespace/map, call/operand and result identity.
+After queue drain/RTA, before MIR, require the same surviving declaration and
+materialized ABI; mismatch raises LoweringError. Other shapes require a body.
+DoD: union1440/1376 RED, union1423/1412 GREEN (26 native results and an uncovered
+arm rejected by both compilers); union1439 GREEN (82 HIR examples including ABI
+return drift and call retargeting rejection). Scoped adversary ROBUST within
+these tested boundaries. NoReturn wrapper narrowing, mixed-union stdio and
+full LavinMQ remain open. Refresh after admission, scheduling, context, RTA or
+ABI changes. Source manifest 48bff14e8d9812736d81a8019bb46287b66f95aabfd42f97658f0ce203897acd.

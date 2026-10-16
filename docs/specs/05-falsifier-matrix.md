@@ -870,3 +870,20 @@ diagnostic meanings.
   source check; certify complete per-arm dispatch rather than relaxing source
   restrictions. Open generic1371: optional Proc boxing times out. Refresh on
   owner inference, ordering, registration or runtime ABI changes.
+
+
+### Admit complete union argument source variants with deferred ABI contracts (2026-10-16)
+- RED union1440 on1376: valid matrix, inline fetch and generic inline fetch
+  each fail single-overload rejection. GREEN union1423 on1412: 26 native outputs
+  match Crystal 1.21; complete three-arm/Nil, mixed returns, both source orders,
+  inherited/generic declarations and single argument evaluation; uncovered Int32
+  arm rejects in both compilers.
+- GREEN union1439: 82 HIR examples, including exact deferred target contracts;
+  mutated target return and retargeted call reject before MIR. Scoped adversary
+  ROBUST for the tested source identity and argument/result ABI boundaries.
+- Frontier lavin1418/channel1415: HTTP::Headers#concat passes; VHost#add_policy
+  still receives Nil|Hash. RED noreturn1422 isolates an unannotated raise wrapper
+  that fails to kill a guard continuation. Separate RED union1399/1376: direct
+  Int64|String printing loses the integer arm. Neither is union feature closure.
+- Refresh on source admission, deferred queue, retained contexts, RTA call repair
+  or ABI changes. Broader/default/named/splat/block deferred shapes remain open.

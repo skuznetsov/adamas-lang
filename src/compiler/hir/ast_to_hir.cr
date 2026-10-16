@@ -1115,6 +1115,37 @@ module Adamas::HIR
       end
     end
 
+    # An exact source-admitted arm may be queued while its caller is lowered.
+    # Its provisional ABI is checked against the surviving body before MIR.
+    private class DeferredUnionVariantContract
+      getter caller : Adamas::HIR::Function
+      getter call : Adamas::HIR::Call
+      getter method_name : String
+      getter receiver_id : ValueId?
+      getter argument_ids : Array(ValueId)
+      getter source_def : Adamas::Compiler::Frontend::DefNode
+      getter source_arena : Adamas::Compiler::Frontend::ArenaLike
+      getter declaration_namespace : String?
+      getter type_param_bindings : Hash(String, String)
+      getter argument_types : Array(TypeRef)
+      getter return_type : TypeRef
+
+      def initialize(
+        @caller : Adamas::HIR::Function,
+        @call : Adamas::HIR::Call,
+        @method_name : String,
+        @receiver_id : ValueId?,
+        @argument_ids : Array(ValueId),
+        @source_def : Adamas::Compiler::Frontend::DefNode,
+        @source_arena : Adamas::Compiler::Frontend::ArenaLike,
+        @declaration_namespace : String?,
+        @type_param_bindings : Hash(String, String),
+        @argument_types : Array(TypeRef),
+        @return_type : TypeRef,
+      )
+      end
+    end
+
     private class IncludedForallVirtualReturnCertificate
       getter caller : Adamas::HIR::Function
       getter call : Adamas::HIR::Call
@@ -7387,6 +7418,7 @@ module Adamas::HIR
     # until class materialization and RTA are complete. Keep their identities
     # so the pre-MIR boundary can reject a stale or incomplete dispatch set.
     @included_forall_virtual_return_certificates : Array(IncludedForallVirtualReturnCertificate)
+    @deferred_union_variant_contracts : Array(DeferredUnionVariantContract)
     @included_forall_virtual_body_demands : Array(IncludedForallVirtualBodyDemand) = [] of IncludedForallVirtualBodyDemand
     @included_forall_virtual_body_provenance : Hash(String, IncludedForallVirtualBodyProvenance) = {} of String => IncludedForallVirtualBodyProvenance
     # Dedup replay work at the (child, parent, method, args_hash, flags) grain:
@@ -7634,6 +7666,7 @@ module Adamas::HIR
       @function_defs = Hash(String, Adamas::Compiler::Frontend::DefNode).new(initial_capacity: 32768)
       @source_recovered_defs = {} of UInt64 => Adamas::Compiler::Frontend::DefNode
       @included_forall_virtual_return_certificates = [] of IncludedForallVirtualReturnCertificate
+      @deferred_union_variant_contracts = [] of DeferredUnionVariantContract
       @included_forall_virtual_body_demands = [] of IncludedForallVirtualBodyDemand
       @included_forall_virtual_body_provenance = {} of String => IncludedForallVirtualBodyProvenance
       @function_visibilities = Hash(String, Adamas::Compiler::Frontend::Visibility).new(initial_capacity: 4096)
@@ -104693,6 +104726,19 @@ module Adamas::HIR
           end
         end
         if source_rejection
+          # A source mismatch against one overload does not reject a union
+          # whose arms select distinct, individually admitted declarations.
+          # Emit that complete fanout before coercion can erase its variants.
+          if block_id.nil? && arg_types.any? { |type| is_union_type?(type) } &&
+             (receiver_id.nil? || !is_union_type?(ctx.type_of(receiver_id.not_nil!)))
+            if dispatched = try_emit_union_arg_dispatch(
+                 ctx, receiver_id, base_method_name, mangled_method_name,
+                 args, arg_types, TypeRef::VOID, false, false, false, false,
+                 require_source_compatible_variants: true,
+               )
+              return dispatched
+            end
+          end
           actual_name, declared_name = source_rejection
           raise LoweringError.new(
             "no overload matches #{lookup_name}: expected argument restriction #{declared_name}, got #{actual_name}",
@@ -108423,12 +108469,105 @@ module Adamas::HIR
       selected_path == variant_path
     end
 
+    # Source admission reads the selected declaration's arena and bindings,
+    # independently of the caller and of other cached overload candidates.
+    private def with_union_variant_declaration_context(name : String, context : String?, &)
+      namespace = function_namespace_override_for(name)
+      declaration_context = namespace ? strip_generic_args(namespace) : context
+      arena = @function_def_arenas[name]? || @arena
+      bindings = function_type_param_map_for_name(name) || EMPTY_DEFERRED_TYPE_PARAM_SNAPSHOT
+      with_arena(arena) do
+        with_namespace_override_or_clear(declaration_context) do
+          with_isolated_type_param_map(bindings) do
+            yield declaration_context
+          end
+        end
+      end
+    end
+
+    # Source admission and body scheduling are separate. For a full positional
+    # call whose annotations exactly describe the scalar ABI, infer its result
+    # in the selected declaration's environment without recursive body lowering.
+    # Broader restrictions, omitted/default slots, blocks, and splats still need
+    # a materialized target; they do not acquire an ABI by this fallback.
+    private def deferred_union_variant_return_type(
+      name : String,
+      source_def : Adamas::Compiler::Frontend::DefNode,
+      argument_types : Array(TypeRef),
+      receiver_type : TypeRef?,
+    ) : TypeRef?
+      return nil unless @function_defs[name]?.try(&.same?(source_def))
+      return nil unless name == mangle_function_name(strip_type_suffix(name), argument_types)
+      stats = function_param_stats(name, source_def)
+      return nil if stats.has_block || stats.has_splat || stats.has_double_splat || stats.has_named_only
+      params = function_param_infos(source_def)
+      return nil unless params.size == argument_types.size
+      with_union_variant_declaration_context(name, function_context_from_name(name)) do |declaration_context|
+        params.each_with_index do |param, index|
+          annotation_name = param.type_annotation
+          return nil unless annotation_name
+          return nil if annotation_name.empty?
+          declared_type = annotation_type_ref(annotation_name, declaration_context)
+          return nil if declared_type == TypeRef::VOID || declared_type != argument_types[index]
+        end
+        result = resolve_return_type_from_def(name, strip_type_suffix(name), receiver_type, argument_types.size, source_def)
+        result ||= infer_return_type_from_callsite_inner(
+          source_def, declaration_context, argument_types, nil,
+          receiver_type ? get_type_name_from_ref(receiver_type) : nil,
+        )
+        return nil unless result && result != TypeRef::VOID && !result.null_ptr?
+        return nil if unresolved_generic_return_type?(result)
+        result
+      end
+    end
+
+    # Provisional source inference is not final ABI evidence. Validate against
+    # the exact surviving declaration, body, operands, parameters, and result
+    # after deferred lowering and RTA; a mismatch stops before MIR emission.
+    def validate_deferred_union_variant_contracts!(hir_module : Adamas::HIR::Module) : Nil
+      return if @deferred_union_variant_contracts.empty?
+      raise LoweringError.new("deferred union contracts belong to another HIR module") unless hir_module.same?(@module)
+      @deferred_union_variant_contracts.each do |contract|
+        caller = contract.caller
+        next unless hir_module.functions.any? { |function| function.same?(caller) }
+        call = contract.call
+        call_present = caller.blocks.any? do |block|
+          block.instructions.any? { |instruction| instruction.same?(call) }
+        end
+        raise LoweringError.new("deferred union call changed before MIR: #{caller.name}") unless call_present && !call.virtual && !call.has_block?
+        name = call.method_name
+        unless name == contract.method_name && call.receiver == contract.receiver_id && call.args == contract.argument_ids
+          raise LoweringError.new("deferred union call identity changed before MIR: #{contract.method_name}")
+        end
+        bindings = function_type_param_map_for_name(name) || EMPTY_DEFERRED_TYPE_PARAM_SNAPSHOT
+        unless function_namespace_override_for(name) == contract.declaration_namespace && bindings == contract.type_param_bindings
+          raise LoweringError.new("deferred union declaration context changed before MIR: #{name}")
+        end
+        target = hir_module.function_by_name(name)
+        source_def = @function_defs[name]?
+        source_arena = @function_def_arenas[name]?
+        unless target && hir_function_body_emitted?(target) &&
+               source_def && source_def.same?(contract.source_def) &&
+               source_arena && source_arena.same?(contract.source_arena)
+          raise LoweringError.new("deferred union target has no matching source body before MIR: #{name}")
+        end
+        parameter_offset = target.params.first?.try(&.name) == "self" ? 1 : 0
+        parameter_types = target.params[parameter_offset, target.params.size - parameter_offset].map(&.type)
+        argument_types = call.args.map { |id| hir_value_type_in_function(caller, id) || TypeRef::VOID }
+        unless parameter_types == contract.argument_types && argument_types == contract.argument_types &&
+               target.return_type == contract.return_type && call.type == contract.return_type
+          raise LoweringError.new("deferred union target ABI changed before MIR: #{name}")
+        end
+      end
+    end
+
     # Union arg dispatch: when an arg is union with distinct typed overloads
     private def try_emit_union_arg_dispatch(
       ctx : LoweringContext, receiver_id : ValueId?, base_method_name : String,
       mangled_method_name : String?, args : Array(ValueId), arg_types : Array(TypeRef),
       return_type : TypeRef, has_block_call : Bool, call_has_splat : Bool,
       call_splat_packed : Bool, call_has_named_args : Bool,
+      require_source_compatible_variants : Bool = false,
     ) : ValueId?
       ui = -1
       ut = TypeRef::VOID
@@ -108576,6 +108715,17 @@ module Adamas::HIR
           end
         end
 
+        if require_source_compatible_variants
+          return nil unless variant_source_def
+          admitted = with_union_variant_declaration_context(
+            variant_source_name, function_context_for_lookup_candidate(bfm, variant_source_name),
+          ) do |declaration_context|
+            source_generic_argument_mismatch_for_def(variant_source_def, vat, declaration_context).nil? &&
+              params_compatible_with_args?(variant_source_def, vat, declaration_context)
+          end
+          return nil unless admitted
+        end
+
         has_unresolved_variant_target ||= !(@function_types.has_key?(vm) ||
                                              @function_defs.has_key?(vm) ||
                                              @module.has_function?(vm))
@@ -108630,7 +108780,16 @@ module Adamas::HIR
             has_block_call, call_has_splat, call_has_named_args, call_splat_packed,
           )
         end
-        lower_function_if_needed(method_name)
+        if require_source_compatible_variants
+          arm_types = arg_types.dup
+          arm_types[ui] = variant_type
+          with_union_variant_declaration_context(method_name, function_context_from_name(method_name)) do
+            remember_callsite_arg_types(method_name, arm_types)
+            lower_function_if_needed(method_name)
+          end
+        else
+          lower_function_if_needed(method_name)
+        end
         unless @module.has_function_with_body?(method_name)
           # Nested lowering may defer an exact, already-resolved arm target.
           # Force only that target before CFG mutation; if the established
@@ -108639,13 +108798,29 @@ module Adamas::HIR
           force_lower_function_for_return_type(method_name)
         end
       end
-      variant_functions = [] of Adamas::HIR::Function
       variant_return_types = [] of TypeRef
-      vo.each do |method_name, variant_type, _|
+      deferred_variant_defs = [] of Adamas::Compiler::Frontend::DefNode?
+      vo.each_with_index do |(method_name, variant_type, _), index|
         target = @module.function_by_name(method_name)
-        return nil unless target
-        return nil unless @module.has_function_with_body?(method_name)
-        target_return = target.return_type
+        deferred_def = nil.as(Adamas::Compiler::Frontend::DefNode?)
+        target_return = TypeRef::VOID
+        if target && @module.has_function_with_body?(method_name)
+          target_return = target.return_type
+        elsif require_source_compatible_variants && !class_receiver_virtual && !call_has_splat && !vo_drop[index]
+          arm_types = arg_types.dup
+          arm_types[ui] = variant_type
+          source_name, source_def = variant_source_defs[index]
+          return nil unless source_name == method_name
+          inferred = deferred_union_variant_return_type(
+            method_name, source_def, arm_types,
+            receiver_id ? ctx.type_of(receiver_id.not_nil!) : nil,
+          )
+          return nil unless inferred
+          target_return = inferred
+          deferred_def = source_def
+        else
+          return nil
+        end
         if class_receiver_virtual && (receiver = receiver_id)
           arm_types = arg_types.dup
           arm_types[ui] = variant_type
@@ -108657,7 +108832,7 @@ module Adamas::HIR
           target_return = virtual_return unless virtual_return == TypeRef::VOID
         end
         return nil if target_return == TypeRef::VOID || target_return.null_ptr?
-        variant_functions << target
+        deferred_variant_defs << deferred_def
         variant_return_types << target_return
       end
 
@@ -108743,6 +108918,15 @@ module Adamas::HIR
                  Call.without_receiver(ctx.next_id, target_return_type, method_name, branch_args)
                end
         ctx.emit(call); ctx.register_type(call.id, target_return_type)
+        if source_def = deferred_variant_defs[idx]
+          source_arena = @function_def_arenas[method_name]? || @arena
+          @deferred_union_variant_contracts << DeferredUnionVariantContract.new(
+            ctx.function, call, method_name, receiver_id, branch_args.dup,
+            source_def, source_arena, function_namespace_override_for(method_name),
+            (function_type_param_map_for_name(method_name) || EMPTY_DEFERRED_TYPE_PARAM_SNAPSHOT).dup,
+            branch_args.map { |id| ctx.type_of(id) }, target_return_type,
+          )
+        end
         arm_value = coerce_value_to_type(ctx, call.id, dispatch_return_type)
         incoming_block = ctx.current_block
         ctx.terminate(Jump.new(merge))

@@ -19673,3 +19673,20 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Admit a union call only when its complete arm set has source-compatible
   targets, before final single-overload rejection. union1385 reduces the
   HTTP::Headers#concat failure to a String|Array(String) consumer.
+
+
+### Admit complete union argument source variants with deferred ABI contracts (2026-10-16)
+- [x] Admit a union argument only after every scalar arm matches its original
+  overload under retained declaration context; separate exact deferred-body
+  scheduling from source admission and validate the final target before MIR.
+  union1440 parent RED; union1423 GREEN on 26 Crystal-matched native results and
+  uncovered-arm rejection; union1439 GREEN on 82 HIR examples including drift
+  and retarget attacks. Sealed source union1412.
+- [ ] Extend deferred union evidence to broader source restrictions, defaults,
+  named/splat/block calls only with exact final ABI and original-first falsifiers.
+- [ ] Propagate NoReturn effects through exact unannotated wrapper calls so
+  continuation narrowing excludes failed guard branches (noreturn1422 RED,
+  Lavin1418 Nil|Hash argument to VHost#add_policy). VOID is not bottom evidence.
+- [ ] Repair mixed Int64|String stdio dispatch/demand: union1399 builds on
+  committed1376 but prints a blank line for the integer arm; track the separate
+  side-effect-once risk when synthetic puts lowers its source argument twice.
