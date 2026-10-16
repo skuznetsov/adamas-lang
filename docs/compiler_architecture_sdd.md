@@ -4113,3 +4113,22 @@ GREEN on five fixtures and 22 native lines. Forward-layout, absolute-name and
 43 HIR example guards pass. Scoped adversary ROBUST for annotation/storage
 identity; restriction admission, included forall and LavinMQ are outside this
 certificate. Refresh when binding, annotation caches or layout repair change.
+
+
+### Canonicalize Union constructors and preserve admitted generic variants (2026-10-16)
+Union(...) is a type constructor for a value-set union, not a nominal Generic.
+Its resolved arms use canonical union flattening/collapse; unresolved arms defer
+without caching a fictitious nominal instance. A stale raw nominal cache entry
+must not override reconstruction. For source generic restrictions, every actual
+union arm must match an allowed declared arm. Nullable syntax and Union/pipe
+syntax denote the same arm set. This source proof applies to generic shapes;
+ordinary deferred nongeneric TypeRefs retain their existing admission path.
+A bare generic restriction permits multiple applied instantiations without
+providing one runtime layout. When every arm is admitted, the concrete union
+must be retained in both parameter ABI and specialized body-local typing.
+DoD: canonical_generic_union_repro.sh, original-first Crystal 1.21 comparison.
+generic1343/1292 RED; generic1342/1339 GREEN on two native fixtures and two invalid
+union rejections. generic1346 passes 62 HIR examples; Proc ranking and bound
+annotation guards pass. Scoped adversary ROBUST for those paths, not abstract
+union subsumption, transitive include transport or full LavinMQ compatibility.
+Refresh after cache, restriction, runtime parameter or dispatch changes.

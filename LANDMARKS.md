@@ -18614,3 +18614,30 @@ union dispatch are open. Source manifest
 host 437bdfc487bae3a3d06bac5dfaf6a4f2b1b614da73a9db531ea1fac0d468ce37.
 Refresh after generic binding, annotation caching or nullable layout changes.
 Rollback this source slice and its regression together.
+
+
+### Canonicalize Union constructors and preserve admitted generic variants (2026-10-16)
+Union(...) was interned as a nominal Generic, including stale cache entries.
+Consequently union storage emitted a Union#id stub. Bare generic admission also
+rejected valid applied arms or accepted an unrelated arm; after admission the
+specialized body erased the concrete union and emitted a Context#id stub.
+Resolve Union constructor arms before ordinary generic interning, flatten and
+collapse them through the existing value-set union path, and recompute stale
+nominal cache entries. Unresolved arms remain deferred. Source generic proofs
+check every actual arm against a declared arm, with equivalent nullable, pipe
+and Union spellings. Nongeneric deferred unions retain ordinary TypeRef checks.
+Keep the admitted applied union in a bare generic runtime parameter and body.
+DoD: canonical_generic_union_repro.sh against pinned original Crystal 1.21.
+generic1343/parent1292 is RED with both stubs and both invalid unions admitted;
+generic1342/generic1339 is GREEN: two native fixtures (8 output lines) and two
+compile-negative cases. generic1346 has 62 HIR examples GREEN, generic1347 keeps
+the Proc ranking/input corpus, and generic1351 keeps all 22 bound annotation
+identity outputs. Scoped adversary ROBUST for these union paths and negatives.
+Manifest 7926b2725d98559b9004e205d8029d3da841b1b3f28c2b6df420cce1b5209b02;
+host f5f72ee7dc48de88dc43c64fdd4c03536df5f5bf2607a02874aec6f8f55f1032.
+LavinMQ and transitive included method binding remain open. Abstract Int union
+subsumption is not certified by concrete storage normalization. Constructor
+admission now exposes missing named-call evidence and speculative block demands;
+those require a separate source-to-pending handoff fix, not relaxed admission.
+Refresh after union caching, restrictions, exact parameter ABI or call dispatch
+changes. Roll back this source slice and its specs/regression together.

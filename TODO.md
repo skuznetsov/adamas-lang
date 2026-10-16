@@ -19638,3 +19638,19 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Admit a union against a bare generic restriction member by member, with
   wrong-family negatives, before rerunning LavinMQ Channel::SelectAction#unwait
   (lavin1266 rejects a union of two valid SelectContext instantiations).
+
+
+### Canonicalize Union constructors and preserve admitted generic variants (2026-10-16)
+- [x] Canonicalize Union(...) before generic caching, admit applied generic
+  union arms member by member, and preserve exact variants in a bare generic
+  runtime parameter/body. generic1343 parent RED; generic1342 GREEN against
+  Crystal 1.21 (8 native lines and two rejected invalid unions); 62 HIR examples,
+  the Proc restriction corpus and 22 bound annotation outputs pass on generic1339.
+- [ ] Refresh LavinMQ Channel::SelectAction#unwait with this union slice; a local
+  union certificate does not close transitive included-body binding or LavinMQ.
+- [ ] Specify and test abstract union subsumption separately from concrete value
+  storage normalization; do not treat Union(Int, Int32) collapse as source proof.
+- [ ] Preserve constructor call shape through argument reordering and pending
+  demand transport. generic1350 identifies an invented Time::Span.new$Int64_block
+  request from the self-recursion escape with no remembered source callsite;
+  the escape must authenticate a trailing Proc before enqueueing a block target.

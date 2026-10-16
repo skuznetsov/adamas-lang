@@ -273,3 +273,88 @@ describe "source generic rejection handoff" do
     rejections.should be_empty
   end
 end
+
+
+# Union(A, B) is the internal spelling produced by generic argument binding.
+# Every possible runtime member must satisfy a parameter restriction.
+describe "generic restriction admission for union arguments" do
+  {
+    "AdmissionContext(Nil) | AdmissionContext(AdmissionState)",
+    "Union(AdmissionContext(Nil), AdmissionContext(AdmissionState))",
+  }.each do |actual|
+    it "admits every specialization of a bare generic in #{actual}" do
+      converter, definitions = generic_admission_fixture
+      converter.__test_source_generic_shape_match(actual, "AdmissionContext").should be_true
+      compatible, score = converter.__test_bound_generic_admission(definitions["bare_context"], actual)
+      compatible.should be_true
+      score.should_not be_nil
+    end
+
+    it "rejects a nonmatching member of an applied restriction in #{actual}" do
+      converter, definitions = generic_admission_fixture
+      converter.__test_source_generic_shape_match(actual, "AdmissionContext(Nil)").should be_false
+      compatible, score = converter.__test_bound_generic_admission(definitions["bound_context"], actual)
+      compatible.should be_false
+      score.should be_nil
+    end
+  end
+
+  {
+    "Union(AdmissionContext(Nil), AdmissionAnimal)",
+    "Union(AdmissionContext(Nil), Nil)",
+    "Union(AdmissionContext(Nil), AdmissionOther::AdmissionContext(Nil))",
+  }.each do |actual|
+    it "rejects a union containing a different nominal family in #{actual}" do
+      converter, definitions = generic_admission_fixture
+      converter.__test_source_generic_shape_match(actual, "AdmissionContext").should be_false
+      compatible, score = converter.__test_bound_generic_admission(definitions["bare_context"], actual)
+      compatible.should be_false
+      score.should be_nil
+    end
+  end
+end
+
+
+describe "nullable union restriction equivalence" do
+  it "admits canonical generic union members for a nullable restriction" do
+    converter, _ = generic_admission_fixture
+    converter.__test_source_generic_shape_match("Nil | AdmissionContext(Nil)", "AdmissionContext(Nil)?").should be_true
+    converter.__test_source_generic_shape_match("Union(AdmissionContext(Nil), Nil)", "AdmissionContext(Nil)?").should be_true
+    converter.__test_source_generic_shape_match("AdmissionContext(Nil)?", "AdmissionContext(Nil) | Nil").should be_true
+  end
+
+  it "rejects a nullable generic restriction when an actual member is outside its family" do
+    converter, _ = generic_admission_fixture
+    converter.__test_source_generic_shape_match("AdmissionContext(Nil) | AdmissionState", "AdmissionContext(Nil)?").should be_false
+  end
+
+  it "leaves nongeneric deferred unions to ordinary TypeRef admission" do
+    converter, _ = generic_admission_fixture
+    converter.__test_source_generic_shape_match("Nil | Object", "Bool?").should be_nil
+    converter.__test_source_generic_shape_match("Nil | AdmissionAnimal", "AdmissionAnimal?").should be_nil
+  end
+end
+
+
+class Adamas::HIR::AstToHir
+  def __test_exact_generic_union_runtime_type(actual : String, restriction : String)
+    should_use_exact_call_type_for_local_inference?(type_ref_for_name(restriction), type_ref_for_name(actual))
+  end
+end
+
+describe "bare generic union runtime specialization" do
+  it "keeps all admitted applied variants in the runtime parameter" do
+    converter, _ = generic_admission_fixture
+    converter.__test_exact_generic_union_runtime_type("AdmissionContext(Nil) | AdmissionContext(AdmissionState)", "AdmissionContext").should be_true
+  end
+
+  it "does not specialize an unrelated union member under the generic restriction" do
+    converter, _ = generic_admission_fixture
+    converter.__test_exact_generic_union_runtime_type("AdmissionContext(Nil) | AdmissionAnimal", "AdmissionContext").should be_false
+  end
+
+  it "does not specialize a nullable actual under a nonnullable generic restriction" do
+    converter, _ = generic_admission_fixture
+    converter.__test_exact_generic_union_runtime_type("AdmissionContext(Nil)?", "AdmissionContext").should be_false
+  end
+end

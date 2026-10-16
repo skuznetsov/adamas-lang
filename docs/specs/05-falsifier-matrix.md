@@ -836,3 +836,21 @@ diagnostic meanings.
   reject as Crystal does; compatibility still loses bound identity. Ordinary
   typed fallback after PICK=nil and LavinMQ SelectContext union admission remain
   open. Refresh after binding, name-cache or nullable layout changes.
+
+
+### Canonicalize Union constructors and preserve admitted generic variants (2026-10-16)
+- RED generic1343/1292: Union#id and erased Context#id stubs; wrong nominal
+  family and wrong applied argument are both admitted incorrectly.
+- GREEN generic1342/1339: original-first union storage and bare generic body
+  fixtures match Crystal 1.21 on 8 native lines; both invalid unions reject with
+  ordinary diagnostics and no output binary. Invalid binaries are never run.
+- GREEN generic1346: 62 HIR examples cover stale nominal caches, duplicate and
+  nested union arms, StaticArray/tuple-splat substitution, unresolved arms,
+  nullable equivalence, per-arm admission and exact runtime specialization.
+- GREEN generic1347/generic1351: existing Proc restrictions and 22 bound annotation
+  native outputs remain intact. Scoped adversary ROBUST for this slice.
+- Open: abstract Int subsumption, transitive included bindings and full LavinMQ.
+  Constructor trace generic1350 shows a spurious positional block demand from a
+  named self-forwarder; close the producer contract before enabling strict
+  constructor rejection. Refresh all dependent evidence on union cache,
+  restriction or exact-runtime-parameter changes.

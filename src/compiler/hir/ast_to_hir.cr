@@ -17851,6 +17851,17 @@ module Adamas::HIR
         return call_name.starts_with?("#{param_name}(")
       end
 
+      # A bare generic restriction admits each applied variant, but must not
+      # erase their union from the specialized body's runtime parameter. The
+      # variant set still determines receiver dispatch and storage ABI.
+      if @generic_templates.has_key?(param_name)
+        if call_desc = @module.get_type_descriptor(call_type)
+          if call_desc.kind == TypeKind::Union
+            return source_generic_restriction_match?(call_name, param_name) == true
+          end
+        end
+      end
+
       if info = split_generic_base_and_args(call_name)
         return info[:base] == param_name
       end
@@ -53051,13 +53062,35 @@ module Adamas::HIR
       end
     end
 
+    private def source_restriction_union_members(name : String) : Array(String)?
+      if name.ends_with?('?') && name.size > 1
+        return [name[0, name.size - 1], "Nil"]
+      end
+      if has_top_level_union_separator?(name)
+        return split_union_type_name(name)
+      end
+      if generic_union_type_name?(name)
+        if info = split_generic_base_and_args(name)
+          members = split_generic_type_args(info.args)
+          return members unless members.empty?
+        end
+      end
+      nil
+    end
+
     # Check source restrictions before TypeRef normalization erases applied
     # arguments. A nil result leaves unrelated or variadic shapes to the
     # existing restriction path; a known contradiction must remain false.
     private def source_generic_restriction_match?(actual_name : String, declared_name : String) : Bool?
       actual_name = resolve_type_alias_chain(actual_name.lchop("::"), preserve_abstract_int: true)
       declared_name = resolve_type_alias_chain(declared_name.lchop("::"), preserve_abstract_int: true)
-      return nil if has_top_level_union_separator?(actual_name) || has_top_level_union_separator?(declared_name)
+      if source_restriction_union_members(actual_name) || source_restriction_union_members(declared_name)
+        # This source proof preserves applied generic arguments. Nongeneric
+        # unions still use the ordinary TypeRef restriction path, where erased
+        # or deferred members need the existing compatibility rules.
+        return nil unless actual_name.includes?('(') || declared_name.includes?('(')
+        return source_generic_argument_matches?(actual_name, declared_name)
+      end
       actual = split_generic_base_and_args(actual_name)
       declared = split_generic_base_and_args(declared_name)
       return nil unless actual || declared
@@ -53093,18 +53126,18 @@ module Adamas::HIR
       actual = resolve_type_alias_chain(actual.strip.lchop("::"), preserve_abstract_int: true)
       restriction = resolve_type_alias_chain(restriction.strip.lchop("::"), preserve_abstract_int: true)
       return true if actual == restriction || restriction == "_" || restriction == "Object" || unresolved_type_param_annotation?(restriction)
-      if has_top_level_union_separator?(actual)
+      if members = source_restriction_union_members(actual)
         undecided = false
-        split_union_type_name(actual).each do |part|
+        members.each do |part|
           matched = source_generic_argument_matches?(part, restriction)
           return false if matched == false
           undecided = true if matched.nil?
         end
         return undecided ? nil : true
       end
-      if has_top_level_union_separator?(restriction)
+      if members = source_restriction_union_members(restriction)
         undecided = false
-        split_union_type_name(restriction).each do |part|
+        members.each do |part|
           matched = source_generic_argument_matches?(actual, part)
           return true if matched
           undecided = true if matched.nil?
@@ -131419,11 +131452,13 @@ module Adamas::HIR
       has_nullable = name.ends_with?('?')
       has_pointer_suffix = name.ends_with?('*')
       has_complex_shape = has_union || has_comma || has_paren || has_brace || has_nullable || has_pointer_suffix
+      generic_union_name = generic_union_type_name?(raw_name)
       # `typeof(...)` is context-sensitive: the same source spelling can resolve
       # differently for each function's local/type-parameter environment. Never
       # satisfy it from the context-free raw-name cache populated by an earlier
       # registration-time probe.
-      if has_complex_shape && !raw_name.includes?("typeof(")
+      # Recompute Union(...) instead of trusting a stale nominal Generic cache.
+      if has_complex_shape && !raw_name.includes?("typeof(") && !generic_union_name
         raw_cache_key = type_cache_key(raw_name)
         if cached = @type_cache[raw_cache_key]?
           if has_union || raw_name.includes?("___")
@@ -131676,6 +131711,31 @@ module Adamas::HIR
          has_unresolved_short_type_param_token?(lookup_name)
         @type_cache.delete(cache_key)
         return TypeRef::VOID
+      end
+
+      # Crystal's `Union(...)` generic constructor has value semantics: each
+      # argument is a type arm, duplicate arms collapse, and nested unions
+      # flatten. It must never be interned as an ordinary Generic descriptor.
+      if generic_union_type_name?(lookup_name)
+        union_info = split_generic_base_and_args(lookup_name)
+        return TypeRef::VOID unless union_info
+        union_args = split_generic_type_args(union_info.args)
+        if union_args.empty?
+          @type_cache.delete(cache_key)
+          return TypeRef::VOID
+        end
+        union_types = union_args.map { |arg| type_ref_for_name(arg.strip) }
+        if union_types.any? { |type| type == TypeRef::VOID }
+          @type_cache.delete(cache_key)
+          return TypeRef::VOID
+        end
+        result = union_type_for_value_set(union_types) || TypeRef::VOID
+        if result != TypeRef::VOID
+          store_type_cache(cache_key, result)
+        else
+          @type_cache.delete(cache_key)
+        end
+        return result
       end
 
       if lookup_name.ends_with?('?')
