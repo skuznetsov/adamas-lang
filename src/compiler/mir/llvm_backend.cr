@@ -5078,7 +5078,9 @@ module Adamas::MIR
         io << "do_strlen:\n"
         io << "  %len64 = call i64 @strlen(ptr %chars)\n"
         io << "  %len = trunc i64 %len64 to i32\n"
-        io << "  %result = call ptr @String$Dnew$$Pointer$LUInt8$R_Int32_Int32(ptr %chars, i32 %len, i32 %len)\n"
+        # A byte count is not a character count. Zero preserves the source
+        # constructor contract and lets String#size derive UTF-8 length lazily.
+        io << "  %result = call ptr @String$Dnew$$Pointer$LUInt8$R_Int32_Int32(ptr %chars, i32 %len, i32 0)\n"
         io << "  ret ptr %result\n"
         io << "}\n\n"
       end

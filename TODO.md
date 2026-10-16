@@ -19559,3 +19559,13 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   values match Crystal in number1056.
 - [ ] Audit suffix-like text consumers outside NumberNode and the independent
   full-width integer WIP. This fix does not certify integer overflow handling.
+
+
+### Keep C-string character length lazy (2026-10-16)
+
+- [x] Pass unknown character length from native String.new(UInt8*) instead of
+  treating strlen as the UTF-8 character count. string1060 RED, string1058 GREEN
+  across 15 byte sequences and repeated reads; byte guards string1059 GREEN.
+- [ ] Repair no-prelude String#size, which currently forwards to bytesize, and
+  audit __adamas_runtime_string_from_cstr/substrings for byte counts stored as
+  known character lengths. string1047 records the separate fallback failure.

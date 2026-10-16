@@ -748,3 +748,14 @@ diagnostic meanings.
   full/no prelude; includes hexadecimal f32/f64 tails and arithmetic.
   Scoped adversary ROBUST for suffix identity; refresh after numeric parsing
   changes. Overflow/range correctness and LavinMQ parity remain open.
+
+
+### Keep C-string character length lazy (2026-10-16)
+
+- RED string1060 on number1053: C-string String#size returns byte count for
+  multibyte data. GREEN string1058 on string1057: 15 valid/invalid/truncated/NUL
+  sequences and repeated reads match original Crystal under full prelude.
+- GREEN string1059: existing full/no-prelude byte and source-body priority guards.
+  Scoped adversary ROBUST for the native constructor's lazy metadata contract.
+- Open: no-prelude String#size and other native String metadata producers.
+  Refresh after constructor, layout or String#size lowering changes.

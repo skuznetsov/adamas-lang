@@ -4011,3 +4011,14 @@ Hexadecimal f digits remain digits, even for 0xf32 or 0xf64. The scoped DoD is
 number1055 (three parser examples) and number1056 (original-first native values,
 full/no prelude), both GREEN; parent number1054 is RED. Scoped adversary ROBUST.
 Refresh on lexing/normalization changes. Full-width range handling remains open.
+
+
+### Keep C-string character length lazy (2026-10-16)
+
+Native String.new(UInt8*) delegates strlen as bytesize and zero as the unknown
+character-count sentinel, matching string.cr:214/5428. Full-prelude String#size
+owns UTF-8 counting and lazy caching. DoD string1058 matches original Crystal
+for 15 byte sequences and repeated reads; string1059 preserves byte roundtrips
+and source-method priority. Parent string1060 is RED. Scoped adversary ROBUST.
+No-prelude size synthesis and other String producers are separate open work.
+Refresh after native constructor, String layout or size-lowering changes.

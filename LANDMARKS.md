@@ -18461,3 +18461,17 @@ in full/no prelude, including f32/f64-shaped hex tails, explicit suffixes,
 radices and arithmetic. Float normalization remains covered by parser guards.
 Scoped adversary ROBUST for suffix identity; 128-bit range handling is open.
 Refresh after lexing or numeric normalization changes; roll back with tests.
+
+
+### Keep C-string character length lazy (2026-10-16)
+
+The native String.new(UInt8*) body passed strlen as both bytesize and character
+count, overriding the original constructor's unknown-length sentinel. Pass zero
+for character length so the source String#size computes and caches UTF-8 length.
+Parent number1053 is RED in string1060; child string1057 is GREEN in original-first
+string1058: 15 empty/ASCII/2-4-byte/invalid/truncated/NUL-boundary cases plus
+repeated lazy reads agree. Existing byte/body-priority guards pass in string1059.
+The expanded probe also exposed hexadecimal f-digit normalization, fixed first
+in number1053. Scoped adversary ROBUST for full-prelude C-string metadata.
+No-prelude String#size and other native String metadata producers remain open.
+Refresh on native constructors, String layout or size lowering changes.
