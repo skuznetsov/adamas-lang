@@ -29,6 +29,17 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+Deferred included-module snapshots own declaration generic substitutions;
+only the exact selected call may contribute transient block-result and
+callback-ABI hints. Register an included source Def before classifying a
+concrete generic receiver's block dependency. Wildcard Proc outputs may vary,
+and case subjects/conditions consume yielded values independently of whether
+the case result is used. DoD: inferred_block_return_shape_repro.sh, three
+original-first native fixtures for alternating/nested results, stdlib flat_map
+and transitive generic include/local override. Rollback is the bounded deferred
+map, source-selection and yield-dependency changes. Local Proc values passed
+with `&proc`, current S2 and LavinMQ parity remain separate open obligations.
+
 Named/rest source calls keep the raw positional boundary and named labels
 through typed overload selection, then carry the selected Def together with
 the packed ABI vector. Default evaluation binds preceding formals in the live

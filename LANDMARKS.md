@@ -1,5 +1,26 @@
 # LANDMARKS
 
+Inferred block result ownership (2026-10-16): a deferred declaration snapshot
+owns generic bindings, while only the exact selected call owns transient
+block-result and callback-ABI hints. A concrete generic receiver must register
+its included source Def before classifying the block contract. Wildcard Proc
+results vary by call; case subjects and conditions consume yielded values,
+including when the case result is discarded. The original-first native
+inferred_block_return_shape_repro.sh matches ABCD, ABABABAB and ABCDE across
+literal case, stdlib flat_map and transitive generic include/override fixtures.
+The immediate pre-case candidate aborts after A; the earlier flat_map candidate
+confuses Array(Int64) with Array(Int32). Deferred-binding, yielding-macro and
+untyped raw-callback identity controls pass. Scoped verdict: ROBUST for these
+literal-block specializations and declared-owner controls. Source HIR SHA256:
+059fd2ce5d5246139bca677a03e3001caf145e15ab84bda1e7258a8e4577a276;
+host SHA256: 7c0ee43833ead3d90849527974db21dabf5f0c96cb7a9b883de856101bec31a1.
+Receipts: flat2047/2048, flat2050, flat2053/2054/2055/2060. Refresh after
+deferred maps, included-source selection, Proc annotations or yield traversal.
+Dynamic Proc locals remain RED at callback-result SSA (flat2043/2044). Fresh
+S2 advances beyond flat_map and stops at sorting-comparator UInt64 inference;
+the bundled-stdlib Hash#any? neighbor also fails on the parent (flat2056/2059).
+This does not certify S2 or LavinMQ runtime/spec parity.
+
 Expected block Proc ABI contract (2026-10-15): source blocks may ignore
 expected inputs without changing their machine signature. An allocator must
 use its selected initializer's input and Nil-result contracts before callback

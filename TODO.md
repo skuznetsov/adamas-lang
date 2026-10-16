@@ -1,5 +1,26 @@
 # Adamas Bootstrap TODO
 
+2026-10-16 INFERRED BLOCK RESULT SPECIALIZATION: deferred included-module
+snapshots retain only the exact selected call's block-result/callback-ABI
+hints, while declaration generic bindings remain authoritative. Resolve the
+included source Def before determining a concrete generic receiver's block
+contract. Wildcard Proc output can vary, and yields in case subjects,
+conditions and exhaustive branches consume values. The original-first native
+regression matches ABCD, ABABABAB and ABCDE for alternating/nested block
+results, stdlib flat_map, transitive generic includes and a local override.
+The literal case fails the immediate pre-case fix; flat_map fails before the
+combined repair. Deferred-binding, yielding-macro and untyped raw-callback
+identity guards pass. Evidence: flat2047/2048, flat2050, flat2053/2054/2055/2060.
+Refresh after deferred maps, included-source lookup, Proc annotations or yield
+dependency traversal changes.
+- [ ] Local Proc variables passed through `&proc` to the same case fixture
+  still produce an undefined callback-result SSA value (flat2043/2044).
+  Audit the return carrier and the separate yield-discovery walkers together.
+- [ ] Repair the next S2 sorting-comparator UInt64 inference failure
+  (s2_flat2051). The bundled-stdlib Hash#any? neighbor hits the same failure on
+  both the parent and candidate (flat2056/2059); it is not a passing guard.
+- [ ] Complete fresh bootstrap and unchanged LavinMQ runtime/spec parity.
+
 2026-10-15 EXPECTED BLOCK PROC ABI: omitted source bindings do not remove
 expected callback arguments. Generated allocators inherit both the selected
 initializer's inputs and its declared Nil result; an unrelated registered

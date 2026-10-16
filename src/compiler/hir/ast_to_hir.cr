@@ -21497,11 +21497,25 @@ module Adamas::HIR
     end
 
     private def apply_deferred_module_context(ctx : DeferredModuleContext, full_name : String, base_name : String) : Nil
-      # Store the deferred type param snapshot so lower_method can set up correct context
+      # Declaration snapshots own generic substitutions, while the selected
+      # call target owns block-result and callback-ABI hints. Never import
+      # transient hints from the declaration snapshot or the shared base map.
+      params = ctx.type_param_snapshot.dup
+      params.delete("__block_return__")
+      params.delete("__yield_call_abi__")
+      if full_name != base_name
+        if selected_params = @function_type_param_maps[full_name]?
+          {"__block_return__", "__yield_call_abi__"}.each do |key|
+            if hint = selected_params[key]?
+              params[key] = hint
+            end
+          end
+        end
+      end
       store_function_type_param_map(
         full_name,
         base_name,
-        ctx.type_param_snapshot,
+        params,
         ctx.type_param_names,
         authoritative_keys: ctx.type_param_names
       )
@@ -58417,8 +58431,20 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::BlockNode
         yield_in_value_position?(node.body, false, depth + 1)
       when Adamas::Compiler::Frontend::CaseNode
-        node.when_branches.each do |w|
-          return true if yield_in_value_position?(w.body, value_pos, depth + 1)
+        # The subject and branch conditions consume values even when the case
+        # itself is a statement. Their yields still determine the callback ABI.
+        if subject = node.value
+          return true if yield_in_value_position?(subject, true, depth + 1)
+        end
+        node.when_branches.each do |branch|
+          return true if branch.conditions.any? { |condition| yield_in_value_position?(condition, true, depth + 1) }
+          return true if yield_in_value_position?(branch.body, value_pos, depth + 1)
+        end
+        if in_branches = node.in_branches
+          in_branches.each do |branch|
+            return true if branch.conditions.any? { |condition| yield_in_value_position?(condition, true, depth + 1) }
+            return true if yield_in_value_position?(branch.body, value_pos, depth + 1)
+          end
         end
         node.else_branch ? yield_in_value_position?(node.else_branch.not_nil!, value_pos, depth + 1) : false
       when Adamas::Compiler::Frontend::BeginNode
@@ -64616,7 +64642,7 @@ module Adamas::HIR
       end
       return false unless out_name = output
       return false if out_name.empty? || out_name == "Nil" || out_name == "nil"
-      return true if type_param_like?(out_name)
+      return true if out_name == "_" || type_param_like?(out_name)
       if info = split_generic_base_and_args(out_name)
         return split_generic_type_args(info.args).any? { |arg| type_param_like?(arg.strip) }
       end
@@ -103473,8 +103499,8 @@ module Adamas::HIR
                     "argt=#{arg_types.map { |t| get_type_name_from_ref(t) }.join(",")}"
       end
       if selected_target.nil? && semantic_target.nil? && receiver_id &&
-         !ctx.type_literal?(receiver_id) && !has_block_call && !has_splat &&
-         !has_named_args && !arg_types.empty? &&
+         !ctx.type_literal?(receiver_id) && !has_splat &&
+         !has_named_args && (has_block_call || !arg_types.empty?) &&
          arg_types.all? { |type_ref| type_ref != TypeRef::VOID }
         receiver_name = normalize_method_owner_name(get_type_name_from_ref(ctx.type_of(receiver_id)))
         if owner_info = generic_owner_info(receiver_name)
@@ -103483,10 +103509,10 @@ module Adamas::HIR
                  receiver_name,
                  method_name,
                  arg_types,
-                 false,
+                 has_block_call,
                )
               included_base_name = "#{receiver_name}##{method_name}"
-              included_target_name = mangle_function_name(included_base_name, arg_types, false)
+              included_target_name = mangle_function_name(included_base_name, arg_types, has_block_call)
               if existing_def = @function_defs[included_target_name]?
                 unless same_def_node?(existing_def, found[0])
                   raise LoweringError.new(
