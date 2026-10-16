@@ -18116,3 +18116,19 @@ flags639 matches pinned Crystal 1.21 native output in all five define modes;
 parent flags638 rejects the first define. Refresh after flag transport or
 expander-construction changes; rollback the bounded CLI/HIR changes together.
 This establishes local flag transport, not full stdlib or LavinMQ parity.
+
+
+### Nested numeric carrier specialization (2026-10-16)
+Source `Range(Int, Int)` was normalized to a Range(Int32, Int32) body even
+when HIR had allocated a Range(UInt64, UInt64). In stdlib initialization this
+made Random::Secure.rand_range read the wrong field widths and raise before
+user code. Exact-call annotation analysis now descends through matching generic
+constructors and arities. A separate recursive guard checks every position,
+unions, aliases and signedness before refining the entire carrier. range650
+has five failing parent checks; range655 rejects the first unguarded trial on
+mixed and signedness restrictions. Final range658 passes 26 HIR checks
+(range659), native AA output (range660/662), and full-prelude A/exit0 startup
+(startup661); parent startup642 exits 1 before output. This certifies these
+transport/startup consumers, not universal generic admission or LavinMQ parity.
+Refresh after annotation normalization, overload fallback or generic ABI changes;
+rollback the bounded HIR change and its regression together.

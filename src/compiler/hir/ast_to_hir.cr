@@ -17933,6 +17933,31 @@ module Adamas::HIR
         return false
       end
 
+      # The source restriction can stay abstract inside a generic while its
+      # registry TypeRef already uses a default concrete numeric argument.
+      # After overload admission, preserve the actual carrier in the body ABI
+      # whenever one of its nested restrictions needs an exact call-site type.
+      if annotation_generic = split_generic_base_and_args(annotation_name)
+        if call_generic = split_generic_base_and_args(call_name)
+          if annotation_generic.base == call_generic.base
+            # Arity-only fallback can reach this helper too. A refinement
+            # must not make an incompatible sibling argument look admitted.
+            return false unless nested_numeric_generic_restriction_compatible?(annotation_name, call_name)
+            annotation_args = split_generic_type_args(annotation_generic.args)
+            call_args = split_generic_type_args(call_generic.args)
+            if annotation_args.size == call_args.size
+              index = 0
+              while index < annotation_args.size
+                return true if exact_call_type_required_for_annotation_name?(
+                  annotation_args.unsafe_fetch(index), call_args.unsafe_fetch(index),
+                )
+                index += 1
+              end
+            end
+          end
+        end
+      end
+
       annotation_base = strip_generic_args(annotation_name)
       case annotation_base
       when "Number"
@@ -17954,6 +17979,50 @@ module Adamas::HIR
 
       inherited_value_dispatch_needs_origin?(call_name) &&
         inherits_from?(call_name, annotation_base)
+    end
+
+    # Source-level numeric restrictions differ from normalized ABI names:
+    # Int admits unsigned primitives, but Int32 and Int::Signed do not.
+    # Check every nested position before refining an entire carrier's body.
+    private def nested_numeric_generic_restriction_compatible?(declared_name : String, actual_name : String) : Bool
+      declared_name = strip_absolute_name_prefix(declared_name) if absolute_name_prefix_bytes?(declared_name)
+      actual_name = strip_absolute_name_prefix(actual_name) if absolute_name_prefix_bytes?(actual_name)
+      return true if declared_name == actual_name
+
+      if has_top_level_union_separator?(actual_name)
+        return split_union_type_name(actual_name).all? do |variant|
+          nested_numeric_generic_restriction_compatible?(declared_name, variant)
+        end
+      end
+      if has_top_level_union_separator?(declared_name)
+        return split_union_type_name(declared_name).any? do |variant|
+          nested_numeric_generic_restriction_compatible?(variant, actual_name)
+        end
+      end
+      primitive_match = primitive_is_a_hierarchy?(actual_name, declared_name)
+      return primitive_match unless primitive_match.nil?
+
+      resolved_declared = resolve_type_alias_chain(declared_name)
+      resolved_actual = resolve_type_alias_chain(actual_name)
+      if resolved_declared != declared_name || resolved_actual != actual_name
+        return nested_numeric_generic_restriction_compatible?(resolved_declared, resolved_actual)
+      end
+
+      declared_generic = split_generic_base_and_args(declared_name)
+      actual_generic = split_generic_base_and_args(actual_name)
+      return false unless declared_generic && actual_generic
+      return false unless declared_generic.base == actual_generic.base
+      declared_args = split_generic_type_args(declared_generic.args)
+      actual_args = split_generic_type_args(actual_generic.args)
+      return false unless declared_args.size == actual_args.size
+      index = 0
+      while index < declared_args.size
+        return false unless nested_numeric_generic_restriction_compatible?(
+          declared_args.unsafe_fetch(index), actual_args.unsafe_fetch(index),
+        )
+        index += 1
+      end
+      true
     end
 
     private def defer_eager_value_dispatch_template?(

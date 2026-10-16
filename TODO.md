@@ -19333,3 +19333,18 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   separately; command-line host-target evidence does not establish those routes.
 - [ ] Recheck real preview_mt/execution_context stdlib startup and LavinMQ tests;
   accepting a flag does not establish the selected runtime implementation.
+
+
+### Nested numeric carrier specialization (2026-10-16)
+- [x] Preserve concrete nested numeric generic arguments in body specialization.
+  range659: 26 HIR checks; range660/662: AA matches pinned Crystal 1.21.
+- [x] Guard all sibling arguments and signedness before refining a carrier.
+  The first trial failed mixed/signed negative controls (range655); final passes.
+- [x] Recheck ordinary full-prelude startup: startup661 prints A and exits 0,
+  while startup642 fails before user code in Random::Secure.rand_range.
+- [ ] Reject incompatible generic arguments before same-base and arity-only
+  overload fallbacks; body refinement guards do not establish source admission.
+- [ ] Probe nested unresolved forall variables, contextual aliases and actual
+  union carriers separately before claiming general restriction compatibility.
+- [ ] Establish full preview_mt/execution_context startup and LavinMQ parity;
+  the ordinary prelude probe does not exercise those runtime implementations.

@@ -482,3 +482,19 @@ diagnostic meanings.
 - Scope: host-target CLI flag transport. LSP configuration, cross-target
   semantics and multithreaded runtime behavior remain separate obligations.
   Refresh on option/context/expander changes; rollback CLI and HIR together.
+
+
+### Nested numeric generic carrier transport (2026-10-16)
+- RED range647: original AA/exit0, parent BB/exit0 for UInt64 endpoint ranges
+  under Range(Int, Int). range650: five failing exact-specialization checks.
+- Adversary range655: unguarded recursion fails mixed concrete/abstract and
+  signed/unsigned negative controls. Final range659: 26 examples, zero failures.
+- GREEN range660/662: native AA agrees with pinned Crystal 1.21; portable
+  regression cleans its private files on success. Concrete, unrelated,
+  constructor/arity and signedness predicate guards remain negative.
+- Startup parent642: exit1 before user output; first raise643 is
+  Random::Secure.rand_range$Range(Int32,Int32) consuming UInt64 fields.
+  Final startup661 prints A/exit0 with the ordinary full prelude.
+- Scope: exact body transport and measured startup. Generic admission fallback,
+  nested unresolved variables, multithreaded startup and LavinMQ parity are open.
+  Refresh after restriction/overload/ABI changes; rollback the bounded HIR unit.

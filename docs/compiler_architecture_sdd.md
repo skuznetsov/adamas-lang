@@ -3742,3 +3742,19 @@ combined guards; flags639 compares five native modes against pinned Crystal
 context construction or expansion changes; rollback CLI/HIR together. LSP flag
 configuration, cross-target semantics and runtime capabilities need their own
 evidence. This boundary alone does not certify LavinMQ compilation or parity.
+
+
+### Numeric restriction to carrier body boundary (2026-10-16)
+An abstract numeric source restriction within a generic must not overwrite the
+concrete call-site carrier used by the specialized body. For matching generic
+constructors/arity, exactness analysis recurses through arguments. Before
+refining the whole carrier, a recursive guard requires every sibling to match
+its source numeric restriction, including signedness. This guard uses primitive
+membership, exact leaves, aliases, unions and nested matching generic shapes.
+It does not replace overload admission: same-base and arity-only fallbacks need
+separate rejection evidence. range659 checks 26 HIR cases; range660/662 compare
+native range behavior with Crystal 1.21; startup661 establishes ordinary prelude
+startup. Parent startup642 raises in a wrong-width Random::Secure range body.
+Refresh on restriction normalization, overload or carrier layout changes;
+rollback HIR and its regression as one unit. Nested forall/module covariance,
+multithreaded startup and whole-application parity remain outside this evidence.
