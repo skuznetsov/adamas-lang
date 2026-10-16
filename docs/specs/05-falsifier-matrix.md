@@ -1185,3 +1185,14 @@ diagnostic meanings.
 - Scoped ROBUST for child-slot read/store symmetry. Source manifest 6cb6e3bdbc808d8c9867532929d513dafb4e754c622efda52c41679a1df947e6; host d4ef999c6408f3cee2d95279403d96781d169a6c37dd3f7b49b6f1b01e2e3a64.
   Refresh after layout or field-lowering changes. File.close, bootstrap, and
   LavinMQ parity remain open.
+
+
+### Preserve source named/rest binding through ABI packing (2026-10-16)
+- GREEN caller1967: sealed caller1966_named_rest_scope_and_ancestor_guards;
+  named_rest_argument_binding_repro.sh has twelve original-first exact stdout
+  and empty runtime stderr cases: restrictions, overload order, forwarding,
+  evaluation/default scope, bare named separator, inheritance, and recursion.
+- RED caller1968: exact file1869 parent misbinds named-rest forwarding.
+- Scoped ROBUST for the non-block, non-double-splat source-binding slice.
+  Source manifest cb10c6312ef8c9c06346ca7c3007ff30163ff51cf5135bba061174522e75afaa; host 87b2034bc14df31d6e96366fca429931289639860d91b41c10ba9408528eb497. Refresh after source selection, locals restoration, or ABI changes.
+  Deferred includes/contextual Symbol shapes and bootstrap/LavinMQ remain open.

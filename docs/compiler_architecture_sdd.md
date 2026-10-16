@@ -29,6 +29,15 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+Named/rest source calls keep the raw positional boundary and named labels
+through typed overload selection, then carry the selected Def together with
+the packed ABI vector. Default evaluation binds preceding formals in the live
+locals map and restores the caller scope, including nested calls. DoD:
+named_rest_argument_binding_repro.sh, twelve original-first native cases.
+This slice excludes block/double-splat and contextual Symbol conversion.
+Rollback is the atomic source-binding commit; bootstrap/LavinMQ are separate
+consumer checks, not implied by the bounded native regression.
+
 Nested struct field reads use the same child-slot inline-versus-carrier policy
 as field stores; a borrowed parent address alone is insufficient. DoD:
 nested_struct_field_slot_policy_repro.sh, original-first pointer-child and

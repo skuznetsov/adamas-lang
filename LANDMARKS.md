@@ -19163,3 +19163,22 @@ choice. A blind batch deletion would confuse intrinsic/runtime necessities
 with stdlib substitutions. This is deferred work, not a LavinMQ completion or
 an architecture authorization. Refresh these observations after shadow,
 override, stdlib buffering or source-identity changes.
+
+
+### Preserve source named/rest binding through ABI packing (2026-10-16)
+Named rest calls were flattened together with named suffix values before
+packing. The callee could receive an IO or exception in a different formal slot,
+and a second lookup could replace the source overload after packing its Tuple.
+The source positional boundary and named labels now form a candidate-local
+type view; the selected Def travels with the normalized ABI vector. Source
+expressions are lowered once in order, defaults see preceding formals, and
+nested default lowering reacquires the current locals map before each binding.
+Ancestor retries preserve the source-shape mode. The rest-candidate precheck
+includes inherited overloads without changing typed resolver precedence.
+caller1967 original-first native regression is GREEN for twelve cases; exact
+parent caller1968 is RED for named-rest forwarding. Scoped ROBUST for this
+non-block, non-double-splat source-binding slice. Source manifest cb10c6312ef8c9c06346ca7c3007ff30163ff51cf5135bba061174522e75afaa; host 87b2034bc14df31d6e96366fca429931289639860d91b41c10ba9408528eb497.
+Direct contextual Symbol conversion, block/double-splat calls, and deferred
+module-include raw named matching retain the existing paths and need dedicated
+falsifiers before widening. Refresh after resolver, default-local, arena, or
+argument-layout changes. Bootstrap and LavinMQ parity remain open.

@@ -19982,3 +19982,14 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   Low measured disagreement with continuing lowering/codegen failures weakens
   the proposed migration rationale; do not treat repair counts or file sizes
   as causal evidence. Current priority remains LavinMQ correctness/test parity.
+
+
+### Preserve source named/rest binding through ABI packing (2026-10-16)
+- [x] Bind named/rest arguments from the source call before ABI Tuple packing,
+  retaining the selected Def, source evaluation order, defaults, and inherited
+  overload shape. caller1967: twelve original-first cases GREEN; exact parent
+  caller1968 forwarding RED. No stdlib/application edits.
+- [ ] Add dedicated contextual Symbol, block/double-splat, and deferred generic
+  module-include named/rest probes before extending this bounded binding path.
+  Deferred module lookup must accept the raw named positional boundary at its
+  existing resolver seam; an all-definition scan would lose lookup precedence.

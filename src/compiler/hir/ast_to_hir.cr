@@ -1279,6 +1279,7 @@ module Adamas::HIR
       # normalized full-shape list. Only a raw shape can be checked against the
       # positional prefix of a def (slots before `*` / "already specified").
       getter raw_positional_count : Int32?
+      getter source_named_types : Bool
 
       def initialize(
         @func_name : String,
@@ -1289,6 +1290,7 @@ module Adamas::HIR
         @has_named : Bool,
         @named_names : Array(String)?,
         @raw_positional_count : Int32? = nil,
+        @source_named_types : Bool = false,
       )
       end
     end
@@ -1306,6 +1308,7 @@ module Adamas::HIR
       getter has_named : Bool
       getter named_names : Array(String)?
       getter raw_positional_count : Int32?
+      getter source_named_types : Bool
       getter current_class : String?
       getter current_method : String?
       getter current_namespace : String?
@@ -1346,6 +1349,7 @@ module Adamas::HIR
         @has_named = input.has_named
         @named_names = input.named_names.try(&.dup)
         @raw_positional_count = input.raw_positional_count
+        @source_named_types = input.source_named_types
         @type_params = [] of Tuple(String, String)
         type_param_map.each do |name, value|
           @type_params << {name, value}
@@ -1377,6 +1381,7 @@ module Adamas::HIR
         return false unless @has_named == input.has_named
         return false unless @named_names == input.named_names
         return false unless @raw_positional_count == input.raw_positional_count
+        return false unless @source_named_types == input.source_named_types
         return false unless @current_class == current_class
         return false unless @current_method == current_method
         return false unless @current_namespace == current_namespace
@@ -101573,6 +101578,8 @@ module Adamas::HIR
       lexical_method_name = method_name if lexical_method_name.empty?
       arg_binding_full_method_name = constructor_arg_binding_name || full_method_name
       arg_lowering_arena : Adamas::Compiler::Frontend::ArenaLike = call_arena || @arena
+      source_named_entry : Tuple(String, Adamas::Compiler::Frontend::DefNode)? = nil
+      source_named_rest_packed = false
       args = with_arena(call_arena) do
         if DebugHooks::ENABLED && block_pass_expr
           kind = Adamas::Compiler::Frontend.node_kind(@arena[block_pass_expr])
@@ -101585,7 +101592,10 @@ module Adamas::HIR
           STDERR.puts "[SPLAT_TRACE_ARGS] #{@last_splat_context || "func=#{ctx.function.name}"} args=#{kinds.join(",")}"
         end
         args_result = if named_args = node.named_args
-                        reorder_named_args(ctx, call_args, named_args, method_name, arg_binding_full_method_name, has_block_call, call_arena)
+                        reordered = reorder_named_args(ctx, call_args, named_args, method_name, arg_binding_full_method_name, has_block_call, call_arena)
+                        source_named_entry = reordered[1]
+                        source_named_rest_packed = reordered[2]
+                        reordered[0]
                       elsif has_splat
                         expand_splat_args(ctx, call_args, call_arena)
                       elsif lowered_arg = prelowered_puts_arg_id
@@ -101621,7 +101631,9 @@ module Adamas::HIR
       # would materialize an unused full-shape `.new` overload and then split its
       # union arguments into concrete initializer bodies. Keep the source call
       # shape and let the allocator wrapper evaluate each default exactly once.
-      args, has_named_args, default_arg_entry_name = if constructor_arg_binding_name &&
+      args, has_named_args, default_arg_entry_name = if source_named_entry
+                                                       {args, has_named_args, source_named_entry[0]}
+                                                     elsif constructor_arg_binding_name &&
                                                         !has_named_args && !has_splat && !has_block_call
                                                        {args, has_named_args, nil}
                                                      else
@@ -102100,7 +102112,11 @@ module Adamas::HIR
       # generic base after defaults can miss because the first scalar arg has not
       # been packed into the tuple splat slot yet.
       splat_pack_full_method_name = default_arg_entry_name || full_method_name
-      pack_result = pack_splat_args_for_call(ctx, args, method_name, splat_pack_full_method_name, has_block_call, has_named_args, receiver_id, has_splat)
+      pack_result = if source_named_entry
+                      {args, source_named_rest_packed}
+                    else
+                      pack_splat_args_for_call(ctx, args, method_name, splat_pack_full_method_name, has_block_call, has_named_args, receiver_id, has_splat)
+                    end
       args = pack_result[0]
       splat_packed = pack_result[1]
       debug_lower_call_trace(
@@ -103444,7 +103460,11 @@ module Adamas::HIR
         end
       end
       source_call_rejections = [] of Tuple(String, String)
-      selected_target = semantic_target
+      selected_target = if source_named_entry
+                          SelectedCallTarget.new(source_named_entry[0], source_named_entry[1])
+                        else
+                          semantic_target
+                        end
       selected_target ||= (m3e_input ? resolve_call_target(m3e_input, source_call_rejections) : nil)
       if env_get("DEBUG_JOIN_PICK") && lookup_name.includes?("join")
         STDERR.puts "[JOIN_SRC] src=#{semantic_target ? "semantic" : (selected_target ? "resolver" : "none")} " \
@@ -105076,7 +105096,8 @@ module Adamas::HIR
       # exact call-site symbol; late materialization must not rediscover a
       # different included or inherited body from the serialized name alone.
       if selected_def = selected_call_entry_def
-        if !has_block_call && !has_splat && !has_named_args &&
+        if (source_named_entry && !has_block_call && same_def_node?(source_named_entry[1], selected_def)) ||
+           (!has_block_call && !has_splat && !has_named_args &&
            method_name_codec_exact_callsite_name?(
              mangled_method_name,
              base_method_name,
@@ -105089,7 +105110,7 @@ module Adamas::HIR
               selected_call_entry_name || base_method_name,
               arg_types,
               false,
-            ).nil?)
+            ).nil?))
           if existing_def = @function_defs[mangled_method_name]?
             if !same_def_node?(existing_def, selected_def) &&
                @module.has_function_with_body?(mangled_method_name)
@@ -111823,6 +111844,7 @@ module Adamas::HIR
       call_has_named_args : Bool = false,
       named_arg_names : Array(String)? = nil,
       raw_positional_count : Int32? = nil,
+      source_named_types : Bool = false,
     ) : Tuple(String, Adamas::Compiler::Frontend::DefNode)?
       return nil unless v2_string_readable?(func_name)
       named_arg_names = canonical_named_arg_names(named_arg_names)
@@ -111835,7 +111857,78 @@ module Adamas::HIR
         has_named: call_has_named_args,
         named_names: named_arg_names,
         raw_positional_count: raw_positional_count,
+        source_named_types: source_named_types,
       ))
+    end
+
+    # Build a candidate-local virtual signature for named calls. A positional
+    # rest parameter contributes one virtual formal per raw positional value;
+    # named suffix values remain paired with their declared formals. This lets
+    # the established compatibility and score functions rank source overloads
+    # before the caller packs the rest values into its ABI Tuple.
+    private def named_call_candidate_type_view(
+      def_node : Adamas::Compiler::Frontend::DefNode,
+      source_arg_types : Array(TypeRef),
+      raw_positional_count : Int32,
+      named_arg_names : Array(String),
+      context : String?,
+    ) : Tuple(Array(TypeRef), Array(DefParamInfo))?
+      return nil if raw_positional_count < 0 || source_arg_types.size != raw_positional_count + named_arg_names.size
+
+      named_types = Hash(String, TypeRef).new
+      named_arg_names.each_with_index do |name, index|
+        return nil if named_types.has_key?(name)
+        named_types[name] = source_arg_types[raw_positional_count + index]
+      end
+
+      types = [] of TypeRef
+      infos = [] of DefParamInfo
+      positional_index = 0
+      named_only = false
+
+      function_param_infos(def_node).each do |param|
+        next if param.is_block
+        if named_only_separator?(param)
+          named_only = true
+          next
+        end
+        return nil if param.is_double_splat
+
+        if param.is_splat
+          # Do not reinterpret a named assignment to the splat local as a
+          # sequence of rest elements. That call shape remains on the legacy
+          # path until it has a dedicated source-level contract.
+          if label = named_parameter_label(param)
+            return nil if named_types.has_key?(label)
+          end
+          until positional_index >= raw_positional_count
+            type_ref = source_arg_types[positional_index]
+            types << type_ref
+            infos << DefParamInfo.new(param.name, param.external_name, param.type_annotation, nil, false, false, false)
+            positional_index += 1
+          end
+          named_only = true
+          next
+        end
+
+        if !named_only && positional_index < raw_positional_count
+          types << source_arg_types[positional_index]
+          infos << DefParamInfo.new(param.name, param.external_name, param.type_annotation, nil, false, false, false)
+          positional_index += 1
+          next
+        end
+
+        if label = named_parameter_label(param)
+          if type_ref = named_types.delete(label)
+            types << type_ref
+            infos << DefParamInfo.new(param.name, param.external_name, param.type_annotation, nil, false, false, false)
+          end
+        end
+      end
+
+      return nil unless positional_index == raw_positional_count
+      return nil unless named_types.empty?
+      {types, infos}
     end
 
     private def call_resolution_memo_mix(hash : UInt64, value : UInt64) : UInt64
@@ -111887,6 +111980,7 @@ module Adamas::HIR
       hash = call_resolution_memo_mix(hash, input.has_block ? 1_u64 : 0_u64)
       hash = call_resolution_memo_mix(hash, input.has_splat ? 1_u64 : 0_u64)
       hash = call_resolution_memo_mix(hash, input.has_named ? 1_u64 : 0_u64)
+      hash = call_resolution_memo_mix(hash, input.source_named_types ? 1_u64 : 0_u64)
       hash = call_resolution_memo_mix(hash, (input.raw_positional_count.try(&.to_u64) || UInt64::MAX))
       if arg_types = input.arg_types
         hash = call_resolution_memo_mix(hash, arg_types.size.to_u64)
@@ -112135,7 +112229,7 @@ module Adamas::HIR
       end
       unknown_args = arg_types && arg_types.all? { |t| t == TypeRef::VOID }
       base_name = strip_type_suffix(func_name)
-      if func_name.includes?('$')
+      if func_name.includes?('$') && !input.source_named_types
         if func_def = @function_defs[func_name]?
           if debug_call_lookup
             STDERR.puts "[CALL_LOOKUP_DIRECT_HIT] func=#{func_name}"
@@ -112484,7 +112578,16 @@ module Adamas::HIR
               all_source_candidates_rejected = false
             end
           end
-          compatible = params_compatible_with_args?(def_node, arg_types, func_context, nil, ovl_trace)
+          match_arg_types = arg_types
+          match_param_infos : Array(DefParamInfo)? = nil
+          if input.source_named_types
+            next unless raw_count = input.raw_positional_count
+            next unless names = named_arg_names
+            view = named_call_candidate_type_view(def_node, arg_types, raw_count, names, func_context)
+            next unless view
+            match_arg_types, match_param_infos = view
+          end
+          compatible = params_compatible_with_args?(def_node, match_arg_types, func_context, match_param_infos, ovl_trace)
           STDERR.puts "[OVL]   cand=#{name} pc=#{param_count} req=#{required} ctx=#{func_context} compat=#{compatible}" if ovl_trace
           if compatible && single_candidate_fast_path
             if env_get("DEBUG_JOIN_PICK") && debug_overload_pick_suspicious?(name, arg_count)
@@ -112499,7 +112602,7 @@ module Adamas::HIR
             if !has_block && !call_has_splat && !call_has_named_args && arg_types.none? { |type_ref| type_ref == TypeRef::VOID }
               candidate_requires_proc_nil_discard = source_proc_nil_result_discard_required_for_def?(def_node, arg_types, func_context)
             end
-            score = params_match_score(def_node, arg_types, func_context)
+            score = params_match_score(def_node, match_arg_types, func_context, match_param_infos)
             score += class_method_owner_match_bonus(func_name, name, arg_types)
             score += named_args_match_score(def_node, named_arg_names)
           end
@@ -112548,7 +112651,18 @@ module Adamas::HIR
           # so split(separator : Char) beats split(limit : Int32?) for `split('/')` (both score 3,
           # the lossy one previously won the param_count tiebreak). Only the score-tie ordering
           # changes; a strictly higher score still wins regardless of exactness.
-          cand_exact = overload_positional_types_exact_match?(name, def_node, arg_types)
+          cand_exact = if input.source_named_types
+                         if view = named_call_candidate_type_view(def_node, arg_types, input.raw_positional_count.not_nil!, named_arg_names.not_nil!, function_context_for_lookup_candidate(func_name, name))
+                           view[1].each_with_index.all? do |param, index|
+                             param_annotation = param.type_annotation
+                             param_annotation && (declared_type_match_score(view[0][index], param_annotation) || 0) >= 2
+                           end
+                         else
+                           false
+                         end
+                       else
+                         overload_positional_types_exact_match?(name, def_node, arg_types)
+                       end
           same_proc_result_phase = candidate_requires_proc_nil_discard == best_requires_proc_nil_discard
           restriction_precedence = if same_proc_result_phase && score == best_score && cand_exact == best_exact && param_count == best_param_count
                                      if incumbent_def = best
@@ -112603,6 +112717,7 @@ module Adamas::HIR
                    call_has_named_args,
                    named_arg_names,
                    input.raw_positional_count,
+                   input.source_named_types,
                  )
                 if debug_call_lookup
                   STDERR.puts "[CALL_LOOKUP_INHERITED_AFTER_LOCAL_MISS] func=#{func_name} target=#{inherited_lookup}"
@@ -112623,7 +112738,9 @@ module Adamas::HIR
                    arg_types,
                    call_has_splat,
                    call_has_named_args,
-                   named_arg_names
+                   named_arg_names,
+                   input.raw_positional_count,
+                   input.source_named_types,
                  )
                 return inherited_entry
               end
@@ -113306,6 +113423,131 @@ module Adamas::HIR
       result
     end
 
+    # Bind the source rest segment before adding named/default suffix slots.
+    # Every source expression is lowered once in source order. The selected Def
+    # and the normalized ABI vector then travel together through call lowering.
+    private def lower_named_rest_args(
+      ctx : LoweringContext,
+      positional_args : Array(ExprId),
+      named_args : Array(Adamas::Compiler::Frontend::NamedArgument),
+      func_name : String,
+      initial_entry : Tuple(String, Adamas::Compiler::Frontend::DefNode)?,
+      has_block_call : Bool,
+      call_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Tuple(Array(ValueId), Tuple(String, Adamas::Compiler::Frontend::DefNode), Bool)?
+      return nil if has_block_call || named_args.empty?
+      initial_params = initial_entry ? function_param_infos(initial_entry[0], initial_entry[1]) : [] of DefParamInfo
+      has_rest_candidate = initial_params.any? { |param| param.is_splat && !param.is_double_splat && !named_only_separator?(param) }
+      unless has_rest_candidate
+        candidate_bases = [strip_type_suffix(func_name)]
+        parts = parse_method_name_compact(candidate_bases.first)
+        if parts.separator == '#' && (method = parts.method)
+          get_parent_chain(parts.owner).each { |owner| candidate_bases << "#{owner}##{method}" }
+        end
+        candidate_bases.each do |base|
+          function_def_overload_keys(base).each do |name|
+            next unless candidate = @function_defs[name]?
+            candidate_params = function_param_infos(name, candidate)
+            if candidate_params.any? { |param| param.is_splat && !param.is_double_splat && !named_only_separator?(param) } &&
+               !candidate_params.any?(&.is_double_splat)
+              has_rest_candidate = true
+              break
+            end
+          end
+          break if has_rest_candidate
+        end
+      end
+      return nil unless has_rest_candidate
+      return nil if initial_params.any?(&.is_double_splat)
+      # Symbol-to-enum conversion needs a contextual restriction. Preserve its
+      # existing path until source overload matching carries that contract.
+      return nil if positional_args.any? { |id| call_arena[id].is_a?(Adamas::Compiler::Frontend::SymbolNode) }
+      return nil if named_args.any? { |arg| call_arena[arg.value].is_a?(Adamas::Compiler::Frontend::SymbolNode) }
+
+      positional_values = expand_splat_args(ctx, positional_args, call_arena)
+      named_values = {} of String => ValueId
+      named_args.each do |arg|
+        label = safe_slice_to_string(arg.name) || ""
+        raise LoweringError.new("duplicate named argument #{label}") if named_values.has_key?(label)
+        named_values[label] = with_arena(call_arena) { lower_expr(ctx, arg.value) }
+      end
+      names = named_values.keys.sort
+      source_types = positional_values.map { |id| ctx.type_of(id) }
+      names.each { |name| source_types << ctx.type_of(named_values[name]) }
+      selected = lookup_function_def_for_call(
+        func_name, source_types.size, has_block_call, source_types,
+        false, true, names, positional_values.size, true,
+      )
+      unless selected
+        raise LoweringError.new("no overload of #{strip_type_suffix(func_name)} accepts these positional and named arguments")
+      end
+
+      context = function_context_for_lookup_candidate(func_name, selected[0])
+      def_arena = @function_def_arenas[selected[0]]? || @arena
+      params = function_param_infos(selected[0], selected[1])
+      result = [] of ValueId
+      positional_index = 0
+      named_only = false
+      rest_packed = false
+      saved_locals = ctx.save_locals
+      begin
+        params.each do |param|
+          next if param.is_block
+          if named_only_separator?(param)
+            named_only = true
+            next
+          end
+          if param.is_splat
+            rest_values = positional_values[positional_index, positional_values.size - positional_index]
+            # Coerce each rest element before choosing its Tuple layout.
+            if param_annotation = param.type_annotation
+              normalized = normalize_declared_type_name(param_annotation, context)
+              target_type = type_ref_for_name(normalized)
+              if target_type != TypeRef::VOID && !unresolved_type_param_annotation?(normalized)
+                rest_values = rest_values.map { |id| coerce_value_to_type(ctx, id, target_type) }
+              end
+            end
+            tuple_id = if rest_values.empty?
+                         allocate_empty_tuple(ctx)
+                       else
+                         tuple_type = tuple_type_from_arg_types(rest_values.map { |id| ctx.type_of(id) }, allow_void: true)
+                         allocation = Allocate.new(ctx.next_id, tuple_type, rest_values)
+                         ctx.emit(allocation)
+                         ctx.register_type(allocation.id, tuple_type)
+                         allocation.id
+                       end
+            result << tuple_id
+            if local_name = param.name
+              ctx.all_locals[local_name] = tuple_id
+            end
+            positional_index = positional_values.size
+            named_only = true
+            rest_packed = true
+            next
+          end
+
+          value = if !named_only && positional_index < positional_values.size
+                    id = positional_values[positional_index]
+                    positional_index += 1
+                    id
+                  elsif (label = named_parameter_label(param)) && (id = named_values.delete(label))
+                    id
+                  elsif default = param.default_value
+                    with_arena(def_arena) { lower_expr(ctx, default) }
+                  else
+                    raise LoweringError.new("missing argument #{param.name} for #{strip_type_suffix(func_name)}")
+                  end
+          result << value
+          if local_name = param.name
+            ctx.all_locals[local_name.lstrip('@')] = value
+          end
+        end
+      ensure
+        ctx.restore_locals(saved_locals)
+      end
+      {result, selected, rest_packed}
+    end
+
     # Reorder named arguments to match parameter positions
     private def reorder_named_args(
       ctx : LoweringContext,
@@ -113315,7 +113557,7 @@ module Adamas::HIR
       full_method_name : String?,
       has_block_call : Bool,
       call_arena : Adamas::Compiler::Frontend::ArenaLike,
-    ) : Array(ValueId)
+    ) : Tuple(Array(ValueId), Tuple(String, Adamas::Compiler::Frontend::DefNode)?, Bool)
       # Get parameter names from function definition
       func_name = full_method_name || method_name
       named_arg_names = named_arg_names_for(named_args)
@@ -113332,6 +113574,9 @@ module Adamas::HIR
         end
       end
       func_entry = lookup_function_def_for_call(func_name, positional_args.size + named_args.size, has_block_call, nil, false, !named_args.empty?, named_arg_names, raw_positional_count)
+      if bound = lower_named_rest_args(ctx, positional_args, named_args, func_name, func_entry, has_block_call, call_arena)
+        return {bound[0], bound[1], bound[2]}
+      end
       func_def = func_entry ? func_entry[1] : nil
       func_context = func_entry ? function_context_from_name(func_entry[0]) : nil
       def_arena = func_entry ? (@function_def_arenas[func_entry[0]]? || @arena) : @arena
@@ -113562,7 +113807,7 @@ module Adamas::HIR
         end
       end
 
-      result
+      {result, nil, false}
     end
 
     private def apply_default_args(
