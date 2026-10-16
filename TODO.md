@@ -19601,3 +19601,14 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   still admits SelectContext(Nil) to an action whose S binding is another type;
   channel1162 traces unresolved S before generic admission. Keep the later source
   restriction guard fail-closed while repairing candidate declaration context.
+
+
+### Preserve source generic restrictions and Proc adaptation phases (2026-10-16)
+- [x] Preserve applied source restrictions through overload admission, memoized
+  misses and final lowering; separate Proc result-discard adaptation from
+  structural ordering. generic1171 RED, generic1170 GREEN (22 pinned-1.21 native
+  outputs plus negative input guard); generic1175 GREEN (47 HIR examples).
+- [ ] Extend Proc adaptation-phase evidence to named/splat/block and union-shaped
+  call arguments before claiming general overload-order compatibility.
+- [ ] Preserve include-site module bindings when rechecking a registered target,
+  and preserve narrowed Proc union-arm arguments through deferred lowering.

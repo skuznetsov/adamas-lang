@@ -18546,3 +18546,28 @@ host 41931095531bd85f187bf0a50e4ec2d9cb03359f55b255a383aafc4b9b9f8f51.
 Refresh after block-return inference, annotation resolution, include binding or
 arena ownership changes. Roll back source and regression together. Proc ranking,
 Channel.select cross-context overloads and LavinMQ parity remain open.
+
+
+### Preserve source generic restrictions and Proc adaptation phases (2026-10-16)
+Applied generic argument restrictions must be checked before TypeRef storage
+normalization erases their arguments. Preserve source abstract Int through alias
+resolution, admit bare generic restrictions without specializing them to the
+current owner, and retain concrete rejection evidence through direct serialized
+targets, resolver memo misses and the final emitting handoff. Unknown/erased
+actual arguments remain undecided rather than becoming a rejection certificate.
+Within eligible positional overloads, compare structural restrictions only on
+ordinary-score ties. Model Proc result discard as a separate candidate lookup
+phase: a candidate requiring no discard wins before one adapting a non-Nil,
+non-NoReturn Proc result to Nil. Crossed restrictions remain incomparable.
+Independent pinned Crystal 1.21 replay: parent generic1171 RED; integrated
+generic1165/generic1170 GREEN with 22 native outputs plus a rejected incompatible
+Proc input. generic1175: 47 admission/numeric HIR examples GREEN, including a
+memoized miss and preselected target. generic1169/1173/1174 preserve ten block
+outputs, eleven ancestor cases and 44 full/no-prelude union equality results.
+Scoped adversary ROBUST for these cases; phase ordering of named/splat/block or
+union-shaped arguments remains outside this certificate. Channel.select include
+context and deferred Proc-union equality demands remain open, as does LavinMQ.
+Manifest 7d1167cd5517390f7bd90234ab225d08dce298d0d85b0ac862955e7cd7dbc228;
+host dfe31fdf654239cb8db5502151d13a69d67272396597e588f51cdbb171e768b8.
+Refresh after alias, generic admission, overload ordering or resolver handoff
+changes. Roll back source and the two regression artifacts together.

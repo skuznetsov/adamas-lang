@@ -52969,6 +52969,113 @@ module Adamas::HIR
       end
     end
 
+    # Check source restrictions before TypeRef normalization erases applied
+    # arguments. A nil result leaves unrelated or variadic shapes to the
+    # existing restriction path; a known contradiction must remain false.
+    private def source_generic_restriction_match?(actual_name : String, declared_name : String) : Bool?
+      actual_name = resolve_type_alias_chain(actual_name.lchop("::"), preserve_abstract_int: true)
+      declared_name = resolve_type_alias_chain(declared_name.lchop("::"), preserve_abstract_int: true)
+      return nil if has_top_level_union_separator?(actual_name) || has_top_level_union_separator?(declared_name)
+      actual = split_generic_base_and_args(actual_name)
+      declared = split_generic_base_and_args(declared_name)
+      return nil unless actual || declared
+      actual_base = actual.try(&.base) || actual_name
+      declared_base = declared.try(&.base) || declared_name
+      return nil unless actual_base == declared_base
+      return true unless declared
+      # A bare actual can be an erased/deferred TypeRef. It proves no
+      # contradiction about source arguments that are no longer available.
+      return nil unless actual
+      actual_args = split_generic_type_args(actual.args)
+      declared_args = split_generic_type_args(declared.args)
+      # Named fields and variadic restrictions have their own binding rules.
+      return nil if declared_base == "NamedTuple" || actual.args.includes?('*') || declared.args.includes?('*')
+      return false unless actual_args.size == declared_args.size
+      undecided = false
+      declared_args.each_with_index do |restriction, index|
+        if declared_base == "Proc" && index == declared_args.size - 1
+          # Crystal permits discarding a Proc's result at a Nil-return boundary,
+          # and NoReturn satisfies every declared Proc result restriction.
+          result_restriction = resolve_type_alias_chain(restriction.strip, preserve_abstract_int: true)
+          result_actual = resolve_type_alias_chain(actual_args[index].strip, preserve_abstract_int: true)
+          next if result_restriction == "Nil" || result_actual == "NoReturn"
+        end
+        matched = source_generic_argument_matches?(actual_args[index], restriction)
+        return false if matched == false
+        undecided = true if matched.nil?
+      end
+      undecided ? nil : true
+    end
+
+    private def source_generic_argument_matches?(actual : String, restriction : String) : Bool?
+      actual = resolve_type_alias_chain(actual.strip.lchop("::"), preserve_abstract_int: true)
+      restriction = resolve_type_alias_chain(restriction.strip.lchop("::"), preserve_abstract_int: true)
+      return true if actual == restriction || restriction == "_" || restriction == "Object" || unresolved_type_param_annotation?(restriction)
+      if has_top_level_union_separator?(actual)
+        undecided = false
+        split_union_type_name(actual).each do |part|
+          matched = source_generic_argument_matches?(part, restriction)
+          return false if matched == false
+          undecided = true if matched.nil?
+        end
+        return undecided ? nil : true
+      end
+      if has_top_level_union_separator?(restriction)
+        undecided = false
+        split_union_type_name(restriction).each do |part|
+          matched = source_generic_argument_matches?(actual, part)
+          return true if matched
+          undecided = true if matched.nil?
+        end
+        return undecided ? nil : false
+      end
+      match = source_generic_restriction_match?(actual, restriction)
+      return match unless match.nil?
+      actual_generic = split_generic_base_and_args(actual)
+      restriction_generic = split_generic_base_and_args(restriction)
+      if actual_generic && restriction_generic && actual_generic.base == restriction_generic.base
+        return nil
+      end
+      # Source abstract numerics precede storage normalization: Int admits
+      # UInt64 even though the short C binding fallback uses Int32.
+      primitive_match = primitive_is_a_hierarchy?(actual, restriction)
+      return primitive_match unless primitive_match.nil?
+      # A bare module restriction accepts its concrete includers, including
+      # inherited and transitive includes. Keep the exact qualified identity;
+      # a same-named module from another namespace is not interchangeable.
+      if module_like_type_name?(restriction) && !restriction.includes?('(')
+        return true if class_includes_module_transitively?(actual, restriction)
+      end
+      # Applied module arguments and class ancestors retain their projections.
+      bind_constructor_type_params(restriction, actual, [] of String, {} of String => String)
+    end
+
+    # Only a concrete source contradiction is a rejection certificate. Unknown
+    # arguments and source shapes with separate binding rules remain undecided.
+    private def source_generic_argument_mismatch_for_def(
+      def_node : Adamas::Compiler::Frontend::DefNode,
+      arg_types : Array(TypeRef),
+      context : String?,
+    ) : Tuple(String, String)?
+      return nil if arg_types.empty? || arg_types.any? { |type_ref| type_ref == TypeRef::VOID }
+      params = function_param_infos(def_node)
+      return nil if params.any? { |param| param.is_splat || param.is_double_splat || named_only_separator?(param) }
+      arg_index = 0
+      params.each do |param|
+        next if param.is_block
+        break if arg_index >= arg_types.size
+        if restriction_text = param.type_annotation
+          declared_name = normalize_declared_type_name(restriction_text, context, specialize_bare_generics: false)
+          actual_name = generic_param_type_name_from_ref(arg_types[arg_index])
+          if source_generic_restriction_match?(actual_name, declared_name) == false
+            return {actual_name, declared_name}
+          end
+        end
+        arg_index += 1
+      end
+      nil
+    end
+
     private def params_compatible_with_args?(
       def_node : Adamas::Compiler::Frontend::DefNode,
       arg_types : Array(TypeRef),
@@ -53004,7 +53111,7 @@ module Adamas::HIR
           if param.is_splat && !param.is_double_splat && (ta = param.type_annotation)
             splat_type_name = ta
             if !splat_type_name.empty? && context
-              splat_type_name = normalize_declared_type_name(splat_type_name, context)
+              splat_type_name = normalize_declared_type_name(splat_type_name, context, specialize_bare_generics: false)
             end
 
             unless splat_type_name.empty? || splat_type_name == "_" || unresolved_type_param_annotation?(splat_type_name)
@@ -53046,6 +53153,12 @@ module Adamas::HIR
                 while check_idx < splat_check_args.size
                   splat_arg_type = splat_check_args[check_idx]
                   return false if splat_arg_type == TypeRef::VOID
+                  generic_match = source_generic_restriction_match?(generic_param_type_name_from_ref(splat_arg_type), splat_resolved_name)
+                  unless generic_match.nil?
+                    return false unless generic_match
+                    check_idx += 1
+                    next
+                  end
                   if module_like_type_name?(splat_resolved_name) || collection_module_type_name?(splat_resolved_name)
                     return false if primitive_type?(splat_arg_type)
                     check_idx += 1
@@ -53088,10 +53201,18 @@ module Adamas::HIR
 
         param_type_name = param.type_annotation || ""
         param_resolved_name = param_type_name
-        if !param_type_name.empty? && context
-          param_type_name = normalize_declared_type_name(param_type_name, context)
+        if !param_type_name.empty?
+          param_type_name = normalize_declared_type_name(param_type_name, context, specialize_bare_generics: false)
         end
         arg_type = arg_types[arg_idx]
+        if arg_type != TypeRef::VOID && !param_type_name.empty?
+          generic_match = source_generic_restriction_match?(generic_param_type_name_from_ref(arg_type), param_type_name)
+          unless generic_match.nil?
+            return false unless generic_match
+            arg_idx += 1
+            next
+          end
+        end
 
         # "_" is a wildcard type in Crystal (matches any argument).
         if param_type_name == "_"
@@ -53366,6 +53487,162 @@ module Adamas::HIR
       false
     end
 
+    # Mark candidates that require Crystal's Proc result-discard adaptation.
+    # This is a lookup phase bit, not structural restriction specificity: an
+    # exact candidate on every argument wins before candidates requiring this
+    # adaptation, regardless of declaration order or aggregate score.
+    private def source_proc_nil_result_discard_required?(actual_name : String, declared_name : String, depth : Int32 = 0) : Bool
+      return false if depth >= 24
+      actual_name = resolve_type_alias_chain(actual_name.strip.lchop("::"), preserve_abstract_int: true)
+      declared_name = resolve_type_alias_chain(declared_name.strip.lchop("::"), preserve_abstract_int: true)
+      return false if has_top_level_union_separator?(actual_name) || has_top_level_union_separator?(declared_name)
+      actual = split_generic_base_and_args(actual_name)
+      declared = split_generic_base_and_args(declared_name)
+      return false unless actual && declared
+      actual_base = resolve_type_alias_chain(actual.base, preserve_abstract_int: true)
+      declared_base = resolve_type_alias_chain(declared.base, preserve_abstract_int: true)
+      return false unless actual_base == declared_base
+      actual_args = split_generic_type_args(actual.args)
+      declared_args = split_generic_type_args(declared.args)
+      return false unless actual_args.size == declared_args.size
+      if actual_base == "Proc" && !actual_args.empty?
+        actual_result = resolve_type_alias_chain(actual_args.last.strip, preserve_abstract_int: true)
+        declared_result = resolve_type_alias_chain(declared_args.last.strip, preserve_abstract_int: true)
+        return true if declared_result == "Nil" && actual_result != "Nil" && actual_result != "NoReturn"
+      end
+      actual_args.each_with_index.any? do |actual_arg, index|
+        source_proc_nil_result_discard_required?(actual_arg, declared_args[index], depth + 1)
+      end
+    end
+
+    private def source_proc_nil_result_discard_required_for_def?(
+      def_node : Adamas::Compiler::Frontend::DefNode,
+      arg_types : Array(TypeRef),
+      context : String?,
+    ) : Bool
+      params = function_param_infos(def_node)
+      return false if params.any? { |param| param.is_splat || param.is_double_splat || named_only_separator?(param) }
+      arg_index = 0
+      params.each do |param|
+        next if param.is_block
+        break if arg_index >= arg_types.size
+        if type_annotation = param.type_annotation
+          declared_name = normalize_declared_type_name(type_annotation, context, specialize_bare_generics: false)
+          actual_name = generic_param_type_name_from_ref(arg_types[arg_index])
+          return true if source_proc_nil_result_discard_required?(actual_name, declared_name)
+        end
+        arg_index += 1
+      end
+      false
+    end
+
+    # Compare only proven structural restriction order. This is a tie-breaker,
+    # not an admission check: unknown shapes remain incomparable and retain the
+    # existing resolver order.
+    private def source_overload_restriction_precedence(
+      lookup_name : String,
+      candidate_name : String,
+      candidate_def : Adamas::Compiler::Frontend::DefNode,
+      incumbent_name : String,
+      incumbent_def : Adamas::Compiler::Frontend::DefNode,
+    ) : Int32?
+      candidate_params = function_param_infos(candidate_name, candidate_def)
+      incumbent_params = function_param_infos(incumbent_name, incumbent_def)
+      return nil unless candidate_params.size == incumbent_params.size
+
+      candidate_context = function_context_for_lookup_candidate(lookup_name, candidate_name)
+      incumbent_context = function_context_for_lookup_candidate(lookup_name, incumbent_name)
+      precedence = 0
+      candidate_params.each_with_index do |candidate_param, index|
+        incumbent_param = incumbent_params[index]
+        return nil unless candidate_param.is_block == incumbent_param.is_block
+        return nil unless candidate_param.is_splat == incumbent_param.is_splat
+        return nil unless candidate_param.is_double_splat == incumbent_param.is_double_splat
+        return nil unless named_only_separator?(candidate_param) == named_only_separator?(incumbent_param)
+        return nil unless candidate_param.external_name == incumbent_param.external_name
+        return nil unless !candidate_param.default_value.nil? == !incumbent_param.default_value.nil?
+        next if named_only_separator?(candidate_param) || candidate_param.is_block
+
+        candidate_annotation = candidate_param.type_annotation || ""
+        incumbent_annotation = incumbent_param.type_annotation || ""
+        relation = if candidate_annotation.empty? && incumbent_annotation.empty?
+                     0
+                   elsif candidate_annotation.empty?
+                     -1
+                   elsif incumbent_annotation.empty?
+                     1
+                   else
+                     source_restriction_specificity(
+                       candidate_annotation, candidate_context, incumbent_annotation, incumbent_context,
+                     )
+                   end
+        return nil unless relation
+        next if relation == 0
+        return nil if precedence != 0 && precedence != relation
+        precedence = relation
+      end
+      precedence == 0 ? nil : precedence
+    end
+
+    private def source_restriction_specificity(
+      left_annotation : String,
+      left_context : String?,
+      right_annotation : String,
+      right_context : String?,
+    ) : Int32?
+      left = normalize_declared_type_name(left_annotation, left_context, specialize_bare_generics: false).strip
+      right = normalize_declared_type_name(right_annotation, right_context, specialize_bare_generics: false).strip
+      left = resolve_type_alias_chain(left, preserve_abstract_int: true)
+      right = resolve_type_alias_chain(right, preserve_abstract_int: true)
+      return 0 if left == right
+      return nil if has_top_level_union_separator?(left) || has_top_level_union_separator?(right)
+
+      left_generic = split_generic_base_and_args(left)
+      right_generic = split_generic_base_and_args(right)
+      if left_generic && right_generic
+        return nil unless resolve_type_alias_chain(left_generic.base, preserve_abstract_int: true) ==
+                          resolve_type_alias_chain(right_generic.base, preserve_abstract_int: true)
+        left_args = split_generic_type_args(left_generic.args)
+        right_args = split_generic_type_args(right_generic.args)
+        return nil unless left_args.size == right_args.size
+        precedence = 0
+        left_args.each_with_index do |left_arg, index|
+          relation = source_restriction_specificity(left_arg, left_context, right_args[index], right_context)
+          return nil unless relation
+          next if relation == 0
+          return nil if precedence != 0 && precedence != relation
+          precedence = relation
+        end
+        return precedence == 0 ? 0 : precedence
+      end
+
+      if left_generic
+        if strip_generic_args(left) == right
+          if resolve_type_alias_chain(left_generic.base, preserve_abstract_int: true) == "Proc" &&
+             split_generic_type_args(left_generic.args).last? == "Nil"
+            return -1
+          end
+          return 1
+        end
+        return nil
+      elsif right_generic
+        if left == strip_generic_args(right)
+          if resolve_type_alias_chain(right_generic.base, preserve_abstract_int: true) == "Proc" &&
+             split_generic_type_args(right_generic.args).last? == "Nil"
+            return 1
+          end
+          return -1
+        end
+        return nil
+      end
+
+      left_narrower = nested_numeric_generic_restriction_compatible?(right, left) || inherits_from?(left, right)
+      right_narrower = nested_numeric_generic_restriction_compatible?(left, right) || inherits_from?(right, left)
+      return 1 if left_narrower && !right_narrower
+      return -1 if right_narrower && !left_narrower
+      nil
+    end
+
     private def params_match_score(
       def_node : Adamas::Compiler::Frontend::DefNode,
       arg_types : Array(TypeRef),
@@ -53387,11 +53664,20 @@ module Adamas::HIR
         end
 
         param_type_name = param.type_annotation || ""
-        if !param_type_name.empty? && context
-          param_type_name = normalize_declared_type_name(param_type_name, context)
+        if !param_type_name.empty?
+          param_type_name = normalize_declared_type_name(param_type_name, context, specialize_bare_generics: false)
         end
 
         arg_type = arg_types[arg_idx]
+        if arg_type != TypeRef::VOID && !param_type_name.empty?
+          actual_name = generic_param_type_name_from_ref(arg_type)
+          generic_match = source_generic_restriction_match?(actual_name, param_type_name)
+          unless generic_match.nil?
+            score += actual_name == param_type_name ? 2 : 1 if generic_match
+            arg_idx += 1
+            next
+          end
+        end
         if param_type_name == "_"
           arg_idx += 1
           next
@@ -53620,6 +53906,12 @@ module Adamas::HIR
 
       resolved_name = resolve_type_alias_chain(declared_type_name.strip)
       return nil if resolved_name.empty?
+      actual_name = generic_param_type_name_from_ref(arg_type)
+      generic_match = source_generic_restriction_match?(actual_name, resolved_name)
+      unless generic_match.nil?
+        return nil unless generic_match
+        return actual_name == resolved_name ? 2 : 1
+      end
 
       if union_type_name?(resolved_name)
         if arg_desc = @module.get_type_descriptor(arg_type)
@@ -62794,17 +63086,22 @@ module Adamas::HIR
       end
     end
 
-    private def resolve_type_alias_chain_no_context(name : String) : String
+    private def resolve_type_alias_chain_no_context(name : String, preserve_abstract_int : Bool = false) : String
+      # The short C binding fallback Int -> Int32 is an ABI convenience, not
+      # the Crystal source restriction Int. Keep it out of restriction checks,
+      # including aliases whose target reaches Int after one or more hops.
+      return name if preserve_abstract_int && name == "Int"
       resolved = @type_aliases[name]? || LIBC_TYPE_ALIASES[name]? || compiler_internal_alias_target(name) || name
       depth = 0
       while (next_resolved = @type_aliases[resolved]? || LIBC_TYPE_ALIASES[resolved]? || compiler_internal_alias_target(resolved)) && next_resolved != resolved && depth < 10
+        break if preserve_abstract_int && resolved == "Int"
         resolved = next_resolved
         depth += 1
       end
       resolved
     end
 
-    private def resolve_type_alias_chain(name : String) : String
+    private def resolve_type_alias_chain(name : String, preserve_abstract_int : Bool = false) : String
       return "" if name.unsafe_as(UInt64) == 0_u64
       stripped_name = ascii_strip(name)
       return "" if stripped_name.empty?
@@ -62815,7 +63112,7 @@ module Adamas::HIR
           i = 0
           while i < variants.size
             variant = ascii_strip(variants.unsafe_fetch(i))
-            resolved_variants << resolve_type_alias_chain(variant) unless variant.empty?
+            resolved_variants << resolve_type_alias_chain(variant, preserve_abstract_int) unless variant.empty?
             i += 1
           end
           return normalize_union_type_name(resolved_variants.join(" | "))
@@ -62829,6 +63126,7 @@ module Adamas::HIR
                   else
                     stripped_name
                   end
+      cache_key = "#{cache_key}\u0000source-int" if preserve_abstract_int
       if cached = @resolved_type_alias_cache[cache_key]?
         return cached
       end
@@ -62842,10 +63140,10 @@ module Adamas::HIR
         end
       end
 
-      resolved = resolve_type_alias_chain_no_context(seed)
+      resolved = resolve_type_alias_chain_no_context(seed, preserve_abstract_int)
       if resolved == seed && !contextual
         if suffix_target = resolve_type_alias_by_qualified_suffix(seed)
-          resolved = resolve_type_alias_chain_no_context(suffix_target)
+          resolved = resolve_type_alias_chain_no_context(suffix_target, preserve_abstract_int)
         end
       end
 
@@ -102510,8 +102808,17 @@ module Adamas::HIR
         end
       end
       semantic_target = expr_id.invalid? ? nil : semantic_call_target(expr_id, lookup_name)
+      if semantic_target && !has_block_call && !has_splat && !has_named_args
+        if source_generic_argument_mismatch_for_def(
+             semantic_target.def_node, arg_types,
+             function_context_for_lookup_candidate(lookup_name, semantic_target.symbol_name),
+           )
+          semantic_target = nil
+        end
+      end
+      source_call_rejections = [] of Tuple(String, String)
       selected_target = semantic_target
-      selected_target ||= (m3e_input ? resolve_call_target(m3e_input) : nil)
+      selected_target ||= (m3e_input ? resolve_call_target(m3e_input, source_call_rejections) : nil)
       if env_get("DEBUG_JOIN_PICK") && lookup_name.includes?("join")
         STDERR.puts "[JOIN_SRC] src=#{semantic_target ? "semantic" : (selected_target ? "resolver" : "none")} " \
                     "sym=#{selected_target.try(&.symbol_name) || "nil"} lookup=#{lookup_name} " \
@@ -104158,6 +104465,27 @@ module Adamas::HIR
             has_block_call,
             has_splat,
             has_named_args,
+          )
+        end
+      end
+      if !has_block_call && !has_splat && !has_named_args
+        final_def = selected_call_entry_def || @function_defs[mangled_method_name]?
+        final_context = function_context_for_lookup_candidate(
+          lookup_name, selected_call_entry_name || mangled_method_name,
+        )
+        source_rejection = final_def ? source_generic_argument_mismatch_for_def(final_def, arg_types, final_context) : nil
+        if prior_rejection = source_call_rejections.first?
+          # A later owner-aware rematch may legitimately find a different Def.
+          # It must establish compatibility before superseding a typed rejection.
+          unless final_def && params_compatible_with_args?(final_def, arg_types, final_context)
+            source_rejection ||= prior_rejection
+          end
+        end
+        if source_rejection
+          actual_name, declared_name = source_rejection
+          raise LoweringError.new(
+            "no overload matches #{lookup_name}: expected argument restriction #{declared_name}, got #{actual_name}",
+            node,
           )
         end
       end
@@ -110699,7 +111027,7 @@ module Adamas::HIR
 
     # Keep the legacy resolver's selected symbol and DefNode together. This is a
     # behavior-neutral compatibility result, not semantic CallResolution identity.
-    private def resolve_call_target(input : CallResolutionInput) : SelectedCallTarget?
+    private def resolve_call_target(input : CallResolutionInput, source_rejections : Array(Tuple(String, String))? = nil) : SelectedCallTarget?
       profile = @call_resolution_profile_active
       started_at = Time.instant if profile
       memo_fingerprint = call_resolution_memo_fingerprint(input) if @call_resolution_memo_enabled
@@ -110710,13 +111038,17 @@ module Adamas::HIR
             @call_resolution_memo_hits += 1_i64
             if def_node = memo_entry.def_node
               {memo_entry.symbol_name.not_nil!, def_node}
+            elsif source_rejections
+              # Older query callers only cache the selected target. Recover a
+              # missing target's rejection evidence for the emitting callsite.
+              resolve_call_tuple(input, source_rejections)
             else
               nil
             end
           else
             @call_resolution_memo_misses += 1_i64 if @call_resolution_memo_enabled
             memo_key = call_resolution_memo_key(input) if @call_resolution_memo_enabled
-            resolved = resolve_call_tuple(input)
+            resolved = resolve_call_tuple(input, source_rejections)
             if memo_fingerprint && memo_key
               if call_resolution_memo_key_matches?(memo_key, input)
                 if @call_resolution_memo.size >= 8192 && !@call_resolution_memo.has_key?(memo_fingerprint)
@@ -110810,7 +111142,7 @@ module Adamas::HIR
 
     # Tuple-producing legacy resolver core. Named args are canonicalized by the
     # lookup_function_def_for_call wrapper.
-    private def resolve_call_tuple(input : CallResolutionInput) : Tuple(String, Adamas::Compiler::Frontend::DefNode)?
+    private def resolve_call_tuple(input : CallResolutionInput, source_rejections : Array(Tuple(String, String))? = nil) : Tuple(String, Adamas::Compiler::Frontend::DefNode)?
       func_name = input.func_name
       arg_count = if input.has_named && input.named_names && input.raw_positional_count
                     input.raw_positional_count.not_nil! + input.named_names.not_nil!.size
@@ -110847,7 +111179,12 @@ module Adamas::HIR
           if debug_call_lookup
             STDERR.puts "[CALL_LOOKUP_DIRECT_HIT] func=#{func_name}"
           end
-          return {func_name, func_def}
+          direct_mismatch = if arg_types && !call_has_splat && !call_has_named_args && !has_block
+                              source_generic_argument_mismatch_for_def(
+                                func_def, arg_types, function_context_from_name(func_name),
+                              )
+                            end
+          return {func_name, func_def} unless direct_mismatch
         end
       end
 
@@ -111080,6 +111417,11 @@ module Adamas::HIR
       best_param_count = Int32::MAX
       best_score = Int32::MIN
       best_exact = false # Bug 1: whether `best` is a strictly type-exact positional match
+      best_requires_proc_nil_discard = false
+      source_rejection = nil.as(Tuple(String, String)?)
+      saw_source_candidate = false
+      all_source_candidates_rejected = true
+      collect_source_rejections = source_rejections && !has_block && !call_has_splat && !call_has_named_args
       single_candidate_fast_path = overload_keys.size == 1 &&
                                    !debug_call_lookup &&
                                    !debug_merge_sort_lookup &&
@@ -111169,8 +111511,17 @@ module Adamas::HIR
 
         score = 0
         compatible = true
+        candidate_requires_proc_nil_discard = false
         if arg_types && !unknown_args
           func_context = function_context_for_lookup_candidate(func_name, name)
+          if collect_source_rejections
+            saw_source_candidate = true
+            if mismatch = source_generic_argument_mismatch_for_def(def_node, arg_types, func_context)
+              source_rejection ||= mismatch
+            else
+              all_source_candidates_rejected = false
+            end
+          end
           compatible = params_compatible_with_args?(def_node, arg_types, func_context, nil, ovl_trace)
           STDERR.puts "[OVL]   cand=#{name} pc=#{param_count} req=#{required} ctx=#{func_context} compat=#{compatible}" if ovl_trace
           if compatible && single_candidate_fast_path
@@ -111183,6 +111534,9 @@ module Adamas::HIR
             break
           end
           if compatible
+            if !has_block && !call_has_splat && !call_has_named_args && arg_types.none? { |type_ref| type_ref == TypeRef::VOID }
+              candidate_requires_proc_nil_discard = source_proc_nil_result_discard_required_for_def?(def_node, arg_types, func_context)
+            end
             score = params_match_score(def_node, arg_types, func_context)
             score += class_method_owner_match_bonus(func_name, name, arg_types)
             score += named_args_match_score(def_node, named_arg_names)
@@ -111233,14 +111587,28 @@ module Adamas::HIR
           # the lossy one previously won the param_count tiebreak). Only the score-tie ordering
           # changes; a strictly higher score still wins regardless of exactness.
           cand_exact = overload_positional_types_exact_match?(name, def_node, arg_types)
-          if score > best_score ||
-             (score == best_score && cand_exact && !best_exact) ||
-             (score == best_score && cand_exact == best_exact && param_count < best_param_count)
+          same_proc_result_phase = candidate_requires_proc_nil_discard == best_requires_proc_nil_discard
+          restriction_precedence = if same_proc_result_phase && score == best_score && cand_exact == best_exact && param_count == best_param_count
+                                     if incumbent_def = best
+                                       if incumbent_name = best_name
+                                         source_overload_restriction_precedence(
+                                           func_name, name, def_node, incumbent_name, incumbent_def,
+                                         )
+                                       end
+                                     end
+                                   end
+          candidate_precedes_by_proc_phase = best_requires_proc_nil_discard && !candidate_requires_proc_nil_discard
+          if best.nil? || candidate_precedes_by_proc_phase ||
+             (same_proc_result_phase && (score > best_score ||
+              (score == best_score && cand_exact && !best_exact) ||
+              (score == best_score && cand_exact == best_exact && param_count < best_param_count) ||
+              restriction_precedence == 1))
             best = def_node
             best_name = name
             best_param_count = param_count
             best_score = score
             best_exact = cand_exact
+            best_requires_proc_nil_discard = candidate_requires_proc_nil_discard
           end
         else
           # For untyped calls, keep arity-first fallback behavior.
@@ -111333,6 +111701,11 @@ module Adamas::HIR
           block_receiver_base = block_receiver_base ? strip_generic_args(block_receiver_base) : nil
           if block_entry = lookup_block_function_def_for_call(base, arg_count, arg_types, block_receiver_base)
             return block_entry
+          end
+        end
+        if source_rejections && saw_source_candidate && all_source_candidates_rejected
+          if rejection = source_rejection
+            source_rejections << rejection
           end
         end
         STDERR.puts "[CALL_LOOKUP_MISS] func=#{func_name}" if debug_call_lookup

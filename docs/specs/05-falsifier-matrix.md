@@ -796,3 +796,17 @@ diagnostic meanings.
 - GREEN blockmap1166/1167: eleven ancestor cases and all 44 full/no-prelude union
   equality results. Scoped adversary ROBUST; Channel.select and LavinMQ remain
   open. Refresh after declaration context, annotation or block inference changes.
+
+
+### Preserve source generic restrictions and Proc adaptation phases (2026-10-16)
+- RED generic1171 on blockmap1152: the original accepts the parent-typed Proc
+  input, while the candidate reaches an accept_parent_input stub and aborts.
+- GREEN generic1170 on generic1165: 22 pinned Crystal 1.21 native outputs plus
+  incompatible-input rejection, including declaration-order reversals, crossed
+  restrictions, nested Procs, abstract numerics and generic-owner bindings.
+- GREEN generic1175: 47 source admission/numeric HIR examples, including direct
+  serialized targets, memoized misses, unknown arguments and valid alternatives.
+- GREEN generic1169/1173/1174: ten block outputs, eleven ancestor cases and 44
+  full/no-prelude union results. Scoped adversary ROBUST; Proc phase ordering for
+  excluded call shapes and complete LavinMQ parity remain open. Refresh after
+  source restriction, alias, candidate ordering or emitting-handoff changes.

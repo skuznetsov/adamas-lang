@@ -4067,3 +4067,21 @@ Namespaced/global Envelope collision and alternating generic include bindings
 are the scope adversaries. blockmap1166/1167 preserve ancestor and union guards.
 Scoped adversary ROBUST for these shapes; this is no full overload-context or
 LavinMQ completion claim. Refresh after annotation/inference/include changes.
+
+
+### Preserve source generic restrictions and Proc adaptation phases (2026-10-16)
+A source generic restriction is distinct from its storage TypeRef. Check known
+applied arguments before erasure; preserve source abstract Int and bare generic
+restrictions. Carry a known source contradiction to the emitting callsite even
+when a query cache stores only a miss. A later owner-aware rematch must establish
+compatibility before superseding that contradiction. Unknown source arguments
+remain undecided. In known positional, non-splat/non-named/non-block calls, Proc
+result discard is a later lookup phase than candidates requiring no adaptation;
+structural restriction precedence only breaks otherwise equal candidate scores.
+DoD: proc_overload_restriction_order_repro.sh matches 22 Crystal 1.21 native
+outputs and rejects the same incompatible Proc input. builtin_generic_restriction_
+admission_spec.cr exercises admission and rejection handoff; the combined numeric
+guard set has 47 passing examples (generic1175). Parent generic1171 RED; isolated
+generic1165/generic1170 GREEN. Block/ancestor/union guards GREEN. Scoped adversary
+ROBUST; excluded call shapes, include-site context and LavinMQ remain open.
+Refresh after source restriction, alias, adaptation or resolver cache changes.
