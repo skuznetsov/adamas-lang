@@ -3670,3 +3670,17 @@ regression, including calls after narrowing. Source533 fails that same regressio
 This scope excludes explicit-return inference, arbitrary Proc covariance, numeric
 export identity, and LavinMQ parity. Refresh on type/union/narrowing changes;
 rollback is the bounded HIR change.
+
+
+### NamedTuple IndexNode inference boundary (2026-10-15)
+Admitted: a single literal key on a NamedTuple receiver contributes that exact
+field TypeRef while inferring its enclosing expression, including a mapped
+NamedTuple block result. Use the same key/element helpers as ordinary lowering.
+Rejected: inventing a field type for a missing key. Guard-only: ordinary Array
+and Hash index inference remain on their existing paths; unresolved fields and
+nonliteral keys retain existing fallback.
+DoD: nt576 passes 14 focused HIR cases; source554 fails four field/result cases.
+The minimal native generic-block guard matches Crystal; it also passes on the
+parent. Whole Hash-map/full-prelude and LavinMQ result transport remain open.
+Refresh on expression, alias, or generic-block inference changes; rollback the
+bounded IndexNode hunk.

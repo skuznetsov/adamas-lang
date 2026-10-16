@@ -19273,3 +19273,14 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Reconcile the existing Char#ord union-dispatch WIP test against an atomic
   implementation: proc555 and baseline proc557 have the same failure. LavinMQ
   compilation/runtime/spec parity remains open.
+
+
+### Literal NamedTuple key inference and remaining map consumers (2026-10-15)
+- [x] Preserve exact field types during IndexNode inference for generic block
+  results. Atomic nt576 passes 14 focused HIR cases; parent fails four new cases.
+- [ ] Repair the separate BaseUser/User permissions_details result transport:
+  LavinMQ still reads the input Permissions carrier where :vhost/:user belong to
+  the mapped five-field result (full493 literal-index overlay).
+- [ ] Resolve the exact atomic full-prelude comparison-block failure exposed
+  after this inference repair: expected Int32 or Nil, got UInt64 (nt578/nt581).
+  Do not bypass it in stdlib or application sources.

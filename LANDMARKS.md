@@ -18021,3 +18021,24 @@ proc555); it is a separate existing implementation gap. One alternative Proc
 union oracle crashes original Crystal (proc553) and is not compatibility evidence.
 Refresh on Proc type interning, union descriptors/tags, or branch narrowing;
 rollback is this commit. Whole LavinMQ parity and numeric export identity remain open.
+
+
+### Infer NamedTuple literal keys before generic block results (2026-10-15)
+IndexNode expression inference omitted NamedTuple literal-key fields even though
+ordinary lowering already had the exact key/type authority. A generic map block
+could therefore lose its complete NamedTuple return shape. For exactly one literal
+key on a NamedTuple receiver, reuse named_tuple_literal_key_name and
+named_tuple_element_for_key before collection fallback. Unknown keys remain
+unresolved in inference; ordinary lowering retains its missing-key diagnostic.
+Atomic source nt576 (HIR SHA dfaffa715116843043fa9e86500f77bbfb625c917c3d4bc734eb5dc8e5b4db01)
+passes 14 focused HIR examples, including three distinct field types, the complete
+mapped result, missing-key/Array/Hash guards, and prior Proc return controls
+(nt585). Parent source554 fails four of the same seven new cases (nt586).
+The minimal generic-block native consumer prints true/guest on both Crystal and
+nt576 (nt584); the parent also passes it (nt587), so it is a guard, not the RED
+falsifier. Full493 plus this same hunk passes the original-first Hash-map runtime
+consumer, but exact atomic full-prelude lowering reaches a separate UInt64
+comparison-block contract failure (nt578/nt581). LavinMQ still loses the mapped
+result across BaseUser/User permissions_details and rejects :vhost. Neither
+external frontier is closed by these local checks. Refresh on expression/type
+inference, alias resolution, or generic block result changes; rollback this commit.

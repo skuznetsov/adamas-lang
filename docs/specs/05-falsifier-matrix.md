@@ -399,3 +399,18 @@ diagnostic meanings.
 - Exclusions: proc553 crashes the original compiler and is an invalid runtime
   oracle. The Char#ord WIP test has the same baseline failure (proc557/proc555).
   No LavinMQ parity claim. Refresh on Proc/union identity or narrowing changes.
+
+
+### NamedTuple literal-key expression inference (2026-10-15)
+- RED: nt586 runs the seven new HIR cases on source554: :config/:label/:count
+  and their enclosing mapped result all lose their inferred type (four failures).
+- GREEN: nt585 runs those cases plus prior semantic Proc-return controls on
+  atomic nt576: 14 examples, zero failures/errors. nt589 runs the portable
+  regression wrapper on the same sealed suite.
+- Guards: unknown keys remain unresolved, Array(Int32) and Hash(String, Bool)
+  retain their element types. Native generic-block nt584 prints true/guest equal
+  to Crystal; parent nt587 also passes, so native success is not the RED oracle.
+- Open: full-prelude atomic Hash-map lowering reaches a UInt64 comparison-block
+  contract error (nt578/nt581), and full493+hunk LavinMQ still rejects :vhost
+  after BaseUser/User result transport. Do not promote local inference evidence
+  to LavinMQ compilation or runtime parity. Refresh on inference changes.

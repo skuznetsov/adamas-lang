@@ -27789,6 +27789,19 @@ module Adamas::HIR
           desc = @module.get_type_descriptor(obj_type)
           type_name = desc.try(&.name) || get_type_name_from_ref(obj_type)
           return nil if type_name.empty?
+          # A literal key on a NamedTuple has an exact field type even while
+          # the containing expression is being inferred (for example, inside
+          # a generic block return). Preserve that type so the enclosing
+          # NamedTuple literal can be inferred instead of collapsing to nil.
+          if expr_node.indexes.size == 1 && desc &&
+             (desc.kind == TypeKind::NamedTuple || desc.name.starts_with?("NamedTuple("))
+            index_node = node_for_expr(expr_node.indexes.first)
+            if key_name = named_tuple_literal_key_name(index_node)
+              if element = named_tuple_element_for_key(obj_type, key_name)
+                return element[1] if element[1] != TypeRef::VOID
+              end
+            end
+          end
           if type_name == "String"
             has_range_index = false
             index_scan_idx = 0
