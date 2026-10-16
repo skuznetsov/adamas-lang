@@ -1048,3 +1048,16 @@ diagnostic meanings.
 - RED json_ctor_relation_20261016: JSON::Any scalar is not closed by this fix.
   Current bootstrap and produced-stage LavinMQ parity remain open. Manifest
   6c1df4d1076a51cad95c203404d64b531b3dac373ccc50024c243adce1a0daf5. Expiry: restriction/order, arena, selection, or stdlib changes.
+
+
+### Prove registered source carriers disjoint from concrete scalars (2026-10-16)
+- GREEN disjoint1708/disjoint1698: struct/class union arms omit impossible
+  scalar bodies; a real UInt8 arm survives with its payload. Original-first
+  stdout/stderr agreement. RED disjoint1713 exact ctor1684 parent.
+- GREEN disjoint1709: 135 HIR examples. RED disjoint1710 parent: 3/5 new
+  examples fail. Ancestor carriers, unknown descriptors and Pointer guarded.
+- Scoped ROBUST for registered source carriers versus concrete scalar builtins.
+  String, modules and erased Pointer are outside the new proof.
+- RED io1712: pre-existing write_byte/puts ordering mismatch, separately open.
+  Current bootstrap and produced-stage LavinMQ parity remain open. Manifest
+  8cc553d5cf15bf27de935d7ee0ec0ccaaf4bffabd7b16589c79af8faec65c373. Expiry: hierarchy, builtin parents, predicate/narrowing or stdlib.

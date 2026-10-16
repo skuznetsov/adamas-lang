@@ -4334,3 +4334,17 @@ parent RED; ctor1687 current 130 HIR examples GREEN. Scoped ROBUST. JSON scalar,
 current bootstrap and produced-stage LavinMQ parity remain open. Manifest
 6c1df4d1076a51cad95c203404d64b531b3dac373ccc50024c243adce1a0daf5; host 0f9c09db1ec1d2664724535c43ea2f0b7dc1d1d6efbac29a9d78445715faf649. Expiry: source restriction, overload order,
 definition arena, constructor selection, or external stdlib changes.
+
+
+### Prove registered source carriers disjoint from concrete scalars (2026-10-16)
+Concrete scalar builtin targets may lack ordinary HIR descriptors. A
+ClassInfo-backed source Class/Struct can be proved disjoint unless its name
+occurs in the scalar's predefined parent chain. An ancestor remains unknown
+because it can contain the checked descendant. Descriptor-only placeholders,
+modules, String and erased Pointer do not receive this proof. Reuse the general
+is_a? relation so union predicate expansion and case-body reachability consume
+the same evidence. Evidence: disjoint1708 three native original-first fixtures;
+disjoint1713 exact parent RED; disjoint1709 135 HIR examples; disjoint1710 parent
+3/5 RED. Scoped ROBUST. Manifest 8cc553d5cf15bf27de935d7ee0ec0ccaaf4bffabd7b16589c79af8faec65c373; host 9c3c1163a2b2488068e253cd063273542bdf237b4881e4583a0345ecbe3cc6b3.
+Expiry: hierarchy registration, builtin parents, predicate or union narrowing,
+and external stdlib changes. Output ordering, bootstrap and LavinMQ parity open.

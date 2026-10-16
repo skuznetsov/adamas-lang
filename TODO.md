@@ -19859,3 +19859,14 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Extend constructor source-order evidence to cross-arena equivalent or
   incomparable ties and broader call shapes before widening this helper.
   JSON::Any scalar construction/serialization remains separately RED.
+
+
+### Prove registered source carriers disjoint from concrete scalars (2026-10-16)
+- [x] Prove registered source classes/structs disjoint from concrete scalar
+  builtin targets while retaining possible predefined ancestor carriers.
+  disjoint1708 original-first native fixtures GREEN; disjoint1713 parent RED;
+  disjoint1709 135 HIR examples GREEN; disjoint1710 parent 3/5 RED.
+- [ ] Fix STDOUT.write_byte/puts output ordering at the compiler/runtime root.
+  io1712 exact ctor1684 parent matches neither the original byte order nor
+  line placement; this predates the scalar-disjointness change. Reproducer:
+  io1711_stdout_ordering.cr, SHA df0bb3566ae75d2ddd984bf7b22cd2405479fa316fb10d47e95f343c1033db41.

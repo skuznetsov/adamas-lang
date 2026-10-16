@@ -18944,3 +18944,23 @@ selection is not JSON completion. Current bootstrap and produced-stage
 LavinMQ functional/upstream parity remain open. Source manifest 6c1df4d1076a51cad95c203404d64b531b3dac373ccc50024c243adce1a0daf5;
 host 0f9c09db1ec1d2664724535c43ea2f0b7dc1d1d6efbac29a9d78445715faf649. Refresh after source restriction, overload ordering, definition
 arena, constructor selection, or external stdlib changes.
+
+
+### Prove registered source carriers disjoint from concrete scalars (2026-10-16)
+A descriptorless UInt8 target left a registered user struct undecidable,
+so a Char | Payload | Tuple union instantiated an impossible when UInt8 body
+and rejected its correctly restricted call. For registered ClassInfo-backed
+classes and structs, use the predefined scalar parent chain to retain possible
+ancestor carriers and prove all other concrete scalar pairs disjoint. Do not
+infer this from descriptor-only placeholders, modules, String or erased Pointer.
+DoD: registered_scalar_case_disjoint_repro.sh. disjoint1708 matches original
+Crystal stdout/stderr for struct/class unions and a surviving UInt8 payload;
+disjoint1713 exact parent rejects the first fixture. disjoint1709 passes 135
+focused HIR examples, including ancestor/unknown/Pointer guards; disjoint1710
+parent has 3 failures in the 5 new examples. Scoped adversary ROBUST.
+Adjacent io1712 confirms pre-existing STDOUT.write_byte/puts reordering:
+Crystal emits payload\nAbyte; the exact parent emits payload\nbyte\nA.
+This separate output-order bug, current bootstrap and produced-stage LavinMQ
+functional/upstream parity remain open. Manifest 8cc553d5cf15bf27de935d7ee0ec0ccaaf4bffabd7b16589c79af8faec65c373; host 9c3c1163a2b2488068e253cd063273542bdf237b4881e4583a0345ecbe3cc6b3.
+Refresh after hierarchy registration, builtin parent definitions, predicate
+lowering, union narrowing, or external stdlib changes.

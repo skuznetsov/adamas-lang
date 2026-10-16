@@ -86537,6 +86537,25 @@ module Adamas::HIR
         end
       end
 
+      # A registered source class/struct cannot overlap a concrete scalar
+      # builtin unless it is one of that builtin's predefined ancestors.
+      # Requiring the source ClassInfo keeps descriptor-only placeholders
+      # conservative. String and erased Pointer carriers are not scalar proofs.
+      if check_type.primitive? &&
+         (numeric_primitive?(check_type) || check_type == TypeRef::BOOL || check_type == TypeRef::SYMBOL) &&
+         value_desc && (value_desc.kind == TypeKind::Class || value_desc.kind == TypeKind::Struct)
+        if value_info = @class_info[value_desc.name]?
+          if value_info.type_ref == value_type
+            ancestor = primitive_class_name(check_type)
+            while ancestor
+              return nil if ancestor == value_desc.name
+              ancestor = builtin_parent_for(ancestor, true)
+            end
+            return false
+          end
+        end
+      end
+
       return nil unless value_desc && check_desc
       return nil if value_desc.kind == TypeKind::Union || check_desc.kind == TypeKind::Union
       return false if value_desc.kind == TypeKind::Primitive && check_desc.kind == TypeKind::Primitive
