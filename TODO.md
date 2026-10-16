@@ -19302,3 +19302,15 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Preserve generated root arena identity and runtime collection through
   every macro expansion path. Audit recovery-origin admission separately;
   indentation and collect_main_exprs are not evidence of syntactic ownership.
+
+
+### Generated macro root ownership (2026-10-16)
+- [x] Preserve runtime mode and actual parser arena for valid generated main
+  roots; eight HIR guards and Crystal/native ABCDE comparison pass on root614.
+- [ ] Require scanners must consume each control piece/tag before a continuation;
+  unmatched else/elsif pieces currently bypass the cursor increment and hang.
+- [ ] Audit structured-array for expansion and shared begin/loop variable context;
+  the supported percent-word loop regression does not establish those paths.
+- [ ] Resolve absolute module-macro declaration/reflection ownership (three
+  guards fail on parent and candidate) and full-prelude startup exiting 1 before
+  user code; both remain outside the generated-main arena repair.

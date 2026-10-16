@@ -438,3 +438,20 @@ diagnostic meanings.
 - Scope: ordinary parser roots. Generated/recovered macro root admission and
   arena identity are not established by these checks. Refresh on parser-root
   or collector changes; no LavinMQ parity claim follows.
+
+
+### Generated root arena/runtime collection (2026-10-16)
+- RED root629: pinned Crystal 1.21 prints ABCDE; root605 parent builds and exits
+  zero with only E. Earlier root613 used the externally updated Crystal 1.22;
+  root629 is the repeated same-version behavioral falsifier.
+- GREEN root625: eight HIR examples pass, preserving conditional/begin/percent-word
+  loop roots and nested class ownership, and rejecting malformed full expansion.
+  root624 repeats Crystal/native ABCDE with recovered pinned Crystal 1.21;
+  root615/root617 also passed before the external toolchain replacement.
+- Guard limits: module-macro absolute owner tests fail 3/3 on parent root627 and
+  candidate root623; full-prelude startup exits 1 on both root620 and root618.
+  Root619 hung in the separate require-piece cursor loop and was terminated;
+  its incomplete run is not a passing guard. Root612's host hash changed during
+  an external Homebrew update; use the completed sealed root614 build instead.
+- Refresh on parser/collector/main-arena binding changes. No LavinMQ parity or
+  arbitrary array-loop/shared macro-context claim follows.

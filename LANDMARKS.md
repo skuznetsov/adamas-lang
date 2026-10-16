@@ -18072,3 +18072,19 @@ Crystal's BAC (root609/root611); the parent exits successfully with no output
 The root606 HIR RED attempt hit the FD watchdog and is inconclusive; root607 is
 the valid behavioral falsifier. Refresh on parser-root/collector changes;
 rollback this commit. This does not establish LavinMQ parity.
+
+
+### Generated main roots retain their parser arena (2026-10-16)
+The CLI collected valid generated roots with runtime collection disabled and
+encoded their ExprIds using the original file's arena index. Collection now
+transports the runtime/declaration mode and actual arena identity through
+conditional, begin and supported for expansion paths; HIR receives the extended
+arena list after collection. Incomplete recovery fragments remain declarations
+only, and malformed full expansions are rejected. Sealed root614 passes eight
+focused HIR guards (root625) and native ABCDE matches pinned Crystal 1.21
+(root624/root617); the parent prints only E (root629). Refresh on macro parsing,
+collector recursion or main-arena binding changes; rollback this commit.
+The three absolute module-macro owner guards fail identically on both parent
+and candidate (root627/root623), and full-prelude startup still exits 1 on both
+(root620/root618). Require-scanner progress and structured-array loop context
+remain separate obligations. This does not establish LavinMQ parity.

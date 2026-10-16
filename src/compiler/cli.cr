@@ -2049,7 +2049,8 @@ module Adamas
               file_path,
               0,
               true,
-              paths_by_arena
+              paths_by_arena,
+              main_arenas: main_arenas
               )
               expr_i += 1
             end
@@ -2057,6 +2058,8 @@ module Adamas
           bootstrap_trace_puts "[S2_HIR_SETUP] phase=collect_arena_done idx=#{arena_i} defs=#{def_nodes.size} classes=#{class_nodes.size} modules=#{module_nodes.size} enums=#{enum_nodes.size} aliases=#{alias_nodes.size} libs=#{lib_nodes.size} type_names=#{top_level_type_names.size}"; STDERR.flush
           arena_i += 1
         end
+        # Generated main ExprIds must resolve against their owning parser arena.
+        hir_converter.bootstrap_bind_main_arenas(main_arenas)
         bootstrap_trace_puts "[S2_HIR_SETUP] phase=collect_done defs=#{def_nodes.size} classes=#{class_nodes.size} modules=#{module_nodes.size} enums=#{enum_nodes.size} aliases=#{alias_nodes.size} libs=#{lib_nodes.size} type_names=#{top_level_type_names.size}"; STDERR.flush
         stage2_debug("[STAGE2_DEBUG] top-level collection done defs=#{def_nodes.size} classes=#{class_nodes.size} modules=#{module_nodes.size} constants=#{constant_exprs.size} main=#{main_exprs.size}", err_io)
         log_generated_stage_memory_phase(
@@ -5086,6 +5089,21 @@ module Adamas
         target.is_a?(Frontend::PathNode) || target.is_a?(Frontend::ConstantNode)
       end
 
+      private def ensure_main_arena_index(
+        arena : Frontend::ArenaLike,
+        main_arenas : Array(Frontend::ArenaLike)?,
+      ) : Int32?
+        arenas = main_arenas
+        return nil unless arenas
+        i = 0
+        while i < arenas.size
+          return i.to_i32 if arenas.unsafe_fetch(i).object_id == arena.object_id
+          i += 1
+        end
+        arenas << arena
+        (arenas.size - 1).to_i32
+      end
+
       private def collect_top_level_nodes(
         arena : Frontend::ArenaLike,
         arena_index : Int32,
@@ -5109,9 +5127,11 @@ module Adamas
         macro_origin_path : String? = nil,
         depth : Int32 = 0,
         collect_main_exprs : Bool = true,
-        paths_by_arena : Hash(UInt64, String)? = nil
+        paths_by_arena : Hash(UInt64, String)? = nil,
+        main_arenas : Array(Frontend::ArenaLike)? = nil
       ) : Nil
         return if depth > 4
+        packed_arena_index = ensure_main_arena_index(arena, main_arenas) || arena_index
         if paths_by_arena
           if current_path = macro_origin_path || paths_by_arena[arena.object_id.to_u64]?
             paths_by_arena[arena.object_id.to_u64] = current_path
@@ -5167,7 +5187,7 @@ module Adamas
         when Frontend::ConstantNode
           constant_exprs << {expr_id, arena}
           if collect_main_exprs
-            packed_main_expr = (arena_index.to_u64 << 32) | expr_id.index.to_u64
+            packed_main_expr = (packed_arena_index.to_u64 << 32) | expr_id.index.to_u64
             main_exprs << packed_main_expr
           end
           pending_annotations.clear
@@ -5188,18 +5208,18 @@ module Adamas
         when Frontend::MacroExpressionNode
           # Statement-position `{% expr %}` (output=false) is compile-time only; it emits no runtime code.
           if node.output
-            collect_top_level_nodes(arena, arena_index, node.expression, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena)
+            collect_top_level_nodes(arena, arena_index, node.expression, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena, main_arenas: main_arenas)
           elsif collect_main_exprs && macro_statement_may_raise?(arena, node.expression)
             # A top-level `{% raise ... %}` must still abort compilation. Lowering
             # a statement macro runs its compile-time effects and emits only nil,
             # so routing it through main is runtime-neutral.
-            main_exprs << ((arena_index.to_u64 << 32) | expr_id.index.to_u64)
+            main_exprs << ((packed_arena_index.to_u64 << 32) | expr_id.index.to_u64)
           end
         when Frontend::VisibilityModifierNode
           unless node.expression.null_ptr? || node.expression.invalid?
             validate_top_level_visibility_modifier!(node, arena[node.expression], arena)
           end
-          collect_top_level_nodes(arena, arena_index, node.expression, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena)
+          collect_top_level_nodes(arena, arena_index, node.expression, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena, main_arenas: main_arenas)
         when Frontend::MacroIfNode
           condition = evaluate_macro_condition(arena, node.condition, flags)
           if env_enabled?("DEBUG_MACRO_EXPAND")
@@ -5212,10 +5232,10 @@ module Adamas
           # MacroLiteralNode which the collector will expand correctly.
           unless condition.nil?
             if condition == true
-              collect_top_level_nodes(arena, arena_index, node.then_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena)
+              collect_top_level_nodes(arena, arena_index, node.then_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena, main_arenas: main_arenas)
             else
               if else_body = node.else_body
-                collect_top_level_nodes(arena, arena_index, else_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena)
+                collect_top_level_nodes(arena, arena_index, else_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena, main_arenas: main_arenas)
               end
             end
             return  # Skip raw-text and fallback paths
@@ -5244,7 +5264,8 @@ module Adamas
                   bootstrap_trace_puts "[DEBUG_MACRO_EXPAND] MacroIfNode begin-combined empty=#{combined.strip.empty?} has_percent=#{combined.includes?("{%")} size=#{combined.size}"
                 end
                 unless combined.strip.empty? || combined.includes?("{%")
-                  if parsed = parse_macro_literal_program(combined)
+                  valid_roots = parse_macro_literal_program(combined, require_valid_roots: true)
+                  if parsed = valid_roots || parse_macro_literal_program(combined)
                     program, sanitized = parsed
                     sources_by_arena[program.arena.object_id.to_u64] = sanitized
                     if paths_by_arena
@@ -5253,7 +5274,7 @@ module Adamas
                       end
                     end
                     program.roots.each do |inner_id|
-                      collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, sanitized, macro_origin_path, depth + 1, false, paths_by_arena)
+                      collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, sanitized, macro_origin_path, depth + 1, collect_main_exprs && !valid_roots.nil?, paths_by_arena, main_arenas: main_arenas)
                     end
                     return
                   end
@@ -5273,7 +5294,8 @@ module Adamas
                 end
               end
               unless combined.strip.empty? || combined.includes?("{%")
-                if parsed = parse_macro_literal_program(combined)
+                valid_roots = parse_macro_literal_program(combined, require_valid_roots: true)
+                if parsed = valid_roots || parse_macro_literal_program(combined)
                   program, sanitized = parsed
                   parsed_any = true
                   sources_by_arena[program.arena.object_id.to_u64] = sanitized
@@ -5283,7 +5305,7 @@ module Adamas
                     end
                   end
                   program.roots.each do |inner_id|
-                    collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, sanitized, macro_origin_path, depth + 1, false, paths_by_arena)
+                    collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, sanitized, macro_origin_path, depth + 1, collect_main_exprs && !valid_roots.nil?, paths_by_arena, main_arenas: main_arenas)
                   end
                 end
               end
@@ -5301,15 +5323,15 @@ module Adamas
               then_node = arena[node.then_body]
               bootstrap_trace_puts "[DEBUG_MACRO_EXPAND] MacroIfNode then_body type=#{then_node.class}"
             end
-            collect_top_level_nodes(arena, arena_index, node.then_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena)
+            collect_top_level_nodes(arena, arena_index, node.then_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena, main_arenas: main_arenas)
           elsif condition == false
             if else_body = node.else_body
-              collect_top_level_nodes(arena, arena_index, else_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena)
+              collect_top_level_nodes(arena, arena_index, else_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena, main_arenas: main_arenas)
             end
           else
-            collect_top_level_nodes(arena, arena_index, node.then_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena)
+            collect_top_level_nodes(arena, arena_index, node.then_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena, main_arenas: main_arenas)
             if else_body = node.else_body
-              collect_top_level_nodes(arena, arena_index, else_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena)
+              collect_top_level_nodes(arena, arena_index, else_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena, main_arenas: main_arenas)
             end
           end
         when Frontend::MacroLiteralNode
@@ -5325,7 +5347,8 @@ module Adamas
             if macro_literal_simple_control_flow?(node)
               combined = macro_literal_combined_active_text(arena, node, flags, source)
               unless combined.strip.empty? || combined.includes?("{%")
-                if parsed = parse_macro_literal_program(combined)
+                valid_roots = parse_macro_literal_program(combined, require_valid_roots: true)
+                if parsed = valid_roots || parse_macro_literal_program(combined)
                   program, exp_source = parsed
                   sources_by_arena[program.arena.object_id.to_u64] = exp_source
                   if paths_by_arena
@@ -5334,7 +5357,7 @@ module Adamas
                     end
                   end
                   program.roots.each do |inner_id|
-                    collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, exp_source, macro_origin_path, depth + 1, false, paths_by_arena)
+                    collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, exp_source, macro_origin_path, depth + 1, collect_main_exprs && !valid_roots.nil?, paths_by_arena, main_arenas: main_arenas)
                   end
                   return
                 end
@@ -5346,7 +5369,7 @@ module Adamas
                 bootstrap_trace_puts "[DEBUG_MACRO_EXPAND] expanded=#{expanded[0, [expanded.size, 200].min].inspect}"
               end
               unless expanded.strip.empty?
-                if parsed = parse_top_level_macro_expansion(expanded)
+                if parsed = parse_top_level_macro_expansion(expanded, reject_parser_errors: true)
                   program, exp_source = parsed
                   sources_by_arena[program.arena.object_id.to_u64] = exp_source
                   if paths_by_arena
@@ -5355,7 +5378,7 @@ module Adamas
                     end
                   end
                   program.roots.each do |inner_id|
-                    collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, exp_source, macro_origin_path, depth + 1, false, paths_by_arena)
+                    collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, exp_source, macro_origin_path, depth + 1, collect_main_exprs, paths_by_arena, main_arenas: main_arenas)
                   end
                 end
               end
@@ -5365,7 +5388,8 @@ module Adamas
             track_macro_var_assignment(raw_text)
             combined = macro_literal_combined_text_from_raw(raw_text, flags)
             unless combined.strip.empty? || combined.includes?("{%")
-              if parsed = parse_macro_literal_program(combined)
+              valid_roots = parse_macro_literal_program(combined, require_valid_roots: true)
+              if parsed = valid_roots || parse_macro_literal_program(combined)
                 program, sanitized = parsed
                 sources_by_arena[program.arena.object_id.to_u64] = sanitized
                 if paths_by_arena
@@ -5374,13 +5398,13 @@ module Adamas
                   end
                 end
                 program.roots.each do |inner_id|
-                  collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, sanitized, macro_origin_path, depth + 1, false, paths_by_arena)
+                  collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, sanitized, macro_origin_path, depth + 1, collect_main_exprs && !valid_roots.nil?, paths_by_arena, main_arenas: main_arenas)
                 end
               end
             end
           end
         when Frontend::MacroForNode
-          expand_top_level_macro_for(node, arena, arena_index, source, macro_origin_path, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, depth, paths_by_arena)
+          expand_top_level_macro_for(node, arena, arena_index, source, macro_origin_path, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, depth, paths_by_arena, collect_main_exprs: collect_main_exprs, main_arenas: main_arenas)
         when Frontend::AssignNode
           target = arena[node.target]
           constant_target = target.is_a?(Frontend::ConstantNode) ||
@@ -5389,12 +5413,12 @@ module Adamas
             constant_exprs << {expr_id, arena}
           end
           if collect_main_exprs
-            packed_main_expr = (arena_index.to_u64 << 32) | expr_id.index.to_u64
+            packed_main_expr = (packed_arena_index.to_u64 << 32) | expr_id.index.to_u64
             main_exprs << packed_main_expr
           end
         else
           if collect_main_exprs
-            packed_main_expr = (arena_index.to_u64 << 32) | expr_id.index.to_u64
+            packed_main_expr = (packed_arena_index.to_u64 << 32) | expr_id.index.to_u64
             main_exprs << packed_main_expr
           end
         end
@@ -5518,7 +5542,9 @@ module Adamas
         flags : Set(String),
         sources_by_arena : Hash(UInt64, String),
         depth : Int32,
-        paths_by_arena : Hash(UInt64, String)? = nil
+        paths_by_arena : Hash(UInt64, String)? = nil,
+        collect_main_exprs : Bool = true,
+        main_arenas : Array(Frontend::ArenaLike)? = nil
       ) : Nil
         return if depth > 3
 
@@ -5557,7 +5583,7 @@ module Adamas
         return if expanded.strip.empty?
 
         # Parse the expanded text (which may contain {% %} / {{ }} inside struct bodies)
-        if parsed = parse_top_level_macro_expansion(expanded)
+        if parsed = parse_top_level_macro_expansion(expanded, reject_parser_errors: true)
           program, exp_source = parsed
           sources_by_arena[program.arena.object_id.to_u64] = exp_source
           if paths_by_arena
@@ -5566,7 +5592,7 @@ module Adamas
             end
           end
           program.roots.each do |inner_id|
-            collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, exp_source, macro_origin_path, depth + 1, false, paths_by_arena)
+            collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, exp_source, macro_origin_path, depth + 1, collect_main_exprs, paths_by_arena, main_arenas: main_arenas)
           end
         end
       end
@@ -5758,12 +5784,16 @@ module Adamas
       end
 
       # Parse expanded macro text allowing {% %} and {{ }} inside struct/class bodies
-      private def parse_top_level_macro_expansion(text : String) : {Frontend::Program, String}?
+      private def parse_top_level_macro_expansion(text : String, *, reject_parser_errors : Bool = false) : {Frontend::Program, String}?
         trimmed = text.strip
         return nil if trimmed.empty?
         lexer = Frontend::Lexer.new(text)
         parser = Frontend::Parser.new(lexer, recovery_mode: true)
         program = parser.parse_program
+        if reject_parser_errors && (diagnostic = parser.diagnostics.first?)
+          formatted = Frontend::DiagnosticFormatter.format(text, diagnostic)
+          raise HIR::LoweringError.new("invalid generated macro expansion:\n#{formatted}")
+        end
         return nil if program.roots.empty?
         {program, text}
       end
@@ -6429,7 +6459,7 @@ module Adamas
         source.byte_slice(start, length)
       end
 
-      private def parse_macro_literal_program(text : String) : {Frontend::Program, String}?
+      private def parse_macro_literal_program(text : String, *, require_valid_roots : Bool = false) : {Frontend::Program, String}?
         sanitized = sanitize_macro_literal_text(text)
         trimmed = sanitized.strip
         return nil if trimmed.empty?
@@ -6439,6 +6469,7 @@ module Adamas
         parser = Frontend::Parser.new(lexer, recovery_mode: true)
         program = parser.parse_program
         return nil if program.roots.empty?
+        return nil if require_valid_roots && !parser.diagnostics.empty?
         {program, sanitized}
       end
 

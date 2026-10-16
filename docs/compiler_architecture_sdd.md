@@ -3705,3 +3705,16 @@ members retain their parser-assigned owner. Sealed root605 passes root608 HIR
 and root611 Crystal/native comparison; parent root607 silently loses all output.
 Generated/recovered macro roots and their arena transport remain separate
 obligations. Refresh on parser/collector changes; rollback the bounded CLI hunk.
+
+
+### Generated main arena transport (2026-10-16)
+A valid expansion's generated main ExprId must carry the index of its actual
+parser arena. Collector recursion preserves runtime versus declaration mode,
+registers generated arenas by identity, and rebinds HIR after collection extends
+the arena list. Only error-free parsed roots may enter main; incomplete recovery
+fragments remain declaration-only. Malformed complete expansions are rejected.
+Sealed root614 passes root625's eight HIR guards (including generated class
+ownership and malformed output) and root624/root617's native ABCDE comparison.
+Parent root629 prints only E. Refresh after parser/collector/main binding changes;
+rollback the bounded CLI transport. Absolute module-macro ownership, arbitrary
+array loops, shared begin bindings and full-prelude startup remain unclosed.
