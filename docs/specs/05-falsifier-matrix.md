@@ -455,3 +455,16 @@ diagnostic meanings.
   an external Homebrew update; use the completed sealed root614 build instead.
 - Refresh on parser/collector/main-arena binding changes. No LavinMQ parity or
   arbitrary array-loop/shared macro-context claim follows.
+
+
+### Macro require scanner cursor conservation (2026-10-16)
+- RED root631: the compiled parent piece scanner exceeds an eight-second SAFE
+  runtime limit on unmatched else/elsif fragments; root632 raw scanning returns
+  repeated preceding text plus the already-consumed else tag.
+- GREEN root633: seven scanner cases pass, including both unmatched tags,
+  known/nested branch selection, quoted/commented tags and unterminated tags.
+  root630 passes twelve combined scanner/root cases; root634 portable regression
+  passes; root635 native active require matches pinned Crystal 1.21 output A.
+- Scope: consume input before continuation in both scanner representations.
+  Unknown-condition dependency admission, skip_file and final language validity
+  require separate evidence. Refresh after scanner cursor/control-stack changes.

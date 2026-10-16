@@ -6352,6 +6352,7 @@ module Adamas
         piece_i = 0
         while piece_i < pieces.size
           piece = pieces.unsafe_fetch(piece_i)
+          piece_i += 1
           case piece.kind
           when Frontend::MacroPiece::Kind::Text
             if active && (text = piece.text)
@@ -6410,7 +6411,6 @@ module Adamas
           else
             # Ignore expression/macro var pieces for require scanning.
           end
-          piece_i += 1
         end
 
         texts
@@ -6585,6 +6585,8 @@ module Adamas
             tag = copied_string_window(text, tag_start, idx - tag_start)
             tag = tag.strip
             tag = tag.lstrip('-').lstrip('~').rstrip('-').rstrip('~').strip
+            idx += 2
+            segment_start = idx
 
             if tag.starts_with?("skip_file")
               cond_text = macro_tag_suffix(tag, "skip_file")
@@ -6656,8 +6658,6 @@ module Adamas
               end
             end
 
-            idx += 2
-            segment_start = idx
             next
           else
             idx += 1

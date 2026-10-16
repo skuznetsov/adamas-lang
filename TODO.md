@@ -19307,10 +19307,18 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 ### Generated macro root ownership (2026-10-16)
 - [x] Preserve runtime mode and actual parser arena for valid generated main
   roots; eight HIR guards and Crystal/native ABCDE comparison pass on root614.
-- [ ] Require scanners must consume each control piece/tag before a continuation;
-  unmatched else/elsif pieces currently bypass the cursor increment and hang.
+- [x] Require scanners consume each control piece/tag before a continuation;
+  root626 repairs unmatched else/elsif progress (root633/root634).
 - [ ] Audit structured-array for expansion and shared begin/loop variable context;
   the supported percent-word loop regression does not establish those paths.
 - [ ] Resolve absolute module-macro declaration/reflection ownership (three
   guards fail on parent and candidate) and full-prelude startup exiting 1 before
   user code; both remain outside the generated-main arena repair.
+
+
+### Macro require scanner progress (2026-10-16)
+- [x] Consume pieces and raw tags before branch handling; parent piece scan
+  times out and raw scan repeats consumed text. root633's seven guards and
+  root634's bounded portable regression pass; valid active require matches Crystal.
+- [ ] Audit unknown-condition and inactive skip_file semantics independently;
+  forward progress does not establish which dependency a fragment may admit.

@@ -3718,3 +3718,14 @@ ownership and malformed output) and root624/root617's native ABCDE comparison.
 Parent root629 prints only E. Refresh after parser/collector/main binding changes;
 rollback the bounded CLI transport. Absolute module-macro ownership, arbitrary
 array loops, shared begin bindings and full-prelude startup remain unclosed.
+
+
+### Macro require scanner consumption invariant (2026-10-16)
+Every scanner iteration must consume its current piece or complete raw tag
+before any branch-stack continuation. Unmatched else/elsif fragments do not
+revisit input or re-emit consumed control tags. This recovery behavior only
+supports dependency discovery and does not admit malformed programs. Sealed
+root626 passes seven scanner guards plus the bounded portable regression;
+active conditional imports preserve Crystal/native output A. Parent root631
+hangs and root632 duplicates raw input. Refresh on cursor/stack changes;
+rollback the bounded CLI hunk. Unknown branches and skip_file remain separate.

@@ -18088,3 +18088,17 @@ The three absolute module-macro owner guards fail identically on both parent
 and candidate (root627/root623), and full-prelude startup still exits 1 on both
 (root620/root618). Require-scanner progress and structured-array loop context
 remain separate obligations. This does not establish LavinMQ parity.
+
+
+### Consume macro require scanner input before branch handling (2026-10-16)
+Both require scanners advanced their cursor after control-stack dispatch.
+An unmatched else/elsif fragment could bypass advancement: the piece scanner
+looped forever (root631, bounded timeout), while the raw scanner repeated the
+previous text and exposed the consumed control tag (root632). Consumption now
+precedes dispatch in both representations. Sealed root626 passes seven scanner
+guards (root633), twelve combined root/scanner guards (root630), the portable
+regression (root634), and native active-require output A equals Crystal (root635).
+Nested branches, strings/comments and unterminated tags have explicit guards.
+Refresh on scanner cursor/control-stack changes; rollback this bounded CLI hunk.
+Unknown-condition policy and skip_file behavior still need separate evidence;
+scanner progress is not a language-validity or LavinMQ-parity certificate.
