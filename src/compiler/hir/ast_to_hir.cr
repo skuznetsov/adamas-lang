@@ -69880,6 +69880,10 @@ module Adamas::HIR
       exact_id = get_union_member_variant_id(union_type, check_type)
       return {exact_id, check_type} if exact_id >= 0
 
+      # A typed Proc's display name is erased. Only the exact signature above
+      # may select its union arm; the bare generic fallback would pick any Proc.
+      check_desc = @module.get_type_descriptor(check_type)
+      return nil if check_desc && check_desc.kind == TypeKind::Proc && !check_desc.type_params.empty?
       check_name = get_type_name_from_ref(check_type)
       return nil if check_name.empty?
       ensure_union_descriptor_for_type_ref(union_type)
@@ -84761,11 +84765,35 @@ module Adamas::HIR
           next
         end
 
-        # Union subjects must be narrowed before generic/parent no-op checks.
-        # `case v = @u; when String` otherwise sees the broad union as
-        # statically compatible with String and leaves `v` wide, which can
-        # store a tagged union into pointer-backed `String?` fields.
+        # Narrow to every statically matching arm before direct-member fallback.
+        # Bare generics can retain several concrete signatures; choosing the
+        # first arm loses the actual type on subsequent predicates and calls.
         if is_union_type?(local_type)
+          if split = union_variants_satisfying_union_check(local_type, target_type)
+            matched, total = split
+            if matched.size == 1
+              variant_id, matched_type = matched.first
+              unwrap = UnionUnwrap.new(ctx.next_id, matched_type, local_id, variant_id, false)
+              ctx.emit(unwrap)
+              ctx.register_type(unwrap.id, matched_type)
+              ctx.register_local(name, unwrap.id)
+            elsif matched.size > 1 && matched.size < total
+              union_name = matched.map { |(_, t)| generic_param_type_name_from_ref(t) }.join(" | ")
+              narrowed_type = create_union_type(union_name)
+              if narrowed_type != TypeRef::VOID && narrowed_type != local_type && is_union_type?(narrowed_type)
+                narrowed = if all_ref_union_type_ref?(local_type) && all_ref_union_type_ref?(narrowed_type)
+                             Copy.new(ctx.next_id, narrowed_type, local_id).as(Value)
+                           else
+                             UnionWrap.new(ctx.next_id, narrowed_type, local_id, -2).as(Value)
+                           end
+                ctx.emit(narrowed)
+                ctx.register_type(narrowed.id, narrowed_type)
+                ctx.register_local(name, narrowed.id)
+              end
+            end
+            target_idx += 1
+            next
+          end
           if match = get_union_member_variant_for_type_check(local_type, target_type)
             variant_id, matched_type = match
             unwrap = UnionUnwrap.new(ctx.next_id, matched_type, local_id, variant_id, false)
@@ -84785,38 +84813,6 @@ module Adamas::HIR
             ctx.register_local(name, cast.id)
             target_idx += 1
             next
-          end
-          # Union target: narrow to the statically proven variant intersection.
-          # One surviving variant unwraps; several remap into the intersection
-          # union (Copy for all-reference unions, else the -2 union->union
-          # UnionWrap). Never emit a union->union Cast: MIR lowers it to a
-          # Bitcast, which scrambles the type-id/payload layout.
-          if is_union_type?(target_type)
-            if split = union_variants_satisfying_union_check(local_type, target_type)
-              matched, total = split
-              if matched.size == 1
-                variant_id, matched_type = matched.first
-                unwrap = UnionUnwrap.new(ctx.next_id, matched_type, local_id, variant_id, false)
-                ctx.emit(unwrap)
-                ctx.register_type(unwrap.id, matched_type)
-                ctx.register_local(name, unwrap.id)
-              elsif matched.size > 1 && matched.size < total
-                union_name = matched.map { |(_, t)| generic_param_type_name_from_ref(t) }.join(" | ")
-                narrowed_type = create_union_type(union_name)
-                if narrowed_type != TypeRef::VOID && narrowed_type != local_type && is_union_type?(narrowed_type)
-                  narrowed = if all_ref_union_type_ref?(local_type) && all_ref_union_type_ref?(narrowed_type)
-                               Copy.new(ctx.next_id, narrowed_type, local_id).as(Value)
-                             else
-                               UnionWrap.new(ctx.next_id, narrowed_type, local_id, -2).as(Value)
-                             end
-                  ctx.emit(narrowed)
-                  ctx.register_type(narrowed.id, narrowed_type)
-                  ctx.register_local(name, narrowed.id)
-                end
-              end
-              target_idx += 1
-              next
-            end
           end
         end
 
@@ -85037,16 +85033,20 @@ module Adamas::HIR
       cast.id
     end
 
-    # Value-union variants that statically satisfy a union check type, as
-    # {variant type_id, HIR variant type}, plus the value union's variant count.
-    # nil when descriptors are missing or some pair is undecidable statically.
+    # Decide every value arm against the checked type or each checked union
+    # member. A bare generic may match several arms; one selected tag is unsound.
+    # Return nil when a descriptor is missing or a pair needs a runtime class test.
     private def union_variants_satisfying_union_check(value_type : TypeRef, check_type : TypeRef) : Tuple(Array(Tuple(Int32, TypeRef)), Int32)?
       ensure_union_descriptor_for_type_ref(value_type)
-      ensure_union_descriptor_for_type_ref(check_type)
-      value_desc = @union_descriptors[hir_to_mir_type_ref(value_type)]?
-      check_desc = @union_descriptors[hir_to_mir_type_ref(check_type)]?
-      return nil unless value_desc && check_desc
-      check_members = check_desc.variants.map { |cv| mir_to_hir_type_ref(cv.type_ref) }
+      value_desc = union_descriptor_from_sidecar(value_type)
+      return nil unless value_desc
+      check_members = [check_type]
+      if is_union_type?(check_type)
+        ensure_union_descriptor_for_type_ref(check_type)
+        check_desc = union_descriptor_from_sidecar(check_type)
+        return nil unless check_desc
+        check_members = check_desc.variants.map { |cv| mir_to_hir_type_ref(cv.type_ref) }
+      end
       matched = [] of Tuple(Int32, TypeRef)
       value_desc.variants.each do |vv|
         hir_vv = mir_to_hir_type_ref(vv.type_ref)
@@ -85064,11 +85064,8 @@ module Adamas::HIR
       {matched, value_desc.variants.size}
     end
 
-    # `union_value.is_a?(A | B)`: decide per VALUE variant whether it satisfies
-    # any check member, and OR the matching UnionIs tests. Returns nil when some
-    # value variant cannot be decided statically (caller falls back). A single
-    # type-id compare against the check union's own type id is always false for
-    # a union-typed value, so the check must be expanded.
+    # Expand union predicates over all matching value tags, including a bare
+    # generic such as Proc. Preserve the runtime fallback for undecidable arms.
     private def emit_union_value_is_a_union_check(ctx : LoweringContext, value_id : ValueId, value_type : TypeRef, check_type : TypeRef) : ValueId?
       split = union_variants_satisfying_union_check(value_type, check_type)
       return nil unless split
@@ -85112,6 +85109,9 @@ module Adamas::HIR
 
       value_type = ctx.type_of(value_id)
       if is_union_type?(value_type)
+        if expanded = emit_union_value_is_a_union_check(ctx, value_id, value_type, check_type)
+          return expanded
+        end
         if match = get_union_member_variant_for_type_check(value_type, check_type)
           variant_id, _ = match
           union_is = UnionIs.new(ctx.next_id, value_id, variant_id, value_type)
@@ -85168,6 +85168,17 @@ module Adamas::HIR
       return nil unless value_desc && check_desc
       return nil if value_desc.kind == TypeKind::Union || check_desc.kind == TypeKind::Union
       return false if value_desc.kind == TypeKind::Primitive && check_desc.kind == TypeKind::Primitive
+
+      # Proc display names are deliberately erased to "Proc". Concrete
+      # signatures match only when every input and the result agree; otherwise
+      # unrelated callbacks would satisfy is_a? and collapse during union joins.
+      if value_desc.kind == TypeKind::Proc
+        if check_desc.kind == TypeKind::Proc
+          return check_desc.type_params.empty? || value_desc.type_params == check_desc.type_params
+        end
+        # The parser can register the bare Proc class before typed Proc values.
+        return true if check_desc.name == "Proc" && check_desc.type_params.empty?
+      end
 
       value_name = value_desc.name
       check_name = check_desc.name
@@ -128045,6 +128056,9 @@ module Adamas::HIR
       # Check if value is a union type - use UnionIs for runtime type check
       value_type = ctx.type_of(value_id)
       if is_union_type?(value_type)
+        if expanded = emit_union_value_is_a_union_check(ctx, value_id, value_type, check_type)
+          return expanded
+        end
         # Get the variant_type_id for the check_type within this union
         if match = get_union_member_variant_for_type_check(value_type, check_type)
           variant_id, _ = match

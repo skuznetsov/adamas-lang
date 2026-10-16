@@ -19261,3 +19261,15 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Close the separate Proc signature-predicate defect (proc535), then probe
   explicit-return joins and ordinary expression/local type preservation across
   constant pruning. These are distinct from admitting Proc result covariance.
+
+
+### Proc signature predicates and union intersections (2026-10-15)
+- [x] Compare concrete Proc inputs/results before erased display names, check
+  every union arm, and preserve the full matching set during branch narrowing.
+  Atomic source554 passes 69 HIR examples and 23 native outputs equal to Crystal.
+- [ ] Keep explicit Proc return joins, generic alias substitutions, inline-yield
+  result contracts, and ordinary local types after constant pruning as separate
+  obligations; these focused predicates do not establish those surfaces.
+- [ ] Reconcile the existing Char#ord union-dispatch WIP test against an atomic
+  implementation: proc555 and baseline proc557 have the same failure. LavinMQ
+  compilation/runtime/spec parity remains open.

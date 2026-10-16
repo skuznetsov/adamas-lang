@@ -17999,3 +17999,25 @@ comparing only the erased display name; it remains open and is not certified
 by this result-ABI fix. Explicit returns and non-Proc branch/local typing are
 adjacent unproven surfaces. Whole LavinMQ parity remains open. Refresh after
 Proc inference, branch pruning, or return ABI changes; rollback is this commit.
+
+
+### Proc predicates retain signature and union-arm identity (2026-10-15)
+Proc descriptors display the erased name Proc; compare their full input/result
+TypeRefs before name-based subtype checks. Crystal rejects distinct concrete
+Proc signatures in is_a?, including wider input/result unions and Nil results.
+A bare Proc check admits all Proc variants, not the first matching union tag.
+Use the authoritative union sidecar to decide every arm, OR matching tags, and
+narrow to the full proven intersection before direct-member fallback. Preserve
+runtime class tests when a pair is undecidable. Never apply the bare generic
+fallback to a missing concrete Proc signature.
+Atomic source554 (HIR SHA 5f2c10b24ac2603f41d94bb007a1abe7aa055881d928abd96fee313314154e12)
+passes 69 HIR cases and 23 original-first native outputs, including both Proc
+union tags, a mixed tuple arm, repeated predicates, and .call after narrowing.
+Source533 fails the same native regression (proc569); an initial static-only
+repair still failed native predicates (proc544/proc550), requiring union-aware
+narrowing. Receipts: proc552, proc557, proc559, proc564, proc566, proc568, proc569.
+The Char#ord WIP spec fails identically before and after this repair (proc557 /
+proc555); it is a separate existing implementation gap. One alternative Proc
+union oracle crashes original Crystal (proc553) and is not compatibility evidence.
+Refresh on Proc type interning, union descriptors/tags, or branch narrowing;
+rollback is this commit. Whole LavinMQ parity and numeric export identity remain open.

@@ -382,3 +382,20 @@ diagnostic meanings.
 - Scope: unannotated Proc result inference and emitted return normalization.
   Proc signature predicates remain a separate observed defect (proc535).
   Refresh after inference/pruning/ABI changes; whole LavinMQ parity stays open.
+
+
+### Complete Proc signature predicates and branch narrowing (2026-10-15)
+- RED: source533 disagrees with Crystal on the 23-output native regression
+  (proc569). Static-only source541 still picks an unrelated Proc union arm and
+  rejects bare Proc (proc544); source548 fixes predicates but loses a concrete
+  signature after bare-Proc narrowing (proc550). Non-union-target unit probes
+  fail five descriptor assertions on source541 (proc552).
+- GREEN: source554 passes 69 HIR examples (proc564) and 23 native outputs equal
+  to Crystal (proc568), including concrete/absent/input/result/arity checks,
+  both Proc union tags, tuple exclusion, repeated predicates, and narrowed .call.
+- Guard: multiple matching arms survive a partial intersection; exact single
+  arms unwrap; absent signatures add no cast; bare Array matches both generic
+  instances. Undecidable class checks keep runtime fallback.
+- Exclusions: proc553 crashes the original compiler and is an invalid runtime
+  oracle. The Char#ord WIP test has the same baseline failure (proc557/proc555).
+  No LavinMQ parity claim. Refresh on Proc/union identity or narrowing changes.

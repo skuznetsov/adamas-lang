@@ -3655,3 +3655,18 @@ This preserves the literal's inferred signature; it does not admit covariance
 between distinct Proc instances. Signature predicates, explicit-return joins,
 and ordinary local typing remain separate obligations. Refresh on inference,
 pruning, or return-ABI changes; rollback is the bounded HIR change.
+
+
+### Proc predicates and union branch intersections (2026-10-15)
+Admitted: identical concrete Proc input/result TypeRefs satisfy is_a?; different
+signatures do not. Bare Proc accepts every Proc signature. For a union subject,
+resolve all statically decidable matching arms using the descriptor sidecar,
+combine their tags, and retain their full intersection during branch narrowing.
+A missing concrete Proc does not fall back to the erased Proc generic name.
+Guard-only: undecidable class pairs retain existing runtime checks. Multiple
+matching arms use the existing reference-copy/tag-remap path; one arm unwraps.
+DoD: sealed source554 passes 69 HIR examples and a 23-output original-first native
+regression, including calls after narrowing. Source533 fails that same regression.
+This scope excludes explicit-return inference, arbitrary Proc covariance, numeric
+export identity, and LavinMQ parity. Refresh on type/union/narrowing changes;
+rollback is the bounded HIR change.
