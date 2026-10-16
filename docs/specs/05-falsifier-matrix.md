@@ -854,3 +854,19 @@ diagnostic meanings.
   named self-forwarder; close the producer contract before enabling strict
   constructor rejection. Refresh all dependent evidence on union cache,
   restriction or exact-runtime-parameter changes.
+
+
+### Infer bare generic class-method owners independently of cached siblings (2026-10-16)
+- RED generic1365/1349: explicit Int32 then bare String method prints 7/16;
+  LLVM defines the String-named specialization with i32 parameter and return.
+- RED generic1382/1339: native matrix times out after first output and admits
+  a wrong nominal family. GREEN generic1381/1376: 15 native results, structural,
+  multi-param, default and ambient cases, both overload orders, and rejection
+  of wrong bare family and wrong explicit applied argument.
+- GREEN generic1383: 73 HIR examples; generic1387/1388: prior union/Proc corpora.
+  Scoped adversary ROBUST for tested positional calls. Two alias-binding HIR
+  failures are pre-existing (generic1380 parent, generic1379 candidate).
+- Open union1385: valid String|Array(String) fails a final single-overload
+  source check; certify complete per-arm dispatch rather than relaxing source
+  restrictions. Open generic1371: optional Proc boxing times out. Refresh on
+  owner inference, ordering, registration or runtime ABI changes.

@@ -4132,3 +4132,18 @@ union rejections. generic1346 passes 62 HIR examples; Proc ranking and bound
 annotation guards pass. Scoped adversary ROBUST for those paths, not abstract
 union subsumption, transitive include transport or full LavinMQ compatibility.
 Refresh after cache, restriction, runtime parameter or dispatch changes.
+
+
+### Infer bare generic class-method owners independently of cached siblings (2026-10-16)
+An unapplied generic class method binds owner formals from this call's concrete
+arguments and original declaration restrictions. A cached sibling's bare alias
+does not supply binding evidence for the new receiver. For admitted positional
+shapes, solve under the template arena with caller substitutions isolated,
+prefer structurally stricter applicable source signatures, and instantiate the
+resulting owner before indexed dispatch.
+DoD: bare_generic_class_method_inference_repro.sh; generic1382/1339 RED,
+generic1381/1376 GREEN on 15 native results and two compile-negative cases.
+73 HIR examples and prior union/Proc corpora pass; scoped adversary ROBUST for
+these shapes. Named/splat/block/forall inference, two existing alias-precedence
+HIR failures, optional Proc storage and full LavinMQ remain open. Refresh after
+owner binding, signature ordering, registration or ABI changes.

@@ -18641,3 +18641,29 @@ admission now exposes missing named-call evidence and speculative block demands;
 those require a separate source-to-pending handoff fix, not relaxed admission.
 Refresh after union caching, restrictions, exact parameter ABI or call dispatch
 changes. Roll back this source slice and its specs/regression together.
+
+
+### Infer bare generic class-method owners independently of cached siblings (2026-10-16)
+Registering GenericOwner(Int32).take retained a bare GenericOwner alias with
+T=Int32. A subsequent GenericOwner.take(String) borrowed that map and emitted an
+i32 ABI for a String-named function (generic1365: original 7/ok, candidate 7/16).
+Infer the unapplied class-method receiver from current lowered arguments and
+original source restrictions under its retained arena and an isolated formal
+map. Structurally bind every owner formal, eliminate signatures dominated by
+stricter applicable restrictions, then instantiate the resulting receiver before
+consulting cached overloads. Declaration order does not choose the owner type.
+DoD: bare_generic_class_method_inference_repro.sh, original-first Crystal 1.21.
+generic1382/1339 RED: timeout after first output and wrong nominal family admitted.
+generic1381/1376 GREEN: 15 native results, structural and two-parameter binding,
+defaults, ambient shadow, both overload orders, and two invalid calls rejected.
+generic1383: 73 HIR examples GREEN; generic1387/1388 preserve union/Proc corpora.
+Scoped adversary ROBUST for plain positional calls covered by these cases.
+Manifest d4d3d52c67da86c9703decf3f7f2e08766ce8d245e3796b5eb8b6ad2f2524de1;
+host dcabb0f723ab92eccd43e4db9163e76d3ff59fa413250b34ccf0416d3bdf6c3c.
+Open: named/splat/block/forall owner inference. Two alias-precedence HIR failures
+already occur on parent1339 (generic1380) and persist on1376 (generic1379).
+Optional Proc boxing remains a separate native failure. The LavinMQ composition
+passes Box admission then rejects HTTP::Headers#concat's String|Array(String).
+This local certificate does not establish broker compatibility. Refresh after
+owner inference, source ordering, generic registration or ABI changes. Roll back
+this source slice and regression together.

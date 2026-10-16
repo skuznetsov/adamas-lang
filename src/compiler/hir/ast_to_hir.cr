@@ -69486,6 +69486,88 @@ module Adamas::HIR
       nil
     end
 
+    # A bare generic class method binds its owner's formals from this call,
+    # before the overload index can borrow a previously registered sibling.
+    # Read restrictions in the template arena and keep caller substitutions out.
+    private def infer_bare_generic_class_method_owner(
+      owner : String,
+      method_name : String,
+      arg_types : Array(TypeRef),
+    ) : String?
+      return nil if owner.includes?('(') || method_name == "new" || arg_types.empty?
+      return nil if arg_types.any? { |type| type == TypeRef::VOID }
+      template = @generic_templates[owner]?
+      return nil unless template
+      body = template.node.body
+      return nil unless body
+      candidates = [] of Tuple(Array(String), Hash(String, String))
+      constrained = false
+      unsupported = false
+      with_arena(template.arena) do
+        with_isolated_type_param_map(EMPTY_DEFERRED_TYPE_PARAM_SNAPSHOT) do
+          with_namespace_override(template.name) do
+            body.each do |expr_id|
+              member = unwrap_visibility_member_in_arena(template.arena[expr_id], template.arena)
+              next unless member.is_a?(Adamas::Compiler::Frontend::DefNode)
+              next if member.is_abstract
+              next unless def_method_name_from_node(member, template.arena) == method_name
+              receiver = member.receiver
+              next unless receiver && class_method_receiver_text?(safe_slice_to_string(receiver) || "")
+              params = function_param_infos(member, template.arena)
+              next if params.any? { |param| param.is_block || param.is_splat || param.is_double_splat || named_only_separator?(param) }
+              required = params.count { |param| param.default_value.nil? }
+              next unless arg_types.size >= required && arg_types.size <= params.size
+              next unless params.any? do |param|
+                restriction = param.type_annotation
+                restriction && template.type_params.any? { |formal| type_name_includes_param?(restriction, formal) }
+              end
+              if !forall_type_param_names(member).empty? || params.any? do |param|
+                   restriction = param.type_annotation
+                   restriction && template.type_params.any? { |formal| type_name_includes_param?(restriction, formal) } &&
+                     (restriction.includes?('|') || restriction.includes?("->") || restriction.includes?('*') || restriction.includes?('?'))
+                 end
+                unsupported = true
+                next
+              end
+              constrained = true
+              bindings = {} of String => String
+              restrictions = {} of String => String
+              compatible = arg_types.each_with_index.all? do |actual, index|
+                restriction = params[index].type_annotation
+                restrictions["p:#{index}"] = restriction || "_"
+                restriction.nil? || bind_constructor_type_params(
+                  restriction, generic_param_type_name_from_ref(actual), template.type_params, bindings, template.name,
+                )
+              end
+              next unless compatible
+              inferred = [] of String
+              template.type_params.each do |formal|
+                if concrete = bindings[formal]?
+                  inferred << concrete
+                end
+              end
+              candidates << {inferred, restrictions} if inferred.size == template.type_params.size
+            end
+          end
+        end
+      end
+      return nil unless constrained && !unsupported
+      # Select by source restriction specificity, never by declaration order.
+      survivors = candidates.reject do |candidate|
+        candidates.any? do |other|
+          constructor_restrictions_stricter?(other[1], candidate[1], template.type_params)
+        end
+      end
+      inferred_types = survivors.map { |candidate| candidate[0] }.uniq
+      unless inferred_types.size == 1
+        raise LoweringError.new("cannot infer #{owner}.#{method_name} type arguments from source restrictions")
+      end
+      args = inferred_types.first
+      specialized = "#{owner}(#{args.join(", ")})"
+      monomorphize_generic_class(owner, args, specialized) unless @monomorphized.includes?(specialized)
+      specialized
+    end
+
     # Infer ALL type args for a multi-param generic constructor call.
     # Returns Array(String) of inferred type args matching template.type_params,
     # or nil if inference fails for any param.
@@ -102752,6 +102834,16 @@ module Adamas::HIR
       end
 
       has_unknown_arg_types = arg_types.any? { |t| t == TypeRef::VOID }
+      if receiver_id.nil? && !has_block_call && !has_named_args && !has_splat && !has_unknown_arg_types
+        if bare_owner = class_name_str
+          if inferred_owner = infer_bare_generic_class_method_owner(bare_owner, method_name, arg_types)
+            class_name_str = inferred_owner
+            static_class_name = inferred_owner
+            base_method_name = "#{inferred_owner}.#{method_name}"
+            full_method_name = base_method_name
+          end
+        end
+      end
       # `mangle_function_name(..., has_block: true)` must match `function_full_name_for_def`
       # for `def foo(..., &)` — otherwise call sites target a symbol that was never
       # registered (LLVM abort stubs). When arg types are still VOID, a bare base

@@ -19654,3 +19654,22 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   demand transport. generic1350 identifies an invented Time::Span.new$Int64_block
   request from the self-recursion escape with no remembered source callsite;
   the escape must authenticate a trailing Proc before enqueueing a block target.
+
+
+### Infer bare generic class-method owners independently of cached siblings (2026-10-16)
+- [x] Infer a bare generic class-method owner from the current plain positional
+  call, independently of cached sibling maps; choose structural signatures by
+  specificity. generic1382 parent RED; generic1381 GREEN against Crystal 1.21
+  on 15 native results and two invalid calls; 73 HIR examples and union/Proc
+  corpora pass on sealed generic1376.
+- [ ] Extend source owner binding to named/splat/block/forall calls and complex
+  formal restriction shapes with original-first falsifiers.
+- [ ] Repair generic_binding_alias_precedence_spec's two pre-existing formal
+  ABI failures (generic1380/parent1339 and generic1379/1376); a bound generic
+  parameter must not be reinterpreted as an unrelated alias.
+- [ ] Preserve optional Proc return variants before boxing: generic1371 emits
+  Box(Nil) for a callback producer and times out; owner inference alone does
+  not certify nullable callback storage.
+- [ ] Admit a union call only when its complete arm set has source-compatible
+  targets, before final single-overload rejection. union1385 reduces the
+  HTTP::Headers#concat failure to a String|Array(String) consumer.
