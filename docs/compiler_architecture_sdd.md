@@ -3941,3 +3941,25 @@ The LavinMQ integration passes SelectContext inference but has not built a broke
 StrictReceiveAction(Nil)#unwait overload compatibility remains under investigation.
 Refresh when initializer discovery, arena ownership, include registration,
 argument mapping or restriction precedence changes.
+
+
+### Preserve applied generic module reference dispatch (2026-10-16)
+
+Applied include identity crosses HIR to MIR through HIR::Module.module_includers.
+Keep each fully qualified module application separate from the semantic index
+that locates source definitions. MIR registers Generic module descriptors as
+reference views when their full module base is in that census; never infer this
+from a short-name match. Preserve runtime header guards for unrelated generic
+value and pointer descriptors.
+Both CallNode and parenthesis-free MemberAccess must request module virtual
+bodies through ensure_virtual_call_targets_lowered. Its receiver shape,
+registry-version cache and pending-target retry rules apply to both syntaxes;
+a separate bare-module loop loses concrete arguments and qualified includers.
+DoD on source module956: module958, 54 examples without failures/errors;
+original-first module959, identical 24-line native output in forward/reverse
+specialization order, direct/transitive/qualified class views and both syntaxes.
+Scoped adversary ROBUST for this class-reference corridor. Struct/value module
+includers and late registry mutation remain unadmitted by this evidence.
+LavinMQ still has an independent unwait overload-selection blocker; no candidate
+broker or complete application test parity is claimed. Refresh after include
+registration, HIR/MIR kind conversion, virtual-target planning or ABI changes.

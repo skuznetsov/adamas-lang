@@ -682,3 +682,23 @@ diagnostic meanings.
 - Invalid harness attempt constructor919 referenced a nonexistent Array spec;
   its failure is not compiler evidence. Refresh constructor gates on solver,
   expression producer, include/ancestor registration or overload-order changes.
+
+
+### Preserve applied generic module reference dispatch (2026-10-16)
+
+- RED module945 on module938: three applied includer HIR examples error because
+  the runtime census contains only erased module identities.
+- RED module947 on module943: one of eight examples fails; a qualified applied
+  module key alone does not register its Generic descriptor as a MIR reference.
+- Refuted module943 mixed native case: semantic index pollution truncates type
+  names and makes a namespace Context#value call itself. Use the runtime census.
+- RED module951 on module948: the smaller mixed native case passes, but adding
+  a second namespace specialization aborts at Action(S)#value. Missing concrete
+  bodies expose the obsolete parenthesis-free module fanout path.
+- GREEN module958 on module956: 54 HIR/MIR examples, no failures/errors; includes
+  concrete/transitive/qualified census, applied-only keys, short-name collisions
+  and non-module value/pointer header guards.
+- GREEN module959 on module956: original Crystal and candidate agree on 24
+  output lines in each specialization order and both member-call syntaxes.
+- Open: struct/value module view ABI and late include/descendant registration.
+  Refresh on include census, namespace, kind classification or demand changes.

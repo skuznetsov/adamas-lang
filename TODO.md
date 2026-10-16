@@ -19503,3 +19503,18 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Extend constructor restriction inference to inherited/module initializers,
   union/proc/variadic signatures and lexical aliases; verify overload ordering
   with mixed named/default shapes before admitting those corridors.
+
+
+### Preserve applied generic module reference dispatch (2026-10-16)
+
+- [x] Preserve applied generic module receiver identity in HIR/MIR and share
+  module virtual-target demand across MemberAccess/CallNode: module958 passes
+  54 examples; module959 matches Crystal on 24 native output lines in both
+  specialization orders, including transitive/qualified Int32/Int64 views.
+- [ ] Probe generic module views of struct/value includers before admitting
+  their boxing/layout ABI; the current runtime gate covers class references.
+- [ ] Add late include/descendant-registration and namespace-collision native
+  controls for the common versioned pending virtual-target demand helper.
+- [ ] Continue LavinMQ: diagnose StrictReceiveAction(Nil)#unwait overload
+  selection using the selected source Def, retained arena and actual shape;
+  generic module dispatch passing does not establish broker compatibility.

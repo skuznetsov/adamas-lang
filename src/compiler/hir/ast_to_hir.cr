@@ -64623,6 +64623,10 @@ module Adamas::HIR
       return if instantiations.includes?(instantiation)
 
       instantiations << instantiation
+      # MIR needs the applied include identity, in addition to the semantic
+      # projection above. Keep this runtime census separate from the declaring
+      # module index used to discover and instantiate source definitions.
+      @module.register_module_includer(instantiation, class_name)
       @class_include_instantiations_version += 1
       bump_resolved_type_name_cache_epoch
       module_base = split_generic_base_and_args(instantiation).try(&.base) ||
@@ -122281,29 +122285,11 @@ module Adamas::HIR
             end
           elsif type_desc.kind == TypeKind::Module || (type_desc.kind == TypeKind::Generic &&
                 (module_like_type_name?(type_desc.name) || module_includers_match?(type_desc.name)))
-            module_name = type_desc.name
-            if type_desc.kind == TypeKind::Generic
-              module_name = strip_generic_args(module_name)
-            end
-            ah = arg_types_hash(arg_types)
-            vf = vdispatch_flags(false, is_module: true)
-            key = {module_name, member_name, ah, vf}
-            unless @virtual_targets_lowered.includes?(key)
-              @virtual_targets_lowered.add(key)
-              includers = @module_includers[module_name]? || begin
-                short_name = last_namespace_component(module_name)
-                @module_includers[short_name]?
-              end
-              if includers
-                owners = includers.to_a + collect_subclasses(includers.to_a)
-                owners.each do |owner|
-                  base_name = "#{owner}##{member_name}"
-                  candidate = mangle_function_name(base_name, arg_types, false)
-                  lower_function_if_needed(candidate)
-                  lower_function_if_needed(base_name) unless candidate == base_name
-                end
-              end
-            end
+            # MemberAccess and CallNode need identical applied-module reachability,
+            # registry-version invalidation and pending-target retry semantics.
+            ensure_virtual_call_targets_lowered(
+              ctx, object_id, member_name, arg_types, false, false, false, false,
+            )
           end
         end
       end

@@ -3830,10 +3830,19 @@ module Adamas
       # Register module types so module literals can be represented as runtime singletons.
       # This prevents lowering module values as null pointers (which breaks vdispatch).
       def register_module_types(type_descriptors : ::Array(Adamas::HIR::TypeDescriptor))
+        module_bases = ::Set(String).new
+        @hir_module.module_includers.each_key do |name|
+          module_bases.add(strip_generic_args(name))
+        end
         idx = 0
         while idx < type_descriptors.size
           desc = type_descriptors.unsafe_fetch(idx)
-          if desc.kind == Adamas::HIR::TypeKind::Module
+          # Generic module applications retain a Generic HIR descriptor. Their
+          # values still view concrete includers through an object reference;
+          # omitting the MIR registry entry makes vdispatch reject that view.
+          generic_module = desc.kind == Adamas::HIR::TypeKind::Generic &&
+                           module_bases.includes?(strip_generic_args(desc.name))
+          if desc.kind == Adamas::HIR::TypeKind::Module || generic_module
             hir_ref = Adamas::HIR::TypeRef.new(Adamas::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
             mir_ref = convert_type(hir_ref)
 

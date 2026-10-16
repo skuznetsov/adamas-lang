@@ -18365,3 +18365,34 @@ typeof881 aborts at ProjectionAction(S)#value despite a concrete annotated field
 It does not invalidate the tested constructor output, and remains an active bug.
 Refresh after constructor inference, retained arenas, include projection or
 restriction ordering changes. Roll back source hunks and focused tests together.
+
+
+### Preserve applied generic module reference dispatch (2026-10-16)
+
+Applied module includes had no exact runtime includer census, and Generic HIR
+module descriptors were not registered as MIR reference views. An Action(Int32)
+field could consequently fall back to an abstract Action(S)#value stub. Record
+the applied identity in HIR::Module without mutating the separate semantic
+module-definition index. MIR recognizes generic module applications by exact
+qualified module base, with no short-name match.
+A second, syntax-specific defect survived: the parenthesis-free MemberAccess
+fanout erased actual arguments, used a non-versioned cache and missed qualified
+module includers. It now calls the same existing versioned, pending-aware helper
+as CallNode. Keep both syntaxes on that common demand path.
+RED module945: missing applied runtime census (three HIR errors). RED module947:
+qualified applied-only MIR key is not a reference view. RED module951: namespace
+Int32/Int64 mixture aborts at Action(S)#value after a smaller native case passed.
+Refuted module943: updating the semantic index as well caused namespace type
+names to truncate and Context#value to call itself. The runtime census must be
+separate from semantic source-template discovery.
+GREEN module958 on sealed module956: 54 HIR/MIR examples, zero failures/errors.
+GREEN module959: original Crystal and candidate agree on all 24 native output
+lines in both orderings, with Int32/Int64, direct/transitive/qualified class
+includers and both .value and .value() syntax. Header classification guards also
+reject unrelated generic value/pointer descriptors and namespace collisions.
+Scoped adversary ROBUST for these class-reference cases. Host SHA256
+bb38b4754f07125890fadf61010d077737007f65ed5adf81197211f9901ff795.
+Struct/value includers, reopened include registries and broader ABI combinations
+still need separate falsifiers. Refresh after include census, receiver kind,
+namespace resolution or virtual-target demand changes. Roll back source hunks
+and focused regressions together. This does not claim a successful LavinMQ build.
