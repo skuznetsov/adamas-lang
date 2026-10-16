@@ -783,3 +783,16 @@ diagnostic meanings.
 - GREEN ancestor1139: all 44 original-first union equality outputs match under
   full/no prelude. Scoped adversary ROBUST for these shapes; no LavinMQ closure.
   Refresh after lookup, self-call inference, numeric hierarchy or shape changes.
+
+
+### Preserve declaration context for block-dependent result annotations (2026-10-16)
+- RED blockmap1164 on ancestor1133: the LavinMQ permissions callback reaches
+  Pointer$H$IDX$$Symbol after included map result inference loses its annotation.
+- RED blockmap1150 and namespace-only blockmap1151: namespaced Envelope(U)
+  resolves as a global decoy, prints an invalid native value and times out.
+- GREEN blockmap1163 on isolated blockmap1152: ten original-first native outputs
+  match pinned Crystal 1.21, including namespace collision, wrapper return ABI,
+  alternating module type bindings and a local override.
+- GREEN blockmap1166/1167: eleven ancestor cases and all 44 full/no-prelude union
+  equality results. Scoped adversary ROBUST; Channel.select and LavinMQ remain
+  open. Refresh after declaration context, annotation or block inference changes.

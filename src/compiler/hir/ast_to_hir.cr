@@ -27606,7 +27606,13 @@ module Adamas::HIR
                 call_arg_types = infer_arg_types_for_call(expr_node.args, self_type_name)
                 block_param_types = block_param_types_for_call(base_name, base_name, recv_type, call_arg_types)
                 if block_return_name = infer_call_block_return_name(block_expr, block_pass_expr, expr_node.span, block_param_types, self_type_name)
-                  if inferred = resolve_block_dependent_return_type(base_name, base_name, block_return_name)
+                  if inferred = resolve_block_dependent_return_type(
+                       base_name,
+                       base_name,
+                       block_return_name,
+                       recv_name,
+                       call_arg_types,
+                     )
                     return inferred
                   end
                   if member_name == "map" || member_name == "map_with_index"
@@ -65757,12 +65763,49 @@ module Adamas::HIR
       mangled_method_name : String,
       base_method_name : String,
       block_return_name : String,
+      receiver_name : String? = nil,
+      call_arg_types : Array(TypeRef)? = nil,
     ) : TypeRef?
       block_return_name = stable_block_return_type_name(block_return_name) || return nil
 
-      func_def = @function_defs[mangled_method_name]? || @function_defs[base_method_name]?
-      return nil if !func_def
+      if func_def = @function_defs[mangled_method_name]? || @function_defs[base_method_name]?
+        declaration_owner = function_namespace_override_for(mangled_method_name, base_method_name) ||
+                            function_context_from_name(mangled_method_name)
+        def_arena = @function_def_arenas[mangled_method_name]? || @function_def_arenas[base_method_name]? || @arena
+        param_map = function_type_param_map_for(mangled_method_name, base_method_name) || {} of String => String
+        return with_arena(def_arena) do
+          with_namespace_override_or_clear(declaration_owner) do
+            with_type_param_map(param_map) do
+              resolve_block_dependent_return_type_from_def(func_def, block_return_name, declaration_owner)
+            end
+          end
+        end
+      end
 
+      # Hash#map is inherited from Enumerable(T); some receivers therefore have
+      # no direct Def under their concrete owner even though normal method
+      # resolution can select the included module implementation. Reuse that
+      # owner-aware lookup for block-dependent return substitution.
+      receiver = receiver_name || return nil
+      args = call_arg_types || return nil
+      method_name = parse_method_name_uncached(base_method_name).method || return nil
+      found = find_included_module_def_for_owner(receiver, method_name, args, true) || return nil
+      declaration_owner = found[2]
+      param_map = included_module_type_param_map(receiver, declaration_owner) || {} of String => String
+      with_arena(found[1]) do
+        with_namespace_override(declaration_owner) do
+          with_type_param_map(param_map) do
+            resolve_block_dependent_return_type_from_def(found[0], block_return_name, declaration_owner)
+          end
+        end
+      end
+    end
+
+    private def resolve_block_dependent_return_type_from_def(
+      func_def : Adamas::Compiler::Frontend::DefNode,
+      block_return_name : String,
+      declaration_owner : String?,
+    ) : TypeRef?
       return_type_slice = func_def.return_type
       return nil unless return_type_slice
       return_type_name = (safe_slice_to_string(return_type_slice) || "")
@@ -65781,7 +65824,7 @@ module Adamas::HIR
       substituted = substitute_type_param(return_type_name, type_param_name, block_return_name)
       return nil if substituted == return_type_name
 
-      type_ref_for_name(substituted)
+      annotation_type_ref(substituted, declaration_owner)
     end
 
     private def block_return_type_param_name(
@@ -104452,7 +104495,14 @@ module Adamas::HIR
         "[L11_RT] site=B rt=#{get_type_name_from_ref(return_type)}",
       )
       if block_return_name
-        if inferred = resolve_block_dependent_return_type(mangled_method_name, base_method_name, block_return_name)
+        receiver_name = receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : nil
+        if inferred = resolve_block_dependent_return_type(
+             mangled_method_name,
+             base_method_name,
+             block_return_name,
+             receiver_name,
+             arg_types,
+           )
           return_type = inferred
         end
         if receiver_id && (method_name == "map" || method_name == "map_with_index")
@@ -117232,7 +117282,14 @@ module Adamas::HIR
         end
 
         if block_return_name
-          if inferred = resolve_block_dependent_return_type(inline_key, base_inline_name, block_return_name)
+          receiver_name = receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : nil
+          if inferred = resolve_block_dependent_return_type(
+               inline_key,
+               base_inline_name,
+               block_return_name,
+               receiver_name,
+               callsite_arg_types,
+             )
             return_type = inferred
           end
           if yield_return_function_for_call(inline_key, base_inline_name)

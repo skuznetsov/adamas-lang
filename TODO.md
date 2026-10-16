@@ -19590,3 +19590,14 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   full/no-prelude union equality outputs).
 - [ ] Audit unqualified-self inference of mixed splat/named calls: this fix covers
   the declared native shapes, not a universal expansion-aware call-shape builder.
+
+
+### Preserve declaration context for block-dependent result annotations (2026-10-16)
+- [x] Infer explicit block-dependent result annotations from included modules
+  under their declaration arena, namespace and type bindings. blockmap1164 RED;
+  blockmap1163 GREEN (ten pinned-1.21 original-first native outputs), with
+  ancestor and 44-result union guards GREEN in blockmap1166/1167.
+- [ ] Audit generic included-overload admission after registration: Channel.select
+  still admits SelectContext(Nil) to an action whose S binding is another type;
+  channel1162 traces unresolved S before generic admission. Keep the later source
+  restriction guard fail-closed while repairing candidate declaration context.

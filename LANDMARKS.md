@@ -18523,3 +18523,26 @@ host 62ec19c274e6a92b6d6f5e08d933638400b0826f5573f9b19b22232403bf5ed4.
 Refresh after lookup, self-call inference, call-shape or numeric hierarchy changes.
 Roll back source and regression together. Mixed splat inference remains outside
 the stated native oracle; do not treat transported metadata as universal closure.
+
+
+### Preserve declaration context for block-dependent result annotations (2026-10-16)
+Block-result inference formerly inspected only the receiver's registered Def.
+An included Enumerable#map could therefore lose its explicit Array(U) result
+before ordinary body lowering. Reuse owner-aware included-module lookup when
+the direct Def is absent, and carry receiver and argument types at all three
+call sites. Interpret the substituted result as a declaration annotation under
+its owning arena, lexical namespace and generic bindings, including direct
+registered included targets. Raw type_ref_for_name was insufficient: a module's
+Envelope(U) was confused with a same-named global class and corrupted native
+values. A namespace-only wrapper also remained RED (blockmap1151).
+Pinned Crystal 1.21 original-first regression: parent ancestor1133 is RED in
+blockmap1164; isolated blockmap1152 is GREEN in blockmap1163, with ten native
+outputs covering the LavinMQ permissions route, generic wrappers, a local
+override, namespace shadowing and alternating Int32/String include bindings.
+blockmap1166 preserves the eleven ancestor cases; blockmap1167 preserves all
+44 full/no-prelude union equality results. Scoped adversary ROBUST for these
+cases. Manifest 0adbc435f56ecd586e09a6b46094f90cc4d85250cab9ab129b7d5dfbb84b57e6;
+host 41931095531bd85f187bf0a50e4ec2d9cb03359f55b255a383aafc4b9b9f8f51.
+Refresh after block-return inference, annotation resolution, include binding or
+arena ownership changes. Roll back source and regression together. Proc ranking,
+Channel.select cross-context overloads and LavinMQ parity remain open.

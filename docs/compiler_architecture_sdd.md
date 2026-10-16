@@ -4053,3 +4053,17 @@ full/no-prelude union dispatch guard is GREEN in ancestor1139. Scoped adversary
 ROBUST for the declared cases, including reopened ancestor versus local override.
 Proc match phases, wrong external-label rejection and mixed-splat inference are
 not certified by this boundary. Refresh on lookup/call-shape/hierarchy changes.
+
+
+### Preserve declaration context for block-dependent result annotations (2026-10-16)
+Block-dependent result annotations belong to the selected declaration, including
+when only an included-module origin is available before ordinary body lowering.
+Carry the receiver and call argument types to owner-aware module lookup. Resolve
+the substituted annotation in the declaration arena, namespace and type-param
+map; a consumer namespace and a raw type-name lookup cannot certify its identity.
+DoD: included_block_result_owner_repro.sh matches ten pinned Crystal 1.21 native
+outputs. Parent blockmap1164 RED; isolated blockmap1152/blockmap1163 GREEN.
+Namespaced/global Envelope collision and alternating generic include bindings
+are the scope adversaries. blockmap1166/1167 preserve ancestor and union guards.
+Scoped adversary ROBUST for these shapes; this is no full overload-context or
+LavinMQ completion claim. Refresh after annotation/inference/include changes.
