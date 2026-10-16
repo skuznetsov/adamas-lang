@@ -440,6 +440,46 @@ module Adamas
         end
       end
 
+      # Regular expression value. Keep the parser-provided pattern and flags
+      # separate so consumers never need to recover them from rendered source.
+      class MacroRegexValue < MacroValue
+        getter pattern : String
+        getter flags : String
+
+        def initialize(@pattern : String, @flags : String)
+        end
+
+        def to_macro_output : String
+          "/#{@pattern}/#{@flags}"
+        end
+
+        def class_name : String
+          "RegexLiteral"
+        end
+
+        def type_name : String
+          "Regex"
+        end
+
+        def to_regex : Regex
+          options = Regex::CompileOptions::None
+          @flags.each_char do |flag|
+            case flag
+            when 'i'
+              options |= Regex::CompileOptions::IGNORE_CASE
+            when 'm'
+              options |= Regex::CompileOptions::MULTILINE
+            when 'x'
+              options |= Regex::CompileOptions::EXTENDED
+            else
+              raise ArgumentError.new("unsupported regex flag #{flag.inspect}")
+            end
+          end
+
+          Regex.new(@pattern, options)
+        end
+      end
+
       # String value
       class MacroStringValue < MacroValue
         getter value : String
@@ -478,6 +518,22 @@ module Adamas
               return MacroBoolValue.new(result)
             end
             super
+          when "gsub"
+            unless args.size == 2 && (named_args.nil? || named_args.empty?)
+              raise ArgumentError.new("StringLiteral#gsub expects exactly two positional arguments")
+            end
+
+            regex = args[0]
+            unless regex.is_a?(MacroRegexValue)
+              raise ArgumentError.new("first argument to StringLiteral#gsub must be a regex, not #{regex.class_name}")
+            end
+
+            replacement = args[1]
+            unless replacement.is_a?(MacroStringValue) && replacement.class_name == "StringLiteral"
+              raise ArgumentError.new("second argument to StringLiteral#gsub must be a string, not #{replacement.class_name}")
+            end
+
+            MacroStringValue.new(@value.gsub(regex.to_regex, replacement.value))
           when "size", "bytesize"
             MacroNumberValue.new(@value.size.to_i64)
           when "empty?"

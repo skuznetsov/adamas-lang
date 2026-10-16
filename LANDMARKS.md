@@ -18277,3 +18277,24 @@ Class-macro root registration and @type owner reflection remain open: broad tria
 random798/801 still fail those separate HIR examples and are not promoted.
 Refresh after ClassNode parsing, macro output routing, class naming or lookup
 changes; roll back this walker line with its regression and spec.
+
+
+### Macro regex replacement and result reflection (2026-10-16)
+
+The macro value evaluator had no RegexLiteral value or StringLiteral#gsub arm;
+the text fallback silently retained the receiver. Chained class_name also
+reflected the unevaluated CallNode as ASTNode. Preserve regex pattern/flags,
+implement the two-argument replacement contract, and reflect the evaluated AST
+value. MacroId delegation retains its receiver kind. No stdlib/app changes.
+RED random837: seven semantic examples fail. Original-first native random844
+prints seven expected replacements/kinds; the parent emits unchanged strings
+and ASTNode labels. GREEN random843 passes seven semantic examples, random846
+matches both native outputs, and random851 passes 33 existing macro method examples.
+Scoped adversary ROBUST for two-argument replacement, i/m/x flags, captures,
+zero-width/unmatched patterns, receiver kinds and invalid argument rejection.
+Sealed random842 host 694b5da0c7821fc231e56859a3cecfd1181c2cd45d8008ef799c7d2c0788a62e.
+Refresh after regex parsing, macro value dispatch or result reflection changes.
+Roll back both evaluator/value hunks together with the focused regression/spec.
+Block-form replacement remains open. A separate command-argument parsing bug
+drops the argument in puts {{ expression }} (random830/832/839/840); the native
+replacement oracle uses the equivalent parenthesized call to isolate this bug.

@@ -3875,3 +3875,16 @@ random808 are GREEN, including root method registration, relative shadowing,
 stdlib thread_local construction and Array#sample. Scoped adversary ROBUST.
 Owner reflection and class macro root routing remain open. Refresh on AST name
 flags, macro registration routing, definition naming or constant lookup changes.
+
+
+### Macro regex replacement and result reflection (2026-10-16)
+
+Admit StringLiteral#gsub(RegexLiteral, StringLiteral) and the MacroId delegation
+with its result kind preserved. Regex AST values retain pattern and i/m/x flags
+without reparsing rendered source. Reject wrong arity, named arguments, invalid
+patterns and non-string replacements at the value dispatch boundary. Chained
+class_name consumes the evaluated AST value rather than its source CallNode.
+RED random837/844; GREEN random843/846 and 33 existing method controls random851. Native
+inputs are original-first and all binaries use run_safe.sh. Scoped adversary
+ROBUST for the stated contract; block-form gsub and bare command macro arguments
+remain open. Refresh on parser regex fields or macro dispatch/reflection edits.

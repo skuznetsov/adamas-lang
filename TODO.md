@@ -19454,3 +19454,16 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   execution alone does not validate generated Thread property names.
 - [ ] Check absolute module/enum output forms and multithread TLS behavior with
   matched Crystal probes; this class-naming fix does not establish those cases.
+
+
+### Macro regex replacement and result reflection (2026-10-16)
+
+- [x] Implement macro StringLiteral/MacroId two-argument regex replacement and
+  reflect evaluated result kinds: random843 seven examples and random846 native
+  parity; random851 passes 33 existing macro method examples.
+- [ ] Implement and compare block-form macro gsub with the original interpreter.
+- [ ] Trace command-call parsing/lowering of puts {{ expression }}: original
+  prints the value, while random830/832/839/840 emit zero-argument puts and blank
+  lines. Parenthesized calls preserve arguments. Fix the compiler, not callers.
+- [ ] Audit text macro method fallback paths that silently return the receiver
+  for unsupported operations; reject invalid calls or implement the contract.

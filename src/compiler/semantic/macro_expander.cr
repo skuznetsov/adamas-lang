@@ -952,6 +952,8 @@ module Adamas
             if node.is_a?(Frontend::StringInterpolationNode)
               return evaluate_command_literal_to_macro_value(expr_id, node, context) ||
                 MacroStringValue.new(evaluate_string_interpolation(node, context))
+            elsif node.is_a?(Frontend::RegexNode)
+              return MacroRegexValue.new(String.new(node.pattern), String.new(node.flags))
             elsif node.is_a?(Frontend::ArrayLiteralNode)
               values = node.elements.map { |elem| evaluate_to_macro_value(elem, context) }
               return MacroArrayValue.new(values)
@@ -2575,10 +2577,11 @@ module Adamas
             return receiver.call_method(member, [] of MacroValue, nil).to_macro_output
           end
 
-          # Phase 87B-6: Handle .class_name before evaluating base
-          # Need to know the AST node type, not the evaluated value
+          # Macro methods return AST values. Reflect the evaluated receiver,
+          # including StringLiteral/MacroId results of calls such as gsub.
           if member == "class_name"
-            return macro_class_name(obj, context)
+            receiver = evaluate_to_macro_value(node.object, context)
+            return receiver.call_method(member, [] of MacroValue, nil).to_macro_output
           end
 
           # Handle @type.* type introspection methods directly

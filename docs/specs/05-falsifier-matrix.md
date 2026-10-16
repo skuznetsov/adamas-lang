@@ -617,3 +617,20 @@ diagnostic meanings.
   examples; those extra trial changes are not part of this repair.
 - All test binaries run through scripts/run_safe.sh. Refresh after declaration
   absolute flags, output registration, class naming or lookup changes.
+
+
+### Macro regex replacement and result reflection (2026-10-16)
+
+- RED random837: 7 semantic examples fail on source random803.
+- RED random844: Crystal emits replacements and StringLiteral/MacroId labels;
+  candidate exits 0 with unchanged strings and two ASTNode labels.
+- GREEN random843: 7 examples, 0 failures/errors/pending on sealed random842.
+- GREEN random846: original and candidate explicitly PASS the same seven lines.
+- GREEN random851: 33 existing macro method examples pass on random842.
+- Broader random849 includes uncommitted split/pair/parse_type WIP and fails
+  16 examples; parent random850 cannot compile that WIP (MacroRegexValue absent).
+  Neither run establishes a regression or closure for those uncommitted features.
+- Guards cover invalid arity/named arguments, pattern/replacement kinds and bad
+  regex syntax; positive controls cover i/m/x flags, captures and empty matches.
+- Separate random830 command-call syntax still loses macro arguments; keep it
+  open and do not attribute its blank output to regex replacement semantics.
