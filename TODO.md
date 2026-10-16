@@ -19964,3 +19964,21 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Re-run File.close after the named/rest frontend blocker is repaired;
   the nested FdLock/Atomic and PointerLinkedList consumer mismatch is now covered
   by a minimal representation regression, not a File.close completion claim.
+
+
+### Deferred semantic comparator and stdlib override audit (2026-10-16)
+
+- [ ] Audit manual LLVM builtin overrides with original-first behavioral probes,
+  starting with buffered IO. A raw `read`/two-argument `gets` override is a
+  confirmed buffer bypass, but data loss/reordering is still a hypothesis.
+  Reproduce buffered residual bytes on the same object, then mixed access;
+  keep raw-only alternation as a baseline. Change one override at a time and
+  require its regression plus fresh ordinary S2 before accepting removal.
+- [ ] Before proposing frontend migration, implement an observational per-call
+  comparator. Current ADAMAS_SEMANTIC_SHADOW compares declaration inventories,
+  parser diagnostics and diagnostic counts, not selected Def/result types.
+  Key calls by source-owned arena/node identity and receiver/substitutions;
+  classify unsupported/unknown separately from measured disagreement.
+  Low measured disagreement with continuing lowering/codegen failures weakens
+  the proposed migration rationale; do not treat repair counts or file sizes
+  as causal evidence. Current priority remains LavinMQ correctness/test parity.

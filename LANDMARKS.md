@@ -19138,3 +19138,28 @@ ROBUST for this representation boundary. Source manifest 6cb6e3bdbc808d8c9867532
 Refresh after field layout, store/read policy, or borrowed-address changes.
 The matching File/FdLock LLVM mismatch is a consumer lead; File.close runtime
 verification remains blocked by the existing named/rest frontend failure.
+
+
+### Deferred semantic comparator and stdlib override audit (2026-10-16)
+
+Read-only audit at source revision 2ee2b8cf confirmed that
+cli.cr run_semantic_compile_shadow (8389-8430) runs inference but compares
+collector/symbol declaration inventories and parser diagnostics, then counts
+semantic/resolution/type diagnostics. It does not compare production-selected
+Def instances or result types per source call. ExprId alone is insufficient
+across distinct arenas; a future comparator must preserve source ownership.
+
+llvm_backend.cr emit_builtin_override bypasses ordinary source-body emission
+when it succeeds. Its exact FileDescriptor read(Slice(UInt8)) branch
+(12244-12272) calls POSIX read directly; two-argument FileDescriptor/File gets
+(12337-12405) reads one byte at a time directly. IO::Buffered retains unread
+bytes separately. A mixed access hazard requires buffered residual bytes or
+shared open-file-description state; alternating only the two raw overrides
+has not been shown to fail. No runtime read/gets parity claim is made here.
+
+Proposed audit order is per-override falsifier, bounded source-body restoration,
+regression and ordinary S2; then semantic comparison before any migration
+choice. A blind batch deletion would confuse intrinsic/runtime necessities
+with stdlib substitutions. This is deferred work, not a LavinMQ completion or
+an architecture authorization. Refresh these observations after shadow,
+override, stdlib buffering or source-identity changes.
