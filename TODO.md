@@ -19821,3 +19821,20 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   cause. Identify the first incorrect receiver/demand without stdlib edits.
 - [ ] Complete fresh source-scoped bootstrap and produced-stage LavinMQ
   runtime/upstream parity; local printing checks do not establish these gates.
+
+
+### Preserve omitted literal Nil default provenance (2026-10-16)
+- [x] Preserve Nil for an omitted unannotated literal Nil default rather
+  than inventing Nil | Object in module and instance lowering. nil1640 matches
+  five original-first native cases including stdout/stderr; nil1643 parent
+  reproduces extra non-Flags Enum#each demand; nil1641 passes 130 HIR examples.
+- [ ] Repair *args/named argument slot binding. In buffered1626, a positional
+  String becomes exception; buffered1636 reproduces failure on the parent with
+  explicitly typed defaults. Empty-splat buffered1637 also loses named data.
+- [ ] Repair duplicate LLVM SSL_get_error declaration exposed by OpenSSL
+  consumers after Nil-default correction (buffered1614/1615).
+- [ ] Repair fresh S2 Array(String) -> Enumerable(String)? admission failure
+  (s2_print1606), then run S2/S3/S4 and raw S3/S4 IR equality on current source.
+- [ ] Repair lavin1639 IO::Memory#write_byte receiving Char | JSON::Any |
+  Tuple(String, JSON::Any), then run produced-stage LavinMQ functional/upstream
+  parity. The historical Oct13 fixed point does not certify current source.

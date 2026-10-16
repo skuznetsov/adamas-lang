@@ -18880,3 +18880,25 @@ print change (lavin1601); it remains open in bare-call/dispatch processing.
 Fresh bootstrap is in progress; produced-stage LavinMQ functional/upstream
 parity is still required. Manifest 406d797dd63957b34631b1f62631ef4f0af11e88566b3e78af6df54a0d69e93c; host 770de54048a7347eea6bbac61490c7bbf6594748c75155d448c06d18bf098b13. Refresh after
 print interception, argument binding, virtual demands or return ABI changes.
+
+
+### Preserve omitted literal Nil default provenance (2026-10-16)
+When an omitted unannotated literal Nil default had no concrete callsite
+TypeRef, lower_module_method and lower_method invented Nil | Object. A
+backtrace.try(&.each) then registered Object#each demands for unrelated
+non-Flags enums. Keep the fallback Nil; explicit annotations and concrete
+callsite types retain precedence. This is a source-provenance bug, independent
+of a foreign ambient T: the reducer fails without OpenSSL or custom generics.
+DoD: nil_default_receiver_provenance_repro.sh. Parent nil1643 is RED with
+LibPCRE2::Error#each. Candidate nil1640 matches original Crystal stdout and
+stderr for five native cases: default body, both specialization orders,
+module forwarding, local reassignment, and Crystal.print_error_buffered.
+nil1641 passes 130 HIR examples. Scoped adversary ROBUST for this fallback.
+Full channel lavin1639 passes the former Enum#each failure and reaches an
+IO::Memory#write_byte argument-type contradiction; no LavinMQ binary exists.
+Separate parent controls expose preexisting *args/named-slot binding failure;
+OpenSSL reducers expose a duplicate SSL_get_error LLVM declaration. Both are
+open. Fresh S2 on print1596 fails Array(String) -> Enumerable(String)?;
+current bootstrap and produced-stage LavinMQ parity remain unverified.
+Manifest c96214e5769ab5cd7a2977d287bd125da18b61f29b53b2d0bfbe432f14a592d9; host 9804a22a1de5c0626bd05d177ca8c324266dc517b5708ef84eb12a7ef825a87e. Refresh after default provenance, argument
+binding, specialization or virtual-demand changes.

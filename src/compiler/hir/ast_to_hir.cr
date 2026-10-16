@@ -35450,8 +35450,9 @@ module Adamas::HIR
                 STDERR.puts "[PARAM_DEFAULT] func=#{base_name} param=#{param_name} node=#{default_kind}#{default_extra}"
               end
               if default_node.is_a?(Adamas::Compiler::Frontend::NilNode)
-                object_ref = type_ref_for_name("Object")
-                param_type = create_union_type_for_nullable(object_ref) if object_ref != TypeRef::VOID
+                # An omitted literal default supplies Nil. Concrete callsite
+                # types have already taken precedence above this fallback.
+                param_type = TypeRef::NIL
               else
                 if inferred_default = infer_type_from_expr(default_value, module_name)
                   if debug_env_filter_match?("DEBUG_PARAM_DEFAULT", base_name, param_name)
@@ -43357,8 +43358,9 @@ module Adamas::HIR
                 STDERR.puts "[PARAM_DEFAULT] func=#{base_name} param=#{param_name} node=#{default_kind}#{default_extra}"
               end
               if default_node.is_a?(Adamas::Compiler::Frontend::NilNode)
-                object_ref = type_ref_for_name("Object")
-                param_type = create_union_type_for_nullable(object_ref) if object_ref != TypeRef::VOID
+                # An omitted literal default supplies Nil. Concrete callsite
+                # types have already taken precedence above this fallback.
+                param_type = TypeRef::NIL
               else
                 if inferred_default = infer_type_from_expr(default_value, class_name)
                   if debug_env_filter_match?("DEBUG_PARAM_DEFAULT", base_name, param_name)

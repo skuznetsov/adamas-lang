@@ -4289,3 +4289,19 @@ print1600 130 HIR examples GREEN. Scoped ROBUST. Manifest 406d797dd63957b34631b1
 The bare-only LavinMQ enum-each failure, fresh bootstrap and produced-stage
 functional/upstream parity remain open. Expiry: print interception, argument
 binding, virtual demand or return ABI changes.
+
+
+### Preserve omitted literal Nil default provenance (2026-10-16)
+An omitted unannotated literal Nil default contributes Nil when no
+concrete callsite type is available. It does not justify an Object union.
+Explicit declared types and actual callsite types retain precedence in both
+module and instance lowering. This prevents false Object#each virtual demand
+from otherwise dormant backtrace branches; it does not authorize suppressing
+Enum macro errors or altering stdlib source.
+Evidence: parent nil1643 RED; candidate nil1640 five original-first native
+stdout/stderr comparisons GREEN; nil1641 130 HIR examples GREEN. Scoped ROBUST.
+Lavin1639 advances past non-Flags Enum#each to an IO::Memory#write_byte
+argument-type failure. Splat/named binding, duplicate SSL_get_error LLVM
+declarations, current bootstrap and produced-stage parity remain open.
+Manifest c96214e5769ab5cd7a2977d287bd125da18b61f29b53b2d0bfbe432f14a592d9; host 9804a22a1de5c0626bd05d177ca8c324266dc517b5708ef84eb12a7ef825a87e. Expiry: default provenance, call binding,
+specialization or virtual-demand changes.

@@ -1004,3 +1004,21 @@ diagnostic meanings.
 - OPEN fresh bootstrap and produced-stage LavinMQ functional/upstream parity.
   Manifest 406d797dd63957b34631b1f62631ef4f0af11e88566b3e78af6df54a0d69e93c. Expiry: print interception, argument binding,
   virtual demand or return ABI changes.
+
+
+### Preserve omitted literal Nil default provenance (2026-10-16)
+- RED nil1643/print1596: an omitted literal Nil backtrace creates unrelated
+  LibPCRE2::Error#each demand. GREEN nil1640/print1613: five original-first
+  stdout/stderr comparisons, covering both call orders, explicit Nil/Array,
+  module forwarding, local reassignment and Crystal.print_error_buffered.
+- GREEN nil1641: 130 HIR examples. Scoped ROBUST for literal-default fallback.
+- REFUTED necessity of a foreign ambient T for this Enum failure: default
+  reducer uses no custom generics and no OpenSSL; it still fails on the parent.
+- OPEN buffered1636: parent with typed defaults misbinds *args/named slots.
+- OPEN buffered1614/1615: duplicate SSL_get_error LLVM declarations.
+- OPEN lavin1639: next integrated error is IO::Memory#write_byte receiving
+  Char | JSON::Any | Tuple(String, JSON::Any).
+- OPEN s2_print1606: Array(String) -> Enumerable(String)? admission; current
+  S3/S4 convergence and produced-stage LavinMQ functional/upstream parity.
+  Manifest c96214e5769ab5cd7a2977d287bd125da18b61f29b53b2d0bfbe432f14a592d9. Expiry: default provenance, argument binding,
+  specialization or virtual-demand changes.
