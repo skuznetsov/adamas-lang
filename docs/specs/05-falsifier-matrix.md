@@ -589,3 +589,17 @@ diagnostic meanings.
   adjacent boundaries. Full LavinMQ and Random runtime parity remain open.
 - All binaries execute through scripts/run_safe.sh; refresh after literal,
   generic receiver or operand timing changes.
+
+
+### Module macro classvar declarations (2026-10-16)
+- RED random792: three HIR examples, one failure and one error on named767;
+  direct/class registration controls pass, generated module declarations vanish.
+- RED random793: original-first native getter prints NAA, candidate AA; both
+  build and exit zero, so exit status alone misses the skipped constructor.
+- GREEN random794: three HIR examples, zero failures/errors/pending on random787.
+- GREEN random795: explicit original/candidate PASS with exact NAA output;
+  constructor executes once and the second getter returns its cached value.
+- Absolute root Thread registration and owner reflection remain separate open
+  falsifiers. Older Proc alias check fails equally in random788 and random789.
+- All binaries use scripts/run_safe.sh. Refresh after macro-output declaration,
+  arena or classvar type lowering changes; this is not LavinMQ runtime parity.

@@ -19427,3 +19427,17 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   inference; the native certificate currently covers homogeneous Hash inference.
 - [ ] Continue actual LavinMQ integration and Random.thread_default repair;
   named-literal parity does not establish application or RNG parity.
+
+
+### Module macro declaration completeness (2026-10-16)
+- [x] Register emitted module classvar declarations and split type pairs;
+  random794 passes three HIR examples and random795 matches native NAA output.
+- [ ] Preserve absolute class identity in module/class macro walkers: after the
+  classvar repair, random790 constructs the value then calls a bogus
+  LazyOwner::Thread.current stub. Root Thread must remain root.
+- [ ] Check macro owner reflection and multistatement yielded expression values
+  when completing thread_local; this registration certificate is narrower.
+- [ ] Normalize Proc aliases in classvar initializer annotations; the pre-existing
+  Int32 -> versus Proc(Int32, Nil) failure persists in both random788 and 789.
+- [ ] Audit declaration forms handled by class macro registration but omitted by
+  module macro registration, using matched original-first probes before changes.

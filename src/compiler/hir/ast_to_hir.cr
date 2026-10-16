@@ -30884,6 +30884,37 @@ module Adamas::HIR
       register_module_members_from_macro_expansion(module_name, expr_id, 0)
     end
 
+    private def register_module_macro_expansion_body(
+      module_name : String,
+      body : Array(ExprId),
+      depth : Int32,
+    ) : Nil
+      body.each do |child_id|
+        child = unwrap_visibility_member(@arena[child_id])
+        next unless child.is_a?(Adamas::Compiler::Frontend::ExtendNode)
+        mark_module_extend_self(child, module_name)
+      end
+
+      skip_next = false
+      body.each_with_index do |child_id, index|
+        if skip_next
+          skip_next = false
+          next
+        end
+
+        child = unwrap_visibility_member(@arena[child_id])
+        if child.is_a?(Adamas::Compiler::Frontend::ClassVarNode) && index + 1 < body.size
+          type_expr_id = body[index + 1]
+          if register_expanded_class_var_type_pair(module_name, child_id, child, type_expr_id)
+            skip_next = true
+            next
+          end
+        end
+
+        register_module_members_from_macro_expansion(module_name, child_id, depth)
+      end
+    end
+
     private def expand_module_macro_call(
       module_name : String,
       method_name : String,
@@ -30914,23 +30945,11 @@ module Adamas::HIR
       member = unwrap_visibility_member(@arena[expr_id])
       case member
       when Adamas::Compiler::Frontend::BlockNode
-        member.body.each do |child_id|
-          child = unwrap_visibility_member(@arena[child_id])
-          next unless child.is_a?(Adamas::Compiler::Frontend::ExtendNode)
-          mark_module_extend_self(child, module_name)
-        end
-        member.body.each do |child_id|
-          register_module_members_from_macro_expansion(module_name, child_id, depth)
-        end
+        register_module_macro_expansion_body(module_name, member.body, depth)
       when Adamas::Compiler::Frontend::BeginNode
-        member.body.each do |child_id|
-          child = unwrap_visibility_member(@arena[child_id])
-          next unless child.is_a?(Adamas::Compiler::Frontend::ExtendNode)
-          mark_module_extend_self(child, module_name)
-        end
-        member.body.each do |child_id|
-          register_module_members_from_macro_expansion(module_name, child_id, depth)
-        end
+        register_module_macro_expansion_body(module_name, member.body, depth)
+      when Adamas::Compiler::Frontend::ClassVarDeclNode
+        register_expanded_class_var_decl(module_name, expr_id, member)
       when Adamas::Compiler::Frontend::DefNode
         register_module_method_from_def(member, module_name)
       when Adamas::Compiler::Frontend::AliasNode

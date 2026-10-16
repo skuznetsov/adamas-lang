@@ -18237,3 +18237,24 @@ Empty concrete named collections and early bare-generic constant inference are
 not covered by this certificate. Refresh after literal expansion, generic
 receiver inference, or operand evaluation changes. Roll back this lowerer and
 its regression/spec together.
+
+
+### Register class variables emitted by module macros (2026-10-16)
+The module macro-output walker skipped ClassVarDeclNode and the parser's split
+ClassVarNode/type-expression form. A generated lazy getter therefore read its
+nullable class variable as Void; nil? folded false and skipped construction.
+Reuse the class declaration registrar and pair scanner for module output,
+preserving the declaration arena and the existing first pass for extend self.
+RED random793 on named767: Crystal prints NAA, candidate prints AA (both exit 0).
+GREEN random795: original-first native cached getter prints NAA through both
+compilers. random794 passes three HIR examples covering direct/class controls,
+primitive/generic/nilable declarations, sibling module isolation, literal
+initial values and deferred non-literal initializers. Scoped adversary ROBUST.
+Source random787 HIR 82279e43cea44d15f33c4f1c000747f54de10189f4ef5c716ad72a8bb25c8c0e;
+host 9356d444c61e2d9e0d07f3bcf589f6c0ec600790bbc3278ac0bad4dd79c22d90.
+This certificate does not close thread_local: random790 now calls construction
+then exposes a separate wrongly nested absolute Thread declaration. Proc alias
+normalization also fails identically before and after this repair in the older
+mixed classvar spec (random788/789). Refresh after macro registration, declaration
+parsing, arena provenance or classvar type lowering changes. Roll back this
+walker change, focused spec and regression together.

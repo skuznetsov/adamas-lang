@@ -3848,3 +3848,17 @@ passing HIR controls. Scoped adversary ROBUST; full application parity, empty
 concrete receivers and early constant inference are outside this certificate.
 Refresh when operand classification, generic inference or ordinary call lowering
 changes.
+
+
+### Module macro classvar registration boundary (2026-10-16)
+Module output registration admits ClassVarDeclNode and adjacent ClassVarNode /
+type-expression pairs in BeginNode or BlockNode bodies. Use the same annotation,
+literal initialization and deferred initializer registrar as class macro output;
+consume a split pair once, and retain the existing extend-self prepass. Method
+lowering must observe the registered nullable type rather than Void. Evidence:
+random792 is RED (missing module declarations), random794 passes three HIR
+examples; native random793 AA versus Crystal NAA becomes matched NAA in
+random795. Scoped adversary ROBUST; absolute emitted classes, owner reflection,
+thread-local execution and general Proc alias normalization remain outside this
+certificate. Refresh when AST declaration shapes, arenas, registration or nil?
+lowering changes.
