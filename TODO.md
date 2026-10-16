@@ -19727,3 +19727,17 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Resolve the new Lavin1475 frontier: HTTP::Server.build_middleware rejects
   Nil|Proc(HTTP::Server::Context, Nil) for (HTTP::Server::Context ->)?. Preserve
   Proc input restrictions, result-discard semantics and declaration context.
+
+
+### Share Proc syntax between source admission and TypeRef construction (2026-10-16)
+- [x] Unify source arrow Proc restriction parsing with TypeRef construction.
+  proc1495 parent RED; proc1494 candidate GREEN (eight outputs and three
+  original-first rejections); proc1496 GREEN on 93 HIR examples. This closes
+  Lavin1475's nullable callback rejection in build_middleware.
+- [ ] Trace Lavin1497's IO::Memory#write_byte call: UInt8 receives a JSON value
+  union (Nil/Array(JSON::Any)/Bool/Float64/Hash(String, JSON::Any)/Int64/String).
+  Identify the source call and chosen overload before changing conversion or
+  source admission. Do not modify stdlib or LavinMQ to hide the mismatch.
+- [ ] Audit source restriction consumers that compare type spellings before
+  TypeRef construction for other grammar/context divergence. The Proc parser
+  is now shared; this evidence does not certify unrelated syntax families.

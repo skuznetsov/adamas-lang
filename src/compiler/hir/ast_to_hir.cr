@@ -53206,6 +53206,12 @@ module Adamas::HIR
     private def source_generic_restriction_match?(actual_name : String, declared_name : String) : Bool?
       actual_name = resolve_type_alias_chain(actual_name.lchop("::"), preserve_abstract_int: true)
       declared_name = resolve_type_alias_chain(declared_name.lchop("::"), preserve_abstract_int: true)
+      if actual_name.includes?("->") && (arguments = proc_type_argument_names(actual_name))
+        actual_name = "Proc(#{arguments.join(", ")})"
+      end
+      if declared_name.includes?("->") && (arguments = proc_type_argument_names(declared_name))
+        declared_name = "Proc(#{arguments.join(", ")})"
+      end
       if source_restriction_union_members(actual_name) || source_restriction_union_members(declared_name)
         # This source proof preserves applied generic arguments. Nongeneric
         # unions still use the ordinary TypeRef restriction path, where erased
@@ -68635,13 +68641,20 @@ module Adamas::HIR
     end
 
     private def proc_type_ref_for_name(name : String) : TypeRef?
+      arguments = proc_type_argument_names(name)
+      arguments ? intern_proc_type(arguments) : nil
+    end
+
+    # Parse the signature without interning or substituting its source names.
+    # Source admission and TypeRef construction must share the arrow grammar.
+    private def proc_type_argument_names(name : String) : Array(String)?
       stripped = name.strip
       return nil if stripped.empty?
 
       if stripped.starts_with?("Proc(") && stripped.ends_with?(')')
         if generic = split_generic_base_and_args(stripped)
           if generic.base == "Proc"
-            return intern_proc_type(split_generic_type_args(generic.args))
+            return split_generic_type_args(generic.args)
           end
         end
       end
@@ -68655,25 +68668,25 @@ module Adamas::HIR
           parts = inner.empty? ? ([] of String) : split_proc_type_inputs(inner)
           if right.empty?
             if parts.empty?
-              return intern_proc_type(["Nil"])
+              return ["Nil"]
             elsif parts.size == 1
               # `{A} ->` is treated as a single input with implicit Nil return.
-              return intern_proc_type([parts.first, "Nil"])
+              return [parts.first, "Nil"]
             else
               # `{A, B} ->` means `A -> B` (last part is return type).
               inputs = parts[0...-1]
               ret_name = parts.last
-              return intern_proc_type(inputs + [ret_name])
+              return inputs + [ret_name]
             end
           else
             # `{A, B} -> C` means `A, B -> C` (parts are inputs).
-            return intern_proc_type(parts + [right])
+            return parts + [right]
           end
         end
 
         args = left.empty? ? [] of String : split_generic_type_args(left)
         ret_name = right.empty? ? "Nil" : right
-        return intern_proc_type(args + [ret_name])
+        return args + [ret_name]
       end
 
       # Handle parenthesized Proc shorthand: (A, B -> C)
@@ -68686,7 +68699,7 @@ module Adamas::HIR
             right = inner[arrow_index + 2, inner.size - arrow_index - 2].strip
             args = left.empty? ? [] of String : split_proc_type_inputs(left)
             ret_name = right.empty? ? "Nil" : right
-            return intern_proc_type(args + [ret_name])
+            return args + [ret_name]
           end
         end
       end

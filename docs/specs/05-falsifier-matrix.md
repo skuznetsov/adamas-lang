@@ -919,3 +919,16 @@ diagnostic meanings.
 - Lavin1475/channel1473 passes IO::Memory and reaches nullable Proc admission
   in HTTP::Server.build_middleware. No broker binary or test parity exists.
 - Expiry: source/body/arena/context/ABI changes require replay of these probes.
+
+
+### Share Proc syntax between source admission and TypeRef construction (2026-10-16)
+- RED proc1490/1471: four source restriction checks reject valid arrow Proc
+  spellings while equivalent TypeRef construction already succeeds.
+- RED proc1495/1471: qualified callback/result-discard portable reproducer.
+- GREEN proc1492/1491: eight source checks; GREEN proc1496: 93 HIR examples.
+- GREEN proc1494/1491: eight original-first native outputs and rejection of
+  wrong Proc input type, arity and explicit result. Scoped adversary ROBUST.
+- Lavin1497/channel1493 passes nullable build_middleware admission and reaches
+  IO::Memory#write_byte receiving a JSON value union instead of UInt8.
+- No broker executable/parity claim. Expiry: Proc grammar, alias/context or
+  restriction changes require replay of the original-first controls.

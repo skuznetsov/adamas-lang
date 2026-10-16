@@ -4204,3 +4204,18 @@ capacity admission remain open; this is not general constructor closure.
 Lavin1475 advances to a nullable Proc source restriction; no executable/parity
 claim. Source manifest 2bd0eea66a17dcec8fd6739b7c72d3ca27b967faeb8dd34cf63ee5c7b502407e.
 Refresh after origin registration, body/allocator structure or ABI changes.
+
+
+### Share Proc syntax between source admission and TypeRef construction (2026-10-16)
+Proc arrow restrictions and TypeRef interning consume one syntax-only signature
+parser. Source admission canonicalizes an arrow to Proc source arguments before
+structural comparison, preserving generic names instead of interning them early.
+Nullable unions, exact input arity/types, explicit result restrictions, Nil
+result discard and NoReturn retain their ordinary contracts. No fallback is
+admitted merely because TypeRef normalization erases an argument.
+proc1495 parent RED; proc1494 candidate GREEN on eight Crystal-matched native
+outputs and three incompatible-Proc rejections; proc1496 GREEN on 93 HIR tests.
+Scoped delta verdict ROBUST. Lavin1497 advances to a JSON-value/UInt8 mismatch
+at IO::Memory#write_byte; broker/runtime parity remains open. Manifest
+f184063e73f27bbce92260ec3329eb94783c95b33ddc992b09b1698269099159.
+Refresh after grammar, alias/context normalization or restriction-rule changes.

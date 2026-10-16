@@ -18747,3 +18747,22 @@ Neither gap is closed by this provenance fix. Source manifest
 host 809a1e18ccf209db205bff5695e2f49e03f88d91cc5ea55c56f0adb63b831fbc.
 Refresh after allocator structure, source registration, lowering context or ABI
 changes. Roll back this slice with its regression and HIR contract tests.
+
+
+### Share Proc syntax between source admission and TypeRef construction (2026-10-16)
+Source restriction admission compared parenthesized arrow syntax as a nominal
+constructor, while TypeRef construction already parsed it as Proc. Qualified
+nullable callbacks therefore failed before lowering. Share a syntax-only Proc
+argument parser with TypeRef construction; canonicalize source arrow spellings
+without erasing formal generic names. Preserve input/arity restrictions, Nil
+result discard and NoReturn compatibility.
+DoD: nullable_proc_source_restriction_repro.sh; proc1495/1471 RED and
+proc1494/1491 GREEN (eight native outputs plus three original-first semantic
+rejections). proc1490 has four failing source checks; proc1492 passes all eight;
+proc1496 passes 93 HIR examples. Scoped delta adversary ROBUST. The qualified
+callback reproducer also matches Crystal in proc1498. Lavin1497/channel1493
+passes build_middleware and now rejects IO::Memory#write_byte with a JSON value
+union where UInt8 is required. No broker binary or test parity exists.
+Manifest f184063e73f27bbce92260ec3329eb94783c95b33ddc992b09b1698269099159;
+host c6d1e8ad2ca5bd1abb11a02c97dd64ce2c799c12132c103db49178c32060b87a.
+Refresh after Proc grammar, alias/context normalization or restriction changes.
