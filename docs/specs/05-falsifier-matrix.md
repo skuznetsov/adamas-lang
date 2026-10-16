@@ -1113,3 +1113,19 @@ diagnostic meanings.
   nilable enum guards, full JSON, current bootstrap and LavinMQ parity.
   Refresh after wrapper admission, selected-call ownership, arena, namespace
   or specialization suffix changes.
+
+
+### Keep selected deferred callees through final target rematching (2026-10-16)
+- GREEN json1821 on sealed json1811: four original-first native fixtures,
+  exact stdout/stderr; the added annotated case invokes zero-argument wrappers
+  from main and a typed nested caller over generic and ordinary receivers.
+- RED json1822 on exact json1777 parent: three existing controls pass, then
+  annotated_zero_arg exits 138. Annotation-free control json1802 is A/A;
+  annotated json1806 is original A / parent 138. Trace json1810 shows the
+  selected concrete target Pending and queued before final ancestor rematch.
+- Guards retain lexical source scope and sibling receiver isolation. The
+  selected-target guard requires both Pending state and a present queue item.
+  Scoped ROBUST for the scheduling contract. Manifest aa5828b6d8acae75382b2aecc3475aa24e7389b111511a85d13d14fb10e384c2; host fd5a2c6bb5716f3ca0216261dd7f3dc374c7a72c7892da82d6a16995c1e23ee5.
+- OPEN json1819 no-parentheses member selection, json1812 concrete JSON
+  helper suppression, current bootstrap and LavinMQ parity. Refresh after
+  lookup, worklist/state or final rematch changes.

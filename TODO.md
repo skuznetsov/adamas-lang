@@ -19912,3 +19912,15 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Continue full JSON execution and LavinMQ serialization: private channel
   composition json1783 still exits 132. General inherited cross-method dispatch,
   known-argument rejection revived by arity fallback and bootstrap stay open.
+
+
+### Keep selected deferred callees through final target rematching (2026-10-16)
+- [x] Preserve a selected exact target while it is Pending and still queued.
+  json1821 four original-first native fixtures GREEN; json1822 exact parent
+  passes old controls then exits 138 on the annotated zero-argument case.
+- [ ] Preserve the same concrete wrapper selection for no-parentheses member
+  calls: json1819 still exits 138 after the pending-target guard.
+- [ ] Admit genuine concrete JSON wrapper demand before helper suppression:
+  json1812 traces Hash(String, String)#to_json returning NotStarted without
+  queue/body via rta_exact_helper_suppressed; late rematch then chooses Object.
+  Keep speculative fan-out bounded. Full bootstrap/LavinMQ parity remain open.

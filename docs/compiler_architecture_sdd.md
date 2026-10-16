@@ -29,6 +29,16 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+A successful source selection remains authoritative while its exact target
+is Pending and present in the deferred worklist. Body/Def absence alone does
+not authorize a final overload rematch to an ancestor. Unselected or unqueued
+probes retain their fallback. DoD is the original-first annotated zero-argument
+case in reference_wrapper_receiver_handoff_repro.sh, with exact stdout/stderr
+and normal exit, guarded by generic/ordinary receivers, nested callers,
+lexical source scope and sibling isolation. Rollback is the bounded pending
+selection guard. No-parentheses member selection, pre-queue helper suppression,
+full JSON execution and current bootstrap/LavinMQ parity remain open.
+
 **Concrete reference wrapper receiver handoff.** The selected-call path may
 resolve an inherited Object wrapper to its source Def without erasing the
 runtime receiver used by the existing structural wrapper-owner policy.

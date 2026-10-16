@@ -19040,3 +19040,24 @@ dispatch, typed rejection followed by arity fallback, the existing nilable-enum
 guard, full JSON execution, current bootstrap and LavinMQ parity remain open.
 The private channel-consumer composition json1783 still exits 132 in basic JSON.
 Rollback is the bounded selected-call receiver prefix handoff.
+
+
+### Keep selected deferred callees through final target rematching (2026-10-16)
+A successful source lookup can produce a concrete inherited wrapper symbol
+whose body and Def alias do not exist yet. lower_function_if_needed queues that
+symbol, but the final untyped rematch used only body/Def absence and replaced
+it with the ancestor. An explicit return annotation hides the accidental
+repair from return-type forcing: original Crystal prints A, exact parent
+json1806 exits 138. Preserve a source-selected target only while both its
+Pending state and its exact worklist entry exist; ordinary unresolved probes
+still use the fallback. No method-name or return-type exception is added.
+json1821 matches exact original-first stdout/stderr for four native fixtures,
+including annotated zero-argument calls from main and a typed nested caller,
+ordinary/generic receivers, lexical scope and siblings; json1822 exact parent
+passes the three old controls then fails the new annotated case with 138.
+Scoped adversary ROBUST for the selected pending target invariant. Manifest aa5828b6d8acae75382b2aecc3475aa24e7389b111511a85d13d14fb10e384c2; host fd5a2c6bb5716f3ca0216261dd7f3dc374c7a72c7892da82d6a16995c1e23ee5.
+Refresh after source selection, queue/state transitions or final rematching
+changes. No-parentheses member selection is separately RED (json1819), and
+full JSON's concrete call is suppressed before queue admission (json1812).
+Neither is repaired by this scheduling change. Current bootstrap and LavinMQ
+parity remain open. Rollback is the bounded selected_target_pending guard.

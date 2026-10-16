@@ -19,7 +19,7 @@ fi
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/reference-wrapper-owner.XXXXXX")"
 cleanup() {
   local status=$?
-  for name in direct_yielded lexical siblings; do
+  for name in direct_yielded lexical siblings annotated_zero_arg; do
     rm -rf "$WORK_DIR/original-$name.cache" "$WORK_DIR/candidate-$name.cache"
   done
   if [[ "$status" -ne 0 || "${KEEP_ARTIFACTS:-0}" == 1 ]]; then
@@ -200,6 +200,73 @@ ABABAAA
 EXPECTED
 : >"$WORK_DIR/siblings.stderr.expected"
 
+cat >"$WORK_DIR/annotated_zero_arg.cr" <<'CRYSTAL'
+lib C
+  fun putchar(value : Int32) : Int32
+end
+
+class Reference
+end
+
+abstract class OutputSink
+end
+
+class OutputBuffer < OutputSink
+end
+
+class FormatBuilder
+  def self.with(sink : OutputSink, &)
+    yield new
+  end
+end
+
+class Object
+  def emit_format_direct : Int32
+    emit_format_direct(OutputBuffer.new)
+  end
+
+  def emit_format_direct(sink : OutputSink) : Int32
+    emit_format_direct(FormatBuilder.new)
+  end
+
+  def emit_format_yielded(sink : OutputSink)
+    FormatBuilder.with(sink) do |builder|
+      emit_format_yielded(builder)
+    end
+  end
+end
+
+class Hash(K, V) < Reference
+  def emit_format_direct(builder : FormatBuilder) : Int32
+    C.putchar(65)
+  end
+
+  def emit_format_yielded(builder : FormatBuilder)
+    C.putchar(65)
+  end
+end
+
+class FormattedMessage < Reference
+  def emit_format_direct(builder : FormatBuilder) : Int32
+    C.putchar(65)
+  end
+end
+
+def render(message) : Int32
+  message.emit_format_direct()
+end
+
+message = Hash(String, Int32).new
+message.emit_format_direct()
+render(message)
+FormattedMessage.new.emit_format_direct()
+C.putchar(10)
+CRYSTAL
+cat >"$WORK_DIR/annotated_zero_arg.expected" <<'EXPECTED'
+AAA
+EXPECTED
+: >"$WORK_DIR/annotated_zero_arg.stderr.expected"
+
 compile_run() {
   local name="$1" mode="$2" compiler="$3" status=0
   local source="$WORK_DIR/$name.cr" output="$WORK_DIR/$mode-$name.bin"
@@ -245,11 +312,11 @@ compile_run() {
 }
 
 # Certify every fixture against the original before testing the candidate.
-for name in direct_yielded lexical siblings; do
+for name in direct_yielded lexical siblings annotated_zero_arg; do
   compile_run "$name" original "$ORIGINAL_CRYSTAL_BIN"
 done
-for name in direct_yielded lexical siblings; do
+for name in direct_yielded lexical siblings annotated_zero_arg; do
   compile_run "$name" candidate "$COMPILER"
   echo "PASS[$name]: original and candidate stdout and stderr agree"
 done
-echo "PASS[reference-wrapper-owner]: three original-first fixtures agree"
+echo "PASS[reference-wrapper-owner]: four original-first fixtures agree"

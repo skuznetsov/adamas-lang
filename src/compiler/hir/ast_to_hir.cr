@@ -107405,8 +107405,15 @@ module Adamas::HIR
           lower_function_if_needed(mangled_method_name)
         end
       end
+      # A selected callee queued for deferred lowering still owns this call.
+      # An absent body is not an overload miss; rematching here would replace
+      # the admitted concrete target with an ancestor before its body is built.
+      selected_target_pending = resolved_by_lookup &&
+                                function_state(mangled_method_name).pending? &&
+                                @pending_function_queue.includes?(mangled_method_name)
       if !mangled_method_name.empty? &&
          !mangled_method_name.includes?('$') &&
+         !selected_target_pending &&
          !@module.has_function?(mangled_method_name) &&
          !@function_defs.has_key?(mangled_method_name)
         # M3g: convert the final rematch site (M3e/M3f pattern).
