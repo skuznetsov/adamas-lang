@@ -414,3 +414,17 @@ diagnostic meanings.
   contract error (nt578/nt581), and full493+hunk LavinMQ still rejects :vhost
   after BaseUser/User result transport. Do not promote local inference evidence
   to LavinMQ compilation or runtime parity. Refresh on inference changes.
+
+
+### Dynamic Char#ord union receiver (2026-10-15)
+- RED char595: parent nt576 fails both Char variant order HIR cases; the
+  argument-taking overload guard passes. RED char599: the dynamic native
+  consumer builds then aborts in Char#ord, while original Crystal prints three
+  true values.
+- GREEN char594: atomic char590 passes all 33 focused HIR cases. Native char598
+  and portable regression char600 match Crystal for ASCII, Unicode, and the
+  custom receiver. Static consumers char593/char596 pass on both versions and
+  must not be treated as RED evidence.
+- Scope: zero-argument, block-free Char#ord union dispatch. Other primitive
+  conversions and heterogeneous result types remain open; no LavinMQ parity
+  claim follows. Refresh on dispatch, primitive conversion, or ABI changes.

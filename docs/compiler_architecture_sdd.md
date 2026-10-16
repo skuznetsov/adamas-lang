@@ -3684,3 +3684,14 @@ The minimal native generic-block guard matches Crystal; it also passes on the
 parent. Whole Hash-map/full-prelude and LavinMQ result transport remain open.
 Refresh on expression, alias, or generic-block inference changes; rollback the
 bounded IndexNode hunk.
+
+
+### Char#ord through a union receiver (2026-10-15)
+Admitted: the Char arm of a tagged union uses the ordinary primitive Int32 cast
+for zero-argument, block-free ord calls in either CFG position. Calls with
+arguments or blocks retain ordinary dispatch. The custom receiver arm remains
+an ordinary method call. DoD: 33 HIR cases pass on atomic char590; both primitive
+cases fail on the parent. Dynamic ASCII/Unicode/custom-arm results match Crystal
+while the parent aborts in a bodyless Char#ord stub. Other primitive methods and
+heterogeneous return unions are outside this certificate. Refresh on dispatch,
+conversion, or ABI changes; rollback the bounded two-arm hunk.

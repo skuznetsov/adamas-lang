@@ -108188,7 +108188,13 @@ module Adamas::HIR
           variant_return_type = explicit_branch_return_types.try(&.[idx]) ||
                                 tuple_static_array_return_type(vmr, mb) ||
                                 static_array_slice_return_type(vmr, mb) || dispatch_return_type
-          c = if pi
+          primitive_char_ord = vmr == TypeRef::CHAR && mb == "ord" &&
+                               args.empty? && !has_block_call && block_id.nil?
+          variant_return_type = TypeRef::INT32 if primitive_char_ord
+          c = if primitive_char_ord
+                # Match the ordinary Char receiver's primitive conversion.
+                Cast.new(ctx.next_id, TypeRef::INT32, uw.id, TypeRef::INT32, safe: false)
+              elsif pi
                 Call.without_receiver(ctx.next_id, pi[1], pi[0], [uw.id] + args)
               else
                 Call.with_receiver(ctx.next_id, variant_return_type, uw.id, vmn, args)
@@ -108215,7 +108221,13 @@ module Adamas::HIR
           variant_return_type = explicit_branch_return_types.try(&.[idx]) ||
                                 tuple_static_array_return_type(vmr, mb) ||
                                 static_array_slice_return_type(vmr, mb) || dispatch_return_type
-          c = if pi2
+          primitive_char_ord = vmr == TypeRef::CHAR && mb == "ord" &&
+                               args.empty? && !has_block_call && block_id.nil?
+          variant_return_type = TypeRef::INT32 if primitive_char_ord
+          c = if primitive_char_ord
+                # Match the ordinary Char receiver's primitive conversion.
+                Cast.new(ctx.next_id, TypeRef::INT32, uw.id, TypeRef::INT32, safe: false)
+              elsif pi2
                 Call.without_receiver(ctx.next_id, pi2[1], pi2[0], [uw.id] + args)
               else
                 Call.with_receiver(ctx.next_id, variant_return_type, uw.id, vmn, args)

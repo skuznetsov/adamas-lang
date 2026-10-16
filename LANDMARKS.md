@@ -18042,3 +18042,21 @@ comparison-block contract failure (nt578/nt581). LavinMQ still loses the mapped
 result across BaseUser/User permissions_details and rejects :vhost. Neither
 external frontier is closed by these local checks. Refresh on expression/type
 inference, alias resolution, or generic block result changes; rollback this commit.
+
+
+### Preserve Char#ord primitives in tagged union dispatch (2026-10-15)
+The two CFG arms of try_emit_union_receiver_dispatch emitted a normal Char#ord
+call even though the ordinary Char path uses the primitive Int32 conversion.
+A dynamic Char|OrdBox receiver therefore reached a bodyless Char#ord stub.
+Use that same cast in both union branches, only for zero arguments and no block.
+Atomic char590 (HIR SHA 63fc01827a254db6eea60a772881c78c26c6ac980668dec5ff1372af66012f6b)
+passes 33 focused HIR cases (char594). Both Char variant orders and the ordinary
+argument-taking overload are covered; the parent fails both primitive cases
+(char595). The dynamic native consumer matches Crystal for ASCII, Unicode and
+the custom OrdBox arm (char598); the parent builds but aborts in Char#ord
+(char599). The portable regression also passes (char600). A statically narrowed
+consumer passes on the parent too and is only a guard (char593/char596).
+Other primitive conversions and heterogeneous custom ord return types remain
+separate audit questions. This proves the scoped primitive repair, not LavinMQ
+parity. Refresh on union dispatch, primitive conversion, or ABI changes;
+rollback this commit.

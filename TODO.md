@@ -19284,3 +19284,13 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Resolve the exact atomic full-prelude comparison-block failure exposed
   after this inference repair: expected Int32 or Nil, got UInt64 (nt578/nt581).
   Do not bypass it in stdlib or application sources.
+
+
+### Char primitive union dispatch boundary (2026-10-15)
+- [x] Preserve primitive Char#ord in both tagged union CFG branches. Atomic
+  char590 passes 33 HIR cases and the dynamic native regression against Crystal;
+  the parent aborts in its Char#ord stub.
+- [ ] Audit other primitive conversions for the same union-dispatch bypass.
+- [ ] Probe Char#ord mixed with a custom ord returning a wider numeric type;
+  verify return union wrapping rather than assuming the Int32-only evidence
+  proves heterogeneous result transport.
