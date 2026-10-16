@@ -350,3 +350,19 @@ diagnostic meanings.
 - Scope: selected block-annotation alias consumers. Refresh on declaration
   namespace, alias parsing, or callback ABI changes. The real upstream build now
   exposes a separate Hash#map NamedTuple element-type error; parity stays open.
+
+
+### Proc outer unions and complete specialization suffixes (2026-10-15)
+- RED: source492 fails five of eight descriptor cases and returns true for both
+  tuple arguments in the original-first native probe. Parser-only source496
+  repairs descriptors but returns false for both Proc arguments. Its two added
+  specialization cases also fail (proc517).
+- GREEN: source510 passes 21 focused HIR examples and the native regression
+  script (proc518/proc514), matching Crystal's true/false/true/false output
+  (proc513). Typed Proc input/result signatures produce distinct call keys.
+- Guard: signature scans and body lowering, aliases/chains, reversed arms,
+  nested Arrays, and genuine inner input/result unions. Bare unknown Proc stays
+  on the unchanged descriptor fallback. Inner unions are structural guards only:
+  the extended covariance/demand runtime path still has a missing stub.
+- Scope: type parsing and concrete Proc specialization identity. Refresh on these
+  consumers or union ABI changes. Whole broker/test parity remains open.

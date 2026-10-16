@@ -19234,3 +19234,17 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   unions, and inline-yield result contracts separately. These combinations are
   adjacent untested surfaces; the Proc outer-union annotation defect is being
   investigated independently. Whole LavinMQ runtime/test parity remains open.
+
+
+### Proc union boundaries and specialization shapes (2026-10-15)
+- [x] Distinguish `Proc(Nil) | Tuple(Int32, Int32)` from a Proc whose result is
+  a union. Require the complete generic base to be Proc, including through aliases.
+  Keep concrete Proc input/result parameters in specialization suffixes; otherwise
+  a Proc value can enter a union-typed callee without the matching representation.
+  Atomic source510 passes 21 focused HIR examples and original-first native
+  dispatch (true/false/true/false); source492 returns true for both tuple cases.
+- [ ] Close the adjacent runtime demand/covariance gap for passing `Proc(Nil)`
+  to `Proc(Nil | Int32) | Tuple(...)`: a composed compiler still emits a missing
+  `inner_union_form$Proc(Nil)` stub. Descriptor-level inner-union guards pass but
+  do not prove this runtime path. Also retain generic alias substitutions and
+  inline-yield result contracts as separate obligations. LavinMQ parity is open.

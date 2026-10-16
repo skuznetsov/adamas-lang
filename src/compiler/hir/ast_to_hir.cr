@@ -45851,7 +45851,12 @@ module Adamas::HIR
           type_ref = param_types.unsafe_fetch(i)
           if type_ref != TypeRef::VOID
             suffix << "_" unless first
-            suffix << type_name_for_mangling(type_ref)
+            descriptor = @module.get_type_descriptor(type_ref)
+            if descriptor && descriptor.kind == TypeKind::Proc && !descriptor.type_params.empty?
+              suffix << generic_param_type_name_from_ref(type_ref)
+            else
+              suffix << type_name_for_mangling(type_ref)
+            end
             first = false
           end
           i += 1
@@ -67884,8 +67889,11 @@ module Adamas::HIR
       return nil if stripped.empty?
 
       if stripped.starts_with?("Proc(") && stripped.ends_with?(')')
-        inner = stripped[5, stripped.size - 6]
-        return intern_proc_type(split_generic_type_args(inner))
+        if generic = split_generic_base_and_args(stripped)
+          if generic.base == "Proc"
+            return intern_proc_type(split_generic_type_args(generic.args))
+          end
+        end
       end
 
       # Handle top-level arrow syntax: A, B -> C

@@ -3626,3 +3626,18 @@ aliases, alias chains, empty and omitted inputs, and concrete annotations.
 General generic/union alias semantics, raw-yield lifetimes, and whole LavinMQ
 parity remain separate obligations. Rollback is the atomic HIR change; refresh
 after selected declaration context, alias/signature parsing, or block ABI changes.
+
+
+### Proc syntax and call-key boundaries (2026-10-15)
+Admitted: parse a concrete Proc type only when the balanced full expression has
+base Proc. Outer unions belong to union parsing even if their text starts with
+`Proc(` and ends in `)`. Retain inputs/results when a typed Proc descriptor crosses
+into a specialization suffix; the display/owner name `Proc` is insufficient to
+recover its call representation. Unknown/bare Proc descriptors retain their path.
+DoD: atomic source510 passes 21 HIR examples and original-first native direct and
+aliased dispatch with true/false/true/false. The parser-only source496 fails the
+Proc-positive native cases, demonstrating why the call-key companion is required.
+Signature scans, alias chains, reversed arms, nested containers, and genuine
+inner Proc unions are structural guards. Proc result covariance and its demand
+materialization remain separate runtime obligations. Refresh after Proc parsing,
+specialization, or union ABI changes; rollback is the bounded atomic HIR change.

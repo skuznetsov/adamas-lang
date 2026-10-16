@@ -17952,3 +17952,28 @@ block491_full_route_alias_green, upstream480.
 Refresh on selected-Def namespace, alias normalization, block signature parsing,
 or callback ABI changes. Generic alias substitution and outer Proc unions need
 separate evidence; rollback is this atomic HIR commit.
+
+
+### Outer Proc unions retain type and call identity (2026-10-15)
+A prefix/suffix-only Proc parser consumed the text between the first `Proc(` and
+last `)` even when the last parenthesis belonged to a separate Tuple union arm.
+Use the balanced generic splitter and require the entire generic base to be Proc.
+An original-first native check exposed a second loss at the specialization key:
+typed Proc descriptors have display name `Proc`, so a suffix built only from that
+name loses inputs/results and can decode to a union formal with the wrong ABI.
+Serialize the complete Proc signature for concrete Proc specialization suffixes;
+leave unknown/bare Proc descriptors on their previous path.
+The original eight descriptor probes fail five cases on source492; source496
+repairs those but the native probe still returns false for both Proc values.
+Atomic source510 passes 21 HIR examples and the exact Crystal output
+true/false/true/false for direct and aliased Proc/Tuple dispatch. It also separates
+untyped callees receiving Proc(Nil), Proc(Int32), and Proc(Int32, Int32).
+Guards cover signature scans, reversed outer arms, alias chains, nested Arrays,
+and genuine inner Proc input/result unions. The latter are descriptor guards;
+a separate extended runtime probe still aborts at an inner-union Proc demand
+stub in the composed compiler. Do not promote that path or LavinMQ parity.
+Atomic HIR SHA 6c92e403d7b79304a2972e6609fe270249192d96475205a6630b93c4c1abcff6.
+Receipts: proc500, proc501, proc503, proc504, proc513, proc514, proc517, proc518.
+Early proc497/498 and proc511/512 used faulty test instrumentation; exclude their
+failing totals from claims. Refresh on Proc parsing, type naming, specialization,
+or union ABI changes. Rollback is this bounded HIR commit.
