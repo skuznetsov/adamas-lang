@@ -4305,3 +4305,17 @@ argument-type failure. Splat/named binding, duplicate SSL_get_error LLVM
 declarations, current bootstrap and produced-stage parity remain open.
 Manifest c96214e5769ab5cd7a2977d287bd125da18b61f29b53b2d0bfbe432f14a592d9; host 9804a22a1de5c0626bd05d177ca8c324266dc517b5708ef84eb12a7ef825a87e. Expiry: default provenance, call binding,
 specialization or virtual-demand changes.
+
+
+### Preserve captured locals through inline try/tap (2026-10-16)
+Specialized try/tap lexical blocks carry writes only to locals already in
+the enclosing scope, excluding block parameter bindings. Newly declared locals
+remain scoped. Nullable try creates SSA merges against the unchanged nil path
+and excludes terminating body paths. Apply the existing inline-caller merge
+alongside the ordinary local merge before returning the nullable result.
+Evidence: capture1680 six original-first stdout/stderr fixtures GREEN;
+capture1682 exact parent RED (direct_try writes lost); capture1681 130 HIR
+examples GREEN. Scoped ROBUST, not a certificate for all block constructs.
+Named/splat binding, current bootstrap and produced-stage LavinMQ parity stay
+open. Source manifest adf2bf5f78f5acca641b592c705f23a564cf073b40d0331751a0e8c1a38ea43e; host 0524de0ea8d18853f57f891e9e25b10c6ff8b5a6297d7d8446897691559e9ef0. Expiry: lexical-scope,
+branch-merge, inline-caller capture, or external stdlib changes.

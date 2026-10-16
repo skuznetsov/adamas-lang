@@ -19838,3 +19838,14 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Repair lavin1639 IO::Memory#write_byte receiving Char | JSON::Any |
   Tuple(String, JSON::Any), then run produced-stage LavinMQ functional/upstream
   parity. The historical Oct13 fixed point does not certify current source.
+
+
+### Preserve captured locals through inline try/tap (2026-10-16)
+- [x] Preserve captured outer-local writes in specialized inline try/tap and
+  merge live nullable continuations. capture1680 matches six original-first
+  native fixtures; exact parent capture1682 loses direct writes; capture1681
+  passes 130 HIR examples. No global pop_scope behavior was changed.
+- [ ] Repair named/splat slot packing together with typed trailing-slot
+  admission. args1676 parent silently loses a typed argument; args1667 packing
+  trial emits a stub. args1674 also exposes empty typed splat acceptance that
+  Crystal rejects. Keep raw/packed provenance explicit.

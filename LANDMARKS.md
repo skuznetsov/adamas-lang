@@ -18902,3 +18902,23 @@ open. Fresh S2 on print1596 fails Array(String) -> Enumerable(String)?;
 current bootstrap and produced-stage LavinMQ parity remain unverified.
 Manifest c96214e5769ab5cd7a2977d287bd125da18b61f29b53b2d0bfbe432f14a592d9; host 9804a22a1de5c0626bd05d177ca8c324266dc517b5708ef84eb12a7ef825a87e. Refresh after default provenance, argument
 binding, specialization or virtual-demand changes.
+
+
+### Preserve captured locals through inline try/tap (2026-10-16)
+Specialized try/tap lowering restored the pre-block local snapshot and lost
+writes to captured outer locals. Preserve only names that already existed in
+the enclosing scope, excluding block parameters. For nullable try, merge the
+unchanged nil path and only body paths that reach the continuation; also merge
+inline-caller local snapshots through the existing SSA merge helpers.
+DoD: inline_try_tap_capture_writeback_repro.sh. capture1680 matches original
+Crystal stdout and stderr in six fixtures: direct try/tap, nil tap/try,
+nullable result and capture, proc syntax, early return, nested blocks and loops.
+Exact parent print1613 fails capture1682 by dropping both direct_try writes.
+capture1681 passes 130 focused HIR examples. Scoped adversary ROBUST for these
+capture and continuation shapes. String.build was an already-passing parent
+control (capture1662), not changed by this fix. Named/splat slot packing and
+typed-splat admission remain separate open work: args1676 parent loses a typed
+argument, while args1667 candidate emits a stub. Current bootstrap and
+produced-stage LavinMQ functional/upstream parity remain open.
+Source manifest adf2bf5f78f5acca641b592c705f23a564cf073b40d0331751a0e8c1a38ea43e; host 0524de0ea8d18853f57f891e9e25b10c6ff8b5a6297d7d8446897691559e9ef0. Refresh after lexical scope, branch
+merge, inline-caller capture, or external stdlib changes.

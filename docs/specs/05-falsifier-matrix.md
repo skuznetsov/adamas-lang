@@ -1022,3 +1022,16 @@ diagnostic meanings.
   S3/S4 convergence and produced-stage LavinMQ functional/upstream parity.
   Manifest c96214e5769ab5cd7a2977d287bd125da18b61f29b53b2d0bfbe432f14a592d9. Expiry: default provenance, argument binding,
   specialization or virtual-demand changes.
+
+
+### Preserve captured locals through inline try/tap (2026-10-16)
+- GREEN capture1680/capture1679: six original-first native stdout/stderr
+  fixtures cover direct try and tap, nil tap and try, nullable captures and
+  results, proc syntax, early return, nested try/tap, and an enclosing loop.
+- RED capture1682/print1613: direct_try prints trace/before instead of
+  trace/one/two and after/1. GREEN capture1681: 130 HIR examples.
+- Scoped adversary ROBUST for tested captured-local continuation shapes.
+  String.build parent control capture1662 was already GREEN.
+- OPEN args1676/args1667: parent typed splat loses an argument; packing trial
+  emits a stub. Current bootstrap and produced-stage LavinMQ parity stay open.
+  Manifest adf2bf5f78f5acca641b592c705f23a564cf073b40d0331751a0e8c1a38ea43e. Expiry: scope, branch-merge, capture, or stdlib changes.

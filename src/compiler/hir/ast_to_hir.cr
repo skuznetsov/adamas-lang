@@ -321,6 +321,22 @@ module Adamas::HIR
       scope_id
     end
 
+    # Inline lexical blocks may update existing outer locals, but their
+    # parameters and newly declared locals belong only to the child scope.
+    # Conditional block execution still requires an SSA merge at its caller.
+    def pop_scope_preserving_captured_locals(block_parameters : Array(String)) : ScopeId
+      body_locals = @locals
+      captured_names = @locals_snapshots.last.keys
+      scope_id = pop_scope
+      captured_names.each do |name|
+        next if block_parameters.includes?(name)
+        if value_id = body_locals[name]?
+          register_local(name, value_id)
+        end
+      end
+      scope_id
+    end
+
     # Create new block in current scope
     def create_block : BlockId
       @function.create_block(current_scope)
@@ -117963,6 +117979,7 @@ module Adamas::HIR
       receiver_id : ValueId,
       block_node : Adamas::Compiler::Frontend::BlockNode,
     ) : ValueId
+      block_parameters = [] of String
       ctx.push_scope(ScopeKind::Block)
 
       # Bind block params to receiver_id
@@ -117973,6 +117990,7 @@ module Adamas::HIR
                        else
                          "_block_param_#{i}"
                        end
+          block_parameters << param_name
           register_inline_block_parameter(ctx, param_name, receiver_id)
           ctx.register_type(receiver_id, ctx.type_of(receiver_id))
         end
@@ -117985,7 +118003,7 @@ module Adamas::HIR
         end
       end
 
-      ctx.pop_scope
+      ctx.pop_scope_preserving_captured_locals(block_parameters)
       # tap returns self
       receiver_id
     end
@@ -117999,6 +118017,7 @@ module Adamas::HIR
       receiver_id : ValueId,
       proc_node : Adamas::Compiler::Frontend::ProcLiteralNode,
     ) : ValueId
+      block_parameters = [] of String
       ctx.push_scope(ScopeKind::Block)
 
       # The proc body is like: x.flush_on_newline=(true)
@@ -118015,6 +118034,7 @@ module Adamas::HIR
                          else
                            "_block_param_#{i}"
                          end
+            block_parameters << param_name
             register_inline_block_parameter(ctx, param_name, receiver_id)
             ctx.register_type(receiver_id, ctx.type_of(receiver_id))
           end
@@ -118027,7 +118047,7 @@ module Adamas::HIR
         end
       end
 
-      ctx.pop_scope
+      ctx.pop_scope_preserving_captured_locals(block_parameters)
       # tap returns self
       receiver_id
     end
@@ -118057,6 +118077,7 @@ module Adamas::HIR
       block_node : Adamas::Compiler::Frontend::BlockNode,
       param_value : ValueId,
     ) : ValueId
+      block_parameters = [] of String
       ctx.push_scope(ScopeKind::Block)
       if debug_env_filter_match?("DEBUG_INLINE_TRY_NARROW", ctx.function.name)
         names = [] of String
@@ -118075,6 +118096,7 @@ module Adamas::HIR
                        else
                          "_block_param_#{i}"
                        end
+          block_parameters << param_name
           register_inline_block_parameter(ctx, param_name, param_value)
           ctx.register_type(param_value, ctx.type_of(param_value))
         end
@@ -118088,7 +118110,7 @@ module Adamas::HIR
                    nil_lit.id
                  end
 
-      ctx.pop_scope
+      ctx.pop_scope_preserving_captured_locals(block_parameters)
       value_id
     end
 
@@ -118117,6 +118139,7 @@ module Adamas::HIR
       proc_node : Adamas::Compiler::Frontend::ProcLiteralNode,
       param_value : ValueId,
     ) : ValueId
+      block_parameters = [] of String
       ctx.push_scope(ScopeKind::Block)
 
       if params = proc_node.params
@@ -118126,6 +118149,7 @@ module Adamas::HIR
                        else
                          "_block_param_#{i}"
                        end
+          block_parameters << param_name
           register_inline_block_parameter(ctx, param_name, param_value)
           ctx.register_type(param_value, ctx.type_of(param_value))
         end
@@ -118139,7 +118163,7 @@ module Adamas::HIR
                    nil_lit.id
                  end
 
-      ctx.pop_scope
+      ctx.pop_scope_preserving_captured_locals(block_parameters)
       value_id
     end
 
@@ -118150,6 +118174,8 @@ module Adamas::HIR
       block_node : Adamas::Compiler::Frontend::BlockNode,
       as_question_result : Bool = false,
     ) : ValueId
+      pre_block_locals = ctx.save_locals
+      pre_inline_caller_locals = @inline_caller_locals_stack.map(&.dup)
       nil_check = if as_question_result
                     lower_as_question_nil_check(ctx, receiver_id)
                   else
@@ -118193,6 +118219,8 @@ module Adamas::HIR
         ctx.register_type(receiver_id, original_type.not_nil!)
       end
 
+      value_locals = ctx.save_locals.locals
+      value_inline_caller_locals = @inline_caller_locals_stack.map(&.dup)
       value_exit_block = ctx.current_block
       block_data = ctx.get_block(value_exit_block)
       value_has_noreturn = block_has_raise_or_return_instruction?(block_data)
@@ -118203,8 +118231,18 @@ module Adamas::HIR
         ctx.terminate(Jump.new(merge_block))
       end
 
-      # Merge
+      # Merge captures only from branches that reach the continuation. The
+      # nil path retains the pre-block values; body-only values cannot dominate it.
+      ctx.restore_locals(pre_block_locals)
       ctx.current_block = merge_block
+      capture_branches = [{nil_exit_block, pre_block_locals.locals}]
+      inline_capture_branches = [{nil_exit_block, pre_inline_caller_locals}]
+      if value_flows_to_merge
+        capture_branches << {value_exit_block, value_locals}
+        inline_capture_branches << {value_exit_block, value_inline_caller_locals}
+      end
+      merge_if_branch_locals(ctx, pre_block_locals.locals, capture_branches)
+      merge_inline_caller_locals_after_if(ctx, pre_inline_caller_locals, inline_capture_branches)
 
       unless value_flows_to_merge
         return nil_lit.id
@@ -118231,6 +118269,8 @@ module Adamas::HIR
       proc_node : Adamas::Compiler::Frontend::ProcLiteralNode,
       as_question_result : Bool = false,
     ) : ValueId
+      pre_block_locals = ctx.save_locals
+      pre_inline_caller_locals = @inline_caller_locals_stack.map(&.dup)
       nil_check = if as_question_result
                     lower_as_question_nil_check(ctx, receiver_id)
                   else
@@ -118269,6 +118309,8 @@ module Adamas::HIR
         ctx.register_type(receiver_id, original_type.not_nil!)
       end
 
+      value_locals = ctx.save_locals.locals
+      value_inline_caller_locals = @inline_caller_locals_stack.map(&.dup)
       value_exit_block = ctx.current_block
       block_data = ctx.get_block(value_exit_block)
       value_has_noreturn = block_has_raise_or_return_instruction?(block_data)
@@ -118279,8 +118321,18 @@ module Adamas::HIR
         ctx.terminate(Jump.new(merge_block))
       end
 
-      # Merge
+      # Merge captures only from branches that reach the continuation. The
+      # nil path retains the pre-block values; body-only values cannot dominate it.
+      ctx.restore_locals(pre_block_locals)
       ctx.current_block = merge_block
+      capture_branches = [{nil_exit_block, pre_block_locals.locals}]
+      inline_capture_branches = [{nil_exit_block, pre_inline_caller_locals}]
+      if value_flows_to_merge
+        capture_branches << {value_exit_block, value_locals}
+        inline_capture_branches << {value_exit_block, value_inline_caller_locals}
+      end
+      merge_if_branch_locals(ctx, pre_block_locals.locals, capture_branches)
+      merge_inline_caller_locals_after_if(ctx, pre_inline_caller_locals, inline_capture_branches)
 
       unless value_flows_to_merge
         return nil_lit.id
