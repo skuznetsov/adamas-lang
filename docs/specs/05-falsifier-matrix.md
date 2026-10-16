@@ -1084,3 +1084,17 @@ diagnostic meanings.
 - OPEN union1744 basic JSON: Empty JSON after initial state-tag correction.
   Bootstrap and produced-stage LavinMQ parity remain open. Refresh after array
   lowering, union coercion, MIR allocation or payload ownership changes.
+
+
+### Bind postfix member calls to the yield result (2026-10-16)
+- GREEN yield1761 on sealed yield1759: four original-first native families
+  compare stdout/stderr for nested yields, whitespace/newline/do forms,
+  explicit/grouped arguments, retained tap results and actual argument calls.
+- RED yield1764 exact union1745 parent: ABC becomes ACB.
+- GREEN yield1760 seven AST examples; RED yield1758 exact parent has three
+  receiver-shape errors. Original AST oracle yield1755 confirms ownership.
+- GREEN yield1768: 2238 selected tracked parser examples, zero failures/errors,
+  one existing pending. Modified local suites and untracked WIP were excluded.
+  Scoped ROBUST. Manifest 3e01ac0eb917a7c9ce2147c6a61ca147ba338ea2499dc76968718477261f91b1; host eab90be1b7514d6368b60e624a05dc87978888bc2d58a219e833f037f05757a1.
+- OPEN JSON, buffering, current bootstrap and produced-stage LavinMQ parity.
+  Refresh after yield arguments, postfix members, trivia or block binding.

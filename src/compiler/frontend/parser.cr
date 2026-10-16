@@ -5187,8 +5187,10 @@ module Adamas
             return @arena.add_typed(YieldNode.new(yield_token.span, nil))
           end
           if token.kind.in?(Token::Kind::Newline, Token::Kind::EOF, Token::Kind::End, Token::Kind::Else, Token::Kind::Elsif, Token::Kind::If, Token::Kind::Unless, Token::Kind::While, Token::Kind::Until, Token::Kind::Do, Token::Kind::RBrace, Token::Kind::RParen, Token::Kind::Semicolon) ||
-             (token.kind == Token::Kind::Colon && @no_type_declaration > 0)
-            # Yield without args (colon check handles ternary: flag ? yield : else_val)
+             (token.kind == Token::Kind::Colon && @no_type_declaration > 0) ||
+             (token.kind == Token::Kind::Operator && slice_eq?(token.slice, "."))
+            # A following dot calls a member on the yield result, not on implicit self.
+            # The colon check handles ternary: flag ? yield : else_val.
             @arena.add_typed(YieldNode.new(yield_token.span, nil))
           else
             args_b = ExprIdBuffer.new(2)

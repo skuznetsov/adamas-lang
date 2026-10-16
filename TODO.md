@@ -19890,3 +19890,13 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Trace the remaining basic JSON serialization failure: union1744 on the
   union-carrier trial raises Empty JSON after the earlier invalid StartState
   failure is removed. Keep JSON completion separate from union-tag correctness.
+
+
+### Bind postfix member calls to the yield result (2026-10-16)
+- [x] Bind postfix member calls on argumentless yield to the yielded
+  result. yield1761 four original-first native families GREEN; exact parent
+  yield1764 ACB vs ABC RED. yield1760 seven AST examples GREEN; exact parent
+  yield1758 three errors. yield1768 2238 selected tracked parser examples,
+  zero failures/errors and one existing pending case.
+- [ ] Continue basic JSON and LavinMQ serialization checks after the parser
+  ordering correction; the isolated yield contract does not establish parity.

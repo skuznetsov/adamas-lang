@@ -18999,3 +18999,23 @@ Scoped adversary ROBUST. Manifest 18a1f9248a33b971b6b96afc0ce575599d925e5b4b55b5
 consumer now reaches Empty JSON (union1744), so JSON, current bootstrap and
 produced-stage LavinMQ parity remain open. Refresh after array lowering,
 union coercion, MIR allocation representation or union payload ownership changes.
+
+
+### Bind postfix member calls to the yield result (2026-10-16)
+The no-argument delimiter branch in parse_yield omitted a member dot.
+The expression parser therefore accepted an implicit-self tap call as a yield
+argument, executing its block before the outer yield. Admit dot as a delimiter
+so the existing postfix parser consumes the yielded result. Original Crystal
+AST oracle yield1755 confirms receiver ownership for adjacent, spaced, newline,
+parenthesized and grouped forms; actual argument calls keep their block.
+DoD yield_member_receiver_order_repro.sh: yield1761 matches original Crystal
+stdout/stderr for four native fixture families, including nested yields and
+retained result values; yield1764 exact parent prints ACB instead of ABC.
+yield1760 passes seven AST examples; exact parent yield1758 has three errors.
+yield1768 passes 2238 selected tracked parser examples with one existing
+pending case; two locally modified parser suites and other untracked tests
+were outside that broader check. Scoped adversary ROBUST for this grammar and
+native ordering boundary. Manifest 3e01ac0eb917a7c9ce2147c6a61ca147ba338ea2499dc76968718477261f91b1; host eab90be1b7514d6368b60e624a05dc87978888bc2d58a219e833f037f05757a1.
+Refresh after yield argument, postfix member, trivia or block-binding changes.
+JSON serialization, IO buffering, current bootstrap and produced-stage LavinMQ
+parity remain open. Rollback is the bounded parse_yield delimiter change.

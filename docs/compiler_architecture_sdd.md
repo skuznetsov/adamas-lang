@@ -29,6 +29,15 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+A postfix member separator after an argumentless yield belongs to a call on
+that yield's result. It cannot become an implicit-self call passed as a yield
+argument. Whitespace and newline continuation retain that ownership, while
+explicit yield arguments and blocks on actual argument calls preserve their
+existing binding. AST receiver shape and native side-effect order are the
+falsifiers; grouped/parenthesized yields and ordinary argument calls are guards.
+Rollback is the bounded no-argument delimiter branch in parse_yield. This
+parser contract does not certify JSON dispatch, buffering, or LavinMQ parity.
+
 Expected Proc inputs define callback ABI slots even when source block
 bindings omit some or all arguments. Generated allocators consume the selected
 initializer's input and declared Nil-result contracts before materializing the
