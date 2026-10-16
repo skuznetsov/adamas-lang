@@ -19441,3 +19441,16 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   Int32 -> versus Proc(Int32, Nil) failure persists in both random788 and 789.
 - [ ] Audit declaration forms handled by class macro registration but omitted by
   module macro registration, using matched original-first probes before changes.
+
+
+### Module absolute-class closure and remaining macro owners (2026-10-16)
+- [x] Keep module-macro class ::Root at the root while preserving relative nested
+  classes. random807 passes its HIR control; random808 matches native ABCNAAA.
+  This closes the module-output portion of the earlier root Thread task.
+- [ ] Class-body macro paths still register absolute Thread under the class;
+  changing the member walker and nested-type prepass alone was insufficient
+  (random798/801). Trace the actual registration route before another repair.
+- [ ] Supply the declaring module owner during macro reflection; cached getter
+  execution alone does not validate generated Thread property names.
+- [ ] Check absolute module/enum output forms and multithread TLS behavior with
+  matched Crystal probes; this class-naming fix does not establish those cases.

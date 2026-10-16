@@ -603,3 +603,17 @@ diagnostic meanings.
   falsifiers. Older Proc alias check fails equally in random788 and random789.
 - All binaries use scripts/run_safe.sh. Refresh after macro-output declaration,
   arena or classvar type lowering changes; this is not LavinMQ runtime parity.
+
+
+### Module macro absolute class registration (2026-10-16)
+- RED random805 on random787: bogus AbsoluteThreadMacroOwner::Thread exists.
+- RED random806: Crystal ABCNAAA/0; candidate A/NUL/C/N then abort134 on the
+  wrongly nested ModuleMacroCachedOwner::Thread.current stub.
+- GREEN random807: one HIR example, zero failures/errors/pending; root method and
+  real relative nested shadowing resolve to the intended owners.
+- GREEN random808: both compilers explicitly PASS exact ABCNAAA native output,
+  including relative macro classes, cached construction and Array#sample.
+- Broad random798/801 trials remain RED for separate class-macro/owner-reflection
+  examples; those extra trial changes are not part of this repair.
+- All test binaries run through scripts/run_safe.sh. Refresh after declaration
+  absolute flags, output registration, class naming or lookup changes.

@@ -30959,7 +30959,7 @@ module Adamas::HIR
         @current_class = old_class
       when Adamas::Compiler::Frontend::ClassNode
         class_name = (safe_slice_to_string(member.name) || "")
-        full_class_name = "#{module_name}::#{class_name}"
+        full_class_name = member.absolute ? "::#{class_name}" : "#{module_name}::#{class_name}"
         register_class_with_name(member, full_class_name)
       when Adamas::Compiler::Frontend::ModuleNode
         nested_name = (safe_slice_to_string(member.name) || "")

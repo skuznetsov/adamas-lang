@@ -18258,3 +18258,22 @@ normalization also fails identically before and after this repair in the older
 mixed classvar spec (random788/789). Refresh after macro registration, declaration
 parsing, arena provenance or classvar type lowering changes. Roll back this
 walker change, focused spec and regression together.
+
+
+### Module macros retain absolute class identity (2026-10-16)
+The module macro walker unconditionally prefixed ClassNode names with its module,
+turning class ::Thread into Owner::Thread and capturing Thread.current calls.
+Honor ClassNode.absolute at this registration boundary; relative classes retain
+their nested owner. No stdlib or application changes are used.
+RED random805 finds a bogus nested Thread. Native random806 builds but prints
+A/NUL/C/N and aborts on ModuleMacroCachedOwner::Thread.current, while Crystal
+prints ABCNAAA. GREEN random807 passes the root/nested-shadow HIR example;
+original-first portable random808 matches ABCNAAA and explicit PASS for root
+reopening, real relative macro classes, one-time thread_local construction and
+Array#sample after Random.rand. Scoped adversary ROBUST for module output.
+Source random803 HIR 5ff0ab02222baee50ec22e3774afc0bfa92b1b26368846bce76e2b1ac73b4595;
+host e98d7703bc974cde6c792bef01657985d89e0afa155b4afa3eb7fd8faac32cac.
+Class-macro root registration and @type owner reflection remain open: broad trials
+random798/801 still fail those separate HIR examples and are not promoted.
+Refresh after ClassNode parsing, macro output routing, class naming or lookup
+changes; roll back this walker line with its regression and spec.

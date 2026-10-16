@@ -3862,3 +3862,16 @@ random795. Scoped adversary ROBUST; absolute emitted classes, owner reflection,
 thread-local execution and general Proc alias normalization remain outside this
 certificate. Refresh when AST declaration shapes, arenas, registration or nil?
 lowering changes.
+
+
+### Absolute class names in module macro output (2026-10-16)
+For a generated ClassNode the module-output registrar must pass ::Name when its
+absolute flag is set, otherwise ModuleOwner::Name. The existing class-definition
+resolver consumes that root marker. The output arena remains unchanged. Admit
+root reopenings and actual relative nested classes at this boundary; do not infer
+closure for other declaration forms or class-body macro registration.
+random805/806 are RED before this line change; random807 and native original-first
+random808 are GREEN, including root method registration, relative shadowing,
+stdlib thread_local construction and Array#sample. Scoped adversary ROBUST.
+Owner reflection and class macro root routing remain open. Refresh on AST name
+flags, macro registration routing, definition naming or constant lookup changes.
