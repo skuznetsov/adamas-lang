@@ -61643,7 +61643,9 @@ module Adamas::HIR
         if info = split_generic_base_and_args(stripped)
           resolved_args = split_generic_type_args(info.args).map do |arg|
             arg = arg.strip
-            if arg.starts_with?(':')
+            # Preserve absolute type arguments; a single-colon syntax prefix
+            # must not consume one colon from a `::Name` path.
+            if arg.starts_with?(':') && !arg.starts_with?("::")
               arg = arg.size > 1 ? arg[1..] : ""
             end
             if arg == "self"
@@ -61791,7 +61793,9 @@ module Adamas::HIR
           resolved_base = resolve_generic_base_name_in_context(info.base)
           resolved_args = split_generic_type_args(info.args).map do |arg|
             arg = arg.strip
-            if arg.starts_with?(':')
+            # Preserve absolute type arguments; a single-colon syntax prefix
+            # must not consume one colon from a `::Name` path.
+            if arg.starts_with?(':') && !arg.starts_with?("::")
               arg = arg.size > 1 ? arg[1..] : ""
             end
             # Preserve short unbound type params in generic args (T/U/V) so they

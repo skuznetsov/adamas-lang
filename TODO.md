@@ -19612,3 +19612,14 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   call arguments before claiming general overload-order compatibility.
 - [ ] Preserve include-site module bindings when rechecking a registered target,
   and preserve narrowed Proc union-arm arguments through deferred lowering.
+
+
+### Preserve absolute names inside contextual generic arguments (2026-10-16)
+- [x] Preserve `::` in contextual generic arguments; rooted1253 parent RED,
+  rooted1254 GREEN against pinned Crystal 1.21 with lexical and wrong-namespace
+  guards (rooted_generic_argument_resolution_repro.sh).
+- [ ] Audit the remaining single-colon stripping branches in signature/type
+  recovery for the same absolute-path ambiguity; do not infer coverage from
+  contextual generic resolution alone.
+- [ ] Trace canonical generic argument identity through included forall demand
+  binding; a nested user class still resolves to a same-name lexical decoy.

@@ -4085,3 +4085,14 @@ guard set has 47 passing examples (generic1175). Parent generic1171 RED; isolate
 generic1165/generic1170 GREEN. Block/ancestor/union guards GREEN. Scoped adversary
 ROBUST; excluded call shapes, include-site context and LavinMQ remain open.
 Refresh after source restriction, alias, adaptation or resolver cache changes.
+
+
+### Preserve absolute names inside contextual generic arguments (2026-10-16)
+An absolute `::Name` inside a generic argument retains root lookup across
+contextual resolution, including recursively nested applied generics. A single
+colon syntax prefix and an absolute type path are distinct inputs.
+DoD: rooted_generic_argument_resolution_repro.sh compares native behavior with
+pinned Crystal 1.21 and requires unrelated-namespace rejection on both compilers.
+Parent rooted1253 RED; isolated rooted1250/rooted1254 GREEN. Scoped adversary
+ROBUST for this corridor; signature recovery and included forall identity remain
+outside this certificate. Refresh after name resolution or cache changes.

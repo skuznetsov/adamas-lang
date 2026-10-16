@@ -810,3 +810,14 @@ diagnostic meanings.
   full/no-prelude union results. Scoped adversary ROBUST; Proc phase ordering for
   excluded call shapes and complete LavinMQ parity remain open. Refresh after
   source restriction, alias, candidate ordering or emitting-handoff changes.
+
+
+### Preserve absolute names inside contextual generic arguments (2026-10-16)
+- RED rooted1253 on generic1165: Array(::AdmissionView) is captured by the
+  lexical AdmissionScope::AdmissionView declaration and a valid call is rejected.
+- GREEN rooted1254 on rooted1250: absolute and nested generic arguments produce
+  31/21/41 as Crystal 1.21 does; lexical-only and root-only controls produce 11
+  and 31. Both compilers reject an unrelated namespace implementation.
+- Scoped adversary ROBUST for contextual generic arguments. Signature-recovery
+  colon handling, included forall identity and LavinMQ remain open. Refresh
+  after contextual name resolution or cache changes.

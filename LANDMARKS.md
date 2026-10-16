@@ -18571,3 +18571,20 @@ Manifest 7d1167cd5517390f7bd90234ab225d08dce298d0d85b0ac862955e7cd7dbc228;
 host dfe31fdf654239cb8db5502151d13a69d67272396597e588f51cdbb171e768b8.
 Refresh after alias, generic admission, overload ordering or resolver handoff
 changes. Roll back source and the two regression artifacts together.
+
+
+### Preserve absolute names inside contextual generic arguments (2026-10-16)
+Contextual generic argument resolution removed one colon from a leading `::`
+path, allowing a same-name lexical declaration to capture the absolute type.
+Preserve the double-colon prefix in both generic argument loops in
+resolve_type_name_in_context_impl; keep the existing single-colon syntax rule.
+Pinned Crystal 1.21 oracle: rooted1253 parent RED on the shadowed absolute case;
+rooted1254 on rooted1250 GREEN. Native outputs 31/21/41, lexical-only 11 and
+root-only 31 match. Both compilers reject the unrelated namespace negative.
+Scoped adversary ROBUST for these contextual resolution cases. Other colon
+stripping sites and included-method forall identity transport remain open.
+Manifest 75875ca72d310ac7da14cb172fed8525cef108d499b231ac79cc4e298154b582;
+host 6d71b8c05e74225885c9ddb1abc5612a6cf97a1f25231810d47b03729cbcd70a.
+Refresh after contextual generic/name resolution or its caches change. Roll back
+source and rooted_generic_argument_resolution_repro.sh together. LavinMQ parity
+is not established by this regression.
