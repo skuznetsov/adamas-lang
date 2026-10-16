@@ -18102,3 +18102,17 @@ Nested branches, strings/comments and unterminated tags have explicit guards.
 Refresh on scanner cursor/control-stack changes; rollback this bounded CLI hunk.
 Unknown-condition policy and skip_file behavior still need separate evidence;
 scanner progress is not a language-validity or LavinMQ-parity certificate.
+
+
+### Invocation-owned compile-time flags (2026-10-16)
+CLI previously rejected Crystal define options, while HIR invented fixed values
+for release and optional flags. Collection, semantic analysis and HIR expansion
+now consume one invocation set: a copy of host target flags plus requested
+defines and release. HIR copies the supplied set; sequential invocations cannot
+mutate the cached host set. Sealed flags636 passes 30 combined guards (flags640),
+including both option parsers, missing values, enabled/disabled/enabled calls,
+inactive requires, release, host defaults and earlier root/scanner repairs.
+flags639 matches pinned Crystal 1.21 native output in all five define modes;
+parent flags638 rejects the first define. Refresh after flag transport or
+expander-construction changes; rollback the bounded CLI/HIR changes together.
+This establishes local flag transport, not full stdlib or LavinMQ parity.

@@ -869,6 +869,16 @@ module Adamas::HIR
   class AstToHir
     property no_prelude : Bool
 
+    @compilation_flags : Set(String)? = nil
+
+    def compilation_flags=(flags : Set(String)) : Nil
+      @compilation_flags = flags.dup
+    end
+
+    private def compilation_flags : Set(String)
+      @compilation_flags || Adamas::Runtime.target_flags
+    end
+
     private def macro_crystal_version_literal : String
       {{ ::Crystal::VERSION }}
     end
@@ -15326,7 +15336,7 @@ module Adamas::HIR
       expander = Adamas::Compiler::Semantic::MacroExpander.new(
         program,
         @arena,
-        Adamas::Runtime.target_flags,
+        compilation_flags,
         recovery_mode: true,
         macro_source: source,
         macro_source_path: source_path_for(@arena),
@@ -15587,7 +15597,7 @@ module Adamas::HIR
       expander = Adamas::Compiler::Semantic::MacroExpander.new(
         program,
         macro_arena,
-        Adamas::Runtime.target_flags,
+        compilation_flags,
         recovery_mode: true,
         source_provider: ->(expr_id : ExprId) : String? { macro_block_body_text(expr_id) },
         macro_source: source_for_arena(macro_arena),
@@ -24525,7 +24535,7 @@ module Adamas::HIR
       expander = Adamas::Compiler::Semantic::MacroExpander.new(
         program,
         @arena,
-        Adamas::Runtime.target_flags,
+        compilation_flags,
         recovery_mode: true,
         macro_source: source,
         macro_source_path: source_path_for(@arena),
@@ -30153,7 +30163,7 @@ module Adamas::HIR
       expander = Adamas::Compiler::Semantic::MacroExpander.new(
         program,
         @arena,
-        Adamas::Runtime.target_flags,
+        compilation_flags,
         recovery_mode: true,
         macro_source: source,
         macro_source_path: source_path_for(@arena),
@@ -31153,7 +31163,7 @@ module Adamas::HIR
       expander = Adamas::Compiler::Semantic::MacroExpander.new(
         program,
         @arena,
-        Adamas::Runtime.target_flags,
+        compilation_flags,
         recovery_mode: true,
         macro_source: source,
         macro_source_path: source_path_for(@arena),
@@ -32975,7 +32985,7 @@ module Adamas::HIR
       expander = Adamas::Compiler::Semantic::MacroExpander.new(
         program,
         @arena,
-        Adamas::Runtime.target_flags,
+        compilation_flags,
         recovery_mode: true,
         macro_source: source,
         macro_source_path: source_path_for(@arena),
@@ -33199,7 +33209,7 @@ module Adamas::HIR
       expander = Adamas::Compiler::Semantic::MacroExpander.new(
         program,
         @arena,
-        Adamas::Runtime.target_flags,
+        compilation_flags,
         recovery_mode: true,
         macro_source: source,
         macro_source_path: source_path_for(@arena),
@@ -76304,38 +76314,7 @@ module Adamas::HIR
     # Evaluate a macro flag condition at compile time
     private def evaluate_macro_flag(flag_name : String) : Bool
       clean_name = normalize_macro_flag_name(flag_name)
-      result = case clean_name
-               # Check against known compile flags - use macOS defaults for now
-               when "darwin", "unix", "linux", "freebsd", "openbsd", "netbsd", "dragonfly",
-                    "win32", "windows", "android", "wasi",
-                    "x86_64", "i386", "x86", "aarch64", "arm64", "arm"
-                 host_macro_flag_enabled?(clean_name)
-               when "kqueue"
-                 host_macro_flag_enabled?("darwin") || host_macro_flag_enabled?("freebsd") ||
-                   host_macro_flag_enabled?("openbsd") || host_macro_flag_enabled?("netbsd") ||
-                   host_macro_flag_enabled?("dragonfly")
-               when "epoll"
-                 host_macro_flag_enabled?("linux")
-               when "libevent"
-                 false
-               when "release"
-                 true
-               when "debug"
-                 false
-               when "execution_context", "preview_mt"
-                 false
-               when "use_pcre2"
-                 true
-               when "bootstrap_fast"
-                 true
-               else
-                 # Check using macro-style syntax flag?("evloop=kqueue")
-                 if clean_name.starts_with?("evloop=")
-                   clean_name == "evloop=kqueue" && evaluate_macro_flag("kqueue")
-                 else
-                   host_macro_flag_enabled?(clean_name)
-                 end
-               end
+      result = compilation_flags.includes?(clean_name)
       debug_flag_parse("flag.eval raw=#{flag_name.bytesize} clean=#{clean_name} result=#{result ? 1 : 0}")
       result
     end
@@ -78333,7 +78312,7 @@ module Adamas::HIR
       Adamas::Compiler::Semantic::MacroExpander.new(
         program,
         @arena,
-        Adamas::Runtime.target_flags,
+        compilation_flags,
         recovery_mode: true,
         macro_source: source,
         macro_source_path: source_path_for(@arena),

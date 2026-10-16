@@ -3729,3 +3729,16 @@ root626 passes seven scanner guards plus the bounded portable regression;
 active conditional imports preserve Crystal/native output A. Parent root631
 hangs and root632 duplicates raw input. Refresh on cursor/stack changes;
 rollback the bounded CLI hunk. Unknown branches and skip_file remain separate.
+
+
+### Compile-time flag ownership boundary (2026-10-16)
+For a CLI invocation, the admitted flag set is copied host target flags plus
+explicit -D/--define values and release when requested. Declaration collectors,
+semantic contexts and all HIR macro expanders receive this set. HIR stores its
+own copy. Shared Runtime.target_flags must remain unchanged across compilations.
+Hardcoded HIR release/optional defaults are rejected. flags640 executes 30
+combined guards; flags639 compares five native modes against pinned Crystal
+1.21, while flags638 rejects the define on the parent. Refresh on option parsing,
+context construction or expansion changes; rollback CLI/HIR together. LSP flag
+configuration, cross-target semantics and runtime capabilities need their own
+evidence. This boundary alone does not certify LavinMQ compilation or parity.

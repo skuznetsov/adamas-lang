@@ -96,6 +96,11 @@ module Adamas
       @pipeline_cache_hits : Int32 = 0
       @pipeline_cache_misses : Int32 = 0
       @parse_trace : Bool = BootstrapEnv.enabled?("ADAMAS_PARSE_TRACE")
+      @compile_flags : Set(String)? = nil
+
+      private def compilation_flags : Set(String)
+        @compile_flags || Runtime.target_flags
+      end
 
       # Resolve stdlib path: CRYSTAL_PATH env var (first component) > compiled-in default.
       # Deferred to runtime so V2-compiled binaries don't crash in constant init.
@@ -906,6 +911,19 @@ module Adamas
           if arg == "--release"
             options.optimize = 3
             options.release = true
+          elsif arg == "-D" || arg == "--define"
+            if i + 1 < @args.size
+              options.defines << @args[i + 1]
+              i += 1
+            else
+              err_io.puts "Error: #{arg} expects a value"
+              status = 1
+              break
+            end
+          elsif arg.starts_with?("-D") && arg.size > 2
+            options.defines << arg[2..-1]
+          elsif arg.starts_with?("--define=")
+            options.defines << arg[9..-1]
           elsif arg == "-O"
             if i + 1 < @args.size
               parsed = @args[i + 1].to_i32?
@@ -1333,6 +1351,7 @@ module Adamas
             end
 
             # Prelude (Crystal-compatible)
+            p.on("-D FLAG", "--define FLAG", "Define a compile-time flag") { |flag| options.defines << flag }
             p.on("--prelude FILE", "Use given file as prelude") { |f| options.prelude_file = f }
             p.on("--no-prelude", "Don't load prelude") { options.no_prelude = true }
 
@@ -1406,6 +1425,12 @@ module Adamas
           log_codepath_status("cli.parser", "no_option_parser_object", "taken", "CLI")
           parser_text = parser_help
         end
+
+        # Invocation definitions must never mutate the cached host target set.
+        invocation_flags = Runtime.target_flags.dup
+        options.defines.each { |flag| invocation_flags << flag }
+        invocation_flags << "release" if options.release
+        @compile_flags = invocation_flags
 
         {% if flag?(:debug_hooks) %}
           setup_debug_hooks
@@ -1500,6 +1525,7 @@ module Adamas
         property output : String = ""
         property optimize : Int32 = 0
         property release : Bool = false
+        property defines : Set(String) = Set(String).new
         property emit_llvm : Bool = false
         property emit_hir : Bool = false
         property emit_mir : Bool = false
@@ -1562,7 +1588,7 @@ module Adamas
         stage2_debug("[STAGE2_DEBUG] parse_file_recursive parse ok", out_io)
 
         if parser.diagnostics.empty?
-          analyzer = Semantic::Analyzer.new(program)
+          analyzer = Semantic::Analyzer.new(program, Semantic::Context.new(Semantic::SymbolTable.new, compilation_flags))
           analyzer.collect_symbols(
             node_file_path_provider: ->(_node_id : Frontend::ExprId) { path.as(String?) },
             source_for_path_provider: ->(source_path : String) { source_path == path ? source : nil }
@@ -1961,6 +1987,7 @@ module Adamas
         # constructor path. Keep constructor arguments minimal, then rebind
         # the mutable bootstrap state through the narrower recovery helpers.
         hir_converter = HIR::AstToHir.new(first_arena, input_file)
+        hir_converter.compilation_flags = compilation_flags
         bootstrap_trace_puts "[S2_HIR_SETUP] phase=converter_new"; STDERR.flush
         hir_converter.no_prelude = options.no_prelude
         hir_converter.bootstrap_bind_core_state(first_arena, hir_mod)
@@ -2008,7 +2035,7 @@ module Adamas
         top_level_type_names = Set(String).new
         top_level_class_kinds = {} of String => Bool
 
-        flags = Runtime.target_flags
+        flags = compilation_flags
         hir_collect_start = Time.instant if debug_profile
         stage2_debug("[STAGE2_DEBUG] top-level collection walk start", err_io)
         bootstrap_trace_puts "[S2_HIR_SETUP] phase=top_level_collect_walk"; STDERR.flush
@@ -4159,7 +4186,7 @@ module Adamas
             flags << value
             seen << marker
           when "dll"
-            unless Runtime.target_flags.includes?("win32") || Runtime.target_flags.includes?("windows")
+            unless compilation_flags.includes?("win32") || compilation_flags.includes?("windows")
               next
             end
             next if value.empty?
@@ -4595,7 +4622,7 @@ module Adamas
            source.includes?("{% verbatim") || source.includes?("{%- verbatim") || source.includes?("{%~ verbatim")
           return [source]
         end
-        macro_literal_texts_from_raw(source, Runtime.target_flags)
+        macro_literal_texts_from_raw(source, compilation_flags)
       end
 
       private def active_source_might_contain_require?(source : String) : Bool
@@ -4689,7 +4716,7 @@ module Adamas
         when Frontend::MacroIfNode
           # Evaluate flag? conditions when possible to avoid loading the wrong platform branch.
           # Fall back to both branches if the condition is unknown.
-          condition = evaluate_macro_condition(arena, node.condition, Runtime.target_flags)
+          condition = evaluate_macro_condition(arena, node.condition, compilation_flags)
           if condition == true
             process_require_node(arena, node.then_body, source, base_dir, input_base_dir, options, out_io, requires_out)
           elsif condition == false
@@ -4705,9 +4732,9 @@ module Adamas
         when Frontend::MacroLiteralNode
           raw_text = extract_span_text(node.span, source)
           texts = if raw_text
-                    macro_literal_texts_from_raw(raw_text, Runtime.target_flags)
+                    macro_literal_texts_from_raw(raw_text, compilation_flags)
                   else
-                    macro_literal_require_texts(arena, node, Runtime.target_flags)
+                    macro_literal_require_texts(arena, node, compilation_flags)
                   end
           found_require_text = false
           texts.each do |text|
@@ -4721,7 +4748,7 @@ module Adamas
             found_require_text = true
           end
           unless found_require_text
-            fallback_texts = macro_literal_require_texts(arena, node, Runtime.target_flags)
+            fallback_texts = macro_literal_require_texts(arena, node, compilation_flags)
             fallback_texts.each do |text|
               if text.includes?("require")
                 texts = fallback_texts
@@ -4999,7 +5026,7 @@ module Adamas
             end
           end
         when Frontend::MacroIfNode
-          condition = evaluate_macro_condition(arena, node.condition, Runtime.target_flags)
+          condition = evaluate_macro_condition(arena, node.condition, compilation_flags)
           if condition == true
             collect_link_libraries_from_expr(arena, node.then_body, source, libraries, options, out_io)
           elsif condition == false
@@ -5015,9 +5042,9 @@ module Adamas
         when Frontend::MacroLiteralNode
           raw_text = extract_span_text(node.span, source)
           texts = if raw_text
-                    macro_literal_texts_from_raw(raw_text, Runtime.target_flags)
+                    macro_literal_texts_from_raw(raw_text, compilation_flags)
                   else
-                    macro_literal_active_texts(arena, node, Runtime.target_flags, source)
+                    macro_literal_active_texts(arena, node, compilation_flags, source)
                   end
           if texts.empty? && raw_text && raw_text.includes?("@[Link") && !raw_text.includes?("{%")
             texts = [raw_text]
@@ -5029,7 +5056,7 @@ module Adamas
             end
           end
           if expr_libraries.empty? && raw_text && raw_text.includes?("@[Link")
-            macro_literal_active_texts(arena, node, Runtime.target_flags, source).each do |text|
+            macro_literal_active_texts(arena, node, compilation_flags, source).each do |text|
               extract_link_libraries_from_text(text).each do |lib_name|
                 expr_libraries << lib_name unless expr_libraries.includes?(lib_name)
               end
@@ -7615,7 +7642,7 @@ module Adamas
       end
 
       private def active_semantic_units(units : Array(ParsedUnit)) : Array(ParsedUnit)
-        flags = Runtime.target_flags
+        flags = compilation_flags
         active_units = [] of ParsedUnit
         units.each do |unit|
           next if skip_file_directive?(unit.source, flags)
@@ -7722,7 +7749,7 @@ module Adamas
             return {status: 1, call_target: nil}
           end
         end
-        analyzer = Semantic::Analyzer.new(aggregate.program)
+        analyzer = Semantic::Analyzer.new(aggregate.program, Semantic::Context.new(Semantic::SymbolTable.new, compilation_flags))
         sources_by_path = aggregate.sources_by_path
         compile_parse_diagnostics = active_units.flat_map(&.parse_diagnostics)
         shadow_parse_diagnostics = aggregate.parse_diagnostics
@@ -7985,7 +8012,7 @@ module Adamas
         acyclic_types = Set(String).new
         top_level_type_names = Set(String).new
         top_level_class_kinds = {} of String => Bool
-        flags = Runtime.target_flags
+        flags = compilation_flags
         sources_by_arena = Hash(UInt64, String).new(initial_capacity: aggregate.unit_summaries.size)
         paths_by_arena = Hash(UInt64, String).new(initial_capacity: aggregate.unit_summaries.size)
         sources_by_arena[aggregate_arena.object_id.to_u64] = ""
@@ -8362,7 +8389,7 @@ module Adamas
         aggregate = build_semantic_shadow_aggregate(active_units)
         program = aggregate.program
         collector_inventory = build_shadow_collector_declaration_inventory(aggregate)
-        analyzer = Semantic::Analyzer.new(program)
+        analyzer = Semantic::Analyzer.new(program, Semantic::Context.new(Semantic::SymbolTable.new, compilation_flags))
         analyzer.collect_symbols(
           node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) },
           source_for_path_provider: ->(path : String) { aggregate.source_for_path(path) },

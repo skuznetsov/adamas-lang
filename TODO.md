@@ -19322,3 +19322,14 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   root634's bounded portable regression pass; valid active require matches Crystal.
 - [ ] Audit unknown-condition and inactive skip_file semantics independently;
   forward progress does not establish which dependency a fragment may admit.
+
+
+### Invocation-owned compile-time flag contract (2026-10-16)
+- [x] Accept all four Crystal -D/--define forms and propagate one isolated flag
+  set through declaration collection, semantic analysis and HIR macro expansion.
+  flags640: 30 guards pass; flags639: five native modes match Crystal 1.21.
+- [x] Remove invented HIR release/optional defaults; preserve actual host flags.
+- [ ] Establish flags under LSP/project configuration and cross-target builds
+  separately; command-line host-target evidence does not establish those routes.
+- [ ] Recheck real preview_mt/execution_context stdlib startup and LavinMQ tests;
+  accepting a flag does not establish the selected runtime implementation.

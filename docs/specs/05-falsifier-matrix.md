@@ -468,3 +468,17 @@ diagnostic meanings.
 - Scope: consume input before continuation in both scanner representations.
   Unknown-condition dependency admission, skip_file and final language validity
   require separate evidence. Refresh after scanner cursor/control-stack changes.
+
+
+### Invocation flag transport and isolation (2026-10-16)
+- RED flags638: pinned Crystal 1.21 compiles all five native define modes;
+  parent root626 rejects -Dcontract_feature after the absent mode passes.
+- GREEN flags639: absent BDF and four define spellings ACE match Crystal.
+  flags640: 30 combined guards pass, including 15 flag tests, seven require
+  scanner tests, four generated-root tests and four indentation tests.
+- Guards include both CLI parsers, missing values, sequential isolation,
+  declaration/method/macro agreement, inactive requires, release and 16 host or
+  optional flag names. Optional flags have no invented HIR defaults.
+- Scope: host-target CLI flag transport. LSP configuration, cross-target
+  semantics and multithreaded runtime behavior remain separate obligations.
+  Refresh on option/context/expander changes; rollback CLI and HIR together.
