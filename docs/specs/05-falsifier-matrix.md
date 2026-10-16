@@ -525,3 +525,20 @@ diagnostic meanings.
 - Scoped verdict ROBUST for backing storage in these consumers. Neither these
   outputs nor structural allocation prove seed entropy or whole LavinMQ parity.
   Refresh after classvar init or aggregate representation changes.
+
+
+### Materialized recursive union macro reflection (2026-10-16)
+- RED macro703: five materialization orders, three projection-cycle errors.
+  Array(Field) prewarming alone can hide the failure, so order is part of input.
+- RED macro710: original method consumer AA/0; diagnostic parent rejects the
+  same recursive projection cycle. This diagnostic guard is not production code.
+- GREEN macro714: 17 examples, zero failures/errors, including canonical duplicate
+  aliases and an explicit expanded-union type argument. GREEN macro712: AA/0
+  matching Crystal; macro716: explicit portable PASS.
+- macro713 confirms the same eight unrelated broader projection failures on
+  parent and candidate. No claim that the full reflection suite passes.
+- macro706/707 top-level macro-for omitted output and cannot certify this fix;
+  corrected macro709 uses method-scoped expansion and distinguishes the parents.
+- Integrated macro715 reaches protected load_apply access rejection in LavinMQ.
+  This closes the observed recursive projection frontier, not LavinMQ parity.
+  Refresh after alias registry, runtime canonicalization or reflection changes.

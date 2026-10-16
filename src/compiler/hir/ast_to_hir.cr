@@ -77839,8 +77839,17 @@ module Adamas::HIR
           type_vars
         )
       end
+      # Keep source projection spellings across runtime canonicalization. A
+      # recursive generic arm may become Array(expanded union) in HIR, while
+      # macro reflection must retain its finite Array(AliasType) boundary.
+      projection_member_names = if union_type_name?(resolved)
+                                  split_union_type_name(normalize_union_type_name(resolved))
+                                end
       type_ref = type_ref_for_name(resolved)
       desc = type_ref == TypeRef::VOID ? nil : @module.get_type_descriptor(type_ref)
+      projection_members = projection_member_names.try do |names|
+        names.map { |name| {type_ref_for_name(name), name} }
+      end
       if type_ref != TypeRef::VOID && (desc.try(&.kind) == TypeKind::Union || union_type_name?(resolved) ||
          generic_union_type_name?(resolved) || resolved.ends_with?('?') || resolved.ends_with?('*'))
         # A union spelling may resolve to a scalar after duplicate arms collapse.
@@ -77854,10 +77863,16 @@ module Adamas::HIR
       is_struct = desc ? desc.kind == TypeKind::Struct : false
       is_module = desc ? desc.kind == TypeKind::Module : false
       union_members = if desc && desc.kind == TypeKind::Union
-                        # HIR keeps union arms in the canonical descriptor name,
-                        # not in generic type_params. Project those concrete arms
-                        # after type_ref_for_name has flattened aliases.
+                        # The descriptor remains authoritative for flattening,
+                        # deduplication and abstract-value expansion. Recover the
+                        # finite macro spelling only for the same runtime type.
                         split_union_type_name(desc.name).map do |member|
+                          if candidates = projection_members
+                            member_ref = type_ref_for_name(member)
+                            if projected = candidates.find { |candidate| candidate[0] == member_ref }
+                              member = projected[1]
+                            end
+                          end
                           macro_value_for_type_name(member).as(Adamas::Compiler::Semantic::MacroValue)
                         end
                       end

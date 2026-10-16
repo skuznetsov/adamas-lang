@@ -18159,3 +18159,20 @@ the portable lazy/eager regression. This certificate covers storage and these
 consumers, not seed entropy, class-body execution, or LavinMQ parity. Refresh
 on aggregate representation or classvar initialization changes; revert lowering
 and its regression together.
+
+
+### Finite recursive aliases across macro union materialization (2026-10-16)
+Runtime union canonicalization expanded Array(Field) to Array(expanded union).
+Macro reflection then followed canonical descriptor names recursively, losing
+the finite AliasType boundary. macro703 reproduces the cycle in three of five
+materialization orders; macro710 reproduces it in an instance-method consumer
+where original Crystal prints AA. Keep source arm spellings only when their
+TypeRef matches a canonical arm; the descriptor still owns flattening, member
+deduplication and abstract-value expansion. macro714 passes 17 HIR examples,
+macro712 matches AA/0 and portable macro716 prints its explicit PASS.
+Source certificate: macro704 HIR 0ba32a8ce6a24cb55449e0fc9e327a2c7cc3beb81eb7815dbfa063ec95a07c81;
+host 006cbf0c3344dc2866f1aba9b0a2c06ab76973e569105c9f594364052b7243b7.
+The macro713 paired baseline retains the same eight broader projection failures.
+Integrated macro715 advances LavinMQ to protected load_apply access checking;
+this is not application parity. Refresh after alias registry, canonicalization
+or macro projection changes. Revert both HIR hunks and their tests together.

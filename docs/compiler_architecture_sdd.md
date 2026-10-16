@@ -3782,3 +3782,20 @@ local/inferred/declared storage, repeat writes and both modes; uninit691 covers
 Hasher.new and enum hashing with the unchanged stdlib. Contents before a write
 remain outside this contract. Refresh after representation or init changes.
 Executable class-body statements and random seed entropy need separate evidence.
+
+
+### Source macro projection versus canonical runtime union arms (2026-10-16)
+Runtime descriptors and macro TypeNodes have different representation duties.
+Canonical union arms remain authoritative for flattening, deduplication and
+abstract-value expansion. For macro reflection, recover a source arm spelling
+only when its resolved TypeRef equals the canonical member TypeRef. This keeps
+recursive Array(AliasType) and Hash(String, AliasType) projections finite without
+replacing runtime type identity with textual equality. The original compiler's
+AliasType#remove_alias_if_simple retains recursive aliases at this boundary.
+macro714 tests five materialization orders, canonical duplicate arms and an
+explicit expanded-union generic argument (17 examples with existing controls).
+macro712 and portable macro716 exercise generated native output against Crystal.
+Scoped adversary verdict: ROBUST for these concrete recursive projections.
+Eight broader failures are unchanged in the macro713 paired baseline. Nullable
+source forms, unresolved-type identity and top-level macro-for omission remain
+separate obligations. Refresh on alias registration or representation changes.

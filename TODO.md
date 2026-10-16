@@ -19373,3 +19373,18 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Diagnose recursive macro reflection on real LavinMQ: enum681 LLDB shows
   macro_value_for_type_name/type lookup recursion; bounded macro688 reports
   a recursive union/Array projection cycle instead of overflowing the stack.
+
+
+### Recursive union macro projection follow-up (2026-10-16)
+- [x] Preserve finite recursive generic alias boundaries after canonical union
+  materialization. macro714: 17/17 HIR checks; macro712: AA/0 matching Crystal;
+  macro716: explicit portable regression PASS.
+- [ ] Audit source nullable and Union(...) spellings at this projection boundary;
+  unresolved TypeRef::VOID must not serve as evidence of concrete type identity.
+- [ ] Refresh the eight broader projection failures preserved by macro713's
+  parent/candidate comparison before claiming full reflection conformance.
+- [ ] Investigate top-level macro-for runtime output: macro706/707 compiled but
+  omitted AA, while method-scoped macro709/712 emitted it. This is a separate
+  observed gap, not the recursive union regression's positive control.
+- [ ] Preserve lexical access context for protected method references: integrated
+  LavinMQ macro715 now rejects DefinitionsStore#load_apply at &->self.load_apply.
