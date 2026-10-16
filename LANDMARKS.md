@@ -18195,3 +18195,24 @@ protected734 pairs the same existing Proc-forwarding failure on parent/candidate
 callback checks pass on the parent and do not discriminate this stdlib boundary.
 Refresh after lexical-owner, namespace override or block/Proc lowering changes.
 Rollback the context transport and its full-prelude regression together.
+
+
+### Module values and type literals keep separate dispatch contexts (2026-10-16)
+LavinMQ's Array#sample selected Random#rand but later bound Random.rand to that
+instance Def. Diagnostic module742 records distinct source spans in the same
+live arena; this is receiver-context loss, not arena lifetime corruption.
+The module resolver now handles values through includers or extend-self methods;
+type literals retain qualified class-method lookup. The late qualified fallback
+also requires a type literal. The exact selected Def conflict guard is unchanged.
+module762 is RED on the parent (Crystal ABBC/0, candidate Def conflict).
+module758/759 and portable module764 match ABBC, BBCA and ABCD at native runtime;
+module761 passes eight HIR controls. Scoped adversary verdict: ROBUST for these
+instance/class separation, override, extend and call-order boundaries.
+Source module756 HIR f178eeac44fae94f18574fd3449ef2384049eaf94fcc50e4f56a3a5f0e27b796;
+host e96b940c4d22a849ac355fbc8803b459b8f56c8ccfedfe26ab7705726c3aef9a.
+Lavin integration module765 proceeds to unsupported non-empty named hash
+literals. Actual Array#sample still returns NUL in module757/760: emitted
+Random.thread_default reads a null class variable with no initialization store.
+Its root cause is open; this dispatch certificate does not cover RNG behavior.
+Refresh after receiver classification, module lookup or late target changes;
+rollback the resolver/fallback change and its regression together.

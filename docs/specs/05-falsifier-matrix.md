@@ -557,3 +557,20 @@ diagnostic meanings.
   on both and cannot stand in for this full-prelude discriminator.
 - Certificate scope is callback lexical namespace transport, not application
   parity; refresh after block owner, Proc lowering or namespace changes.
+
+
+### Module instance versus class dispatch (2026-10-16)
+- RED module762: Crystal ABBC/0; parent binds the class-method target to a
+  distinct instance Def and rejects the conflict. Both Defs share a live arena.
+- Narrow trial module749 fixes only the late fallback and remains RED in
+  module753/755; module756 also separates the module resolver's receiver paths.
+- GREEN module758/759: native ABBC/ABCD match Crystal. Portable module764
+  additionally checks reversed binding order BBCA and prints explicit PASS.
+- Guards module761: eight passing HIR examples for included extend-self,
+  macro-generated extend-self and module setter virtual dispatch.
+- Integration module765 reaches unsupported non-empty named hash literals.
+  Separate module757/760 compile but Array#sample emits NUL: generated
+  Random.thread_default reads null without initialization. RNG parity remains
+  open and must not be inferred from this dispatch-only certificate.
+- All binaries run through scripts/run_safe.sh. Refresh after module lookup,
+  receiver category or selected-target materialization changes.

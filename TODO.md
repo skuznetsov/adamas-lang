@@ -19401,3 +19401,17 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   no-prelude protected callback checks also pass on the affected parent.
 - [ ] Repair the separate typed Proc forwarding HIR expectation: protected734
   records the same bare_invocation-is-nil failure on parent and candidate.
+
+
+### Module receiver context and remaining LavinMQ gaps (2026-10-16)
+- [x] Keep module-typed instance calls separate from same-named class methods.
+  Portable module764 matches Crystal ABBC/BBCA/ABCD in both binding orders;
+  module761 passes eight HIR controls including extend-self and setter dispatch.
+- [ ] Repair Random.thread_default initialization: module757/760 compile but
+  Array#sample returns NUL; LLVM contains a null class variable and no store.
+  Compare an explicit nullable lazy class-variable getter with thread_local
+  macro expansion before attributing the defect to narrowing or registration.
+- [ ] Lower non-empty named collection literals. Actual Lavin integration
+  module765 reaches this unsupported capability after the dispatch fix.
+- [ ] Audit other late lookup fallbacks for value/type-literal confusion;
+  retain the selected Def/arena guard and native tests in both binding orders.

@@ -3815,3 +3815,19 @@ protected732 checks combined AB output and that negative guard. Scoped adversary
 verdict: ROBUST for these nested collection/method-reference boundaries.
 The paired protected734 HIR controls retain one existing Proc-forwarding failure;
 this does not certify all callback lowering. Refresh on owner/context changes.
+
+
+### Module receiver category survives resolution and fallback (2026-10-16)
+A module-typed runtime value resolves instance methods on its includers and
+extend-self implementations. A type-literal receiver resolves module class
+methods, including methods exported by extend. The value resolver must not
+prefer a same-named module class method; the late qualified fallback is admitted
+only for a type literal. Explicit receiver context remains authoritative over
+the shared method-name spelling. Selected Def/arena identity checks remain.
+module758/759 and portable module764 provide native Crystal parity across
+nullable module values, concrete overrides, generic class methods, extend,
+extend self and reversed call order; module761 passes eight HIR controls.
+Scoped adversary: ROBUST for those boundaries. Random.thread_default still
+returns null without a store (module757/760); no RNG or application parity claim
+is admitted. Refresh this certificate when receiver classification or dispatch
+fallbacks change.

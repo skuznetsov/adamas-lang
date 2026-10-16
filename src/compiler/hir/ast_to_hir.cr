@@ -47351,7 +47351,7 @@ module Adamas::HIR
 
       # For module-typed receivers, prefer module-typed dispatch (unique includer or `extend self`)
       # before returning an exact match on the module's own instance method (e.g. `M#value`).
-      if module_like_receiver
+      if module_like_receiver && !receiver_is_type_literal
         if resolved = resolve_module_typed_method(method_name, arg_types, class_name, has_block_call, @current_class)
           debug_hook("method.resolve", "base=#{base_method_name} resolved=#{resolved} reason=module_typed_prefer")
           return cache_method_resolution(cache_key, resolved)
@@ -47474,7 +47474,7 @@ module Adamas::HIR
 
       # If the receiver is module-like (e.g., Iterator(T)) or maps to a known includer,
       # resolve only when a unique includer matches the call signature.
-      if module_like_receiver
+      if module_like_receiver && !receiver_is_type_literal
         if resolved = resolve_module_typed_method(method_name, arg_types, class_name, has_block_call, @current_class)
           debug_hook("method.resolve", "base=#{base_method_name} resolved=#{resolved} reason=module_typed")
           return cache_method_resolution(cache_key, resolved)
@@ -49986,25 +49986,8 @@ module Adamas::HIR
       end
 
       arg_count = arg_types.size
-      module_method_base = "#{module_base}.#{method_name}"
-      if entry = lookup_function_def_for_call(module_method_base, arg_count, has_block, arg_types)
-        def_node = entry[1]
-        func_context = function_context_from_name(entry[0])
-        if params_compatible_with_args?(def_node, arg_types, func_context)
-          mangled = mangle_function_name(module_method_base, arg_types, has_block)
-          if @function_types.has_key?(mangled) || @module.has_function?(mangled)
-            return mangled unless abstract_def?(mangled)
-          elsif has_function_base?(module_method_base)
-            return module_method_base unless abstract_def?(module_method_base)
-          end
-        end
-      end
-      if has_function_base?(module_method_base) && !abstract_def?(module_method_base)
-        return module_method_base
-      end
-
       candidates = includers.to_a
-      if module_like_type_name?(module_base) && !candidates.includes?(module_base)
+      if @module_extend_self.includes?(module_base) && !candidates.includes?(module_base)
         candidates << module_base
       end
       if prefer_class && !candidates.includes?(prefer_class)
@@ -102679,7 +102662,10 @@ module Adamas::HIR
           end
         end
       end
-      if receiver_id && !receiver_is_self_call
+      # Qualified module class-method fallback only applies to type literals.
+      # A value typed as a module has already resolved its instance method;
+      # replacing that target with Module.method loses the selected definition.
+      if receiver_id && !receiver_is_self_call && ctx.type_literal?(receiver_id)
         if type_desc = @module.get_type_descriptor(ctx.type_of(receiver_id))
           if type_desc.kind == TypeKind::Module || (type_desc.kind == TypeKind::Generic && module_like_type_name?(type_desc.name))
             # Prefer the fully-qualified (possibly generic) module name first.
