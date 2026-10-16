@@ -1164,3 +1164,14 @@ diagnostic meanings.
   TypeKind.Reference values in ptr-backed synthesized append. Manifest aea7f1ea28c80b7803398deeb834985b6d1b152ae3ea3d969809ca5738b50950; host cc7d89542be7a77df8d362da257bcf738acfbb26a23e8e15a8b6a9130e7581ce.
 - OPEN Array-kind and aggregate child ownership, fresh bootstrap and LavinMQ
   parity. Refresh after append synthesis, type classification or RC changes.
+
+
+### Preserve postfixes in spaced parenthesized command arguments (2026-10-16)
+- GREEN parser1867 sealed array1841_spaced_parenthesized_argument_final:
+  original-first native assertions for bare/member/keyword command arguments,
+  chained members, indexes, binary suffixes, multiple grouped arguments,
+  adjacent explicit calls and a newline boundary; exact empty stdout/stderr.
+- RED parser1868 exact array1841 parent: native abort at misparsed
+  `expect_two$ParenBox`. Scoped ROBUST for this grammar boundary. Manifest 1ec5f1d623f9820756a525127e83f1ad54611f22bc7e017b130f731f4a659fe7; host cbc7a0f65770f957e1d08f68619c61e7cb5abb5e0c48e2deefd0760d089d9bc2.
+- Refresh after command-call, parenthesis or postfix parsing changes. IO
+  runtime, fresh bootstrap and LavinMQ test parity remain open.

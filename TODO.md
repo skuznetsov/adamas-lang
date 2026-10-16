@@ -19948,3 +19948,10 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   exact current parent array1842 rejects the direct case (A versus X).
 - [ ] Audit aggregate and Array-kind child ownership separately; a nested-Array
   control passed on the parent and does not establish coverage for those cases.
+
+
+### Preserve postfixes in spaced parenthesized command arguments (2026-10-16)
+- [x] Parse spaced same-line parenthesized command arguments with their postfix
+  chains in bare and identifier/keyword member calls. parser1867 original-first
+  native matrix GREEN; exact parent parser1868 RED. Explicit-call and newline
+  guards included; no stdlib or application edits.

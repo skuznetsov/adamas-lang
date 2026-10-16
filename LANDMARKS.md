@@ -19109,3 +19109,19 @@ Scoped ROBUST for this class-reference publication boundary. Manifest aea7f1ea28
 Array-kind and inline/aggregate child ownership remain open. Refresh after
 synthesized append, type classification or RC convention changes. This does
 not establish fresh bootstrap or LavinMQ test parity.
+
+
+### Preserve postfixes in spaced parenthesized command arguments (2026-10-16)
+Same-line `f (expr).member` must parse as `f((expr).member)`. The bare
+identifier path and both identifier/keyword member-command paths rejected
+LParen before parsing an argument, so postfixes attached to the call result.
+Allow a spaced same-line LParen through those guards and the bare argument
+helper. Adjacent explicit calls and newline statement boundaries retain their
+existing paths. Original Crystal parser source admits LParen in command args.
+Root parser1867 original-first native regression passes bare calls, member and
+index chains, binary suffixes, multiple arguments, identifier-member calls,
+keyword-member calls, adjacent explicit calls and a newline guard. Exact parent
+parser1868 aborts with `STUB CALLED: expect_two$ParenBox` on the same fixture.
+Scoped ROBUST for the tested command-argument grammar. Manifest 1ec5f1d623f9820756a525127e83f1ad54611f22bc7e017b130f731f4a659fe7; host cbc7a0f65770f957e1d08f68619c61e7cb5abb5e0c48e2deefd0760d089d9bc2.
+Refresh after command-call, parenthesis or postfix parsing changes. This does
+not establish IO runtime, fresh bootstrap or LavinMQ parity.

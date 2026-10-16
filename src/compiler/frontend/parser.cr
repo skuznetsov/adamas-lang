@@ -9374,7 +9374,7 @@ module Adamas
           try_parse_call_args_without_parens(callee_token.span, stable_identifier_token_slice(callee_token))
         end
 
-        private def try_parse_call_args_without_parens(callee_span : Span, callee_slice : Slice(UInt8)) : ExprId
+        private def try_parse_call_args_without_parens(callee_span : Span, callee_slice : Slice(UInt8), allow_parenthesized_argument : Bool = false) : ExprId
           debug { "try_parse_call_args_without_parens: callee=#{String.new(callee_slice)}, current_token=#{current_token.kind}" }
           trace_call_args_depth("noparen-enter")
           # Inside brace literals (named tuples) a trailing colon usually starts a key/value entry,
@@ -9394,8 +9394,10 @@ module Adamas
             # Do not treat implicit-receiver calls (.foo) as call arguments.
             return PREFIX_ERROR if slice_eq?(current_token.slice, ".")
           when Token::Kind::LParen
-            # Regular call with parentheses, handled separately
-            return PREFIX_ERROR
+            # A same-line command call may pass a parenthesized expression whose postfix
+            # belongs to that argument. Adjacent calls and newline-separated expressions
+            # remain on their existing paths.
+            return PREFIX_ERROR unless allow_parenthesized_argument
           when Token::Kind::End
             # 'end' always ends a block/structure, never an argument
             return PREFIX_ERROR unless next_comes_colon_space?
@@ -13409,7 +13411,10 @@ current_token.kind == Token::Kind::Identifier &&
 
             if space_consumed
               token = current_token
-              if call_without_parens_disallowed?(token)
+              # Same-line parenthesized command arguments include their postfix chain.
+              allow_parenthesized_argument = token.kind == Token::Kind::LParen &&
+                                             token.span.start_line == member_token.span.end_line
+              if call_without_parens_disallowed?(token) && !allow_parenthesized_argument
                 node
               else
                 # Try to parse arguments
@@ -13584,7 +13589,10 @@ current_token.kind == Token::Kind::Identifier &&
 
             if space_consumed
               token = current_token
-              if call_without_parens_disallowed?(token)
+              # Same-line parenthesized command arguments include their postfix chain.
+              allow_parenthesized_argument = token.kind == Token::Kind::LParen &&
+                                             token.span.start_line == member_token.span.end_line
+              if call_without_parens_disallowed?(token) && !allow_parenthesized_argument
                 node
               else
                 # Try to parse arguments
@@ -13930,11 +13938,17 @@ current_token.kind == Token::Kind::Identifier &&
                                 peeked.kind != Token::Kind::Newline &&
                                 peeked.span.start_offset <= boundary_token.span.end_offset
                               end
-            if !force_call && call_without_parens_disallowed?(boundary_token) && !is_unary_prefix
+            allow_parenthesized_argument = space_consumed &&
+                                           boundary_token.kind == Token::Kind::LParen &&
+                                           boundary_token.span.start_line == last_span.end_line
+            if !force_call &&
+               call_without_parens_disallowed?(boundary_token) &&
+               !is_unary_prefix &&
+               !allow_parenthesized_argument
               trace_identifier_transition(identifier_span, "return-ident-disallowed")
               @arena.add_typed(IdentifierNode.new(identifier_span, stable_identifier_name_slice(identifier_slice)))
             else
-              maybe_call = try_parse_call_args_without_parens(identifier_span, identifier_slice)
+              maybe_call = try_parse_call_args_without_parens(identifier_span, identifier_slice, allow_parenthesized_argument)
               if maybe_call.invalid?
                 trace_identifier_transition(identifier_span, "return-ident-call-fallback")
                 @arena.add_typed(IdentifierNode.new(identifier_span, stable_identifier_name_slice(identifier_slice)))

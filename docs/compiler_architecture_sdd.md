@@ -29,6 +29,13 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+A same-line spaced parenthesized command argument owns its postfix chain in
+bare and member calls. Adjacent explicit parentheses and newline statement
+boundaries keep their existing semantics. DoD:
+spaced_parenthesized_command_argument_repro.sh, original-first native
+assertions including identifier/keyword member paths and boundary guards.
+Rollback is the bounded same-line parenthesis admission in the parser guards.
+
 Synthesized Array append retains a concrete class-reference value exactly
 once at its common ptr slot store, including after buffer growth. This repairs
 publication ownership when a caller releases its local reference. DoD:
