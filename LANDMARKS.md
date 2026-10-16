@@ -18964,3 +18964,20 @@ This separate output-order bug, current bootstrap and produced-stage LavinMQ
 functional/upstream parity remain open. Manifest 8cc553d5cf15bf27de935d7ee0ec0ccaaf4bffabd7b16589c79af8faec65c373; host 9c3c1163a2b2488068e253cd063273542bdf237b4881e4583a0345ecbe3cc6b3.
 Refresh after hierarchy registration, builtin parent definitions, predicate
 lowering, union narrowing, or external stdlib changes.
+
+
+### Validate ordinary named calls against source external labels (2026-10-16)
+Named argument admission previously accepted both a parameter's external
+label and its internal variable name. Selected/memoized targets and inline
+yield paths could also bypass source call-shape admission. Use a single source
+label, and validate the original named shape before consuming a selected or
+emitted Def. DoD: named_argument_external_label_admission_repro.sh. Fresh
+named1724 matches original Crystal for external labels, reordered arguments,
+defaults, ordinary names, **kwargs, and direct/inherited block calls; eight
+internal/unknown-label variants are rejected by both compilers. named1725
+exact parent admits an invalid internal label. named1726 passes 135 focused
+HIR examples. Scoped adversary ROBUST for these ordinary calls. String.build's
+special lowering still admits an unknown label in a separate probe; broader
+special-case call-shape admission, current bootstrap and produced-stage LavinMQ
+parity remain open. Manifest fc447cf488ebc1cab04deef54cb4d8189f27c5c18ed17f2cfb1d3092c6707099; host 85ed332c904726404aefd3c38d59673b910137f30ece07d68fd6419e34d344c4. Refresh after parameter
+label representation, call resolution, inline yield or named-pack changes.

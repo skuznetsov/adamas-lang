@@ -1061,3 +1061,14 @@ diagnostic meanings.
 - RED io1712: pre-existing write_byte/puts ordering mismatch, separately open.
   Current bootstrap and produced-stage LavinMQ parity remain open. Manifest
   8cc553d5cf15bf27de935d7ee0ec0ccaaf4bffabd7b16589c79af8faec65c373. Expiry: hierarchy, builtin parents, predicate/narrowing or stdlib.
+
+
+### Validate ordinary named calls against source external labels (2026-10-16)
+- GREEN named1724/named1716: external labels, argument reordering, defaults,
+  ordinary labels, **kwargs, and direct/inherited block calls match original
+  Crystal; eight invalid internal/unknown-label shapes are rejected by both.
+- RED named1725 exact disjoint1698 parent: admits direct_internal_label.
+- GREEN named1726: 135 focused HIR examples. Scoped ROBUST for ordinary named
+  calls. String.build special lowering remains separately open, as do current
+  bootstrap and produced-stage LavinMQ parity. Manifest fc447cf488ebc1cab04deef54cb4d8189f27c5c18ed17f2cfb1d3092c6707099.
+  Expiry: parameter label representation, resolver, inline yield or named pack.

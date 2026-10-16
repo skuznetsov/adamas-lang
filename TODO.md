@@ -19870,3 +19870,13 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   io1712 exact ctor1684 parent matches neither the original byte order nor
   line placement; this predates the scalar-disjointness change. Reproducer:
   io1711_stdout_ordering.cr, SHA df0bb3566ae75d2ddd984bf7b22cd2405479fa316fb10d47e95f343c1033db41.
+
+
+### Validate ordinary named calls against source external labels (2026-10-16)
+- [x] Admit ordinary named calls by external labels and revalidate selected
+  and emitted Def targets before inline yield/call lowering. named1724 native
+  original-first regression GREEN; named1725 exact parent RED; named1726
+  focused HIR suite 135/135 GREEN.
+- [ ] Apply original named call-shape admission to special lowering paths.
+  Separate String.build(bogus: 1) { ... } probe is rejected by original Crystal
+  but accepted by Adamas. Do not infer special-path closure from named1724.

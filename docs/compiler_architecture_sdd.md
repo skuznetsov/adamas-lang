@@ -4348,3 +4348,17 @@ disjoint1713 exact parent RED; disjoint1709 135 HIR examples; disjoint1710 paren
 3/5 RED. Scoped ROBUST. Manifest 8cc553d5cf15bf27de935d7ee0ec0ccaaf4bffabd7b16589c79af8faec65c373; host 9c3c1163a2b2488068e253cd063273542bdf237b4881e4583a0345ecbe3cc6b3.
 Expiry: hierarchy registration, builtin parents, predicate or union narrowing,
 and external stdlib changes. Output ordering, bootstrap and LavinMQ parity open.
+
+
+### Validate ordinary named calls against source external labels (2026-10-16)
+A Def parameter exposes one named label: its explicit external label,
+otherwise its ordinary variable name (without an ivar capture prefix). An
+internal name is not an alias when an external label exists. Ordinary call
+resolution and target reuse validate the original named shape against the
+source Def; inline yield and emitted-call consumers retain that admission
+boundary. **kwargs keeps its catchall behavior. Evidence: named1724 positive
+runtime parity and eight original-first rejections; named1725 exact parent
+admits the invalid internal label; named1726 135 HIR examples GREEN. Scoped
+ROBUST. Manifest fc447cf488ebc1cab04deef54cb4d8189f27c5c18ed17f2cfb1d3092c6707099; host 85ed332c904726404aefd3c38d59673b910137f30ece07d68fd6419e34d344c4. Expiry: parameter labels, resolver,
+inline yield and named packs. Special String.build call-shape admission,
+bootstrap and LavinMQ parity remain open.

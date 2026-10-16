@@ -48967,6 +48967,17 @@ module Adamas::HIR
       count
     end
 
+    private def named_parameter_label(param : DefParamInfo) : String?
+      if external = param.external_name
+        return external unless external.empty?
+      end
+      if name = param.name
+        label = name.lstrip('@')
+        return label unless label.empty?
+      end
+      nil
+    end
+
     private def named_args_compatible_with_def?(
       def_node : Adamas::Compiler::Frontend::DefNode,
       named_arg_names : Array(String)?,
@@ -49008,38 +49019,21 @@ module Adamas::HIR
           # ("argument already specified"); otherwise `x.to_s(io, base: 16)`
           # bound `base` twice on the io-less overload and dropped `io`.
           if raw_positional_count && positional_slots < raw_positional_count.not_nil!
-            ext = param.external_name || ""
-            loc = param.name || ""
-            loc_stripped = loc.lstrip('@')
-            if (!ext.empty? && named_arg_names.includes?(ext)) ||
-               (!loc.empty? && named_arg_names.includes?(loc)) ||
-               (!loc_stripped.empty? && loc_stripped != loc && named_arg_names.includes?(loc_stripped))
-              return false
+            if label = named_parameter_label(param)
+              return false if named_arg_names.includes?(label)
             end
           end
           positional_slots += 1
         end
 
-        if external = param.external_name
-          accepted << external unless external.empty?
-        end
-        if name = param.name
-          accepted << name unless name.empty?
-          # ivar capture params are stored with '@' prefix; add stripped form too
-          stripped = name.lstrip('@')
-          accepted << stripped unless stripped.empty? || stripped == name
+        if label = named_parameter_label(param)
+          accepted << label
         end
 
         if positional_arg_count && positional_index >= positional_arg_count.not_nil! &&
            !param.is_splat && param.default_value.nil?
-          external = param.external_name || ""
-          local = param.name || ""
-          local_stripped = local.lstrip('@')
-          unless (!external.empty? && named_arg_names.includes?(external)) ||
-                 (!local.empty? && named_arg_names.includes?(local)) ||
-                 (!local_stripped.empty? && local_stripped != local && named_arg_names.includes?(local_stripped))
-            return false
-          end
+          label = named_parameter_label(param)
+          return false unless label && named_arg_names.includes?(label)
         end
         positional_index += 1 unless param.is_splat
       end
@@ -49070,11 +49064,8 @@ module Adamas::HIR
           next
         end
 
-        if external = param.external_name
-          accepted << external unless external.empty?
-        end
-        if name = param.name
-          accepted << name unless name.empty?
+        if label = named_parameter_label(param)
+          accepted << label
         end
       end
 
@@ -103440,6 +103431,9 @@ module Adamas::HIR
         end
       end
       semantic_target = expr_id.invalid? ? nil : semantic_call_target(expr_id, lookup_name)
+      if semantic_target && m3e_input && !call_target_matches_call_shape?(m3e_input, semantic_target.def_node)
+        semantic_target = nil
+      end
       if semantic_target && !has_block_call && !has_splat && !has_named_args
         if source_generic_argument_mismatch_for_def(
              semantic_target.def_node, arg_types,
@@ -104268,7 +104262,21 @@ module Adamas::HIR
 
       disable_inline_yield = env_has?("ADAMAS_DISABLE_INLINE_YIELD")
       disabled_tuple_each_inline = concrete_tuple_each_inline?(ctx, strip_type_suffix(base_method_name), receiver_id)
-      if (block_for_inline || proc_for_inline) && (!disable_inline_yield || disabled_tuple_each_inline)
+      inline_named_shape_admitted = true
+      if m3e_input && has_named_args && m3e_input.named_names
+        inline_named_shape_known = false
+        if selected_def = selected_call_entry_def
+          inline_named_shape_known = true
+          inline_named_shape_admitted = call_target_matches_call_shape?(m3e_input, selected_def)
+        end
+        if emitted_def = @function_defs[mangled_method_name]?
+          inline_named_shape_known = true
+          inline_named_shape_admitted = inline_named_shape_admitted &&
+                                        call_target_matches_call_shape?(m3e_input, emitted_def)
+        end
+        inline_named_shape_admitted = false unless inline_named_shape_known
+      end
+      if inline_named_shape_admitted && (block_for_inline || proc_for_inline) && (!disable_inline_yield || disabled_tuple_each_inline)
         try_inline_allowed = env_has?("ADAMAS_INLINE_TRY") || !env_has?("ADAMAS_DISABLE_TRY_INLINE")
         if method_name == "try"
           if env_has?("ADAMAS_DISABLE_TRY_INLINE")
@@ -105146,6 +105154,15 @@ module Adamas::HIR
             "no overload matches #{lookup_name}: expected argument restriction #{declared_name}, got #{actual_name}",
             node,
           )
+        end
+      end
+      if m3e_input && has_named_args && m3e_input.named_names
+        emitted_call_def = @function_defs[mangled_method_name]?
+        if selected_call_entry_def && !call_target_matches_call_shape?(m3e_input, selected_call_entry_def)
+          raise LoweringError.new("no overload matches named arguments for #{lookup_name}", node)
+        end
+        if emitted_call_def && !call_target_matches_call_shape?(m3e_input, emitted_call_def)
+          raise LoweringError.new("no overload matches named arguments for #{lookup_name}", node)
         end
       end
       lower_function_if_needed(mangled_method_name)
@@ -111906,6 +111923,30 @@ module Adamas::HIR
       )
     end
 
+    # A resolved Def is admissible only for the original named-argument shape.
+    # This final check protects memoized and compatibility return paths that may
+    # otherwise bypass overload candidate validation.
+    private def call_target_matches_call_shape?(input : CallResolutionInput, def_node : Adamas::Compiler::Frontend::DefNode) : Bool
+      return true unless input.has_named
+      named_names = input.named_names
+      return false unless named_names
+
+      arg_count = if raw_positional_count = input.raw_positional_count
+                    raw_positional_count + named_names.size
+                  else
+                    input.arg_count
+                  end
+      positional_arg_count = arg_count - named_names.size +
+                             packed_double_splat_key_count(input.arg_types, named_names)
+      positional_arg_count = 0 if positional_arg_count < 0
+      named_args_compatible_with_def?(
+        def_node,
+        named_names,
+        positional_arg_count,
+        input.raw_positional_count,
+      )
+    end
+
     # Keep the legacy resolver's selected symbol and DefNode together. This is a
     # behavior-neutral compatibility result, not semantic CallResolution identity.
     private def resolve_call_target(input : CallResolutionInput, source_rejections : Array(Tuple(String, String))? = nil) : SelectedCallTarget?
@@ -111913,7 +111954,15 @@ module Adamas::HIR
       started_at = Time.instant if profile
       memo_fingerprint = call_resolution_memo_fingerprint(input) if @call_resolution_memo_enabled
       memo_entry = memo_fingerprint ? @call_resolution_memo[memo_fingerprint]? : nil
-      memo_hit = memo_entry && call_resolution_memo_key_matches?(memo_entry.key, input)
+      memo_hit = if memo_entry && call_resolution_memo_key_matches?(memo_entry.key, input)
+                   if memo_def = memo_entry.def_node
+                     call_target_matches_call_shape?(input, memo_def)
+                   else
+                     true
+                   end
+                 else
+                   false
+                 end
 
       t = if memo_hit && memo_entry
             @call_resolution_memo_hits += 1_i64
@@ -111930,6 +111979,9 @@ module Adamas::HIR
             @call_resolution_memo_misses += 1_i64 if @call_resolution_memo_enabled
             memo_key = call_resolution_memo_key(input) if @call_resolution_memo_enabled
             resolved = resolve_call_tuple(input, source_rejections)
+            if resolved && !call_target_matches_call_shape?(input, resolved[1])
+              resolved = nil
+            end
             if memo_fingerprint && memo_key
               if call_resolution_memo_key_matches?(memo_key, input)
                 if @call_resolution_memo.size >= 8192 && !@call_resolution_memo.has_key?(memo_fingerprint)
@@ -111977,6 +112029,7 @@ module Adamas::HIR
         end
       end
       return nil unless t
+      return nil unless call_target_matches_call_shape?(input, t[1])
       SelectedCallTarget.new(t[0], t[1])
     end
 
@@ -112065,7 +112118,8 @@ module Adamas::HIR
                                 func_def, arg_types, function_context_from_name(func_name),
                               )
                             end
-          return {func_name, func_def} unless direct_mismatch
+          direct_shape_matches = call_target_matches_call_shape?(input, func_def)
+          return {func_name, func_def} unless direct_mismatch || !direct_shape_matches
         end
       end
 
