@@ -904,3 +904,18 @@ diagnostic meanings.
   rejection, while Bytes[] variant union1451 separately produces 0/0 vs 4/2
   after incorrectly inferring String|UInt8 and selecting a capacity allocator.
 - Refresh after selection, body state, exception/CFG or narrowing changes.
+
+
+### Retain exact source identity for materialized initializer specializations (2026-10-16)
+- RED union1484/1432: scalar-primed IO::Memory.new loses the initialize
+  declaration for a Slice(UInt8)|String union, although the body exists.
+- GREEN union1480/1471: both union arms and scalar factory/slice controls
+  match Crystal outputs 4/2/7/5. GREEN union1481: 85 HIR examples, including
+  rejection after initializer ABI mutation and source-arena removal.
+- Scoped delta verdict ROBUST for existing exact-ABI materialized allocators.
+  RED union1474: unprimed demand remains absent. OPEN union1479/1476:
+  parent and candidate both accept Bool|String and coerce it to a capacity
+  argument; Crystal rejects it. These are separate surviving falsifiers.
+- Lavin1475/channel1473 passes IO::Memory and reaches nullable Proc admission
+  in HTTP::Server.build_middleware. No broker binary or test parity exists.
+- Expiry: source/body/arena/context/ABI changes require replay of these probes.

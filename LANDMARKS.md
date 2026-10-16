@@ -18721,3 +18721,29 @@ Source manifest 4203eda30b83bec54978515438345ddecf875333a31cfece5f8692e45b858c93
 host a1e48fefdd6c3b999eea45836a352783e9762b510a05251ddb00c5cd4793916b.
 Refresh after call selection, completion state, HIR CFG/exception edges or
 continuation narrowing changes. Roll back this slice with its portable test.
+
+
+### Retain exact source identity for materialized initializer specializations (2026-10-16)
+A generated Owner.new wrapper has no source Def, and its already-emitted
+initialize specialization may also have only a derived symbol. Body presence
+therefore could not establish source admission for IO::Memory.new(Slice|String).
+Record the exact initializer Function, source Def/arena, namespace, registered
+bindings and ABI after successful lowering; do not add fake overload entries.
+Consume this origin only for an existing exact-ABI allocator that returns its
+one allocation, forwards it to one nonvirtual initializer, and preserves the
+input parameter IDs. Recheck source call shape/restrictions in its own context.
+The origin expires on Function/source/arena/context/ABI identity changes.
+DoD: materialized_allocator_source_provenance_repro.sh; parent1432 RED in
+union1484, candidate1471 GREEN in union1480 (four native sizes match Crystal
+1.21). union1481: 85 HIR examples GREEN, including return-ABI and source-arena
+mutation rejection. Scoped delta adversary ROBUST for this materialized corridor.
+Lavin1475/channel1473 passes the former IO::Memory rejection and now rejects
+HTTP::Server.build_middleware's nullable Proc restriction; no broker exists yet.
+Unprimed first-demand union1452 remains RED (union1474). A separate Bool|String
+negative is accepted by BOTH parent1432 (union1479) and candidate1471 (union1476),
+while Crystal rejects it: LLVM incorrectly routes it to a capacity allocator.
+Neither gap is closed by this provenance fix. Source manifest
+2bd0eea66a17dcec8fd6739b7c72d3ca27b967faeb8dd34cf63ee5c7b502407e;
+host 809a1e18ccf209db205bff5695e2f49e03f88d91cc5ea55c56f0adb63b831fbc.
+Refresh after allocator structure, source registration, lowering context or ABI
+changes. Roll back this slice with its regression and HIR contract tests.

@@ -19709,3 +19709,21 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Diagnose the separate Bytes[] return-inference/constructor gap:
   union1451 builds on1432 but produces buffer sizes 0/0 instead of Crystal's
   4/2; LLVM uses String|UInt8 and the capacity allocator, not Slice|String.
+
+
+### Retain exact source identity for materialized initializer specializations (2026-10-16)
+- [x] Retain exact source identity for already-materialized initializer
+  specializations without fake source overloads, and consume it for the verified
+  allocator union corridor. union1484/1432 RED; union1480/1471 GREEN on four
+  original-first native outputs; union1481 GREEN on 85 HIR examples.
+- [ ] Demand source-admitted concrete allocators on an unprimed union call.
+  union1452/union1474 still rejects IO::Memory.new(Slice(UInt8)|String), whereas
+  the scalar-primed union now works. Avoid speculative allocator fabrication.
+- [ ] Fix unsupported union constructor admission: union1479 fixture SHA
+  4739f7b3a5427b0fafc04e0daa4fbe6c2c6f9b23c522976d250db95f3ffebcc6
+  passes on parent1432 and candidate1471 although Crystal rejects Bool|String.
+  LLVM calls IO::Memory.new$Bool|String with an Int32 capacity ABI; inspect
+  allocator_unique_positional_def_for and union-to-integer coercion together.
+- [ ] Resolve the new Lavin1475 frontier: HTTP::Server.build_middleware rejects
+  Nil|Proc(HTTP::Server::Context, Nil) for (HTTP::Server::Context ->)?. Preserve
+  Proc input restrictions, result-discard semantics and declaration context.

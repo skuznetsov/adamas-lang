@@ -4186,3 +4186,21 @@ Lavin1443 advances to synthetic IO::Memory.new union source provenance; the
 broker has not compiled. Source manifest
 4203eda30b83bec54978515438345ddecf875333a31cfece5f8692e45b858c93.
 Refresh on source selection, body completion, CFG/exception or flow changes.
+
+
+### Retain exact source identity for materialized initializer specializations (2026-10-16)
+A materialized initialize specialization is a derived body, not a declaration
+in the overload index. Its admissible origin is an exact Function/source Def/
+arena identity plus declaration namespace, registered bindings and ABI snapshot,
+recorded only after successful lowering. Identity/context/ABI changes invalidate
+it. Existing allocator wrappers may consume this origin only with one returned
+allocation, one direct initializer call, exact parameter forwarding and complete
+ordinary source-call admission, including omitted default arguments.
+No allocator demand, overload fabrication or relaxed restriction follows from
+body presence alone. union1484 parent RED; union1480 candidate GREEN on four
+Crystal-matched native outputs; union1481 GREEN on 85 HIR examples. Delta
+adversary ROBUST in that corridor. First-demand unions and unsupported union
+capacity admission remain open; this is not general constructor closure.
+Lavin1475 advances to a nullable Proc source restriction; no executable/parity
+claim. Source manifest 2bd0eea66a17dcec8fd6739b7c72d3ca27b967faeb8dd34cf63ee5c7b502407e.
+Refresh after origin registration, body/allocator structure or ABI changes.

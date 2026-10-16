@@ -1115,6 +1115,32 @@ module Adamas::HIR
       end
     end
 
+    # A specialized initializer can have an emitted symbol without a source
+    # overload entry. Retain its exact lowering source without adding a fake
+    # declaration to the overload index.
+    private class MaterializedInitializerSource
+      getter function : Adamas::HIR::Function
+      getter source_name : String
+      getter source_def : Adamas::Compiler::Frontend::DefNode
+      getter source_arena : Adamas::Compiler::Frontend::ArenaLike
+      getter namespace : String?
+      getter bindings : Hash(String, String)
+      getter parameter_types : Array(TypeRef)
+      getter return_type : TypeRef
+
+      def initialize(
+        @function : Adamas::HIR::Function,
+        @source_name : String,
+        @source_def : Adamas::Compiler::Frontend::DefNode,
+        @source_arena : Adamas::Compiler::Frontend::ArenaLike,
+        @namespace : String?,
+        @bindings : Hash(String, String),
+        @parameter_types : Array(TypeRef),
+        @return_type : TypeRef,
+      )
+      end
+    end
+
     # An exact source-admitted arm may be queued while its caller is lowered.
     # Its provisional ABI is checked against the surviving body before MIR.
     private class DeferredUnionVariantContract
@@ -7419,6 +7445,7 @@ module Adamas::HIR
     # so the pre-MIR boundary can reject a stale or incomplete dispatch set.
     @included_forall_virtual_return_certificates : Array(IncludedForallVirtualReturnCertificate)
     @deferred_union_variant_contracts : Array(DeferredUnionVariantContract)
+    @materialized_initializer_sources = {} of String => MaterializedInitializerSource
     @included_forall_virtual_body_demands : Array(IncludedForallVirtualBodyDemand) = [] of IncludedForallVirtualBodyDemand
     @included_forall_virtual_body_provenance : Hash(String, IncludedForallVirtualBodyProvenance) = {} of String => IncludedForallVirtualBodyProvenance
     # Dedup replay work at the (child, parent, method, args_hash, flags) grain:
@@ -7667,6 +7694,7 @@ module Adamas::HIR
       @source_recovered_defs = {} of UInt64 => Adamas::Compiler::Frontend::DefNode
       @included_forall_virtual_return_certificates = [] of IncludedForallVirtualReturnCertificate
       @deferred_union_variant_contracts = [] of DeferredUnionVariantContract
+      @materialized_initializer_sources = {} of String => MaterializedInitializerSource
       @included_forall_virtual_body_demands = [] of IncludedForallVirtualBodyDemand
       @included_forall_virtual_body_provenance = {} of String => IncludedForallVirtualBodyProvenance
       @function_visibilities = Hash(String, Adamas::Compiler::Frontend::Visibility).new(initial_capacity: 4096)
@@ -44191,6 +44219,19 @@ module Adamas::HIR
           full_name,
           is_class_method,
           included_forall_body_method_arena,
+        )
+      end
+
+      if is_initialize_method && (source_name = logical_registered_name) &&
+         (source_def = @function_defs[source_name]?) && source_def.same?(node) &&
+         (source_arena = @function_def_arenas[source_name]?) &&
+         (body_arena = included_forall_body_method_arena) &&
+         arena_map_key(source_arena) == arena_map_key(body_arena)
+        bindings = function_type_param_map_for_name(source_name) || EMPTY_DEFERRED_TYPE_PARAM_SNAPSHOT
+        @materialized_initializer_sources[full_name] = MaterializedInitializerSource.new(
+          func, source_name, source_def, source_arena,
+          function_namespace_override_for(source_name), bindings.dup,
+          func.params.map(&.type), func.return_type,
         )
       end
 
@@ -108605,6 +108646,88 @@ module Adamas::HIR
       end
     end
 
+    private def materialized_initializer_source_current?(source : MaterializedInitializerSource) : Bool
+      function = source.function
+      name = function.name
+      return false unless @module.function_by_name(name).try(&.same?(function)) &&
+                          function_state(name).completed? && @module.has_function_with_body?(name)
+      return false unless function.params.map(&.type) == source.parameter_types && function.return_type == source.return_type
+      return false unless @function_defs[source.source_name]?.try(&.same?(source.source_def)) &&
+                          @function_def_arenas[source.source_name]?.try { |arena| arena_map_key(arena) == arena_map_key(source.source_arena) }
+      bindings = function_type_param_map_for_name(source.source_name) || EMPTY_DEFERRED_TYPE_PARAM_SNAPSHOT
+      function_namespace_override_for(source.source_name) == source.namespace && bindings == source.bindings
+    end
+
+    # Synthesized `.new` wrappers have no source DefNode of their own. Admit
+    # only an already materialized, exact-ABI allocator whose allocation is
+    # returned and passed unchanged to one source-backed initializer. Defaults
+    # belong to that initializer's ordinary source-call contract.
+    private def materialized_allocator_union_source(
+      name : String,
+      argument_types : Array(TypeRef),
+    ) : Tuple(String, Adamas::Compiler::Frontend::DefNode)?
+      return nil if @function_defs.has_key?(name)
+      base = strip_type_suffix(name)
+      return nil unless base.ends_with?(".new") && name == mangle_function_name(base, argument_types)
+      owner = method_owner_from_name(base)
+      info = @class_info[owner]?
+      target = @module.function_by_name(name)
+      return nil unless info && target && @module.has_function_with_body?(name)
+      return nil unless target.return_type == info.type_ref && target.params.map(&.type) == argument_types
+      allocations = [] of Allocate
+      target.blocks.each do |block|
+        block.instructions.each do |instruction|
+          if instruction.is_a?(Allocate) && instruction.type == info.type_ref
+            allocations << instruction
+          end
+        end
+      end
+      return nil unless allocations.size == 1
+      allocation = allocations.first
+      exits = reachable_blocks(target).select { |block| block.terminator.try(&.successors.empty?) }
+      return nil if exits.empty?
+      return nil unless exits.all? do |block|
+        terminator = block.terminator
+        terminator.is_a?(Return) && terminator.value == allocation.id
+      end
+      initializers = [] of Call
+      target.blocks.each do |block|
+        block.instructions.each do |instruction|
+          if instruction.is_a?(Call) && instruction.receiver == allocation.id &&
+             method_short_from_name(instruction.method_name) == "initialize"
+            initializers << instruction
+          end
+        end
+      end
+      return nil unless initializers.size == 1
+      initializer = initializers.first
+      return nil if initializer.virtual || initializer.has_block?
+      source_name = initializer.method_name
+      if provenance = @materialized_initializer_sources[source_name]?
+        return nil unless materialized_initializer_source_current?(provenance)
+        source_name = provenance.source_name
+      end
+      source_def = @function_defs[source_name]?
+      source_arena = @function_def_arenas[source_name]?
+      body = @module.function_by_name(initializer.method_name)
+      return nil unless source_def && source_arena && body && @module.has_function_with_body?(initializer.method_name)
+      return nil unless body.params.first?.try(&.name) == "self" && body.params.first.type == info.type_ref
+      actual_types = initializer.args.map { |id| hir_value_type_in_function(target, id) || TypeRef::VOID }
+      return nil if actual_types.any? { |type| type == TypeRef::VOID }
+      return nil unless body.params[1, body.params.size - 1].map(&.type) == actual_types
+      return nil unless initializer.args.size >= argument_types.size &&
+                        initializer.args[0, argument_types.size] == target.params.map(&.id)
+      shape_admitted = with_union_variant_declaration_context(
+        source_name, function_context_from_name(source_name),
+      ) do |declaration_context|
+        function_def_accepts_call_shape?(source_name, source_def, argument_types, false, false, nil) &&
+          source_generic_argument_mismatch_for_def(source_def, argument_types, declaration_context).nil? &&
+          params_compatible_with_args?(source_def, argument_types, declaration_context)
+      end
+      return nil unless shape_admitted
+      {source_name, source_def}
+    end
+
     # Union arg dispatch: when an arg is union with distinct typed overloads
     private def try_emit_union_arg_dispatch(
       ctx : LoweringContext, receiver_id : ValueId?, base_method_name : String,
@@ -108759,6 +108882,11 @@ module Adamas::HIR
           end
         end
 
+        unless variant_source_def
+          if allocator_source = materialized_allocator_union_source(vm, vat)
+            variant_source_name, variant_source_def = allocator_source
+          end
+        end
         if require_source_compatible_variants
           return nil unless variant_source_def
           admitted = with_union_variant_declaration_context(
