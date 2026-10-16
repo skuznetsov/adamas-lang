@@ -3963,3 +3963,23 @@ includers and late registry mutation remain unadmitted by this evidence.
 LavinMQ still has an independent unwait overload-selection blocker; no candidate
 broker or complete application test parity is claimed. Refresh after include
 registration, HIR/MIR kind conversion, virtual-target planning or ABI changes.
+
+
+### Preserve pointerof source pointee identity (2026-10-16)
+
+pointerof must transport source pointee identity at production, including nested
+Pointer and full Proc signatures. Its ivar path uses the canonical storage type
+found on the actual owner/ancestor. Address calculation still uses byte-level
+PointerAdd (Int8 element stride) and never loads the field before taking its
+address. Source identity and arithmetic stride have different purposes.
+Known local/inferred operands use pointer_type_ref_for_element, not a display
+name. Unknown/VOID ivar storage retains the prior raw-pointer fallback; this
+evidence does not admit unsafe generic matching for an erased actual pointer.
+DoD on pointer1020: pointer1021 (three HIR examples), original-first pointer1028
+(eight identical native outputs), pointer1024 CFG writeback, pointer1027
+heap-promoted aggregate address guard. All pass. Scoped adversary ROBUST for
+these cases, including struct and reference-field writes and Proc ivar calls.
+The String missing-body call-result mismatch remains a separate parent failure
+(pointer1022); native String byte extraction passes. Escaped-address lifetime,
+all foreign aggregate layouts and full LavinMQ parity remain outside this gate.
+Refresh on pointee interning, storage canonicalization, offsets or ABI changes.

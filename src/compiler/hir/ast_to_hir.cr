@@ -26743,9 +26743,8 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::PointerofNode
         if inner = expr_node.args.first?
           if inner_type = infer_type_from_expr(inner, self_type_name)
-            inner_name = get_type_name_from_ref(inner_type)
-            if !inner_name.empty? && inner_name != "Void" && inner_name != "Unknown"
-              return type_ref_for_name("Pointer(#{inner_name})")
+            unless inner_type.null_ptr? || inner_type == TypeRef::VOID
+              return pointer_type_ref_for_element(inner_type)
             end
           end
         end
@@ -80880,6 +80879,7 @@ module Adamas::HIR
                      # Do NOT load the value — we need the address.
                      ivar_name = (safe_slice_to_string(arg_node.name) || "")
                      ivar_offset = 0
+                     ivar_type = TypeRef::VOID
                      if class_name = @current_class
                        # String's @c is an implicit trailing byte, not an ordinary
                        # registered ivar. Its address is part of the runtime ABI and
@@ -80887,6 +80887,7 @@ module Adamas::HIR
                        # completed String class-info discovery.
                        if class_name == "String" && ivar_name == "@c"
                          ivar_offset = STRING_DATA_OFFSET
+                         ivar_type = TypeRef::UINT8
                        else
                          search_name : String? = class_name
                          found = false
@@ -80894,6 +80895,7 @@ module Adamas::HIR
                            if class_info = @class_info[search_name]?
                              if found_ivar = find_ivar_info(class_info.ivars, ivar_name)
                                ivar_offset = found_ivar.offset
+                               ivar_type = canonical_ivar_storage_type_ref(found_ivar.type, search_name, found_ivar.name)
                                found = true
                                break
                              end
@@ -80912,9 +80914,12 @@ module Adamas::HIR
                      offset_lit = Literal.new(ctx.next_id, TypeRef::INT64, ivar_offset.to_i64)
                      ctx.emit(offset_lit)
                      ctx.register_type(offset_lit.id, TypeRef::INT64)
-                     ptr_add = PointerAdd.new(ctx.next_id, TypeRef::POINTER, self_id, offset_lit.id, TypeRef::INT8)
+                     # Keep the source pointee type while retaining byte-level
+                     # address arithmetic. Never load the field to take its address.
+                     addr_type = ivar_type.null_ptr? || ivar_type == TypeRef::VOID ? TypeRef::POINTER : pointer_type_ref_for_element(ivar_type)
+                     ptr_add = PointerAdd.new(ctx.next_id, addr_type, self_id, offset_lit.id, TypeRef::INT8)
                      ctx.emit(ptr_add)
-                     ctx.register_type(ptr_add.id, TypeRef::POINTER)
+                     ctx.register_type(ptr_add.id, addr_type)
                      return ptr_add.id # Return field address directly, skip AddressOf
                    else
                      lower_expr(ctx, node.args.first)
@@ -80923,12 +80928,8 @@ module Adamas::HIR
       # Create AddressOf instruction — use typed pointer when operand type is known.
       operand_type = ctx.type_of(operand_id)
       addr_type = TypeRef::POINTER
-      unless operand_type.null_ptr? || operand_type == TypeRef::VOID || operand_type == TypeRef::POINTER
-        elem_name = get_type_name_from_ref(operand_type)
-        unless elem_name.empty? || elem_name == "Void" || elem_name == "Unknown" || elem_name == "Pointer"
-          candidate = type_ref_for_name("Pointer(#{elem_name})")
-          addr_type = candidate unless candidate == TypeRef::VOID
-        end
+      unless operand_type.null_ptr? || operand_type == TypeRef::VOID
+        addr_type = pointer_type_ref_for_element(operand_type)
       end
       addr_of = AddressOf.new(ctx.next_id, addr_type, operand_id)
       ctx.emit(addr_of)

@@ -18396,3 +18396,32 @@ Struct/value includers, reopened include registries and broader ABI combinations
 still need separate falsifiers. Refresh after include census, receiver kind,
 namespace resolution or virtual-target demand changes. Roll back source hunks
 and focused regressions together. This does not claim a successful LavinMQ build.
+
+
+### Preserve pointerof source pointee identity (2026-10-16)
+
+pointerof's producer erased instance-field pointee identity to raw Pointer even
+when the owner registry knew the field type. Local and inferred pointers also
+used a display name, losing Proc signatures. This later looked like a failed
+Pointer(T) restriction; accepting raw Pointer there would hide the producer bug.
+Use the canonical ivar storage type and pointer_type_ref_for_element for known
+source types. Preserve byte-based PointerAdd with Int8 stride, return the field
+address without loading it, and retain raw Pointer only for unknown storage.
+This follows Crystal's semantic binding of PointerOf to variable storage and its
+codegen address path (semantic/main_visitor.cr:2654, codegen/codegen.cr:730).
+Parent 8acf6b9/source module956 is RED: pointer1026 has one failure and two errors
+in three focused HIR examples. Sealed pointer1020 is GREEN: pointer1021 passes
+all three. Original-first pointer1028 agrees on eight native outputs covering
+generic/inherited ivars, nested pointers, local/ivar Proc signatures, String
+bytes, a struct field write and a reference-field write. pointer1024 CFG writeback
+and pointer1027 heap-promoted aggregate address guards also pass.
+Scoped adversary ROBUST for these storage cases; a separate original-first
+struct/Proc/reference probe (pointer1025) agrees on 47, 79 and second. This does
+not certify every pointer ABI, address lifetime or a successful LavinMQ build.
+The existing String missing-body call identity test has one failure on parent
+module956 too (pointer1022); keep that separate consumer defect open.
+Source manifest a154da0a844103d9e4d82e3ca62b543cf8308b28d090d5cd49b3bc97325e6536;
+host 52ae952cba8ae755f596d9b5bc239d66f4f0329816fd837303e91d4549b93487.
+Refresh after pointee interning, ivar storage canonicalization, field offsets,
+pointerof lowering or pointer ABI changes. Roll back source and regressions as
+one change. Tests do not establish the lifetime of pointers escaping storage.

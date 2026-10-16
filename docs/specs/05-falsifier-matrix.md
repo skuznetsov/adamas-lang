@@ -702,3 +702,23 @@ diagnostic meanings.
   output lines in each specialization order and both member-call syntaxes.
 - Open: struct/value module view ABI and late include/descendant registration.
   Refresh on include census, namespace, kind classification or demand changes.
+
+
+### Preserve pointerof source pointee identity (2026-10-16)
+
+- RED pointer1026 on parent module956: three pointerof source-identity examples
+  produce one failure (Proc signature erased) and two errors (raw ivar pointer
+  has no concrete pointee descriptor).
+- GREEN pointer1021 on pointer1020: all three HIR examples pass; ivar pointer
+  identity is concrete while arithmetic remains byte based and field loads are
+  absent from the address path.
+- GREEN original-first pointer1028: eight native outputs match Crystal for
+  generic/inherited ivars, nested pointers, local/ivar Procs, String bytes,
+  struct field writeback and reference-field writeback.
+- GREEN pointer1024/pointer1027: CFG alias/writeback and heap-promoted aggregate
+  address guards. Scoped adversary ROBUST for the tested storage corridor.
+- Existing RED pointer1022 on parent module956: String missing-body call-result
+  identity is inconsistent with its UInt8 pointer descriptor (one of three
+  examples); do not count it as fixed by the pointerof producer repair.
+- Open: escaped-address lifetime, foreign aggregate/union storage and full
+  LavinMQ compilation/test parity. Refresh after storage, interning or ABI edits.

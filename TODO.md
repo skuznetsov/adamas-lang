@@ -19518,3 +19518,21 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Continue LavinMQ: diagnose StrictReceiveAction(Nil)#unwait overload
   selection using the selected source Def, retained arena and actual shape;
   generic module dispatch passing does not establish broker compatibility.
+
+
+### Preserve pointerof source pointee identity (2026-10-16)
+
+- [x] Preserve pointerof's source pointee identity at the HIR producer instead
+  of admitting an erased raw pointer at generic restriction consumers. On sealed
+  pointer1020, pointer1021 passes three HIR examples and original-first
+  pointer1028 matches eight outputs; CFG and heap-aggregate address guards pass.
+- [ ] Diagnose the String#to_unsafe missing-body call identity mismatch retained
+  on committed module956 (pointer1022: one of three examples fails). Compare
+  descriptor interning with the call-result consumer rather than weakening its
+  UInt8 requirement; the native String byte case already passes.
+- [ ] Add pointerof lifetime and storage-kind falsifiers for escaping unions,
+  foreign aggregates and reopened generic owners before broader ABI claims.
+- [ ] Continue LavinMQ at Proc(Nil) | Tuple(AMQP::Queue, LavinMQ::Message)
+  comparison dispatch. Integration generic1013 passes the previous typed-pointer
+  frontier but does not produce a broker binary; pointer1020 alone is not that
+  integration and does not claim full application test parity.
