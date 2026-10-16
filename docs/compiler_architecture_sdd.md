@@ -29,6 +29,13 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+MemberAccessNode retains the same admitted concrete Object-wrapper receiver
+as CallNode, while using the selected ancestor source Def and lexical arena.
+DoD: reference_wrapper_receiver_handoff_repro.sh, six original-first native
+fixtures with exact stdout/stderr. The isolated annotated_member rejects the
+parent; additional receiver/scope cases guard against widening. Rollback is
+the bounded member-selection handoff. Full JSON and bootstrap/parity are open.
+
 A successful source selection remains authoritative while its exact target
 is Pending and present in the deferred worklist. Body/Def absence alone does
 not authorize a final overload rematch to an ancestor. Unselected or unqueued

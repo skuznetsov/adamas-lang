@@ -19061,3 +19061,18 @@ changes. No-parentheses member selection is separately RED (json1819), and
 full JSON's concrete call is suppressed before queue admission (json1812).
 Neither is repaired by this scheduling change. Current bootstrap and LavinMQ
 parity remain open. Rollback is the bounded selected_target_pending guard.
+
+
+### Retain concrete Object-wrapper receivers for member calls (2026-10-16)
+No-parentheses calls use MemberAccessNode. Its successful inherited lookup
+replaced an admitted concrete Object-wrapper owner with Object, despite the
+CallNode path retaining that receiver. Apply the same existing structural
+admission to the member path, keeping the selected source Def and arena.
+Original json1816 prints A; exact parent json1819 exits 138; json1824 prints A.
+json1830 six original-first native fixtures agree in exact stdout/stderr;
+json1832 parent passes the four prior cases then exits 138 on the minimal
+member case. The expanded scope fixture alone also passes on the parent:
+extra demands can mask the bug, so it is a guard rather than the falsifier.
+Scoped ROBUST for member receiver handoff. Manifest 6ab6d2a44ed7a29fd1e103d8918dce2b2078af4a4ee33f041b58d402d466b87e; host a7c0b64ae6e8763aa95f1ce07f100255dc0e1244665f354746657e7cd47a732d.
+Refresh after member selection, wrapper admission or arena transport changes.
+Full JSON helper demand, current bootstrap and LavinMQ parity remain open.

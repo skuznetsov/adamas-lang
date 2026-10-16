@@ -19,7 +19,7 @@ fi
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/reference-wrapper-owner.XXXXXX")"
 cleanup() {
   local status=$?
-  for name in direct_yielded lexical siblings annotated_zero_arg; do
+  for name in direct_yielded lexical siblings annotated_zero_arg annotated_member member_scope_guard; do
     rm -rf "$WORK_DIR/original-$name.cache" "$WORK_DIR/candidate-$name.cache"
   done
   if [[ "$status" -ne 0 || "${KEEP_ARTIFACTS:-0}" == 1 ]]; then
@@ -267,6 +267,113 @@ AAA
 EXPECTED
 : >"$WORK_DIR/annotated_zero_arg.stderr.expected"
 
+cat >"$WORK_DIR/annotated_member.cr" <<'CRYSTAL'
+lib C
+  fun putchar(value : Int32) : Int32
+end
+
+class Reference
+end
+
+abstract class OutputSink
+end
+
+class OutputBuffer < OutputSink
+end
+
+class FormatBuilder
+  def self.with(sink : OutputSink, &)
+    yield new
+  end
+end
+
+class Object
+  def emit_format_direct : Int32
+    emit_format_direct(OutputBuffer.new)
+  end
+
+  def emit_format_direct(sink : OutputSink) : Int32
+    emit_format_direct(FormatBuilder.new)
+  end
+
+  def emit_format_yielded(sink : OutputSink)
+    FormatBuilder.with(sink) do |builder|
+      emit_format_yielded(builder)
+    end
+  end
+end
+
+class Hash(K, V) < Reference
+  def emit_format_direct(builder : FormatBuilder) : Int32
+    C.putchar(65)
+  end
+
+  def emit_format_yielded(builder : FormatBuilder)
+    C.putchar(65)
+  end
+end
+
+message = Hash(String, Int32).new
+message.emit_format_direct
+C.putchar(10)
+CRYSTAL
+cat >"$WORK_DIR/annotated_member.expected" <<'EXPECTED'
+A
+EXPECTED
+: >"$WORK_DIR/annotated_member.stderr.expected"
+
+cat >"$WORK_DIR/member_scope_guard.cr" <<'CRYSTAL'
+lib C
+  fun putchar(value : Int32) : Int32
+end
+
+class Reference
+end
+
+class Marker
+end
+
+class Object
+  def render : Int32
+    render(Marker.new)
+  end
+end
+
+class Hash(K, V) < Reference
+  def render(marker : Marker) : Int32
+    C.putchar(65)
+  end
+end
+
+module CallerScope
+  class Marker
+  end
+
+  class FormattedMessage < Reference
+    def render(marker : ::Marker) : Int32
+      C.putchar(66)
+    end
+  end
+end
+
+def display(value) : Int32
+  value.render
+end
+
+first = Hash(String, Int32).new
+second = CallerScope::FormattedMessage.new
+first.render
+second.render
+display(first)
+display(second)
+Hash(Int32, String).new.render
+C.putchar(10)
+CRYSTAL
+cat >"$WORK_DIR/member_scope_guard.expected" <<'EXPECTED'
+ABABA
+EXPECTED
+: >"$WORK_DIR/member_scope_guard.stderr.expected"
+
 compile_run() {
   local name="$1" mode="$2" compiler="$3" status=0
   local source="$WORK_DIR/$name.cr" output="$WORK_DIR/$mode-$name.bin"
@@ -312,11 +419,11 @@ compile_run() {
 }
 
 # Certify every fixture against the original before testing the candidate.
-for name in direct_yielded lexical siblings annotated_zero_arg; do
+for name in direct_yielded lexical siblings annotated_zero_arg annotated_member member_scope_guard; do
   compile_run "$name" original "$ORIGINAL_CRYSTAL_BIN"
 done
-for name in direct_yielded lexical siblings annotated_zero_arg; do
+for name in direct_yielded lexical siblings annotated_zero_arg annotated_member member_scope_guard; do
   compile_run "$name" candidate "$COMPILER"
   echo "PASS[$name]: original and candidate stdout and stderr agree"
 done
-echo "PASS[reference-wrapper-owner]: four original-first fixtures agree"
+echo "PASS[reference-wrapper-owner]: six original-first fixtures agree"

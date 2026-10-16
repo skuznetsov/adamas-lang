@@ -123490,6 +123490,17 @@ module Adamas::HIR
             if concrete_owner.includes?('(')
               actual_name = specialize_method_owner_name(actual_name, concrete_owner)
             end
+            reference_base = "#{concrete_owner}##{member_name}"
+            if !ctx.type_literal?(object_id) &&
+               preserve_requested_runtime_reference_wrapper_owner?(reference_base, entry[0], entry[1])
+              selected_parts = parse_method_name(actual_name)
+              actual_name = reference_base
+              if selected_suffix = selected_parts.suffix
+                actual_name = "#{reference_base}$#{selected_suffix}"
+              end
+              base_method_name = reference_base
+              resolved_method_name = reference_base
+            end
           end
         end
       end

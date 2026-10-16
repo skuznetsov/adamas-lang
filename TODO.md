@@ -19924,3 +19924,11 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   json1812 traces Hash(String, String)#to_json returning NotStarted without
   queue/body via rta_exact_helper_suppressed; late rematch then chooses Object.
   Keep speculative fan-out bounded. Full bootstrap/LavinMQ parity remain open.
+
+
+### Retain concrete Object-wrapper receivers for member calls (2026-10-16)
+- [x] Retain admitted concrete Object-wrapper receivers in MemberAccessNode.
+  json1830 six original-first native fixtures GREEN; json1832 exact parent
+  fails the isolated member call with 138 after four passing controls.
+- [ ] Complete concrete JSON wrapper body demand through helper suppression;
+  current bootstrap and LavinMQ parity remain open.

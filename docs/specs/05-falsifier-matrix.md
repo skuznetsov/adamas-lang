@@ -1129,3 +1129,15 @@ diagnostic meanings.
 - OPEN json1819 no-parentheses member selection, json1812 concrete JSON
   helper suppression, current bootstrap and LavinMQ parity. Refresh after
   lookup, worklist/state or final rematch changes.
+
+
+### Retain concrete Object-wrapper receivers for member calls (2026-10-16)
+- GREEN json1830 sealed json1823: six original-first native fixtures, exact
+  stdout/stderr; minimal annotated member call plus generic/ordinary siblings,
+  nested callers and lexical source guards. RED json1832 exact json1811 parent:
+  four prior cases pass, then isolated annotated_member exits 138.
+- The expanded member scope fixture passed on the parent (json1826) and is
+  only a regression guard; other demands can mask the missing handoff.
+  Scoped ROBUST for member receiver selection. Manifest 6ab6d2a44ed7a29fd1e103d8918dce2b2078af4a4ee33f041b58d402d466b87e; host a7c0b64ae6e8763aa95f1ce07f100255dc0e1244665f354746657e7cd47a732d.
+- OPEN helper-filtered JSON body demand and current bootstrap/LavinMQ parity.
+  Refresh after member selection, wrapper admission or arena transport changes.
