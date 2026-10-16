@@ -19294,3 +19294,11 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Probe Char#ord mixed with a custom ord returning a wider numeric type;
   verify return union wrapping rather than assuming the Int32-only evidence
   proves heterogeneous result transport.
+
+
+### Root ownership versus whitespace (2026-10-15)
+- [x] Preserve parser-owned ordinary root constants, assignments, definitions
+  and calls regardless of indentation; root608 HIR and root611 native checks pass.
+- [ ] Preserve generated root arena identity and runtime collection through
+  every macro expansion path. Audit recovery-origin admission separately;
+  indentation and collect_main_exprs are not evidence of syntactic ownership.

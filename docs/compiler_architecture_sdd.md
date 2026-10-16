@@ -3695,3 +3695,13 @@ cases fail on the parent. Dynamic ASCII/Unicode/custom-arm results match Crystal
 while the parent aborts in a bodyless Char#ord stub. Other primitive methods and
 heterogeneous return unions are outside this certificate. Refresh on dispatch,
 conversion, or ABI changes; rollback the bounded two-arm hunk.
+
+
+### Ordinary root ownership (2026-10-15)
+A parser-owned ordinary main root remains a root independent of indentation.
+The collector must not reinterpret whitespace as syntactic nesting. Admitted:
+constants, assignments, definitions and calls with spaces/tabs, while class
+members retain their parser-assigned owner. Sealed root605 passes root608 HIR
+and root611 Crystal/native comparison; parent root607 silently loses all output.
+Generated/recovered macro roots and their arena transport remain separate
+obligations. Refresh on parser/collector changes; rollback the bounded CLI hunk.

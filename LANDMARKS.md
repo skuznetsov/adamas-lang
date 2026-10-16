@@ -18060,3 +18060,15 @@ Other primitive conversions and heterogeneous custom ord return types remain
 separate audit questions. This proves the scoped primitive repair, not LavinMQ
 parity. Refresh on union dispatch, primitive conversion, or ABI changes;
 rollback this commit.
+
+
+### Preserve parser-owned ordinary roots across indentation (2026-10-15)
+The CLI collector inferred nesting from leading whitespace and silently dropped
+valid root constants, assignments, definitions and calls. Ordinary parser roots
+now retain their structural ownership. Sealed root605 passes spaces, tabs,
+column-zero and nested-class HIR guards (root608), and native output matches
+Crystal's BAC (root609/root611); the parent exits successfully with no output
+(root607). The generated/recovered-macro path remains a separate boundary.
+The root606 HIR RED attempt hit the FD watchdog and is inconclusive; root607 is
+the valid behavioral falsifier. Refresh on parser-root/collector changes;
+rollback this commit. This does not establish LavinMQ parity.

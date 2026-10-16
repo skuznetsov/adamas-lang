@@ -428,3 +428,13 @@ diagnostic meanings.
 - Scope: zero-argument, block-free Char#ord union dispatch. Other primitive
   conversions and heterogeneous result types remain open; no LavinMQ parity
   claim follows. Refresh on dispatch, primitive conversion, or ABI changes.
+
+
+### Ordinary indented root collection (2026-10-15)
+- RED root607: original Crystal prints BAC; parent char590 builds and exits 0
+  with empty output. root606 was killed by the FD watchdog and is inconclusive.
+- GREEN root608/root609/root611: sealed root605 retains column-zero, space and
+  tab roots, preserves nested-class ownership, and matches native BAC output.
+- Scope: ordinary parser roots. Generated/recovered macro root admission and
+  arena identity are not established by these checks. Refresh on parser-root
+  or collector changes; no LavinMQ parity claim follows.

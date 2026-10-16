@@ -5134,7 +5134,9 @@ module Adamas
         end
         case node
         when Frontend::DefNode
-          if flattened_nested_def_root?(node, source)
+          # Ordinary source roots are owned by the parser, not by indentation.
+          # Keep the legacy recovered-macro guard separate from main roots.
+          if !collect_main_exprs && flattened_nested_def_root?(node, source)
             if env_enabled?("DEBUG_COLLECT_SKIP_NESTED_DEF")
               def_name = Frontend.node_def_name_string(node) || "(nil)"
               bootstrap_trace_puts "[COLLECT_SKIP_NESTED_DEF] name=#{def_name} depth=#{depth}"
@@ -5163,11 +5165,8 @@ module Adamas
           enum_nodes << {node, arena}
           pending_annotations.clear
         when Frontend::ConstantNode
-          nested_root = collect_main_exprs && flattened_nested_root_line?(node.span, source)
-          unless nested_root
-            constant_exprs << {expr_id, arena}
-          end
-          if collect_main_exprs && !nested_root
+          constant_exprs << {expr_id, arena}
+          if collect_main_exprs
             packed_main_expr = (arena_index.to_u64 << 32) | expr_id.index.to_u64
             main_exprs << packed_main_expr
           end
@@ -5384,18 +5383,17 @@ module Adamas
           expand_top_level_macro_for(node, arena, arena_index, source, macro_origin_path, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, depth, paths_by_arena)
         when Frontend::AssignNode
           target = arena[node.target]
-          nested_root = collect_main_exprs && flattened_nested_root_line?(node.span, source)
           constant_target = target.is_a?(Frontend::ConstantNode) ||
                             (target.is_a?(Frontend::IdentifierNode) && constant_identifier_name?(target.name))
-          if constant_target && !nested_root
+          if constant_target
             constant_exprs << {expr_id, arena}
           end
-          if collect_main_exprs && !nested_root
+          if collect_main_exprs
             packed_main_expr = (arena_index.to_u64 << 32) | expr_id.index.to_u64
             main_exprs << packed_main_expr
           end
         else
-          if collect_main_exprs && !flattened_nested_root_line?(node.span, source)
+          if collect_main_exprs
             packed_main_expr = (arena_index.to_u64 << 32) | expr_id.index.to_u64
             main_exprs << packed_main_expr
           end
