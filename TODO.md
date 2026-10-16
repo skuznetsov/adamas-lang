@@ -19880,3 +19880,13 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Apply original named call-shape admission to special lowering paths.
   Separate String.build(bogus: 1) { ... } probe is rejected by original Crystal
   but accepted by Adamas. Do not infer special-path closure from named1724.
+
+
+### Preserve concrete union carriers in array literals (2026-10-16)
+- [x] Preserve concrete array union element identity before opaque MIR
+  allocation: union1746 four original-first native cases GREEN; union1747
+  exact parent RED; union1750 focused HIR suite 137/137 GREEN; union1751
+  concrete-wrap assertion RED on the exact parent.
+- [ ] Trace the remaining basic JSON serialization failure: union1744 on the
+  union-carrier trial raises Empty JSON after the earlier invalid StartState
+  failure is removed. Keep JSON completion separate from union-tag correctness.

@@ -18981,3 +18981,21 @@ special lowering still admits an unknown label in a separate probe; broader
 special-case call-shape admission, current bootstrap and produced-stage LavinMQ
 parity remain open. Manifest fc447cf488ebc1cab04deef54cb4d8189f27c5c18ed17f2cfb1d3092c6707099; host 85ed332c904726404aefd3c38d59673b910137f30ece07d68fd6419e34d344c4. Refresh after parameter
 label representation, call resolution, inline yield or named-pack changes.
+
+
+### Preserve concrete union carriers in array literals (2026-10-16)
+ArrayLiteral accepted concrete struct values directly into a declared union.
+MIR allocation erases their result type to Pointer, so the backend's array
+store could choose generic type id 18 instead of the concrete union member.
+Coerce union/nilable array elements through the existing HIR union conversion
+while concrete source identity is available. Existing carriers are reused and
+existing union payload ownership applies. DoD:
+array_union_literal_carrier_repro.sh. union1746 matches original Crystal for
+empty structs, returned nonempty structs, struct/scalar/Nil arrays with source
+mutation, and nullable inherited references. Exact parent union1747 prints B
+instead of A. union1750 passes 137 focused HIR examples; union1751 exact parent
+fails the concrete-wrap assertion while the no-double-wrap guard passes.
+Scoped adversary ROBUST. Manifest 18a1f9248a33b971b6b96afc0ce575599d925e5b4b55b5a748b16d5f0f62276c; host b7aacdbd5461ca777c425cdef9fdd97c93a7e3a502b4e34862de41fefe8179e3. The simple JSON
+consumer now reaches Empty JSON (union1744), so JSON, current bootstrap and
+produced-stage LavinMQ parity remain open. Refresh after array lowering,
+union coercion, MIR allocation representation or union payload ownership changes.

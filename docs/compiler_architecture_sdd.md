@@ -4362,3 +4362,17 @@ admits the invalid internal label; named1726 135 HIR examples GREEN. Scoped
 ROBUST. Manifest fc447cf488ebc1cab04deef54cb4d8189f27c5c18ed17f2cfb1d3092c6707099; host 85ed332c904726404aefd3c38d59673b910137f30ece07d68fd6419e34d344c4. Expiry: parameter labels, resolver,
 inline yield and named packs. Special String.build call-shape admission,
 bootstrap and LavinMQ parity remain open.
+
+
+### Preserve concrete union carriers in array literals (2026-10-16)
+A union/nilable ArrayLiteral element must cross the HIR-to-MIR boundary
+with its canonical carrier. Apply existing HIR coercion while the concrete
+struct identity is known; a generic Pointer allocation result is not semantic
+authority for its union discriminator. Reuse already-correct carriers and the
+existing union payload lifetime/value-copy rules. Evidence: union1746 four
+original-first native cases with mutation and nullable-reference controls;
+union1747 exact parent wrong discriminator; union1750 137 HIR examples GREEN
+including no-double-wrap; union1751 exact parent concrete-wrap assertion RED.
+Scoped ROBUST. Manifest 18a1f9248a33b971b6b96afc0ce575599d925e5b4b55b5a748b16d5f0f62276c; host b7aacdbd5461ca777c425cdef9fdd97c93a7e3a502b4e34862de41fefe8179e3. Expiry: array lowering, union
+coercion, MIR allocation and payload ownership. JSON serialization, bootstrap
+and produced-stage LavinMQ parity remain unverified.

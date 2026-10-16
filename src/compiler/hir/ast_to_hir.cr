@@ -128655,6 +128655,15 @@ module Adamas::HIR
                        TypeRef::INT32
                      end
 
+      # Preserve the declared union carrier before MIR allocations erase
+      # concrete struct values to opaque pointers. The ordinary union coercion
+      # records the descriptor variant and preserves value ownership.
+      if is_union_or_nilable_type?(element_type)
+        element_ids = element_ids.map do |element_id|
+          coerce_value_to_type(ctx, element_id, element_type)
+        end
+      end
+
       # Create ArrayLiteral instruction (not generic Allocate)
       arr = ArrayLiteral.new(ctx.next_id, element_type, element_ids)
       arr.lifetime = LifetimeTag::StackLocal # Default to stack until escape analysis

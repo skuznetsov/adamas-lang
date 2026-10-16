@@ -1072,3 +1072,15 @@ diagnostic meanings.
   calls. String.build special lowering remains separately open, as do current
   bootstrap and produced-stage LavinMQ parity. Manifest fc447cf488ebc1cab04deef54cb4d8189f27c5c18ed17f2cfb1d3092c6707099.
   Expiry: parameter label representation, resolver, inline yield or named pack.
+
+
+### Preserve concrete union carriers in array literals (2026-10-16)
+- GREEN union1746/union1745: empty and returned nonempty struct union arrays,
+  mixed struct/Int32/Nil with source mutation, nullable inherited reference.
+- RED union1747 exact named1716 parent: first case prints B instead of A.
+- GREEN union1750: 137 focused HIR examples, including concrete UnionWrap and
+  already-union carrier reuse. RED union1751: exact parent fails only the
+  concrete-wrap case. Scoped ROBUST. Manifest 18a1f9248a33b971b6b96afc0ce575599d925e5b4b55b5a748b16d5f0f62276c; host b7aacdbd5461ca777c425cdef9fdd97c93a7e3a502b4e34862de41fefe8179e3.
+- OPEN union1744 basic JSON: Empty JSON after initial state-tag correction.
+  Bootstrap and produced-stage LavinMQ parity remain open. Refresh after array
+  lowering, union coercion, MIR allocation or payload ownership changes.
