@@ -10837,6 +10837,29 @@ module Adamas::HIR
       create_union_type(union_name)
     end
 
+    # Bottom remains separate from the Void ABI. Every concrete class target
+    # (including overrides) needs its own completed exact effect certificate.
+    # Tagged value unions need a separate CFG/ABI proof and stay conservative.
+    private def concrete_class_virtual_targets_noreturn?(
+      owner_name : String,
+      method_name : String,
+      arg_types : Array(TypeRef),
+      has_block_call : Bool,
+      has_splat : Bool,
+    ) : Bool
+      return false if has_block_call || has_splat
+      owner_type = type_ref_for_name(owner_name)
+      owner_desc = @module.get_type_descriptor(owner_type)
+      return false unless owner_desc && owner_desc.kind == TypeKind::Class
+      owners = [owner_name] + collect_subclasses_cached(owner_name)
+      owners.all? do |owner|
+        selected = lookup_function_def_for_call(
+          "#{owner}##{method_name}", arg_types.size, false, arg_types, false,
+        )
+        selected && selected_call_noreturn?(selected[0], selected[1])
+      end
+    end
+
     # Union method lookup keeps one concrete owner as the dispatch-name anchor,
     # but runtime dispatch can reach every concrete generic instance in the
     # union. Preserve the complete return ABI at the callsite without changing
@@ -11087,6 +11110,7 @@ module Adamas::HIR
       end
 
       candidates = [] of TypeRef
+      unresolved_variants = [] of String
       resolved_variants.each do |resolved_variant|
         candidate = infer_virtual_return_type_from_class_targets(
           resolved_variant,
@@ -11097,15 +11121,32 @@ module Adamas::HIR
           include_nil: true,
         )
         if candidate == TypeRef::VOID
-          raise LoweringError.new(
-            "cannot safely lower unresolved returns for concrete generic receiver union #{union_name}##{method_name}"
-          )
+          unresolved_variants << resolved_variant
+          next
         end
         candidates << candidate
         if debug_generic_union_contract
           STDERR.puts(
             "[GENERIC_UNION_CONTRACT] phase=candidate union=#{union_name} method=#{method_name} " \
             "variant=#{resolved_variant} return_id=#{candidate.id} return=#{get_type_name_from_ref(candidate)}"
+          )
+        end
+      end
+
+      unless unresolved_variants.empty?
+        # A wholly bottom union needs no value join and uses the existing Void
+        # ABI. Check effects after normal return inference has visited every
+        # target. Mixed bottom/value joins still need a separate carrier proof.
+        all_targets_noreturn = candidates.empty? &&
+                               !has_block_call && !has_splat && !call_has_named_args &&
+                               unresolved_variants.all? do |variant|
+                                 concrete_class_virtual_targets_noreturn?(
+                                   variant, method_name, arg_types, false, false,
+                                 )
+                               end
+        unless all_targets_noreturn
+          raise LoweringError.new(
+            "cannot safely lower unresolved returns for concrete generic receiver union #{union_name}##{method_name}"
           )
         end
       end

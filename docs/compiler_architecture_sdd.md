@@ -4261,3 +4261,17 @@ NoReturn rejection controls and seven nullable Proc oracles survive; return1571
 passes 125 HIR examples. Scoped verdict ROBUST. Printing argument reuse and
 LavinMQ completion are separate open obligations. Manifest ba8a274f2cc2de70cfd0087218b86e29206ed056b618dd822adba91026991013.
 Refresh after pending-call demand, result typing or completion-guard changes.
+
+
+### Certify wholly bottom concrete generic union calls (2026-10-16)
+An empty concrete generic class union value-return set admits the existing
+Void ABI only with an exact selected NoReturn certificate for every variant
+and descendant, after ordinary return inference. Exclude blocks, splats and
+named arguments. Preserve mixed/rescued value-join rejection; infer no new CFG
+death or value carrier from this certificate.
+union1589 parent RED; union1588 six native outputs/two guards; union1590 five
+effect checks including returning overrides; union1592 prior NoReturn controls;
+union1593 130 HIR examples. Scoped ROBUST. Manifest 3f3f824e6a14973dcc9fc9bc908a58f09e5ae8002a35008b2416100a3ccf74dc.
+Descendant return erasure, integrated extra enum demand, a fresh bootstrap and
+produced-stage LavinMQ parity remain open. Refresh after effect, selected-source
+identity, dispatch, union ABI or demand changes.

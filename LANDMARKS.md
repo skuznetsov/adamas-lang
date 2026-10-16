@@ -18836,3 +18836,27 @@ runtime/upstream parity is established. Lavin1562 has reached the incompatible
 explicit-argument guard for LooseReceiveAction(... )#to_json.
 Manifest ba8a274f2cc2de70cfd0087218b86e29206ed056b618dd822adba91026991013; host f54d172537c5e0ea3ff2ca12916b2c713a8eadef148ee334ca754eca2e1f6545.
 Refresh after lazy-call demand, return typing or completion-guard changes.
+
+
+### Certify wholly bottom concrete generic union calls (2026-10-16)
+Void represents both missing return evidence and a lowered bottom ABI.
+An empty generic-union value-candidate set may use Void only when every
+concrete class variant and descendant has an exact selected NoReturn
+certificate. Exclude blocks, splats and named arguments; retain mixed/rescued
+value-join rejection. No new CFG death marker or eager body demand is added.
+DoD: generic_union_bottom_return_repro.sh. union1589 parent RED; union1588
+GREEN on six original-first member/call/wrapper outputs and two retained
+value-join guards. union1590 passes five certificate tests, including a
+returning descendant. union1592 preserves prior NoReturn native/Hash guards;
+union1593 passes 130 HIR examples. Scoped adversary ROBUST.
+The broader descendant String erasure already exists on the parent (union1564);
+the helper-level guard does not close that source-to-native defect. Rejected
+1537/1541 mixed bottom/value widening remains rejected after losing String.
+The integrated bare/print channel now fails earlier at non-Flags
+LibSSL::Options#each (lavin1581/1587): localize this regression; do not call it
+an advanced frontier. Ambient generic-binding leakage remains a hypothesis.
+Fresh LavinMQ candidates use host-Crystal-built S1, not a produced S3/S4.
+The historical fixed point does not certify this revision. Final delivery
+requires fresh bootstrap plus produced-stage functional/upstream parity.
+Manifest 3f3f824e6a14973dcc9fc9bc908a58f09e5ae8002a35008b2416100a3ccf74dc; host e769970217ad128a55abd0c111bd0f2e1c281103118b4950ac0a750a1f79955f. Refresh after effects, selected-source
+identity, dispatch, generic union ABI or demand changes.

@@ -974,3 +974,18 @@ diagnostic meanings.
   this is distinct from completing a previously unknown bare-call result.
 - No broker or upstream parity claim. Expiry: changes to lazy demand, caller
   result typing or completion guards require replay. Manifest ba8a274f2cc2de70cfd0087218b86e29206ed056b618dd822adba91026991013.
+
+
+### Certify wholly bottom concrete generic union calls (2026-10-16)
+- RED union1589/return1567: all-raising generic class union rejected as an
+  unresolved return. GREEN union1588/union1582: six matching original-first
+  member/call/wrapper outputs and two retained mixed/rescued guards.
+- GREEN union1590: five certificate checks, including returning descendants,
+  missing body evidence, block and splat boundaries. GREEN union1592: prior
+  NoReturn native/Hash guards. GREEN union1593: 130 HIR examples. Scoped ROBUST.
+- OPEN union1564: broader descendant result erasure also exists on the parent.
+- OPEN lavin1581/1587: new integrated channel materializes non-Flags enum each;
+  locate the responsible delta before claiming further LavinMQ progress.
+- OPEN final gate: fresh source-revision bootstrap and produced-stage LavinMQ
+  runtime/upstream parity. Manifest 3f3f824e6a14973dcc9fc9bc908a58f09e5ae8002a35008b2416100a3ccf74dc. Expiry: effect, selected-source
+  identity, dispatch, union ABI or demand changes.

@@ -19792,3 +19792,20 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Trace Lavin1562's LooseReceiveAction(State?)|LooseReceiveAction(Nil)
   to_json argument guard from the selected source Def and caller provenance.
   Broker runtime and full upstream parity remain open.
+
+
+### Certify wholly bottom concrete generic union calls (2026-10-16)
+- [x] Certify wholly bottom concrete generic class union calls. union1588:
+  six matching outputs and two retained guards; union1589 parent RED;
+  union1590 five effect checks; union1592 prior controls; union1593 130 HIR
+  examples. Mixed bottom/value joins remain outside this change.
+- [ ] Repair the separate descendant-return erasure in union1564. A helper
+  override guard does not establish source-to-native compatibility.
+- [ ] Localize unnecessary LibSSL::Options#each demand in lavin1581/1587.
+  Preserve the correct non-Flags diagnostic and the original stdlib.
+- [ ] Test the same specialization under distinct unrelated ambient bindings;
+  foreign keys alone do not prove an owner-context leak.
+- [ ] After stabilization, rebuild the bootstrap ladder, compare current S3/S4
+  IR, then compile LavinMQ and rerun functional/upstream parity with the
+  produced compiler. Host S1 results and the historical fixed point do not
+  satisfy this source-revision-scoped final gate.
