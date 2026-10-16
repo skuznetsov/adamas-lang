@@ -19489,3 +19489,17 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Audit other type-value producer/consumer paths for metadata-only identity
   that diverges from receiver lookup; include aliases, nested generic names and
   type values crossing argument/return boundaries before broadening the claim.
+
+
+### Infer generic constructor parameters from initializer restrictions (2026-10-16)
+
+- [x] Infer generic constructor formals from initializer restrictions in both
+  expression inference and strict lowering: constructor921 passes 29 HIR
+  examples; constructor934 matches original Crystal on 23 output lines and two
+  rejected programs, including concrete generic module projection.
+- [ ] Fix the independently reproduced generic module virtual-member failure:
+  ProjectionAction(Int32) fields can call an unlowered ProjectionAction(S)#value
+  stub with multiple includers (constructor932 reproduces on parent typeof881).
+- [ ] Extend constructor restriction inference to inherited/module initializers,
+  union/proc/variadic signatures and lexical aliases; verify overload ordering
+  with mixed named/default shapes before admitting those corridors.

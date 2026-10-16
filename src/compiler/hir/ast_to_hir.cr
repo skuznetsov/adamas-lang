@@ -27406,6 +27406,12 @@ module Adamas::HIR
                 end
               end
               if template = @generic_templates[type_str]?
+                unless type_str == "Array" || type_str == "Atomic" || type_str == "Slice" || type_str == "Pointer::Appender"
+                  if inferred = infer_constructor_restriction_type_args(template, expr_node.args, expr_node.named_args, nil, self_type_name)
+                    return nil if inferred.empty?
+                    return type_ref_for_name("#{type_str}(#{inferred.join(", ")})")
+                  end
+                end
                 if template.type_params.size == 1
                   inferred_name = nil.as(String?)
                   if type_str == "Array"
@@ -68560,6 +68566,244 @@ module Adamas::HIR
       nil
     end
 
+    # Match initializer restrictions structurally instead of assigning each
+    # whole argument type to a template parameter by position. The callee's
+    # declared formals are local to this inference, even if the caller has T.
+    private def bind_constructor_type_params(
+      restriction : String,
+      actual : String,
+      formals : Array(String),
+      bindings : Hash(String, String),
+      context : String? = nil,
+    ) : Bool
+      restriction = restriction.strip
+      actual = actual.strip
+      return false if actual.empty? || actual == "Void" || actual == "Unknown"
+      if formals.includes?(restriction)
+        if previous = bindings[restriction]?
+          return previous == actual
+        end
+        bindings[restriction] = actual
+        return true
+      end
+
+      if annotation_info = split_generic_base_and_args(restriction)
+        # Qualify the owner without substituting the callee-local formals in
+        # its arguments from an ambient caller's type-parameter map.
+        annotation_base = normalize_declared_type_name(annotation_info.base, context, specialize_bare_generics: false)
+        annotation_base = resolve_type_alias_chain(annotation_base.lchop("::"))
+        annotation_args = split_generic_type_args(annotation_info.args)
+        projections = [] of String
+        get_ancestor_chain(actual).each do |owner|
+          projections << owner
+          if included = @class_include_instantiations[owner]?
+            included.each { |application| projections << application }
+          end
+        end
+        matches = [] of Hash(String, String)
+        projections.uniq.each do |projection|
+          next unless projected = split_generic_base_and_args(projection)
+          next unless resolve_type_alias_chain(projected.base.lchop("::")) == annotation_base
+          projected_args = split_generic_type_args(projected.args)
+          next unless annotation_args.size == projected_args.size
+          candidate = bindings.dup
+          compatible = annotation_args.each_with_index.all? do |part, index|
+            bind_constructor_type_params(part, projected_args[index], formals, candidate, context)
+          end
+          matches << candidate if compatible
+        end
+        matches.uniq!
+        return false unless matches.size == 1
+        matches.first.each { |formal, concrete| bindings[formal] = concrete }
+        return true
+      end
+
+      ground = normalize_declared_type_name(restriction, context, specialize_bare_generics: false)
+      restriction == "_" ||
+        nested_numeric_generic_restriction_compatible?(ground, actual) ||
+        inherits_from?(actual, ground)
+    end
+
+    # Compare raw restrictions before substituting the candidate-local formals.
+    # A structural restriction such as Carrier(T) precedes an unconstrained T;
+    # generic arguments are compared recursively, as in Crystal's restrictions.
+    private def constructor_restriction_of?(left : String, right : String, formals : Array(String)) : Bool
+      left = left.strip
+      right = right.strip
+      return true if left == right
+      return true if right == "_" || formals.includes?(right)
+      return false if left == "_" || formals.includes?(left)
+      left_info = split_generic_base_and_args(left)
+      right_info = split_generic_base_and_args(right)
+      if left_info && right_info
+        return false unless resolve_type_alias_chain(left_info.base) == resolve_type_alias_chain(right_info.base)
+        left_args = split_generic_type_args(left_info.args)
+        right_args = split_generic_type_args(right_info.args)
+        return false unless left_args.size == right_args.size
+        return left_args.each_with_index.all? do |part, index|
+          constructor_restriction_of?(part, right_args[index], formals)
+        end
+      end
+      return false if left_info || right_info
+      nested_numeric_generic_restriction_compatible?(right, left) || inherits_from?(left, right)
+    end
+
+    private def constructor_restrictions_stricter?(
+      left : Hash(String, String),
+      right : Hash(String, String),
+      formals : Array(String),
+    ) : Bool
+      return false unless left.size == right.size
+      strictly = false
+      left.each do |key, restriction|
+        other = right[key]? || return false
+        return false unless constructor_restriction_of?(restriction, other, formals)
+        strictly ||= !constructor_restriction_of?(other, restriction, formals)
+      end
+      strictly
+    end
+
+    private def constructor_inference_arg_name(
+      expr_id : ExprId,
+      ctx : LoweringContext?,
+      self_type_name : String? = nil,
+    ) : String?
+      node = @arena[expr_id]
+      if ctx && node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
+        if local = ctx.lookup_local(safe_slice_to_string(node.name) || "")
+          name = get_type_name_from_ref(ctx.type_of(local))
+          return name unless name.empty? || name == "Void" || name == "Unknown"
+        end
+      end
+      owner = self_type_name || @current_class
+      if node.is_a?(Adamas::Compiler::Frontend::SelfNode)
+        return owner if owner
+      end
+      if inferred = infer_type_from_expr(expr_id, owner)
+        name = get_type_name_from_ref(inferred)
+        return name unless name.empty? || name == "Void" || name == "Unknown"
+      end
+      # A deferred call must not become a positional generic guess through a
+      # second inference path after its restrictions could not yet be solved.
+      return nil if node.is_a?(Adamas::Compiler::Frontend::CallNode)
+      infer_type_name_from_expr_id(expr_id)
+    end
+
+    private def infer_constructor_restriction_type_args(
+      template : GenericClassTemplate,
+      args : Array(ExprId)?,
+      named_args : Array(Adamas::Compiler::Frontend::NamedArgument)?,
+      ctx : LoweringContext?,
+      self_type_name : String? = nil,
+    ) : Array(String)?
+      body = template.node.body
+      return nil unless body
+      positional = args || [] of ExprId
+      named = {} of String => ExprId
+      if named_args
+        named_args.each { |arg| named[safe_slice_to_string(arg.name) || ""] = arg.value }
+      end
+      candidates = [] of Tuple(Array(String), Hash(String, String))
+      constrained = false
+      body.each do |expr_id|
+        # The declaration and its parameter slices belong to the retained
+        # template arena, not the callsite arena used to inspect arguments.
+        member = unwrap_visibility_member_in_arena(template.arena[expr_id], template.arena)
+        next unless member.is_a?(Adamas::Compiler::Frontend::DefNode)
+        next unless def_method_name_from_node(member, template.arena) == "initialize"
+        next if member.receiver
+        params = function_param_infos(member, template.arena)
+        next if params.any? { |param| (param.is_splat && !named_only_separator?(param)) || param.is_double_splat || param.is_block }
+        next unless params.any? do |param|
+          restriction = param.type_annotation
+          restriction && template.type_params.any? { |formal| type_name_includes_param?(restriction, formal) }
+        end
+        # These shapes need their own restriction solver; do not let a partial
+        # structural match reinterpret a union or block signature as a name.
+        next if params.any? do |param|
+          restriction = param.type_annotation
+          restriction && (restriction.includes?('|') || restriction.includes?("->") || restriction.includes?('*') || restriction.includes?('?'))
+        end
+        constrained = true
+        bindings = {} of String => String
+        restrictions = {} of String => String
+        consumed_names = Set(String).new
+        position = 0
+        named_only = false
+        matches = true
+        params.each do |param|
+          if named_only_separator?(param)
+            named_only = true
+            next
+          end
+          name = (param.external_name || param.name || "").lchop('@')
+          value = nil.as(ExprId?)
+          restriction_key = ""
+          if !named_only && position < positional.size
+            restriction_key = "p:#{position}"
+            value = positional[position]
+            position += 1
+            if named.has_key?(name)
+              matches = false
+              break
+            end
+          elsif supplied = named[name]?
+            restriction_key = "n:#{name}"
+            value = supplied
+            consumed_names << name
+          end
+          unless value
+            unless param.default_value
+              matches = false
+              break
+            end
+            next
+          end
+          restrictions[restriction_key] = param.type_annotation || "_"
+          if restriction = param.type_annotation
+            actual = constructor_inference_arg_name(value, ctx, self_type_name)
+            compatible = actual && bind_constructor_type_params(restriction, actual, template.type_params, bindings, template.name)
+            # Literal enum conversion is part of argument compatibility, not
+            # a binding of the callee's generic parameters to Symbol. Reuse the
+            # same owner-aware member lookup as normal argument lowering.
+            if !compatible && !template.type_params.any? { |formal| type_name_includes_param?(restriction, formal) }
+              argument = @arena[value]
+              if argument.is_a?(Adamas::Compiler::Frontend::SymbolNode)
+                compatible = !enum_member_value(restriction, safe_slice_to_string(argument.name) || "", template.name).nil?
+              end
+            end
+            unless compatible
+              matches = false
+              break
+            end
+          end
+        end
+        next unless matches && position == positional.size && consumed_names.size == named.size
+        inferred = [] of String
+        template.type_params.each do |formal|
+          if concrete = bindings[formal]?
+            inferred << concrete
+          end
+        end
+        next unless inferred.size == template.type_params.size
+        candidates << {inferred, restrictions}
+      end
+      return nil unless constrained
+      # Keep only candidates not dominated by a stricter applicable signature.
+      # Declaration order must not choose between Carrier(T) and bare T.
+      survivors = candidates.reject do |candidate|
+        candidates.any? do |other|
+          constructor_restrictions_stricter?(other[1], candidate[1], template.type_params)
+        end
+      end
+      inferred_types = survivors.map { |candidate| candidate[0] }.uniq
+      return inferred_types.first if inferred_types.size == 1
+      # Preliminary expression inference can run before arguments have concrete
+      # types. Defer that expression, while strict lowering diagnoses failure.
+      return [] of String unless ctx
+      raise ArgumentError.new("cannot infer #{template.name} type arguments from initializer restrictions")
+    end
+
     private def infer_generic_type_arg(
       class_name : String,
       args : Array(Adamas::Compiler::Frontend::ExprId)?,
@@ -68692,6 +68936,12 @@ module Adamas::HIR
         return "UInt8"
       end
 
+      if template = @generic_templates[class_name]?
+        if inferred = infer_constructor_restriction_type_args(template, args, named_args, ctx)
+          return inferred.first? if template.type_params.size == 1
+        end
+      end
+
       # Generic fallback (single type param) from positional or named args.
       if template = @generic_templates[class_name]?
         if template.type_params.size == 1
@@ -68748,11 +68998,15 @@ module Adamas::HIR
       class_name : String,
       args : Array(Adamas::Compiler::Frontend::ExprId)?,
       ctx : LoweringContext,
+      named_args : Array(Adamas::Compiler::Frontend::NamedArgument)? = nil,
     ) : Array(String)?
       template = @generic_templates[class_name]?
       return nil unless template
       num_params = template.type_params.size
       return nil if num_params < 2
+      if inferred = infer_constructor_restriction_type_args(template, args, named_args, ctx)
+        return inferred
+      end
       return nil unless args && args.size >= num_params
 
       inferred = Array(String).new(num_params)
@@ -68839,7 +69093,7 @@ module Adamas::HIR
         return expected_name
       end
 
-      if multi_args = infer_generic_type_args_multi(template_base, args, ctx)
+      if multi_args = infer_generic_type_args_multi(template_base, args, ctx, named_args)
         specialized_name = "#{resolved}(#{multi_args.join(", ")})"
         monomorphize_generic_class(template_base, multi_args, specialized_name) unless @monomorphized.includes?(specialized_name)
         return specialized_name
@@ -98645,7 +98899,7 @@ module Adamas::HIR
                     end
                   else
                     # Try multi-param inference first (e.g. Pair(A,B), Hash(K,V))
-                    if multi_args = infer_generic_type_args_multi(resolved, call_args, ctx)
+                    if multi_args = infer_generic_type_args_multi(resolved, call_args, ctx, node.named_args)
                       specialized_name = "#{resolved}(#{multi_args.join(", ")})"
                       if !@monomorphized.includes?(specialized_name)
                         monomorphize_generic_class(resolved, multi_args, specialized_name)
@@ -98742,7 +98996,7 @@ module Adamas::HIR
                     end
                   else
                     # Try multi-param inference first (e.g. Pair(A,B), Hash(K,V))
-                    if multi_args = infer_generic_type_args_multi(resolved_name, call_args, ctx)
+                    if multi_args = infer_generic_type_args_multi(resolved_name, call_args, ctx, node.named_args)
                       specialized_name = "#{resolved_name}(#{multi_args.join(", ")})"
                       if !@monomorphized.includes?(specialized_name)
                         monomorphize_generic_class(resolved_name, multi_args, specialized_name)
@@ -98799,7 +99053,7 @@ module Adamas::HIR
                       # Try multi-param inference first, then single-param fallback
                       if expected_name = specialize_generic_new_receiver_from_expected_return(resolved_name, ctx, call_args, block_expr)
                         class_name_str = expected_name
-                      elsif multi_args = infer_generic_type_args_multi(resolved_name, call_args, ctx)
+                      elsif multi_args = infer_generic_type_args_multi(resolved_name, call_args, ctx, node.named_args)
                         specialized_name = "#{resolved_name}(#{multi_args.join(", ")})"
                         if !@monomorphized.includes?(specialized_name)
                           monomorphize_generic_class(resolved_name, multi_args, specialized_name)
@@ -99027,7 +99281,7 @@ module Adamas::HIR
                   if expected_name = specialize_generic_new_receiver_from_expected_return(resolved, ctx, call_args, block_expr)
                     class_name_str = expected_name
                     path_receiver_class_name = expected_name if path_receiver_class_name_found
-                  elsif multi_args = infer_generic_type_args_multi(resolved, call_args, ctx)
+                  elsif multi_args = infer_generic_type_args_multi(resolved, call_args, ctx, node.named_args)
                     specialized_name = "#{resolved}(#{multi_args.join(", ")})"
                     if !@monomorphized.includes?(specialized_name)
                       monomorphize_generic_class(resolved, multi_args, specialized_name)

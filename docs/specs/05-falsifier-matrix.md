@@ -665,3 +665,20 @@ diagnostic meanings.
   are test-harness failures, not evidence of a compiler regression.
 - Refresh on producer metadata, receiver lookup or name-query changes. No
   LavinMQ execution or general type-value transport claim follows from this gate.
+
+
+### Infer generic constructor parameters from initializer restrictions (2026-10-16)
+
+- RED constructor914 on constructor900: three of 15 HIR examples fail because
+  preliminary .new inference still guesses positional actuals or a bare owner.
+- RED constructor908: original Crystal prints ProjectionContext(Int32) and 65;
+  candidate fails to infer through the concrete generic module application.
+- GREEN constructor921 on sealed constructor913: 29 examples, no failures/errors.
+- GREEN constructor934 on the same host: original and candidate match 23 native
+  output lines; both reject conflicting formal bindings and invalid enum members.
+- Independent open falsifier constructor932 on parent typeof881: an explicitly
+  instantiated ProjectionContext(Int32) compiles but aborts at an abstract module
+  stub. The concrete field type survives; dispatch/fanout still needs repair.
+- Invalid harness attempt constructor919 referenced a nonexistent Array spec;
+  its failure is not compiler evidence. Refresh constructor gates on solver,
+  expression producer, include/ancestor registration or overload-order changes.

@@ -18339,3 +18339,29 @@ Sealed typeof881 host 6b8c859468964ce02caee50177e0154938c601749d54d290aa476b0798
 No application or stdlib edits. Refresh after typeof inference, type-value
 marking, member/call receiver routing or type-name query changes. Roll back the
 HIR hunks and their focused tests together. This is not a LavinMQ parity claim.
+
+
+### Infer generic constructor parameters from initializer restrictions (2026-10-16)
+
+Generic .new inference assigned whole actual argument types to template formals
+by position. It therefore inferred Action(Carrier(Int32)) for an initializer
+restricted to Carrier(T). Strict lowering and preliminary expression inference
+were separate producers of this wrong type. Both now use one retained-arena
+restriction solver, including concrete parent/module applications, named/default
+argument mapping, candidate-local bindings and structural overload precedence.
+Do not substitute callee formals from an ambient caller's type map. Unknown
+expression arguments defer; conflicting strict bindings reject.
+RED constructor914 on constructor900: 15 examples, three failures. RED
+constructor908: original generic module projection runs, candidate cannot infer.
+GREEN constructor921 on sealed constructor913: 29 HIR examples pass, including
+existing typeof and Array constructor identity controls. GREEN constructor934:
+original Crystal and candidate agree on 23 native output lines and both reject
+conflicting bindings and an invalid enum member. Includes structural overloads
+in both declaration orders, UInt64 under Int, enum payload and module projection.
+Scoped adversary ROBUST for this tested corridor. Host SHA256
+968fb543858fc2b7aa301cdac2dcd73d6cbb6879f218b4ec9c01bd7b93fc4c03.
+An additional module-dispatch failure is preexisting: constructor932 on parent
+typeof881 aborts at ProjectionAction(S)#value despite a concrete annotated field.
+It does not invalidate the tested constructor output, and remains an active bug.
+Refresh after constructor inference, retained arenas, include projection or
+restriction ordering changes. Roll back source hunks and focused tests together.

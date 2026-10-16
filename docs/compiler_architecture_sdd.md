@@ -3919,3 +3919,25 @@ adversary typeof880. Final typeof881 passes typeof884 (13 HIR examples) and
 original-first typeof883 (11 native output lines). Scoped adversary ROBUST for
 these cases. Other type-value transport paths and complete application parity
 remain open. Refresh on typeof, receiver classification or type-name edits.
+
+
+### Infer generic constructor parameters from initializer restrictions (2026-10-16)
+
+Generic constructor inference consumes actual arguments against the initializer
+restrictions in the retained template arena. Bind callee-local formals through
+matching concrete generic heads, parent applications and recorded module
+applications; repeated bindings must agree. Map positional and named arguments
+before comparing compatible overloads by structural restriction precedence.
+Both preliminary .new expression inference and strict lowering consume this
+solver. An unresolved preliminary argument defers rather than caching a whole
+carrier as T. Existing builtin Array/Atomic/Slice/Pointer::Appender inference
+retains its specialized path. Union/proc/actual variadic restriction signatures
+and inherited/module initializer discovery remain outside this solver's gate.
+DoD: constructor921, 29 HIR examples; original-first constructor934, identical
+23-line native output and rejection of conflicting bindings/invalid enum member.
+Scoped adversary ROBUST within these cases. Module dispatch is a separate open
+boundary: constructor932 aborts on parent typeof881 with ProjectionAction(S)#value.
+The LavinMQ integration passes SelectContext inference but has not built a broker;
+StrictReceiveAction(Nil)#unwait overload compatibility remains under investigation.
+Refresh when initializer discovery, arena ownership, include registration,
+argument mapping or restriction precedence changes.
