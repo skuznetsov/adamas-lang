@@ -71391,8 +71391,6 @@ module Adamas::HIR
             case node
             when Adamas::Compiler::Frontend::ClassVarDeclNode
               if val_id = node.value
-                val_node = @arena[val_id]
-                next if val_node.is_a?(Adamas::Compiler::Frontend::UninitializedNode)
                 raw_name = (safe_slice_to_string(node.name) || "")
                 cvar_name = raw_name.lstrip('@')
                 value_id = lower_expr(ctx, val_id)
@@ -71401,8 +71399,6 @@ module Adamas::HIR
                 ctx.emit(class_var_set)
               end
             when Adamas::Compiler::Frontend::AssignNode
-              rhs_node = @arena[node.value]
-              next if rhs_node.is_a?(Adamas::Compiler::Frontend::UninitializedNode)
               if env_has?("DEBUG_DEFERRED_CLASSVAR")
                 target = @arena[node.target]
                 target_name = target.is_a?(Adamas::Compiler::Frontend::ClassVarNode) ? (safe_slice_to_string(target.name) || "") : "?"
@@ -81590,23 +81586,19 @@ module Adamas::HIR
       case node
       when Adamas::Compiler::Frontend::ClassVarDeclNode
         if val_id = node.value
-          val_node = @arena[val_id]
-          unless val_node.is_a?(Adamas::Compiler::Frontend::UninitializedNode)
-            value_id = lower_expr(init_ctx, val_id)
-            value_type = init_ctx.type_of(value_id)
-            cvar_name = (safe_slice_to_string(node.name) || "").lstrip('@')
-            if get_class_var_type(cvar_name) == TypeRef::VOID
-              record_class_var_type(owner_class, cvar_name, value_type, nil, source_location_for_node(@arena, node))
-            end
-            set = ClassVarSet.new(init_ctx.next_id, value_type, owner_class, cvar_name, value_id)
-            init_ctx.emit(set)
+          # Uninitialized aggregates still need backing storage: their HIR
+          # representation is a pointer, unlike Crystal's inline global value.
+          value_id = lower_expr(init_ctx, val_id)
+          value_type = init_ctx.type_of(value_id)
+          cvar_name = (safe_slice_to_string(node.name) || "").lstrip('@')
+          if get_class_var_type(cvar_name) == TypeRef::VOID
+            record_class_var_type(owner_class, cvar_name, value_type, nil, source_location_for_node(@arena, node))
           end
+          set = ClassVarSet.new(init_ctx.next_id, value_type, owner_class, cvar_name, value_id)
+          init_ctx.emit(set)
         end
       when Adamas::Compiler::Frontend::AssignNode
-        rhs_node = @arena[node.value]
-        unless rhs_node.is_a?(Adamas::Compiler::Frontend::UninitializedNode)
-          lower_expr(init_ctx, init_expr_id)
-        end
+        lower_expr(init_ctx, init_expr_id)
       when Adamas::Compiler::Frontend::ConstantNode
         lower_expr(init_ctx, init_expr_id)
       end

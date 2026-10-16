@@ -510,3 +510,18 @@ diagnostic meanings.
   enum676 LLDB identifies a null seed load in Crystal::Hasher.new. enum675
   real LavinMQ compilation traps. Neither is covered by the owner-identity fix.
   Refresh after enum provenance, namespace recovery or dispatch changes.
+
+
+### Uninitialized aggregate classvar allocation (2026-10-16)
+- Invalid uninit682 typed-initializer syntax was rejected by original Crystal;
+  it is not regression evidence. Corrected immutable uninit684 uses a separate
+  type declaration and assignment.
+- RED uninit685: original LADR/0, lazy parent timeout. RED uninit692 eager parent:
+  build 0, runtime 139. LLDB enum676 independently locates the null Hasher seed.
+- GREEN uninit689/690: full/no prelude LADR/0, matching Crystal; uninit692 eager
+  candidate also LADR/0. Full-prelude uninit691 hash consumer matches AI/0.
+- uninit695 exposed an empty Bash array under nounset; it did not execute the
+  regression. Corrected uninit696 prints its explicit PASS in both modes.
+- Scoped verdict ROBUST for backing storage in these consumers. Neither these
+  outputs nor structural allocation prove seed entropy or whole LavinMQ parity.
+  Refresh after classvar init or aggregate representation changes.

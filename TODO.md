@@ -19361,3 +19361,15 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   the Hasher null access appeared as a timeout until observed with LLDB.
 - [ ] Diagnose the host compiler trap in enum675 on real LavinMQ. Its failure
   does not establish whole-application or multithreaded-runtime compatibility.
+
+
+### Uninitialized class-variable storage follow-up (2026-10-16)
+- [x] Restore required backing storage for deferred uninitialized aggregates in
+  both modes. uninit689/690 and uninit692 candidate match Crystal LADR;
+  uninit691 full-prelude Hasher/enum consumer matches AI; uninit696 is portable.
+  This closes the null-seed storage item above, within those checks.
+- [ ] Audit executable class-body statements and Hasher random_bytes seed setup
+  separately. Equal hashes do not establish correct entropy initialization.
+- [ ] Diagnose recursive macro reflection on real LavinMQ: enum681 LLDB shows
+  macro_value_for_type_name/type lookup recursion; bounded macro688 reports
+  a recursive union/Array projection cycle instead of overflowing the stack.

@@ -18145,3 +18145,17 @@ Crystal 1.21. enum674 passes 23 HIR checks with aliases, another enum, explicit
 integer conversion and actual module dispatch. This is a bounded owner-identity
 certificate, not full-prelude or LavinMQ parity. Refresh after enum provenance,
 namespace lookup or dispatch changes; revert HIR and its regression together.
+
+
+### Backing storage for uninitialized class variables (2026-10-16)
+Uninitialized suppresses value initialization, not storage. Deferred HIR
+classvar lowering skipped the expression in both modes, leaving pointer-backed
+StaticArray globals null. Both paths now reuse lower_uninitialized and publish
+its backing allocation. uninit685 timed out and eager parent uninit692 exited
+139; uninit689/690 and eager candidate uninit692 print LADR, matching Crystal
+1.21 with local, inferred/declared classvars and a second wide-value write.
+uninit691 restores the full-prelude enum/Hasher probe to AI; uninit696 passes
+the portable lazy/eager regression. This certificate covers storage and these
+consumers, not seed entropy, class-body execution, or LavinMQ parity. Refresh
+on aggregate representation or classvar initialization changes; revert lowering
+and its regression together.

@@ -3770,3 +3770,15 @@ against Crystal 1.21, while the parent emits IAIIC. Missing/stale enum provenanc
 still requires its existing compatibility checks; these guards do not invent it.
 Refresh on enum, namespace or dispatch changes. Full-prelude hashing currently
 has a separate uninitialized seed failure, outside this certificate.
+
+
+### Uninitialized values at the classvar storage boundary (2026-10-16)
+Crystal can reserve inline global aggregate storage without running a value
+initializer. HIR uses pointers for these aggregates, so deferred uninitialized
+expressions must still lower through the ordinary allocation path and store
+the pointer. Lazy guard handling remains unchanged; eager initialization uses
+the same value lowering. uninit689/690 and uninit692 exercise wide elements,
+local/inferred/declared storage, repeat writes and both modes; uninit691 covers
+Hasher.new and enum hashing with the unchanged stdlib. Contents before a write
+remain outside this contract. Refresh after representation or init changes.
+Executable class-body statements and random seed entropy need separate evidence.
