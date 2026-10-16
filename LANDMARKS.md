@@ -18132,3 +18132,16 @@ mixed and signedness restrictions. Final range658 passes 26 HIR checks
 transport/startup consumers, not universal generic admission or LavinMQ parity.
 Refresh after annotation normalization, overload fallback or generic ABI changes;
 rollback the bounded HIR change and its regression together.
+
+
+### Exact enum owners before module recovery (2026-10-16)
+A registered enum's fully qualified owner must survive short-name namespace
+recovery and module dispatch. Enums have no ClassInfo entry; the old recovery
+therefore redirected EnumDomain::Options to an unrelated Collision::Options.
+The two module classification predicates now exclude registered enums, and
+resolve_method_call retains its confirmed enum owner across those fallback
+steps. enum679 prints IAIIC on the parent; enum678 prints AABIC, matching
+Crystal 1.21. enum674 passes 23 HIR checks with aliases, another enum, explicit
+integer conversion and actual module dispatch. This is a bounded owner-identity
+certificate, not full-prelude or LavinMQ parity. Refresh after enum provenance,
+namespace lookup or dispatch changes; revert HIR and its regression together.

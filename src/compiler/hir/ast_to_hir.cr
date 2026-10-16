@@ -25242,6 +25242,8 @@ module Adamas::HIR
     private def module_like_type_name?(name : String) : Bool
       path_base = strip_generic_args_from_namespace_path(name)
       return false if class_like_namespace?(path_base)
+      # Exact registered enum identity outranks unrelated module suffixes.
+      return false if @enum_info.try(&.has_key?(path_base))
 
       base = strip_generic_args(name)
       return true if @module_defs.has_key?(base)
@@ -47203,14 +47205,14 @@ module Adamas::HIR
         end
       end
       class_name = normalize_method_owner_name(class_name)
-      if !class_name.empty? && class_name.includes?("::") && !@class_info.has_key?(class_name)
+      if enum_type_name.nil? && !class_name.empty? && class_name.includes?("::") && !@class_info.has_key?(class_name)
         if resolved = resolve_short_type_in_namespace_chain(class_name)
           class_name = resolved
           receiver_type = type_ref_for_name(class_name)
           type_desc = @module.get_type_descriptor(receiver_type)
         end
       end
-      if type_desc && type_desc.kind == TypeKind::Module
+      if enum_type_name.nil? && type_desc && type_desc.kind == TypeKind::Module
         resolved = resolve_type_alias_chain(class_name)
         if resolved != class_name
           class_name = resolved
@@ -47324,7 +47326,7 @@ module Adamas::HIR
         STDERR.puts "[MATH_MIN_RESOLVE] class=#{class_name} method=#{method_name} base=#{base_method_name} mangled=#{mangled_name} args=#{arg_type_names.join(",")}"
       end
       preferred_module_class = preferred_module_typed_class_for(class_name)
-      module_like_receiver = !class_name.empty? && (type_is_module || module_like_type_name?(class_name) || module_includers_match?(class_name) || !preferred_module_class.nil?)
+      module_like_receiver = enum_type_name.nil? && !class_name.empty? && (type_is_module || module_like_type_name?(class_name) || module_includers_match?(class_name) || !preferred_module_class.nil?)
 
       # Calls proven to target instance `self` inside a module specialization
       # must keep that specialization as the virtual-dispatch root. Selecting
@@ -52721,6 +52723,7 @@ module Adamas::HIR
       # This prevents e.g. the "File" class from matching the "Crystal::System::File" module
       # via suffix matching.
       return false if class_like_namespace?(name)
+      return false if @enum_info.try(&.has_key?(name))
 
       return true if @module_includers.has_key?(name)
 

@@ -498,3 +498,15 @@ diagnostic meanings.
 - Scope: exact body transport and measured startup. Generic admission fallback,
   nested unresolved variables, multithreaded startup and LavinMQ parity are open.
   Refresh after restriction/overload/ABI changes; rollback the bounded HIR unit.
+
+
+### Nominal enums against module suffix collisions (2026-10-16)
+- RED enum665: two wrong-owner HIR failures. Classifier-only enum668 still fails
+  twice, discriminating the later namespace/dispatch overwrite.
+- RED enum679: native parent emits IAIIC; original Crystal emits AABIC.
+- GREEN enum674: 23 HIR checks; enum678/680 emit AABIC and exit 0. Aliases,
+  distinct enum owners, integer conversion and real module dispatch are controls.
+- Counterexample to broad closure: enum672 full-prelude hashing times out;
+  enum676 LLDB identifies a null seed load in Crystal::Hasher.new. enum675
+  real LavinMQ compilation traps. Neither is covered by the owner-identity fix.
+  Refresh after enum provenance, namespace recovery or dispatch changes.

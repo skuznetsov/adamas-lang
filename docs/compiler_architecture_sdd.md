@@ -3758,3 +3758,15 @@ startup. Parent startup642 raises in a wrong-width Random::Secure range body.
 Refresh on restriction normalization, overload or carrier layout changes;
 rollback HIR and its regression as one unit. Nested forall/module covariance,
 multithreaded startup and whole-application parity remain outside this evidence.
+
+
+### Enum identity to module dispatch boundary (2026-10-16)
+An exact registered enum identity outranks unrelated modules sharing its final
+namespace component. Known enum receivers bypass recovery intended for missing
+class metadata and module-typed dispatch. Genuine module values retain those
+paths; an explicit Enum#value conversion retains integer semantics. enum674
+checks this boundary with 23 HIR examples; enum678/680 establish native AABIC
+against Crystal 1.21, while the parent emits IAIIC. Missing/stale enum provenance
+still requires its existing compatibility checks; these guards do not invent it.
+Refresh on enum, namespace or dispatch changes. Full-prelude hashing currently
+has a separate uninitialized seed failure, outside this certificate.

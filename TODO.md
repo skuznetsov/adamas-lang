@@ -19348,3 +19348,16 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   union carriers separately before claiming general restriction compatibility.
 - [ ] Establish full preview_mt/execution_context startup and LavinMQ parity;
   the ordinary prelude probe does not exercise those runtime implementations.
+
+
+### Exact enum identity and adjacent runtime blockers (2026-10-16)
+- [x] Preserve registered enum owners before module suffix recovery; enum674
+  passes 23 HIR checks and enum678/680 native AABIC matches Crystal 1.21.
+- [ ] Restore uninitialized StaticArray classvar storage and indexing contracts:
+  enum676 stops in Crystal::Hasher.new reading its null @@seed; the emitted
+  classvar initializer sets only its guard. Check instance/local uninitialized
+  aggregates and StaticArray versus Array element addressing as separate paths.
+- [ ] Keep crash-handler recursion distinct from the originating fault:
+  the Hasher null access appeared as a timeout until observed with LLDB.
+- [ ] Diagnose the host compiler trap in enum675 on real LavinMQ. Its failure
+  does not establish whole-application or multithreaded-runtime compatibility.
