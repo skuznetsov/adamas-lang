@@ -3888,3 +3888,18 @@ RED random837/844; GREEN random843/846 and 33 existing method controls random851
 inputs are original-first and all binaries use run_safe.sh. Scoped adversary
 ROBUST for the stated contract; block-form gsub and bare command macro arguments
 remain open. Refresh on parser regex fields or macro dispatch/reflection edits.
+
+
+### Declaring module owner during early macro expansion (2026-10-16)
+
+Module macro expansion during early registration must receive the declaration
+owner explicitly even before current_class is installed. A module projected
+through the existing ClassSymbol macro context API carries is_module=true and
+is_struct=false; MacroTypeValue and text predicates consume that kind. Context
+restoration remains scoped to the existing owner guard, including nested calls.
+Admit module names, module/class/struct kind queries and generated Thread TLS
+property names at this boundary. RED random811/816/818; GREEN random847 has 9
+examples and random848 matches native reflection/cache/kind controls with both
+compilers. Regex replacement random842 is an explicit native dependency.
+Scoped adversary ROBUST within single-thread contexts; no multithread claim.
+Refresh on registration order, owner projection or macro context dispatch edits.

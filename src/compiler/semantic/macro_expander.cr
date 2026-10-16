@@ -914,7 +914,7 @@ module Adamas
           # became an opaque MacroNodeValue whose text is the source "@type".
           if node.is_a?(Frontend::InstanceVarNode) && (owner = context.owner_type) &&
              intern_name(node.name) == "@type"
-            return MacroTypeValue.new(owner.name, owner, owner.is_struct?, false, owner.is_abstract?,
+            return MacroTypeValue.new(owner.name, owner, owner.is_struct?, owner.is_module?, owner.is_abstract?,
               owner.superclass_name, owner.type_parameters)
           end
 
@@ -1228,7 +1228,7 @@ module Adamas
                         else
                           symbol.name
                         end
-            MacroTypeValue.new(full_name, symbol, symbol.is_struct?, false, symbol.is_abstract?,
+            MacroTypeValue.new(full_name, symbol, symbol.is_struct?, symbol.is_module?, symbol.is_abstract?,
               symbol.superclass_name, type_params)
           when ModuleSymbol
             MacroTypeValue.new(symbol.name, nil, false, true, false, nil, symbol.type_parameters)
@@ -2591,11 +2591,11 @@ module Adamas
               class_symbol = context.owner_type.not_nil!
               case member
               when "class?"
-                return class_symbol.is_struct? ? "" : "true"
+                return class_symbol.is_struct? || class_symbol.is_module? ? "false" : "true"
               when "struct?"
                 return class_symbol.is_struct? ? "true" : ""
               when "module?"
-                return ""  # ClassSymbol is not a module
+                return class_symbol.is_module? ? "true" : "false"
               when "abstract?"
                 return class_symbol.is_abstract? ? "true" : ""
               when "name"
@@ -2982,13 +2982,13 @@ module Adamas
                   return ""
                 when "class?"
                   # @type.class? - true if this is a class (not struct/module/enum)
-                  return class_symbol.is_struct? ? "" : "true"
+                  return class_symbol.is_struct? || class_symbol.is_module? ? "false" : "true"
                 when "struct?"
                   # @type.struct? - true if this is a struct
                   return class_symbol.is_struct? ? "true" : ""
                 when "module?"
-                  # @type.module? - false for ClassSymbol (would be true for ModuleSymbol)
-                  return ""
+                  # Modules use a ClassSymbol projection in the HIR context API.
+                  return class_symbol.is_module? ? "true" : "false"
                 when "abstract?"
                   # @type.abstract? - check if class is abstract
                   # TODO: track abstract flag in ClassSymbol

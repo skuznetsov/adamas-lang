@@ -101,9 +101,12 @@ module Adamas
         getter? is_struct : Bool
         # True if this class is abstract (cannot be instantiated directly)
         getter? is_abstract : Bool
+        # True when this symbol is a module owner projected into the class-only
+        # macro context API for `@type` reflection.
+        getter? is_module : Bool
         getter? explicit_superclass : Bool
 
-        def initialize(name : String, node_id : ExprId, *, scope : SymbolTable, class_scope : SymbolTable, superclass_name : String? = nil, type_parameters : Array(String)? = nil, is_struct : Bool = false, is_abstract : Bool = false, explicit_superclass : Bool = false)
+        def initialize(name : String, node_id : ExprId, *, scope : SymbolTable, class_scope : SymbolTable, superclass_name : String? = nil, type_parameters : Array(String)? = nil, is_struct : Bool = false, is_abstract : Bool = false, is_module : Bool = false, explicit_superclass : Bool = false)
           super(name, node_id)
           @scope = scope
           @class_scope = class_scope
@@ -114,6 +117,7 @@ module Adamas
           @ivar_annotations = {} of String => Array(AnnotationInfo)
           @is_struct = is_struct
           @is_abstract = is_abstract
+          @is_module = is_module
           @explicit_superclass = explicit_superclass
         end
 

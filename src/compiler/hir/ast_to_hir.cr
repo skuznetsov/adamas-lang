@@ -15756,6 +15756,25 @@ module Adamas::HIR
       @type_param_map = old_type_param_map.not_nil!
     end
 
+    # Expand a macro at an explicit declaration owner when registration is
+    # running before the ambient @current_class has been installed. In
+    # particular, module PASS 1.75 expands member macros before PASS 2; Crystal
+    # `@type` reflection must still describe the module where the macro call
+    # appears, not the macro's definition owner.
+    private def expand_macro_expr_for_owner(
+      macro_def : Adamas::Compiler::Frontend::MacroDefNode,
+      macro_arena : Adamas::Compiler::Frontend::ArenaLike,
+      args : Array(ExprId),
+      named_args : Array(Adamas::Compiler::Frontend::NamedArgument)?,
+      block_id : ExprId?,
+      macro_key : String,
+      owner_name : String,
+    ) : ExprId
+      with_macro_owner_context(owner_name) do
+        expand_macro_expr(macro_def, macro_arena, args, named_args, block_id, macro_key)
+      end
+    end
+
     private def expand_macro_for_owner(
       ctx : LoweringContext,
       macro_def : Adamas::Compiler::Frontend::MacroDefNode,
@@ -16259,11 +16278,12 @@ module Adamas::HIR
       end
 
       enum_members = @enum_info.try(&.[class_name]?)
-      return nil unless info || template || enum_members
+      module_owner = @module_defs.has_key?(class_name) && !info && !template && !enum_members
+      return nil unless info || template || enum_members || module_owner
 
       superclass_name = info.try(&.parent_name)
       type_parameters = template.try(&.type_params)
-      is_struct = info ? info.is_struct : (template ? template.is_struct : true)
+      is_struct = info ? info.is_struct : (template ? template.is_struct : !module_owner)
 
       scope = Adamas::Compiler::Semantic::SymbolTable.new
       class_scope = Adamas::Compiler::Semantic::SymbolTable.new
@@ -16276,7 +16296,8 @@ module Adamas::HIR
         superclass_name: superclass_name,
         type_parameters: type_parameters,
         is_struct: is_struct,
-        is_abstract: false
+        is_abstract: false,
+        is_module: module_owner
       )
 
       if enum_members
@@ -29650,7 +29671,7 @@ module Adamas::HIR
             macro_entry, macro_key = macro_lookup
             macro_def, macro_arena = macro_entry
             macro_args, macro_block = extract_macro_block_from_args(member.args, member.block)
-            expanded_id = expand_macro_expr(macro_def, macro_arena, macro_args, member.named_args, macro_block, macro_key)
+            expanded_id = expand_macro_expr_for_owner(macro_def, macro_arena, macro_args, member.named_args, macro_block, macro_key, module_name)
             unless expanded_id.invalid?
               old_arena = @arena
               @arena = macro_arena
@@ -29669,7 +29690,7 @@ module Adamas::HIR
             next unless macro_lookup
             macro_entry, macro_key = macro_lookup
             macro_def, macro_arena = macro_entry
-            expanded_id = expand_macro_expr(macro_def, macro_arena, [] of ExprId, nil, nil, macro_key)
+            expanded_id = expand_macro_expr_for_owner(macro_def, macro_arena, [] of ExprId, nil, nil, macro_key, module_name)
             unless expanded_id.invalid?
               old_arena = @arena
               @arena = macro_arena
@@ -30931,7 +30952,8 @@ module Adamas::HIR
       macro_entry, macro_key = macro_lookup
       macro_def, macro_arena = macro_entry
       macro_args, macro_block = extract_macro_block_from_args(args, block_id)
-      expanded_id = expand_macro_expr(macro_def, macro_arena, macro_args, named_args, macro_block, macro_key)
+      expanded_id = expand_macro_expr_for_owner(
+        macro_def, macro_arena, macro_args, named_args, macro_block, macro_key, module_name)
       return nil if expanded_id.invalid?
 
       {expanded_id, macro_arena}
@@ -34040,7 +34062,7 @@ module Adamas::HIR
             macro_def, macro_arena = macro_entry
             next unless macro_def_maybe_defines_type?(macro_def, macro_arena)
             macro_args, macro_block = extract_macro_block_from_args(member.args, member.block)
-            expanded_id = expand_macro_expr(macro_def, macro_arena, macro_args, member.named_args, macro_block, macro_key)
+            expanded_id = expand_macro_expr_for_owner(macro_def, macro_arena, macro_args, member.named_args, macro_block, macro_key, full_name)
             unless expanded_id.invalid?
               old_arena = @arena
               @arena = macro_arena
@@ -34060,7 +34082,7 @@ module Adamas::HIR
             macro_entry, macro_key = macro_lookup
             macro_def, macro_arena = macro_entry
             next unless macro_def_maybe_defines_type?(macro_def, macro_arena)
-            expanded_id = expand_macro_expr(macro_def, macro_arena, [] of ExprId, nil, nil, macro_key)
+            expanded_id = expand_macro_expr_for_owner(macro_def, macro_arena, [] of ExprId, nil, nil, macro_key, full_name)
             unless expanded_id.invalid?
               old_arena = @arena
               @arena = macro_arena

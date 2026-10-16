@@ -18298,3 +18298,24 @@ Roll back both evaluator/value hunks together with the focused regression/spec.
 Block-form replacement remains open. A separate command-argument parsing bug
 drops the argument in puts {{ expression }} (random830/832/839/840); the native
 replacement oracle uses the equivalent parenthesized call to isolate this bug.
+
+
+### Declaring module owner during early macro expansion (2026-10-16)
+
+Module PASS 1.75 expands member macros before the ambient current_class context
+is installed. The owner projection also rejected modules, and projected symbols
+lost their module kind. Carry the explicit declaring owner through early and
+recursive expansion, project module owners with a kind flag, and propagate that
+flag to macro values and kind predicates. Existing context guards restore the
+previous owner/arena. No stdlib or application source is changed.
+RED random811/816 shows empty owner names and a missing generated Thread getter;
+random818 fails both HIR examples. GREEN random847 passes 9 combined owner/regex
+examples. Original-first random848 matches all declaration labels, direct TLS
+field access, repeated cached construction, nested owners and class/module/struct
+kind controls. Scoped adversary ROBUST for these single-thread owner contexts.
+The native test depends on regex contract random842: its earlier random828
+failure was a separate gsub no-op, producing illegal :: in a generated name.
+Sealed random845 host 97d15f827d5298b0b65258cc538e2e367824ea00964ceb4b39ca1daabf49f316.
+Refresh after declaration registration, owner projection or macro context/value
+routing changes. Multithread execution and class-body absolute registration
+remain open; roll back the owner wrapper/projection/kind changes together.

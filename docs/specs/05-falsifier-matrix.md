@@ -634,3 +634,17 @@ diagnostic meanings.
   regex syntax; positive controls cover i/m/x flags, captures and empty matches.
 - Separate random830 command-call syntax still loses macro arguments; keep it
   open and do not attribute its blank output to regex replacement semantics.
+
+
+### Declaring module owner during early macro expansion (2026-10-16)
+
+- RED random811: Crystal prints four declaration names; parent loses module names.
+- RED random816: parent aborts on the missing intended Thread TLS getter.
+- RED random818: 2 HIR examples fail before explicit module owner projection.
+- GREEN random847: 9 owner/regex examples, 0 failures/errors/pending.
+- GREEN random848: original and candidate PASS reflection, thread_cache and kind
+  fixtures; actual generated fields and repeated cached getter calls are checked.
+- random828 is retained as the earlier failure that exposed missing regex gsub;
+  random845 composes the owner changes with the separately verified random842.
+- All binaries use run_safe.sh; cache parity is single-thread only. Refresh after
+  macro registration, owner lifetime/projection or type-kind dispatch changes.

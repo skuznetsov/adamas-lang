@@ -19467,3 +19467,15 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   lines. Parenthesized calls preserve arguments. Fix the compiler, not callers.
 - [ ] Audit text macro method fallback paths that silently return the receiver
   for unsupported operations; reject invalid calls or implement the contract.
+
+
+### Declaring module owner during early macro expansion (2026-10-16)
+
+- [x] Supply the declaring module owner to early/recursive macro expansion and
+  preserve module kind through reflection: random847 HIR/semantic controls and
+  random848 native names, actual generated TLS properties and cached values.
+- [ ] Compare thread_local behavior across actual threads/execution contexts;
+  single-thread cache parity does not establish multithread correctness.
+- [ ] Audit remaining owner kind/text projection paths, including false-valued
+  struct?/abstract? output and absolute class-body registration, with Crystal
+  oracles before broadening this owner repair.
