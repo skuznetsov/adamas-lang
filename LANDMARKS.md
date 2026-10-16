@@ -18216,3 +18216,24 @@ Random.thread_default reads a null class variable with no initialization store.
 Its root cause is open; this dispatch certificate does not cover RNG behavior.
 Refresh after receiver classification, module lookup or late target changes;
 rollback the resolver/fallback change and its regression together.
+
+
+### Non-empty named hash literals preserve ordinary call semantics (2026-10-16)
+Lavin integration module765 reached an explicit unsupported branch for
+HTTP::Headers{key => value}. The named-hash lowerer now expands through ordinary
+T.new and []= calls, keeping each complex key/value capture in entry order before
+construction and simple operands at setter time. Bare two-parameter generics
+infer key and value types separately; explicit generics retain their receiver.
+No stdlib or LavinMQ source changes are used for this repair.
+named768 is RED on module756: Crystal LavinMQ/0, candidate unsupported lowering.
+named772 matches LavinMQ/0. Portable named774 matches Crystal 1.21 across five
+native fixtures: HTTP headers, complex effects with duplicate keys and container
+return, constructor mutation of a referenced local, generic inference, and the
+existing typed empty construction. named773 passes four HIR examples.
+Scoped adversary: ROBUST for these boundaries; application parity is still open.
+Source named767 HIR 31cb812995f5f4206cc71777d4073f13db7e516ed8f45e17058956929e839870;
+host fad78f5eaa65315ea26cbc615578bca365d025821f97bf42fad7aaf7fbecd254.
+Empty concrete named collections and early bare-generic constant inference are
+not covered by this certificate. Refresh after literal expansion, generic
+receiver inference, or operand evaluation changes. Roll back this lowerer and
+its regression/spec together.

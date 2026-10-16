@@ -127135,6 +127135,193 @@ module Adamas::HIR
       receiver_node
     end
 
+    # Hash-shaped T{key => value} literals use the same construction contract
+    # as Crystal's literal expander: infer the key and value parameters
+    # independently for a bare generic receiver, while leaving an explicit
+    # receiver (or a concrete class name) intact for ordinary `.new` lookup.
+    private def resolve_named_hash_collection_receiver(
+      ctx : LoweringContext,
+      literal : Adamas::Compiler::Frontend::HashLiteralNode,
+      custom_name : ExprId,
+    ) : ExprId
+      receiver_node = require_named_collection_receiver(literal, custom_name)
+      return custom_name if receiver_node.is_a?(Adamas::Compiler::Frontend::GenericNode)
+
+      raw_base = resolve_path_like_name(custom_name)
+      return custom_name if raw_base.nil? || raw_base.empty?
+
+      lookup_base = raw_base.starts_with?("::") ? strip_absolute_name_prefix(raw_base) : raw_base
+      template_base = resolve_generic_template_base(lookup_base)
+      template = @generic_templates[template_base]?
+      # A concrete receiver such as HTTP::Headers has no type parameters and
+      # is already the complete constructor receiver.
+      return custom_name unless template
+      return custom_name if template.type_params.empty?
+
+      unless template.type_params.size == 2
+        raise LoweringError.new(
+          "cannot infer generic type arguments for named hash collection literal #{raw_base} (expected key and value types)",
+          literal,
+        )
+      end
+
+      key_types = [] of TypeRef
+      value_types = [] of TypeRef
+      literal.entries.each do |entry|
+        key_type = infer_named_collection_element_type(ctx, entry.key)
+        value_type = infer_named_collection_element_type(ctx, entry.value)
+        unless key_type && value_type
+          raise LoweringError.new(
+            "cannot infer generic type arguments for named hash collection literal #{raw_base}",
+            literal,
+          )
+        end
+        key_types << key_type
+        value_types << value_type
+      end
+
+      inferred_key_type = union_type_for_value_set(key_types)
+      inferred_value_type = union_type_for_value_set(value_types)
+      unless inferred_key_type && inferred_value_type
+        raise LoweringError.new(
+          "cannot infer generic type arguments for named hash collection literal #{raw_base}",
+          literal,
+        )
+      end
+
+      key_type_name = get_type_name_from_ref(inferred_key_type)
+      value_type_name = get_type_name_from_ref(inferred_value_type)
+      if key_type_name.empty? || value_type_name.empty? ||
+         key_type_name == "Void" || value_type_name == "Void" ||
+         key_type_name == "Unknown" || value_type_name == "Unknown"
+        raise LoweringError.new(
+          "cannot infer generic type arguments for named hash collection literal #{raw_base}",
+          literal,
+        )
+      end
+
+      key_type_arg = named_collection_identifier(literal.span, key_type_name)
+      value_type_arg = named_collection_identifier(literal.span, value_type_name)
+      @arena.add_typed(
+        Adamas::Compiler::Frontend::GenericNode.new(
+          literal.span,
+          custom_name,
+          [key_type_arg, value_type_arg],
+        )
+      )
+    end
+
+    # Lower T{key => value, ...} as ordered key/value assignments into a fresh
+    # T.new. Complex expressions are captured in source order before
+    # construction; simple local and literal operands remain at their []=
+    # position, matching Crystal's complex_elem_temp_vars behavior.
+    private def lower_named_hash_collection_literal(
+      ctx : LoweringContext,
+      node : Adamas::Compiler::Frontend::HashLiteralNode,
+      custom_name : ExprId,
+    ) : ValueId
+      node.entries.each do |entry|
+        unless node_for_expr(entry.key) && node_for_expr(entry.value)
+          raise LoweringError.new(
+            "cannot lower named hash collection literal: malformed entry arena reference",
+            node,
+          )
+        end
+      end
+
+      receiver_id = resolve_named_hash_collection_receiver(ctx, node, custom_name)
+      base_name = "__adamas_named_hash_#{node.span.start_offset}_#{ctx.next_id}"
+      key_temporary_names = Array(String?).new(node.entries.size, nil)
+      value_temporary_names = Array(String?).new(node.entries.size, nil)
+
+      # Crystal captures each complex key and then its value, walking entries
+      # in source order, before it invokes the receiver's constructor.
+      node.entries.each_with_index do |entry, index|
+        unless named_hash_simple_element?(ctx, entry.key)
+          temp_name = "#{base_name}_key_#{index}"
+          target_id = named_collection_identifier(entry.span, temp_name)
+          assignment_id = @arena.add_typed(
+            Adamas::Compiler::Frontend::AssignNode.new(entry.span, target_id, entry.key)
+          )
+          lower_expr(ctx, assignment_id)
+          key_temporary_names[index] = temp_name
+        end
+
+        unless named_hash_simple_element?(ctx, entry.value)
+          temp_name = "#{base_name}_value_#{index}"
+          target_id = named_collection_identifier(entry.span, temp_name)
+          assignment_id = @arena.add_typed(
+            Adamas::Compiler::Frontend::AssignNode.new(entry.span, target_id, entry.value)
+          )
+          lower_expr(ctx, assignment_id)
+          value_temporary_names[index] = temp_name
+        end
+      end
+
+      container_name = "#{base_name}_container"
+      constructor_member = named_collection_member(node.span, receiver_id, "new")
+      constructor_call = @arena.add_typed(
+        Adamas::Compiler::Frontend::CallNode.new(
+          node.span,
+          constructor_member,
+          [] of Adamas::Compiler::Frontend::ExprId,
+        )
+      )
+      container_target = named_collection_identifier(node.span, container_name)
+      container_assignment = @arena.add_typed(
+        Adamas::Compiler::Frontend::AssignNode.new(node.span, container_target, constructor_call)
+      )
+      lower_expr(ctx, container_assignment)
+
+      node.entries.each_with_index do |entry, index|
+        receiver = named_collection_identifier(entry.span, container_name)
+        key = if temp_name = key_temporary_names[index]
+                named_collection_identifier(entry.span, temp_name)
+              else
+                entry.key
+              end
+        value = if temp_name = value_temporary_names[index]
+                  named_collection_identifier(entry.span, temp_name)
+                else
+                  entry.value
+                end
+        setter = named_collection_member(entry.span, receiver, "[]=")
+        setter_call = @arena.add_typed(
+          Adamas::Compiler::Frontend::CallNode.new(
+            entry.span,
+            setter,
+            [key, value],
+          )
+        )
+        lower_expr(ctx, setter_call)
+      end
+
+      lower_expr(ctx, named_collection_identifier(node.span, container_name))
+    end
+
+    private def named_hash_simple_element?(ctx : LoweringContext, expr_id : ExprId) : Bool
+      node = node_for_expr(expr_id)
+      return false unless node
+
+      case node
+      when Adamas::Compiler::Frontend::IdentifierNode
+        # Identifier nodes can stand for either a local or a zero-argument
+        # method. Only a local has Crystal's direct-variable evaluation rule.
+        !ctx.lookup_local(identifier_name_text(node)).nil?
+      when Adamas::Compiler::Frontend::InstanceVarNode,
+           Adamas::Compiler::Frontend::ClassVarNode,
+           Adamas::Compiler::Frontend::NumberNode,
+           Adamas::Compiler::Frontend::NilNode,
+           Adamas::Compiler::Frontend::BoolNode,
+           Adamas::Compiler::Frontend::CharNode,
+           Adamas::Compiler::Frontend::StringNode,
+           Adamas::Compiler::Frontend::SymbolNode
+        true
+      else
+        false
+      end
+    end
+
     private def lower_named_empty_collection_literal(
       ctx : LoweringContext,
       node : Adamas::Compiler::Frontend::HashLiteralNode,
@@ -127211,10 +127398,7 @@ module Adamas::HIR
         if node.entries.empty?
           return lower_named_empty_collection_literal(ctx, node, custom_name)
         end
-        raise LoweringError.new(
-          "cannot lower non-empty named hash collection literals yet",
-          node,
-        )
+        return lower_named_hash_collection_literal(ctx, node, custom_name)
       end
 
       # Lower key-value pairs first to infer types

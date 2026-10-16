@@ -3831,3 +3831,20 @@ Scoped adversary: ROBUST for those boundaries. Random.thread_default still
 returns null without a store (module757/760); no RNG or application parity claim
 is admitted. Refresh this certificate when receiver classification or dispatch
 fallbacks change.
+
+
+### Named hash construction and operand timing (2026-10-16)
+Non-empty named hash literals admit a concrete receiver, an explicit generic
+receiver, or a bare two-parameter generic with separately inferred key/value
+sets. Lowering captures complex keys then values in source entry order before
+T.new; simple locals, instance/class variables and simple literals remain at
+setter time. Every entry invokes ordinary []= even when keys repeat; the final
+value is the constructed container. This matches the original compiler's
+literal_expander.cr complex_elem_temp_vars contract without bypassing normal
+constructor/setter dispatch. Malformed arena references reject before expansion.
+Evidence named772/774 covers native HTTP::Headers, order, duplicate keys,
+constructor mutation, container result and generic inference; named773 has four
+passing HIR controls. Scoped adversary ROBUST; full application parity, empty
+concrete receivers and early constant inference are outside this certificate.
+Refresh when operand classification, generic inference or ordinary call lowering
+changes.

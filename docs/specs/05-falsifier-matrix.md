@@ -574,3 +574,18 @@ diagnostic meanings.
   open and must not be inferred from this dispatch-only certificate.
 - All binaries run through scripts/run_safe.sh. Refresh after module lookup,
   receiver category or selected-target materialization changes.
+
+
+### Non-empty named hash lowering (2026-10-16)
+- RED named768 on module756: original HTTP::Headers fixture prints LavinMQ/0;
+  candidate rejects the unsupported non-empty named collection literal.
+- GREEN named772 on named767: both print LavinMQ/0.
+- Portable named774: five original-first native fixtures compare exact output
+  and print explicit PASS. They exercise complex key/value order before new,
+  repeated []= calls, container result, constructor mutation of a captured local,
+  explicit/bare generic Hash receivers and existing typed empty construction.
+- HIR named773: four examples, zero failures/errors/pending.
+- Empty concrete receivers and heterogeneous/constant inference remain untested
+  adjacent boundaries. Full LavinMQ and Random runtime parity remain open.
+- All binaries execute through scripts/run_safe.sh; refresh after literal,
+  generic receiver or operand timing changes.

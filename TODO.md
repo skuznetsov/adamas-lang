@@ -19415,3 +19415,15 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   module765 reaches this unsupported capability after the dispatch fix.
 - [ ] Audit other late lookup fallbacks for value/type-literal confusion;
   retain the selected Def/arena guard and native tests in both binding orders.
+
+
+### Named hash literals and adjacent compatibility checks (2026-10-16)
+- [x] Lower non-empty T{key => value} through T.new and ordered []= calls.
+  named774 matches five native Crystal 1.21 fixtures; named773 passes four HIR
+  examples, including independently inferred generic key and value parameters.
+- [ ] Probe empty concrete T{} syntax/semantics against Crystal and the current
+  GenericNode-only empty lowerer before broadening the accepted frontier.
+- [ ] Probe bare-generic named literals in constants and heterogeneous key/value
+  inference; the native certificate currently covers homogeneous Hash inference.
+- [ ] Continue actual LavinMQ integration and Random.thread_default repair;
+  named-literal parity does not establish application or RNG parity.
