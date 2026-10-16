@@ -18319,3 +18319,23 @@ Sealed random845 host 97d15f827d5298b0b65258cc538e2e367824ea00964ceb4b39ca1daabf
 Refresh after declaration registration, owner projection or macro context/value
 routing changes. Multithread execution and class-body absolute registration
 remain open; roll back the owner wrapper/projection/kind changes together.
+
+
+### Typeof values retain semantic identity through member and call dispatch (2026-10-16)
+
+The typeof lowerer retained semantic identity only as metadata while emitting a
+Nil-typed value. Member lookup therefore selected Nil methods. Parenthesized
+calls used a separate source-name shortcut, losing active bindings and union
+display. Emit the inferred type as a marked type value, route typeof call
+receivers through the same lowerer, and retain the display name separately from
+the normalized dispatch owner. Type queries do not evaluate their arguments.
+RED typeof876: six focused examples yield one failure and four errors on parent
+random845. Adversary typeof880 rejects the intermediate fix: union .name()
+loses parentheses. GREEN typeof884: 13 focused/existing HIR examples pass;
+typeof883: original Crystal and sealed candidate produce the same 11 lines.
+Scoped adversary ROBUST for bare/parenthesized name dispatch, active HIR locals,
+union name/to_s/inspect, user-defined self.name and non-evaluation controls.
+Sealed typeof881 host 6b8c859468964ce02caee50177e0154938c601749d54d290aa476b079838ec6a.
+No application or stdlib edits. Refresh after typeof inference, type-value
+marking, member/call receiver routing or type-name query changes. Roll back the
+HIR hunks and their focused tests together. This is not a LavinMQ parity claim.

@@ -3903,3 +3903,19 @@ examples and random848 matches native reflection/cache/kind controls with both
 compilers. Regex replacement random842 is an explicit native dependency.
 Scoped adversary ROBUST within single-thread contexts; no multithread claim.
 Refresh on registration order, owner projection or macro context dispatch edits.
+
+
+### Typeof values retain semantic identity through member and call dispatch (2026-10-16)
+
+A resolved typeof expression carries its inferred semantic TypeRef and the
+existing type-literal marker in addition to RuntimeTypeIdentity. Its arguments
+are inspected without runtime lowering. Bare member and parenthesized call
+receivers consume this same value; the normalized dispatch owner and the
+source-level display name remain separate. Default name/to_s/inspect use the
+typeof display, while existing explicit self.name override resolution wins.
+Admit the tested known-type, local-binding and union-query corridor. Parent
+random845 fails typeof876; intermediate typeof865 fails the parenthesized union
+adversary typeof880. Final typeof881 passes typeof884 (13 HIR examples) and
+original-first typeof883 (11 native output lines). Scoped adversary ROBUST for
+these cases. Other type-value transport paths and complete application parity
+remain open. Refresh on typeof, receiver classification or type-name edits.

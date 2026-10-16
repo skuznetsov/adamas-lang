@@ -42099,7 +42099,13 @@ module Adamas::HIR
         return emit_runtime_class_name(ctx, source_id)
       end
 
-      lit = Literal.new(ctx.next_id, TypeRef::STRING, literal_owner)
+      # Typeof preserves its source-level type display (including union
+      # parentheses) separately from the normalized dispatch owner.
+      display_name = literal_owner
+      if receiver_id && (identity = ctx.runtime_type_identity?(receiver_id)) && identity.origin.typeof?
+        display_name = identity.display_name
+      end
+      lit = Literal.new(ctx.next_id, TypeRef::STRING, display_name)
       ctx.emit(lit)
       ctx.register_type(lit.id, TypeRef::STRING)
       owner_ref = type_ref_for_name(literal_owner)
@@ -42109,7 +42115,7 @@ module Adamas::HIR
         owner_ref,
         TypeValueOrigin::TypeLiteralQuery,
         runtime_stringification_required: false,
-        display_name: literal_owner
+        display_name: display_name
       )
       lit.id
     end
@@ -75071,7 +75077,7 @@ module Adamas::HIR
         # Top-level method definition
         lower_top_level_def(ctx, node)
       when Adamas::Compiler::Frontend::TypeofNode
-        # typeof(x) - returns type at compile time, for runtime just return nil
+        # typeof(x) is a semantic type value; its arguments are never evaluated.
         lower_typeof(ctx, node)
       when Adamas::Compiler::Frontend::SizeofNode
         # sizeof(T) - returns size of type
@@ -80447,8 +80453,17 @@ module Adamas::HIR
           next if arg_type == TypeRef::VOID
           semantic_type = semantic_type == TypeRef::VOID ? arg_type : union_type_for_values(semantic_type, arg_type)
         end
-        nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+        # A typeof expression is a type value. Its semantic type must also
+        # reach member dispatch, rather than presenting a Nil receiver with
+        # metadata understood only by stringification consumers.
+        value_type = semantic_type == TypeRef::VOID ? TypeRef::NIL : semantic_type
+        nil_lit = Literal.new(ctx.next_id, value_type, nil)
         ctx.emit(nil_lit)
+        ctx.register_type(nil_lit.id, value_type)
+        if semantic_type != TypeRef::VOID
+          ctx.mark_type_literal(nil_lit.id)
+          @type_literal_values.add(nil_lit.id)
+        end
         mark_runtime_type_identity(
           ctx,
           nil_lit.id,
@@ -98573,6 +98588,14 @@ module Adamas::HIR
              (obj_kind == Adamas::Compiler::Frontend::NodeKind::Self ||
              obj_kind == Adamas::Compiler::Frontend::NodeKind::ImplicitObj)
             class_name_str = @current_class
+          elsif obj_kind == Adamas::Compiler::Frontend::NodeKind::Typeof
+            # Keep the same semantic type value as bare member access. The
+            # source-name fast path loses union display and lexical bindings.
+            receiver_id = lower_typeof(ctx, obj_node.unsafe_as(Adamas::Compiler::Frontend::TypeofNode))
+            receiver_type = ctx.type_of(receiver_id)
+            if ctx.type_literal?(receiver_id)
+              class_name_str = get_type_name_from_ref(receiver_type)
+            end
           elsif obj_kind == Adamas::Compiler::Frontend::NodeKind::Constant
             constant_node = obj_node.unsafe_as(Adamas::Compiler::Frontend::ConstantNode)
             name = (safe_slice_to_string(constant_node.name) || "")
@@ -99278,7 +99301,7 @@ module Adamas::HIR
               end
             end
             if call_args.empty? && !has_block_call
-              if type_literal_name_id = lower_type_literal_name_query(ctx, class_name_str, method_name)
+              if type_literal_name_id = lower_type_literal_name_query(ctx, class_name_str, method_name, receiver_id)
                 return type_literal_name_id
               end
             end

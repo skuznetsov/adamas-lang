@@ -19479,3 +19479,13 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Audit remaining owner kind/text projection paths, including false-valued
   struct?/abstract? output and absolute class-body registration, with Crystal
   oracles before broadening this owner repair.
+
+
+### Typeof values retain semantic identity through member and call dispatch (2026-10-16)
+
+- [x] Preserve typeof semantic type values through bare and parenthesized member
+  dispatch: typeof884 passes 13 HIR examples and typeof883 matches 11 native
+  output lines with original Crystal, including unions, overrides and no effects.
+- [ ] Audit other type-value producer/consumer paths for metadata-only identity
+  that diverges from receiver lookup; include aliases, nested generic names and
+  type values crossing argument/return boundaries before broadening the claim.

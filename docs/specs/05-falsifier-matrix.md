@@ -648,3 +648,20 @@ diagnostic meanings.
   random845 composes the owner changes with the separately verified random842.
 - All binaries use run_safe.sh; cache parity is single-thread only. Refresh after
   macro registration, owner lifetime/projection or type-kind dispatch changes.
+
+
+### Typeof values retain semantic identity through member and call dispatch (2026-10-16)
+
+- RED typeof876 on random845: 6 examples, 1 failure, 4 errors; member lookup
+  receives Nil instead of a marked semantic type value.
+- RED typeof880 on intermediate typeof865: original union .name() has enclosing
+  parentheses, while the candidate's separate call fast path loses them.
+- GREEN typeof884 on sealed typeof881: 13 examples, 0 failures/errors/pending;
+  includes both syntaxes, semantic markers, active locals and no argument calls.
+- GREEN typeof883 on the same host: both compilers PASS identical 11-line native
+  output, with union name/to_s/inspect, custom self.name and effectful operands.
+- Test and script hashes are pinned in their source manifests/receipts. Earlier
+  typeof867/869/873 probes used an incorrect Literal.value test accessor and
+  are test-harness failures, not evidence of a compiler regression.
+- Refresh on producer metadata, receiver lookup or name-query changes. No
+  LavinMQ execution or general type-value transport claim follows from this gate.
