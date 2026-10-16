@@ -19569,3 +19569,15 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Repair no-prelude String#size, which currently forwards to bytesize, and
   audit __adamas_runtime_string_from_cstr/substrings for byte counts stored as
   known character lengths. string1047 records the separate fallback failure.
+
+
+### Preserve receiver semantics across union argument arms (2026-10-16)
+
+- [x] Preserve receiver lookup and virtual override semantics inside union-argument
+  branches, including binary ==/!=. equality1108 RED, equality1109 GREEN for 44
+  full/no-prelude results; inherited return ABI and existing dispatch guards pass.
+- [ ] Preserve narrowed per-arm materialization demand through pending functions:
+  proc_union_enqueue_context1025 selects Proc#==$Proc correctly but enqueues it
+  before recording [Proc(Nil)]; whole-call fallback then writes Proc|Tuple into
+  the shared target demand, and queue draining fails at the union's #pointer.
+  Repair the demand transport without bypassing the unresolved-pointer guard.

@@ -86131,6 +86131,26 @@ module Adamas::HIR
       class_name = normalize_method_owner_name(class_name)
       base_method_name = class_name.empty? ? op : "#{class_name}##{op}"
       primary_mangled_name = mangle_function_name(base_method_name, [right_type])
+      # Binary operators need the same per-argument dispatch as explicit calls.
+      # Union arms can select distinct source overloads; resolving the combined
+      # type as one argument can leave a bodyless or inapplicable target.
+      if (op == "==" || op == "!=") && is_union_type?(right_type)
+        if dispatched = try_emit_union_arg_dispatch(
+             ctx,
+             left,
+             base_method_name,
+             primary_mangled_name,
+             [right],
+             [right_type],
+             TypeRef::BOOL,
+             false,
+             false,
+             false,
+             false,
+           )
+          return dispatched
+        end
+      end
       if env_get("DEBUG_SORT_CMP_RESOLVE") && @current_method == "cmp"
         STDERR.puts "[SORT_CMP_RESOLVE] stage=pre left=#{type_name_for_mangling(left_type)} right=#{type_name_for_mangling(right_type)} class=#{class_name} base=#{base_method_name} primary=#{primary_mangled_name} map=#{type_param_map_debug_string}"
       end
@@ -106974,15 +106994,21 @@ module Adamas::HIR
 
       # Union arg dispatch: branch on union arg variant for distinct overloads.
       # Applies to instance and class method calls (the latter have nil receiver).
-      if !call_virtual && block_id.nil?
+      # Class receivers can remain virtual inside each argument arm. Union
+      # receivers keep their separate discriminator-based lowering below.
+      class_union_receiver = receiver_id &&
+                             @module.get_type_descriptor(ctx.type_of(receiver_id.not_nil!)).try(&.kind) == TypeKind::Class
+      if (!call_virtual || class_union_receiver) && block_id.nil?
         if uad = try_emit_union_arg_dispatch(ctx, receiver_id, base_method_name,
              mangled_method_name, args, arg_types, return_type, has_block_call,
              has_splat, splat_packed, has_named_args)
           return uad
         end
-        if cad = try_emit_class_arg_overload_dispatch(ctx, receiver_id, base_method_name,
-             mangled_method_name, args, arg_types, return_type, has_block_call)
-          return cad
+        unless call_virtual
+          if cad = try_emit_class_arg_overload_dispatch(ctx, receiver_id, base_method_name,
+               mangled_method_name, args, arg_types, return_type, has_block_call)
+            return cad
+          end
         end
       end
       # Module-owned class methods (Frontend.node_literal) are flagged
@@ -107824,6 +107850,24 @@ module Adamas::HIR
       vs = raw_vs
       return nil if vs.size < 2
       bfm = strip_type_suffix(base_method_name)
+      class_receiver_virtual = false
+      # The whole-union lookup may have selected an inherited fallback whose
+      # owner has none of the receiver's local overloads. Resolve each arm in
+      # the original concrete receiver context, as an ordinary scalar call
+      # would, rather than starting at that already-selected ancestor.
+      if receiver = receiver_id
+        unless ctx.type_literal?(receiver)
+          if receiver_desc = @module.get_type_descriptor(ctx.type_of(receiver))
+            if receiver_desc.kind == TypeKind::Class
+              class_receiver_virtual = instance_call_virtual?(ctx, receiver, bfm)
+              parts = parse_method_name_uncached(bfm)
+              if parts.is_instance && (method = parts.method)
+                bfm = "#{receiver_desc.name}##{method}"
+              end
+            end
+          end
+        end
+      end
       vo = [] of {String, TypeRef, Int32}
       # If the last arg is an empty Tuple() coming from empty-splat padding,
       # also try a variant lookup that drops it. The actual call site had no
@@ -107961,7 +108005,15 @@ module Adamas::HIR
       unless has_explicit_variant
         return nil
       end
-      vo.each do |method_name, _, _|
+      vo.each do |method_name, variant_type, _|
+        if class_receiver_virtual && (receiver = receiver_id)
+          arm_types = arg_types.dup
+          arm_types[ui] = variant_type
+          ensure_virtual_call_targets_lowered(
+            ctx, receiver, method_short_from_name(bfm) || bfm, arm_types,
+            has_block_call, call_has_splat, call_has_named_args, call_splat_packed,
+          )
+        end
         lower_function_if_needed(method_name)
         unless @module.has_function_with_body?(method_name)
           # Nested lowering may defer an exact, already-resolved arm target.
@@ -107973,11 +108025,21 @@ module Adamas::HIR
       end
       variant_functions = [] of Adamas::HIR::Function
       variant_return_types = [] of TypeRef
-      vo.each do |method_name, _, _|
+      vo.each do |method_name, variant_type, _|
         target = @module.function_by_name(method_name)
         return nil unless target
         return nil unless @module.has_function_with_body?(method_name)
         target_return = target.return_type
+        if class_receiver_virtual && (receiver = receiver_id)
+          arm_types = arg_types.dup
+          arm_types[ui] = variant_type
+          receiver_name = get_type_name_from_ref(ctx.type_of(receiver))
+          virtual_return = infer_virtual_return_type_from_class_targets(
+            receiver_name, method_short_from_name(bfm) || bfm, arm_types,
+            has_block_call, call_has_splat, include_nil: true,
+          )
+          target_return = virtual_return unless virtual_return == TypeRef::VOID
+        end
         return nil if target_return == TypeRef::VOID || target_return.null_ptr?
         variant_functions << target
         variant_return_types << target_return
@@ -108054,9 +108116,13 @@ module Adamas::HIR
         # parameter such as String | Nil), so redo the same exact-name coercion
         # after replacing the union argument and packing any splat.
         branch_args = coerce_args_to_param_types(ctx, branch_args, method_name)
-        target_return_type = variant_functions[idx].return_type
+        target_return_type = variant_return_types[idx]
         call = if recv = receiver_id
-                 Call.with_receiver(ctx.next_id, target_return_type, recv, method_name, branch_args)
+                 if class_receiver_virtual
+                   Call.with_receiver_virtual(ctx.next_id, target_return_type, recv, method_name, branch_args, true)
+                 else
+                   Call.with_receiver(ctx.next_id, target_return_type, recv, method_name, branch_args)
+                 end
                else
                  Call.without_receiver(ctx.next_id, target_return_type, method_name, branch_args)
                end

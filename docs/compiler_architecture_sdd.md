@@ -4022,3 +4022,20 @@ for 15 byte sequences and repeated reads; string1059 preserves byte roundtrips
 and source-method priority. Parent string1060 is RED. Scoped adversary ROBUST.
 No-prelude size synthesis and other String producers are separate open work.
 Refresh after native constructor, String layout or size-lowering changes.
+
+
+### Preserve receiver semantics across union argument arms (2026-10-16)
+
+Admit binary ==/!= to the existing guarded union-argument fanout. Per-arm lookup
+starts from the original concrete class receiver, even when initial whole-union
+lookup selected an ancestor fallback. A class receiver with virtual dispatch
+retains per-arm target reachability, a virtual Call and the inferred virtual
+return ABI; union receivers keep their separate lowering. Named/block fanout,
+primitive-body and unresolved-target guards retain ordinary lowering authority.
+DoD: original-first union_argument_binary_equality_repro.sh, 44 native results
+under both full/no prelude. Parent equality1108 is RED; equality1098/equality1109
+is GREEN. Typed inequality, class-argument and union-receiver guards also pass.
+Scoped adversary ROBUST includes subclasses that reverse operator results and
+return Int32/Char through a base-typed receiver. Pending Proc arm materialization
+is a separate open producer/consumer defect; LavinMQ parity remains unverified.
+Refresh after lookup, union fanout, virtual replay or return ABI changes.

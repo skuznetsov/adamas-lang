@@ -759,3 +759,16 @@ diagnostic meanings.
   Scoped adversary ROBUST for the native constructor's lazy metadata contract.
 - Open: no-prelude String#size and other native String metadata producers.
   Refresh after constructor, layout or String#size lowering changes.
+
+
+### Preserve receiver semantics across union argument arms (2026-10-16)
+
+- RED equality1108 on parent string1057: binary class == with a self|Tuple RHS
+  reaches a bodyless combined target. RED equality1094 on intermediate1091:
+  splitting the argument still loses subclass overrides (TFTFFFFF vs TFFTTFFT).
+- GREEN equality1109 on equality1098: all 44 original-first results match in
+  full/no prelude. Includes explicit operators, reversed overload declaration
+  order, self restrictions, forwarding, virtual overrides and Int32/Char returns.
+- GREEN equality1104-1106: typed !=, class-argument and union-receiver guards.
+  Scoped adversary ROBUST for declared call shapes; pending Proc materialization
+  and LavinMQ parity remain open. Refresh after union/lookup/virtual ABI changes.

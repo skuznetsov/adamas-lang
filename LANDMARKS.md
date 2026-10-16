@@ -18475,3 +18475,29 @@ The expanded probe also exposed hexadecimal f-digit normalization, fixed first
 in number1053. Scoped adversary ROBUST for full-prelude C-string metadata.
 No-prelude String#size and other native String metadata producers remain open.
 Refresh on native constructors, String layout or size lowering changes.
+
+
+### Preserve receiver semantics across union argument arms (2026-10-16)
+
+Binary ==/!= bypassed the union-argument overload fanout. Explicit calls could
+start that fanout at Reference after a whole-union fallback, losing the original
+class's typed overloads. The fanout also emitted direct calls for class receivers
+with subclasses, discarding receiver overrides. Preserve the concrete class
+lookup origin, share fanout with binary equality, and retain virtual target
+reachability and per-arm virtual return inference inside the argument branches.
+Parent 5820b080/string1057 is RED in equality1108: the portable oracle reaches a
+bodyless combined-union equality target. The intermediate direct-call patch is
+refuted by equality1094: TFTFFFFF differs from Crystal's TFFTTFFT for inherited
+receivers. Sealed equality1098 is GREEN in equality1109: all 44 original-first
+results agree under full/no prelude, including overload order, self restrictions,
+explicit operators, forwarding, subclass overrides and differing Int32/Char
+return ABIs. Existing typed inequality, class-argument and union-receiver guards
+pass in equality1104-1106. Scoped adversary ROBUST for these call shapes.
+The separate Proc equality materialization defect remains open: correct arm
+selection can enqueue a target without narrowed argument demand, then a broad
+fallback overwrites its pending callsite types (proc_union_enqueue_context1025).
+This does not certify LavinMQ compilation or general overload completeness.
+Manifest 83abfb2cb46238dc3ffa38afbbf04b6f596f9fafafb20451dec904c551dcae16;
+host 96d3d6ac348781122eff6ecd3c62b0e57075df91df8a1275652e61d15026b580.
+Refresh on receiver lookup, union fanout, virtual target replay or return ABI
+changes. Roll back source and its portable regression together.
