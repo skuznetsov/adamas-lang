@@ -4246,3 +4246,18 @@ nullable1538 passes ten unit examples; nullable1533 passes 115 related HIR
 examples. Scoped verdict ROBUST. This is an inference rule, not a constructor,
 virtual NoReturn or full-stdlib compatibility certificate. Refresh on branch
 inference, Proc signature or terminal-return changes.
+
+
+### Materialize unknown bare-call results before caller typing (2026-10-16)
+An unknown AST result is not a Void contract for a pending bare call. Before
+publishing such a caller value, lower_identifier uses the existing guarded
+pending-target completion operation and re-reads the completed result. This
+applies to bare self, class/module, top-level and main calls and the getter
+fallback; tuples retain their completed-layout requirement. Existing cycle,
+depth, speculative and inline-yield boundaries remain authoritative.
+Conservative unknown If/Case/Begin inference remains unchanged. return1577
+is the parent falsifier; return1576 matches six original-first native fixtures.
+NoReturn rejection controls and seven nullable Proc oracles survive; return1571
+passes 125 HIR examples. Scoped verdict ROBUST. Printing argument reuse and
+LavinMQ completion are separate open obligations. Manifest ba8a274f2cc2de70cfd0087218b86e29206ed056b618dd822adba91026991013.
+Refresh after pending-call demand, result typing or completion-guard changes.

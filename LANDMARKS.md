@@ -18810,3 +18810,29 @@ Manifest 949fc005ff0cf5a6bcc0e7bc3636a520983a73055863d41b2eb563172e93a6be;
 host 891793bc58e1b05874056f7bb9e988a0bccccb0ef5c85aa4d2362b81dde6cb25.
 Refresh after AST branch inference, Proc signature or terminal-return changes.
 This does not close LavinMQ build/runtime parity or constructor recursion.
+
+
+### Materialize unknown bare-call results before caller typing (2026-10-16)
+Conservative branch inference correctly leaves a rescue expression unknown when
+its body cannot yet be resolved. That exposed a separate lazy-demand defect:
+lower_identifier queued bare calls but did not complete unknown results before
+registering their caller value as Void. The rescue method eventually returned
+String, while its caller had already selected puts(Tuple(Void)) and printed an
+empty line. return1565/1566 prove the earlier parents printed rescued;
+return1577 reproduces the regression on nullable1529.
+Use existing guarded pending-target materialization for unknown bare instance,
+class/module, top-level and main calls, and refresh the getter fallback. Tuple
+results retain their layout completion requirement. Do not restore optimistic
+AST branch inference or bypass recursion/speculation/inline-yield guards.
+DoD: deferred_bare_call_return_type_repro.sh; return1577 parent RED,
+return1576 candidate GREEN on six original-first fixtures. return1569 restores
+the prior two NoReturn native fixtures and three nullable Hash rejection guards;
+return1570 retains all seven nullable Proc native oracles; return1571 passes
+125 HIR examples. Scoped result/materialization adversary ROBUST.
+A distinct pre-existing printing defect remains: return1574 prints a union
+argument's effect twice on this candidate. Keep the lowered argument once and
+select its actual HIR type in a separate fix. Neither broker compilation nor
+runtime/upstream parity is established. Lavin1562 has reached the incompatible
+explicit-argument guard for LooseReceiveAction(... )#to_json.
+Manifest ba8a274f2cc2de70cfd0087218b86e29206ed056b618dd822adba91026991013; host f54d172537c5e0ea3ff2ca12916b2c713a8eadef148ee334ca754eca2e1f6545.
+Refresh after lazy-call demand, return typing or completion-guard changes.

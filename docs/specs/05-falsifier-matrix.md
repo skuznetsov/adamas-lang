@@ -960,3 +960,17 @@ diagnostic meanings.
   branch oracle and was superseded, not accepted as a partial solution.
 - No LavinMQ parity claim. Expiry: branch-inference, Proc-signature or terminal
   Return changes require replay of these controls.
+
+
+### Materialize unknown bare-call results before caller typing (2026-10-16)
+- RED return1577/nullable1529: a bare rescue call returns String in its body
+  but its caller prints a blank line through the stale Void argument contract.
+- GREEN return1576/return1567: six original-first native fixtures covering the
+  regression and bare self/default, class, module, top-level/default and main.
+- GREEN return1569: two prior NoReturn native fixtures and three nullable Hash
+  rejection guards. GREEN return1570: seven nullable Proc oracles. GREEN
+  return1571: 125 HIR examples. Scoped completion adversary ROBUST.
+- OPEN return1574: puts evaluates an explicit union-returning call twice;
+  this is distinct from completing a previously unknown bare-call result.
+- No broker or upstream parity claim. Expiry: changes to lazy demand, caller
+  result typing or completion guards require replay. Manifest ba8a274f2cc2de70cfd0087218b86e29206ed056b618dd822adba91026991013.

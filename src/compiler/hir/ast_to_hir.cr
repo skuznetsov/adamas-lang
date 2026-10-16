@@ -82275,10 +82275,12 @@ module Adamas::HIR
             full_name = mangle_function_name(class_method_base, bare_self_arg_types)
             return_type = @function_types[full_name]? || TypeRef::VOID
             lower_function_if_needed(full_name)
-            # Bare calls also need the completed tuple layout before extraction.
+            # Unknown AST inference is not a Void result contract. Materialize
+            # the exact pending target before its value enters caller lowering;
+            # tuple extraction likewise needs the completed concrete layout.
             tuple_return = get_type_name_from_ref(return_type).starts_with?("Tuple(")
-            if tuple_return
-              force_lower_function_for_return_type(full_name)
+            if return_type == TypeRef::VOID || tuple_return
+              force_pending_call_targets_for_return_type(full_name, context: "bare_self")
             end
             if return_type == TypeRef::VOID || tuple_return
               return_type = get_function_return_type(full_name)
@@ -82352,6 +82354,7 @@ module Adamas::HIR
             return_type = @function_types[full_name]? || @function_types[module_method_base]? || TypeRef::VOID
             lower_function_if_needed(full_name)
             if return_type == TypeRef::VOID
+              force_pending_call_targets_for_return_type(full_name, context: "bare_class")
               return_type = get_function_return_type(full_name)
               if return_type == TypeRef::VOID && full_name != module_method_base
                 return_type = get_function_return_type(module_method_base)
@@ -82374,6 +82377,10 @@ module Adamas::HIR
         full_name = mangle_function_name(TOP_LEVEL_MAIN_BASE, [] of TypeRef)
         return_type = @function_types[full_name]? || TypeRef::VOID
         lower_function_if_needed(full_name)
+        if return_type == TypeRef::VOID
+          force_pending_call_targets_for_return_type(full_name, context: "bare_main")
+          return_type = get_function_return_type(full_name, 0)
+        end
         call = Call.without_receiver(ctx.next_id, return_type, full_name, [] of ValueId)
         ctx.emit(call)
         ctx.register_type(call.id, return_type)
@@ -82418,6 +82425,7 @@ module Adamas::HIR
         end
         lower_function_if_needed(full_name)
         if return_type == TypeRef::VOID
+          force_pending_call_targets_for_return_type(full_name, context: "bare_top_level")
           return_type = get_function_return_type(full_name, call_args.size, selected_def)
           if return_type == TypeRef::VOID && full_name != name
             return_type = get_function_return_type(name, call_args.size, selected_def)
@@ -82562,6 +82570,10 @@ module Adamas::HIR
             # Ensure the getter method is lowered
             remember_callsite_arg_types(full_name, [] of TypeRef)
             lower_function_if_needed(full_name)
+            if return_type == TypeRef::VOID
+              force_pending_call_targets_for_return_type(full_name, context: "ivar_getter")
+              return_type = get_function_return_type(full_name, 0)
+            end
             call = Call.with_receiver(ctx.next_id, return_type, self_id, full_name, [] of ValueId)
             ctx.emit(call)
             ctx.register_type(call.id, return_type)

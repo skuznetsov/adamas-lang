@@ -19775,3 +19775,20 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Repair JSON::Any.new(Int64) constructor binding. json1524 LLVM contains an
   immediate recursive new(Int64) call; its SAFE-wrapped LLDB trace repeats that
   frame. This fails before JSON serialization, and broker parity remains open.
+
+
+### Materialize unknown bare-call results before caller typing (2026-10-16)
+- [x] Complete unknown pending bare-call results before typing caller values.
+  return1577 nullable1529 RED; return1576 GREEN on six original-first fixtures;
+  return1569/1570 preserve NoReturn and nullable Proc controls; return1571
+  passes 125 HIR examples. Conservative unknown branch inference is retained.
+- [ ] Preserve a puts/print argument's lowered value through interception and
+  fallback, using its actual HIR type. return1574 reproduces duplicate effects
+  for a String|Int32 return; original emits one effect, return1567 emits two.
+- [ ] Complete the all-bottom generic union join only after composing this
+  caller-result fix and rerunning its native and guard checks. A descendant
+  String result is already erased on nullable1529 (union1564); do not claim
+  the existing generic-union guard rejects that separate path.
+- [ ] Trace Lavin1562's LooseReceiveAction(State?)|LooseReceiveAction(Nil)
+  to_json argument guard from the selected source Def and caller provenance.
+  Broker runtime and full upstream parity remain open.
