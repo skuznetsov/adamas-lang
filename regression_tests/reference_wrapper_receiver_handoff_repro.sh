@@ -19,7 +19,7 @@ fi
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/reference-wrapper-owner.XXXXXX")"
 cleanup() {
   local status=$?
-  for name in direct_yielded lexical siblings annotated_zero_arg annotated_member member_scope_guard; do
+  for name in direct_yielded lexical siblings annotated_zero_arg annotated_member member_scope_guard helper_filtered_zero_arg; do
     rm -rf "$WORK_DIR/original-$name.cache" "$WORK_DIR/candidate-$name.cache"
   done
   if [[ "$status" -ne 0 || "${KEEP_ARTIFACTS:-0}" == 1 ]]; then
@@ -374,6 +374,14 @@ ABABA
 EXPECTED
 : >"$WORK_DIR/member_scope_guard.stderr.expected"
 
+# The helper-name filter defers this exact source-selected call before it is
+# queued. Keep the admitted target so the emitted-call sweep can demand its body.
+sed -e 's/emit_format_direct/to_json/g' \
+  -e 's/^message.to_json$/message.to_json()/' \
+  "$WORK_DIR/annotated_member.cr" >"$WORK_DIR/helper_filtered_zero_arg.cr"
+printf 'A\n' >"$WORK_DIR/helper_filtered_zero_arg.expected"
+: >"$WORK_DIR/helper_filtered_zero_arg.stderr.expected"
+
 compile_run() {
   local name="$1" mode="$2" compiler="$3" status=0
   local source="$WORK_DIR/$name.cr" output="$WORK_DIR/$mode-$name.bin"
@@ -419,11 +427,11 @@ compile_run() {
 }
 
 # Certify every fixture against the original before testing the candidate.
-for name in direct_yielded lexical siblings annotated_zero_arg annotated_member member_scope_guard; do
+for name in direct_yielded lexical siblings annotated_zero_arg annotated_member member_scope_guard helper_filtered_zero_arg; do
   compile_run "$name" original "$ORIGINAL_CRYSTAL_BIN"
 done
-for name in direct_yielded lexical siblings annotated_zero_arg annotated_member member_scope_guard; do
+for name in direct_yielded lexical siblings annotated_zero_arg annotated_member member_scope_guard helper_filtered_zero_arg; do
   compile_run "$name" candidate "$COMPILER"
   echo "PASS[$name]: original and candidate stdout and stderr agree"
 done
-echo "PASS[reference-wrapper-owner]: six original-first fixtures agree"
+echo "PASS[reference-wrapper-owner]: seven original-first fixtures agree"

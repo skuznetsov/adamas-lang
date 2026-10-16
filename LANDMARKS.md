@@ -19076,3 +19076,20 @@ extra demands can mask the bug, so it is a guard rather than the falsifier.
 Scoped ROBUST for member receiver handoff. Manifest 6ab6d2a44ed7a29fd1e103d8918dce2b2078af4a4ee33f041b58d402d466b87e; host a7c0b64ae6e8763aa95f1ce07f100255dc0e1244665f354746657e7cd47a732d.
 Refresh after member selection, wrapper admission or arena transport changes.
 Full JSON helper demand, current bootstrap and LavinMQ parity remain open.
+
+
+### Retain source-selected wrapper targets across deferred body demand (2026-10-16)
+The exact-helper filter can defer a structurally admitted concrete wrapper
+before queue admission. Final call-target rematching treated the missing body
+as failed overload selection and changed a valid Hash#to_json() to Object.
+Retain the exact source-selected wrapper name through that final fallback;
+the existing emitted-call sweep supplies its mandatory body demand. Selection
+of a different target still takes the existing fallback. No global RTA filter
+or helper-name exemption was added; source Def and lexical arena are retained.
+Original json1829 prints A; exact parent exits 138; json1836 prints A.
+json1838 seven original-first native fixtures match exact stdout/stderr;
+json1839 exact parent passes six then exits 138 on helper_filtered_zero_arg.
+Scoped ROBUST for exact admitted wrapper target retention. Manifest cb17812b3f04f58039ab270bac08f557b1d8a8ef06f6ea35c26d6d54f41d1836; host d9ea1ea8fd01c3b6d1aac56c0c0b3a4a0adc10e7153ea4f7a8c59e44740da817.
+Refresh after overload rematching, wrapper admission or missing-target demand
+changes. Full JSON on the normal prelude, fresh bootstrap and LavinMQ parity
+remain open; the private prelude-helper composition is diagnostic only.

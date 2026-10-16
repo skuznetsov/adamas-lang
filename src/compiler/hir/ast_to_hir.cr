@@ -103374,6 +103374,7 @@ module Adamas::HIR
       end
       resolved_by_lookup = false
       selected_call_entry_def : Adamas::Compiler::Frontend::DefNode? = nil
+      selected_reference_wrapper_target : String? = nil
       double_splat_layout_specialized = false
       selected_call_entry_name : String? = nil
       # Preserve the authoritative structured-resolver selection for the
@@ -103679,6 +103680,7 @@ module Adamas::HIR
               mangled_method_name = "#{reference_base}$#{reference_suffix}"
             end
             base_method_name = reference_base
+            selected_reference_wrapper_target = mangled_method_name
           end
         end
         if debug_env_filter_match?("DEBUG_CALL_LOOKUP", ctx.function.name, lookup_name, entry_name, mangled_method_name)
@@ -107405,7 +107407,9 @@ module Adamas::HIR
           lower_function_if_needed(mangled_method_name)
         end
       end
-      # A selected callee queued for deferred lowering still owns this call.
+      # A source-selected reference wrapper keeps its exact target even when
+      # helper filtering defers queue admission; the emitted-call sweep owns
+      # that demand. A selected queued callee also still owns this call.
       # An absent body is not an overload miss; rematching here would replace
       # the admitted concrete target with an ancestor before its body is built.
       selected_target_pending = resolved_by_lookup &&
@@ -107414,6 +107418,7 @@ module Adamas::HIR
       if !mangled_method_name.empty? &&
          !mangled_method_name.includes?('$') &&
          !selected_target_pending &&
+         mangled_method_name != selected_reference_wrapper_target &&
          !@module.has_function?(mangled_method_name) &&
          !@function_defs.has_key?(mangled_method_name)
         # M3g: convert the final rematch site (M3e/M3f pattern).

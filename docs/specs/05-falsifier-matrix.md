@@ -1141,3 +1141,15 @@ diagnostic meanings.
   Scoped ROBUST for member receiver selection. Manifest 6ab6d2a44ed7a29fd1e103d8918dce2b2078af4a4ee33f041b58d402d466b87e; host a7c0b64ae6e8763aa95f1ce07f100255dc0e1244665f354746657e7cd47a732d.
 - OPEN helper-filtered JSON body demand and current bootstrap/LavinMQ parity.
   Refresh after member selection, wrapper admission or arena transport changes.
+
+
+### Retain source-selected wrapper targets across deferred body demand (2026-10-16)
+- GREEN json1838 sealed json1834: seven original-first native fixtures with
+  exact stdout/stderr, including helper-filtered explicit zero-argument calls.
+  RED json1839 exact json1823 parent: six controls pass, new case exits 138.
+- The exact retained target is admitted by the existing structural wrapper
+  predicate. Global RTA/helper filtering remains active; the ordinary emitted
+  call sweep supplies demand. Scoped ROBUST for this identity boundary.
+  Manifest cb17812b3f04f58039ab270bac08f557b1d8a8ef06f6ea35c26d6d54f41d1836; host d9ea1ea8fd01c3b6d1aac56c0c0b3a4a0adc10e7153ea4f7a8c59e44740da817.
+- OPEN normal-prelude full JSON, current bootstrap and LavinMQ parity. Refresh
+  after selection, wrapper admission or missing-target demand changes.

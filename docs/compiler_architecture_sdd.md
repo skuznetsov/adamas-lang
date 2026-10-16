@@ -29,6 +29,15 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+A structurally admitted source-selected reference wrapper retains its exact
+target through final overload fallback even if body filtering deferred queue
+admission. Missing emitted-call demand is handled by the existing sweep, not
+by replacing the selected owner or disabling global helper filters.
+DoD: reference_wrapper_receiver_handoff_repro.sh, seven original-first native
+fixtures matching exact stdout/stderr; the seventh rejects the exact parent.
+Rollback is the bounded call-local identity guard. Normal-prelude full JSON,
+fresh bootstrap and LavinMQ parity remain open.
+
 MemberAccessNode retains the same admitted concrete Object-wrapper receiver
 as CallNode, while using the selected ancestor source Def and lexical arena.
 DoD: reference_wrapper_receiver_handoff_repro.sh, six original-first native

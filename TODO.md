@@ -19932,3 +19932,11 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   fails the isolated member call with 138 after four passing controls.
 - [ ] Complete concrete JSON wrapper body demand through helper suppression;
   current bootstrap and LavinMQ parity remain open.
+
+
+### Retain source-selected wrapper targets across deferred body demand (2026-10-16)
+- [x] Keep exact admitted source-wrapper targets when helper filtering defers
+  queue admission. json1838 seven native original-first cases GREEN; exact
+  parent json1839 passes six and exits 138 on helper_filtered_zero_arg.
+- [ ] Repair normal-prelude binding after flattened rest arguments; then
+  recheck full JSON, fresh bootstrap and LavinMQ build/test parity.
