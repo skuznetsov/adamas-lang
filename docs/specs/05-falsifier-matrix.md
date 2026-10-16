@@ -722,3 +722,18 @@ diagnostic meanings.
   examples); do not count it as fixed by the pointerof producer repair.
 - Open: escaped-address lifetime, foreign aggregate/union storage and full
   LavinMQ compilation/test parity. Refresh after storage, interning or ABI edits.
+
+
+### Preserve backend String byte-pointer contracts (2026-10-16)
+
+- RED string1035 on parent pointer1020: one of three String pointer-identity
+  examples fails. RED string1036 after HIR repair: native bytes are correct but
+  String.new copies neither string. RED string1044: one of three backend cases
+  selects a zeroed generic allocator instead of the native String copy body.
+- GREEN string1045 on string1040: nine HIR/MIR examples, including source-method
+  priority, unrelated names, existing pointerof cases and wrong ABI/owner/pointee.
+- GREEN original-first string1043: UTF-8, ASCII and empty byte roundtrips agree
+  under full/no prelude; both source call spellings and override guards agree.
+  Scoped adversary ROBUST for these byte contracts.
+- Open: UTF-8 character-count metadata, broad native-contract coverage and full
+  LavinMQ parity. Refresh after method lookup or native/missing-body changes.

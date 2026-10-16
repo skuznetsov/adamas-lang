@@ -5064,6 +5064,26 @@ module Adamas::MIR
       end
     end
 
+    # Both ordinary functions and missing-body calls must use the same native
+    # String constructor contract instead of a generic zeroed class allocator.
+    private def emit_string_cstr_constructor_body(name : String) : String
+      String.build do |io|
+        io << "; String.new(UInt8*) — runtime body (strlen + copy)\n"
+        io << "define ptr @" << name << "(ptr %chars) {\n"
+        io << "entry:\n"
+        io << "  %is_null = icmp eq ptr %chars, null\n"
+        io << "  br i1 %is_null, label %ret_empty, label %do_strlen\n"
+        io << "ret_empty:\n"
+        io << "  ret ptr @.str.empty\n"
+        io << "do_strlen:\n"
+        io << "  %len64 = call i64 @strlen(ptr %chars)\n"
+        io << "  %len = trunc i64 %len64 to i32\n"
+        io << "  %result = call ptr @String$Dnew$$Pointer$LUInt8$R_Int32_Int32(ptr %chars, i32 %len, i32 %len)\n"
+        io << "  ret ptr %result\n"
+        io << "}\n\n"
+      end
+    end
+
     # Emit a stub function body for methods called on Nil/Unknown/impossible receivers.
     # Returns the LLVM IR string for the stub, or nil if the name doesn't match.
     private def emit_dead_code_stub(name : String, return_type : String, arg_count : Int32 = 0, arg_types : Array(String) = [] of String) : String?
@@ -5078,6 +5098,13 @@ module Adamas::MIR
       # function synthesis path, not only ordinary Function emission.
       if inline_pop_ir = emit_inline_array_pop_stub(name, return_type, arg_types)
         return inline_pop_ir
+      end
+
+      # This exact source constructor already has a native implementation. It
+      # must win before the generic .new recovery path discards its byte data.
+      if name == "String$Dnew$$Pointer$LUInt8$R" && return_type == "ptr" &&
+         arg_count == 1 && arg_types == ["ptr"]
+        return emit_string_cstr_constructor_body(name)
       end
 
       # Root-qualified top-level methods can still reach the missing-body path as
@@ -11719,22 +11746,7 @@ module Adamas::MIR
         emit_raw "}\n\n"
         return true
       when "String$Dnew$$Pointer$LUInt8$R"
-        # String.new(chars : UInt8*) — calls strlen then delegates to 3-arg version.
-        # The auto-allocator ignores the argument; this override implements the
-        # stdlib's self.new(UInt8*) which copies data from the C string.
-        emit_raw "; String.new(UInt8*) — runtime override (strlen + copy)\n"
-        emit_raw "define ptr @#{mangled}(ptr %chars) {\n"
-        emit_raw "entry:\n"
-        emit_raw "  %is_null = icmp eq ptr %chars, null\n"
-        emit_raw "  br i1 %is_null, label %ret_empty, label %do_strlen\n"
-        emit_raw "ret_empty:\n"
-        emit_raw "  ret ptr @.str.empty\n"
-        emit_raw "do_strlen:\n"
-        emit_raw "  %len64 = call i64 @strlen(ptr %chars)\n"
-        emit_raw "  %len = trunc i64 %len64 to i32\n"
-        emit_raw "  %result = call ptr @String$Dnew$$Pointer$LUInt8$R_Int32_Int32(ptr %chars, i32 %len, i32 %len)\n"
-        emit_raw "  ret ptr %result\n"
-        emit_raw "}\n\n"
+        emit_raw emit_string_cstr_constructor_body(mangled)
         return true
       when "String$Dnew$$Pointer$LUInt8$R_Int32"
         # String.new(chars : UInt8*, bytesize, size = 0)

@@ -3983,3 +3983,21 @@ The String missing-body call-result mismatch remains a separate parent failure
 (pointer1022); native String byte extraction passes. Escaped-address lifetime,
 all foreign aggregate layouts and full LavinMQ parity remain outside this gate.
 Refresh on pointee interning, storage canonicalization, offsets or ABI changes.
+
+
+### Preserve backend String byte-pointer contracts (2026-10-16)
+
+The exact missing-body String#to_unsafe contract returns Pointer(UInt8), matching
+the backend data address and original string.cr:5605. A registered source body
+or source definition remains authoritative. Short method names alone do not
+certify a byte pointer.
+String.new(UInt8*) ordinary emission and ABI-matched missing-body emission use
+one native strlen/copy implementation. The missing-body admission requires the
+exact owner/pointee symbol, ptr result and one ptr argument, before generic .new
+recovery. Other owners, pointees and ABIs retain their existing resolution.
+DoD on string1040: string1045 (nine examples), string1043 (original-first native
+UTF-8/ASCII/empty byte roundtrips in full/no prelude and registered source-method
+guards), all GREEN. Parent failures are string1035/string1044; string1036 isolates
+the lost-byte allocator failure. Scoped adversary ROBUST for this corridor.
+UTF-8 codepoint metadata, general constructor recovery and LavinMQ parity remain
+open. Refresh after lookup, native String contracts or missing-body changes.

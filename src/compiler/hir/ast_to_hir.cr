@@ -59193,6 +59193,12 @@ module Adamas::HIR
         # Both IO#pos backend dispatch implementations emit `i32`, including
         # the IO::FileDescriptor path which truncates lseek's i64 result.
         TypeRef::INT32
+      when "String#to_unsafe"
+        # Without a source body the backend returns the String's raw bytes.
+        # Preserve their UInt8 identity before callers select Pointer overloads.
+        return nil if @module.has_function_with_body?(name)
+        return nil if lookup_function_def_for_return(name, name, 0)
+        type_ref_for_name("Pointer(UInt8)")
       else
         nil
       end

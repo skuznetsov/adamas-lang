@@ -19536,3 +19536,17 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   comparison dispatch. Integration generic1013 passes the previous typed-pointer
   frontier but does not produce a broker binary; pointer1020 alone is not that
   integration and does not claim full application test parity.
+
+
+### Preserve backend String byte-pointer contracts (2026-10-16)
+
+- [x] Preserve the missing-body String#to_unsafe UInt8 pointer contract and
+  route ABI-matched String.new(UInt8*) to its existing native copy body.
+  string1045 passes nine HIR/MIR examples; string1043 matches Crystal for
+  UTF-8/ASCII/empty byte roundtrips and source-method guards, with/full prelude.
+- [ ] Audit character-count metadata in native String constructors and the
+  no-prelude String#size fallback. Source inspection still shows byte counts
+  used as size; the byte-roundtrip gate does not establish codepoint counts.
+- [ ] Audit known native contracts omitted from missing-function synthesis
+  before widening recovery. A generic .new allocator is not evidence that a
+  source constructor ran; require identity/ABI guards and a native falsifier.

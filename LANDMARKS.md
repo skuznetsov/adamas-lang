@@ -18425,3 +18425,25 @@ host 52ae952cba8ae755f596d9b5bc239d66f4f0329816fd837303e91d4549b93487.
 Refresh after pointee interning, ivar storage canonicalization, field offsets,
 pointerof lowering or pointer ABI changes. Roll back source and regressions as
 one change. Tests do not establish the lifetime of pointers escaping storage.
+
+
+### Preserve backend String byte-pointer contracts (2026-10-16)
+
+Two producer/consumer seams broke the no-prelude String byte path. HIR assigned
+raw Pointer to a missing-body String#to_unsafe although the backend returns the
+UInt8 data address. Once that identity selected String.new(Pointer(UInt8)), the
+missing-function path used a generic zeroed allocator and discarded the bytes.
+Give only the exact missing-body method its UInt8 contract; registered source
+definitions keep priority. Share the existing strlen/copy constructor body
+between ordinary emission and ABI-matched missing-body emission.
+Parent pointer1020 is RED in string1035 (one of three HIR examples fails).
+The HIR-only trial still prints two empty strings (string1036); its backend is
+RED in string1044. Final string1040 passes nine HIR/MIR examples (string1045)
+and the original-first native regression (string1043): UTF-8/ASCII/empty bytes,
+full/no prelude, both call spellings and source-method overrides agree.
+Scoped adversary ROBUST: wrong ABI, owner and pointee do not gain the String
+contract. This certifies byte copying, not all UTF-8 metadata or LavinMQ parity.
+Source manifest ef3e98b11f145d052765a2c66d70d6ef9fe95a6e2ce04eb0ea51cd36d288b179;
+host 36d5be46d924b722a416fd6b6ba2f8201335fa008aa4e49c73f84a5d95be9922.
+Refresh on method lookup, native String contracts or missing-body emission
+changes; roll back source and regressions together.
