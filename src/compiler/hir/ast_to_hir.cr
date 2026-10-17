@@ -53514,7 +53514,17 @@ module Adamas::HIR
       return nil unless actual || declared
       actual_base = actual.try(&.base) || actual_name
       declared_base = declared.try(&.base) || declared_name
-      return nil unless actual_base == declared_base
+      if actual_base != declared_base
+        # An applied module restriction must match a qualified include
+        # projection, including its arguments. Returning undecided here lets
+        # the erased module fallback accept unrelated owners and instances.
+        return nil unless declared && module_like_type_name?(declared_base)
+        return nil if declared.args.includes?('*') || declared_base == "NamedTuple"
+        return nil if split_generic_type_args(declared.args).any? { |arg| unresolved_generic_type_arg?(arg) }
+        return nil if unresolved_generic_type_arg?(actual_name)
+        return nil if !actual && @generic_templates.has_key?(actual_base)
+        return bind_constructor_type_params(declared_name, actual_name, [] of String, {} of String => String)
+      end
       return true unless declared
       # A bare actual can be an erased/deferred TypeRef. It proves no
       # contradiction about source arguments that are no longer available.
@@ -69564,6 +69574,68 @@ module Adamas::HIR
       nil
     end
 
+    # Applied restrictions need source ancestry even when a builtin receiver
+    # has not registered its module methods yet. Preserve each include's actual
+    # arguments instead of using the erased module-includer index.
+    private def source_generic_ancestor_projections(actual : String) : Array(String)
+      pending = get_ancestor_chain(actual).dup
+      projections = [] of String
+      visited = Set(String).new
+      while owner = pending.shift?
+        next if visited.includes?(owner)
+        visited << owner
+        projections << owner
+        if included = @class_include_instantiations[owner]?
+          included.each { |application| pending << application }
+        end
+        source_generic_class_includes(owner).each { |application| pending << application }
+        macro_transitive_module_includes(owner).each { |application| pending << application }
+      end
+      projections
+    end
+
+    private def source_generic_class_includes(owner : String) : Array(String)
+      result = [] of String
+      info = split_generic_base_and_args(owner)
+      return result unless info
+      base = resolve_generic_template_base(info.base)
+      template = @generic_templates[base]?
+      return result unless template
+      args = split_generic_type_args(info.args).map(&.strip)
+      templates = [template]
+      if reopenings = @generic_reopenings[base]?
+        reopenings.each { |reopening| templates << reopening }
+      end
+      old_class = @current_class
+      @current_class = owner
+      begin
+        templates.each do |definition|
+          next unless definition.type_params.size == args.size
+          param_map = {} of String => String
+          definition.type_params.each_with_index { |param, index| param_map[param] = args[index] }
+          next unless body = definition.node.body
+          with_arena(definition.arena) do
+            with_namespace_override(definition.name) do
+              with_type_param_map(param_map) do
+                body.each do |member_id|
+                  member = unwrap_visibility_member_in_arena(definition.arena[member_id], definition.arena)
+                  next unless member.is_a?(Adamas::Compiler::Frontend::IncludeNode)
+                  target = stringify_type_expr_in_current_arena(member.target)
+                  next unless target
+                  resolved = macro_resolve_included_module_name(target, definition.name)
+                  next unless resolved && macro_concrete_module_instance?(resolved, definition.name)
+                  result << resolved unless result.includes?(resolved)
+                end
+              end
+            end
+          end
+        end
+      ensure
+        @current_class = old_class
+      end
+      result
+    end
+
     # Match initializer restrictions structurally instead of assigning each
     # whole argument type to a template parameter by position. The callee's
     # declared formals are local to this inference, even if the caller has T.
@@ -69591,13 +69663,7 @@ module Adamas::HIR
         annotation_base = normalize_declared_type_name(annotation_info.base, context, specialize_bare_generics: false)
         annotation_base = resolve_type_alias_chain(annotation_base.lchop("::"))
         annotation_args = split_generic_type_args(annotation_info.args)
-        projections = [] of String
-        get_ancestor_chain(actual).each do |owner|
-          projections << owner
-          if included = @class_include_instantiations[owner]?
-            included.each { |application| projections << application }
-          end
-        end
+        projections = source_generic_ancestor_projections(actual)
         matches = [] of Hash(String, String)
         projections.uniq.each do |projection|
           next unless projected = split_generic_base_and_args(projection)
@@ -79338,6 +79404,14 @@ module Adamas::HIR
     private def macro_module_definition_key(instance : String) : String?
       info = split_generic_base_and_args(instance)
       base = info.try(&.base) || instance
+      # A bare reopening shares the generic module's formals. Applied instances
+      # must recover those formals from the generic declaration first.
+      if info
+        ensure_module_defs_stripped_lookup
+        if generic_key = module_defs_stripped_lookup(base)
+          return generic_key
+        end
+      end
       return base if @module_defs.has_key?(base)
       return instance if @module_defs.has_key?(instance)
 
@@ -79384,7 +79458,11 @@ module Adamas::HIR
       module_node = defs.not_nil!.first?.try(&.[0])
       namespace = macro_module_definition_namespace(key)
       param_map = macro_module_instance_type_param_map(instance, key, module_node)
-      defs.not_nil!.each do |module_node, module_arena|
+      definitions = defs.not_nil!.dup
+      if namespace != key && (reopenings = @module_defs[namespace]?)
+        reopenings.each { |reopening| definitions << reopening unless definitions.includes?(reopening) }
+      end
+      definitions.each do |module_node, module_arena|
         next unless body = module_node.body
         body.not_nil!.each do |member_id|
           member = unwrap_visibility_member_in_arena(module_arena[member_id], module_arena)

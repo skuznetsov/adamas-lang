@@ -1,5 +1,32 @@
 # Adamas Bootstrap TODO
 
+2026-10-16 APPLIED MODULE SOURCE PROJECTIONS: retain concrete include arguments
+when checking applied module restrictions before lazy method registration.
+Array(String) -> Indexable::Mutable(String) -> Indexable(String) ->
+Enumerable(String) was missing from the registered projection census. Also,
+the bare Enumerable reopening hid Enumerable(T)'s declaration-owned formals.
+Read direct generic class includes and registered/transitive module edges;
+recover the generic declaration's formals and apply them to bare reopening
+include bodies. DoD: nullable_applied_module_restriction_repro.sh, original-
+first exact 1/1/0/2/0/3/0/4 and wrong-element/applied/namespace/union rejection.
+Fresh S1 generic2242 passes (generic2244), as do constructor restriction,
+nilable specialization and included-restriction neighbors. Exact production
+parent generic2221 rejects Array(String) at Enumerable(String)?. Key-only
+generic2237 remains RED; first-four-hunk generic2240 independently rejects
+a valid include added by a bare module reopening. The fifth hunk repairs it.
+- [x] Restore qualified applied projections for these source restriction cases.
+- [ ] Repair allocator/source-new admission: first-four-hunk ordinary S2
+  s2_bootstrap2233 gets past Process.exec's nullable restriction, then rejects
+  Set(String).new(Int32) against Indexable(String). The full candidate also
+  fails the independent Set capacity reducer (constructor2247); determine
+  selected-target identity versus stale rejected-overload state before fixing.
+- [ ] Repair the separate Slice["two"] producer: generic2231 supplies
+  Slice(Pointer(Void)) instead of Slice(String). The restriction regression
+  uses an explicitly typed Slice constructor to test the consumer separately.
+- [ ] Probe conditional/macro-generated include completeness and transforming
+  include cycles before widening the direct-source projection claim.
+- [ ] Complete fresh S2, self-hosted buffered IO and unchanged LavinMQ parity.
+
 2026-10-16 BUFFERED FD WRITE: restore IO::Buffered#write's source body for
 FileDescriptor/File instead of issuing write(2) from a public write override.
 The substitute bypassed pending write_byte/Char bytes and reordered output.
@@ -28,7 +55,10 @@ The exact String-only parent io2190 passes the original oracle, builds the
 candidate, then times out under the safe runner on its native read test.
 - [x] Verify Claude 89f44ba5's source-body restoration on a fresh S1.
 - [ ] Verify the buffered path on fresh ordinary S2; current bootstrap remains
-  blocked separately at AstToHir#safe_slice_to_string (Nil | Slice(UInt8)).
+  blocked before self-hosted execution. Production s2_bootstrap2217 rejects
+  Process.exec's Enumerable(String)? argument; the projection candidate gets
+  past that boundary and stops at Set(String).new (s2_bootstrap2233). The
+  earlier combined diagnostic's safe_slice_to_string capture issue is separate.
   Full override acceptance across stages and LavinMQ parity remain open.
 - [ ] Repair File.close, multi-argument IO#print and the crashing signal
   handler as separate compiler/runtime boundaries. This read regression

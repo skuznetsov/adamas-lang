@@ -1,5 +1,30 @@
 # LANDMARKS
 
+Applied module source projections (2026-10-16): source restriction checking
+cannot infer applied ancestry solely from the lazy module-method registry.
+Use registered edges plus direct generic class includes and transitive module
+includes, preserving qualified owners and concrete arguments. An applied
+module obtains its formals from the generic declaration, even when a bare
+reopening has its own definition key; reopening include bodies use that same
+instance map. Array(String)'s Enumerable(String) projection needs both the
+source census and declaration identity; either partial repair remains RED.
+Original-first nullable_applied_module_restriction_repro.sh passes on fresh
+host generic2242 (generic2244): exact 1/1/0/2/0/3/0/4, including the bare
+reopening edge, and wrong element/applied owner/namespace/union rejections.
+The exact production parent rejects the small Array(String) consumer
+(generic2221); first-four-hunk generic2240 separately fails the reopening edge.
+Constructor restriction and nilable specialization neighbors pass. HIR SHA256
+a843989b7cc74f10c5dad3f6e695ae4cc2c09ff4c365caef3cc1f2c9e3f93f78;
+host 0c3c41ba7c35a067aa2758e6eba642269bc7f7b1f6f4192142335406586765ee.
+Scoped ROBUST for these concrete unconditional includes and registered edges,
+with root-executed oracles and a correlated read-only adversarial review.
+Refresh after include registration, generic/reopening lookup, source-arena or
+restriction binding changes. Conditional/macro-generated include completeness
+and transforming cycles are unverified. First-four-hunk ordinary S2 clears
+Process.exec, then fails Set(String).new(Int32) admission (s2_bootstrap2233);
+the full host reproduces that separate failure (constructor2247). Slice[]'s
+element producer also remains open. No complete fresh S2 or LavinMQ certificate.
+
 Buffered FD write source authority (2026-10-16): the public
 FileDescriptor/File#write(Slice(UInt8)) override issued write(2) before bytes
 pending in IO::Buffered from write_byte/Char. Remove that substitute and

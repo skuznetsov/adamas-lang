@@ -29,6 +29,21 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+Applied module restrictions consume qualified ancestor projections with their
+concrete arguments. Lazy module-method registration is not a complete ancestry
+proof: the restriction binder also reads direct generic class includes and
+transitive module includes. Applied module formals belong to the generic
+declaration, including when a bare reopening contributes another include body.
+Source arena, namespace, class and type-parameter context are restored after
+each projection. DoD: nullable_applied_module_restriction_repro.sh compares
+original-first nullable/exact positives and rejects wrong arguments, unrelated
+qualified owners and incompatible union arms; constructor and nilable-module
+restriction neighbors remain green. Rollback is the atomic source projection
+and generic/reopening identity change. Conditional/macro-generated include
+completeness, transforming cycles, the separate Slice[] producer and
+allocator/source-new admission remain open; this does not certify fresh S2,
+self-hosted buffered IO or LavinMQ parity.
+
 FileDescriptor/File#write(Slice(UInt8)) consumes the unchanged IO::Buffered
 body. The backend cannot bypass pending byte/Char writes with a public-method
 syscall substitution; system_write remains the unbuffered syscall boundary.
