@@ -82196,6 +82196,27 @@ module Adamas::HIR
       addr_of.id
     end
 
+    # Source lib calls must satisfy their declaration after tuple splats have
+    # expanded. Internal intrinsic emission also uses ExternFunction with a
+    # synthetic empty signature, so validate at the source-call boundary.
+    private def validate_source_extern_arity(
+      extern_func : ExternFunction,
+      arg_count : Int32,
+      node : Adamas::Compiler::Frontend::Node? = nil,
+    ) : Nil
+      fixed_count = extern_func.param_types.size
+      valid = extern_func.varargs ? arg_count >= fixed_count : arg_count == fixed_count
+      return if valid
+
+      call_name = if lib_name = extern_func.lib_name
+                    "#{lib_name}.#{extern_func.name}"
+                  else
+                    extern_func.name
+                  end
+      expected = extern_func.varargs ? "at least #{fixed_count}" : fixed_count.to_s
+      raise LoweringError.new("wrong number of arguments for '#{call_name}' (given #{arg_count}, expected #{expected})", node)
+    end
+
     # Emit a call to an external C function
     private def emit_extern_call(ctx : LoweringContext, extern_func : ExternFunction, arg_ids : Array(ValueId)) : ValueId
       # Emit an ExternCall instruction with the real C function name
@@ -100944,6 +100965,7 @@ module Adamas::HIR
               if env_get("DEBUG_MEM_INTRINSIC") && class_name_str == "LibIntrinsics"
                 STDERR.puts "[MEM_INTRINSIC] extern method=#{method_name} call_args=#{call_args.size} lowered=#{arg_ids.size}"
               end
+              validate_source_extern_arity(extern_func, arg_ids.size, node)
               call_result = emit_extern_call(ctx, extern_func, arg_ids)
               return call_result
             end
@@ -125236,6 +125258,7 @@ module Adamas::HIR
         return class_var_get.id
       end
       if extern_func = @module.get_extern_function(class_name_str, member_name)
+        validate_source_extern_arity(extern_func, 0)
         return emit_extern_call(ctx, extern_func, [] of ValueId)
       end
 

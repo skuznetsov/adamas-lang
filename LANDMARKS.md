@@ -19472,3 +19472,25 @@ host e83d84b103c4a0376fa2b264305cb747a2e46d04cc905e8ce451db8cb9dbacc4.
 Refresh after helper generation, formatting, fallback admission or stdout sink
 changes. This does not establish short-write/EINTR handling, all legacy
 C-string consumers, fresh S2, or unchanged LavinMQ parity.
+
+
+### Source FFI positional arity is checked before IR emission (2026-10-17)
+Both explicit lib calls and bare static lib members emitted ExternCall without
+checking the source declaration. A missing putchar argument therefore reached
+LLVM and produced an executable. Validate the lowered count after tuple-splat
+expansion: exact fixed count or at least the variadic fixed prefix. Keep the
+check at source-call sites because internal mem intrinsics use deliberately
+synthetic empty signatures.
+
+ffi_call_arity_repro.sh qualifies original Crystal first, compares exact bytes
+for fixed/variadic/tuple-splat/zero-argument positives and requires rc=1 without
+an executable for missing, excess, bare missing and missing variadic-prefix
+arguments. Parent slice2584 is RED (2593); exact-production slice2597 is GREEN
+(2600 and repository-path 2601). Scoped adversary ROBUST for these positional
+calls. Source manifest SHA-256 80f9ca24c141858967028acef50fb5a99260173c2e746c78f587584bcc6ecddf;
+host cda957df7877d9a801b132cb1824112352c953c6ae10b0861331005dc4e5b158.
+
+Refresh after extern signature recovery, argument normalization or call
+emission changes; revert the check and regression together. Named FFI argument
+normalization remains an independent open contract in TODO. This evidence does
+not establish fresh S2 acceptance or unchanged LavinMQ functional/test parity.

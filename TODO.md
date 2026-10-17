@@ -20245,3 +20245,18 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   These paths are not established by the generic receiver regression.
 - [ ] Continue fresh bootstrap and unchanged LavinMQ functional/upstream parity;
   this S1 lexical-context regression does not establish either outcome.
+
+
+### Validate positional source FFI arity before emission (2026-10-17)
+- [x] Check fixed argument counts and variadic fixed-prefix minimums after
+  tuple-splat expansion, including bare zero-argument lib members. The
+  original-first ffi_call_arity_repro.sh passes on fresh exact-production S1
+  slice2597 (2601); parent slice2584 accepts missing required arguments (2593).
+  Correct zero-argument, tuple-splat, fixed and variadic calls retain byte parity.
+- [ ] Normalize named FFI arguments from declaration parameter names before
+  emission. ExternFunction currently loses those names and lower_call ignores
+  named_args; pristine LLVM stdlib uses generic_value_to_int(self, is_signed: 1).
+  Follow Crystal semantic/lib.cr ordering/duplicate/unknown/missing checks;
+  reject named variadic calls as Crystal does. Source fun defaults are forbidden
+  by both parsers. Keep synthetic internal intrinsic signatures outside source
+  arity validation. Fresh S2 and unchanged LavinMQ parity remain open.
