@@ -20265,10 +20265,14 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   exact-production host slice2627 passes original-first ffi_splat_boundary_repro.sh
   (ffi2663); exact parent slice2625 is RED (ffi2662). Named validation and
   positional fixed/variadic arity remain GREEN (ffi2663/ffi2664).
-- [ ] Preserve FFI out-local payload storage through reads, assignments,
-  captures and pointerof. Private slice2644 passes original-first out2647;
-  production integration remains open. Audit pointer/non-Void parameter
-  validation, varargs out rejection and frozen pointee assignment types as
-  adjacent language-contract gaps. Do not add stdlib workarounds.
+- [x] Preserve FFI out-local payload storage through reads, assignments,
+  captures and pointerof. Fresh exact-production slice2659 passes original-first
+  out2672 and the named/splat interaction matrix out2675; exact parent slice2627
+  crashes (out2671). Repeated out declarations reject; out _ remains disposable.
+- [ ] Validate FFI out pointer/non-Void formals, reject variadic out arguments,
+  and freeze pointee types. In particular, audit out @ivar against a mismatched
+  pointee width before returning its field address. Original semantic/lib.cr
+  checks this boundary; Adamas infer_out is still a stub. Escaping lib-struct
+  storage lifetime is a separate untested risk. Do not add stdlib workarounds.
 - [ ] Run fresh pristine S2 and unchanged LavinMQ functional/upstream parity.
   These source-call S1 checks do not establish either acceptance criterion.

@@ -1,3 +1,28 @@
+### FFI out locals and pointerof share the payload address (2026-10-17)
+The C output destination and the source local used different storage meanings:
+reads/assignments could treat an allocated payload pointer as the local value,
+and pointerof a boxed local took the address of its box-pointer slot. Register
+fresh scalar/pointer out locals as boxed payloads and return that payload's
+typed pointer directly. Keep lib structs as aggregate destinations and create
+fresh unregistered storage for every out _. Reject an already visible local;
+original Crystal requires pointerof for subsequent writes.
+
+Exact production parent slice2627 crashes in out2671. Fresh host slice2659
+passes original-first out2672 and out2675: exact bytes for pointer/primitive/
+lib-struct outputs, captured reads, later assignments/writes, stable pointer
+identity, discarded outputs, and named/splat combinations with single evaluation.
+Repeated/pre-existing local declarations reject with rc=1 and no executable.
+Scoped adversary verdict ROBUST for those storage paths; static review agrees
+that the payload early return avoids the extra indirection. All 1919 integrated
+source hashes match the tested seal. Source manifest SHA256 714e9b77aa423f4d2d0e31e4d6a75a788043c11da92bd89992f62ae5be387126;
+host SHA256 52d121f49037653f649d435f28d58a1ed2ac1ae04b13393e9f17c1aa3f42218b.
+
+Refresh after local/capture boxing, address lowering, out binding, or lib-struct
+representation changes; revert source and regression together. Pointer-formal,
+Void*, frozen-pointee and escaping lib-struct checks remain open in TODO.
+Fresh pristine S2 and unchanged LavinMQ functional/upstream parity remain open.
+
+
 ### FFI tuple-splat values retain source conversion semantics (2026-10-17)
 The source lib-call path diverted splatted arguments into generic expansion,
 which bypassed implicit to_unsafe. A tuple containing String therefore passed

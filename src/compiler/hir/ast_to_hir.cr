@@ -82148,7 +82148,13 @@ module Adamas::HIR
                    when Adamas::Compiler::Frontend::IdentifierNode
                      name = (safe_slice_to_string(arg_node.name) || "")
                      if local_id = ctx.lookup_local(name)
-                       local_id # Use storage directly, not a copy
+                       if box_info = ctx.lookup_boxed_local_for_local(name, local_id)
+                         # The box pointer is already the source variable's address.
+                         # Wrapping it in AddressOf would expose the box pointer slot.
+                         return pointer_for_boxed_local(ctx, box_info.box_ptr, box_info.payload_type)
+                       else
+                         local_id # Use storage directly, not a copy
+                       end
                      else
                        lower_expr(ctx, node.args.first)
                      end
@@ -110512,6 +110518,21 @@ module Adamas::HIR
       nil
     end
 
+    # A boxed local's payload already lives at `box_ptr`; return that address
+    # with the source-level pointer element type, without taking the address of
+    # the pointer value itself.
+    private def pointer_for_boxed_local(
+      ctx : LoweringContext,
+      box_ptr : ValueId,
+      payload_type : TypeRef,
+    ) : ValueId
+      pointer_type = pointer_type_ref_for_element(payload_type)
+      pointer_value = Copy.new(ctx.next_id, pointer_type, box_ptr)
+      ctx.emit(pointer_value)
+      ctx.register_type(pointer_value.id, pointer_type)
+      pointer_value.id
+    end
+
     # Expand splat arguments in a call
     # *array becomes individual elements at compile time (if array is literal)
     private def out_alloc_type_for_param(param_type : TypeRef) : TypeRef
@@ -110558,48 +110579,36 @@ module Adamas::HIR
         end
       end
 
-      # Local variable: create temp alloca + AddressOf
-      var_id = ctx.lookup_local(var_name)
-      is_lib_out = false
-      if var_id.nil?
-        alloc_type = out_alloc_type_for_param(param_type)
-        alloc_type_desc = @module.get_type_descriptor(alloc_type)
-        alloc = Allocate.new(ctx.next_id, alloc_type, [] of ValueId, true)
-        # Lib struct `out` args must use heap allocation: the pointer may be stored
-        # in a struct field and outlive this function's stack frame.
-        alloc_type_desc = @module.get_type_descriptor(alloc_type)
-        is_lib_out = !!(alloc_type_desc && alloc_type_desc.kind == TypeKind::Struct && @lib_structs.includes?(alloc_type_desc.name))
-        if !is_lib_out && alloc_type_desc
-          is_lib_out = !!(alloc_type_desc.kind == TypeKind::Struct && @lib_structs.any? { |ls| ls == alloc_type_desc.name || ls.ends_with?("::#{alloc_type_desc.name}") })
-        end
-        if is_lib_out
-          alloc.memory_strategy = HIR::MemoryStrategy::ARC
-        end
-        ctx.emit(alloc)
-        if path = source_path_for(@arena)
-          span = node.span
-          ctx.function.record_value_location(alloc.id, SourceLocation.new(path, span.start_line, span.start_column))
-        end
+      # `out x` declares a local. Reusing a visible binding would silently
+      # change its source type and storage; Crystal requires pointerof(x) instead.
+      if var_name != "_" && ctx.lookup_local(var_name)
+        raise LoweringError.new("variable '#{var_name}' is already defined, out must be used to define a variable", node)
+      end
+
+      alloc_type = out_alloc_type_for_param(param_type)
+      alloc_type_desc = @module.get_type_descriptor(alloc_type)
+      is_lib_out = !!(alloc_type_desc && alloc_type_desc.kind == TypeKind::Struct && @lib_structs.includes?(alloc_type_desc.name))
+      if !is_lib_out && alloc_type_desc
+        is_lib_out = !!(alloc_type_desc.kind == TypeKind::Struct && @lib_structs.any? { |ls| ls == alloc_type_desc.name || ls.ends_with?("::#{alloc_type_desc.name}") })
+      end
+      alloc = Allocate.new(ctx.next_id, alloc_type, [] of ValueId, true)
+      # Lib structs use their aggregate allocation directly as the C destination.
+      alloc.memory_strategy = HIR::MemoryStrategy::ARC if is_lib_out
+      ctx.emit(alloc)
+      if path = source_path_for(@arena)
+        span = node.span
+        ctx.function.record_value_location(alloc.id, SourceLocation.new(path, span.start_line, span.start_column))
+      end
+      unless var_name == "_"
         ctx.register_local(var_name, alloc.id)
-        var_id = alloc.id
-      else
-        # Existing variable — check if it's a heap-allocated lib struct
-        alloc_type = out_alloc_type_for_param(param_type)
-        alloc_type_desc = @module.get_type_descriptor(alloc_type)
-        is_lib_out = !!(alloc_type_desc && alloc_type_desc.kind == TypeKind::Struct && @lib_structs.includes?(alloc_type_desc.name))
-        if !is_lib_out && alloc_type_desc
-          is_lib_out = !!(alloc_type_desc.kind == TypeKind::Struct && @lib_structs.any? { |ls| ls == alloc_type_desc.name || ls.ends_with?("::#{alloc_type_desc.name}") })
+        unless is_lib_out
+          # All reads, assignments, captures, and address-taking must use this
+          # payload, rather than treating its address as the local's value.
+          ctx.register_boxed_local(var_name, alloc.id, alloc_type, alloc.id)
         end
       end
-      # For heap-allocated lib structs, the var IS already a pointer to the struct
-      # data. Return it directly — AddressOf would create a pointer-to-pointer,
-      # causing the C function to write past the 8-byte slot and corrupt the stack.
-      if is_lib_out
-        return var_id
-      end
-      ptr = AddressOf.new(ctx.next_id, TypeRef::POINTER, var_id)
-      ctx.emit(ptr)
-      ptr.id
+      return alloc.id if is_lib_out
+      pointer_for_boxed_local(ctx, alloc.id, alloc_type)
     end
 
     private def expand_extern_args(
