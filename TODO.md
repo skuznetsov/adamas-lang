@@ -1,5 +1,17 @@
 # Adamas Bootstrap TODO
 
+2026-10-16 JSON ESCAPE READ: removed both manual backend substitutes;
+compile the unchanged stdlib raising body through ordinary MIR. The overrides
+both violated source behavior and emitted an invalid Int32|NoReturn|String
+return layout. DoD: json_escape_read_noreturn_repro.sh, original-first exact
+bytes for JSON read/rescue, typed IO::Memory and virtual Int32/NoReturn;
+parent RED on the first two, virtual guard GREEN. Receipt: io2156. Refresh
+on builtin override, virtual ABI or read lowering changes.
+- [ ] Complete Claude's buffered FD read/gets check after resolving the separate
+  String.new(bytes) omitted-keyword route; then run a fresh S2 smoke test.
+- [ ] Audit remaining handwritten IO overrides against source semantics.
+  Do not infer a general NoReturn union bug from this removed override.
+
 2026-10-16 DECLARED METHOD-FORALL BINDINGS: source `forall` names define
 free-variable identity, including long names and nested/pointer restrictions.
 Use their call-local substitutions for restriction admission, concrete body

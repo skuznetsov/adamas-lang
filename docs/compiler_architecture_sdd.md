@@ -29,6 +29,15 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+JSON::Builder::Escape#read consumes its unchanged stdlib body, which raises.
+Backend overrides must not delegate it to an inner IO or invent a conflicting
+return union. Ordinary MIR/virtual ABI handles the tested NoReturn join. DoD:
+json_escape_read_noreturn_repro.sh compares original-first JSON read/rescue,
+typed IO::Memory and ordinary virtual Int32/NoReturn exact bytes; the parent
+fails the first two while the independent virtual control passes. Rollback is
+the atomic removal of both backend substitutes. Buffered FD read/gets, fresh
+complete bootstrap and LavinMQ parity remain separate gates.
+
 Declared method-forall variables bind from the exact source restrictions and
 actual positional types before owner normalization. Their identities do not
 depend on short-name heuristics. Nested restrictions select a concrete body;

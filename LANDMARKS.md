@@ -1,5 +1,20 @@
 # LANDMARKS
 
+JSON Escape read source authority (2026-10-16): remove both handwritten
+LLVM overrides of JSON::Builder::Escape#read. The stdlib body raises; the
+substitutes delegated to inner IO and fabricated an invalid
+Int32|NoReturn|String ABI. Ordinary MIR lowering already handles the bottom
+return in this corridor. Original-first json_escape_read_noreturn_repro.sh
+passes the raising JSON path, typed IO::Memory read and an ordinary virtual
+Int32/NoReturn control; the exact parent fails IR emission for the first two
+and passes the independent virtual control. Scoped verdict: ROBUST for these
+three consumers, not a general union canonicalization claim. Receipt: io2156;
+frozen host 11b878d197989d876457f085846fd60d648aa7a9a2e95b4cecc8484817efe0c4,
+backend f668d0d44c3417a0cc617cca381bf18953864374561c99d31c707ac9ca956bbe.
+Refresh after builtin override, virtual-return ABI or JSON read lowering changes.
+Buffered FD read/gets, String.new omitted keyword routing, fresh complete
+bootstrap and LavinMQ runtime/spec parity remain separate open gates.
+
 Declared method-forall binding (2026-10-16): exact retained `forall` names
 supply free-variable identity before source restriction normalization. Reuse
 those call-local bindings after owner registration restoration and specialize
