@@ -2145,8 +2145,18 @@ module Adamas::HIR
     getter param_types : Array(TypeRef)
     getter return_type : TypeRef
     getter varargs : Bool
+    getter parameter_names : Array(String?)
 
-    def initialize(@name, @real_name, @lib_name, @param_types, @return_type, @varargs = false)
+    def initialize(
+      @name,
+      @real_name,
+      @lib_name,
+      @param_types,
+      @return_type,
+      @varargs = false,
+      parameter_names : Array(String?)? = nil,
+    )
+      @parameter_names = parameter_names || [] of String?
     end
   end
 

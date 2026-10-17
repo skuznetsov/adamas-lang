@@ -14855,7 +14855,7 @@ module Adamas::HIR
         end
       when Adamas::Compiler::Frontend::FunNode
         return unless pass == :externs
-        return if register_extern_fun_from_source(lib_name, node.span)
+        return if register_extern_fun_from_source(lib_name, node.span, node.params)
         register_extern_fun(lib_name, node)
       when Adamas::Compiler::Frontend::GlobalVarDeclNode
         return unless pass == :externs
@@ -77687,9 +77687,26 @@ module Adamas::HIR
       param_text.strip
     end
 
+    private def source_extern_parameter_names(
+      params : Array(Adamas::Compiler::Frontend::Parameter)?,
+      param_count : Int32,
+    ) : Array(String?)
+      names = Array(String?).new(param_count, nil)
+      if actual_params = params
+        actual_params.each_with_index do |param, index|
+          break if index >= param_count
+          if name = param.name
+            names[index] = safe_slice_to_string(name)
+          end
+        end
+      end
+      names
+    end
+
     private def register_extern_fun_from_source(
       lib_name : String,
       span : Adamas::Compiler::Frontend::Span,
+      params : Array(Adamas::Compiler::Frontend::Parameter)?,
     ) : Bool
       arena = @arena
       names = extern_fun_names_from_source(span)
@@ -77714,7 +77731,8 @@ module Adamas::HIR
         lib_name: lib_name,
         param_types: param_types,
         return_type: return_type,
-        varargs: parsed[:varargs]
+        varargs: parsed[:varargs],
+        parameter_names: source_extern_parameter_names(params, param_types.size),
       ))
 
       true
@@ -77771,7 +77789,8 @@ module Adamas::HIR
         lib_name: lib_name,
         param_types: param_types,
         return_type: return_type,
-        varargs: varargs
+        varargs: varargs,
+        parameter_names: source_extern_parameter_names(params, param_types.size),
       ))
 
       if env_get("DEBUG_LIB_REG") && lib_name == "LibUnwind" && fun_name == "raise_exception"
@@ -82194,6 +82213,80 @@ module Adamas::HIR
       ctx.emit(addr_of)
       ctx.register_type(addr_of.id, addr_type)
       addr_of.id
+    end
+
+    # Crystal resolves named lib arguments against the declaration's source
+    # parameter names, then appends values in ABI parameter order.
+    private def lower_source_extern_named_args(
+      ctx : LoweringContext,
+      extern_func : ExternFunction,
+      arg_exprs : Array(ExprId),
+      named_args : Array(Adamas::Compiler::Frontend::NamedArgument),
+      call_arena : Adamas::Compiler::Frontend::ArenaLike,
+      node : Adamas::Compiler::Frontend::Node,
+    ) : Array(ValueId)
+      if extern_func.varargs
+        raise LoweringError.new("can't use named args with variadic function", node)
+      end
+
+      parameter_count = extern_func.param_types.size
+      covered_by_named = Array(Bool).new(parameter_count, false)
+      named_by_index = [] of {Int32, Adamas::Compiler::Frontend::NamedArgument}
+
+      # Resolve every label before lowering any argument expression, so an
+      # unknown or repeated name cannot partially emit the call's values.
+      named_args.each do |named_arg|
+        name = safe_slice_to_string(named_arg.name) || ""
+        parameter_index = extern_func.parameter_names.index { |parameter_name| parameter_name == name }
+        unless parameter_index
+          raise LoweringError.new("no parameter named '#{name}'", node)
+        end
+        if covered_by_named[parameter_index]
+          raise LoweringError.new("argument for parameter '#{name}' already specified", node)
+        end
+        covered_by_named[parameter_index] = true
+        named_by_index << {parameter_index, named_arg}
+      end
+
+      has_splat = arg_exprs.any? do |arg_expr|
+        call_arena[arg_expr].is_a?(Adamas::Compiler::Frontend::SplatNode)
+      end
+      positional_values = if has_splat
+                            expand_splat_args(ctx, arg_exprs, call_arena)
+                          else
+                            expand_extern_args(ctx, arg_exprs, call_arena, extern_func)
+                          end
+
+      positional_values.each_index do |index|
+        next if index >= parameter_count
+        if covered_by_named[index]
+          name = extern_func.parameter_names[index] || "argument ##{index + 1}"
+          raise LoweringError.new("argument for parameter '#{name}' already specified", node)
+        end
+        covered_by_named[index] = true
+      end
+
+      missing = [] of String
+      covered_by_named.each_with_index do |covered, index|
+        unless covered
+          missing << (extern_func.parameter_names[index] || "argument ##{index + 1}")
+        end
+      end
+      if missing.size == 1
+        raise LoweringError.new("missing argument: #{missing.first}", node)
+      elsif missing.size > 1
+        raise LoweringError.new("missing arguments: #{missing.join(", ")}", node)
+      end
+
+      named_by_index.sort_by! { |entry| entry[0] }
+      named_by_index.each do |entry|
+        parameter_index = entry[0]
+        named_arg = entry[1]
+        lowered_value = expand_extern_args(ctx, [named_arg.value], call_arena, extern_func, parameter_index)
+        positional_values << lowered_value.first
+      end
+
+      positional_values
     end
 
     # Source lib calls must satisfy their declaration after tuple splats have
@@ -100954,13 +101047,18 @@ module Adamas::HIR
             if extern_func
               # This is a call to an extern C function
               # Lower args and emit extern call with real C name
-              has_splat = call_args.any? do |arg_expr|
-                call_arena[arg_expr].is_a?(Adamas::Compiler::Frontend::SplatNode)
-              end
-              arg_ids = if has_splat
-                          expand_splat_args(ctx, call_args, call_arena)
+              named_args = node.named_args
+              arg_ids = if named_args && !named_args.empty?
+                          lower_source_extern_named_args(ctx, extern_func, call_args, named_args, call_arena, node)
                         else
-                          expand_extern_args(ctx, call_args, call_arena, extern_func)
+                          has_splat = call_args.any? do |arg_expr|
+                            call_arena[arg_expr].is_a?(Adamas::Compiler::Frontend::SplatNode)
+                          end
+                          if has_splat
+                            expand_splat_args(ctx, call_args, call_arena)
+                          else
+                            expand_extern_args(ctx, call_args, call_arena, extern_func)
+                          end
                         end
               if env_get("DEBUG_MEM_INTRINSIC") && class_name_str == "LibIntrinsics"
                 STDERR.puts "[MEM_INTRINSIC] extern method=#{method_name} call_args=#{call_args.size} lowered=#{arg_ids.size}"
@@ -110523,21 +110621,23 @@ module Adamas::HIR
       arg_exprs : Array(ExprId),
       call_arena : Adamas::Compiler::Frontend::ArenaLike,
       extern_func : ExternFunction,
+      parameter_offset : Int32 = 0,
     ) : Array(ValueId)
       result = [] of ValueId
       param_types = extern_func.param_types
       old_arena = @arena
       begin
         arg_exprs.each_with_index do |arg_expr, idx|
+          parameter_index = parameter_offset + idx
           @arena = call_arena
           arg_node = @arena[arg_expr]
           if arg_node.is_a?(Adamas::Compiler::Frontend::OutNode)
-            expected_type = param_types[idx]? || TypeRef::POINTER
+            expected_type = param_types[parameter_index]? || TypeRef::POINTER
             result << lower_out_arg(ctx, arg_node, expected_type)
           elsif arg_node.is_a?(Adamas::Compiler::Frontend::ProcLiteralNode)
             # Proc literal passed to C function — generate a standalone callback
             # function and pass its address as a raw function pointer.
-            result << lower_proc_as_c_callback(ctx, arg_node, extern_func, idx)
+            result << lower_proc_as_c_callback(ctx, arg_node, extern_func, parameter_index)
           else
             arg_val = lower_expr(ctx, arg_expr)
             # Crystal implicitly calls to_unsafe when passing a class instance

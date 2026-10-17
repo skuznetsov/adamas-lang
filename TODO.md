@@ -20253,10 +20253,20 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   original-first ffi_call_arity_repro.sh passes on fresh exact-production S1
   slice2597 (2601); parent slice2584 accepts missing required arguments (2593).
   Correct zero-argument, tuple-splat, fixed and variadic calls retain byte parity.
-- [ ] Normalize named FFI arguments from declaration parameter names before
-  emission. ExternFunction currently loses those names and lower_call ignores
-  named_args; pristine LLVM stdlib uses generic_value_to_int(self, is_signed: 1).
-  Follow Crystal semantic/lib.cr ordering/duplicate/unknown/missing checks;
-  reject named variadic calls as Crystal does. Source fun defaults are forbidden
-  by both parsers. Keep synthetic internal intrinsic signatures outside source
-  arity validation. Fresh S2 and unchanged LavinMQ parity remain open.
+- [x] Normalize named FFI arguments from declaration parameter names before
+  emission, preserving ABI order and single evaluation. Fresh exact-production
+  host slice2625 passes original-first ffi_named_args_repro.sh (ffi2651),
+  including side effects, mixed positional arguments and duplicate/unknown/
+  missing/variadic rejections; exact parent slice2597 is RED (ffi2650). The
+  positional fixed/variadic arity neighbor remains GREEN (ffi2653). Synthetic
+  internal intrinsic signatures retain their existing source-call boundary.
+- [ ] Route FFI tuple-splat elements through the same implicit to_unsafe path
+  as ordinary arguments. Private slice2621 has an original-first regression;
+  the independent production port still needs its own qualification/commit.
+- [ ] Preserve FFI out-local payload storage through reads, assignments,
+  captures and pointerof. Private slice2644 passes original-first out2647;
+  production integration remains open. Audit pointer/non-Void parameter
+  validation, varargs out rejection and frozen pointee assignment types as
+  adjacent language-contract gaps. Do not add stdlib workarounds.
+- [ ] Run fresh pristine S2 and unchanged LavinMQ functional/upstream parity.
+  These source-call S1 checks do not establish either acceptance criterion.

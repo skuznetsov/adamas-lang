@@ -1,5 +1,23 @@
 # LANDMARKS
 
+Named source FFI binding (2026-10-17): ExternFunction must preserve source
+parameter names at declaration registration. Source lib calls validate labels,
+normalize arguments into declaration order, and lower each named value with its
+actual parameter offset before emitting the external call. Dropping named_args
+previously turned write(count: ..., buffer: ..., fd: ...) into a zero-argument
+call; exact parent slice2597 is RED (ffi2650). Fresh host slice2625 passes the
+original-first byte comparison and evaluation-order/once probe plus duplicate,
+unknown, missing and variadic-name rejection (ffi2651). Positional fixed and
+variadic arity remains GREEN (ffi2653). All 1919 production source-file hashes
+match the tested seal after integration. Host SHA256
+858f89c35050f4eef70f55795d17a9d4df5b97d08d130c1be1b7a4504f0fb9d3;
+HIR 34577c3a078bf55c1e775089547e4cc8a5323f9b452c5ad3c464911edcba016e.
+Scoped ROBUST for this source-call normalization. Refresh after source fun
+registration, parameter-name identity, call lowering or ABI ordering changes.
+Tuple-splat to_unsafe conversion and out-local payload repair have separate
+private probes; their production acceptance, fresh pristine S2, fixed point
+and unchanged LavinMQ functional/spec parity remain open.
+
 Numeric source kinds and typeof continuity (2026-10-17): textual typeof
 must consume complete lexer Number tokens, including explicit suffix metadata,
 before member-chain splitting. Only a sign adjacent to the numeric token can
