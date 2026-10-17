@@ -1,5 +1,23 @@
 # Adamas Bootstrap TODO
 
+2026-10-17 SELECTED GENERIC RETURN ANNOTATIONS: owner specialization resolved
+an explicit generic annotation before a call selected its source Def. Later
+AST-only typeof and bare-member paths could consume that provisional family
+entry or a sibling overload's result. Keep the annotation on the deferred Def;
+resolve it with the selected call and concrete receiver before cache/body
+fallback. DoD: selected_generic_return_annotation_repro.sh matches sixteen
+original-first type assertions and actual nullable/nonnullable Array payloads.
+Fresh S1 return3338 passes repository run3345; exact parent3258 fails run3346.
+Numeric annotation/rejection, named typeof, source-new and inherited bare-member
+controls also pass (return3340,3342,3347,3355).
+- [x] Preserve selected explicit annotations through generic owner registration,
+  ordinary positional typeof calls and zero-argument member lowering.
+- [ ] Repair the separate nested typeof/index expression: original-qualified
+  inherited probe3349 and exact parent3350 both emit four blank lines in place
+  of Bool results. Whole-array types, Nil payloads and sizes pass probe3355.
+- [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
+
+
 2026-10-17 NIL PREDICATE ON UNION CARRIERS: the static is_a? helper returned
 false for Nil before inspecting the value's union carrier. lower_if consumed
 that answer and removed a reachable Nil branch. Keep the predicate unknown

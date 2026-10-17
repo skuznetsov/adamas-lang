@@ -19877,3 +19877,32 @@ isolated lazy-call block-return probe still prints 0 instead of original20
 annotation deferral3223 fails a selected Array(T?) payload test that parent3178
 passes (run3272 vs3250); it is not promoted. Fresh S2, unchanged LavinMQ
 functional/upstream parity and bootstrap fixed point remain unverified.
+
+
+### Explicit generic annotations follow the selected call (2026-10-17)
+Generic owner registration resolved explicit annotations before selecting a
+source overload. AST-only typeof and bare-member return lookup could then use
+a provisional family entry or a sibling Def. Retain the deferred annotation;
+resolve the selected Def with the concrete receiver before family/body fallback.
+Ordinary positional typeof calls perform exact receiver lookup; unknown argument
+types with competing Defs retain the existing path. Bare members supply their
+selected zero-argument Def. No stdlib or application changes are involved.
+
+`python3 run_clean_portable_regression.py return3338_selected_annotation_without_diagnostics
+return3345_repository_selected_annotation_candidate regression_tests/selected_generic_return_annotation_repro.sh`
+passes sixteen original-first type assertions and nullable/nonnullable Array
+payload checks. Exact parent3258 fails the same repository script in return3346.
+Abstract numeric annotations and rejection guards, named typeof and source-new
+controls pass return3340,3342,3347. Inherited bare calls through Parent(Array(U))
+pass twelve original-first whole-return/Nil/size assertions in return3355, with
+String/Int32 specializations in both orders. Scoped adversary ROBUST for these
+selected-annotation paths. HIR SHA-256
+6b4ac6b8ca877414922e4ce7406892929cca3a564586b3ef4a78cb8f420feb86;
+host 57691971285a9a315f6678617d2feb812f9c2c951436e3b5c5403b6dd9e4a250.
+
+Refresh after source registration, selected-Def identity, generic substitution,
+typeof or member return lookup changes; revert source and regression together.
+The nested typeof/index nullable-expression probe has four blank Bool outputs
+on both candidate3349 and parent3350, so it remains an independent open bug.
+This delta does not close general flow-sensitive return inference. Fresh S2,
+unchanged LavinMQ runtime/spec parity and bootstrap fixed point remain open.

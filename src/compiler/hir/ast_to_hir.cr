@@ -28058,6 +28058,39 @@ module Adamas::HIR
                   end
                 end
               end
+              # AST-only inference (notably typeof) bypasses lower_call's selected-Def path.
+              # Resolve an ordinary positional source call against its concrete receiver before
+              # consulting family caches, which may be Void or belong to a sibling overload.
+              if !block_expr && !block_pass_expr && !expr_node.named_args &&
+                 !expr_node.args.any? { |arg| node_for_expr(arg).is_a?(Adamas::Compiler::Frontend::SplatNode) }
+                # Keep the concrete specialization in the lookup key so a prior receiver's Def cannot answer this call.
+                # The later stripped-base cache path remains available when this exact receiver has no source entry.
+                exact_owner = recv_name
+                exact_base = resolve_method_with_inheritance(exact_owner, member_name) || "#{exact_owner}##{member_name}"
+                exact_arg_types = infer_arg_types_for_call(expr_node.args, self_type_name)
+                if selected = lookup_function_def_for_call(exact_base, exact_arg_types.size, false, exact_arg_types)
+                  # Unknown positional types cannot discriminate overloaded
+                  # declarations. Keep the existing cache path when another
+                  # source Def could match this call shape.
+                  ambiguous = false
+                  if exact_arg_types.any? { |type| type == TypeRef::VOID || type == TypeRef::POINTER }
+                    variants = function_def_overloads(exact_base)
+                    ambiguous = variants.any? do |name|
+                      candidate = @function_defs[name]?
+                      candidate && candidate.object_id != selected[1].object_id
+                    end
+                  end
+                  if !ambiguous && selected[1].return_type
+                    selected_name = selected[0]
+                    selected_base = strip_type_suffix(selected_name)
+                    selected_return = with_namespace_override(method_owner(selected_base)) do
+                      resolve_return_type_from_def(selected_name, selected_base, recv_type, exact_arg_types.size, selected[1])
+                    end
+                    return selected_return if selected_return && selected_return != TypeRef::VOID
+                  end
+                end
+              end
+
               # Strip generic args for base lookup: Array(UInt64) -> Array
               base_recv = strip_generic_args(recv_name)
               # Try exact type first, then base type
@@ -37156,6 +37189,7 @@ module Adamas::HIR
               STDERR.puts "[REG_METHOD_PHASE] class=#{class_name} method=#{method_name} phase=before_return_field" if trace_method_phase
               explicit_return_type_name = explicit_return_type_for_registration(member, member_arena)
               STDERR.puts "[REG_METHOD_PHASE] class=#{class_name} method=#{method_name} phase=after_return_field present=#{explicit_return_type_name ? 1 : 0}" if trace_method_phase
+              defer_explicit_return_resolution = false
               contains_yield : Bool? = nil
               query_has_block_or_yield = false
               if params = member.params
@@ -37181,12 +37215,22 @@ module Adamas::HIR
                                 STDERR.puts "[DEBUG_ENUM_RETURN] class=#{class_name} rt=#{rt_name} resolved=#{resolved_rt_name} enum=#{enum_return_name || "(nil)"}"
                               end
                               inferred = module_like_type_name?(rt_name) ? infer_concrete_return_type_from_body(member, class_name, member_arena, node_expr_id: expr_id) : nil
-                              resolved = inferred || annotation_type_ref(rt_name, class_name)
-                              if resolved == TypeRef::VOID && method_name.ends_with?('?')
-                                self_type = type_ref
-                                resolved = infer_unannotated_query_return_type(method_name, self_type) || resolved
+                              if inferred
+                                inferred
+                              elsif @defer_body_return_inference
+                                # Keep the explicit Def and its annotation for
+                                # selected-call resolution. Do not publish its
+                                # return type while only specializing the owner.
+                                defer_explicit_return_resolution = true
+                                TypeRef::VOID
+                              else
+                                resolved = annotation_type_ref(rt_name, class_name)
+                                if resolved == TypeRef::VOID && method_name.ends_with?('?')
+                                  self_type = type_ref
+                                  resolved = infer_unannotated_query_return_type(method_name, self_type) || resolved
+                                end
+                                resolved
                               end
-                              resolved
                             elsif method_name.ends_with?('?')
                               provisional_query_return_type_for_registration(
                                 method_name,
@@ -37211,7 +37255,7 @@ module Adamas::HIR
                             end
               if type_literal_name
                 literal_ref = type_ref_for_name(type_literal_name)
-                if return_type == TypeRef::VOID || return_type == TypeRef::NIL
+                if !defer_explicit_return_resolution && (return_type == TypeRef::VOID || return_type == TypeRef::NIL)
                   return_type = literal_ref if literal_ref != TypeRef::VOID
                 end
               end
@@ -60881,6 +60925,18 @@ module Adamas::HIR
         end
       end
       if existing_type == TypeRef::VOID
+        # Resolve only the exact selected annotation before base-family and body fallback.
+        if def_node = selected_def
+          if def_node.return_type
+            if resolved = resolve_return_type_from_def(name, base_name, nil, call_arg_count, def_node)
+              if resolved != TypeRef::VOID
+                set_function_type_entry(name, resolved)
+                set_function_base_return_type(base_name, resolved) if name == base_name
+                existing_type = resolved
+              end
+            end
+          end
+        end
         # Check base_name cache early (before AST-walk / force_lower).
         if name == base_name
           if base_rt = @function_base_return_types[base_name]?
@@ -122714,6 +122770,16 @@ module Adamas::HIR
       result_id
     end
 
+    # Resolve a source Def for zero-argument member access before return inference.
+    # Family/arity-only return lookup can choose a different overload or infer its body.
+    private def selected_member_access_return_type(name : String) : TypeRef
+      if selected = lookup_function_def_for_call(name, 0, false, [] of TypeRef)
+        get_function_return_type(name, 0, selected[1])
+      else
+        get_function_return_type(name, 0)
+      end
+    end
+
     private def lower_member_access(ctx : LoweringContext, node : Adamas::Compiler::Frontend::MemberAccessNode) : ValueId
       obj_node = @arena[node.object]
       # Use member_access_name_text (has span-based fallback safe in s2b when safe_slice_to_string
@@ -124096,13 +124162,13 @@ module Adamas::HIR
         if base_method = resolve_method_with_inheritance(receiver_owner_hint, member_name)
           if resolved = resolve_untyped_overload(base_method, 0, false)
             resolved_method_name = resolved
-            return_type = get_function_return_type(resolved, 0)
+            return_type = selected_member_access_return_type(resolved)
           elsif resolved = resolve_ancestor_overload(receiver_owner_hint, member_name, 0, false)
             resolved_method_name = resolved
-            return_type = get_function_return_type(resolved, 0)
+            return_type = selected_member_access_return_type(resolved)
           else
             resolved_method_name = base_method
-            return_type = get_function_return_type(base_method, 0)
+            return_type = selected_member_access_return_type(base_method)
           end
         end
       end
@@ -124144,13 +124210,13 @@ module Adamas::HIR
           if base_method = resolve_method_with_inheritance(info_name, member_name)
             if resolved = resolve_untyped_overload(base_method, 0, false)
               resolved_method_name = resolved
-              return_type = get_function_return_type(resolved, 0)
+              return_type = selected_member_access_return_type(resolved)
             elsif resolved = resolve_ancestor_overload(info_name, member_name, 0, false)
               resolved_method_name = resolved
-              return_type = get_function_return_type(resolved, 0)
+              return_type = selected_member_access_return_type(resolved)
             else
               resolved_method_name = base_method
-              return_type = get_function_return_type(base_method, 0)
+              return_type = selected_member_access_return_type(base_method)
             end
             # Per-class compilation for inherited methods: when the resolved method
             # belongs to a parent class but the receiver is a concrete subclass,
@@ -124179,13 +124245,13 @@ module Adamas::HIR
           if base_method = resolve_method_with_inheritance(ref_type_name, member_name)
             if resolved = resolve_untyped_overload(base_method, 0, false)
               resolved_method_name = resolved
-              return_type = get_function_return_type(resolved, 0)
+              return_type = selected_member_access_return_type(resolved)
             elsif resolved = resolve_ancestor_overload(ref_type_name, member_name, 0, false)
               resolved_method_name = resolved
-              return_type = get_function_return_type(resolved, 0)
+              return_type = selected_member_access_return_type(resolved)
             else
               resolved_method_name = base_method
-              return_type = get_function_return_type(base_method, 0)
+              return_type = selected_member_access_return_type(base_method)
             end
           end
         end
@@ -124200,13 +124266,13 @@ module Adamas::HIR
             if base_method = resolve_method_with_inheritance(type_name, member_name)
               if resolved = resolve_untyped_overload(base_method, 0, false)
                 resolved_method_name = resolved
-                return_type = get_function_return_type(resolved, 0)
+                return_type = selected_member_access_return_type(resolved)
               elsif resolved = resolve_ancestor_overload(type_name, member_name, 0, false)
                 resolved_method_name = resolved
-                return_type = get_function_return_type(resolved, 0)
+                return_type = selected_member_access_return_type(resolved)
               else
                 resolved_method_name = base_method
-                return_type = get_function_return_type(base_method, 0)
+                return_type = selected_member_access_return_type(base_method)
               end
             end
           else
@@ -124218,13 +124284,13 @@ module Adamas::HIR
                 if base_method = resolve_method_with_inheritance(candidate, member_name)
                   if resolved = resolve_untyped_overload(base_method, 0, false)
                     resolved_method_name = resolved
-                    return_type = get_function_return_type(resolved, 0)
+                    return_type = selected_member_access_return_type(resolved)
                   elsif resolved = resolve_ancestor_overload(candidate, member_name, 0, false)
                     resolved_method_name = resolved
-                    return_type = get_function_return_type(resolved, 0)
+                    return_type = selected_member_access_return_type(resolved)
                   else
                     resolved_method_name = base_method
-                    return_type = get_function_return_type(base_method, 0)
+                    return_type = selected_member_access_return_type(base_method)
                   end
                 end
               end
@@ -124247,7 +124313,7 @@ module Adamas::HIR
           end
           if matches.size == 1
             resolved_method_name = matches.first
-            return_type = get_function_return_type(resolved_method_name, 0)
+            return_type = selected_member_access_return_type(resolved_method_name)
           end
         end
       end
@@ -124301,7 +124367,7 @@ module Adamas::HIR
         # lowered includer cannot replace the specialized module root.
         base_method_name = self_root
         resolved_method_name = self_root
-        return_type = get_function_return_type(self_root, 0)
+        return_type = selected_member_access_return_type(self_root)
       end
 
       # Concrete Tuple#hash with no explicit parentheses reaches this
