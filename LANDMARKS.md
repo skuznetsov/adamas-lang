@@ -19434,3 +19434,23 @@ mismatch (slice2441 and parent slice2442); this change does not repair it.
 Refresh after IO selection, runtime-helper admission, virtual dispatch or
 buffering changes. Revert the HIR/MIR changes and regression together. Fresh
 ordinary S2 and unchanged LavinMQ functional/upstream parity remain open.
+
+
+### Standalone runtime printing uses one stdout sink (2026-10-17)
+The no-prelude integer print helpers used libc printf while integer puts,
+floats, Strings and Bool wrote directly. Buffered stdout moved print values
+after later puts calls. Format the four signed/unsigned 32/64-bit integer
+helpers into bounded stack buffers and write their bytes, as their newline
+variants already do. Route the legacy C-string puts helper through the same
+sink, including its newline; retain ordinary prelude IO selection.
+
+numeric_standalone_order_repro.sh compares original Crystal output with
+candidate --no-prelude output for mixed print/puts, all helper integer families,
+Float32/Float64, String and Bool. Exact parent slice2447 is RED at byte 7;
+fresh S1 slice2443 passes slice2446. Prelude ordering/receiver guard slice2448
+also passes. Scoped adversary ROBUST for this sink-ordering contract. Source
+manifest bc9f45e3f81a4dfa2d17c9076ba47f8b9c57a87e07f9ffb82118ee21b0a06418;
+host e83d84b103c4a0376fa2b264305cb747a2e46d04cc905e8ce451db8cb9dbacc4.
+Refresh after helper generation, formatting, fallback admission or stdout sink
+changes. This does not establish short-write/EINTR handling, all legacy
+C-string consumers, fresh S2, or unchanged LavinMQ parity.

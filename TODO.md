@@ -11,9 +11,12 @@ numeric-parser candidate's parent slice2432 fails, and HIR-only slice2433
 still loses Float receivers. The full HIR/MIR candidate passes slice2438
 and the signed-literal boundary neighbor slice2439.
 - [x] Preserve buffered ordering and explicit receivers for numeric printing.
-- [ ] Fix the separate standalone runtime sink mismatch: integer print uses
-  libc printf while subsequent float/integer puts uses write(2). Both parent
-  slice2442 and full-IO candidate slice2441 reproduce 3.5-before-2 ordering.
+- [x] Repair the separate standalone runtime sink mismatch: integer print and
+  the C-string puts helper now share write(2) with float/string/bool helpers.
+  Fresh S1 slice2443 passes original-first mixed no-prelude output slice2446;
+  exact parent slice2447 fails at byte 7. Prelude IO neighbor slice2448 passes.
+- [ ] Audit standalone short-write/EINTR handling and legacy C-string helper
+  consumers before claiming general standalone IO completeness.
 - [ ] Verify fresh S2 and unchanged LavinMQ runtime/spec parity.
 
 2026-10-16 APPLIED MODULE SOURCE PROJECTIONS: retain concrete include arguments

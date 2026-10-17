@@ -7864,14 +7864,21 @@ module Adamas::MIR
       emit_raw "}\n\n"
       bootstrap_trace_puts "  [RT_DECL] after file_open helper" if runtime_decl_trace
 
-      # IO functions - use printf
+      # Standalone helpers share an unbuffered stdout sink. Mixing libc stdio
+      # with write(2) would reorder print/puts and integer/float/string output.
       emit_raw "define void @__adamas_puts(ptr %str) {\n"
-      emit_raw "  call i32 @puts(ptr %str)\n"
+      emit_raw "  %len = call i64 @strlen(ptr %str)\n"
+      emit_raw "  call i64 @write(i32 1, ptr %str, i64 %len)\n"
+      emit_raw "  call i64 @write(i32 1, ptr @.str_newline, i64 1)\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
       emit_raw "define void @__adamas_print_int32(i32 %val) {\n"
-      emit_raw "  call i32 (ptr, ...) @printf(ptr @.int_fmt_no_nl, i32 %val)\n"
+      emit_raw "entry:\n"
+      emit_raw "  %tmp = alloca [16 x i8]\n"
+      emit_raw "  call i32 (ptr, ptr, ...) @sprintf(ptr %tmp, ptr @.int_fmt_no_nl, i32 %val)\n"
+      emit_raw "  %len = call i64 @strlen(ptr %tmp)\n"
+      emit_raw "  call i64 @write(i32 1, ptr %tmp, i64 %len)\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
@@ -7891,7 +7898,11 @@ module Adamas::MIR
       emit_raw "}\n\n"
 
       emit_raw "define void @__adamas_print_uint32(i32 %val) {\n"
-      emit_raw "  call i32 (ptr, ...) @printf(ptr @.uint_fmt_no_nl, i32 %val)\n"
+      emit_raw "entry:\n"
+      emit_raw "  %tmp = alloca [16 x i8]\n"
+      emit_raw "  call i32 (ptr, ptr, ...) @sprintf(ptr %tmp, ptr @.uint_fmt_no_nl, i32 %val)\n"
+      emit_raw "  %len = call i64 @strlen(ptr %tmp)\n"
+      emit_raw "  call i64 @write(i32 1, ptr %tmp, i64 %len)\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
@@ -7905,7 +7916,11 @@ module Adamas::MIR
       emit_raw "}\n\n"
 
       emit_raw "define void @__adamas_print_int64(i64 %val) {\n"
-      emit_raw "  call i32 (ptr, ...) @printf(ptr @.long_fmt_no_nl, i64 %val)\n"
+      emit_raw "entry:\n"
+      emit_raw "  %tmp = alloca [32 x i8]\n"
+      emit_raw "  call i32 (ptr, ptr, ...) @sprintf(ptr %tmp, ptr @.long_fmt_no_nl, i64 %val)\n"
+      emit_raw "  %len = call i64 @strlen(ptr %tmp)\n"
+      emit_raw "  call i64 @write(i32 1, ptr %tmp, i64 %len)\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
@@ -7919,7 +7934,11 @@ module Adamas::MIR
       emit_raw "}\n\n"
 
       emit_raw "define void @__adamas_print_uint64(i64 %val) {\n"
-      emit_raw "  call i32 (ptr, ...) @printf(ptr @.ulong_fmt_no_nl, i64 %val)\n"
+      emit_raw "entry:\n"
+      emit_raw "  %tmp = alloca [32 x i8]\n"
+      emit_raw "  call i32 (ptr, ptr, ...) @sprintf(ptr %tmp, ptr @.ulong_fmt_no_nl, i64 %val)\n"
+      emit_raw "  %len = call i64 @strlen(ptr %tmp)\n"
+      emit_raw "  call i64 @write(i32 1, ptr %tmp, i64 %len)\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
