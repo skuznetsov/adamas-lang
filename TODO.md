@@ -1,5 +1,20 @@
 # Adamas Bootstrap TODO
 
+2026-10-16 BUFFERED FD WRITE: restore IO::Buffered#write's source body for
+FileDescriptor/File instead of issuing write(2) from a public write override.
+The substitute bypassed pending write_byte/Char bytes and reordered output.
+The low-level system_write override stays at the unbuffered boundary. DoD:
+buffered_write_order_repro.sh, original-first exact stdout/stderr with file
+and pipe sinks, mixed writes, >8 KiB slices, buffer-boundary writes and sync.
+io2213 passes on fresh S1 io2204; read-fixed parent io2177 fails at byte 8 of
+stdout and emits stderr rr!E instead of Err!. The parent's only source
+difference from the pre-write production state is an explanatory comment.
+The same fresh host passes the buffered read guard (io2215).
+- [x] Integrate Claude f7cd4eaf's write removal with a fresh S1 parity check.
+- [ ] Verify buffered output on fresh self-hosted S2. This S1 regression
+  excludes the separate File.close and spaced-parenthesized-call bugs;
+  complete fresh bootstrap and LavinMQ runtime/spec parity remain open.
+
 2026-10-16 BUFFERED FD READ/GETS: restore the unchanged stdlib bodies for
 FileDescriptor#read(Slice), FileDescriptor#gets(Char, Bool) and File#gets.
 The read override skipped unread buffered bytes; gets also emitted a struct

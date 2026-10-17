@@ -1,5 +1,23 @@
 # LANDMARKS
 
+Buffered FD write source authority (2026-10-16): the public
+FileDescriptor/File#write(Slice(UInt8)) override issued write(2) before bytes
+pending in IO::Buffered from write_byte/Char. Remove that substitute and
+compile the unchanged stdlib write body; retain system_write as the syscall
+boundary. This integrates Claude f7cd4eaf's write-side change.
+Original-first buffered_write_order_repro.sh passes on fresh host io2204
+(io2213): exact stdout/stderr in file and pipe modes, mixed writes, >8 KiB
+slices, buffer-remainder crossing, IO::Memory/File and sync transitions.
+The read-fixed parent io2177 (io2214) fails at stdout byte 8 and emits stderr
+rr!E rather than Err!; its only source difference from production before this
+write delta is one explanatory comment. Scoped ROBUST for these S1 controls.
+The same host also passes buffered_read_order_repro.sh (io2215).
+Backend SHA256 c17d1b3532ed15cf25d9b28dffc392d8afdc4353179e28c2b3a77260a76244da;
+host 71793a98b538877fb9467809dded7ab0778b9b3af423157d96ea2ebcaa4aa87a.
+Refresh after overrides, buffering, write dispatch or flush lowering changes.
+File.close and the spaced-parenthesized-call parser bug are excluded; fresh
+S2 buffering, socket/error cases and LavinMQ runtime/spec parity remain open.
+
 Buffered FD read/gets source authority (2026-10-16): manual FileDescriptor
 read(Slice) bypassed IO::Buffered's unread bytes. The FileDescriptor/File
 gets(Char, Bool) overrides also emitted a Nil|String struct where the ordinary

@@ -12137,31 +12137,10 @@ module Adamas::MIR
         return true
       end
 
-      # IO::FileDescriptor#write(Slice(UInt8)) — stage2 debug output reaches this
-      # before the generic Indexable#size path is reliably materialized. Use the
-      # concrete Slice layout directly (size @0, pointer @8) and ignore the byte
-      # count because the Crystal method returns Nil.
-      if mangled == "IO$CCFileDescriptor$Hwrite$$arity1" ||
-         mangled == "IO$CCFileDescriptor$Hwrite$$Slice$LUInt8$R" ||
-         mangled == "File$Hwrite$$Slice$LUInt8$R"
-        emit_raw "; #{mangled} — direct syscall write(Slice(UInt8)) override\n"
-        emit_raw "define void @#{mangled}(ptr %self, ptr %slice) {\n"
-        emit_raw "entry:\n"
-        emit_raw "  %fd = call i32 @IO$CCFileDescriptor$Hfd(ptr %self)\n"
-        emit_raw "  %size = load i32, ptr %slice\n"
-        emit_raw "  %is_zero = icmp eq i32 %size, 0\n"
-        emit_raw "  br i1 %is_zero, label %ret_done, label %do_write\n"
-        emit_raw "do_write:\n"
-        emit_raw "  %buf_ptr_ptr = getelementptr i8, ptr %slice, i32 8\n"
-        emit_raw "  %buf_ptr = load ptr, ptr %buf_ptr_ptr\n"
-        emit_raw "  %size64 = zext i32 %size to i64\n"
-        emit_raw "  %nbytes = call i64 @write(i32 %fd, ptr %buf_ptr, i64 %size64)\n"
-        emit_raw "  br label %ret_done\n"
-        emit_raw "ret_done:\n"
-        emit_raw "  ret void\n"
-        emit_raw "}\n\n"
-        return true
-      end
+      # IO::FileDescriptor#write(Slice(UInt8)) / File#write is IO::Buffered#write
+      # and must compile from the stdlib body. A direct write(2) override here
+      # bypassed bytes buffered by write_byte/print(Char), reordering output.
+      # Keep only system_write, the unbuffered bottom, as a syscall override.
       #
       # IO::FileDescriptor#read(Slice) and
       # #gets(Char, Bool) / File#gets(Char, Bool) are compiled from the stdlib
