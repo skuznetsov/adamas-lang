@@ -18061,12 +18061,16 @@ module Adamas::HIR
     end
 
     private def update_typeof_local(name : String, type_ref : TypeRef) : Nil
+      # `_` is a discard target, not a flow-typed local.
+      return if name == "_"
       return unless locals = @current_typeof_locals
       locals[name] = type_ref
       bump_infer_type_cache_version
     end
 
     private def update_typeof_local_name(name : String, type_name : String) : Nil
+      # Do not let discarded assignments shadow the structural type wildcard.
+      return if name == "_"
       return unless locals = @current_typeof_local_names
       normalized = normalize_declared_type_name(type_name)
       if env_get("DEBUG_TYPE_CLASS") && normalized.ends_with?(".class")
@@ -27415,6 +27419,7 @@ module Adamas::HIR
         return type_ref_for_name(self_type_name) if self_type_name
       when Adamas::Compiler::Frontend::IdentifierNode
         name = (safe_slice_to_string(expr_node.name) || "")
+        return nil if name == "_"
         if env_get("DEBUG_INT_CLASS") && name == "int_class"
           local_ref = @current_typeof_locals.try(&.[name]?)
           local_name = @current_typeof_local_names.try(&.[name]?)
@@ -82608,6 +82613,7 @@ module Adamas::HIR
 
     private def lower_identifier(ctx : LoweringContext, node : Adamas::Compiler::Frontend::IdentifierNode) : ValueId
       name = identifier_name_text(node)
+      raise LoweringError.new("can't read from _", node) if name == "_"
 
       case name
       when "__FILE__"
@@ -124810,6 +124816,7 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::NodeKind::Identifier
         target_ident = target_node.unsafe_as(Adamas::Compiler::Frontend::IdentifierNode)
         name = identifier_name_text(target_ident)
+        return value_id if name == "_"
         value_type = assignment_value_type(ctx, value_id, name)
         # P1: boxed locals write through PointerStore to the box ptr.
         # Lookup is owner-aware so assignments to same-name shadow locals
@@ -126049,6 +126056,7 @@ module Adamas::HIR
         target_ident = target_node.unsafe_as(Adamas::Compiler::Frontend::IdentifierNode)
         name = Adamas::Compiler::Frontend.node_identifier_name_string(target_node) ||
                (safe_slice_to_string(target_ident.name) || "")
+        return value_id if name == "_"
         value_type = assignment_value_type(ctx, value_id, name)
         # Keep tuple-destructuring assignments consistent with ordinary
         # identifier assignments: captured locals must write through their box

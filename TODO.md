@@ -1,5 +1,21 @@
 # Adamas Bootstrap TODO
 
+2026-10-17 DISCARD ASSIGNMENT CONTRACT: `_ = rhs` was stored as an ordinary
+local in lowering and typeof flow, so discarded values could shadow the type
+wildcard and value reads were accepted. Evaluate the RHS once and return its
+value without binding `_`; keep it out of both inference maps and reject reads.
+DoD: discard_assignment_contract_repro.sh compares nine original-first native
+transcripts and requires source rejection without an executable for reading `_`.
+Fresh exact-production S1 discard2939 passes discard2943 and repository-path
+run discard2946. Production predecessor parser2905 accepts the invalid read in
+discard2945, producing an executable.
+- [x] Preserve discard side effects and assignment-expression values in ordinary,
+  conditional and tuple positions without creating a local binding.
+- [x] Keep direct and nested type-restriction wildcards independent of discards.
+- [ ] Audit other binding producers before extending the assignment claim to
+  every anonymous parameter, declaration and pattern form.
+- [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
+
 2026-10-17 STATEMENT DELIMITER SCOPE: outer call parentheses leaked into
 nested Proc/control-flow bodies, so a negative statement after an if condition
 was parsed as part of the comparison. Track a delimiter floor for each source

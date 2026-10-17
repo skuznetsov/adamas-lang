@@ -19662,3 +19662,28 @@ or out lowering changes; revert the source and regression together. Pointee
 freezing across later assignments, late ivar inference and escaping lib-struct
 storage remain open. This S1 evidence does not establish fresh S2 acceptance
 or unchanged LavinMQ functional/upstream parity.
+
+
+### Discard assignments do not introduce locals or typeof bindings (2026-10-17)
+`_ = rhs` formerly entered ordinary assignment lowering and both typeof-local
+maps. This made the discarded value readable and could substitute its type for
+structural wildcard `_` in a later restriction. Both ordinary and destructuring
+assignment now evaluate the RHS and return its existing value before binding;
+both inference-map writers ignore `_`, and value reads fail with a diagnostic.
+
+The original-first regression compares exact native stdout and empty stderr
+for nine positives: direct side effects, wildcard-after-discard, both tuple
+positions, splat discard, conditional assignment, assignment result and nested
+Array(_) restriction. It also requires rc=1 and no executable for reading `_`.
+Fresh exact-production S1 discard2939 passes private discard2943 and repository
+run discard2946. Exact predecessor parser2905 accepts the invalid read and
+produces an executable in discard2945. Scoped adversary ROBUST for these source
+assignment forms; RHS-once and result-value controls guard against silently
+omitting evaluation. HIR SHA-256
+5f8c4d28b4936c85eed0ae22a6a6bb1649f2d7b2bb40cbe3c1dab7f9a232b37a;
+host 0d1bdc32cd28faac27fb7c7564d88c5126cc309677b34f004d005a51e63a3ab0.
+
+Refresh after assignment, tuple expansion, identifier reads or typeof-local
+binding changes. Revert the six source changes and regression together.
+Other binding producers, fresh S2 and unchanged LavinMQ functional/upstream
+parity remain open; this certificate does not close those capabilities.
