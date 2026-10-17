@@ -7143,6 +7143,9 @@ module Adamas::HIR
 
     # Track which allocators have been generated (to avoid duplicates for reopened classes)
     @generated_allocators : Set(String)
+    # A generated wrapper has no source Def of its own. Retain the initializer
+    # chosen for this exact body so a later guard need not reselect a mutable alias.
+    @generated_allocator_sources : Hash(String, Tuple(Adamas::HIR::Function, UInt64, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike, String, Array(TypeRef)))
     @stale_empty_allocators : Set(String) # Classes whose allocator was generated with empty ivars
     @allocator_layout_prelower_in_progress : Set(String)
     @deferred_allocators : Set(String)
@@ -7835,6 +7838,7 @@ module Adamas::HIR
       @resolved_type_alias_cache = Hash(String, String).new(initial_capacity: 4096)
       @type_alias_keys_by_suffix = {} of String => Array(String)
       @generated_allocators = Set(String).new
+      @generated_allocator_sources = {} of String => Tuple(Adamas::HIR::Function, UInt64, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike, String, Array(TypeRef))
       @stale_empty_allocators = Set(String).new
       @allocator_layout_prelower_in_progress = Set(String).new
       @deferred_allocators = Set(String).new
@@ -42125,6 +42129,39 @@ module Adamas::HIR
       end
 
       ctx.terminate(Return.new(alloc.id))
+      if !call_has_named_args && !initializer_has_block &&
+         forwarded_initializer_block_index.nil? &&
+         (source_def = matched_init_def) && (source_arena = matched_init_arena) &&
+         (source_init_name = init_name) && @module.has_function_with_body?(source_init_name)
+        @generated_allocator_sources[overload_name] = {
+          func, func.body_revision, source_def, source_arena,
+          class_name, call_arg_types.dup,
+        }
+      end
+    end
+
+    # Admit only the initializer selected when this exact positional wrapper
+    # was emitted. Replaced or mutated bodies and other call shapes need fresh
+    # source evidence; a lowered ABI match cannot supply it.
+    private def generated_allocator_source_accepts?(
+      name : String,
+      arg_types : Array(TypeRef),
+    ) : Bool
+      return false if arg_types.any? { |type| type == TypeRef::VOID }
+      proof = @generated_allocator_sources[name]?
+      return false unless proof
+      function = @module.function_by_name(name)
+      return false unless function && function.same?(proof[0]) &&
+                          function.body_revision == proof[1] &&
+                          @module.has_function_with_body?(name) && proof[5] == arg_types
+      source_def, source_arena, context = proof[2], proof[3], proof[4]
+      with_arena(source_arena) do
+        params = function_param_infos(source_def)
+        return false if params.any? { |param| param.is_splat || param.is_double_splat || param.is_block || named_only_separator?(param) }
+        return false if def_contains_yield?(source_def, source_arena)
+        params_compatible_with_args?(source_def, arg_types, context, params) &&
+          source_generic_argument_mismatch_for_def(source_def, arg_types, context).nil?
+      end
     end
 
     # A concrete call variant specializes a declared union initializer param
@@ -105613,9 +105650,11 @@ module Adamas::HIR
         if prior_rejection = source_call_rejections.first?
           # A later owner-aware rematch may legitimately find a different Def.
           # It must establish compatibility before superseding a typed rejection.
-          unless final_def && params_compatible_with_args?(final_def, arg_types, final_context)
-            source_rejection ||= prior_rejection
+          source_admitted = final_def && params_compatible_with_args?(final_def, arg_types, final_context)
+          if !source_admitted && method_name == "new" && !allocator_explicit_new_call
+            source_admitted = generated_allocator_source_accepts?(mangled_method_name, arg_types)
           end
+          source_rejection ||= prior_rejection unless source_admitted
         end
         if source_rejection
           # A source mismatch against one overload does not reject a union

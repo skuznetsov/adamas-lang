@@ -19779,3 +19779,39 @@ Named initializer source admission, block constructors, included generic bare
 Tuple T identity, fresh S2 and unchanged LavinMQ functional/upstream parity
 remain open. Fresh S2 tuple3136 and LavinMQ lavin3137 both stop at the independent
 Set(String).new(4) source-rejection guard before IR generation.
+
+
+### Emitted positional allocator retains initializer source evidence (2026-10-17)
+An explicit source `.new(Indexable(String))` rejection survived even after a
+compatible initialize(Int32)-backed Set allocator had been selected and emitted:
+the generated wrapper has no source Def for the final guard to inspect. Retain
+its selected initializer Def/arena and exact call types when emitting its body.
+The final guard may suppress that other-overload rejection only if the wrapper
+object and body revision still match and the retained initializer passes both
+ordinary and concrete generic source restrictions. Keep direct final Def
+rejections and named/block/splat paths unchanged. No stdlib or app changes.
+
+`python3 run_clean_portable_regression.py alloc3159_positional_allocator_source_proof
+alloc3166_source_admission_repository regression_tests/generated_allocator_source_admission_repro.sh`
+passes original-first ABDCE and invalid Bool/no-executable controls. Exact parent
+source fails the valid Set call (alloc3158). Source-new priority and declaration
+order across source arenas remain GREEN (alloc3167); adding an initializer
+preserves the original-qualified AAAB output (alloc3171). Scoped adversary
+ROBUST for these already-emitted positional wrapper cases. HIR SHA-256
+2f0ac3f8591be9368fc979c14013e4d82fdb6cc3fe544adacd79c5452cb8638e;
+host 49668d0c14df77683f86db1ab688dc29b5edf67f81c78028c6500b74845f4398.
+
+Refresh after allocator generation/invalidation, selected-Def/source-arena
+identity or argument restriction changes; revert source and regression together.
+The no-ivar deferred allocator is still rejected on a valid first Int32 call
+(alloc3171), so that adversary does not test its later Bool rejection. The
+scalar String/Int32 Bool false acceptance is independently reproduced on the
+unchanged parent (alloc3160/3161). Neither residual is claimed fixed. A guessed
+same-signature redefinition output AC was refuted by original Crystal's CC
+(alloc3168); use the qualified oracle instead of assuming source-order execution.
+
+Fresh sealed S2 s2_alloc3164 and unchanged LavinMQ lavin3165 both clear the Set
+blocker and stop at Tuple(String, String, String, String) -> Enumerable(String).
+No S2 or broker executable, fresh fixed point or functional/upstream parity is
+established. Deferred, named/block/splat admission and source Tuple projections
+remain independent active frontiers.

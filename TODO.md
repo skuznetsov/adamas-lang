@@ -20403,3 +20403,29 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   oracle; this is preexisting and separate from the empty `.new` result bug.
 - [ ] Continue fresh pristine S2 and unchanged LavinMQ functional/upstream
   parity. The source-new S1 regression does not establish either outcome.
+
+
+### Preserve emitted allocator source admission (2026-10-17)
+- [x] Retain the selected initializer Def and source arena when a concrete
+  positional allocator wrapper is emitted. A prior rejection from an unrelated
+  explicit `.new` may be superseded only while that exact wrapper identity,
+  body revision and call argument types still agree, and its retained source
+  restriction accepts the arguments. Direct final source mismatches still
+  reject. Fresh host alloc3159 passes original-first Set capacity/add/read,
+  source-new priority and invalid generic argument controls in
+  generated_allocator_source_admission_repro.sh (alloc3166); exact parent
+  tuple3131 rejects Set(String).new(4) against Indexable(String) (alloc3158).
+  Source-priority/declaration-order/cross-arena neighbors pass (alloc3167),
+  and the qualified added-initializer adversary preserves AAAB (alloc3171).
+- [ ] Preserve source admission before an empty-class allocator is deferred.
+  alloc3171 still rejects the valid first Int32 constructor call for a class
+  with no ivars; it does not reach that fixture's later invalid Bool call.
+  Do not interpret this probe as evidence of stale initializer admission.
+- [ ] Complete named/block/splat allocator admission separately. A scalar
+  String-overload/Int32-initializer Bool false acceptance occurs on both
+  alloc3159 and its unchanged parent (alloc3160/3161); the generic rejection
+  regression does not close that preexisting restriction path.
+- [ ] Continue fresh pristine S2 and unchanged LavinMQ functional/upstream
+  parity. Both source-locked alloc3159 runs pass Set allocation and stop at
+  Tuple(String, String, String, String) -> Enumerable(String) admission
+  (s2_alloc3164 / lavin3165); no S2 or broker executable is produced.
