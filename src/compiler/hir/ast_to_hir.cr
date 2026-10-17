@@ -101468,10 +101468,11 @@ module Adamas::HIR
       _puts_single_positional = call_args.size == 1 && node.named_args.nil? &&
                                 !call_arena[call_args[0]].is_a?(Adamas::Compiler::Frontend::SplatNode)
       if _puts_recv_nil && _puts_single_positional && _puts_no_block && _puts_fmn_ok
-        # V2 bootstrap NumberNode fast path: use NumberKind.value (raw enum int) to select extern.
-        # Avoids TypeRef constant comparison entirely — TypeRef constants may be broken in s2b.
+        # Standalone programs without stdlib IO use the runtime numeric helpers.
+        # With IO available, literals follow the same buffered path as locals.
         _puts_arg0_node = with_arena(call_arena) { @arena[call_args[0]] }
-        if _puts_arg0_node.is_a?(Adamas::Compiler::Frontend::NumberNode)
+        if !prelude_io_print_available?(method_name) &&
+           _puts_arg0_node.is_a?(Adamas::Compiler::Frontend::NumberNode)
           _puts_nk = _puts_arg0_node.kind.value # 0=I8,1=I16,2=I32,3=I64,4=I128,5=U8,6=U16,7=U32,8=U64,9=U128,10=F32,11=F64
           _puts_arg0_id = with_arena(call_arena) { lower_expr(ctx, call_args[0]) }
           prelowered_puts_arg_id = _puts_arg0_id
@@ -101560,22 +101561,8 @@ module Adamas::HIR
               return runtime_print
             end
 
-            # For Float32/Float64, use direct printf-based extern calls to avoid
-            # broken Float::Printer.shortest (yield/block issues)
-            float_extern = case arg_type
-                           when TypeRef::FLOAT64
-                             method_name == "puts" ? "__adamas_print_float64_ln" : "__adamas_print_float64"
-                           when TypeRef::FLOAT32
-                             method_name == "puts" ? "__adamas_print_float32_ln" : "__adamas_print_float32"
-                           else
-                             nil
-                           end
-            if float_extern
-              extern_call = ExternCall.new(ctx.next_id, TypeRef::VOID, float_extern, [arg_id])
-              ctx.emit(extern_call)
-              ctx.register_type(extern_call.id, TypeRef::NIL)
-              return extern_call.id
-            end
+            # Runtime numeric helpers are selected above only when stdlib IO
+            # is unavailable. Float values also use its buffered print methods.
 
             # Enum types: emit value→name lookup + puts on string
             # Skip if the expression is .value (user explicitly wants numeric value)
@@ -101888,21 +101875,6 @@ module Adamas::HIR
           _post_arg_id = args[0]
           if _runtime_print = emit_runtime_print_fallback(ctx, method_name, _post_arg_id, _post_arg_type)
             return _runtime_print
-          end
-          # Float special handling
-          _float_extern = case _post_arg_type
-                          when TypeRef::FLOAT64
-                            method_name == "puts" ? "__adamas_print_float64_ln" : "__adamas_print_float64"
-                          when TypeRef::FLOAT32
-                            method_name == "puts" ? "__adamas_print_float32_ln" : "__adamas_print_float32"
-                          else
-                            nil
-                          end
-          if _float_extern
-            _ext_call = ExternCall.new(ctx.next_id, TypeRef::VOID, _float_extern, [_post_arg_id])
-            ctx.emit(_ext_call)
-            ctx.register_type(_ext_call.id, TypeRef::NIL)
-            return _ext_call.id
           end
           _stdout_id = emit_runtime_deferred_stdio_get(ctx, "STDOUT")
           _mangled = mangle_function_name("IO##{method_name}", [_post_arg_type])

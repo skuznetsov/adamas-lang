@@ -19411,3 +19411,26 @@ Refresh after parser typeof representation, local/capture ownership, inference
 cache keys, or generic receiver lowering changes. Other type operators, the
 uncommon type-like CallNode raw-argument path, fresh bootstrap, and LavinMQ
 parity remain open; TODO records the adjacent consumers and cache obligation.
+
+
+### Numeric printing preserves stdlib IO and the selected receiver (2026-10-17)
+The HIR NumberNode fast path bypassed stdlib IO even when it was available;
+two float branches repeated the bypass. A separate MIR Float puts/print
+intercept dropped the IO receiver entirely, sending IO::Memory output to
+stdout. With prelude IO present, lower these calls through the source methods;
+standalone runtime ExternCalls retain their existing no-prelude path.
+
+numeric_io_order_repro.sh compares original-first exact stdout for all ordinary
+integer widths, float literals/locals, print/puts, sync transitions and Memory.
+Parent slice2432 is RED; HIR-only slice2433 is independently RED on float
+ordering and Memory. Full slice2438 is GREEN and signed boundary slice2439 is
+GREEN. The exact-production composition slice2440 freshly builds and passes
+slice2444. Scoped adversary verdict ROBUST for these tested prelude receivers
+and ordering paths. Source manifest SHA-256 c35af2d91b6653424de3ca6bb7b6abce8b74cbccf46502908d4a3f62ed44d9bd;
+host ab9a19849e38e4af3742b10f7e87bff0dd79bc87cae4ef94e4feacca2f3ede58.
+
+The broader standalone guard exposed an existing independent libc/write sink
+mismatch (slice2441 and parent slice2442); this change does not repair it.
+Refresh after IO selection, runtime-helper admission, virtual dispatch or
+buffering changes. Revert the HIR/MIR changes and regression together. Fresh
+ordinary S2 and unchanged LavinMQ functional/upstream parity remain open.

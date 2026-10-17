@@ -7131,26 +7131,8 @@ module Adamas
           end
         end
 
-        # Intercept IO#puts/print for Float64/Float32 BEFORE virtual dispatch.
-        # Float::Printer.shortest is broken (yield/block issues), so redirect to printf-based helpers.
-        if args.size == 2 # self (IO) + float value
-          _mn = call.method_name
-          float_extern = if _mn.includes?("puts$Float64")
-                           "__adamas_print_float64_ln"
-                         elsif _mn.includes?("puts$Float32")
-                           "__adamas_print_float32_ln"
-                         elsif _mn.includes?("print$Float64")
-                           "__adamas_print_float64"
-                         elsif _mn.includes?("print$Float32")
-                           "__adamas_print_float32"
-                         else
-                           nil
-                         end
-          if float_extern
-            # Pass only the float argument (args[1]), not the IO self
-            return builder.extern_call(float_extern, [args[1]], TypeRef::VOID)
-          end
-        end
+        # Preserve the selected IO receiver and stdlib buffering for numeric
+        # printing. Standalone runtime helpers arrive as explicit ExternCalls.
 
         # Some inherited wrappers are lowered with `virtual = false` but still call a
         # parent-owned instance method on `self` (e.g. IO::Memory#read_fully ->

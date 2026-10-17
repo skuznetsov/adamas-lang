@@ -1,5 +1,21 @@
 # Adamas Bootstrap TODO
 
+2026-10-17 NUMERIC PRINT IO RECEIVERS: numeric literal fast paths and float
+substitutions in HIR/MIR bypassed standard IO buffering; MIR also discarded
+an explicit IO::Memory receiver. Use the selected stdlib methods whenever
+prelude IO is present. Keep standalone helpers for programs without it. DoD:
+numeric_io_order_repro.sh matches original Crystal byte-for-byte for all
+integer widths, Float32/Float64 literals and locals, puts/print ordering,
+sync transitions and IO::Memory. Fresh S1 slice2440 passes slice2444; the
+numeric-parser candidate's parent slice2432 fails, and HIR-only slice2433
+still loses Float receivers. The full HIR/MIR candidate passes slice2438
+and the signed-literal boundary neighbor slice2439.
+- [x] Preserve buffered ordering and explicit receivers for numeric printing.
+- [ ] Fix the separate standalone runtime sink mismatch: integer print uses
+  libc printf while subsequent float/integer puts uses write(2). Both parent
+  slice2442 and full-IO candidate slice2441 reproduce 3.5-before-2 ordering.
+- [ ] Verify fresh S2 and unchanged LavinMQ runtime/spec parity.
+
 2026-10-16 APPLIED MODULE SOURCE PROJECTIONS: retain concrete include arguments
 when checking applied module restrictions before lazy method registration.
 Array(String) -> Indexable::Mutable(String) -> Indexable(String) ->
