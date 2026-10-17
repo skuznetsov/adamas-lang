@@ -19749,3 +19749,33 @@ functional/upstream parity remain open.
 Fresh pristine S2 return3073 and exact parent return3074 use the same frozen
 return3062 source; both stop at Set(String).new(4) source-overload admission
 before IR generation. That independent constructor blocker does not verify S2.
+
+
+### Source class new publishes the selected body result (2026-10-17)
+Source `.new` was treated as a generated allocator: its result could be pinned
+to the owner class, bare calls could replace an empty-splat source method with
+an allocator, and a lazy call could consume its provisional return before the
+body was materialized. Preserve the selected source Def and arena, supply the
+empty positional Tuple when required, and demand that exact body before
+publishing its return. Only generated allocators promise the owner's instance
+type. No standard library or application changes are involved.
+
+`python3 run_clean_portable_regression.py tuple3131_source_new_on_production
+tuple3132_source_new_repository regression_tests/source_class_new_return_repro.sh`
+passes fourteen original-first type/value controls. Exact parent return3062
+is RED in tuple3133: wrong owner-type tags and an IndexError on a source-new
+Tuple payload. Constructor source priority, declaration order and cross-arena
+controls remain GREEN in tuple3134; pending numeric return controls remain
+GREEN in tuple3135. The four-case original-first tuple3142 adversary preserves
+distinct named-only/defaulted and positional source-new results across both
+declaration and call orders. Scoped adversary ROBUST for these source-new
+return and identity cases. HIR SHA-256
+7b608dc8b3a51a21a0f1706064766d969688a6f94f13b4a63d85262b0c3eb300;
+host e19f577a3a7a09850c143099370096f7cb449d2a0f81546cb8967e889a80095e.
+
+Refresh after constructor selection, call-site identity, splat packing or lazy
+return publication changes. Revert the source delta and regression together.
+Named initializer source admission, block constructors, included generic bare
+Tuple T identity, fresh S2 and unchanged LavinMQ functional/upstream parity
+remain open. Fresh S2 tuple3136 and LavinMQ lavin3137 both stop at the independent
+Set(String).new(4) source-rejection guard before IR generation.

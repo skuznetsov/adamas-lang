@@ -105537,7 +105537,8 @@ module Adamas::HIR
       # exact call-site symbol; late materialization must not rediscover a
       # different included or inherited body from the serialized name alone.
       if selected_def = selected_call_entry_def
-        if (source_named_entry && !has_block_call && same_def_node?(source_named_entry[1], selected_def)) ||
+        if (allocator_explicit_new_call && !has_block_call) ||
+           (source_named_entry && !has_block_call && same_def_node?(source_named_entry[1], selected_def)) ||
            (!has_block_call && !has_splat && !has_named_args &&
            method_name_codec_exact_callsite_name?(
              mangled_method_name,
@@ -107234,10 +107235,11 @@ module Adamas::HIR
         end
       end
 
-      # For allocator calls (ClassName.new), enforce return type as the class type.
-      # Prefer fully-qualified owners to avoid short-name collisions (e.g. multiple `Parser` classes).
+      # Only generated allocators promise their owner's instance type. A selected
+      # source .new is an ordinary class method and may return another type.
+      # Prefer fully-qualified owners to avoid short-name collisions.
       return_type_pinned = false
-      if method_name == "new"
+      if method_name == "new" && !allocator_explicit_new_call
         owner_candidates = [] of String
         if full_method_name
           full_base = strip_type_suffix(full_method_name)
@@ -107952,7 +107954,8 @@ module Adamas::HIR
       # Lazy lowering can defer the callee body while still leaving an early
       # pre-lowering return type in the cache. If the target is still pending,
       # force it now before we freeze the call instruction type.
-      force_return_type_needed = return_type == TypeRef::VOID ||
+      force_return_type_needed = (allocator_explicit_new_call && !has_block_call) ||
+                                 return_type == TypeRef::VOID ||
                                  is_union_type?(return_type) ||
                                  unresolved_generic_return_type?(return_type) ||
                                  !abstract_numeric_return_constraint_for_function(mangled_method_name).nil?
@@ -125546,16 +125549,20 @@ module Adamas::HIR
                            resolve_class_method_with_inheritance(class_name_str, member_name) || "#{class_name_str}.#{member_name}"
                          end
       generated_allocator_target : String? = nil
+      source_new_entry : Tuple(String, Adamas::Compiler::Frontend::DefNode)? = nil
       if member_name == "new"
         if class_info = @class_info[class_name_str]? || @class_info[lookup_class_name]?
           zero_arg_types = [] of TypeRef
           explicit_new = lookup_function_def_for_call(
             full_method_name, 0, false, zero_arg_types, false, false,
           )
-          generate_allocator(class_name_str, class_info, zero_arg_types, force: true)
-          # Bare `Type.new` is the same zero-argument source call as
-          # `Type.new()`. Retain an explicit wrapper when one was selected.
-          unless explicit_new
+          # Bare `Type.new` must retain the selected source body, including an
+          # empty positional splat, instead of creating an allocator over it.
+          if explicit_new
+            source_new_entry = explicit_new
+            full_method_name = explicit_new[0]
+          else
+            generate_allocator(class_name_str, class_info, zero_arg_types, force: true)
             zero_arg_target = allocator_overload_name_for_call(class_name_str, zero_arg_types)
             if @module.has_function_with_body?(zero_arg_target)
               full_method_name = zero_arg_target
@@ -125618,9 +125625,28 @@ module Adamas::HIR
       end
 
       arg_types = args.map { |arg_id| ctx.type_of(arg_id) }
+      if selected = source_new_entry
+        pad_missing_positional_splat(ctx, selected[0], selected[1], args, arg_types)
+      end
       # Runtime mangling strips source arity suffixes. Keep the generated
       # zero-argument wrapper whose ABI differs from the bare allocator.
       mangled_name = generated_allocator_target || mangle_function_name(full_method_name, arg_types)
+      if selected = source_new_entry
+        selected_name, selected_def = selected
+        selected_params = function_param_infos(selected_name, selected_def)
+        if selected_params.any? { |param| param.is_splat && !param.is_double_splat }
+          mangled_name = "#{mangled_name}_splat" unless mangled_name.ends_with?("_splat")
+        end
+        if existing_def = @function_defs[mangled_name]?
+          if !same_def_node?(existing_def, selected_def) && @module.has_function_with_body?(mangled_name)
+            raise LoweringError.new("exact static call target #{mangled_name} already has a different materialized definition")
+          end
+        end
+        selected_arena = @function_def_arenas[selected_name]? || @arena
+        set_function_def_entry(mangled_name, selected_def, false)
+        set_function_def_arena(mangled_name, resolve_arena_for_def(selected_def, selected_arena))
+        remember_callsite_arg_types(mangled_name, arg_types)
+      end
       # DEBUG: Catch short names being used for method calls
       if env_has?("DEBUG_SHORT_NAMES") && full_method_name &&
          (full_method_name.starts_with?("Seek#") || full_method_name.starts_with?("Seek.") ||
@@ -125628,7 +125654,7 @@ module Adamas::HIR
          full_method_name.starts_with?("LoadCommand#") || full_method_name.starts_with?("LoadCommand."))
         STDERR.puts "[SHORT_NAME_CALL] full_method_name=#{full_method_name}, mangled=#{mangled_name}"
       end
-      actual_name = if @function_types.has_key?(mangled_name) || @module.has_function?(mangled_name)
+      actual_name = if source_new_entry || @function_types.has_key?(mangled_name) || @module.has_function?(mangled_name)
                       mangled_name
                     elsif has_function_base?(full_method_name)
                       full_method_name
@@ -125646,7 +125672,7 @@ module Adamas::HIR
         end
       end
       # For .new, use class type_ref as return type
-      if member_name == "new" && return_type == TypeRef::VOID
+      if member_name == "new" && source_new_entry.nil? && return_type == TypeRef::VOID
         if enum_name
           return_type = enum_base_type(enum_name)
         elsif class_info = @class_info[class_name_str]? || @class_info[lookup_class_name]?
@@ -125664,7 +125690,7 @@ module Adamas::HIR
       if actual_name != mangled_name
         lower_function_if_needed(actual_name)
       end
-      if !abstract_numeric_return_constraint_for_function(actual_name).nil? &&
+      if (source_new_entry || !abstract_numeric_return_constraint_for_function(actual_name).nil?) &&
          force_pending_call_targets_for_return_type(actual_name, mangled_name, full_method_name, context: "static_member_access")
         refreshed = get_function_return_type(actual_name)
         return_type = refreshed unless refreshed == TypeRef::VOID

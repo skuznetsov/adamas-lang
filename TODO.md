@@ -20380,3 +20380,26 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   a stub. Do not add stdlib workarounds.
 - [ ] Run fresh pristine S2 and unchanged LavinMQ functional/upstream parity.
   These source-call S1 checks do not establish either acceptance criterion.
+
+
+### Preserve source class new results (2026-10-17)
+- [x] Keep a selected source `.new` as an ordinary class method. Bare calls
+  retain its Def/arena and empty splat; parenthesized calls demand the selected
+  body before consuming its result type. Only generated allocators promise
+  their owner's instance type. Fresh production S1 tuple3131 passes fourteen
+  original-first type/value controls in source_class_new_return_repro.sh
+  (tuple3132); exact parent return3062 emits wrong tags and raises IndexError
+  when reading a nonempty source-new Tuple (tuple3133). Constructor source
+  priority/declaration-order/cross-arena and abstract numeric return neighbors
+  remain GREEN (tuple3134/3135). Four named-only/defaulted versus positional
+  overload controls preserve distinct results across both declaration and
+  call orders (tuple3142).
+- [ ] Complete named and block constructor source admission without losing the
+  exact selected Def, arena or source argument identity. The named Time::Span
+  nanoseconds-only source overload is still routed through initialize in
+  alloc3101; these return-type tests do not establish that separate boundary.
+- [ ] Preserve variadic Tuple's bare T identity in included generic formals.
+  tuple3102 and exact production tuple3106 both fail the positive original
+  oracle; this is preexisting and separate from the empty `.new` result bug.
+- [ ] Continue fresh pristine S2 and unchanged LavinMQ functional/upstream
+  parity. The source-new S1 regression does not establish either outcome.
