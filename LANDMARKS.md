@@ -1,3 +1,35 @@
+### Generated macro nodes retain exact source identity (2026-10-17)
+Macro expansion reparses text into an existing arena, but ExprId offsets alone
+do not identify its source buffer. Fresh expanders previously read generated
+command spans against the definition file or another buffer. Share the exact
+buffer per generated ExprId, partition it by arena, and retain each arena
+owner so object_id reuse cannot attach old entries to a new arena. Parser text
+pieces remain authoritative after escapes/trim markers; provenance spans must
+not undo that decoding.
+
+Output String expressions also bypassed command classification, while an
+unsuccessful shell command returned nil and became an ordinary quoted string.
+Use the common value evaluator and propagate MacroCommandError before emission.
+This is an evaluation failure, not a recoverable non-command classification.
+
+Fresh S1 macro2859 passes original-first macro2867: exact ABDC/newline/inert
+string bytes, separate generated buffers invoked in reverse order, a nested
+escaped-template reducer, and rc=1/no executable for failed commands in direct,
+assigned, interpolated and generated contexts. kwargs neighbor macro2868 also
+passes. Exact production parent is RED in macro2861; retaining the evaluator
+without the source map is RED in macro2852, and retaining only the source map
+is RED in macro2841. Scoped adversary verdict ROBUST for those contexts; the
+buffer-order and negative controls distinguish source aliasing and silent
+failure fallback. All 1919 integrated source hashes match the tested seal.
+Source manifest SHA256 14f4288180425f9e66c455ed7b3aa66935fe949e16289dd83921e329b7cd76f6;
+host SHA256 bd235d885911e3978a244d71ff1712edf2e58b282c15333209a34fead3bc752b.
+
+Refresh after AST arena ownership, macro reparsing, literal classification or
+source-provider changes; revert source and regression together. Module-body
+runtime emission, broader generated raw-text reconstruction, fresh pristine S2
+and unchanged LavinMQ functional/upstream parity remain open.
+
+
 ### Macro double-splat capture owns its named map (2026-10-17)
 Macro context construction wrapped named_values by reference in the captured
 MacroNamedTupleValue, then cleared that same map. Nonempty **kwargs therefore

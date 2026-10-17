@@ -7607,6 +7607,8 @@ module Adamas::HIR
     @macro_generated_parameter_def_ids : Set(UInt64)
     # Exact generated source buffer that produced each macro-expanded DefNode.
     @macro_generated_parameter_sources : Hash({UInt64, UInt64}, String)
+    # Exact buffers for nodes parsed by macro expansion, partitioned by arena.
+    @macro_generated_sources_by_arena : Hash(UInt64, {Adamas::Compiler::Frontend::ArenaLike, Hash(Int32, String)})
     @link_libraries : Array(String)
     @last_splat_context : String?
     @type_literal_values : Set(ValueId)
@@ -7969,6 +7971,7 @@ module Adamas::HIR
       @extra_sources_by_arena = {} of UInt64 => Array(String)
       @macro_generated_parameter_def_ids = Set(UInt64).new
       @macro_generated_parameter_sources = {} of {UInt64, UInt64} => String
+      @macro_generated_sources_by_arena = {} of UInt64 => {Adamas::Compiler::Frontend::ArenaLike, Hash(Int32, String)}
       @link_libraries = link_libraries || [] of String
       @last_splat_context = nil
       @type_literal_values = Set(ValueId).new
@@ -8240,6 +8243,7 @@ module Adamas::HIR
       @extra_sources_by_arena = {} of UInt64 => Array(String)
       @macro_generated_parameter_def_ids = Set(UInt64).new
       @macro_generated_parameter_sources = {} of {UInt64, UInt64} => String
+      @macro_generated_sources_by_arena = {} of UInt64 => {Adamas::Compiler::Frontend::ArenaLike, Hash(Int32, String)}
     end
 
     def bootstrap_bind_stdlib_root(stdlib_root : String) : Nil
@@ -8265,6 +8269,7 @@ module Adamas::HIR
       @source_recovered_defs = {} of UInt64 => Adamas::Compiler::Frontend::DefNode
       @macro_generated_parameter_def_ids = Set(UInt64).new
       @macro_generated_parameter_sources = {} of {UInt64, UInt64} => String
+      @macro_generated_sources_by_arena = {} of UInt64 => {Adamas::Compiler::Frontend::ArenaLike, Hash(Int32, String)}
       @last_splat_context = nil
       @type_literal_values = Set(ValueId).new
       @constant_defs = Set(String).new
@@ -8343,6 +8348,18 @@ module Adamas::HIR
     @[AlwaysInline]
     private def source_for_arena(arena : Adamas::Compiler::Frontend::ArenaLike) : String?
       @sources_by_arena[arena_map_key(arena)]?
+    end
+
+    private def macro_generated_sources_for(arena : Adamas::Compiler::Frontend::ArenaLike) : Hash(Int32, String)
+      key = arena_map_key(arena)
+      if entry = @macro_generated_sources_by_arena[key]?
+        return entry[1]
+      end
+      # Retain the owner alongside its ExprId table. A recycled object_id must
+      # never attach an old generated buffer to a different arena's nodes.
+      sources = {} of Int32 => String
+      @macro_generated_sources_by_arena[key] = {arena, sources}
+      sources
     end
 
     @[AlwaysInline]
@@ -15456,6 +15473,7 @@ module Adamas::HIR
         @arena,
         compilation_flags,
         recovery_mode: true,
+        generated_sources: macro_generated_sources_for(@arena),
         macro_source: source,
         macro_source_path: source_path_for(@arena),
         type_value_resolver: macro_type_value_resolver,
@@ -15717,6 +15735,7 @@ module Adamas::HIR
         macro_arena,
         compilation_flags,
         recovery_mode: true,
+        generated_sources: macro_generated_sources_for(macro_arena),
         source_provider: ->(expr_id : ExprId) : String? { macro_block_body_text(expr_id) },
         macro_source: source_for_arena(macro_arena),
         macro_source_path: source_path_for(macro_arena),
@@ -24970,6 +24989,7 @@ module Adamas::HIR
         @arena,
         compilation_flags,
         recovery_mode: true,
+        generated_sources: macro_generated_sources_for(@arena),
         macro_source: source,
         macro_source_path: source_path_for(@arena),
         type_value_resolver: macro_type_value_resolver,
@@ -30815,6 +30835,7 @@ module Adamas::HIR
         @arena,
         compilation_flags,
         recovery_mode: true,
+        generated_sources: macro_generated_sources_for(@arena),
         macro_source: source,
         macro_source_path: source_path_for(@arena),
         type_value_resolver: macro_type_value_resolver,
@@ -31835,6 +31856,7 @@ module Adamas::HIR
         @arena,
         compilation_flags,
         recovery_mode: true,
+        generated_sources: macro_generated_sources_for(@arena),
         macro_source: source,
         macro_source_path: source_path_for(@arena),
         type_value_resolver: macro_type_value_resolver,
@@ -33657,6 +33679,7 @@ module Adamas::HIR
         @arena,
         compilation_flags,
         recovery_mode: true,
+        generated_sources: macro_generated_sources_for(@arena),
         macro_source: source,
         macro_source_path: source_path_for(@arena),
         type_value_resolver: macro_type_value_resolver,
@@ -33881,6 +33904,7 @@ module Adamas::HIR
         @arena,
         compilation_flags,
         recovery_mode: true,
+        generated_sources: macro_generated_sources_for(@arena),
         macro_source: source,
         macro_source_path: source_path_for(@arena),
         type_value_resolver: macro_type_value_resolver,
@@ -79957,6 +79981,7 @@ module Adamas::HIR
         @arena,
         compilation_flags,
         recovery_mode: true,
+        generated_sources: macro_generated_sources_for(@arena),
         macro_source: source,
         macro_source_path: source_path_for(@arena),
         source_provider: ->(block_id : Adamas::Compiler::Frontend::ExprId) { macro_block_text(block_id) },
@@ -81462,7 +81487,10 @@ module Adamas::HIR
       builder = String::Builder.new
 
       node.pieces.each do |piece|
-        if source && (span = piece.span)
+        # Text pieces are parser-decoded; source spans are provenance only.
+        if text = piece.text
+          builder << text
+        elsif source && (span = piece.span)
           start = span.start_offset
           length = span.end_offset - span.start_offset
           next if length <= 0

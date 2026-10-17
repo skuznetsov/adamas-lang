@@ -10,6 +10,10 @@ require "./macro_value"
 module Adamas
   module Compiler
     module Semantic
+      # A failed command is an evaluation error, never an ordinary string fallback.
+      class MacroCommandError < Exception
+      end
+
       # Small JSONL writer for macro-expansion diagnostics.
       #
       # Keep this local and scalar-only: using Hash#to_json here pulls generic
@@ -220,6 +224,7 @@ module Adamas
           macro_source : String? = nil,
           macro_source_path : String? = nil,
           source_sink : Proc(String, Nil)? = nil,
+          generated_sources : Hash(Int32, String)? = nil,
           type_value_resolver : Proc(String, MacroValue?)? = nil,
           constant_value_resolver : Proc(String, MacroValue?)? = nil,
           type_relation_resolver : Proc(String, String, Bool)? = nil
@@ -235,6 +240,9 @@ module Adamas
           @macro_source_path = macro_source_path
           @macro_source_provider = nil.as(Proc(Frontend::ExprId, String?)?)
           @source_sink = source_sink
+          # ExprIds belong to one arena. HIR shares this table across fresh
+          # expanders for that arena; offsets alone never identify a buffer.
+          @generated_sources = generated_sources || {} of Int32 => String
           @type_value_resolver = type_value_resolver
           @constant_value_resolver = constant_value_resolver
           @type_relation_resolver = type_relation_resolver
@@ -348,7 +356,10 @@ module Adamas
           # For multi-file aggregates: temporarily set @macro_source to the
           # defining file's source so span-based text extraction works correctly.
           saved_macro_source = @macro_source
-          if provider = @macro_source_provider
+          if generated_source = @generated_sources[macro_symbol.body.index]? ||
+                                @generated_sources[macro_symbol.node_id.index]?
+            @macro_source = generated_source
+          elsif provider = @macro_source_provider
             if resolved_source = provider.call(macro_symbol.node_id)
               @macro_source = resolved_source
             end
@@ -1844,6 +1855,11 @@ module Adamas
         end
 
         private def macro_piece_text(piece : MacroPiece) : String?
+          # Parser text has already applied macro escapes and trim markers.
+          # A source span records provenance; it must not undo that decoding.
+          if text = piece.text
+            return text
+          end
           if source = @macro_source
             if span = piece.span
               start = span.start_offset
@@ -2179,6 +2195,9 @@ module Adamas
         end
 
         private def source_for_node(node_id : ExprId, span : Frontend::Span) : String?
+          if generated_source = @generated_sources[node_id.index]?
+            return generated_source
+          end
           if provider = @macro_source_provider
             if source = provider.call(node_id)
               return source if span.end_offset <= source.bytesize
@@ -2241,27 +2260,28 @@ module Adamas
                       evaluate_string_interpolation(node.as(Frontend::StringInterpolationNode), context)
                     end
 
-          output = execute_macro_command(command)
-          return nil if output.nil?
+          output = execute_macro_command(command, node_id)
           MacroIdValue.new(output)
         end
 
-        private def execute_macro_command(command : String) : String?
+        private def execute_macro_command(command : String, location : ExprId) : String
           output = IO::Memory.new
           error = IO::Memory.new
 
           status = begin
             Process.run("sh", ["-c", command], output: output, error: error)
           rescue ex
-            emit_error("error executing command: #{command}: #{ex.message}")
-            return nil
+            message = "error executing command: #{command}: #{ex.message}"
+            emit_error(message, location)
+            raise MacroCommandError.new(message)
           end
 
           unless status.success?
             err = error.to_s.strip
             detail = err.empty? ? "exit #{status.exit_code}" : err
-            emit_error("error executing command: #{command}: #{detail}")
-            return nil
+            message = "error executing command: #{command}: #{detail}"
+            emit_error(message, location)
+            raise MacroCommandError.new(message)
           end
 
           output.to_s
@@ -2280,6 +2300,7 @@ module Adamas
           parser = Frontend::Parser.new(lexer, @arena, recovery_mode: @recovery_mode)
 
           begin
+            first_generated_index = @arena.size
             program = parser.parse_program
 
             # Check for parse errors
@@ -2291,16 +2312,24 @@ module Adamas
             end
 
             roots = program.roots
-            if roots.empty?
-              ExprId.new(-1)
-            elsif roots.size == 1
-              roots.first
-            else
-              first_span = @arena[roots.first].span
-              last_span = @arena[roots.last].span
-              begin_node = Frontend::BeginNode.new(first_span.cover(last_span), roots)
-              @arena.add_typed(begin_node)
+            expanded_id = if roots.empty?
+                            ExprId.new(-1)
+                          elsif roots.size == 1
+                            roots.first
+                          else
+                            first_span = @arena[roots.first].span
+                            last_span = @arena[roots.last].span
+                            begin_node = Frontend::BeginNode.new(first_span.cover(last_span), roots)
+                            @arena.add_typed(begin_node)
+                          end
+            unless expanded_id.invalid?
+              generated_index = first_generated_index
+              while generated_index < @arena.size
+                @generated_sources[generated_index] = output
+                generated_index += 1
+              end
             end
+            expanded_id
           rescue ex
             # Catch any parser exceptions
             emit_error("Failed to parse macro expansion: #{ex.message}. Generated code: \"#{output}\"", location)
@@ -2364,9 +2393,9 @@ module Adamas
             # Number literal: 42, 3.14
             Frontend.node_literal_string(node) || ""
           when .string?
-            # String literal: "hello" (preserve quotes)
-            literal = Frontend.node_literal_string(node) || ""
-            literal.inspect
+            # Use the value evaluator for literal classification as well as
+            # quoting, so command literals execute in output expressions too.
+            evaluate_to_macro_value(expr_id, context).to_macro_output
           when .char?
             # Char literal: 'a'
             literal = Frontend.node_literal_string(node) || ""

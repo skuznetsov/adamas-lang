@@ -1,5 +1,27 @@
 # Adamas Bootstrap TODO
 
+2026-10-17 MACRO COMMAND SOURCE IDENTITY: generated ExprId spans were read
+against the macro definition file or a different expansion buffer. Track the
+exact generated buffer per ExprId and retain its arena owner across expanders.
+Use parser-decoded text pieces before provenance spans; evaluate output String
+nodes through the same value evaluator as assignments. Failed shell commands
+must raise an evaluation error instead of falling back to ordinary strings.
+DoD: macro_command_source_identity_repro.sh compares original-first exact bytes
+for direct/assigned commands, two generated buffers invoked in reverse order,
+inert quoted strings and nested escaped templates. Direct, assigned,
+interpolated and generated failed commands require rc=1 and no executable.
+Fresh S1 macro2859 passes macro2867 and kwargs neighbor macro2868; production
+parent fails macro2861, and source-map/evaluator ablations fail independently.
+- [x] Preserve generated source identity, decoded text and command failures.
+- [ ] Isolate the separate dropped module-body executable-call behavior: the
+  original-qualified private macro-header fixture emits P/F with Crystal but
+  no output with the candidate. The module-body lowering route handles
+  declarations/macros without emitting ordinary calls; verify a plain module
+  reducer before attributing this failure to macro header scanning.
+- [ ] Probe generated raw-text gaps and source reconstruction paths beyond
+  the command classifier before extending this provenance claim.
+- [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
+
 2026-10-17 MACRO DOUBLE-SPLAT MAP OWNERSHIP: context construction stored a
 reference to named_values in **kwargs and immediately cleared that same map.
 Copy the named map when creating the captured MacroNamedTupleValue. DoD:
