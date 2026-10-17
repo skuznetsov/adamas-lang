@@ -20429,3 +20429,26 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   parity. Both source-locked alloc3159 runs pass Set allocation and stop at
   Tuple(String, String, String, String) -> Enumerable(String) admission
   (s2_alloc3164 / lavin3165); no S2 or broker executable is produced.
+
+
+### Preserve builtin Tuple source include projection (2026-10-17)
+- [x] Retain each direct class include target with its source arena before
+  generic registration returns. Tuple's bare stdlib reopening has no explicit
+  formals; its implicit variadic T must bind both ordered elements and their
+  normalized union. Substitute the complete Union(*T) application before
+  reducing Union, so Indexable/Enumerable(String) admission sees String.
+  Fresh sealed host tuple3178 passes the original-first repository regression
+  (tuple3195): ten positive native tags, including rooted/aliased Tuple,
+  heterogeneous/repeated/nilable/nested elements, plus three rc1/no-executable
+  element, nested element and nominal namespace rejections. Exact parent
+  alloc3159 is RED (tuple3173); capture without substitution is RED (tuple3174).
+- [x] Preserve nullable applied-module and canonical generic-union neighbors
+  (tuple3185/3190), and direct/bare/cross-source-arena generic reopenings
+  (tuple3194). The original-qualified lexical module/alias positive still
+  rejects on both candidate tuple3187 and exact parent tuple3189. Fix its
+  owner-lexical identity separately; do not weaken nominal admission.
+- [ ] Complete macro-produced include collection and bare variadic Tuple T
+  identity. This direct-include/Union(*T) repair does not establish either.
+- [ ] Complete fresh pristine S2, unchanged LavinMQ functional/upstream parity
+  and bootstrap fixed point. Lavin3182 was interrupted with no final result;
+  an interrupted compiler process is not an observed compile failure.

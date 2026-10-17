@@ -6962,6 +6962,9 @@ module Adamas::HIR
     @generic_templates : Hash(String, GenericClassTemplate)
     # Additional generic class reopenings (base name -> templates)
     @generic_reopenings : Hash(String, Array(GenericClassTemplate))
+    # Direct source includes retain their declaration arena even for builtin
+    # generic owners whose stdlib reopening has no explicit type parameters.
+    @source_class_include_targets : Hash(String, Array(Tuple(ExprId, Adamas::Compiler::Frontend::ArenaLike)))
 
     # Already monomorphized generic classes (specialized name -> true)
     @monomorphized : Set(String)
@@ -7766,6 +7769,7 @@ module Adamas::HIR
       @function_namespace_overrides = Hash(String, String).new(initial_capacity: 4096)
       @generic_templates = {} of String => GenericClassTemplate
       @generic_reopenings = {} of String => Array(GenericClassTemplate)
+      @source_class_include_targets = {} of String => Array(Tuple(ExprId, Adamas::Compiler::Frontend::ArenaLike))
       @monomorphized = Set(String).new(initial_capacity: 32768)
       @pending_monomorphizations = [] of {String, Array(String), String}
       @pending_monomorphization_names = Set(String).new(initial_capacity: 32768)
@@ -16677,10 +16681,10 @@ module Adamas::HIR
             args << str
           end
         end
-        if base == "Union" && args.size == 1
-          return args.first
-        end
-        "#{base}(#{args.join(", ")})"
+        # Substitute the complete application before reducing Union. In
+        # particular Union(*T) must retain its wrapper until the variadic
+        # binding is expanded; reducing it to *T loses the element union.
+        substitute_type_params_in_type_name("#{base}(#{args.join(", ")})")
       when Adamas::Compiler::Frontend::SplatNode
         stringify_type_expr(node.expr)
       when Adamas::Compiler::Frontend::TupleLiteralNode
@@ -36240,6 +36244,15 @@ module Adamas::HIR
     )
       bootstrap_trace_puts "[CLASS_FRONTIER] class_current_arena_enter #{class_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
       class_name = resolve_class_name_for_definition(class_name)
+      if body = node.body
+        body.each do |member_id|
+          member = unwrap_visibility_member_in_arena(@arena[member_id], @arena)
+          next unless member.is_a?(Adamas::Compiler::Frontend::IncludeNode)
+          targets = @source_class_include_targets[class_name] ||= [] of Tuple(ExprId, Adamas::Compiler::Frontend::ArenaLike)
+          target = {member.target, @arena}
+          targets << target unless targets.includes?(target)
+        end
+      end
       @abstract_class_names.add(class_name) if node.is_abstract == true
       if type_params = node.type_params
         if type_params.size > 0
@@ -64801,9 +64814,12 @@ module Adamas::HIR
             end
             new_args << normalize_tuple_literal_type_name(substitute_type_params_in_type_name(arg))
           end
-          # Union(X) collapses to X — matches stringify_type_expr GenericNode.
-          if info.base == "Union" && new_args.size == 1
-            return scope_cache[name] = new_args.first
+          # A Union application denotes the normalized union of its expanded
+          # arguments. An unresolved splat must retain the application until
+          # a concrete type-parameter map supplies its element list.
+          if info.base == "Union" && !new_args.any? { |arg| arg.starts_with?('*') }
+            union = new_args.empty? ? "NoReturn" : normalize_union_type_name(new_args.join(" | "))
+            return scope_cache[name] = union
           end
           return scope_cache[name] = "#{info.base}(#{new_args.join(", ")})"
         end
@@ -69830,33 +69846,33 @@ module Adamas::HIR
       info = split_generic_base_and_args(owner)
       return result unless info
       base = resolve_generic_template_base(info.base)
-      template = @generic_templates[base]?
-      return result unless template
+      targets = @source_class_include_targets[base]?
+      return result unless targets
       args = split_generic_type_args(info.args).map(&.strip)
-      templates = [template]
-      if reopenings = @generic_reopenings[base]?
-        reopenings.each { |reopening| templates << reopening }
+      param_map = {} of String => String
+      if base == "Tuple"
+        # Tuple's implicit variadic T belongs to the builtin declaration, while
+        # its stdlib body is a bare reopening. Preserve the ordered splat as
+        # well as the element union when projecting Union(*T) includes.
+        param_map["T"] = args.empty? ? "NoReturn" : normalize_union_type_name(args.join(" | "))
+        param_map["T__tuple"] = args.join(", ")
+      else
+        template = @generic_templates[base]?
+        return result unless template && template.type_params.size == args.size
+        template.type_params.each_with_index { |param, index| param_map[param] = args[index] }
       end
       old_class = @current_class
       @current_class = owner
       begin
-        templates.each do |definition|
-          next unless definition.type_params.size == args.size
-          param_map = {} of String => String
-          definition.type_params.each_with_index { |param, index| param_map[param] = args[index] }
-          next unless body = definition.node.body
-          with_arena(definition.arena) do
-            with_namespace_override(definition.name) do
+        targets.each do |target_id, target_arena|
+          with_arena(target_arena) do
+            with_namespace_override(base) do
               with_type_param_map(param_map) do
-                body.each do |member_id|
-                  member = unwrap_visibility_member_in_arena(definition.arena[member_id], definition.arena)
-                  next unless member.is_a?(Adamas::Compiler::Frontend::IncludeNode)
-                  target = stringify_type_expr_in_current_arena(member.target)
-                  next unless target
-                  resolved = macro_resolve_included_module_name(target, definition.name)
-                  next unless resolved && macro_concrete_module_instance?(resolved, definition.name)
-                  result << resolved unless result.includes?(resolved)
-                end
+                target = stringify_type_expr_in_current_arena(target_id)
+                next unless target
+                resolved = macro_resolve_included_module_name(target, base)
+                next unless resolved && macro_concrete_module_instance?(resolved, base)
+                result << resolved unless result.includes?(resolved)
               end
             end
           end

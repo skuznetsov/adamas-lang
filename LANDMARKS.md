@@ -19815,3 +19815,39 @@ blocker and stop at Tuple(String, String, String, String) -> Enumerable(String).
 No S2 or broker executable, fresh fixed point or functional/upstream parity is
 established. Deferred, named/block/splat admission and source Tuple projections
 remain independent active frontiers.
+
+
+### Tuple source includes substitute before union reduction (2026-10-17)
+Tuple(String, String, String, String) failed Enumerable(String) admission even
+though pristine stdlib declares `struct Tuple; include Indexable(Union(*T))`.
+The implicit builtin variadic formal is absent from that bare reopening, so
+looking only for explicit generic templates missed its source include. Retain
+class include ExprIds with their owning arenas before the generic early return;
+project Tuple with both T's element union and its ordered T__tuple binding.
+Capture alone remained RED: GenericNode stringification reduced Union(*T) to
+*T before binding. Substitute the complete application first, then normalize
+its expanded concrete Union. No stdlib or application changes are involved.
+
+`python3 run_clean_portable_regression.py tuple3178_substitute_before_union_reduction
+tuple3195_source_projection_rooted_alias regression_tests/tuple_source_module_projection_repro.sh`
+passes ten original-first native tags AABCDABCAA and three rc1/no-executable
+negative controls (wrong element, nested element and nominal namespace).
+Exact parent alloc3159 is RED in tuple3173; capture-only tuple3172 is RED in
+tuple3174. Trace tuple3177 separates the loss: Indexable(*T) remained unresolved
+despite T=String and T__tuple=String,String,String,String. Nullable applied module
+and canonical generic union neighbors remain GREEN (tuple3185/3190); direct,
+bare and cross-arena generic reopenings remain GREEN (tuple3194). Source review
+and rooted/aliased concrete Tuple guards found no counterexample: scoped
+adversary ROBUST for this direct source projection and concrete Union path.
+HIR SHA-256
+b4134ebff786857489283cd8d63c570bb1bfeeb6dda5dddbe77c697831a7f48b;
+host fa6b7d40b38e8eb57fdccd69cde7f10e489454ff50691eae8c9e95f8bcee108b.
+
+Refresh after source registration, source-arena ownership, generic substitution,
+Union normalization or module owner resolution changes; revert source and
+regression together. The nested lexical-module/alias positive fails identically
+on candidate tuple3187 and parent tuple3189 and remains separate. Macro-produced
+include targets, bare Tuple T identity and empty Tuple projection remain open.
+Lavin3182 cleared the admission error but was interrupted during lowering with
+no final result. No broker executable, functional/upstream parity or fresh
+bootstrap fixed point is established by these local regressions.
