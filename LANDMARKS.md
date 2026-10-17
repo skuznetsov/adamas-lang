@@ -1,5 +1,20 @@
 # LANDMARKS
 
+Macro alias equality (2026-10-16): compare already-visible aliases by their
+projected types in the active declaration context. Preserve rooted paths and
+lexical shadows; do not resolve an unknown short name through an unrelated
+same-suffix alias. Original-first macro_alias_type_equality_repro.sh matches
+ABCDEFGHIXK for direct/chained/qualified/rooted names, shadows, unequal types,
+unrelated aliases and literal controls; the exact parent emits XXXXXXXHIXK.
+Scoped verdict: ROBUST for these registered aliases, not general alias closure.
+HIR 1c3955b82344b582146f7a9ae43d956dd0ede01cee1efe61bc16106006877479;
+host 36e119ff38b07a337bfd24301327a9b754009c46228ece82395ae0cb9e407161.
+Receipts: alias2161/2163/2165; refresh after macro comparison, alias visibility or
+namespace projection changes. FastFloat remains RED: nested Pow5Tables macro
+comparison precedes registration of the enclosing flag-selected Limb alias
+(alias2160). That traversal-order boundary, recursive/unresolved aliases,
+fresh bootstrap and LavinMQ parity remain open.
+
 JSON Escape read source authority (2026-10-16): remove both handwritten
 LLVM overrides of JSON::Builder::Escape#read. The stdlib body raises; the
 substitutes delegated to inner IO and fabricated an invalid

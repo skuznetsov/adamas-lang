@@ -29,6 +29,14 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+Macro type equality projects already-visible aliases with declaration-owned
+namespace lookup; rooted paths and local shadows retain authority. Unknown
+short names cannot capture unrelated aliases. DoD:
+macro_alias_type_equality_repro.sh, original-first ABCDEFGHIXK versus parent
+XXXXXXXHIXK. Rollback is the bounded comparison operand helper. Recursive or
+unresolved aliases and enclosing flag-macro declaration ordering remain open;
+registered-alias equality does not certify FastFloat, bootstrap or LavinMQ.
+
 JSON::Builder::Escape#read consumes its unchanged stdlib body, which raises.
 Backend overrides must not delegate it to an inner IO or invent a conflicting
 return union. Ordinary MIR/virtual ABI handles the tested NoReturn join. DoD:

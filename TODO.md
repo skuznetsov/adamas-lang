@@ -1,5 +1,18 @@
 # Adamas Bootstrap TODO
 
+2026-10-16 MACRO ALIAS EQUALITY: equality/inequality conditions resolve
+already-visible aliases in their declaration namespace, preserving rooted
+paths and lexical shadowing. Unknown short names cannot capture unrelated
+same-suffix aliases. DoD: macro_alias_type_equality_repro.sh compares original
+exact ABCDEFGHIXK; the parent produces XXXXXXXHIXK. Evidence: alias2161/2163/2165,
+alias2154 and the original-first refreshed script. Refresh after macro
+condition extraction, alias visibility or namespace projection changes.
+- [ ] Resolve enclosing-module declaration ordering: FastFloat::Pow5Tables
+  evaluates Limb == UInt64 before its enclosing flag-selected Limb alias is
+  registered (alias2160). Registered-alias equality alone does not close the
+  String#to_f64 consumer or bootstrap.
+- [ ] Audit recursive/unresolved alias comparisons separately.
+
 2026-10-16 JSON ESCAPE READ: removed both manual backend substitutes;
 compile the unchanged stdlib raising body through ordinary MIR. The overrides
 both violated source behavior and emitted an invalid Int32|NoReturn|String

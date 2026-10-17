@@ -78052,8 +78052,8 @@ module Adamas::HIR
         case op_str
         when "==", "!="
           # Handle type parameter comparison: {% if F == Float32 %}
-          left_type = macro_condition_type_name(cond_node.left)
-          right_type = macro_condition_type_name(cond_node.right)
+          left_type = macro_condition_comparison_type_name(cond_node.left)
+          right_type = macro_condition_comparison_type_name(cond_node.right)
           if env_has?("DEBUG_MACRO_TYPE_CMP")
             method_name = @current_method || "(unknown)"
             if @current_class.try(&.includes?("Slice")) && method_name.includes?("hash")
@@ -78159,6 +78159,35 @@ module Adamas::HIR
       members = split_union_type_name(resolved)
       return nil if members.empty?
       members
+    end
+
+    # Canonicalize only an alias that is already visible in the active source context.
+    # Unknown short names stay raw so an unrelated same-suffix alias cannot fabricate identity.
+    private def macro_condition_comparison_type_name(expr_id : ExprId) : String?
+      name = macro_condition_type_name(expr_id)
+      return nil unless name
+
+      if rooted = macro_condition_rooted_alias_name(expr_id)
+        return macro_projection_type_name(rooted) if macro_projection_alias_key(rooted)
+      end
+
+      return name unless macro_projection_alias_key(name)
+      macro_projection_type_name(name)
+    end
+
+    private def macro_condition_rooted_alias_name(expr_id : ExprId) : String?
+      node = @arena[expr_id]
+      case node
+      when Adamas::Compiler::Frontend::MacroExpressionNode
+        macro_condition_rooted_alias_name(node.expression)
+      when Adamas::Compiler::Frontend::GroupingNode
+        macro_condition_rooted_alias_name(node.expression)
+      when Adamas::Compiler::Frontend::PathNode
+        path = collect_path_string(node)
+        path.starts_with?("::") ? path : nil
+      else
+        nil
+      end
     end
 
     # Extract type name from macro condition expression, with type param substitution.
