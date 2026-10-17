@@ -1,5 +1,24 @@
 # Adamas Bootstrap TODO
 
+2026-10-16 BUFFERED FD READ/GETS: restore the unchanged stdlib bodies for
+FileDescriptor#read(Slice), FileDescriptor#gets(Char, Bool) and File#gets.
+The read override skipped unread buffered bytes; gets also emitted a struct
+return where its caller used the nilable-pointer ABI. DoD:
+buffered_read_order_repro.sh, original-first exact File/pipe transcripts for
+mixed gets/read/read_byte/peek, UTF-8/CRLF, long lines, remainder and EOF.
+io2180 passes on a newly compiled S1 with the read-side patch plus the selected
+String.new-default fix, without IR edits. io2175 read-removals-only fails on
+String.new's omitted default; that independent root cause is now covered.
+The exact String-only parent io2190 passes the original oracle, builds the
+candidate, then times out under the safe runner on its native read test.
+- [x] Verify Claude 89f44ba5's source-body restoration on a fresh S1.
+- [ ] Verify the buffered path on fresh ordinary S2; current bootstrap remains
+  blocked separately at AstToHir#safe_slice_to_string (Nil | Slice(UInt8)).
+  Full override acceptance across stages and LavinMQ parity remain open.
+- [ ] Repair File.close, multi-argument IO#print and the crashing signal
+  handler as separate compiler/runtime boundaries. This read regression
+  explicitly excludes close and multi-argument print.
+
 2026-10-16 SELECTED SOURCE NEW DEFAULTS: retain a source-selected constructor
 and its defining arena when omitted named-only defaults become ABI arguments.
 A second lookup of the packed positional vector discarded String.new(Bytes,
@@ -61,8 +80,8 @@ return layout. DoD: json_escape_read_noreturn_repro.sh, original-first exact
 bytes for JSON read/rescue, typed IO::Memory and virtual Int32/NoReturn;
 parent RED on the first two, virtual guard GREEN. Receipt: io2156. Refresh
 on builtin override, virtual ABI or read lowering changes.
-- [ ] Complete Claude's buffered FD read/gets check after resolving the separate
-  String.new(bytes) omitted-keyword route; then run a fresh S2 smoke test.
+- [x] Complete Claude's buffered FD read/gets S1 check after resolving the
+  String.new(bytes) omitted-keyword route (io2180); fresh S2 remains open above.
 - [ ] Audit remaining handwritten IO overrides against source semantics.
   Do not infer a general NoReturn union bug from this removed override.
 
@@ -20102,11 +20121,10 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 ### Deferred semantic comparator and stdlib override audit (2026-10-16)
 
 - [ ] Audit manual LLVM builtin overrides with original-first behavioral probes,
-  starting with buffered IO. A raw `read`/two-argument `gets` override is a
-  confirmed buffer bypass, but data loss/reordering is still a hypothesis.
-  Reproduce buffered residual bytes on the same object, then mixed access;
-  keep raw-only alternation as a baseline. Change one override at a time and
-  require its regression plus fresh ordinary S2 before accepting removal.
+  starting with buffered IO. The later io2180 regression confirms the mixed
+  read/gets bug and source-body S1 parity; fresh self-hosted acceptance remains
+  open. Change one override at a time and require its regression plus fresh
+  ordinary S2 before claiming removal is accepted across stages.
 - [ ] Before proposing frontend migration, implement an observational per-call
   comparator. Current ADAMAS_SEMANTIC_SHADOW compares declaration inventories,
   parser diagnostics and diagnostic counts, not selected Def/result types.

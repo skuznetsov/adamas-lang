@@ -29,6 +29,15 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+FileDescriptor#read(Slice) and FileDescriptor/File#gets(Char, Bool) consume
+the unchanged buffered stdlib bodies. A backend substitution cannot discard
+buffered residual bytes or change the caller's nilable-pointer return ABI.
+DoD: buffered_read_order_repro.sh compares original-first exact File/pipe
+transcripts for mixed reads, UTF-8/CRLF, long lines, remainder and EOF on a
+fresh S1. Rollback is the atomic three-override removal. system_write and the
+separate write audit retain their existing boundaries. Fresh self-hosted
+buffering/S2, File.close and LavinMQ parity remain open.
+
 An already-selected source constructor retains its Def, symbol and defining
 arena when an omitted named-only default is appended to the ABI vector. Packed
 arguments cannot reopen source overload selection as an unnamed positional

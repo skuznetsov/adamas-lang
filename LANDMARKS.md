@@ -1,5 +1,27 @@
 # LANDMARKS
 
+Buffered FD read/gets source authority (2026-10-16): manual FileDescriptor
+read(Slice) bypassed IO::Buffered's unread bytes. The FileDescriptor/File
+gets(Char, Bool) overrides also emitted a Nil|String struct where the ordinary
+virtual caller expected a nilable pointer. Remove those three substitutions;
+ordinary stdlib IO::Buffered#read and IO#gets own buffering and return ABI.
+This integrates Claude 89f44ba5's read-side change; the separate write and
+system_write overrides are outside this commit.
+Root io2180 passes buffered_read_order_repro.sh original-first on fresh host
+io2177: File and STDIN pipe, mixed gets/read/read_byte/peek, UTF-8/CRLF, a
+5004-byte line, remaining bytes and EOF. The source-generated native output
+matches Crystal byte-for-byte without IR rewriting. It requires the separately
+verified selected String.new-default fix; io2175 without that fix is RED.
+The exact String-only parent io2190 builds but its native read test times out
+at the safe runner's 10-second limit after the original oracle passes.
+Scoped ROBUST for this S1 regression. Host SHA256
+3766cdc5a05d9b6d6e68f9a7c0cadcedfd488bdf0ca78b159b8f057bc8f008cb.
+The tested backend hash is 3ac303679171a904ad59257b8b838dee182164b44d86d9ba8b5b188d7b0464cd;
+integration changes only its standalone explanatory comment. Refresh after
+override, buffering, nilable ABI or selected-constructor changes. File.close,
+multi-argument print, signal handling, fresh S2 and LavinMQ parity remain open;
+S1 evidence does not certify self-hosted buffering.
+
 Selected source-new defaults (2026-10-16): apply_default_args already selected
 the correct source String.new(Bytes, *, truncate_at_null = false), but final
 constructor matching interpreted its appended named default as an ordinary
