@@ -1,5 +1,21 @@
 # Adamas Bootstrap TODO
 
+2026-10-17 NIL PREDICATE ON UNION CARRIERS: the static is_a? helper returned
+false for Nil before inspecting the value's union carrier. lower_if consumed
+that answer and removed a reachable Nil branch. Keep the predicate unknown
+for unions and let ordinary tagged-union lowering decide at runtime. DoD:
+union_nil_predicate_repro.sh compares six original-first no-prelude native
+outputs, covering Nil/non-Nil numeric unions, a nullable reference, a union
+without Nil, exact types and unless. Parent3178 fails the independent runtime-
+union probe3262; sealed candidate3258 passes repository run3275.
+- [x] Preserve possible Nil variants through the static predicate precheck.
+- [ ] Repair the independent lazy call-result lifecycle: isolated block-return
+  probe3266 still prints 0 instead of original20 after this helper correction.
+- [ ] Probe additional nested-union representations before widening this carrier
+  claim; this delta does not change union layout or classification.
+- [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
+
+
 2026-10-17 PENDING ABSTRACT NUMERIC RETURN ABI: source registration published
 Int/Float/Number as concrete ABI aliases before lowering their bodies. Bare
 forwarders consumed those aliases, truncating UInt64 and misreading Float32.

@@ -19851,3 +19851,29 @@ include targets, bare Tuple T identity and empty Tuple projection remain open.
 Lavin3182 cleared the admission error but was interrupted during lowering with
 no final result. No broker executable, functional/upstream parity or fresh
 bootstrap fixed point is established by these local regressions.
+
+
+### Nil predicate preserves runtime union variants (2026-10-17)
+`statically_is_a_type?` returned false for every non-Nil carrier checked against
+Nil before reaching its union handling. lower_if/lower_unless could consume
+that answer and erase a reachable Nil branch. Preserve unknown for union
+carriers in that shortcut so ordinary variant lowering evaluates the predicate.
+Exact Nil and nonunion shortcuts remain. No stdlib or app changes.
+
+`python3 run_clean_portable_regression.py union3258_defer_nil_predicate_for_union
+union3275_nullable_reference_guard regression_tests/union_nil_predicate_repro.sh`
+passes six original-first no-prelude native cases: numeric union Nil/non-Nil,
+nullable String, disjoint numeric union, exact types and unless. Unchanged
+parent3178 fails independent runtime-union probe3262 (2 instead of 1), without
+any pending user callee. Source adversary ROBUST within valid union carriers;
+the proposed reference-member counterexample also passes run3275. HIR SHA-256
+9619b793258d8f5097d4c6e72d35955ca88318b7d1108d2382c8082c4c6c3f42;
+host e4364f28aa3dbf179bec34487623c15f55cc42af336fc09ade87469609586b4b.
+
+Refresh after static predicates, union classification/layout or condition
+lowering changes; revert the one-line delta and regression together. The
+isolated lazy-call block-return probe still prints 0 instead of original20
+(run3266), so this is not a call-result lifecycle fix. Separately, experimental
+annotation deferral3223 fails a selected Array(T?) payload test that parent3178
+passes (run3272 vs3250); it is not promoted. Fresh S2, unchanged LavinMQ
+functional/upstream parity and bootstrap fixed point remain unverified.

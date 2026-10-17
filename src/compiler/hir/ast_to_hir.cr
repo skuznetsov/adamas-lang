@@ -87039,6 +87039,7 @@ module Adamas::HIR
         return check_type == TypeRef::NIL
       end
       if check_type == TypeRef::NIL
+        return nil if is_union_type?(value_type)
         return false
       end
 
