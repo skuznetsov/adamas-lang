@@ -19388,3 +19388,26 @@ Direct contextual Symbol conversion, block/double-splat calls, and deferred
 module-include raw named matching retain the existing paths and need dedicated
 falsifiers before widening. Refresh after resolver, default-local, arena, or
 argument-layout changes. Bootstrap and LavinMQ parity remain open.
+
+
+### Generic typeof uses the lowering context before specialization (2026-10-17)
+The parser represents generic typeof arguments as IdentifierNode source text.
+Resolving them without the current LoweringContext lost local and captured
+payload types; a textual-number fallback could then misclassify an identifier.
+with_typeof_local_bindings projects active local types into the existing typeof
+resolver, gives inference a unique environment epoch, and restores the prior
+maps/epoch in ensure. Generic arguments preserve raw typeof text; receivers and
+Pointer.malloc finish type resolution before monomorphization or runtime lowering.
+The separate textual-number grammar issue is not repaired by this change.
+
+slice2361 original-first native regression matches all 48 lines for nine local
+spellings, method scope, boxed capture payloads, sibling Int32/Int64/Bool/String
+specializations, and static generic indexing. Exact parent slice2356 is RED;
+slice2355 semantic-only captured/generic typeof neighbor is GREEN. Scoped ROBUST
+for those type-position boundaries. Source manifest
+63801be6a01e9cce6b52479b8cd00f485e0b0e267db18af16b6405f4e555073e;
+host b285d3ad4ad62de9e52bb5bbde651ac7a7693db3392d2f8726599571ed7a25e2.
+Refresh after parser typeof representation, local/capture ownership, inference
+cache keys, or generic receiver lowering changes. Other type operators, the
+uncommon type-like CallNode raw-argument path, fresh bootstrap, and LavinMQ
+parity remain open; TODO records the adjacent consumers and cache obligation.

@@ -81801,11 +81801,9 @@ module Adamas::HIR
       nil
     end
 
-    private def lower_typeof(ctx : LoweringContext, node : Adamas::Compiler::Frontend::TypeofNode) : ValueId
-      # Typeof never evaluates its arguments. Inlined blocks can nevertheless
-      # bind locals that AST-only inference cannot rediscover from a def body.
-      # Expose the active lexical bindings, using the payload of an owner-bound
-      # capture rather than its box carrier, for nested receiver inference.
+    # Resolve type-position typeof expressions against the active lowering locals.
+    # Captured locals use their payload types, matching runtime typeof lowering.
+    private def with_typeof_local_bindings(ctx : LoweringContext, &)
       old_locals = @current_typeof_locals
       old_names = @current_typeof_local_names
       old_version = @infer_type_cache_version
@@ -81826,6 +81824,18 @@ module Adamas::HIR
       @current_typeof_local_names = name_map
       bump_infer_type_cache_version
       begin
+        yield
+      ensure
+        @current_typeof_locals = old_locals
+        @current_typeof_local_names = old_names
+        @infer_type_cache_version = old_version
+      end
+    end
+
+    private def lower_typeof(ctx : LoweringContext, node : Adamas::Compiler::Frontend::TypeofNode) : ValueId
+      # Typeof never evaluates its arguments. Inlined blocks can nevertheless
+      # bind locals that AST-only inference cannot rediscover from a def body.
+      with_typeof_local_bindings(ctx) do
         semantic_type = TypeRef::VOID
         node.args.each do |arg_id|
           arg_type = infer_type_from_expr(arg_id, @current_class)
@@ -81862,10 +81872,6 @@ module Adamas::HIR
           display_name: typeof_type_value_display_name(semantic_type)
         )
         nil_lit.id
-      ensure
-        @current_typeof_locals = old_locals
-        @current_typeof_local_names = old_names
-        @infer_type_cache_version = old_version
       end
     end
 
@@ -84451,71 +84457,75 @@ module Adamas::HIR
         end
       }
 
-      type_args = node.type_args.map do |arg_id|
-        arg_node = @arena[arg_id]
-        arg_name = case arg_node
-                   when Adamas::Compiler::Frontend::TypeofNode
-                     inner = arg_node.args.first?
-                     resolved = inner ? resolve_typeof_expr(inner) : nil
-                     if (resolved.nil? || resolved == "Pointer(Void)") && inner
-                       inner_node = @arena[inner]
-                       if inner_node.is_a?(Adamas::Compiler::Frontend::YieldNode)
-                         # typeof(yield ...) — try the inline block return stack
-                         if @inline_yield_block_return_stack.size > 0
-                           if block_ret = @inline_yield_block_return_stack.last?
-                             resolved = block_ret unless block_ret.nil? || block_ret.empty? || block_ret == "Void"
+      # Both TypeofNode and Identifier-backed typeof arguments need the same
+      # lexical environment. Preserve raw typeof text until scoped resolution.
+      type_args = with_typeof_local_bindings(ctx) do
+        node.type_args.map do |arg_id|
+          arg_node = @arena[arg_id]
+          arg_name = case arg_node
+                     when Adamas::Compiler::Frontend::TypeofNode
+                       inner = arg_node.args.first?
+                       resolved = inner ? resolve_typeof_expr(inner) : nil
+                       if (resolved.nil? || resolved == "Pointer(Void)") && inner
+                         inner_node = @arena[inner]
+                         if inner_node.is_a?(Adamas::Compiler::Frontend::YieldNode)
+                           # typeof(yield ...) — try the inline block return stack
+                           if @inline_yield_block_return_stack.size > 0
+                             if block_ret = @inline_yield_block_return_stack.last?
+                               resolved = block_ret unless block_ret.nil? || block_ret.empty? || block_ret == "Void"
+                             end
                            end
-                         end
-                         if (resolved.nil? || resolved == "Pointer(Void)")
-                           # Try the type parameter T from block signature (& : T ->)
-                           if @type_param_map["T"]?
-                             resolved = @type_param_map["T"]
+                           if (resolved.nil? || resolved == "Pointer(Void)")
+                             # Try the type parameter T from block signature (& : T ->)
+                             if @type_param_map["T"]?
+                               resolved = @type_param_map["T"]
+                             end
                            end
                          end
                        end
+                       resolved || "Pointer(Void)"
+                     else
+                       stringify_type_expr_for_typeof_resolution(arg_id) || "Unknown"
                      end
-                     resolved || "Pointer(Void)"
-                   else
-                     stringify_type_expr(arg_id) || "Unknown"
-                   end
-        arg_name = resolve_typeof_in_type_string(arg_name)
-        # If typeof(yield ...) resolved to Pointer(Void), try __block_return__
-        # from function_type_param_maps (set by callers with known block types).
-        if arg_name == "Pointer(Void)" || arg_name.empty?
-          raw = if arg_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
-                  (safe_slice_to_string(arg_node.name) || "")
-                else
-                  ""
+          arg_name = resolve_typeof_in_type_string(arg_name)
+          # If typeof(yield ...) resolved to Pointer(Void), try __block_return__
+          # from function_type_param_maps (set by callers with known block types).
+          if arg_name == "Pointer(Void)" || arg_name.empty?
+            raw = if arg_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
+                    (safe_slice_to_string(arg_node.name) || "")
+                  else
+                    ""
+                  end
+            if raw.includes?("typeof(yield")
+              func_name = ctx.function.name
+              # Keep this path allocation-free and stage-safe.  The regex-based
+              # String#sub route can reach a nil replacement receiver while
+              # lowering specialized functions; the compiler already has a
+              # deterministic suffix stripper for mangled names.
+              base_func = strip_type_suffix(func_name)
+              # 1. Check inline block return stack (available during inline expansion)
+              if @inline_yield_block_return_stack.size > 0
+                if br = @inline_yield_block_return_stack.last?
+                  arg_name = br unless br.empty? || br == "Void" || br == "Unknown"
                 end
-          if raw.includes?("typeof(yield")
-            func_name = ctx.function.name
-            # Keep this path allocation-free and stage-safe.  The regex-based
-            # String#sub route can reach a nil replacement receiver while
-            # lowering specialized functions; the compiler already has a
-            # deterministic suffix stripper for mangled names.
-            base_func = strip_type_suffix(func_name)
-            # 1. Check inline block return stack (available during inline expansion)
-            if @inline_yield_block_return_stack.size > 0
-              if br = @inline_yield_block_return_stack.last?
-                arg_name = br unless br.empty? || br == "Void" || br == "Unknown"
               end
-            end
-            # 2. Check function_type_param_maps (set by callers before lowering)
-            if arg_name == "Pointer(Void)" || arg_name.empty?
-              if br = function_type_param_map_value?(func_name, "__block_return__")
-                arg_name = br
-              elsif br = function_type_param_map_value?(base_func, "__block_return__")
-                arg_name = br
-              elsif br = @type_param_map["__block_return__"]?
-                arg_name = br unless br.empty? || br == "Void" || br == "Unknown"
+              # 2. Check function_type_param_maps (set by callers before lowering)
+              if arg_name == "Pointer(Void)" || arg_name.empty?
+                if br = function_type_param_map_value?(func_name, "__block_return__")
+                  arg_name = br
+                elsif br = function_type_param_map_value?(base_func, "__block_return__")
+                  arg_name = br
+                elsif br = @type_param_map["__block_return__"]?
+                  arg_name = br unless br.empty? || br == "Void" || br == "Unknown"
+                end
               end
             end
           end
+          arg_name = normalize_typeof_name.call(arg_name)
+          arg_name = resolve_type_name_in_context(arg_name)
+          arg_name = substitute_type_params_in_type_name(arg_name)
+          normalize_tuple_literal_type_name(arg_name)
         end
-        arg_name = normalize_typeof_name.call(arg_name)
-        arg_name = resolve_type_name_in_context(arg_name)
-        arg_name = substitute_type_params_in_type_name(arg_name)
-        normalize_tuple_literal_type_name(arg_name)
       end
 
       # Create specialized class name like Array(Int32)
@@ -99016,14 +99026,14 @@ module Adamas::HIR
       end
       debug_lower_call_arena_phase(ctx, node, "before.type_like_call", call_arena)
       if type_like_call_expr?(node)
-        base = resolve_path_like_name(node.callee) || stringify_type_expr(node.callee)
-        if base
-          args = node.args.compact_map { |arg| stringify_type_expr(arg) }
-          if args.size == node.args.size
-            type_name = "#{base}(#{args.join(", ")})"
-            return lower_type_literal_from_name(ctx, type_name)
+        type_name = with_typeof_local_bindings(ctx) do
+          base = resolve_path_like_name(node.callee) || stringify_type_expr(node.callee)
+          if base
+            args = node.args.compact_map { |arg| stringify_type_expr(arg) }
+            args.size == node.args.size ? "#{base}(#{args.join(", ")})" : nil
           end
         end
+        return lower_type_literal_from_name(ctx, type_name) if type_name
       end
       debug_lower_call_arena_phase(ctx, node, "after.type_like_call", call_arena)
       # CallNode has callee (ExprId) which can be:
@@ -99661,10 +99671,14 @@ module Adamas::HIR
           end
 
           if method_name == "malloc" && call_args.size == 1 && node.named_args.nil? && block_expr.nil? && block_pass_expr.nil?
-            if pointer_type_name = stringify_type_expr(obj_expr)
-              pointer_type_name = resolve_typeof_in_type_string(pointer_type_name)
-              pointer_type_name = substitute_type_params_in_type_name(pointer_type_name)
-              pointer_type_name = normalize_tuple_literal_type_name(pointer_type_name)
+            resolved_pointer_name = with_typeof_local_bindings(ctx) do
+              if name = stringify_type_expr(obj_expr)
+                name = resolve_typeof_in_type_string(name)
+                name = substitute_type_params_in_type_name(name)
+                normalize_tuple_literal_type_name(name)
+              end
+            end
+            if pointer_type_name = resolved_pointer_name
               if pointer_type_name.starts_with?("Pointer(")
                 element_type = pointer_element_type(pointer_type_name)
                 pointer_type_ref = type_ref_for_name(pointer_type_name)
@@ -100264,20 +100278,22 @@ module Adamas::HIR
                 end
               }
 
-              type_args = generic_node.type_args.map do |arg_id|
-                arg_node = @arena[arg_id]
-                arg_name = case arg_node
-                           when Adamas::Compiler::Frontend::TypeofNode
-                             inner = arg_node.args.first?
-                             inner ? resolve_typeof_expr(inner) : "Pointer(Void)"
-                           else
-                             stringify_type_expr_for_typeof_resolution(arg_id) || "Unknown"
-                           end
-                arg_name = resolve_typeof_in_type_string(arg_name)
-                arg_name = normalize_typeof_name.call(arg_name)
-                arg_name = resolve_type_name_in_context(arg_name)
-                arg_name = substitute_type_params_in_type_name(arg_name)
-                normalize_tuple_literal_type_name(arg_name)
+              type_args = with_typeof_local_bindings(ctx) do
+                generic_node.type_args.map do |arg_id|
+                  arg_node = @arena[arg_id]
+                  arg_name = case arg_node
+                             when Adamas::Compiler::Frontend::TypeofNode
+                               inner = arg_node.args.first?
+                               inner ? resolve_typeof_expr(inner) : "Pointer(Void)"
+                             else
+                               stringify_type_expr_for_typeof_resolution(arg_id) || "Unknown"
+                             end
+                  arg_name = resolve_typeof_in_type_string(arg_name)
+                  arg_name = normalize_typeof_name.call(arg_name)
+                  arg_name = resolve_type_name_in_context(arg_name)
+                  arg_name = substitute_type_params_in_type_name(arg_name)
+                  normalize_tuple_literal_type_name(arg_name)
+                end
               end
 
               # Create specialized class name like Box(Int32)
@@ -100318,7 +100334,7 @@ module Adamas::HIR
             # must stay instance receivers; otherwise we can lose `self` and degrade
             # `recv.meth(args)` into pseudo-static `recv_expr.meth(args)`.
             if type_like_call_expr?(call_receiver_node)
-              if type_name = stringify_type_expr(obj_expr)
+              if type_name = with_typeof_local_bindings(ctx) { stringify_type_expr(obj_expr) }
                 type_name = substitute_type_params_in_type_name(type_name)
                 if type_name[0]?.try(&.uppercase?) || type_name.includes?("::")
                   if info = split_generic_base_and_args(type_name)
@@ -121136,12 +121152,14 @@ module Adamas::HIR
                 type_name
               end
             }
-            type_args = obj_node.type_args.map do |arg_id|
-              arg_name = stringify_type_expr_for_typeof_resolution(arg_id) || "Unknown"
-              arg_name = resolve_typeof_in_type_string(arg_name)
-              arg_name = normalize_typeof_name.call(arg_name)
-              arg_name = resolve_type_name_in_context(arg_name)
-              substitute_type_params_in_type_name(arg_name)
+            type_args = with_typeof_local_bindings(ctx) do
+              obj_node.type_args.map do |arg_id|
+                arg_name = stringify_type_expr_for_typeof_resolution(arg_id) || "Unknown"
+                arg_name = resolve_typeof_in_type_string(arg_name)
+                arg_name = normalize_typeof_name.call(arg_name)
+                arg_name = resolve_type_name_in_context(arg_name)
+                substitute_type_params_in_type_name(arg_name)
+              end
             end
             static_owner_name = "#{base_name}(#{type_args.join(", ")})"
             static_owner_name = substitute_type_params_in_type_name(static_owner_name)
@@ -122387,17 +122405,19 @@ module Adamas::HIR
             end
           }
 
-          type_args = gen_obj.type_args.map do |arg_id|
-            raw_arg_name = stringify_type_expr_for_typeof_resolution(arg_id) || "Unknown"
-            arg_name = resolve_typeof_in_type_string(raw_arg_name)
-            # Only degrade a Void produced by failed typeof inference; a literal
-            # `Void` argument (e.g. `Pointer(Void).null`) must stay `Void`, or the
-            # receiver becomes `Pointer(Pointer(Void))`.
-            unless raw_arg_name == "Void" || raw_arg_name == "::Void"
-              arg_name = normalize_typeof_name.call(arg_name)
+          type_args = with_typeof_local_bindings(ctx) do
+            gen_obj.type_args.map do |arg_id|
+              raw_arg_name = stringify_type_expr_for_typeof_resolution(arg_id) || "Unknown"
+              arg_name = resolve_typeof_in_type_string(raw_arg_name)
+              # Only degrade a Void produced by failed typeof inference; a literal
+              # `Void` argument (e.g. `Pointer(Void).null`) must stay `Void`, or the
+              # receiver becomes `Pointer(Pointer(Void))`.
+              unless raw_arg_name == "Void" || raw_arg_name == "::Void"
+                arg_name = normalize_typeof_name.call(arg_name)
+              end
+              arg_name = resolve_type_name_in_context(arg_name)
+              substitute_type_params_in_type_name(arg_name)
             end
-            arg_name = resolve_type_name_in_context(arg_name)
-            substitute_type_params_in_type_name(arg_name)
           end
           # Create specialized class name like Hash(Int32, Int32)
           class_name_str = "#{base_name}(#{type_args.join(", ")})"
@@ -122412,7 +122432,7 @@ module Adamas::HIR
         # Type-like call receiver such as ::Set(String).new parsed without parens.
         call_obj = obj_node.as?(Adamas::Compiler::Frontend::CallNode) || obj_node.unsafe_as(Adamas::Compiler::Frontend::CallNode)
         if type_like_call_expr?(call_obj)
-          if type_name = stringify_type_expr(node.object)
+          if type_name = with_typeof_local_bindings(ctx) { stringify_type_expr(node.object) }
             type_name = substitute_type_params_in_type_name(type_name)
             if type_name[0]?.try(&.uppercase?) || type_name.includes?("::")
               if info = split_generic_base_and_args(type_name)

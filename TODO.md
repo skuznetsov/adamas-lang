@@ -20189,3 +20189,20 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   module-include named/rest probes before extending this bounded binding path.
   Deferred module lookup must accept the raw named positional boundary at its
   existing resolver seam; an all-definition scan would lose lookup precedence.
+
+
+### Resolve generic typeof arguments in the active lexical context (2026-10-17)
+- [x] Share lower_typeof's lexical local/payload environment with generic type
+  arguments, type receivers, static indexing, and the Pointer.malloc intrinsic.
+  Preserve parser-owned Identifier-backed typeof text until scoped resolution;
+  restore maps and inference epoch after the type-only query. slice2361 passes
+  48 exact original-first output lines; slice2356 exact parent is RED, and
+  slice2355 captured/generic semantic-only typeof neighbor is GREEN.
+- [ ] Audit the remaining context-bearing type positions: sizeof, uninitialized,
+  Array `of`, typed method pointers, as/as?/is_a and static is_a narrowing.
+  normalize_declared_type_name's cache omits the local map/epoch; resolve scoped
+  typeof before using that cache or add a complete environment key. Also check
+  the uncommon type-like CallNode path for raw Identifier-backed typeof args.
+  These paths are not established by the generic receiver regression.
+- [ ] Continue fresh bootstrap and unchanged LavinMQ functional/upstream parity;
+  this S1 lexical-context regression does not establish either outcome.
