@@ -1,5 +1,14 @@
 # Adamas Bootstrap TODO
 
+2026-10-17 MACRO DOUBLE-SPLAT MAP OWNERSHIP: context construction stored a
+reference to named_values in **kwargs and immediately cleared that same map.
+Copy the named map when creating the captured MacroNamedTupleValue. DoD:
+kwargs_capture_repro.sh compares exact original-first output for empty, one,
+two, ordinary-named-plus-extras and successive invocations. Production parent
+slice2659 fails kwargs2681; fresh S1 macro_kwargs2677 passes kwargs2684.
+- [x] Preserve captured named arguments and isolate successive invocations.
+- [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
+
 2026-10-17 NUMERIC LITERAL TYPE CONTINUITY: textual typeof used suffix/string
 heuristics that classified hexadecimal digits as floating point, ignored
 integer ranges, split decimal points as member separators and lost local

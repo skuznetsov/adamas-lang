@@ -603,7 +603,7 @@ module Adamas
           params.each_with_index do |raw_name, idx|
             if raw_name.starts_with?("**")
               name = raw_name[2..]
-              variables[name] = MacroNamedTupleValue.new(named_values)
+              variables[name] = MacroNamedTupleValue.new(named_values.dup)
               named_values.clear
               next
             end

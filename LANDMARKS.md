@@ -1,3 +1,24 @@
+### Macro double-splat capture owns its named map (2026-10-17)
+Macro context construction wrapped named_values by reference in the captured
+MacroNamedTupleValue, then cleared that same map. Nonempty **kwargs therefore
+became empty before expansion. Snapshot the map before clearing the binder's
+working state, matching Crystal's independently collected named-tuple entries.
+
+Exact production parent slice2659 is RED in kwargs2681. Fresh S1 built from
+macro_kwargs2677_current_production passes original-first kwargs2684 with exact
+stdout and empty stderr: empty, one and two extras, ordinary named arguments
+alongside extras, and successive invocations. The candidate uses no-prelude to
+isolate macro capture from the separately open eager module-template issue.
+Scoped adversary verdict ROBUST for map capture and per-invocation isolation;
+the multi-call and named-tail controls exercise the likely aliasing failure.
+All 1919 integrated source hashes match the tested source seal.
+Source manifest SHA256 2f84e45327600e24fa788ad95ea04f81685f398bbca6c04af70d89be5274b232;
+host SHA256 b4cb64688eb83c60cf0e7c74f4dfc93205c9c8b0b2a69dca59bc6f060ffe393b.
+Refresh after macro argument binding, named-map ownership or context reuse
+changes; revert source and regression together. Fresh pristine S2 and unchanged
+LavinMQ functional/upstream parity remain open.
+
+
 ### FFI out locals and pointerof share the payload address (2026-10-17)
 The C output destination and the source local used different storage meanings:
 reads/assignments could treat an allocated payload pointer as the local value,
