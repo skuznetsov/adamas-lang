@@ -1,3 +1,25 @@
+### Nested statements own their newline delimiter scope (2026-10-17)
+Global delimiter depths made an outer call parenthesis join the next line in
+a nested Proc/if body. The parser read `left < right` followed by `-1` as
+`left < (right - 1)`, producing an empty then branch. Save the current depths
+at each statement boundary; only delimiters opened within that statement can
+join lines. Restore the floors with ensure so nested parsing cannot leak them.
+
+Fresh exact-production-base S1 parser2905 passes original-first parser2907:
+then/elsif/else results, operator continuation, multiline calls/arrays/indexes,
+and nested Proc/yielded block bodies. Its generated macro source/error neighbor
+passes parser2908. Parser-identical callback2888 fails the direct result test
+in parser2904, while the parser-only successor passes parser2900. Scoped
+adversary verdict ROBUST for the tested successful-input statement boundaries;
+the multiline-neighbor controls guard against disabling newline continuation.
+All 1919 integrated source hashes match the tested seal. Host SHA256
+54d288da412b3688dc94dcd228ce3b1e85d2231b92a31aed5873cd1f8140a48d.
+
+Refresh after expression/control-body parsing, delimiter tracking or recovery
+changes; revert the parser and regression together. Malformed-input recovery,
+fresh pristine S2 and unchanged LavinMQ functional/upstream parity remain open.
+
+
 ### Generated macro nodes retain exact source identity (2026-10-17)
 Macro expansion reparses text into an existing arena, but ExprId offsets alone
 do not identify its source buffer. Fresh expanders previously read generated

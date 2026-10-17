@@ -26,6 +26,10 @@ module Adamas
         @paren_depth : Int32
         @bracket_depth : Int32
         @brace_depth : Int32
+        # Delimiters opened outside the current statement do not join lines inside it.
+        @newline_paren_floor : Int32
+        @newline_bracket_floor : Int32
+        @newline_brace_floor : Int32
         # Phase 103: Type declaration control flag (like original Crystal parser)
         # When > 0, disables type annotation parsing (e.g., in ternary operator ? :)
         @no_type_declaration : Int32
@@ -166,6 +170,9 @@ module Adamas
           @paren_depth = 0
           @bracket_depth = 0
           @brace_depth = 0
+          @newline_paren_floor = 0
+          @newline_bracket_floor = 0
+          @newline_brace_floor = 0
           @ternary_branch_depth = 0
           @no_type_declaration = 0                     # Phase 103: Type annotations enabled by default
           @string_pool = lexer.string_pool             # Week 1 Day 2: share string pool for deduplication
@@ -358,6 +365,9 @@ module Adamas
           @paren_depth = 0
           @bracket_depth = 0
           @brace_depth = 0
+          @newline_paren_floor = 0
+          @newline_bracket_floor = 0
+          @newline_brace_floor = 0
           @ternary_branch_depth = ternary_branch_depth
           @no_type_declaration = ternary_branch_depth
           @string_pool = lexer.string_pool             # Week 1 Day 2: share string pool for deduplication
@@ -597,6 +607,12 @@ module Adamas
 
         # Parse a statement (assignment or expression)
         private def parse_statement : ExprId
+          with_statement_delimiter_scope do
+            parse_statement_in_scope
+          end
+        end
+
+        private def parse_statement_in_scope : ExprId
           # Normalize leading trivia at statement start
           skip_trivia
           # Phase 103J: Check for macro control ({% if %}, {% for %}, etc.)
@@ -1474,11 +1490,31 @@ module Adamas
           end
         end
 
-        # Phase 103: Multi-line expression support
-        # Check if we're inside delimiters where newlines should be treated as whitespace.
-        # Braces honor @skip_newlines_in_braces to allow statement-mode parsing inside hashes/blocks.
+        # Phase 103: Multi-line expression support. Only delimiters opened
+        # since the current statement began can make a newline whitespace.
         private def inside_delimiters? : Bool
-          @paren_depth > 0 || @bracket_depth > 0 || (@brace_depth > 0 && @skip_newlines_in_braces)
+          @paren_depth > @newline_paren_floor ||
+            @bracket_depth > @newline_bracket_floor ||
+            (@brace_depth > @newline_brace_floor && @skip_newlines_in_braces)
+        end
+
+        # Keep outer call/grouping delimiters from leaking into nested statement
+        # bodies, while retaining newline continuation for delimiters opened
+        # by the statement itself.
+        private def with_statement_delimiter_scope(&)
+          previous_paren_floor = @newline_paren_floor
+          previous_bracket_floor = @newline_bracket_floor
+          previous_brace_floor = @newline_brace_floor
+          @newline_paren_floor = @paren_depth
+          @newline_bracket_floor = @bracket_depth
+          @newline_brace_floor = @brace_depth
+          begin
+            yield
+          ensure
+            @newline_paren_floor = previous_paren_floor
+            @newline_bracket_floor = previous_bracket_floor
+            @newline_brace_floor = previous_brace_floor
+          end
         end
 
         # Temporarily treat newlines inside braces as statement separators (do not skip them).

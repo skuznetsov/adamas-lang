@@ -1,5 +1,20 @@
 # Adamas Bootstrap TODO
 
+2026-10-17 STATEMENT DELIMITER SCOPE: outer call parentheses leaked into
+nested Proc/control-flow bodies, so a negative statement after an if condition
+was parsed as part of the comparison. Track a delimiter floor for each source
+statement and restore it after nested parsing. Delimiters opened by the current
+statement still allow multiline calls, operators, arrays and indexes. DoD:
+parser_statement_delimiter_scope_repro.sh compares five original-first native
+transcripts, including direct then/elsif/else results and nested Proc/yielded
+bodies. Fresh production-base S1 parser2905 passes parser2907 and generated
+macro source/failure guard parser2908. Parser-identical predecessor callback2888
+is RED in parser2904 (the direct comparator incorrectly infers Nil | Int32).
+- [x] Preserve source statement boundaries inside outer delimiters.
+- [ ] Probe recovery after malformed nested delimiters before extending the
+  successful-input parser claim to error recovery.
+- [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
+
 2026-10-17 MACRO COMMAND SOURCE IDENTITY: generated ExprId spans were read
 against the macro definition file or a different expansion buffer. Track the
 exact generated buffer per ExprId and retain its arena owner across expanders.
