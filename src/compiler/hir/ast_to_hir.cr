@@ -55294,10 +55294,11 @@ module Adamas::HIR
       return pointer_word_bytes_i32 unless info.is_struct
       return info.size if @lib_structs.includes?(info.name)
 
-      name = info.name
-      if name.starts_with?("Slice(") ||
-         name.starts_with?("StaticArray(") ||
-         name.starts_with?("Hash::Entry(")
+      # Container-element inline ABI = the field-storage rule (lock-step with
+      # MIR container_elem_storage_size_u64 / LLVM inline_container_struct_type?):
+      # one Pointer(T) must be valid over both `pointerof(@field)` and
+      # `Array#to_unsafe`, so element strides use the same predicate as fields.
+      if info.size > 0 && Adamas::LayoutContract.user_struct_inline?(info.size.to_u64, info.name)
         return info.size
       end
 

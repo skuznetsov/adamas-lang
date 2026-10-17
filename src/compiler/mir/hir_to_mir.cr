@@ -4315,10 +4315,8 @@ module Adamas
           return elem_type.size
         end
 
-        # Only structs with an implemented container-value ABI are stored inline.
-        # Most V2 structs are still represented as heap pointers; treating all
-        # Struct types as inline corrupts arrays such as Array(Parameter).
-        if inline_container_struct_type?(elem_type)
+        # Structs that are inline in a field slot are inline in a container slot.
+        if inline_struct_element_type?(elem_type)
           return elem_type.size
         end
 
@@ -4332,14 +4330,21 @@ module Adamas
         Adamas::LayoutContract.primitive_tuple?(elem_type)
       end
 
+      # Inline-container struct families (Slice/StaticArray/Hash::Entry): their
+      # own field payloads are laid out as inline bytes.
       private def inline_container_struct_type?(elem_type : Type?) : Bool
         return false unless elem_type
         return false unless elem_type.kind.struct? && elem_type.size > 0
+        Adamas::LayoutContract.inline_container_family?(elem_type.name)
+      end
 
-        name = elem_type.name
-        name.starts_with?("Slice(") ||
-          name.starts_with?("StaticArray(") ||
-          name.starts_with?("Hash::Entry(")
+      # Container-element (Array buffer / Pointer(T) pointee) inline ABI = the
+      # field-storage rule, so one Pointer(T) is valid both over `pointerof(@field)`
+      # and over `Array#to_unsafe`. Must agree with LLVM inline_container_struct_type?.
+      private def inline_struct_element_type?(elem_type : Type?) : Bool
+        return false unless elem_type
+        return false unless elem_type.kind.struct? && elem_type.size > 0
+        Adamas::LayoutContract.user_struct_inline?(elem_type.size, elem_type.name)
       end
 
       private def container_elem_alignment_u32(elem_type : Type?) : UInt32
@@ -4351,6 +4356,10 @@ module Adamas
         end
 
         if elem_type.kind.union? && elem_type.alignment > 0
+          return elem_type.alignment
+        end
+
+        if inline_struct_element_type?(elem_type) && elem_type.alignment > 0
           return elem_type.alignment
         end
 
@@ -6539,7 +6548,7 @@ module Adamas
         return false unless desc.kind == HIR::TypeKind::Struct
         return false if hir_type_is_lib_struct?(type)
         mir_ref = convert_type(type)
-        inline_container_struct_type?(@mir_module.type_registry.get(mir_ref))
+        inline_struct_element_type?(@mir_module.type_registry.get(mir_ref))
       end
 
       private def hir_type_is_inline_pointer_tuple?(type : Adamas::HIR::TypeRef?) : Bool
@@ -10642,7 +10651,8 @@ module Adamas
       end
 
       # A struct read out of inline container storage (`get_entry(i)` ->
-      # `@entries[i]`, InlineAddress) is an interior pointer into that storage.
+      # `@entries[i]`, InlineAddress, or a direct `ptr.value` / `array[i]`)
+      # is an interior pointer into that storage.
       # Binding it to a local (`entry = get_entry(i)`) must give the local value
       # semantics: the slot may be overwritten before the local is read again
       # (Hash#delete / #upsert return the OLD entry after clearing / replacing
@@ -10652,12 +10662,20 @@ module Adamas
         hir_func = @current_hir_func
         return nil unless hir_func
         src_inst = hir_function_defs(hir_func)[copy.source]?
-        return nil unless src_inst.is_a?(HIR::Call)
-        return nil if generated_struct_allocator_hir_call?(src_inst)
+        case src_inst
+        when HIR::Call
+          return nil if generated_struct_allocator_hir_call?(src_inst)
+        when HIR::PointerLoad, HIR::IndexGet
+          # `x = ptr.value` / `x = ptr[i]` / `x = array[i]` borrow the inline
+          # element address; the local needs its own bytes.
+          return nil if hir_type_is_lib_struct?(copy.type)
+        else
+          return nil
+        end
         mir_type_ref = convert_type(copy.type)
         mir_type = @mir_module.type_registry.get(mir_type_ref)
         return nil unless mir_type && mir_type.kind.struct? && mir_type.size > 0
-        return nil unless Adamas::LayoutContract.inline_container_family?(mir_type.name)
+        return nil unless inline_struct_element_type?(mir_type)
         status = hir_value_stack_safety(
           hir_func, copy.id, ::Set(HIR::ValueId).new,
           STACK_STRUCT_ARG_SAFETY_MAX_DEPTH, allow_return: false, interior_fields: true)
@@ -11798,9 +11816,21 @@ module Adamas
         # Get the operand value
         operand = get_value(addr_of.operand)
 
-        # For address-of, we need to return the address of the operand
-        # In MIR, this is a pointer to the value's storage location
-        # For now, emit an alloca and return its address
+        # Inline struct values (C lib structs, inline pointer tuples, inline user
+        # structs) are carried as the address of their bytes, and PointerLoad of
+        # such a type returns that address unchanged. pointerof must agree: the
+        # carrier itself is the storage address. Taking the address of the slot
+        # that holds the carrier would make ptr.value reinterpret the slot as the
+        # struct bytes.
+        operand_hir_type = @hir_value_types[addr_of.operand]?
+        if operand_hir_type &&
+           (hir_type_is_lib_struct?(operand_hir_type) ||
+           hir_type_is_inline_pointer_tuple?(operand_hir_type) ||
+           hir_type_is_inline_container_struct?(operand_hir_type))
+          return operand
+        end
+
+        # Other values: address of the slot that holds the value.
         builder.addressof(operand, TypeRef::POINTER)
       end
 

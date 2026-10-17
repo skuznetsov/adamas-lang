@@ -3331,9 +3331,7 @@ module Adamas::MIR
         return elem_type.size
       end
 
-      # Only structs with an implemented container-value ABI are stored inline.
-      # Most V2 structs are still heap-pointer values; treating every Struct as
-      # inline corrupts arrays such as Array(Parameter).
+      # Structs that are inline in a field slot are inline in a container slot.
       if inline_container_struct_type?(elem_type)
         return elem_type.size
       end
@@ -3352,14 +3350,12 @@ module Adamas::MIR
       return false unless elem_type
       return false unless elem_type.kind.struct? && elem_type.size > 0
 
-      # Container-element inline ABI = ONLY the implemented inline-container
-      # families (NOT the field-storage `size > pointer_word` rule): a >8-byte
-      # plain user struct is still a POINTER element in Array/Slice (treating it
-      # inline corrupts arrays such as Array(Parameter), see :2773). So this
-      # routes through the contract's shared family sub-predicate rather than
-      # user_struct_inline?, collapsing the duplicated family name-list onto the
-      # single source (ABI-rework: family list lives only in LayoutContract).
-      Adamas::LayoutContract.inline_container_family?(elem_type.name)
+      # Container-element inline ABI = the field-storage rule. A struct stored
+      # inline in an ivar slot (`pointerof(@field)`) and the same struct stored in
+      # an Array/Pointer buffer (`to_unsafe`) must share one representation, so a
+      # single Pointer(T) is valid over both (original Crystal: Pointer#value
+      # projects the pointee address for every aggregate).
+      Adamas::LayoutContract.user_struct_inline?(elem_type.size, elem_type.name)
     end
 
     # True when ArrayGet/ArraySet targets a Slice(T) value (not Array/StaticArray).
@@ -5391,9 +5387,17 @@ module Adamas::MIR
         if append_value_mir && elem_type == "ptr"
           retain_append_value = append_value_mir.kind.reference?
         end
+        # Inline struct elements: the slot holds the struct bytes and %value is
+        # a pointer to the source bytes — copy the payload, never store the
+        # carrier pointer (same contract as emit_array_set / PointerStore).
+        inline_struct_elem = elem_type == "ptr" && elem_mir && inline_container_struct_type?(elem_mir)
         append_store_ir = String.build do |io|
           io << "  call void @__adamas_rc_inc(ptr %value)\n" if retain_append_value
-          io << "  store #{elem_type} %value, ptr %slot\n"
+          if inline_struct_elem
+            io << "  call void @llvm.memcpy.p0.p0.i64(ptr %slot, ptr %value, i64 #{stride}, i1 false)\n"
+          else
+            io << "  store #{elem_type} %value, ptr %slot\n"
+          end
         end
         return "; #{name} — primitive Array#<<(T) for late generic append bodies\n" \
                "define ptr @#{name}(ptr %self, #{elem_type} %value) {\n" \
@@ -5441,6 +5445,14 @@ module Adamas::MIR
         # would stride by the smaller LLVM size and read across slot boundaries
         # (the s2b Globber `list[-1]` garbage read). Byte-offset by the MIR stride.
         stride = elem_mir ? container_elem_storage_size_u64(elem_mir).to_i64 : llvm_store_size_bytes(elem_type).to_i64
+        # Inline struct elements live as bytes in the slot: the struct value is
+        # the slot address (the same borrow emit_array_get returns), not a
+        # pointer loaded from the payload's first word.
+        fetch_value_ir = if elem_type == "ptr" && elem_mir && inline_container_struct_type?(elem_mir)
+                           "  %value = getelementptr i8, ptr %slot, i64 0\n"
+                         else
+                           "  %value = load #{elem_type}, ptr %slot\n"
+                         end
         return "; #{name} — primitive Array#unsafe_fetch(Int32) for late generic fetch bodies\n" \
                "define #{elem_type} @#{name}(ptr %self, i32 %index) {\n" \
                "entry:\n" \
@@ -5455,7 +5467,7 @@ module Adamas::MIR
                "  %idx64 = sext i32 %physical_index to i64\n" \
                "  %byte_off = mul i64 %idx64, #{stride}\n" \
                "  %slot = getelementptr i8, ptr %buf, i64 %byte_off\n" \
-               "  %value = load #{elem_type}, ptr %slot\n" \
+               "#{fetch_value_ir}" \
                "  ret #{elem_type} %value\n" \
                "ret_zero:\n" \
                "#{zero_return_for_llvm_type(elem_type)}" \
@@ -6285,11 +6297,20 @@ module Adamas::MIR
       if name.starts_with?("Pointer$H$SHL$$") && arg_count >= 2
         value_type = arg_types.size > 1 ? arg_types.unsafe_fetch(1) : "ptr"
         ptr_int = pointer_sized_int_llvm_type
+        # Same container-element contract as the full Pointer#<< body: an inline
+        # struct is copied as payload bytes and advances by its storage size.
+        value_mir = value_type == "ptr" ? array_append_value_mir_type_from_mangled_method(name) : nil
+        inline_struct_value = !!(value_mir && inline_container_struct_type?(value_mir))
+        elem_size = inline_struct_value && value_mir ? container_elem_storage_size_u64(value_mir) : pointer_word_bytes_u64
         return String.build do |io|
           io << "; missing Pointer#<< storage stub: " << name << "\n"
           io << "define " << return_type << " @" << name << "(" << param_list << ") {\n"
-          io << "  store " << value_type << " %arg1, ptr %arg0\n"
-          io << "  %next = getelementptr i8, ptr %arg0, " << ptr_int << " " << pointer_word_bytes_u64 << "\n"
+          if inline_struct_value
+            io << "  call void @llvm.memcpy.p0.p0.i64(ptr %arg0, ptr %arg1, i64 " << elem_size << ", i1 false)\n"
+          else
+            io << "  store " << value_type << " %arg1, ptr %arg0\n"
+          end
+          io << "  %next = getelementptr i8, ptr %arg0, " << ptr_int << " " << elem_size << "\n"
           if return_type == "ptr"
             io << "  ret ptr %next\n"
           elsif return_type == "void"
@@ -11007,19 +11028,15 @@ module Adamas::MIR
     # @[Naked] + inline asm which V2 can't lower.  We emit it directly as
     # LLVM IR with an inline asm block.
     #
-    # V2 ABI note: the caller passes pointers to *stack allocas* that hold
-    # the real Fiber::Context pointers, so the first thing the asm does is
-    # dereference x0/x1 once to obtain the actual context addresses.
+    # Fiber::Context is an inline struct, so `pointerof(fiber.@context)` is the
+    # address of the context bytes inside the Fiber object (same contract as
+    # original Crystal): x0/x1 are used as context addresses directly.
     private def emit_fiber_swapcontext_override(mangled : String) : Nil
       emit_raw "; #{mangled} — AArch64 fiber context switch (builtin override)\n"
-      emit_raw "define void @#{mangled}(ptr %current_pp, ptr %new_pp) naked noinline {\n"
+      emit_raw "define void @#{mangled}(ptr %current_context, ptr %new_context) naked noinline {\n"
       emit_raw "entry:\n"
       emit_raw "  call void asm sideeffect \""
       emit_raw "\\0A"  # newline
-      # Dereference the V2 alloca indirection: x0/x1 point to stack slots
-      # that hold the real Fiber::Context pointers.
-      emit_raw "    ldr     x0, [x0]\\0A"
-      emit_raw "    ldr     x1, [x1]\\0A"
       # Save callee-saved registers (AAPCS64): d8-d15, x19-x30, plus x0/x1.
       emit_raw "    stp     d15, d14, [sp, #-22*8]!\\0A"
       emit_raw "    stp     d13, d12, [sp, #2*8]\\0A"
@@ -15167,9 +15184,19 @@ module Adamas::MIR
         value_llvm = @type_mapper.llvm_type(value_param.type)
         ptr_int = pointer_sized_int_llvm_type
 
+        # Element stride/representation follow the container-element contract:
+        # an inline struct is copied as payload bytes and advances by its size.
+        value_mir = @module.type_registry.get(value_param.type)
+        inline_struct_value = value_llvm == "ptr" && value_mir && inline_container_struct_type?(value_mir)
+        elem_size = container_elem_storage_size_u64(value_mir) if inline_struct_value
+
         emit_raw "define #{return_type} @#{mangled_name}(#{param_types.join(", ")}) {\n"
         emit_raw "entry:\n"
-        emit_raw "  store #{value_llvm} %#{value_name}, ptr %self\n"
+        if inline_struct_value
+          emit_raw "  call void @llvm.memcpy.p0.p0.i64(ptr %self, ptr %#{value_name}, i64 #{elem_size}, i1 false)\n"
+        else
+          emit_raw "  store #{value_llvm} %#{value_name}, ptr %self\n"
+        end
         emit_raw "  %next = getelementptr i8, ptr %self, #{ptr_int} #{elem_size}\n"
         if return_type == "ptr"
           emit_raw "  ret ptr %next\n"
