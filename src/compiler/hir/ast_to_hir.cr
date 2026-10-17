@@ -31428,6 +31428,9 @@ module Adamas::HIR
           end
         end
         return_type ||= TypeRef::VOID
+        if with_arena(member_arena) { abstract_numeric_return_constraint(member) }
+          return_type = TypeRef::VOID
+        end
         contains_yield = false
         if !has_block
           contains_yield = def_contains_yield?(member, member_arena)
@@ -32904,6 +32907,10 @@ module Adamas::HIR
           return_type = enum_base_type(enum_name)
         end
       end
+      abstract_return_constraint = with_arena(member_arena) do
+        abstract_numeric_return_constraint(effective_member)
+      end
+      return_type = TypeRef::VOID if abstract_return_constraint
       param_types = [] of TypeRef
       has_block = false
       contains_yield : Bool? = nil
@@ -44034,6 +44041,10 @@ module Adamas::HIR
         end
       end
 
+      abstract_return_constraint = if !is_initialize_method && !(method_name == "value" && !enum_base_type_by_name?(class_name).nil?)
+                                     abstract_numeric_return_constraint(node)
+                                   end
+
       # Registration resolves explicit annotations while the defining source
       # arena is still authoritative. Lazy lowering may later receive a
       # transported DefNode whose return-type slice is unreadable, so preserve
@@ -44064,6 +44075,8 @@ module Adamas::HIR
         end
       end
 
+      return_type = TypeRef::VOID if abstract_return_constraint
+
       unless v2_string_readable?(full_name)
         if v2_string_readable?(base_name)
           full_name = base_name unless base_name.empty?
@@ -44073,7 +44086,13 @@ module Adamas::HIR
       return if full_name.empty?
 
       register_pending_method_effects(full_name, param_types.size)
-      register_function_type(full_name, return_type)
+      if abstract_return_constraint
+        unless @module.has_function_with_body?(full_name)
+          register_function_type(full_name, TypeRef::VOID, allow_explicit_replacement: true)
+        end
+      else
+        register_function_type(full_name, return_type)
+      end
 
       if debug_env_filter_match?("DEBUG_FROM_CHARS", base_name, full_name)
         STDERR.puts "[LOWER_METHOD] base_name=#{base_name}, full_name=#{full_name}, param_types=#{param_types.map(&.to_s)}, override=#{effective_full_name_override.empty? ? "nil" : effective_full_name_override}"
@@ -56266,6 +56285,8 @@ module Adamas::HIR
                     else
                       TypeRef::VOID
                     end
+      abstract_return_constraint = abstract_numeric_return_constraint(node)
+      return_type = TypeRef::VOID if abstract_return_constraint
       @current_typeof_locals = old_typeof_locals
       STDERR.puts "[FASTFLOAT_PASS2] phase=after_return_type type=#{get_type_name_from_ref(return_type)}" if trace_fastfloat_pass2
       STDERR.puts "[REGISTER_DEF_RAW] phase=after_return_type type=#{get_type_name_from_ref(return_type)}" if debug_register_raw
@@ -56283,7 +56304,11 @@ module Adamas::HIR
       if debug_register_raw
         STDERR.puts "[REGISTER_DEF_RAW] phase=keying base=#{base_name} full=#{full_name} has_block=#{has_block ? 1 : 0} register_base=#{register_base_name ? 1 : 0}"
       end
-      register_function_type(full_name, return_type)
+      register_function_type(
+        full_name,
+        return_type,
+        allow_explicit_replacement: !abstract_return_constraint.nil?,
+      )
       STDERR.puts "[FASTFLOAT_PASS2] phase=after_register_function_type full=#{full_name}" if trace_fastfloat_pass2
       STDERR.puts "[REGISTER_DEF_RAW] phase=after_register_function_type full=#{full_name}" if debug_register_raw
 
@@ -67031,13 +67056,21 @@ module Adamas::HIR
       return nil if return_type_name.empty?
 
       if return_type_name == "Int" || return_type_name == "Float" || return_type_name == "Number"
-        if function = @module.function_by_name(normalized_mangled)
-          if @module.has_function_with_body?(normalized_mangled) &&
-             function.return_type != TypeRef::VOID &&
-             abstract_numeric_return_admits?(return_type_name, get_type_name_from_ref(function.return_type))
-            return function.return_type
-          end
+        # Abstract numeric names are source constraints, not ABI aliases. Only
+        # an exact Def already associated with this materialized body can
+        # supply the ABI type; a stale specialization or family cache is not
+        # evidence for the selected source definition.
+        registered_def = @function_defs[normalized_mangled]?
+        return nil unless registered_def && registered_def.same?(func_def)
+        return nil unless @function_def_arenas[normalized_mangled]?
+        return nil unless function = @module.function_by_name(normalized_mangled)
+        return nil unless @module.has_function_with_body?(normalized_mangled)
+        actual_type = function.return_type
+        if actual_type != TypeRef::VOID &&
+           abstract_numeric_return_admits?(return_type_name, get_type_name_from_ref(actual_type))
+          return actual_type
         end
+        return nil
       end
 
       owner_override = method_owner(normalized_base)
@@ -72492,6 +72525,7 @@ module Adamas::HIR
       end
 
       # Determine return type (default to Void if not specified)
+      abstract_return_constraint = abstract_numeric_return_constraint(node)
       return_type = TypeRef::VOID
       # An unannotated `?` method is only *guessed* to return Bool. The guess
       # is registered for callers that need a type before the body is lowered
@@ -72556,14 +72590,17 @@ module Adamas::HIR
             return_type = resolved_return
           end
         end
+        return_type = TypeRef::VOID if abstract_return_constraint
       ensure
         @signature_scan_mode = saved_signature_scan_mode
       end
 
-      if registered = @function_types[full_name]?
-        if (return_type == TypeRef::VOID || return_type == TypeRef::NIL) &&
-           registered != TypeRef::VOID && registered != TypeRef::NIL
-          return_type = registered
+      unless abstract_return_constraint
+        if registered = @function_types[full_name]?
+          if (return_type == TypeRef::VOID || return_type == TypeRef::NIL) &&
+             registered != TypeRef::VOID && registered != TypeRef::NIL
+            return_type = registered
+          end
         end
       end
       # Idempotency: avoid lowering the same function twice (can happen with conditional defs),
@@ -72576,6 +72613,13 @@ module Adamas::HIR
           @closure_ref_prefer_cell = saved_closure_ref_prefer
           return existing
         end
+      end
+
+      # Abstract numeric annotations constrain the completed body type; they
+      # are not provisional ABI aliases. Seed a pending VOID only before the
+      # body exists, then let finalize_abstract_numeric_return publish it.
+      if abstract_return_constraint && !@module.has_function_with_body?(full_name)
+        register_function_type(full_name, TypeRef::VOID, allow_explicit_replacement: true)
       end
 
       # Ensure function type is registered even when caller skipped register_function (e.g. conditional defs).
@@ -72613,7 +72657,6 @@ module Adamas::HIR
       # Lower a guessed predicate body without the Bool contract so its
       # returns are neither coerced to Bool nor skip inference below.
       return_type = TypeRef::VOID if predicate_return_guess && return_type == TypeRef::BOOL
-      abstract_return_constraint = abstract_numeric_return_constraint(node)
       return_type = TypeRef::VOID if abstract_return_constraint
       func = @module.create_function(full_name, return_type)
       if path = source_path_for(@arena)

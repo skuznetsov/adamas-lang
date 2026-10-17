@@ -1,5 +1,25 @@
 # Adamas Bootstrap TODO
 
+2026-10-17 PENDING ABSTRACT NUMERIC RETURN ABI: source registration published
+Int/Float/Number as concrete ABI aliases before lowering their bodies. Bare
+forwarders consumed those aliases, truncating UInt64 and misreading Float32.
+Keep these source constraints provisional through registration/lowering; only
+the exact selected Def with a materialized admissible body can supply the ABI.
+DoD: abstract_numeric_pending_return_repro.sh compares thirteen original-first
+type/value tags, including forwarders, differently ordered module overloads,
+NoReturn and same-signature redefinition. It requires rc=1/no executable for
+Float32 bodies restricted to Int, including a demanded unreachable tail.
+Exact parent return3050 fails the original ten-tag probe return3067 and aborts
+on the UInt64-only redefinition consumer in repository run return3085. Fresh
+S1 return3062 passes repository run return3084 and mixed numeric/predicate/
+wide-rand guards return3064-3066.
+- [x] Keep pending abstract numeric return constraints separate from ABI types.
+- [ ] Probe mutually recursive and reparsed-definition return inference before
+  extending this exact materialized-source identity claim to those paths.
+- [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
+  Fresh S2 return3073 and exact parent return3074 both stop at the same
+  Set(String).new(4) source-overload admission error, before IR generation.
+
 2026-10-17 IMPLICIT YIELD CALLBACK RESULT ABI: the return-shape contract required
 a declared &block, although methods can receive a block through implicit yield.
 Nested fallback materialization then reused one wrapper for Int32 and Float64

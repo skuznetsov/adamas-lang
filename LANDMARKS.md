@@ -19712,3 +19712,40 @@ Refresh after block admission, callback specialization, fallback materialization
 or return-ABI changes. Revert the source change and regression together.
 Untyped raw-union carriers, fresh S2 and unchanged LavinMQ functional/upstream
 parity remain open.
+
+
+### Pending abstract numeric constraints do not publish an ABI (2026-10-17)
+Registration resolved Int, Float and Number return annotations through concrete
+fallback aliases before their selected bodies existed. Bare forwarders could
+consume those aliases before lazy lowering published UInt64 or Float32. Keep
+the source constraint provisional as VOID across registration and lowering;
+skip cached-family return adoption for it. Annotation resolution accepts only
+the exact stored source Def with an arena and a materialized body whose return
+belongs to the numeric constraint. The existing finalizer publishes the
+completed concrete carrier and validates source membership.
+
+abstract_numeric_pending_return_repro.sh qualifies thirteen type/value tags on
+pristine Crystal, including UInt64 4294967297, Float32 1.25, bare forwarders and
+module overloads in both declaration orders. A UInt64-only consumer additionally
+checks static return admission and actual payload after NoReturn and a
+same-signature redefinition. Both ordinary and demanded unreachable Float32
+bodies constrained to Int require rc=1 without an executable. Exact parent
+return3050 fails the original ten-tag probe return3067 with I and F0 instead of
+the corresponding U1 tags. It compiles the expanded regression but aborts in
+return3085 at a generated only_pending_uint64$Int32 stub after the redefinition;
+pristine Crystal emits all thirteen expected tags. Fresh S1 return3062 passes
+repository run return3084;
+mixed numeric union returns, predicate inference and rand with a 2^32 bound pass
+return3064-3066. Scoped adversary ROBUST for these pending-to-materialized paths
+and the three direct control-flow/source-identity guards return3079/3080/3083.
+HIR SHA-256
+ca84e88d0ac4dc6520f156d9fbff4e2c4824d08f677551917c240b5822fdec45;
+host 610910e2c9219edc41b2ba3bb72f99ea2b844a01176b3ea601688cfad2cddecc.
+
+Refresh after source registration, selected-Def identity, lazy return inference
+or ABI publication changes. Revert the source change and regression together.
+Mutual recursion, reparsed Def identity, fresh S2 and unchanged LavinMQ
+functional/upstream parity remain open.
+Fresh pristine S2 return3073 and exact parent return3074 use the same frozen
+return3062 source; both stop at Set(String).new(4) source-overload admission
+before IR generation. That independent constructor blocker does not verify S2.
