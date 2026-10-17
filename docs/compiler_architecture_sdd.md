@@ -29,6 +29,18 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+Control-flow and virtual-return joins consume only types supplied by their
+actual incoming values. An existing wider union descriptor cannot add possible
+values. The shared value-set join flattens nested unions, removes redundant
+subtypes and retains a genuinely returning Nil arm; no-flow arms stay excluded
+by their flow boundary. DoD: flow_union_precision_repro.sh compares original
+plain/seeded-if/case/rescue ABC and real-Nil rejection. Rollback is the atomic
+replacement of covering-union lookup at the five join consumers. Crystal's
+sibling-class virtual LCA behavior, fresh S2 and LavinMQ parity remain open.
+The focused HIR spec also checks actual Phi arms and the registered-target
+virtual inference helper; helper coverage alone does not certify a complete
+virtual call's lowering or ABI.
+
 Macro type equality projects already-visible aliases with declaration-owned
 namespace lookup; rooted paths and local shadows retain authority. Unknown
 short names cannot capture unrelated aliases. DoD:

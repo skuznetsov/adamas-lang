@@ -1,5 +1,30 @@
 # Adamas Bootstrap TODO
 
+2026-10-16 FLOW-LOCAL UNION JOINS: a registered storage union is not evidence
+that an expression can return every arm in that union. The old covering-union
+lookup admitted unrelated Nil/other arms at if/case/rescue, inline-return and
+virtual-return joins. Construct those joins from their actual flowing values,
+using the existing flattening/subtype normalization; retain a real returning
+Nil arm. DoD: flow_union_precision_repro.sh matches original ABC for plain,
+seeded if, case and rescue, and rejects a genuine Nil at Array(BaseType).
+Parent seeded/case/rescue reject the valid programs; parent plain/Nil controls
+pass. Evidence: bootstrap2164/2167/2168/2170; host bootstrap2166. Refresh after
+flow joins, union normalization, subtype pruning or return collection changes.
+The focused flow_union_precision_spec.cr passes 6/6 on the candidate and
+fails 6/6 on the exact parent (bootstrap2179 evidence). It checks actual
+if/case/rescue/inline Phi types, flattening, subtype and no-flow controls;
+virtual return inference is checked through its production helper, since
+the isolated full-call fixture does not infer a concrete result.
+- [x] Fresh ordinary combined S2 passes the previous
+  TypeInferenceEngine#infer_safe_navigation / TypeContext#union_of refusal
+  (s2_bootstrap2176, exit 1, 268.83 seconds). It next rejects Nil | Slice(UInt8)
+  at AstToHir#safe_slice_to_string; localize that independent call before
+  changing either its producer or the restriction check.
+- [ ] Audit Crystal-style sibling-class least-common-ancestor/virtual-base
+  merging separately. Exact input arms and subtype pruning do not establish
+  that broader type-merge parity.
+- [ ] Complete fresh bootstrap and unchanged LavinMQ runtime/spec parity.
+
 2026-10-16 MACRO ALIAS EQUALITY: equality/inequality conditions resolve
 already-visible aliases in their declaration namespace, preserving rooted
 paths and lexical shadowing. Unknown short names cannot capture unrelated
@@ -44,12 +69,9 @@ forall metadata, call specialization, or owner-map restoration changes.
 - [ ] Resolve the separate Float::FastFloat.large_mul LimbSpan versus
   Slice(UInt32) restriction failure, reached by the combined ordinary
   String#to_f64 consumer after the forall repair (float2124).
-- [ ] Localize the next fresh ordinary S2 refusal: TypeContext#union_of
-  expects Array(Type) but receives Array(Nil | PrimitiveType | Type)
-  in TypeInferenceEngine#infer_safe_navigation (s2_float2131/2139,
-  frozen combined source; exit 1 after 164/168 seconds). Plain ancestor,
-  optional-value guard, fallback array and nested-annotation controls pass
-  (bootstrap2138/2143/2145).
+- [x] Localize the next S2 refusal to a flow join reusing an unrelated wider
+  registered union (bootstrap2158/2164/2167/2168). Its native producer controls
+  pass after the exact-flow join repair above; full S2 still needs refresh.
 - [ ] Audit alias-dependent, named/splat, and unequal-union free-variable
   shapes separately; this repair adds source binding for plain positional
   restrictions and preserves existing call-shape binding for other shapes.

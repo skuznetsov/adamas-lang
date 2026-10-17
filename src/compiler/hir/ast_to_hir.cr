@@ -10847,15 +10847,7 @@ module Adamas::HIR
 
       return TypeRef::VOID if candidates.empty?
 
-      unique_candidates = candidates.uniq
-      return unique_candidates.first if unique_candidates.size == 1
-
-      if union_ref = find_covering_union_type(unique_candidates)
-        return union_ref
-      end
-
-      union_name = unique_candidates.map { |t| generic_param_type_name_from_ref(t) }.uniq.join(" | ")
-      create_union_type(union_name)
+      union_type_for_value_set(candidates) || TypeRef::VOID
     end
 
     # Bottom remains separate from the Void ABI. Every concrete class target
@@ -71478,61 +71470,6 @@ module Adamas::HIR
       false
     end
 
-    # Find an existing union type in the module that can represent all required types.
-    # Prefer the smallest matching union (fewest variants) to avoid needlessly wide phis.
-    private def find_covering_union_type(required_types : Array(TypeRef)) : TypeRef?
-      return nil if required_types.empty?
-
-      # Keep this allocation-light: this path is hot in branch/phi lowering.
-      required_mir = [] of MIR::TypeRef
-      required_types.each do |type_ref|
-        mir_ref = hir_to_mir_type_ref(type_ref)
-        seen = false
-        required_mir.each do |existing|
-          if existing == mir_ref
-            seen = true
-            break
-          end
-        end
-        required_mir << mir_ref unless seen
-      end
-
-      best_ref : TypeRef? = nil
-      best_variant_count = Int32::MAX
-
-      @union_descriptors.each do |mir_union_ref, descriptor|
-        variant_count = descriptor.variants.size
-        next if variant_count < required_mir.size
-        next if variant_count >= best_variant_count
-
-        covers_all = true
-        required_mir.each do |required|
-          found = false
-          descriptor.variants.each do |variant|
-            if variant.type_ref == required
-              found = true
-              break
-            end
-          end
-
-          unless found
-            covers_all = false
-            break
-          end
-        end
-
-        next unless covers_all
-
-        best_variant_count = variant_count
-        best_ref = mir_to_hir_type_ref(mir_union_ref)
-
-        # Exact minimal cover: cannot do better than number of required variants.
-        break if best_variant_count == required_mir.size
-      end
-
-      best_ref
-    end
-
     # Get class variable type from current class
     private def get_class_var_type(name : String) : TypeRef
       if class_name = @current_class
@@ -88210,16 +88147,9 @@ module Adamas::HIR
           incoming_values << fb[1]
         end
         value_types = incoming_values.map { |val| tuple_static_array_value_type(ctx, val) }.reject { |t| t == TypeRef::VOID }.uniq
-        phi_type = value_types.first? || TypeRef::VOID
-
-        if value_types.size > 1
-          if union_ref = find_covering_union_type(value_types)
-            phi_type = union_ref
-          else
-            union_name = value_types.map { |t| generic_param_type_name_from_ref(t) }.uniq.join(" | ")
-            phi_type = create_union_type(union_name)
-          end
-        end
+        # Join only flowing values. A previously registered wider union is a
+        # storage option, not evidence that this expression can produce its extra arms.
+        phi_type = union_type_for_value_set(value_types) || TypeRef::VOID
 
         # Don't create phi for void/nil types — but STILL merge local variables!
         if phi_type == TypeRef::VOID || phi_type == TypeRef::NIL
@@ -91947,7 +91877,7 @@ module Adamas::HIR
       merge_case_locals(ctx, pre_case_locals.locals, branch_locals)
 
       value_types = incoming.map { |(_, val)| ctx.type_of(val) }.reject { |t| t == TypeRef::VOID }.uniq
-      phi_type = value_types.first? || TypeRef::VOID
+      phi_type = union_type_for_value_set(value_types) || TypeRef::VOID
 
       if env_get("DEBUG_UNION_PHI")
         debug_filter = env_get("DEBUG_UNION_PHI")
@@ -91961,18 +91891,6 @@ module Adamas::HIR
             val_name = val_info.is_a?(Call) ? " call=#{val_info.method_name}" : ""
             STDERR.puts "[UNION_PHI_IN] func=#{ctx.function.name} blk=#{blk} val=#{get_type_name_from_ref(val_type)} kind=#{val_desc}#{val_name}"
           end
-        end
-      end
-
-      # If branch value types differ, prefer a union type that covers them.
-      # This avoids invalid IR when merging mixed types (e.g., Bool/Float64/Int64),
-      # and matches Crystal semantics (case expression returns a union).
-      if value_types.size > 1
-        if union_ref = find_covering_union_type(value_types)
-          phi_type = union_ref
-        else
-          union_name = value_types.map { |t| generic_param_type_name_from_ref(t) }.uniq.join(" | ")
-          phi_type = create_union_type(union_name)
         end
       end
 
@@ -93090,26 +93008,9 @@ module Adamas::HIR
             # Rescue never flows (re-raises) — use body value directly
             # result_id already set
           elsif body_type != TypeRef::VOID && rescue_type != TypeRef::VOID
-            # Determine PHI type
-            if body_type == rescue_type
-              phi_type = body_type
-            else
-              value_types = [body_type, rescue_type].reject { |t| t == TypeRef::NIL }.uniq
-              if value_types.size <= 1
-                phi_type = value_types.first? || TypeRef::NIL
-              else
-                if union_ref = find_covering_union_type(value_types)
-                  phi_type = union_ref
-                elsif value_types.all? { |t| numeric_primitive?(t) }
-                  # Mixed numeric body/rescue values merge to their union
-                  # (Crystal semantics); casting to the body type truncates.
-                  union_name = value_types.map { |t| generic_param_type_name_from_ref(t) }.uniq.join(" | ")
-                  phi_type = create_union_type(union_name)
-                else
-                  phi_type = body_type
-                end
-              end
-            end
+            # A returning Nil arm is a real value; only non-flowing Void arms
+            # were excluded above. Use the same exact join as other control flow.
+            phi_type = union_type_for_value_set([body_type, rescue_type]) || TypeRef::VOID
 
             # Coerce values to PHI type if needed
             coerced_body = result_id
@@ -120028,19 +119929,10 @@ module Adamas::HIR
           inline_return.incoming.first[1]
         else
           value_types = inline_return.incoming.map { |(_, val)| ctx.type_of(val) }.reject { |t| t == TypeRef::VOID }.uniq
-          phi_type = value_types.first? || TypeRef::VOID
-
-          if value_types.size > 1
-            if union_ref = find_covering_union_type(value_types)
-              phi_type = union_ref
-            else
-              value_names = value_types.map { |t| get_type_name_from_ref(t) }.uniq
-              if env_has?("DEBUG_INLINE_RETURN")
-                STDERR.puts "[INLINE_RETURN] callee=#{inline_key} types=#{value_names.join(",")}"
-              end
-              union_name = value_names.join(" | ")
-              phi_type = create_union_type(union_name)
-            end
+          phi_type = union_type_for_value_set(value_types) || TypeRef::VOID
+          if value_types.size > 1 && env_has?("DEBUG_INLINE_RETURN")
+            value_names = value_types.map { |t| get_type_name_from_ref(t) }.uniq
+            STDERR.puts "[INLINE_RETURN] callee=#{inline_key} types=#{value_names.join(",")}"
           end
 
           coerced_incoming = inline_return.incoming.map do |(blk, val)|

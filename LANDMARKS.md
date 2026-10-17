@@ -1,5 +1,27 @@
 # LANDMARKS
 
+Flow-local union authority (2026-10-16): infer join arms from actual incoming
+values, not from any previously registered union that happens to cover them.
+The old lookup introduced Nil at the enclosing infer_safe_navigation if even
+though its inner || returned plain Type (bootstrap2158). A nullable union
+seed alone turns the small valid program RED on the exact parent; if/case/
+rescue become original-matched ABC after using the existing normalized
+value-set join. Plain and real-Nil rejection controls also pass (bootstrap2170).
+The six focused HIR examples pass on this source and all fail on the exact
+parent (bootstrap2179): actual if/case/rescue/inline Phi arms plus nested-union,
+subtype and no-flow controls. Virtual-return coverage calls the production
+inference helper directly after declaration registration; it does not certify
+the full virtual-call lowering path. Scoped verdict: ROBUST for these joins.
+Fresh ordinary combined S2 advances beyond that refusal and next rejects
+Nil | Slice(UInt8) at AstToHir#safe_slice_to_string (s2_bootstrap2176, exit 1,
+268.83 seconds; source seals unchanged). This localizes the next frontier,
+not completion of the bootstrap ladder.
+HIR 1fff80f9f339f1226b8ae8d99a8cdaee5ee2e6bbd29a99f8399490999dfd93c6;
+host e83a7088efa7e71d54b153c839cbdfc654dd04ace2a3ca52ade310691ed6ae45.
+Refresh after flow joins, union normalization, subtype pruning or return
+collection changes. This does not establish Crystal's sibling-class virtual
+LCA merging, a complete fresh S2, or LavinMQ runtime/spec parity.
+
 Macro alias equality (2026-10-16): compare already-visible aliases by their
 projected types in the active declaration context. Preserve rooted paths and
 lexical shadows; do not resolve an unknown short name through an unrelated
