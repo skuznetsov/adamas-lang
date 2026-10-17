@@ -81,6 +81,20 @@ module Adamas
           else           "Int32" # Default fallback
           end
         end
+
+        # Select the default integer kind after applying a source unary sign.
+        # The lexer and textual typeof resolver share this range boundary.
+        def self.from_integer_magnitude(magnitude : UInt64, negative : Bool) : NumberKind?
+          if negative
+            return I32 if magnitude <= Int32::MAX.to_u64 + 1_u64
+            return I64 if magnitude <= Int64::MAX.to_u64 + 1_u64
+            return nil
+          end
+
+          return I32 if magnitude <= Int32::MAX.to_u64
+          return I64 if magnitude <= Int64::MAX.to_u64
+          U64
+        end
       end
 
       # Phase 37: Visibility modifier for methods
@@ -794,18 +808,28 @@ module Adamas
             @parsed_int = 0_i64
             @parsed_uint = 0_u64
           else
-            raw = if text.starts_with?("0x") || text.starts_with?("0X")
-                    text[2..].to_u64?(16) || 0_u64
-                  elsif text.starts_with?("0b") || text.starts_with?("0B")
-                    text[2..].to_u64?(2) || 0_u64
-                  elsif text.starts_with?("0o") || text.starts_with?("0O")
-                    text[2..].to_u64?(8) || 0_u64
+            negative = text.starts_with?("-")
+            numeric_text = if negative || text.starts_with?("+")
+                             text[1..]
+                           else
+                             text
+                           end
+            raw = if numeric_text.starts_with?("0x") || numeric_text.starts_with?("0X")
+                    numeric_text[2..].to_u64?(16) || 0_u64
+                  elsif numeric_text.starts_with?("0b") || numeric_text.starts_with?("0B")
+                    numeric_text[2..].to_u64?(2) || 0_u64
+                  elsif numeric_text.starts_with?("0o") || numeric_text.starts_with?("0O")
+                    numeric_text[2..].to_u64?(8) || 0_u64
                   else
-                    text.to_u64? || text.to_i64?.try(&.to_u64!) || 0_u64
+                    numeric_text.to_u64? || numeric_text.to_i64?.try(&.to_u64!) || 0_u64
                   end
             @parsed_uint = raw
             @parsed_int = if unsigned_integer_kind?
                             raw <= Int64::MAX.to_u64 ? raw.to_i64 : 0_i64
+                          elsif negative && raw == Int64::MAX.to_u64 + 1_u64
+                            Int64::MIN
+                          elsif negative && raw <= Int64::MAX.to_u64
+                            -raw.to_i64
                           else
                             raw.to_i64!
                           end

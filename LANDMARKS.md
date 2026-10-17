@@ -1,5 +1,23 @@
 # LANDMARKS
 
+Numeric source kinds and typeof continuity (2026-10-17): textual typeof
+must consume complete lexer Number tokens, including explicit suffix metadata,
+before member-chain splitting. Only a sign adjacent to the numeric token can
+change its default signed-magnitude kind; outer unary operators preserve the
+inner kind. NumberNode parsing retains signed based-literal values and Int64
+minimum, while ordinary locals retain their selected literal kind. Known
+Tuple/Array local indices project their element types rather than the container.
+Fresh host slice2478 passes original-first signed/suffix/hex/local/Box parity
+(slice2485) and adjacent/spaced/commented/nested sign, postfix/subtraction and
+runtime-value boundaries (slice2482). Parent slice2472 fails textual spacing,
+nested signs and comment gaps (slice2477). Scoped ROBUST for these valid cases;
+host SHA256 29d462df0f80ae6287889536c2923565923264123488f4b374626a87ec943e20.
+HIR SHA256 0c521106e59a82d72681b5994fa54f1d42d3f0b2a3c42566f662c4e8b391431d.
+Refresh after token-kind metadata, unary parsing, source-span ownership, textual
+typeof or local projection changes. Invalid numeric diagnostics, nested-union
+and negative-index projections, synthetic macro spans, fresh S2 and LavinMQ
+runtime/spec parity remain open.
+
 Applied module source projections (2026-10-16): source restriction checking
 cannot infer applied ancestry solely from the lazy module-method registry.
 Use registered edges plus direct generic class includes and transitive module

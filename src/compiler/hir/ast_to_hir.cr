@@ -16901,6 +16901,14 @@ module Adamas::HIR
         STDERR.puts "[L13Z] typeof_expr=#{expr.inspect} class=#{@current_class.inspect} method=#{@current_method.inspect} locals=#{loc}"
       end
 
+      # The textual typeof path receives parser-preserved expressions as a
+      # String. Classify a complete numeric token before interpreting `.` as a
+      # method-chain separator (for example, `1.5_f32`). The lexer-backed
+      # helper rejects any trailing operators or member names.
+      if numeric_type = number_literal_type_name(expr)
+        return normalize_typeof_type_name(numeric_type)
+      end
+
       # typeof(expr1, expr2, ...) in type positions should resolve each top-level
       # argument separately and then combine them, not reinterpret the whole
       # comma-joined payload as a single tuple literal string.
@@ -17005,9 +17013,33 @@ module Adamas::HIR
 
     # Split a method chain string, handling nested parentheses
     private def split_method_chain(expr : String) : Array(String)
+      # Keep decimal points that belong to lexer-recognized Number tokens in
+      # the receiver. A textual expression such as `1.5_f32.to_s` contains
+      # both a decimal point and a method separator; character-only splitting
+      # cannot distinguish them. Offsets are bytes because Token::Span uses
+      # byte offsets and numeric token text is ASCII.
+      decimal_dot_offsets = [] of Int32
+      if expr.includes?('.')
+        lexer = Adamas::Compiler::Frontend::Lexer.new(expr)
+        lexer.each_token do |token|
+          next unless token.kind == Adamas::Compiler::Frontend::Token::Kind::Number
+
+          token_text = token.lexeme
+          token_offset = token.span.start_offset
+          token_index = 0
+          while token_index < token_text.bytesize
+            if token_text.byte_at(token_index) == '.'.ord.to_u8
+              decimal_dot_offsets << token_offset + token_index
+            end
+            token_index += 1
+          end
+        end
+      end
+
       parts = [] of String
       current = String::Builder.new
       depth = 0
+      byte_offset = 0
 
       expr.each_char do |c|
         case c
@@ -17018,7 +17050,7 @@ module Adamas::HIR
           depth -= 1
           current << c
         when '.'
-          if depth == 0
+          if depth == 0 && !decimal_dot_offsets.includes?(byte_offset)
             parts << current.to_s
             current = String::Builder.new
           else
@@ -17027,6 +17059,7 @@ module Adamas::HIR
         else
           current << c
         end
+        byte_offset += c.bytesize
       end
 
       parts << current.to_s unless current.empty?
@@ -17240,6 +17273,26 @@ module Adamas::HIR
         end
       end
 
+      # Resolve a textual index applied to a local before falling back to
+      # element-type expressions and literal parsing. This keeps the local's
+      # already-known Tuple/Array element type instead of reparsing its name.
+      if index = index_suffix
+        indexed_local_type : String? = nil
+        if locals = @current_typeof_locals
+          if type_ref = locals[expr]?
+            local_type_name = get_type_name_from_ref(type_ref)
+            indexed_local_type = local_type_name unless local_type_name == "Void"
+          end
+        end
+        indexed_local_type ||= lookup_typeof_local_name(expr)
+        if local_type = indexed_local_type
+          if resolved = project_local_index_type_name(local_type, index)
+            resolved = drop_nil_from_union(resolved) if drop_nil
+            return normalize_typeof_type_name(resolved)
+          end
+        end
+      end
+
       if resolved = resolve_element_type_expression(expr)
         resolved = apply_index_to_type_name(resolved, index_suffix) if index_suffix
         resolved = drop_nil_from_union(resolved) if drop_nil
@@ -17312,43 +17365,76 @@ module Adamas::HIR
     end
 
     private def number_literal_type_name(literal : String) : String?
-      value = literal.strip
-      return nil if value.empty?
+      source = literal.strip
+      return nil if source.empty?
 
-      if value.starts_with?('+') || value.starts_with?('-')
-        inner = value[1..]
-        inner_type = number_literal_type_name(inner)
-        return inner_type if inner_type
-      end
+      diagnostics = [] of Adamas::Compiler::Frontend::Diagnostic
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source, diagnostics: diagnostics)
+      number_kind : Adamas::Compiler::Frontend::NumberKind? = nil
+      number_lexeme : String? = nil
+      number_kind_explicit = false
+      number_seen = false
+      adjacent_negative = false
+      last_sign : Adamas::Compiler::Frontend::Token? = nil
 
-      if match = value.match(/_?(i8|i16|i32|i64|i128|u8|u16|u32|u64|u128|f32|f64|i|u|f)\z/i)
-        suffix = match[1].downcase
-        return case suffix
-        when "i8"   then "Int8"
-        when "i16"  then "Int16"
-        when "i32"  then "Int32"
-        when "i64"  then "Int64"
-        when "i128" then "Int128"
-        when "u8"   then "UInt8"
-        when "u16"  then "UInt16"
-        when "u32"  then "UInt32"
-        when "u64"  then "UInt64"
-        when "u128" then "UInt128"
-        when "f32"  then "Float32"
-        when "f64"  then "Float64"
-        when "i"    then "Int32"
-        when "u"    then "UInt64"
-        when "f"    then "Float64"
-        else             nil
+      loop do
+        token = lexer.next_token
+        case token.kind
+        when Adamas::Compiler::Frontend::Token::Kind::Whitespace,
+             Adamas::Compiler::Frontend::Token::Kind::Newline,
+             Adamas::Compiler::Frontend::Token::Kind::Comment
+          next
+        when Adamas::Compiler::Frontend::Token::Kind::Plus,
+             Adamas::Compiler::Frontend::Token::Kind::Minus
+          # Only the sign adjacent to the literal can change its number kind.
+          # Outer unary operators preserve that kind, irrespective of parity.
+          return nil if number_seen
+          last_sign = token
+        when Adamas::Compiler::Frontend::Token::Kind::Number
+          return nil if number_seen
+          number_kind = token.number_kind
+          return nil unless number_kind
+          number_lexeme = token.lexeme
+          number_kind_explicit = token.number_kind_explicit
+          if sign = last_sign
+            adjacent_negative = sign.kind == Adamas::Compiler::Frontend::Token::Kind::Minus &&
+                                sign.span.end_offset == token.span.start_offset
+          end
+          number_seen = true
+        when Adamas::Compiler::Frontend::Token::Kind::EOF
+          break
+        else
+          return nil
         end
       end
 
-      stripped = strip_numeric_suffix(value).gsub("_", "")
-      return nil if stripped.empty?
-      return "Float64" if stripped.includes?('.') || stripped.includes?('e') || stripped.includes?('E')
-      return "Int32" if stripped.to_i64?(prefix: true)
+      return nil unless number_seen && diagnostics.empty?
+      kind = number_kind.not_nil!
+      return kind.to_s if !adjacent_negative || number_kind_explicit || kind == Adamas::Compiler::Frontend::NumberKind::F32 || kind == Adamas::Compiler::Frontend::NumberKind::F64
 
-      nil
+      lexeme = number_lexeme.not_nil!.delete('_')
+      base = 10
+      digits = lexeme
+      if lexeme.starts_with?("0x") || lexeme.starts_with?("0X")
+        base = 16
+        digits = lexeme[2..]
+      elsif lexeme.starts_with?("0b") || lexeme.starts_with?("0B")
+        base = 2
+        digits = lexeme[2..]
+      elsif lexeme.starts_with?("0o") || lexeme.starts_with?("0O")
+        base = 8
+        digits = lexeme[2..]
+      end
+
+      if magnitude = digits.to_u64?(base)
+        if signed_kind = Adamas::Compiler::Frontend::NumberKind.from_integer_magnitude(magnitude, true)
+          return signed_kind.to_s
+        end
+      end
+
+      # Keep the lexer-selected fallback for values outside this helper's
+      # representable magnitude; range diagnostics remain owned by the lexer.
+      kind.to_s
     end
 
     private def resolve_element_type_expression(expr : String) : String?
@@ -17554,6 +17640,41 @@ module Adamas::HIR
       end
       return default_type if registered_type == TypeRef::VOID
       registered_type
+    end
+
+    # Return a local index projection only when every possible local arm has a
+    # known result. Never preserve the container type as a failed projection.
+    private def project_local_index_type_name(type_name : String, index : Int32) : String?
+      return nil if index < 0
+      name = type_name.strip
+
+      if name.includes?('|')
+        variants = split_union_type_name(name).map(&.strip)
+        return nil if variants.size <= 1
+        projected = [] of String
+        i = 0
+        while i < variants.size
+          variant_type = project_local_index_type_name(variants[i], index)
+          return nil unless variant_type
+          projected << variant_type
+          i += 1
+        end
+        return projected.uniq.join(" | ")
+      end
+
+      if name.starts_with?("Tuple(") && name.ends_with?(')')
+        params_str = name[6, name.size - 7]
+        args = split_generic_type_args(params_str)
+        return args[index]?
+      end
+
+      if name.starts_with?("Array(") && name.ends_with?(')')
+        params_str = name[6, name.size - 7]
+        args = split_generic_type_args(params_str)
+        return args.first?
+      end
+
+      nil
     end
 
     private def apply_index_to_type_name(type_name : String, index : Int32?) : String

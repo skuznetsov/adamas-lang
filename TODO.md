@@ -1,5 +1,25 @@
 # Adamas Bootstrap TODO
 
+2026-10-17 NUMERIC LITERAL TYPE CONTINUITY: textual typeof used suffix/string
+heuristics that classified hexadecimal digits as floating point, ignored
+integer ranges, split decimal points as member separators and lost local
+Tuple/Array index projections. Use lexer token kinds and known local element
+types. Preserve adjacent unary signs as NumberNodes so signed minima, local
+inference and literal postfix binding match Crystal. The textual path uses
+the same sign adjacency instead of reducing outer signs by parity. DoD:
+typeof_numeric_signed_parity_repro.sh and numeric_signed_literal_boundary_repro.sh
+match original-first exact output. Fresh S1 slice2478 passes slice2485 and
+slice2482; predecessor slice2472 fails the spaced/nested/commented textual
+sign cases in slice2477. Scope: tested valid numeric spellings, numeric member
+chains, concrete Tuple/Array locals and signed boundaries.
+- [x] Preserve tested number kinds across expression and textual type contexts.
+- [ ] Repair invalid numeric spelling/range rejection separately: overflow,
+  explicit narrow integer bounds, negative unsigned and malformed exponents
+  remain pre-existing gaps. This change does not certify those diagnostics.
+- [ ] Probe nested-union/negative-index local projections and synthetic macro
+  spans before widening the local projection or generated-sign claim.
+- [ ] Verify fresh S2 and unchanged LavinMQ runtime/spec parity.
+
 2026-10-17 NUMERIC PRINT IO RECEIVERS: numeric literal fast paths and float
 substitutions in HIR/MIR bypassed standard IO buffering; MIR also discarded
 an explicit IO::Memory receiver. Use the selected stdlib methods whenever

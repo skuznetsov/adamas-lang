@@ -3632,6 +3632,52 @@ module Adamas
           source_slice[start_offset, end_offset - start_offset]
         end
 
+        # Crystal treats an adjacent sign and numeric token as one literal.
+        # Keep that distinction at the AST boundary so signed minima and postfix
+        # binding use the same literal node as the original parser.
+        private def fused_signed_number_kind(op : Token, number : Token) : NumberKind?
+          kind = number.number_kind
+          return nil unless kind
+          return kind if op.kind == Token::Kind::Plus
+          return nil unless op.kind == Token::Kind::Minus
+          return nil if number.number_kind_explicit &&
+                        (kind.u8? || kind.u16? || kind.u32? || kind.u64? || kind.u128?)
+          return kind if number.number_kind_explicit || kind.f32? || kind.f64?
+
+          lexeme = String.new(number.slice).delete('_')
+          base = 10
+          digits = lexeme
+          if lexeme.starts_with?("0x") || lexeme.starts_with?("0X")
+            base = 16
+            digits = lexeme[2..]
+          elsif lexeme.starts_with?("0b") || lexeme.starts_with?("0B")
+            base = 2
+            digits = lexeme[2..]
+          elsif lexeme.starts_with?("0o") || lexeme.starts_with?("0O")
+            base = 8
+            digits = lexeme[2..]
+          end
+
+          magnitude = digits.to_u64?(base)
+          return nil unless magnitude
+          NumberKind.from_integer_magnitude(magnitude, true)
+        end
+
+        private def parse_fused_signed_number(op : Token) : ExprId?
+          number = current_token
+          return nil unless number.kind == Token::Kind::Number
+          return nil unless op.span.end_offset == number.span.start_offset
+          kind = fused_signed_number_kind(op, number)
+          return nil unless kind
+
+          span = op.span.cover(number.span)
+          value = source_span_slice(span)
+          return nil unless value
+
+          advance
+          @arena.add_typed(NumberNode.new(span, value, kind))
+        end
+
         private def char_literal_source_text_slice(span : Span) : Slice(UInt8)?
           literal = source_span_slice(span)
           if literal && literal.size >= 3 &&
@@ -10547,11 +10593,15 @@ module Adamas
             # Phase 89: Added AmpPlus and AmpMinus for wrapping unary operators
             op = token
             advance
-            right = parse_expression(UNARY_PRECEDENCE)
-            return PREFIX_ERROR if right.invalid?
-            operand_span = node_span(right)
-            unary_span = op.span.cover(operand_span)
-            @arena.add_typed(UnaryNode.new(unary_span, op.slice, right))
+            if fused = parse_fused_signed_number(op)
+              fused
+            else
+              right = parse_expression(UNARY_PRECEDENCE)
+              return PREFIX_ERROR if right.invalid?
+              operand_span = node_span(right)
+              unary_span = op.span.cover(operand_span)
+              @arena.add_typed(UnaryNode.new(unary_span, op.slice, right))
+            end
           when Token::Kind::LParen
             parse_grouping
           when Token::Kind::LBracket

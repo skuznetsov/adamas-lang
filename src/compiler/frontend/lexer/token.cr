@@ -9,8 +9,9 @@ module Adamas
         getter slice : Slice(UInt8)
         getter span : Span
         getter number_kind : NumberKind?
+        getter number_kind_explicit : Bool
 
-        def initialize(@kind : Kind, @slice : Slice(UInt8), @span : Span, @number_kind : NumberKind? = nil)
+        def initialize(@kind : Kind, @slice : Slice(UInt8), @span : Span, @number_kind : NumberKind? = nil, @number_kind_explicit : Bool = false)
         end
 
         def lexeme : String

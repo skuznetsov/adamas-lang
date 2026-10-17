@@ -931,6 +931,7 @@ module Adamas
           end
 
           # Phase 103J: Check for suffix (_i8, _i16, _i32, _i64, _i128, _u8, _u16, _u32, _u64, _u128, _f32, _f64)
+          suffix_start = @offset
           number_kind = lex_number_suffix
 
           # Phase 103L: Allow float suffix without underscore (e.g., 1e0f32, 1.0f64)
@@ -996,25 +997,15 @@ module Adamas
             if has_decimal
               number_kind = NumberKind::F64
             else
-              # Check if value exceeds Int32 range → use Int64
               num_str = String.new(bytes_range(from, @offset)).delete('_')
-              if num_str.starts_with?('-')
-                is_negative = true
-                abs_str = num_str[1..]
-              else
-                is_negative = false
-                abs_str = num_str
-              end
-              val = abs_str.to_i64?(strict: false)
-              if val && (val > Int32::MAX || (is_negative && val > (Int32::MAX.to_i64 + 1)))
-                number_kind = NumberKind::I64
-              elsif val.nil? && !is_negative && abs_str.to_u64?(strict: false)
-                # Decimal literals above Int64::MAX (e.g. 18446744073709551615)
-                # are UInt64 on the host, not a truncated Int32.
-                number_kind = NumberKind::U64
-              else
-                number_kind = NumberKind::I32
-              end
+              magnitude = num_str.to_u64?(strict: false)
+              number_kind = if magnitude
+                              NumberKind.from_integer_magnitude(magnitude, false) || NumberKind::I32
+                            else
+                              # Preserve the existing fallback for out-of-range
+                              # spellings; lexer diagnostics are a separate concern.
+                              NumberKind::I32
+                            end
             end
           end
 
@@ -1022,7 +1013,8 @@ module Adamas
             Token::Kind::Number,
             bytes_range(from, @offset),
             build_span(start_offset, start_line, start_column),
-            number_kind: number_kind
+            number_kind: number_kind,
+            number_kind_explicit: @offset > suffix_start
           )
         end
 
@@ -1042,6 +1034,7 @@ module Adamas
           end
 
           # Check for suffix (_i32, _i64, _f64)
+          suffix_start = @offset
           number_kind = lex_number_suffix
 
           # Infer NumberKind if not explicitly specified
@@ -1087,7 +1080,8 @@ module Adamas
             Token::Kind::Number,
             bytes_range(from, @offset),
             build_span(start_offset, start_line, start_column),
-            number_kind: number_kind
+            number_kind: number_kind,
+            number_kind_explicit: @offset > suffix_start
           )
         end
 
@@ -1107,6 +1101,7 @@ module Adamas
           end
 
           # Check for suffix (_i32, _i64, _f64)
+          suffix_start = @offset
           number_kind = lex_number_suffix
 
           # Infer NumberKind if not explicitly specified
@@ -1152,7 +1147,8 @@ module Adamas
             Token::Kind::Number,
             bytes_range(from, @offset),
             build_span(start_offset, start_line, start_column),
-            number_kind: number_kind
+            number_kind: number_kind,
+            number_kind_explicit: @offset > suffix_start
           )
         end
 
@@ -1172,6 +1168,7 @@ module Adamas
           end
 
           # Check for suffix (_i32, _i64, _f64)
+          suffix_start = @offset
           number_kind = lex_number_suffix
 
           # Infer NumberKind if not explicitly specified
@@ -1217,7 +1214,8 @@ module Adamas
             Token::Kind::Number,
             bytes_range(from, @offset),
             build_span(start_offset, start_line, start_column),
-            number_kind: number_kind
+            number_kind: number_kind,
+            number_kind_explicit: @offset > suffix_start
           )
         end
 
@@ -1235,13 +1233,7 @@ module Adamas
           digits = String.new(bytes_range(from + 2, @offset)).delete('_')
           val = digits.to_u64?(base)
           return NumberKind::I32 unless val
-          if val <= Int32::MAX.to_u64
-            NumberKind::I32
-          elsif val <= Int64::MAX.to_u64
-            NumberKind::I64
-          else
-            NumberKind::U64
-          end
+          NumberKind.from_integer_magnitude(val, false) || NumberKind::I32
         end
 
         # Phase 53: Extract number suffix parsing to helper (byte-wise, no String allocations)
