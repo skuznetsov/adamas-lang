@@ -82248,14 +82248,7 @@ module Adamas::HIR
         named_by_index << {parameter_index, named_arg}
       end
 
-      has_splat = arg_exprs.any? do |arg_expr|
-        call_arena[arg_expr].is_a?(Adamas::Compiler::Frontend::SplatNode)
-      end
-      positional_values = if has_splat
-                            expand_splat_args(ctx, arg_exprs, call_arena)
-                          else
-                            expand_extern_args(ctx, arg_exprs, call_arena, extern_func)
-                          end
+      positional_values = expand_extern_args(ctx, arg_exprs, call_arena, extern_func)
 
       positional_values.each_index do |index|
         next if index >= parameter_count
@@ -101051,14 +101044,7 @@ module Adamas::HIR
               arg_ids = if named_args && !named_args.empty?
                           lower_source_extern_named_args(ctx, extern_func, call_args, named_args, call_arena, node)
                         else
-                          has_splat = call_args.any? do |arg_expr|
-                            call_arena[arg_expr].is_a?(Adamas::Compiler::Frontend::SplatNode)
-                          end
-                          if has_splat
-                            expand_splat_args(ctx, call_args, call_arena)
-                          else
-                            expand_extern_args(ctx, call_args, call_arena, extern_func)
-                          end
+                          expand_extern_args(ctx, call_args, call_arena, extern_func)
                         end
               if env_get("DEBUG_MEM_INTRINSIC") && class_name_str == "LibIntrinsics"
                 STDERR.puts "[MEM_INTRINSIC] extern method=#{method_name} call_args=#{call_args.size} lowered=#{arg_ids.size}"
@@ -110623,6 +110609,10 @@ module Adamas::HIR
       extern_func : ExternFunction,
       parameter_offset : Int32 = 0,
     ) : Array(ValueId)
+      if arg_exprs.any? { |arg_expr| call_arena[arg_expr].is_a?(Adamas::Compiler::Frontend::SplatNode) }
+        return expand_splat_args(ctx, arg_exprs, call_arena, extern_func, parameter_offset)
+      end
+
       result = [] of ValueId
       param_types = extern_func.param_types
       old_arena = @arena
@@ -110792,6 +110782,8 @@ module Adamas::HIR
       ctx : LoweringContext,
       arg_exprs : Array(ExprId),
       call_arena : Adamas::Compiler::Frontend::ArenaLike,
+      extern_func : ExternFunction? = nil,
+      parameter_offset : Int32 = 0,
     ) : Array(ValueId)
       result = [] of ValueId
 
@@ -110852,7 +110844,11 @@ module Adamas::HIR
               # Expand array elements as individual arguments
               inner_node.elements.each do |elem_id|
                 @arena = call_arena
-                result << lower_expr(ctx, elem_id)
+                if extern_func
+                  result.concat(expand_extern_args(ctx, [elem_id], call_arena, extern_func, parameter_offset + result.size))
+                else
+                  result << lower_expr(ctx, elem_id)
+                end
                 @arena = call_arena
                 if env_get("DEBUG_SPLAT_TRACE")
                   STDERR.puts "[SPLAT_TRACE_DONE] elem=#{elem_id.index}"
@@ -110875,14 +110871,17 @@ module Adamas::HIR
                   extract = IndexGet.new(ctx.next_id, elem_type, inner_val, idx_lit.id)
                   ctx.emit(extract)
                   ctx.register_type(extract.id, elem_type)
-                  result << extract.id
+                  # A tuple expansion retains the C call's conversion boundary.
+                  # Use the splat node rather than its receiver (which may be self)
+                  # so conversion follows each extracted value's actual type.
+                  result << (extern_func ? try_implicit_to_unsafe(ctx, extract.id, arg_node) : extract.id)
                 end
                 if env_get("DEBUG_SPLAT_TRACE")
                   STDERR.puts "[SPLAT_TRACE_DONE] tuple_unpack=#{elem_types.size} inner=#{arg_node.expr.index}"
                 end
               else
                 # Not a Tuple - pass through as single argument
-                result << inner_val
+                result << (extern_func ? try_implicit_to_unsafe(ctx, inner_val, arg_node) : inner_val)
                 if env_get("DEBUG_SPLAT_TRACE")
                   STDERR.puts "[SPLAT_TRACE_DONE] inner=#{arg_node.expr.index}"
                 end
@@ -110890,7 +110889,11 @@ module Adamas::HIR
             end
           else
             @arena = call_arena
-            result << lower_expr(ctx, arg_expr)
+            if extern_func
+              result.concat(expand_extern_args(ctx, [arg_expr], call_arena, extern_func, parameter_offset + result.size))
+            else
+              result << lower_expr(ctx, arg_expr)
+            end
             @arena = call_arena
             if env_get("DEBUG_SPLAT_TRACE")
               STDERR.puts "[SPLAT_TRACE_DONE] expr=#{arg_expr.index}"

@@ -1,3 +1,27 @@
+### FFI tuple-splat values retain source conversion semantics (2026-10-17)
+The source lib-call path diverted splatted arguments into generic expansion,
+which bypassed implicit to_unsafe. A tuple containing String therefore passed
+the String object address to C rather than its byte payload. Preserve the
+extern declaration and flattened parameter index through expansion; convert
+each extracted value at the same boundary as an ordinary source argument.
+Use the splat node as conversion context, so a self receiver cannot replace
+the extracted value.
+
+Exact parent slice2625 is RED (ffi2662), emitting null bytes where strtol should
+read digits. Fresh exact-production host slice2627 passes original-first
+ffi_splat_boundary_repro.sh (ffi2663): exact bytes for ordinary and named/splat
+calls, tuple-producing function evaluated once, and four named-call rejection
+guards. The fixed/variadic arity neighbor also passes (ffi2664). Scoped adversary
+verdict ROBUST for these conversion and source-shape cases. All 1919 integrated
+source hashes match the tested seal. Source manifest SHA256 95172d3bc7bb3efee8f1e641285fdd52c77280a6c66b3c06b26ed5d6001bfd39;
+host SHA256 255472f5f6fbaa49eed2e89588548aa9c10f94c762a378dc9f68019ebd537991.
+
+Refresh after tuple extraction, argument conversion, extern source binding or
+arena ownership changes; revert the delta and regression together. FFI out-local
+storage, fresh pristine S2 and unchanged LavinMQ functional/upstream parity
+remain separate open obligations.
+
+
 # LANDMARKS
 
 Named source FFI binding (2026-10-17): ExternFunction must preserve source

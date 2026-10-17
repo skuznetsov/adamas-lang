@@ -20260,9 +20260,11 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   missing/variadic rejections; exact parent slice2597 is RED (ffi2650). The
   positional fixed/variadic arity neighbor remains GREEN (ffi2653). Synthetic
   internal intrinsic signatures retain their existing source-call boundary.
-- [ ] Route FFI tuple-splat elements through the same implicit to_unsafe path
-  as ordinary arguments. Private slice2621 has an original-first regression;
-  the independent production port still needs its own qualification/commit.
+- [x] Route FFI tuple-splat elements through the ordinary implicit to_unsafe
+  boundary, retaining flattened parameter indexes and single evaluation. Fresh
+  exact-production host slice2627 passes original-first ffi_splat_boundary_repro.sh
+  (ffi2663); exact parent slice2625 is RED (ffi2662). Named validation and
+  positional fixed/variadic arity remain GREEN (ffi2663/ffi2664).
 - [ ] Preserve FFI out-local payload storage through reads, assignments,
   captures and pointerof. Private slice2644 passes original-first out2647;
   production integration remains open. Audit pointer/non-Void parameter
