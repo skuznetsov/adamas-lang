@@ -19687,3 +19687,28 @@ Refresh after assignment, tuple expansion, identifier reads or typeof-local
 binding changes. Revert the six source changes and regression together.
 Other binding producers, fresh S2 and unchanged LavinMQ functional/upstream
 parity remain open; this certificate does not close those capabilities.
+
+
+### Implicit yield participates in callback return-shape specialization (2026-10-17)
+block_call_return_contract_for required a declared &block parameter. A source
+method using only yield was therefore excluded, and nested String.build
+lowering could materialize one fallback wrapper for both Int32 and Float64
+callback results. Admit the same contract when the selected source Def contains
+yield. Keep the existing concrete-annotation, stable-return and body-dependence
+guards; no late ABI recovery or new callback carrier is introduced.
+
+implicit_yield_return_shape_repro.sh qualifies all four expected byte strings on
+pristine Crystal, then checks actual callback payloads inside String.build with
+both sibling orders and an outer warm call. Exact parent discard2939 is RED in
+return3059: float_then_int prints XC instead of FC. Fresh minimal S1 return3050
+passes repository run return3058. Six callback neighbors pass in return3052
+through return3057: typed union ABI, inferred case/flat_map/included-module
+returns, Nil unions, captured returns, raw closure shape and mega-union return
+isolation. Scoped adversary ROBUST for these result-shape paths. HIR SHA-256
+63e9769888602d302614e6cb54db56d7fc83e434a81b8541efaf462e1fe1179e;
+host 4fb627677b4a1e457ba8c99f2c5c8d92090db3800c7699203a74ba2dc5b88854.
+
+Refresh after block admission, callback specialization, fallback materialization
+or return-ABI changes. Revert the source change and regression together.
+Untyped raw-union carriers, fresh S2 and unchanged LavinMQ functional/upstream
+parity remain open.

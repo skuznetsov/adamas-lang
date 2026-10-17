@@ -8752,15 +8752,26 @@ module Adamas::HIR
       return nil if block_return_type == TypeRef::VOID || block_return_type == TypeRef::NIL
 
       params = block_def.params
-      return nil unless params
-      block_param = find_param(params) { |_p| _p.is_block }
-      return nil unless block_param
+      block_param = if params
+                      find_param(params) { |_p| _p.is_block }
+                    else
+                      nil
+                    end
+      # A method can receive the block implicitly through yield without a
+      # declared &block parameter. Permit that source shape only when the
+      # selected Def body actually contains yield; otherwise keep the contract
+      # fail-closed.
+      unless block_param
+        return nil unless def_contains_yield?(block_def, source_arena)
+      end
       # A CONCRETE block annotation pins the proc ABI — no shape key needed.
       # A GENERIC one (`& : T -> U`, e.g. Array#map) pins nothing: the return
       # shape still varies per callsite and needs the same specialization.
-      if ta = block_param.type_annotation
-        ann = safe_slice_to_string(ta) || ""
-        return nil unless generic_proc_annotation?(ann)
+      if block_param
+        if ta = block_param.type_annotation
+          ann = safe_slice_to_string(ta) || ""
+          return nil unless generic_proc_annotation?(ann)
+        end
       end
 
       body = block_def.body

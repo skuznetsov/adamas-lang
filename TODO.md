@@ -1,5 +1,21 @@
 # Adamas Bootstrap TODO
 
+2026-10-17 IMPLICIT YIELD CALLBACK RESULT ABI: the return-shape contract required
+a declared &block, although methods can receive a block through implicit yield.
+Nested fallback materialization then reused one wrapper for Int32 and Float64
+results. Admit the existing specialization contract when the selected source
+Def contains yield; retain concrete-annotation and stable/body-dependent return
+guards. DoD: implicit_yield_return_shape_repro.sh compares four original-first
+native transcripts with actual integer/float payload checks inside String.build
+and reversed/warmed sibling orders. Exact parent discard2939 fails return3059
+with XC instead of FC; minimal fresh S1 return3050 passes repository run
+return3058 and six callback-neighbor scripts (return3052 through return3057).
+- [x] Specialize implicit-yield callback wrappers by their result ABI.
+- [ ] Audit other uses of a declared &block as a proxy for source block use.
+- [ ] Repair the separate untyped raw-union carrier contract before extending
+  typed callback/union evidence to that path.
+- [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
+
 2026-10-17 DISCARD ASSIGNMENT CONTRACT: `_ = rhs` was stored as an ordinary
 local in lowering and typeof flow, so discarded values could shadow the type
 wildcard and value reads were accepted. Evaluate the RHS once and return its
