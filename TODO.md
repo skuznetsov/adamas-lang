@@ -1,5 +1,36 @@
 # Adamas Bootstrap TODO
 
+2026-10-16 DECLARED METHOD-FORALL BINDINGS: source `forall` names define
+free-variable identity, including long names and nested/pointer restrictions.
+Use their call-local substitutions for restriction admission, concrete body
+specialization, and body/return lowering after owner registration maps. The
+minimal included-module trace had UC=UInt8 during return inference but UC=UC
+in the body after registration restoration; re-infer the exact declaration's
+bindings instead of transporting the owner placeholder. Remove the FastFloat
+UC/T shortcut. DoD: method_forall_call_binding_repro.sh matches ABCD/A/E and
+rejects inconsistent repeated bindings and ordinary constants; the exact
+committed parent fails Carrier(Element) versus Carrier(UInt8). Keep the new
+specialization demand within the call-binding helper's positional signature
+guard; named-only/rest routing controls match A/A instead of the intermediate
+candidate's unresolved stubs. Existing block-forall owner/result priority and
+forwarded-Proc results remain green. Evidence: float2120, float2122/2123/2125,
+float2129, float2150/2151/2152/2157. Refresh after source restrictions,
+forall metadata, call specialization, or owner-map restoration changes.
+- [ ] Resolve the separate Float::FastFloat.large_mul LimbSpan versus
+  Slice(UInt32) restriction failure, reached by the combined ordinary
+  String#to_f64 consumer after the forall repair (float2124).
+- [ ] Localize the next fresh ordinary S2 refusal: TypeContext#union_of
+  expects Array(Type) but receives Array(Nil | PrimitiveType | Type)
+  in TypeInferenceEngine#infer_safe_navigation (s2_float2131/2139,
+  frozen combined source; exit 1 after 164/168 seconds). Plain ancestor,
+  optional-value guard, fallback array and nested-annotation controls pass
+  (bootstrap2138/2143/2145).
+- [ ] Audit alias-dependent, named/splat, and unequal-union free-variable
+  shapes separately; this repair adds source binding for plain positional
+  restrictions and preserves existing call-shape binding for other shapes.
+  The two A/A named/rest routing guards do not establish general coverage.
+- [ ] Complete fresh bootstrap and unchanged LavinMQ runtime/spec parity.
+
 2026-10-16 FORWARDED TYPED PROC ABI: use the concrete Proc descriptor before
 resolving generic stdlib Proc#call when constructing a forwarded block. The
 signature was retained; the old consumer chose Proc#call$*T_splat and published
@@ -9,9 +40,10 @@ UInt64/Float64 key and reverse sorts, plus ABC for Int64/Float64/Nil result
 forwarding. The exact parent fails the sort macro; expected-input guards pass.
 Evidence: sort2077/2078, sort2081/2083/2084. Refresh after Proc descriptor,
 forwarded-block construction, call dispatch or callback ABI changes.
-- [ ] Repair the fresh ordinary S2 ParseOptionsT(UC) versus ParseOptionsT(UInt8)
-  restriction mismatch in Float::FastFloat::BinaryFormat_Float64#from_chars_advanced
-  (s2_sort2082). This run passed the previous comparator failure; S2 is not built.
+- [x] Repair the declaration-local ParseOptionsT(UC) binding loss found by
+  s2_sort2082; the ordinary combined from_chars consumer passes this boundary
+  and reaches a separate LimbSpan alias restriction (float2124). A fresh
+  complete S2 remains an independent acceptance gate.
 - [ ] Retain bare/unresolved Proc and dynamic callback-result SSA as separate
   obligations; this fix consumes an existing concrete descriptor only.
 - [ ] Complete fresh bootstrap and unchanged LavinMQ runtime/spec parity.

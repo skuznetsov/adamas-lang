@@ -29,6 +29,22 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+Declared method-forall variables bind from the exact source restrictions and
+actual positional types before owner normalization. Their identities do not
+depend on short-name heuristics. Nested restrictions select a concrete body;
+its call-local forall map supersedes the registration map only for those
+explicit declaration variables. Non-forall module bindings retain authority,
+and block-result priority is restored afterward. New specialization demand
+uses the same positional signature guard as the binding helper, preserving
+existing named/rest call-shape routing. The FastFloat-specific map is removed.
+DoD: method_forall_call_binding_repro.sh, original-first ABCD/A/E,
+repeated-variable contradiction, ordinary-constant rejection and A/A named/rest
+routing controls, plus the existing block-forall priority control. The exact parent fails the source
+restriction and an intermediate candidate loses the binding at body restore.
+Rollback is the atomic source-binding helper/specialization change and its
+regression. Alias-dependent and named/splat shapes, complete fresh bootstrap
+and LavinMQ runtime/spec parity remain separate open obligations.
+
 A forwarded block whose value already has a concrete Proc descriptor consumes
 that descriptor's bound result and the intrinsic Proc call, as an ordinary
 proc.call does. Generic stdlib Proc#call lookup cannot replace the bound result
@@ -386,6 +402,7 @@ Current evidence is deliberately revision-scoped:
 
 | Source/artifact | Current classification | Consequence |
 |---|---|---|
+| Declared method-forall source/body bindings | Exact declaration names bind nested/pointer positional restrictions; original-first ABCD/A/E, A/A named/rest routing controls and both negative guards pass, the committed parent fails, and existing block-result priority passes. | Closes the measured source-admission/body-context loss only; aliases, named/splat shapes, fresh bootstrap and LavinMQ parity remain independent gates. |
 | `548d29b1` clean baseline | Stage1 and host/no-prelude probes pass; fresh `s1 -> s2` timed out at 900 seconds | Control only; no fresh-s2 certificate. |
 | `04b98b04` lineage | Direct `Object`/`Reference` method census 2085 -> 50 | Diagnostic demand-amplifier evidence; not a release certificate. |
 | Historical fresh both-smoke green | 231.37 seconds strongest surviving certificate; 251.91/253.42 seconds corroborating | Within the <=300-second numeric budget but stale; not current-source admission. |

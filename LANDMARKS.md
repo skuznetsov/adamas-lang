@@ -1,5 +1,37 @@
 # LANDMARKS
 
+Declared method-forall binding (2026-10-16): exact retained `forall` names
+supply free-variable identity before source restriction normalization. Reuse
+those call-local bindings after owner registration restoration and specialize
+nested restrictions even when their placeholder TypeRefs are already non-Void.
+The minimal included-module trace resolves Result(UC) as Result(UInt8), then
+loses UC to a stored UC=UC body map; that transport boundary is the root,
+independent of variable spelling or return annotation. The FastFloat-specific
+UC/T shortcut is removed. Original-first method_forall_call_binding_repro.sh
+passes ABCD/A/E across top-level, module, nested/pointer and included-owner
+shapes; inconsistent repeated bindings and ordinary constants reject. Demand
+for new positional specialization shares the binding helper's signature guard:
+named-only/rest routing controls also match the original A/A. An intermediate
+unguarded demand produced runtime stubs for those two controls; it is rejected. The
+exact committed parent rejects Carrier(Element), and the earlier partial
+candidate still fails the included-body macro. Block-forall receiver/result
+priority stays green. Scoped verdict: ROBUST for these plain positional
+bindings and owner-shadowing controls. HIR SHA256:
+b6abda42b14f83137dd5ec41aafe48f60ebf6c16f403f278fa2be7927f1647d7;
+host SHA256: e29b0293392e19f6630ad808c2d5e05bd07f3797c65b65cbf8b7f91edca23c11.
+Receipts: float2120, float2122/2123/2125, float2129, float2150/2151/2152/2157. Refresh after
+forall metadata, restriction normalization, body specialization or owner-map
+restoration changes. Combined String#to_f64 advances to the separate LimbSpan
+versus Slice(UInt32) restriction (float2124); alias/named/splat generalization,
+complete fresh bootstrap and LavinMQ runtime/spec parity remain open. Fresh
+combined S2 passes the old forall boundary, then rejects TypeContext#union_of
+with Array(Nil | PrimitiveType | Type) instead of Array(Type) (s2_float2131;
+exit 1, 163.87 seconds, source seal unchanged). A diagnostic-only source seal
+identifies TypeInferenceEngine#infer_safe_navigation as that caller
+(s2_bootstrap2139; exit 1, 167.91 seconds); plain ancestor, optional-value
+guard, fallback-array and nested-annotation controls pass
+(bootstrap2138/2143/2145).
+
 Forwarded typed Proc ABI (2026-10-16): the descriptor retained the exact
 UInt64/tuple inputs and Int32 result, but lower_block_pass_proc resolved the
 generic stdlib Proc#call$*T_splat first and used its unresolved R. A known Proc

@@ -35568,7 +35568,7 @@ module Adamas::HIR
             end
           end
           if !param_literal && type_ann_str && call_type_for_param != TypeRef::VOID
-            merge_type_param_substitutions_from_callsite(extra_type_params, type_ann_str, call_type_for_param)
+            merge_type_param_substitutions_from_callsite(extra_type_params, type_ann_str, call_type_for_param, forall_type_param_names(node))
           end
           if !param_literal && type_ann_str && call_type_for_param != TypeRef::VOID
             # Map pointer-shaped generic annotations (e.g. `T*`) from concrete call-site
@@ -35619,6 +35619,7 @@ module Adamas::HIR
           STDERR.puts "[LOWER_MODULE_TPM] base=#{base_name} override=#{full_name_override || "nil"} merged=#{registered_params}"
         end
       end
+      extra_type_params.merge!(method_forall_call_bindings(node, call_types))
 
       if splat_param_name
         splat_type = packed_splat_param_type || TypeRef::VOID
@@ -35723,6 +35724,8 @@ module Adamas::HIR
       if registered_params = function_type_param_map_for(full_name, base_name)
         extra_type_params.merge!(registered_params)
       end
+
+      extra_type_params.merge!(method_forall_call_bindings(node, call_types))
 
       # Re-resolve annotated return type after full-name type-param map merge.
       if rt = node.return_type
@@ -43546,7 +43549,7 @@ module Adamas::HIR
           end
           if !param_literal && call_type_for_param != TypeRef::VOID
             if type_ann_value = type_ann_str
-              merge_type_param_substitutions_from_callsite(extra_type_params, type_ann_value, call_type_for_param)
+              merge_type_param_substitutions_from_callsite(extra_type_params, type_ann_value, call_type_for_param, forall_type_param_names(node))
             end
           end
           exact_runtime_param_type = if preserve_shared_arity_union
@@ -43832,6 +43835,9 @@ module Adamas::HIR
           STDERR.puts "[LOWER_METHOD_TPM] full=#{full_name} base=#{base_name} merged=#{registered_params}"
         end
       end
+
+      # Method-forall variables shadow the registered owner context.
+      extra_type_params.merge!(method_forall_call_bindings(node, call_types))
 
       # The selected block's method-forall result is call-local. Reapply it
       # after the owner registration map, which can contain the same name.
@@ -49396,6 +49402,8 @@ module Adamas::HIR
       def_node = @function_defs[resolved_name]? || @function_defs[base_method_name]?
       return nil unless def_node
 
+      declared_formals = forall_type_param_names(def_node)
+      transport_declared_formals = method_forall_positional_signature?(def_node)
       needs_callsite_specialization = semantic_state_scope_prefer_callsite_specialization_shadow_untyped_regular_param?(
         base_method_name,
         resolved_name,
@@ -49425,7 +49433,15 @@ module Adamas::HIR
               string_builder_formatting_shape?(method_name, type_name, call_type) &&
                 (@string_builder_formatting_corridor_depth > 0 ||
                 current_object_wrapper_formatting_seed_call?(base_method_name))
-            if should_use_exact_call_type_for_local_inference?(param_type, call_type) ||
+            # A method free variable must reach its selected concrete body,
+            # including nested restrictions whose registry TypeRef is already
+            # non-void. The declaration, rather than the variable spelling,
+            # supplies the identity of those free variables.
+            declared_formal_transport = transport_declared_formals && call_type != TypeRef::VOID &&
+              !param.is_splat && !param.is_double_splat &&
+              declared_formals.any? { |formal| type_name_includes_param?(type_name, formal) }
+            if declared_formal_transport ||
+               should_use_exact_call_type_for_local_inference?(param_type, call_type) ||
                should_use_exact_call_type_for_annotation?(type_name, call_type) ||
                formatting_corridor_transport
               needs_callsite_specialization = true
@@ -53573,6 +53589,64 @@ module Adamas::HIR
       bind_constructor_type_params(restriction, actual, [] of String, {} of String => String)
     end
 
+    # Method free variables are declaration-local identities, not a spelling
+    # heuristic. Infer them from the source restrictions before an owner map
+    # can substitute a same-named variable. The selected call's bindings also
+    # take precedence when the body later restores its registration context.
+    private def method_forall_positional_signature?(def_node : Adamas::Compiler::Frontend::DefNode) : Bool
+      !function_param_infos(def_node).any? do |param|
+        param.is_splat || param.is_double_splat || named_only_separator?(param)
+      end
+    end
+
+    private def method_forall_call_bindings(
+      def_node : Adamas::Compiler::Frontend::DefNode,
+      arg_types : Array(TypeRef),
+    ) : Hash(String, String)
+      bindings = {} of String => String
+      formals = forall_type_param_names(def_node)
+      return bindings if formals.empty? || arg_types.empty?
+      return bindings unless method_forall_positional_signature?(def_node)
+      source_params = function_param_infos(def_node)
+
+      arg_index = 0
+      source_params.each do |param|
+        next if param.is_block
+        break if arg_index >= arg_types.size
+        actual = arg_types[arg_index]
+        if actual != TypeRef::VOID && (restriction_text = param.type_annotation)
+          collect_type_param_substitutions(
+            restriction_text, generic_param_type_name_from_ref(actual), bindings, formals
+          )
+        end
+        arg_index += 1
+      end
+      bindings
+    end
+
+    private def method_forall_call_param_infos(
+      def_node : Adamas::Compiler::Frontend::DefNode,
+      arg_types : Array(TypeRef),
+      params : Array(DefParamInfo),
+    ) : Array(DefParamInfo)
+      bindings = method_forall_call_bindings(def_node, arg_types)
+      return params if bindings.empty?
+      source_params = function_param_infos(def_node)
+      return params if source_params.size != params.size
+      formals = forall_type_param_names(def_node)
+
+      params.map_with_index do |param, index|
+        restriction_text = param.type_annotation
+        if source_annotation = source_params[index].type_annotation
+          if formals.any? { |formal| type_name_includes_param?(source_annotation, formal) }
+            restriction_text = substitute_type_params(source_annotation, bindings)
+          end
+        end
+        DefParamInfo.new(param.name, param.external_name, restriction_text,
+          param.default_value, param.is_splat, param.is_double_splat, param.is_block)
+      end
+    end
+
     # Only a concrete source contradiction is a rejection certificate. Unknown
     # arguments and source shapes with separate binding rules remain undecided.
     private def source_generic_argument_mismatch_for_def(
@@ -53581,7 +53655,7 @@ module Adamas::HIR
       context : String?,
     ) : Tuple(String, String)?
       return nil if arg_types.empty? || arg_types.any? { |type_ref| type_ref == TypeRef::VOID }
-      params = function_param_infos(def_node)
+      params = method_forall_call_param_infos(def_node, arg_types, function_param_infos(def_node))
       return nil if params.any? { |param| param.is_splat || param.is_double_splat || named_only_separator?(param) }
       arg_index = 0
       params.each do |param|
@@ -53606,7 +53680,7 @@ module Adamas::HIR
       param_infos : Array(DefParamInfo)? = nil,
       trace : Bool = false,
     ) : Bool
-      params = param_infos || function_param_infos(def_node)
+      params = method_forall_call_param_infos(def_node, arg_types, param_infos || function_param_infos(def_node))
       STDERR.puts "[COMPAT] enter def=#{def_node.name} params=#{params.size} args=#{arg_types.size} ctx=#{context}" if trace
       return true if params.empty?
 
@@ -54351,9 +54425,10 @@ module Adamas::HIR
       extra_type_params : Hash(String, String),
       type_annotation : String,
       call_type : TypeRef,
+      declared_formals : Array(String)? = nil,
     ) : Nil
       return if call_type == TypeRef::VOID
-      inferred = infer_type_param_substitutions_from_annotation(type_annotation, call_type)
+      inferred = infer_type_param_substitutions_from_annotation(type_annotation, call_type, declared_formals)
       inferred.each do |key, value|
         next if value.empty? || value == "Void" || value == "Unknown"
         existing = extra_type_params[key]?
@@ -54363,12 +54438,16 @@ module Adamas::HIR
       end
     end
 
-    private def infer_type_param_substitutions_from_annotation(type_annotation : String, call_type : TypeRef) : Hash(String, String)
+    private def infer_type_param_substitutions_from_annotation(
+      type_annotation : String,
+      call_type : TypeRef,
+      declared_formals : Array(String)? = nil,
+    ) : Hash(String, String)
       concrete = get_type_name_from_ref(call_type).strip
       return {} of String => String if concrete.empty? || concrete == "Void" || concrete == "Unknown"
 
       substitutions = {} of String => String
-      collect_type_param_substitutions(type_annotation.strip, concrete, substitutions)
+      collect_type_param_substitutions(type_annotation.strip, concrete, substitutions, declared_formals)
       substitutions
     end
 
@@ -54376,11 +54455,13 @@ module Adamas::HIR
       annotated_type : String,
       concrete : String,
       substitutions : Hash(String, String),
+      declared_formals : Array(String)? = nil,
     ) : Nil
       return if annotated_type.empty? || concrete.empty?
       return if concrete == "Void" || concrete == "Unknown"
 
-      if unresolved_type_param_annotation?(annotated_type)
+      if (declared_formals && declared_formals.includes?(annotated_type)) ||
+         ((declared_formals.nil? || declared_formals.empty?) && unresolved_type_param_annotation?(annotated_type))
         substitutions[annotated_type] ||= concrete
         return
       end
@@ -54391,7 +54472,7 @@ module Adamas::HIR
           if info.base == "Pointer"
             pointed = info.args.strip
             unless pointed.empty?
-              collect_type_param_substitutions(inner, pointed, substitutions)
+              collect_type_param_substitutions(inner, pointed, substitutions, declared_formals)
             end
           end
         end
@@ -54402,7 +54483,7 @@ module Adamas::HIR
       concrete_union = split_union_type_name(concrete)
       if annotation_union.size > 1 && concrete_union.size == annotation_union.size
         annotation_union.each_with_index do |part, idx|
-          collect_type_param_substitutions(part.strip, concrete_union[idx].strip, substitutions)
+          collect_type_param_substitutions(part.strip, concrete_union[idx].strip, substitutions, declared_formals)
         end
         return
       end
@@ -54420,7 +54501,7 @@ module Adamas::HIR
       return unless ann_args.size == concrete_args.size
 
       ann_args.each_with_index do |ann_arg, idx|
-        collect_type_param_substitutions(ann_arg.strip, concrete_args[idx].strip, substitutions)
+        collect_type_param_substitutions(ann_arg.strip, concrete_args[idx].strip, substitutions, declared_formals)
       end
     end
 
@@ -72129,7 +72210,7 @@ module Adamas::HIR
               end
             end
             if !param_literal && has_type_ann_str && call_type_for_param != TypeRef::VOID
-              merge_type_param_substitutions_from_callsite(extra_type_params, type_ann_str, call_type_for_param)
+              merge_type_param_substitutions_from_callsite(extra_type_params, type_ann_str, call_type_for_param, forall_type_param_names(node))
             end
             if !param_literal && has_type_ann_str && call_type_for_param != TypeRef::VOID
               # Map pointer-shaped generic annotations (e.g. `T*`) from concrete call-site
@@ -72293,6 +72374,9 @@ module Adamas::HIR
             STDERR.puts "[LOWER_DEF_TPM] full=#{full_name} base=#{base_name} merged=#{registered_params}"
           end
         end
+        # Method-forall variables shadow the registered owner context.
+        extra_type_params.merge!(method_forall_call_bindings(node, call_types))
+
         # Re-resolve annotated return type after type-param map merge.
         # Generic signatures like `: T*` may resolve to VOID before lazy specialization
         # mappings are attached.
@@ -97884,11 +97968,9 @@ module Adamas::HIR
               if materialize_requested_instance_wrapper && namespace_override.nil?
                 namespace_override = resolved_parts.owner
               end
-              # Add forall type param bindings for primitive templates and FastFloat methods.
+              # Primitive templates supply their own declaration bindings.
+              # Method-forall variables are inferred from the selected call.
               extra_params = primitive_template_map || {} of String => String
-              if target_name.includes?("FastFloat")
-                extra_params = extra_params.merge({"UC" => "UInt8", "T" => "Float64"})
-              end
               merged_params = extra_type_params ? extra_params.merge(extra_type_params) : extra_params
               instance_transaction : CallMaterializationTransaction = call_materialization_transaction(
                 "instance_method",
